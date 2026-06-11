@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Shioaji Pro — 專業台股交易終端</title>
-<meta name="description" content="基於永豐金 Shioaji API 的開源桌面交易終端：閃電下單、圖表點價下單、停損停利、多面板自由版面、自選清單雲端同步。macOS / Windows / Linux。" />
-<meta property="og:title" content="Shioaji Pro — 專業台股交易終端" />
-<meta property="og:description" content="閃電下單・圖表點價・停損停利・多面板版面・自動更新。基於 Shioaji API 的開源桌面交易終端。" />
+<title>Shioaji Pro — 開源台股交易終端示範 powered by Shioaji</title>
+<meta name="description" content="用 Shioaji API 能做到什麼？這是一個完整開源的桌面交易終端示範：閃電下單、圖表點價、停損停利、多面板版面 — 全部原始碼公開，是打造自己交易工具的學習素材。" />
+<meta property="og:title" content="Shioaji Pro — 開源台股交易終端示範" />
+<meta property="og:description" content="用 Shioaji API 打造的完整交易終端 demo — 閃電下單、圖表點價、停損停利。原始碼全部開源，自由研究、改造成你自己的交易工具。" />
 <meta property="og:image" content="https://sinotrade.github.io/shioaji-pro-app/screenshot-futures.png" />
 <meta property="og:type" content="website" />
 <style>
@@ -226,6 +226,7 @@
     <a class="brand" href="#">Shioaji Pro <span class="sub">交易終端</span></a>
     <div class="nav-links">
       <a href="#features">功能</a>
+      <a href="#opensource">開源學習</a>
       <a href="#quickstart">快速開始</a>
       <a href="#downloads">下載</a>
       <a class="nav-gh" href="https://github.com/Sinotrade/shioaji-pro-app" target="_blank" rel="noopener">
@@ -238,22 +239,23 @@
 
 <header class="hero">
   <div class="wrap">
-    <h1>專業台股交易終端<br /><span class="grad">開源・跨平台・即時</span></h1>
+    <h1>用 Shioaji 能做到什麼？<br /><span class="grad">一個完整開源的交易終端</span></h1>
     <p class="tag">
-      基於永豐金 <a href="https://github.com/Sinotrade/Shioaji" target="_blank" rel="noopener">Shioaji API</a> 打造的桌面交易終端 —
-      閃電下單、圖表點價、停損停利、多面板自由版面，行情與委託即時串流。
+      Shioaji Pro 是以永豐金 <a href="https://github.com/Sinotrade/Shioaji" target="_blank" rel="noopener">Shioaji API</a> 打造的<strong>開源示範專案</strong> —
+      閃電下單、圖表點價、停損停利、多面板版面，每一行程式碼都公開，
+      是你打造自己交易工具的學習素材與起點。
     </p>
     <div class="badges">
+      <span class="badge" style="color: var(--accent); border-color: var(--accent);">100% 開源</span>
       <span class="badge" id="ver-badge">v—</span>
       <span class="badge">macOS ・ Windows ・ Linux</span>
-      <span class="badge">內建 shioaji server</span>
       <span class="badge sim">預設模擬環境</span>
     </div>
     <div class="cta-row">
-      <a class="btn primary" id="cta-dl" href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">⬇ 下載最新版</a>
-      <a class="btn" href="https://github.com/Sinotrade/shioaji-pro-app">查看原始碼</a>
+      <a class="btn primary" href="https://github.com/Sinotrade/shioaji-pro-app">★ 查看原始碼</a>
+      <a class="btn" id="cta-dl" href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">⬇ 下載體驗</a>
     </div>
-    <p class="cta-note" id="cta-note">macOS 已簽章公證・內建自動更新</p>
+    <p class="cta-note" id="cta-note">下載即用・macOS 已簽章公證・內建自動更新</p>
     <p class="all-dl"><a href="#downloads">所有平台下載 ↓</a></p>
   </div>
 </header>
@@ -271,7 +273,7 @@
   <div class="wrap">
     <div class="sec-head">
       <h2>為當沖與短線而生的下單體驗</h2>
-      <p>每個功能都針對台股交易流程設計 — 股票、期貨、選擇權</p>
+      <p>每個功能都針對台股交易流程設計，全部以公開的 Shioaji API 實作 — 股票、期貨、選擇權</p>
     </div>
     <div class="grid">
       <div class="card">
@@ -323,7 +325,48 @@
   </div>
 </section>
 
-<section id="quickstart" style="background: var(--bg-soft); border-block: 1px solid var(--border);">
+<section id="opensource" style="background: var(--bg-soft); border-block: 1px solid var(--border);">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>不只是 App — 是一份完整的學習素材</h2>
+      <p>想用 Shioaji 打造自己的交易工具？這個專案展示了每一塊該怎麼做，原始碼全部公開</p>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="ico">🔌</div>
+        <h3>純前端 × Shioaji API</h3>
+        <p>沒有自家後端 — 整個終端只靠 shioaji server 的 HTTP API 與 SSE 串流。行情、下單、帳務每個呼叫都是可以直接參考的 API 用法範例。</p>
+      </div>
+      <div class="card">
+        <div class="ico">📡</div>
+        <h3>真實場景的串流處理</h3>
+        <p>單一 SSE 連線餵全 app、斷線自動重連並重放訂閱、每日維護偵測、tick／五檔的 store 設計 — 即時行情系統會遇到的坑都處理給你看。</p>
+      </div>
+      <div class="card">
+        <div class="ico">🧩</div>
+        <h3>下單全流程實作</h3>
+        <p>限價／市價、刪單改價、停損停利觸價引擎、OCO 括弧單、風控閘道 — 從 UI 到 API 的完整下單鏈路，照著讀就能改造成自己的策略工具。</p>
+      </div>
+      <div class="card">
+        <div class="ico">🛠</div>
+        <h3>Clone 即跑</h3>
+        <p><code style="font-family: var(--mono); font-size: 0.78rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px;">git clone → pnpm i → pnpm dev</code><br />搭配 shioaji CLI 啟動本機 server 就能開發，README 有完整步驟。</p>
+      </div>
+      <div class="card">
+        <div class="ico">📚</div>
+        <h3>現代前端技術棧</h3>
+        <p>React 19 + TypeScript + Vite、vanilla-extract 主題系統、lightweight-charts、Tauri 2 桌面打包與自動更新 — 一套交易級前端的完整參考。</p>
+      </div>
+      <div class="card">
+        <div class="ico">💡</div>
+        <h3>佛心開源</h3>
+        <p>功能再多也是 demo 的一部分 — fork 它、拆它、只抄你需要的那一段都歡迎。搭配 <a href="https://sinotrade.github.io/" target="_blank" rel="noopener">Shioaji 官方文件</a> 一起服用。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="quickstart">
   <div class="wrap">
     <div class="sec-head">
       <h2>三步開始</h2>
@@ -389,9 +432,10 @@
   <div class="wrap">
     <div class="foot-inner">
       <div>
-        <strong style="color: var(--fg);">Shioaji Pro</strong> — 開源台股交易終端<br />
+        <strong style="color: var(--fg);">Shioaji Pro</strong> — 開源台股交易終端示範<br />
         Powered by <a href="https://github.com/Sinotrade/Shioaji" target="_blank" rel="noopener">Shioaji</a> ・
         <a href="https://sinotrade.github.io/" target="_blank" rel="noopener">API 文件</a> ・
+        <a href="https://github.com/Sinotrade/shioaji-pro-app" target="_blank" rel="noopener">原始碼</a> ・
         <a href="https://github.com/Sinotrade/shioaji-pro-app/issues" target="_blank" rel="noopener">問題回報</a>
       </div>
       <div style="text-align: right;">
