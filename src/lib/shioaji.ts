@@ -63,6 +63,18 @@ export function fetchAccounts() {
     return apiGet<Account[]>('/api/v1/auth/accounts');
 }
 
+export function subscribeTradeEvents(account: {
+    broker_id: string;
+    account_id: string;
+    account_type: string;
+}) {
+    return apiPost<unknown>('/api/v1/auth/subscribe_trade', {
+        broker_id: account.broker_id,
+        account_id: account.account_id,
+        account_type: account.account_type,
+    });
+}
+
 // ---- contracts ----
 
 export function fetchContract(

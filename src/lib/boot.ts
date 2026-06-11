@@ -4,7 +4,12 @@
 //    reload once it comes up so every panel bootstraps cleanly. Transient
 //    outages after a healthy boot are handled by the SSE self-heal instead.
 
-import { fetchHealth } from './shioaji';
+import {
+    fetchAccounts,
+    fetchHealth,
+    fetchInfo,
+    subscribeTradeEvents,
+} from './shioaji';
 import { isTauri } from './runtime';
 import { loadDesktopSettings, serverStart, serverStatus } from './tauri';
 import { notify } from './trade';
@@ -47,6 +52,7 @@ async function run() {
     // bootstrap watchdog: reload once the server becomes reachable
     try {
         await fetchHealth();
+        void subscribeProductionTradeEvents();
         return; // server was up at boot — components loaded normally
     } catch {
         notify({
@@ -64,4 +70,21 @@ async function run() {
             // keep waiting
         }
     }, 4000);
+}
+
+// In production the order_event SSE stream only emits heartbeats until
+// each account is explicitly subscribed (no-op in simulation).
+async function subscribeProductionTradeEvents() {
+    try {
+        const info = await fetchInfo();
+        if (info.simulation) return;
+        const accounts = await fetchAccounts();
+        await Promise.allSettled(
+            accounts
+                .filter((a) => a.signed)
+                .map((a) => subscribeTradeEvents(a)),
+        );
+    } catch {
+        // best-effort — order events fall back to trade polling
+    }
 }
