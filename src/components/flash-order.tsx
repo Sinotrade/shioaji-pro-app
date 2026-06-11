@@ -28,7 +28,6 @@ import * as styles from './flash-order.css';
 
 const ROW_H = 22; // must match row height in flash-order.css.ts
 const EDGE = 2; // auto-recenter when last price gets this close to the edge
-const WHEEL_STEP = 3; // ticks per wheel notch
 
 const keyOf = (p: number) => p.toFixed(2);
 
@@ -269,16 +268,24 @@ export function FlashOrder({
         setAnchor(roundToTick(contractRef.current, lp));
     }, []);
 
-    // wheel scrolls the ladder in tick space (needs non-passive listener)
+    // wheel scrolls the ladder in tick space (needs non-passive listener).
+    // Trackpads fire dozens of small-delta events per swipe, so accumulate
+    // pixels and move one tick per row height — the ladder tracks the
+    // gesture 1:1 instead of jumping a fixed amount per event.
+    const wheelAccum = useRef(0);
     useEffect(() => {
         const el = bodyRef.current;
         if (!el) return;
         const onWheel = (e: WheelEvent) => {
             e.preventDefault();
-            const steps = e.deltaY > 0 ? -WHEEL_STEP : WHEEL_STEP;
+            const px = e.deltaMode === 1 ? e.deltaY * ROW_H : e.deltaY;
+            wheelAccum.current += px;
+            const ticks = Math.trunc(wheelAccum.current / ROW_H);
+            if (ticks === 0) return;
+            wheelAccum.current -= ticks * ROW_H;
             setFollow(false);
             setAnchor((a) =>
-                a === null ? a : stepPrice(contractRef.current, a, steps),
+                a === null ? a : stepPrice(contractRef.current, a, -ticks),
             );
         };
         el.addEventListener('wheel', onWheel, { passive: false });
@@ -479,9 +486,11 @@ export function FlashOrder({
     const lastKey = last !== null ? keyOf(roundToTick(contract, last)) : '';
     const lastIdx =
         lastKey === '' ? -1 : rows.findIndex((r) => keyOf(r) === lastKey);
-    const lastAbove = lastIdx === -1 && last !== null && rows.length > 0
-        ? last > rows[0]
-        : false;
+    const topRow = rows[0];
+    const lastAbove =
+        lastIdx === -1 && last !== null && topRow !== undefined
+            ? last > topRow
+            : false;
 
     const workingCount = useMemo(() => {
         let n = 0;
