@@ -147,6 +147,17 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # The matrix jobs read-modify-write latest.json concurrently, so
+      # entries can race away — rebuild it deterministically from the
+      # uploaded .sig assets before the release goes live.
+      - name: Rebuild updater latest.json from assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/lj
+          gh release download '${{ github.ref_name }}'             --repo '${{ github.repository }}'             --dir /tmp/lj --pattern '*.sig' --pattern 'latest.json'
+          python3 scripts/fix-latest-json.py '${{ github.ref_name }}'             /tmp/lj '${{ github.repository }}'
+          gh release upload '${{ github.ref_name }}'             --repo '${{ github.repository }}' /tmp/lj/latest.json --clobber
       - name: Publish release (all platforms assembled)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
