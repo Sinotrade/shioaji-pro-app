@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Shioaji Pro — 開源台股交易終端示範 powered by Shioaji</title>
-<meta name="description" content="用 Shioaji API 能做到什麼？這是一個完整開源的桌面交易終端示範：閃電下單、圖表點價、停損停利、多面板版面 — 全部原始碼公開，是打造自己交易工具的學習素材。" />
-<meta property="og:title" content="Shioaji Pro — 開源台股交易終端示範" />
-<meta property="og:description" content="用 Shioaji API 打造的完整交易終端 demo — 閃電下單、圖表點價、停損停利。原始碼全部開源，自由研究、改造成你自己的交易工具。" />
+<title>Shioaji Pro — 100% 由 AI Agent 打造的開源交易終端</title>
+<meta name="description" content="這個完整的台股交易終端從第一行到最後一行都由 AI Agent 開發 — 為 agent 交易快速打底鋪路。在 Claude Code / Codex 裝上 shioaji skill，就能客製自己的交易介面、甚至讓 agent 直接介接 Shioaji 交易。" />
+<meta property="og:title" content="Shioaji Pro — 100% 由 AI Agent 打造的開源交易終端" />
+<meta property="og:description" content="為 agent 交易鋪路的開源專案：用你的 Claude Code / Codex 加上 shioaji skill，客製交易介面或直接介接交易 — 這個終端就是能力證明。" />
 <meta property="og:image" content="https://sinotrade.github.io/shioaji-pro-app/screenshot-futures.png" />
 <meta property="og:type" content="website" />
 <style>
@@ -226,7 +226,7 @@
     <a class="brand" href="#">Shioaji Pro <span class="sub">交易終端</span></a>
     <div class="nav-links">
       <a href="#features">功能</a>
-      <a href="#opensource">開源學習</a>
+      <a href="#opensource">Agent 交易</a>
       <a href="#quickstart">快速開始</a>
       <a href="#downloads">下載</a>
       <a class="nav-gh" href="https://github.com/Sinotrade/shioaji-pro-app" target="_blank" rel="noopener">
@@ -239,13 +239,15 @@
 
 <header class="hero">
   <div class="wrap">
-    <h1>用 Shioaji 能做到什麼？<br /><span class="grad">一個完整開源的交易終端</span></h1>
+    <h1>這個交易終端<br /><span class="grad">100% 由 AI Agent 打造</span></h1>
     <p class="tag">
-      Shioaji Pro 是以永豐金 <a href="https://github.com/Sinotrade/Shioaji" target="_blank" rel="noopener">Shioaji API</a> 打造的<strong>開源示範專案</strong> —
-      閃電下單、圖表點價、停損停利、多面板版面，每一行程式碼都公開，
-      是你打造自己交易工具的學習素材與起點。
+      Shioaji Pro 是為 <strong>Agent 交易</strong>快速打底鋪路的開源專案 —
+      在 Claude Code／Codex 裝上 <a href="https://github.com/Sinotrade/Shioaji" target="_blank" rel="noopener">shioaji skill</a>，
+      就能讓 agent 完全客製你自己的交易介面，甚至直接介接 Shioaji 進行交易。
+      閃電下單、圖表點價、停損停利 — 這裡的每一行程式碼，都是 agent 寫出來的能力證明。
     </p>
     <div class="badges">
+      <span class="badge" style="color: var(--accent); border-color: var(--accent);">🤖 AI Agent 開發</span>
       <span class="badge" style="color: var(--accent); border-color: var(--accent);">100% 開源</span>
       <span class="badge" id="ver-badge">v—</span>
       <span class="badge">macOS ・ Windows ・ Linux</span>
@@ -328,40 +330,54 @@
 <section id="opensource" style="background: var(--bg-soft); border-block: 1px solid var(--border);">
   <div class="wrap">
     <div class="sec-head">
-      <h2>不只是 App — 是一份完整的學習素材</h2>
-      <p>想用 Shioaji 打造自己的交易工具？這個專案展示了每一塊該怎麼做，原始碼全部公開</p>
+      <h2>為 Agent 交易鋪路</h2>
+      <p>這個專案從第一個 commit 到自動發佈，全部由 AI agent 完成 — 它就是你的起點與能力上限參考</p>
     </div>
     <div class="grid">
       <div class="card">
-        <div class="ico">🔌</div>
-        <h3>純前端 × Shioaji API</h3>
-        <p>沒有自家後端 — 整個終端只靠 shioaji server 的 HTTP API 與 SSE 串流。行情、下單、帳務每個呼叫都是可以直接參考的 API 用法範例。</p>
+        <div class="ico">🤖</div>
+        <h3>整個專案都是 Agent 做的</h3>
+        <p>UI、SSE 串流、下單鏈路、Tauri 打包、簽章公證、CI 發佈 — 沒有一行人手寫的程式碼。這不是概念展示，是一個真的能交易的終端。</p>
+      </div>
+      <div class="card">
+        <div class="ico">🎛</div>
+        <h3>客製你自己的交易介面</h3>
+        <p>Fork 之後對 agent 開口就好：加一個面板、改閃電下單的行為、接上你的策略訊號 — 不用從零刻 UI，這裡已經把地基打完。</p>
+      </div>
+      <div class="card">
+        <div class="ico">🔗</div>
+        <h3>介接 Agent 直接交易</h3>
+        <p>shioaji server 是純 HTTP API + SSE — agent 不只能寫介面，還能直接查行情、下單、管理部位，打造全自動或人機協作的交易流程（請先在模擬環境驗證）。</p>
       </div>
       <div class="card">
         <div class="ico">📡</div>
-        <h3>真實場景的串流處理</h3>
-        <p>單一 SSE 連線餵全 app、斷線自動重連並重放訂閱、每日維護偵測、tick／五檔的 store 設計 — 即時行情系統會遇到的坑都處理給你看。</p>
-      </div>
-      <div class="card">
-        <div class="ico">🧩</div>
-        <h3>下單全流程實作</h3>
-        <p>限價／市價、刪單改價、停損停利觸價引擎、OCO 括弧單、風控閘道 — 從 UI 到 API 的完整下單鏈路，照著讀就能改造成自己的策略工具。</p>
-      </div>
-      <div class="card">
-        <div class="ico">🛠</div>
-        <h3>Clone 即跑</h3>
-        <p><code style="font-family: var(--mono); font-size: 0.78rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px;">git clone → pnpm i → pnpm dev</code><br />搭配 shioaji CLI 啟動本機 server 就能開發，README 有完整步驟。</p>
+        <h3>真實場景參考實作</h3>
+        <p>斷線重連重放訂閱、tick／五檔 store、停損停利觸價引擎、OCO、風控閘道 — 即時交易系統會遇到的坑，原始碼裡都處理給你看。</p>
       </div>
       <div class="card">
         <div class="ico">📚</div>
-        <h3>現代前端技術棧</h3>
-        <p>React 19 + TypeScript + Vite、vanilla-extract 主題系統、lightweight-charts、Tauri 2 桌面打包與自動更新 — 一套交易級前端的完整參考。</p>
+        <h3>現代技術棧</h3>
+        <p>React 19 + TypeScript + Vite、vanilla-extract 主題系統、lightweight-charts、Tauri 2 桌面打包與自動更新 — 交易級前端的完整參考。</p>
       </div>
       <div class="card">
         <div class="ico">💡</div>
         <h3>佛心開源</h3>
-        <p>功能再多也是 demo 的一部分 — fork 它、拆它、只抄你需要的那一段都歡迎。搭配 <a href="https://sinotrade.github.io/" target="_blank" rel="noopener">Shioaji 官方文件</a> 一起服用。</p>
+        <p>fork 它、拆它、只抄你需要的那一段都歡迎 — 全部程式碼都是學習素材，搭配 <a href="https://sinotrade.github.io/" target="_blank" rel="noopener">Shioaji 官方文件</a> 一起服用。</p>
       </div>
+    </div>
+    <div style="max-width: 620px; margin: 36px auto 0; text-align: center;">
+      <p style="font-size: 0.9rem; color: var(--muted); margin-bottom: 12px;">
+        用自己的 Claude Code／Codex 開始 — 裝上 shioaji skill 就緒：
+      </p>
+      <div style="font-family: var(--mono); font-size: 0.82rem; text-align: left; background: var(--bg); border: 1px solid var(--border-bright); border-radius: var(--radius); padding: 16px 20px; line-height: 2;">
+        <span style="color: var(--muted);"># Claude Code</span><br />
+        /plugin marketplace add Sinotrade/Shioaji<br />
+        /plugin install shioaji@sinotrade<br />
+        <span style="color: var(--muted);"># 然後直接說：「幫我用 shioaji 做一個 ___」</span>
+      </div>
+      <p style="font-size: 0.78rem; color: var(--muted); margin-top: 10px;">
+        Codex／Cursor 使用者：repo 內附 <a href="https://github.com/Sinotrade/Shioaji" target="_blank" rel="noopener">.agents 與 .cursor-plugin</a> 對應設定
+      </p>
     </div>
   </div>
 </section>
@@ -432,7 +448,7 @@
   <div class="wrap">
     <div class="foot-inner">
       <div>
-        <strong style="color: var(--fg);">Shioaji Pro</strong> — 開源台股交易終端示範<br />
+        <strong style="color: var(--fg);">Shioaji Pro</strong> — 100% 由 AI Agent 打造的開源台股交易終端<br />
         Powered by <a href="https://github.com/Sinotrade/Shioaji" target="_blank" rel="noopener">Shioaji</a> ・
         <a href="https://sinotrade.github.io/" target="_blank" rel="noopener">API 文件</a> ・
         <a href="https://github.com/Sinotrade/shioaji-pro-app" target="_blank" rel="noopener">原始碼</a> ・
