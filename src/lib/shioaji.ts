@@ -1,7 +1,7 @@
 // src/lib/shioaji.ts
 
 import { accountFor } from './account-store';
-import { apiGet, apiPost, apiPut } from './api';
+import { apiDelete, apiGet, apiPost, apiPut } from './api';
 import type {
     ContractBase,
     ContractInfo,
@@ -273,4 +273,8 @@ export function syncWatchlist(id: string, contracts: ContractBase[]) {
     return apiPut<ServerWatchlist>(`/api/v1/watchlist/${id}`, {
         contracts: contracts.map(contractKey),
     });
+}
+
+export function deleteWatchlist(id: string) {
+    return apiDelete<unknown>(`/api/v1/watchlist/${id}`);
 }

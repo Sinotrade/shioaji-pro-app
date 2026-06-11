@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  SHIOAJI_VERSION: v1.5.2
+  SHIOAJI_VERSION: v1.5.3
 
 jobs:
   build:

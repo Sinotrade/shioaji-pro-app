@@ -1,7 +1,12 @@
 // src/components/bottom-dock.tsx — positions / orders / account tabs
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { usePoll } from '../hooks/use-poll';
+import {
+    ensureAccounts,
+    selectAccount,
+    useAccounts,
+} from '../lib/account-store';
 import { ensureContract } from '../lib/contracts-cache';
 import {
     cancelOrder,
@@ -418,6 +423,46 @@ function AccountView({
     );
 }
 
+function AccountPicker({
+    type,
+    onChanged,
+}: {
+    type: 'S' | 'F';
+    onChanged: () => void;
+}) {
+    const { accounts, selectedStock, selectedFutures } = useAccounts();
+    useEffect(ensureAccounts, []);
+    const list = accounts.filter((a) => a.account_type === type);
+    if (list.length === 0) return null;
+    const selected = type === 'S' ? selectedStock : selectedFutures;
+    const key = selected ? `${selected.broker_id}-${selected.account_id}` : '';
+    return (
+        <select
+            className={styles.accountSelect}
+            title={type === 'S' ? '證券帳號' : '期貨帳號'}
+            value={key}
+            onChange={(e) => {
+                const acc = list.find(
+                    (a) => `${a.broker_id}-${a.account_id}` === e.target.value,
+                );
+                if (acc) {
+                    selectAccount(acc);
+                    onChanged();
+                }
+            }}
+        >
+            {list.map((a) => (
+                <option
+                    key={`${a.broker_id}-${a.account_id}`}
+                    value={`${a.broker_id}-${a.account_id}`}
+                >
+                    {type === 'S' ? '證' : '期'} {a.broker_id}-{a.account_id}
+                </option>
+            ))}
+        </select>
+    );
+}
+
 export function BottomDock({
     positions,
     trades,
@@ -454,6 +499,9 @@ export function BottomDock({
                         {t.label}
                     </button>
                 ))}
+                <span className={styles.tabSpacer} />
+                <AccountPicker type='S' onChanged={onTradesChanged} />
+                <AccountPicker type='F' onChanged={onTradesChanged} />
             </div>
             <div className={panel.panelBody}>
                 {tab === 'positions' && (

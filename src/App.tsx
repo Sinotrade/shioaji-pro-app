@@ -334,10 +334,12 @@ export default function App() {
         items,
         loading,
         addSymbol,
+        removeSymbol,
         serverLists,
         activeListId,
         setActiveList,
-        readOnly,
+        createList,
+        deleteCurrentList,
     } = useWatchlist();
     const [selected, setSelected] = useState<ContractInfo | null>(null);
     const [workspace, setWorkspace] = useState<Workspace>(loadWorkspace);
@@ -388,7 +390,9 @@ export default function App() {
     const refreshTrading = useCallback(() => {
         tradesPoll.refresh();
         positionsPoll.refresh();
-    }, [tradesPoll, positionsPoll]);
+        balancePoll.refresh();
+        marginPoll.refresh();
+    }, [tradesPoll, positionsPoll, balancePoll, marginPoll]);
 
     // feed risk engine: unrealized position P&L + futures settle P&L
     useEffect(() => {
@@ -575,10 +579,12 @@ export default function App() {
         selectedCode: selected?.code ?? null,
         onSelect: setSelected,
         onAdd: addSymbol,
+        onRemove: removeSymbol,
         serverLists,
         activeListId,
         onSelectList: setActiveList,
-        readOnly,
+        onCreateList: createList,
+        onDeleteList: deleteCurrentList,
         loading,
     };
     const dockProps = {

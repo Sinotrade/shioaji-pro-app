@@ -9,6 +9,7 @@ export const list = style({
 });
 
 const rowBase = style({
+    position: 'relative',
     display: 'grid',
     gridTemplateColumns: '1fr auto',
     gridTemplateRows: 'auto auto',
@@ -99,14 +100,47 @@ export const listSelect = style({
     ':focus': { borderColor: vars.color.accent },
 });
 
-export const roBadge = style({
-    fontSize: '0.6rem',
-    fontWeight: 600,
-    color: vars.color.amber,
-    border: `1px solid rgba(224, 164, 60, 0.45)`,
-    borderRadius: '999px',
-    padding: '0 7px',
+export const listBtn = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
+    width: '24px',
+    height: '24px',
+    cursor: 'pointer',
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    color: vars.color.mutedForeground,
     flexShrink: 0,
+    ':hover': { color: vars.color.foreground, borderColor: vars.color.borderBright },
+});
+
+export const listBtnDanger = style({
+    color: '#fff',
+    background: vars.color.danger,
+    borderColor: vars.color.danger,
+    fontSize: '0.6rem',
+});
+
+export const rowRemove = style({
+    position: 'absolute',
+    right: '4px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    width: '18px',
+    height: '18px',
+    fontSize: '0.62rem',
+    lineHeight: 1,
+    cursor: 'pointer',
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    color: vars.color.mutedForeground,
+    opacity: 0,
+    transition: 'opacity 0.12s',
+    selectors: {
+        [`${rowBase}:hover &`]: { opacity: 1 },
+        '&:hover': { color: vars.color.danger, borderColor: vars.color.danger },
+    },
 });
 
 export const loadingHint = style({

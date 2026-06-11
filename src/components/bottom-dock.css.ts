@@ -43,6 +43,23 @@ export const tab = styleVariants({
     ],
 });
 
+export const tabSpacer = style({ flex: 1 });
+
+export const accountSelect = style({
+    alignSelf: 'center',
+    fontFamily: vars.font.mono,
+    fontSize: '0.66rem',
+    color: vars.color.foreground,
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    padding: '2px 4px',
+    marginRight: '6px',
+    outline: 'none',
+    maxWidth: '11rem',
+    ':focus': { borderColor: vars.color.accent },
+});
+
 export const table = style({
     width: '100%',
     borderCollapse: 'collapse',
