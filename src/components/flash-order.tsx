@@ -238,8 +238,10 @@ export function FlashOrder({
         return () => ro.disconnect();
     }, []);
 
-    // ladder window generated in tick space around the anchor,
-    // clamped to limit-up/down
+    // ladder window generated in tick space around the anchor, clamped to
+    // limit-up/down. When one side is cut short by a limit, the other side
+    // borrows the leftover rows so the window always stays full — the limit
+    // price sticks to the top/bottom edge instead of leaving blank space.
     const rows = useMemo(() => {
         if (anchor === null) return [] as number[];
         // the anchor itself must stay inside the price limits
@@ -247,24 +249,31 @@ export function FlashOrder({
         if (limitUp > 0 && center > limitUp) center = limitUp;
         if (limitDown > 0 && center < limitDown) center = limitDown;
         const half = Math.floor(rowCount / 2);
-        const up: number[] = [];
+        const ups: number[] = [];
         let p = center;
-        for (let i = 0; i < half; i++) {
+        for (let i = 0; i < rowCount - 1; i++) {
             const n = stepPrice(contract, p, 1);
             if (limitUp > 0 && n > limitUp + 1e-9) break;
-            up.push(n);
+            ups.push(n);
             p = n;
         }
-        const out = [...up.reverse(), center];
+        const downs: number[] = [];
         p = center;
-        for (let i = 0; i < rowCount - 1 - up.length; i++) {
+        for (let i = 0; i < rowCount - 1; i++) {
             const n = stepPrice(contract, p, -1);
             if (n <= 0) break;
             if (limitDown > 0 && n < limitDown - 1e-9) break;
-            out.push(n);
+            downs.push(n);
             p = n;
         }
-        return out;
+        let nUp = Math.min(half, ups.length);
+        const nDown = Math.min(rowCount - 1 - nUp, downs.length);
+        nUp = Math.min(rowCount - 1 - nDown, ups.length);
+        return [
+            ...ups.slice(0, nUp).reverse(),
+            center,
+            ...downs.slice(0, nDown),
+        ];
     }, [anchor, rowCount, contract, limitUp, limitDown]);
 
     const rowsRef = useRef(rows);
