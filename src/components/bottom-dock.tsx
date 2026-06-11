@@ -49,9 +49,11 @@ function statusKind(status: string): 'ok' | 'pending' | 'bad' {
 function PositionsTable({
     positions,
     onChanged,
+    onSelectCode,
 }: {
     positions: Position[];
     onChanged: () => void;
+    onSelectCode: (code: string) => void;
 }) {
     const [busyCode, setBusyCode] = useState<string | null>(null);
     const act = async (p: Position, mode: 'close' | 'reverse') => {
@@ -103,7 +105,12 @@ function PositionsTable({
                 {positions.map((p) => {
                     const dir = p.pnl > 0 ? 'up' : p.pnl < 0 ? 'down' : 'flat';
                     return (
-                        <tr key={`${p.code}-${p.id}`}>
+                        <tr
+                            key={`${p.code}-${p.id}`}
+                            className={styles.clickableRow}
+                            onClick={() => onSelectCode(p.code)}
+                            title='點擊連動圖表與下單面板'
+                        >
                             <td className={styles.td}>{p.code}</td>
                             <td
                                 className={`${styles.td} ${panel.dirText[p.direction === 'Buy' ? 'up' : 'down']}`}
@@ -142,7 +149,10 @@ function PositionsTable({
                                     className={styles.cancelBtn}
                                     disabled={busyCode === p.code}
                                     title='市價沖銷此倉位'
-                                    onClick={() => act(p, 'close')}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        void act(p, 'close');
+                                    }}
                                 >
                                     平
                                 </button>{' '}
@@ -150,7 +160,10 @@ function PositionsTable({
                                     className={styles.cancelBtn}
                                     disabled={busyCode === p.code}
                                     title='市價反向兩倍（翻倉）'
-                                    onClick={() => act(p, 'reverse')}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        void act(p, 'reverse');
+                                    }}
                                 >
                                     反
                                 </button>
@@ -234,9 +247,11 @@ function QtyEditor({
 function OrdersTable({
     trades,
     onChanged,
+    onSelectCode,
 }: {
     trades: Trade[];
     onChanged: () => void;
+    onSelectCode: (code: string) => void;
 }) {
     const [cancelling, setCancelling] = useState<string | null>(null);
     if (trades.length === 0) {
@@ -271,7 +286,12 @@ function OrdersTable({
                 {[...trades].reverse().map((t) => {
                     const st = t.status.status;
                     return (
-                        <tr key={t.order.id}>
+                        <tr
+                            key={t.order.id}
+                            className={styles.clickableRow}
+                            onClick={() => onSelectCode(t.contract.code)}
+                            title='點擊連動圖表與下單面板'
+                        >
                             <td className={styles.td}>{t.contract.code}</td>
                             <td
                                 className={`${styles.td} ${panel.dirText[t.order.action === 'Buy' ? 'up' : 'down']}`}
@@ -312,18 +332,25 @@ function OrdersTable({
                             <td className={styles.td}>
                                 {ACTIVE_STATUSES.has(st) && (
                                     <>
-                                        <QtyEditor
-                                            trade={t}
-                                            onChanged={onChanged}
-                                        />{' '}
+                                        <span
+                                            onClick={(e) =>
+                                                e.stopPropagation()
+                                            }
+                                        >
+                                            <QtyEditor
+                                                trade={t}
+                                                onChanged={onChanged}
+                                            />
+                                        </span>{' '}
                                         <button
                                             className={styles.cancelBtn}
                                             disabled={
                                                 cancelling === t.order.id
                                             }
-                                            onClick={() =>
-                                                doCancel(t.order.id)
-                                            }
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                doCancel(t.order.id);
+                                            }}
                                         >
                                             {cancelling === t.order.id
                                                 ? '…'
@@ -469,12 +496,14 @@ export function BottomDock({
     balance,
     margin,
     onTradesChanged,
+    onSelectCode,
 }: {
     positions: Position[];
     trades: Trade[];
     balance?: AccountBalance;
     margin?: Margin;
     onTradesChanged: () => void;
+    onSelectCode: (code: string) => void;
 }) {
     const [tab, setTab] = useState<TabKey>('positions');
     const activeOrders = trades.filter((t) =>
@@ -508,10 +537,15 @@ export function BottomDock({
                     <PositionsTable
                         positions={positions}
                         onChanged={onTradesChanged}
+                        onSelectCode={onSelectCode}
                     />
                 )}
                 {tab === 'orders' && (
-                    <OrdersTable trades={trades} onChanged={onTradesChanged} />
+                    <OrdersTable
+                        trades={trades}
+                        onChanged={onTradesChanged}
+                        onSelectCode={onSelectCode}
+                    />
                 )}
                 {tab === 'account' && (
                     <AccountView balance={balance} margin={margin} />

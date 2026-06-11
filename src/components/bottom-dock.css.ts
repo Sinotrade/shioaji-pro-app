@@ -60,6 +60,11 @@ export const accountSelect = style({
     ':focus': { borderColor: vars.color.accent },
 });
 
+export const clickableRow = style({
+    cursor: 'pointer',
+    ':hover': { background: vars.color.muted },
+});
+
 export const table = style({
     width: '100%',
     borderCollapse: 'collapse',

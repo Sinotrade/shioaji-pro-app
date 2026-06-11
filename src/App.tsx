@@ -404,6 +404,7 @@ export default function App() {
         reportDailyPnl(unrealized + settle);
     }, [positionsPoll.data, marginPoll.data]);
 
+    // select & link a symbol WITHOUT adding it to the watchlist
     const selectByCode = useCallback(
         async (code: string) => {
             const existing = items.find((i) => i.contract.code === code);
@@ -412,13 +413,17 @@ export default function App() {
                 return;
             }
             try {
-                const c = (await addSymbol(code)) as ContractInfo;
+                const c = await ensureContract(code);
                 setSelected(c);
             } catch {
-                // unknown code from scanner — ignore
+                notify({
+                    kind: 'err',
+                    title: '找不到商品',
+                    body: `代碼 ${code} 無法解析`,
+                });
             }
         },
-        [items, addSymbol],
+        [items],
     );
 
     const selectedSnapshot = useMemo(
@@ -550,10 +555,10 @@ export default function App() {
                 setSelected(existing.contract);
                 return;
             }
-            const c = (await addSymbol(code)) as ContractInfo;
+            const c = await ensureContract(code);
             setSelected(c);
         },
-        [items, addSymbol],
+        [items],
     );
 
     const addableTypes = useMemo(
@@ -593,6 +598,7 @@ export default function App() {
         balance: balancePoll.data,
         margin: marginPoll.data,
         onTradesChanged: refreshTrading,
+        onSelectCode: selectByCode,
     };
 
     return (
