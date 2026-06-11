@@ -237,6 +237,14 @@ export const menuItem = style({
     },
 });
 
+export const presetDesc = style({
+    display: 'block',
+    fontSize: '0.6rem',
+    fontWeight: 400,
+    color: vars.color.mutedForeground,
+    marginTop: '1px',
+});
+
 export const saveRow = style({
     display: 'flex',
     gap: vars.space.xs,

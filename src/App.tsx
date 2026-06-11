@@ -49,6 +49,7 @@ import type { Position } from './lib/types/portfolio';
 import {
     BLOCK_META,
     DEFAULT_WORKSPACE,
+    LAYOUT_PRESETS,
     loadProfiles,
     loadWorkspace,
     newBlockId,
@@ -498,6 +499,21 @@ export default function App() {
         updateWorkspace(structuredClone(DEFAULT_WORKSPACE));
     }, [updateWorkspace]);
 
+    const loadPreset = useCallback(
+        (name: string) => {
+            const preset = LAYOUT_PRESETS.find((p) => p.name === name);
+            if (preset) {
+                updateWorkspace(structuredClone(preset.workspace));
+                notify({
+                    kind: 'info',
+                    title: '版面已套用',
+                    body: `預設版面「${name}」`,
+                });
+            }
+        },
+        [updateWorkspace],
+    );
+
     // ---- profiles ----
 
     const saveProfileAs = useCallback(
@@ -612,6 +628,7 @@ export default function App() {
                 onLoadProfile={loadProfile}
                 onDeleteProfile={deleteProfile}
                 onResetWorkspace={resetWorkspace}
+                onLoadPreset={loadPreset}
             />
             <EventToasts onEvent={refreshTrading} />
             <CommandPalette

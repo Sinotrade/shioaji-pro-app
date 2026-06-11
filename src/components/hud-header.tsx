@@ -22,7 +22,7 @@ import {
 } from '../lib/theme-store';
 import { checkForUpdates, listenTrayEvents } from '../lib/tauri';
 import { fmtMoney } from '../lib/utils/format';
-import type { BlockType } from '../lib/workspace';
+import { LAYOUT_PRESETS, type BlockType } from '../lib/workspace';
 import { MarketBar } from './market-bar';
 import { ServerManager } from './server-manager';
 import * as panel from './panel.css';
@@ -330,18 +330,39 @@ function ProfilesMenu({
     onLoadProfile,
     onDeleteProfile,
     onResetWorkspace,
+    onLoadPreset,
 }: {
     profiles: string[];
     onSaveProfile: (name: string) => void;
     onLoadProfile: (name: string) => void;
     onDeleteProfile: (name: string) => void;
     onResetWorkspace: () => void;
+    onLoadPreset: (name: string) => void;
 }) {
     const [name, setName] = useState('');
     return (
         <Menu label='版面'>
             {(close) => (
                 <>
+                    <span className={styles.settingLabel}>
+                        預設版面 Presets
+                    </span>
+                    {LAYOUT_PRESETS.map((p) => (
+                        <button
+                            key={p.name}
+                            className={styles.menuItem}
+                            title={p.desc}
+                            onClick={() => {
+                                onLoadPreset(p.name);
+                                close();
+                            }}
+                        >
+                            {p.name}
+                            <span className={styles.presetDesc}>
+                                {p.desc}
+                            </span>
+                        </button>
+                    ))}
                     <span className={styles.settingLabel}>
                         儲存目前版面 Save Layout
                     </span>
@@ -424,6 +445,7 @@ export function HudHeader({
     onLoadProfile,
     onDeleteProfile,
     onResetWorkspace,
+    onLoadPreset,
 }: {
     accBalance?: number;
     addableTypes: { type: BlockType; label: string; disabled: boolean }[];
@@ -433,6 +455,7 @@ export function HudHeader({
     onLoadProfile: (name: string) => void;
     onDeleteProfile: (name: string) => void;
     onResetWorkspace: () => void;
+    onLoadPreset: (name: string) => void;
 }) {
     const streamStatus = useStreamStatus();
     const [simulation, setSimulation] = useState<boolean | null>(null);
@@ -522,6 +545,7 @@ export function HudHeader({
                 onLoadProfile={onLoadProfile}
                 onDeleteProfile={onDeleteProfile}
                 onResetWorkspace={onResetWorkspace}
+                onLoadPreset={onLoadPreset}
             />
             <ThemeSettings />
 

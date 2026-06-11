@@ -151,6 +151,101 @@ export const DEFAULT_WORKSPACE: Workspace = {
     ],
 };
 
+// built-in layout presets for common trading workflows
+export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[] = [
+    {
+        name: '標準看盤',
+        desc: '自選+排行 / K線+持倉 / 五檔+下單+明細',
+        workspace: DEFAULT_WORKSPACE,
+    },
+    {
+        name: '當沖戰士',
+        desc: '大圖+閃電下單+五檔明細，執行優先',
+        workspace: {
+            blocks: [
+                { id: 'chart-dt', type: 'chart', pin: null },
+                { id: 'flash-dt', type: 'flash', pin: null },
+                { id: 'depth-dt', type: 'depth', pin: null },
+                { id: 'tape-dt', type: 'tape', pin: null },
+                { id: 'dock-dt', type: 'dock', pin: null },
+                { id: 'vol-dt', type: 'volprofile', pin: null },
+                { id: 'ticket-dt', type: 'ticket', pin: null },
+            ],
+            layout: [
+                { i: 'chart-dt', x: 0, y: 0, w: 13, h: 15, minW: 6, minH: 7 },
+                { i: 'flash-dt', x: 13, y: 0, w: 5, h: 15, minW: 4, minH: 8 },
+                { i: 'depth-dt', x: 18, y: 0, w: 6, h: 8, minW: 4, minH: 7 },
+                { i: 'tape-dt', x: 18, y: 8, w: 6, h: 7, minW: 3, minH: 4 },
+                { i: 'dock-dt', x: 0, y: 15, w: 13, h: 9, minW: 6, minH: 5 },
+                { i: 'vol-dt', x: 13, y: 15, w: 5, h: 9, minW: 4, minH: 6 },
+                { i: 'ticket-dt', x: 18, y: 15, w: 6, h: 9, minW: 4, minH: 9 },
+            ],
+        },
+    },
+    {
+        name: '雙圖對照',
+        desc: '連動圖+鎖定台指期圖並排',
+        workspace: {
+            blocks: [
+                { id: 'watch-2c', type: 'watchlist', pin: null },
+                { id: 'chart-2ca', type: 'chart', pin: null },
+                { id: 'chart-2cb', type: 'chart', pin: 'TXFR1' },
+                { id: 'movers-2c', type: 'movers', pin: null },
+                { id: 'dock-2c', type: 'dock', pin: null },
+                { id: 'ticket-2c', type: 'ticket', pin: null },
+            ],
+            layout: [
+                { i: 'watch-2c', x: 0, y: 0, w: 4, h: 14, minW: 3, minH: 6 },
+                { i: 'chart-2ca', x: 4, y: 0, w: 10, h: 14, minW: 6, minH: 7 },
+                { i: 'chart-2cb', x: 14, y: 0, w: 10, h: 14, minW: 6, minH: 7 },
+                { i: 'movers-2c', x: 0, y: 14, w: 4, h: 10, minW: 3, minH: 5 },
+                { i: 'dock-2c', x: 4, y: 14, w: 14, h: 10, minW: 6, minH: 5 },
+                { i: 'ticket-2c', x: 18, y: 14, w: 6, h: 10, minW: 4, minH: 9 },
+            ],
+        },
+    },
+    {
+        name: '選擇權工作站',
+        desc: 'T字報價+台指期圖+下單',
+        workspace: {
+            blocks: [
+                { id: 'opt-ow', type: 'optchain', pin: null },
+                { id: 'chart-ow', type: 'chart', pin: 'TXFR1' },
+                { id: 'ticket-ow', type: 'ticket', pin: null },
+                { id: 'depth-ow', type: 'depth', pin: null },
+                { id: 'dock-ow', type: 'dock', pin: null },
+            ],
+            layout: [
+                { i: 'opt-ow', x: 0, y: 0, w: 10, h: 16, minW: 8, minH: 8 },
+                { i: 'chart-ow', x: 10, y: 0, w: 9, h: 16, minW: 6, minH: 7 },
+                { i: 'ticket-ow', x: 19, y: 0, w: 5, h: 10, minW: 4, minH: 9 },
+                { i: 'depth-ow', x: 19, y: 10, w: 5, h: 6, minW: 4, minH: 6 },
+                { i: 'dock-ow', x: 0, y: 16, w: 24, h: 8, minW: 6, minH: 5 },
+            ],
+        },
+    },
+    {
+        name: '分析研究',
+        desc: 'K線+分價量+籌碼+損益+回放',
+        workspace: {
+            blocks: [
+                { id: 'chart-an', type: 'chart', pin: null },
+                { id: 'vol-an', type: 'volprofile', pin: null },
+                { id: 'chips-an', type: 'chips', pin: null },
+                { id: 'pnl-an', type: 'pnl', pin: null },
+                { id: 'replay-an', type: 'replay', pin: null },
+            ],
+            layout: [
+                { i: 'chart-an', x: 0, y: 0, w: 12, h: 13, minW: 6, minH: 7 },
+                { i: 'vol-an', x: 12, y: 0, w: 6, h: 13, minW: 4, minH: 6 },
+                { i: 'chips-an', x: 18, y: 0, w: 6, h: 13, minW: 4, minH: 5 },
+                { i: 'pnl-an', x: 0, y: 13, w: 12, h: 11, minW: 6, minH: 6 },
+                { i: 'replay-an', x: 12, y: 13, w: 12, h: 11, minW: 6, minH: 6 },
+            ],
+        },
+    },
+];
+
 const WS_KEY = 'sj-pro-workspace-v2';
 const PROFILES_KEY = 'sj-pro-profiles-v1';
 
