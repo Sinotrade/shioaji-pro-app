@@ -3,6 +3,11 @@
 import { useEffect, useState } from 'react';
 import { useStreamStatus } from '../hooks/use-stream';
 import {
+    ensureAccounts,
+    selectAccount,
+    useAccounts,
+} from '../lib/account-store';
+import {
     getDailyPnl,
     setRiskSettings,
     useRiskSettings,
@@ -134,6 +139,75 @@ function ThemeSettings() {
                     >
                         {sound ? '🔉 成交/警示音效開啟' : '🔇 音效關閉'}
                     </button>
+                </>
+            )}
+        </Menu>
+    );
+}
+
+function AccountMenu() {
+    const { accounts, selectedStock, selectedFutures, loaded } = useAccounts();
+    useEffect(ensureAccounts, []);
+    if (!loaded || accounts.length === 0) return null;
+    const groups: { label: string; type: 'S' | 'F'; selected: string }[] = [
+        {
+            label: '證券帳戶',
+            type: 'S',
+            selected: selectedStock
+                ? `${selectedStock.broker_id}-${selectedStock.account_id}`
+                : '',
+        },
+        {
+            label: '期貨帳戶',
+            type: 'F',
+            selected: selectedFutures
+                ? `${selectedFutures.broker_id}-${selectedFutures.account_id}`
+                : '',
+        },
+    ];
+    return (
+        <Menu label='帳號'>
+            {() => (
+                <>
+                    {groups.map((g) => {
+                        const list = accounts.filter(
+                            (a) => a.account_type === g.type,
+                        );
+                        if (list.length === 0) return null;
+                        return (
+                            <div key={g.type}>
+                                <span className={styles.settingLabel}>
+                                    {g.label}
+                                </span>
+                                {list.map((a) => {
+                                    const key = `${a.broker_id}-${a.account_id}`;
+                                    return (
+                                        <button
+                                            key={key}
+                                            className={
+                                                styles.opt[
+                                                    g.selected === key
+                                                        ? 'on'
+                                                        : 'off'
+                                                ]
+                                            }
+                                            style={{
+                                                width: '100%',
+                                                marginTop: 4,
+                                            }}
+                                            onClick={() => selectAccount(a)}
+                                        >
+                                            {a.broker_id}-{a.account_id}（
+                                            {a.username}）
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })}
+                    <span className={styles.emptyHint}>
+                        下單與帳務查詢都使用選定的帳號
+                    </span>
                 </>
             )}
         </Menu>
@@ -436,6 +510,7 @@ export function HudHeader({
                 open={serverMgrOpen}
                 onToggle={setServerMgrOpen}
             />
+            <AccountMenu />
             <RiskMenu />
             <AddBlockMenu
                 addableTypes={addableTypes}

@@ -1,8 +1,14 @@
 // src/components/bottom-dock.tsx — positions / orders / account tabs
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
+import { usePoll } from '../hooks/use-poll';
 import { ensureContract } from '../lib/contracts-cache';
-import { cancelOrder, updateOrderQty } from '../lib/shioaji';
+import {
+    cancelOrder,
+    fetchSettlements,
+    updateOrderQty,
+    type Settlement,
+} from '../lib/shioaji';
 import { notify, placeQuickOrder } from '../lib/trade';
 import type { Trade } from '../lib/types/order';
 import type {
@@ -336,6 +342,10 @@ function AccountView({
     balance?: AccountBalance;
     margin?: Margin;
 }) {
+    const { data: settlements } = usePoll<Settlement[]>(
+        useCallback(() => fetchSettlements().catch(() => []), []),
+        60000,
+    );
     const items: { label: string; value: string; dir?: 'up' | 'down' | 'flat' }[] =
         [];
     if (balance) {
@@ -380,6 +390,14 @@ function AccountView({
                           : 'flat',
             },
         );
+    }
+    for (const st of settlements ?? []) {
+        if (!st.amount) continue;
+        items.push({
+            label: `交割款 ${st.date}`,
+            value: fmtSigned(st.amount, 0),
+            dir: st.amount > 0 ? 'up' : 'down',
+        });
     }
     if (items.length === 0) {
         return <div className={styles.emptyState}>NO ACCOUNT DATA · 無帳務資料</div>;

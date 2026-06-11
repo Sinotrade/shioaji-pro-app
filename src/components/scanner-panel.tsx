@@ -7,10 +7,13 @@ import { fmtPct, fmtPrice } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './scanner-panel.css';
 
-const MODES: { key: ScannerType; label: string }[] = [
-    { key: 'ChangePercentRank', label: '漲幅' },
-    { key: 'VolumeRank', label: '量' },
-    { key: 'AmountRank', label: '額' },
+// NOTE: the server's `ascending` flag is inverted (sinotrade/shioaji#207):
+// true → largest first. Encode the working values per mode here.
+const MODES: { key: string; type: ScannerType; label: string; ascending: boolean }[] = [
+    { key: 'gain', type: 'ChangePercentRank', label: '漲幅', ascending: true },
+    { key: 'loss', type: 'ChangePercentRank', label: '跌幅', ascending: false },
+    { key: 'vol', type: 'VolumeRank', label: '量', ascending: true },
+    { key: 'amt', type: 'AmountRank', label: '額', ascending: true },
 ];
 
 export function ScannerPanel({
@@ -18,15 +21,16 @@ export function ScannerPanel({
 }: {
     onPick: (code: string) => void;
 }) {
-    const [mode, setMode] = useState<ScannerType>('ChangePercentRank');
+    const [modeKey, setModeKey] = useState('gain');
     const [items, setItems] = useState<ScannerItem[]>([]);
     const [error, setError] = useState(false);
+    const mode = MODES.find((m) => m.key === modeKey) ?? MODES[0]!;
 
     useEffect(() => {
         let cancelled = false;
         setError(false);
         const load = () =>
-            fetchScanner(mode, 20)
+            fetchScanner(mode.type, 20, mode.ascending)
                 .then((d) => !cancelled && setItems(d))
                 .catch(() => !cancelled && setError(true));
         load();
@@ -43,8 +47,8 @@ export function ScannerPanel({
                 {MODES.map((m) => (
                     <button
                         key={m.key}
-                        className={styles.sw[mode === m.key ? 'on' : 'off']}
-                        onClick={() => setMode(m.key)}
+                        className={styles.sw[modeKey === m.key ? 'on' : 'off']}
+                        onClick={() => setModeKey(m.key)}
                     >
                         {m.label}
                     </button>

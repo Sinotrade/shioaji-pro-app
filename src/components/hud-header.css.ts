@@ -277,6 +277,27 @@ export const profileDelete = style({
     ':hover': { color: vars.color.danger, background: vars.color.muted },
 });
 
+export const updateBtn = style({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '7px',
+    fontFamily: vars.font.display,
+    fontSize: '0.72rem',
+    fontWeight: 600,
+    padding: '7px 0',
+    cursor: 'pointer',
+    borderRadius: vars.radius.sm,
+    border: `1px solid ${vars.color.border}`,
+    background: vars.color.inset,
+    color: vars.color.accent,
+    transition: 'all 0.12s',
+    ':hover': {
+        borderColor: vars.color.accent,
+        background: vars.color.accentDim,
+    },
+});
+
 export const emptyHint = style({
     fontSize: '0.68rem',
     color: vars.color.mutedForeground,

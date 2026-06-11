@@ -42,10 +42,15 @@ export async function ensureContract(
         if (type) {
             contract = await fetchContract(code, type);
         } else {
+            // auto-detect: stock → futures → index
             try {
                 contract = await fetchContract(code, 'STK');
             } catch {
-                contract = await fetchContract(code, 'FUT');
+                try {
+                    contract = await fetchContract(code, 'FUT');
+                } catch {
+                    contract = await fetchContract(code, 'IND');
+                }
             }
         }
         cache.set(code, contract);

@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
-import type { WatchItem } from '../hooks/use-watchlist';
-import type { ContractInfo, SecurityType } from '../lib/types/contract';
+import { LOCAL_LIST_ID, type WatchItem } from '../hooks/use-watchlist';
+import type { ServerWatchlist } from '../lib/shioaji';
+import type { ContractInfo } from '../lib/types/contract';
 import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './watchlist.css';
@@ -61,14 +62,23 @@ export function Watchlist({
     selectedCode,
     onSelect,
     onAdd,
+    serverLists,
+    activeListId,
+    onSelectList,
+    readOnly,
+    loading,
 }: {
     items: WatchItem[];
     selectedCode: string | null;
     onSelect: (c: ContractInfo) => void;
-    onAdd: (code: string, type: SecurityType) => Promise<unknown>;
+    onAdd: (code: string) => Promise<unknown>;
+    serverLists: ServerWatchlist[];
+    activeListId: string;
+    onSelectList: (id: string) => void;
+    readOnly: boolean;
+    loading: boolean;
 }) {
     const [input, setInput] = useState('');
-    const [type, setType] = useState<SecurityType>('STK');
     const [busy, setBusy] = useState(false);
 
     const submit = async () => {
@@ -76,7 +86,7 @@ export function Watchlist({
         if (!code || busy) return;
         setBusy(true);
         try {
-            await onAdd(code, type);
+            await onAdd(code);
             setInput('');
         } catch {
             // keep input so user can fix typo
@@ -87,8 +97,26 @@ export function Watchlist({
 
     return (
         <>
+            <div className={styles.listPicker}>
+                <select
+                    className={styles.listSelect}
+                    value={activeListId}
+                    onChange={(e) => onSelectList(e.target.value)}
+                >
+                    <option value={LOCAL_LIST_ID}>我的自選（本機）</option>
+                    {serverLists.map((l) => (
+                        <option key={l.id} value={l.id}>
+                            ☁ {l.name}（{l.contracts.length}）
+                        </option>
+                    ))}
+                </select>
+                {readOnly && <span className={styles.roBadge}>唯讀</span>}
+            </div>
             <div className={panel.panelBody}>
                 <div className={styles.list}>
+                    {loading && items.length === 0 && (
+                        <div className={styles.loadingHint}>載入清單…</div>
+                    )}
                     {items.map((item) => (
                         <WatchRow
                             key={item.contract.code}
@@ -99,26 +127,24 @@ export function Watchlist({
                     ))}
                 </div>
             </div>
-            <div className={styles.addRow}>
-                <input
-                    className={styles.addInput}
-                    placeholder='代碼 e.g. 2330'
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && submit()}
-                />
-                <select
-                    className={styles.typeSelect}
-                    value={type ?? 'STK'}
-                    onChange={(e) => setType(e.target.value as SecurityType)}
-                >
-                    <option value='STK'>股</option>
-                    <option value='FUT'>期</option>
-                </select>
-                <button className={panel.btn} onClick={submit} disabled={busy}>
-                    +
-                </button>
-            </div>
+            {!readOnly && (
+                <div className={styles.addRow}>
+                    <input
+                        className={styles.addInput}
+                        placeholder='代碼（自動判別股/期/指數）'
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && submit()}
+                    />
+                    <button
+                        className={panel.btn}
+                        onClick={submit}
+                        disabled={busy}
+                    >
+                        {busy ? '…' : '+'}
+                    </button>
+                </div>
+            )}
         </>
     );
 }

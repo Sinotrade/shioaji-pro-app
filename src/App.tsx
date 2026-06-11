@@ -330,7 +330,15 @@ function PopoutView({
 }
 
 export default function App() {
-    const { items, loading, addSymbol } = useWatchlist();
+    const {
+        items,
+        loading,
+        addSymbol,
+        serverLists,
+        activeListId,
+        setActiveList,
+        readOnly,
+    } = useWatchlist();
     const [selected, setSelected] = useState<ContractInfo | null>(null);
     const [workspace, setWorkspace] = useState<Workspace>(loadWorkspace);
     const [profiles, setProfiles] = useState<Profile[]>(loadProfiles);
@@ -400,7 +408,7 @@ export default function App() {
                 return;
             }
             try {
-                const c = (await addSymbol(code, 'STK')) as ContractInfo;
+                const c = (await addSymbol(code)) as ContractInfo;
                 setSelected(c);
             } catch {
                 // unknown code from scanner — ignore
@@ -538,9 +546,7 @@ export default function App() {
                 setSelected(existing.contract);
                 return;
             }
-            const c = (await addSymbol(code, 'STK').catch(() =>
-                addSymbol(code, 'FUT'),
-            )) as ContractInfo;
+            const c = (await addSymbol(code)) as ContractInfo;
             setSelected(c);
         },
         [items, addSymbol],
@@ -569,6 +575,11 @@ export default function App() {
         selectedCode: selected?.code ?? null,
         onSelect: setSelected,
         onAdd: addSymbol,
+        serverLists,
+        activeListId,
+        onSelectList: setActiveList,
+        readOnly,
+        loading,
     };
     const dockProps = {
         positions: positionsPoll.data ?? [],

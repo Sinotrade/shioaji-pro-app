@@ -1,5 +1,6 @@
 // src/lib/shioaji.ts
 
+import { accountFor } from './account-store';
 import { apiGet, apiPost, apiPut } from './api';
 import type {
     ContractBase,
@@ -157,7 +158,7 @@ export function unsubscribeQuote(
 export function placeStockOrder(contract: ContractBase, order: StockOrderReq) {
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: contractKey(contract),
-        stock_order: order,
+        stock_order: { ...order, account: accountFor('S') },
     });
 }
 
@@ -167,7 +168,7 @@ export function placeFuturesOrder(
 ) {
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: contractKey(contract),
-        futures_order: order,
+        futures_order: { ...order, account: accountFor('F') },
     });
 }
 
@@ -189,10 +190,17 @@ export function updateOrderQty(tradeId: string, quantity: number) {
     });
 }
 
-export function fetchTrades(accountType: AccountTypeName) {
-    return apiPost<Trade[]>('/api/v1/order/trades', {
+function accountBody(accountType: AccountTypeName) {
+    const acc = accountFor(accountType as 'S' | 'F');
+    return {
         account_type: accountType,
-    });
+        broker_id: acc?.broker_id,
+        account_id: acc?.account_id,
+    };
+}
+
+export function fetchTrades(accountType: AccountTypeName) {
+    return apiPost<Trade[]>('/api/v1/order/trades', accountBody(accountType));
 }
 
 // ---- portfolio ----
@@ -200,20 +208,31 @@ export function fetchTrades(accountType: AccountTypeName) {
 export function fetchPositions(accountType: AccountTypeName) {
     return apiPost<(StockPosition | FuturePosition)[]>(
         '/api/v1/portfolio/position_unit',
-        { account_type: accountType, unit: 'Common' },
+        { ...accountBody(accountType), unit: 'Common' },
     );
 }
 
 export function fetchAccountBalance() {
-    return apiPost<AccountBalance>('/api/v1/portfolio/account_balance', {
-        account_type: 'S',
-    });
+    return apiPost<AccountBalance>(
+        '/api/v1/portfolio/account_balance',
+        accountBody('S'),
+    );
 }
 
 export function fetchMargin() {
-    return apiPost<Margin>('/api/v1/portfolio/margin', {
-        account_type: 'F',
-    });
+    return apiPost<Margin>('/api/v1/portfolio/margin', accountBody('F'));
+}
+
+export interface Settlement {
+    date: string;
+    amount: number;
+}
+
+export function fetchSettlements() {
+    return apiPost<Settlement[]>(
+        '/api/v1/portfolio/settlements',
+        accountBody('S'),
+    );
 }
 
 // ---- server watchlists ----

@@ -1,5 +1,5 @@
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, MenuItemKind},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager,
 };
@@ -83,7 +83,32 @@ pub fn run() {
             }
             tray.build(app)?;
 
+            // native app menu with a standard "Check for Updates…" entry
+            #[cfg(target_os = "macos")]
+            {
+                let menu = Menu::default(app.handle())?;
+                if let Some(MenuItemKind::Submenu(app_menu)) =
+                    menu.items()?.into_iter().next()
+                {
+                    let check = MenuItem::with_id(
+                        app,
+                        "menu-check-update",
+                        "檢查更新…",
+                        true,
+                        None::<&str>,
+                    )?;
+                    app_menu.insert(&check, 1)?;
+                }
+                app.set_menu(menu)?;
+            }
+
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            if event.id.as_ref() == "menu-check-update" {
+                show_main(app);
+                let _ = app.emit("check-updates", ());
+            }
         })
         .on_window_event(|window, event| {
             // closing the main window hides to tray (menu-bar app behaviour)

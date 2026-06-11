@@ -75,6 +75,47 @@ export const removeBtn = style({
     display: 'none',
 });
 
+export const listPicker = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: vars.space.xs,
+    padding: `4px ${vars.space.sm}`,
+    borderBottom: `1px solid ${vars.color.border}`,
+    flexShrink: 0,
+});
+
+export const listSelect = style({
+    flex: 1,
+    minWidth: 0,
+    fontFamily: vars.font.body,
+    fontSize: '0.72rem',
+    fontWeight: 500,
+    color: vars.color.foreground,
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    padding: '3px 6px',
+    outline: 'none',
+    ':focus': { borderColor: vars.color.accent },
+});
+
+export const roBadge = style({
+    fontSize: '0.6rem',
+    fontWeight: 600,
+    color: vars.color.amber,
+    border: `1px solid rgba(224, 164, 60, 0.45)`,
+    borderRadius: '999px',
+    padding: '0 7px',
+    flexShrink: 0,
+});
+
+export const loadingHint = style({
+    padding: vars.space.md,
+    textAlign: 'center',
+    fontSize: '0.7rem',
+    color: vars.color.mutedForeground,
+});
+
 export const addRow = style({
     display: 'flex',
     gap: vars.space.xs,

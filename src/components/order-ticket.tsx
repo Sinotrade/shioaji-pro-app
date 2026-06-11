@@ -6,6 +6,7 @@ import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
 import { useQuote } from '../hooks/use-stream';
 import { registerBracket } from '../lib/bracket';
 import { usePickedPrice } from '../lib/price-sync';
+import { useAccounts } from '../lib/account-store';
 import { checkOrderAllowed } from '../lib/risk';
 import { placeFuturesOrder, placeStockOrder } from '../lib/shioaji';
 import type { ContractInfo } from '../lib/types/contract';
@@ -156,6 +157,8 @@ export function OrderTicket({
     };
 
     const qtyUnit = isFutures ? '口' : orderLot === 'IntradayOdd' ? '股' : '張';
+    const { selectedStock, selectedFutures } = useAccounts();
+    const activeAccount = isFutures ? selectedFutures : selectedStock;
 
     return (
         <div className={styles.body}>
@@ -375,6 +378,13 @@ export function OrderTicket({
                             onChange={(e) => setTakePrice(e.target.value)}
                         />
                     </div>
+                )}
+
+                {activeAccount && (
+                    <span className={styles.costRow}>
+                        帳號 {activeAccount.broker_id}-
+                        {activeAccount.account_id}（{activeAccount.username}）
+                    </span>
                 )}
 
                 <CostEstimate
