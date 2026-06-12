@@ -189,12 +189,22 @@
   }
   @keyframes dotPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-  /* orderbook */
-  .book { font-family: var(--mono); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+  /* mini flash-order ladder */
+  .book { font-family: var(--mono); font-size: 0.66rem; font-variant-numeric: tabular-nums; }
   .b-row {
-    display: grid; grid-template-columns: 1fr 4.2em 1fr; align-items: center;
-    height: 18px; gap: 6px;
+    display: grid; grid-template-columns: 1.7em 1fr 3.9em 1fr 1.7em; align-items: center;
+    height: 18px; gap: 5px;
   }
+  .b-chip {
+    height: 13px; min-width: 15px; padding: 0 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.58rem; font-weight: 700; line-height: 1;
+    border-radius: 3px; border: 1px solid transparent;
+  }
+  .b-chip.on-buy { color: var(--up); border-color: var(--up); background: rgba(229, 72, 77, 0.12); }
+  .b-chip.on-sell { color: var(--down); border-color: var(--down); background: rgba(22, 179, 137, 0.12); }
+  .b-chip.fl-buy { color: #fff; border-color: var(--up); background: var(--up); animation: cellFlash 0.35s ease; }
+  .b-chip.fl-sell { color: #fff; border-color: var(--down); background: var(--down); animation: cellFlash 0.35s ease; }
   .b-price { text-align: center; color: var(--muted); }
   .b-bid, .b-ask { position: relative; height: 12px; }
   .b-bid i, .b-ask i {
@@ -494,7 +504,7 @@
   <canvas id="hero-bg" aria-hidden="true"></canvas>
   <div class="deck" aria-hidden="true">
     <div class="glass g-book">
-      <div class="glass-head"><span class="dot"></span>Order Book ・ 2330</div>
+      <div class="glass-head"><span class="dot"></span>Flash Order ・ 2330</div>
       <div class="book" id="book"></div>
     </div>
     <div class="glass g-con">
@@ -923,28 +933,44 @@
     }).observe(deckEl);
   }
 
-  // orderbook — 5 levels each side, ticking fast
+  // mini flash ladder — 5 levels each side, with orders being worked:
+  // chips appear (掛單), sometimes cancel, sometimes fill solid
   var bookEl = document.getElementById('book');
   if (bookEl) {
     var TICK = 5, mid = 1185, lastMid = mid;
-    var rows = [];
     var html = '';
     for (var i = 0; i < 5; i++) {
-      html += '<div class="b-row"><span class="b-bid"></span><span class="b-price"></span><span class="b-ask"><i></i><b></b></span></div>';
+      html += '<div class="b-row"><span class="b-chip"></span><span class="b-bid"></span><span class="b-price"></span><span class="b-ask"><i></i><b></b></span><span class="b-chip"></span></div>';
     }
     html += '<div class="b-mid" id="b-mid"></div>';
     for (var i = 0; i < 5; i++) {
-      html += '<div class="b-row"><span class="b-bid"><i></i><b></b></span><span class="b-price"></span><span class="b-ask"></span></div>';
+      html += '<div class="b-row"><span class="b-chip"></span><span class="b-bid"><i></i><b></b></span><span class="b-price"></span><span class="b-ask"></span><span class="b-chip"></span></div>';
     }
     bookEl.innerHTML = html;
     var rowEls = bookEl.querySelectorAll('.b-row');
     var midEl = document.getElementById('b-mid');
     var vols = [];
     for (var i = 0; i < 10; i++) vols.push(80 + Math.random() * 400);
+    // working orders per level: {q: qty, fill: ticks left in filled state}
+    var chips = [];
+    for (var i = 0; i < 10; i++) chips.push({ q: 0, fill: 0 });
+    function stepChip(c) {
+      if (c.fill > 0) {
+        c.fill--;
+        if (c.fill === 0) c.q = 0;
+        return;
+      }
+      if (c.q === 0) {
+        if (Math.random() < 0.05) c.q = 1 + Math.floor(Math.random() * 3);
+      } else if (Math.random() < 0.045) {
+        c.q = 0; // cancelled
+      } else if (Math.random() < 0.05) {
+        c.fill = 7; // filled — stays solid for a moment
+      }
+    }
     function fmtN(n) { return n.toLocaleString('en-US'); }
     function tickBook() {
       if (!deckRunning) return;
-      // drift the mid occasionally
       if (Math.random() < 0.22) {
         lastMid = mid;
         mid += (Math.random() < 0.5 ? -1 : 1) * TICK;
@@ -956,6 +982,7 @@
           vols[i] = Math.max(8, vols[i] + (Math.random() - 0.5) * 160);
         }
         maxV = Math.max(maxV, vols[i]);
+        stepChip(chips[i]);
       }
       rowEls.forEach(function (row, r) {
         var isAsk = r < 5;
@@ -974,6 +1001,19 @@
             num.classList.add('fl');
           }
         }
+        // sell orders sit on ask rows (right cell), buys on bid rows (left)
+        var c = chips[r];
+        var cell = row.children[isAsk ? 4 : 0];
+        var cls = 'b-chip';
+        var txt = '';
+        if (c.q > 0) {
+          txt = String(c.q);
+          cls += c.fill > 0
+            ? (isAsk ? ' fl-sell' : ' fl-buy')
+            : (isAsk ? ' on-sell' : ' on-buy');
+        }
+        if (cell.className !== cls) cell.className = cls;
+        if (cell.textContent !== txt) cell.textContent = txt;
       });
       midEl.textContent = fmtN(mid);
       midEl.className = 'b-mid ' + (mid > lastMid ? 'up' : mid < lastMid ? 'down' : '');
@@ -1039,16 +1079,22 @@
     }
     ssize();
     addEventListener('resize', ssize, { passive: true });
-    // ever-climbing equity curve: mostly up with small pullbacks, the
-    // spark renormalizes to its rolling window so the climb never stops
-    var hist = [], val = 26000;
+    // equity curve with real texture: momentum runs, choppy stretches and
+    // genuine drawdowns — but a steady drift keeps the big picture rising
+    var hist = [], val = 64000, mom = 0;
+    function pnlStep() {
+      if (Math.random() < 0.03) mom -= 3000 + Math.random() * 8000; // pullback
+      mom += (Math.random() - 0.5) * 2800;
+      mom *= 0.85;
+      val = Math.max(2000, val + 1100 + mom);
+    }
     for (var i = 0; i < 70; i++) {
-      val += Math.max(-3000, (Math.random() - 0.24) * 4200);
+      pnlStep();
       hist.push(val);
     }
     function tickPnl() {
       if (!deckRunning) return;
-      val += Math.max(-5200, (Math.random() - 0.24) * 5600);
+      pnlStep();
       hist.push(val);
       if (hist.length > 70) hist.shift();
       var lo = Math.min.apply(null, hist), hi = Math.max.apply(null, hist);
