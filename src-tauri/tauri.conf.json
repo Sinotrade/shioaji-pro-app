@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Shioaji Pro",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "identifier": "com.sinotrade.shioaji-pro",
   "build": {
     "frontendDist": "../dist",
