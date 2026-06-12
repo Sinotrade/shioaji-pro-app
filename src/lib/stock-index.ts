@@ -110,6 +110,42 @@ export function sectorLabel(category: string): string {
     return SECTOR_LABELS[category] ?? category;
 }
 
+// TWSE industry index (IND) code → the stock category it drills into, so the
+// heatmap can show a sector-heat overview (which 類股 is hot today) and then
+// drill into that sector's members (issue #2).
+export const SECTOR_INDICES: {
+    index: string;
+    category: string;
+    label: string;
+}[] = [
+    { index: '036', category: '24', label: '半導體' },
+    { index: '037', category: '25', label: '電腦週邊' },
+    { index: '038', category: '26', label: '光電' },
+    { index: '039', category: '27', label: '通信網路' },
+    { index: '040', category: '28', label: '電子零組件' },
+    { index: '041', category: '29', label: '電子通路' },
+    { index: '042', category: '30', label: '資訊服務' },
+    { index: '043', category: '31', label: '其他電子' },
+    { index: '031', category: '17', label: '金融保險' },
+    { index: '029', category: '15', label: '航運' },
+    { index: '026', category: '12', label: '汽車' },
+    { index: '024', category: '10', label: '鋼鐵' },
+    { index: '035', category: '23', label: '油電燃氣' },
+    { index: '021', category: '22', label: '生技化學' },
+    { index: '028', category: '14', label: '建材營造' },
+    { index: '019', category: '05', label: '電機機械' },
+    { index: '017', category: '03', label: '塑膠' },
+    { index: '016', category: '02', label: '食品' },
+    { index: '018', category: '04', label: '紡織' },
+    { index: '015', category: '01', label: '水泥' },
+    { index: '030', category: '16', label: '觀光' },
+    { index: '032', category: '18', label: '貿易百貨' },
+    { index: '025', category: '11', label: '橡膠' },
+    { index: '023', category: '09', label: '造紙' },
+    { index: '020', category: '06', label: '電器電纜' },
+    { index: '022', category: '08', label: '玻璃陶瓷' },
+];
+
 // the category code for a single stock code (for showing/jumping by sector)
 export function categoryOf(
     index: StockMeta[],

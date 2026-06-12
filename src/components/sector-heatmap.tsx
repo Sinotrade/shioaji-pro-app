@@ -11,6 +11,7 @@ import {
     categoriesOf,
     loadStockIndex,
     sectorLabel,
+    SECTOR_INDICES,
     type StockMeta,
 } from '../lib/stock-index';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
@@ -33,6 +34,9 @@ export function SectorHeatmap({
     const [cat, setCat] = useState(
         () => localStorage.getItem(CAT_KEY) ?? '24',
     );
+    // two levels (issue #2): 'overview' compares 類股 by their TWSE industry
+    // index; 'sector' drills into one sector's member stocks
+    const [view, setView] = useState<'overview' | 'sector'>('overview');
     const theme = useThemeSettings();
     const colors = getChartColors(theme);
 
@@ -45,9 +49,45 @@ export function SectorHeatmap({
     useEffect(() => {
         if (focused?.category) {
             setCat(focused.category);
+            setView('sector');
             localStorage.setItem(CAT_KEY, focused.category);
         }
     }, [focused?.seq]);
+
+    // overview: snapshot every sector index, colored by today's change%
+    const overviewPoll = usePoll<Snapshot[]>(
+        useCallback(() => {
+            if (view !== 'overview') return Promise.resolve([]);
+            return fetchSnapshots(
+                SECTOR_INDICES.map((s) => ({
+                    security_type: 'IND' as const,
+                    exchange: 'TSE' as const,
+                    code: s.index,
+                    target_code: null,
+                })),
+            ).catch(() => []);
+        }, [view]),
+        20000,
+    );
+
+    const sectorTiles = useMemo(() => {
+        const byCode = new Map(
+            (overviewPoll.data ?? []).map((s) => [s.code, s]),
+        );
+        return SECTOR_INDICES.map((sec) => {
+            const s = byCode.get(sec.index);
+            const ref = s ? s.close - s.change_price : 0;
+            const pct =
+                s && s.change_price && ref > 0
+                    ? (s.change_price / ref) * 100
+                    : 0;
+            return {
+                ...sec,
+                amount: s?.total_amount ?? 0,
+                pct,
+            };
+        }).sort((a, b) => b.pct - a.pct); // 最強類股在前
+    }, [overviewPoll.data]);
 
     const categories = useMemo(
         () => (index ? categoriesOf(index).filter((c) => c.count >= 5) : []),
@@ -114,9 +154,56 @@ export function SectorHeatmap({
         return <div className={dock.emptyState}>載入商品分類…</div>;
     }
 
+    if (view === 'overview') {
+        return (
+            <div className={styles.wrap}>
+                <div className={styles.toolbar}>
+                    <span className={styles.catSelect} style={{ pointerEvents: 'none' }}>
+                        類股總覽
+                    </span>
+                    <span className={styles.hint}>
+                        各類股指數漲跌 · 點一下進該類股
+                    </span>
+                </div>
+                <div className={styles.gridBox}>
+                    {sectorTiles.map((t) => (
+                        <button
+                            key={t.index}
+                            className={styles.tile}
+                            style={{ background: tileColor(t.pct) }}
+                            title={`${t.label}指數（${t.pct >= 0 ? '+' : ''}${t.pct.toFixed(2)}%）`}
+                            onClick={() => {
+                                setCat(t.category);
+                                localStorage.setItem(CAT_KEY, t.category);
+                                setView('sector');
+                            }}
+                        >
+                            <span className={styles.tileName}>{t.label}</span>
+                            <span className={styles.tilePct}>
+                                {t.pct >= 0 ? '+' : ''}
+                                {t.pct.toFixed(2)}%
+                            </span>
+                        </button>
+                    ))}
+                    {sectorTiles.every((t) => t.pct === 0) && (
+                        <div className={dock.emptyState}>類股指數載入中…</div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className={styles.wrap}>
             <div className={styles.toolbar}>
+                <button
+                    className={styles.hint}
+                    style={{ cursor: 'pointer', background: 'none', border: 'none' }}
+                    onClick={() => setView('overview')}
+                    title='回類股總覽'
+                >
+                    ← 總覽
+                </button>
                 <select
                     className={styles.catSelect}
                     value={cat}
