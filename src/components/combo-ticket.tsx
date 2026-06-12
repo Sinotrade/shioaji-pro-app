@@ -5,7 +5,8 @@
 
 import { Crosshair } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useQuote } from '../hooks/use-stream';
+import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
+import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { usePoll } from '../hooks/use-poll';
 import { ensureContract } from '../lib/contracts-cache';
 import {
@@ -16,7 +17,7 @@ import {
     type ComboLeg,
     type ComboTrade,
 } from '../lib/shioaji';
-import { notify } from '../lib/trade';
+import { assertTradingLive, notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtPrice } from '../lib/utils/format';
 import * as styles from './order-ticket.css';
@@ -97,6 +98,8 @@ export function ComboTicket() {
     const [qty, setQty] = useState(1);
     const [armed, setArmed] = useState(false);
     const [busy, setBusy] = useState(false);
+    const [orderType, setOrderType] = useState<'IOC' | 'FOK' | 'ROD'>('IOC');
+    const live = useTradingLive();
 
     const tradesPoll = usePoll<ComboTrade[]>(
         useCallback(() => fetchComboTrades().catch(() => []), []),
@@ -146,6 +149,31 @@ export function ComboTicket() {
     }, [synth, priceTouched]);
 
     const ready = legs.every((l) => l.contract);
+    const hasOpt = legs.some((l) => l.contract?.security_type === 'OPT');
+    const allFut =
+        ready && legs.every((l) => l.contract?.security_type === 'FUT');
+    // FOK valid for any TAIFEX combo; ROD (resting / 芭樂價) only for futures
+    const orderTypes: ('IOC' | 'FOK' | 'ROD')[] = allFut
+        ? ['IOC', 'FOK', 'ROD']
+        : ['IOC', 'FOK'];
+    // keep the selected order type valid as legs change
+    useEffect(() => {
+        if (!orderTypes.includes(orderType)) setOrderType('IOC');
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [allFut, hasOpt]);
+
+    // B/S hotkeys switch the combo direction (issue #1 — was inert here)
+    useEffect(() => {
+        const onAction = (e: Event) => {
+            const a = (e as CustomEvent).detail?.action;
+            if (a === 'Buy' || a === 'Sell') {
+                setAction(a);
+                setArmed(false);
+            }
+        };
+        window.addEventListener(TICKET_ACTION_EVENT, onAction);
+        return () => window.removeEventListener(TICKET_ACTION_EVENT, onAction);
+    }, []);
 
     // watcher: buy when the synthetic ASK drops to target; sell when the
     // synthetic BID rises to target
@@ -222,6 +250,7 @@ export function ComboTicket() {
         if (!ready) return;
         setBusy(true);
         try {
+            assertTradingLive();
             const legReqs: ComboLeg[] = legs.map((l) => ({
                 action: l.action,
                 security_type: l.contract!.security_type,
@@ -235,7 +264,7 @@ export function ComboTicket() {
                 price: Number.isFinite(p) ? p : 0,
                 quantity: qty,
                 price_type: 'LMT',
-                order_type: 'IOC', // TAIFEX combos match immediately or not
+                order_type: orderType,
                 octype: 'Auto',
             });
             notify({
@@ -364,18 +393,45 @@ export function ComboTicket() {
                 />
             </div>
 
+            <div className={styles.fieldRow}>
+                <span className={styles.fieldLabel}>條件</span>
+                <div className={styles.segGroup}>
+                    {orderTypes.map((ot) => (
+                        <button
+                            key={ot}
+                            className={styles.seg[orderType === ot ? 'on' : 'off']}
+                            onClick={() => {
+                                setOrderType(ot);
+                                setArmed(false);
+                            }}
+                            title={
+                                ot === 'IOC'
+                                    ? '立即成交否則取消'
+                                    : ot === 'FOK'
+                                      ? '全部成交否則取消'
+                                      : '掛單等候（可掛芭樂價）'
+                            }
+                        >
+                            {ot}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
             <button
                 className={styles.execBtn[armed ? 'armed' : action === 'Buy' ? 'buy' : 'sell']}
-                disabled={busy || !ready}
+                disabled={busy || !ready || !live}
                 onClick={execute}
             >
-                {busy
-                    ? '傳送中…'
-                    : armed
-                      ? `確認${action === 'Buy' ? '買進' : '賣出'}組合 ${qty} @ ${price}（LMT/IOC）`
-                      : ready
-                        ? `${action === 'Buy' ? '買進' : '賣出'}組合下單`
-                        : '先輸入兩腳合約代碼'}
+                {!live
+                    ? '⚠ 行情未連線，暫停下單'
+                    : busy
+                      ? '傳送中…'
+                      : armed
+                        ? `確認${action === 'Buy' ? '買進' : '賣出'}組合 ${qty} @ ${price}（LMT/${orderType}）`
+                        : ready
+                          ? `${action === 'Buy' ? '買進' : '賣出'}組合下單`
+                          : '先輸入兩腳合約代碼'}
             </button>
 
             <div className={styles.fieldRow}>

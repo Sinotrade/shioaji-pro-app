@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
-import { useQuote } from '../hooks/use-stream';
+import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { registerBracket } from '../lib/bracket';
 import { usePickedPrice } from '../lib/price-sync';
 import { maskAccountId, maskName, usePrivacyMode } from '../lib/privacy';
@@ -31,6 +31,7 @@ export function OrderTicket({
     const isFutures =
         contract.security_type === 'FUT' || contract.security_type === 'OPT';
     const quote = useQuote(contract.code);
+    const live = useTradingLive();
 
     const [action, setAction] = useState<Action>('Buy');
     const [price, setPrice] = useState('');
@@ -436,15 +437,17 @@ export function OrderTicket({
                         ]
                     }
                     onClick={execute}
-                    disabled={busy || qty < 1}
+                    disabled={busy || qty < 1 || !live}
                 >
-                    {busy
-                        ? '傳送中…'
-                        : armed
-                          ? `確認${action === 'Buy' ? '買進' : '賣出'} ${qty}${qtyUnit} @ ${priceType === 'LMT' ? fmtPrice(Number(price)) : priceType}`
-                          : action === 'Buy'
-                            ? '買進下單'
-                            : '賣出下單'}
+                    {!live
+                        ? '⚠ 行情未連線，暫停下單'
+                        : busy
+                          ? '傳送中…'
+                          : armed
+                            ? `確認${action === 'Buy' ? '買進' : '賣出'} ${qty}${qtyUnit} @ ${priceType === 'LMT' ? fmtPrice(Number(price)) : priceType}`
+                            : action === 'Buy'
+                              ? '買進下單'
+                              : '賣出下單'}
                 </button>
 
             {feedback && (

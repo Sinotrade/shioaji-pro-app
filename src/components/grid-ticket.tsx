@@ -6,7 +6,7 @@
 
 import { RefreshCw, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuote } from '../hooks/use-stream';
+import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { checkOrderAllowed } from '../lib/risk';
 import {
     cancelOrder,
@@ -44,6 +44,7 @@ export function GridTicket({
     onOrdersChanged?: () => void;
 }) {
     const quote = useQuote(contract.code);
+    const live = useTradingLive();
     const [side, setSide] = useState<Action>('Buy');
     const [startOff, setStartOff] = useState(1); // ticks from last
     const [levels, setLevels] = useState(5);
@@ -334,10 +335,14 @@ export function GridTicket({
                         styles.execBtn[side === 'Buy' ? 'buy' : 'sell']
                     }
                     style={{ flex: 1 }}
-                    disabled={!armed || busy || last === null}
+                    disabled={!armed || busy || last === null || !live}
                     onClick={() => void layGrid()}
                 >
-                    {busy ? '處理中…' : `鋪 ${preview.length} 檔`}
+                    {!live
+                        ? '⚠ 未連線'
+                        : busy
+                          ? '處理中…'
+                          : `鋪 ${preview.length} 檔`}
                 </button>
                 <button
                     className={flash.cancelAllBtn}

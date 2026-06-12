@@ -17,7 +17,13 @@ import { getAliasFor } from '../lib/stream';
 import type { WatchItem } from '../hooks/use-watchlist';
 import type { ScannerItem } from '../lib/types/market';
 import type { Position } from '../lib/types/portfolio';
-import { fmtInt, fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
+import {
+    fmtInt,
+    fmtPct,
+    fmtPrice,
+    fmtSigned,
+    fmtStockLots,
+} from '../lib/utils/format';
 import { Sparkline } from './sparkline';
 import * as panel from './panel.css';
 import * as styles from './tray-panel.css';
@@ -248,10 +254,7 @@ export function TrayPanel() {
                                     <span className={styles.name}>
                                         {p.direction === 'Buy' ? '多' : '空'}{' '}
                                         {'yd_quantity' in p
-                                            ? (p.quantity / 1000).toLocaleString(
-                                                  undefined,
-                                                  { maximumFractionDigits: 3 },
-                                              )
+                                            ? fmtStockLots(p.quantity)
                                             : fmtInt(p.quantity)}{' '}
                                         @{fmtPrice(p.price)}
                                     </span>

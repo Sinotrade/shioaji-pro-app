@@ -16,7 +16,7 @@ import {
     useRef,
     useState,
 } from 'react';
-import { useQuote } from '../hooks/use-stream';
+import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { cancelOrder } from '../lib/shioaji';
 import { getAliasFor, onOrderEvent } from '../lib/stream';
@@ -179,6 +179,7 @@ export function FlashOrder({
     onOrdersChanged?: () => void;
 }) {
     const quote = useQuote(contract.code);
+    const live = useTradingLive();
     const privMoney = usePrivacyMoney();
     const [qty, setQty] = useState(1);
     const [armed, setArmed] = useState(false);
@@ -218,6 +219,12 @@ export function FlashOrder({
         setFollow(true);
         setArmed(false);
     }, [contract.code]);
+
+    // safety: drop out of armed mode the moment the feed isn't LIVE so a
+    // click can't fire into a dead connection (issue #2)
+    useEffect(() => {
+        if (!live) setArmed(false);
+    }, [live]);
 
     // Esc disarms anywhere
     useEffect(() => {
@@ -597,9 +604,12 @@ export function FlashOrder({
                 </button>
                 <button
                     className={styles.armBtn[armed ? 'on' : 'off']}
+                    disabled={!live}
                     onClick={() => setArmed((a) => !a)}
                 >
-                    {armed ? (
+                    {!live ? (
+                        '⚠ 未連線'
+                    ) : armed ? (
                         <>
                             <Zap size={10} style={{ verticalAlign: '-1px' }} />{' '}
                             點價即下單

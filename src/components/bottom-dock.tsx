@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePoll } from '../hooks/use-poll';
+import { useTradingLive } from '../hooks/use-stream';
 import {
     ensureAccounts,
     selectAccount,
@@ -37,6 +38,7 @@ import {
     fmtMoney,
     fmtPrice,
     fmtSigned,
+    fmtStockLots,
 } from '../lib/utils/format';
 import { vars } from '../theme.css';
 import * as panel from './panel.css';
@@ -57,13 +59,6 @@ function statusKind(status: string): 'ok' | 'pending' | 'bad' {
     return 'bad';
 }
 
-// stock quantities arrive in SHARES (unit=Share) — render as 張 with
-// decimals so odd lots stay visible (issue #2)
-function fmtStockLots(shares: number): string {
-    const lots = shares / 1000;
-    return lots.toLocaleString(undefined, { maximumFractionDigits: 3 });
-}
-
 function PositionsTable({
     positions,
     onChanged,
@@ -75,6 +70,7 @@ function PositionsTable({
 }) {
     const [busyCode, setBusyCode] = useState<string | null>(null);
     const privMoney = usePrivacyMoney();
+    const live = useTradingLive();
     const act = async (p: Position, mode: 'close' | 'reverse') => {
         if (busyCode) return;
         setBusyCode(p.code);
@@ -92,7 +88,7 @@ function PositionsTable({
                 kind: 'ok',
                 title: mode === 'close' ? '⏹ 平倉單已送出' : '🔄 反手單已送出',
                 body: `${p.code} 市價${exit === 'Buy' ? '買' : '賣'} ${
-                    isStockPosition(p) ? `${fmtStockLots(qty)} 張` : `${qty} 口`
+                    isStockPosition(p) ? fmtStockLots(qty) : `${qty} 口`
                 }`,
             });
             onChanged();
@@ -193,8 +189,12 @@ function PositionsTable({
                             <td className={styles.td}>
                                 <button
                                     className={styles.cancelBtn}
-                                    disabled={busyCode === p.code}
-                                    title='市價沖銷此倉位'
+                                    disabled={busyCode === p.code || !live}
+                                    title={
+                                        live
+                                            ? '市價沖銷此倉位'
+                                            : '行情未連線，暫停下單'
+                                    }
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         void act(p, 'close');
@@ -204,8 +204,12 @@ function PositionsTable({
                                 </button>{' '}
                                 <button
                                     className={styles.cancelBtn}
-                                    disabled={busyCode === p.code}
-                                    title='市價反向兩倍（翻倉）'
+                                    disabled={busyCode === p.code || !live}
+                                    title={
+                                        live
+                                            ? '市價反向兩倍（翻倉）'
+                                            : '行情未連線，暫停下單'
+                                    }
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         void act(p, 'reverse');

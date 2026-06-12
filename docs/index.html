@@ -132,30 +132,104 @@
     font-size: 0.72rem; color: var(--muted);
     letter-spacing: 0.08em;
   }
-  /* ticker divider — decorative demo feed */
-  .ticker {
+  /* ---- live deck — floating glass panels: orderbook / agent / pnl ---- */
+  .deck {
+    max-width: 1120px; margin: 18px auto 0; padding: 0 24px;
+    display: grid; grid-template-columns: 1fr 1.45fr 1fr; gap: 16px;
+    position: relative; z-index: 1;
+  }
+  @media (max-width: 880px) { .deck { grid-template-columns: 1fr; max-width: 480px; } }
+  .glass {
+    background: rgba(16, 23, 39, 0.6);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border-bright);
+    border-radius: 14px;
+    padding: 13px 15px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(220, 228, 245, 0.05);
+    animation: floaty 7.5s ease-in-out infinite;
+    min-width: 0;
+  }
+  .glass:nth-child(2) { animation-delay: -2.5s; }
+  .glass:nth-child(3) { animation-delay: -5s; }
+  @keyframes floaty {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-7px); }
+  }
+  @media (prefers-reduced-motion: reduce) { .glass { animation: none; } }
+  .glass-head {
+    display: flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 0.62rem; font-weight: 600;
+    letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 10px;
+  }
+  .glass-head .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--down); box-shadow: 0 0 8px var(--down);
+    animation: dotPulse 1.6s ease-in-out infinite;
+  }
+  @keyframes dotPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  /* orderbook */
+  .book { font-family: var(--mono); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+  .b-row {
+    display: grid; grid-template-columns: 1fr 4.2em 1fr; align-items: center;
+    height: 18px; gap: 6px;
+  }
+  .b-price { text-align: center; color: var(--muted); }
+  .b-bid, .b-ask { position: relative; height: 12px; }
+  .b-bid i, .b-ask i {
+    position: absolute; top: 1px; bottom: 1px; border-radius: 2px;
+    opacity: 0.22; transition: width 0.18s ease;
+  }
+  .b-bid i { right: 0; background: var(--up); }
+  .b-ask i { left: 0; background: var(--down); }
+  .b-bid b, .b-ask b {
+    position: relative; font-weight: 500; line-height: 12px; display: block;
+    transition: color 0.15s;
+  }
+  .b-bid b { text-align: right; color: var(--up); }
+  .b-ask b { text-align: left; color: var(--down); }
+  .b-mid {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    height: 22px; margin: 2px 0;
+    font-size: 0.8rem; font-weight: 700; color: var(--fg);
     border-block: 1px solid var(--border);
-    overflow: hidden; position: relative;
-    background: var(--bg-soft);
   }
-  .ticker::before, .ticker::after {
-    content: ""; position: absolute; top: 0; bottom: 0; width: 90px; z-index: 1; pointer-events: none;
+  .b-mid.up { color: var(--up); }
+  .b-mid.down { color: var(--down); }
+  @keyframes cellFlash { from { filter: brightness(1.9); } to { filter: none; } }
+  .b-bid b.fl, .b-ask b.fl { animation: cellFlash 0.3s ease; }
+
+  /* agent console */
+  .console {
+    font-family: var(--mono); font-size: 0.72rem; line-height: 1.9;
+    height: 132px; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: flex-end;
   }
-  .ticker::before { left: 0; background: linear-gradient(to right, var(--bg), transparent); }
-  .ticker::after { right: 0; background: linear-gradient(to left, var(--bg), transparent); }
-  .ticker-track {
-    display: flex; gap: 56px; width: max-content;
-    padding: 9px 0;
-    font-family: var(--mono); font-size: 0.74rem;
-    color: var(--muted);
-    animation: tickerMove 48s linear infinite;
-    white-space: nowrap;
+  .console .ln { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .console .u { color: var(--fg); }
+  .console .u::before { content: "› "; color: var(--accent); font-weight: 700; }
+  .console .a { color: var(--muted); }
+  .console .a::before { content: "✦ "; color: var(--accent); }
+  .console .t { color: var(--amber); }
+  .console .k { color: var(--down); }
+  .console .caret {
+    display: inline-block; width: 7px; height: 12px; margin-left: 2px;
+    background: var(--accent); vertical-align: -1px;
+    animation: dotPulse 0.9s steps(1) infinite;
   }
-  .ticker:hover .ticker-track { animation-play-state: paused; }
-  @keyframes tickerMove { to { transform: translateX(-50%); } }
-  @media (prefers-reduced-motion: reduce) { .ticker-track { animation: none; } }
-  .tk-up { color: var(--up); }
-  .tk-down { color: var(--down); }
+
+  /* pnl */
+  #spark { width: 100%; height: 56px; display: block; }
+  .pnl-num {
+    font-family: var(--mono); font-size: 1.25rem; font-weight: 700;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+    color: var(--up); margin-top: 6px;
+    transition: color 0.2s;
+  }
+  .pnl-num.neg { color: var(--down); }
+  .pnl-sub { font-family: var(--mono); font-size: 0.62rem; color: var(--muted); }
   .hero p.tag strong { color: var(--fg); }
   .badges { margin-top: 16px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
   .badge {
@@ -427,7 +501,22 @@
   </div>
 </header>
 
-<div class="ticker" aria-hidden="true"><div class="ticker-track" id="tk"></div></div>
+<div class="deck" aria-hidden="true">
+  <div class="glass">
+    <div class="glass-head"><span class="dot"></span>Order Book ・ 2330</div>
+    <div class="book" id="book"></div>
+  </div>
+  <div class="glass">
+    <div class="glass-head"><span class="dot"></span>AI Agent ・ Live</div>
+    <div class="console" id="console"></div>
+  </div>
+  <div class="glass">
+    <div class="glass-head"><span class="dot"></span>Unrealized P&amp;L</div>
+    <canvas id="spark"></canvas>
+    <div class="pnl-num" id="pnl">+0</div>
+    <div class="pnl-sub">DEMO ・ 模擬資料</div>
+  </div>
+</div>
 
 <div class="shot wrap">
   <div class="shot-frame"><img id="shot-img" src="shot-terminal-dark.png" alt="Shioaji Pro 交易終端 — 期貨夜盤實況" /></div>

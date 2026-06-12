@@ -7,6 +7,7 @@ import {
     placeFuturesOrder,
     placeStockOrder,
 } from './shioaji';
+import { getStreamStatus } from './stream';
 import type { ContractBase } from './types/contract';
 import {
     ACTIVE_ORDER_STATUSES,
@@ -74,6 +75,16 @@ export function isFuturesContract(contract: ContractBase): boolean {
 }
 
 // price === null → market order (futures MKT/IOC, stocks MKT/IOC)
+// hard safety net: never let an order through while the quote feed is not
+// LIVE — a dead/reconnecting connection silently drops orders, and users
+// (esp. with real money on the line) must not think a click went through
+// when it didn't (issue #2). UI also disables the buttons; this backs it up.
+export function assertTradingLive() {
+    if (getStreamStatus() !== 'live') {
+        throw new Error('行情未連線（非 LIVE）— 為避免誤單已暫停下單，請待連線恢復');
+    }
+}
+
 export async function placeQuickOrder(
     contract: ContractBase,
     action: Action,
@@ -81,6 +92,7 @@ export async function placeQuickOrder(
     quantity: number,
     opts?: { bypassRisk?: boolean; orderLot?: StockOrderLot },
 ): Promise<Trade> {
+    assertTradingLive();
     if (!opts?.bypassRisk) {
         const blocked = checkOrderAllowed(quantity);
         if (blocked) throw new Error(blocked);
@@ -126,6 +138,7 @@ export async function placeStockExitByShares(
     action: Action,
     shares: number,
 ): Promise<Trade[]> {
+    assertTradingLive();
     const lots = Math.floor(shares / 1000);
     const odd = shares % 1000;
     const out: Trade[] = [];
