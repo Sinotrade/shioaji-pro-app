@@ -435,12 +435,15 @@ export function FlashOrder({
     }, [positions, contract]);
 
     // refresh working orders promptly after any order event (debounced —
-    // a burst of events triggers one refresh)
+    // a burst of events triggers one refresh). The delay is jittered per
+    // instance so eight 閃電全開 windows don't all refetch in the same
+    // instant when a fill lands.
     useEffect(() => {
+        const delay = 400 + Math.floor(Math.random() * 900);
         let timer: ReturnType<typeof setTimeout> | null = null;
         const off = onOrderEvent(() => {
             if (timer) clearTimeout(timer);
-            timer = setTimeout(() => onOrdersChangedRef.current?.(), 400);
+            timer = setTimeout(() => onOrdersChangedRef.current?.(), delay);
         });
         return () => {
             off();

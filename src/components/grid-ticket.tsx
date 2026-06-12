@@ -70,6 +70,10 @@ export function GridTicket({
     const onChangedRef = useRef(onOrdersChanged);
     onChangedRef.current = onOrdersChanged;
     const cycleBusy = useRef(false);
+    // prices we placed recently — the trades poll may not reflect them yet,
+    // and re-placing a level that's merely in flight would double the order
+    const recentPlace = useRef(new Map<string, number>());
+    const RECENT_MS = 15000;
 
     // reset on symbol change
     useEffect(() => {
@@ -107,6 +111,7 @@ export function GridTicket({
     };
 
     const placeAt = async (price: number) => {
+        recentPlace.current.set(keyOf(price), Date.now());
         const c = contractRef.current;
         const p = paramsRef.current;
         const s = sideRef.current;
@@ -214,9 +219,15 @@ export function GridTicket({
                         await cancelOrder(t.order.id).catch(() => undefined);
                     }
                 }
+                const now = Date.now();
+                for (const [k, ts] of recentPlace.current) {
+                    if (now - ts > RECENT_MS) recentPlace.current.delete(k);
+                }
                 for (const k of desired) {
                     if (ops >= MAX_OPS_PER_CYCLE) break;
-                    if (!have.has(k)) {
+                    // skip levels visible in trades OR placed moments ago
+                    // (the poll hasn't caught up — re-placing would double)
+                    if (!have.has(k) && !recentPlace.current.has(k)) {
                         ops += 1;
                         await placeAt(Number(k)).catch(() => undefined);
                     }

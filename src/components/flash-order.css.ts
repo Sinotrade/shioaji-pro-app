@@ -12,9 +12,11 @@ export const wrap = style({
     height: '100%',
 });
 
+// wraps so an 8-strip tile (~240px wide) still shows every control
 export const controls = style({
     display: 'flex',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: vars.space.xs,
     padding: `4px ${vars.space.sm}`,
     borderBottom: `1px solid ${vars.color.border}`,
@@ -138,6 +140,7 @@ export const recenterBtn = style({
 export const actionBar = style({
     display: 'flex',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: vars.space.xs,
     padding: `3px ${vars.space.sm}`,
     borderBottom: `1px solid ${vars.color.border}`,

@@ -287,6 +287,10 @@ function PopoutView({
     useEffect(() => {
         if (code) ensureContract(code).catch(() => undefined);
     }, [code]);
+    // popouts can run 8+ at once (閃電全開) — longer intervals with a
+    // per-window jitter so they don't hammer the upstream accounting
+    // rate limit (25 req/5s) in lockstep
+    const [pollJitter] = useState(() => Math.floor(Math.random() * 6000));
     const tradesPoll = usePoll<Trade[]>(
         useCallback(async () => {
             const [s, f] = await Promise.allSettled([
@@ -298,7 +302,7 @@ function PopoutView({
                 ...(f.status === 'fulfilled' ? f.value : []),
             ];
         }, []),
-        8000,
+        12000 + pollJitter,
     );
     const popoutPositionsPoll = usePoll<Position[]>(
         useCallback(async () => {
@@ -311,7 +315,7 @@ function PopoutView({
                 ...(fu.status === 'fulfilled' ? fu.value : []),
             ];
         }, []),
-        10000,
+        20000 + pollJitter,
     );
     const meta = BLOCK_META[type];
 
