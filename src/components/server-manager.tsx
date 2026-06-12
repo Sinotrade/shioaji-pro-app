@@ -141,6 +141,15 @@ export function ServerManager({
         appVersion().then(setVer);
     }, []);
 
+    // safety net: never let a stuck sidecar promise pin 啟動中 / disable the
+    // buttons forever — auto-clear busy after 75s (a production login + CA +
+    // contract load is well under that)
+    useEffect(() => {
+        if (!busy) return;
+        const t = setTimeout(() => setBusy(false), 75_000);
+        return () => clearTimeout(t);
+    }, [busy]);
+
     const stream = useStreamStatus();
     const { data: status, refresh } = usePoll<ServerStatus | null>(
         useCallback(() => serverStatus(), []),
@@ -260,16 +269,20 @@ export function ServerManager({
     if (!isTauri) return null;
 
     const running = status?.running && status.healthy;
-    // explicit lifecycle so starting/connecting never looks stuck:
-    // busy → 啟動中 (amber breathing); running but stream not live yet →
-    // 連線中 (amber breathing); healthy + live → steady green; else red
-    const phase: 'starting' | 'connecting' | 'ok' | 'down' = busy
-        ? 'starting'
-        : running && stream === 'live'
-          ? 'ok'
-          : status?.running || stream === 'connecting'
-            ? 'connecting'
-            : 'down';
+    // explicit lifecycle so starting/connecting never looks stuck. A LIVE
+    // quote stream means the server is up and serving — that must beat a
+    // still-pending `busy` (the sidecar `server start` can stay awaited well
+    // after the daemon is live), otherwise it sticks on 啟動中 forever.
+    const phase: 'starting' | 'connecting' | 'ok' | 'down' =
+        running && stream === 'live'
+            ? 'ok'
+            : stream === 'live'
+              ? 'connecting' // data flowing, health not confirmed yet
+              : busy
+                ? 'starting'
+                : status?.running || stream === 'connecting'
+                  ? 'connecting'
+                  : 'down';
     const phaseLabel =
         phase === 'starting'
             ? '啟動中…'

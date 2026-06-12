@@ -40,6 +40,55 @@ async function sidecar(
     return { ok: out.code === 0, output: text };
 }
 
+// `shioaji server start` runs the server in the FOREGROUND — it never exits,
+// so awaiting execute() hangs the UI on 啟動中 forever. Spawn it instead and
+// poll health to know when it's actually up; surface the captured log only if
+// the process dies with an error before the server answers.
+async function spawnServer(
+    args: string[],
+    env: Record<string, string>,
+    port: number,
+): Promise<SidecarResult> {
+    const { Command } = await import('@tauri-apps/plugin-shell');
+    const cmd = Command.sidecar('binaries/shioaji', args, {
+        env: { NO_COLOR: '1', ...env },
+    });
+    let buf = '';
+    let exitCode: number | null = null;
+    cmd.stdout.on('data', (l) => (buf += l));
+    cmd.stderr.on('data', (l) => (buf += l));
+    cmd.on('close', (e: { code: number | null }) => {
+        exitCode = e.code ?? -1;
+    });
+    cmd.on('error', (e) => {
+        buf += `\n${String(e)}`;
+        exitCode = -1;
+    });
+    try {
+        await cmd.spawn();
+    } catch (e) {
+        return { ok: false, output: `啟動失敗：${String(e)}` };
+    }
+    // poll until the server answers, or it dies, or we give up (~45s covers a
+    // production login + CA activation + contract load)
+    const deadline = Date.now() + 45_000;
+    while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (await probeShioaji(port)) {
+            return { ok: true, output: buf.replace(ANSI_RE, '').trim() };
+        }
+        if (exitCode !== null && exitCode !== 0) {
+            // process exited before serving — a real start failure
+            return { ok: false, output: buf.replace(ANSI_RE, '').trim() };
+        }
+    }
+    return {
+        ok: false,
+        output:
+            `${buf.replace(ANSI_RE, '').trim()}\n啟動逾時（45 秒未就緒）`.trim(),
+    };
+}
+
 export async function serverStatus(): Promise<ServerStatus | null> {
     if (!isTauri) return null;
     try {
@@ -193,7 +242,8 @@ export async function serverStart(opts: {
     }
     const args = ['server', 'start', '--no-open'];
     if (opts.production) args.push('--production');
-    const res = await sidecar(args, env);
+    // spawn (don't await to completion) — the start runs in foreground
+    const res = await spawnServer(args, env, port);
     const portChanged = res.ok ? setApiPort(port) : false;
     const note =
         res.ok && port !== 8080
