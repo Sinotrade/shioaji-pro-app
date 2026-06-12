@@ -245,10 +245,20 @@ export async function serverStart(opts: {
     // spawn (don't await to completion) — the start runs in foreground
     const res = await spawnServer(args, env, port);
     const portChanged = res.ok ? setApiPort(port) : false;
-    const note =
+    // the server starts even when CA activation fails (login still works) —
+    // catch that warning from the log so the user knows production orders
+    // will 400 (e.g. expired certificate) instead of finding out at order time
+    const caFail = /Failed to activate CA[^\n]*/i.exec(res.output);
+    let note =
         res.ok && port !== 8080
             ? `\n⚠ 8080 被占用，伺服器改用 port ${port}`
             : '';
+    if (res.ok && opts.production && caFail) {
+        const reason = /expired/i.test(caFail[0])
+            ? '憑證已過期，請至 API 管理頁重新下載 Sinopac.pfx'
+            : caFail[0].replace(/.*Failed to activate CA certificate:\s*/i, '');
+        note += `\n⚠ CA 未啟用（${reason}）— 正式環境下單會被拒`;
+    }
     return {
         ...res,
         output: `${res.output}${note}`,
