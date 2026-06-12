@@ -1,6 +1,6 @@
 // src/components/assistant-panel.css.ts
 
-import { globalStyle, style } from '@vanilla-extract/css';
+import { globalStyle, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const wrap = style({
@@ -183,6 +183,56 @@ export const msgForkBtn = style({
 });
 
 globalStyle(`${userMsg}:hover ${msgForkBtn}`, { opacity: 1 });
+
+// ---- slash skill palette (/ opens, ↑↓ navigates, Enter runs) ----
+
+export const slashMenu = style({
+    position: 'absolute',
+    bottom: '100%',
+    insetInlineStart: 0,
+    insetInlineEnd: 0,
+    marginBottom: '4px',
+    display: 'flex',
+    flexDirection: 'column',
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.borderBright}`,
+    borderRadius: vars.radius.md,
+    boxShadow: '0 -8px 24px rgba(0,0,0,0.4)',
+    overflow: 'hidden',
+    zIndex: 30,
+});
+
+const slashItemBase = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: '8px',
+    padding: `5px ${vars.space.sm}`,
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    textAlign: 'left',
+});
+
+export const slashItem = styleVariants({
+    off: [slashItemBase],
+    on: [slashItemBase, { background: vars.color.accentDim }],
+});
+
+export const slashName = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
+    fontWeight: 650,
+    color: vars.color.accent,
+    flexShrink: 0,
+});
+
+export const slashDesc = style({
+    fontSize: '0.68rem',
+    color: vars.color.mutedForeground,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+});
 
 // ---- Claude-Code-style tool / thinking rows ----
 

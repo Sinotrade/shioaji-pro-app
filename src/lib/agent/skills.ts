@@ -50,6 +50,18 @@ const BUILTINS: AgentSkill[] = [
 4. 寫 5 行以內的今日總結與明日開盤前要注意的事`,
         builtin: true,
     },
+    {
+        id: 'builtin-observe',
+        name: '操作觀察學習',
+        description:
+            '看使用者最近的操作軌跡，找出重複的工作流程並收斂成技能',
+        instructions: `1. get_user_activity 取最近 24 小時的操作軌跡
+2. 找出重複出現的模式：固定時間做的事（如開盤先看哪幾檔）、固定順序的操作（如選商品→開閃電→下單）、反覆查看的同一組商品
+3. 對每個明確的重複模式，用 save_skill 存成技能：名稱取自用途（如「早盤掃描」），instructions 寫成可重複執行的工具步驟
+4. 已存在的同名技能用觀察到的新行為改進它
+5. 最後用 2-3 行總結你觀察到什麼、學了/更新了哪些技能；沒有明確模式就說還在觀察，不要硬造技能`,
+        builtin: true,
+    },
 ];
 
 function loadUser(): AgentSkill[] {

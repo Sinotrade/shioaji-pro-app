@@ -217,9 +217,31 @@ function rebuildPriceWatchers() {
 
 let started = false;
 
+// resident observation task: watches the user's operation log daily and
+// converges recurring workflows into skills（一次性播種，使用者可關閉/刪除）
+const OBSERVE_SEEDED_KEY = 'sj-agent-observe-seeded';
+
+function seedObservationTask() {
+    try {
+        if (localStorage.getItem(OBSERVE_SEEDED_KEY)) return;
+        localStorage.setItem(OBSERVE_SEEDED_KEY, '1');
+    } catch {
+        return;
+    }
+    if (tasks.some((t) => t.name === '工作流程觀察')) return;
+    saveTask({
+        name: '工作流程觀察',
+        prompt: '執行技能「操作觀察學習」：用 get_user_activity 看今天的操作軌跡，找重複 workflow，收斂成 save_skill 技能。',
+        trigger: { type: 'daily', time: '13:50' },
+        policy: 'readonly',
+        enabled: true,
+    });
+}
+
 export function ensureAgentScheduler() {
     if (started) return;
     started = true;
+    seedObservationTask();
     rebuildPriceWatchers();
 
     // minute tick: daily + interval triggers

@@ -14,7 +14,7 @@ import {
     Wrench,
     X,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -133,6 +133,87 @@ function pretty(json?: string): string {
     } catch {
         return json;
     }
+}
+
+type ToolBlockT = Extract<AgentBlock, { type: 'tool' }>;
+
+// flatten chat turns into render items, merging consecutive calls of the
+// same tool into one stacked group（get_quote ×9 → 一列收合）
+type RenderItem =
+    | { kind: 'user'; turnIndex: number; text: string }
+    | { kind: 'text'; text: string }
+    | { kind: 'thinking'; text: string }
+    | { kind: 'tools'; name: string; calls: ToolBlockT[] }
+    | { kind: 'proposal'; id: string; proposal: OrderProposal };
+
+function toRenderItems(turns: ChatTurn[]): RenderItem[] {
+    const out: RenderItem[] = [];
+    turns.forEach((t, turnIndex) => {
+        if (t.role === 'user') {
+            out.push({
+                kind: 'user',
+                turnIndex,
+                text: t.blocks
+                    .map((b) => (b.type === 'text' ? b.text : ''))
+                    .join(''),
+            });
+            return;
+        }
+        for (const b of t.blocks) {
+            if (b.type === 'text') out.push({ kind: 'text', text: b.text });
+            else if (b.type === 'thinking')
+                out.push({ kind: 'thinking', text: b.text });
+            else if (b.type === 'proposal')
+                out.push({ kind: 'proposal', id: b.id, proposal: b.proposal });
+            else {
+                const last = out[out.length - 1];
+                if (last && last.kind === 'tools' && last.name === b.name) {
+                    last.calls.push(b);
+                } else {
+                    out.push({ kind: 'tools', name: b.name, calls: [b] });
+                }
+            }
+        }
+    });
+    return out;
+}
+
+function ToolGroup({ name, calls }: { name: string; calls: ToolBlockT[] }) {
+    if (calls.length === 1) return <ToolRow b={calls[0]!} />;
+    const anyErr = calls.some((c) => c.isError);
+    // one-line preview: the distinguishing arg of each call (e.g. codes)
+    const brief = calls
+        .map((c) => {
+            try {
+                const o = JSON.parse(c.args || '{}') as Record<string, unknown>;
+                const v = o.code ?? o.codes ?? Object.values(o)[0];
+                return typeof v === 'string' ? v : JSON.stringify(v);
+            } catch {
+                return '';
+            }
+        })
+        .filter(Boolean)
+        .join(' ');
+    return (
+        <details className={styles.toolRow}>
+            <summary className={styles.toolHead}>
+                <ChevronRight size={10} className={styles.toolChevron} />
+                <span
+                    className={anyErr ? styles.toolDotErr : styles.toolDotOk}
+                />
+                <Wrench size={10} />
+                <span className={styles.toolName}>
+                    {name} ×{calls.length}
+                </span>
+                <span className={styles.toolBrief}>{brief}</span>
+            </summary>
+            <div className={styles.toolDetail}>
+                {calls.map((c, i) => (
+                    <ToolRow key={i} b={c} />
+                ))}
+            </div>
+        </details>
+    );
 }
 
 function ToolRow({ b }: { b: Extract<AgentBlock, { type: 'tool' }> }) {
@@ -265,8 +346,32 @@ function ChatTab() {
         if (fork) openSession(fork.id);
     };
 
-    const send = async () => {
-        let text = input.trim();
+    const renderItems = useMemo(() => toRenderItems(turns), [turns]);
+
+    // `/` opens a skill palette (Claude Code style slash commands)
+    const slashQuery = input.startsWith('/')
+        ? input.slice(1).trim().toLowerCase()
+        : null;
+    const slashMatches = useMemo(
+        () =>
+            slashQuery === null
+                ? []
+                : skills
+                      .filter(
+                          (s) =>
+                              s.name.toLowerCase().includes(slashQuery) ||
+                              s.description
+                                  .toLowerCase()
+                                  .includes(slashQuery),
+                      )
+                      .slice(0, 8),
+        [slashQuery, skills],
+    );
+    const [slashIdx, setSlashIdx] = useState(0);
+    useEffect(() => setSlashIdx(0), [input]);
+
+    const send = async (overrideText?: string) => {
+        let text = (overrideText ?? input).trim();
         if (!text || busy) return;
         touched.current = true; // disk hydrate must not clobber a live chat
         // /技能名 → run that skill's workflow
@@ -276,11 +381,12 @@ function ChatTab() {
                 text = `執行技能「${skill.name}」，照以下步驟：\n${skill.instructions}`;
             }
         }
+        const displayText = (overrideText ?? input).trim();
         setInput('');
         const prior = turns;
         setTurns((p) => [
             ...p,
-            { role: 'user', blocks: [{ type: 'text', text: input.trim() }] },
+            { role: 'user', blocks: [{ type: 'text', text: displayText }] },
         ]);
         setBusy(true);
         try {
@@ -429,122 +535,165 @@ function ChatTab() {
                         {skills.map((s) => `/${s.name}`).join('　')}
                     </div>
                 )}
-                {turns.map((t, i) =>
-                    t.role === 'user' ? (
-                        <div key={i} className={styles.userMsg}>
-                            <button
-                                className={styles.msgForkBtn}
-                                title='從這裡分岔（不含此訊息之後的內容）'
-                                disabled={busy}
-                                onClick={() => doFork(i)}
-                            >
-                                <GitBranch size={10} />
-                            </button>
-                            {t.blocks.map((b, j) =>
-                                b.type === 'text' ? (
-                                    <span key={j}>{b.text}</span>
-                                ) : null,
+                {renderItems.map((it, i) => {
+                    if (it.kind === 'user') {
+                        return (
+                            <div key={i} className={styles.userMsg}>
+                                <button
+                                    className={styles.msgForkBtn}
+                                    title='從這裡分岔（不含此訊息之後的內容）'
+                                    disabled={busy}
+                                    onClick={() => doFork(it.turnIndex)}
+                                >
+                                    <GitBranch size={10} />
+                                </button>
+                                <span>{it.text}</span>
+                            </div>
+                        );
+                    }
+                    if (it.kind === 'text') {
+                        return (
+                            <div key={i} className={styles.aiMsg}>
+                                <div className={styles.mdBody}>
+                                    <Markdown remarkPlugins={[remarkGfm]}>
+                                        {it.text}
+                                    </Markdown>
+                                </div>
+                            </div>
+                        );
+                    }
+                    if (it.kind === 'thinking') {
+                        return <ThinkingRow key={i} text={it.text} />;
+                    }
+                    if (it.kind === 'tools') {
+                        return (
+                            <ToolGroup
+                                key={i}
+                                name={it.name}
+                                calls={it.calls}
+                            />
+                        );
+                    }
+                    const state = proposalDone[it.id];
+                    const p = it.proposal;
+                    return (
+                        <div key={i} className={styles.proposalCard}>
+                            <span className={styles.proposalTitle}>
+                                下單提案
+                            </span>
+                            <span className={styles.proposalBody}>
+                                {p.action === 'Buy' ? '買進' : '賣出'} {p.code}{' '}
+                                × {p.quantity} @{' '}
+                                {p.price === null
+                                    ? '市價'
+                                    : fmtPrice(p.price)}
+                                <br />
+                                <span className={styles.proposalReason}>
+                                    {p.reason}
+                                </span>
+                            </span>
+                            {!state ? (
+                                <div className={styles.proposalBtns}>
+                                    <button
+                                        className={styles.confirmBtn}
+                                        onClick={() => void confirm(it.id, p)}
+                                    >
+                                        確認下單
+                                    </button>
+                                    <button
+                                        className={styles.rejectBtn}
+                                        onClick={() =>
+                                            setProposalDone((s) => ({
+                                                ...s,
+                                                [it.id]: 'cancelled',
+                                            }))
+                                        }
+                                    >
+                                        取消
+                                    </button>
+                                </div>
+                            ) : (
+                                <span className={styles.proposalDone}>
+                                    {state === 'confirmed'
+                                        ? '✓ 已確認下單'
+                                        : '已取消'}
+                                </span>
                             )}
                         </div>
-                    ) : (
-                        // assistant blocks render standalone, Claude-Code
-                        // style: text in a bubble, tools/thinking as stacked
-                        // full-width expandable rows
-                        <div key={i} className={styles.aiGroup}>
-                            {t.blocks.map((b, j) => {
-                                if (b.type === 'text') {
-                                    return (
-                                        <div key={j} className={styles.aiMsg}>
-                                            <div className={styles.mdBody}>
-                                                <Markdown
-                                                    remarkPlugins={[remarkGfm]}
-                                                >
-                                                    {b.text}
-                                                </Markdown>
-                                            </div>
-                                        </div>
-                                    );
-                                }
-                                if (b.type === 'thinking') {
-                                    return (
-                                        <ThinkingRow key={j} text={b.text} />
-                                    );
-                                }
-                                if (b.type === 'tool') {
-                                    return <ToolRow key={j} b={b} />;
-                                }
-                                const state = proposalDone[b.id];
-                                const p = b.proposal;
-                                return (
-                                    <div key={j} className={styles.proposalCard}>
-                                        <span className={styles.proposalTitle}>
-                                            下單提案
-                                        </span>
-                                        <span className={styles.proposalBody}>
-                                            {p.action === 'Buy'
-                                                ? '買進'
-                                                : '賣出'}{' '}
-                                            {p.code} × {p.quantity} @{' '}
-                                            {p.price === null
-                                                ? '市價'
-                                                : fmtPrice(p.price)}
-                                            <br />
-                                            <span
-                                                className={
-                                                    styles.proposalReason
-                                                }
-                                            >
-                                                {p.reason}
-                                            </span>
-                                        </span>
-                                        {!state ? (
-                                            <div className={styles.proposalBtns}>
-                                                <button
-                                                    className={styles.confirmBtn}
-                                                    onClick={() =>
-                                                        void confirm(b.id, p)
-                                                    }
-                                                >
-                                                    確認下單
-                                                </button>
-                                                <button
-                                                    className={styles.rejectBtn}
-                                                    onClick={() =>
-                                                        setProposalDone((s) => ({
-                                                            ...s,
-                                                            [b.id]: 'cancelled',
-                                                        }))
-                                                    }
-                                                >
-                                                    取消
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <span
-                                                className={styles.proposalDone}
-                                            >
-                                                {state === 'confirmed'
-                                                    ? '✓ 已確認下單'
-                                                    : '已取消'}
-                                            </span>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ),
-                )}
+                    );
+                })}
                 {busy && <div className={styles.aiMsg}>思考中…</div>}
             </div>
             )}
-            <div className={styles.inputRow}>
+            <div className={styles.inputRow} style={{ position: 'relative' }}>
+                {slashMatches.length > 0 && (
+                    <div className={styles.slashMenu}>
+                        {slashMatches.map((s, i) => (
+                            <button
+                                key={s.id}
+                                className={
+                                    styles.slashItem[
+                                        i === slashIdx ? 'on' : 'off'
+                                    ]
+                                }
+                                onMouseEnter={() => setSlashIdx(i)}
+                                onClick={() => void send(`/${s.name}`)}
+                            >
+                                <span className={styles.slashName}>
+                                    /{s.name}
+                                </span>
+                                <span className={styles.slashDesc}>
+                                    {s.description}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                )}
                 <input
                     className={styles.chatInput}
-                    placeholder='問行情、下指令，或 /技能名…'
+                    placeholder='分析持倉、巡檢風險、自動化流程，或 / 執行技能…'
                     value={input}
                     disabled={busy}
                     onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && void send()}
+                    onKeyDown={(e) => {
+                        if (slashMatches.length > 0) {
+                            if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                setSlashIdx(
+                                    (v) => (v + 1) % slashMatches.length,
+                                );
+                                return;
+                            }
+                            if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                setSlashIdx(
+                                    (v) =>
+                                        (v - 1 + slashMatches.length) %
+                                        slashMatches.length,
+                                );
+                                return;
+                            }
+                            if (e.key === 'Tab') {
+                                e.preventDefault();
+                                setInput(
+                                    `/${slashMatches[slashIdx]!.name}`,
+                                );
+                                return;
+                            }
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                void send(
+                                    `/${slashMatches[slashIdx]!.name}`,
+                                );
+                                return;
+                            }
+                            if (e.key === 'Escape') {
+                                setInput('');
+                                return;
+                            }
+                        }
+                        if (e.key === 'Enter') void send();
+                    }}
                 />
                 <button
                     className={styles.sendBtn}

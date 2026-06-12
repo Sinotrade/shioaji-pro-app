@@ -1,5 +1,6 @@
 // src/lib/trade.ts — one-shot order helper + in-app notification channel
 
+import { trackActivity } from './agent/activity';
 import { checkOrderAllowed } from './risk';
 import {
     cancelOrder,
@@ -97,6 +98,10 @@ export async function placeQuickOrder(
         const blocked = checkOrderAllowed(quantity);
         if (blocked) throw new Error(blocked);
     }
+    trackActivity(
+        '下單',
+        `${contract.code} ${action === 'Buy' ? '買' : '賣'} ${quantity} @${price ?? '市價'}`,
+    );
     const market = price === null;
     return sendOrder(contract, action, price, quantity, market, opts?.orderLot);
 }
@@ -162,6 +167,7 @@ export async function placeStockExitByShares(
 
 // cancel every working order across stock + futures accounts
 export async function cancelAllOrders(): Promise<number> {
+    trackActivity('全刪委託');
     const [st, fu] = await Promise.allSettled([
         fetchTrades('S'),
         fetchTrades('F'),

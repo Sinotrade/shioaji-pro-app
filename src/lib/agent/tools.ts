@@ -4,6 +4,7 @@
 // path as every human order.
 
 import { ensureContract } from '../contracts-cache';
+import { activityLog } from './activity';
 import {
     cancelOrder,
     fetchAccountBalance,
@@ -28,13 +29,30 @@ import type {
 export const TOOL_DEFS: ToolDef[] = [
     {
         name: 'get_quote',
-        description: '取得商品即時報價（價格、漲跌、買賣價、量、漲跌停）',
+        description:
+            '取得單一商品即時報價（價格、漲跌、買賣價、量、漲跌停）。查多檔請改用 get_snapshots 批次，不要逐檔呼叫',
         schema: {
             type: 'object',
             properties: {
                 code: { type: 'string', description: '代碼，如 2330、TXFR1' },
             },
             required: ['code'],
+        },
+    },
+    {
+        name: 'get_snapshots',
+        description:
+            '一次取得多檔商品的即時快照（收盤價、漲跌幅、量、額）— 查 2 檔以上一律用這個，一次呼叫完成',
+        schema: {
+            type: 'object',
+            properties: {
+                codes: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: '代碼清單，如 ["2330","0050","TXFR1"]，最多 50 檔',
+                },
+            },
+            required: ['codes'],
         },
     },
     {
@@ -77,6 +95,17 @@ export const TOOL_DEFS: ToolDef[] = [
                 count: { type: 'number', description: '預設 10' },
             },
             required: ['rank'],
+        },
+    },
+    {
+        name: 'get_user_activity',
+        description:
+            '取得使用者最近的操作軌跡（選了哪些商品、開了哪些面板、下了哪些單）— 用於觀察重複的工作流程並用 save_skill 收斂成技能',
+        schema: {
+            type: 'object',
+            properties: {
+                hours: { type: 'number', description: '回看幾小時，預設 24' },
+            },
         },
     },
     {
@@ -189,6 +218,45 @@ export async function executeTool(
                     limit_up: c.limit_up,
                     limit_down: c.limit_down,
                 },
+            };
+        }
+        case 'get_snapshots': {
+            const codes = (
+                Array.isArray(input.codes) ? input.codes : []
+            )
+                .map((c) => String(c).toUpperCase())
+                .slice(0, 50);
+            if (codes.length === 0)
+                return { result: { error: 'codes 不可為空' } };
+            const contracts = (
+                await Promise.allSettled(codes.map((c) => ensureContract(c)))
+            )
+                .filter(
+                    (
+                        r,
+                    ): r is PromiseFulfilledResult<
+                        Awaited<ReturnType<typeof ensureContract>>
+                    > => r.status === 'fulfilled',
+                )
+                .map((r) => r.value);
+            const snaps = await fetchSnapshots(contracts).catch(() => []);
+            const byCode = new Map(snaps.map((s) => [s.code, s]));
+            return {
+                result: contracts.map((c) => {
+                    const s = byCode.get(c.code);
+                    const ref = s ? s.close - s.change_price : 0;
+                    return {
+                        code: c.code,
+                        name: c.name,
+                        close: s?.close ?? null,
+                        change_pct:
+                            s && s.change_price && ref > 0
+                                ? `${((s.change_price / ref) * 100).toFixed(2)}%`
+                                : null,
+                        total_volume: s?.total_volume ?? null,
+                        total_amount: s?.total_amount ?? null,
+                    };
+                }),
             };
         }
         case 'get_positions': {
@@ -305,6 +373,16 @@ export async function executeTool(
                     volume: it.total_volume,
                     amount: it.total_amount,
                 })),
+            };
+        }
+        case 'get_user_activity': {
+            const hours = Math.min(72, Number(input.hours) || 24);
+            const log = activityLog(hours);
+            return {
+                result:
+                    log.length > 0
+                        ? { hours, events: log }
+                        : { hours, events: [], note: '期間內沒有記錄到操作' },
             };
         }
         case 'use_skill': {

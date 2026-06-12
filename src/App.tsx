@@ -41,6 +41,7 @@ import * as panel from './components/panel.css';
 import { useHotkeys } from './hooks/use-hotkeys';
 import { usePoll } from './hooks/use-poll';
 import { useWatchlist } from './hooks/use-watchlist';
+import { trackActivity } from './lib/agent/activity';
 import { ensureContract, useContract } from './lib/contracts-cache';
 import { reportDailyPnl } from './lib/risk';
 import { isTauri, openPopout } from './lib/tauri';
@@ -530,6 +531,15 @@ export default function App() {
         [items, selected],
     );
 
+    // ambient observation: one effect catches every selection path
+    // (watchlist / palette / scanner / heatmap / tray)
+    useEffect(() => {
+        if (selected) {
+            trackActivity('選商品', `${selected.code} ${selected.name}`);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selected?.code]);
+
     // ---- workspace ops ----
 
     const updateWorkspace = useCallback((w: Workspace) => {
@@ -553,6 +563,7 @@ export default function App() {
             ) {
                 return;
             }
+            trackActivity('開面板', meta.label);
             const id = newBlockId(type);
             const item: LayoutItem = {
                 i: id,
