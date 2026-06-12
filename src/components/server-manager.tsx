@@ -3,6 +3,8 @@
 
 import {
     Clipboard,
+    Eye,
+    EyeOff,
     Play,
     RefreshCw,
     RotateCcw,
@@ -87,6 +89,23 @@ export function ServerManager({
     const [ver, setVer] = useState('');
     const [checking, setChecking] = useState(false);
     const [readyLines, setReadyLines] = useState<string[]>([]);
+    const [showPw, setShowPw] = useState(false);
+
+    // human-readable CA activation failure pulled from the latest start log
+    // (the server starts even when CA fails, so this is how the user learns
+    // why production orders will 400)
+    const caError = (() => {
+        const m =
+            /Failed to activate CA certificate:\s*([^\n]+)/i.exec(lastOutput) ||
+            /CA 未啟用（([^）]+)）/.exec(lastOutput);
+        if (!m || !m[1]) return '';
+        const raw = m[1].trim();
+        if (/expired/i.test(raw))
+            return 'CA 憑證已過期 — 請至 API 管理頁重新下載 Sinopac.pfx';
+        if (/password/i.test(raw))
+            return 'CA 憑證密碼錯誤 — 請確認下載憑證時設定的密碼';
+        return `CA 未啟用：${raw}`;
+    })();
 
     // diagnose why production orders 400: which accounts are signed + CA
     // validity (issue #1 support — "加了 CA 還是 400")
@@ -512,15 +531,52 @@ export function ServerManager({
                             )}
                         </div>
                         {settings.caPath && (
-                            <input
-                                className={styles.saveInput}
-                                type='password'
-                                placeholder='憑證密碼（下載時設定）'
-                                value={settings.caPasswd}
-                                onChange={(e) =>
-                                    persist({ caPasswd: e.target.value })
-                                }
-                            />
+                            <div
+                                className={styles.saveRow}
+                                style={{ position: 'relative' }}
+                            >
+                                <input
+                                    className={styles.saveInput}
+                                    style={{ flex: 1, paddingRight: '30px' }}
+                                    type={showPw ? 'text' : 'password'}
+                                    placeholder='憑證密碼（下載時設定）'
+                                    value={settings.caPasswd}
+                                    onChange={(e) =>
+                                        persist({ caPasswd: e.target.value })
+                                    }
+                                />
+                                <button
+                                    className={styles.resetBtn}
+                                    style={{
+                                        position: 'absolute',
+                                        right: '4px',
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        padding: '2px 6px',
+                                        border: 'none',
+                                        background: 'transparent',
+                                    }}
+                                    title={showPw ? '隱藏密碼' : '顯示密碼'}
+                                    onClick={() => setShowPw((v) => !v)}
+                                >
+                                    {showPw ? (
+                                        <EyeOff size={13} />
+                                    ) : (
+                                        <Eye size={13} />
+                                    )}
+                                </button>
+                            </div>
+                        )}
+                        {caError && (
+                            <span
+                                className={styles.emptyHint}
+                                style={{
+                                    color: 'var(--danger, #f23645)',
+                                    fontWeight: 600,
+                                }}
+                            >
+                                ⚠ {caError}
+                            </span>
                         )}
                         {settings.production && !settings.caPath && (
                             <span
