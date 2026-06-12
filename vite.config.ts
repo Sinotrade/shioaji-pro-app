@@ -21,7 +21,16 @@ export default defineConfig(({ mode }) => {
         // shioaji app upload flattens nested paths — emit a flat bundle
         build: { assetsDir: '' },
         // react-draggable (react-grid-layout dep) reads process.env at runtime
-        define: { 'process.env': {} },
+        define: {
+            'process.env': {},
+            // feature-flag service client key (publishable) — from .env
+            // locally, or the STATSIG_CLIENT_KEY secret in CI builds
+            __STATSIG_CLIENT_KEY__: JSON.stringify(
+                env.STATSIG_CLIENT_KEY ??
+                    process.env.STATSIG_CLIENT_KEY ??
+                    '',
+            ),
+        },
         plugins: [vanillaExtractPlugin(), react()],
         resolve: {
             alias: {
