@@ -1,6 +1,6 @@
 // src/components/assistant-panel.css.ts
 
-import { style } from '@vanilla-extract/css';
+import { globalStyle, style } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const wrap = style({
@@ -256,6 +256,12 @@ export const formCol = style({
 export const formRow = style({
     display: 'flex',
     gap: vars.space.xs,
+});
+
+// chatInput/formSelect carry flex:1 for horizontal rows — as direct children
+// of the vertical formCol that would stretch them to fill the panel height
+globalStyle(`${formCol} > input, ${formCol} > select`, {
+    flex: '0 0 auto',
 });
 
 export const formArea = style({
