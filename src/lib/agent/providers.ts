@@ -100,6 +100,142 @@ export function anthropicSession(
     };
 }
 
+// ---- Codex subscription (Responses API on the ChatGPT backend) ----
+// Reverse-engineered endpoint used by the Codex CLI itself — quota counts
+// against the subscription's rolling window. Desktop only.
+
+import { borrowCodexCredentials } from './codex-auth';
+
+interface ResponseItem {
+    type: string;
+    role?: string;
+    content?: { type: string; text?: string }[];
+    call_id?: string;
+    name?: string;
+    arguments?: string;
+    id?: string;
+    [k: string]: unknown;
+}
+
+export function codexSession(
+    model: string,
+    system: string,
+    tools: ToolDef[],
+): ProviderSession {
+    const input: unknown[] = [];
+    return {
+        sendUser(text) {
+            input.push({
+                role: 'user',
+                content: [{ type: 'input_text', text }],
+            });
+        },
+        pushToolResults(results) {
+            for (const r of results) {
+                input.push({
+                    type: 'function_call_output',
+                    call_id: r.id,
+                    output: r.content,
+                });
+            }
+        },
+        async next() {
+            const cred = await borrowCodexCredentials();
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${cred.accessToken}`,
+            };
+            if (cred.accountId) {
+                headers['ChatGPT-Account-ID'] = cred.accountId;
+            }
+            const res = await llmFetch(
+                'https://chatgpt.com/backend-api/codex/responses',
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({
+                        model,
+                        instructions: system,
+                        input,
+                        tools: tools.map((t) => ({
+                            type: 'function',
+                            name: t.name,
+                            description: t.description,
+                            parameters: t.schema,
+                        })),
+                        store: false,
+                        stream: true,
+                    }),
+                },
+            );
+            if (!res.ok) {
+                throw new Error(
+                    `Codex ${res.status}: ${(await res.text()).slice(0, 200)}`,
+                );
+            }
+            // the endpoint only streams — collect the SSE and parse the
+            // completed output items
+            const text = await res.text();
+            const items: ResponseItem[] = [];
+            for (const line of text.split('\n')) {
+                if (!line.startsWith('data:')) continue;
+                const payload = line.slice(5).trim();
+                if (!payload || payload === '[DONE]') continue;
+                try {
+                    const ev = JSON.parse(payload) as {
+                        type?: string;
+                        item?: ResponseItem;
+                    };
+                    if (
+                        ev.type === 'response.output_item.done' &&
+                        ev.item
+                    ) {
+                        items.push(ev.item);
+                    }
+                } catch {
+                    // partial line — skip
+                }
+            }
+            // echo assistant items into the running input for continuity
+            for (const item of items) {
+                if (item.type === 'message' || item.type === 'function_call') {
+                    input.push(item);
+                }
+            }
+            return {
+                texts: items
+                    .filter((i) => i.type === 'message')
+                    .flatMap(
+                        (i) =>
+                            i.content
+                                ?.filter(
+                                    (c) =>
+                                        c.type === 'output_text' && c.text,
+                                )
+                                .map((c) => c.text!) ?? [],
+                    ),
+                toolCalls: items
+                    .filter(
+                        (i) => i.type === 'function_call' && i.call_id && i.name,
+                    )
+                    .map((i) => {
+                        let parsed: Record<string, unknown> = {};
+                        try {
+                            parsed = JSON.parse(i.arguments || '{}');
+                        } catch {
+                            // malformed arguments
+                        }
+                        return {
+                            id: i.call_id!,
+                            name: i.name!,
+                            input: parsed,
+                        };
+                    }),
+            };
+        },
+    };
+}
+
 // ---- OpenAI (chat completions + function calling) ----
 
 interface OaToolCall {

@@ -2,7 +2,12 @@
 // model stops calling tools (or the round cap). Provider-agnostic.
 
 import { getAgentConfig } from './config';
-import { anthropicSession, openaiSession, type ProviderSession } from './providers';
+import {
+    anthropicSession,
+    codexSession,
+    openaiSession,
+    type ProviderSession,
+} from './providers';
 import { buildSystemPrompt } from './skill';
 import { skillCatalogue } from './skills';
 import { executeTool, toolsForPolicy } from './tools';
@@ -20,7 +25,7 @@ export function createAgentSession(
 ): AgentSession {
     const cfg = getAgentConfig();
     const policy = overridePolicy ?? cfg.policy;
-    if (!cfg.apiKey) {
+    if (cfg.provider !== 'codex' && !cfg.apiKey) {
         throw new Error(
             cfg.provider === 'anthropic'
                 ? '尚未設定 Anthropic API Key'
@@ -32,7 +37,9 @@ export function createAgentSession(
     const session: ProviderSession =
         cfg.provider === 'anthropic'
             ? anthropicSession(cfg.apiKey, cfg.model, system, tools)
-            : openaiSession(cfg.apiKey, cfg.model, system, tools);
+            : cfg.provider === 'openai'
+              ? openaiSession(cfg.apiKey, cfg.model, system, tools)
+              : codexSession(cfg.model, system, tools);
 
     return {
         policy,

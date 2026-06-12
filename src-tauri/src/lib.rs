@@ -82,6 +82,34 @@ fn position_tray_panel(win: &tauri::WebviewWindow, rect: tauri::Rect) {
 // Returns `preferred` if it is bindable on 127.0.0.1, otherwise the first
 // free port after it (0 if none found within 50). Used to dodge port-8080
 // conflicts before spawning the shioaji sidecar.
+// Codex CLI subscription auth (~/.codex/auth.json): read for the AI Agent's
+// "Codex 訂閱" provider, write back refreshed tokens so the CLI keeps working.
+fn codex_auth_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("CODEX_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs_next_home().map(|h| h.join(".codex")))?;
+    Some(home.join("auth.json"))
+}
+
+fn dirs_next_home() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+}
+
+#[tauri::command]
+fn read_codex_auth() -> Result<String, String> {
+    let path = codex_auth_path().ok_or("無法取得家目錄")?;
+    std::fs::read_to_string(&path)
+        .map_err(|e| format!("讀取 {} 失敗：{e}（請先用 codex login 登入）", path.display()))
+}
+
+#[tauri::command]
+fn write_codex_auth(content: String) -> Result<(), String> {
+    let path = codex_auth_path().ok_or("無法取得家目錄")?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn find_free_port(preferred: u16) -> u16 {
     use std::net::TcpListener;
@@ -122,7 +150,7 @@ pub fn run() {
     }
 
     builder
-        .invoke_handler(tauri::generate_handler![find_free_port])
+        .invoke_handler(tauri::generate_handler![find_free_port, read_codex_auth, write_codex_auth])
         .setup(|app| {
             // ---- tray / menu-bar icon ----
             let show =

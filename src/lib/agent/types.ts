@@ -1,7 +1,7 @@
 // src/lib/agent/types.ts — AI Agent core types: provider-agnostic tool
 // calls, permission policies, scheduled/triggered tasks, run records.
 
-export type AgentProvider = 'anthropic' | 'openai';
+export type AgentProvider = 'anthropic' | 'openai' | 'codex';
 
 // what the agent is allowed to do with trading tools
 //  readonly — no trading tools exposed at all

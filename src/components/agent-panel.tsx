@@ -37,6 +37,8 @@ import type {
     OrderProposal,
     TaskTrigger,
 } from '../lib/agent/types';
+import { codexLoginStatus } from '../lib/agent/codex-auth';
+import { listModels } from '../lib/agent/models';
 import { ensureContract } from '../lib/contracts-cache';
 import { notify, placeQuickOrder } from '../lib/trade';
 import { fmtPrice } from '../lib/utils/format';
@@ -660,6 +662,25 @@ function SettingsTab() {
     const [keyAnth, setKeyAnth] = useState(() => getAgentKey('anthropic'));
     const [keyOa, setKeyOa] = useState(() => getAgentKey('openai'));
     const [policy, setPolicyState] = useState<AgentPolicy>(getAgentPolicy);
+    const [models, setModels] = useState<string[]>([]);
+    const [codexStatus, setCodexStatus] = useState('檢查登入狀態…');
+
+    // available models come from the provider's API, not user guessing
+    useEffect(() => {
+        let cancelled = false;
+        setModels([]);
+        listModels(provider)
+            .then((m) => !cancelled && setModels(m))
+            .catch(() => undefined);
+        if (provider === 'codex') {
+            codexLoginStatus().then(
+                (s) => !cancelled && setCodexStatus(s),
+            );
+        }
+        return () => {
+            cancelled = true;
+        };
+    }, [provider, keyAnth, keyOa]);
 
     return (
         <div className={styles.formCol}>
@@ -667,8 +688,9 @@ function SettingsTab() {
             <div className={styles.formRow}>
                 {(
                     [
-                        ['anthropic', 'Claude (Anthropic)'],
-                        ['openai', 'GPT / Codex (OpenAI)'],
+                        ['anthropic', 'Claude API'],
+                        ['openai', 'OpenAI API'],
+                        ['codex', 'Codex 訂閱'],
                     ] as [AgentProvider, string][]
                 ).map(([p, label]) => (
                     <button
@@ -686,39 +708,76 @@ function SettingsTab() {
                     </button>
                 ))}
             </div>
+            {provider === 'codex' && (
+                <span className={styles.itemSub}>
+                    使用 Codex CLI 的 ChatGPT 登入（~/.codex/auth.json），
+                    額度計入訂閱方案 — {codexStatus}
+                </span>
+            )}
             <span className={styles.itemSub}>模型</span>
-            <input
-                className={styles.chatInput}
-                value={model}
-                onChange={(e) => {
-                    setModel(e.target.value);
-                    setAgentModel(provider, e.target.value.trim());
-                }}
-            />
-            <span className={styles.itemSub}>
-                Anthropic API Key（存本機）
-            </span>
-            <input
-                className={styles.chatInput}
-                type='password'
-                placeholder='sk-ant-…'
-                value={keyAnth}
-                onChange={(e) => {
-                    setKeyAnth(e.target.value);
-                    setAgentKey('anthropic', e.target.value.trim());
-                }}
-            />
-            <span className={styles.itemSub}>OpenAI API Key（存本機）</span>
-            <input
-                className={styles.chatInput}
-                type='password'
-                placeholder='sk-…'
-                value={keyOa}
-                onChange={(e) => {
-                    setKeyOa(e.target.value);
-                    setAgentKey('openai', e.target.value.trim());
-                }}
-            />
+            {models.length > 0 ? (
+                <select
+                    className={styles.formSelect}
+                    value={model}
+                    onChange={(e) => {
+                        setModel(e.target.value);
+                        setAgentModel(provider, e.target.value);
+                    }}
+                >
+                    {!models.includes(model) && (
+                        <option value={model}>{model}</option>
+                    )}
+                    {models.map((m) => (
+                        <option key={m} value={m}>
+                            {m}
+                        </option>
+                    ))}
+                </select>
+            ) : (
+                <input
+                    className={styles.chatInput}
+                    value={model}
+                    placeholder='填入金鑰後自動載入模型清單'
+                    onChange={(e) => {
+                        setModel(e.target.value);
+                        setAgentModel(provider, e.target.value.trim());
+                    }}
+                />
+            )}
+            {provider === 'anthropic' && (
+                <>
+                    <span className={styles.itemSub}>
+                        Anthropic API Key（存本機）
+                    </span>
+                    <input
+                        className={styles.chatInput}
+                        type='password'
+                        placeholder='sk-ant-…'
+                        value={keyAnth}
+                        onChange={(e) => {
+                            setKeyAnth(e.target.value);
+                            setAgentKey('anthropic', e.target.value.trim());
+                        }}
+                    />
+                </>
+            )}
+            {provider === 'openai' && (
+                <>
+                    <span className={styles.itemSub}>
+                        OpenAI API Key（存本機）
+                    </span>
+                    <input
+                        className={styles.chatInput}
+                        type='password'
+                        placeholder='sk-…'
+                        value={keyOa}
+                        onChange={(e) => {
+                            setKeyOa(e.target.value);
+                            setAgentKey('openai', e.target.value.trim());
+                        }}
+                    />
+                </>
+            )}
             <span className={styles.itemSub}>預設權限（對話使用）</span>
             <div className={styles.formRow}>
                 {POLICIES.map((p) => (

@@ -28,7 +28,9 @@
         { "url": "http://127.0.0.1:*/*" },
         { "url": "http://localhost:*/*" },
         { "url": "https://api.anthropic.com/*" },
-        { "url": "https://api.openai.com/*" }
+        { "url": "https://api.openai.com/*" },
+        { "url": "https://chatgpt.com/*" },
+        { "url": "https://auth.openai.com/*" }
       ]
     },
     {

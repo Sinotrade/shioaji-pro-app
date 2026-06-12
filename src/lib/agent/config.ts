@@ -14,6 +14,7 @@ const K = {
 const DEFAULT_MODEL: Record<AgentProvider, string> = {
     anthropic: 'claude-sonnet-4-6',
     openai: 'gpt-5.1',
+    codex: 'gpt-5.4-codex',
 };
 
 function get(key: string): string {
@@ -40,7 +41,8 @@ export interface AgentConfig {
 }
 
 export function getAgentProvider(): AgentProvider {
-    return get(K.provider) === 'openai' ? 'openai' : 'anthropic';
+    const v = get(K.provider);
+    return v === 'openai' || v === 'codex' ? v : 'anthropic';
 }
 
 export function setAgentProvider(p: AgentProvider) {
@@ -52,22 +54,22 @@ export function getAgentKey(provider: AgentProvider): string {
         // migrate from the old assistant key
         return get(K.keyAnthropic) || get('sj-pro-anthropic-key');
     }
-    return get(K.keyOpenai);
+    if (provider === 'openai') return get(K.keyOpenai);
+    return ''; // codex uses the CLI's ChatGPT session, no API key
 }
 
 export function setAgentKey(provider: AgentProvider, key: string) {
+    if (provider === 'codex') return;
     set(provider === 'anthropic' ? K.keyAnthropic : K.keyOpenai, key);
 }
 
 export function getAgentModel(provider: AgentProvider): string {
-    const v = get(
-        provider === 'anthropic' ? K.modelAnthropic : K.modelOpenai,
-    );
+    const v = get(`sj-agent-model-${provider}`);
     return v || DEFAULT_MODEL[provider];
 }
 
 export function setAgentModel(provider: AgentProvider, model: string) {
-    set(provider === 'anthropic' ? K.modelAnthropic : K.modelOpenai, model);
+    set(`sj-agent-model-${provider}`, model);
 }
 
 export function getAgentPolicy(): AgentPolicy {
