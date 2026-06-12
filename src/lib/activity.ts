@@ -1,4 +1,4 @@
-// src/lib/agent/activity.ts — ambient operation log: key user actions
+// src/lib/activity.ts — ambient operation log: key user actions
 // (symbol picks, panel opens, orders, presets) recorded locally so the
 // resident observation task can mine recurring workflows and converge them
 // into skills (Hermes-style procedural memory, learned by watching).

@@ -1,6 +1,6 @@
 // src/lib/trade.ts — one-shot order helper + in-app notification channel
 
-import { trackActivity } from './agent/activity';
+import { trackActivity } from './activity';
 import { checkOrderAllowed } from './risk';
 import {
     cancelOrder,

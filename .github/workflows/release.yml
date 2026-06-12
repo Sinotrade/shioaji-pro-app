@@ -54,6 +54,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # the AI Agent is a closed-source desktop module — pull it into
+      # agent/ via a read-only deploy key so the desktop build is complete
+      - name: Checkout desktop agent module (private)
+        shell: bash
+        env:
+          AGENT_SSH_KEY: ${{ secrets.AGENT_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
+          chmod 600 ~/.ssh/agent_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" \
+            git clone --depth 1 git@github.com:Yvictor/shioaji-pro-desktop.git agent
+          rm ~/.ssh/agent_key
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10

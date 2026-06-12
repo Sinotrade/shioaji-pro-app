@@ -18,8 +18,9 @@
         "noEmit": true,
         "baseUrl": ".",
         "paths": {
-            "@/*": ["src/*"]
+            "@/*": ["src/*"],
+            "@agent": ["agent/index.ts", "src/agent-stub/index.tsx"]
         }
     },
-    "include": ["src"]
+    "include": ["src", "agent"]
 }

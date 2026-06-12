@@ -10,7 +10,7 @@ import {
     fetchInfo,
     subscribeTradeEvents,
 } from './shioaji';
-import { ensureAgentScheduler } from './agent/tasks';
+import { ensureAgentScheduler } from '@agent';
 import { isTauri, setApiPort } from './runtime';
 import { onOrderEvent } from './stream';
 import { loadDesktopSettings, serverStart, serverStatus } from './tauri';
