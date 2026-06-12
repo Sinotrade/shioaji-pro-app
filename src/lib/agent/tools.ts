@@ -5,6 +5,7 @@
 
 import { ensureContract } from '../contracts-cache';
 import { activityLog } from './activity';
+import { findPackage, readReference } from './marketplace';
 import {
     cancelOrder,
     fetchAccountBalance,
@@ -110,11 +111,25 @@ export const TOOL_DEFS: ToolDef[] = [
     },
     {
         name: 'use_skill',
-        description: '載入一個具名技能的完整工作流程步驟，然後照著執行',
+        description:
+            '載入一個具名技能的完整內容（使用者技能的工作流程步驟，或市集技能包的 SKILL.md），然後照著執行',
         schema: {
             type: 'object',
             properties: { name: { type: 'string', description: '技能名稱' } },
             required: ['name'],
+        },
+    },
+    {
+        name: 'read_skill_reference',
+        description:
+            '讀取市集技能包的參考文件內容（如 shioaji 的 ORDERS.md／STREAMING.md）— 需要 API 細節時先 use_skill 看文件清單再讀對應檔案',
+        schema: {
+            type: 'object',
+            properties: {
+                skill: { type: 'string', description: '技能包名稱，如 shioaji' },
+                file: { type: 'string', description: '文件檔名，如 ORDERS.md' },
+            },
+            required: ['skill', 'file'],
         },
     },
     {
@@ -386,16 +401,44 @@ export async function executeTool(
             };
         }
         case 'use_skill': {
-            const skill = findSkill(String(input.name ?? ''));
-            if (!skill) {
-                return { result: { error: `找不到技能 ${input.name}` } };
+            const wanted = String(input.name ?? '');
+            const skill = findSkill(wanted);
+            if (skill) {
+                return {
+                    result: {
+                        name: skill.name,
+                        instructions: skill.instructions,
+                    },
+                };
             }
-            return {
-                result: {
-                    name: skill.name,
-                    instructions: skill.instructions,
-                },
-            };
+            const pkg = findPackage(wanted);
+            if (pkg) {
+                return {
+                    result: {
+                        name: pkg.name,
+                        source: `${pkg.repo}@${pkg.version}`,
+                        skill_md: pkg.skillMd,
+                        references: pkg.references.map((r) => r.name),
+                        note: '需要文件細節時用 read_skill_reference 讀取對應檔案',
+                    },
+                };
+            }
+            return { result: { error: `找不到技能 ${wanted}` } };
+        }
+        case 'read_skill_reference': {
+            try {
+                const content = await readReference(
+                    String(input.skill ?? ''),
+                    String(input.file ?? ''),
+                );
+                return { result: { file: input.file, content } };
+            } catch (e) {
+                return {
+                    result: {
+                        error: e instanceof Error ? e.message : String(e),
+                    },
+                };
+            }
         }
         case 'save_skill': {
             const name = String(input.name ?? '').trim();

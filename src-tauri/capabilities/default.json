@@ -30,7 +30,9 @@
         { "url": "https://api.anthropic.com/*" },
         { "url": "https://api.openai.com/*" },
         { "url": "https://chatgpt.com/*" },
-        { "url": "https://auth.openai.com/*" }
+        { "url": "https://auth.openai.com/*" },
+        { "url": "https://api.github.com/*" },
+        { "url": "https://raw.githubusercontent.com/*" }
       ]
     },
     {

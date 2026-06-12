@@ -8,8 +8,10 @@ import {
     ChevronRight,
     GitBranch,
     History,
+    Package,
     Play,
     Plus,
+    RefreshCw,
     Trash2,
     Wrench,
     X,
@@ -66,6 +68,13 @@ import type {
     TaskTrigger,
 } from '../lib/agent/types';
 import { codexLoginStatus } from '../lib/agent/codex-auth';
+import {
+    ensureShioajiPackage,
+    getPackages,
+    installFromRepo,
+    removePackage,
+    subscribePackages,
+} from '../lib/agent/marketplace';
 import { listModels } from '../lib/agent/models';
 import { ensureContract } from '../lib/contracts-cache';
 import { notify, placeQuickOrder } from '../lib/trade';
@@ -803,7 +812,91 @@ function SkillsTab() {
             <button className={styles.sendBtn} onClick={() => startEdit()}>
                 ＋ 新增技能
             </button>
+            <MarketplaceSection />
         </div>
+    );
+}
+
+// skill packages installed from a Claude-plugin style marketplace repo
+function MarketplaceSection() {
+    const [, bump] = useState(0);
+    const [repo, setRepo] = useState('Sinotrade/Shioaji');
+    const [installing, setInstalling] = useState(false);
+    const [msg, setMsg] = useState('');
+
+    useEffect(() => subscribePackages(() => bump((v) => v + 1)), []);
+    const pkgs = getPackages();
+
+    const install = async () => {
+        setInstalling(true);
+        setMsg('');
+        try {
+            const res = await installFromRepo(repo);
+            setMsg(`✓ 已安裝：${res.installed.join('、')}`);
+        } catch (e) {
+            setMsg(`✗ ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+            setInstalling(false);
+        }
+    };
+
+    return (
+        <>
+            <span className={styles.itemSub} style={{ marginTop: '8px' }}>
+                技能市集（Claude plugin marketplace 格式）
+            </span>
+            {pkgs.map((p) => (
+                <div key={p.id} className={styles.itemRow}>
+                    <div className={styles.itemMain}>
+                        <span className={styles.itemTitle}>
+                            <Package size={11} /> {p.name}
+                            <span className={styles.itemSub}>
+                                {' '}
+                                {p.repo}@{p.version} ·{' '}
+                                {p.references.length} 份文件
+                            </span>
+                        </span>
+                        <span className={styles.itemSub}>
+                            {p.description.slice(0, 80)}
+                        </span>
+                    </div>
+                    <button
+                        className={styles.itemIconBtn}
+                        title='重新安裝（更新）'
+                        disabled={installing}
+                        onClick={() => {
+                            setRepo(p.repo);
+                            void install();
+                        }}
+                    >
+                        <RefreshCw size={11} />
+                    </button>
+                    <button
+                        className={styles.itemIconBtn}
+                        title='移除技能包'
+                        onClick={() => removePackage(p.id)}
+                    >
+                        <Trash2 size={11} />
+                    </button>
+                </div>
+            ))}
+            <div className={styles.formRow}>
+                <input
+                    className={styles.chatInput}
+                    placeholder='owner/repo，如 Sinotrade/Shioaji'
+                    value={repo}
+                    onChange={(e) => setRepo(e.target.value)}
+                />
+                <button
+                    className={styles.sendBtn}
+                    disabled={installing || !repo.trim()}
+                    onClick={() => void install()}
+                >
+                    {installing ? '安裝中…' : '安裝'}
+                </button>
+            </div>
+            {msg && <span className={styles.itemSub}>{msg}</span>}
+        </>
     );
 }
 
@@ -1270,6 +1363,10 @@ function SettingsTab() {
 
 export function AgentPanel() {
     const [tab, setTab] = useState<Tab>('chat');
+    // pre-install the shioaji skill package once（背景靜默）
+    useEffect(() => {
+        ensureShioajiPackage();
+    }, []);
     return (
         <div className={styles.wrap}>
             <div className={styles.tabBar}>

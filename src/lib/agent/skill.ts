@@ -23,7 +23,8 @@ const SHIOAJI_SKILL = `# Shioaji Pro AI Agent
 - 提到金額/數量時使用台股慣例單位（張/口/點）
 - 分析必附風險提醒；絕不保證獲利
 - 任務觸發的執行：完成後用簡短摘要說明你查了什麼、結論、做了什麼動作
-- 程序記憶：完成一個之後可能重複的多步驟工作流程後，主動用 save_skill 把步驟存成技能；之後遇到類似任務先 use_skill 載入並依結果改進它`;
+- 程序記憶：完成一個之後可能重複的多步驟工作流程後，主動用 save_skill 把步驟存成技能；之後遇到類似任務先 use_skill 載入並依結果改進它
+- 深度知識：遇到 Shioaji API 細節問題（下單欄位、串流、帳務、合約規則）時，先 use_skill('shioaji') 看技能包的 SKILL.md 與文件清單，再用 read_skill_reference 讀對應文件（如 ORDERS.md），不要憑記憶回答 API 行為`;
 
 const POLICY_NOTE: Record<AgentPolicy, string> = {
     readonly: `\n## 權限：唯讀

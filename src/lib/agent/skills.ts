@@ -5,6 +5,7 @@
 // directly with /技能名 in chat / by binding it to a scheduled task.
 
 import { useSyncExternalStore } from 'react';
+import { getPackages } from './marketplace';
 
 export interface AgentSkill {
     id: string;
@@ -140,8 +141,20 @@ export function useSkills(): AgentSkill[] {
 // the catalogue advertised in the system prompt
 export function skillCatalogue(): string {
     const all = getSkills();
-    if (all.length === 0) return '';
-    return `\n## 可用技能（用 use_skill 工具載入完整步驟）\n${all
-        .map((s) => `- ${s.name}：${s.description}`)
-        .join('\n')}`;
+    const pkgs = getPackages();
+    let out = '';
+    if (all.length > 0) {
+        out += `\n## 可用技能（用 use_skill 工具載入完整步驟）\n${all
+            .map((s) => `- ${s.name}：${s.description}`)
+            .join('\n')}`;
+    }
+    if (pkgs.length > 0) {
+        out += `\n## 已安裝技能包（先 use_skill 看 SKILL.md 與文件清單，細節用 read_skill_reference 讀取）\n${pkgs
+            .map(
+                (p) =>
+                    `- ${p.name}（${p.repo}@${p.version}）：${p.description.slice(0, 120)}`,
+            )
+            .join('\n')}`;
+    }
+    return out;
 }
