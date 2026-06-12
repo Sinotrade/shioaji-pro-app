@@ -11,6 +11,10 @@ it talks directly to your local `shioaji server`.
 以 Shioaji HTTP API 打造的專業交易終端：即時行情、K 線、五檔、閃電下單、
 圖表點價下單、停損停利觸價單、可拖拉的自訂版面。
 
+**介面 100% 開源** — UI、行情串流、下單鏈路全部都在這個 repo，
+clone 下來就能 build 出完整的 Web 版終端。桌面版外殼（Tauri）與
+AI Agent 為專屬模組，直接到 Releases 下載安裝檔即可使用。
+
 ![Shioaji Pro — futures night session](docs/screenshot-futures.png)
 
 ## Features 功能
@@ -54,6 +58,8 @@ it talks directly to your local `shioaji server`.
 到 [Releases](https://github.com/Sinotrade/shioaji-pro-app/releases) 下載對應平台安裝檔
 （macOS `.dmg`、Windows `.msi`、Linux `.AppImage`/`.deb`/`.rpm`）。桌面版特色：
 
+- **AI Agent** — 多供應商（Claude / Codex）agentic 對話、shioaji 技能市集、
+  排程任務、操作觀察學習（桌面版專屬）
 - **內建 shioaji server**（sidecar）— 不需另外安裝 CLI
 - **伺服器管理介面** — header「伺服器」選單：啟動/停止/重啟、健康狀態、
   PID/port、token 效期；API 金鑰在介面填寫（存於本機 App 資料夾）
@@ -64,15 +70,8 @@ it talks directly to your local `shioaji server`.
 - **多視窗 Popout** — 面板 ⧉ 彈出為原生視窗，多螢幕交易
 - **單一實例** — 重複開啟自動聚焦既有視窗
 
-桌面版開發：
-
-```sh
-pnpm tauri dev    # 需先放置 sidecar：src-tauri/binaries/shioaji-<target-triple>
-pnpm tauri build
-```
-
-發佈：推 `v*` tag 觸發 GitHub Actions，自動建置 macOS（Intel/Apple Silicon）、
-Windows、Linux 並上傳 Release 與 updater manifest。
+> 桌面版外殼（Tauri）與 AI Agent 為專屬模組，不在本 repo —— 本 repo
+> 可 build 出完整的 Web 版終端（CI 持續驗證），桌面版請直接下載安裝檔。
 
 ## Getting Started 開始使用（Web 版）
 
