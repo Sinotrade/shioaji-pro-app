@@ -3,12 +3,13 @@
 // buying the combo lifts the Buy legs' asks and hits the Sell legs' bids,
 // so 合成買價 = Σ(±bid/ask) accordingly. Working combos listed with cancel.
 
-import { Crosshair } from 'lucide-react';
+import { Crosshair, Link2, Lock, Unlock } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { usePoll } from '../hooks/use-poll';
 import { ensureContract } from '../lib/contracts-cache';
+import { useOptionLegPick } from '../lib/option-pick';
 import {
     cancelComboOrder,
     fetchComboTrades,
@@ -29,6 +30,7 @@ interface LegState {
     contract: ContractInfo | null;
     action: 'Buy' | 'Sell';
     error: boolean;
+    locked: boolean; // 連動模式下鎖定的腳不被 T 字點擊覆寫
 }
 
 const EMPTY_LEG: LegState = {
@@ -36,6 +38,7 @@ const EMPTY_LEG: LegState = {
     contract: null,
     action: 'Buy',
     error: false,
+    locked: false,
 };
 
 function LegQuote({
@@ -99,7 +102,9 @@ export function ComboTicket() {
     const [armed, setArmed] = useState(false);
     const [busy, setBusy] = useState(false);
     const [orderType, setOrderType] = useState<'IOC' | 'FOK' | 'ROD'>('IOC');
+    const [linkChain, setLinkChain] = useState(false); // 連動 T 字
     const live = useTradingLive();
+    const optPick = useOptionLegPick();
 
     const tradesPoll = usePoll<ComboTrade[]>(
         useCallback(() => fetchComboTrades().catch(() => []), []),
@@ -121,8 +126,8 @@ export function ComboTicket() {
             prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)),
         );
 
-    const resolveLeg = async (i: number) => {
-        const code = legs[i]!.input.trim().toUpperCase();
+    const resolveCode = async (i: number, raw: string) => {
+        const code = raw.trim().toUpperCase();
         if (!code) return;
         try {
             const c = await ensureContract(code);
@@ -138,6 +143,24 @@ export function ComboTicket() {
             setLeg(i, { contract: null, error: true });
         }
     };
+    const resolveLeg = (i: number) => resolveCode(i, legs[i]!.input);
+
+    // 連動 T 字 (issue #1): a click in the 選擇權 T 字 fills the next
+    // unlocked leg, alternating — lock a leg to pin it while you pick the
+    // other. Refs avoid re-subscribing the picker on every leg edit.
+    const legsRef = useRef(legs);
+    legsRef.current = legs;
+    useEffect(() => {
+        if (!linkChain || !optPick) return;
+        const cur = legsRef.current;
+        // prefer an empty unlocked leg, else the first unlocked leg
+        let target = cur.findIndex((l) => !l.locked && !l.contract);
+        if (target < 0) target = cur.findIndex((l) => !l.locked);
+        if (target < 0) return; // both locked
+        void resolveCode(target, optPick.code);
+        setArmed(false);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [optPick?.seq, linkChain]);
 
     const synth = useSynthetic(legs);
     // autofill price from synthetic mid until the user edits it
@@ -304,6 +327,21 @@ export function ComboTicket() {
 
     return (
         <div className={styles.body}>
+            <div className={styles.fieldRow}>
+                <button
+                    className={styles.iconToggle[linkChain ? 'on' : 'off']}
+                    title='連動選擇權 T 字：點 T 字報價自動填入未鎖定的腳'
+                    onClick={() => setLinkChain((v) => !v)}
+                    style={{ width: 'auto', padding: '2px 8px', gap: '4px' }}
+                >
+                    <Link2 size={11} /> 連動 T 字
+                </button>
+                {linkChain && (
+                    <span className={styles.costRow} style={{ margin: 0 }}>
+                        點 T 字填入未鎖定的腳，交替填兩腳
+                    </span>
+                )}
+            </div>
             {legs.map((leg, i) => (
                 <div key={i}>
                     <div className={styles.fieldRow}>
@@ -331,6 +369,19 @@ export function ComboTicket() {
                             onKeyDown={(e) => e.key === 'Enter' && resolveLeg(i)}
                             onBlur={() => resolveLeg(i)}
                         />
+                        {linkChain && (
+                            <button
+                                className={styles.iconToggle[leg.locked ? 'on' : 'off']}
+                                title={leg.locked ? '已鎖定（T 字點擊不覆寫）' : '鎖定此腳'}
+                                onClick={() => setLeg(i, { locked: !leg.locked })}
+                            >
+                                {leg.locked ? (
+                                    <Lock size={11} />
+                                ) : (
+                                    <Unlock size={11} />
+                                )}
+                            </button>
+                        )}
                     </div>
                     {leg.contract && (
                         <LegQuote contract={leg.contract} action={leg.action} />

@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { apiPost } from '../lib/api';
+import { pickOptionLeg } from '../lib/option-pick';
 import { fetchSnapshots } from '../lib/shioaji';
 import type { Snapshot } from '../lib/types/market';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
@@ -270,7 +271,12 @@ export function OptionChain({
                                     const code = left
                                         ? r.call?.code
                                         : r.put?.code;
-                                    if (code) onPick(code);
+                                    if (code) {
+                                        onPick(code);
+                                        // also offer it to a combo panel in
+                                        // 連動 mode (issue #1)
+                                        pickOptionLeg(code);
+                                    }
                                 }}
                             >
                                 <Cell code={r.call?.code} />

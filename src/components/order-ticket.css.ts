@@ -138,6 +138,36 @@ export const seg = styleVariants({
     ],
 });
 
+const iconToggleBase = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '24px',
+    height: '24px',
+    flexShrink: 0,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    background: 'transparent',
+    color: vars.color.mutedForeground,
+    cursor: 'pointer',
+    transition: 'all 0.12s',
+});
+
+export const iconToggle = styleVariants({
+    off: [
+        iconToggleBase,
+        { ':hover': { color: vars.color.foreground, borderColor: vars.color.borderBright } },
+    ],
+    on: [
+        iconToggleBase,
+        {
+            color: vars.color.accent,
+            borderColor: vars.color.accent,
+            background: vars.color.accentDim,
+        },
+    ],
+});
+
 const execBase = style({
     fontFamily: vars.font.display,
     fontSize: '0.82rem',
