@@ -13,6 +13,7 @@
         "@statsig/js-client": "^3.33.2",
         "@tauri-apps/api": "^2.11.0",
         "@tauri-apps/plugin-dialog": "^2.7.1",
+        "@tauri-apps/plugin-fs": "^2.5.1",
         "@tauri-apps/plugin-http": "^2.5.9",
         "@tauri-apps/plugin-notification": "^2.3.3",
         "@tauri-apps/plugin-process": "^2.3.1",
