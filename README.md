@@ -70,6 +70,8 @@ AI Agent 為專屬模組，直接到 Releases 下載安裝檔即可使用。
 到 [Releases](https://github.com/Sinotrade/shioaji-pro-app/releases) 下載對應平台安裝檔
 （macOS `.dmg`、Windows `.msi`、Linux `.AppImage`/`.deb`/`.rpm`）。桌面版特色：
 
+系統需求：macOS 13.3+（Apple Silicon / Intel）、Windows 10/11 x64、Linux x86_64。
+
 - **AI Agent** — 多供應商（Claude / Codex）agentic 對話、shioaji 技能市集、
   排程任務、操作觀察學習（桌面版專屬）
 - **內建 shioaji server**（sidecar）— 不需另外安裝 CLI

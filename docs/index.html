@@ -783,7 +783,7 @@
     <div class="steps rv">
       <div class="step">
         <h3>下載安裝</h3>
-        <p>下載對應平台安裝檔。macOS 已完成 Apple 簽章與公證，開啟即用。</p>
+        <p>下載對應平台安裝檔。macOS 13.3+ 已完成 Apple 簽章與公證，開啟即用。</p>
       </div>
       <div class="step">
         <h3>填入 API Key</h3>
@@ -806,7 +806,7 @@
     <div class="dl-grid rv">
       <div class="dl-card">
         <h3>macOS</h3>
-        <div class="arch">已簽章・已公證</div>
+        <div class="arch">13.3+・已簽章・已公證</div>
         <div class="dl-links" id="dl-mac">
           <a class="dl-link" href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Apple Silicon <span class="ext">.dmg</span></a>
           <a class="dl-link" href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Intel <span class="ext">.dmg</span></a>
@@ -1199,7 +1199,7 @@
       var url = null, label = null;
       if (/Macintosh/.test(ua)) {
         url = asset(/aarch64\.dmg$/); label = '下載 macOS 版 (Apple Silicon)';
-        note.textContent = 'Intel Mac 請至下方下載區 ・ 已簽章公證 ・ 自動更新';
+        note.textContent = 'macOS 13.3+ ・ Intel Mac 請至下方下載區 ・ 已簽章公證';
       } else if (/Windows/.test(ua)) {
         url = asset(/\.msi$/); label = '下載 Windows 版 (.msi)';
       } else if (/Linux/.test(ua)) {
