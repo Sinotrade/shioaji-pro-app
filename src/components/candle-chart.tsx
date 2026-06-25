@@ -12,7 +12,7 @@ import {
     type ISeriesApi,
     type UTCTimestamp,
 } from 'lightweight-charts';
-import { Bell, Crosshair, OctagonX, X } from 'lucide-react';
+import { Bell, Crosshair, Maximize2, OctagonX, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { bollinger, ema, sma, vwap } from '../lib/indicators';
@@ -388,6 +388,13 @@ export function CandleChart({
                 loadedKeyRef.current = loadKey;
                 setDataVersion((v) => v + 1);
                 chartRef.current?.timeScale().scrollToRealTime();
+                // a manual price-axis drag disables autoScale and pins the
+                // range; without re-enabling it the prior symbol's price band
+                // sticks (e.g. a 1000元 stock leaves a 10元 stock off-screen,
+                // issue #6) — restore auto-fit for every freshly loaded symbol
+                candleSeriesRef.current
+                    .priceScale()
+                    .applyOptions({ autoScale: true });
             })
             .catch(() => {
                 if (cancelled) return;
@@ -522,6 +529,15 @@ export function CandleChart({
             );
             return next;
         });
+    };
+
+    // recalibrate the view — re-fit both axes after the user has panned or
+    // dragged the price scale into a corner (issue #6: no reset control)
+    const resetView = () => {
+        const chart = chartRef.current;
+        if (!chart) return;
+        candleSeriesRef.current?.priceScale().applyOptions({ autoScale: true });
+        chart.timeScale().fitContent();
     };
 
     // draw working-order price lines (buy=up color / sell=down color)
@@ -711,6 +727,14 @@ export function CandleChart({
                         {t.label}
                     </button>
                 ))}
+                <button
+                    className={styles.iconBtn}
+                    onClick={resetView}
+                    title='重設視圖（自動縮放）'
+                    aria-label='重設視圖'
+                >
+                    <Maximize2 size={12} />
+                </button>
                 <span className={styles.toolbarDivider} />
                 {TRADE_MODES.map((m) => (
                     <button

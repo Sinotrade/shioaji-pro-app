@@ -43,6 +43,16 @@ export const tfBtn = styleVariants({
     ],
 });
 
+export const iconBtn = style([
+    tfBase,
+    {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '2px 6px',
+    },
+]);
+
 export const toolbarDivider = style({
     width: '1px',
     alignSelf: 'stretch',
