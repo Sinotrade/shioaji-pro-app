@@ -46,7 +46,10 @@ export default defineConfig(({ mode }) => {
             // default stays 5173 for tauri dev
             port: Number(process.env.PORT) || 5173,
             proxy: {
-                '/api': 'http://localhost:8080',
+                // dev 打自帶 sidecar（scripts/dev-api.sh，與 CI 打包同版
+                // binary、port 21322）— 確保 API/UI 版本相符，不依賴使用
+                // 者自裝在 8080 的 CLI。要打別台時用 VITE_API_TARGET 蓋掉
+                '/api': env.VITE_API_TARGET ?? 'http://127.0.0.1:21322',
             },
         },
     };

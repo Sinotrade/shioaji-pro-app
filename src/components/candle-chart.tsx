@@ -156,6 +156,9 @@ export function CandleChart({
     // sub-pane layout memory: instId -> pane index（上次重建的配置）與
     // instId -> 高度 px（使用者拖出來的上下圖比例，重建時還原）
     const paneAssignRef = useRef(new Map<string, number>());
+    // stretch factor 是比例值 — 用它保存/還原上下圖比例才不會像 px
+    // 高度那樣每次重建累積捨入漂移；'__main' 鍵保存主圖那份
+    const paneStretchRef = useRef(new Map<string, number>());
     const paneHeightsRef = useRef(new Map<string, number>());
     // 副圖 legend 定位：instId -> pane 在 chartHost 內的 top offset px
     const [paneTops, setPaneTops] = useState<Record<string, number>>({});
@@ -644,11 +647,15 @@ export function CandleChart({
     useEffect(() => {
         const chart = chartRef.current;
         if (!chart) return;
-        // remember the user-dragged height of every existing sub-pane
-        // BEFORE teardown — rebuilds must not reset the 上下圖比例
+        // remember the user-dragged proportions of every pane BEFORE
+        // teardown — rebuilds must not reset the 上下圖比例
         try {
             const panes = chart.panes();
+            const mainSf = panes[0]?.getStretchFactor();
+            if (mainSf) paneStretchRef.current.set('__main', mainSf);
             paneAssignRef.current.forEach((paneIdx, instId) => {
+                const sf = panes[paneIdx]?.getStretchFactor();
+                if (sf) paneStretchRef.current.set(instId, sf);
                 const h = panes[paneIdx]?.getHeight();
                 if (h && h > 0) paneHeightsRef.current.set(instId, h);
             });
@@ -841,15 +848,21 @@ export function CandleChart({
                 }
             }
         }
-        // restore each instance's remembered pane height（使用者拖過的
-        // 上下圖比例在移除別的指標/改參數/收 K 棒重建後都要保住）；
-        // 只有第一次出現的 pane 用預設 110px
+        // restore the remembered proportions（stretch factor 精確還原，
+        // 含主圖；px 只當第一次出現的 pane 的預設值用）
         try {
             const panes = chart.panes();
+            const mainSf = paneStretchRef.current.get('__main');
+            if (mainSf && panes[0]) panes[0].setStretchFactor(mainSf);
             paneAssign.forEach((paneIdx, instId) => {
-                panes[paneIdx]?.setHeight(
-                    paneHeightsRef.current.get(instId) ?? 110,
-                );
+                const sf = paneStretchRef.current.get(instId);
+                if (sf) {
+                    panes[paneIdx]?.setStretchFactor(sf);
+                } else {
+                    panes[paneIdx]?.setHeight(
+                        paneHeightsRef.current.get(instId) ?? 110,
+                    );
+                }
             });
         } catch {
             // pane API differences must never take the chart down

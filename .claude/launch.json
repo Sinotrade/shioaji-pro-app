@@ -8,6 +8,12 @@
             "autoPort": true
         },
         {
+            "name": "api",
+            "runtimeExecutable": "./scripts/dev-api.sh",
+            "runtimeArgs": [],
+            "port": 21322
+        },
+        {
             "name": "landing",
             "runtimeExecutable": "python3",
             "runtimeArgs": ["-m", "http.server", "8787", "-d", "docs"],
