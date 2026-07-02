@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  SHIOAJI_VERSION: v1.5.3
+  SHIOAJI_VERSION: v1.5.5
 
 jobs:
   # Create the draft release ONCE before the matrix fans out — when the four

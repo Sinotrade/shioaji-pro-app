@@ -1,7 +1,15 @@
 // src/lib/tauri.ts — desktop bridge: sidecar server management, popout
 // windows, auto-updates. Every entry point is a no-op in the browser.
 
-import { getApiPort, isTauri, setApiPort } from './runtime';
+import {
+    DEFAULT_PORT,
+    LEGACY_PORT,
+    getApiPort,
+    getServerPid,
+    isTauri,
+    setApiPort,
+    setServerPid,
+} from './runtime';
 import { notify } from './trade';
 
 export { isTauri } from './runtime';
@@ -64,21 +72,27 @@ async function spawnServer(
         buf += `\n${String(e)}`;
         exitCode = -1;
     });
+    let child: { pid?: number } | null = null;
     try {
-        await cmd.spawn();
+        child = await cmd.spawn();
     } catch (e) {
         return { ok: false, output: `啟動失敗：${String(e)}` };
     }
+    // remember the child pid — a foreground `server start` never registers
+    // with the CLI daemon state, so stop/restart (even after an app relaunch)
+    // must kill this pid ourselves
+    if (child?.pid) setServerPid(child.pid);
     // poll until the server answers, or it dies, or we give up (~45s covers a
     // production login + CA activation + contract load)
     const deadline = Date.now() + 45_000;
     while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 1500));
-        if (await probeShioaji(port)) {
+        if (await probeInfo(port)) {
             return { ok: true, output: buf.replace(ANSI_RE, '').trim() };
         }
         if (exitCode !== null && exitCode !== 0) {
             // process exited before serving — a real start failure
+            setServerPid(null);
             return { ok: false, output: buf.replace(ANSI_RE, '').trim() };
         }
     }
@@ -89,37 +103,93 @@ async function spawnServer(
     };
 }
 
+// Ports a shioaji server could be answering on: whatever the app last used,
+// the app default, and the CLI default (a user-run `shioaji server` daemon).
+function candidatePorts(): number[] {
+    return [...new Set([getApiPort(), DEFAULT_PORT, LEGACY_PORT])];
+}
+
+// The CLI's `server status` only knows daemonized servers — a foreground
+// `server start` (which is how this app spawns it) never appears there, and
+// its state file goes stale. Ground truth is therefore an HTTP probe of the
+// candidate ports; the CLI registry is only consulted as a last resort for
+// daemons living on some other port.
 export async function serverStatus(): Promise<ServerStatus | null> {
     if (!isTauri) return null;
+    const ports = candidatePorts();
+    const infos = await Promise.all(ports.map((p) => probeInfo(p)));
+    for (const [i, port] of ports.entries()) {
+        const info = infos[i];
+        if (!info) continue;
+        return {
+            running: true,
+            port,
+            healthy: await probeHealthy(port),
+            simulation: info.simulation,
+            pid: getServerPid() ?? undefined,
+        };
+    }
     try {
         const res = await sidecar(['server', 'status', '--format', 'json']);
         const jsonStart = res.output.indexOf('{');
         if (jsonStart >= 0) {
-            return JSON.parse(res.output.slice(jsonStart)) as ServerStatus;
+            const st = JSON.parse(
+                res.output.slice(jsonStart),
+            ) as ServerStatus;
+            if (st.running && st.port && !ports.includes(st.port)) {
+                const info = await probeInfo(st.port);
+                if (info) {
+                    return {
+                        running: true,
+                        port: st.port,
+                        healthy: await probeHealthy(st.port),
+                        simulation: info.simulation,
+                        pid: st.pid,
+                    };
+                }
+            }
         }
     } catch {
         // sidecar missing / failed
     }
-    return null;
+    return { running: false };
 }
 
-// is a shioaji HTTP server already answering on this port?
-async function probeShioaji(port: number): Promise<boolean> {
+// is a shioaji HTTP server answering on this port? (null = no / not shioaji)
+async function probeInfo(
+    port: number,
+): Promise<{ version: string; simulation: boolean } | null> {
     try {
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
         const res = await tauriFetch(
             `http://127.0.0.1:${port}/api/v1/info`,
             { signal: AbortSignal.timeout(1500) },
         );
-        if (!res.ok) return false;
+        if (!res.ok) return null;
         const info = (await res.json()) as {
             version?: string;
             simulation?: boolean;
         };
-        return (
+        if (
             typeof info.version === 'string' &&
             typeof info.simulation === 'boolean'
+        ) {
+            return { version: info.version, simulation: info.simulation };
+        }
+    } catch {
+        // not answering
+    }
+    return null;
+}
+
+async function probeHealthy(port: number): Promise<boolean> {
+    try {
+        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+        const res = await tauriFetch(
+            `http://127.0.0.1:${port}/api/v1/health`,
+            { signal: AbortSignal.timeout(2000) },
         );
+        return res.ok;
     } catch {
         return false;
     }
@@ -168,8 +238,33 @@ export async function serverStart(opts: {
     // if its CA is actually active — otherwise orders 400 (issue #1)
     const needsCa = !!opts.production && !!opts.caPath;
 
-    // our own daemon already running (possibly on a non-default port)?
-    const st = await serverStatus();
+    // a shioaji server already answering (ours from a previous run, or the
+    // user's own CLI daemon on :8080)? Attach only if it can actually trade
+    // in the requested mode — a CA-less daemon here is exactly why
+    // "加了 CA 還是 400" on the installed app.
+    let st = await serverStatus();
+    if (!st?.running) {
+        // an orphan of ours can sit on a fallback port with its record lost
+        // (cleared web storage) — sweep the find_free_port windows (current
+        // default + the pre-21322 legacy one) before piling yet another
+        // server on top of it
+        const win = [
+            ...Array.from({ length: 9 }, (_, i) => DEFAULT_PORT + 1 + i),
+            ...Array.from({ length: 5 }, (_, i) => LEGACY_PORT + 1 + i),
+        ];
+        const infos = await Promise.all(win.map((p) => probeInfo(p)));
+        const hit = win.findIndex((_, i) => infos[i]);
+        if (hit >= 0) {
+            const port = win[hit] as number;
+            st = {
+                running: true,
+                port,
+                healthy: await probeHealthy(port),
+                simulation: infos[hit]?.simulation,
+                pid: getServerPid() ?? undefined,
+            };
+        }
+    }
     if (st?.running && st.port) {
         const modeMismatch =
             st.simulation !== undefined &&
@@ -185,49 +280,43 @@ export async function serverStart(opts: {
                 portChanged: setApiPort(st.port),
             };
         }
-        // unhealthy, wrong mode, or CA not active — restart with the
-        // requested settings instead of attaching to a daemon that can't
-        // place orders (v0.1.13 stuck-at-連線中 + the CA-less attach bug)
-        await sidecar(['server', 'stop']);
-        await new Promise((r) => setTimeout(r, 1200));
-    }
-
-    // a shioaji server already on 8080 (e.g. the user's own CLI daemon)?
-    // attach only if it can actually trade in the requested mode — a CA-less
-    // daemon here is exactly why "加了 CA 還是 400" on the installed app
-    if (await probeShioaji(8080)) {
-        if (!needsCa || (await caActive(8080))) {
+        // unhealthy, wrong mode, or CA not active — stop it and start fresh
+        // with the requested settings instead of attaching to a daemon that
+        // can't place orders (v0.1.13 stuck-at-連線中 + the CA-less attach
+        // bug). serverStop kills our remembered pid, so this also works for
+        // the foreground servers the CLI daemon registry never sees.
+        const stopped = await serverStop();
+        if (!stopped.ok && (await probeInfo(st.port))) {
+            // still answering — an external server we can't kill; tell the
+            // user instead of piling a second server onto another port
+            const why = modeMismatch
+                ? '模式與設定不符'
+                : !caOk
+                  ? 'CA 未啟用，正式環境無法下單'
+                  : '狀態不健康';
             return {
-                ok: true,
-                output: '偵測到既有 shioaji server（:8080），直接連接',
-                port: 8080,
-                attached: true,
-                portChanged: setApiPort(8080),
+                ok: false,
+                output:
+                    `:${st.port} 已有一個 shioaji server（${why}），且無法自動停止。\n` +
+                    `${stopped.output}\n停止後再用本 App 啟動以套用設定。`.trim(),
+                port: st.port,
+                attached: false,
+                portChanged: false,
             };
         }
-        // external daemon on 8080 without active CA — we can't restart it
-        // (not ours); tell the user instead of silently 400-ing every order
-        return {
-            ok: false,
-            output:
-                ':8080 已有一個 shioaji server，但它的 CA 未啟用，正式環境無法下單。' +
-                '請先停掉那個伺服器（如自行用 CLI 啟動的），再用本 App 啟動以套用憑證。',
-            port: 8080,
-            attached: false,
-            portChanged: false,
-        };
     }
 
-    // 8080 occupied by something else → bind the first free port instead
-    let port = 8080;
+    // preferred port occupied by something else → first free port after it
+    let port = DEFAULT_PORT;
     try {
         const { invoke } = await import('@tauri-apps/api/core');
         const free = await invoke<number>('find_free_port', {
-            preferred: 8080,
+            preferred: DEFAULT_PORT,
         });
         if (free > 0) port = free;
     } catch {
-        // command unavailable — try 8080 and let the server error surface
+        // command unavailable — try the default and let the server error
+        // surface
     }
 
     const env: Record<string, string> = {
@@ -250,8 +339,8 @@ export async function serverStart(opts: {
     // will 400 (e.g. expired certificate) instead of finding out at order time
     const caFail = /Failed to activate CA[^\n]*/i.exec(res.output);
     let note =
-        res.ok && port !== 8080
-            ? `\n⚠ 8080 被占用，伺服器改用 port ${port}`
+        res.ok && port !== DEFAULT_PORT
+            ? `\n⚠ ${DEFAULT_PORT} 被占用，伺服器改用 port ${port}`
             : '';
     if (res.ok && opts.production && caFail) {
         const reason = /expired/i.test(caFail[0])
@@ -268,8 +357,60 @@ export async function serverStart(opts: {
     };
 }
 
+// Stop whatever server is serving: kill the pid we spawned (foreground
+// servers never appear in the CLI daemon registry, so `server stop` alone
+// can't touch them), then let the CLI stop any daemonized one, and finally
+// verify the port actually went quiet.
 export async function serverStop(): Promise<SidecarResult> {
-    return sidecar(['server', 'stop']);
+    if (!isTauri) return { ok: false, output: '' };
+    const st = await serverStatus();
+    const notes: string[] = [];
+    const pid = getServerPid();
+    // resolve the victim by port (survives lost pid records from older app
+    // versions); the remembered pid is only a fallback for a server that is
+    // up but not listening yet. Nothing running and no pid → nothing to kill.
+    const port = (st?.running && st.port) || getApiPort();
+    if (st?.running || pid) {
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const killed = await invoke<boolean>('kill_shioaji', {
+                port,
+                pid,
+            });
+            setServerPid(null);
+            if (killed) notes.push(`已終止伺服器（:${port}）`);
+        } catch (e) {
+            // ownership refused (external shioaji / foreign service) — keep
+            // the explanation for the caller; the pid record stays in case
+            // it referred to a not-yet-listening child
+            notes.push(String(e));
+        }
+    }
+    // a user-run daemon (started via the CLI/dashboard) is stopped here
+    const cli = await sidecar(['server', 'stop']);
+    if (cli.ok && cli.output) notes.push(cli.output);
+    if (st?.running && st.port) {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+            if (!(await probeInfo(st.port))) {
+                return {
+                    ok: true,
+                    output: notes.join('\n') || '伺服器已停止',
+                };
+            }
+            await new Promise((r) => setTimeout(r, 500));
+        }
+        return {
+            ok: false,
+            output: [
+                ...notes,
+                `:${st.port} 上的伺服器仍在運行 — 可能不是本 App 啟動的，請手動停止`,
+            ]
+                .join('\n')
+                .trim(),
+        };
+    }
+    return { ok: true, output: notes.join('\n') || '伺服器未在運行' };
 }
 
 // ---- settings store (API keys live in the app-data dir, not the repo) ----

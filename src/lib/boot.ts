@@ -40,7 +40,14 @@ export function bootstrap() {
 }
 
 async function run() {
-    if (isTauri) {
+    // only the main window may auto-start the server — the tray panel,
+    // popouts and flash tiles each run their own bootstrap(), and concurrent
+    // serverStarts race for the same port and clobber the pid record. They
+    // still get the health watchdog below.
+    const isPopout = new URLSearchParams(window.location.search).has(
+        'popout',
+    );
+    if (isTauri && !isPopout) {
         try {
             const settings = await loadDesktopSettings();
             if (settings.autoStart && settings.apiKey && settings.secretKey) {

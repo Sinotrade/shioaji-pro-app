@@ -377,7 +377,7 @@ export function ServerManager({
                                 (status?.running && phase !== 'starting')) && (
                                 <>
                                     {phase === 'connecting' && <br />}
-                                    {`運行中 · PID ${status?.pid} · :${status?.port} · ${
+                                    {`運行中 · ${status?.pid ? `PID ${status.pid} · ` : ''}:${status?.port} · ${
                                         status?.simulation
                                             ? '模擬環境'
                                             : '⚠ 正式環境'
