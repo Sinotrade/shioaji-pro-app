@@ -252,7 +252,7 @@ export function IndicatorDialog({
                     </div>
                 </div>
                 <div className={styles.footer}>
-                    <span>點擊即加入圖表，可重複加入同型指標（不同參數）</span>
+                    <span>點擊指標開啟設定，確定後加入；同型可加多個（不同參數）</span>
                     <span>已啟用 {instances.length} 個</span>
                 </div>
             </div>

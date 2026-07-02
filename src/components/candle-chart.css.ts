@@ -270,6 +270,16 @@ export const legendCtrlBtn = style({
     ':hover': { color: vars.color.foreground, background: vars.color.muted },
 });
 
+// 副圖指標的 legend — 絕對定位到自己的 pane 左上角
+export const paneLegend = style({
+    position: 'absolute',
+    left: '8px',
+    zIndex: 5,
+    fontFamily: vars.font.mono,
+    fontSize: '0.64rem',
+    fontVariantNumeric: 'tabular-nums',
+});
+
 export const legendNote = style({
     fontFamily: vars.font.body,
     fontSize: '0.58rem',

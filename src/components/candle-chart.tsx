@@ -157,6 +157,9 @@ export function CandleChart({
     // instId -> 高度 px（使用者拖出來的上下圖比例，重建時還原）
     const paneAssignRef = useRef(new Map<string, number>());
     const paneHeightsRef = useRef(new Map<string, number>());
+    // 副圖 legend 定位：instId -> pane 在 chartHost 內的 top offset px
+    const [paneTops, setPaneTops] = useState<Record<string, number>>({});
+    const paneRoRef = useRef<ResizeObserver | null>(null);
     const [dataVersion, setDataVersion] = useState(0);
     const barsRef = useRef<Candle[]>([]);
     // raw 1-min candles backing the current view — history pages merge here
@@ -672,6 +675,7 @@ export function CandleChart({
         const bars = barsRef.current;
         if (bars.length === 0) {
             paneAssignRef.current = paneAssign; // no panes exist right now
+            setPaneTops({});
             return;
         }
 
@@ -851,7 +855,38 @@ export function CandleChart({
             // pane API differences must never take the chart down
         }
         paneAssignRef.current = paneAssign;
+        // 副圖 legend 跟著自己的 pane 走 — 量出每個 pane 在 host 內的
+        // top offset，pane 被拖動改高度時 ResizeObserver 會重新量
+        try {
+            const host = hostRef.current;
+            const panes = chart.panes();
+            const measure = () => {
+                const hostTop = host?.getBoundingClientRect().top ?? 0;
+                const tops: Record<string, number> = {};
+                paneAssign.forEach((paneIdx, instId) => {
+                    const el = panes[paneIdx]?.getHTMLElement();
+                    if (el) {
+                        tops[instId] =
+                            el.getBoundingClientRect().top - hostTop;
+                    }
+                });
+                setPaneTops(tops);
+            };
+            const ro = new ResizeObserver(measure);
+            paneAssign.forEach((paneIdx) => {
+                const el = panes[paneIdx]?.getHTMLElement();
+                if (el) ro.observe(el);
+            });
+            paneRoRef.current = ro;
+            requestAnimationFrame(measure);
+        } catch {
+            setPaneTops({}); // pane API 不可用 → 副圖 legend 退回主圖堆疊
+        }
         updateLegendRef.current(); // seed legend with latest values
+        return () => {
+            paneRoRef.current?.disconnect();
+            paneRoRef.current = null;
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dataVersion, instancesKey, themeKey, tf.minutes]);
 
@@ -859,8 +894,13 @@ export function CandleChart({
         setInstances(list);
         saveInstances(list);
     };
+    // 點選指標 → 先開設定（圖上即時預覽），確定才算加入、取消整個撤掉
     const addIndicator = (type: string) => {
-        commitInstances([...instances, newInstance(type)]);
+        settingsSnapshotRef.current = JSON.stringify(instances); // 不含新實例
+        const inst = newInstance(type);
+        commitInstances([...instances, inst]);
+        setPickerOpen(false);
+        setSettingsFor(inst.id);
     };
     const removeIndicator = (id: string) => {
         if (settingsFor === id) setSettingsFor(null);
@@ -1097,132 +1137,17 @@ export function CandleChart({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [JSON.stringify(triggers), themeKey, contract.code]);
 
-    return (
-        <div className={styles.wrap}>
-            <div className={styles.toolbar}>
-                {TIMEFRAMES.map((t, i) => (
-                    <button
-                        key={t.label}
-                        className={styles.tfBtn[i === tfIdx ? 'active' : 'normal']}
-                        onClick={() => setTfIdx(i)}
-                    >
-                        {t.label}
-                    </button>
-                ))}
-                <button
-                    className={styles.iconBtn}
-                    onClick={resetView}
-                    title='重設視圖（自動縮放）'
-                    aria-label='重設視圖'
-                >
-                    <Maximize2 size={12} />
-                </button>
-                <span className={styles.toolbarDivider} />
-                {TRADE_MODES.map((m) => (
-                    <button
-                        key={m.key}
-                        className={
-                            styles.modeBtn[
-                                mode === m.key
-                                    ? m.key === 'observe'
-                                        ? 'active'
-                                        : 'armed'
-                                    : 'normal'
-                            ]
-                        }
-                        onClick={() => setMode(m.key)}
-                    >
-                        {m.label}
-                    </button>
-                ))}
-                <label
-                    className={styles.qtyWrap}
-                    title='圖表下單數量（點價買賣/停損/停利的口數或張數）'
-                >
-                    量
-                    <input
-                        className={styles.qtyInput}
-                        value={tradeQty}
-                        inputMode='numeric'
-                        onChange={(e) => {
-                            const v = Number(e.target.value);
-                            if (Number.isInteger(v) && v >= 1) setTradeQty(v);
-                        }}
-                    />
-                </label>
-                <button
-                    className={
-                        styles.indicatorBtn[
-                            instances.length > 0 ? 'active' : 'normal'
-                        ]
-                    }
-                    onClick={() => setPickerOpen(true)}
-                >
-                    指標
-                </button>
-                {pickerOpen && (
-                    <IndicatorDialog
-                        instances={instances}
-                        onAdd={addIndicator}
-                        onClose={() => setPickerOpen(false)}
-                    />
-                )}
-                {settingsInst && (
-                    <IndicatorSettingsModal
-                        inst={settingsInst}
-                        timeframes={TIMEFRAMES.map((t) => ({
-                            label: t.label,
-                            minutes: t.minutes,
-                        }))}
-                        onPatch={(patch) =>
-                            patchInstance(settingsInst.id, patch)
-                        }
-                        onRemove={() => removeIndicator(settingsInst.id)}
-                        onCommit={() => setSettingsFor(null)}
-                        onCancel={cancelSettings}
-                    />
-                )}
-            </div>
-            <div ref={hostRef} className={styles.chartHost}>
-                {loading && (
-                    <div className={styles.emptyMsg}>
-                        <span className={panel.mono}>
-                            載入 {tf.label} K 線…
-                        </span>
-                    </div>
-                )}
-                {empty && !loading && (
-                    <div className={styles.emptyMsg}>
-                        <span className={panel.mono}>無 K 線資料</span>
-                    </div>
-                )}
-                {mode !== 'observe' && (
-                    <div className={styles.modeHint}>
-                        {mode === 'buy' && '點擊圖表價位 → 限價買進'}
-                        {mode === 'sell' && '點擊圖表價位 → 限價賣出'}
-                        {mode === 'stop' && '點擊價位掛停損（觸價市價單）'}
-                        {mode === 'take' && '點擊價位掛停利（觸價市價單）'}
-                        {mode === 'alert' && '點擊價位設定到價警示（只通知不下單）'}
-                    </div>
-                )}
-                {(workingOrders.length > 0 ||
-                    triggers.length > 0 ||
-                    instances.length > 0) && (
-                    <div className={styles.triggerList}>
-                        {instances.map((inst, idx) => {
-                            const def = DEF_BY_TYPE.get(inst.type);
-                            if (!def) return null;
-                            const vals = legendValues[inst.id] ?? [];
-                            const offTf =
-                                !!inst.visibleTf &&
-                                !inst.visibleTf.includes(tf.minutes);
-                            const dimmed = inst.hidden || offTf;
-                            const nameColor = outputStyle(
-                                inst,
-                                def,
-                                def.outputs[0]!.key,
-                            ).color;
-                            return (
+    // 單列 legend（主圖堆疊與各副圖 pane 共用同一套列與控制）
+    const renderLegendRow = (inst: IndicatorInstance) => {
+        const def = DEF_BY_TYPE.get(inst.type);
+        if (!def) return null;
+        const idx = instances.findIndex((i) => i.id === inst.id);
+        const vals = legendValues[inst.id] ?? [];
+        const offTf =
+            !!inst.visibleTf && !inst.visibleTf.includes(tf.minutes);
+        const dimmed = inst.hidden || offTf;
+        const nameColor = outputStyle(inst, def, def.outputs[0]!.key).color;
+        return (
                                 <div
                                     key={inst.id}
                                     className={
@@ -1419,8 +1344,136 @@ export function CandleChart({
                                         </>
                                     )}
                                 </div>
-                            );
-                        })}
+        );
+    };
+    // 主圖堆疊只放：主圖疊加類、被隱藏/此時框停用、或 pane 尚未量到位置的
+    const mainLegendInsts = instances.filter((inst) => {
+        const def = DEF_BY_TYPE.get(inst.type);
+        if (!def) return false;
+        const offTf =
+            !!inst.visibleTf && !inst.visibleTf.includes(tf.minutes);
+        return (
+            def.category === 'overlay' ||
+            !!inst.hidden ||
+            offTf ||
+            paneTops[inst.id] === undefined
+        );
+    });
+    return (
+        <div className={styles.wrap}>
+            <div className={styles.toolbar}>
+                {TIMEFRAMES.map((t, i) => (
+                    <button
+                        key={t.label}
+                        className={styles.tfBtn[i === tfIdx ? 'active' : 'normal']}
+                        onClick={() => setTfIdx(i)}
+                    >
+                        {t.label}
+                    </button>
+                ))}
+                <button
+                    className={styles.iconBtn}
+                    onClick={resetView}
+                    title='重設視圖（自動縮放）'
+                    aria-label='重設視圖'
+                >
+                    <Maximize2 size={12} />
+                </button>
+                <span className={styles.toolbarDivider} />
+                {TRADE_MODES.map((m) => (
+                    <button
+                        key={m.key}
+                        className={
+                            styles.modeBtn[
+                                mode === m.key
+                                    ? m.key === 'observe'
+                                        ? 'active'
+                                        : 'armed'
+                                    : 'normal'
+                            ]
+                        }
+                        onClick={() => setMode(m.key)}
+                    >
+                        {m.label}
+                    </button>
+                ))}
+                <label
+                    className={styles.qtyWrap}
+                    title='圖表下單數量（點價買賣/停損/停利的口數或張數）'
+                >
+                    量
+                    <input
+                        className={styles.qtyInput}
+                        value={tradeQty}
+                        inputMode='numeric'
+                        onChange={(e) => {
+                            const v = Number(e.target.value);
+                            if (Number.isInteger(v) && v >= 1) setTradeQty(v);
+                        }}
+                    />
+                </label>
+                <button
+                    className={
+                        styles.indicatorBtn[
+                            instances.length > 0 ? 'active' : 'normal'
+                        ]
+                    }
+                    onClick={() => setPickerOpen(true)}
+                >
+                    指標
+                </button>
+                {pickerOpen && (
+                    <IndicatorDialog
+                        instances={instances}
+                        onAdd={addIndicator}
+                        onClose={() => setPickerOpen(false)}
+                    />
+                )}
+                {settingsInst && (
+                    <IndicatorSettingsModal
+                        inst={settingsInst}
+                        timeframes={TIMEFRAMES.map((t) => ({
+                            label: t.label,
+                            minutes: t.minutes,
+                        }))}
+                        onPatch={(patch) =>
+                            patchInstance(settingsInst.id, patch)
+                        }
+                        onRemove={() => removeIndicator(settingsInst.id)}
+                        onCommit={() => setSettingsFor(null)}
+                        onCancel={cancelSettings}
+                    />
+                )}
+            </div>
+            <div ref={hostRef} className={styles.chartHost}>
+                {loading && (
+                    <div className={styles.emptyMsg}>
+                        <span className={panel.mono}>
+                            載入 {tf.label} K 線…
+                        </span>
+                    </div>
+                )}
+                {empty && !loading && (
+                    <div className={styles.emptyMsg}>
+                        <span className={panel.mono}>無 K 線資料</span>
+                    </div>
+                )}
+                {mode !== 'observe' && (
+                    <div className={styles.modeHint}>
+                        {mode === 'buy' && '點擊圖表價位 → 限價買進'}
+                        {mode === 'sell' && '點擊圖表價位 → 限價賣出'}
+                        {mode === 'stop' && '點擊價位掛停損（觸價市價單）'}
+                        {mode === 'take' && '點擊價位掛停利（觸價市價單）'}
+                        {mode === 'alert' && '點擊價位設定到價警示（只通知不下單）'}
+                    </div>
+                )}
+                {(workingOrders.length > 0 ||
+                    triggers.length > 0 ||
+                    instances.length > 0) && (
+                    <div className={styles.triggerList}>
+                        {mainLegendInsts.map((inst) =>
+                            renderLegendRow(inst),
+                        )}
                         {workingOrders.map((t) => {
                             const price =
                                 t.status.modified_price || t.order.price;
@@ -1498,6 +1551,30 @@ export function CandleChart({
                         ))}
                     </div>
                 )}
+                {/* 副圖指標的 legend 疊在自己的 pane 左上角，不混進主圖 */}
+                {instances.map((inst) => {
+                    const def = DEF_BY_TYPE.get(inst.type);
+                    if (!def || def.category !== 'pane' || inst.hidden) {
+                        return null;
+                    }
+                    if (
+                        inst.visibleTf &&
+                        !inst.visibleTf.includes(tf.minutes)
+                    ) {
+                        return null;
+                    }
+                    const top = paneTops[inst.id];
+                    if (top === undefined) return null;
+                    return (
+                        <div
+                            key={`pane-legend-${inst.id}`}
+                            className={styles.paneLegend}
+                            style={{ top: top + 4 }}
+                        >
+                            {renderLegendRow(inst)}
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );
