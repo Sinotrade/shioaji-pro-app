@@ -384,3 +384,15 @@ export function syncWatchlist(id: string, contracts: ContractBase[]) {
 export function deleteWatchlist(id: string) {
     return apiDelete<unknown>(`/api/v1/watchlist/${id}`);
 }
+
+// the server has no rename endpoint (PUT ignores `name`) — recreate the
+// list under the new name with the same contracts, then drop the old id.
+// Contracts are already in wire format so they round-trip untouched.
+export async function renameWatchlist(list: ServerWatchlist, name: string) {
+    const created = await apiPost<ServerWatchlist>('/api/v1/watchlist', {
+        name,
+        contracts: list.contracts,
+    });
+    await apiDelete<unknown>(`/api/v1/watchlist/${list.id}`);
+    return created;
+}

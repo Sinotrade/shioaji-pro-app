@@ -421,6 +421,7 @@ export default function App() {
         activeListId,
         setActiveList,
         createList,
+        renameCurrentList,
         deleteCurrentList,
     } = useWatchlist();
     const [selected, setSelected] = useState<ContractInfo | null>(null);
@@ -747,6 +748,7 @@ export default function App() {
         activeListId,
         onSelectList: setActiveList,
         onCreateList: createList,
+        onRenameList: renameCurrentList,
         onDeleteList: deleteCurrentList,
         loading,
     };

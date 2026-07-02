@@ -10,6 +10,7 @@ import {
     fetchContract,
     fetchSnapshots,
     fetchWatchlists,
+    renameWatchlist,
     subscribeQuote,
     syncWatchlist,
     type ServerWatchlist,
@@ -223,6 +224,51 @@ export function useWatchlist() {
         [refreshLists, setActiveList],
     );
 
+    // rename = recreate + delete on the server (no rename endpoint), so the
+    // active id changes; items stay as-is because the contracts are identical.
+    // Returns false when rejected (duplicate name) so the UI can stay in edit.
+    const renameCurrentList = useCallback(
+        async (name: string): Promise<boolean> => {
+            const id = activeIdRef.current;
+            const list = serverLists.find((l) => l.id === id);
+            const trimmed = name.trim();
+            if (!id || !list || !trimmed) return false;
+            if (trimmed === list.name) return true;
+            if (serverLists.some((l) => l.id !== id && l.name === trimmed)) {
+                notify({
+                    kind: 'err',
+                    title: '清單名稱重複',
+                    body: `已有名為「${trimmed}」的清單`,
+                });
+                return false;
+            }
+            try {
+                const created = await renameWatchlist(list, trimmed);
+                // update the ref eagerly — a persistItems fired before the
+                // re-render must not PUT against the deleted old id
+                activeIdRef.current = created.id;
+                setActiveListId(created.id);
+                localStorage.setItem(ACTIVE_KEY, created.id);
+                await refreshLists();
+                notify({
+                    kind: 'ok',
+                    title: '已重新命名',
+                    body: `「${list.name}」→「${trimmed}」`,
+                });
+                return true;
+            } catch {
+                await refreshLists().catch(() => undefined);
+                notify({
+                    kind: 'err',
+                    title: '重新命名失敗',
+                    body: '與伺服器同步時發生錯誤',
+                });
+                return false;
+            }
+        },
+        [serverLists, refreshLists],
+    );
+
     const deleteCurrentList = useCallback(async () => {
         const id = activeIdRef.current;
         const list = serverLists.find((l) => l.id === id);
@@ -332,6 +378,7 @@ export function useWatchlist() {
         activeListId,
         setActiveList,
         createList,
+        renameCurrentList,
         deleteCurrentList,
     };
 }

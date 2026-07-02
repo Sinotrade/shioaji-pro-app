@@ -6,6 +6,7 @@ import {
     ArrowDown,
     ArrowDownUp,
     ArrowUp,
+    Pencil,
     Plus,
     TrendingUp,
     Trash2,
@@ -157,6 +158,7 @@ export function Watchlist({
     activeListId,
     onSelectList,
     onCreateList,
+    onRenameList,
     onDeleteList,
     loading,
 }: {
@@ -170,6 +172,8 @@ export function Watchlist({
     activeListId: string;
     onSelectList: (id: string) => void;
     onCreateList: (name: string) => Promise<unknown>;
+    // resolves false when the rename is rejected (e.g. duplicate name)
+    onRenameList: (name: string) => Promise<boolean>;
     onDeleteList: () => Promise<unknown>;
     loading: boolean;
 }) {
@@ -197,6 +201,37 @@ export function Watchlist({
     };
     const [newName, setNewName] = useState('');
     const [confirmDelete, setConfirmDelete] = useState(false);
+    // inline rename (issue #9) — WKWebView has no working window.prompt,
+    // so the picker row swaps to an input: Enter/blur commit, Esc cancels
+    const [renaming, setRenaming] = useState(false);
+    const [renameValue, setRenameValue] = useState('');
+    const renameBusy = useRef(false);
+    const renameEscaped = useRef(false);
+    const activeList = serverLists.find((l) => l.id === activeListId);
+
+    const startRename = () => {
+        if (!activeList) return;
+        renameEscaped.current = false;
+        setRenameValue(activeList.name);
+        setRenaming(true);
+    };
+
+    const commitRename = async () => {
+        if (renameBusy.current) return;
+        const name = renameValue.trim();
+        if (!name || name === activeList?.name) {
+            setRenaming(false);
+            return;
+        }
+        renameBusy.current = true;
+        try {
+            const ok = await onRenameList(name);
+            // rejected (duplicate name) → stay in edit so the user can fix it
+            if (ok) setRenaming(false);
+        } finally {
+            renameBusy.current = false;
+        }
+    };
     const dragCode = useRef<string | null>(null);
     // ref mirrors the state — drop can fire in the same frame as the last
     // dragover, before React commits the state update
@@ -284,6 +319,26 @@ export function Watchlist({
                             建立
                         </button>
                     </>
+                ) : renaming ? (
+                    <input
+                        autoFocus
+                        className={styles.addInput}
+                        placeholder='清單名稱'
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') void commitRename();
+                            if (e.key === 'Escape') {
+                                renameEscaped.current = true;
+                                setRenaming(false);
+                            }
+                        }}
+                        onBlur={() => {
+                            if (renameEscaped.current) return;
+                            void commitRename();
+                        }}
+                    />
                 ) : (
                     <>
                         <select
@@ -300,6 +355,13 @@ export function Watchlist({
                                 </option>
                             ))}
                         </select>
+                        <button
+                            className={styles.listBtn}
+                            title='重新命名清單'
+                            onClick={startRename}
+                        >
+                            <Pencil size={12} />
+                        </button>
                         <button
                             className={`${styles.listBtn} ${
                                 sortMode !== 'custom' ? styles.listBtnOn : ''
