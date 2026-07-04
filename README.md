@@ -12,15 +12,16 @@ it talks directly to your local `shioaji server`.
 圖表點價下單、停損停利觸價單、可拖拉的自訂版面。
 
 **介面 100% 開源** — UI、行情串流、下單鏈路全部都在這個 repo，
-clone 下來就能 build 出完整的 Web 版終端。桌面版外殼（Tauri）與
-AI Agent 為專屬模組，直接到 Releases 下載安裝檔即可使用。
+clone 下來就能 build 出完整的 Web 版終端。桌面版外殼（Tauri）、
+AI Agent 與策略回測為專屬模組，直接到 Releases 下載安裝檔即可使用。
 
 ![Shioaji Pro — futures night session](docs/shot-terminal-dark.png)
 
 ## Features 功能
 
 - **即時行情** — 單一 SSE 連線串流 tick / 五檔，自選清單成交閃動（只在真實成交時閃，試撮不閃）
-- **K 線圖** — lightweight-charts，1m/5m/15m/60m/1D，即時 tick 更新當根 K 棒
+- **K 線圖** — lightweight-charts，1m/5m/15m/60m/1D，即時 tick 更新當根 K 棒，
+  **歷史無限回溯**（往左拖自動載入更舊 K 棒，最多三年）
   - **點價下單**：點圖表價位直接限價買賣
   - **停損 / 停利**：在圖上掛觸價單（觸價送市價單），虛線顯示、可取消
   - **委託管理**：未成交委託顯示為實線、overlay 有 CANCEL 按鈕、**拖曳委託線即改價**
@@ -43,7 +44,14 @@ AI Agent 為專屬模組，直接到 Releases 下載安裝檔即可使用。
   Esc×2 全部刪單、括號單（成交後自動掛 OCO 停損停利）、持倉一鍵平倉/反手、
   委託改量、下單預估成本（手續費/稅/契約值）
 - **快捷鍵** — B/S 切換買賣、Esc×2 全刪單、⌘K 商品搜尋跳轉（支援中文股名）
-- **技術指標** — MA5/10/20/60、EMA、布林通道、VWAP 疊圖
+- **技術指標** — 21 種內建（MA/EMA/WMA/BOLL/VWAP/SAR/SuperTrend/Donchian/
+  Keltner/MACD/RSI/KD/StochRSI/CCI/ATR/OBV/MFI/W%R/DMI/ROC/BIAS），
+  TradingView 式選擇器（搜尋/收藏/分類）與設定視窗（色盤/線型/透明度/
+  線寬/時框顯示/存為我的預設），副圖獨立窗格、圖上 legend 即時數值、
+  上下窗格比例拖曳保存
+- **自訂指標** — 面板內用 JavaScript + `ta.*` 函式庫寫自己的指標
+  （`plot()`/`hline()` 宣告輸出），Web Worker 沙箱驗證（自動擋無窮迴圈）、
+  自動偵測輸出線，寫完與內建指標同等待遇（設定/樣式/收藏全套）
 - **大盤狀態列** — 加權指數與台指期基差常駐頂部
 - **到價警示** — 圖上點擊設警示線（只通知不下單），音效＋toast
 - **分析面板** — 損益分析（權益曲線/勝率/賺賠比）、分價量表＋內外盤比、
@@ -74,6 +82,10 @@ AI Agent 為專屬模組，直接到 Releases 下載安裝檔即可使用。
 
 - **AI Agent** — 多供應商（Claude / Codex）agentic 對話、shioaji 技能市集、
   排程任務、操作觀察學習（桌面版專屬）
+- **策略回測** — 用 JS 寫進出場策略（與自訂指標同一套 `ta` 函式庫）、
+  含手續費/證交稅/期交稅/滑價的回測引擎（訊號收盤成立、次根開盤成交，
+  無未來函數）、單商品與自選清單多商品整合績效（合併權益曲線＋可排序
+  商品表）、進出場標記直接畫在 K 線上（桌面版專屬）
 - **內建 shioaji server**（sidecar）— 不需另外安裝 CLI
 - **伺服器管理介面** — header「伺服器」選單：啟動/停止/重啟、健康狀態、
   PID/port、token 效期；API 金鑰在介面填寫（存於本機 App 資料夾）
@@ -84,8 +96,8 @@ AI Agent 為專屬模組，直接到 Releases 下載安裝檔即可使用。
 - **多視窗 Popout** — 面板 ⧉ 彈出為原生視窗，多螢幕交易
 - **單一實例** — 重複開啟自動聚焦既有視窗
 
-> 桌面版外殼（Tauri）與 AI Agent 為專屬模組，不在本 repo —— 本 repo
-> 可 build 出完整的 Web 版終端（CI 持續驗證），桌面版請直接下載安裝檔。
+> 桌面版外殼（Tauri）、AI Agent 與策略回測為專屬模組，不在本 repo ——
+> 本 repo 可 build 出完整的 Web 版終端（CI 持續驗證），桌面版請直接下載安裝檔。
 
 ## Getting Started 開始使用（Web 版）
 

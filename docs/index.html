@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Shioaji Pro — Agent 交易時代的新起點：介面 100% 開源的 agent 交易終端</title>
-<meta name="description" content="交易工具的誕生方式已經不一樣了 — 這個完整的交易終端全程由 coding agent 打造，介面 100% 開源，桌面版內建 AI Agent。在 Claude Code / Codex 裝上 shioaji skill 客製自己的交易介面；閃電下單、鋪單、熱力圖、選擇權損益圖，預設模擬環境。" />
+<meta name="description" content="交易工具的誕生方式已經不一樣了 — 這個完整的交易終端全程由 coding agent 打造，介面 100% 開源，桌面版內建 AI Agent 與策略回測。在 Claude Code / Codex 裝上 shioaji skill 客製自己的交易介面；閃電下單、鋪單、熱力圖、自訂指標、含成本回測，預設模擬環境。" />
 <meta property="og:title" content="Shioaji Pro — Agent 交易時代的新起點" />
 <meta property="og:description" content="為 agent 交易鋪路：交易終端全程由 coding agent 打造，介面 100% 開源、桌面版內建 AI Agent 與全套專業下單面板 — 這個終端就是能力證明。" />
 <meta property="og:image" content="https://sinotrade.github.io/shioaji-pro-app/shot-terminal-dark.png" />
@@ -489,6 +489,7 @@
       <a href="#agent">AI Agent</a>
       <a href="#execution">下單</a>
       <a href="#market">看盤</a>
+      <a href="#quant">指標＆回測</a>
       <a href="#desktop">桌面</a>
       <a href="#opensource">開源</a>
       <a href="#downloads">下載</a>
@@ -679,6 +680,48 @@
   </div>
 </section>
 
+<section id="quant">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <p class="kicker">Charting &amp; Backtest</p>
+      <h2>指標自己寫，策略自己驗</h2>
+      <p>TradingView 級圖表指標 ＋ 含成本的策略回測</p>
+    </div>
+    <div class="grid rv">
+      <div class="card">
+        <div class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/></svg></div>
+        <h3>21 種技術指標</h3>
+        <p>MA 到 SuperTrend、MACD 到 DMI — 搜尋選擇器、色盤線型、時框顯示、我的預設，副圖獨立窗格。</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg></div>
+        <h3>自訂指標</h3>
+        <p>面板內用 JS ＋ ta 函式庫寫自己的指標，沙箱驗證、自動偵測輸出線，跟內建指標同等待遇。</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg></div>
+        <h3>K 線無限回溯</h3>
+        <p>往左拖到底自動載入更舊的 K 棒，最多回溯三年 — 回測看得多遠，圖就拉得多遠。</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></div>
+        <h3>策略回測<span style="font-size:.62rem;color:var(--accent);margin-left:6px;">桌面版</span></h3>
+        <p>JS 寫進出場訊號，引擎含手續費／稅／滑價，收盤訊號次根開盤成交 — 沒有未來函數。</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg></div>
+        <h3>多商品整合回測<span style="font-size:.62rem;color:var(--accent);margin-left:6px;">桌面版</span></h3>
+        <p>整個自選清單一次跑，合併權益曲線 ＋ 可排序的各商品績效表，一眼挑出策略適用的標的。</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></div>
+        <h3>進出場畫在 K 線上</h3>
+        <p>多／空／平標記含數量與成交價（可設定顯示哪些），點交易明細直接縮放到那筆進出場。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="desktop" style="background: var(--bg-soft); border-block: 1px solid var(--border);">
   <div class="wrap">
     <div class="sec-head rv">
@@ -854,6 +897,7 @@
       本軟體可能存在錯誤、延遲或非預期行為；下單、改單、刪單、停損停利與任何自動化功能，
       均可能因程式缺陷、網路中斷、行情延遲或第三方服務異常而失效或產生非預期結果。
       <strong>AI Agent 之分析與操作僅供參考，不構成投資建議；自動下單模式請自行評估風險後啟用，盈虧自負。</strong>
+      策略回測結果基於歷史資料與簡化之成本假設，不代表未來績效，亦不構成任何策略有效性之保證。
       Codex 訂閱通道為非官方文件化端點，可能隨 OpenAI 調整而變動。
       使用前請務必於<strong>模擬環境自行充分測試與驗證</strong>，完全理解其行為後再評估是否用於正式環境。
       本軟體不構成任何投資建議、要約或招攬；所有交易決策與其結果 —
