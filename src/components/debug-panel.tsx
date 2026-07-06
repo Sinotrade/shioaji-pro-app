@@ -12,6 +12,7 @@ import {
     onAnyTick,
     onOrderEvent,
 } from '../lib/stream';
+import { analyticsEnabled } from '../lib/analytics';
 import { useTier } from '../lib/features';
 import type { OrderEventReport } from '../lib/order-report';
 import { appVersion } from '../lib/tauri';
@@ -72,6 +73,10 @@ export function DebugPanel() {
     const rows: { label: string; value: string; warn?: boolean }[] = [
         { label: 'App 版本', value: ver ? `v${ver}` : '—' },
         { label: '方案', value: tier === 'vip' ? 'VIP' : 'Free' },
+        {
+            label: 'GA 即時',
+            value: analyticsEnabled() ? '已啟用' : '未設定',
+        },
         {
             label: 'SSE 行情流',
             value: STATUS_LABEL[stream],

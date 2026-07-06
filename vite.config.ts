@@ -13,6 +13,9 @@ const modulesDir = path.resolve(__dirname, './modules/index.ts');
 const modulesTarget = fs.existsSync(modulesDir)
     ? modulesDir
     : path.resolve(__dirname, './src/modules-stub/index.ts');
+const pkg = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'),
+) as { version?: string };
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, process.cwd(), '');
@@ -33,6 +36,7 @@ export default defineConfig(({ mode }) => {
                     process.env.STATSIG_CLIENT_KEY ??
                     '',
             ),
+            __SHIOAJI_APP_VERSION__: JSON.stringify(pkg.version ?? ''),
             // bundled server version（repo 根目錄 SHIOAJI_VERSION —
             // 與 CI 下載 sidecar 的同一個來源）— app 開機做版本握手
             __SHIOAJI_SERVER_VERSION__: JSON.stringify(

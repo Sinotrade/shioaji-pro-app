@@ -148,6 +148,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # feature-flag service client key (publishable; baked into bundle)
           STATSIG_CLIENT_KEY: ${{ secrets.STATSIG_CLIENT_KEY }}
+          # GA4 Measurement ID (publishable; baked into bundle for Realtime)
+          VITE_GA_MEASUREMENT_ID: ${{ secrets.VITE_GA_MEASUREMENT_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # macOS code-signing (notarization env is injected by the step
