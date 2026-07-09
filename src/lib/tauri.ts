@@ -17,6 +17,27 @@ import { notify } from './trade';
 
 export { isTauri } from './runtime';
 
+// poll /health until it answers, then reload — used after a fresh start so
+// every panel bootstraps cleanly instead of racing a server that's still
+// warming up (login + CA activation + contract load)
+export function reloadWhenHealthy(timeoutMs = 90_000) {
+    const deadline = Date.now() + timeoutMs;
+    const t = setInterval(async () => {
+        if (Date.now() > deadline) {
+            clearInterval(t);
+            return;
+        }
+        try {
+            const { fetchHealth } = await import('./shioaji');
+            await fetchHealth();
+            clearInterval(t);
+            window.location.reload();
+        } catch {
+            // not up yet
+        }
+    }, 2000);
+}
+
 // ---- shioaji server sidecar ----
 
 export interface ServerStatus {
