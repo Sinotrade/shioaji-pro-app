@@ -78,6 +78,11 @@ export function OnboardingSetup() {
     };
 
     const AgentPanel = agentModule?.Panel;
+    // codex (ChatGPT 訂閱) 比 Anthropic/OpenAI API key 更多人已經有，設成
+    // 首次啟動的預設，才不會「為了申請一把 key 又要先申請另一把 key」；
+    // 只在使用者從未手動選過 provider 時生效，且必須在 AgentPanel 掛載前
+    // （render 階段，不用 useEffect）跑完，否則面板第一次渲染就讀到舊預設
+    agentModule?.ensureDefaultProvider('codex');
 
     return (
         <div className={styles.shell}>
@@ -275,6 +280,7 @@ export function OnboardingSetup() {
                             <FeatureGate feature='agent'>
                                 <AgentPanel
                                     initialPrompt={AGENT_STARTER_PROMPT}
+                                    visibleTabs={['chat', 'settings']}
                                 />
                             </FeatureGate>
                         </div>

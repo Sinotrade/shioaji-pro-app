@@ -23,8 +23,15 @@ export interface ClosedModules {
     // service has no opinion → fall back to the tier rule below.
     checkFeature?: (key: string) => boolean | undefined;
     agent?: {
-        Panel: React.ComponentType<{ initialPrompt?: string }>;
+        Panel: React.ComponentType<{
+            initialPrompt?: string;
+            visibleTabs?: string[];
+        }>;
         ensureScheduler: () => void;
+        // sets the provider only if the user has never explicitly chosen one
+        ensureDefaultProvider: (
+            provider: 'anthropic' | 'openai' | 'codex',
+        ) => void;
     };
     backtest?: {
         Panel: React.ComponentType<{
