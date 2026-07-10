@@ -30,6 +30,10 @@ import { notify } from './trade';
 
 export { isTauri } from './runtime';
 
+// Do not inject capability material into the server until the rshioaji team
+// approves and releases the matching protocol.
+const SERVER_TRADING_CAPABILITY_ENABLED = false;
+
 // poll /health until it answers, then reload — used after a fresh start so
 // every panel bootstraps cleanly instead of racing a server that's still
 // warming up (login + CA activation + contract load)
@@ -750,6 +754,22 @@ export async function serverStart(opts: {
         SJ_HTTP_LOG: 'false',
         RUST_LOG: 'warn',
     };
+    if (SERVER_TRADING_CAPABILITY_ENABLED) {
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const capability = await invoke<{
+                keyPath: string;
+                trustedCli?: string;
+            }>('agent_trading_environment');
+            // Only enable daemon enforcement when the app has a trusted
+            // bundled CLI and therefore a running peer-verified broker.
+            if (capability.trustedCli) {
+                env.SJ_AGENT_CAPABILITY_KEY_PATH = capability.keyPath;
+            }
+        } catch {
+            // Older desktop shells keep the server's backward-compatible mode.
+        }
+    }
     // CA certificate — required for production orders, ignored in simulation
     if (opts.caPath) {
         env.SJ_CA_PATH = opts.caPath;
