@@ -8,6 +8,10 @@ import { getApiBase, isTauri } from './runtime';
 // (the stuck-at-載入交易終端 bug)
 const base = () => getApiBase();
 
+// Future server capability integration. Disabled until rshioaji ships an
+// approved mutation-authorization protocol.
+const SERVER_TRADING_CAPABILITY_ENABLED = false;
+
 // The desktop webview enforces CORS but the shioaji server doesn't answer
 // preflight OPTIONS (405) — route requests through Tauri's Rust-side fetch,
 // which has no CORS, when running in the app.
@@ -50,6 +54,48 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+    const mutationPaths = new Set([
+        '/api/v1/order/place_order',
+        '/api/v1/order/cancel_order',
+        '/api/v1/order/update_price',
+        '/api/v1/order/update_qty',
+        '/api/v1/order/place_comboorder',
+        '/api/v1/order/cancel_comboorder',
+        '/api/v1/order/reserve_stock',
+        '/api/v1/order/reserve_earmarking',
+    ]);
+    if (SERVER_TRADING_CAPABILITY_ENABLED && isTauri && mutationPaths.has(path)) {
+        const health = await doFetch(base() + '/api/v1/health');
+        if (!health.ok) await throwApiError(health);
+        const negotiation = (await health.json()) as {
+            agent_capabilities?: {
+                version?: number;
+                mutation_auth_required?: boolean;
+                broker_transport?: string;
+            };
+        };
+        const capability = negotiation.agent_capabilities;
+        if (capability) {
+            if (
+                capability.version !== 1 ||
+                capability.mutation_auth_required !== true ||
+                capability.broker_transport !== 'unix'
+            ) {
+                throw new Error('daemon trading capability protocol 不相容');
+            }
+            const { invoke } = await import('@tauri-apps/api/core');
+            const proxied = await invoke<{ status: number; body: string }>(
+                'agent_trading_ui_post',
+                { url: base() + path, payload: body },
+            );
+            const res = new Response(proxied.body, {
+                status: proxied.status,
+                headers: { 'Content-Type': 'application/json' },
+            });
+            if (!res.ok) await throwApiError(res);
+            return res.json() as Promise<T>;
+        }
+    }
     const res = await doFetch(base() + path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

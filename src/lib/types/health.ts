@@ -8,4 +8,10 @@ export interface Health {
     token_stale: boolean;
     contract_count: number;
     next_maintenance: string;
+    agent_capabilities?: {
+        version: number;
+        mutation_auth_required: boolean;
+        broker_transport: string;
+        daemon_instance_id?: string;
+    };
 }

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { vanillaExtractPlugin } from '@vanilla-extract/vite-plugin';
 import react from '@vitejs/plugin-react';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig, loadEnv, searchForWorkspaceRoot } from 'vite';
 
 // closed-source modules (AI Agent, future tiered features) live in the
 // private repo, checked out into ./modules on desktop builds; open-source
@@ -13,6 +13,10 @@ const modulesDir = path.resolve(__dirname, './modules/index.ts');
 const modulesTarget = fs.existsSync(modulesDir)
     ? modulesDir
     : path.resolve(__dirname, './src/modules-stub/index.ts');
+// In the split public/private worktree, ./modules is a symlink into the
+// private checkout. Vite resolves Worker URLs to that real path, so explicitly
+// allow the resolved modules directory without hard-coding either repository.
+const modulesAllowDir = path.dirname(fs.realpathSync(modulesTarget));
 const pkg = JSON.parse(
     fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'),
 ) as { version?: string };
@@ -59,6 +63,9 @@ export default defineConfig(({ mode }) => {
             // honor a harness-assigned port (preview tooling sets PORT);
             // default stays 5173 for tauri dev
             port: Number(process.env.PORT) || 5173,
+            fs: {
+                allow: [searchForWorkspaceRoot(process.cwd()), modulesAllowDir],
+            },
             proxy: {
                 // dev 打自帶 sidecar（scripts/dev-api.sh，與 CI 打包同版
                 // binary、port 21322）— 確保 API/UI 版本相符，不依賴使用
