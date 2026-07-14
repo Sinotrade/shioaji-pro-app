@@ -41,6 +41,7 @@ import { ScannerPanel } from './components/scanner-panel';
 import { TickTape } from './components/tick-tape';
 import { TrayPanel } from './components/tray-panel';
 import { Watchlist } from './components/watchlist';
+import { WebviewPanel } from './components/webview-panel';
 import * as panel from './components/panel.css';
 import { useHotkeys } from './hooks/use-hotkeys';
 import { usePoll } from './hooks/use-poll';
@@ -124,6 +125,7 @@ function BlockBody({
     dockProps,
     onSelectCode,
     refreshTrading,
+    onBlockUrlChange,
 }: {
     block: Block;
     contract: ContractInfo | null;
@@ -132,6 +134,7 @@ function BlockBody({
     dockProps: React.ComponentProps<typeof BottomDock>;
     onSelectCode: (code: string) => void;
     refreshTrading: () => void;
+    onBlockUrlChange: (id: string, url: string | null) => void;
 }) {
     switch (block.type) {
         case 'watchlist':
@@ -248,6 +251,13 @@ function BlockBody({
             ) : (
                 <BlockPlaceholder />
             );
+        case 'webview':
+            return (
+                <WebviewPanel
+                    url={block.url ?? null}
+                    onUrlChange={(url) => onBlockUrlChange(block.id, url)}
+                />
+            );
     }
 }
 
@@ -260,6 +270,7 @@ interface BlockViewProps {
     selected: ContractInfo | null;
     onPinChange: (id: string, pin: string | null) => void;
     onRemove: (id: string) => void;
+    onBlockUrlChange: (id: string, url: string | null) => void;
     snapshot?: import('./lib/types/market').Snapshot;
     watchlistProps: React.ComponentProps<typeof Watchlist>;
     dockProps: React.ComponentProps<typeof BottomDock>;
@@ -639,6 +650,18 @@ export default function App() {
         [workspace, updateWorkspace],
     );
 
+    const setBlockUrl = useCallback(
+        (id: string, url: string | null) => {
+            updateWorkspace({
+                ...workspace,
+                blocks: workspace.blocks.map((b) =>
+                    b.id === id ? { ...b, url: url ?? undefined } : b,
+                ),
+            });
+        },
+        [workspace, updateWorkspace],
+    );
+
     const resetWorkspace = useCallback(() => {
         updateWorkspace(structuredClone(DEFAULT_WORKSPACE));
     }, [updateWorkspace]);
@@ -826,6 +849,7 @@ export default function App() {
                                     selected={selected}
                                     onPinChange={setBlockPin}
                                     onRemove={removeBlock}
+                                    onBlockUrlChange={setBlockUrl}
                                     snapshot={
                                         block.pin
                                             ? undefined
