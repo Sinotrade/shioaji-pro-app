@@ -24,13 +24,16 @@ export type BlockType =
     | 'heatmap'
     | 'optpnl'
     | 'backtest'
-    | 'assistant';
+    | 'assistant'
+    | 'webview';
 
 export interface Block {
     id: string;
     type: BlockType;
     // null → follows the globally selected symbol; string → pinned to a code
     pin: string | null;
+    // webview only: the embedded page URL (persisted with the workspace)
+    url?: string;
 }
 
 export interface Workspace {
@@ -183,6 +186,13 @@ export const BLOCK_META: Record<
         pinnable: false,
         singleton: true,
         defaultSize: { w: 7, h: 14, minW: 5, minH: 9 },
+    },
+    webview: {
+        label: '自訂網頁',
+        // pinnable：URL 含 {code} 時代入商品代碼（跟隨選股或釘選）；靜態 URL 不受影響
+        pinnable: true,
+        singleton: false,
+        defaultSize: { w: 8, h: 10, minW: 3, minH: 4 },
     },
 };
 
