@@ -189,7 +189,8 @@ export const BLOCK_META: Record<
     },
     webview: {
         label: '自訂網頁',
-        pinnable: false,
+        // pinnable：URL 含 {code} 時代入商品代碼（跟隨選股或釘選）；靜態 URL 不受影響
+        pinnable: true,
         singleton: false,
         defaultSize: { w: 8, h: 10, minW: 3, minH: 4 },
     },

@@ -255,6 +255,7 @@ function BlockBody({
             return (
                 <WebviewPanel
                     url={block.url ?? null}
+                    code={contract?.code ?? null}
                     onUrlChange={(url) => onBlockUrlChange(block.id, url)}
                 />
             );
