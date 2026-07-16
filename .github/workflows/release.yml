@@ -60,12 +60,22 @@ jobs:
         env:
           AGENT_SSH_KEY: ${{ secrets.AGENT_SSH_KEY }}
         run: |
+          DESKTOP_REF="$(tr -d '[:space:]' < DESKTOP_MODULES_REF)"
+          if [[ ! "$DESKTOP_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "DESKTOP_MODULES_REF must contain one full commit SHA" >&2
+            exit 1
+          fi
           mkdir -p ~/.ssh
           echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
           chmod 600 ~/.ssh/agent_key
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          mkdir desktop_modules
+          git -C desktop_modules init
+          git -C desktop_modules remote add origin git@github.com:Yvictor/shioaji-pro-desktop.git
           GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" \
-            git clone --depth 1 git@github.com:Yvictor/shioaji-pro-desktop.git desktop_modules
+            git -C desktop_modules fetch --depth 1 origin "$DESKTOP_REF"
+          git -C desktop_modules checkout --detach FETCH_HEAD
+          test "$(git -C desktop_modules rev-parse HEAD)" = "$DESKTOP_REF"
           mv desktop_modules/modules modules
           mv desktop_modules/src-tauri src-tauri
           rm -rf desktop_modules ~/.ssh/agent_key

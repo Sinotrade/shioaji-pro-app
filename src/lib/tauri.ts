@@ -207,10 +207,9 @@ async function probeInfo(
     port: number,
 ): Promise<{ version: string; simulation: boolean } | null> {
     try {
-        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-        const res = await tauriFetch(
+        const res = await tauriFetchWithTimeout(
             `http://127.0.0.1:${port}/api/v1/info`,
-            { signal: AbortSignal.timeout(1500) },
+            1500,
         );
         if (!res.ok) return null;
         const info = (await res.json()) as {
@@ -231,10 +230,9 @@ async function probeInfo(
 
 async function probeHealthy(port: number): Promise<boolean> {
     try {
-        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-        const res = await tauriFetch(
+        const res = await tauriFetchWithTimeout(
             `http://127.0.0.1:${port}/api/v1/health`,
-            { signal: AbortSignal.timeout(2000) },
+            2000,
         );
         return res.ok;
     } catch {
@@ -247,24 +245,38 @@ async function probeHealthy(port: number): Promise<boolean> {
 // user sets CA in the app but the running daemon never had it (issue #1).
 async function caActive(port: number): Promise<boolean> {
     try {
-        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-        const accRes = await tauriFetch(
+        const accRes = await tauriFetchWithTimeout(
             `http://127.0.0.1:${port}/api/v1/auth/accounts`,
-            { signal: AbortSignal.timeout(2000) },
+            2000,
         );
         if (!accRes.ok) return false;
         const accts = (await accRes.json()) as { person_id?: string }[];
         const pid = accts[0]?.person_id;
         if (!pid) return false;
-        const caRes = await tauriFetch(
+        const caRes = await tauriFetchWithTimeout(
             `http://127.0.0.1:${port}/api/v1/auth/ca_expiretime?person_id=${encodeURIComponent(pid)}`,
-            { signal: AbortSignal.timeout(2000) },
+            2000,
         );
         if (!caRes.ok) return false; // 400 "CA not activated"
         const ca = (await caRes.json()) as { expire_time?: string };
         return !!ca.expire_time && new Date(ca.expire_time).getTime() > Date.now();
     } catch {
         return false;
+    }
+}
+
+// AbortSignal.timeout() cannot be cancelled after a request settles. With the
+// Tauri HTTP plugin, its later abort event attempts to close an already-freed
+// Rust resource and surfaces as an unhandled "resource id ... is invalid"
+// rejection. Own the timer so successful probes clear it immediately.
+async function tauriFetchWithTimeout(url: string, timeoutMs: number) {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await tauriFetch(url, { signal: controller.signal });
+    } finally {
+        window.clearTimeout(timer);
     }
 }
 
