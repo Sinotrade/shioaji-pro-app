@@ -27,12 +27,14 @@ import {
     notify,
     placeQuickOrder,
     placeStockExitByShares,
+    watchTradesToTerminal,
 } from '../lib/trade';
 import type { Trade } from '../lib/types/order';
 import type {
     AccountBalance,
     Margin,
     Position,
+    StockPosition,
 } from '../lib/types/portfolio';
 import {
     fmtInt,
@@ -104,11 +106,20 @@ function PositionsTable({
             const contract = await ensureContract(p.code);
             const exit = p.direction === 'Buy' ? 'Sell' : 'Buy';
             const qty = mode === 'close' ? p.quantity : p.quantity * 2;
+            const actLabel = `${p.code} ${mode === 'close' ? '平倉' : '反手'}`;
             if (isStockPosition(p)) {
-                // shares → Common lots + IntradayOdd remainder
-                await placeStockExitByShares(contract, exit, qty);
+                // shares → Common lots + IntradayOdd remainder；帶 yd_quantity
+                // 讓今日買進的部分走現股當沖賣（否則集保餘股不足退件）
+                const placed = await placeStockExitByShares(
+                    contract,
+                    exit,
+                    qty,
+                    p.yd_quantity,
+                );
+                void watchTradesToTerminal('S', placed, actLabel);
             } else {
-                await placeQuickOrder(contract, exit, null, qty);
+                const placed = await placeQuickOrder(contract, exit, null, qty);
+                void watchTradesToTerminal('F', [placed], actLabel);
             }
             notify({
                 kind: 'ok',
@@ -539,7 +550,7 @@ function OrdersTable({
 }
 
 // stock positions carry yd_quantity; futures ones don't
-function isStockPosition(p: Position): boolean {
+function isStockPosition(p: Position): p is StockPosition {
     return 'yd_quantity' in p;
 }
 
