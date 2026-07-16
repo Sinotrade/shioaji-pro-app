@@ -1,0 +1,83 @@
+name: desktop-agent-ci
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  workflow_dispatch:
+
+jobs:
+  combined-agent:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout pinned desktop modules
+        shell: bash
+        env:
+          AGENT_SSH_KEY: ${{ secrets.AGENT_SSH_KEY }}
+        run: |
+          DESKTOP_REF="$(tr -d '[:space:]' < DESKTOP_MODULES_REF)"
+          if [[ ! "$DESKTOP_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "DESKTOP_MODULES_REF must contain one full commit SHA" >&2
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
+          chmod 600 ~/.ssh/agent_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          mkdir desktop_modules
+          git -C desktop_modules init
+          git -C desktop_modules remote add origin git@github.com:Yvictor/shioaji-pro-desktop.git
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" \
+            git -C desktop_modules fetch --depth 1 origin "$DESKTOP_REF"
+          git -C desktop_modules checkout --detach FETCH_HEAD
+          test "$(git -C desktop_modules rev-parse HEAD)" = "$DESKTOP_REF"
+          mv desktop_modules/modules modules
+          mv desktop_modules/src-tauri src-tauri
+          rm -rf desktop_modules ~/.ssh/agent_key
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stage test sidecar
+        run: |
+          mkdir -p src-tauri/binaries
+          install -m 755 /bin/true src-tauri/binaries/shioaji-x86_64-unknown-linux-gnu
+
+      - name: Frontend production build
+        run: pnpm build
+
+      - name: Pi permission policy tests
+        run: node --test src-tauri/src/pi_policy_extension.test.mjs
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Rust runtime and capability tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Rust lint
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings

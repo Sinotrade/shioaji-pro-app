@@ -424,19 +424,23 @@ async function probeFetch(
     url: string,
     timeoutMs: number,
 ): Promise<Response> {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
     try {
-        return await tauriFetch(url, {
-            signal: AbortSignal.timeout(timeoutMs),
-        });
+        return await tauriFetchWithTimeout(url, timeoutMs);
     } catch (err) {
         if (url.startsWith('https://')) {
+            const controller = new AbortController();
+            const timer = window.setTimeout(
+                () => controller.abort(),
+                timeoutMs,
+            );
             try {
                 return await fetch(url, {
-                    signal: AbortSignal.timeout(timeoutMs),
+                    signal: controller.signal,
                 });
             } catch (err2) {
                 throw err2;
+            } finally {
+                window.clearTimeout(timer);
             }
         }
         throw err;
@@ -551,6 +555,21 @@ async function caActive(
         return !!ca.expire_time && new Date(ca.expire_time).getTime() > Date.now();
     } catch {
         return false;
+    }
+}
+
+// AbortSignal.timeout() cannot be cancelled after a request settles. With the
+// Tauri HTTP plugin, its later abort event attempts to close an already-freed
+// Rust resource and surfaces as an unhandled "resource id ... is invalid"
+// rejection. Own the timer so successful probes clear it immediately.
+async function tauriFetchWithTimeout(url: string, timeoutMs: number) {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await tauriFetch(url, { signal: controller.signal });
+    } finally {
+        window.clearTimeout(timer);
     }
 }
 

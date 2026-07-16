@@ -29,7 +29,39 @@ export default defineConfig(({ mode }) => {
         // target: old Intel Macs run older WKWebView (Safari 13–15 era);
         // Vite 8's default (baseline-widely-available ≈ Safari 16) emits
         // syntax those webviews cannot parse → white screen on launch (#4)
-        build: { assetsDir: '', target: ['es2020', 'safari13'] },
+        build: {
+            assetsDir: '',
+            target: ['es2020', 'safari13'],
+            rolldownOptions: {
+                output: {
+                    codeSplitting: {
+                        groups: [
+                            {
+                                name: 'agent',
+                                test: /[\\/]modules[\\/]agent[\\/]/,
+                                priority: 4,
+                            },
+                            {
+                                name: 'backtest',
+                                test: /[\\/]modules[\\/]backtest[\\/]/,
+                                priority: 3,
+                            },
+                            {
+                                name: 'markdown',
+                                test: /node_modules[\\/](?:react-markdown|remark-|rehype-|unified|micromark|mdast|hast)/,
+                                priority: 2,
+                            },
+                            {
+                                name: 'vendor',
+                                test: /node_modules/,
+                                priority: 1,
+                                maxSize: 400_000,
+                            },
+                        ],
+                    },
+                },
+            },
+        },
         // react-draggable (react-grid-layout dep) reads process.env at runtime
         define: {
             'process.env': {},
