@@ -399,6 +399,12 @@ export const updateBtn = style({
         borderColor: vars.color.accent,
         background: vars.color.accentDim,
     },
+    ':disabled': {
+        cursor: 'wait',
+        color: vars.color.mutedForeground,
+        borderColor: vars.color.border,
+        background: vars.color.inset,
+    },
 });
 
 export const emptyHint = style({

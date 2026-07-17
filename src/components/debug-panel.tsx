@@ -69,6 +69,8 @@ export function DebugPanel() {
     const hb = getLastHeartbeat();
     const hbAge = hb ? Math.round((Date.now() - hb) / 1000) : null;
     const rate = (tickTimes.current.length / 5).toFixed(1);
+    const tokenSeconds = health?.token_expires_in_seconds;
+    const contractCount = health?.contract_count;
 
     const rows: { label: string; value: string; warn?: boolean }[] = [
         { label: 'App 版本', value: ver ? `v${ver}` : '—' },
@@ -96,15 +98,17 @@ export function DebugPanel() {
         },
         {
             label: 'Token 有效',
-            value: health
-                ? `${Math.round(health.token_expires_in_seconds / 3600)}h`
+            value: typeof tokenSeconds === 'number'
+                ? `${Math.round(tokenSeconds / 3600)}h`
                 : '—',
-            warn:
-                !!health && health.token_expires_in_seconds < 3600,
+            warn: typeof tokenSeconds === 'number' && tokenSeconds < 3600,
         },
         {
             label: '合約數',
-            value: health ? health.contract_count.toLocaleString() : '—',
+            value:
+                typeof contractCount === 'number'
+                    ? contractCount.toLocaleString()
+                    : '—',
         },
     ];
 

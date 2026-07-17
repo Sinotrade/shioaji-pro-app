@@ -3,8 +3,10 @@
 
 import {
     Clipboard,
+    Download,
     Eye,
     EyeOff,
+    ExternalLink,
     FileUp,
     LogOut,
     Play,
@@ -14,9 +16,15 @@ import {
     Square,
     X,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import {
+    useCallback,
+    useEffect,
+    useState,
+    useSyncExternalStore,
+} from 'react';
 import { usePoll } from '../hooks/use-poll';
 import { useStreamStatus } from '../hooks/use-stream';
+import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
 import {
     fetchAccounts,
@@ -26,16 +34,20 @@ import {
 } from '../lib/shioaji';
 import {
     appVersion,
+    checkForUpdates,
+    getAppUpdateState,
     isTauri,
     loadDesktopSettings,
+    openLatestRelease,
     pickCaFile,
     pickEnvFile,
     reloadWhenHealthy,
+    restartAndInstallUpdate,
     saveDesktopSettings,
     serverStart,
     serverStatus,
     serverStop,
-    checkForUpdates,
+    subscribeAppUpdateState,
     type DesktopSettings,
     type ServerStatus,
 } from '../lib/tauri';
@@ -66,6 +78,11 @@ export function ServerManager({
     const [showPw, setShowPw] = useState(false);
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [envMsg, setEnvMsg] = useState('');
+    const updateState = useSyncExternalStore(
+        subscribeAppUpdateState,
+        getAppUpdateState,
+        getAppUpdateState,
+    );
 
     // human-readable CA activation failure pulled from the latest start log
     // (the server starts even when CA fails, so this is how the user learns
@@ -281,6 +298,51 @@ export function ServerManager({
             : phase === 'connecting'
               ? '連線中…'
               : '伺服器';
+    const updatePercent =
+        updateState.totalBytes && updateState.downloadedBytes !== undefined
+            ? Math.min(
+                  100,
+                  Math.round(
+                      (updateState.downloadedBytes /
+                          updateState.totalBytes) *
+                          100,
+                  ),
+              )
+            : undefined;
+    const updateNeedsAttention =
+        updateState.phase === 'downloading' ||
+        updateState.phase === 'ready' ||
+        updateState.phase === 'installing' ||
+        updateState.phase === 'external';
+    const serverVersion = status?.version ?? health?.version;
+    const serverVersionMismatch =
+        !!serverVersion &&
+        !!EXPECTED_SERVER_VERSION &&
+        serverVersion !== EXPECTED_SERVER_VERSION;
+    const updateHeaderLabel =
+        updateState.phase === 'downloading'
+            ? `下載更新${updatePercent === undefined ? '' : ` ${updatePercent}%`}`
+            : updateState.phase === 'ready'
+              ? `更新 v${updateState.version}`
+              : updateState.phase === 'installing'
+                ? '正在更新…'
+                : updateState.phase === 'external'
+                  ? `新版 v${updateState.version}`
+                  : phaseLabel;
+    const updateBusy =
+        updateState.phase === 'checking' ||
+        updateState.phase === 'available' ||
+        updateState.phase === 'downloading' ||
+        updateState.phase === 'installing';
+    const runUpdateAction = () => {
+        if (updateState.phase === 'ready') {
+            void restartAndInstallUpdate();
+        } else if (updateState.phase === 'external') {
+            void openLatestRelease();
+        } else {
+            void checkForUpdates(false);
+        }
+    };
 
     return (
         <div className={styles.settingsWrap}>
@@ -293,14 +355,21 @@ export function ServerManager({
                 }}
                 onClick={() => onToggle(!open)}
             >
-                {phase === 'starting' || phase === 'connecting' ? (
+                {updateState.phase === 'downloading' ||
+                updateState.phase === 'installing' ? (
+                    <span className={styles.spinner} />
+                ) : updateState.phase === 'ready' ? (
+                    <Download size={11} />
+                ) : updateState.phase === 'external' ? (
+                    <ExternalLink size={11} />
+                ) : phase === 'starting' || phase === 'connecting' ? (
                     <span className={styles.spinner} />
                 ) : (
                     <span
                         className={styles.led[phase === 'ok' ? 'live' : 'down']}
                     />
                 )}
-                {phaseLabel}
+                {updateNeedsAttention ? updateHeaderLabel : phaseLabel}
             </button>
             {open && (
                 <>
@@ -318,7 +387,7 @@ export function ServerManager({
                             }}
                         >
                             Shioaji Server 狀態
-                            {ver && (
+                            {(serverVersion || ver) && (
                                 <span
                                     style={{
                                         fontFamily: 'var(--font-mono, monospace)',
@@ -326,10 +395,22 @@ export function ServerManager({
                                         fontWeight: 400,
                                     }}
                                 >
-                                    App v{ver}
+                                    {serverVersion
+                                        ? `Server v${serverVersion}`
+                                        : 'Server —'}
+                                    {ver && ` · App v${ver}`}
                                 </span>
                             )}
                         </span>
+                        {serverVersionMismatch && (
+                            <span
+                                className={styles.emptyHint}
+                                style={{ color: 'var(--amber, #e0a43c)' }}
+                            >
+                                ⚠ Server v{serverVersion} 與本版要求 v
+                                {EXPECTED_SERVER_VERSION} 不符
+                            </span>
+                        )}
                         <span className={styles.emptyHint}>
                             {phase === 'starting' &&
                                 '啟動中 — 登入與載入合約約需 10–30 秒…'}
@@ -382,10 +463,17 @@ export function ServerManager({
                         {health && (
                             <span className={styles.emptyHint}>
                                 token 剩餘{' '}
-                                {Math.round(
-                                    health.token_expires_in_seconds / 3600,
-                                )}
-                                h · 合約 {health.contract_count}
+                                {typeof health.token_expires_in_seconds ===
+                                'number'
+                                    ? `${Math.round(
+                                          health.token_expires_in_seconds /
+                                              3600,
+                                      )}h`
+                                    : '—'}
+                                {' · 合約 '}
+                                {typeof health.contract_count === 'number'
+                                    ? health.contract_count.toLocaleString()
+                                    : '—'}
                             </span>
                         )}
                         <div className={styles.settingGroup}>
@@ -630,11 +718,61 @@ export function ServerManager({
                         </button>
                         <button
                             className={styles.updateBtn}
-                            onClick={() => checkForUpdates(false)}
+                            onClick={runUpdateAction}
+                            disabled={updateBusy}
                         >
-                            <RefreshCw size={13} />
-                            檢查 App 更新
+                            {updateState.phase === 'ready' ? (
+                                <RotateCcw size={13} />
+                            ) : updateState.phase === 'external' ? (
+                                <ExternalLink size={13} />
+                            ) : updateState.phase === 'downloading' ? (
+                                <Download size={13} />
+                            ) : (
+                                <RefreshCw size={13} />
+                            )}
+                            {updateState.phase === 'checking'
+                                ? '正在檢查更新…'
+                                : updateState.phase === 'available'
+                                  ? `找到 v${updateState.version}`
+                                  : updateState.phase === 'downloading'
+                                    ? `下載 v${updateState.version}${
+                                          updatePercent === undefined
+                                              ? '…'
+                                              : ` · ${updatePercent}%`
+                                      }`
+                                    : updateState.phase === 'ready'
+                                      ? `重新啟動並更新 v${updateState.version}`
+                                      : updateState.phase === 'installing'
+                                        ? '正在安裝更新…'
+                                        : updateState.phase === 'external'
+                                          ? `前往下載 v${updateState.version}`
+                                          : updateState.phase === 'error'
+                                            ? '重試檢查更新'
+                                            : '檢查 App 更新'}
                         </button>
+                        {updateState.phase === 'downloading' && (
+                            <span className={styles.emptyHint}>
+                                更新會在背景下載，完成後再由你決定何時重新啟動。
+                            </span>
+                        )}
+                        {updateState.phase === 'ready' && (
+                            <span className={styles.emptyHint}>
+                                已下載完成；按上方按鈕後才會安裝並重新啟動 App。
+                            </span>
+                        )}
+                        {updateState.phase === 'external' && (
+                            <span className={styles.emptyHint}>
+                                RPM／DEB 安裝版不會在 App 內要求系統權限，請下載新版套件或由套件管理器更新。
+                            </span>
+                        )}
+                        {updateState.phase === 'error' && updateState.error && (
+                            <span
+                                className={styles.emptyHint}
+                                style={{ color: 'var(--danger, #f23645)' }}
+                            >
+                                更新失敗：{updateState.error}
+                            </span>
+                        )}
                         {lastOutput && diagnoseOutput(lastOutput) && (
                             <span
                                 className={styles.emptyHint}

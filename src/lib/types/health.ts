@@ -6,6 +6,8 @@ export interface Health {
     timestamp: string;
     token_expires_in_seconds: number;
     token_stale: boolean;
-    contract_count: number;
+    // Contract V2 loads lazily, so newer servers may omit the old eager-load
+    // count from their health response.
+    contract_count?: number;
     next_maintenance: string;
 }

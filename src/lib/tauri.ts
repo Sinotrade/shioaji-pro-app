@@ -1,6 +1,10 @@
 // src/lib/tauri.ts — desktop bridge: sidecar server management, popout
 // windows, auto-updates. Every entry point is a no-op in the browser.
 
+import type {
+    DownloadEvent,
+    Update,
+} from '@tauri-apps/plugin-updater';
 import {
     DEFAULT_PORT,
     EXPECTED_SERVER_VERSION,
@@ -187,6 +191,7 @@ export async function serverStatus(): Promise<ServerStatus | null> {
                         port: st.port,
                         healthy: await probeHealthy(st.port),
                         simulation: info.simulation,
+                        version: info.version,
                         pid: st.pid,
                     };
                 }
@@ -740,15 +745,97 @@ export async function appVersion(): Promise<string> {
 
 // ---- auto-update ----
 
+export type AppUpdatePhase =
+    | 'idle'
+    | 'checking'
+    | 'available'
+    | 'downloading'
+    | 'ready'
+    | 'installing'
+    | 'external'
+    | 'error';
+
+export interface AppUpdateState {
+    phase: AppUpdatePhase;
+    version?: string;
+    downloadedBytes?: number;
+    totalBytes?: number;
+    error?: string;
+}
+
+const APP_RELEASE_URL =
+    'https://github.com/Sinotrade/shioaji-pro-app/releases/latest';
+
+let appUpdateState: AppUpdateState = { phase: 'idle' };
+const appUpdateListeners = new Set<() => void>();
+let pendingUpdate: Update | null = null;
 let updateInFlight = false;
+
+export function getAppUpdateState(): AppUpdateState {
+    return appUpdateState;
+}
+
+export function subscribeAppUpdateState(listener: () => void): () => void {
+    appUpdateListeners.add(listener);
+    return () => {
+        appUpdateListeners.delete(listener);
+    };
+}
+
+function setAppUpdateState(state: AppUpdateState) {
+    appUpdateState = state;
+    appUpdateListeners.forEach((listener) => listener());
+}
+
+function updateDownloadProgress(event: DownloadEvent) {
+    if (appUpdateState.phase !== 'downloading') return;
+    if (event.event === 'Started') {
+        setAppUpdateState({
+            ...appUpdateState,
+            downloadedBytes: 0,
+            totalBytes: event.data.contentLength,
+        });
+        return;
+    }
+    if (event.event === 'Progress') {
+        setAppUpdateState({
+            ...appUpdateState,
+            downloadedBytes:
+                (appUpdateState.downloadedBytes ?? 0) +
+                event.data.chunkLength,
+        });
+    }
+}
 
 export async function checkForUpdates(silent: boolean) {
     if (!isTauri || updateInFlight) return;
+    if (appUpdateState.phase === 'ready') {
+        if (!silent) {
+            notify({
+                kind: 'info',
+                title: `更新 v${appUpdateState.version} 已下載`,
+                body: '請按「重新啟動並更新」完成安裝',
+            });
+        }
+        return;
+    }
+    if (appUpdateState.phase === 'external') {
+        if (!silent) {
+            notify({
+                kind: 'info',
+                title: `有新版 v${appUpdateState.version}`,
+                body: 'RPM／DEB 安裝版請從下載頁或系統套件管理器更新',
+            });
+        }
+        return;
+    }
     updateInFlight = true;
+    setAppUpdateState({ phase: 'checking' });
     try {
         const { check } = await import('@tauri-apps/plugin-updater');
         const update = await check();
         if (!update) {
+            setAppUpdateState({ phase: 'idle' });
             if (!silent) {
                 notify({
                     kind: 'info',
@@ -758,24 +845,100 @@ export async function checkForUpdates(silent: boolean) {
             }
             return;
         }
+        setAppUpdateState({ phase: 'available', version: update.version });
+        const { invoke } = await import('@tauri-apps/api/core');
+        const canInstall = await invoke<boolean>(
+            'supports_in_app_update',
+        ).catch(() => !/Linux/i.test(navigator.userAgent));
+        if (!canInstall) {
+            await update.close().catch(() => undefined);
+            setAppUpdateState({
+                phase: 'external',
+                version: update.version,
+            });
+            notify({
+                kind: 'info',
+                title: `有新版 v${update.version}`,
+                body: 'RPM／DEB 安裝版請從下載頁或系統套件管理器更新',
+            });
+            return;
+        }
+        pendingUpdate = update;
+        setAppUpdateState({
+            phase: 'downloading',
+            version: update.version,
+            downloadedBytes: 0,
+        });
+        await update.download(updateDownloadProgress);
+        setAppUpdateState({ phase: 'ready', version: update.version });
         notify({
             kind: 'info',
-            title: `⬇️ 下載更新 v${update.version}`,
-            body: '更新完成後將自動重新啟動',
+            title: `更新 v${update.version} 已下載`,
+            body: '可在方便時重新啟動並完成更新',
         });
-        await update.downloadAndInstall();
-        const { relaunch } = await import('@tauri-apps/plugin-process');
-        await relaunch();
     } catch (e) {
+        await pendingUpdate?.close().catch(() => undefined);
+        pendingUpdate = null;
+        const message = e instanceof Error ? e.message : String(e);
+        setAppUpdateState({ phase: 'error', error: message });
         if (!silent) {
             notify({
                 kind: 'err',
                 title: '更新檢查失敗',
-                body: e instanceof Error ? e.message : String(e),
+                body: message,
             });
         }
     } finally {
         updateInFlight = false;
+    }
+}
+
+export async function restartAndInstallUpdate() {
+    if (
+        !isTauri ||
+        updateInFlight ||
+        appUpdateState.phase !== 'ready' ||
+        !pendingUpdate
+    ) {
+        return;
+    }
+    updateInFlight = true;
+    const update = pendingUpdate;
+    setAppUpdateState({ phase: 'installing', version: update.version });
+    try {
+        await update.install();
+        pendingUpdate = null;
+        const { relaunch } = await import('@tauri-apps/plugin-process');
+        await relaunch();
+    } catch (e) {
+        await update.close().catch(() => undefined);
+        pendingUpdate = null;
+        const message = e instanceof Error ? e.message : String(e);
+        setAppUpdateState({
+            phase: 'error',
+            version: update.version,
+            error: message,
+        });
+        notify({
+            kind: 'err',
+            title: '更新安裝失敗',
+            body: message,
+        });
+    } finally {
+        updateInFlight = false;
+    }
+}
+
+export async function openLatestRelease() {
+    try {
+        const { open } = await import('@tauri-apps/plugin-shell');
+        await open(APP_RELEASE_URL);
+    } catch (e) {
+        notify({
+            kind: 'err',
+            title: '無法開啟下載頁',
+            body: e instanceof Error ? e.message : String(e),
+        });
     }
 }
 
