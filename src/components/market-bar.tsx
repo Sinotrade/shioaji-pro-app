@@ -1,6 +1,6 @@
 // src/components/market-bar.tsx — index / futures basis strip in the header
 
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import { usePoll } from '../hooks/use-poll';
 import { useQuote } from '../hooks/use-stream';
 import { fetchSnapshots } from '../lib/shioaji';
@@ -10,33 +10,19 @@ import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './hud-header.css';
 
-const TSE_INDEX = {
-    security_type: 'IND' as const,
-    exchange: 'TSE' as const,
-    code: 'IX0001',
-    target_code: null,
-};
-const TXF = {
-    security_type: 'FUT' as const,
-    exchange: 'TAIFEX' as const,
-    code: 'TXFR1',
-    target_code: null,
-};
-
 export function MarketBar() {
     const { data } = usePoll<Snapshot[]>(
-        useCallback(() => fetchSnapshots([TSE_INDEX, TXF]), []),
+        useCallback(async () => {
+            const contracts = await Promise.all([
+                ensureContract('IX0001', 'IND'),
+                ensureContract('TXFR1', 'FUT'),
+            ]);
+            return fetchSnapshots(contracts);
+        }, []),
         10000,
     );
     const indexLive = useQuote('IX0001');
     const txfLive = useQuote('TXFR1');
-
-    useEffect(() => {
-        void Promise.allSettled([
-            ensureContract('IX0001', 'IND'),
-            ensureContract('TXFR1', 'FUT'),
-        ]);
-    }, []);
 
     const indexSnap = data?.find((s) => s.code === 'IX0001');
     const txfSnap = data?.find((s) => s.code !== 'IX0001');

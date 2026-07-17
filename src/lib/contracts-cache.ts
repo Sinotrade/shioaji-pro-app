@@ -22,8 +22,10 @@ export function getCachedContract(code: string): ContractInfo | undefined {
 
 export function primeContract(contract: ContractInfo) {
     cache.set(contract.code, contract);
+    if (contract.target_code) {
+        registerCodeAlias(contract.target_code, contract.code);
+    }
     emit();
-    subscribed.add(contract.code); // watchlist already subscribed it
 }
 
 export async function ensureContract(
@@ -31,7 +33,18 @@ export async function ensureContract(
     type?: SecurityType,
 ): Promise<ContractInfo> {
     const hit = cache.get(code);
-    if (hit) return hit;
+    if (hit) {
+        if (hit.target_code) {
+            registerCodeAlias(hit.target_code, hit.code);
+        }
+        if (!subscribed.has(hit.code)) {
+            const results = await subscribeContractQuotes(hit);
+            if (results.some((result) => result.status === 'fulfilled')) {
+                subscribed.add(hit.code);
+            }
+        }
+        return hit;
+    }
     const pendingKey = `${type ?? 'AUTO'}:${code}`;
     const inflight = pending.get(pendingKey);
     if (inflight) return inflight;
@@ -41,12 +54,15 @@ export async function ensureContract(
         // supplied, so auto-detection is one request instead of four 404s.
         const contract = await resolveContract(code, type);
         cache.set(code, contract);
+        cache.set(contract.code, contract);
         if (contract.target_code) {
             registerCodeAlias(contract.target_code, contract.code);
         }
         if (!subscribed.has(contract.code)) {
-            subscribed.add(contract.code);
-            await subscribeContractQuotes(contract);
+            const results = await subscribeContractQuotes(contract);
+            if (results.some((result) => result.status === 'fulfilled')) {
+                subscribed.add(contract.code);
+            }
         }
         emit();
         return contract;

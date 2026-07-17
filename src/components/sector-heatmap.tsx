@@ -3,8 +3,15 @@
 // percent change (intensity scales with magnitude), sized order by 成交額.
 // Click a tile to link the symbol everywhere.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+    useCallback,
+    useEffect,
+    useMemo,
+    useState,
+    useSyncExternalStore,
+} from 'react';
 import { usePoll } from '../hooks/use-poll';
+import { ensureContract } from '../lib/contracts-cache';
 import { fetchSnapshots } from '../lib/shioaji';
 import { useFocusedSector } from '../lib/sector-sync';
 import {
@@ -14,6 +21,7 @@ import {
     SECTOR_INDICES,
     type StockMeta,
 } from '../lib/stock-index';
+import { getQuote, subscribeQuoteStore } from '../lib/stream';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { Snapshot } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
@@ -22,6 +30,20 @@ import * as styles from './sector-heatmap.css';
 
 const MAX_MEMBERS = 80;
 const CAT_KEY = 'sj-pro-heatmap-cat';
+const SECTOR_INDEX_CODES = SECTOR_INDICES.map((sector) => sector.index);
+
+function subscribeSectorQuoteStore(listener: () => void) {
+    const off = SECTOR_INDEX_CODES.map((code) =>
+        subscribeQuoteStore(code, listener),
+    );
+    return () => off.forEach((unsubscribe) => unsubscribe());
+}
+
+function getSectorQuoteVersion() {
+    return SECTOR_INDEX_CODES.map(
+        (code) => getQuote(code)?.seq ?? 0,
+    ).join(':');
+}
 
 const catLabel = sectorLabel;
 
@@ -39,10 +61,21 @@ export function SectorHeatmap({
     const [view, setView] = useState<'overview' | 'sector'>('overview');
     const theme = useThemeSettings();
     const colors = getChartColors(theme);
+    const sectorQuoteVersion = useSyncExternalStore(
+        subscribeSectorQuoteStore,
+        getSectorQuoteVersion,
+    );
 
     useEffect(() => {
         loadStockIndex().then(setIndex).catch(() => undefined);
     }, []);
+
+    useEffect(() => {
+        if (view !== 'overview') return;
+        void Promise.allSettled(
+            SECTOR_INDEX_CODES.map((code) => ensureContract(code, 'IND')),
+        );
+    }, [view]);
 
     // jump here when a leaderboard row's 跳同類 fires (issue #2)
     const focused = useFocusedSector();
@@ -76,18 +109,26 @@ export function SectorHeatmap({
         );
         return SECTOR_INDICES.map((sec) => {
             const s = byCode.get(sec.index);
-            const ref = s ? s.close - s.change_price : 0;
+            const live = getQuote(sec.index)?.index;
+            const close = live ? Number(live.close) : s?.close;
+            const ref = live
+                ? Number(live.reference)
+                : s
+                  ? s.close - s.change_price
+                  : 0;
             const pct =
-                s && s.change_price && ref > 0
-                    ? (s.change_price / ref) * 100
+                close !== undefined && ref > 0
+                    ? ((close - ref) / ref) * 100
                     : 0;
             return {
                 ...sec,
-                amount: s?.total_amount ?? 0,
+                amount: live?.amount_sum
+                    ? Number(live.amount_sum)
+                    : (s?.total_amount ?? 0),
                 pct,
             };
         }).sort((a, b) => b.pct - a.pct); // 最強類股在前
-    }, [overviewPoll.data]);
+    }, [overviewPoll.data, sectorQuoteVersion]);
 
     const categories = useMemo(
         () => (index ? categoriesOf(index).filter((c) => c.count >= 5) : []),

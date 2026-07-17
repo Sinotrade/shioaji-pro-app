@@ -117,8 +117,9 @@ export interface SseBidAsk {
     simtrade?: boolean;
 }
 
-// SSE quote_idx events. Only the standard price fields are guaranteed for
-// every exchange index; broad-market statistics are intentionally optional.
+// Normalized SSE quote_idx event. Shioaji 1.7 sends QuoteIdxV1 fields in
+// PascalCase; stream.ts converts them to this lower-case frontend shape.
+// Only standard price fields are guaranteed for every exchange index.
 export interface SseIndexQuote {
     code: string;
     exchange: string;

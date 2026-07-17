@@ -580,24 +580,27 @@ export function CandleChart({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, tf]);
 
-    // live tick -> update current bar
-    const tick = quote?.tick;
-    if (tick && tick.code === contract.code) {
-        const p = Number(tick.close);
+    // Live trade/index quote -> update the current bar. Index products use
+    // quote_idx rather than the regular tick stream in Shioaji 1.7.
+    const liveQuote = quote?.tick ?? quote?.index;
+    if (liveQuote && liveQuote.code === contract.code) {
+        const p = Number(liveQuote.close);
         if (Number.isFinite(p)) lastPriceRef.current = p;
     }
     useEffect(() => {
-        if (!tick || tick.code !== contract.code) return;
+        if (!liveQuote || liveQuote.code !== contract.code) return;
         // 試撮 (simtrade) 揭示價可以是漲跌停天地價 — 畫進 K 棒會把
         // Y 軸尺度撐爆（issue #5），一律排除
-        if (tick.simtrade) return;
+        if ('simtrade' in liveQuote && liveQuote.simtrade) return;
         // history for this (symbol, timeframe) not in place yet
         if (loadedKeyRef.current !== `${contract.code}|${tf.minutes}`) return;
         const series = candleSeriesRef.current;
         if (!series) return;
-        const price = Number(tick.close);
+        const price = Number(liveQuote.close);
         if (!Number.isFinite(price)) return;
-        const tickTime = wallClockToUtc(`${tick.date}T${tick.time}`);
+        const tickTime = wallClockToUtc(
+            `${liveQuote.date}T${liveQuote.time}`,
+        );
         const bucketSec = tf.minutes * 60;
         const bucket =
             tf.minutes >= 1440
@@ -611,7 +614,7 @@ export function CandleChart({
                 high: price,
                 low: price,
                 close: price,
-                volume: tick.volume,
+                volume: quote?.tick?.volume ?? 0,
             };
             // a fresh bucket = the previous bar closed — keep barsRef in
             // sync (history paging re-attaches this tail) and recompute
@@ -622,7 +625,7 @@ export function CandleChart({
             bar.high = Math.max(bar.high, price);
             bar.low = Math.min(bar.low, price);
             bar.close = price;
-            bar.volume += tick.volume;
+            bar.volume += quote?.tick?.volume ?? 0;
         }
         lastBarRef.current = bar;
         try {
@@ -642,7 +645,7 @@ export function CandleChart({
             // a rejected update (e.g. timestamp older than the series tail)
             // must never take the app down — history reload will resync
         }
-    }, [tick, contract.code, tf.minutes]);
+    }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
     const [customVer, setCustomVer] = useState(0);

@@ -4,6 +4,7 @@ import {
     fetchOptionRoots,
     fetchOptions,
     fetchWarrants,
+    normalizeContractCode,
     resolveContract,
 } from './shioaji';
 import {
@@ -144,7 +145,11 @@ export async function searchProducts(
 
     const normalized = raw.toUpperCase();
     if (/^[A-Z0-9]+$/.test(normalized)) {
-        const direct = await resolveContract(normalized).catch(() => null);
+        const canonicalIndex = normalizeContractCode(normalized, 'IND');
+        const direct = await resolveContract(
+            canonicalIndex,
+            canonicalIndex !== normalized ? 'IND' : undefined,
+        ).catch(() => null);
         if (
             direct &&
             (direct.security_type !== 'WRT' || options.includeWarrants)
@@ -249,7 +254,9 @@ export async function searchProducts(
         })),
     ].filter(
         (index) =>
-            index.code.startsWith(normalized) || index.name.includes(lookup),
+            index.code.startsWith(
+                normalizeContractCode(normalized, 'IND'),
+            ) || index.name.includes(lookup),
     );
     results.push(
         ...indexMatches.map((index) => ({

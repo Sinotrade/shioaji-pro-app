@@ -35,8 +35,14 @@ type SortMode = 'custom' | 'desc' | 'asc';
 // live percent change for sorting — quote first, snapshot fallback
 function pctOf(item: WatchItem): number {
     const q = getQuote(item.contract.code);
-    const ref = item.contract.reference;
-    const close = q?.tick ? Number(q.tick.close) : item.snapshot?.close;
+    const ref = q?.index
+        ? Number(q.index.reference)
+        : item.contract.reference;
+    const close = q?.tick
+        ? Number(q.tick.close)
+        : q?.index
+          ? Number(q.index.close)
+          : item.snapshot?.close;
     if (close !== undefined && ref) return ((close - ref) / ref) * 100;
     return item.snapshot?.change_rate ?? 0;
 }
@@ -64,11 +70,18 @@ const WatchRow = memo(function WatchRow({
 }) {
     const quote = useQuote(item.contract.code);
     const tick = quote?.tick;
+    const index = quote?.index;
 
-    const close = tick ? Number(tick.close) : item.snapshot?.close;
-    const ref = item.contract.reference;
+    const close = tick
+        ? Number(tick.close)
+        : index
+          ? Number(index.close)
+          : item.snapshot?.close;
+    const ref = index ? Number(index.reference) : item.contract.reference;
     const chg = tick?.price_chg
         ? Number(tick.price_chg)
+        : index
+          ? Number(index.close) - Number(index.reference)
         : close !== undefined && ref
           ? close - ref
           : undefined;

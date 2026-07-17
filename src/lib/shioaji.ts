@@ -123,7 +123,7 @@ export function normalizeContractCode(
     securityType?: SecurityType,
 ) {
     const normalized = code.trim().toUpperCase();
-    return securityType === 'IND'
+    return securityType === 'IND' || normalized in LEGACY_INDEX_CODES
         ? (LEGACY_INDEX_CODES[normalized] ?? normalized)
         : normalized;
 }

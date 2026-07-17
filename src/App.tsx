@@ -135,6 +135,9 @@ function BlockBody({
     onSelectCode: (code: string) => void;
     refreshTrading: () => void;
 }) {
+    if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
+        return <IndexBlockUnavailable type={block.type} />;
+    }
     switch (block.type) {
         case 'watchlist':
             return <Watchlist {...watchlistProps} />;
@@ -283,6 +286,27 @@ function BlockPlaceholder() {
     return <div className={styles.blockPlaceholder}>等待商品…</div>;
 }
 
+function indexBlockMessage(type: BlockType): string | null {
+    if (type === 'depth' || type === 'depthmap') {
+        return '指數 Quote 行情不含五檔委託資料';
+    }
+    if (type === 'tape' || type === 'volprofile') {
+        return '指數沒有即時 Tick 串流，此面板不支援盤中更新';
+    }
+    if (type === 'flash' || type === 'grid') {
+        return '指數商品不可下單';
+    }
+    return null;
+}
+
+function IndexBlockUnavailable({ type }: { type: BlockType }) {
+    return (
+        <div className={styles.blockPlaceholder}>
+            {indexBlockMessage(type)}
+        </div>
+    );
+}
+
 interface BlockViewProps {
     block: Block;
     selected: ContractInfo | null;
@@ -376,7 +400,12 @@ function PopoutView({
         // 下單面板等連動面板跟著動（issue #1: T 字要同時連動下單面板）
         body = <OptionChain onPick={broadcastSelectCode} />;
     else if (type === 'combo') body = <ComboTicket />;
-    else if (contract) {
+    else if (
+        contract?.security_type === 'IND' &&
+        indexBlockMessage(type)
+    ) {
+        body = <IndexBlockUnavailable type={type} />;
+    } else if (contract) {
         switch (type) {
             case 'chart':
                 body = (

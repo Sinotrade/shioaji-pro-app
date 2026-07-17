@@ -70,8 +70,13 @@ async function pickCode(code: string) {
 function WatchMini({ item, spark }: { item: WatchItem; spark: boolean }) {
     const quote = useQuote(item.contract.code);
     const tick = quote?.tick;
-    const close = tick ? Number(tick.close) : item.snapshot?.close;
-    const ref = item.contract.reference;
+    const index = quote?.index;
+    const close = tick
+        ? Number(tick.close)
+        : index
+          ? Number(index.close)
+          : item.snapshot?.close;
+    const ref = index ? Number(index.reference) : item.contract.reference;
     const pct =
         close !== undefined && ref
             ? ((close - ref) / ref) * 100

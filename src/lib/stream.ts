@@ -127,11 +127,76 @@ function ingestBidAsk(bidask: SseBidAsk) {
     emitQuote(bidask.code);
 }
 
+const INDEX_UPSTREAM_ALIASES: Record<string, string> = {
+    limit_up_count: 'RaiseStop',
+    raise_count: 'Raise',
+    flat_count: 'Flat',
+    fall_count: 'Fall',
+    limit_down_count: 'FallStop',
+};
+
+function indexField(
+    raw: Record<string, unknown>,
+    name: string,
+): unknown {
+    const pascal = name
+        .split('_')
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join('');
+    return raw[name] ?? raw[pascal] ?? raw[INDEX_UPSTREAM_ALIASES[name] ?? ''];
+}
+
+function optionalString(raw: Record<string, unknown>, name: string) {
+    const value = indexField(raw, name);
+    return value === undefined || value === null ? undefined : String(value);
+}
+
+function optionalNumber(raw: Record<string, unknown>, name: string) {
+    const value = indexField(raw, name);
+    if (value === undefined || value === null) return undefined;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : undefined;
+}
+
+// Shioaji Server 1.7 preserves the upstream QuoteIdxV1 field names in SSE
+// (Date, Time, Reference, Close...). Normalize once at the stream boundary so
+// the rest of the frontend can use the same lower-case shape as tick events.
+export function normalizeIndexQuote(raw: string): SseIndexQuote {
+    const source = JSON.parse(raw) as Record<string, unknown>;
+    return {
+        code: String(indexField(source, 'code') ?? ''),
+        exchange: String(indexField(source, 'exchange') ?? ''),
+        date: String(indexField(source, 'date') ?? ''),
+        time: String(indexField(source, 'time') ?? ''),
+        datetime: optionalString(source, 'datetime'),
+        reference: String(indexField(source, 'reference') ?? ''),
+        open: String(indexField(source, 'open') ?? ''),
+        high: String(indexField(source, 'high') ?? ''),
+        low: String(indexField(source, 'low') ?? ''),
+        close: String(indexField(source, 'close') ?? ''),
+        amount_sum: optionalString(source, 'amount_sum'),
+        amount: optionalString(source, 'amount'),
+        volume: optionalNumber(source, 'volume'),
+        vol_sum: optionalNumber(source, 'vol_sum'),
+        count: optionalNumber(source, 'count'),
+        count_sum: optionalNumber(source, 'count_sum'),
+        no_trade: optionalNumber(source, 'no_trade'),
+        limit_up_count: optionalNumber(source, 'limit_up_count'),
+        raise_count: optionalNumber(source, 'raise_count'),
+        flat_count: optionalNumber(source, 'flat_count'),
+        fall_count: optionalNumber(source, 'fall_count'),
+        limit_down_count: optionalNumber(source, 'limit_down_count'),
+        estimate_amount_sum: optionalString(source, 'estimate_amount_sum'),
+    };
+}
+
 function handleIndexQuote(raw: string) {
-    const index = JSON.parse(raw) as SseIndexQuote;
+    const index = normalizeIndexQuote(raw);
+    if (!index.code || !Number.isFinite(Number(index.close))) return;
     const prev = quotes.get(index.code);
     const previousClose = prev?.index ? Number(prev.index.close) : undefined;
     const close = Number(index.close);
+    const moved = previousClose !== undefined && close !== previousClose;
     const lastDir: QuoteState['lastDir'] =
         previousClose === undefined || close === previousClose
             ? (prev?.lastDir ?? 0)
@@ -144,7 +209,7 @@ function handleIndexQuote(raw: string) {
         index,
         lastDir,
         seq: (prev?.seq ?? 0) + 1,
-        flashSeq: prev?.flashSeq ?? 0,
+        flashSeq: (prev?.flashSeq ?? 0) + (moved ? 1 : 0),
     });
     emitQuote(index.code);
 }
