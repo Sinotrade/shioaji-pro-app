@@ -1,6 +1,18 @@
 // src/lib/trade.ts — one-shot order helper + in-app notification channel
 
 import { trackActivity } from './activity';
+import {
+    executeExitLegs,
+    isTerminalTrade,
+    type LegError,
+    type PlacedLegs,
+    planStockExitLegs,
+    summarizeTerminalOutcomes,
+    statusText,
+    summarizeTimeout,
+    tradeToOutcome,
+    type TradeOutcome,
+} from './exit-plan';
 import { checkOrderAllowed } from './risk';
 import {
     cancelOrder,
@@ -9,7 +21,7 @@ import {
     placeStockOrder,
 } from './shioaji';
 import { getStreamStatus } from './stream';
-import type { ContractBase } from './types/contract';
+import type { ContractBase, DayTrade } from './types/contract';
 import {
     ACTIVE_ORDER_STATUSES,
     type Action,
@@ -149,73 +161,83 @@ async function sendOrder(
 }
 
 // close/flip a stock position counted in SHARES: whole lots go out as a
-// market Common order (張); the odd remainder as an IntradayOdd LIMIT at
-// the price limit (盤中零股 only accepts LMT — the limit price acts as a
-// marketable order)
-// ydShares＝昨日庫存股數（Position.yd_quantity）。賣出超過昨日庫存的部分是
-// 今日買進 — 集保 T+2 還沒入帳，普通現股賣出會被「集保賣出餘股數不足」退件
-// （2026-07-16 6244 平倉事件），超出的整張改掛現股當沖賣（daytrade_short）。
-// 盤中零股不可現沖，今日買進的零股賣不掉 — 先把原因說清楚而不是送必死單。
+// market Common order (張); today-bought lots as daytrade_short (集保 T+2
+// 未入帳); the odd remainder as an IntradayOdd LIMIT at the price limit.
+// 拆腿與驗證邏輯在 exit-plan.ts（純函式）— 所有前置驗證都在送出任何一腿之前
+// 完成，送不出去的腿具名跳過（不 throw、也不擋住送得出去的腿）；開始送單後
+// 逐腿 catch。已送出與沒送出的腿分開回傳，caller 必須對 placed 啟動
+// watchTradesToTerminal、對 errors 明確告知哪一腿沒送出。
 export async function placeStockExitByShares(
-    contract: ContractBase & { limit_up?: number; limit_down?: number },
+    contract: ContractBase & {
+        limit_up?: number;
+        limit_down?: number;
+        day_trade?: DayTrade;
+    },
     action: Action,
-    shares: number,
-    ydShares?: number,
-): Promise<Trade[]> {
+    opts: {
+        closeShares: number;
+        openShares: number;
+        ydShares?: number;
+        cond?: string;
+    },
+): Promise<PlacedLegs<Trade>> {
     assertTradingLive();
-    const yd =
-        action === 'Sell' && ydShares !== undefined
-            ? ydShares
-            : Number.POSITIVE_INFINITY;
-    const dtShares = Math.max(0, shares - yd);
-    if (dtShares % 1000 > 0) {
-        throw new Error(
-            '今日買進含零股 — 盤中零股不可現股當沖賣出，零股請留倉隔日再賣',
-        );
-    }
-    const dtLots = dtShares / 1000;
-    const plainShares = shares - dtShares;
-    const lots = Math.floor(plainShares / 1000);
-    const odd = plainShares % 1000;
-    const out: Trade[] = [];
-    if (lots > 0) {
-        out.push(await placeQuickOrder(contract, action, null, lots));
-    }
-    if (dtLots > 0) {
-        out.push(
-            await placeQuickOrder(contract, action, null, dtLots, {
-                daytradeShort: true,
-            }),
-        );
-    }
-    if (odd > 0) {
-        const limitPrice =
-            action === 'Sell' ? contract.limit_down : contract.limit_up;
-        if (!limitPrice) {
-            throw new Error('零股需要漲跌停價作為限價，無法取得');
-        }
-        out.push(
-            await placeQuickOrder(contract, action, limitPrice, odd, {
-                orderLot: 'IntradayOdd',
-            }),
-        );
-    }
-    return out;
+    const { legs, skipped } = planStockExitLegs({
+        action,
+        closeShares: opts.closeShares,
+        openShares: opts.openShares,
+        ydShares: opts.ydShares,
+        cond: opts.cond,
+        limits: contract,
+    });
+    const { placed, errors } = await executeExitLegs(legs, (leg) =>
+        placeQuickOrder(contract, action, leg.price, leg.quantity, {
+            orderLot: leg.orderLot,
+            daytradeShort: leg.daytradeShort,
+        }),
+    );
+    // 刻意跳過的腿與送出失敗的腿走同一條回報路徑 — 兩者都是「這一腿沒送出去」，
+    // 終態彙總靠它們才不會把「只平了一半」講成「全部成交」
+    return { placed, errors: [...skipped, ...errors] };
 }
 
 // 送單後追蹤到終態。模擬盤常「已送出（Submitted）」後才非同步補終態，退件
 // （例如集保餘股不足）時 SSE 事件未必會來 — 送出成功的綠色 toast 會讓人以為
-// 平倉完成，其實單子死了沒人講（2026-07-16 6244 平倉事件）。輪詢 30 秒兜底：
-// 全成交 → ok、有退件 → err 附退件原因、逾時仍掛著 → 提示去委託分頁看。
+// 平倉完成，其實單子死了沒人講（2026-07-16 6244 平倉事件）。
+// 終態判讀在 exit-plan.ts 的純函式：只有每腿 Filled 且足量、且沒有任何一腿在
+// 送出階段就失敗（unsentLegs）才報成功；其餘一律紅色警示附各腿明細。
+// unsentLegs 必須傳進來 —— 只把送出成功的腿餵進彙總，every() 會對縮小過的
+// 集合成立而報出假的「全部成交」。
 export async function watchTradesToTerminal(
     accountType: 'S' | 'F',
     placed: Trade[],
     label: string,
+    unsentLegs: LegError[] = [],
 ): Promise<void> {
     const ids = new Set(placed.map((t) => t.order.id));
-    if (ids.size === 0) return;
-    const TERMINAL = new Set(['Filled', 'Failed', 'Cancelled']);
-    const deadline = Date.now() + 30_000;
+    if (ids.size === 0) {
+        // 一腿都沒送出去也要講 — 靜默 return 會讓使用者只看到「傳送中」沒有下文
+        if (unsentLegs.length > 0) {
+            notify(summarizeTerminalOutcomes(label, [], unsentLegs));
+        }
+        return;
+    }
+    if (ids.size !== placed.length) {
+        // 兩腿拿到同一個 order id → 會被縮成一腿判讀而誤報足量，寧可交人工
+        notify({
+            kind: 'err',
+            title: `⚠️ ${label} 委託編號重複，無法逐腿對帳`,
+            body: '請到「委託」分頁自行確認每筆委託與剩餘部位',
+        });
+        return;
+    }
+    const toOutcome = (t: Trade) => tradeToOutcome(t, accountType);
+    // 盤中零股是 LMT+ROD、撮合有週期，30 秒往往還沒到終態；等太短會把同批
+    // 整張腿的退件原因一起埋掉，只剩一則沒有資訊的逾時通知
+    const hasOddLeg = placed.some((t) => t.order.order_lot === 'IntradayOdd');
+    const deadline = Date.now() + (hasOddLeg ? 240_000 : 30_000);
+    let lastKnown: TradeOutcome[] = [];
+    const alerted = new Set<string>();
     while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2000));
         let mine: Trade[];
@@ -227,29 +249,32 @@ export async function watchTradesToTerminal(
             continue; // transient — keep polling until the deadline
         }
         if (mine.length !== ids.size) continue;
-        if (!mine.every((t) => TERMINAL.has(t.status.status))) continue;
-        const failed = mine.filter((t) => t.status.status === 'Failed');
-        const dealt = mine.reduce((s, t) => s + t.status.deal_quantity, 0);
-        if (failed.length > 0) {
-            notify({
-                kind: 'err',
-                title: `❌ ${label} 委託被退件`,
-                body: failed
-                    .map((t) => t.status.msg || 'Failed（無退件原因）')
-                    .join('；'),
-            });
-        } else if (dealt === 0) {
-            notify({ kind: 'info', title: `${label} 已取消（未成交）`, body: '' });
-        } else {
-            notify({ kind: 'ok', title: `✅ ${label} 成交`, body: '' });
+        lastKnown = mine.map(toOutcome);
+        const done = mine.every(isTerminalTrade);
+        if (!done) {
+            // 有腿已經確定沒平到就先講，別讓它被還在撮合的零股腿壓到 4 分鐘後
+            // 才出現。零成交的 Cancelled 也算（市價 IOC 遇薄簿很常見）；帶部分
+            // 成交的取消留給最後的彙總講，這裡用退件語氣反而誤導
+            for (const t of mine) {
+                const o = toOutcome(t);
+                const dead =
+                    o.status === 'Failed' ||
+                    o.status === 'Inactive' ||
+                    (o.status === 'Cancelled' && o.dealQty === 0);
+                if (!dead || alerted.has(t.order.id)) continue;
+                alerted.add(t.order.id);
+                notify({
+                    kind: 'err',
+                    title: `❌ ${label} 有一腿未成交`,
+                    body: `${o.orderQty} ${o.unit}：${o.msg || statusText(o.status)} — 其餘腿仍在撮合，完整結果稍後通知`,
+                });
+            }
+            continue;
         }
+        notify(summarizeTerminalOutcomes(label, lastKnown, unsentLegs));
         return;
     }
-    notify({
-        kind: 'info',
-        title: `⏳ ${label} 逾 30 秒未有結果`,
-        body: '委託仍掛著（模擬盤撮合可能延遲）— 到「委託」分頁確認或刪單',
-    });
+    notify(summarizeTimeout(label, lastKnown, unsentLegs));
 }
 
 // cancel every working order across stock + futures accounts
