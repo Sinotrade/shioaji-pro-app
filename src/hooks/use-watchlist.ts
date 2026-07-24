@@ -3,7 +3,11 @@
 // First run migrates the old local list / creates a default one.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ensureContract, primeContract } from '../lib/contracts-cache';
+import {
+    ensureContract,
+    primeContract,
+    refreshCachedContracts,
+} from '../lib/contracts-cache';
 import {
     createWatchlist,
     deleteWatchlist,
@@ -392,17 +396,31 @@ export function useWatchlist() {
     }, []);
 
     useEffect(() => {
-        return onContractEvent((event) => {
-            const list = serverLists.find(
-                (candidate) => candidate.id === activeIdRef.current,
-            );
-            if (
-                list &&
-                (event.base_changed || event.info_changed)
-            ) {
-                void loadList(list);
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let pendingType: SecurityType | null | undefined;
+        const off = onContractEvent((event) => {
+            if (!event.base_changed && !event.info_changed) return;
+            const eventType = event.security_type as SecurityType | null;
+            if (!timer) {
+                pendingType = eventType;
+            } else if (pendingType !== eventType) {
+                pendingType = null;
             }
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => {
+                const list = serverLists.find(
+                    (candidate) => candidate.id === activeIdRef.current,
+                );
+                void refreshCachedContracts(pendingType ?? undefined);
+                if (list) void loadList(list);
+                timer = null;
+                pendingType = undefined;
+            }, 250);
         });
+        return () => {
+            off();
+            if (timer) clearTimeout(timer);
+        };
     }, [serverLists, loadList]);
 
     return {

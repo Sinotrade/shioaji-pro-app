@@ -15,7 +15,7 @@ export interface ContractChangeEvent {
     event_id: string;
     action: string;
     region: string;
-    security_type: string;
+    security_type: string | null;
     published_at: string;
     base_changed: boolean;
     info_changed: boolean;
@@ -60,6 +60,28 @@ const tickTapeListeners = new Set<(tick: SseTick) => void>();
 const contractEventListeners = new Set<
     (event: ContractChangeEvent) => void
 >();
+
+function emitContractChange(event: ContractChangeEvent) {
+    contractEventListeners.forEach((listener) => listener(event));
+}
+
+function emitFullContractRefresh(
+    action: 'RECONNECT' | 'MAINTENANCE',
+    eventId: string,
+    publishedAt: string,
+) {
+    emitContractChange({
+        event_id: eventId,
+        action,
+        region: 'TW',
+        security_type: null,
+        published_at: publishedAt,
+        base_changed: true,
+        info_changed: true,
+        info_scope: 'ALL',
+        info_shards: [],
+    });
+}
 
 function emitQuote(code: string) {
     quoteListeners.get(code)?.forEach((l) => l());
@@ -306,11 +328,17 @@ function connectContractEvents() {
     contractEs = new EventSource(
         `${getApiBase()}/api/v1/stream/data/contract_event?region=TW`,
     );
+    contractEs.onopen = () => {
+        const now = new Date().toISOString();
+        // SSE does not replay changes missed while disconnected. Re-query on
+        // every successful connection so a daily update cannot stay stale.
+        emitFullContractRefresh('RECONNECT', `reconnect:${now}`, now);
+    };
     contractEs.addEventListener('contract_event', (event) => {
         const change = JSON.parse(
             (event as MessageEvent).data,
         ) as ContractChangeEvent;
-        contractEventListeners.forEach((listener) => listener(change));
+        emitContractChange(change);
     });
     contractEs.onerror = () => {
         contractEs?.close();
@@ -333,6 +361,14 @@ async function watchMaintenance() {
         const lm = h.last_maintenance ?? null;
         if (lastMaintenance !== null && lm !== lastMaintenance) {
             await resubscribeAll();
+            // Contract events are not replayed. The server can rebuild its
+            // client while this EventSource reconnects, so use maintenance as
+            // a compensating signal and re-query cached Contract V2 info.
+            emitFullContractRefresh(
+                'MAINTENANCE',
+                `maintenance:${lm ?? Date.now()}`,
+                lm ?? new Date().toISOString(),
+            );
         }
         lastMaintenance = lm;
     } catch {

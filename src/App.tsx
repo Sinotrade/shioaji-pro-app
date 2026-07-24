@@ -492,6 +492,7 @@ export default function App() {
         deleteCurrentList,
     } = useWatchlist();
     const [selected, setSelected] = useState<ContractInfo | null>(null);
+    const cachedSelected = useContract(selected?.code ?? null);
     const [workspace, setWorkspace] = useState<Workspace>(loadWorkspace);
     const [profiles, setProfiles] = useState<Profile[]>(loadProfiles);
     const { width, containerRef, mounted } = useContainerWidth();
@@ -512,6 +513,15 @@ export default function App() {
             }
         }
     }, [items, selected]);
+
+    // Contract V2 info is refreshed after daily maintenance/update events.
+    // Keep selections opened outside the active watchlist on the refreshed
+    // cache object as well, so limits/reference never remain on yesterday.
+    useEffect(() => {
+        if (cachedSelected && cachedSelected !== selected) {
+            setSelected(cachedSelected);
+        }
+    }, [cachedSelected, selected]);
 
     // portfolio polling (stock + futures merged)
     const positionsPoll = usePoll<Position[]>(

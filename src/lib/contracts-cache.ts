@@ -28,6 +28,48 @@ export function primeContract(contract: ContractInfo) {
     emit();
 }
 
+export async function refreshCachedContracts(
+    securityType?: SecurityType,
+): Promise<void> {
+    const targets = new Map<string, ContractInfo>();
+    for (const contract of cache.values()) {
+        if (securityType && contract.security_type !== securityType) continue;
+        targets.set(
+            `${contract.security_type ?? 'AUTO'}:${contract.code}`,
+            contract,
+        );
+    }
+    if (targets.size === 0) return;
+
+    const targetList = [...targets.values()];
+    const refreshed = await Promise.allSettled(
+        targetList.map((contract) =>
+            resolveContract(contract.code, contract.security_type ?? undefined),
+        ),
+    );
+    let changed = false;
+    refreshed.forEach((result, index) => {
+        if (result.status !== 'fulfilled') return;
+        const previous = targetList[index];
+        if (!previous) return;
+        const next = result.value;
+        for (const [key, cached] of cache) {
+            if (
+                cached.code === previous.code &&
+                cached.security_type === previous.security_type
+            ) {
+                cache.set(key, next);
+            }
+        }
+        cache.set(next.code, next);
+        if (next.target_code) {
+            registerCodeAlias(next.target_code, next.code);
+        }
+        changed = true;
+    });
+    if (changed) emit();
+}
+
 export async function ensureContract(
     code: string,
     type?: SecurityType,
