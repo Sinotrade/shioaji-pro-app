@@ -27,12 +27,14 @@ import {
     notify,
     placeQuickOrder,
     placeStockExitByShares,
+    watchTradesToTerminal,
 } from '../lib/trade';
 import type { Trade } from '../lib/types/order';
 import type {
     AccountBalance,
     Margin,
     Position,
+    StockPosition,
 } from '../lib/types/portfolio';
 import {
     fmtInt,
@@ -103,19 +105,68 @@ function PositionsTable({
         try {
             const contract = await ensureContract(p.code);
             const exit = p.direction === 'Buy' ? 'Sell' : 'Buy';
-            const qty = mode === 'close' ? p.quantity : p.quantity * 2;
+            // 反手＝平掉舊倉 + 再開同量反向倉。兩者分開傳，拆腿的錯誤訊息才
+            // 講得出零股是卡在「今日買進」還是「新開的反向倉」
+            const closeShares = p.quantity;
+            const openShares = mode === 'reverse' ? p.quantity : 0;
+            const qty = closeShares + openShares;
+            const actLabel = `${p.code} ${mode === 'close' ? '平倉' : '反手'}`;
             if (isStockPosition(p)) {
-                // shares → Common lots + IntradayOdd remainder
-                await placeStockExitByShares(contract, exit, qty);
+                // shares → Common lots + daytrade 今日買進 + IntradayOdd 零股；
+                // 不 throw — 已送出的腿一定進 watcher，失敗的腿記名回報
+                const { placed, errors } = await placeStockExitByShares(
+                    contract,
+                    exit,
+                    {
+                        closeShares,
+                        openShares,
+                        ydShares: p.yd_quantity,
+                        cond: p.cond,
+                    },
+                );
+                if (placed.length > 0) {
+                    // errors 必須一起傳 — 否則已送出的腿全成交時，終態通知會
+                    // 報綠色「全部成交」，但部位其實只處理了一部分
+                    void watchTradesToTerminal('S', placed, actLabel, errors);
+                }
+                if (errors.length > 0) {
+                    // 「我們決定不送」與「送出時炸了、不知道券商收到沒」給
+                    // 使用者的指示完全相反，不可以混成同一句話
+                    const anyUnknown = errors.some(
+                        (er) => er.sent === 'unknown',
+                    );
+                    notify({
+                        kind: 'err',
+                        title: `❌ ${actLabel} 有委託未送出`,
+                        body:
+                            errors
+                                .map((er) => `${er.leg}：${er.error}`)
+                                .join('；') +
+                            (placed.length > 0
+                                ? '；其餘已送出的腿追蹤中'
+                                : '') +
+                            (anyUnknown
+                                ? ' — 無法確認這些委託是否已送達券商，請先到「委託」分頁確認再決定是否重送，勿直接重按'
+                                : placed.length > 0
+                                  ? ' — 這些腿未送出，券商不會有對應委託；勿直接重按（會重複送出已成功的腿）'
+                                  : ' — 這些腿未送出，券商不會有對應委託'),
+                    });
+                    onChanged();
+                    return;
+                }
             } else {
-                await placeQuickOrder(contract, exit, null, qty);
+                const placed = await placeQuickOrder(contract, exit, null, qty);
+                void watchTradesToTerminal('F', [placed], actLabel);
             }
+            // 送出成功只代表「傳送中」— place_order 初始可能只是
+            // PendingSubmit，成交/退件/部分成交由 watcher 的終態通知定案
             notify({
-                kind: 'ok',
-                title: mode === 'close' ? '⏹ 平倉單已送出' : '🔄 反手單已送出',
+                kind: 'info',
+                title:
+                    mode === 'close' ? '⏳ 平倉單傳送中' : '⏳ 反手單傳送中',
                 body: `${p.code} 市價${exit === 'Buy' ? '買' : '賣'} ${
                     isStockPosition(p) ? fmtStockLots(qty) : `${qty} 口`
-                }`,
+                } — 等待回報確認（成交／退件以結果通知為準）`,
             });
             onChanged();
         } catch (e) {
@@ -539,7 +590,7 @@ function OrdersTable({
 }
 
 // stock positions carry yd_quantity; futures ones don't
-function isStockPosition(p: Position): boolean {
+function isStockPosition(p: Position): p is StockPosition {
     return 'yd_quantity' in p;
 }
 
