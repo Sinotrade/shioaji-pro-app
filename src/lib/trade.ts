@@ -160,9 +160,10 @@ async function sendOrder(
     return trade;
 }
 
-// close/flip a stock position counted in SHARES: whole lots go out as a
-// market Common order (張); today-bought lots as daytrade_short (集保 T+2
-// 未入帳); the odd remainder as an IntradayOdd LIMIT at the price limit.
+// close/flip a stock position counted in SHARES: all existing long shares,
+// including shares bought today, close with ordinary Cash sell orders;
+// only the newly opened short side of a flip uses daytrade_short. Odd-lot
+// closes use IntradayOdd LIMIT orders at the price limit.
 // 拆腿與驗證邏輯在 exit-plan.ts（純函式）— 所有前置驗證都在送出任何一腿之前
 // 完成，送不出去的腿具名跳過（不 throw、也不擋住送得出去的腿）；開始送單後
 // 逐腿 catch。已送出與沒送出的腿分開回傳，caller 必須對 placed 啟動

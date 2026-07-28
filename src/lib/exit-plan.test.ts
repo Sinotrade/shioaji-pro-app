@@ -35,12 +35,25 @@ function outcome(partial: Partial<TradeOutcome>): TradeOutcome {
 }
 
 describe('planStockExitLegs — 平倉', () => {
+    it('OnlyBuy + 今日買進 + 平倉 → 送普通 Cash sell，不可跳過或帶 daytrade_short', () => {
+        const { legs, skipped } = plan({
+            closeShares: 2000,
+            ydShares: 0,
+            limits: { ...LIMITS, day_trade: 'OnlyBuy' },
+        });
+        expect(legs).toEqual([
+            { label: '平倉整張', quantity: 2, price: null },
+        ]);
+        expect(legs.every((leg) => !leg.daytradeShort)).toBe(true);
+        expect(skipped).toEqual([]);
+    });
+
     it('昨日庫存足夠 → 整張 + 零股，無現沖腿', () => {
         const { legs, skipped } = plan({ closeShares: 3500, ydShares: 3500 });
         expect(legs).toEqual([
-            { label: '整張', quantity: 3, price: null },
+            { label: '平倉整張', quantity: 3, price: null },
             {
-                label: '零股',
+                label: '平倉零股',
                 quantity: 500,
                 price: 90,
                 orderLot: 'IntradayOdd',
@@ -49,18 +62,17 @@ describe('planStockExitLegs — 平倉', () => {
         expect(skipped).toEqual([]);
     });
 
-    it('賣出超過昨日庫存 → 超出的整張走現沖腿', () => {
+    it('Yes + 賣出超過昨日庫存 → 昨日與今日部位都走普通 Cash sell', () => {
         const { legs } = plan({ closeShares: 5000, ydShares: 2000 });
         expect(legs).toEqual([
-            { label: '整張', quantity: 2, price: null },
-            { label: '現沖', quantity: 3, price: null, daytradeShort: true },
+            { label: '平倉整張', quantity: 5, price: null },
         ]);
     });
 
-    it('全部是今日買進 → 只有現沖腿', () => {
+    it('Yes + 全部是今日買進 → 仍是普通 Cash sell', () => {
         const { legs } = plan({ closeShares: 2000, ydShares: 0 });
         expect(legs).toEqual([
-            { label: '現沖', quantity: 2, price: null, daytradeShort: true },
+            { label: '平倉整張', quantity: 2, price: null },
         ]);
     });
 
@@ -87,38 +99,44 @@ describe('planStockExitLegs — 平倉', () => {
 // 平倉是降風險動作 —— 送不出去的腿要具名跳過，但不能因此連送得出去的腿都不送，
 // 把使用者鎖在部位裡（而且「請改為只賣昨日庫存」在 UI 上沒有對應操作）
 describe('planStockExitLegs — 送不出的腿具名跳過，其餘照送', () => {
-    it('今日買進含零股 → 只跳過零股部分，整張的今日買進照樣現沖', () => {
+    it('Yes + 今日買進含零股 → 整張與零股都走普通 Cash sell', () => {
         const { legs, skipped } = plan({ closeShares: 2500, ydShares: 1000 });
         expect(legs).toEqual([
-            { label: '整張', quantity: 1, price: null },
-            { label: '現沖', quantity: 1, price: null, daytradeShort: true },
+            { label: '平倉整張', quantity: 2, price: null },
+            {
+                label: '平倉零股',
+                quantity: 500,
+                price: 90,
+                orderLot: 'IntradayOdd',
+            },
         ]);
-        expect(skipped).toHaveLength(1);
-        expect(skipped[0]?.error).toMatch(/今日買進 1500 股含 500 股零股/);
+        expect(skipped).toEqual([]);
     });
 
-    it('不可現沖（day_trade=No）→ 跳過現沖腿，昨日庫存仍然賣得掉', () => {
+    it('day_trade=No → 跳過今日平倉，昨日庫存仍然賣得掉', () => {
         const { legs, skipped } = plan({
             closeShares: 3000,
             ydShares: 1000,
             limits: { ...LIMITS, day_trade: 'No' },
         });
-        expect(legs).toEqual([{ label: '整張', quantity: 1, price: null }]);
+        expect(legs).toEqual([
+            { label: '平倉整張', quantity: 1, price: null },
+        ]);
         expect(skipped).toHaveLength(1);
-        expect(skipped[0]?.leg).toBe('現沖');
-        expect(skipped[0]?.error).toMatch(/不可現股當沖/);
+        expect(skipped[0]?.leg).toBe('今日平倉');
+        expect(skipped[0]?.error).toMatch(/不可先買後賣/);
         expect(skipped[0]?.sent).toBe('no');
     });
 
-    it.each(['No', 'OnlyBuy', ''] as const)(
-        'day_trade=%s 一律跳過現沖腿（OnlyBuy 只能先買後賣，當沖賣正是先賣）',
+    it.each(['No', ''] as const)(
+        'day_trade=%s 跳過今日平倉腿',
         (dt) => {
             const { skipped } = plan({
                 closeShares: 3000,
                 ydShares: 1000,
                 limits: { ...LIMITS, day_trade: dt },
             });
-            expect(skipped.map((s) => s.leg)).toContain('現沖');
+            expect(skipped.map((s) => s.leg)).toContain('今日平倉');
         },
     );
 
@@ -128,7 +146,7 @@ describe('planStockExitLegs — 送不出的腿具名跳過，其餘照送', () 
             ydShares: 1000,
             limits: { limit_up: 110, limit_down: 90 },
         });
-        expect(skipped.map((s) => s.leg)).toContain('現沖');
+        expect(skipped.map((s) => s.leg)).toContain('今日平倉');
     });
 
     it('只賣昨日庫存（不需要現沖腿）→ day_trade=No 也照賣，不得跳過', () => {
@@ -137,7 +155,9 @@ describe('planStockExitLegs — 送不出的腿具名跳過，其餘照送', () 
             ydShares: 2000,
             limits: { ...LIMITS, day_trade: 'No' },
         });
-        expect(legs).toEqual([{ label: '整張', quantity: 2, price: null }]);
+        expect(legs).toEqual([
+            { label: '平倉整張', quantity: 2, price: null },
+        ]);
         expect(skipped).toEqual([]);
     });
 
@@ -147,8 +167,10 @@ describe('planStockExitLegs — 送不出的腿具名跳過，其餘照送', () 
             ydShares: 1500,
             limits: { day_trade: 'Yes' },
         });
-        expect(legs).toEqual([{ label: '整張', quantity: 1, price: null }]);
-        expect(skipped[0]?.leg).toBe('零股');
+        expect(legs).toEqual([
+            { label: '平倉整張', quantity: 1, price: null },
+        ]);
+        expect(skipped[0]?.leg).toBe('平倉零股');
     });
 
     it.each([
@@ -189,6 +211,51 @@ describe('planStockExitLegs — 送不出的腿具名跳過，其餘照送', () 
 });
 
 describe('planStockExitLegs — 反手', () => {
+    it('Yes + 今日買進 + 反手 → 平倉 Cash 腿與反手新空腿分開分類', () => {
+        const { legs, skipped } = plan({
+            closeShares: 2000,
+            openShares: 2000,
+            ydShares: 1000,
+        });
+        expect(legs).toEqual([
+            { label: '平倉整張', quantity: 2, price: null },
+            {
+                label: '反手新空',
+                quantity: 2,
+                price: null,
+                daytradeShort: true,
+            },
+        ]);
+        expect(skipped).toEqual([]);
+    });
+
+    it('OnlyBuy + 反手 → 可平今日多單，但新增空單具名跳過且終態不可報全部成交', () => {
+        const { legs, skipped } = plan({
+            closeShares: 2000,
+            openShares: 2000,
+            ydShares: 0,
+            limits: { ...LIMITS, day_trade: 'OnlyBuy' },
+        });
+        expect(legs).toEqual([
+            { label: '平倉整張', quantity: 2, price: null },
+        ]);
+        expect(skipped).toHaveLength(1);
+        expect(skipped[0]).toMatchObject({
+            leg: '反手新空',
+            sent: 'no',
+        });
+        expect(skipped[0]?.error).toContain('2000 股');
+
+        const notice = summarizeTerminalOutcomes(
+            '2330 反手',
+            [outcome({ orderQty: 2, dealQty: 2 })],
+            skipped,
+        );
+        expect(notice.kind).toBe('err');
+        expect(notice.title).not.toContain('全部成交');
+        expect(notice.body).toContain('反手新空');
+    });
+
     it('全為昨日庫存的反手 → 平倉腿走普通、新開空單走現沖', () => {
         const { legs } = plan({
             closeShares: 2000,
@@ -196,20 +263,13 @@ describe('planStockExitLegs — 反手', () => {
             ydShares: 2000,
         });
         expect(legs).toEqual([
-            { label: '整張', quantity: 2, price: null },
-            { label: '現沖', quantity: 2, price: null, daytradeShort: true },
-        ]);
-    });
-
-    it('今日買進 + 反手 → 兩者合併成同一現沖腿', () => {
-        const { legs } = plan({
-            closeShares: 2000,
-            openShares: 2000,
-            ydShares: 1000,
-        });
-        expect(legs).toEqual([
-            { label: '整張', quantity: 1, price: null },
-            { label: '現沖', quantity: 3, price: null, daytradeShort: true },
+            { label: '平倉整張', quantity: 2, price: null },
+            {
+                label: '反手新空',
+                quantity: 2,
+                price: null,
+                daytradeShort: true,
+            },
         ]);
     });
 
@@ -236,7 +296,7 @@ describe('planStockExitLegs — 反手', () => {
         expect(legs).toEqual([{ label: '整張', quantity: 4, price: null }]);
     });
 
-    it('拆腿數量與舊式 max(0, close+open-yd) 等價（yd <= close 恆成立）', () => {
+    it('反手新空腿數量只等於 openShares，不混入 closeShares 或 ydShares', () => {
         for (const close of [1000, 2000, 5000, 10000]) {
             for (const yd of [0, 1000, 2000, 5000]) {
                 if (yd > close) continue;
@@ -247,8 +307,8 @@ describe('planStockExitLegs — 反手', () => {
                         ydShares: yd,
                     });
                     const dt =
-                        legs.find((l) => l.label === '現沖')?.quantity ?? 0;
-                    expect(dt * 1000).toBe(Math.max(0, close + open - yd));
+                        legs.find((l) => l.label === '反手新空')?.quantity ?? 0;
+                    expect(dt * 1000).toBe(open);
                 }
             }
         }
@@ -257,29 +317,38 @@ describe('planStockExitLegs — 反手', () => {
 
 describe('executeExitLegs', () => {
     const legs: ExitLeg[] = [
-        { label: '整張', quantity: 2, price: null },
-        { label: '現沖', quantity: 1, price: null, daytradeShort: true },
-        { label: '零股', quantity: 500, price: 90, orderLot: 'IntradayOdd' },
+        { label: '平倉整張', quantity: 2, price: null },
+        { label: '反手新空', quantity: 1, price: null, daytradeShort: true },
+        {
+            label: '平倉零股',
+            quantity: 500,
+            price: 90,
+            orderLot: 'IntradayOdd',
+        },
     ];
 
     it('全部送出成功 → placed 齊、errors 空', async () => {
         const { placed, errors } = await executeExitLegs(legs, (leg) =>
             Promise.resolve(`id-${leg.label}`),
         );
-        expect(placed).toEqual(['id-整張', 'id-現沖', 'id-零股']);
+        expect(placed).toEqual([
+            'id-平倉整張',
+            'id-反手新空',
+            'id-平倉零股',
+        ]);
         expect(errors).toEqual([]);
     });
 
     it('第二腿同步失敗 → 不 throw，第一腿保留、第三腿照送、失敗腿記名', async () => {
         const { placed, errors } = await executeExitLegs(legs, (leg) =>
-            leg.label === '現沖'
+            leg.label === '反手新空'
                 ? Promise.reject(new Error('連線逾時'))
                 : Promise.resolve(`id-${leg.label}`),
         );
-        expect(placed).toEqual(['id-整張', 'id-零股']);
+        expect(placed).toEqual(['id-平倉整張', 'id-平倉零股']);
         // 送出時炸掉無從得知券商收到沒有 → sent:'unknown'（與刻意跳過相反）
         expect(errors).toEqual([
-            { leg: '現沖', error: '連線逾時', sent: 'unknown' },
+            { leg: '反手新空', error: '連線逾時', sent: 'unknown' },
         ]);
     });
 
@@ -288,7 +357,11 @@ describe('executeExitLegs', () => {
             Promise.reject(new Error('斷線')),
         );
         expect(placed).toEqual([]);
-        expect(errors.map((e) => e.leg)).toEqual(['整張', '現沖', '零股']);
+        expect(errors.map((e) => e.leg)).toEqual([
+            '平倉整張',
+            '反手新空',
+            '平倉零股',
+        ]);
     });
 });
 
@@ -523,11 +596,16 @@ describe('summarizeTerminalOutcomes — 未送出的腿必須進入判讀', () =
 
     it('端到端：executeExitLegs 的 errors 餵進彙總後不可能產生 ok', async () => {
         const legs: ExitLeg[] = [
-            { label: '整張', quantity: 3, price: null },
-            { label: '現沖', quantity: 5, price: null, daytradeShort: true },
+            { label: '平倉整張', quantity: 3, price: null },
+            {
+                label: '反手新空',
+                quantity: 5,
+                price: null,
+                daytradeShort: true,
+            },
         ];
         const { placed, errors } = await executeExitLegs(legs, (leg) =>
-            leg.label === '現沖'
+            leg.label === '反手新空'
                 ? Promise.reject(new Error('超過單筆上限 3（本筆 5）'))
                 : Promise.resolve({ qty: leg.quantity }),
         );
@@ -540,11 +618,12 @@ describe('summarizeTerminalOutcomes — 未送出的腿必須進入判讀', () =
         expect(n.title).not.toContain('全部成交');
     });
 
-    it('端到端：拆腿時被跳過的腿同樣不得產生 ok（不可現沖 + 昨日庫存照賣）', async () => {
+    it('端到端：拆腿時被跳過的腿同樣不得產生 ok（OnlyBuy 反手新空）', async () => {
         const { legs, skipped } = plan({
             closeShares: 3000,
+            openShares: 2000,
             ydShares: 1000,
-            limits: { ...LIMITS, day_trade: 'No' },
+            limits: { ...LIMITS, day_trade: 'OnlyBuy' },
         });
         const { placed, errors } = await executeExitLegs(legs, (leg) =>
             Promise.resolve({ qty: leg.quantity }),
@@ -556,7 +635,7 @@ describe('summarizeTerminalOutcomes — 未送出的腿必須進入判讀', () =
         );
         expect(n.kind).toBe('err');
         expect(n.title).not.toContain('全部成交');
-        expect(n.body).toContain('不可現股當沖');
+        expect(n.body).toContain('不可先賣後買');
     });
 });
 

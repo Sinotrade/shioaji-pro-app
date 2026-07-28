@@ -4,8 +4,13 @@ import type { DayTrade } from './types/contract';
 import type { Action, OrderStatusName, StockOrderLot } from './types/order';
 
 export interface ExitLeg {
-    label: '整張' | '現沖' | '零股';
-    quantity: number; // 整張/現沖＝張數；零股＝股數
+    label:
+        | '整張'
+        | '零股'
+        | '平倉整張'
+        | '平倉零股'
+        | '反手新空';
+    quantity: number; // 整張/平倉整張/反手新空＝張數；零股/平倉零股＝股數
     price: number | null; // null → 市價
     orderLot?: StockOrderLot;
     daytradeShort?: boolean;
@@ -39,15 +44,13 @@ const CREDIT_COND: Record<string, string> = {
 // 拆腿計畫：所有前置驗證都在這裡（送出任何一腿之前）完成 —
 // 不會發生「第一腿已送出，才發現後面的腿必死」的半途 throw。
 //
-// 賣出超過昨日庫存的部分是今日買進 — 集保 T+2 還沒入帳，普通現股賣出會被
-// 「集保賣出餘股數不足」退件（2026-07-16 6244 平倉事件）；反手要新開的空單同樣
-// 是先賣後買。兩者都必須掛現股當沖賣（daytrade_short），合併成同一腿送出。
-// closeShares/openShares 分開傳是為了讓訊息講得出零股卡在哪一邊 —— 反手時
-// 「超出昨日庫存」可能一股今日買進都沒有，全是新開的空單。
+// closeShares 全部是既有多單的平倉：昨日庫存可直接賣，今日先買的部分在 OnlyBuy /
+// Yes 時送普通 Cash sell。openShares 才是反手後新增的空單，屬於先賣後買，必須
+// 獨立使用 daytrade_short。兩者交易目的與 day_trade 資格不同，絕不可合併。
 //
 // 送不出去的腿一律「具名跳過」而不是讓整筆計畫 throw：平倉是降風險動作，
-// 因為今日買進的那 2 張不可現沖，就連昨日庫存的 1 張都賣不掉，等於把使用者
-// 鎖在部位裡（而且「請改為只賣昨日庫存」這種建議，UI 上根本沒有對應操作）。
+// 某一種交易資格不足時，其餘可合法送出的平倉腿仍照送，避免把使用者鎖在部位裡
+// （而且「請改為只賣昨日庫存」這種建議，UI 上根本沒有對應操作）。
 // 跳過的腿會走與送出失敗完全相同的回報路徑，終態彙總因此不可能報「全部成交」。
 export function planStockExitLegs({
     action,
@@ -76,41 +79,49 @@ export function planStockExitLegs({
         return buildPlan(action, closeShares + openShares, 0, limits, []);
     }
     const skipped: LegError[] = [];
-    const yd = ydShares ?? Number.POSITIVE_INFINITY;
-    const todayBought = Math.max(0, closeShares - yd);
-    let dtShares = todayBought + openShares;
-    const dtOdd = dtShares % 1000;
-    if (dtOdd > 0) {
-        // 零股不可現沖，但整張的部分照送
+    const yd = Math.max(0, ydShares ?? Number.POSITIVE_INFINITY);
+    const yesterdayHeld = Math.min(closeShares, yd);
+    const todayBought = Math.max(0, closeShares - yesterdayHeld);
+    let cashCloseShares = closeShares;
+    if (
+        todayBought > 0 &&
+        limits.day_trade !== 'OnlyBuy' &&
+        limits.day_trade !== 'Yes'
+    ) {
         skipped.push({
-            leg: '零股現沖',
+            leg: '今日平倉',
             sent: 'no',
-            error: oddDaytradeMessage(todayBought, openShares),
+            error: `本檔不可先買後賣（day_trade=${limits.day_trade || '未知'}）— 今日買進的 ${todayBought} 股送出必被退件，已跳過`,
         });
-        dtShares -= dtOdd;
+        cashCloseShares = yesterdayHeld;
     }
-    // 'OnlyBuy'＝只能先買後賣，而 daytrade_short 正是先賣，同樣不可現沖
-    if (dtShares > 0 && limits.day_trade !== 'Yes') {
+    let shortShares = openShares;
+    // 'OnlyBuy' 允許 closeShares 的先買後賣，但不允許 openShares 的先賣後買。
+    if (shortShares > 0 && limits.day_trade !== 'Yes') {
         skipped.push({
-            leg: '現沖',
+            leg: '反手新空',
             sent: 'no',
-            error: `本檔不可現股當沖（day_trade=${limits.day_trade || '未知'}）— 需現沖賣出的 ${dtShares} 股送出必被退件，已跳過`,
+            error: `本檔不可先賣後買（day_trade=${limits.day_trade || '未知'}）— 反手新空單 ${shortShares} 股送出必被退件，已跳過`,
         });
-        dtShares = 0;
+        shortShares = 0;
     }
-    return buildPlan(
-        action,
-        closeShares - todayBought,
-        dtShares,
-        limits,
-        skipped,
-    );
+    const shortOdd = shortShares % 1000;
+    if (shortOdd > 0) {
+        // 盤中零股不可先賣後買，但反手新空的整張部分照送
+        skipped.push({
+            leg: '反手新空零股',
+            sent: 'no',
+            error: `反手新空單 ${openShares} 股含 ${shortOdd} 股零股 — 盤中零股不可現股當沖放空；請改用「平」只平倉`,
+        });
+        shortShares -= shortOdd;
+    }
+    return buildPlan(action, cashCloseShares, shortShares, limits, skipped);
 }
 
 function buildPlan(
     action: Action,
     plainShares: number,
-    dtShares: number,
+    shortShares: number,
     limits: { limit_up?: number; limit_down?: number },
     skipped: LegError[],
 ): ExitPlan {
@@ -118,12 +129,16 @@ function buildPlan(
     const lots = Math.floor(plainShares / 1000);
     const odd = plainShares % 1000;
     if (lots > 0) {
-        legs.push({ label: '整張', quantity: lots, price: null });
-    }
-    if (dtShares > 0) {
         legs.push({
-            label: '現沖',
-            quantity: dtShares / 1000,
+            label: action === 'Sell' ? '平倉整張' : '整張',
+            quantity: lots,
+            price: null,
+        });
+    }
+    if (shortShares > 0) {
+        legs.push({
+            label: '反手新空',
+            quantity: shortShares / 1000,
             price: null,
             daytradeShort: true,
         });
@@ -134,34 +149,20 @@ function buildPlan(
             action === 'Sell' ? limits.limit_down : limits.limit_up;
         if (limitPrice) {
             legs.push({
-                label: '零股',
+                label: action === 'Sell' ? '平倉零股' : '零股',
                 quantity: odd,
                 price: limitPrice,
                 orderLot: 'IntradayOdd',
             });
         } else {
             skipped.push({
-                leg: '零股',
+                leg: action === 'Sell' ? '平倉零股' : '零股',
                 sent: 'no',
                 error: `取不到漲跌停價，${odd} 股零股無法掛限價單 — 請至「委託」分頁自行掛單`,
             });
         }
     }
     return { legs, skipped };
-}
-
-// 零股卡在哪一邊，訊息就要講哪一邊 —— 反手時可能一股今日買進都沒有，
-// 卡住的是新開空單的零股；此時叫使用者「留倉隔日再賣」是錯誤指引
-// （那些零股是昨日庫存，今天用「平」就賣得掉）。
-function oddDaytradeMessage(todayBought: number, openShares: number): string {
-    const odd = (todayBought + openShares) % 1000;
-    if (todayBought > 0 && openShares > 0) {
-        return `今日買進 ${todayBought} 股加上反手新空單 ${openShares} 股湊不成整張（餘 ${odd} 股）— 盤中零股不可現股當沖，請改用「平」只平倉`;
-    }
-    if (openShares > 0) {
-        return `反手新空單 ${openShares} 股含 ${odd} 股零股 — 盤中零股不可現股當沖放空；請改用「平」只平倉`;
-    }
-    return `今日買進 ${todayBought} 股含 ${odd} 股零股 — 盤中零股不可現股當沖賣出，零股請留倉隔日再賣`;
 }
 
 export interface LegError {
