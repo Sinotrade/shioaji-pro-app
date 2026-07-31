@@ -46,6 +46,107 @@ export interface Candle {
     volume: number;
 }
 
+export interface CalculatedIndexEvent {
+    code: string;
+    date: string;
+    time: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    total_amount: number;
+    price_chg: number;
+    pct_chg: number;
+    simtrade: boolean;
+}
+
+export type ContributionRanking =
+    'top10' | 'abs10' | 'positive25' | 'negative25';
+
+export interface IndexContributionEntry {
+    code: string;
+    price: number;
+    reference: number;
+    price_chg: number;
+    pct_chg: number;
+    points: number;
+}
+
+export interface IndexContributionEvent {
+    ranking: ContributionRanking;
+    code: string;
+    date: string;
+    time: string;
+    entries: IndexContributionEntry[];
+    simtrade: boolean;
+}
+
+export interface IndustryContributionEntry {
+    category: string;
+    points: number;
+}
+
+export interface IndustryContributionEvent {
+    code: string;
+    date: string;
+    time: string;
+    entries: IndustryContributionEntry[];
+    simtrade: boolean;
+    index_close: number;
+    index_price_chg: number;
+}
+
+export type ScannerRule =
+    | 'bid_near_limit_up'
+    | 'bid_touch_limit_up'
+    | 'limit_up_unlocked'
+    | 'ask_near_limit_down'
+    | 'ask_touch_limit_down'
+    | 'limit_down_unlocked'
+    | 'trade_price_surge'
+    | 'trade_price_drop'
+    | 'bid_price_surge'
+    | 'ask_price_drop'
+    | 'volume_burst'
+    | 'simtrade'
+    | 'suspend';
+
+export type ScannerExchange = 'TSE' | 'OTC';
+
+export interface ScannerQuote {
+    code: string;
+    date: string;
+    time: string;
+    open?: string;
+    high?: string;
+    low?: string;
+    close?: string;
+    amount_sum?: string;
+    vol_sum?: number;
+    diff_price?: string;
+    simtrade?: boolean;
+}
+
+export type ScannerExtra = Record<string, string | number | null | undefined>;
+
+export interface ScannerSignalEvent {
+    scanner: ScannerRule;
+    region: 'TW';
+    security_type: 'STK';
+    exchange: ScannerExchange;
+    quote: ScannerQuote;
+    extra: ScannerExtra;
+    received_at: number;
+}
+
+export interface ScannerGapEvent {
+    dropped_count: number;
+    first_time: string;
+    last_time: string;
+    subscriptions: unknown[];
+    received_at: number;
+}
+
 // REST /api/v1/data/scanner
 export interface ScannerItem {
     code: string;

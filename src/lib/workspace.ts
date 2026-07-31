@@ -24,6 +24,7 @@ export type BlockType =
     | 'debug'
     | 'grid'
     | 'heatmap'
+    | 'pulse'
     | 'optpnl'
     | 'backtest'
     | 'assistant';
@@ -179,6 +180,12 @@ export const BLOCK_META: Record<
         pinnable: false,
         singleton: true,
         defaultSize: { w: 8, h: 11, minW: 5, minH: 6 },
+    },
+    pulse: {
+        label: '市場脈動',
+        pinnable: false,
+        singleton: true,
+        defaultSize: { w: 10, h: 12, minW: 7, minH: 7 },
     },
     optpnl: {
         label: '選擇權損益圖',

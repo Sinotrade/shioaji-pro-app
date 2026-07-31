@@ -3,6 +3,7 @@
 // via useSyncExternalStore without prop drilling.
 
 import { getApiBase } from './runtime';
+import { apiPost } from './api';
 import type { SseBidAsk, SseIndexQuote, SseTick } from './types/market';
 import {
     normalizeOrderEvent,
@@ -239,6 +240,10 @@ function handleIndexQuote(raw: string) {
 // registry of every quote subscription made this session — replayed after
 // the SSE connection recovers (covers shioaji-server restarts)
 const subscriptionRegistry = new Map<string, Record<string, unknown>>();
+const capabilityRegistry = new Map<
+    string,
+    { path: string; body: Record<string, unknown> }
+>();
 
 export function registerSubscription(body: {
     security_type: string | null;
@@ -255,17 +260,51 @@ export function unregisterSubscription(code: string, quoteType: string) {
     subscriptionRegistry.delete(`${code}:${quoteType}`);
 }
 
+export function registerCapabilitySubscription(
+    key: string,
+    path: string,
+    body: Record<string, unknown>,
+) {
+    capabilityRegistry.set(key, { path, body });
+}
+
+export function unregisterCapabilitySubscription(key: string) {
+    capabilityRegistry.delete(key);
+}
+
+let resubscribeRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
 async function resubscribeAll() {
+    let failed = false;
     for (const body of subscriptionRegistry.values()) {
         try {
-            await fetch(`${getApiBase()}/api/v1/stream/subscribe`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
+            const response = await apiPost<{ success?: boolean; message?: string }>(
+                '/api/v1/stream/subscribe',
+                body,
+            );
+            if (response.success === false) {
+                throw new Error(response.message || '行情重新訂閱失敗');
+            }
         } catch {
-            // server still down — next reconnect will retry
+            failed = true;
         }
+    }
+    for (const { path, body } of capabilityRegistry.values()) {
+        try {
+            const response = await apiPost<{ success: boolean; message: string }>(
+                `/api/v1/stream/subscribe/${path}`,
+                body,
+            );
+            if (!response.success) throw new Error(response.message);
+        } catch {
+            failed = true;
+        }
+    }
+    if (failed && !resubscribeRetryTimer) {
+        resubscribeRetryTimer = setTimeout(() => {
+            resubscribeRetryTimer = null;
+            void resubscribeAll();
+        }, 5000);
     }
 }
 
