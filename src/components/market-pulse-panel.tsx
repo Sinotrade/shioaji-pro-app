@@ -80,6 +80,7 @@ const RANKINGS: { value: ContributionRanking; label: string }[] = [
     { value: 'negative25', label: '壓抑' },
 ];
 const FLOW_RANKINGS: ContributionRanking[] = ['positive25', 'negative25'];
+const STOCK_DETAIL_BATCH_SIZE = 8;
 const FAMILY_RULES: Record<SignalFamily, ScannerRule[]> = {
     limit: [
         'bid_near_limit_up',
@@ -571,7 +572,17 @@ export function MarketPulsePanel({
         setStockDetails((current) =>
             current.filter((stock) => codes.includes(stock.code)),
         );
-        void loadStockDetails(codes)
+        const loadDetails = async () => {
+            const details: StockMeta[] = [];
+            for (let start = 0; start < codes.length; start += STOCK_DETAIL_BATCH_SIZE) {
+                const batch = await loadStockDetails(
+                    codes.slice(start, start + STOCK_DETAIL_BATCH_SIZE),
+                );
+                details.push(...batch);
+            }
+            return details;
+        };
+        void loadDetails()
             .then((details) => {
                 if (active) setStockDetails(details);
             })
@@ -788,7 +799,10 @@ export function MarketPulsePanel({
                                         <span className={styles.code}>
                                             {entry.code}
                                             <small className={styles.stockName}>
-                                                {stockByCode.get(entry.code)?.name ?? ''}
+                                                {stockByCode.get(entry.code)?.name ??
+                                                    (stockDetailsPending
+                                                        ? '名稱載入中'
+                                                        : '名稱未取得')}
                                             </small>
                                         </span>
                                         <span

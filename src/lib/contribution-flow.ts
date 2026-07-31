@@ -53,7 +53,8 @@ export function buildContributionFlow(
         if (!nodes.has(rootId)) {
             nodes.set(rootId, {
                 id: rootId,
-                label: direction === 'up' ? '拉抬' : '壓抑',
+                label:
+                    direction === 'up' ? '上漲貢獻' : '下跌貢獻',
                 kind: 'direction',
                 direction,
                 points: 0,
@@ -98,7 +99,7 @@ export function buildContributionFlow(
             const stockId = `stock:${entry.code}`;
             nodes.set(stockId, {
                 id: stockId,
-                label: meta?.name ? `${entry.code} ${meta.name}` : entry.code,
+                label: `${entry.code} ${meta?.name || '名稱未取得'}`,
                 kind: 'stock',
                 direction,
                 points: Math.abs(entry.points),

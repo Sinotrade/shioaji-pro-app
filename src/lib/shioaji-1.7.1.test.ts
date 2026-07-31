@@ -135,8 +135,16 @@ describe('live enriched-index payloads', () => {
                 }),
                 expect.objectContaining({
                     id: 'direction:down',
-                    label: '壓抑',
+                    label: '下跌貢獻',
                     points: 5,
+                }),
+            ]),
+        );
+        expect(flow.nodes).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'stock:2330',
+                    label: '2330 台積電',
                 }),
             ]),
         );
