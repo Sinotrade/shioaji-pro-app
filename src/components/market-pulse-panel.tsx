@@ -1,19 +1,58 @@
-import { Activity, AlertTriangle, Radio } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import {
+    Activity,
+    AlertTriangle,
+    GitBranch,
+    LayoutGrid,
+    Radio,
+} from 'lucide-react';
+import {
+    type CSSProperties,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from 'react';
+import { hierarchy, treemap, treemapSquarify } from 'd3-hierarchy';
+import {
+    sankey,
+    sankeyLinkHorizontal,
+    type SankeyGraph,
+} from 'd3-sankey';
 import { useMarketPulseSnapshot } from '../hooks/use-market-pulse';
+import { useQuote } from '../hooks/use-stream';
+import {
+    buildContributionFlow,
+    type ContributionFlowLink,
+    type ContributionFlowNode,
+} from '../lib/contribution-flow';
+import {
+    exchangeTimeDifferenceSeconds,
+} from '../lib/market-pulse';
 import {
     subscribeEnrichedIndex,
     subscribeMarketSignal,
+    subscribeQuote,
     unsubscribeEnrichedIndex,
     unsubscribeMarketSignal,
 } from '../lib/shioaji';
-import { sectorLabel } from '../lib/stock-index';
+import {
+    loadStockDetails,
+    sectorLabel,
+    type StockMeta,
+} from '../lib/stock-index';
 import type { ContractBase } from '../lib/types/contract';
-import type { ContributionRanking, ScannerRule } from '../lib/types/market';
+import type {
+    ContributionRanking,
+    IndexContributionEntry,
+    ScannerRule,
+} from '../lib/types/market';
+import type { IndustryContributionEntry } from '../lib/types/market';
+import { vars } from '../theme.css';
 import * as panel from './panel.css';
 import * as styles from './market-pulse-panel.css';
 
 type PulseView = 'index' | 'signals';
+type IndexVisualization = 'distribution' | 'flow';
 type SignalFamily = 'limit' | 'move' | 'volume' | 'state';
 
 const INDICES: Record<'IX0001' | 'IX0043', ContractBase> = {
@@ -101,6 +140,254 @@ function signalDetail(rule: ScannerRule, extra: Record<string, unknown>) {
     return price > 0 ? price.toLocaleString('en-US') : '';
 }
 
+interface TreemapDatum {
+    name: string;
+    entry?: IndustryContributionEntry;
+    children?: TreemapDatum[];
+}
+
+function IndustryTreemap({ entries }: { entries: IndustryContributionEntry[] }) {
+    const ref = useRef<HTMLDivElement>(null);
+    const [size, setSize] = useState({ width: 0, height: 0 });
+
+    useEffect(() => {
+        const element = ref.current;
+        if (!element || typeof ResizeObserver === 'undefined') return;
+        const update = () => {
+            const { width, height } = element.getBoundingClientRect();
+            setSize({ width: Math.floor(width), height: Math.floor(height) });
+        };
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(element);
+        return () => observer.disconnect();
+    }, []);
+
+    const layout = useMemo(() => {
+        if (size.width <= 0 || size.height <= 0) return [];
+        const visible = entries.filter((entry) => entry.points !== 0);
+        const root = hierarchy<TreemapDatum>({
+            name: 'industries',
+            children: visible.map((entry) => ({
+                name: sectorLabel(entry.category),
+                entry,
+            })),
+        })
+            .sum((datum) => Math.abs(datum.entry?.points ?? 0))
+            .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+        const laidOut = treemap<TreemapDatum>()
+            .tile(treemapSquarify.ratio(1.35))
+            .size([size.width, size.height])
+            .paddingInner(2)
+            .round(true)(root);
+        const total = laidOut.value ?? 0;
+        const max = laidOut.leaves()[0]?.value ?? 0;
+        return laidOut.leaves().map((leaf) => ({
+            ...leaf,
+            entry: leaf.data.entry as IndustryContributionEntry,
+            share: total > 0 ? ((leaf.value ?? 0) / total) * 100 : 0,
+            intensity:
+                max > 0
+                    ? 18 + Math.sqrt((leaf.value ?? 0) / max) * 34
+                    : 18,
+        }));
+    }, [entries, size]);
+
+    return (
+        <div ref={ref} className={styles.treemap}>
+            {layout.map((leaf) => {
+                const width = leaf.x1 - leaf.x0;
+                const height = leaf.y1 - leaf.y0;
+                const entry = leaf.entry;
+                const style = {
+                    left: leaf.x0,
+                    top: leaf.y0,
+                    width,
+                    height,
+                    '--heat-color':
+                        entry.points > 0
+                            ? vars.color.up
+                            : entry.points < 0
+                              ? vars.color.down
+                              : vars.color.flat,
+                    '--heat-alpha': `${leaf.intensity.toFixed(0)}%`,
+                } as CSSProperties;
+                return (
+                    <div
+                        key={entry.category}
+                        className={styles.treemapTile}
+                        style={style}
+                        title={`${sectorLabel(entry.category)} ${entry.points > 0 ? '+' : ''}${entry.points.toFixed(2)} 點 · ${leaf.share.toFixed(2)}%`}
+                    >
+                        {width >= 48 && height >= 26 && (
+                            <span className={styles.treemapName}>
+                                {sectorLabel(entry.category)}
+                            </span>
+                        )}
+                        {width >= 58 && height >= 38 && (
+                            <strong className={styles.treemapPoints}>
+                                {entry.points > 0 ? '+' : ''}
+                                {entry.points.toFixed(2)}
+                            </strong>
+                        )}
+                        {width >= 92 && height >= 58 && (
+                            <span className={styles.treemapShare}>
+                                {leaf.share.toFixed(1)}%
+                            </span>
+                        )}
+                    </div>
+                );
+            })}
+            {layout.length === 0 && (
+                <div className={styles.empty}>等待產業貢獻資料</div>
+            )}
+        </div>
+    );
+}
+
+function ContributionSankey({
+    entries,
+    details,
+    industries,
+    onPick,
+}: {
+    entries: IndexContributionEntry[];
+    details: StockMeta[];
+    industries: IndustryContributionEntry[];
+    onPick?: (code: string) => void;
+}) {
+    const ref = useRef<HTMLDivElement>(null);
+    const [size, setSize] = useState({ width: 0, height: 0 });
+
+    useEffect(() => {
+        const element = ref.current;
+        if (!element || typeof ResizeObserver === 'undefined') return;
+        const update = () => {
+            const { width, height } = element.getBoundingClientRect();
+            setSize({ width: Math.floor(width), height: Math.floor(height) });
+        };
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(element);
+        return () => observer.disconnect();
+    }, []);
+
+    const layout = useMemo(() => {
+        const flow = buildContributionFlow(entries, details, industries);
+        if (!flow.links.length || size.height <= 0) return null;
+        const width = Math.max(560, size.width);
+        const height = Math.max(220, size.height);
+        const generator = sankey<
+            SankeyGraph<ContributionFlowNode, ContributionFlowLink>,
+            ContributionFlowNode,
+            ContributionFlowLink
+        >()
+            .nodeId((node) => node.id)
+            .nodeWidth(8)
+            .nodePadding(9)
+            .extent([
+                [12, 12],
+                [width - 118, height - 14],
+            ]);
+        return {
+            width,
+            height,
+            graph: generator({
+                nodes: flow.nodes.map((node) => ({ ...node })),
+                links: flow.links.map((link) => ({ ...link })),
+            }),
+        };
+    }, [details, entries, industries, size]);
+
+    const linkPath = useMemo(
+        () => sankeyLinkHorizontal<ContributionFlowNode, ContributionFlowLink>(),
+        [],
+    );
+
+    return (
+        <div ref={ref} className={styles.sankeyViewport}>
+            {layout ? (
+                <svg
+                    className={styles.sankey}
+                    width={layout.width}
+                    height={layout.height}
+                    viewBox={`0 0 ${layout.width} ${layout.height}`}
+                    role="img"
+                    aria-label="拉抬與壓抑經由產業到主要個股的指數貢獻傳導圖"
+                >
+                    <g className={styles.sankeyLinks}>
+                        {layout.graph.links.map((link, index) => (
+                            <path
+                                key={`${String(link.source)}-${String(link.target)}-${index}`}
+                                className={styles.sankeyLink}
+                                d={linkPath(link) ?? undefined}
+                                stroke={
+                                    link.direction === 'up'
+                                        ? vars.color.up
+                                        : vars.color.down
+                                }
+                                strokeWidth={Math.max(1, link.width ?? 1)}
+                            >
+                                <title>{`${link.value.toFixed(2)} 點`}</title>
+                            </path>
+                        ))}
+                    </g>
+                    <g>
+                        {layout.graph.nodes.map((node) => {
+                            const x0 = node.x0 ?? 0;
+                            const x1 = node.x1 ?? 0;
+                            const y0 = node.y0 ?? 0;
+                            const y1 = node.y1 ?? 0;
+                            const color =
+                                node.direction === 'up'
+                                    ? vars.color.up
+                                    : vars.color.down;
+                            return (
+                                <g
+                                    key={node.id}
+                                    className={
+                                        node.code && onPick
+                                            ? styles.sankeyInteractiveNode
+                                            : undefined
+                                    }
+                                    onClick={() =>
+                                        node.code && onPick?.(node.code)
+                                    }
+                                >
+                                    <rect
+                                        x={x0}
+                                        y={y0}
+                                        width={Math.max(1, x1 - x0)}
+                                        height={Math.max(1, y1 - y0)}
+                                        rx={2}
+                                        fill={color}
+                                    />
+                                    <text
+                                        className={styles.sankeyLabel}
+                                        x={x1 + 6}
+                                        y={(y0 + y1) / 2}
+                                        dominantBaseline="middle"
+                                        fill={color}
+                                    >
+                                        {node.label}
+                                        <tspan className={styles.sankeyValue}>
+                                            {' '}
+                                            {node.direction === 'up' ? '+' : '-'}
+                                            {node.points.toFixed(2)}
+                                        </tspan>
+                                    </text>
+                                </g>
+                            );
+                        })}
+                    </g>
+                </svg>
+            ) : (
+                <div className={styles.empty}>等待成分股貢獻資料</div>
+            )}
+        </div>
+    );
+}
+
 export function MarketPulsePanel({
     onPick,
 }: {
@@ -108,18 +395,22 @@ export function MarketPulsePanel({
 }) {
     const pulse = useMarketPulseSnapshot();
     const [view, setView] = useState<PulseView>('index');
+    const [visualization, setVisualization] =
+        useState<IndexVisualization>('distribution');
     const [indexCode, setIndexCode] = useState<'IX0001' | 'IX0043'>('IX0001');
     const [ranking, setRanking] = useState<ContributionRanking>('top10');
     const [family, setFamily] = useState<SignalFamily>('move');
     const [error, setError] = useState('');
     const [indexPending, setIndexPending] = useState(false);
     const [contributionPending, setContributionPending] = useState(false);
+    const [stockDetails, setStockDetails] = useState<StockMeta[]>([]);
     const [signalCoverage, setSignalCoverage] = useState({
         ok: 0,
         total: 0,
         pending: false,
     });
     const index = INDICES[indexCode];
+    const officialIndex = useQuote(indexCode)?.index;
 
     useEffect(() => {
         if (view !== 'index') return;
@@ -129,6 +420,7 @@ export function MarketPulsePanel({
         void Promise.all([
             subscribeEnrichedIndex('calculated_index', index),
             subscribeEnrichedIndex('industry_contribution', index),
+            subscribeQuote(index, 'Quote'),
         ])
             .then(() => {
                 if (active) setIndexPending(false);
@@ -218,21 +510,85 @@ export function MarketPulsePanel({
     }, [family, view]);
 
     const calculated = pulse.calculated.get(indexCode);
+    const officialCloseValue = Number(officialIndex?.close);
+    const officialClose = Number.isFinite(officialCloseValue)
+        ? officialCloseValue
+        : null;
+    const indexGap =
+        calculated && officialClose !== null
+            ? calculated.close - officialClose
+            : null;
+    const timeGap =
+        calculated && officialIndex?.time
+            ? exchangeTimeDifferenceSeconds(
+                  calculated.time,
+                  officialIndex.time,
+              )
+            : null;
     const contribution = pulse.indexContribution.get(
         `${indexCode}:${ranking}`,
     );
     const industryContribution = pulse.industryContribution.get(indexCode);
     const drivers = contribution?.entries ?? [];
+    const driverCodes = [...new Set(drivers.map((entry) => entry.code))]
+        .sort()
+        .join(',');
+
+    useEffect(() => {
+        if (!driverCodes) {
+            setStockDetails([]);
+            return;
+        }
+        const codes = driverCodes.split(',');
+        setStockDetails((current) =>
+            current.filter((stock) => codes.includes(stock.code)),
+        );
+        for (const code of codes) {
+            void loadStockDetails([code])
+                .then(([detail]) => {
+                    if (!detail) return;
+                    setStockDetails((current) => [
+                        ...current.filter((stock) => stock.code !== detail.code),
+                        detail,
+                    ]);
+                })
+                .catch(() => undefined);
+        }
+    }, [driverCodes]);
+
+    const stockByCode = useMemo(
+        () => new Map(stockDetails.map((stock) => [stock.code, stock])),
+        [stockDetails],
+    );
     const industries = useMemo(
-        () =>
-            [...(industryContribution?.entries ?? [])]
-                .sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
-                .slice(0, 18),
+        () => [...(industryContribution?.entries ?? [])],
         [industryContribution, pulse.version],
     );
-    const maxIndustryPoints = Math.max(
+    const flowIndustries = useMemo(() => {
+        const sorted = [...industries].sort(
+            (a, b) => Math.abs(b.points) - Math.abs(a.points),
+        );
+        const visible = sorted.slice(0, 12);
+        const rest = sorted.slice(12);
+        const otherUp = rest.reduce(
+            (sum, entry) => sum + Math.max(0, entry.points),
+            0,
+        );
+        const otherDown = rest.reduce(
+            (sum, entry) => sum + Math.min(0, entry.points),
+            0,
+        );
+        if (otherUp > 0) {
+            visible.push({ category: 'other-up', points: otherUp });
+        }
+        if (otherDown < 0) {
+            visible.push({ category: 'other-down', points: otherDown });
+        }
+        return visible;
+    }, [industries]);
+    const industryTotal = industries.reduce(
+        (total, entry) => total + Math.abs(entry.points),
         0,
-        ...industries.map((entry) => Math.abs(entry.points)),
     );
     const contributionIsSimtrade =
         contribution?.simtrade || industryContribution?.simtrade;
@@ -281,6 +637,31 @@ export function MarketPulsePanel({
                                 </button>
                             ),
                         )}
+                        <span className={styles.controlDivider} />
+                        <button
+                            className={
+                                styles.control[
+                                    visualization === 'distribution'
+                                        ? 'on'
+                                        : 'off'
+                                ]
+                            }
+                            onClick={() => setVisualization('distribution')}
+                            title="產業貢獻分布"
+                        >
+                            <LayoutGrid size={12} /> 產業分布
+                        </button>
+                        <button
+                            className={
+                                styles.control[
+                                    visualization === 'flow' ? 'on' : 'off'
+                                ]
+                            }
+                            onClick={() => setVisualization('flow')}
+                            title="貢獻傳導"
+                        >
+                            <GitBranch size={12} /> 貢獻傳導
+                        </button>
                         <span className={styles.spacer} />
                         {RANKINGS.map((item) => (
                             <button
@@ -297,25 +678,59 @@ export function MarketPulsePanel({
                         ))}
                     </div>
                     <div className={styles.summary}>
-                        <span className={styles.summaryLabel}>自算指數</span>
-                        <strong
-                            className={`${styles.summaryValue} ${panel.dirText[direction(calculated?.price_chg ?? 0)]}`}
-                        >
-                            {calculated
-                                ? calculated.close.toLocaleString('en-US', {
-                                      maximumFractionDigits: 2,
-                                  })
-                                : '--'}
-                        </strong>
-                        <span
-                            className={`${styles.change} ${panel.dirText[direction(calculated?.price_chg ?? 0)]}`}
-                        >
-                            {calculated
-                                ? `${calculated.price_chg > 0 ? '+' : ''}${calculated.price_chg.toFixed(2)} · ${calculated.pct_chg.toFixed(2)}%`
-                                : indexPending
-                                  ? '訂閱中...'
-                                  : '等待盤中資料'}
+                        <span className={styles.summaryMetric}>
+                            <span className={styles.summaryLabel}>自算</span>
+                            <strong
+                                className={`${styles.summaryValue} ${panel.dirText[direction(calculated?.price_chg ?? 0)]}`}
+                            >
+                                {calculated
+                                    ? calculated.close.toLocaleString('en-US', {
+                                          maximumFractionDigits: 2,
+                                      })
+                                    : '--'}
+                            </strong>
+                            <span
+                                className={`${styles.change} ${panel.dirText[direction(calculated?.price_chg ?? 0)]}`}
+                            >
+                                {calculated
+                                    ? `${calculated.price_chg > 0 ? '+' : ''}${calculated.price_chg.toFixed(2)} · ${calculated.pct_chg.toFixed(2)}%`
+                                    : indexPending
+                                      ? '訂閱中...'
+                                      : '等待盤中資料'}
+                            </span>
                         </span>
+                        <span className={styles.metricDivider} />
+                        <span className={styles.summaryMetric}>
+                            <span className={styles.summaryLabel}>官方</span>
+                            <strong className={styles.metricValue}>
+                                {officialClose?.toLocaleString('en-US', {
+                                    maximumFractionDigits: 2,
+                                }) ?? '--'}
+                            </strong>
+                        </span>
+                        <span className={styles.summaryMetric}>
+                            <span className={styles.summaryLabel}>價差</span>
+                            <strong
+                                className={`${styles.metricValue} ${panel.dirText[direction(indexGap ?? 0)]}`}
+                                title="自算指數 − 官方指數"
+                            >
+                                {indexGap === null
+                                    ? '--'
+                                    : `${indexGap > 0 ? '+' : ''}${indexGap.toFixed(2)} 點`}
+                            </strong>
+                        </span>
+                        <span className={styles.summaryMetric}>
+                            <span className={styles.summaryLabel}>時間差</span>
+                            <strong
+                                className={`${styles.metricValue} ${panel.dirText[direction(timeGap ?? 0)]}`}
+                                title="自算指數時間 − 官方指數時間"
+                            >
+                                {timeGap === null
+                                    ? '--'
+                                    : `${timeGap > 0 ? '+' : ''}${timeGap.toFixed(3)} 秒`}
+                            </strong>
+                        </span>
+                        <span className={styles.spacer} />
                         {(calculated?.simtrade || contributionIsSimtrade) && (
                             <span className={styles.simtrade}>試撮</span>
                         )}
@@ -323,10 +738,14 @@ export function MarketPulsePanel({
                             {calculated?.time.slice(0, 8) ?? ''}
                         </span>
                     </div>
+                    {visualization === 'distribution' ? (
                     <div className={styles.columns}>
                         <section className={styles.section}>
-                            <div className={styles.sectionTitle}>
-                                成分股貢獻
+                            <div className={styles.sectionHeading}>
+                                <span>成分股貢獻</span>
+                                <span className={styles.areaLegend}>
+                                    目前排行
+                                </span>
                             </div>
                             <div className={styles.list}>
                                 {drivers.map((entry, idx) => (
@@ -340,6 +759,9 @@ export function MarketPulsePanel({
                                         </span>
                                         <span className={styles.code}>
                                             {entry.code}
+                                            <small className={styles.stockName}>
+                                                {stockByCode.get(entry.code)?.name ?? ''}
+                                            </small>
                                         </span>
                                         <span
                                             className={`${styles.points} ${panel.dirText[direction(entry.points)]}`}
@@ -365,51 +787,41 @@ export function MarketPulsePanel({
                             </div>
                         </section>
                         <section className={styles.section}>
-                            <div className={styles.sectionTitle}>產業貢獻熱力圖</div>
-                            <div className={styles.heatmap}>
-                                {industries.map((entry) => (
-                                    <div
-                                        key={entry.category}
-                                        className={
-                                            styles.heatTile[
-                                                direction(entry.points)
-                                            ]
-                                        }
-                                        style={{
-                                            flexGrow:
-                                                maxIndustryPoints > 0
-                                                    ? Math.max(
-                                                          0.35,
-                                                          Math.sqrt(
-                                                              Math.abs(
-                                                                  entry.points,
-                                                              ) /
-                                                                  maxIndustryPoints,
-                                                          ),
-                                                      )
-                                                    : 1,
-                                        }}
-                                        title={`${sectorLabel(entry.category)} ${entry.points > 0 ? '+' : ''}${entry.points.toFixed(2)} 點`}
-                                    >
-                                        <span className={styles.heatName}>
-                                            {sectorLabel(entry.category)}
-                                        </span>
-                                        <strong className={styles.heatPoints}>
-                                            {entry.points > 0 ? '+' : ''}
-                                            {entry.points.toFixed(2)}
-                                        </strong>
-                                    </div>
-                                ))}
-                                {industries.length === 0 && (
-                                    <div className={styles.empty}>
-                                        {indexPending
-                                            ? '訂閱中...'
-                                            : '等待產業貢獻資料'}
-                                    </div>
-                                )}
+                            <div className={styles.sectionHeading}>
+                                <span>產業貢獻分布</span>
+                                <span className={styles.areaLegend}>
+                                    面積＝絕對貢獻
+                                    {industryTotal > 0 &&
+                                        ` · ${industryTotal.toFixed(1)} 點`}
+                                </span>
                             </div>
+                            {industries.length > 0 ? (
+                                <IndustryTreemap entries={industries} />
+                            ) : (
+                                <div className={styles.empty}>
+                                    {indexPending
+                                        ? '訂閱中...'
+                                        : '等待產業貢獻資料'}
+                                </div>
+                            )}
                         </section>
                     </div>
+                    ) : (
+                        <section className={styles.flowSection}>
+                            <div className={styles.sectionHeading}>
+                                <span>貢獻傳導</span>
+                                <span className={styles.areaLegend}>
+                                    產業流寬＝貢獻點數 · 個股依排行占比 · 非成交資金轉移
+                                </span>
+                            </div>
+                            <ContributionSankey
+                                entries={drivers}
+                                details={stockDetails}
+                                industries={flowIndustries}
+                                onPick={onPick}
+                            />
+                        </section>
+                    )}
                 </>
             ) : (
                 <>

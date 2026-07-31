@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
     parseCalculatedIndexEvent,
+    exchangeTimeDifferenceSeconds,
     parseIndexContributionEvent,
     parseIndustryContributionEvent,
     parseScannerMessage,
     scannerSignalKey,
 } from './market-pulse';
+import { buildContributionFlow } from './contribution-flow';
 import { scannerSubscriptionBody } from './shioaji';
+import { sectorLabel } from './stock-index';
 import type { ScannerSignalEvent } from './types/market';
 
 describe('Shioaji 1.7.1 subscription payloads', () => {
@@ -30,6 +33,20 @@ describe('Shioaji 1.7.1 subscription payloads', () => {
 });
 
 describe('live enriched-index payloads', () => {
+    it('compares calculated and official exchange timestamps to milliseconds', () => {
+        expect(
+            exchangeTimeDifferenceSeconds(
+                '09:00:01.250000',
+                '09:00:01.100000',
+            ),
+        ).toBeCloseTo(0.15, 6);
+        expect(exchangeTimeDifferenceSeconds('bad', '09:00:01')).toBeNull();
+    });
+    it('normalizes unpadded industry category codes', () => {
+        expect(sectorLabel('5')).toBe('電機');
+        expect(sectorLabel('3')).toBe('塑膠');
+    });
+
     it('keeps the trial-auction flag on a calculated index update', () => {
         const event = parseCalculatedIndexEvent(
             '{"code":"IX0001","date":"2026/07/31","time":"08:45:46.000000","open":42158.86,"high":42158.86,"low":42158.86,"close":42158.86,"total_amount":0,"price_chg":2225.56,"pct_chg":5.57,"simtrade":true}',
@@ -59,6 +76,70 @@ describe('live enriched-index payloads', () => {
             ['37', -0.46],
         ]);
         expect(event.simtrade).toBe(true);
+    });
+
+    it('uses industry points for flow width and preserves the residual', () => {
+        const flow = buildContributionFlow(
+            [
+                {
+                    code: '2330',
+                    price: 1000,
+                    reference: 990,
+                    price_chg: 10,
+                    pct_chg: 1.01,
+                    points: 12,
+                },
+                {
+                    code: '2454',
+                    price: 1500,
+                    reference: 1510,
+                    price_chg: -10,
+                    pct_chg: -0.66,
+                    points: -4,
+                },
+            ],
+            [
+                { code: '2330', name: '台積電', category: '24', exchange: 'TSE' },
+                { code: '2454', name: '聯發科', category: '24', exchange: 'TSE' },
+            ],
+            [
+                { category: '24', points: 16 },
+                { category: '24', points: -5 },
+            ],
+        );
+        expect(flow.links).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    source: 'direction:up',
+                    target: 'sector:up:24',
+                    value: 16,
+                }),
+                expect.objectContaining({
+                    source: 'sector:down:24',
+                    target: 'stock:2454',
+                    value: 4,
+                }),
+                expect.objectContaining({
+                    source: 'sector:up:24',
+                    target: 'other:up:24',
+                    value: 4,
+                }),
+            ]),
+        );
+        expect(flow.nodes).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'stock:2330',
+                    label: '2330 台積電',
+                    points: 12,
+                }),
+                expect.objectContaining({
+                    id: 'direction:down',
+                    label: '壓抑',
+                    points: 5,
+                }),
+            ]),
+        );
     });
 });
 

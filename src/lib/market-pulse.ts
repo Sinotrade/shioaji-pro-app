@@ -70,6 +70,29 @@ export function parseIndustryContributionEvent(raw: string) {
     return JSON.parse(raw) as IndustryContributionEvent;
 }
 
+export function exchangeTimeDifferenceSeconds(
+    left: string,
+    right: string,
+): number | null {
+    const parse = (value: string) => {
+        const match = /^(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/.exec(value);
+        if (!match) return null;
+        const [, hours, minutes, seconds, fraction = ''] = match;
+        const millis = Number((fraction + '000').slice(0, 3));
+        return (
+            Number(hours) * 3_600_000 +
+            Number(minutes) * 60_000 +
+            Number(seconds) * 1_000 +
+            millis
+        );
+    };
+    const leftMs = parse(left);
+    const rightMs = parse(right);
+    return leftMs === null || rightMs === null
+        ? null
+        : (leftMs - rightMs) / 1_000;
+}
+
 function handleIndexContribution(raw: string) {
     const event = parseIndexContributionEvent(raw);
     if (!event.code || !event.ranking) return;

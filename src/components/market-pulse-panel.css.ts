@@ -51,6 +51,10 @@ export const controls = style({
     overflowX: 'auto',
 });
 const controlBase = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '4px',
     border: `1px solid ${vars.color.border}`,
     borderRadius: vars.radius.sm,
     padding: '2px 7px',
@@ -74,6 +78,13 @@ export const control = styleVariants({
     ],
 });
 export const spacer = style({ flex: 1 });
+export const controlDivider = style({
+    width: '1px',
+    height: '16px',
+    margin: '0 2px',
+    flex: '0 0 auto',
+    background: vars.color.border,
+});
 export const live = style({
     display: 'inline-flex',
     alignItems: 'center',
@@ -110,13 +121,26 @@ export const gap = style({
     borderBottom: `1px solid ${vars.color.border}`,
 });
 export const summary = style({
-    display: 'grid',
-    gridTemplateColumns: 'auto auto minmax(0, 1fr) auto auto',
+    display: 'flex',
     alignItems: 'baseline',
     gap: vars.space.sm,
     padding: `8px ${vars.space.md}`,
     borderBottom: `1px solid ${vars.color.border}`,
     fontVariantNumeric: 'tabular-nums',
+    overflowX: 'auto',
+});
+export const summaryMetric = style({
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    gap: '6px',
+    whiteSpace: 'nowrap',
+});
+export const metricDivider = style({
+    width: '1px',
+    height: '20px',
+    flex: '0 0 auto',
+    alignSelf: 'center',
+    background: vars.color.border,
 });
 export const summaryLabel = style({ color: vars.color.mutedForeground });
 export const summaryValue = style({
@@ -128,6 +152,10 @@ export const change = style({
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+});
+export const metricValue = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
 });
 export const simtrade = style({
     color: vars.color.amber,
@@ -142,7 +170,7 @@ export const time = style({
 });
 export const columns = style({
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1.15fr) minmax(0, .85fr)',
+    gridTemplateColumns: 'minmax(11rem, .78fr) minmax(16rem, 1.22fr)',
     flex: 1,
     minHeight: 0,
     '@media': { '(max-width: 720px)': { gridTemplateColumns: '1fr' } },
@@ -154,11 +182,36 @@ export const section = style({
     minHeight: 0,
     selectors: { '& + &': { borderLeft: `1px solid ${vars.color.border}` } },
 });
+export const flowSection = style({
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+});
 export const sectionTitle = style({
     padding: `5px ${vars.space.sm}`,
     color: vars.color.mutedForeground,
     fontWeight: 600,
     borderBottom: `1px solid ${vars.color.border}`,
+});
+export const sectionHeading = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: vars.space.sm,
+    padding: `5px ${vars.space.sm}`,
+    color: vars.color.mutedForeground,
+    fontWeight: 600,
+    borderBottom: `1px solid ${vars.color.border}`,
+});
+export const areaLegend = style({
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontFamily: vars.font.mono,
+    fontSize: '0.57rem',
+    fontWeight: 400,
 });
 export const list = style({ flex: 1, overflow: 'auto' });
 export const rowButton = style({
@@ -177,62 +230,48 @@ export const rowButton = style({
     cursor: 'pointer',
     ':hover': { background: vars.color.muted },
 });
-export const heatmap = style({
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignContent: 'stretch',
-    gap: '3px',
+export const treemap = style({
+    position: 'relative',
     flex: 1,
     minHeight: 0,
-    padding: '3px',
-    overflow: 'auto',
+    margin: '3px',
+    overflow: 'hidden',
 });
-const heatTileBase = style({
+export const treemapTile = style({
+    position: 'absolute',
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'space-between',
-    minWidth: '5.25rem',
-    minHeight: '3.6rem',
-    flexBasis: '30%',
-    padding: '7px',
-    border: '1px solid transparent',
+    padding: '5px 6px',
+    color: vars.color.foreground,
+    background: `color-mix(in srgb, var(--heat-color) var(--heat-alpha), ${vars.color.panel})`,
+    border: `1px solid color-mix(in srgb, var(--heat-color) 58%, ${vars.color.border})`,
     fontVariantNumeric: 'tabular-nums',
     overflow: 'hidden',
-});
-export const heatTile = styleVariants({
-    up: [
-        heatTileBase,
-        {
-            color: vars.color.up,
-            background: `color-mix(in srgb, ${vars.color.up} 18%, ${vars.color.panel})`,
-            borderColor: `color-mix(in srgb, ${vars.color.up} 42%, ${vars.color.border})`,
-        },
-    ],
-    down: [
-        heatTileBase,
-        {
-            color: vars.color.down,
-            background: `color-mix(in srgb, ${vars.color.down} 18%, ${vars.color.panel})`,
-            borderColor: `color-mix(in srgb, ${vars.color.down} 42%, ${vars.color.border})`,
-        },
-    ],
-    flat: [
-        heatTileBase,
-        {
-            color: vars.color.flat,
-            background: vars.color.muted,
-            borderColor: vars.color.border,
-        },
-    ],
+    transition: 'filter 120ms ease',
+    ':hover': { filter: 'brightness(1.16)' },
 });
 export const rank = style({
     color: vars.color.mutedForeground,
     textAlign: 'right',
 });
 export const code = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: '5px',
+    minWidth: 0,
     color: vars.color.foreground,
     fontFamily: vars.font.mono,
     fontWeight: 600,
+});
+export const stockName = style({
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    color: vars.color.mutedForeground,
+    fontFamily: vars.font.body,
+    fontSize: '0.58rem',
+    fontWeight: 400,
+    whiteSpace: 'nowrap',
 });
 export const points = style({
     textAlign: 'right',
@@ -244,17 +283,63 @@ export const pct = style({
     fontFamily: vars.font.mono,
     whiteSpace: 'nowrap',
 });
-export const heatName = style({
+export const treemapName = style({
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-    color: vars.color.foreground,
     fontWeight: 600,
 });
-export const heatPoints = style({
+export const treemapPoints = style({
     alignSelf: 'flex-end',
     fontFamily: vars.font.mono,
     fontSize: '0.84rem',
+    color: 'var(--heat-color)',
+});
+export const treemapShare = style({
+    alignSelf: 'flex-end',
+    color: vars.color.mutedForeground,
+    fontFamily: vars.font.mono,
+    fontSize: '0.57rem',
+});
+export const sankeyViewport = style({
+    position: 'relative',
+    flex: 1,
+    minHeight: '220px',
+    overflow: 'auto hidden',
+    background: vars.color.inset,
+});
+export const sankey = style({
+    display: 'block',
+    minWidth: '560px',
+});
+export const sankeyLinks = style({
+    fill: 'none',
+    mixBlendMode: 'screen',
+});
+export const sankeyLink = style({
+    strokeOpacity: 0.28,
+    transition: 'stroke-opacity 120ms ease',
+    ':hover': { strokeOpacity: 0.68 },
+});
+export const sankeyInteractiveNode = style({
+    cursor: 'pointer',
+    transition: 'filter 120ms ease',
+    ':hover': { filter: 'brightness(1.25)' },
+});
+export const sankeyLabel = style({
+    fontFamily: vars.font.body,
+    fontSize: '10px',
+    fontWeight: 600,
+    paintOrder: 'stroke',
+    stroke: vars.color.inset,
+    strokeWidth: '3px',
+    strokeLinejoin: 'round',
+});
+export const sankeyValue = style({
+    fill: vars.color.mutedForeground,
+    fontFamily: vars.font.mono,
+    fontSize: '9px',
+    fontWeight: 400,
 });
 export const empty = style({
     padding: '1.25rem',

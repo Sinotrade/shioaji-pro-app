@@ -20,6 +20,8 @@ let catalogCache: StockMeta[] | null = null;
 let catalogLoading: Promise<StockMeta[]> | null = null;
 let detailsCache: StockMeta[] | null = null;
 let detailsLoading: Promise<StockMeta[]> | null = null;
+const detailByCode = new Map<string, StockMeta>();
+const detailLoadingByCode = new Map<string, Promise<StockMeta | null>>();
 
 export function loadStockCatalog(): Promise<StockMeta[]> {
     if (catalogCache) return Promise.resolve(catalogCache);
@@ -51,52 +53,33 @@ export function loadStockCatalog(): Promise<StockMeta[]> {
     return catalogLoading;
 }
 
-async function mapConcurrent<T, R>(
-    values: T[],
-    concurrency: number,
-    fn: (value: T) => Promise<R>,
-): Promise<PromiseSettledResult<R>[]> {
-    const results: PromiseSettledResult<R>[] = new Array(values.length);
-    let cursor = 0;
-    const worker = async () => {
-        while (cursor < values.length) {
-            const index = cursor++;
-            try {
-                results[index] = {
-                    status: 'fulfilled',
-                    value: await fn(values[index]!),
-                };
-            } catch (reason) {
-                results[index] = { status: 'rejected', reason };
-            }
-        }
-    };
-    await Promise.all(
-        Array.from(
-            { length: Math.min(concurrency, values.length) },
-            worker,
-        ),
-    );
-    return results;
-}
-
 export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
     const unique = [...new Set(codes.filter(Boolean))];
-    const rows = await mapConcurrent(unique, 16, (code) =>
-        fetchContractInfo(code, 'STK'),
-    );
-    return rows.flatMap((result) =>
-        result.status === 'fulfilled'
-            ? [
-                  {
-                      code: result.value.code,
-                      name: result.value.name,
-                      category: result.value.category,
-                      exchange: result.value.exchange ?? '',
-                      day_trade: result.value.day_trade,
-                  },
-              ]
-            : [],
+    const load = (code: string) => {
+        const cached = detailByCode.get(code);
+        if (cached) return Promise.resolve(cached);
+        const pending = detailLoadingByCode.get(code);
+        if (pending) return pending;
+        const request = fetchContractInfo(code, 'STK')
+            .then((info) => {
+                const detail: StockMeta = {
+                    code: info.code,
+                    name: info.name,
+                    category: info.category,
+                    exchange: info.exchange ?? '',
+                    day_trade: info.day_trade,
+                };
+                detailByCode.set(code, detail);
+                return detail;
+            })
+            .catch(() => null)
+            .finally(() => detailLoadingByCode.delete(code));
+        detailLoadingByCode.set(code, request);
+        return request;
+    };
+    const rows = await Promise.all(unique.map(load));
+    return rows.filter(
+        (detail): detail is StockMeta => detail !== null,
     );
 }
 
@@ -191,7 +174,11 @@ export const SECTOR_LABELS: Record<string, string> = {
 };
 
 export function sectorLabel(category: string): string {
-    return SECTOR_LABELS[category] ?? category;
+    return (
+        SECTOR_LABELS[category] ??
+        SECTOR_LABELS[category.padStart(2, '0')] ??
+        category
+    );
 }
 
 // TWSE industry index master code → the stock category it drills into, so the
