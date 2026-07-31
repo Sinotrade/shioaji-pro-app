@@ -141,6 +141,41 @@ describe('live enriched-index payloads', () => {
             ]),
         );
     });
+
+    it('expands only the five highest-contribution stocks under a sector', () => {
+        const entries = ['2330', '2454', '2303', '3711', '3037', '2379'].map(
+            (code, index) => ({
+                code,
+                price: 100,
+                reference: 90,
+                price_chg: 10,
+                pct_chg: 10,
+                points: 60 - index * 5,
+            }),
+        );
+        const details = entries.map(({ code }) => ({
+            code,
+            name: code,
+            category: '24',
+            exchange: 'TSE',
+        }));
+        const flow = buildContributionFlow(entries, details, [
+            { category: '24', points: 300 },
+        ]);
+
+        const semiconductorStocks = flow.links.filter(
+            (link) =>
+                link.source === 'sector:up:24' &&
+                String(link.target).startsWith('stock:'),
+        );
+        expect(semiconductorStocks).toHaveLength(5);
+        expect(semiconductorStocks.map((link) => link.target)).toContain(
+            'stock:2330',
+        );
+        expect(semiconductorStocks.map((link) => link.target)).not.toContain(
+            'stock:2379',
+        );
+    });
 });
 
 describe('market signal messages', () => {

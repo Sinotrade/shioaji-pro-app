@@ -28,6 +28,8 @@ export interface ContributionFlowGraph {
     links: ContributionFlowLink[];
 }
 
+const MAX_STOCKS_PER_SECTOR = 5;
+
 export function buildContributionFlow(
     entries: IndexContributionEntry[],
     details: StockMeta[],
@@ -74,14 +76,17 @@ export function buildContributionFlow(
             direction,
         });
 
-        const matching = entries.filter((entry) => {
-            const meta = metaByCode.get(entry.code);
-            return (
-                meta?.category?.padStart(2, '0') === category &&
-                (entry.points > 0 ? 'up' : 'down') === direction &&
-                entry.points !== 0
-            );
-        });
+        const matching = entries
+            .filter((entry) => {
+                const meta = metaByCode.get(entry.code);
+                return (
+                    meta?.category?.padStart(2, '0') === category &&
+                    (entry.points > 0 ? 'up' : 'down') === direction &&
+                    entry.points !== 0
+                );
+            })
+            .sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
+            .slice(0, MAX_STOCKS_PER_SECTOR);
         const rankedTotal = matching.reduce(
             (sum, entry) => sum + Math.abs(entry.points),
             0,

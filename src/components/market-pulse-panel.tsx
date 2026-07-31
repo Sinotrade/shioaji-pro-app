@@ -79,6 +79,7 @@ const RANKINGS: { value: ContributionRanking; label: string }[] = [
     { value: 'positive25', label: '拉抬' },
     { value: 'negative25', label: '壓抑' },
 ];
+const FLOW_RANKINGS: ContributionRanking[] = ['positive25', 'negative25'];
 const FAMILY_RULES: Record<SignalFamily, ScannerRule[]> = {
     limit: [
         'bid_near_limit_up',
@@ -404,6 +405,7 @@ export function MarketPulsePanel({
     const [indexPending, setIndexPending] = useState(false);
     const [contributionPending, setContributionPending] = useState(false);
     const [stockDetails, setStockDetails] = useState<StockMeta[]>([]);
+    const [stockDetailsPending, setStockDetailsPending] = useState(false);
     const [signalCoverage, setSignalCoverage] = useState({
         ok: 0,
         total: 0,
@@ -447,10 +449,11 @@ export function MarketPulsePanel({
         if (view !== 'index') return;
         let active = true;
         setContributionPending(true);
-        void subscribeEnrichedIndex(
-            'index_contribution',
-            index,
-            ranking,
+        const rankings = [...new Set([ranking, ...FLOW_RANKINGS])];
+        void Promise.all(
+            rankings.map((value) =>
+                subscribeEnrichedIndex('index_contribution', index, value),
+            ),
         )
             .then(() => {
                 if (active) setContributionPending(false);
@@ -466,11 +469,15 @@ export function MarketPulsePanel({
             });
         return () => {
             active = false;
-            void unsubscribeEnrichedIndex(
-                'index_contribution',
-                index,
-                ranking,
-            ).catch(() => undefined);
+            void Promise.allSettled(
+                rankings.map((value) =>
+                    unsubscribeEnrichedIndex(
+                        'index_contribution',
+                        index,
+                        value,
+                    ),
+                ),
+            );
         };
     }, [index, ranking, view]);
 
@@ -530,30 +537,51 @@ export function MarketPulsePanel({
     );
     const industryContribution = pulse.industryContribution.get(indexCode);
     const drivers = contribution?.entries ?? [];
-    const driverCodes = [...new Set(drivers.map((entry) => entry.code))]
+    const flowDrivers = useMemo(() => {
+        const byCode = new Map<string, IndexContributionEntry>();
+        for (const flowRanking of FLOW_RANKINGS) {
+            const event = pulse.indexContribution.get(
+                `${indexCode}:${flowRanking}`,
+            );
+            for (const entry of event?.entries ?? []) {
+                const current = byCode.get(entry.code);
+                if (!current || Math.abs(entry.points) > Math.abs(current.points)) {
+                    byCode.set(entry.code, entry);
+                }
+            }
+        }
+        for (const entry of drivers) {
+            if (!byCode.has(entry.code)) byCode.set(entry.code, entry);
+        }
+        return [...byCode.values()];
+    }, [drivers, indexCode, pulse.indexContribution, pulse.version]);
+    const driverCodes = [...new Set(flowDrivers.map((entry) => entry.code))]
         .sort()
         .join(',');
 
     useEffect(() => {
         if (!driverCodes) {
             setStockDetails([]);
+            setStockDetailsPending(false);
             return;
         }
+        let active = true;
         const codes = driverCodes.split(',');
+        setStockDetailsPending(true);
         setStockDetails((current) =>
             current.filter((stock) => codes.includes(stock.code)),
         );
-        for (const code of codes) {
-            void loadStockDetails([code])
-                .then(([detail]) => {
-                    if (!detail) return;
-                    setStockDetails((current) => [
-                        ...current.filter((stock) => stock.code !== detail.code),
-                        detail,
-                    ]);
-                })
-                .catch(() => undefined);
-        }
+        void loadStockDetails(codes)
+            .then((details) => {
+                if (active) setStockDetails(details);
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                if (active) setStockDetailsPending(false);
+            });
+        return () => {
+            active = false;
+        };
     }, [driverCodes]);
 
     const stockByCode = useMemo(
@@ -811,15 +839,21 @@ export function MarketPulsePanel({
                             <div className={styles.sectionHeading}>
                                 <span>貢獻傳導</span>
                                 <span className={styles.areaLegend}>
-                                    產業流寬＝貢獻點數 · 個股依排行占比 · 非成交資金轉移
+                                    產業流寬＝貢獻點數 · 各產業展開前 5 大個股 · 非成交資金轉移
                                 </span>
                             </div>
-                            <ContributionSankey
-                                entries={drivers}
-                                details={stockDetails}
-                                industries={flowIndustries}
-                                onPick={onPick}
-                            />
+                            {stockDetailsPending && stockDetails.length === 0 ? (
+                                <div className={styles.empty}>
+                                    正在解析主要個股產業…
+                                </div>
+                            ) : (
+                                <ContributionSankey
+                                    entries={flowDrivers}
+                                    details={stockDetails}
+                                    industries={flowIndustries}
+                                    onPick={onPick}
+                                />
+                            )}
                         </section>
                     )}
                 </>
