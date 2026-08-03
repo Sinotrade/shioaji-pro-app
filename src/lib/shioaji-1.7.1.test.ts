@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     parseCalculatedIndexEvent,
     exchangeTimeDifferenceSeconds,
+    futuresIndexBasis,
     parseIndexContributionEvent,
     parseIndustryContributionEvent,
     parseScannerMessage,
@@ -41,6 +42,12 @@ describe('live enriched-index payloads', () => {
             ),
         ).toBeCloseTo(0.15, 6);
         expect(exchangeTimeDifferenceSeconds('bad', '09:00:01')).toBeNull();
+    });
+
+    it('calculates near-month futures premium against the calculated index', () => {
+        expect(futuresIndexBasis(43_980, 43_963.17)).toBeCloseTo(16.83, 6);
+        expect(futuresIndexBasis(undefined, 43_963.17)).toBeNull();
+        expect(futuresIndexBasis(43_980, null)).toBeNull();
     });
     it('normalizes unpadded industry category codes', () => {
         expect(sectorLabel('5')).toBe('電機');

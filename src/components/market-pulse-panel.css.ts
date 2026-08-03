@@ -157,6 +157,11 @@ export const metricValue = style({
     fontFamily: vars.font.mono,
     fontSize: '0.72rem',
 });
+export const contractCode = style({
+    color: vars.color.mutedForeground,
+    fontFamily: vars.font.mono,
+    fontSize: '0.57rem',
+});
 export const simtrade = style({
     color: vars.color.amber,
     border: `1px solid ${vars.color.amber}`,

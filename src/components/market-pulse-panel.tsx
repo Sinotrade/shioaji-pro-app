@@ -20,6 +20,7 @@ import {
 } from 'd3-sankey';
 import { useMarketPulseSnapshot } from '../hooks/use-market-pulse';
 import { useQuote } from '../hooks/use-stream';
+import { ensureContract } from '../lib/contracts-cache';
 import {
     buildContributionFlow,
     type ContributionFlowLink,
@@ -27,6 +28,7 @@ import {
 } from '../lib/contribution-flow';
 import {
     exchangeTimeDifferenceSeconds,
+    futuresIndexBasis,
 } from '../lib/market-pulse';
 import {
     subscribeEnrichedIndex,
@@ -407,6 +409,8 @@ export function MarketPulsePanel({
     const [contributionPending, setContributionPending] = useState(false);
     const [stockDetails, setStockDetails] = useState<StockMeta[]>([]);
     const [stockDetailsPending, setStockDetailsPending] = useState(false);
+    const [nearMonthCode, setNearMonthCode] = useState('');
+    const [nearMonthPending, setNearMonthPending] = useState(false);
     const [signalCoverage, setSignalCoverage] = useState({
         ok: 0,
         total: 0,
@@ -414,6 +418,9 @@ export function MarketPulsePanel({
     });
     const index = INDICES[indexCode];
     const officialIndex = useQuote(indexCode)?.index;
+    const nearMonthQuote = useQuote(
+        indexCode === 'IX0001' ? 'TXFR1' : null,
+    )?.tick;
 
     useEffect(() => {
         if (view !== 'index') return;
@@ -445,6 +452,30 @@ export function MarketPulsePanel({
             ]);
         };
     }, [index, view]);
+
+    useEffect(() => {
+        if (view !== 'index' || indexCode !== 'IX0001') {
+            setNearMonthPending(false);
+            return;
+        }
+        let active = true;
+        setNearMonthPending(true);
+        void ensureContract('TXFR1', 'FUT')
+            .then((contract) => {
+                if (active) {
+                    setNearMonthCode(contract.target_code || contract.code);
+                }
+            })
+            .catch(() => {
+                if (active) setNearMonthCode('');
+            })
+            .finally(() => {
+                if (active) setNearMonthPending(false);
+            });
+        return () => {
+            active = false;
+        };
+    }, [indexCode, view]);
 
     useEffect(() => {
         if (view !== 'index') return;
@@ -533,6 +564,14 @@ export function MarketPulsePanel({
                   officialIndex.time,
               )
             : null;
+    const nearMonthPriceValue = Number(nearMonthQuote?.close);
+    const nearMonthPrice = Number.isFinite(nearMonthPriceValue)
+        ? nearMonthPriceValue
+        : null;
+    const futuresBasis = futuresIndexBasis(
+        nearMonthPrice,
+        calculated?.close,
+    );
     const contribution = pulse.indexContribution.get(
         `${indexCode}:${ranking}`,
     );
@@ -769,6 +808,48 @@ export function MarketPulsePanel({
                                     : `${timeGap > 0 ? '+' : ''}${timeGap.toFixed(3)} 秒`}
                             </strong>
                         </span>
+                        {indexCode === 'IX0001' && (
+                            <>
+                                <span className={styles.metricDivider} />
+                                <span className={styles.summaryMetric}>
+                                    <span
+                                        className={styles.summaryLabel}
+                                        title={`連續近月 TXFR1${nearMonthCode ? `，目前映射 ${nearMonthCode}` : ''}`}
+                                    >
+                                        台指近月
+                                    </span>
+                                    <strong className={styles.metricValue}>
+                                        {nearMonthPrice?.toLocaleString(
+                                            'en-US',
+                                            {
+                                                maximumFractionDigits: 2,
+                                            },
+                                        ) ??
+                                            (nearMonthPending
+                                                ? '訂閱中...'
+                                                : '--')}
+                                    </strong>
+                                    {nearMonthCode && (
+                                        <span className={styles.contractCode}>
+                                            {nearMonthCode}
+                                        </span>
+                                    )}
+                                </span>
+                                <span className={styles.summaryMetric}>
+                                    <span className={styles.summaryLabel}>
+                                        期現差
+                                    </span>
+                                    <strong
+                                        className={`${styles.metricValue} ${panel.dirText[direction(futuresBasis ?? 0)]}`}
+                                        title="台指期近月 − 自算加權指數；正值為升水，負值為逆價差"
+                                    >
+                                        {futuresBasis === null
+                                            ? '--'
+                                            : `${futuresBasis > 0 ? '+' : ''}${futuresBasis.toFixed(2)} 點`}
+                                    </strong>
+                                </span>
+                            </>
+                        )}
                         <span className={styles.spacer} />
                         {(calculated?.simtrade || contributionIsSimtrade) && (
                             <span className={styles.simtrade}>試撮</span>

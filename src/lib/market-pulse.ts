@@ -93,6 +93,15 @@ export function exchangeTimeDifferenceSeconds(
         : (leftMs - rightMs) / 1_000;
 }
 
+export function futuresIndexBasis(
+    futuresPrice: number | null | undefined,
+    indexValue: number | null | undefined,
+): number | null {
+    return Number.isFinite(futuresPrice) && Number.isFinite(indexValue)
+        ? Number(futuresPrice) - Number(indexValue)
+        : null;
+}
+
 function handleIndexContribution(raw: string) {
     const event = parseIndexContributionEvent(raw);
     if (!event.code || !event.ranking) return;
