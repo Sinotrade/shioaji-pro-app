@@ -335,6 +335,11 @@ export function useWatchlist() {
                         break;
                     } catch (e) {
                         lastErr = e;
+                        // A healthy HTTP server can still be waiting for its
+                        // Shioaji session. Keep retrying in the background,
+                        // but do not hold the entire terminal behind the boot
+                        // screen for the full backoff window.
+                        if (attempt === 0) setInitialLoading(false);
                         await new Promise((r) =>
                             setTimeout(r, 1500 + attempt * 1000),
                         );

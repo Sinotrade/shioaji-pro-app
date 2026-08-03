@@ -10,7 +10,10 @@ import type {
 import type { Health } from './types/health';
 import type {
     KBars,
+    ContributionRanking,
     QuoteTypeName,
+    ScannerExchange,
+    ScannerRule,
     ScannerItem,
     ScannerType,
     Snapshot,
@@ -29,8 +32,12 @@ import type {
     Margin,
     StockPosition,
 } from './types/portfolio';
-import { registerSubscription } from './stream';
-import { unregisterSubscription } from './stream';
+import {
+    registerCapabilitySubscription,
+    registerSubscription,
+    unregisterCapabilitySubscription,
+    unregisterSubscription,
+} from './stream';
 import type { HistoryTicks } from './types/tick';
 import { todayStr } from './utils/date';
 
@@ -46,6 +53,15 @@ function contractKey(c: ContractBase) {
     return {
         security_type: c.security_type,
         region: c.region ?? 'TW',
+        exchange: c.exchange,
+        code: c.code,
+        target_code: c.target_code || null,
+    };
+}
+
+function streamContractKey(c: ContractBase) {
+    return {
+        security_type: c.security_type,
         exchange: c.exchange,
         code: c.code,
         target_code: c.target_code || null,
@@ -400,6 +416,151 @@ export function subscribeContractQuotes(contract: ContractBase) {
         contract.security_type === 'IND' ? ['Quote'] : ['Tick', 'BidAsk'];
     return Promise.allSettled(
         quoteTypes.map((quoteType) => subscribeQuote(contract, quoteType)),
+    );
+}
+
+type CapabilityResponse = { success: boolean; message: string };
+const capabilityQueues = new Map<string, Promise<CapabilityResponse>>();
+const capabilityRefs = new Map<string, number>();
+
+function enqueueCapability(
+    key: string,
+    operation: () => Promise<CapabilityResponse>,
+) {
+    const previous = capabilityQueues.get(key);
+    const next = (previous ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(operation);
+    capabilityQueues.set(key, next);
+    const cleanup = () => {
+        if (capabilityQueues.get(key) === next) capabilityQueues.delete(key);
+    };
+    void next.then(cleanup, cleanup);
+    return next;
+}
+
+async function updateCapabilitySubscription(
+    action: 'subscribe' | 'unsubscribe',
+    path: string,
+    key: string,
+    body: Record<string, unknown>,
+) {
+    return enqueueCapability(key, async () => {
+        const refs = capabilityRefs.get(key) ?? 0;
+        if (action === 'subscribe' && refs > 0) {
+            capabilityRefs.set(key, refs + 1);
+            return { success: true, message: 'Subscription retained' };
+        }
+        if (action === 'unsubscribe' && refs > 1) {
+            capabilityRefs.set(key, refs - 1);
+            return { success: true, message: 'Subscription retained' };
+        }
+        if (action === 'unsubscribe' && refs === 0) {
+            return { success: true, message: 'Already unsubscribed' };
+        }
+        const response = await apiPost<CapabilityResponse>(
+            `/api/v1/stream/${action}/${path}`,
+            body,
+        );
+        if (!response.success) {
+            throw new Error(response.message || `${path} 訂閱操作失敗`);
+        }
+        if (action === 'subscribe') {
+            capabilityRefs.set(key, 1);
+            registerCapabilitySubscription(key, path, body);
+        } else {
+            capabilityRefs.delete(key);
+            unregisterCapabilitySubscription(key);
+        }
+        return response;
+    });
+}
+
+export type EnrichedIndexCapability =
+    | 'calculated_index'
+    | 'index_contribution'
+    | 'industry_contribution';
+
+export function subscribeEnrichedIndex(
+    capability: EnrichedIndexCapability,
+    contract: ContractBase,
+    ranking?: ContributionRanking,
+) {
+    const body: Record<string, unknown> = {
+        index: streamContractKey(contract),
+    };
+    if (capability === 'index_contribution') {
+        body.ranking = ranking ?? 'top10';
+    }
+    const suffix =
+        capability === 'index_contribution' ? `:${body.ranking}` : '';
+    return updateCapabilitySubscription(
+        'subscribe',
+        capability,
+        `${capability}:${contract.code}${suffix}`,
+        body,
+    );
+}
+
+export function unsubscribeEnrichedIndex(
+    capability: EnrichedIndexCapability,
+    contract: ContractBase,
+    ranking?: ContributionRanking,
+) {
+    const body: Record<string, unknown> = {
+        index: streamContractKey(contract),
+    };
+    if (capability === 'index_contribution') {
+        body.ranking = ranking ?? 'top10';
+    }
+    const suffix =
+        capability === 'index_contribution' ? `:${body.ranking}` : '';
+    return updateCapabilitySubscription(
+        'unsubscribe',
+        capability,
+        `${capability}:${contract.code}${suffix}`,
+        body,
+    );
+}
+
+export function scannerSubscriptionBody(
+    scanner: ScannerRule,
+    exchange: ScannerExchange,
+) {
+    return {
+        scanner:
+            scanner === 'simtrade' || scanner === 'suspend'
+                ? scanner
+                : { kind: 'preset_rule', id: scanner },
+        region: 'TW',
+        security_type: 'STK',
+        exchange,
+    };
+}
+
+export function subscribeMarketSignal(
+    scanner: ScannerRule,
+    exchange: ScannerExchange,
+) {
+    const body = scannerSubscriptionBody(scanner, exchange);
+    return updateCapabilitySubscription(
+        'subscribe',
+        'scanner',
+        `scanner:${exchange}:${scanner}`,
+        body,
+    );
+}
+
+export function unsubscribeMarketSignal(
+    scanner: ScannerRule,
+    exchange: ScannerExchange,
+) {
+    const body = scannerSubscriptionBody(scanner, exchange);
+    return updateCapabilitySubscription(
+        'unsubscribe',
+        'scanner',
+        `scanner:${exchange}:${scanner}`,
+        body,
     );
 }
 

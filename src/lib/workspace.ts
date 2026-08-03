@@ -24,15 +24,26 @@ export type BlockType =
     | 'debug'
     | 'grid'
     | 'heatmap'
+    | 'pulse'
+    | 'signals'
     | 'optpnl'
     | 'backtest'
     | 'assistant';
+
+export type PulseSection = 'stocks' | 'industries' | 'flow';
+export type PulseSectionWeights = Record<PulseSection, number>;
+export type PulseIndexCode = 'IX0001' | 'IX0043';
 
 export interface Block {
     id: string;
     type: BlockType;
     // null → follows the globally selected symbol; string → pinned to a code
     pin: string | null;
+    // Market-pulse presets can open multiple panels on distinct views.
+    pulseVisualization?: 'distribution' | 'flow';
+    pulseSections?: PulseSection[];
+    pulseWeights?: Partial<PulseSectionWeights>;
+    pulseIndex?: PulseIndexCode;
 }
 
 export interface Workspace {
@@ -179,6 +190,18 @@ export const BLOCK_META: Record<
         pinnable: false,
         singleton: true,
         defaultSize: { w: 8, h: 11, minW: 5, minH: 6 },
+    },
+    pulse: {
+        label: '市場脈動',
+        pinnable: false,
+        singleton: false,
+        defaultSize: { w: 10, h: 12, minW: 7, minH: 7 },
+    },
+    signals: {
+        label: '即時訊號',
+        pinnable: false,
+        singleton: true,
+        defaultSize: { w: 8, h: 12, minW: 5, minH: 7 },
     },
     optpnl: {
         label: '選擇權損益圖',
@@ -375,6 +398,108 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
                 { i: 'watch-hs', x: 0, y: 12, w: 6, h: 12, minW: 3, minH: 6 },
                 { i: 'chart-hs', x: 6, y: 12, w: 12, h: 12, minW: 6, minH: 7 },
                 { i: 'dock-hs', x: 18, y: 12, w: 6, h: 12, minW: 6, minH: 5 },
+            ],
+        },
+    },
+    {
+        name: '市場脈動',
+        desc: '上市＋上櫃並排，分別觀察成分股、產業分布與貢獻傳導',
+        workspace: {
+            blocks: [
+                {
+                    id: 'pulse-tse',
+                    type: 'pulse',
+                    pin: null,
+                    pulseIndex: 'IX0001',
+                    pulseSections: ['flow'],
+                    pulseWeights: {
+                        stocks: 28,
+                        industries: 32,
+                        flow: 40,
+                    },
+                },
+                {
+                    id: 'pulse-otc',
+                    type: 'pulse',
+                    pin: null,
+                    pulseIndex: 'IX0043',
+                    pulseSections: ['flow'],
+                    pulseWeights: {
+                        stocks: 28,
+                        industries: 32,
+                        flow: 40,
+                    },
+                },
+            ],
+            layout: [
+                {
+                    i: 'pulse-tse',
+                    x: 0,
+                    y: 0,
+                    w: 12,
+                    h: 20,
+                    minW: 7,
+                    minH: 7,
+                },
+                {
+                    i: 'pulse-otc',
+                    x: 12,
+                    y: 0,
+                    w: 12,
+                    h: 20,
+                    minW: 7,
+                    minH: 7,
+                },
+            ],
+        },
+    },
+    {
+        name: '盤中雷達',
+        desc: '即時訊號連動 K 線、五檔與成交明細，各面板可個別鎖定',
+        workspace: {
+            blocks: [
+                { id: 'signals-sr', type: 'signals', pin: null },
+                { id: 'chart-sr', type: 'chart', pin: null },
+                { id: 'depth-sr', type: 'depth', pin: null },
+                { id: 'tape-sr', type: 'tape', pin: null },
+            ],
+            layout: [
+                {
+                    i: 'signals-sr',
+                    x: 0,
+                    y: 0,
+                    w: 6,
+                    h: 24,
+                    minW: 5,
+                    minH: 7,
+                },
+                {
+                    i: 'chart-sr',
+                    x: 6,
+                    y: 0,
+                    w: 13,
+                    h: 24,
+                    minW: 6,
+                    minH: 7,
+                },
+                {
+                    i: 'depth-sr',
+                    x: 19,
+                    y: 0,
+                    w: 5,
+                    h: 10,
+                    minW: 4,
+                    minH: 7,
+                },
+                {
+                    i: 'tape-sr',
+                    x: 19,
+                    y: 10,
+                    w: 5,
+                    h: 14,
+                    minW: 3,
+                    minH: 4,
+                },
             ],
         },
     },

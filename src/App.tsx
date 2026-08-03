@@ -43,6 +43,10 @@ import { TrayPanel } from './components/tray-panel';
 import { Watchlist } from './components/watchlist';
 import { StockFuturesPanel } from './components/stock-futures-panel';
 import { WarrantPanel } from './components/warrant-panel';
+import {
+    MarketPulsePanel,
+    MarketSignalPanel,
+} from './components/market-pulse-panel';
 import * as panel from './components/panel.css';
 import { useHotkeys } from './hooks/use-hotkeys';
 import { usePoll } from './hooks/use-poll';
@@ -74,6 +78,8 @@ import {
     saveWorkspace,
     type Block,
     type BlockType,
+    type PulseSection,
+    type PulseSectionWeights,
     type Profile,
     type Workspace,
 } from './lib/workspace';
@@ -125,6 +131,7 @@ function BlockBody({
     watchlistProps,
     dockProps,
     onSelectCode,
+    onPulseConfigChange,
     refreshTrading,
 }: {
     block: Block;
@@ -133,6 +140,11 @@ function BlockBody({
     watchlistProps: React.ComponentProps<typeof Watchlist>;
     dockProps: React.ComponentProps<typeof BottomDock>;
     onSelectCode: (code: string) => void;
+    onPulseConfigChange: (
+        id: string,
+        sections: PulseSection[],
+        weights: PulseSectionWeights,
+    ) => void;
     refreshTrading: () => void;
 }) {
     if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
@@ -247,6 +259,23 @@ function BlockBody({
             );
         case 'heatmap':
             return <SectorHeatmap onPick={onSelectCode} />;
+        case 'pulse':
+            return (
+                <MarketPulsePanel
+                    onPick={onSelectCode}
+                    initialVisualization={block.pulseVisualization}
+                    initialSections={block.pulseSections}
+                    initialWeights={block.pulseWeights}
+                    initialIndexCode={block.pulseIndex}
+                    fixedIndex={Boolean(block.pulseIndex)}
+                    fixedView="index"
+                    onConfigChange={(sections, weights) =>
+                        onPulseConfigChange(block.id, sections, weights)
+                    }
+                />
+            );
+        case 'signals':
+            return <MarketSignalPanel onPick={onSelectCode} />;
         case 'backtest': {
             const BtPanel = backtestModule?.Panel;
             return (
@@ -316,6 +345,11 @@ interface BlockViewProps {
     watchlistProps: React.ComponentProps<typeof Watchlist>;
     dockProps: React.ComponentProps<typeof BottomDock>;
     onSelectCode: (code: string) => void;
+    onPulseConfigChange: (
+        id: string,
+        sections: PulseSection[],
+        weights: PulseSectionWeights,
+    ) => void;
     refreshTrading: () => void;
 }
 
@@ -325,11 +359,15 @@ function BlockView(props: BlockViewProps) {
     const meta = BLOCK_META[block.type];
     const showSymbol =
         meta.pinnable && contract ? ` · ${contract.code}` : '';
+    const pulseMarket =
+        block.type === 'pulse' && block.pulseIndex
+            ? ` · ${block.pulseIndex === 'IX0001' ? '上市' : '上櫃'}`
+            : '';
 
     return (
         <section className={panel.panel}>
             <PanelChrome
-                title={`${meta.label}${showSymbol}`}
+                title={`${meta.label}${pulseMarket}${showSymbol}`}
                 pinnable={meta.pinnable}
                 pin={block.pin}
                 currentCode={selected?.code ?? null}
@@ -715,6 +753,24 @@ export default function App() {
         [workspace, updateWorkspace],
     );
 
+    const setBlockPulseConfig = useCallback(
+        (
+            id: string,
+            pulseSections: PulseSection[],
+            pulseWeights: PulseSectionWeights,
+        ) => {
+            updateWorkspace({
+                ...workspace,
+                blocks: workspace.blocks.map((block) =>
+                    block.id === id
+                        ? { ...block, pulseSections, pulseWeights }
+                        : block,
+                ),
+            });
+        },
+        [workspace, updateWorkspace],
+    );
+
     const resetWorkspace = useCallback(() => {
         updateWorkspace(structuredClone(DEFAULT_WORKSPACE));
     }, [updateWorkspace]);
@@ -910,6 +966,7 @@ export default function App() {
                                     watchlistProps={watchlistProps}
                                     dockProps={dockProps}
                                     onSelectCode={selectByCode}
+                                    onPulseConfigChange={setBlockPulseConfig}
                                     refreshTrading={refreshTrading}
                                 />
                             </div>

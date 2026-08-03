@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Run unit tests
+        run: pnpm test
+
       # no private modules checkout on purpose — this is the OSS path
       - name: Build web app (stub modules)
         run: pnpm build
