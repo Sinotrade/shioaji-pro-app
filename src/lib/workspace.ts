@@ -454,6 +454,56 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
         },
     },
     {
+        name: '訊號雷達',
+        desc: '即時訊號連動 K 線、五檔與成交明細，各面板可個別鎖定',
+        workspace: {
+            blocks: [
+                { id: 'signals-sr', type: 'signals', pin: null },
+                { id: 'chart-sr', type: 'chart', pin: null },
+                { id: 'depth-sr', type: 'depth', pin: null },
+                { id: 'tape-sr', type: 'tape', pin: null },
+            ],
+            layout: [
+                {
+                    i: 'signals-sr',
+                    x: 0,
+                    y: 0,
+                    w: 6,
+                    h: 24,
+                    minW: 5,
+                    minH: 7,
+                },
+                {
+                    i: 'chart-sr',
+                    x: 6,
+                    y: 0,
+                    w: 13,
+                    h: 24,
+                    minW: 6,
+                    minH: 7,
+                },
+                {
+                    i: 'depth-sr',
+                    x: 19,
+                    y: 0,
+                    w: 5,
+                    h: 10,
+                    minW: 4,
+                    minH: 7,
+                },
+                {
+                    i: 'tape-sr',
+                    x: 19,
+                    y: 10,
+                    w: 5,
+                    h: 14,
+                    minW: 3,
+                    minH: 4,
+                },
+            ],
+        },
+    },
+    {
         name: 'AI 副駕',
         desc: 'AI Agent 常駐側欄，看盤帳務通知一條龍',
         workspace: {
