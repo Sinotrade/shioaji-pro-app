@@ -2,6 +2,7 @@ import { style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const root = style({
+    position: 'relative',
     display: 'flex',
     flexDirection: 'column',
     width: '100%',
@@ -87,13 +88,32 @@ export const liveDotPartial = style({
     background: vars.color.amber,
 });
 export const signalRuleFilters = style({
+    position: 'absolute',
+    top: '34px',
+    left: vars.space.sm,
+    zIndex: 101,
     display: 'grid',
-    gridTemplateColumns: 'repeat(4, minmax(150px, 1fr))',
+    gridTemplateColumns: 'repeat(5, minmax(130px, 1fr))',
     gap: vars.space.sm,
+    width: `calc(100% - ${vars.space.md})`,
+    maxWidth: '760px',
+    maxHeight: 'min(360px, calc(100% - 42px))',
+    boxSizing: 'border-box',
     padding: `${vars.space.sm} ${vars.space.md}`,
-    borderBottom: `1px solid ${vars.color.border}`,
-    background: vars.color.muted,
-    overflowX: 'auto',
+    border: `1px solid ${vars.color.borderBright}`,
+    borderRadius: vars.radius.md,
+    background: vars.color.panelRaised,
+    boxShadow: '0 12px 32px rgba(0, 0, 0, 0.38)',
+    overflow: 'auto',
+});
+export const signalRuleBackdrop = style({
+    position: 'fixed',
+    inset: 0,
+    zIndex: 100,
+    padding: 0,
+    border: 0,
+    background: 'transparent',
+    cursor: 'default',
 });
 export const signalRuleGroup = style({
     display: 'flex',
@@ -107,10 +127,21 @@ export const signalRuleGroup = style({
     color: vars.color.foreground,
 });
 export const signalRuleLegend = style({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     width: '100%',
     marginBottom: '2px',
     color: vars.color.mutedForeground,
     fontWeight: 600,
+});
+export const signalRuleGroupToggle = style({
+    padding: 0,
+    border: 0,
+    color: vars.color.accent,
+    background: 'transparent',
+    font: 'inherit',
+    cursor: 'pointer',
 });
 export const signalRuleOption = style({
     display: 'inline-flex',
