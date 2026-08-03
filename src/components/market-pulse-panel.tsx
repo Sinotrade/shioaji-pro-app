@@ -2,6 +2,7 @@ import {
     AlertTriangle,
     GitBranch,
     LayoutGrid,
+    Link2,
     ListOrdered,
 } from 'lucide-react';
 import {
@@ -470,6 +471,8 @@ export function MarketPulsePanel({
         useState<PulseIndexCode>(initialIndexCode);
     const [ranking, setRanking] = useState<ContributionRanking>('top10');
     const [family, setFamily] = useState<SignalFamily>('move');
+    const [autoFollowSignals, setAutoFollowSignals] = useState(true);
+    const latestSignalRef = useRef<string | null | undefined>(undefined);
     const [error, setError] = useState('');
     const [indexPending, setIndexPending] = useState(false);
     const [contributionPending, setContributionPending] = useState(false);
@@ -754,6 +757,26 @@ export function MarketPulsePanel({
     const visibleSignals = pulse.signals
         .filter((signal) => familyRules.includes(signal.scanner))
         .slice(0, 100);
+    const latestSignal = visibleSignals[0];
+    const latestSignalKey = latestSignal
+        ? `${latestSignal.exchange}-${latestSignal.scanner}-${latestSignal.quote.code}-${latestSignal.quote.time}`
+        : null;
+
+    useEffect(() => {
+        latestSignalRef.current = latestSignalKey;
+    }, [family]);
+
+    useEffect(() => {
+        if (view !== 'signals') return;
+        if (latestSignalRef.current === undefined) {
+            latestSignalRef.current = latestSignalKey;
+            return;
+        }
+        if (!latestSignalKey || !latestSignal) return;
+        if (latestSignalRef.current === latestSignalKey) return;
+        latestSignalRef.current = latestSignalKey;
+        if (autoFollowSignals) onPick?.(latestSignal.quote.code);
+    }, [autoFollowSignals, latestSignal, latestSignalKey, onPick, view]);
 
     const toggleSection = useCallback(
         (section: PulseSection) => {
@@ -1235,6 +1258,18 @@ export function MarketPulsePanel({
                             </button>
                             ),
                         )}
+                        <button
+                            className={
+                                styles.control[autoFollowSignals ? 'on' : 'off']
+                            }
+                            title='新訊號抵達時連動未鎖定的行情面板'
+                            aria-pressed={autoFollowSignals}
+                            onClick={() =>
+                                setAutoFollowSignals((enabled) => !enabled)
+                            }
+                        >
+                            <Link2 size={11} /> 自動跟隨
+                        </button>
                         <span className={styles.spacer} />
                         <span className={styles.live}>
                             <span
