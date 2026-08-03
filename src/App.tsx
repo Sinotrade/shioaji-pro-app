@@ -249,7 +249,12 @@ function BlockBody({
         case 'heatmap':
             return <SectorHeatmap onPick={onSelectCode} />;
         case 'pulse':
-            return <MarketPulsePanel onPick={onSelectCode} />;
+            return (
+                <MarketPulsePanel
+                    onPick={onSelectCode}
+                    initialVisualization={block.pulseVisualization}
+                />
+            );
         case 'backtest': {
             const BtPanel = backtestModule?.Panel;
             return (

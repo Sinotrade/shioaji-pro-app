@@ -34,6 +34,8 @@ export interface Block {
     type: BlockType;
     // null → follows the globally selected symbol; string → pinned to a code
     pin: string | null;
+    // Market-pulse presets can open multiple panels on distinct views.
+    pulseVisualization?: 'distribution' | 'flow';
 }
 
 export interface Workspace {
@@ -184,7 +186,7 @@ export const BLOCK_META: Record<
     pulse: {
         label: '市場脈動',
         pinnable: false,
-        singleton: true,
+        singleton: false,
         defaultSize: { w: 10, h: 12, minW: 7, minH: 7 },
     },
     optpnl: {
@@ -382,6 +384,46 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
                 { i: 'watch-hs', x: 0, y: 12, w: 6, h: 12, minW: 3, minH: 6 },
                 { i: 'chart-hs', x: 6, y: 12, w: 12, h: 12, minW: 6, minH: 7 },
                 { i: 'dock-hs', x: 18, y: 12, w: 6, h: 12, minW: 6, minH: 5 },
+            ],
+        },
+    },
+    {
+        name: '市場脈動',
+        desc: '產業分布＋貢獻傳導並排，掌握產業與個股驅動',
+        workspace: {
+            blocks: [
+                {
+                    id: 'pulse-dist',
+                    type: 'pulse',
+                    pin: null,
+                    pulseVisualization: 'distribution',
+                },
+                {
+                    id: 'pulse-flow',
+                    type: 'pulse',
+                    pin: null,
+                    pulseVisualization: 'flow',
+                },
+            ],
+            layout: [
+                {
+                    i: 'pulse-dist',
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 20,
+                    minW: 7,
+                    minH: 7,
+                },
+                {
+                    i: 'pulse-flow',
+                    x: 10,
+                    y: 0,
+                    w: 14,
+                    h: 20,
+                    minW: 7,
+                    minH: 7,
+                },
             ],
         },
     },

@@ -394,13 +394,15 @@ function ContributionSankey({
 
 export function MarketPulsePanel({
     onPick,
+    initialVisualization = 'distribution',
 }: {
     onPick?: (code: string) => void;
+    initialVisualization?: IndexVisualization;
 }) {
     const pulse = useMarketPulseSnapshot();
     const [view, setView] = useState<PulseView>('index');
     const [visualization, setVisualization] =
-        useState<IndexVisualization>('distribution');
+        useState<IndexVisualization>(initialVisualization);
     const [indexCode, setIndexCode] = useState<'IX0001' | 'IX0043'>('IX0001');
     const [ranking, setRanking] = useState<ContributionRanking>('top10');
     const [family, setFamily] = useState<SignalFamily>('move');
@@ -618,13 +620,11 @@ export function MarketPulsePanel({
                     codes.slice(start, start + STOCK_DETAIL_BATCH_SIZE),
                 );
                 details.push(...batch);
+                if (active) setStockDetails([...details]);
             }
             return details;
         };
         void loadDetails()
-            .then((details) => {
-                if (active) setStockDetails(details);
-            })
             .catch(() => undefined)
             .finally(() => {
                 if (active) setStockDetailsPending(false);

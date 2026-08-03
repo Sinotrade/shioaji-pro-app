@@ -421,6 +421,7 @@ export function subscribeContractQuotes(contract: ContractBase) {
 
 type CapabilityResponse = { success: boolean; message: string };
 const capabilityQueues = new Map<string, Promise<CapabilityResponse>>();
+const capabilityRefs = new Map<string, number>();
 
 function enqueueCapability(
     key: string,
@@ -445,6 +446,18 @@ async function updateCapabilitySubscription(
     body: Record<string, unknown>,
 ) {
     return enqueueCapability(key, async () => {
+        const refs = capabilityRefs.get(key) ?? 0;
+        if (action === 'subscribe' && refs > 0) {
+            capabilityRefs.set(key, refs + 1);
+            return { success: true, message: 'Subscription retained' };
+        }
+        if (action === 'unsubscribe' && refs > 1) {
+            capabilityRefs.set(key, refs - 1);
+            return { success: true, message: 'Subscription retained' };
+        }
+        if (action === 'unsubscribe' && refs === 0) {
+            return { success: true, message: 'Already unsubscribed' };
+        }
         const response = await apiPost<CapabilityResponse>(
             `/api/v1/stream/${action}/${path}`,
             body,
@@ -453,8 +466,10 @@ async function updateCapabilitySubscription(
             throw new Error(response.message || `${path} 訂閱操作失敗`);
         }
         if (action === 'subscribe') {
+            capabilityRefs.set(key, 1);
             registerCapabilitySubscription(key, path, body);
         } else {
+            capabilityRefs.delete(key);
             unregisterCapabilitySubscription(key);
         }
         return response;

@@ -4,9 +4,12 @@ import { vars } from '../theme.css';
 export const root = style({
     display: 'flex',
     flexDirection: 'column',
+    width: '100%',
+    minWidth: 0,
     minHeight: 0,
     flex: 1,
     fontSize: '0.7rem',
+    overflow: 'hidden',
 });
 export const tabs = style({
     display: 'flex',
@@ -123,6 +126,9 @@ export const gap = style({
 export const summary = style({
     display: 'flex',
     alignItems: 'baseline',
+    width: '100%',
+    minWidth: 0,
+    boxSizing: 'border-box',
     gap: vars.space.sm,
     padding: `8px ${vars.space.md}`,
     borderBottom: `1px solid ${vars.color.border}`,
