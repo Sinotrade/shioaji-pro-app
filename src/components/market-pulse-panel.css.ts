@@ -86,6 +86,46 @@ export const liveDotPartial = style({
     borderRadius: '50%',
     background: vars.color.amber,
 });
+export const signalRuleFilters = style({
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, minmax(150px, 1fr))',
+    gap: vars.space.sm,
+    padding: `${vars.space.sm} ${vars.space.md}`,
+    borderBottom: `1px solid ${vars.color.border}`,
+    background: vars.color.muted,
+    overflowX: 'auto',
+});
+export const signalRuleGroup = style({
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignContent: 'flex-start',
+    gap: '5px 10px',
+    minWidth: '150px',
+    margin: 0,
+    padding: 0,
+    border: 0,
+    color: vars.color.foreground,
+});
+export const signalRuleLegend = style({
+    width: '100%',
+    marginBottom: '2px',
+    color: vars.color.mutedForeground,
+    fontWeight: 600,
+});
+export const signalRuleOption = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    minHeight: '20px',
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+});
+export const signalRuleCheckbox = style({
+    width: '12px',
+    height: '12px',
+    margin: 0,
+    accentColor: vars.color.accent,
+});
 export const error = style({
     display: 'flex',
     alignItems: 'center',

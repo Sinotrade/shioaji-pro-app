@@ -4,6 +4,7 @@ import {
     LayoutGrid,
     Link2,
     ListOrdered,
+    SlidersHorizontal,
 } from 'lucide-react';
 import {
     type CSSProperties,
@@ -143,6 +144,16 @@ const FAMILY_RULES: Record<SignalFamily, ScannerRule[]> = {
     volume: ['volume_burst'],
     state: ['simtrade', 'suspend'],
 };
+const SIGNAL_FAMILIES: SignalFamily[] = ['limit', 'move', 'volume', 'state'];
+const FAMILY_LABELS: Record<SignalFamily, string> = {
+    limit: '漲跌停',
+    move: '急漲跌',
+    volume: '爆量',
+    state: '狀態',
+};
+const ALL_SIGNAL_RULES = SIGNAL_FAMILIES.flatMap(
+    (family) => FAMILY_RULES[family],
+);
 const RULE_LABELS: Record<ScannerRule, string> = {
     bid_near_limit_up: '接近漲停',
     bid_touch_limit_up: '觸及漲停',
@@ -470,7 +481,10 @@ export function MarketPulsePanel({
     const [indexCode, setIndexCode] =
         useState<PulseIndexCode>(initialIndexCode);
     const [ranking, setRanking] = useState<ContributionRanking>('top10');
-    const [family, setFamily] = useState<SignalFamily>('move');
+    const [enabledSignalRules, setEnabledSignalRules] = useState<ScannerRule[]>(
+        () => [...FAMILY_RULES.move],
+    );
+    const [showSignalRules, setShowSignalRules] = useState(false);
     const [autoFollowSignals, setAutoFollowSignals] = useState(true);
     const latestSignalRef = useRef<string | null | undefined>(undefined);
     const [error, setError] = useState('');
@@ -601,7 +615,7 @@ export function MarketPulsePanel({
     useEffect(() => {
         if (view !== 'signals') return;
         let active = true;
-        const rules = FAMILY_RULES[family];
+        const rules = enabledSignalRules;
         const subscriptions = rules.flatMap((rule) =>
             (['TSE', 'OTC'] as const).map((exchange) => ({ rule, exchange })),
         );
@@ -631,7 +645,7 @@ export function MarketPulsePanel({
                 ),
             );
         };
-    }, [family, view]);
+    }, [enabledSignalRules, view]);
 
     const calculated = pulse.calculated.get(indexCode);
     const officialCloseValue = Number(officialIndex?.close);
@@ -753,9 +767,10 @@ export function MarketPulsePanel({
     );
     const contributionIsSimtrade =
         contribution?.simtrade || industryContribution?.simtrade;
-    const familyRules = FAMILY_RULES[family];
+    const enabledSignalRuleSet = new Set(enabledSignalRules);
+    const enabledSignalRulesKey = enabledSignalRules.join('|');
     const visibleSignals = pulse.signals
-        .filter((signal) => familyRules.includes(signal.scanner))
+        .filter((signal) => enabledSignalRuleSet.has(signal.scanner))
         .slice(0, 100);
     const latestSignal = visibleSignals[0];
     const latestSignalKey = latestSignal
@@ -764,7 +779,7 @@ export function MarketPulsePanel({
 
     useEffect(() => {
         latestSignalRef.current = latestSignalKey;
-    }, [family]);
+    }, [enabledSignalRulesKey]);
 
     useEffect(() => {
         if (view !== 'signals') return;
@@ -777,6 +792,30 @@ export function MarketPulsePanel({
         latestSignalRef.current = latestSignalKey;
         if (autoFollowSignals) onPick?.(latestSignal.quote.code);
     }, [autoFollowSignals, latestSignal, latestSignalKey, onPick, view]);
+
+    const toggleSignalFamily = useCallback((family: SignalFamily) => {
+        const familyRules = FAMILY_RULES[family];
+        setEnabledSignalRules((current) => {
+            const currentSet = new Set(current);
+            const allEnabled = familyRules.every((rule) =>
+                currentSet.has(rule),
+            );
+            familyRules.forEach((rule) =>
+                allEnabled ? currentSet.delete(rule) : currentSet.add(rule),
+            );
+            return ALL_SIGNAL_RULES.filter((rule) => currentSet.has(rule));
+        });
+    }, []);
+
+    const toggleSignalRule = useCallback((rule: ScannerRule) => {
+        setEnabledSignalRules((current) => {
+            const currentSet = new Set(current);
+            currentSet.has(rule)
+                ? currentSet.delete(rule)
+                : currentSet.add(rule);
+            return ALL_SIGNAL_RULES.filter((value) => currentSet.has(value));
+        });
+    }, []);
 
     const toggleSection = useCallback(
         (section: PulseSection) => {
@@ -1237,27 +1276,35 @@ export function MarketPulsePanel({
             ) : (
                 <>
                     <div className={styles.controls}>
-                        {(['limit', 'move', 'volume', 'state'] as const).map(
-                            (value) => (
-                            <button
-                                key={value}
-                                className={
-                                    styles.control[
-                                        value === family ? 'on' : 'off'
-                                    ]
-                                }
-                                onClick={() => setFamily(value)}
-                            >
-                                {value === 'limit'
-                                    ? '漲跌停'
-                                    : value === 'move'
-                                      ? '急漲跌'
-                                      : value === 'volume'
-                                        ? '爆量'
-                                        : '狀態'}
-                            </button>
-                            ),
-                        )}
+                        {SIGNAL_FAMILIES.map((family) => {
+                            const enabledCount = FAMILY_RULES[family].filter(
+                                (rule) => enabledSignalRuleSet.has(rule),
+                            ).length;
+                            return (
+                                <button
+                                    key={family}
+                                    className={
+                                        styles.control[
+                                            enabledCount > 0 ? 'on' : 'off'
+                                        ]
+                                    }
+                                    aria-pressed={enabledCount > 0}
+                                    title={`${enabledCount}/${FAMILY_RULES[family].length} 個規則已開啟`}
+                                    onClick={() => toggleSignalFamily(family)}
+                                >
+                                    {FAMILY_LABELS[family]}
+                                </button>
+                            );
+                        })}
+                        <button
+                            className={
+                                styles.control[showSignalRules ? 'on' : 'off']
+                            }
+                            aria-expanded={showSignalRules}
+                            onClick={() => setShowSignalRules((open) => !open)}
+                        >
+                            <SlidersHorizontal size={11} /> 訊號規則
+                        </button>
                         <button
                             className={
                                 styles.control[autoFollowSignals ? 'on' : 'off']
@@ -1285,6 +1332,40 @@ export function MarketPulsePanel({
                                 : `${signalCoverage.ok}/${signalCoverage.total} subscriptions`}
                         </span>
                     </div>
+                    {showSignalRules && (
+                        <div className={styles.signalRuleFilters}>
+                            {SIGNAL_FAMILIES.map((family) => (
+                                <fieldset
+                                    key={family}
+                                    className={styles.signalRuleGroup}
+                                >
+                                    <legend className={styles.signalRuleLegend}>
+                                        {FAMILY_LABELS[family]}
+                                    </legend>
+                                    {FAMILY_RULES[family].map((rule) => (
+                                        <label
+                                            key={rule}
+                                            className={styles.signalRuleOption}
+                                        >
+                                            <input
+                                                type='checkbox'
+                                                className={
+                                                    styles.signalRuleCheckbox
+                                                }
+                                                checked={enabledSignalRuleSet.has(
+                                                    rule,
+                                                )}
+                                                onChange={() =>
+                                                    toggleSignalRule(rule)
+                                                }
+                                            />
+                                            <span>{RULE_LABELS[rule]}</span>
+                                        </label>
+                                    ))}
+                                </fieldset>
+                            ))}
+                        </div>
+                    )}
                     {pulse.gap && (
                         <div className={styles.gap}>
                             <AlertTriangle size={13} />
