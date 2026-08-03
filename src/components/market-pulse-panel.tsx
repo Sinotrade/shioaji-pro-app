@@ -1,6 +1,7 @@
 import {
     AlertTriangle,
     ChevronDown,
+    ChevronRight,
     GitBranch,
     LayoutGrid,
     Link2,
@@ -68,6 +69,7 @@ import * as styles from './market-pulse-panel.css';
 type PulseView = 'index' | 'signals';
 type IndexVisualization = 'distribution' | 'flow';
 type SignalFamily = 'limit' | 'move' | 'volume' | 'state';
+type SignalFilterGroup = 'market' | SignalFamily;
 
 const INDICES: Record<'IX0001' | 'IX0043', ContractBase> = {
     IX0001: {
@@ -495,6 +497,9 @@ export function MarketPulsePanel({
         ScannerExchange[]
     >(() => [...SIGNAL_EXCHANGES]);
     const [showSignalRules, setShowSignalRules] = useState(false);
+    const [expandedSignalGroups, setExpandedSignalGroups] = useState<
+        SignalFilterGroup[]
+    >(['market', 'move']);
     const [autoFollowSignals, setAutoFollowSignals] = useState(true);
     const latestSignalRef = useRef<string | null | undefined>(undefined);
     const [error, setError] = useState('');
@@ -855,6 +860,14 @@ export function MarketPulsePanel({
     const clearSignalFilters = useCallback(() => {
         setEnabledSignalRules([]);
         setEnabledSignalExchanges([]);
+    }, []);
+
+    const toggleSignalGroup = useCallback((group: SignalFilterGroup) => {
+        setExpandedSignalGroups((current) =>
+            current.includes(group)
+                ? current.filter((value) => value !== group)
+                : [...current, group],
+        );
     }, []);
 
     const toggleSection = useCallback(
@@ -1399,38 +1412,72 @@ export function MarketPulsePanel({
                                     </button>
                                 </div>
                                 <section className={styles.signalMarketSection}>
-                                    <h4 className={styles.signalMenuHeading}>
-                                        市場
-                                    </h4>
-                                    <div className={styles.signalMarketOptions}>
-                                        {SIGNAL_EXCHANGES.map((exchange) => (
-                                            <label
-                                                key={exchange}
-                                                className={
-                                                    styles.signalRuleOption
-                                                }
-                                            >
-                                                <input
-                                                    type='checkbox'
+                                    <button
+                                        type='button'
+                                        className={styles.signalSectionToggle}
+                                        aria-expanded={expandedSignalGroups.includes(
+                                            'market',
+                                        )}
+                                        onClick={() =>
+                                            toggleSignalGroup('market')
+                                        }
+                                    >
+                                        {expandedSignalGroups.includes(
+                                            'market',
+                                        ) ? (
+                                            <ChevronDown size={12} />
+                                        ) : (
+                                            <ChevronRight size={12} />
+                                        )}
+                                        <span>市場</span>
+                                        <small
+                                            className={styles.signalGroupCount}
+                                        >
+                                            {enabledSignalExchanges.length}/
+                                            {SIGNAL_EXCHANGES.length}
+                                        </small>
+                                    </button>
+                                    {expandedSignalGroups.includes(
+                                        'market',
+                                    ) && (
+                                        <div
+                                            className={
+                                                styles.signalMarketOptions
+                                            }
+                                        >
+                                            {SIGNAL_EXCHANGES.map((exchange) => (
+                                                <label
+                                                    key={exchange}
                                                     className={
-                                                        styles.signalRuleCheckbox
+                                                        styles.signalRuleOption
                                                     }
-                                                    checked={enabledSignalExchangeSet.has(
-                                                        exchange,
-                                                    )}
-                                                    onChange={() =>
-                                                        toggleSignalExchange(
+                                                >
+                                                    <input
+                                                        type='checkbox'
+                                                        className={
+                                                            styles.signalRuleCheckbox
+                                                        }
+                                                        checked={enabledSignalExchangeSet.has(
                                                             exchange,
-                                                        )
-                                                    }
-                                                />
-                                                <span>
-                                                    {EXCHANGE_LABELS[exchange]}{' '}
-                                                    {exchange}
-                                                </span>
-                                            </label>
-                                        ))}
-                                    </div>
+                                                        )}
+                                                        onChange={() =>
+                                                            toggleSignalExchange(
+                                                                exchange,
+                                                            )
+                                                        }
+                                                    />
+                                                    <span>
+                                                        {
+                                                            EXCHANGE_LABELS[
+                                                                exchange
+                                                            ]
+                                                        }{' '}
+                                                        {exchange}
+                                                    </span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    )}
                                 </section>
                                 <div className={styles.signalRuleDivider} />
                                 <h4 className={styles.signalRulesHeading}>
@@ -1456,9 +1503,47 @@ export function MarketPulsePanel({
                                                         styles.signalRuleLegend
                                                     }
                                                 >
-                                                    <span>
-                                                        {FAMILY_LABELS[family]}
-                                                    </span>
+                                                    <button
+                                                        type='button'
+                                                        className={
+                                                            styles.signalRuleCollapseToggle
+                                                        }
+                                                        aria-expanded={expandedSignalGroups.includes(
+                                                            family,
+                                                        )}
+                                                        onClick={() =>
+                                                            toggleSignalGroup(
+                                                                family,
+                                                            )
+                                                        }
+                                                    >
+                                                        {expandedSignalGroups.includes(
+                                                            family,
+                                                        ) ? (
+                                                            <ChevronDown
+                                                                size={12}
+                                                            />
+                                                        ) : (
+                                                            <ChevronRight
+                                                                size={12}
+                                                            />
+                                                        )}
+                                                        <span>
+                                                            {
+                                                                FAMILY_LABELS[
+                                                                    family
+                                                                ]
+                                                            }
+                                                        </span>
+                                                        <small
+                                                            className={
+                                                                styles.signalGroupCount
+                                                            }
+                                                        >
+                                                            {enabledCount}/
+                                                            {familyRules.length}
+                                                        </small>
+                                                    </button>
                                                     <button
                                                         type='button'
                                                         className={
@@ -1476,42 +1561,48 @@ export function MarketPulsePanel({
                                                             : '全選'}
                                                     </button>
                                                 </legend>
-                                                <div
-                                                    className={
-                                                        styles.signalRuleOptions
-                                                    }
-                                                >
-                                                    {familyRules.map((rule) => (
-                                                        <label
-                                                            key={rule}
-                                                            className={
-                                                                styles.signalRuleOption
-                                                            }
-                                                        >
-                                                            <input
-                                                                type='checkbox'
-                                                                className={
-                                                                    styles.signalRuleCheckbox
-                                                                }
-                                                                checked={enabledSignalRuleSet.has(
-                                                                    rule,
-                                                                )}
-                                                                onChange={() =>
-                                                                    toggleSignalRule(
-                                                                        rule,
-                                                                    )
-                                                                }
-                                                            />
-                                                            <span>
-                                                                {
-                                                                    RULE_LABELS[
-                                                                        rule
-                                                                    ]
-                                                                }
-                                                            </span>
-                                                        </label>
-                                                    ))}
-                                                </div>
+                                                {expandedSignalGroups.includes(
+                                                    family,
+                                                ) && (
+                                                    <div
+                                                        className={
+                                                            styles.signalRuleOptions
+                                                        }
+                                                    >
+                                                        {familyRules.map(
+                                                            (rule) => (
+                                                                <label
+                                                                    key={rule}
+                                                                    className={
+                                                                        styles.signalRuleOption
+                                                                    }
+                                                                >
+                                                                    <input
+                                                                        type='checkbox'
+                                                                        className={
+                                                                            styles.signalRuleCheckbox
+                                                                        }
+                                                                        checked={enabledSignalRuleSet.has(
+                                                                            rule,
+                                                                        )}
+                                                                        onChange={() =>
+                                                                            toggleSignalRule(
+                                                                                rule,
+                                                                            )
+                                                                        }
+                                                                    />
+                                                                    <span>
+                                                                        {
+                                                                            RULE_LABELS[
+                                                                                rule
+                                                                            ]
+                                                                        }
+                                                                    </span>
+                                                                </label>
+                                                            ),
+                                                        )}
+                                                    </div>
+                                                )}
                                             </fieldset>
                                         );
                                     })}

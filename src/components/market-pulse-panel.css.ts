@@ -137,16 +137,26 @@ export const signalRuleClear = style({
 export const signalMarketSection = style({
     padding: `${vars.space.sm} ${vars.space.md}`,
 });
-export const signalMenuHeading = style({
-    margin: `0 0 ${vars.space.sm}`,
+export const signalSectionToggle = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
+    width: '100%',
+    margin: 0,
+    padding: 0,
+    border: 0,
     color: vars.color.mutedForeground,
+    background: 'transparent',
     fontSize: '0.65rem',
+    fontWeight: 600,
+    cursor: 'pointer',
 });
 export const signalMarketOptions = style({
     display: 'flex',
     alignItems: 'center',
     gap: '24px',
     minHeight: '22px',
+    marginTop: vars.space.sm,
 });
 export const signalRuleDivider = style({
     height: '1px',
@@ -202,6 +212,24 @@ export const signalRuleGroupToggle = style({
     background: 'transparent',
     font: 'inherit',
     cursor: 'pointer',
+});
+export const signalRuleCollapseToggle = style({
+    display: 'inline-flex',
+    flex: 1,
+    alignItems: 'center',
+    gap: '4px',
+    minWidth: 0,
+    padding: 0,
+    border: 0,
+    color: 'inherit',
+    background: 'transparent',
+    font: 'inherit',
+    cursor: 'pointer',
+});
+export const signalGroupCount = style({
+    marginLeft: 'auto',
+    color: vars.color.accent,
+    font: 'inherit',
 });
 export const signalRuleOption = style({
     display: 'inline-flex',
