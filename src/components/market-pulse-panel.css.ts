@@ -3,6 +3,7 @@ import { vars } from '../theme.css';
 
 export const root = style({
     position: 'relative',
+    containerType: 'inline-size',
     display: 'flex',
     flexDirection: 'column',
     width: '100%',
@@ -92,19 +93,82 @@ export const signalRuleFilters = style({
     top: '34px',
     left: vars.space.sm,
     zIndex: 101,
-    display: 'grid',
-    gridTemplateColumns: 'repeat(5, minmax(130px, 1fr))',
-    gap: vars.space.sm,
+    display: 'flex',
+    flexDirection: 'column',
     width: `calc(100% - ${vars.space.md})`,
-    maxWidth: '760px',
+    maxWidth: '720px',
     maxHeight: 'min(360px, calc(100% - 42px))',
     boxSizing: 'border-box',
-    padding: `${vars.space.sm} ${vars.space.md}`,
+    padding: 0,
     border: `1px solid ${vars.color.borderBright}`,
     borderRadius: vars.radius.md,
     background: vars.color.panelRaised,
     boxShadow: '0 12px 32px rgba(0, 0, 0, 0.38)',
     overflow: 'auto',
+});
+export const signalRuleMenuHeader = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: vars.space.sm,
+    minHeight: '34px',
+    padding: `0 ${vars.space.md}`,
+    borderBottom: `1px solid ${vars.color.border}`,
+});
+export const signalRuleMenuTitle = style({
+    fontSize: '0.72rem',
+    color: vars.color.foreground,
+});
+export const signalRuleMenuSummary = style({
+    color: vars.color.mutedForeground,
+});
+export const signalRuleClear = style({
+    marginLeft: 'auto',
+    padding: 0,
+    border: 0,
+    color: vars.color.accent,
+    background: 'transparent',
+    font: 'inherit',
+    cursor: 'pointer',
+    ':disabled': {
+        opacity: 0.4,
+        cursor: 'default',
+    },
+});
+export const signalMarketSection = style({
+    padding: `${vars.space.sm} ${vars.space.md}`,
+});
+export const signalMenuHeading = style({
+    margin: `0 0 ${vars.space.sm}`,
+    color: vars.color.mutedForeground,
+    fontSize: '0.65rem',
+});
+export const signalMarketOptions = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '24px',
+    minHeight: '22px',
+});
+export const signalRuleDivider = style({
+    height: '1px',
+    margin: `0 ${vars.space.md}`,
+    background: vars.color.border,
+});
+export const signalRulesHeading = style({
+    margin: 0,
+    padding: `${vars.space.sm} ${vars.space.md} 0`,
+    color: vars.color.mutedForeground,
+    fontSize: '0.65rem',
+});
+export const signalRuleGrid = style({
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(240px, 1fr))',
+    gap: `${vars.space.md} 24px`,
+    padding: vars.space.md,
+    '@container': {
+        '(max-width: 560px)': {
+            gridTemplateColumns: '1fr',
+        },
+    },
 });
 export const signalRuleBackdrop = style({
     position: 'fixed',
@@ -116,11 +180,7 @@ export const signalRuleBackdrop = style({
     cursor: 'default',
 });
 export const signalRuleGroup = style({
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignContent: 'flex-start',
-    gap: '5px 10px',
-    minWidth: '150px',
+    minWidth: 0,
     margin: 0,
     padding: 0,
     border: 0,
@@ -150,6 +210,11 @@ export const signalRuleOption = style({
     minHeight: '20px',
     whiteSpace: 'nowrap',
     cursor: 'pointer',
+});
+export const signalRuleOptions = style({
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(100px, 1fr))',
+    gap: '5px 14px',
 });
 export const signalRuleCheckbox = style({
     width: '12px',

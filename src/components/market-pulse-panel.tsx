@@ -1,5 +1,6 @@
 import {
     AlertTriangle,
+    ChevronDown,
     GitBranch,
     LayoutGrid,
     Link2,
@@ -851,6 +852,11 @@ export function MarketPulsePanel({
         );
     }, []);
 
+    const clearSignalFilters = useCallback(() => {
+        setEnabledSignalRules([]);
+        setEnabledSignalExchanges([]);
+    }, []);
+
     const toggleSection = useCallback(
         (section: PulseSection) => {
             const next = sections.includes(section)
@@ -1322,6 +1328,7 @@ export function MarketPulsePanel({
                             {enabledSignalRules.length}/{ALL_SIGNAL_RULES.length}
                             {' · '}市場 {enabledSignalExchanges.length}/
                             {SIGNAL_EXCHANGES.length}
+                            <ChevronDown size={11} />
                         </button>
                         <button
                             className={
@@ -1347,7 +1354,11 @@ export function MarketPulsePanel({
                             />{' '}
                             {signalCoverage.pending
                                 ? '訂閱中'
-                                : `${enabledSignalRules.length} 項規則 · ${signalCoverage.ok}/${signalCoverage.total} 市場訂閱`}
+                                : signalCoverage.total === 0
+                                  ? '未選擇訂閱'
+                                  : signalCoverage.ok === signalCoverage.total
+                                    ? `${signalCoverage.ok}/${signalCoverage.total} 訂閱正常`
+                                    : `${signalCoverage.ok}/${signalCoverage.total} 訂閱成功`}
                         </span>
                     </div>
                     {showSignalRules && (
@@ -1362,103 +1373,149 @@ export function MarketPulsePanel({
                                 role='dialog'
                                 aria-label='訊號與市場篩選'
                             >
-                                <fieldset className={styles.signalRuleGroup}>
-                                    <legend
-                                        className={styles.signalRuleLegend}
+                                <div className={styles.signalRuleMenuHeader}>
+                                    <strong
+                                        className={styles.signalRuleMenuTitle}
                                     >
+                                        訊號篩選
+                                    </strong>
+                                    <span
+                                        className={
+                                            styles.signalRuleMenuSummary
+                                        }
+                                    >
+                                        已選 {enabledSignalRules.length} 項
+                                    </span>
+                                    <button
+                                        type='button'
+                                        className={styles.signalRuleClear}
+                                        disabled={
+                                            enabledSignalRules.length === 0 &&
+                                            enabledSignalExchanges.length === 0
+                                        }
+                                        onClick={clearSignalFilters}
+                                    >
+                                        全部清除
+                                    </button>
+                                </div>
+                                <section className={styles.signalMarketSection}>
+                                    <h4 className={styles.signalMenuHeading}>
                                         市場
-                                    </legend>
-                                    {SIGNAL_EXCHANGES.map((exchange) => (
-                                        <label
-                                            key={exchange}
-                                            className={styles.signalRuleOption}
-                                        >
-                                            <input
-                                                type='checkbox'
+                                    </h4>
+                                    <div className={styles.signalMarketOptions}>
+                                        {SIGNAL_EXCHANGES.map((exchange) => (
+                                            <label
+                                                key={exchange}
                                                 className={
-                                                    styles.signalRuleCheckbox
-                                                }
-                                                checked={enabledSignalExchangeSet.has(
-                                                    exchange,
-                                                )}
-                                                onChange={() =>
-                                                    toggleSignalExchange(
-                                                        exchange,
-                                                    )
-                                                }
-                                            />
-                                            <span>
-                                                {EXCHANGE_LABELS[exchange]}{' '}
-                                                {exchange}
-                                            </span>
-                                        </label>
-                                    ))}
-                                </fieldset>
-                                {SIGNAL_FAMILIES.map((family) => {
-                                    const familyRules = FAMILY_RULES[family];
-                                    const enabledCount = familyRules.filter(
-                                        (rule) =>
-                                            enabledSignalRuleSet.has(rule),
-                                    ).length;
-                                    return (
-                                        <fieldset
-                                            key={family}
-                                            className={styles.signalRuleGroup}
-                                        >
-                                            <legend
-                                                className={
-                                                    styles.signalRuleLegend
+                                                    styles.signalRuleOption
                                                 }
                                             >
-                                                <span>
-                                                    {FAMILY_LABELS[family]}
-                                                </span>
-                                                <button
-                                                    type='button'
+                                                <input
+                                                    type='checkbox'
                                                     className={
-                                                        styles.signalRuleGroupToggle
+                                                        styles.signalRuleCheckbox
                                                     }
-                                                    onClick={() =>
-                                                        toggleSignalFamily(
-                                                            family,
+                                                    checked={enabledSignalExchangeSet.has(
+                                                        exchange,
+                                                    )}
+                                                    onChange={() =>
+                                                        toggleSignalExchange(
+                                                            exchange,
                                                         )
                                                     }
-                                                >
-                                                    {enabledCount ===
-                                                    familyRules.length
-                                                        ? '清除'
-                                                        : '全選'}
-                                                </button>
-                                            </legend>
-                                            {familyRules.map((rule) => (
-                                                <label
-                                                    key={rule}
+                                                />
+                                                <span>
+                                                    {EXCHANGE_LABELS[exchange]}{' '}
+                                                    {exchange}
+                                                </span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </section>
+                                <div className={styles.signalRuleDivider} />
+                                <h4 className={styles.signalRulesHeading}>
+                                    訊號規則
+                                </h4>
+                                <div className={styles.signalRuleGrid}>
+                                    {SIGNAL_FAMILIES.map((family) => {
+                                        const familyRules =
+                                            FAMILY_RULES[family];
+                                        const enabledCount = familyRules.filter(
+                                            (rule) =>
+                                                enabledSignalRuleSet.has(rule),
+                                        ).length;
+                                        return (
+                                            <fieldset
+                                                key={family}
+                                                className={
+                                                    styles.signalRuleGroup
+                                                }
+                                            >
+                                                <legend
                                                     className={
-                                                        styles.signalRuleOption
+                                                        styles.signalRuleLegend
                                                     }
                                                 >
-                                                    <input
-                                                        type='checkbox'
+                                                    <span>
+                                                        {FAMILY_LABELS[family]}
+                                                    </span>
+                                                    <button
+                                                        type='button'
                                                         className={
-                                                            styles.signalRuleCheckbox
+                                                            styles.signalRuleGroupToggle
                                                         }
-                                                        checked={enabledSignalRuleSet.has(
-                                                            rule,
-                                                        )}
-                                                        onChange={() =>
-                                                            toggleSignalRule(
-                                                                rule,
+                                                        onClick={() =>
+                                                            toggleSignalFamily(
+                                                                family,
                                                             )
                                                         }
-                                                    />
-                                                    <span>
-                                                        {RULE_LABELS[rule]}
-                                                    </span>
-                                                </label>
-                                            ))}
-                                        </fieldset>
-                                    );
-                                })}
+                                                    >
+                                                        {enabledCount ===
+                                                        familyRules.length
+                                                            ? '清除'
+                                                            : '全選'}
+                                                    </button>
+                                                </legend>
+                                                <div
+                                                    className={
+                                                        styles.signalRuleOptions
+                                                    }
+                                                >
+                                                    {familyRules.map((rule) => (
+                                                        <label
+                                                            key={rule}
+                                                            className={
+                                                                styles.signalRuleOption
+                                                            }
+                                                        >
+                                                            <input
+                                                                type='checkbox'
+                                                                className={
+                                                                    styles.signalRuleCheckbox
+                                                                }
+                                                                checked={enabledSignalRuleSet.has(
+                                                                    rule,
+                                                                )}
+                                                                onChange={() =>
+                                                                    toggleSignalRule(
+                                                                        rule,
+                                                                    )
+                                                                }
+                                                            />
+                                                            <span>
+                                                                {
+                                                                    RULE_LABELS[
+                                                                        rule
+                                                                    ]
+                                                                }
+                                                            </span>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </fieldset>
+                                        );
+                                    })}
+                                </div>
                             </div>
                         </>
                     )}
