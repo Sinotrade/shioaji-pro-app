@@ -10,6 +10,7 @@ import type { ContractInfo, SecurityType } from './types/contract';
 const cache = new Map<string, ContractInfo>();
 const pending = new Map<string, Promise<ContractInfo>>();
 const subscribed = new Set<string>();
+const subscriptionPending = new Set<string>();
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -26,6 +27,23 @@ export function primeContract(contract: ContractInfo) {
         registerCodeAlias(contract.target_code, contract.code);
     }
     emit();
+}
+
+function ensureQuoteSubscription(contract: ContractInfo) {
+    if (
+        subscribed.has(contract.code) ||
+        subscriptionPending.has(contract.code)
+    ) {
+        return;
+    }
+    subscriptionPending.add(contract.code);
+    void subscribeContractQuotes(contract)
+        .then((results) => {
+            if (results.some((result) => result.status === 'fulfilled')) {
+                subscribed.add(contract.code);
+            }
+        })
+        .finally(() => subscriptionPending.delete(contract.code));
 }
 
 export async function refreshCachedContracts(
@@ -79,12 +97,7 @@ export async function ensureContract(
         if (hit.target_code) {
             registerCodeAlias(hit.target_code, hit.code);
         }
-        if (!subscribed.has(hit.code)) {
-            const results = await subscribeContractQuotes(hit);
-            if (results.some((result) => result.status === 'fulfilled')) {
-                subscribed.add(hit.code);
-            }
-        }
+        ensureQuoteSubscription(hit);
         return hit;
     }
     const pendingKey = `${type ?? 'AUTO'}:${code}`;
@@ -100,12 +113,7 @@ export async function ensureContract(
         if (contract.target_code) {
             registerCodeAlias(contract.target_code, contract.code);
         }
-        if (!subscribed.has(contract.code)) {
-            const results = await subscribeContractQuotes(contract);
-            if (results.some((result) => result.status === 'fulfilled')) {
-                subscribed.add(contract.code);
-            }
-        }
+        ensureQuoteSubscription(contract);
         emit();
         return contract;
     })();

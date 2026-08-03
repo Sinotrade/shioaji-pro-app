@@ -784,8 +784,6 @@ export function MarketPulsePanel({
         contribution?.simtrade || industryContribution?.simtrade;
     const enabledSignalRuleSet = new Set(enabledSignalRules);
     const enabledSignalExchangeSet = new Set(enabledSignalExchanges);
-    const enabledSignalRulesKey = enabledSignalRules.join('|');
-    const enabledSignalExchangesKey = enabledSignalExchanges.join('|');
     const visibleSignals = pulse.signals
         .filter(
             (signal) =>
@@ -799,10 +797,6 @@ export function MarketPulsePanel({
         : null;
 
     useEffect(() => {
-        latestSignalRef.current = latestSignalKey;
-    }, [enabledSignalExchangesKey, enabledSignalRulesKey]);
-
-    useEffect(() => {
         if (!showSignalRules) return;
         const closeOnEscape = (event: globalThis.KeyboardEvent) => {
             if (event.key === 'Escape') setShowSignalRules(false);
@@ -813,10 +807,6 @@ export function MarketPulsePanel({
 
     useEffect(() => {
         if (view !== 'signals') return;
-        if (latestSignalRef.current === undefined) {
-            latestSignalRef.current = latestSignalKey;
-            return;
-        }
         if (!latestSignalKey || !latestSignal) return;
         if (latestSignalRef.current === latestSignalKey) return;
         latestSignalRef.current = latestSignalKey;

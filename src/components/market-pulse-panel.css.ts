@@ -268,18 +268,20 @@ export const gap = style({
 });
 export const summary = style({
     display: 'flex',
+    flexWrap: 'wrap',
     alignItems: 'baseline',
     width: '100%',
     minWidth: 0,
     boxSizing: 'border-box',
-    gap: vars.space.sm,
+    columnGap: vars.space.sm,
+    rowGap: '5px',
     padding: `8px ${vars.space.md}`,
     borderBottom: `1px solid ${vars.color.border}`,
     fontVariantNumeric: 'tabular-nums',
-    overflowX: 'auto',
 });
 export const summaryMetric = style({
     display: 'inline-flex',
+    flex: '0 0 auto',
     alignItems: 'baseline',
     gap: '6px',
     whiteSpace: 'nowrap',
@@ -483,10 +485,9 @@ export const sankey = style({
 });
 export const sankeyLinks = style({
     fill: 'none',
-    mixBlendMode: 'screen',
 });
 export const sankeyLink = style({
-    strokeOpacity: 0.28,
+    strokeOpacity: 0.42,
     transition: 'stroke-opacity 120ms ease',
     ':hover': { strokeOpacity: 0.68 },
 });
