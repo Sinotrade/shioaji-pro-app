@@ -1329,7 +1329,7 @@ export function MarketPulsePanel({
                             />{' '}
                             {signalCoverage.pending
                                 ? '訂閱中'
-                                : `${signalCoverage.ok}/${signalCoverage.total} subscriptions`}
+                                : `${enabledSignalRules.length} 項規則 · ${signalCoverage.ok}/${signalCoverage.total} 市場訂閱`}
                         </span>
                     </div>
                     {showSignalRules && (
