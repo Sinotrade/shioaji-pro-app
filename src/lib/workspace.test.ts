@@ -36,7 +36,7 @@ describe('market pulse workspace preset', () => {
 describe('signal radar workspace preset', () => {
     it('links signals to chart, depth, and time and sales panels', () => {
         const preset = LAYOUT_PRESETS.find(
-            (candidate) => candidate.name === '訊號雷達',
+            (candidate) => candidate.name === '盤中雷達',
         );
 
         expect(preset?.workspace.blocks).toEqual([

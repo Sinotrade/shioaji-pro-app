@@ -454,7 +454,7 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
         },
     },
     {
-        name: '訊號雷達',
+        name: '盤中雷達',
         desc: '即時訊號連動 K 線、五檔與成交明細，各面板可個別鎖定',
         workspace: {
             blocks: [
