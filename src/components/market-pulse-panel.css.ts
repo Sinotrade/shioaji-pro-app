@@ -179,26 +179,41 @@ export const time = style({
     color: vars.color.mutedForeground,
     whiteSpace: 'nowrap',
 });
-export const columns = style({
-    display: 'grid',
-    gridTemplateColumns: 'minmax(11rem, .78fr) minmax(16rem, 1.22fr)',
+export const sectionWorkspace = style({
+    display: 'flex',
     flex: 1,
+    width: '100%',
+    minWidth: 0,
     minHeight: 0,
-    '@media': { '(max-width: 720px)': { gridTemplateColumns: '1fr' } },
+    overflowX: 'auto',
+    overflowY: 'hidden',
 });
 export const section = style({
     display: 'flex',
     flexDirection: 'column',
-    minWidth: 0,
+    minWidth: '220px',
     minHeight: 0,
-    selectors: { '& + &': { borderLeft: `1px solid ${vars.color.border}` } },
+    overflow: 'hidden',
 });
-export const flowSection = style({
-    display: 'flex',
-    flexDirection: 'column',
-    flex: 1,
-    minWidth: 0,
-    minHeight: 0,
+export const sectionDivider = style({
+    position: 'relative',
+    width: '7px',
+    flex: '0 0 7px',
+    cursor: 'col-resize',
+    touchAction: 'none',
+    outline: 'none',
+    background: vars.color.border,
+    selectors: {
+        '&::after': {
+            content: '',
+            position: 'absolute',
+            inset: '0 2px',
+            background: vars.color.panel,
+        },
+        '&:hover, &:focus-visible': {
+            background: vars.color.accent,
+        },
+    },
 });
 export const sectionTitle = style({
     padding: `5px ${vars.space.sm}`,

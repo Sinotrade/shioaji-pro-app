@@ -3,10 +3,15 @@ import {
     AlertTriangle,
     GitBranch,
     LayoutGrid,
+    ListOrdered,
     Radio,
 } from 'lucide-react';
 import {
     type CSSProperties,
+    Fragment,
+    type KeyboardEvent,
+    type PointerEvent as ReactPointerEvent,
+    useCallback,
     useEffect,
     useMemo,
     useRef,
@@ -44,6 +49,10 @@ import {
 } from '../lib/stock-index';
 import type { ContractBase } from '../lib/types/contract';
 import type {
+    PulseSection,
+    PulseSectionWeights,
+} from '../lib/workspace';
+import type {
     ContributionRanking,
     IndexContributionEntry,
     ScannerRule,
@@ -78,11 +87,44 @@ const INDEX_LABELS = { IX0001: '加權', IX0043: '櫃買' } as const;
 const RANKINGS: { value: ContributionRanking; label: string }[] = [
     { value: 'top10', label: '前十' },
     { value: 'abs10', label: '影響最大' },
-    { value: 'positive25', label: '拉抬' },
-    { value: 'negative25', label: '壓抑' },
+    { value: 'positive25', label: '上漲貢獻' },
+    { value: 'negative25', label: '下跌貢獻' },
 ];
 const FLOW_RANKINGS: ContributionRanking[] = ['positive25', 'negative25'];
 const STOCK_DETAIL_BATCH_SIZE = 8;
+const PULSE_SECTIONS: PulseSection[] = ['stocks', 'industries', 'flow'];
+const DEFAULT_SECTION_WEIGHTS: PulseSectionWeights = {
+    stocks: 28,
+    industries: 32,
+    flow: 40,
+};
+const MIN_SECTION_WEIGHT = 12;
+const SECTION_LABELS: Record<PulseSection, string> = {
+    stocks: '成分股貢獻',
+    industries: '產業貢獻分布',
+    flow: '貢獻傳導',
+};
+
+function initialPulseSections(
+    sections: PulseSection[] | undefined,
+    legacyVisualization: IndexVisualization,
+): PulseSection[] {
+    const valid = PULSE_SECTIONS.filter((section) => sections?.includes(section));
+    if (valid.length > 0) return valid;
+    return legacyVisualization === 'flow'
+        ? ['flow']
+        : ['stocks', 'industries'];
+}
+
+function initialPulseWeights(
+    weights: Partial<PulseSectionWeights> | undefined,
+): PulseSectionWeights {
+    return {
+        stocks: weights?.stocks ?? DEFAULT_SECTION_WEIGHTS.stocks,
+        industries: weights?.industries ?? DEFAULT_SECTION_WEIGHTS.industries,
+        flow: weights?.flow ?? DEFAULT_SECTION_WEIGHTS.flow,
+    };
+}
 const FAMILY_RULES: Record<SignalFamily, ScannerRule[]> = {
     limit: [
         'bid_near_limit_up',
@@ -395,14 +437,30 @@ function ContributionSankey({
 export function MarketPulsePanel({
     onPick,
     initialVisualization = 'distribution',
+    initialSections,
+    initialWeights,
+    onConfigChange,
 }: {
     onPick?: (code: string) => void;
     initialVisualization?: IndexVisualization;
+    initialSections?: PulseSection[];
+    initialWeights?: Partial<PulseSectionWeights>;
+    onConfigChange?: (
+        sections: PulseSection[],
+        weights: PulseSectionWeights,
+    ) => void;
 }) {
     const pulse = useMarketPulseSnapshot();
     const [view, setView] = useState<PulseView>('index');
-    const [visualization, setVisualization] =
-        useState<IndexVisualization>(initialVisualization);
+    const [sections, setSections] = useState<PulseSection[]>(() =>
+        initialPulseSections(initialSections, initialVisualization),
+    );
+    const [sectionWeights, setSectionWeights] = useState<PulseSectionWeights>(
+        () => initialPulseWeights(initialWeights),
+    );
+    const sectionWorkspaceRef = useRef<HTMLDivElement>(null);
+    const sectionWeightsRef = useRef(sectionWeights);
+    sectionWeightsRef.current = sectionWeights;
     const [indexCode, setIndexCode] = useState<'IX0001' | 'IX0043'>('IX0001');
     const [ranking, setRanking] = useState<ContributionRanking>('top10');
     const [family, setFamily] = useState<SignalFamily>('move');
@@ -675,6 +733,105 @@ export function MarketPulsePanel({
         .filter((signal) => familyRules.includes(signal.scanner))
         .slice(0, 100);
 
+    const toggleSection = useCallback(
+        (section: PulseSection) => {
+            const next = sections.includes(section)
+                ? sections.length === 1
+                    ? sections
+                    : sections.filter((value) => value !== section)
+                : PULSE_SECTIONS.filter(
+                      (value) => sections.includes(value) || value === section,
+                  );
+            if (next === sections) return;
+            setSections(next);
+            onConfigChange?.(next, sectionWeightsRef.current);
+        },
+        [onConfigChange, sections],
+    );
+
+    const resizeSections = useCallback(
+        (
+            left: PulseSection,
+            right: PulseSection,
+            delta: number,
+            persist: boolean,
+        ) => {
+            const current = sectionWeightsRef.current;
+            const pairTotal = current[left] + current[right];
+            const leftWeight = Math.max(
+                MIN_SECTION_WEIGHT,
+                Math.min(pairTotal - MIN_SECTION_WEIGHT, current[left] + delta),
+            );
+            const next = {
+                ...current,
+                [left]: leftWeight,
+                [right]: pairTotal - leftWeight,
+            };
+            sectionWeightsRef.current = next;
+            setSectionWeights(next);
+            if (persist) onConfigChange?.(sections, next);
+        },
+        [onConfigChange, sections],
+    );
+
+    const beginResize = useCallback(
+        (
+            event: ReactPointerEvent<HTMLDivElement>,
+            left: PulseSection,
+            right: PulseSection,
+        ) => {
+            event.preventDefault();
+            const startX = event.clientX;
+            const startWeights = sectionWeightsRef.current;
+            const width = sectionWorkspaceRef.current?.clientWidth ?? 1;
+            const totalWeight = sections.reduce(
+                (sum, section) => sum + startWeights[section],
+                0,
+            );
+            const move = (moveEvent: PointerEvent) => {
+                const delta = ((moveEvent.clientX - startX) / width) * totalWeight;
+                setSectionWeights((current) => {
+                    const pairTotal = startWeights[left] + startWeights[right];
+                    const leftWeight = Math.max(
+                        MIN_SECTION_WEIGHT,
+                        Math.min(
+                            pairTotal - MIN_SECTION_WEIGHT,
+                            startWeights[left] + delta,
+                        ),
+                    );
+                    const next = {
+                        ...current,
+                        [left]: leftWeight,
+                        [right]: pairTotal - leftWeight,
+                    };
+                    sectionWeightsRef.current = next;
+                    return next;
+                });
+            };
+            const end = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', end);
+                onConfigChange?.(sections, sectionWeightsRef.current);
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', end, { once: true });
+        },
+        [onConfigChange, sections],
+    );
+
+    const resizeWithKeyboard = useCallback(
+        (
+            event: KeyboardEvent<HTMLDivElement>,
+            left: PulseSection,
+            right: PulseSection,
+        ) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            resizeSections(left, right, event.key === 'ArrowLeft' ? -3 : 3, true);
+        },
+        [resizeSections],
+    );
+
     return (
         <div className={styles.root}>
             <div className={styles.tabs}>
@@ -717,26 +874,32 @@ export function MarketPulsePanel({
                         )}
                         <span className={styles.controlDivider} />
                         <button
-                            className={
-                                styles.control[
-                                    visualization === 'distribution'
-                                        ? 'on'
-                                        : 'off'
-                                ]
-                            }
-                            onClick={() => setVisualization('distribution')}
-                            title="產業貢獻分布"
+                            className={styles.control[
+                                sections.includes('stocks') ? 'on' : 'off'
+                            ]}
+                            onClick={() => toggleSection('stocks')}
+                            aria-pressed={sections.includes('stocks')}
+                            title="顯示或隱藏成分股貢獻"
+                        >
+                            <ListOrdered size={12} /> 成分股貢獻
+                        </button>
+                        <button
+                            className={styles.control[
+                                sections.includes('industries') ? 'on' : 'off'
+                            ]}
+                            onClick={() => toggleSection('industries')}
+                            aria-pressed={sections.includes('industries')}
+                            title="顯示或隱藏產業貢獻分布"
                         >
                             <LayoutGrid size={12} /> 產業分布
                         </button>
                         <button
-                            className={
-                                styles.control[
-                                    visualization === 'flow' ? 'on' : 'off'
-                                ]
-                            }
-                            onClick={() => setVisualization('flow')}
-                            title="貢獻傳導"
+                            className={styles.control[
+                                sections.includes('flow') ? 'on' : 'off'
+                            ]}
+                            onClick={() => toggleSection('flow')}
+                            aria-pressed={sections.includes('flow')}
+                            title="顯示或隱藏貢獻傳導"
                         >
                             <GitBranch size={12} /> 貢獻傳導
                         </button>
@@ -858,99 +1021,181 @@ export function MarketPulsePanel({
                             {calculated?.time.slice(0, 8) ?? ''}
                         </span>
                     </div>
-                    {visualization === 'distribution' ? (
-                    <div className={styles.columns}>
-                        <section className={styles.section}>
-                            <div className={styles.sectionHeading}>
-                                <span>成分股貢獻</span>
-                                <span className={styles.areaLegend}>
-                                    目前排行
-                                </span>
-                            </div>
-                            <div className={styles.list}>
-                                {drivers.map((entry, idx) => (
-                                    <button
-                                        key={`${entry.code}-${idx}`}
-                                        className={styles.rowButton}
-                                        onClick={() => onPick?.(entry.code)}
-                                    >
-                                        <span className={styles.rank}>
-                                            {idx + 1}
-                                        </span>
-                                        <span className={styles.code}>
-                                            {entry.code}
-                                            <small className={styles.stockName}>
-                                                {stockByCode.get(entry.code)?.name ??
-                                                    (stockDetailsPending
-                                                        ? '名稱載入中'
-                                                        : '名稱未取得')}
-                                            </small>
-                                        </span>
-                                        <span
-                                            className={`${styles.points} ${panel.dirText[direction(entry.points)]}`}
-                                        >
-                                            {entry.points > 0 ? '+' : ''}
-                                            {entry.points.toFixed(2)} 點
-                                        </span>
-                                        <span
-                                            className={`${styles.pct} ${panel.dirText[direction(entry.pct_chg)]}`}
-                                        >
-                                            {entry.pct_chg > 0 ? '+' : ''}
-                                            {entry.pct_chg.toFixed(2)}%
-                                        </span>
-                                    </button>
-                                ))}
-                                {drivers.length === 0 && (
-                                    <div className={styles.empty}>
-                                        {contributionPending
-                                            ? '訂閱中...'
-                                            : '等待成分股貢獻資料'}
-                                    </div>
+                    <div
+                        ref={sectionWorkspaceRef}
+                        className={styles.sectionWorkspace}
+                    >
+                        {sections.map((section, index) => (
+                            <Fragment key={section}>
+                                {index > 0 && (
+                                    <div
+                                        className={styles.sectionDivider}
+                                        role="separator"
+                                        aria-label={`調整${SECTION_LABELS[sections[index - 1]!]}與${SECTION_LABELS[section]}寬度`}
+                                        aria-orientation="vertical"
+                                        tabIndex={0}
+                                        onPointerDown={(event) =>
+                                            beginResize(
+                                                event,
+                                                sections[index - 1]!,
+                                                section,
+                                            )
+                                        }
+                                        onKeyDown={(event) =>
+                                            resizeWithKeyboard(
+                                                event,
+                                                sections[index - 1]!,
+                                                section,
+                                            )
+                                        }
+                                    />
                                 )}
-                            </div>
-                        </section>
-                        <section className={styles.section}>
-                            <div className={styles.sectionHeading}>
-                                <span>產業貢獻分布</span>
-                                <span className={styles.areaLegend}>
-                                    面積＝絕對貢獻
-                                    {industryTotal > 0 &&
-                                        ` · ${industryTotal.toFixed(1)} 點`}
-                                </span>
-                            </div>
-                            {industries.length > 0 ? (
-                                <IndustryTreemap entries={industries} />
-                            ) : (
-                                <div className={styles.empty}>
-                                    {indexPending
-                                        ? '訂閱中...'
-                                        : '等待產業貢獻資料'}
-                                </div>
-                            )}
-                        </section>
+                                <section
+                                    className={styles.section}
+                                    style={{
+                                        flexBasis: 0,
+                                        flexGrow: sectionWeights[section],
+                                    }}
+                                >
+                                    {section === 'stocks' ? (
+                                        <>
+                                            <div
+                                                className={styles.sectionHeading}
+                                            >
+                                                <span>成分股貢獻</span>
+                                                <span
+                                                    className={styles.areaLegend}
+                                                >
+                                                    目前排行
+                                                </span>
+                                            </div>
+                                            <div className={styles.list}>
+                                                {drivers.map((entry, idx) => (
+                                                    <button
+                                                        key={`${entry.code}-${idx}`}
+                                                        className={
+                                                            styles.rowButton
+                                                        }
+                                                        onClick={() =>
+                                                            onPick?.(entry.code)
+                                                        }
+                                                    >
+                                                        <span
+                                                            className={styles.rank}
+                                                        >
+                                                            {idx + 1}
+                                                        </span>
+                                                        <span
+                                                            className={styles.code}
+                                                        >
+                                                            {entry.code}
+                                                            <small
+                                                                className={
+                                                                    styles.stockName
+                                                                }
+                                                            >
+                                                                {stockByCode.get(
+                                                                    entry.code,
+                                                                )?.name ??
+                                                                    (stockDetailsPending
+                                                                        ? '名稱載入中'
+                                                                        : '名稱未取得')}
+                                                            </small>
+                                                        </span>
+                                                        <span
+                                                            className={`${styles.points} ${panel.dirText[direction(entry.points)]}`}
+                                                        >
+                                                            {entry.points > 0
+                                                                ? '+'
+                                                                : ''}
+                                                            {entry.points.toFixed(
+                                                                2,
+                                                            )}{' '}
+                                                            點
+                                                        </span>
+                                                        <span
+                                                            className={`${styles.pct} ${panel.dirText[direction(entry.pct_chg)]}`}
+                                                        >
+                                                            {entry.pct_chg > 0
+                                                                ? '+'
+                                                                : ''}
+                                                            {entry.pct_chg.toFixed(
+                                                                2,
+                                                            )}
+                                                            %
+                                                        </span>
+                                                    </button>
+                                                ))}
+                                                {drivers.length === 0 && (
+                                                    <div
+                                                        className={styles.empty}
+                                                    >
+                                                        {contributionPending
+                                                            ? '訂閱中...'
+                                                            : '等待成分股貢獻資料'}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </>
+                                    ) : section === 'industries' ? (
+                                        <>
+                                            <div
+                                                className={styles.sectionHeading}
+                                            >
+                                                <span>產業貢獻分布</span>
+                                                <span
+                                                    className={styles.areaLegend}
+                                                >
+                                                    面積＝絕對貢獻
+                                                    {industryTotal > 0 &&
+                                                        ` · ${industryTotal.toFixed(1)} 點`}
+                                                </span>
+                                            </div>
+                                            {industries.length > 0 ? (
+                                                <IndustryTreemap
+                                                    entries={industries}
+                                                />
+                                            ) : (
+                                                <div className={styles.empty}>
+                                                    {indexPending
+                                                        ? '訂閱中...'
+                                                        : '等待產業貢獻資料'}
+                                                </div>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div
+                                                className={styles.sectionHeading}
+                                            >
+                                                <span>貢獻傳導</span>
+                                                <span
+                                                    className={styles.areaLegend}
+                                                >
+                                                    產業流寬＝貢獻點數 ·
+                                                    各產業展開前 5 大個股 ·
+                                                    非成交資金轉移
+                                                </span>
+                                            </div>
+                                            {stockDetailsPending &&
+                                            stockDetails.length === 0 ? (
+                                                <div className={styles.empty}>
+                                                    正在解析主要個股產業…
+                                                </div>
+                                            ) : (
+                                                <ContributionSankey
+                                                    entries={flowDrivers}
+                                                    details={stockDetails}
+                                                    industries={flowIndustries}
+                                                    onPick={onPick}
+                                                />
+                                            )}
+                                        </>
+                                    )}
+                                </section>
+                            </Fragment>
+                        ))}
                     </div>
-                    ) : (
-                        <section className={styles.flowSection}>
-                            <div className={styles.sectionHeading}>
-                                <span>貢獻傳導</span>
-                                <span className={styles.areaLegend}>
-                                    產業流寬＝貢獻點數 · 各產業展開前 5 大個股 · 非成交資金轉移
-                                </span>
-                            </div>
-                            {stockDetailsPending && stockDetails.length === 0 ? (
-                                <div className={styles.empty}>
-                                    正在解析主要個股產業…
-                                </div>
-                            ) : (
-                                <ContributionSankey
-                                    entries={flowDrivers}
-                                    details={stockDetails}
-                                    industries={flowIndustries}
-                                    onPick={onPick}
-                                />
-                            )}
-                        </section>
-                    )}
                 </>
             ) : (
                 <>

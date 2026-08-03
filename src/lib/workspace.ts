@@ -29,6 +29,9 @@ export type BlockType =
     | 'backtest'
     | 'assistant';
 
+export type PulseSection = 'stocks' | 'industries' | 'flow';
+export type PulseSectionWeights = Record<PulseSection, number>;
+
 export interface Block {
     id: string;
     type: BlockType;
@@ -36,6 +39,8 @@ export interface Block {
     pin: string | null;
     // Market-pulse presets can open multiple panels on distinct views.
     pulseVisualization?: 'distribution' | 'flow';
+    pulseSections?: PulseSection[];
+    pulseWeights?: Partial<PulseSectionWeights>;
 }
 
 export interface Workspace {
@@ -389,37 +394,27 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
     },
     {
         name: '市場脈動',
-        desc: '產業分布＋貢獻傳導並排，掌握產業與個股驅動',
+        desc: '成分股＋產業分布＋貢獻傳導，可多選並調整寬度',
         workspace: {
             blocks: [
                 {
-                    id: 'pulse-dist',
+                    id: 'pulse-market',
                     type: 'pulse',
                     pin: null,
-                    pulseVisualization: 'distribution',
-                },
-                {
-                    id: 'pulse-flow',
-                    type: 'pulse',
-                    pin: null,
-                    pulseVisualization: 'flow',
+                    pulseSections: ['stocks', 'industries', 'flow'],
+                    pulseWeights: {
+                        stocks: 28,
+                        industries: 32,
+                        flow: 40,
+                    },
                 },
             ],
             layout: [
                 {
-                    i: 'pulse-dist',
+                    i: 'pulse-market',
                     x: 0,
                     y: 0,
-                    w: 10,
-                    h: 20,
-                    minW: 7,
-                    minH: 7,
-                },
-                {
-                    i: 'pulse-flow',
-                    x: 10,
-                    y: 0,
-                    w: 14,
+                    w: 24,
                     h: 20,
                     minW: 7,
                     minH: 7,

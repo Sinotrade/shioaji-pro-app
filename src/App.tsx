@@ -75,6 +75,8 @@ import {
     saveWorkspace,
     type Block,
     type BlockType,
+    type PulseSection,
+    type PulseSectionWeights,
     type Profile,
     type Workspace,
 } from './lib/workspace';
@@ -126,6 +128,7 @@ function BlockBody({
     watchlistProps,
     dockProps,
     onSelectCode,
+    onPulseConfigChange,
     refreshTrading,
 }: {
     block: Block;
@@ -134,6 +137,11 @@ function BlockBody({
     watchlistProps: React.ComponentProps<typeof Watchlist>;
     dockProps: React.ComponentProps<typeof BottomDock>;
     onSelectCode: (code: string) => void;
+    onPulseConfigChange: (
+        id: string,
+        sections: PulseSection[],
+        weights: PulseSectionWeights,
+    ) => void;
     refreshTrading: () => void;
 }) {
     if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
@@ -253,6 +261,11 @@ function BlockBody({
                 <MarketPulsePanel
                     onPick={onSelectCode}
                     initialVisualization={block.pulseVisualization}
+                    initialSections={block.pulseSections}
+                    initialWeights={block.pulseWeights}
+                    onConfigChange={(sections, weights) =>
+                        onPulseConfigChange(block.id, sections, weights)
+                    }
                 />
             );
         case 'backtest': {
@@ -324,6 +337,11 @@ interface BlockViewProps {
     watchlistProps: React.ComponentProps<typeof Watchlist>;
     dockProps: React.ComponentProps<typeof BottomDock>;
     onSelectCode: (code: string) => void;
+    onPulseConfigChange: (
+        id: string,
+        sections: PulseSection[],
+        weights: PulseSectionWeights,
+    ) => void;
     refreshTrading: () => void;
 }
 
@@ -723,6 +741,24 @@ export default function App() {
         [workspace, updateWorkspace],
     );
 
+    const setBlockPulseConfig = useCallback(
+        (
+            id: string,
+            pulseSections: PulseSection[],
+            pulseWeights: PulseSectionWeights,
+        ) => {
+            updateWorkspace({
+                ...workspace,
+                blocks: workspace.blocks.map((block) =>
+                    block.id === id
+                        ? { ...block, pulseSections, pulseWeights }
+                        : block,
+                ),
+            });
+        },
+        [workspace, updateWorkspace],
+    );
+
     const resetWorkspace = useCallback(() => {
         updateWorkspace(structuredClone(DEFAULT_WORKSPACE));
     }, [updateWorkspace]);
@@ -918,6 +954,7 @@ export default function App() {
                                     watchlistProps={watchlistProps}
                                     dockProps={dockProps}
                                     onSelectCode={selectByCode}
+                                    onPulseConfigChange={setBlockPulseConfig}
                                     refreshTrading={refreshTrading}
                                 />
                             </div>
