@@ -11,39 +11,6 @@ export const root = style({
     fontSize: '0.7rem',
     overflow: 'hidden',
 });
-export const tabs = style({
-    display: 'flex',
-    gap: '2px',
-    padding: `4px ${vars.space.sm}`,
-    borderBottom: `1px solid ${vars.color.border}`,
-});
-const tabBase = style({
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '5px',
-    flex: 1,
-    padding: '4px 8px',
-    border: 0,
-    borderRadius: vars.radius.sm,
-    fontFamily: vars.font.body,
-    fontSize: '0.68rem',
-    cursor: 'pointer',
-});
-export const tab = styleVariants({
-    off: [
-        tabBase,
-        { color: vars.color.mutedForeground, background: 'transparent' },
-    ],
-    on: [
-        tabBase,
-        {
-            color: vars.color.foreground,
-            background: vars.color.muted,
-            fontWeight: 600,
-        },
-    ],
-});
 export const controls = style({
     display: 'flex',
     alignItems: 'center',
@@ -87,6 +54,18 @@ export const controlDivider = style({
     margin: '0 2px',
     flex: '0 0 auto',
     background: vars.color.border,
+});
+export const marketBadge = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    height: '20px',
+    padding: '0 7px',
+    color: vars.color.foreground,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    background: vars.color.muted,
+    fontWeight: 600,
+    whiteSpace: 'nowrap',
 });
 export const live = style({
     display: 'inline-flex',

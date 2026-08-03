@@ -1,10 +1,8 @@
 import {
-    Activity,
     AlertTriangle,
     GitBranch,
     LayoutGrid,
     ListOrdered,
-    Radio,
 } from 'lucide-react';
 import {
     type CSSProperties,
@@ -49,6 +47,7 @@ import {
 } from '../lib/stock-index';
 import type { ContractBase } from '../lib/types/contract';
 import type {
+    PulseIndexCode,
     PulseSection,
     PulseSectionWeights,
 } from '../lib/workspace';
@@ -439,19 +438,25 @@ export function MarketPulsePanel({
     initialVisualization = 'distribution',
     initialSections,
     initialWeights,
+    initialIndexCode = 'IX0001',
+    fixedIndex = false,
+    fixedView,
     onConfigChange,
 }: {
     onPick?: (code: string) => void;
     initialVisualization?: IndexVisualization;
     initialSections?: PulseSection[];
     initialWeights?: Partial<PulseSectionWeights>;
+    initialIndexCode?: PulseIndexCode;
+    fixedIndex?: boolean;
+    fixedView?: PulseView;
     onConfigChange?: (
         sections: PulseSection[],
         weights: PulseSectionWeights,
     ) => void;
 }) {
     const pulse = useMarketPulseSnapshot();
-    const [view, setView] = useState<PulseView>('index');
+    const view = fixedView ?? 'index';
     const [sections, setSections] = useState<PulseSection[]>(() =>
         initialPulseSections(initialSections, initialVisualization),
     );
@@ -461,7 +466,8 @@ export function MarketPulsePanel({
     const sectionWorkspaceRef = useRef<HTMLDivElement>(null);
     const sectionWeightsRef = useRef(sectionWeights);
     sectionWeightsRef.current = sectionWeights;
-    const [indexCode, setIndexCode] = useState<'IX0001' | 'IX0043'>('IX0001');
+    const [indexCode, setIndexCode] =
+        useState<PulseIndexCode>(initialIndexCode);
     const [ranking, setRanking] = useState<ContributionRanking>('top10');
     const [family, setFamily] = useState<SignalFamily>('move');
     const [error, setError] = useState('');
@@ -481,6 +487,22 @@ export function MarketPulsePanel({
     const nearMonthQuote = useQuote(
         indexCode === 'IX0001' ? 'TXFR1' : null,
     )?.tick;
+
+    useEffect(() => {
+        setSections(
+            initialPulseSections(initialSections, initialVisualization),
+        );
+    }, [initialSections, initialVisualization]);
+
+    useEffect(() => {
+        const next = initialPulseWeights(initialWeights);
+        sectionWeightsRef.current = next;
+        setSectionWeights(next);
+    }, [initialWeights]);
+
+    useEffect(() => {
+        setIndexCode(initialIndexCode);
+    }, [initialIndexCode]);
 
     useEffect(() => {
         if (view !== 'index') return;
@@ -834,20 +856,6 @@ export function MarketPulsePanel({
 
     return (
         <div className={styles.root}>
-            <div className={styles.tabs}>
-                <button
-                    className={styles.tab[view === 'index' ? 'on' : 'off']}
-                    onClick={() => setView('index')}
-                >
-                    <Activity size={13} /> 指數動能
-                </button>
-                <button
-                    className={styles.tab[view === 'signals' ? 'on' : 'off']}
-                    onClick={() => setView('signals')}
-                >
-                    <Radio size={13} /> 即時訊號
-                </button>
-            </div>
             {error && (
                 <div className={styles.error}>
                     <AlertTriangle size={13} />
@@ -857,8 +865,13 @@ export function MarketPulsePanel({
             {view === 'index' ? (
                 <>
                     <div className={styles.controls}>
-                        {(Object.keys(INDICES) as (keyof typeof INDICES)[]).map(
-                            (code) => (
+                        {fixedIndex ? (
+                            <span className={styles.marketBadge}>
+                                {INDEX_LABELS[indexCode]}
+                            </span>
+                        ) : (
+                            (Object.keys(INDICES) as PulseIndexCode[]).map(
+                                (code) => (
                                 <button
                                     key={code}
                                     className={
@@ -870,7 +883,8 @@ export function MarketPulsePanel({
                                 >
                                     {INDEX_LABELS[code]}
                                 </button>
-                            ),
+                                ),
+                            )
                         )}
                         <span className={styles.controlDivider} />
                         <button
@@ -1301,4 +1315,12 @@ export function MarketPulsePanel({
             )}
         </div>
     );
+}
+
+export function MarketSignalPanel({
+    onPick,
+}: {
+    onPick?: (code: string) => void;
+}) {
+    return <MarketPulsePanel onPick={onPick} fixedView="signals" />;
 }

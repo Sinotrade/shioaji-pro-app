@@ -25,12 +25,14 @@ export type BlockType =
     | 'grid'
     | 'heatmap'
     | 'pulse'
+    | 'signals'
     | 'optpnl'
     | 'backtest'
     | 'assistant';
 
 export type PulseSection = 'stocks' | 'industries' | 'flow';
 export type PulseSectionWeights = Record<PulseSection, number>;
+export type PulseIndexCode = 'IX0001' | 'IX0043';
 
 export interface Block {
     id: string;
@@ -41,6 +43,7 @@ export interface Block {
     pulseVisualization?: 'distribution' | 'flow';
     pulseSections?: PulseSection[];
     pulseWeights?: Partial<PulseSectionWeights>;
+    pulseIndex?: PulseIndexCode;
 }
 
 export interface Workspace {
@@ -193,6 +196,12 @@ export const BLOCK_META: Record<
         pinnable: false,
         singleton: false,
         defaultSize: { w: 10, h: 12, minW: 7, minH: 7 },
+    },
+    signals: {
+        label: '即時訊號',
+        pinnable: false,
+        singleton: true,
+        defaultSize: { w: 8, h: 12, minW: 5, minH: 7 },
     },
     optpnl: {
         label: '選擇權損益圖',
@@ -394,14 +403,27 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
     },
     {
         name: '市場脈動',
-        desc: '成分股＋產業分布＋貢獻傳導，可多選並調整寬度',
+        desc: '上市＋上櫃並排，分別觀察成分股、產業分布與貢獻傳導',
         workspace: {
             blocks: [
                 {
-                    id: 'pulse-market',
+                    id: 'pulse-tse',
                     type: 'pulse',
                     pin: null,
-                    pulseSections: ['stocks', 'industries', 'flow'],
+                    pulseIndex: 'IX0001',
+                    pulseSections: ['flow'],
+                    pulseWeights: {
+                        stocks: 28,
+                        industries: 32,
+                        flow: 40,
+                    },
+                },
+                {
+                    id: 'pulse-otc',
+                    type: 'pulse',
+                    pin: null,
+                    pulseIndex: 'IX0043',
+                    pulseSections: ['flow'],
                     pulseWeights: {
                         stocks: 28,
                         industries: 32,
@@ -411,10 +433,19 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
             ],
             layout: [
                 {
-                    i: 'pulse-market',
+                    i: 'pulse-tse',
                     x: 0,
                     y: 0,
-                    w: 24,
+                    w: 12,
+                    h: 20,
+                    minW: 7,
+                    minH: 7,
+                },
+                {
+                    i: 'pulse-otc',
+                    x: 12,
+                    y: 0,
+                    w: 12,
                     h: 20,
                     minW: 7,
                     minH: 7,
