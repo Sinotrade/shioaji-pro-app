@@ -1,27 +1,21 @@
-## v0.1.34 - Shioaji 1.7.1 市場脈動與盤中雷達
+## v0.1.35 - 市場脈動資訊密度與瀏覽器連線修正
 
-![市場脈動貢獻傳導](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.34/docs/images/market-pulse-flow.png)
+![市場脈動成分股與貢獻傳導](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.35/docs/images/release-0.1.35-market-pulse.png)
 
 ### 市場脈動
-- 新增上市、上櫃自算指數，並列顯示官方指數、價差、時間差、台指近月與期現差。
-- 新增成分股貢獻、產業貢獻分布與貢獻傳導三種模組，可自由多選、並排及調整寬度。
-- 貢獻傳導依點數比例呈現「指數方向 -> 產業 -> 主要個股」，並顯示個股代碼與名稱。
-- 支援開盤前試撮資料與上市／上櫃雙市場預設版面；摘要列會依面板寬度自動換行。
+- 貢獻傳導新增「成分股／貢獻（點）／漲跌幅」欄位，漲跌幅可獨立開關並預設顯示。
+- 成分股貢獻清單改為對齊的表格欄位，股票名稱會使用可用空間，不再過早截斷。
+- 貢獻點數與漲跌幅統一靠右，單位集中於表頭，提升快速比較時的辨識度。
+- 產業與方向節點保留點數單位；無法由 Top 25 明細拆出的貢獻仍以其餘成分股彙總呈現。
 
-![盤中雷達](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.34/docs/images/release-0.1.34-intraday-radar.png)
+### 瀏覽器開發模式
+- 修正多條 HTTP/1.1 SSE 長連線占滿同源連線池，導致 Contract V2 商品資訊 REST 請求延遲的問題。
+- 開發模式將 REST 與 SSE 分散至兩個 loopback origin，仍共用同一個 Vite proxy 與 Shioaji Server。
+- Tauri 桌面版維持既有直連方式，不受此項開發環境調整影響。
 
-### 盤中雷達
-- 新增盤中雷達預設版面，即時訊號可連動 K 線、五檔與成交明細，行情面板仍可個別鎖定。
-- 新訊號會自動跟隨最新標的；商品解析完成後立即切換畫面，Tick／BidAsk 訂閱在背景接續完成。
-- 漲跌停、急漲急跌、爆量與狀態訊號可個別啟用，並可篩選上市或上櫃市場。
-- 訂閱狀態顯示實際規則與市場組合，不再把單一規則誤顯示成規則數量。
-
-![訊號與市場篩選](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.34/docs/images/release-0.1.34-signal-filters.png)
-
-### 串流與相容性
-- 內建 Shioaji Server 升級至 `v1.7.1`，支援即時計算指數、個股與產業貢獻及市場訊號訂閱。
-- Server 重啟、SSE 重連及每日維護後會自動恢復訂閱；市場訊號具備去重、保留上限與遺漏警示。
-- 修正淺色主題貢獻傳導對比，深色、純黑與淺色主題皆可清楚辨識流向。
+### 相容性
+- 內建 Shioaji Server 維持 `v1.7.1`。
+- 深色、純黑與淺色主題沿用市場脈動的方向色與表格對比設定。
 
 ---
 
