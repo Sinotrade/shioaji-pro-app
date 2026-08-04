@@ -99,3 +99,19 @@ export function getApiBase(): string {
     if (env) return env;
     return isTauri ? `http://127.0.0.1:${getApiPort()}` : '';
 }
+
+// In browser dev, keep EventSource on a sibling loopback origin. Six
+// long-lived SSE requests can exhaust the browser's HTTP/1.1 per-origin
+// connection pool and starve ordinary REST calls (notably lazy Contract V2
+// info lookups). Both origins still use the same Vite proxy and API target.
+export function getStreamBase(): string {
+    const env = import.meta.env.VITE_STREAM_BASE as string | undefined;
+    if (env) return env;
+    if (!isTauri && import.meta.env.DEV) {
+        const sibling = new URL(window.location.origin);
+        sibling.hostname =
+            sibling.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+        return sibling.origin;
+    }
+    return getApiBase();
+}

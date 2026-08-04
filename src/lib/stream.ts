@@ -2,7 +2,7 @@
 // Quote state lives here (module-level store) so components can subscribe
 // via useSyncExternalStore without prop drilling.
 
-import { getApiBase } from './runtime';
+import { getApiBase, getStreamBase } from './runtime';
 import { apiPost } from './api';
 import type { SseBidAsk, SseIndexQuote, SseTick } from './types/market';
 import {
@@ -318,7 +318,7 @@ let everDown = false;
 function connect() {
     if (es) es.close();
     setStatus('connecting');
-    es = new EventSource(`${getApiBase()}/api/v1/stream/data`);
+    es = new EventSource(`${getStreamBase()}/api/v1/stream/data`);
 
     es.onopen = () => {
         retryDelay = 1000;
@@ -365,7 +365,7 @@ function connect() {
 function connectContractEvents() {
     contractEs?.close();
     contractEs = new EventSource(
-        `${getApiBase()}/api/v1/stream/data/contract_event?region=TW`,
+        `${getStreamBase()}/api/v1/stream/data/contract_event?region=TW`,
     );
     contractEs.onopen = () => {
         const now = new Date().toISOString();

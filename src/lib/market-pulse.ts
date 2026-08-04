@@ -1,4 +1,4 @@
-import { getApiBase } from './runtime';
+import { getStreamBase } from './runtime';
 import type {
     CalculatedIndexEvent,
     IndexContributionEvent,
@@ -189,7 +189,7 @@ function ensureSource(
 ) {
     if (sources.has(channel)) return;
     const source = new EventSource(
-        `${getApiBase()}/api/v1/stream/data/${channel}`,
+        `${getStreamBase()}/api/v1/stream/data/${channel}`,
     );
     source.addEventListener(eventName, (event) =>
         handler((event as MessageEvent).data),
