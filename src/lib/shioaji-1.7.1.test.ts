@@ -139,6 +139,7 @@ describe('live enriched-index payloads', () => {
                     id: 'stock:2330',
                     label: '2330 台積電',
                     points: 12,
+                    pctChg: 1.01,
                 }),
                 expect.objectContaining({
                     id: 'direction:down',
@@ -155,6 +156,9 @@ describe('live enriched-index payloads', () => {
                 }),
             ]),
         );
+        expect(
+            flow.nodes.find((node) => node.id === 'other:up:24'),
+        ).not.toHaveProperty('pctChg');
     });
 
     it('expands only the five highest-contribution stocks under a sector', () => {

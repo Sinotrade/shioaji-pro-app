@@ -14,6 +14,7 @@ export interface ContributionFlowNode {
     direction: ContributionDirection;
     points: number;
     code?: string;
+    pctChg?: number;
 }
 
 export interface ContributionFlowLink {
@@ -104,6 +105,7 @@ export function buildContributionFlow(
                 direction,
                 points: Math.abs(entry.points),
                 code: entry.code,
+                pctChg: entry.pct_chg,
             });
             links.push({
                 source: sectorId,

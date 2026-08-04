@@ -376,6 +376,26 @@ export const sectionHeading = style({
     fontWeight: 600,
     borderBottom: `1px solid ${vars.color.border}`,
 });
+export const stockTableHeading = style({
+    display: 'grid',
+    gridTemplateColumns: '1.5rem minmax(0, 1fr) 5.75rem 4.25rem',
+    alignItems: 'baseline',
+    gap: vars.space.xs,
+    padding: `5px ${vars.space.sm}`,
+    color: vars.color.mutedForeground,
+    fontWeight: 600,
+    borderBottom: `1px solid ${vars.color.border}`,
+});
+export const stockTableTitle = style({
+    gridColumn: '1 / 3',
+});
+export const stockTableColumn = style({
+    justifySelf: 'end',
+    fontFamily: vars.font.mono,
+    fontSize: '0.57rem',
+    fontWeight: 600,
+    whiteSpace: 'nowrap',
+});
 export const areaLegend = style({
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -388,7 +408,7 @@ export const list = style({ flex: 1, overflow: 'auto' });
 export const rowButton = style({
     width: '100%',
     display: 'grid',
-    gridTemplateColumns: '1.5rem 4rem minmax(5rem, 1fr) minmax(4rem, auto)',
+    gridTemplateColumns: '1.5rem minmax(0, 1fr) 5.75rem 4.25rem',
     alignItems: 'center',
     gap: vars.space.xs,
     padding: `4px ${vars.space.sm}`,
@@ -424,6 +444,7 @@ export const treemapTile = style({
 });
 export const rank = style({
     color: vars.color.mutedForeground,
+    justifySelf: 'end',
     textAlign: 'right',
 });
 export const code = style({
@@ -431,13 +452,17 @@ export const code = style({
     alignItems: 'baseline',
     gap: '5px',
     minWidth: 0,
+    textAlign: 'left',
     color: vars.color.foreground,
     fontFamily: vars.font.mono,
     fontWeight: 600,
 });
 export const stockName = style({
+    flex: 1,
+    minWidth: 0,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+    textAlign: 'left',
     color: vars.color.mutedForeground,
     fontFamily: vars.font.body,
     fontSize: '0.58rem',
@@ -445,11 +470,13 @@ export const stockName = style({
     whiteSpace: 'nowrap',
 });
 export const points = style({
+    justifySelf: 'end',
     textAlign: 'right',
     fontFamily: vars.font.mono,
     whiteSpace: 'nowrap',
 });
 export const pct = style({
+    justifySelf: 'end',
     textAlign: 'right',
     fontFamily: vars.font.mono,
     whiteSpace: 'nowrap',
@@ -496,6 +523,12 @@ export const sankeyInteractiveNode = style({
     transition: 'filter 120ms ease',
     ':hover': { filter: 'brightness(1.25)' },
 });
+export const sankeyTableHeader = style({
+    fill: vars.color.mutedForeground,
+    fontFamily: vars.font.body,
+    fontSize: '8px',
+    fontWeight: 600,
+});
 export const sankeyLabel = style({
     fontFamily: vars.font.body,
     fontSize: '10px',
@@ -506,10 +539,14 @@ export const sankeyLabel = style({
     strokeLinejoin: 'round',
 });
 export const sankeyValue = style({
-    fill: vars.color.mutedForeground,
+    fontFamily: vars.font.mono,
+    fontSize: '10px',
+    fontWeight: 700,
+});
+export const sankeyPercent = style({
     fontFamily: vars.font.mono,
     fontSize: '9px',
-    fontWeight: 400,
+    fontWeight: 500,
 });
 export const empty = style({
     padding: '1.25rem',

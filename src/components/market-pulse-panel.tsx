@@ -6,6 +6,7 @@ import {
     LayoutGrid,
     Link2,
     ListOrdered,
+    Percent,
     SlidersHorizontal,
 } from 'lucide-react';
 import {
@@ -315,11 +316,13 @@ function ContributionSankey({
     entries,
     details,
     industries,
+    showPercent,
     onPick,
 }: {
     entries: IndexContributionEntry[];
     details: StockMeta[];
     industries: IndustryContributionEntry[];
+    showPercent: boolean;
     onPick?: (code: string) => void;
 }) {
     const ref = useRef<HTMLDivElement>(null);
@@ -343,6 +346,10 @@ function ContributionSankey({
         if (!flow.links.length || size.height <= 0) return null;
         const width = Math.max(560, size.width);
         const height = Math.max(220, size.height);
+        const rightLabelWidth = showPercent ? 260 : 205;
+        const rightInset = 18;
+        const pointsColumnX = width - (showPercent ? 88 : rightInset);
+        const percentColumnX = width - rightInset;
         const generator = sankey<
             SankeyGraph<ContributionFlowNode, ContributionFlowLink>,
             ContributionFlowNode,
@@ -352,18 +359,21 @@ function ContributionSankey({
             .nodeWidth(8)
             .nodePadding(9)
             .extent([
-                [12, 12],
-                [width - 118, height - 14],
+                [12, 28],
+                [width - rightLabelWidth, height - 14],
             ]);
         return {
             width,
             height,
+            rightLabelWidth,
+            pointsColumnX,
+            percentColumnX,
             graph: generator({
                 nodes: flow.nodes.map((node) => ({ ...node })),
                 links: flow.links.map((link) => ({ ...link })),
             }),
         };
-    }, [details, entries, industries, size]);
+    }, [details, entries, industries, showPercent, size]);
 
     const linkPath = useMemo(
         () => sankeyLinkHorizontal<ContributionFlowNode, ContributionFlowLink>(),
@@ -398,6 +408,30 @@ function ContributionSankey({
                             </path>
                         ))}
                     </g>
+                    <g className={styles.sankeyTableHeader}>
+                        <text
+                            x={layout.width - layout.rightLabelWidth + 14}
+                            y={16}
+                        >
+                            成分股
+                        </text>
+                        <text
+                            x={layout.pointsColumnX}
+                            y={16}
+                            textAnchor="end"
+                        >
+                            貢獻（點）
+                        </text>
+                        {showPercent && (
+                            <text
+                                x={layout.percentColumnX}
+                                y={16}
+                                textAnchor="end"
+                            >
+                                漲跌幅
+                            </text>
+                        )}
+                    </g>
                     <g>
                         {layout.graph.nodes.map((node) => {
                             const x0 = node.x0 ?? 0;
@@ -408,6 +442,7 @@ function ContributionSankey({
                                 node.direction === 'up'
                                     ? vars.color.up
                                     : vars.color.down;
+                            const isStock = node.kind === 'stock';
                             return (
                                 <g
                                     key={node.id}
@@ -428,20 +463,81 @@ function ContributionSankey({
                                         rx={2}
                                         fill={color}
                                     />
-                                    <text
-                                        className={styles.sankeyLabel}
-                                        x={x1 + 6}
-                                        y={(y0 + y1) / 2}
-                                        dominantBaseline="middle"
-                                        fill={color}
-                                    >
-                                        {node.label}
-                                        <tspan className={styles.sankeyValue}>
-                                            {' '}
-                                            {node.direction === 'up' ? '+' : '-'}
-                                            {node.points.toFixed(2)}
-                                        </tspan>
-                                    </text>
+                                    {isStock ? (
+                                        <>
+                                            <text
+                                                className={styles.sankeyLabel}
+                                                x={x1 + 6}
+                                                y={(y0 + y1) / 2}
+                                                dominantBaseline="middle"
+                                                fill={color}
+                                            >
+                                                {node.label}
+                                            </text>
+                                            <text
+                                                className={styles.sankeyValue}
+                                                x={layout.pointsColumnX}
+                                                y={(y0 + y1) / 2}
+                                                dominantBaseline="middle"
+                                                textAnchor="end"
+                                                fill={color}
+                                            >
+                                                {node.direction === 'up'
+                                                    ? '+'
+                                                    : '-'}
+                                                {node.points.toFixed(2)}
+                                            </text>
+                                            {showPercent &&
+                                                node.code &&
+                                                Number.isFinite(node.pctChg) && (
+                                                    <text
+                                                        className={
+                                                            styles.sankeyPercent
+                                                        }
+                                                        x={
+                                                            layout.percentColumnX
+                                                        }
+                                                        y={(y0 + y1) / 2}
+                                                        dominantBaseline="middle"
+                                                        textAnchor="end"
+                                                        fill={
+                                                            (node.pctChg ?? 0) > 0
+                                                                ? vars.color.up
+                                                                : (node.pctChg ?? 0) < 0
+                                                                  ? vars.color.down
+                                                                  : vars.color.flat
+                                                        }
+                                                    >
+                                                        {(node.pctChg ?? 0) > 0
+                                                            ? '+'
+                                                            : ''}
+                                                        {(node.pctChg ?? 0).toFixed(
+                                                            2,
+                                                        )}
+                                                        %
+                                                    </text>
+                                                )}
+                                        </>
+                                    ) : (
+                                        <text
+                                            className={styles.sankeyLabel}
+                                            x={x1 + 6}
+                                            y={(y0 + y1) / 2}
+                                            dominantBaseline="middle"
+                                            fill={color}
+                                        >
+                                            {node.label}
+                                            <tspan
+                                                className={styles.sankeyValue}
+                                            >
+                                                {' '}
+                                                {node.direction === 'up'
+                                                    ? '+'
+                                                    : '-'}
+                                                {node.points.toFixed(2)} 點
+                                            </tspan>
+                                        </text>
+                                    )}
                                 </g>
                             );
                         })}
@@ -484,6 +580,7 @@ export function MarketPulsePanel({
     const [sectionWeights, setSectionWeights] = useState<PulseSectionWeights>(
         () => initialPulseWeights(initialWeights),
     );
+    const [showFlowPercent, setShowFlowPercent] = useState(true);
     const sectionWorkspaceRef = useRef<HTMLDivElement>(null);
     const sectionWeightsRef = useRef(sectionWeights);
     sectionWeightsRef.current = sectionWeights;
@@ -1022,6 +1119,20 @@ export function MarketPulsePanel({
                         >
                             <GitBranch size={12} /> 貢獻傳導
                         </button>
+                        {sections.includes('flow') && (
+                            <button
+                                className={
+                                    styles.control[showFlowPercent ? 'on' : 'off']
+                                }
+                                onClick={() =>
+                                    setShowFlowPercent((current) => !current)
+                                }
+                                aria-pressed={showFlowPercent}
+                                title="顯示或隱藏個股漲跌幅"
+                            >
+                                <Percent size={12} /> 漲跌幅
+                            </button>
+                        )}
                         <span className={styles.spacer} />
                         {RANKINGS.map((item) => (
                             <button
@@ -1179,13 +1290,30 @@ export function MarketPulsePanel({
                                     {section === 'stocks' ? (
                                         <>
                                             <div
-                                                className={styles.sectionHeading}
+                                                className={
+                                                    styles.stockTableHeading
+                                                }
                                             >
-                                                <span>成分股貢獻</span>
                                                 <span
-                                                    className={styles.areaLegend}
+                                                    className={
+                                                        styles.stockTableTitle
+                                                    }
                                                 >
-                                                    目前排行
+                                                    成分股貢獻
+                                                </span>
+                                                <span
+                                                    className={
+                                                        styles.stockTableColumn
+                                                    }
+                                                >
+                                                    貢獻（點）
+                                                </span>
+                                                <span
+                                                    className={
+                                                        styles.stockTableColumn
+                                                    }
+                                                >
+                                                    漲跌幅
                                                 </span>
                                             </div>
                                             <div className={styles.list}>
@@ -1229,8 +1357,7 @@ export function MarketPulsePanel({
                                                                 : ''}
                                                             {entry.points.toFixed(
                                                                 2,
-                                                            )}{' '}
-                                                            點
+                                                            )}
                                                         </span>
                                                         <span
                                                             className={`${styles.pct} ${panel.dirText[direction(entry.pct_chg)]}`}
@@ -1306,6 +1433,7 @@ export function MarketPulsePanel({
                                                     entries={flowDrivers}
                                                     details={stockDetails}
                                                     industries={flowIndustries}
+                                                    showPercent={showFlowPercent}
                                                     onPick={onPick}
                                                 />
                                             )}
