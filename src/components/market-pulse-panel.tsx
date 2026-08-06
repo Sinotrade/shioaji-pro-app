@@ -862,6 +862,15 @@ export function MarketPulsePanel({
     const officialClose = Number.isFinite(officialCloseValue)
         ? officialCloseValue
         : null;
+    const officialReference = Number(officialIndex?.reference);
+    const officialChg =
+        officialClose !== null &&
+        Number.isFinite(officialReference) &&
+        officialReference > 0
+            ? officialClose - officialReference
+            : null;
+    const officialPct =
+        officialChg !== null ? (officialChg / officialReference) * 100 : null;
     const indexGap =
         calculated && officialClose !== null
             ? calculated.close - officialClose
@@ -876,6 +885,14 @@ export function MarketPulsePanel({
     const nearMonthPriceValue = Number(nearMonthQuote?.close);
     const nearMonthPrice = Number.isFinite(nearMonthPriceValue)
         ? nearMonthPriceValue
+        : null;
+    const nearMonthChgValue = Number(nearMonthQuote?.price_chg);
+    const nearMonthChg = Number.isFinite(nearMonthChgValue)
+        ? nearMonthChgValue
+        : null;
+    const nearMonthPctValue = Number(nearMonthQuote?.pct_chg);
+    const nearMonthPct = Number.isFinite(nearMonthPctValue)
+        ? nearMonthPctValue
         : null;
     const futuresBasis = futuresIndexBasis(
         nearMonthPrice,
@@ -1268,11 +1285,22 @@ export function MarketPulsePanel({
                         <span className={styles.metricDivider} />
                         <span className={styles.summaryMetric}>
                             <span className={styles.summaryLabel}>官方</span>
-                            <strong className={styles.metricValue}>
+                            <strong
+                                className={`${styles.metricValue} ${panel.dirText[direction(officialChg ?? 0)]}`}
+                            >
                                 {officialClose?.toLocaleString('en-US', {
                                     maximumFractionDigits: 2,
                                 }) ?? '--'}
                             </strong>
+                            {officialChg !== null && officialPct !== null && (
+                                <span
+                                    className={`${styles.change} ${panel.dirText[direction(officialChg)]}`}
+                                >
+                                    {officialChg > 0 ? '+' : ''}
+                                    {officialChg.toFixed(2)} ·{' '}
+                                    {officialPct.toFixed(2)}%
+                                </span>
+                            )}
                         </span>
                         <span className={styles.summaryMetric}>
                             <span className={styles.summaryLabel}>價差</span>
@@ -1306,7 +1334,9 @@ export function MarketPulsePanel({
                                     >
                                         台指近月
                                     </span>
-                                    <strong className={styles.metricValue}>
+                                    <strong
+                                        className={`${styles.metricValue} ${panel.dirText[direction(nearMonthChg ?? 0)]}`}
+                                    >
                                         {nearMonthPrice?.toLocaleString(
                                             'en-US',
                                             {
@@ -1317,6 +1347,16 @@ export function MarketPulsePanel({
                                                 ? '訂閱中...'
                                                 : '--')}
                                     </strong>
+                                    {nearMonthChg !== null &&
+                                        nearMonthPct !== null && (
+                                            <span
+                                                className={`${styles.change} ${panel.dirText[direction(nearMonthChg)]}`}
+                                            >
+                                                {nearMonthChg > 0 ? '+' : ''}
+                                                {nearMonthChg.toFixed(0)} ·{' '}
+                                                {nearMonthPct.toFixed(2)}%
+                                            </span>
+                                        )}
                                     {nearMonthCode && (
                                         <span className={styles.contractCode}>
                                             {nearMonthCode}
