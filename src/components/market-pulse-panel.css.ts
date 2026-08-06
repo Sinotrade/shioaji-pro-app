@@ -442,15 +442,22 @@ export const sideColumnDivider = style({
     background: vars.color.border,
 });
 export const sideHeader = style({
-    display: 'flex',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) 4.4rem 3.8rem',
     alignItems: 'baseline',
-    justifyContent: 'space-between',
     gap: vars.space.xs,
     padding: `4px ${vars.space.sm}`,
     color: vars.color.mutedForeground,
     fontWeight: 600,
     fontSize: '0.61rem',
     borderBottom: `1px solid ${vars.color.border}`,
+});
+export const sideHeaderLabel = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: vars.space.xs,
+    minWidth: 0,
+    whiteSpace: 'nowrap',
 });
 export const sideCount = style({
     fontFamily: vars.font.mono,
@@ -460,7 +467,7 @@ export const sideList = style({ flex: 1, minHeight: 0, overflow: 'auto' });
 const sideRowBase = style({
     width: '100%',
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto auto',
+    gridTemplateColumns: 'minmax(0, 1fr) 4.4rem 3.8rem',
     alignItems: 'center',
     gap: vars.space.xs,
     padding: `3px ${vars.space.sm}`,

@@ -238,8 +238,12 @@ function ContributionSideColumn({
     return (
         <div className={styles.sideColumn}>
             <div className={styles.sideHeader}>
-                <span>{side === 'up' ? '上漲貢獻' : '下跌貢獻'}</span>
-                <span className={styles.sideCount}>{entries.length}</span>
+                <span className={styles.sideHeaderLabel}>
+                    {side === 'up' ? '上漲貢獻' : '下跌貢獻'}
+                    <span className={styles.sideCount}>Top</span>
+                </span>
+                <span className={styles.stockTableColumn}>貢獻（點）</span>
+                <span className={styles.stockTableColumn}>漲跌幅</span>
             </div>
             <div className={styles.sideList}>
                 {entries.map((entry) => (
