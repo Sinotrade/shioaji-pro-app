@@ -1277,8 +1277,8 @@ export function MarketPulsePanel({
                         <span className={styles.summaryMetric}>
                             <span className={styles.summaryLabel}>價差</span>
                             <strong
-                                className={styles.metricValue}
-                                title="自算指數 − 官方指數（資料領先程度，非多空方向）"
+                                className={`${styles.metricValue} ${panel.dirText[direction(indexGap ?? 0)]}`}
+                                title="自算指數 − 官方指數"
                             >
                                 {indexGap === null
                                     ? '--'
