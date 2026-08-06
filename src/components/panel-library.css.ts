@@ -8,21 +8,57 @@ export const backdrop = style({
     background: 'rgba(0, 0, 0, 0.45)',
 });
 
-export const dialog = style({
+export const shell = style({
     position: 'fixed',
     top: '10vh',
     left: '50%',
     transform: 'translateX(-50%)',
     zIndex: 201,
+    width: 'min(760px, calc(100vw - 32px))',
+});
+
+export const dialog = style({
     display: 'flex',
     flexDirection: 'column',
-    width: 'min(760px, calc(100vw - 32px))',
     maxHeight: '70vh',
     border: `1px solid ${vars.color.borderBright}`,
     borderRadius: vars.radius.md,
     background: vars.color.panelRaised,
     boxShadow: '0 18px 48px rgba(0, 0, 0, 0.45)',
     overflow: 'hidden',
+});
+
+// hover/keyboard preview flyout beside the dialog; hidden when the
+// viewport has no room for it
+export const previewFlyout = style({
+    position: 'absolute',
+    top: 0,
+    left: 'calc(100% + 8px)',
+    width: '228px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: vars.space.sm,
+    padding: vars.space.sm,
+    border: `1px solid ${vars.color.borderBright}`,
+    borderRadius: vars.radius.md,
+    background: vars.color.panelRaised,
+    boxShadow: '0 18px 48px rgba(0, 0, 0, 0.35)',
+    '@media': {
+        'screen and (max-width: 1100px)': {
+            display: 'none',
+        },
+    },
+});
+
+export const previewTitle = style({
+    fontSize: '0.74rem',
+    fontWeight: 600,
+});
+
+export const previewDesc = style({
+    color: vars.color.mutedForeground,
+    fontSize: '0.64rem',
+    lineHeight: 1.5,
 });
 
 export const searchRow = style({

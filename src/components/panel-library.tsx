@@ -49,6 +49,7 @@ import {
     type BlockType,
     PANEL_CATEGORIES,
 } from '../lib/workspace';
+import { PANEL_PREVIEWS } from './panel-previews';
 import * as styles from './panel-library.css';
 
 const RECENTS_KEY = 'sj-pro-panel-recents-v1';
@@ -282,15 +283,18 @@ export function PanelLibrary({
         );
     };
 
+    const activeItem = flatItems[activeIndex];
+
     return (
         <>
             <div className={styles.backdrop} onClick={onClose} />
             <div
-                className={styles.dialog}
+                className={styles.shell}
                 role='dialog'
                 aria-label='新增面板'
                 onKeyDown={onKeyDown}
             >
+                <div className={styles.dialog}>
                 <div className={styles.searchRow}>
                     <Search size={14} />
                     <input
@@ -377,6 +381,20 @@ export function PanelLibrary({
                         </>
                     )}
                 </div>
+                </div>
+                {activeItem && (
+                    <div className={styles.previewFlyout}>
+                        {PANEL_PREVIEWS[activeItem.type]}
+                        <span className={styles.previewTitle}>
+                            {BLOCK_META[activeItem.type].label}
+                        </span>
+                        <span className={styles.previewDesc}>
+                            {BLOCK_META[activeItem.type].description}
+                            {activeItem.existingId &&
+                                ' · 已在版面中，選取後前往'}
+                        </span>
+                    </div>
+                )}
             </div>
         </>
     );
