@@ -505,7 +505,7 @@ export const areaLegend = style({
     fontWeight: 400,
 });
 export const list = style({ flex: 1, overflow: 'auto' });
-export const rowButton = style({
+const rowButtonBase = style({
     width: '100%',
     display: 'grid',
     gridTemplateColumns: '1.5rem minmax(0, 1fr) 5.75rem 4.25rem',
@@ -513,13 +513,43 @@ export const rowButton = style({
     gap: vars.space.xs,
     padding: `4px ${vars.space.sm}`,
     color: vars.color.foreground,
-    background: 'transparent',
+    backgroundColor: 'transparent',
+    backgroundRepeat: 'no-repeat',
     border: 0,
     borderBottom: `1px solid ${vars.color.border}`,
     fontFamily: vars.font.mono,
     fontSize: '0.68rem',
     cursor: 'pointer',
-    ':hover': { background: vars.color.muted },
+    ':hover': { backgroundColor: vars.color.muted },
+});
+export const rowButton = rowButtonBase;
+// 影響最大 magnitude bars live in the numeric columns only, growing out
+// of the divider between 貢獻（點） and 漲跌幅 (the zero axis): gainers
+// extend right of it, losers left. Fixed-width gradient images anchored
+// with edge-offset syntax avoid background-position percentage semantics
+// (percentages resolve against container minus image size).
+const barFill = `color-mix(in srgb, var(--bar-color, transparent) 15%, transparent)`;
+const barGradRight = `linear-gradient(to right, ${barFill} 0 var(--bar-size, 0rem), transparent var(--bar-size, 0rem))`;
+const barGradLeft = `linear-gradient(to left, ${barFill} 0 var(--bar-size, 0rem), transparent var(--bar-size, 0rem))`;
+// axis from the right edge: padding 0.5rem + 漲跌幅 4.25rem + half gap
+export const impactRow = styleVariants({
+    up: [
+        rowButtonBase,
+        {
+            backgroundImage: barGradRight,
+            backgroundSize: '4.375rem 100%',
+            backgroundPosition: 'right 0.5rem center',
+        },
+    ],
+    down: [
+        rowButtonBase,
+        {
+            backgroundImage: barGradLeft,
+            backgroundSize: '4.25rem 100%',
+            backgroundPosition: 'right 4.875rem center',
+        },
+    ],
+    flat: [rowButtonBase, {}],
 });
 export const treemap = style({
     position: 'relative',

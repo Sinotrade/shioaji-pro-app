@@ -98,6 +98,8 @@ const CONTRIBUTION_RANKINGS: ContributionRanking[] = [
     'negative25',
 ];
 const IMPACT_LIMIT = 10;
+// 影響最大 bars live in the numeric columns — max extent in rem
+const IMPACT_BAR_MAX_REM = 4.25;
 const STOCKS_VIEWS: { value: StocksView; label: string }[] = [
     { value: 'impact', label: '影響最大' },
     { value: 'sides', label: '多空對照' },
@@ -1502,7 +1504,34 @@ export function MarketPulsePanel({
                                                     <button
                                                         key={`${entry.code}-${idx}`}
                                                         className={
-                                                            styles.rowButton
+                                                            styles.impactRow[
+                                                                direction(
+                                                                    entry.points,
+                                                                )
+                                                            ]
+                                                        }
+                                                        style={
+                                                            {
+                                                                '--bar-color':
+                                                                    entry.points >
+                                                                    0
+                                                                        ? vars
+                                                                              .color
+                                                                              .up
+                                                                        : vars
+                                                                              .color
+                                                                              .down,
+                                                                '--bar-size': `${(
+                                                                    Math.min(
+                                                                        1,
+                                                                        Math.abs(
+                                                                            entry.points,
+                                                                        ) /
+                                                                            sideBarScale,
+                                                                    ) *
+                                                                    IMPACT_BAR_MAX_REM
+                                                                ).toFixed(2)}rem`,
+                                                            } as CSSProperties
                                                         }
                                                         onClick={() =>
                                                             onPick?.(entry.code)
