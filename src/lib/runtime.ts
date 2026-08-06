@@ -46,6 +46,32 @@ export function setApiPort(port: number): boolean {
     return changed;
 }
 
+// 本機 HTTPS：the sidecar's listener is either plaintext (http/1.1) or TLS
+// (https + h2) — the active scheme is persisted next to the port so every
+// API/SSE consumer builds matching URLs.
+export type ApiScheme = 'http' | 'https';
+const SCHEME_KEY = 'sj-pro-api-scheme';
+
+export function getApiScheme(): ApiScheme {
+    try {
+        if (localStorage.getItem(SCHEME_KEY) === 'https') return 'https';
+    } catch {
+        // storage unavailable
+    }
+    return 'http';
+}
+
+// returns true when the scheme actually changed (caller should reload)
+export function setApiScheme(scheme: ApiScheme): boolean {
+    const changed = getApiScheme() !== scheme;
+    try {
+        localStorage.setItem(SCHEME_KEY, scheme);
+    } catch {
+        // storage unavailable
+    }
+    return changed;
+}
+
 // PID and port of the server we spawned — the CLI daemon registry never sees
 // a foreground `server start`, so stopping/restarting across app launches
 // relies on remembering the child ourselves. The port lets status reporting
@@ -93,11 +119,13 @@ export function setServerPid(pid: number | null) {
 }
 
 // In Tauri the frontend is served from tauri://localhost — API calls must
-// target the local shioaji server explicitly.
+// target the local shioaji server explicitly. The host stays 127.0.0.1;
+// with 本機 HTTPS enabled the mkcert certificate covers it alongside
+// localhost and ::1.
 export function getApiBase(): string {
     const env = import.meta.env.VITE_API_BASE as string | undefined;
     if (env) return env;
-    return isTauri ? `http://127.0.0.1:${getApiPort()}` : '';
+    return isTauri ? `${getApiScheme()}://127.0.0.1:${getApiPort()}` : '';
 }
 
 // Since shioaji 1.7.2 every event family rides ONE aggregate SSE

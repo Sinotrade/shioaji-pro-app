@@ -12,9 +12,19 @@ import {
 } from './shioaji';
 import { agentModule } from './features';
 import { describeOrderReport } from './order-report';
-import { EXPECTED_SERVER_VERSION, isTauri, setApiPort } from './runtime';
+import {
+    EXPECTED_SERVER_VERSION,
+    isTauri,
+    setApiPort,
+    setApiScheme,
+} from './runtime';
 import { onOrderEvent } from './stream';
-import { loadDesktopSettings, serverStart, serverStatus } from './tauri';
+import {
+    loadDesktopSettings,
+    localTlsCertExists,
+    serverStart,
+    serverStatus,
+} from './tauri';
 import { logNotice, notify } from './trade';
 
 let booted = false;
@@ -83,10 +93,17 @@ async function run() {
             const settings = await loadDesktopSettings();
             if (settings.autoStart && settings.apiKey && settings.secretKey) {
                 const status = await serverStatus();
+                // 本機 HTTPS：the desired listener scheme also has to match
+                // — an http daemon while HTTPS is enabled (or vice versa)
+                // needs a restart to swap the listener
+                const wantHttps =
+                    settings.httpsEnabled && (await localTlsCertExists());
                 const healthyMatch =
                     status?.running &&
                     status.healthy &&
                     status.simulation === !settings.production &&
+                    (status.scheme ?? 'http') ===
+                        (wantHttps ? 'https' : 'http') &&
                     // version handshake — 不接版本不符的 server（例如
                     // 使用者 8080 上的舊 CLI），改起自帶 sidecar
                     (EXPECTED_SERVER_VERSION === '' ||
@@ -95,7 +112,13 @@ async function run() {
                 if (healthyMatch) {
                     // daemon survived from a previous run (possibly on a
                     // non-default port) — make sure the API base follows it
-                    if (status.port && setApiPort(status.port)) {
+                    const schemeChanged = status.scheme
+                        ? setApiScheme(status.scheme)
+                        : false;
+                    if (
+                        (status.port && setApiPort(status.port)) ||
+                        schemeChanged
+                    ) {
                         window.location.reload();
                         return;
                     }

@@ -8,6 +8,7 @@ import {
     EyeOff,
     ExternalLink,
     FileUp,
+    Lock,
     LogOut,
     Play,
     RefreshCw,
@@ -35,9 +36,11 @@ import {
 import {
     appVersion,
     checkForUpdates,
+    ensureLocalTlsCert,
     getAppUpdateState,
     isTauri,
     loadDesktopSettings,
+    MKCERT_INSTALL_HINT,
     openLatestRelease,
     pickCaFile,
     pickEnvFile,
@@ -69,6 +72,7 @@ export function ServerManager({
         autoStart: true,
         caPath: '',
         caPasswd: '',
+        httpsEnabled: false,
     });
     const [busy, setBusy] = useState(false);
     const [lastOutput, setLastOutput] = useState('');
@@ -210,15 +214,17 @@ export function ServerManager({
     // after a (re)start the upstream subscriptions are gone — reload the UI
     // once the server reports healthy so every panel bootstraps cleanly
     // (issue #2: charts/watchlist froze after restart until manual reload)
-    const doStart = async () => {
-        const err = validateDesktopSettings(settings);
+    // cfg override lets 啟用/停用 HTTPS restart with the just-persisted
+    // settings instead of the stale closure state
+    const doStart = async (cfg: DesktopSettings = settings) => {
+        const err = validateDesktopSettings(cfg);
         if (err) {
             notify({ kind: 'err', ...err });
             return;
         }
         setBusy(true);
         try {
-            const res = await serverStart(settings);
+            const res = await serverStart(cfg);
             // keep the tail — start failures put the ERROR line last
             setLastOutput(res.output.slice(-600));
             notify({
@@ -229,7 +235,7 @@ export function ServerManager({
                         : '🟢 伺服器啟動指令已送出'
                     : '伺服器啟動失敗',
                 body: res.ok
-                    ? `port ${res.port} · 模式：${settings.production ? '⚠ 正式環境' : '模擬環境'}`
+                    ? `port ${res.port} · 模式：${cfg.production ? '⚠ 正式環境' : '模擬環境'}`
                     : diagnoseOutput(res.output) ||
                       errorLines(res.output) ||
                       res.output.slice(-120),
@@ -264,15 +270,52 @@ export function ServerManager({
         }
     };
 
-    const doRestart = async () => {
+    const doRestart = async (cfg: DesktopSettings = settings) => {
         setBusy(true);
         try {
             await serverStop({ allowExternal: true });
             await new Promise((r) => setTimeout(r, 1200));
-            await doStart();
+            await doStart(cfg);
         } finally {
             setBusy(false);
         }
+    };
+
+    // ---- 本機 HTTPS ----
+    const [httpsBusy, setHttpsBusy] = useState(false);
+    const [httpsMsg, setHttpsMsg] = useState('');
+
+    const enableHttps = async () => {
+        setHttpsBusy(true);
+        setHttpsMsg('');
+        try {
+            const res = await ensureLocalTlsCert();
+            if (!res.ok) {
+                setHttpsMsg(
+                    res.output === 'MKCERT_MISSING'
+                        ? `需要 mkcert 產生本機信任憑證。請先在終端機執行「${MKCERT_INSTALL_HINT}」安裝，完成後再按一次。`
+                        : `憑證產生失敗：${res.output.slice(-300)}`,
+                );
+                return;
+            }
+            const merged = { ...settings, httpsEnabled: true };
+            persist({ httpsEnabled: true });
+            notify({
+                kind: 'ok',
+                title: '🔒 本機 HTTPS 憑證就緒',
+                body: '重啟伺服器套用中…',
+            });
+            await doRestart(merged);
+        } finally {
+            setHttpsBusy(false);
+        }
+    };
+
+    const disableHttps = async () => {
+        setHttpsMsg('');
+        const merged = { ...settings, httpsEnabled: false };
+        persist({ httpsEnabled: false });
+        await doRestart(merged);
     };
 
     if (!isTauri) return null;
@@ -480,7 +523,7 @@ export function ServerManager({
                             <button
                                 className={styles.opt.off}
                                 disabled={busy}
-                                onClick={doStart}
+                                onClick={() => doStart()}
                             >
                                 <Play size={11} style={{ verticalAlign: '-1px' }} />{' '}
                                 啟動
@@ -488,7 +531,7 @@ export function ServerManager({
                             <button
                                 className={styles.opt.off}
                                 disabled={busy}
-                                onClick={doRestart}
+                                onClick={() => doRestart()}
                             >
                                 <RotateCcw size={11} style={{ verticalAlign: '-1px' }} />{' '}
                                 重啟
@@ -669,6 +712,53 @@ export function ServerManager({
                             >
                                 尚未設定憑證 — 正式環境無法下單。請至
                                 sinotrade.com.tw API 管理頁下載 Sinopac.pfx
+                            </span>
+                        )}
+
+                        <span className={styles.settingLabel}>
+                            本機 HTTPS（瀏覽器連線可用 HTTP/2）
+                        </span>
+                        {settings.httpsEnabled ? (
+                            <>
+                                <span className={styles.emptyHint}>
+                                    🔒 已啟用 — 瀏覽器可直接開{' '}
+                                    {`https://localhost:${status?.port ?? 21322}`}
+                                    {status?.running &&
+                                        status.scheme === 'http' &&
+                                        '（伺服器仍為 HTTP，按「重啟」套用）'}
+                                </span>
+                                <button
+                                    className={styles.opt.on}
+                                    disabled={busy || httpsBusy}
+                                    onClick={() => void disableHttps()}
+                                >
+                                    ✓ 本機 HTTPS — 點擊停用並改回 HTTP
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                className={styles.updateBtn}
+                                disabled={busy || httpsBusy}
+                                onClick={() => void enableHttps()}
+                            >
+                                <Lock size={13} />
+                                {httpsBusy
+                                    ? '正在產生憑證…（首次可能跳出系統授權）'
+                                    : '啟用本機 HTTPS'}
+                            </button>
+                        )}
+                        {httpsMsg && (
+                            <span
+                                className={styles.emptyHint}
+                                style={{ color: 'var(--danger, #f23645)' }}
+                            >
+                                {httpsMsg}
+                            </span>
+                        )}
+                        {!settings.httpsEnabled && (
+                            <span className={styles.emptyHint}>
+                                以 mkcert 產生 localhost／127.0.0.1 信任憑證，
+                                供瀏覽器以 HTTPS＋HTTP/2 連本機伺服器。
                             </span>
                         )}
 

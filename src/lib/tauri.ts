@@ -6,14 +6,17 @@ import type {
     Update,
 } from '@tauri-apps/plugin-updater';
 import {
+    type ApiScheme,
     DEFAULT_PORT,
     EXPECTED_SERVER_VERSION,
     LEGACY_PORT,
     getApiPort,
+    getApiScheme,
     getServerPid,
     getSpawnPort,
     isTauri,
     setApiPort,
+    setApiScheme,
     setServerPid,
     setSpawnPort,
 } from './runtime';
@@ -51,6 +54,7 @@ export interface ServerStatus {
     healthy?: boolean;
     simulation?: boolean;
     version?: string;
+    scheme?: ApiScheme;
 }
 
 export interface SidecarResult {
@@ -85,6 +89,7 @@ async function spawnServer(
     args: string[],
     env: Record<string, string>,
     port: number,
+    scheme: ApiScheme = 'http',
 ): Promise<SidecarResult> {
     const { Command } = await import('@tauri-apps/plugin-shell');
     const cmd = Command.sidecar('binaries/shioaji', args, {
@@ -127,7 +132,7 @@ async function spawnServer(
     const deadline = Date.now() + 45_000;
     while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 1500));
-        if (await probeInfo(port)) {
+        if (await probeInfo(port, scheme)) {
             return { ok: true, output: buf.replace(ANSI_RE, '').trim() };
         }
         if (exitCode !== null && exitCode !== 0) {
@@ -149,6 +154,84 @@ function candidatePorts(): number[] {
     return [...new Set([getApiPort(), DEFAULT_PORT, LEGACY_PORT])];
 }
 
+// ---- 本機 HTTPS（mkcert 憑證）----
+// The sidecar (shioaji ≥1.7.2) serves HTTPS with HTTP/2 when
+// SJ_HTTP_TLS_CERT/KEY point at a certificate. We generate a
+// locally-trusted one with mkcert covering localhost / 127.0.0.1 / ::1,
+// stored under ~/.shioaji/tls (the upstream-documented location).
+
+const IS_WINDOWS =
+    typeof navigator !== 'undefined' &&
+    /Win/i.test(navigator.platform || navigator.userAgent);
+
+// GUI apps on macOS/Linux don't inherit the login shell PATH — cover the
+// common install prefixes so `mkcert` from brew/apt/go is found
+const SHELL_PATH_PREFIX =
+    'export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/go/bin";';
+
+export const MKCERT_INSTALL_HINT = IS_WINDOWS
+    ? 'choco install mkcert（或 scoop install mkcert）'
+    : 'brew install mkcert';
+
+async function tlsPaths(): Promise<{ dir: string; cert: string; key: string }> {
+    const { homeDir, join } = await import('@tauri-apps/api/path');
+    const home = await homeDir();
+    const dir = await join(home, '.shioaji', 'tls');
+    return {
+        dir,
+        cert: await join(dir, 'localhost.pem'),
+        key: await join(dir, 'localhost-key.pem'),
+    };
+}
+
+export async function localTlsCertExists(): Promise<boolean> {
+    if (!isTauri) return false;
+    try {
+        const { exists } = await import('@tauri-apps/plugin-fs');
+        const p = await tlsPaths();
+        return (await exists(p.cert)) && (await exists(p.key));
+    } catch {
+        return false;
+    }
+}
+
+// run a user shell command through the already-scoped agent-sh/agent-cmd
+// shell entries (same mechanism the AI agent uses)
+async function runUserShell(script: string): Promise<SidecarResult> {
+    const { Command } = await import('@tauri-apps/plugin-shell');
+    const cmd = IS_WINDOWS
+        ? Command.create('agent-cmd', ['/C', script])
+        : Command.create('agent-sh', ['-c', script]);
+    const out = await cmd.execute();
+    const text = `${out.stdout}\n${out.stderr}`.replace(ANSI_RE, '').trim();
+    return { ok: out.code === 0, output: text };
+}
+
+// generate a locally-trusted localhost certificate with mkcert. The one-time
+// local-CA install (`mkcert -install`) can pop an OS authorization prompt.
+// Returns output 'MKCERT_MISSING' when mkcert is not installed.
+export async function ensureLocalTlsCert(): Promise<SidecarResult> {
+    if (!isTauri) return { ok: false, output: '桌面版限定' };
+    if (await localTlsCertExists()) return { ok: true, output: '' };
+    const check = await runUserShell(
+        IS_WINDOWS
+            ? 'where mkcert'
+            : `${SHELL_PATH_PREFIX} command -v mkcert`,
+    );
+    if (!check.ok) return { ok: false, output: 'MKCERT_MISSING' };
+    const p = await tlsPaths();
+    const gen = await runUserShell(
+        IS_WINDOWS
+            ? `(if not exist "${p.dir}" mkdir "${p.dir}") && mkcert -install && mkcert -cert-file "${p.cert}" -key-file "${p.key}" localhost 127.0.0.1 ::1`
+            : `${SHELL_PATH_PREFIX} mkdir -p "${p.dir}" && mkcert -install && mkcert -cert-file "${p.cert}" -key-file "${p.key}" localhost 127.0.0.1 ::1`,
+    );
+    if (!gen.ok) return gen;
+    return {
+        ok: await localTlsCertExists(),
+        output: gen.output,
+    };
+}
+
 // The CLI's `server status` only knows daemonized servers — a foreground
 // `server start` (which is how this app spawns it) never appears there, and
 // its state file goes stale. Ground truth is therefore an HTTP probe of the
@@ -157,16 +240,17 @@ function candidatePorts(): number[] {
 export async function serverStatus(): Promise<ServerStatus | null> {
     if (!isTauri) return null;
     const ports = candidatePorts();
-    const infos = await Promise.all(ports.map((p) => probeInfo(p)));
+    const infos = await Promise.all(ports.map((p) => probeInfoEither(p)));
     for (const [i, port] of ports.entries()) {
-        const info = infos[i];
-        if (!info) continue;
+        const hit = infos[i];
+        if (!hit) continue;
         return {
             running: true,
             port,
-            healthy: await probeHealthy(port),
-            simulation: info.simulation,
-            version: info.version,
+            healthy: await probeHealthy(port, hit.scheme),
+            simulation: hit.info.simulation,
+            version: hit.info.version,
+            scheme: hit.scheme,
             // only claim a pid for the server we spawned — an attached
             // external server has an unknown pid, and showing our stale
             // record for it is misleading
@@ -184,14 +268,15 @@ export async function serverStatus(): Promise<ServerStatus | null> {
                 res.output.slice(jsonStart),
             ) as ServerStatus;
             if (st.running && st.port && !ports.includes(st.port)) {
-                const info = await probeInfo(st.port);
-                if (info) {
+                const hit = await probeInfoEither(st.port);
+                if (hit) {
                     return {
                         running: true,
                         port: st.port,
-                        healthy: await probeHealthy(st.port),
-                        simulation: info.simulation,
-                        version: info.version,
+                        healthy: await probeHealthy(st.port, hit.scheme),
+                        simulation: hit.info.simulation,
+                        version: hit.info.version,
+                        scheme: hit.scheme,
                         pid: st.pid,
                     };
                 }
@@ -206,11 +291,12 @@ export async function serverStatus(): Promise<ServerStatus | null> {
 // is a shioaji HTTP server answering on this port? (null = no / not shioaji)
 async function probeInfo(
     port: number,
+    scheme: ApiScheme = getApiScheme(),
 ): Promise<{ version: string; simulation: boolean } | null> {
     try {
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
         const res = await tauriFetch(
-            `http://127.0.0.1:${port}/api/v1/info`,
+            `${scheme}://127.0.0.1:${port}/api/v1/info`,
             { signal: AbortSignal.timeout(1500) },
         );
         if (!res.ok) return null;
@@ -230,11 +316,32 @@ async function probeInfo(
     return null;
 }
 
-async function probeHealthy(port: number): Promise<boolean> {
+// probe both schemes (preferred first) — the listener is either plaintext or
+// TLS, and around 本機 HTTPS transitions the persisted scheme can lag what
+// the running server actually speaks
+async function probeInfoEither(
+    port: number,
+    preferred: ApiScheme = getApiScheme(),
+): Promise<{
+    info: { version: string; simulation: boolean };
+    scheme: ApiScheme;
+} | null> {
+    const other: ApiScheme = preferred === 'https' ? 'http' : 'https';
+    for (const scheme of [preferred, other]) {
+        const info = await probeInfo(port, scheme);
+        if (info) return { info, scheme };
+    }
+    return null;
+}
+
+async function probeHealthy(
+    port: number,
+    scheme: ApiScheme = getApiScheme(),
+): Promise<boolean> {
     try {
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
         const res = await tauriFetch(
-            `http://127.0.0.1:${port}/api/v1/health`,
+            `${scheme}://127.0.0.1:${port}/api/v1/health`,
             { signal: AbortSignal.timeout(2000) },
         );
         return res.ok;
@@ -246,11 +353,14 @@ async function probeHealthy(port: number): Promise<boolean> {
 // is CA active on this daemon? production orders 400 without it. We only
 // attach to / keep a daemon for production if its CA is live — otherwise the
 // user sets CA in the app but the running daemon never had it (issue #1).
-async function caActive(port: number): Promise<boolean> {
+async function caActive(
+    port: number,
+    scheme: ApiScheme = getApiScheme(),
+): Promise<boolean> {
     try {
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
         const accRes = await tauriFetch(
-            `http://127.0.0.1:${port}/api/v1/auth/accounts`,
+            `${scheme}://127.0.0.1:${port}/api/v1/auth/accounts`,
             { signal: AbortSignal.timeout(2000) },
         );
         if (!accRes.ok) return false;
@@ -258,7 +368,7 @@ async function caActive(port: number): Promise<boolean> {
         const pid = accts[0]?.person_id;
         if (!pid) return false;
         const caRes = await tauriFetch(
-            `http://127.0.0.1:${port}/api/v1/auth/ca_expiretime?person_id=${encodeURIComponent(pid)}`,
+            `${scheme}://127.0.0.1:${port}/api/v1/auth/ca_expiretime?person_id=${encodeURIComponent(pid)}`,
             { signal: AbortSignal.timeout(2000) },
         );
         if (!caRes.ok) return false; // 400 "CA not activated"
@@ -281,10 +391,16 @@ export async function serverStart(opts: {
     production: boolean;
     caPath?: string;
     caPasswd?: string;
+    httpsEnabled?: boolean;
 }): Promise<StartResult> {
     // when production+CA is requested, a daemon is only good enough to reuse
     // if its CA is actually active — otherwise orders 400 (issue #1)
     const needsCa = !!opts.production && !!opts.caPath;
+    // 本機 HTTPS is only honored when the mkcert certificate is in place —
+    // otherwise fall back to plaintext with a warning instead of a dead TLS
+    // listener the webview can't trust
+    const tlsReady = !!opts.httpsEnabled && (await localTlsCertExists());
+    const wantScheme: ApiScheme = tlsReady ? 'https' : 'http';
 
     // a shioaji server already answering (ours from a previous run, or the
     // user's own CLI daemon on :8080)? Attach only if it can actually trade
@@ -300,26 +416,32 @@ export async function serverStart(opts: {
             ...Array.from({ length: 9 }, (_, i) => DEFAULT_PORT + 1 + i),
             ...Array.from({ length: 5 }, (_, i) => LEGACY_PORT + 1 + i),
         ];
-        const infos = await Promise.all(win.map((p) => probeInfo(p)));
-        const hit = win.findIndex((_, i) => infos[i]);
+        const hits = await Promise.all(win.map((p) => probeInfoEither(p)));
+        const hit = win.findIndex((_, i) => hits[i]);
         if (hit >= 0) {
             const port = win[hit] as number;
+            const found = hits[hit]!;
             st = {
                 running: true,
                 port,
-                healthy: await probeHealthy(port),
-                simulation: infos[hit]?.simulation,
+                healthy: await probeHealthy(port, found.scheme),
+                simulation: found.info.simulation,
                 // without this the versionMismatch check below sees
                 // undefined and adopts an old-version orphan
-                version: infos[hit]?.version,
+                version: found.info.version,
+                scheme: found.scheme,
                 pid: getServerPid() ?? undefined,
             };
         }
     }
     if (st?.running && st.port) {
+        const stScheme: ApiScheme = st.scheme ?? 'http';
         const modeMismatch =
             st.simulation !== undefined &&
             st.simulation === opts.production;
+        // the listener speaks either plaintext or TLS — attaching across a
+        // 本機 HTTPS toggle needs a restart to apply the new listener
+        const schemeMismatch = stScheme !== wantScheme;
         // version handshake: only attach to a server matching the bundled
         // sidecar version — API/UI 版本必須一致
         const versionMismatch =
@@ -327,15 +449,22 @@ export async function serverStart(opts: {
             st.version !== undefined &&
             st.version !== EXPECTED_SERVER_VERSION;
         const external = getSpawnPort() !== st.port;
-        const caOk = !needsCa || (await caActive(st.port));
-        if (st.healthy && !modeMismatch && caOk && !versionMismatch) {
+        const caOk = !needsCa || (await caActive(st.port, stScheme));
+        if (
+            st.healthy &&
+            !modeMismatch &&
+            !schemeMismatch &&
+            caOk &&
+            !versionMismatch
+        ) {
             // healthy, right mode, right version, CA live — just use it
+            const schemeChanged = setApiScheme(stScheme);
             return {
                 ok: true,
                 output: `伺服器已在運行（port ${st.port}）`,
                 port: st.port,
                 attached: true,
-                portChanged: setApiPort(st.port),
+                portChanged: setApiPort(st.port) || schemeChanged,
             };
         }
         if (versionMismatch && external) {
@@ -355,11 +484,13 @@ export async function serverStart(opts: {
                 // port
                 const why = modeMismatch
                     ? '模式與設定不符'
-                    : versionMismatch
-                      ? `版本不符（server ${st.version}，需 ${EXPECTED_SERVER_VERSION}）`
-                      : !caOk
-                        ? 'CA 未啟用，正式環境無法下單'
-                        : '狀態不健康';
+                    : schemeMismatch
+                      ? `連線協定不符（server ${stScheme}，需 ${wantScheme}）`
+                      : versionMismatch
+                        ? `版本不符（server ${st.version}，需 ${EXPECTED_SERVER_VERSION}）`
+                        : !caOk
+                          ? 'CA 未啟用，正式環境無法下單'
+                          : '狀態不健康';
                 return {
                     ok: false,
                     output:
@@ -407,11 +538,18 @@ export async function serverStart(opts: {
         env.SJ_CA_PATH = opts.caPath;
         if (opts.caPasswd) env.SJ_CA_PASSWD = opts.caPasswd;
     }
+    // 本機 HTTPS：static TLS turns the listener into https + HTTP/2
+    if (tlsReady) {
+        const tls = await tlsPaths();
+        env.SJ_HTTP_TLS_CERT = tls.cert;
+        env.SJ_HTTP_TLS_KEY = tls.key;
+    }
     const args = ['server', 'start', '--no-open'];
     if (opts.production) args.push('--production');
     // spawn (don't await to completion) — the start runs in foreground
-    const res = await spawnServer(args, env, port);
-    const portChanged = res.ok ? setApiPort(port) : false;
+    const res = await spawnServer(args, env, port, wantScheme);
+    const schemeChanged = res.ok ? setApiScheme(wantScheme) : false;
+    const portChanged = (res.ok ? setApiPort(port) : false) || schemeChanged;
     // the server starts even when CA activation fails (login still works) —
     // catch that warning from the log so the user knows production orders
     // will 400 (e.g. expired certificate) instead of finding out at order time
@@ -420,6 +558,13 @@ export async function serverStart(opts: {
         res.ok && port !== DEFAULT_PORT
             ? `\n⚠ ${DEFAULT_PORT} 被占用，伺服器改用 port ${port}`
             : '';
+    if (opts.httpsEnabled && !tlsReady) {
+        note +=
+            '\n⚠ 找不到本機 TLS 憑證，已改以 HTTP 啟動 — 請在伺服器管理重新啟用本機 HTTPS';
+    }
+    if (res.ok && tlsReady) {
+        note += `\n🔒 本機 HTTPS 已啟用 — https://localhost:${port}`;
+    }
     if (res.ok && opts.production && caFail) {
         const reason = /expired/i.test(caFail[0])
             ? '憑證已過期，請至 API 管理頁重新下載 Sinopac.pfx'
@@ -509,6 +654,7 @@ export interface DesktopSettings {
     autoStart: boolean; // start the shioaji server when the app launches
     caPath: string; // Sinopac.pfx — required for production orders
     caPasswd: string;
+    httpsEnabled: boolean; // serve the sidecar over local HTTPS (mkcert)
 }
 
 const EMPTY_SETTINGS: DesktopSettings = {
@@ -518,6 +664,7 @@ const EMPTY_SETTINGS: DesktopSettings = {
     autoStart: true,
     caPath: '',
     caPasswd: '',
+    httpsEnabled: false,
 };
 
 export async function loadDesktopSettings(): Promise<DesktopSettings> {
@@ -531,6 +678,7 @@ export async function loadDesktopSettings(): Promise<DesktopSettings> {
         autoStart: (await store.get<boolean>('autoStart')) ?? true,
         caPath: (await store.get<string>('caPath')) ?? '',
         caPasswd: (await store.get<string>('caPasswd')) ?? '',
+        httpsEnabled: (await store.get<boolean>('httpsEnabled')) ?? false,
     };
 }
 
@@ -544,6 +692,7 @@ export async function saveDesktopSettings(s: DesktopSettings) {
     await store.set('autoStart', s.autoStart);
     await store.set('caPath', s.caPath);
     await store.set('caPasswd', s.caPasswd);
+    await store.set('httpsEnabled', s.httpsEnabled);
     await store.save();
 }
 

@@ -35,6 +35,7 @@ const EMPTY: DesktopSettings = {
     autoStart: true,
     caPath: '',
     caPasswd: '',
+    httpsEnabled: false,
 };
 
 export function OnboardingSetup() {
