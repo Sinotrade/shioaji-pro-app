@@ -309,20 +309,54 @@ async function resubscribeAll() {
 }
 
 let es: EventSource | null = null;
-let contractEs: EventSource | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
-let contractRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryDelay = 1000;
 let everDown = false;
+
+// Extra named-event listeners (enriched index, scanner, …) share the ONE
+// aggregate SSE connection. Since shioaji 1.7.2 the aggregate stream
+// carries every event family, so consumers register here instead of
+// opening dedicated per-channel EventSources (six HTTP/1.1 streams used
+// to exhaust the browser's per-origin connection pool).
+const namedListeners = new Map<string, Set<(raw: string) => void>>();
+
+function attachNamed(source: EventSource, name: string) {
+    source.addEventListener(name, (event) => {
+        const set = namedListeners.get(name);
+        set?.forEach((listener) => listener((event as MessageEvent).data));
+    });
+}
+
+export function onStreamEvent(
+    name: string,
+    listener: (raw: string) => void,
+) {
+    let set = namedListeners.get(name);
+    if (!set) {
+        set = new Set();
+        namedListeners.set(name, set);
+        if (es) attachNamed(es, name);
+    }
+    set.add(listener);
+    return () => {
+        namedListeners.get(name)?.delete(listener);
+    };
+}
 
 function connect() {
     if (es) es.close();
     setStatus('connecting');
-    es = new EventSource(`${getStreamBase()}/api/v1/stream/data`);
+    // region filters contract_event only; other families are unfiltered
+    es = new EventSource(`${getStreamBase()}/api/v1/stream/data?region=TW`);
 
     es.onopen = () => {
         retryDelay = 1000;
         setStatus('live');
+        // SSE does not replay contract changes missed while disconnected —
+        // re-query on every successful connection so a daily update cannot
+        // stay stale.
+        const now = new Date().toISOString();
+        emitFullContractRefresh('RECONNECT', `reconnect:${now}`, now);
         if (everDown) {
             everDown = false;
             void resubscribeAll(); // server may have restarted — replay subs
@@ -346,10 +380,19 @@ function connect() {
         );
         if (report) orderEventListeners.forEach((l) => l(report));
     });
+    es.addEventListener('contract_event', (event) => {
+        const change = JSON.parse(
+            (event as MessageEvent).data,
+        ) as ContractChangeEvent;
+        emitContractChange(change);
+    });
     es.addEventListener('heartbeat', () => {
         lastHeartbeat = Date.now();
         setStatus('live');
     });
+    for (const name of namedListeners.keys()) {
+        attachNamed(es, name);
+    }
 
     es.onerror = () => {
         everDown = true;
@@ -359,31 +402,6 @@ function connect() {
         if (retryTimer) clearTimeout(retryTimer);
         retryTimer = setTimeout(connect, retryDelay);
         retryDelay = Math.min(retryDelay * 2, 15000);
-    };
-}
-
-function connectContractEvents() {
-    contractEs?.close();
-    contractEs = new EventSource(
-        `${getStreamBase()}/api/v1/stream/data/contract_event?region=TW`,
-    );
-    contractEs.onopen = () => {
-        const now = new Date().toISOString();
-        // SSE does not replay changes missed while disconnected. Re-query on
-        // every successful connection so a daily update cannot stay stale.
-        emitFullContractRefresh('RECONNECT', `reconnect:${now}`, now);
-    };
-    contractEs.addEventListener('contract_event', (event) => {
-        const change = JSON.parse(
-            (event as MessageEvent).data,
-        ) as ContractChangeEvent;
-        emitContractChange(change);
-    });
-    contractEs.onerror = () => {
-        contractEs?.close();
-        contractEs = null;
-        if (contractRetryTimer) clearTimeout(contractRetryTimer);
-        contractRetryTimer = setTimeout(connectContractEvents, 5000);
     };
 }
 
@@ -420,7 +438,6 @@ export function ensureStream() {
     if (!started) {
         started = true;
         connect();
-        connectContractEvents();
         void watchMaintenance();
         setInterval(watchMaintenance, 60000);
     }

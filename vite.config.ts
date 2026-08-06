@@ -57,10 +57,8 @@ export default defineConfig(({ mode }) => {
         },
         server: {
             // honor a harness-assigned port (preview tooling sets PORT);
-            // default stays 5173 for tauri dev
-            // Bind IPv4 loopback explicitly so browser dev can split REST
-            // (localhost) and long-lived SSE (127.0.0.1) into separate
-            // HTTP/1.1 connection pools without exposing Vite to the LAN.
+            // default stays 5173 for tauri dev. Bind loopback only so Vite
+            // is never exposed to the LAN.
             host: '127.0.0.1',
             port: Number(process.env.PORT) || 5173,
             proxy: {

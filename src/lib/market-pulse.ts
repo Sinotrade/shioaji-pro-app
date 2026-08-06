@@ -1,4 +1,4 @@
-import { getStreamBase } from './runtime';
+import { ensureStream, onStreamEvent } from './stream';
 import type {
     CalculatedIndexEvent,
     IndexContributionEvent,
@@ -178,46 +178,29 @@ function handleScanner(raw: string) {
     if (changed) emitPulse();
 }
 
-const sources = new Map<string, EventSource>();
+// Pulse events arrive on the app's single aggregate SSE connection
+// (stream.ts) — shioaji 1.7.2 carries enriched-index and scanner events
+// there, so no dedicated per-channel EventSources are needed.
 let marketStreamRefs = 0;
-
-function ensureSource(
-    channel: string,
-    eventName: string,
-    handler: (raw: string) => void,
-    onOpen?: () => void,
-) {
-    if (sources.has(channel)) return;
-    const source = new EventSource(
-        `${getStreamBase()}/api/v1/stream/data/${channel}`,
-    );
-    source.addEventListener(eventName, (event) =>
-        handler((event as MessageEvent).data),
-    );
-    if (onOpen) source.onopen = onOpen;
-    sources.set(channel, source);
-}
+let detachListeners: (() => void)[] = [];
 
 function ensureMarketPulseStreams() {
-    ensureSource('calculated_index', 'calculated_index', (raw) =>
-        setMapEvent(calculated, raw, parseCalculatedIndexEvent),
-    );
-    ensureSource(
-        'index_contribution',
-        'index_contribution',
-        handleIndexContribution,
-    );
-    ensureSource('industry_contribution', 'industry_contribution', (raw) =>
-        setMapEvent(industryContribution, raw, parseIndustryContributionEvent),
-    );
-    ensureSource('scanner', 'scanner', handleScanner);
-}
-
-function closeSources(channels: string[]) {
-    for (const channel of channels) {
-        sources.get(channel)?.close();
-        sources.delete(channel);
-    }
+    if (detachListeners.length > 0) return;
+    ensureStream();
+    detachListeners = [
+        onStreamEvent('calculated_index', (raw) =>
+            setMapEvent(calculated, raw, parseCalculatedIndexEvent),
+        ),
+        onStreamEvent('index_contribution', handleIndexContribution),
+        onStreamEvent('industry_contribution', (raw) =>
+            setMapEvent(
+                industryContribution,
+                raw,
+                parseIndustryContributionEvent,
+            ),
+        ),
+        onStreamEvent('scanner', handleScanner),
+    ];
 }
 
 export function retainMarketPulseStreams() {
@@ -226,12 +209,8 @@ export function retainMarketPulseStreams() {
     return () => {
         marketStreamRefs = Math.max(0, marketStreamRefs - 1);
         if (marketStreamRefs === 0) {
-            closeSources([
-                'calculated_index',
-                'index_contribution',
-                'industry_contribution',
-                'scanner',
-            ]);
+            detachListeners.forEach((detach) => detach());
+            detachListeners = [];
         }
     };
 }
