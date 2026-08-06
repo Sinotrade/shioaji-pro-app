@@ -1,21 +1,27 @@
-// src/components/command-palette.tsx — Cmd+K symbol jump
+// src/components/command-palette.tsx — Cmd+K symbol jump + panel commands
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { primeContract } from '../lib/contracts-cache';
 import {
     searchProducts,
     type ProductSuggestion,
 } from '../lib/product-search';
+import { BLOCK_META, type BlockType } from '../lib/workspace';
 import * as styles from './command-palette.css';
+
+const PANEL_TYPES = Object.keys(BLOCK_META) as BlockType[];
+const PANEL_MATCH_LIMIT = 4;
 
 export function CommandPalette({
     open,
     onClose,
     onJump,
+    onAddPanel,
 }: {
     open: boolean;
     onClose: () => void;
     onJump: (code: string) => Promise<unknown>;
+    onAddPanel?: (type: BlockType) => void;
 }) {
     const [value, setValue] = useState('');
     const [busy, setBusy] = useState(false);
@@ -58,9 +64,40 @@ export function CommandPalette({
         };
     }, [open, value]);
 
+    useEffect(() => {
+        setActiveIndex(0);
+    }, [value]);
+
+    const panelMatches = useMemo(() => {
+        if (!onAddPanel) return [];
+        const query = value.trim().toLowerCase();
+        if (!query) return [];
+        return PANEL_TYPES.filter((type) => {
+            const meta = BLOCK_META[type];
+            return (
+                meta.label.toLowerCase().includes(query) ||
+                meta.description.toLowerCase().includes(query)
+            );
+        }).slice(0, PANEL_MATCH_LIMIT);
+    }, [onAddPanel, value]);
+
+    const rowCount = suggestions.length + panelMatches.length;
+
     if (!open) return null;
 
+    const addPanelAt = (index: number) => {
+        const type = panelMatches[index];
+        if (!type) return;
+        onAddPanel?.(type);
+        onClose();
+    };
+
     const submit = async (picked?: ProductSuggestion) => {
+        // active row past the product suggestions → it's a panel command
+        if (!picked && activeIndex >= suggestions.length && rowCount > 0) {
+            addPanelAt(activeIndex - suggestions.length);
+            return;
+        }
         const item = picked ?? suggestions[activeIndex];
         const code = item?.code ?? value.trim().toUpperCase();
         if (!code || busy) return;
@@ -90,25 +127,21 @@ export function CommandPalette({
                         setError(false);
                     }}
                     onKeyDown={(e) => {
-                        if (e.key === 'ArrowDown' && suggestions.length > 0) {
+                        if (e.key === 'ArrowDown' && rowCount > 0) {
                             e.preventDefault();
-                            setActiveIndex(
-                                (index) => (index + 1) % suggestions.length,
-                            );
+                            setActiveIndex((index) => (index + 1) % rowCount);
                         }
-                        if (e.key === 'ArrowUp' && suggestions.length > 0) {
+                        if (e.key === 'ArrowUp' && rowCount > 0) {
                             e.preventDefault();
                             setActiveIndex(
-                                (index) =>
-                                    (index - 1 + suggestions.length) %
-                                    suggestions.length,
+                                (index) => (index - 1 + rowCount) % rowCount,
                             );
                         }
                         if (e.key === 'Enter') void submit();
                         if (e.key === 'Escape') onClose();
                     }}
                 />
-                {suggestions.length > 0 && (
+                {rowCount > 0 && (
                     <div className={styles.results}>
                         {suggestions.map((item, index) => (
                             <button
@@ -132,6 +165,33 @@ export function CommandPalette({
                                 </span>
                             </button>
                         ))}
+                        {panelMatches.map((type, index) => {
+                            const rowIndex = suggestions.length + index;
+                            return (
+                                <button
+                                    key={`panel:${type}`}
+                                    className={
+                                        rowIndex === activeIndex
+                                            ? styles.resultActive
+                                            : styles.result
+                                    }
+                                    onMouseEnter={() =>
+                                        setActiveIndex(rowIndex)
+                                    }
+                                    onClick={() => addPanelAt(index)}
+                                >
+                                    <span className={styles.resultCode}>
+                                        ＋
+                                    </span>
+                                    <span className={styles.resultName}>
+                                        新增面板：{BLOCK_META[type].label}
+                                    </span>
+                                    <span className={styles.resultType}>
+                                        {BLOCK_META[type].description}
+                                    </span>
+                                </button>
+                            );
+                        })}
                     </div>
                 )}
                 <div className={styles.hint}>

@@ -16,7 +16,7 @@ export const dialog = style({
     zIndex: 201,
     display: 'flex',
     flexDirection: 'column',
-    width: 'min(640px, calc(100vw - 32px))',
+    width: 'min(760px, calc(100vw - 32px))',
     maxHeight: '70vh',
     border: `1px solid ${vars.color.borderBright}`,
     borderRadius: vars.radius.md,
@@ -88,13 +88,10 @@ export const sectionCount = style({
 
 export const cardGrid = style({
     display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    // column count follows the dialog width: 3-up at full width,
+    // 2-up / 1-up as the window narrows
+    gridTemplateColumns: 'repeat(auto-fill, minmax(215px, 1fr))',
     gap: '4px',
-    '@media': {
-        'screen and (max-width: 560px)': {
-            gridTemplateColumns: '1fr',
-        },
-    },
 });
 
 const cardBase = style({

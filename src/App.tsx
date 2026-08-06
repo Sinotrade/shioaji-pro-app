@@ -933,6 +933,7 @@ export default function App() {
                 open={paletteOpen}
                 onClose={() => setPaletteOpen(false)}
                 onJump={jumpToCode}
+                onAddPanel={addBlock}
             />
             <PanelLibrary
                 open={panelLibraryOpen}
