@@ -56,10 +56,27 @@ export interface Profile {
     workspace: Workspace;
 }
 
+export type PanelCategory =
+    | 'market'
+    | 'trading'
+    | 'account'
+    | 'derivatives'
+    | 'tools';
+
+export const PANEL_CATEGORIES: { key: PanelCategory; label: string }[] = [
+    { key: 'market', label: '行情' },
+    { key: 'trading', label: '交易' },
+    { key: 'account', label: '帳務分析' },
+    { key: 'derivatives', label: '選擇權/衍生品' },
+    { key: 'tools', label: '工具' },
+];
+
 export const BLOCK_META: Record<
     BlockType,
     {
         label: string;
+        description: string;
+        category: PanelCategory;
         pinnable: boolean;
         singleton: boolean;
         defaultSize: { w: number; h: number; minW: number; minH: number };
@@ -67,156 +84,208 @@ export const BLOCK_META: Record<
 > = {
     watchlist: {
         label: '自選清單',
+        description: '自選商品即時報價清單',
+        category: 'market',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 4, h: 14, minW: 3, minH: 6 },
     },
     movers: {
         label: '排行榜',
+        description: '漲跌幅、量與額排行掃描',
+        category: 'market',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 4, h: 11, minW: 3, minH: 5 },
     },
     dock: {
         label: '持倉/委託/帳務',
+        description: '持倉、委託與帳務總覽',
+        category: 'account',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 15, h: 9, minW: 6, minH: 5 },
     },
     chart: {
         label: 'K 線圖',
+        description: '多週期 K 線與技術指標',
+        category: 'market',
         pinnable: true,
         singleton: false,
         defaultSize: { w: 10, h: 12, minW: 6, minH: 7 },
     },
     depth: {
         label: '五檔',
+        description: '五檔報價與內外盤',
+        category: 'market',
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 8, minW: 4, minH: 7 },
     },
     ticket: {
         label: '下單面板',
+        description: '標準委託下單',
+        category: 'trading',
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 11, minW: 4, minH: 10 },
     },
     tape: {
         label: '成交明細',
+        description: '逐筆成交明細',
+        category: 'market',
         pinnable: true,
         singleton: false,
         defaultSize: { w: 4, h: 8, minW: 3, minH: 4 },
     },
     flash: {
         label: '閃電下單',
+        description: '價格梯快速點價下單',
+        category: 'trading',
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 14, minW: 4, minH: 8 },
     },
     pnl: {
         label: '損益分析',
+        description: '已實現與未實現損益',
+        category: 'account',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 8, h: 8, minW: 6, minH: 6 },
     },
     chips: {
         label: '籌碼資訊',
+        description: '法人買賣超與籌碼動向',
+        category: 'account',
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 8, minW: 4, minH: 5 },
     },
     volprofile: {
         label: '分價量表',
+        description: '各價位累計成交量分布',
+        category: 'trading',
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 12, minW: 4, minH: 6 },
     },
     optchain: {
         label: '選擇權 T 字',
+        description: '選擇權 T 字報價與下單',
+        category: 'derivatives',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 10, h: 14, minW: 8, minH: 8 },
     },
     stockfutures: {
         label: '個股期選擇器',
+        description: '個股期貨標的瀏覽',
+        category: 'derivatives',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 9, h: 12, minW: 7, minH: 8 },
     },
     warrants: {
         label: '權證篩選器',
+        description: '權證條件篩選',
+        category: 'derivatives',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 12, h: 14, minW: 9, minH: 9 },
     },
     replay: {
         label: '行情回放',
+        description: '歷史行情逐筆回放',
+        category: 'market',
         pinnable: true,
         singleton: false,
         defaultSize: { w: 10, h: 10, minW: 6, minH: 6 },
     },
     depthmap: {
         label: '委託簿熱圖',
+        description: '掛單量隨時間熱力分布',
+        category: 'trading',
         pinnable: true,
         singleton: false,
         defaultSize: { w: 8, h: 9, minW: 5, minH: 6 },
     },
     combo: {
         label: '組合單',
+        description: '選擇權組合單下單',
+        category: 'derivatives',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 6, h: 14, minW: 5, minH: 10 },
     },
     notices: {
         label: '通知中心',
+        description: '警示與系統通知',
+        category: 'tools',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 6, h: 10, minW: 4, minH: 6 },
     },
     debug: {
         label: '診斷 Debug',
+        description: '連線與訂閱狀態診斷',
+        category: 'tools',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 6, h: 11, minW: 4, minH: 7 },
     },
     grid: {
         label: '鋪單',
+        description: '一次掛出階梯限價單',
+        category: 'trading',
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 13, minW: 4, minH: 10 },
     },
     heatmap: {
         label: '類股熱力圖',
+        description: '類股漲跌熱力圖',
+        category: 'market',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 8, h: 11, minW: 5, minH: 6 },
     },
     pulse: {
         label: '市場脈動',
+        description: '指數自算與成分股貢獻',
+        category: 'market',
         pinnable: false,
         singleton: false,
         defaultSize: { w: 10, h: 12, minW: 7, minH: 7 },
     },
     signals: {
         label: '即時訊號',
+        description: '盤中異動訊號流',
+        category: 'market',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 8, h: 12, minW: 5, minH: 7 },
     },
     optpnl: {
         label: '選擇權損益圖',
+        description: '選擇權部位到期損益',
+        category: 'derivatives',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 8, h: 13, minW: 6, minH: 9 },
     },
     backtest: {
         label: '策略回測',
+        description: '策略歷史回測',
+        category: 'account',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 12, h: 14, minW: 8, minH: 8 },
     },
     assistant: {
         label: 'AI Agent',
+        description: 'AI 交易助理',
+        category: 'tools',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 7, h: 14, minW: 5, minH: 9 },

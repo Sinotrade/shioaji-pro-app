@@ -44,7 +44,7 @@ import {
     type FlashTileLayout,
 } from '../lib/tauri';
 import { fmtMoney } from '../lib/utils/format';
-import { LAYOUT_PRESETS, type BlockType } from '../lib/workspace';
+import { LAYOUT_PRESETS } from '../lib/workspace';
 import { MarketBar } from './market-bar';
 import { ServerManager } from './server-manager';
 import * as panel from './panel.css';
@@ -438,40 +438,6 @@ function RiskMenu() {
     );
 }
 
-function AddBlockMenu({
-    addableTypes,
-    onAddBlock,
-}: {
-    addableTypes: { type: BlockType; label: string; disabled: boolean }[];
-    onAddBlock: (type: BlockType) => void;
-}) {
-    return (
-        <Menu label='＋ 新增面板'>
-            {(close) => (
-                <>
-                    <span className={styles.settingLabel}>
-                        新增面板 Add Panel
-                    </span>
-                    {addableTypes.map((t) => (
-                        <button
-                            key={t.type}
-                            className={styles.menuItem}
-                            disabled={t.disabled}
-                            onClick={() => {
-                                onAddBlock(t.type);
-                                close();
-                            }}
-                        >
-                            {t.label}
-                            {t.disabled && '（已存在）'}
-                        </button>
-                    ))}
-                </>
-            )}
-        </Menu>
-    );
-}
-
 function ProfilesMenu({
     profiles,
     onSaveProfile,
@@ -668,8 +634,7 @@ function FlashTilesMenu({ flashCodes }: { flashCodes: string[] }) {
 
 export function HudHeader({
     accBalance,
-    addableTypes,
-    onAddBlock,
+    onOpenPanelLibrary,
     profiles,
     onSaveProfile,
     onLoadProfile,
@@ -679,8 +644,7 @@ export function HudHeader({
     flashCodes = [],
 }: {
     accBalance?: number;
-    addableTypes: { type: BlockType; label: string; disabled: boolean }[];
-    onAddBlock: (type: BlockType) => void;
+    onOpenPanelLibrary: () => void;
     flashCodes?: string[];
     profiles: string[];
     onSaveProfile: (name: string) => void;
@@ -775,10 +739,12 @@ export function HudHeader({
             />
             <AccountMenu />
             <RiskMenu />
-            <AddBlockMenu
-                addableTypes={addableTypes}
-                onAddBlock={onAddBlock}
-            />
+            <button
+                className={styles.resetBtn}
+                onClick={onOpenPanelLibrary}
+            >
+                ＋ 新增面板
+            </button>
             {flashCodes.length > 0 && (
                 <FlashTilesMenu flashCodes={flashCodes} />
             )}

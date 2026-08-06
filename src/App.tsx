@@ -18,6 +18,8 @@ import { EventToasts } from './components/event-toasts';
 import { FlashOrder } from './components/flash-order';
 import { HudHeader } from './components/hud-header';
 import { OptionChain } from './components/option-chain';
+import { PanelLibrary } from './components/panel-library';
+import * as libraryStyles from './components/panel-library.css';
 import {
     broadcastSelectCode,
     onBroadcastSelectCode,
@@ -729,6 +731,26 @@ export default function App() {
         [workspace, updateWorkspace],
     );
 
+    const [panelLibraryOpen, setPanelLibraryOpen] = useState(false);
+
+    // jump-to-existing-panel from the panel library: scroll the grid cell
+    // into view and pulse its outline once
+    const locateBlock = useCallback((id: string) => {
+        requestAnimationFrame(() => {
+            const cell = document.querySelector(`[data-block-id="${id}"]`);
+            if (!cell) return;
+            cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            cell.classList.remove(libraryStyles.blockFlash);
+            // restart the animation even when re-triggered back to back
+            void (cell as HTMLElement).offsetWidth;
+            cell.classList.add(libraryStyles.blockFlash);
+            setTimeout(
+                () => cell.classList.remove(libraryStyles.blockFlash),
+                1300,
+            );
+        });
+    }, []);
+
     const removeBlock = useCallback(
         (id: string) => {
             const gone = workspace.blocks.find((b) => b.id === id);
@@ -856,18 +878,6 @@ export default function App() {
         [items],
     );
 
-    const addableTypes = useMemo(
-        () =>
-            (Object.keys(BLOCK_META) as BlockType[]).map((type) => ({
-                type,
-                label: BLOCK_META[type].label,
-                disabled:
-                    BLOCK_META[type].singleton &&
-                    workspace.blocks.some((b) => b.type === type),
-            })),
-        [workspace.blocks],
-    );
-
     const booting = initialLoading;
 
     if (POPOUT_TYPE === 'traypanel') {
@@ -907,8 +917,7 @@ export default function App() {
         <div className={styles.shell}>
             <HudHeader
                 accBalance={balancePoll.data?.acc_balance}
-                addableTypes={addableTypes}
-                onAddBlock={addBlock}
+                onOpenPanelLibrary={() => setPanelLibraryOpen(true)}
                 profiles={profiles.map((p) => p.name)}
                 onSaveProfile={saveProfileAs}
                 onLoadProfile={loadProfile}
@@ -924,6 +933,13 @@ export default function App() {
                 open={paletteOpen}
                 onClose={() => setPaletteOpen(false)}
                 onJump={jumpToCode}
+            />
+            <PanelLibrary
+                open={panelLibraryOpen}
+                onClose={() => setPanelLibraryOpen(false)}
+                blocks={workspace.blocks}
+                onAdd={addBlock}
+                onLocate={locateBlock}
             />
 
             <div className={grid.gridWrap} ref={containerRef}>
@@ -952,7 +968,11 @@ export default function App() {
                         onLayoutChange={onLayoutChange}
                     >
                         {workspace.blocks.map((block) => (
-                            <div key={block.id} className={grid.cell}>
+                            <div
+                                key={block.id}
+                                data-block-id={block.id}
+                                className={grid.cell}
+                            >
                                 <BlockView
                                     block={block}
                                     selected={selected}
