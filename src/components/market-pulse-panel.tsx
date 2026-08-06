@@ -200,7 +200,12 @@ function signalDirection(rule: ScannerRule) {
 function signalDetail(rule: ScannerRule, extra: Record<string, unknown>) {
     if (rule === 'volume_burst') {
         const amount = Number(extra.amount ?? 0);
-        return amount > 0 ? `${(amount / 1_000_000).toFixed(1)} 百萬` : '爆量';
+        if (amount >= 100_000_000) {
+            return `${(amount / 100_000_000).toFixed(2)} 億`;
+        }
+        return amount > 0
+            ? `${Math.round(amount / 10_000).toLocaleString('en-US')} 萬`
+            : '爆量';
     }
     if (rule.includes('surge') || rule.includes('drop')) {
         const pct = Number(extra.change_percent ?? 0);
@@ -1271,8 +1276,8 @@ export function MarketPulsePanel({
                         <span className={styles.summaryMetric}>
                             <span className={styles.summaryLabel}>價差</span>
                             <strong
-                                className={`${styles.metricValue} ${panel.dirText[direction(indexGap ?? 0)]}`}
-                                title="自算指數 − 官方指數"
+                                className={styles.metricValue}
+                                title="自算指數 − 官方指數（資料領先程度，非多空方向）"
                             >
                                 {indexGap === null
                                     ? '--'
@@ -1282,8 +1287,8 @@ export function MarketPulsePanel({
                         <span className={styles.summaryMetric}>
                             <span className={styles.summaryLabel}>時間差</span>
                             <strong
-                                className={`${styles.metricValue} ${panel.dirText[direction(timeGap ?? 0)]}`}
-                                title="自算指數時間 − 官方指數時間"
+                                className={styles.metricValue}
+                                title="自算指數時間 − 官方指數時間（正值＝自算領先）"
                             >
                                 {timeGap === null
                                     ? '--'
@@ -1595,10 +1600,10 @@ export function MarketPulsePanel({
                                                 <span>貢獻傳導</span>
                                                 <span
                                                     className={styles.areaLegend}
+                                                    title="流寬只反映指數貢獻點數的分解，不代表實際資金流向"
                                                 >
-                                                    產業流寬＝貢獻點數 ·
-                                                    各產業展開前 5 大個股 ·
-                                                    非成交資金轉移
+                                                    流寬＝貢獻點數（非資金流）·
+                                                    各產業展開前 5 大個股
                                                 </span>
                                             </div>
                                             {stockDetailsPending &&
