@@ -15,6 +15,7 @@ import type {
     Action,
     FuturesOCType,
     OrderType,
+    StockOrderCond,
     StockOrderLot,
 } from '../lib/types/order';
 import {
@@ -44,6 +45,7 @@ export function OrderTicket({
     const [priceType, setPriceType] = useState('LMT');
     const [orderType, setOrderType] = useState<OrderType>('ROD');
     const [orderLot, setOrderLot] = useState<StockOrderLot>('Common');
+    const [orderCond, setOrderCond] = useState<StockOrderCond>('Cash');
     const [octype, setOctype] = useState<FuturesOCType>('Auto');
     const [daytradeShort, setDaytradeShort] = useState(false);
     const [armed, setArmed] = useState(false);
@@ -66,6 +68,7 @@ export function OrderTicket({
         setPriceType('LMT');
         setOrderType('ROD');
         setOrderLot('Common');
+        setOrderCond('Cash');
         setOctype('Auto');
         setDaytradeShort(false);
         setBracketOn(false);
@@ -85,6 +88,17 @@ export function OrderTicket({
         window.addEventListener(TICKET_ACTION_EVENT, onAction);
         return () => window.removeEventListener(TICKET_ACTION_EVENT, onAction);
     }, []);
+
+    // 融券/借券類條件為賣出限定 — 切回買進時歸位
+    useEffect(() => {
+        if (
+            action === 'Buy' &&
+            orderCond !== 'Cash' &&
+            orderCond !== 'MarginTrading'
+        ) {
+            setOrderCond('Cash');
+        }
+    }, [action, orderCond]);
 
     // autofill price from live quote until user edits it
     const liveClose = quote?.tick?.close;
@@ -135,8 +149,12 @@ export function OrderTicket({
                       price_type: priceType as 'LMT' | 'MKT',
                       order_type: orderType,
                       order_lot: orderLot,
+                      order_cond:
+                          orderCond !== 'Cash' ? orderCond : undefined,
                       daytrade_short:
-                          action === 'Sell' && daytradeShort
+                          action === 'Sell' &&
+                          daytradeShort &&
+                          orderCond === 'Cash'
                               ? true
                               : undefined,
                   });
@@ -372,9 +390,68 @@ export function OrderTicket({
                     </div>
                 )}
 
+                {!isFutures && orderLot === 'Common' && (
+                    <div className={styles.fieldRow}>
+                        <span className={styles.fieldLabel}>信用</span>
+                        <div className={styles.segGroup}>
+                            {(
+                                [
+                                    { value: 'Cash', label: '現股' },
+                                    { value: 'MarginTrading', label: '融資' },
+                                    { value: 'ShortSelling', label: '融券' },
+                                    { value: 'SBLShort', label: '借券' },
+                                    {
+                                        value: 'SBLShortPriceExempt',
+                                        label: '借券豁免',
+                                    },
+                                ] as {
+                                    value: StockOrderCond;
+                                    label: string;
+                                }[]
+                            )
+                                .filter(
+                                    (item) =>
+                                        action === 'Sell' ||
+                                        item.value === 'Cash' ||
+                                        item.value === 'MarginTrading',
+                                )
+                                .map((item) => (
+                                    <button
+                                        key={item.value}
+                                        className={
+                                            styles.seg[
+                                                orderCond === item.value
+                                                    ? 'on'
+                                                    : 'off'
+                                            ]
+                                        }
+                                        title={
+                                            item.value === 'SBLShort'
+                                                ? '一般借券賣出（委託類別5）'
+                                                : item.value ===
+                                                    'SBLShortPriceExempt'
+                                                  ? '價格豁免借券賣出（委託類別6，特殊金融商品適用）'
+                                                  : undefined
+                                        }
+                                        onClick={() => {
+                                            setOrderCond(item.value);
+                                            if (item.value !== 'Cash') {
+                                                setDaytradeShort(false);
+                                            }
+                                            setArmed(false);
+                                        }}
+                                    >
+                                        {item.label}
+                                    </button>
+                                ))}
+                        </div>
+                    </div>
+                )}
+
                 {!isFutures &&
                     action === 'Sell' &&
                     orderLot === 'Common' &&
+                    orderCond === 'Cash' &&
                     contract.day_trade === 'Yes' && (
                         <div className={styles.fieldRow}>
                             <span className={styles.fieldLabel}>沖賣</span>

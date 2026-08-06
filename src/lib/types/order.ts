@@ -13,6 +13,14 @@ export type StockOrderLot =
     | 'Fixing'
     | 'Odd'
     | 'IntradayOdd';
+// 信用/借券條件：SBLShort=一般借券賣出（委託類別5）、
+// SBLShortPriceExempt=價格豁免借券賣出（委託類別6，特殊金融商品）
+export type StockOrderCond =
+    | 'Cash'
+    | 'MarginTrading'
+    | 'ShortSelling'
+    | 'SBLShort'
+    | 'SBLShortPriceExempt';
 export type OrderStatusName =
     | 'Cancelled'
     | 'Filled'
@@ -30,6 +38,7 @@ export interface StockOrderReq {
     price_type: StockPriceType;
     order_type: OrderType;
     order_lot?: StockOrderLot;
+    order_cond?: StockOrderCond;
     daytrade_short?: boolean;
     custom_field?: string; // tag for app-managed orders (e.g. grid)
 }
