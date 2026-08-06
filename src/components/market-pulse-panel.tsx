@@ -6,7 +6,6 @@ import {
     LayoutGrid,
     Link2,
     ListOrdered,
-    Percent,
     SlidersHorizontal,
 } from 'lucide-react';
 import {
@@ -28,6 +27,7 @@ import {
 } from 'd3-sankey';
 import { useMarketPulseSnapshot } from '../hooks/use-market-pulse';
 import { useQuote } from '../hooks/use-stream';
+import { useThemeSettings } from '../lib/theme-store';
 import { ensureContract } from '../lib/contracts-cache';
 import {
     buildContributionFlow,
@@ -429,14 +429,18 @@ function ContributionSankey({
         return () => observer.disconnect();
     }, []);
 
+    const { fontScale } = useThemeSettings();
     const layout = useMemo(() => {
         const flow = buildContributionFlow(entries, details, industries);
         if (!flow.links.length || size.height <= 0) return null;
-        const width = Math.max(560, size.width);
-        const height = Math.max(220, size.height);
-        const rightLabelWidth = showPercent ? 260 : 205;
-        const rightInset = 18;
-        const pointsColumnX = width - (showPercent ? 88 : rightInset);
+        // geometry follows the root font-size setting so SVG text (rem-
+        // sized) keeps its reserved label space at any accessibility scale
+        const s = fontScale;
+        const width = Math.max(560 * s, size.width);
+        const height = Math.max(220 * s, size.height);
+        const rightLabelWidth = (showPercent ? 260 : 205) * s;
+        const rightInset = 18 * s;
+        const pointsColumnX = width - (showPercent ? 88 * s : rightInset);
         const percentColumnX = width - rightInset;
         const generator = sankey<
             SankeyGraph<ContributionFlowNode, ContributionFlowLink>,
@@ -445,14 +449,15 @@ function ContributionSankey({
         >()
             .nodeId((node) => node.id)
             .nodeWidth(8)
-            .nodePadding(9)
+            .nodePadding(9 * s)
             .extent([
-                [12, 28],
-                [width - rightLabelWidth, height - 14],
+                [12, 28 * s],
+                [width - rightLabelWidth, height - 14 * s],
             ]);
         return {
             width,
             height,
+            scale: s,
             rightLabelWidth,
             pointsColumnX,
             percentColumnX,
@@ -461,7 +466,7 @@ function ContributionSankey({
                 links: flow.links.map((link) => ({ ...link })),
             }),
         };
-    }, [details, entries, industries, showPercent, size]);
+    }, [details, entries, fontScale, industries, showPercent, size]);
 
     const linkPath = useMemo(
         () => sankeyLinkHorizontal<ContributionFlowNode, ContributionFlowLink>(),
@@ -498,14 +503,18 @@ function ContributionSankey({
                     </g>
                     <g className={styles.sankeyTableHeader}>
                         <text
-                            x={layout.width - layout.rightLabelWidth + 14}
-                            y={16}
+                            x={
+                                layout.width -
+                                layout.rightLabelWidth +
+                                14 * layout.scale
+                            }
+                            y={16 * layout.scale}
                         >
                             成分股
                         </text>
                         <text
                             x={layout.pointsColumnX}
-                            y={16}
+                            y={16 * layout.scale}
                             textAnchor="end"
                         >
                             貢獻（點）
@@ -513,7 +522,7 @@ function ContributionSankey({
                         {showPercent && (
                             <text
                                 x={layout.percentColumnX}
-                                y={16}
+                                y={16 * layout.scale}
                                 textAnchor="end"
                             >
                                 漲跌幅
@@ -1230,20 +1239,6 @@ export function MarketPulsePanel({
                         >
                             <GitBranch size={12} /> 貢獻傳導
                         </button>
-                        {sections.includes('flow') && (
-                            <button
-                                className={
-                                    styles.control[showFlowPercent ? 'on' : 'off']
-                                }
-                                onClick={() =>
-                                    setShowFlowPercent((current) => !current)
-                                }
-                                aria-pressed={showFlowPercent}
-                                title="顯示或隱藏個股漲跌幅"
-                            >
-                                <Percent size={12} /> 漲跌幅
-                            </button>
-                        )}
                         <span className={styles.spacer} />
                     </div>
                     <div className={styles.summary}>
@@ -1601,7 +1596,41 @@ export function MarketPulsePanel({
                                             <div
                                                 className={styles.sectionHeading}
                                             >
-                                                <span>貢獻傳導</span>
+                                                <span
+                                                    className={
+                                                        styles.sectionHeadingTitle
+                                                    }
+                                                >
+                                                    貢獻傳導
+                                                    <span
+                                                        className={
+                                                            styles.headingToggleGroup
+                                                        }
+                                                    >
+                                                        <button
+                                                            className={
+                                                                styles
+                                                                    .headingToggle[
+                                                                    showFlowPercent
+                                                                        ? 'on'
+                                                                        : 'off'
+                                                                ]
+                                                            }
+                                                            aria-pressed={
+                                                                showFlowPercent
+                                                            }
+                                                            title="顯示或隱藏個股漲跌幅"
+                                                            onClick={() =>
+                                                                setShowFlowPercent(
+                                                                    (current) =>
+                                                                        !current,
+                                                                )
+                                                            }
+                                                        >
+                                                            漲跌幅
+                                                        </button>
+                                                    </span>
+                                                </span>
                                                 <span
                                                     className={styles.areaLegend}
                                                     title="流寬只反映指數貢獻點數的分解，不代表實際資金流向"

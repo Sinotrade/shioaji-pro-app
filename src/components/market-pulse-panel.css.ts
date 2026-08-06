@@ -376,6 +376,12 @@ export const sectionHeading = style({
     fontWeight: 600,
     borderBottom: `1px solid ${vars.color.border}`,
 });
+export const sectionHeadingTitle = style({
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    gap: vars.space.xs,
+    whiteSpace: 'nowrap',
+});
 export const stockTableHeading = style({
     display: 'grid',
     gridTemplateColumns: '1.5rem minmax(0, 1fr) 5.75rem 4.25rem',
@@ -596,13 +602,13 @@ export const treemapShare = style({
 export const sankeyViewport = style({
     position: 'relative',
     flex: 1,
-    minHeight: '220px',
+    minHeight: '13.75rem',
     overflow: 'auto hidden',
     background: vars.color.inset,
 });
 export const sankey = style({
     display: 'block',
-    minWidth: '560px',
+    minWidth: '35rem',
 });
 export const sankeyLinks = style({
     fill: 'none',
@@ -620,12 +626,12 @@ export const sankeyInteractiveNode = style({
 export const sankeyTableHeader = style({
     fill: vars.color.mutedForeground,
     fontFamily: vars.font.body,
-    fontSize: '8px',
+    fontSize: '0.55rem',
     fontWeight: 600,
 });
 export const sankeyLabel = style({
     fontFamily: vars.font.body,
-    fontSize: '10px',
+    fontSize: '0.66rem',
     fontWeight: 600,
     paintOrder: 'stroke',
     stroke: vars.color.inset,
@@ -634,12 +640,12 @@ export const sankeyLabel = style({
 });
 export const sankeyValue = style({
     fontFamily: vars.font.mono,
-    fontSize: '10px',
+    fontSize: '0.66rem',
     fontWeight: 700,
 });
 export const sankeyPercent = style({
     fontFamily: vars.font.mono,
-    fontSize: '9px',
+    fontSize: '0.6rem',
     fontWeight: 500,
 });
 export const empty = style({
