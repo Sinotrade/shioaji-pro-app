@@ -277,7 +277,7 @@ export const BLOCK_META: Record<
     backtest: {
         label: '策略回測',
         description: '策略歷史回測',
-        category: 'account',
+        category: 'tools',
         pinnable: false,
         singleton: true,
         defaultSize: { w: 12, h: 14, minW: 8, minH: 8 },
