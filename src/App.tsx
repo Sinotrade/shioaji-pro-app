@@ -941,6 +941,7 @@ export default function App() {
                 blocks={workspace.blocks}
                 onAdd={addBlock}
                 onLocate={locateBlock}
+                selectedCode={selected?.code}
             />
 
             <div className={grid.gridWrap} ref={containerRef}>

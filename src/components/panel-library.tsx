@@ -16,6 +16,7 @@ import {
     ChevronRight,
     ClipboardList,
     Combine,
+    Eye,
     Filter,
     Flame,
     FlaskConical,
@@ -49,6 +50,13 @@ import {
     type BlockType,
     PANEL_CATEGORIES,
 } from '../lib/workspace';
+import {
+    canLivePreview,
+    LIVE_PREVIEW_H,
+    LIVE_PREVIEW_W,
+    LivePanelPreview,
+    livePreviewEnabled,
+} from './panel-preview-live';
 import { PANEL_PREVIEWS } from './panel-previews';
 import * as styles from './panel-library.css';
 
@@ -117,17 +125,21 @@ export function PanelLibrary({
     blocks,
     onAdd,
     onLocate,
+    selectedCode,
 }: {
     open: boolean;
     onClose: () => void;
     blocks: Block[];
     onAdd: (type: BlockType) => void;
     onLocate: (blockId: string) => void;
+    selectedCode?: string | null;
 }) {
     const [query, setQuery] = useState('');
     const [activeIndex, setActiveIndex] = useState(0);
     const [recents, setRecents] = useState<BlockType[]>(loadRecents);
     const [collapsed, setCollapsed] = useState<string[]>([]);
+    // live preview mounts one real panel at a time, only on request
+    const [liveType, setLiveType] = useState<BlockType | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const bodyRef = useRef<HTMLDivElement>(null);
 
@@ -136,6 +148,7 @@ export function PanelLibrary({
             setQuery('');
             setActiveIndex(0);
             setRecents(loadRecents());
+            setLiveType(null);
             setTimeout(() => inputRef.current?.focus(), 0);
         }
     }, [open]);
@@ -199,6 +212,11 @@ export function PanelLibrary({
     useEffect(() => {
         setActiveIndex(0);
     }, [trimmed]);
+
+    // switching cards unmounts any live preview immediately
+    useEffect(() => {
+        setLiveType(null);
+    }, [activeIndex]);
 
     useEffect(() => {
         const row = bodyRef.current?.querySelector(
@@ -383,8 +401,29 @@ export function PanelLibrary({
                 </div>
                 </div>
                 {activeItem && (
-                    <div className={styles.previewFlyout}>
-                        {PANEL_PREVIEWS[activeItem.type]}
+                    <div
+                        className={`${styles.previewFlyout} ${
+                            liveType === activeItem.type
+                                ? styles.previewFlyoutLive
+                                : ''
+                        }`}
+                    >
+                        {liveType === activeItem.type ? (
+                            <div
+                                className={styles.livePreviewViewport}
+                                style={{
+                                    width: LIVE_PREVIEW_W,
+                                    height: LIVE_PREVIEW_H,
+                                }}
+                            >
+                                <LivePanelPreview
+                                    type={activeItem.type}
+                                    code={selectedCode || '2330'}
+                                />
+                            </div>
+                        ) : (
+                            PANEL_PREVIEWS[activeItem.type]
+                        )}
                         <span className={styles.previewTitle}>
                             {BLOCK_META[activeItem.type].label}
                         </span>
@@ -393,6 +432,18 @@ export function PanelLibrary({
                             {activeItem.existingId &&
                                 ' · 已在版面中，選取後前往'}
                         </span>
+                        {liveType !== activeItem.type &&
+                            livePreviewEnabled() &&
+                            canLivePreview(activeItem.type) && (
+                                <button
+                                    className={styles.previewButton}
+                                    onClick={() =>
+                                        setLiveType(activeItem.type)
+                                    }
+                                >
+                                    <Eye size={12} /> 即時預覽
+                                </button>
+                            )}
                     </div>
                 )}
             </div>

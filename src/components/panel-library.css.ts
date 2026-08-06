@@ -50,6 +50,58 @@ export const previewFlyout = style({
     },
 });
 
+export const previewFlyoutLive = style({
+    width: 'auto',
+});
+
+export const previewButton = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '5px',
+    padding: '5px 8px',
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    background: 'transparent',
+    color: vars.color.accent,
+    fontFamily: vars.font.body,
+    fontSize: '0.66rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+    ':hover': { background: vars.color.muted },
+});
+
+// live preview: the real panel renders full-size and scales down; all
+// interaction is disabled — it is a picture, not a working panel
+export const livePreviewViewport = style({
+    position: 'relative',
+    overflow: 'hidden',
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    background: vars.color.panel,
+    pointerEvents: 'none',
+    userSelect: 'none',
+});
+
+export const livePreviewCanvas = style({
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    transformOrigin: 'top left',
+    background: vars.color.panel,
+});
+
+export const livePreviewLoading = style({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    color: vars.color.mutedForeground,
+    fontSize: '1.2rem',
+});
+
 export const previewTitle = style({
     fontSize: '0.74rem',
     fontWeight: 600,
