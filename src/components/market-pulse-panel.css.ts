@@ -389,12 +389,99 @@ export const stockTableHeading = style({
 export const stockTableTitle = style({
     gridColumn: '1 / 3',
 });
+export const stockTableTitleWide = style({
+    gridColumn: '1 / -1',
+});
 export const stockTableColumn = style({
     justifySelf: 'end',
     fontFamily: vars.font.mono,
     fontSize: '0.57rem',
     fontWeight: 600,
     whiteSpace: 'nowrap',
+});
+export const headingToggleGroup = style({
+    display: 'inline-flex',
+    gap: '3px',
+    marginLeft: vars.space.sm,
+});
+const headingToggleBase = style({
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    padding: '1px 6px',
+    background: 'transparent',
+    fontFamily: vars.font.body,
+    fontSize: '0.57rem',
+    fontWeight: 600,
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+});
+export const headingToggle = styleVariants({
+    off: [headingToggleBase, { color: vars.color.mutedForeground }],
+    on: [
+        headingToggleBase,
+        {
+            color: vars.color.accent,
+            borderColor: vars.color.accent,
+            background: vars.color.accentDim,
+        },
+    ],
+});
+export const sideColumns = style({
+    display: 'flex',
+    flex: 1,
+    minHeight: 0,
+});
+export const sideColumn = style({
+    display: 'flex',
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'column',
+});
+export const sideColumnDivider = style({
+    flex: '0 0 1px',
+    background: vars.color.border,
+});
+export const sideHeader = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: vars.space.xs,
+    padding: `4px ${vars.space.sm}`,
+    color: vars.color.mutedForeground,
+    fontWeight: 600,
+    fontSize: '0.61rem',
+    borderBottom: `1px solid ${vars.color.border}`,
+});
+export const sideCount = style({
+    fontFamily: vars.font.mono,
+    fontWeight: 400,
+});
+export const sideList = style({ flex: 1, minHeight: 0, overflow: 'auto' });
+const sideRowBase = style({
+    width: '100%',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto auto',
+    alignItems: 'center',
+    gap: vars.space.xs,
+    padding: `3px ${vars.space.sm}`,
+    color: vars.color.foreground,
+    border: 0,
+    borderBottom: `1px solid ${vars.color.border}`,
+    backgroundColor: 'transparent',
+    backgroundImage: `linear-gradient(
+        color-mix(in srgb, var(--bar-color) 15%, transparent),
+        color-mix(in srgb, var(--bar-color) 15%, transparent)
+    )`,
+    backgroundRepeat: 'no-repeat',
+    backgroundSize: 'var(--bar-size, 0%) 100%',
+    fontFamily: vars.font.mono,
+    fontSize: '0.64rem',
+    cursor: 'pointer',
+    ':hover': { backgroundColor: vars.color.muted },
+});
+export const sideRow = styleVariants({
+    up: [sideRowBase, { backgroundPosition: 'right center' }],
+    down: [sideRowBase, { backgroundPosition: 'left center' }],
 });
 export const areaLegend = style({
     overflow: 'hidden',

@@ -69,6 +69,7 @@ import * as styles from './market-pulse-panel.css';
 
 type PulseView = 'index' | 'signals';
 type IndexVisualization = 'distribution' | 'flow';
+type StocksView = 'impact' | 'sides';
 type SignalFamily = 'limit' | 'move' | 'volume' | 'state';
 type SignalFilterGroup = 'market' | SignalFamily;
 
@@ -90,13 +91,17 @@ const INDICES: Record<'IX0001' | 'IX0043', ContractBase> = {
 };
 
 const INDEX_LABELS = { IX0001: '加權', IX0043: '櫃買' } as const;
-const RANKINGS: { value: ContributionRanking; label: string }[] = [
-    { value: 'top10', label: '前十' },
-    { value: 'abs10', label: '影響最大' },
-    { value: 'positive25', label: '上漲貢獻' },
-    { value: 'negative25', label: '下跌貢獻' },
+// The panel only ever subscribes these two rankings — top10/abs10 are
+// strict subsets of their union, so every view derives client-side.
+const CONTRIBUTION_RANKINGS: ContributionRanking[] = [
+    'positive25',
+    'negative25',
 ];
-const FLOW_RANKINGS: ContributionRanking[] = ['positive25', 'negative25'];
+const IMPACT_LIMIT = 10;
+const STOCKS_VIEWS: { value: StocksView; label: string }[] = [
+    { value: 'impact', label: '影響最大' },
+    { value: 'sides', label: '多空對照' },
+];
 const STOCK_DETAIL_BATCH_SIZE = 8;
 const PULSE_SECTIONS: PulseSection[] = ['stocks', 'industries', 'flow'];
 const DEFAULT_SECTION_WEIGHTS: PulseSectionWeights = {
@@ -205,6 +210,80 @@ function signalDetail(rule: ScannerRule, extra: Record<string, unknown>) {
     }
     const price = Number(extra.trigger_price ?? extra.limit_price ?? 0);
     return price > 0 ? price.toLocaleString('en-US') : '';
+}
+
+function ContributionSideColumn({
+    side,
+    entries,
+    scale,
+    stockByCode,
+    namesPending,
+    subscriptionPending,
+    onPick,
+}: {
+    side: 'up' | 'down';
+    entries: IndexContributionEntry[];
+    scale: number;
+    stockByCode: ReadonlyMap<string, StockMeta>;
+    namesPending: boolean;
+    subscriptionPending: boolean;
+    onPick?: (code: string) => void;
+}) {
+    const color = side === 'up' ? vars.color.up : vars.color.down;
+    return (
+        <div className={styles.sideColumn}>
+            <div className={styles.sideHeader}>
+                <span>{side === 'up' ? '上漲貢獻' : '下跌貢獻'}</span>
+                <span className={styles.sideCount}>{entries.length}</span>
+            </div>
+            <div className={styles.sideList}>
+                {entries.map((entry) => (
+                    <button
+                        key={entry.code}
+                        className={styles.sideRow[side]}
+                        style={
+                            {
+                                '--bar-color': color,
+                                '--bar-size': `${Math.min(100, (Math.abs(entry.points) / scale) * 100).toFixed(1)}%`,
+                            } as CSSProperties
+                        }
+                        onClick={() => onPick?.(entry.code)}
+                    >
+                        <span className={styles.code}>
+                            {entry.code}
+                            <small className={styles.stockName}>
+                                {stockByCode.get(entry.code)?.name ??
+                                    (namesPending
+                                        ? '名稱載入中'
+                                        : '名稱未取得')}
+                            </small>
+                        </span>
+                        <span
+                            className={`${styles.points} ${panel.dirText[side]}`}
+                        >
+                            {entry.points > 0 ? '+' : ''}
+                            {entry.points.toFixed(2)}
+                        </span>
+                        <span
+                            className={`${styles.pct} ${panel.dirText[direction(entry.pct_chg)]}`}
+                        >
+                            {entry.pct_chg > 0 ? '+' : ''}
+                            {entry.pct_chg.toFixed(2)}%
+                        </span>
+                    </button>
+                ))}
+                {entries.length === 0 && (
+                    <div className={styles.empty}>
+                        {subscriptionPending
+                            ? '訂閱中...'
+                            : side === 'up'
+                              ? '無上漲貢獻'
+                              : '無下跌貢獻'}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
 }
 
 interface TreemapDatum {
@@ -586,7 +665,7 @@ export function MarketPulsePanel({
     sectionWeightsRef.current = sectionWeights;
     const [indexCode, setIndexCode] =
         useState<PulseIndexCode>(initialIndexCode);
-    const [ranking, setRanking] = useState<ContributionRanking>('top10');
+    const [stocksView, setStocksView] = useState<StocksView>('impact');
     const [enabledSignalRules, setEnabledSignalRules] = useState<ScannerRule[]>(
         () => [...FAMILY_RULES.move],
     );
@@ -692,9 +771,8 @@ export function MarketPulsePanel({
         if (view !== 'index') return;
         let active = true;
         setContributionPending(true);
-        const rankings = [...new Set([ranking, ...FLOW_RANKINGS])];
         void Promise.all(
-            rankings.map((value) =>
+            CONTRIBUTION_RANKINGS.map((value) =>
                 subscribeEnrichedIndex('index_contribution', index, value),
             ),
         )
@@ -713,7 +791,7 @@ export function MarketPulsePanel({
         return () => {
             active = false;
             void Promise.allSettled(
-                rankings.map((value) =>
+                CONTRIBUTION_RANKINGS.map((value) =>
                     unsubscribeEnrichedIndex(
                         'index_contribution',
                         index,
@@ -722,7 +800,7 @@ export function MarketPulsePanel({
                 ),
             );
         };
-    }, [index, ranking, view]);
+    }, [index, view]);
 
     useEffect(() => {
         if (view !== 'signals') return;
@@ -783,29 +861,51 @@ export function MarketPulsePanel({
         nearMonthPrice,
         calculated?.close,
     );
-    const contribution = pulse.indexContribution.get(
-        `${indexCode}:${ranking}`,
+    const positiveEvent = pulse.indexContribution.get(
+        `${indexCode}:positive25`,
+    );
+    const negativeEvent = pulse.indexContribution.get(
+        `${indexCode}:negative25`,
     );
     const industryContribution = pulse.industryContribution.get(indexCode);
-    const drivers = contribution?.entries ?? [];
+    const positiveDrivers = useMemo(
+        () =>
+            (positiveEvent?.entries ?? [])
+                .filter((entry) => entry.points > 0)
+                .sort((a, b) => b.points - a.points),
+        [positiveEvent],
+    );
+    const negativeDrivers = useMemo(
+        () =>
+            (negativeEvent?.entries ?? [])
+                .filter((entry) => entry.points < 0)
+                .sort((a, b) => a.points - b.points),
+        [negativeEvent],
+    );
     const flowDrivers = useMemo(() => {
         const byCode = new Map<string, IndexContributionEntry>();
-        for (const flowRanking of FLOW_RANKINGS) {
-            const event = pulse.indexContribution.get(
-                `${indexCode}:${flowRanking}`,
-            );
-            for (const entry of event?.entries ?? []) {
-                const current = byCode.get(entry.code);
-                if (!current || Math.abs(entry.points) > Math.abs(current.points)) {
-                    byCode.set(entry.code, entry);
-                }
+        for (const entry of [...positiveDrivers, ...negativeDrivers]) {
+            const current = byCode.get(entry.code);
+            if (!current || Math.abs(entry.points) > Math.abs(current.points)) {
+                byCode.set(entry.code, entry);
             }
         }
-        for (const entry of drivers) {
-            if (!byCode.has(entry.code)) byCode.set(entry.code, entry);
-        }
         return [...byCode.values()];
-    }, [drivers, indexCode, pulse.indexContribution, pulse.version]);
+    }, [negativeDrivers, positiveDrivers]);
+    const impactDrivers = useMemo(
+        () =>
+            [...flowDrivers]
+                .sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
+                .slice(0, IMPACT_LIMIT),
+        [flowDrivers],
+    );
+    const sideBarScale = useMemo(() => {
+        const maxAbs = Math.max(
+            Math.abs(positiveDrivers[0]?.points ?? 0),
+            Math.abs(negativeDrivers[0]?.points ?? 0),
+        );
+        return maxAbs > 0 ? maxAbs : 1;
+    }, [negativeDrivers, positiveDrivers]);
     const driverCodes = [...new Set(flowDrivers.map((entry) => entry.code))]
         .sort()
         .join(',');
@@ -878,7 +978,9 @@ export function MarketPulsePanel({
         0,
     );
     const contributionIsSimtrade =
-        contribution?.simtrade || industryContribution?.simtrade;
+        positiveEvent?.simtrade ||
+        negativeEvent?.simtrade ||
+        industryContribution?.simtrade;
     const enabledSignalRuleSet = new Set(enabledSignalRules);
     const enabledSignalExchangeSet = new Set(enabledSignalExchanges);
     const visibleSignals = pulse.signals
@@ -1134,19 +1236,6 @@ export function MarketPulsePanel({
                             </button>
                         )}
                         <span className={styles.spacer} />
-                        {RANKINGS.map((item) => (
-                            <button
-                                key={item.value}
-                                className={
-                                    styles.control[
-                                        item.value === ranking ? 'on' : 'off'
-                                    ]
-                                }
-                                onClick={() => setRanking(item.value)}
-                            >
-                                {item.label}
-                            </button>
-                        ))}
                     </div>
                     <div className={styles.summary}>
                         <span className={styles.summaryMetric}>
@@ -1296,28 +1385,116 @@ export function MarketPulsePanel({
                                             >
                                                 <span
                                                     className={
-                                                        styles.stockTableTitle
+                                                        stocksView === 'sides'
+                                                            ? styles.stockTableTitleWide
+                                                            : styles.stockTableTitle
                                                     }
                                                 >
                                                     成分股貢獻
+                                                    <span
+                                                        className={
+                                                            styles.headingToggleGroup
+                                                        }
+                                                    >
+                                                        {STOCKS_VIEWS.map(
+                                                            (item) => (
+                                                                <button
+                                                                    key={
+                                                                        item.value
+                                                                    }
+                                                                    className={
+                                                                        styles
+                                                                            .headingToggle[
+                                                                            item.value ===
+                                                                            stocksView
+                                                                                ? 'on'
+                                                                                : 'off'
+                                                                        ]
+                                                                    }
+                                                                    aria-pressed={
+                                                                        item.value ===
+                                                                        stocksView
+                                                                    }
+                                                                    onClick={() =>
+                                                                        setStocksView(
+                                                                            item.value,
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    {item.label}
+                                                                </button>
+                                                            ),
+                                                        )}
+                                                    </span>
                                                 </span>
-                                                <span
-                                                    className={
-                                                        styles.stockTableColumn
-                                                    }
-                                                >
-                                                    貢獻（點）
-                                                </span>
-                                                <span
-                                                    className={
-                                                        styles.stockTableColumn
-                                                    }
-                                                >
-                                                    漲跌幅
-                                                </span>
+                                                {stocksView === 'impact' && (
+                                                    <>
+                                                        <span
+                                                            className={
+                                                                styles.stockTableColumn
+                                                            }
+                                                        >
+                                                            貢獻（點）
+                                                        </span>
+                                                        <span
+                                                            className={
+                                                                styles.stockTableColumn
+                                                            }
+                                                        >
+                                                            漲跌幅
+                                                        </span>
+                                                    </>
+                                                )}
                                             </div>
+                                            {stocksView === 'sides' ? (
+                                                <div
+                                                    className={
+                                                        styles.sideColumns
+                                                    }
+                                                >
+                                                    <ContributionSideColumn
+                                                        side='up'
+                                                        entries={
+                                                            positiveDrivers
+                                                        }
+                                                        scale={sideBarScale}
+                                                        stockByCode={
+                                                            stockByCode
+                                                        }
+                                                        namesPending={
+                                                            stockDetailsPending
+                                                        }
+                                                        subscriptionPending={
+                                                            contributionPending
+                                                        }
+                                                        onPick={onPick}
+                                                    />
+                                                    <div
+                                                        className={
+                                                            styles.sideColumnDivider
+                                                        }
+                                                    />
+                                                    <ContributionSideColumn
+                                                        side='down'
+                                                        entries={
+                                                            negativeDrivers
+                                                        }
+                                                        scale={sideBarScale}
+                                                        stockByCode={
+                                                            stockByCode
+                                                        }
+                                                        namesPending={
+                                                            stockDetailsPending
+                                                        }
+                                                        subscriptionPending={
+                                                            contributionPending
+                                                        }
+                                                        onPick={onPick}
+                                                    />
+                                                </div>
+                                            ) : (
                                             <div className={styles.list}>
-                                                {drivers.map((entry, idx) => (
+                                                {impactDrivers.map((entry, idx) => (
                                                     <button
                                                         key={`${entry.code}-${idx}`}
                                                         className={
@@ -1372,7 +1549,7 @@ export function MarketPulsePanel({
                                                         </span>
                                                     </button>
                                                 ))}
-                                                {drivers.length === 0 && (
+                                                {impactDrivers.length === 0 && (
                                                     <div
                                                         className={styles.empty}
                                                     >
@@ -1382,6 +1559,7 @@ export function MarketPulsePanel({
                                                     </div>
                                                 )}
                                             </div>
+                                            )}
                                         </>
                                     ) : section === 'industries' ? (
                                         <>
