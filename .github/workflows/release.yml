@@ -35,18 +35,22 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             sidecar: macOS-aarch64.tar.gz
+            mkcert: darwin-arm64
             args: '--target aarch64-apple-darwin'
           - platform: macos-latest
             target: x86_64-apple-darwin
             sidecar: macOS-x86_64.tar.gz
+            mkcert: darwin-amd64
             args: '--target x86_64-apple-darwin'
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             sidecar: Linux-x86_64.tar.gz
+            mkcert: linux-amd64
             args: ''
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             sidecar: Windows-x86_64.zip
+            mkcert: windows-amd64.exe
             args: ''
 
     runs-on: ${{ matrix.platform }}
@@ -121,6 +125,21 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/sinotrade/shioaji/releases/download/$env:SHIOAJI_VERSION/shioaji-$env:SHIOAJI_VERSION-${{ matrix.sidecar }}" -OutFile sidecar.zip
           Expand-Archive sidecar.zip -DestinationPath sidecar-extract
           Move-Item sidecar-extract/shioaji.exe "src-tauri/binaries/shioaji-${{ matrix.target }}.exe"
+
+      # mkcert（BSD-3, FiloSottile/mkcert）內建為第二個 sidecar，
+      # 讓「啟用本機 HTTPS」一鍵完成、user 不需自行安裝任何工具
+      - name: Download mkcert sidecar (unix)
+        if: matrix.platform != 'windows-latest'
+        run: |
+          curl -fsSL -o "src-tauri/binaries/mkcert-${{ matrix.target }}" \
+            "https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-${{ matrix.mkcert }}"
+          chmod +x "src-tauri/binaries/mkcert-${{ matrix.target }}"
+
+      - name: Download mkcert sidecar (windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-${{ matrix.mkcert }}" -OutFile "src-tauri/binaries/mkcert-${{ matrix.target }}.exe"
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile

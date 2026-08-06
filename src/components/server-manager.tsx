@@ -40,7 +40,6 @@ import {
     getAppUpdateState,
     isTauri,
     loadDesktopSettings,
-    MKCERT_INSTALL_HINT,
     openLatestRelease,
     pickCaFile,
     pickEnvFile,
@@ -292,12 +291,17 @@ export function ServerManager({
             const res = await ensureLocalTlsCert();
             if (!res.ok) {
                 setHttpsMsg(
-                    res.output === 'MKCERT_MISSING'
-                        ? `需要 mkcert 產生本機信任憑證。請先在終端機執行「${MKCERT_INSTALL_HINT}」安裝，完成後再按一次。`
-                        : `憑證產生失敗：${res.output.slice(-300)}`,
+                    res.output === 'TRUST_DECLINED'
+                        ? '未完成憑證信任 — 系統的信任視窗被取消或驗證未通過，再按一次「啟用」可重試。'
+                        : res.output === 'LINUX_MANUAL_TRUST'
+                          ? 'Linux 需手動信任本機憑證：請在終端機安裝 mkcert 並執行「mkcert -install」後，再按一次「啟用」。'
+                          : res.output.startsWith('MKCERT_SIDECAR_MISSING')
+                            ? '找不到內建的 mkcert 元件（開發環境請先執行 scripts/fetch-mkcert.sh）。'
+                            : `憑證產生失敗：${res.output.slice(-300)}`,
                 );
                 return;
             }
+            setHttpsMsg('');
             const merged = { ...settings, httpsEnabled: true };
             persist({ httpsEnabled: true });
             notify({
@@ -743,7 +747,7 @@ export function ServerManager({
                             >
                                 <Lock size={13} />
                                 {httpsBusy
-                                    ? '正在產生憑證…（首次可能跳出系統授權）'
+                                    ? '正在產生憑證…（系統若跳出信任視窗請允許）'
                                     : '啟用本機 HTTPS'}
                             </button>
                         )}
@@ -757,8 +761,9 @@ export function ServerManager({
                         )}
                         {!settings.httpsEnabled && (
                             <span className={styles.emptyHint}>
-                                以 mkcert 產生 localhost／127.0.0.1 信任憑證，
+                                一鍵產生並信任 localhost／127.0.0.1 本機憑證，
                                 供瀏覽器以 HTTPS＋HTTP/2 連本機伺服器。
+                                首次啟用會跳出一次系統的憑證信任視窗。
                             </span>
                         )}
 

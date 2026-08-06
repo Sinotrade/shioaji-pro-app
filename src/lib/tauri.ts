@@ -156,22 +156,19 @@ function candidatePorts(): number[] {
 
 // ---- 本機 HTTPS（mkcert 憑證）----
 // The sidecar (shioaji ≥1.7.2) serves HTTPS with HTTP/2 when
-// SJ_HTTP_TLS_CERT/KEY point at a certificate. We generate a
-// locally-trusted one with mkcert covering localhost / 127.0.0.1 / ::1,
-// stored under ~/.shioaji/tls (the upstream-documented location).
+// SJ_HTTP_TLS_CERT/KEY point at a certificate. mkcert is BUNDLED as a
+// second sidecar (binaries/mkcert) so users never install anything — one
+// click generates a local CA + a localhost / 127.0.0.1 / ::1 leaf under
+// ~/.shioaji/tls (the upstream-documented location). The only interaction
+// left is the OS-native trust dialog, which by design must be the user's
+// own click (macOS asks for the login password, Windows shows a confirm).
 
 const IS_WINDOWS =
     typeof navigator !== 'undefined' &&
     /Win/i.test(navigator.platform || navigator.userAgent);
-
-// GUI apps on macOS/Linux don't inherit the login shell PATH — cover the
-// common install prefixes so `mkcert` from brew/apt/go is found
-const SHELL_PATH_PREFIX =
-    'export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/go/bin";';
-
-export const MKCERT_INSTALL_HINT = IS_WINDOWS
-    ? 'choco install mkcert（或 scoop install mkcert）'
-    : 'brew install mkcert';
+const IS_MAC =
+    typeof navigator !== 'undefined' &&
+    /Mac/i.test(navigator.platform || navigator.userAgent);
 
 async function tlsPaths(): Promise<{ dir: string; cert: string; key: string }> {
     const { homeDir, join } = await import('@tauri-apps/api/path');
@@ -207,29 +204,80 @@ async function runUserShell(script: string): Promise<SidecarResult> {
     return { ok: out.code === 0, output: text };
 }
 
-// generate a locally-trusted localhost certificate with mkcert. The one-time
-// local-CA install (`mkcert -install`) can pop an OS authorization prompt.
-// Returns output 'MKCERT_MISSING' when mkcert is not installed.
+// run the bundled mkcert sidecar
+async function runMkcert(args: string[]): Promise<SidecarResult> {
+    try {
+        const { Command } = await import('@tauri-apps/plugin-shell');
+        const out = await Command.sidecar('binaries/mkcert', args).execute();
+        const text = `${out.stdout}\n${out.stderr}`.replace(ANSI_RE, '').trim();
+        return { ok: out.code === 0, output: text };
+    } catch (e) {
+        // dev builds without scripts/fetch-mkcert.sh, or a broken bundle
+        return { ok: false, output: `MKCERT_SIDECAR_MISSING: ${String(e)}` };
+    }
+}
+
+// make the OS trust the mkcert local CA, so both the WKWebView and the
+// Rust HTTP layer (rustls-tls-native-roots) accept the leaf. Idempotent.
+async function ensureCaTrusted(leafCert: string): Promise<SidecarResult> {
+    if (IS_WINDOWS) {
+        // mkcert -install on Windows writes to the CurrentUser Root store —
+        // no admin needed; Windows itself pops the confirm dialog once and
+        // mkcert skips silently when the CA is already installed.
+        return runMkcert(['-install']);
+    }
+    if (IS_MAC) {
+        // already trusted (System or login keychain)? then no dialog at all
+        const verify = await runUserShell(
+            `security verify-cert -c "${leafCert}" >/dev/null 2>&1`,
+        );
+        if (verify.ok) return { ok: true, output: '' };
+        // mkcert -install would shell out to sudo (no TTY here) — instead
+        // trust the CA in the *user* domain, which pops the native
+        // "Certificate Trust Settings" password dialog and needs no admin.
+        const caroot = await runMkcert(['-CAROOT']);
+        if (!caroot.ok) return caroot;
+        const add = await runUserShell(
+            `security add-trusted-cert -r trustRoot -k "$HOME/Library/Keychains/login.keychain-db" "${caroot.output}/rootCA.pem"`,
+        );
+        if (!add.ok) return { ok: false, output: 'TRUST_DECLINED' };
+        const recheck = await runUserShell(
+            `security verify-cert -c "${leafCert}" >/dev/null 2>&1`,
+        );
+        return recheck.ok
+            ? { ok: true, output: '' }
+            : { ok: false, output: 'TRUST_DECLINED' };
+    }
+    // Linux: the system trust store needs root (update-ca-certificates) and
+    // webkit2gtk only reads the system bundle — try, and hand over a manual
+    // step when it fails. Pre-existing certs are assumed already trusted.
+    const inst = await runMkcert(['-install']);
+    return inst.ok ? inst : { ok: false, output: 'LINUX_MANUAL_TRUST' };
+}
+
+// generate + trust a local certificate using the bundled mkcert — fully
+// automatic; at most one OS-native trust dialog on first enable.
 export async function ensureLocalTlsCert(): Promise<SidecarResult> {
     if (!isTauri) return { ok: false, output: '桌面版限定' };
-    if (await localTlsCertExists()) return { ok: true, output: '' };
-    const check = await runUserShell(
-        IS_WINDOWS
-            ? 'where mkcert'
-            : `${SHELL_PATH_PREFIX} command -v mkcert`,
-    );
-    if (!check.ok) return { ok: false, output: 'MKCERT_MISSING' };
     const p = await tlsPaths();
-    const gen = await runUserShell(
-        IS_WINDOWS
-            ? `(if not exist "${p.dir}" mkdir "${p.dir}") && mkcert -install && mkcert -cert-file "${p.cert}" -key-file "${p.key}" localhost 127.0.0.1 ::1`
-            : `${SHELL_PATH_PREFIX} mkdir -p "${p.dir}" && mkcert -install && mkcert -cert-file "${p.cert}" -key-file "${p.key}" localhost 127.0.0.1 ::1`,
-    );
-    if (!gen.ok) return gen;
-    return {
-        ok: await localTlsCertExists(),
-        output: gen.output,
-    };
+    const had = await localTlsCertExists();
+    if (!had) {
+        const { mkdir } = await import('@tauri-apps/plugin-fs');
+        await mkdir(p.dir, { recursive: true });
+        // first run also creates the local CA in mkcert's default CAROOT —
+        // shared with any pre-existing user mkcert install
+        const gen = await runMkcert([
+            '-cert-file', p.cert,
+            '-key-file', p.key,
+            'localhost', '127.0.0.1', '::1',
+        ]);
+        if (!gen.ok) return gen;
+        if (!(await localTlsCertExists())) return { ok: false, output: gen.output };
+    }
+    // always re-check trust: cert files alone don't prove the CA is trusted,
+    // and an untrusted CA is exactly what causes enable-then-restart loops
+    if (!IS_WINDOWS && !IS_MAC && had) return { ok: true, output: '' };
+    return ensureCaTrusted(p.cert);
 }
 
 // The CLI's `server status` only knows daemonized servers — a foreground
