@@ -288,16 +288,44 @@ export async function serverStatus(): Promise<ServerStatus | null> {
     return { running: false };
 }
 
+// all probes go through plugin-http; its reqwest is built with
+// rustls-tls-native-roots so 本機 HTTPS (mkcert, trust chain in the OS
+// keychain/cert store) validates the same way the webview does. If the
+// Rust side still rejects the certificate (e.g. a CA that only lives in
+// the login keychain), fall back to the webview's own fetch, which uses
+// the OS networking stack.
+async function probeFetch(
+    url: string,
+    timeoutMs: number,
+): Promise<Response> {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+    try {
+        return await tauriFetch(url, {
+            signal: AbortSignal.timeout(timeoutMs),
+        });
+    } catch (err) {
+        if (url.startsWith('https://')) {
+            try {
+                return await fetch(url, {
+                    signal: AbortSignal.timeout(timeoutMs),
+                });
+            } catch (err2) {
+                throw err2;
+            }
+        }
+        throw err;
+    }
+}
+
 // is a shioaji HTTP server answering on this port? (null = no / not shioaji)
 async function probeInfo(
     port: number,
     scheme: ApiScheme = getApiScheme(),
 ): Promise<{ version: string; simulation: boolean } | null> {
     try {
-        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-        const res = await tauriFetch(
+        const res = await probeFetch(
             `${scheme}://127.0.0.1:${port}/api/v1/info`,
-            { signal: AbortSignal.timeout(1500) },
+            1500,
         );
         if (!res.ok) return null;
         const info = (await res.json()) as {
@@ -339,10 +367,9 @@ async function probeHealthy(
     scheme: ApiScheme = getApiScheme(),
 ): Promise<boolean> {
     try {
-        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-        const res = await tauriFetch(
+        const res = await probeFetch(
             `${scheme}://127.0.0.1:${port}/api/v1/health`,
-            { signal: AbortSignal.timeout(2000) },
+            2000,
         );
         return res.ok;
     } catch {
@@ -358,18 +385,17 @@ async function caActive(
     scheme: ApiScheme = getApiScheme(),
 ): Promise<boolean> {
     try {
-        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-        const accRes = await tauriFetch(
+        const accRes = await probeFetch(
             `${scheme}://127.0.0.1:${port}/api/v1/auth/accounts`,
-            { signal: AbortSignal.timeout(2000) },
+            2000,
         );
         if (!accRes.ok) return false;
         const accts = (await accRes.json()) as { person_id?: string }[];
         const pid = accts[0]?.person_id;
         if (!pid) return false;
-        const caRes = await tauriFetch(
+        const caRes = await probeFetch(
             `${scheme}://127.0.0.1:${port}/api/v1/auth/ca_expiretime?person_id=${encodeURIComponent(pid)}`,
-            { signal: AbortSignal.timeout(2000) },
+            2000,
         );
         if (!caRes.ok) return false; // 400 "CA not activated"
         const ca = (await caRes.json()) as { expire_time?: string };
@@ -407,6 +433,31 @@ export async function serverStart(opts: {
     // in the requested mode — a CA-less daemon here is exactly why
     // "加了 CA 還是 400" on the installed app.
     let st = await serverStatus();
+    // a child we spawned may still be inside its login window: the 1.7.2
+    // server binds its listener only AFTER login (~5-8s blind spot). Any
+    // reload landing in that window used to see "not running", then the
+    // pre-spawn reclaim killed the warming child by remembered pid — the
+    // restart loop. Wait for the remembered spawn to surface instead.
+    if (!st?.running && getServerPid() && getSpawnPort()) {
+        const spawnPort = getSpawnPort()!;
+        const deadline = Date.now() + 20_000;
+        while (Date.now() < deadline) {
+            const hit = await probeInfoEither(spawnPort);
+            if (hit) {
+                st = {
+                    running: true,
+                    port: spawnPort,
+                    healthy: await probeHealthy(spawnPort, hit.scheme),
+                    simulation: hit.info.simulation,
+                    version: hit.info.version,
+                    scheme: hit.scheme,
+                    pid: getServerPid() ?? undefined,
+                };
+                break;
+            }
+            await new Promise((r) => setTimeout(r, 1500));
+        }
+    }
     if (!st?.running) {
         // an orphan of ours can sit on a fallback port with its record lost
         // (cleared web storage) — sweep the find_free_port windows (current
@@ -440,8 +491,15 @@ export async function serverStart(opts: {
             st.simulation !== undefined &&
             st.simulation === opts.production;
         // the listener speaks either plaintext or TLS — attaching across a
-        // 本機 HTTPS toggle needs a restart to apply the new listener
-        const schemeMismatch = stScheme !== wantScheme;
+        // 本機 HTTPS toggle needs a restart to apply the new listener.
+        // A running https listener while HTTPS is enabled is always right
+        // (it serving TLS proves the cert exists — never re-check the cert
+        // file for a live server, transient fs failures caused kill loops);
+        // http while enabled only mismatches when the cert is ready to
+        // switch to.
+        const schemeMismatch = opts.httpsEnabled
+            ? stScheme === 'http' && tlsReady
+            : stScheme !== 'http';
         // version handshake: only attach to a server matching the bundled
         // sidecar version — API/UI 版本必須一致
         const versionMismatch =
@@ -532,6 +590,10 @@ export async function serverStart(opts: {
         SJ_API_KEY: opts.apiKey,
         SJ_SEC_KEY: opts.secretKey,
         SJ_HTTP_ADDR: `127.0.0.1:${port}`,
+        // startup/login logs still print; per-request logs are unbounded
+        // and the capture pipe outlives no page reload — a full pipe can
+        // wedge the server into a bound-but-dead zombie
+        SJ_HTTP_LOG: 'false',
     };
     // CA certificate — required for production orders, ignored in simulation
     if (opts.caPath) {

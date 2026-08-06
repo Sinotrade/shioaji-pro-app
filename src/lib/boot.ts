@@ -95,21 +95,33 @@ async function run() {
                 const status = await serverStatus();
                 // 本機 HTTPS：the desired listener scheme also has to match
                 // — an http daemon while HTTPS is enabled (or vice versa)
-                // needs a restart to swap the listener
-                const wantHttps =
-                    settings.httpsEnabled && (await localTlsCertExists());
-                const healthyMatch =
+                // needs a restart to swap the listener. Judge a RUNNING
+                // https listener by its scheme alone: it serving TLS proves
+                // the certificate exists, and probing the cert file here
+                // (plugin-fs right at boot) can transiently fail — which
+                // used to misread "cert missing → want http", kill the
+                // healthy https server, and loop forever.
+                const scheme = status?.scheme ?? 'http';
+                const schemeOk = settings.httpsEnabled
+                    ? scheme === 'https' ||
+                      !(await localTlsCertExists().catch(() => false))
+                    : scheme === 'http';
+                // identity match: right mode, right listener scheme, right
+                // version — health is judged separately so a server that is
+                // merely WARMING UP (login + contract load, /health not yet
+                // 200) is never killed. Restart-kill during warmup was a
+                // reload loop: each reload landed inside the next server's
+                // warmup window and killed it again.
+                const matches =
                     status?.running &&
-                    status.healthy &&
                     status.simulation === !settings.production &&
-                    (status.scheme ?? 'http') ===
-                        (wantHttps ? 'https' : 'http') &&
+                    schemeOk &&
                     // version handshake — 不接版本不符的 server（例如
                     // 使用者 8080 上的舊 CLI），改起自帶 sidecar
                     (EXPECTED_SERVER_VERSION === '' ||
                         status.version === undefined ||
                         status.version === EXPECTED_SERVER_VERSION);
-                if (healthyMatch) {
+                if (matches && status.healthy) {
                     // daemon survived from a previous run (possibly on a
                     // non-default port) — make sure the API base follows it
                     const schemeChanged = status.scheme
@@ -122,6 +134,12 @@ async function run() {
                         window.location.reload();
                         return;
                     }
+                } else if (matches) {
+                    // the right server is starting up — adopt its address
+                    // and fall through to the bootstrap watchdog below,
+                    // which reloads once /health answers
+                    if (status.port) setApiPort(status.port);
+                    if (status.scheme) setApiScheme(status.scheme);
                 } else {
                     // not running, unhealthy, or wrong mode — serverStart
                     // stops a broken daemon and starts fresh
@@ -177,7 +195,10 @@ async function run() {
         }
     }
 
-    // bootstrap watchdog: reload once the server becomes reachable
+    // bootstrap watchdog: reload once the server becomes reachable. Uses
+    // the scheme-agnostic status probe (NOT fetchHealth, which is locked to
+    // the persisted scheme) so it still finds the server after a 本機 HTTPS
+    // toggle left localStorage pointing at the other listener type.
     try {
         await fetchHealth();
         if (await serverVersionOk()) {
@@ -195,8 +216,22 @@ async function run() {
     }
     const timer = setInterval(async () => {
         try {
-            await fetchHealth();
-            if (!(await serverVersionOk())) return; // warned; keep waiting
+            const st = isTauri ? await serverStatus() : null;
+            if (st) {
+                if (!st.running || !st.healthy) return;
+                if (
+                    EXPECTED_SERVER_VERSION !== '' &&
+                    st.version !== undefined &&
+                    st.version !== EXPECTED_SERVER_VERSION
+                ) {
+                    return; // wrong-version server — keep waiting
+                }
+                if (st.port) setApiPort(st.port);
+                if (st.scheme) setApiScheme(st.scheme);
+            } else {
+                await fetchHealth();
+                if (!(await serverVersionOk())) return; // warned; keep waiting
+            }
             clearInterval(timer);
             window.location.reload();
         } catch {
