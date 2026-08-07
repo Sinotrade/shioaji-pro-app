@@ -209,18 +209,36 @@ export function ServerManager({
     };
 
     const copyDiagnostics = async () => {
+        // the webview's navigator.platform lies ("MacIntel" on Apple
+        // Silicon) — ask the Rust side for the real OS/arch
+        let host: string = navigator.platform;
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            host = await invoke<string>('host_info');
+        } catch {
+            // older shell without the command
+        }
         const lines = [
-            `Shioaji Pro v${ver || '?'} · ${navigator.platform}`,
-            `server: ${
-                status?.running
-                    ? `running pid=${status.pid} port=${status.port} ${
-                          status.simulation ? 'sim' : 'prod'
-                      } healthy=${status.healthy}`
-                    : 'not running'
-            }`,
+            `Shioaji Pro v${ver || '?'} · ${host}`,
+            status?.running
+                ? `server: running v${status.version ?? '?'}（app 要求 v${
+                      EXPECTED_SERVER_VERSION || '—'
+                  }）· pid=${status.pid ?? '?'} · ${status.scheme ?? 'http'}://127.0.0.1:${status.port} · ${
+                      status.simulation ? 'sim' : 'prod'
+                  } · healthy=${status.healthy}`
+                : 'server: not running',
+            health
+                ? `health: token ${
+                      typeof health.token_expires_in_seconds === 'number'
+                          ? `${Math.round(health.token_expires_in_seconds / 3600)}h`
+                          : '—'
+                  } · contracts ${health.contract_count ?? '—'}`
+                : 'health: —',
             `stream: ${stream} · mode setting: ${
                 settings.production ? 'prod' : 'sim'
-            } · ca: ${settings.caPath ? 'set' : 'none'}`,
+            } · ca: ${settings.caPath ? 'set' : 'none'} · https: ${
+                settings.httpsEnabled ? 'on' : 'off'
+            } · autostart: ${settings.autoStart ? 'on' : 'off'}`,
             lastOutput ? `--- log ---\n${lastOutput}` : '',
         ].filter(Boolean);
         try {
