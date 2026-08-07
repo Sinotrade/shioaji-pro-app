@@ -548,6 +548,10 @@ export function OrderTicket({
                                     Math.max(0, Number(p || 0) - 1),
                                 ),
                             );
+                            // stepper is a manual price edit — de-arm like
+                            // typing does (live-tick autofill must not)
+                            setArmed(false);
+                            setSplitArmed(false);
                         }}
                     >
                         −
@@ -569,6 +573,8 @@ export function OrderTicket({
                         onClick={() => {
                             priceTouched.current = true;
                             setPrice((p) => String(Number(p || 0) + 1));
+                            setArmed(false);
+                            setSplitArmed(false);
                         }}
                     >
                         +

@@ -8,6 +8,13 @@ export const body = style({
     flexDirection: 'column',
     gap: vars.space.sm,
     padding: vars.space.md,
+    // the ticket sits directly inside the panel section (overflow:hidden);
+    // with the split section (分倉) open the content can exceed the panel
+    // height — the body itself must scroll or the exec button becomes
+    // unreachable at compact panel sizes.
+    flex: 1,
+    minHeight: 0,
+    overflowY: 'auto',
 });
 
 export const sideTabs = style({
