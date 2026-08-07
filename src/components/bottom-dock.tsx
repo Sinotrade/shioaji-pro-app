@@ -181,6 +181,10 @@ function AccountView({
         });
     }
     if (margin) {
+        // margin 全 0（模擬帳戶/沒押保證金）時 risk_indicator=0 沒有意義 —
+        // 顯示 — 且不上色，避免「風險 0% 全紅」的假警報
+        const riskMeaningful =
+            margin.initial_margin > 0 && margin.risk_indicator > 0;
         items.push(
             { label: '權益數 Equity', value: fmtMoney(margin.equity) },
             {
@@ -198,13 +202,16 @@ function AccountView({
             {
                 // TAIFEX 風險指標：低於 100% 有追繳風險、過低會被代沖銷
                 label: '風險指標 Risk',
-                value: `${margin.risk_indicator.toFixed(0)}%`,
-                tone:
-                    margin.risk_indicator < 100
-                        ? 'danger'
-                        : margin.risk_indicator < 200
-                          ? 'warn'
-                          : undefined,
+                value: riskMeaningful
+                    ? `${margin.risk_indicator.toFixed(0)}%`
+                    : '—',
+                tone: !riskMeaningful
+                    ? undefined
+                    : margin.risk_indicator < 100
+                      ? 'danger'
+                      : margin.risk_indicator < 200
+                        ? 'warn'
+                        : undefined,
             },
             {
                 label: '期貨平倉損益 Settle P&L',
@@ -442,13 +449,18 @@ export function BottomDock({
         market !== 'S' &&
         (scope === '' || scopeAccount?.account_type === 'F') &&
         !!margin;
-    const riskColor = margin
-        ? margin.risk_indicator < 100
-            ? vars.color.danger
-            : margin.risk_indicator < 200
-              ? vars.color.amber
-              : undefined
-        : undefined;
+    // margin 全 0（模擬帳戶）或沒押保證金時 risk_indicator=0 不代表「快被
+    // 斷頭」— 顯示 — 且不上色；真的有部位才照 <100% 紅 / <200% 琥珀
+    const riskMeaningful =
+        !!margin && margin.initial_margin > 0 && margin.risk_indicator > 0;
+    const riskColor =
+        margin && riskMeaningful
+            ? margin.risk_indicator < 100
+                ? vars.color.danger
+                : margin.risk_indicator < 200
+                  ? vars.color.amber
+                  : undefined
+            : undefined;
 
     const marketChips: { key: MarketFilter; label: string }[] = [
         { key: 'all', label: '全部' },
@@ -572,7 +584,9 @@ export function BottomDock({
                             className={styles.sumValue}
                             style={riskColor ? { color: riskColor } : undefined}
                         >
-                            {margin.risk_indicator.toFixed(0)}%
+                            {riskMeaningful
+                                ? `${margin.risk_indicator.toFixed(0)}%`
+                                : '—'}
                         </span>
                     </span>
                 )}

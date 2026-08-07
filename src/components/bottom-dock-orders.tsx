@@ -2,7 +2,7 @@
 // 分帳戶區段、批次刪單（arm-lock 防誤觸）；inline 改價/減量沿用
 
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     cancelOrder,
     updateOrderPrice,
@@ -278,6 +278,12 @@ export function OrdersPane({
         return [...map.values()];
     }, [rows, mode, fallback, priv]);
 
+    // 帳戶範圍/市場/狀態篩選切換時清空選取 — 不讓被篩掉的委託以隱形選取
+    // 殘留，切回時也不會突然「還原」一批已勾選的單
+    useEffect(() => {
+        setSelected(new Set());
+    }, [scopeKey, market, statusFilter]);
+
     const activeIds = useMemo(
         () =>
             new Set(
@@ -307,7 +313,7 @@ export function OrdersPane({
 
     // 批次刪單：逐筆呼叫 cancelOrder，完成回報筆數
     const runBatchCancel = async (ids: string[]) => {
-        if (ids.length === 0 || busy) return;
+        if (ids.length === 0 || busy || cancelling) return;
         setBusy({ done: 0, total: ids.length });
         let ok = 0;
         for (const id of ids) {
@@ -581,7 +587,11 @@ export function OrdersPane({
                                 statusFilter === c.key ? 'on' : 'off'
                             ]
                         }
-                        title='再點一次顯示全部'
+                        title={
+                            statusFilter === c.key
+                                ? '再點一次顯示全部'
+                                : '只看此狀態'
+                        }
                         onClick={() =>
                             setStatusFilter(
                                 statusFilter === c.key ? 'all' : c.key,
@@ -652,7 +662,9 @@ export function OrdersPane({
                                                 label={`全刪 ${gActive.length}`}
                                                 confirmLabel={`確認刪 ${gActive.length} 筆？`}
                                                 disabled={
-                                                    !armed || busy !== null
+                                                    !armed ||
+                                                    busy !== null ||
+                                                    cancelling !== null
                                                 }
                                                 title={
                                                     armed
@@ -709,7 +721,9 @@ export function OrdersPane({
                     <ConfirmButton
                         label='刪除已選'
                         confirmLabel={`確認刪除 ${selCount} 筆？`}
-                        disabled={!armed || selCount === 0}
+                        disabled={
+                            !armed || selCount === 0 || cancelling !== null
+                        }
                         title={
                             !armed
                                 ? '已鎖定 — 點鎖頭解鎖批次刪單'

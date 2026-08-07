@@ -599,6 +599,9 @@ export default function App() {
         }, []),
         10000,
     );
+    // NOTE（已知限制）：trades 只查「目前選中」的證/期帳戶（accountBody 的
+    // accountFor fallback），沒有像 positions 一樣按帳戶 fan-out。同類型多
+    // 帳戶時非選中帳戶的委託不會出現在委託 tab。現況一證一期沒有實害。
     const tradesPoll = usePoll<Trade[]>(
         useCallback(async () => {
             const [s, f] = await Promise.allSettled([

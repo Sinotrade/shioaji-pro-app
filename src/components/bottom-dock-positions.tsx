@@ -155,6 +155,12 @@ export function PositionsPane({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [codesKey]);
 
+    // 帳戶範圍/市場篩選切換時清空選取 — 被篩掉的列不能以隱形選取殘留，
+    // 切回原篩選時也不該突然「還原」一批已勾選的倉位
+    useEffect(() => {
+        setSelected(new Set());
+    }, [scopeKey, market]);
+
     // poll 更新後選取集合只保留仍存在的列
     const visibleKeys = useMemo(() => new Set(rows.map(posKey)), [rows]);
     const selCount = [...selected].filter((k) => visibleKeys.has(k)).length;
@@ -173,6 +179,10 @@ export function PositionsPane({
         setSelected(allSelected ? new Set() : new Set(rows.map(posKey)));
     };
 
+    // NOTE（已知限制）：平倉單經 placeQuickOrder/placeStockExitByShares 走
+    // accountFor()，也就是「目前選中的證/期帳戶」。同類型多帳戶時，非選中
+    // 帳戶的倉位會被路由到選中帳戶下單。現況一證一期沒有實害；若未來支援
+    // 同類型多帳戶，需把 p.account 傳進下單層。
     const closeOne = async (p: AccountedPosition, mode2: 'close' | 'reverse') => {
         const contract = await ensureContract(p.code);
         const exit = p.direction === 'Buy' ? 'Sell' : 'Buy';
@@ -215,7 +225,7 @@ export function PositionsPane({
     // 批次市價平倉：逐筆送出（避免撞上游帳務 rate limit），完成回報筆數
     const runBatchClose = async () => {
         const targets = rows.filter((p) => selected.has(posKey(p)));
-        if (targets.length === 0 || busy) return;
+        if (targets.length === 0 || busy || busyCode) return;
         setBusy({ done: 0, total: targets.length });
         let ok = 0;
         let firstErr = '';
@@ -626,7 +636,12 @@ export function PositionsPane({
                     <ConfirmButton
                         label='平倉'
                         confirmLabel={`確認市價平倉 ${selCount} 筆？`}
-                        disabled={!armed || selCount === 0 || !live}
+                        disabled={
+                            !armed ||
+                            selCount === 0 ||
+                            !live ||
+                            busyCode !== null
+                        }
                         title={
                             !live
                                 ? '行情未連線，暫停下單'
