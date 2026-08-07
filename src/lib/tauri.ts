@@ -20,6 +20,12 @@ import {
     setServerPid,
     setSpawnPort,
 } from './runtime';
+import {
+    getStoredSpawnKeyHash,
+    hashCredentials,
+    setStoredSpawnKeyHash,
+    shouldForceRespawn,
+} from './spawn-keys';
 import { notify } from './trade';
 
 export { isTauri } from './runtime';
@@ -634,13 +640,30 @@ export async function serverStart(opts: {
             st.version !== undefined &&
             st.version !== EXPECTED_SERVER_VERSION;
         const external = getSpawnPort() !== st.port;
+        // 金鑰 hash 領養檢查 (issue #16): our OWN spawn may still be logged
+        // into the credentials it was STARTED with — after a re-login with a
+        // different API key, adopting it shows the old account's data. Only
+        // our own server is checked (external servers are never ours to
+        // judge), and shouldForceRespawn is deliberately one-sided: a missing
+        // hash (upgrade user, cleared storage, no crypto.subtle) reads as
+        // compatible so adoption proceeds exactly as before — never a new
+        // restart loop. A forced respawn lands the new hash below, so the
+        // check converges after a single restart.
+        const currentKeyHash = await hashCredentials(
+            opts.apiKey,
+            opts.secretKey,
+        );
+        const keyMismatch =
+            !external &&
+            shouldForceRespawn(getStoredSpawnKeyHash(), currentKeyHash);
         const caOk = !needsCa || (await caActive(st.port, stScheme));
         if (
             st.healthy &&
             !modeMismatch &&
             !schemeMismatch &&
             caOk &&
-            !versionMismatch
+            !versionMismatch &&
+            !keyMismatch
         ) {
             // healthy, right mode, right version, CA live — just use it
             const schemeChanged = setApiScheme(stScheme);
@@ -673,9 +696,11 @@ export async function serverStart(opts: {
                       ? `連線協定不符（server ${stScheme}，需 ${wantScheme}）`
                       : versionMismatch
                         ? `版本不符（server ${st.version}，需 ${EXPECTED_SERVER_VERSION}）`
-                        : !caOk
-                          ? 'CA 未啟用，正式環境無法下單'
-                          : '狀態不健康';
+                        : keyMismatch
+                          ? 'API 金鑰已更換，需要重新登入'
+                          : !caOk
+                            ? 'CA 未啟用，正式環境無法下單'
+                            : '狀態不健康';
                 return {
                     ok: false,
                     output:
@@ -740,6 +765,14 @@ export async function serverStart(opts: {
     if (opts.production) args.push('--production');
     // spawn (don't await to completion) — the start runs in foreground
     const res = await spawnServer(args, env, port, wantScheme);
+    if (res.ok) {
+        // remember which credentials THIS spawn was started with (issue #16)
+        // — null (no crypto.subtle) clears the record so a stale hash never
+        // outlives the server it described
+        setStoredSpawnKeyHash(
+            await hashCredentials(opts.apiKey, opts.secretKey),
+        );
+    }
     const schemeChanged = res.ok ? setApiScheme(wantScheme) : false;
     const portChanged = (res.ok ? setApiPort(port) : false) || schemeChanged;
     // the server starts even when CA activation fails (login still works) —

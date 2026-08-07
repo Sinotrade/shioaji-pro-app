@@ -72,10 +72,17 @@ export function BottomDock({
         ['all', 'S', 'F'],
         'all',
     );
-    // 帳戶範圍：'' = 全部帳戶，其餘為 broker_id-account_id
+    // 帳戶範圍：'' = 全部帳戶，其餘為 broker_id-account_id。
+    // scope 選項/持倉 fan-out 只用已簽署帳戶；未簽署帳戶（issue #16）另外
+    // 灰字列出，讓使用者知道帳號有抓到、只是不能下單。
     const [scope, setScope] = useState('');
     const tradable = accounts.filter(
-        (a) => a.account_type === 'S' || a.account_type === 'F',
+        (a) =>
+            a.signed && (a.account_type === 'S' || a.account_type === 'F'),
+    );
+    const unsigned = accounts.filter(
+        (a) =>
+            !a.signed && (a.account_type === 'S' || a.account_type === 'F'),
     );
     useEffect(() => {
         if (
@@ -183,6 +190,21 @@ export function BottomDock({
                                 {a.account_type === 'S' ? '[證]' : '[期]'}{' '}
                                 {a.broker_id}-
                                 {maskAccountId(a.account_id, priv)}
+                            </option>
+                        );
+                    })}
+                    {unsigned.map((a) => {
+                        const key = refKey(accountToRef(a));
+                        return (
+                            <option
+                                key={key}
+                                value={key}
+                                disabled
+                                title='未簽署 API 約定書（無法下單）'
+                            >
+                                {a.account_type === 'S' ? '[證]' : '[期]'}{' '}
+                                {a.broker_id}-
+                                {maskAccountId(a.account_id, priv)} · 未簽署
                             </option>
                         );
                     })}

@@ -28,6 +28,7 @@ import { usePoll } from '../hooks/use-poll';
 import { useStreamStatus } from '../hooks/use-stream';
 import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
+import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
 import {
     fetchAccounts,
     fetchCaExpire,
@@ -274,7 +275,10 @@ export function ServerManager({
 
     // clears the saved API Key/Secret so the app falls back to the first-run
     // onboarding screen on next reload — the only way back to it today
-    // (two-click confirm mirrors watchlist.tsx's delete-list pattern)
+    // (two-click confirm mirrors watchlist.tsx's delete-list pattern).
+    // Logout also STOPS our own server (issue #16): leaving it running means
+    // the next login adopts a server still logged into the OLD credentials.
+    // serverStop() without allowExternal never touches a user's own daemon.
     const doLogout = () => {
         if (!confirmLogout) {
             setConfirmLogout(true);
@@ -282,8 +286,16 @@ export function ServerManager({
             return;
         }
         setConfirmLogout(false);
-        void saveDesktopSettings({ ...settings, apiKey: '', secretKey: '' })
-            .then(() => window.location.reload());
+        void (async () => {
+            await serverStop().catch(() => undefined);
+            clearStoredSpawnKeyHash();
+            await saveDesktopSettings({
+                ...settings,
+                apiKey: '',
+                secretKey: '',
+            });
+            window.location.reload();
+        })();
     };
 
     // after a (re)start the upstream subscriptions are gone — reload the UI

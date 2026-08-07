@@ -571,8 +571,12 @@ export default function App() {
     useEffect(ensureAccounts, []);
     const positionsPoll = usePoll<AccountedPosition[]>(
         useCallback(async () => {
+            // signed only — the store now keeps unsigned accounts for
+            // display, but they can't be queried for positions/orders
             const tradable = getAccountState().accounts.filter(
-                (a) => a.account_type === 'S' || a.account_type === 'F',
+                (a) =>
+                    a.signed &&
+                    (a.account_type === 'S' || a.account_type === 'F'),
             );
             if (tradable.length > 0) {
                 const rs = await Promise.allSettled(
