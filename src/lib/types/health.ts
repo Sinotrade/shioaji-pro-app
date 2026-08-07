@@ -10,4 +10,7 @@ export interface Health {
     // count from their health response.
     contract_count?: number;
     next_maintenance: string;
+    // 1.7.2+
+    ca_expires_in_days?: number;
+    ca_expired?: boolean;
 }

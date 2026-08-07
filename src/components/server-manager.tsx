@@ -58,6 +58,14 @@ import { notify } from '../lib/trade';
 import type { Health } from '../lib/types/health';
 import * as styles from './hud-header.css';
 
+// "9h" reads fine but "0h" while the token auto-renews in minutes is
+// misleading — show minutes below two hours
+function fmtTokenRemaining(seconds: unknown): string {
+    if (typeof seconds !== 'number') return '—';
+    if (seconds >= 7200) return `${Math.round(seconds / 3600)}h`;
+    return `${Math.max(1, Math.round(seconds / 60))}m`;
+}
+
 export function ServerManager({
     open,
     onToggle,
@@ -221,18 +229,24 @@ export function ServerManager({
         const lines = [
             `Shioaji Pro v${ver || '?'} · ${host}`,
             status?.running
-                ? `server: running v${status.version ?? '?'}（app 要求 v${
+                ? `server: running v${status.version ?? '?'} (expected v${
                       EXPECTED_SERVER_VERSION || '—'
-                  }）· pid=${status.pid ?? '?'} · ${status.scheme ?? 'http'}://127.0.0.1:${status.port} · ${
+                  }) · pid=${status.pid ?? '?'} · ${status.scheme ?? 'http'}://127.0.0.1:${status.port} · ${
                       status.simulation ? 'sim' : 'prod'
                   } · healthy=${status.healthy}`
                 : 'server: not running',
             health
-                ? `health: token ${
-                      typeof health.token_expires_in_seconds === 'number'
-                          ? `${Math.round(health.token_expires_in_seconds / 3600)}h`
-                          : '—'
-                  } · contracts ${health.contract_count ?? '—'}`
+                ? `health: token ${fmtTokenRemaining(
+                      health.token_expires_in_seconds,
+                  )}${health.token_stale ? ' (stale)' : ''}${
+                      typeof health.ca_expires_in_days === 'number'
+                          ? ` · ca ${
+                                health.ca_expired
+                                    ? 'EXPIRED'
+                                    : `expires in ${health.ca_expires_in_days}d`
+                            }`
+                          : ''
+                  }`
                 : 'health: —',
             `stream: ${stream} · mode setting: ${
                 settings.production ? 'prod' : 'sim'
@@ -590,19 +604,28 @@ export function ServerManager({
                                         'number' && (
                                         <span className={styles.srvChip}>
                                             token{' '}
-                                            {Math.round(
-                                                health.token_expires_in_seconds /
-                                                    3600,
+                                            {fmtTokenRemaining(
+                                                health.token_expires_in_seconds,
                                             )}
-                                            h
                                         </span>
                                     )}
                                 {health &&
-                                    typeof health.contract_count ===
+                                    typeof health.ca_expires_in_days ===
                                         'number' && (
-                                        <span className={styles.srvChip}>
-                                            合約{' '}
-                                            {health.contract_count.toLocaleString()}
+                                        <span
+                                            className={styles.srvChip}
+                                            style={
+                                                health.ca_expired
+                                                    ? {
+                                                          color: 'var(--danger, #f23645)',
+                                                      }
+                                                    : undefined
+                                            }
+                                        >
+                                            CA{' '}
+                                            {health.ca_expired
+                                                ? '已過期'
+                                                : `${health.ca_expires_in_days}d`}
                                         </span>
                                     )}
                             </div>
