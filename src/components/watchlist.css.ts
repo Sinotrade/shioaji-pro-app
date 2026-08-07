@@ -82,6 +82,54 @@ export const dropTarget = style({
     boxShadow: `inset 0 2px 0 ${vars.color.accent}`,
 });
 
+// 排序模式：左 grip 把手、右 上移/下移 直欄 — 都以絕對定位掛在 row 上，
+// 靠加大的左右 padding 讓出空間，spark 欄版面不動
+export const rowArrange = style({
+    paddingLeft: '24px',
+    paddingRight: '46px',
+    cursor: 'grab',
+});
+
+export const gripHandle = style({
+    position: 'absolute',
+    left: '4px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    display: 'flex',
+    alignItems: 'center',
+    color: vars.color.mutedForeground,
+    pointerEvents: 'none',
+});
+
+export const moveCol = style({
+    position: 'absolute',
+    right: '4px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+});
+
+export const moveBtn = style({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '20px',
+    height: '15px',
+    padding: 0,
+    cursor: 'pointer',
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    color: vars.color.mutedForeground,
+    ':hover': {
+        color: vars.color.foreground,
+        borderColor: vars.color.borderBright,
+    },
+    ':disabled': { opacity: 0.35, cursor: 'default' },
+});
+
 // sparkline mode: third middle column between code/name and price/change
 export const rowSparkCols = style({
     gridTemplateColumns: 'minmax(0, 1fr) minmax(48px, 1.1fr) auto',
@@ -138,6 +186,7 @@ export const listBtn = style({
     color: vars.color.mutedForeground,
     flexShrink: 0,
     ':hover': { color: vars.color.foreground, borderColor: vars.color.borderBright },
+    ':disabled': { opacity: 0.45, cursor: 'not-allowed' },
 });
 
 export const listBtnOn = style({

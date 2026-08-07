@@ -6,13 +6,25 @@ import {
     ArrowDown,
     ArrowDownUp,
     ArrowUp,
+    Check,
+    ChevronDown,
+    ChevronUp,
+    GripVertical,
     Pencil,
     Plus,
     TrendingUp,
     Trash2,
     X,
 } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import {
+    memo,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from 'react';
+import { neighborCode } from '../lib/list-move';
 import { useQuote } from '../hooks/use-stream';
 import type { WatchItem } from '../hooks/use-watchlist';
 import type { ServerWatchlist } from '../lib/shioaji';
@@ -52,6 +64,10 @@ const WatchRow = memo(function WatchRow({
     selected,
     dropTarget,
     spark,
+    arrange,
+    canUp,
+    canDown,
+    onMove,
     onSelect,
     onRemove,
     onDragStart,
@@ -62,6 +78,11 @@ const WatchRow = memo(function WatchRow({
     selected: boolean;
     dropTarget: boolean;
     spark: boolean;
+    // 排序模式：grip＋上下移可見、拖曳啟用、點擊不觸發 onSelect
+    arrange: boolean;
+    canUp: boolean;
+    canDown: boolean;
+    onMove: (code: string, dir: -1 | 1) => void;
     onSelect: (c: ContractInfo) => void;
     onRemove: (code: string) => void;
     onDragStart: (code: string) => void;
@@ -105,9 +126,14 @@ const WatchRow = memo(function WatchRow({
         <div
             className={`${styles.row[selected ? 'selected' : 'normal']} ${
                 spark ? styles.rowSparkCols : ''
-            } ${dropTarget ? styles.dropTarget : ''}`}
-            draggable
-            onClick={() => onSelect(item.contract)}
+            } ${dropTarget ? styles.dropTarget : ''} ${
+                arrange ? styles.rowArrange : ''
+            }`}
+            // 只有排序模式才能拖 — 平常 draggable 會跟點擊選擇打架還會誤拖
+            draggable={arrange}
+            onClick={() => {
+                if (!arrange) onSelect(item.contract);
+            }}
             onDragStart={(e) => {
                 e.dataTransfer.effectAllowed = 'move';
                 onDragStart(item.contract.code);
@@ -126,6 +152,11 @@ const WatchRow = memo(function WatchRow({
                     key={quote?.flashSeq}
                     className={styles.flashOverlay[flashDir]}
                 />
+            )}
+            {arrange && (
+                <span className={styles.gripHandle}>
+                    <GripVertical size={12} />
+                </span>
             )}
             <span className={styles.code}>{item.contract.code}</span>
             {spark && (
@@ -146,16 +177,43 @@ const WatchRow = memo(function WatchRow({
             <span className={`${styles.change} ${panel.dirText[dir]}`}>
                 {fmtSigned(chg)} {fmtPct(pct)}
             </span>
-            <button
-                className={styles.rowRemove}
-                title='從清單移除'
-                onClick={(e) => {
-                    e.stopPropagation();
-                    onRemove(item.contract.code);
-                }}
-            >
-                <X size={10} />
-            </button>
+            {arrange ? (
+                <span className={styles.moveCol}>
+                    <button
+                        className={styles.moveBtn}
+                        title='上移'
+                        disabled={!canUp}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onMove(item.contract.code, -1);
+                        }}
+                    >
+                        <ChevronUp size={11} />
+                    </button>
+                    <button
+                        className={styles.moveBtn}
+                        title='下移'
+                        disabled={!canDown}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onMove(item.contract.code, 1);
+                        }}
+                    >
+                        <ChevronDown size={11} />
+                    </button>
+                </span>
+            ) : (
+                <button
+                    className={styles.rowRemove}
+                    title='從清單移除'
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onRemove(item.contract.code);
+                    }}
+                >
+                    <X size={10} />
+                </button>
+            )}
         </div>
     );
 });
@@ -263,6 +321,8 @@ export function Watchlist({
     );
     // sort by live percent change (issue #1) — re-sorts every 10s while on
     const [sortMode, setSortMode] = useState<SortMode>('custom');
+    // 排序模式（調整順序）：grip/上下移/拖曳僅在此模式；與 % 排序互斥
+    const [arrange, setArrange] = useState(false);
     const [sortTick, setSortTick] = useState(0);
     useEffect(() => {
         if (sortMode === 'custom') return;
@@ -289,6 +349,19 @@ export function Watchlist({
         setDropCode(null);
         if (from && to && from !== to) onReorder(from, to);
     };
+
+    // 上移/下移 — same persisted onReorder path as drag-to-reorder
+    const moveRow = useCallback(
+        (code: string, dir: -1 | 1) => {
+            const to = neighborCode(
+                items.map((i) => i.contract.code),
+                code,
+                dir,
+            );
+            if (to) onReorder(code, to);
+        },
+        [items, onReorder],
+    );
 
     const submit = async () => {
         const code = input.trim().toUpperCase();
@@ -384,14 +457,41 @@ export function Watchlist({
                         </button>
                         <button
                             className={`${styles.listBtn} ${
+                                arrange ? styles.listBtnOn : ''
+                            }`}
+                            disabled={!arrange && sortMode !== 'custom'}
+                            title={
+                                arrange
+                                    ? '完成調整'
+                                    : sortMode !== 'custom'
+                                      ? '依漲跌幅排序中無法調整順序 — 先切回自訂順序'
+                                      : '調整順序（拖曳或上下移，存回伺服器）'
+                            }
+                            onClick={() => {
+                                // 進入排序模式一律回到自訂順序（互斥）
+                                if (!arrange) setSortMode('custom');
+                                setArrange((v) => !v);
+                            }}
+                        >
+                            {arrange ? (
+                                <Check size={12} />
+                            ) : (
+                                <GripVertical size={12} />
+                            )}
+                        </button>
+                        <button
+                            className={`${styles.listBtn} ${
                                 sortMode !== 'custom' ? styles.listBtnOn : ''
                             }`}
+                            disabled={arrange}
                             title={
-                                sortMode === 'custom'
-                                    ? '依漲跌幅排序'
-                                    : sortMode === 'desc'
-                                      ? '漲幅在前 — 點擊改跌幅在前'
-                                      : '跌幅在前 — 點擊回自訂順序'
+                                arrange
+                                    ? '調整順序中 — 先按完成'
+                                    : sortMode === 'custom'
+                                      ? '依漲跌幅排序'
+                                      : sortMode === 'desc'
+                                        ? '漲幅在前 — 點擊改跌幅在前'
+                                        : '跌幅在前 — 點擊回自訂順序'
                             }
                             onClick={() =>
                                 setSortMode((m) =>
@@ -472,21 +572,25 @@ export function Watchlist({
                             清單是空的 — 在下方輸入代碼加入
                         </div>
                     )}
-                    {viewItems.map((item) => (
+                    {viewItems.map((item, idx) => (
                         <WatchRow
                             key={item.contract.code}
                             item={item}
                             selected={item.contract.code === selectedCode}
                             spark={spark}
+                            arrange={arrange}
+                            canUp={idx > 0}
+                            canDown={idx < viewItems.length - 1}
+                            onMove={moveRow}
                             dropTarget={
-                                sortMode === 'custom' &&
-                                item.contract.code === dropCode
+                                arrange && item.contract.code === dropCode
                             }
                             onSelect={onSelect}
                             onRemove={onRemove}
                             onDragStart={(code) => {
-                                // dragging only reorders the custom order
-                                if (sortMode === 'custom') {
+                                // dragging only exists in 排序模式 (which is
+                                // always the custom order)
+                                if (arrange) {
                                     dragCode.current = code;
                                 }
                             }}
