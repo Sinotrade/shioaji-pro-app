@@ -492,7 +492,13 @@ async function probeHealthy(
             `${scheme}://127.0.0.1:${port}/api/v1/health`,
             5000,
         );
-        return res.ok;
+        if (!res.ok) return false;
+        // the server answers 200 even when its upstream session is dead
+        // (status "unhealthy", token expired — Shioaji#215); trust the body.
+        // "degraded" (token renewal due) still counts as healthy — it's a
+        // transient state, and restarting on it would cause churn.
+        const body = (await res.json()) as { status?: string };
+        return body.status !== 'unhealthy';
     } catch {
         return false;
     }
