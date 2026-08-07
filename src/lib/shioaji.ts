@@ -645,20 +645,27 @@ function ensureAccepted<
     return t;
 }
 
-export function placeStockOrder(contract: ContractBase, order: StockOrderReq) {
+// `account` routes the order to an explicit account (split orders / 分倉);
+// omitted keeps the existing behavior — the store's selected account.
+export function placeStockOrder(
+    contract: ContractBase,
+    order: StockOrderReq,
+    account?: Account,
+) {
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: contractKey(contract),
-        stock_order: { ...order, account: accountFor('S') },
+        stock_order: { ...order, account: account ?? accountFor('S') },
     }).then(ensureAccepted);
 }
 
 export function placeFuturesOrder(
     contract: ContractBase,
     order: FuturesOrderReq,
+    account?: Account,
 ) {
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: orderableKey(contract),
-        futures_order: { ...order, account: accountFor('F') },
+        futures_order: { ...order, account: account ?? accountFor('F') },
     }).then(ensureAccepted);
 }
 
