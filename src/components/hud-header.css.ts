@@ -445,3 +445,149 @@ export const clock = style({
     color: vars.color.foreground,
     fontVariantNumeric: 'tabular-nums',
 });
+
+// ---- server manager：狀態卡 chips、switch 列與設定 dialog ----
+
+export const srvChipRow = style({
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '4px',
+});
+
+export const srvChip = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    fontFamily: vars.font.mono,
+    fontSize: '0.66rem',
+    fontVariantNumeric: 'tabular-nums',
+    padding: '2px 7px',
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    background: vars.color.inset,
+    color: vars.color.foreground,
+    whiteSpace: 'nowrap',
+});
+
+export const srvPhaseRow = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '7px',
+    fontFamily: vars.font.display,
+    fontSize: '0.76rem',
+    fontWeight: 600,
+    color: vars.color.foreground,
+});
+
+export const switchRow = style({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: vars.space.sm,
+    padding: '1px 0',
+});
+
+export const switchLabel = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontFamily: vars.font.body,
+    fontSize: '0.72rem',
+    color: vars.color.foreground,
+    minWidth: 0,
+});
+
+const switchTrackBase = style({
+    position: 'relative',
+    width: '30px',
+    height: '16px',
+    borderRadius: '999px',
+    border: '1px solid',
+    cursor: 'pointer',
+    flexShrink: 0,
+    padding: 0,
+    transition: 'all 0.15s',
+    '::after': {
+        content: '',
+        position: 'absolute',
+        top: '2px',
+        width: '10px',
+        height: '10px',
+        borderRadius: '50%',
+        transition: 'all 0.15s',
+    },
+    ':disabled': { opacity: 0.5, cursor: 'wait' },
+});
+
+export const switchTrack = styleVariants({
+    off: [
+        switchTrackBase,
+        {
+            background: vars.color.inset,
+            borderColor: vars.color.border,
+            '::after': { left: '2px', background: vars.color.mutedForeground },
+            ':hover': { borderColor: vars.color.borderBright },
+        },
+    ],
+    on: [
+        switchTrackBase,
+        {
+            background: vars.color.accentDim,
+            borderColor: vars.color.accent,
+            '::after': { left: '16px', background: vars.color.accent },
+        },
+    ],
+});
+
+export const srvDialogBackdrop = style({
+    position: 'fixed',
+    inset: 0,
+    zIndex: 209,
+    background: 'rgba(0, 0, 0, 0.45)',
+});
+
+export const srvDialog = style({
+    position: 'fixed',
+    top: '7vh',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 210,
+    width: 'min(26rem, calc(100vw - 32px))',
+    maxHeight: '84vh',
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: vars.space.sm,
+    border: `1px solid ${vars.color.borderBright}`,
+    borderRadius: vars.radius.md,
+    background: vars.color.panelRaised,
+    boxShadow: '0 18px 48px rgba(0, 0, 0, 0.45)',
+    padding: vars.space.md,
+});
+
+export const srvDialogTitle = style({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    fontFamily: vars.font.display,
+    fontSize: '0.8rem',
+    fontWeight: 700,
+    color: vars.color.foreground,
+});
+
+export const srvSection = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: vars.space.sm,
+    paddingTop: vars.space.sm,
+    borderTop: `1px solid ${vars.color.border}`,
+});
+
+export const srvDanger = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: vars.space.sm,
+    paddingTop: vars.space.sm,
+    borderTop: `1px dashed ${vars.color.danger}`,
+});

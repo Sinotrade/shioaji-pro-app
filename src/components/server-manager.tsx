@@ -13,6 +13,7 @@ import {
     Play,
     RefreshCw,
     RotateCcw,
+    Settings,
     ShieldCheck,
     Square,
     X,
@@ -81,6 +82,7 @@ export function ServerManager({
     const [showPw, setShowPw] = useState(false);
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [envMsg, setEnvMsg] = useState('');
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const updateState = useSyncExternalStore(
         subscribeAppUpdateState,
         getAppUpdateState,
@@ -156,6 +158,16 @@ export function ServerManager({
         appVersion().then(setVer);
     }, []);
 
+    // Esc 關閉設定 dialog
+    useEffect(() => {
+        if (!settingsOpen) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setSettingsOpen(false);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [settingsOpen]);
+
     // safety net: never let a stuck sidecar promise pin 啟動中 / disable the
     // buttons forever — auto-clear busy after 75s (a production login + CA +
     // contract load is well under that)
@@ -194,6 +206,37 @@ export function ServerManager({
         }
         setEnvMsg('');
         persist(found);
+    };
+
+    const copyDiagnostics = async () => {
+        const lines = [
+            `Shioaji Pro v${ver || '?'} · ${navigator.platform}`,
+            `server: ${
+                status?.running
+                    ? `running pid=${status.pid} port=${status.port} ${
+                          status.simulation ? 'sim' : 'prod'
+                      } healthy=${status.healthy}`
+                    : 'not running'
+            }`,
+            `stream: ${stream} · mode setting: ${
+                settings.production ? 'prod' : 'sim'
+            } · ca: ${settings.caPath ? 'set' : 'none'}`,
+            lastOutput ? `--- log ---\n${lastOutput}` : '',
+        ].filter(Boolean);
+        try {
+            await navigator.clipboard.writeText(lines.join('\n'));
+            notify({
+                kind: 'ok',
+                title: '已複製診斷資訊',
+                body: '回報問題時直接貼上即可',
+            });
+        } catch {
+            notify({
+                kind: 'err',
+                title: '複製失敗',
+                body: '請手動截圖面板內容',
+            });
+        }
     };
 
     // clears the saved API Key/Secret so the app falls back to the first-run
@@ -466,25 +509,86 @@ export function ServerManager({
                                 {EXPECTED_SERVER_VERSION} 不符
                             </span>
                         )}
-                        <span className={styles.emptyHint}>
-                            {phase === 'starting' &&
-                                '啟動中 — 登入與載入合約約需 10–30 秒…'}
-                            {phase === 'connecting' &&
-                                status?.running &&
-                                '已啟動，等待行情連線…'}
-                            {(phase === 'ok' ||
-                                (status?.running && phase !== 'starting')) && (
-                                <>
-                                    {phase === 'connecting' && <br />}
-                                    {`運行中 · ${status?.pid ? `PID ${status.pid} · ` : ''}:${status?.port} · ${
-                                        status?.simulation
-                                            ? '模擬環境'
-                                            : '⚠ 正式環境'
-                                    } · ${status?.healthy ? '健康' : '不健康'}`}
-                                </>
+                        <div className={styles.srvPhaseRow}>
+                            {phase === 'starting' ||
+                            phase === 'connecting' ? (
+                                <span className={styles.spinner} />
+                            ) : (
+                                <span
+                                    className={
+                                        styles.led[
+                                            phase === 'ok' ? 'live' : 'down'
+                                        ]
+                                    }
+                                />
                             )}
-                            {!status?.running && phase !== 'starting' && '未運行'}
-                        </span>
+                            {phase === 'starting'
+                                ? '啟動中 — 登入與載入合約約需 10–30 秒'
+                                : phase === 'connecting'
+                                  ? status?.running
+                                      ? '已啟動，等待行情連線'
+                                      : '連線中'
+                                  : status?.running
+                                    ? '運行中'
+                                    : '未運行'}
+                        </div>
+                        {status?.running && (
+                            <div className={styles.srvChipRow}>
+                                {status.pid !== undefined && (
+                                    <span className={styles.srvChip}>
+                                        PID {status.pid}
+                                    </span>
+                                )}
+                                <span className={styles.srvChip}>
+                                    :{status.port}
+                                </span>
+                                <span
+                                    className={styles.srvChip}
+                                    style={
+                                        status.simulation
+                                            ? {
+                                                  color: 'var(--amber, #e0a43c)',
+                                              }
+                                            : {
+                                                  color: 'var(--danger, #f23645)',
+                                                  fontWeight: 700,
+                                              }
+                                    }
+                                >
+                                    {status.simulation ? '模擬' : '⚠ 正式'}
+                                </span>
+                                {status.healthy === false && (
+                                    <span
+                                        className={styles.srvChip}
+                                        style={{
+                                            color: 'var(--danger, #f23645)',
+                                        }}
+                                    >
+                                        不健康
+                                    </span>
+                                )}
+                                {health &&
+                                    typeof health.token_expires_in_seconds ===
+                                        'number' && (
+                                        <span className={styles.srvChip}>
+                                            token{' '}
+                                            {Math.round(
+                                                health.token_expires_in_seconds /
+                                                    3600,
+                                            )}
+                                            h
+                                        </span>
+                                    )}
+                                {health &&
+                                    typeof health.contract_count ===
+                                        'number' && (
+                                        <span className={styles.srvChip}>
+                                            合約{' '}
+                                            {health.contract_count.toLocaleString()}
+                                        </span>
+                                    )}
+                            </div>
+                        )}
                         {(phase === 'starting' ||
                             (phase === 'connecting' && status?.running)) && (
                             <span className={styles.progressTrack}>
@@ -515,22 +619,6 @@ export function ServerManager({
                                 API 金鑰；或切回模擬後按「重啟」
                             </span>
                         )}
-                        {health && (
-                            <span className={styles.emptyHint}>
-                                token 剩餘{' '}
-                                {typeof health.token_expires_in_seconds ===
-                                'number'
-                                    ? `${Math.round(
-                                          health.token_expires_in_seconds /
-                                              3600,
-                                      )}h`
-                                    : '—'}
-                                {' · 合約 '}
-                                {typeof health.contract_count === 'number'
-                                    ? health.contract_count.toLocaleString()
-                                    : '—'}
-                            </span>
-                        )}
                         <div className={styles.settingGroup}>
                             <button
                                 className={styles.opt.off}
@@ -558,6 +646,185 @@ export function ServerManager({
                             </button>
                         </div>
 
+                        <div className={styles.switchRow}>
+                            <span className={styles.switchLabel}>
+                                <Lock size={12} />
+                                本機 HTTPS
+                                {settings.httpsEnabled &&
+                                    status?.running &&
+                                    status.scheme === 'http' && (
+                                        <span
+                                            style={{
+                                                color: 'var(--amber, #e0a43c)',
+                                            }}
+                                        >
+                                            （待重啟套用）
+                                        </span>
+                                    )}
+                            </span>
+                            <button
+                                className={
+                                    styles.switchTrack[
+                                        settings.httpsEnabled ? 'on' : 'off'
+                                    ]
+                                }
+                                disabled={busy || httpsBusy}
+                                title={
+                                    settings.httpsEnabled
+                                        ? '停用並改回 HTTP'
+                                        : '一鍵產生並信任本機憑證，以 HTTPS＋HTTP/2 連本機伺服器'
+                                }
+                                onClick={() =>
+                                    void (settings.httpsEnabled
+                                        ? disableHttps()
+                                        : enableHttps())
+                                }
+                            />
+                        </div>
+                        {httpsBusy && (
+                            <span className={styles.emptyHint}>
+                                正在產生憑證…（系統若跳出信任視窗請允許）
+                            </span>
+                        )}
+                        {settings.httpsEnabled && !httpsBusy && (
+                            <span className={styles.emptyHint}>
+                                🔒 瀏覽器可直接開 https://localhost:
+                                {status?.port ?? 21322}
+                            </span>
+                        )}
+                        {httpsMsg && (
+                            <span
+                                className={styles.emptyHint}
+                                style={{ color: 'var(--danger, #f23645)' }}
+                            >
+                                {httpsMsg}
+                            </span>
+                        )}
+                        <div className={styles.switchRow}>
+                            <span className={styles.switchLabel}>
+                                App 啟動時自動啟動伺服器
+                            </span>
+                            <button
+                                className={
+                                    styles.switchTrack[
+                                        settings.autoStart ? 'on' : 'off'
+                                    ]
+                                }
+                                onClick={() =>
+                                    persist({
+                                        autoStart: !settings.autoStart,
+                                    })
+                                }
+                            />
+                        </div>
+                        {!settings.apiKey && (
+                            <span
+                                className={styles.emptyHint}
+                                style={{ color: 'var(--amber, #e0a43c)' }}
+                            >
+                                尚未設定 API 金鑰 — 請開啟設定完成初始化
+                            </span>
+                        )}
+                        {lastOutput && diagnoseOutput(lastOutput) && (
+                            <span
+                                className={styles.emptyHint}
+                                style={{
+                                    color: 'var(--danger, #f23645)',
+                                    fontWeight: 600,
+                                }}
+                            >
+                                ⚠ {diagnoseOutput(lastOutput)}
+                            </span>
+                        )}
+                        {lastOutput && errorLines(lastOutput) && (
+                            <span
+                                className={styles.emptyHint}
+                                style={{ color: 'var(--danger, #f23645)' }}
+                            >
+                                {errorLines(lastOutput)}
+                            </span>
+                        )}
+                        {lastOutput && (
+                            <span className={styles.emptyHint}>
+                                {lastOutput}
+                            </span>
+                        )}
+                        {updateNeedsAttention && (
+                            <button
+                                className={styles.updateBtn}
+                                onClick={runUpdateAction}
+                                disabled={updateBusy}
+                            >
+                                {updateState.phase === 'ready' ? (
+                                    <RotateCcw size={13} />
+                                ) : updateState.phase === 'external' ? (
+                                    <ExternalLink size={13} />
+                                ) : (
+                                    <Download size={13} />
+                                )}
+                                {updateState.phase === 'ready'
+                                    ? `重新啟動並更新 v${updateState.version}`
+                                    : updateState.phase === 'external'
+                                      ? `前往下載 v${updateState.version}`
+                                      : updateState.phase === 'installing'
+                                        ? '正在安裝更新…'
+                                        : `下載中${
+                                              updatePercent === undefined
+                                                  ? '…'
+                                                  : ` ${updatePercent}%`
+                                          }`}
+                            </button>
+                        )}
+                        <div className={styles.settingGroup}>
+                            <button
+                                className={styles.opt.off}
+                                onClick={() => void copyDiagnostics()}
+                            >
+                                <Clipboard
+                                    size={11}
+                                    style={{ verticalAlign: '-1px' }}
+                                />{' '}
+                                複製診斷
+                            </button>
+                            <button
+                                className={styles.opt.off}
+                                disabled={updateBusy}
+                                onClick={runUpdateAction}
+                            >
+                                <RefreshCw
+                                    size={11}
+                                    style={{ verticalAlign: '-1px' }}
+                                />{' '}
+                                {updateState.phase === 'checking'
+                                    ? '檢查中…'
+                                    : '檢查更新'}
+                            </button>
+                        </div>
+                        <button
+                            className={styles.updateBtn}
+                            onClick={() => setSettingsOpen(true)}
+                        >
+                            <Settings size={13} />
+                            完整設定…
+                        </button>
+                    </div>
+                    {settingsOpen && (
+                        <>
+                            <div
+                                className={styles.srvDialogBackdrop}
+                                onClick={() => setSettingsOpen(false)}
+                            />
+                            <div className={styles.srvDialog}>
+                                <div className={styles.srvDialogTitle}>
+                                    伺服器設定
+                                    <button
+                                        className={styles.profileDelete}
+                                        title='關閉（Esc）'
+                                        onClick={() => setSettingsOpen(false)}
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                </div>
                         <span className={styles.settingLabel}>
                             API 金鑰（儲存在本機 App 資料夾）
                         </span>
@@ -591,18 +858,7 @@ export function ServerManager({
                                 {envMsg}
                             </span>
                         )}
-                        <button
-                            className={
-                                confirmLogout
-                                    ? styles.killBtnOn
-                                    : styles.killBtnOff
-                            }
-                            onClick={doLogout}
-                        >
-                            <LogOut size={13} />
-                            {confirmLogout ? '再按一次確認登出' : '登出（清除 API 金鑰）'}
-                        </button>
-
+                        <div className={styles.srvSection}>
                         <span className={styles.settingLabel}>環境</span>
                         <div className={styles.settingGroup}>
                             <button
@@ -636,7 +892,6 @@ export function ServerManager({
                                 正式環境下單動用真實資金，重啟後生效
                             </span>
                         )}
-
                         <span className={styles.settingLabel}>
                             憑證（正式環境下單必要，模擬不需要）
                         </span>
@@ -726,55 +981,6 @@ export function ServerManager({
                                 sinotrade.com.tw API 管理頁下載 Sinopac.pfx
                             </span>
                         )}
-
-                        <span className={styles.settingLabel}>
-                            本機 HTTPS（瀏覽器連線可用 HTTP/2）
-                        </span>
-                        {settings.httpsEnabled ? (
-                            <>
-                                <span className={styles.emptyHint}>
-                                    🔒 已啟用 — 瀏覽器可直接開{' '}
-                                    {`https://localhost:${status?.port ?? 21322}`}
-                                    {status?.running &&
-                                        status.scheme === 'http' &&
-                                        '（伺服器仍為 HTTP，按「重啟」套用）'}
-                                </span>
-                                <button
-                                    className={styles.opt.on}
-                                    disabled={busy || httpsBusy}
-                                    onClick={() => void disableHttps()}
-                                >
-                                    ✓ 本機 HTTPS — 點擊停用並改回 HTTP
-                                </button>
-                            </>
-                        ) : (
-                            <button
-                                className={styles.updateBtn}
-                                disabled={busy || httpsBusy}
-                                onClick={() => void enableHttps()}
-                            >
-                                <Lock size={13} />
-                                {httpsBusy
-                                    ? '正在產生憑證…（系統若跳出信任視窗請允許）'
-                                    : '啟用本機 HTTPS'}
-                            </button>
-                        )}
-                        {httpsMsg && (
-                            <span
-                                className={styles.emptyHint}
-                                style={{ color: 'var(--danger, #f23645)' }}
-                            >
-                                {httpsMsg}
-                            </span>
-                        )}
-                        {!settings.httpsEnabled && (
-                            <span className={styles.emptyHint}>
-                                一鍵產生並信任 localhost／127.0.0.1 本機憑證，
-                                供瀏覽器以 HTTPS＋HTTP/2 連本機伺服器。
-                                首次啟用會跳出一次系統的憑證信任視窗。
-                            </span>
-                        )}
-
                         <button
                             className={styles.updateBtn}
                             onClick={runReadyCheck}
@@ -806,19 +1012,9 @@ export function ServerManager({
                                 ))}
                             </div>
                         )}
-
-                        <button
-                            className={
-                                styles.opt[settings.autoStart ? 'on' : 'off']
-                            }
-                            onClick={() =>
-                                persist({ autoStart: !settings.autoStart })
-                            }
-                        >
-                            {settings.autoStart
-                                ? '✓ App 啟動時自動啟動伺服器'
-                                : 'App 啟動時自動啟動伺服器'}
-                        </button>
+                        </div>
+                        <div className={styles.srvSection}>
+                            <span className={styles.settingLabel}>進階</span>
                         <button
                             className={styles.updateBtn}
                             onClick={runUpdateAction}
@@ -876,71 +1072,36 @@ export function ServerManager({
                                 更新失敗：{updateState.error}
                             </span>
                         )}
-                        {lastOutput && diagnoseOutput(lastOutput) && (
-                            <span
-                                className={styles.emptyHint}
-                                style={{
-                                    color: 'var(--danger, #f23645)',
-                                    fontWeight: 600,
-                                }}
-                            >
-                                ⚠ {diagnoseOutput(lastOutput)}
-                            </span>
-                        )}
-                        {lastOutput && errorLines(lastOutput) && (
-                            <span
-                                className={styles.emptyHint}
-                                style={{ color: 'var(--danger, #f23645)' }}
-                            >
-                                {errorLines(lastOutput)}
-                            </span>
-                        )}
-                        {lastOutput && (
-                            <span className={styles.emptyHint}>
-                                {lastOutput}
-                            </span>
-                        )}
                         <button
                             className={styles.updateBtn}
-                            onClick={async () => {
-                                const lines = [
-                                    `Shioaji Pro v${ver || '?'} · ${navigator.platform}`,
-                                    `server: ${
-                                        status?.running
-                                            ? `running pid=${status.pid} port=${status.port} ${
-                                                  status.simulation
-                                                      ? 'sim'
-                                                      : 'prod'
-                                              } healthy=${status.healthy}`
-                                            : 'not running'
-                                    }`,
-                                    `stream: ${stream} · mode setting: ${
-                                        settings.production ? 'prod' : 'sim'
-                                    } · ca: ${settings.caPath ? 'set' : 'none'}`,
-                                    lastOutput ? `--- log ---\n${lastOutput}` : '',
-                                ].filter(Boolean);
-                                try {
-                                    await navigator.clipboard.writeText(
-                                        lines.join('\n'),
-                                    );
-                                    notify({
-                                        kind: 'ok',
-                                        title: '已複製診斷資訊',
-                                        body: '回報問題時直接貼上即可',
-                                    });
-                                } catch {
-                                    notify({
-                                        kind: 'err',
-                                        title: '複製失敗',
-                                        body: '請手動截圖面板內容',
-                                    });
-                                }
-                            }}
+                            onClick={() => void copyDiagnostics()}
                         >
                             <Clipboard size={13} />
                             複製診斷資訊
                         </button>
-                    </div>
+                        </div>
+                        <div className={styles.srvDanger}>
+                            <span
+                                className={styles.settingLabel}
+                                style={{ color: 'var(--danger, #f23645)' }}
+                            >
+                                危險區
+                            </span>
+                        <button
+                            className={
+                                confirmLogout
+                                    ? styles.killBtnOn
+                                    : styles.killBtnOff
+                            }
+                            onClick={doLogout}
+                        >
+                            <LogOut size={13} />
+                            {confirmLogout ? '再按一次確認登出' : '登出（清除 API 金鑰）'}
+                        </button>
+                        </div>
+                            </div>
+                        </>
+                    )}
                 </>
             )}
         </div>
