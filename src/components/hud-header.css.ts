@@ -241,6 +241,22 @@ export const killBtnOn = style([
     },
 ]);
 
+// header 版 Kill Switch：resetBtn 的尺寸、killBtnOn 的警示色 — 鎖定中
+// 必須一眼看見且一鍵可解
+export const killHeaderOn = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.66rem',
+    fontWeight: 700,
+    color: '#fff',
+    background: vars.color.danger,
+    border: `1px solid ${vars.color.danger}`,
+    borderRadius: vars.radius.sm,
+    padding: '3px 10px',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    animation: 'pulse-glow 1.2s infinite',
+});
+
 export const riskLabel = style({
     fontSize: '0.66rem',
     color: vars.color.mutedForeground,
