@@ -431,15 +431,23 @@ export function ServerManager({
                                 display: 'flex',
                                 justifyContent: 'space-between',
                                 alignItems: 'baseline',
+                                // 塞不下時讓版本「整塊」掉到下一行，而不是
+                                // 兩邊各自在字中間斷行（狀/態 被拆開的排版災難)
+                                flexWrap: 'wrap',
+                                columnGap: '0.5rem',
                             }}
                         >
-                            Shioaji Server 狀態
+                            <span style={{ whiteSpace: 'nowrap' }}>
+                                Shioaji Server 狀態
+                            </span>
                             {(serverVersion || ver) && (
                                 <span
                                     style={{
                                         fontFamily: 'var(--font-mono, monospace)',
                                         opacity: 0.75,
                                         fontWeight: 400,
+                                        whiteSpace: 'nowrap',
+                                        marginLeft: 'auto',
                                     }}
                                 >
                                     {serverVersion
