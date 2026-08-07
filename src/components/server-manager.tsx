@@ -480,7 +480,7 @@ export function ServerManager({
             >
                 {updateState.phase === 'downloading' ||
                 updateState.phase === 'installing' ? (
-                    <Orb size={12} variant='ring' style={{ color: 'var(--amber, #e0a43c)' }} />
+                    <Orb size={12} variant='sweep' style={{ color: 'var(--amber, #e0a43c)' }} />
                 ) : updateState.phase === 'ready' ? (
                     <Download size={11} />
                 ) : updateState.phase === 'external' ? (
@@ -833,13 +833,31 @@ export function ServerManager({
                                 disabled={updateBusy}
                                 onClick={runUpdateAction}
                             >
-                                <RefreshCw
-                                    size={11}
-                                    style={{ verticalAlign: '-1px' }}
-                                />{' '}
-                                {updateState.phase === 'checking'
-                                    ? '檢查中…'
-                                    : '檢查更新'}
+                                {updateState.phase !== 'checking' && (
+                                    <>
+                                        <RefreshCw
+                                            size={11}
+                                            style={{
+                                                verticalAlign: '-1px',
+                                            }}
+                                        />{' '}
+                                    </>
+                                )}
+                                {updateState.phase === 'checking' ? (
+                                    <>
+                                        <Orb
+                                            size={10}
+                                            variant='ring'
+                                            style={{
+                                                marginRight: 5,
+                                                verticalAlign: '-1px',
+                                            }}
+                                        />
+                                        檢查中…
+                                    </>
+                                ) : (
+                                    '檢查更新'
+                                )}
                             </button>
                         </div>
                         <button
