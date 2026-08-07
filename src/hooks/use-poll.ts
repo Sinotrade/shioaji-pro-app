@@ -16,25 +16,42 @@ export function usePoll<T>(
     // exactly when the backend is slow, congesting plugin-http until even
     // probes against a live server time out
     const inFlight = useRef(false);
-    const run = useCallback(async () => {
-        if (inFlight.current) return;
+    // manual refresh during an in-flight fetch must not be dropped — the
+    // caller usually just swapped the fetcher (scope/market switch) and a
+    // swallowed refresh would show stale-scope data until the next tick.
+    // Queue exactly one trailing rerun instead (interval ticks still skip).
+    const queued = useRef(false);
+    const run = useCallback(async (force = false) => {
+        if (inFlight.current) {
+            if (force) queued.current = true;
+            return;
+        }
         inFlight.current = true;
         try {
-            const d = await fetcherRef.current();
-            setData(d);
-            setError(null);
-        } catch (e) {
-            setError(e instanceof Error ? e.message : String(e));
+            do {
+                queued.current = false;
+                try {
+                    const d = await fetcherRef.current();
+                    setData(d);
+                    setError(null);
+                } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                }
+            } while (queued.current);
         } finally {
             inFlight.current = false;
         }
     }, []);
 
+    const refresh = useCallback(() => {
+        void run(true);
+    }, [run]);
+
     useEffect(() => {
-        run();
-        const t = setInterval(run, intervalMs);
+        void run();
+        const t = setInterval(() => void run(), intervalMs);
         return () => clearInterval(t);
     }, [run, intervalMs]);
 
-    return { data, error, refresh: run };
+    return { data, error, refresh };
 }

@@ -293,7 +293,18 @@ export function BottomDock({
             {tab === 'account' && (
                 <div className={panel.panelBody}>
                     <AccountPane
-                        positions={positions}
+                        // 股票市值估算要跟摘要列一樣尊重帳戶範圍 — 多帳戶時
+                        // 選單一帳戶不能把別的帳戶持倉算進來
+                        positions={
+                            scope
+                                ? positions.filter(
+                                      (p) =>
+                                          refKey(
+                                              positionAccountRef(p, fallback),
+                                          ) === scope,
+                                  )
+                                : positions
+                        }
                         balance={balance}
                         margin={margin}
                         market={market}

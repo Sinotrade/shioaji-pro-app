@@ -86,28 +86,16 @@ function Row({
     label,
     value,
     dir,
-    tone,
 }: {
     label: string;
     value: string;
     dir?: 'up' | 'down' | 'flat';
-    tone?: 'danger' | 'warn';
 }) {
     return (
         <div className={styles.fundRow}>
             <span className={styles.fundLabel}>{label}</span>
             <span
                 className={`${styles.fundValue} ${dir ? panel.dirText[dir] : ''}`}
-                style={
-                    tone
-                        ? {
-                              color:
-                                  tone === 'danger'
-                                      ? vars.color.danger
-                                      : vars.color.amber,
-                          }
-                        : undefined
-                }
             >
                 {value}
             </span>
@@ -687,14 +675,15 @@ export function AccountPane({
     );
 
     // 今日已實現損益：profit_loss 給列表/筆數；profitloss_sum 給權威總額。
-    // 模擬環境 sum 回全 0 但 profit_loss 有 paper 資料 — 以列表加總 fallback
+    // 模擬環境 sum 回全 0 但 profit_loss 有 paper 資料 — 以列表加總 fallback。
+    // fallback 逐市場判斷：證/期各自「sum 有料就用 sum、沒料就加總列表」，
+    // 避免一個市場 sum 有效、另一個只有列表時總額漏掉後者的筆數
     const pnlFetcher = useCallback(async (): Promise<PnlData> => {
         const markets: ('S' | 'F')[] = [];
         if (showStock) markets.push('S');
         if (showFut) markets.push('F');
         const rows: AccountedPnl[] = [];
-        let sumTotal = 0;
-        let haveSum = false;
+        let total = 0;
         await Promise.all(
             markets.map(async (m) => {
                 const sel =
@@ -711,22 +700,16 @@ export function AccountPane({
                     fetchProfitLossSummary(m, sel).catch(() => null),
                 ]);
                 for (const r of list) rows.push({ ...r, market: m });
-                if (
+                const haveSum =
                     sum &&
-                    (sum.total.pnl !== 0 || sum.profitloss_sum.length > 0)
-                ) {
-                    haveSum = true;
-                    sumTotal += sum.total.pnl;
-                }
+                    (sum.total.pnl !== 0 || sum.profitloss_sum.length > 0);
+                total += haveSum
+                    ? sum.total.pnl
+                    : list.reduce((s, r) => s + r.pnl, 0);
             }),
         );
         rows.sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl));
-        return {
-            rows,
-            total: haveSum
-                ? sumTotal
-                : rows.reduce((s, r) => s + r.pnl, 0),
-        };
+        return { rows, total };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showStock, showFut, selKey]);
     const { data: pnl, refresh: refreshPnl } = usePoll<PnlData>(
