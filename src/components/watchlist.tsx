@@ -73,6 +73,7 @@ const WatchRow = memo(function WatchRow({
     onDragStart,
     onDragOver,
     onDrop,
+    onDragEnd,
 }: {
     item: WatchItem;
     selected: boolean;
@@ -88,6 +89,7 @@ const WatchRow = memo(function WatchRow({
     onDragStart: (code: string) => void;
     onDragOver: (code: string) => void;
     onDrop: () => void;
+    onDragEnd: () => void;
 }) {
     const quote = useQuote(item.contract.code);
     const tick = quote?.tick;
@@ -138,14 +140,21 @@ const WatchRow = memo(function WatchRow({
                 e.dataTransfer.effectAllowed = 'move';
                 onDragStart(item.contract.code);
             }}
+            // 排序模式外不接任何拖放（外部拖進來的檔案/文字不該變 drop
+            // target，更不該觸發 handleDrop）
             onDragOver={(e) => {
+                if (!arrange) return;
                 e.preventDefault();
                 onDragOver(item.contract.code);
             }}
             onDrop={(e) => {
+                if (!arrange) return;
                 e.preventDefault();
                 onDrop();
             }}
+            // 取消的拖曳（Esc／拖出視窗）也要清 drag state，否則殘留的
+            // fromCode 會在下一次 drop 時造成 spurious reorder
+            onDragEnd={onDragEnd}
         >
             {flashDir && (
                 <span
@@ -341,6 +350,19 @@ export function Watchlist({
         setDropCode(code);
     };
 
+    const clearDragState = useCallback(() => {
+        dragCode.current = null;
+        dropCodeRef.current = null;
+        setDropCode(null);
+    }, []);
+
+    // 換清單時退出排序模式並清掉拖曳殘留 — 殘留的 from/to code 若恰好也
+    // 存在於新清單，會造成看不懂的 spurious reorder
+    useEffect(() => {
+        setArrange(false);
+        clearDragState();
+    }, [activeListId, clearDragState]);
+
     const handleDrop = () => {
         const from = dragCode.current;
         const to = dropCodeRef.current;
@@ -470,6 +492,7 @@ export function Watchlist({
                             onClick={() => {
                                 // 進入排序模式一律回到自訂順序（互斥）
                                 if (!arrange) setSortMode('custom');
+                                clearDragState();
                                 setArrange((v) => !v);
                             }}
                         >
@@ -596,6 +619,7 @@ export function Watchlist({
                             }}
                             onDragOver={setDropTarget}
                             onDrop={handleDrop}
+                            onDragEnd={clearDragState}
                         />
                     ))}
                 </div>

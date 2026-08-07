@@ -20,6 +20,7 @@ import {
 } from '../lib/account-store';
 import {
     maskAccountId,
+    maskMoney,
     maskName,
     setPrivacyMode,
     setPrivacyMoney,
@@ -301,6 +302,8 @@ function AccountsSection() {
 function RiskSection() {
     const risk = useRiskSettings();
     const dailyPnl = getDailyPnl();
+    // 金額遮蔽也要蓋住這裡的損益估算 — 隱私開關不該在設定 dialog 裡漏底
+    const privMoney = usePrivacyMoney();
     return (
         <>
             <span className={hud.settingLabel}>風控規則 Rules</span>
@@ -344,7 +347,8 @@ function RiskSection() {
                 />
             </div>
             <span className={hud.emptyHint}>
-                目前當日損益估算：{Math.round(dailyPnl).toLocaleString()}
+                目前當日損益估算：
+                {maskMoney(Math.round(dailyPnl).toLocaleString(), privMoney)}
                 （持倉未實現＋期貨平倉）
                 <br />
                 停損/停利觸價單不受風控封鎖。
