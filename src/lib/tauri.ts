@@ -85,7 +85,76 @@ async function sidecar(
 // so awaiting execute() hangs the UI on 啟動中 forever. Spawn it instead and
 // poll health to know when it's actually up; surface the captured log only if
 // the process dies with an error before the server answers.
+//
+// The spawn itself happens on the RUST side with output routed to a file:
+// a plugin-shell spawn streams every output line through a webview channel,
+// and the boot flow reloads the page right after the server turns healthy —
+// the dead channel then ate a "Couldn't find callback" warning per line for
+// the rest of the session, degrading WKWebView IPC until健康 servers got
+// restarted by their own watchdog (2026-08-07 盤中).
 async function spawnServer(
+    args: string[],
+    env: Record<string, string>,
+    port: number,
+    scheme: ApiScheme = 'http',
+): Promise<SidecarResult> {
+    const fullEnv = { NO_COLOR: '1', ...env };
+    const { invoke } = await import('@tauri-apps/api/core');
+    let pid: number;
+    try {
+        pid = await invoke<number>('spawn_server', {
+            args,
+            env: fullEnv,
+            port,
+        });
+    } catch (e) {
+        if (/not found|unknown/i.test(String(e))) {
+            // older Rust shell without the command — channel streaming
+            return spawnServerViaChannels(args, env, port, scheme);
+        }
+        return { ok: false, output: `啟動失敗：${String(e)}` };
+    }
+    setServerPid(pid);
+    setSpawnPort(port);
+    const deadline = Date.now() + 45_000;
+    while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (await probeInfo(port, scheme)) {
+            return { ok: true, output: await readServerLog(port) };
+        }
+        const alive = await invoke<boolean>('process_alive', { pid }).catch(
+            () => true, // transient IPC failure must not read as "died"
+        );
+        if (!alive) {
+            setServerPid(null);
+            return { ok: false, output: await readServerLog(port) };
+        }
+    }
+    return {
+        ok: false,
+        output: `${await readServerLog(port)}\n啟動逾時（45 秒未就緒）`.trim(),
+    };
+}
+
+// startup/login output lands in ~/.shioaji/sjpro-server-<port>.log now —
+// read it back for error surfacing and the CA-activation warning scan
+async function readServerLog(port: number): Promise<string> {
+    try {
+        const { readTextFile } = await import('@tauri-apps/plugin-fs');
+        const { homeDir, join } = await import('@tauri-apps/api/path');
+        const p = await join(
+            await homeDir(),
+            '.shioaji',
+            `sjpro-server-${port}.log`,
+        );
+        const text = await readTextFile(p);
+        return text.replace(ANSI_RE, '').trim().slice(-4000);
+    } catch {
+        return '';
+    }
+}
+
+async function spawnServerViaChannels(
     args: string[],
     env: Record<string, string>,
     port: number,
@@ -371,9 +440,13 @@ async function probeInfo(
     scheme: ApiScheme = getApiScheme(),
 ): Promise<{ version: string; simulation: boolean } | null> {
     try {
+        // generous timeout: at boot the plugin-http queue is congested and
+        // a tight 1.5s deadline cancelled probes against LIVE servers —
+        // "Request cancelled" read as 未運行 and the watchdog restarted a
+        // perfectly healthy daemon (2026-08-07 盤中實錄)
         const res = await probeFetch(
             `${scheme}://127.0.0.1:${port}/api/v1/info`,
-            1500,
+            5000,
         );
         if (!res.ok) return null;
         const info = (await res.json()) as {
@@ -417,7 +490,7 @@ async function probeHealthy(
     try {
         const res = await probeFetch(
             `${scheme}://127.0.0.1:${port}/api/v1/health`,
-            2000,
+            5000,
         );
         return res.ok;
     } catch {
@@ -638,10 +711,13 @@ export async function serverStart(opts: {
         SJ_API_KEY: opts.apiKey,
         SJ_SEC_KEY: opts.secretKey,
         SJ_HTTP_ADDR: `127.0.0.1:${port}`,
-        // startup/login logs still print; per-request logs are unbounded
-        // and the capture pipe outlives no page reload — a full pipe can
-        // wedge the server into a bound-but-dead zombie
+        // per-request logs are unbounded (the spawn log file would grow
+        // ~100MB/day). SJ_HTTP_LOG=false and its documented fallbacks are
+        // all ineffective in 1.7.2 (upstream bug) — RUST_LOG=warn is what
+        // actually silences salvo request logging while keeping WARN+
+        // (e.g. CA activation failures) for error surfacing.
         SJ_HTTP_LOG: 'false',
+        RUST_LOG: 'warn',
     };
     // CA certificate — required for production orders, ignored in simulation
     if (opts.caPath) {

@@ -173,17 +173,22 @@ async function run() {
                             body: '就緒後畫面將自動重新載入',
                         });
                         const deadline = Date.now() + 90_000;
+                        let ticking = false; // overlapping ticks pile probes
                         const timer = setInterval(async () => {
+                            if (ticking) return;
                             if (Date.now() > deadline) {
                                 clearInterval(timer);
                                 return;
                             }
+                            ticking = true;
                             try {
                                 await fetchHealth();
                                 clearInterval(timer);
                                 window.location.reload();
                             } catch {
                                 // not up yet
+                            } finally {
+                                ticking = false;
                             }
                         }, 2000);
                         return;
@@ -214,7 +219,11 @@ async function run() {
             body: '伺服器就緒後將自動載入畫面',
         });
     }
+    let ticking = false; // async ticks must not overlap — probe pile-ups
+    // congest plugin-http until even live-server probes time out
     const timer = setInterval(async () => {
+        if (ticking) return;
+        ticking = true;
         try {
             const st = isTauri ? await serverStatus() : null;
             if (st) {
@@ -236,6 +245,8 @@ async function run() {
             window.location.reload();
         } catch {
             // keep waiting
+        } finally {
+            ticking = false;
         }
     }, 4000);
 }
