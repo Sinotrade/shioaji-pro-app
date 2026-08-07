@@ -738,12 +738,206 @@ export function fetchMargin() {
 export interface Settlement {
     date: string;
     amount: number;
+    /** T 日偏移：0=今日、1=T+1、2=T+2 */
+    T: number;
 }
 
 export function fetchSettlements() {
     return apiPost<Settlement[]>(
         '/api/v1/portfolio/settlements',
         accountBody('S'),
+    );
+}
+
+// ---- realized P&L 已實現損益（帳務/交割 tab）----
+// 模擬環境 profit_loss 會切到 paper endpoint（有真資料）；profitloss_sum
+// 則回空 summary＋全 0 total — 呼叫端要能拿列表自行加總當 fallback
+
+export interface StockProfitLoss {
+    id: number;
+    code: string;
+    quantity: number;
+    pnl: number;
+    /** YYYYMMDD，如 "20260724" */
+    date: string;
+    dseq: string;
+    price: number;
+    pr_ratio: number;
+    cond: string;
+    seqno: string;
+}
+
+export interface FutureProfitLoss {
+    id: number;
+    code: string;
+    quantity: number;
+    pnl: number;
+    date: string;
+    direction: 'Buy' | 'Sell';
+    entry_price: number;
+    cover_price: number;
+    fee: number;
+    tax: number;
+}
+
+export type ProfitLoss = StockProfitLoss | FutureProfitLoss;
+
+export function fetchProfitLoss(
+    accountType: AccountTypeName,
+    account?: AccountSelector,
+    beginDate = todayStr(),
+    endDate = todayStr(),
+) {
+    return apiPost<ProfitLoss[]>('/api/v1/portfolio/profit_loss', {
+        ...accountBody(accountType, account),
+        begin_date: beginDate,
+        end_date: endDate,
+    });
+}
+
+export interface ProfitLossTotal {
+    entry_amount: number;
+    cover_amount: number;
+    quantity: number;
+    buy_cost: number;
+    sell_cost: number;
+    pnl: number;
+    pr_ratio: number;
+}
+
+export interface StockProfitLossSummary {
+    code: string;
+    quantity: number;
+    pnl: number;
+    pr_ratio: number;
+    entry_price: number;
+    cover_price: number;
+    entry_cost: number;
+    cover_cost: number;
+    buy_cost: number;
+    sell_cost: number;
+    cond: string;
+    currency: string;
+}
+
+export interface FutureProfitLossSummary {
+    code: string;
+    quantity: number;
+    pnl: number;
+    direction: 'Buy' | 'Sell';
+    entry_price: number;
+    cover_price: number;
+    fee: number;
+    tax: number;
+    currency: string;
+}
+
+export type ProfitLossSummary =
+    | StockProfitLossSummary
+    | FutureProfitLossSummary;
+
+export interface ProfitLossSummaryTotal {
+    profitloss_sum: ProfitLossSummary[];
+    total: ProfitLossTotal;
+}
+
+export function fetchProfitLossSummary(
+    accountType: AccountTypeName,
+    account?: AccountSelector,
+    beginDate = todayStr(),
+    endDate = todayStr(),
+) {
+    return apiPost<ProfitLossSummaryTotal>(
+        '/api/v1/portfolio/profitloss_sum',
+        {
+            ...accountBody(accountType, account),
+            begin_date: beginDate,
+            end_date: endDate,
+        },
+    );
+}
+
+// 交易額度：股票帳戶限定，交易日 08:30-15:00 才有值；模擬環境回全 0
+export interface TradingLimits {
+    trading_limit: number;
+    trading_used: number;
+    trading_available: number;
+    margin_limit: number;
+    margin_used: number;
+    margin_available: number;
+    short_limit: number;
+    short_used: number;
+    short_available: number;
+}
+
+export function fetchTradingLimits(account?: AccountSelector) {
+    return apiPost<TradingLimits>(
+        '/api/v1/portfolio/trading_limits',
+        accountBody('S', account),
+    );
+}
+
+// ---- 預收券款/圈存（查詢類 only）----
+// reserve_stock / reserve_earmarking 申請屬下單類動作，刻意不在這裡實作。
+// 模擬環境不支援預收，回空 stocks 或錯誤 — 呼叫端 catch 後顯示提示
+
+export interface ReserveStockSummaryRow {
+    contract: ContractBase;
+    available_share: number;
+    reserved_share: number;
+}
+
+export interface ReserveStocksSummary {
+    stocks: ReserveStockSummaryRow[];
+    account: Account;
+}
+
+export function fetchStockReserveSummary(account?: AccountSelector) {
+    return apiPost<ReserveStocksSummary>(
+        '/api/v1/order/stock_reserve_summary',
+        accountBody('S', account),
+    );
+}
+
+export interface ReserveStockDetailRow {
+    contract: ContractBase;
+    share: number;
+    order_datetime: string;
+    status: boolean;
+    info: string;
+}
+
+export interface ReserveStocksDetail {
+    stocks: ReserveStockDetailRow[];
+    account: Account;
+}
+
+export function fetchStockReserveDetail(account?: AccountSelector) {
+    return apiPost<ReserveStocksDetail>(
+        '/api/v1/order/stock_reserve_detail',
+        accountBody('S', account),
+    );
+}
+
+export interface EarmarkStockDetailRow {
+    contract: ContractBase;
+    share: number;
+    price: number;
+    amount: number;
+    order_datetime: string;
+    status: boolean;
+    info: string;
+}
+
+export interface EarmarkStocksDetail {
+    stocks: EarmarkStockDetailRow[];
+    account: Account;
+}
+
+export function fetchEarmarkingDetail(account?: AccountSelector) {
+    return apiPost<EarmarkStocksDetail>(
+        '/api/v1/order/earmarking_detail',
+        accountBody('S', account),
     );
 }
 

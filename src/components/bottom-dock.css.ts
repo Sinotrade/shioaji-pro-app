@@ -250,16 +250,43 @@ export const pnlFill = style({
     transition: 'width 0.3s',
 });
 
-// ---- asset distribution (帳務 tab) ----
+// ---- 帳務/交割 tab：緊湊數字列＋分區小卡 ----
 
-export const distBlock = style({
+export const acctWrap = style({
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: vars.space.md,
+    padding: vars.space.md,
+    alignItems: 'start',
+});
+
+// 寬版兩欄：左=資金狀態＋交割行事曆＋交易額度、右=已實現損益＋預收
+export const acctWrapWide = style({
+    gridTemplateColumns: '1fr 1fr',
+});
+
+export const acctCol = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: vars.space.md,
+    minWidth: 0,
+});
+
+export const acctSection = style({
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
     padding: `${vars.space.sm} ${vars.space.md}`,
     display: 'flex',
     flexDirection: 'column',
-    gap: vars.space.xs,
+    gap: '4px',
+    minWidth: 0,
 });
 
-export const distTitle = style({
+export const acctTitle = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: vars.space.sm,
     fontFamily: vars.font.display,
     fontSize: '0.62rem',
     fontWeight: 600,
@@ -268,98 +295,216 @@ export const distTitle = style({
     color: vars.color.mutedForeground,
 });
 
-// donut on the left, aligned detail/holdings list on the right
-export const distWrap = style({
-    display: 'flex',
-    alignItems: 'center',
-    gap: vars.space.lg,
+export const acctTitleNote = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.6rem',
+    fontWeight: 400,
+    letterSpacing: 'normal',
+    textTransform: 'none',
+    color: vars.color.mutedForeground,
+    opacity: 0.8,
 });
 
-export const distDetail = style({
-    flex: 1,
-    minWidth: 0,
+// 緊湊數字列：label 左、值右對齊
+export const fundRow = style({
     display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-});
-
-export const distRow = style({
-    display: 'grid',
-    gridTemplateColumns: '10px 5.2rem 1fr 3.2rem',
-    alignItems: 'center',
-    columnGap: vars.space.sm,
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: vars.space.sm,
     fontFamily: vars.font.mono,
     fontSize: '0.72rem',
     fontVariantNumeric: 'tabular-nums',
+    lineHeight: 1.7,
 });
 
-export const distLabel = style({
-    fontFamily: vars.font.body,
-    color: vars.color.foreground,
-    fontWeight: 500,
-});
-
-export const distValue = style({
-    textAlign: 'right',
-    color: vars.color.foreground,
-    fontWeight: 600,
-});
-
-export const distPct = style({
-    textAlign: 'right',
-    color: vars.color.mutedForeground,
-    fontSize: '0.66rem',
-});
-
-export const distSwatch = style({
-    width: '10px',
-    height: '10px',
-    borderRadius: '3px',
-});
-
-export const holdingHead = style({
+export const fundLabel = style({
     fontFamily: vars.font.display,
-    fontSize: '0.6rem',
-    fontWeight: 600,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
+    fontSize: '0.64rem',
+    fontWeight: 500,
     color: vars.color.mutedForeground,
-    marginTop: '6px',
-    paddingTop: '6px',
-    borderTop: `1px solid ${vars.color.border}`,
+    whiteSpace: 'nowrap',
 });
 
-export const holdingRow = style({
-    display: 'grid',
-    gridTemplateColumns: '3.6rem 1fr auto 3.2rem',
-    alignItems: 'center',
-    columnGap: vars.space.sm,
-    fontFamily: vars.font.mono,
-    fontSize: '0.68rem',
-    fontVariantNumeric: 'tabular-nums',
-});
-
-export const holdingCode = style({
-    color: vars.color.foreground,
+export const fundValue = style({
     fontWeight: 600,
+    textAlign: 'right',
+    whiteSpace: 'nowrap',
 });
 
-export const holdingTrack = style({
-    height: '6px',
-    borderRadius: '3px',
+// 區內分組（證券｜期貨｜合計）分隔線
+export const fundRule = style({
+    borderTop: `1px solid ${vars.color.border}`,
+    margin: '4px 0',
+});
+
+// 模擬環境/非交易時段的小字提示 — 取代一排 $0
+export const acctHint = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.64rem',
+    color: vars.color.mutedForeground,
+    lineHeight: 1.6,
+});
+
+// ---- 風險指標色條 gauge ----
+
+export const riskRow = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: vars.space.sm,
+    lineHeight: 1.7,
+});
+
+export const riskTrack = style({
+    flex: 1,
+    height: '4px',
+    borderRadius: '2px',
     background: vars.color.muted,
     overflow: 'hidden',
 });
 
-export const holdingFill = style({
+export const riskFill = style({
     height: '100%',
-    borderRadius: '3px',
-    background: vars.color.accent,
-    opacity: 0.7,
+    borderRadius: '2px',
+    transition: 'width 0.3s, background 0.3s',
 });
 
-export const holdingValue = style({
+// ---- 交割行事曆：T+0/T+1/T+2 三列 ----
+
+export const settleRow = style({
+    display: 'grid',
+    gridTemplateColumns: '2.6rem 5.6rem 1fr',
+    alignItems: 'baseline',
+    columnGap: vars.space.sm,
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
+    fontVariantNumeric: 'tabular-nums',
+    lineHeight: 1.8,
+});
+
+export const settleTag = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.6rem',
+    fontWeight: 600,
     color: vars.color.mutedForeground,
+});
+
+export const settleDate = style({
+    color: vars.color.mutedForeground,
+    fontSize: '0.68rem',
+});
+
+export const settleAmount = style({
+    textAlign: 'right',
+    fontWeight: 600,
+});
+
+// ---- 已實現損益：總額列可展開明細 ----
+
+export const pnlToggle = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: vars.space.sm,
+    width: '100%',
+    padding: '2px 0',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
+    fontVariantNumeric: 'tabular-nums',
+    color: vars.color.foreground,
+    textAlign: 'left',
+    ':hover': { color: vars.color.accent },
+});
+
+export const pnlTotal = style({
+    fontSize: '0.9rem',
+    fontWeight: 700,
+});
+
+export const pnlCount = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.62rem',
+    color: vars.color.mutedForeground,
+});
+
+export const pnlDetailRow = style({
+    display: 'grid',
+    gridTemplateColumns: '3.4rem 1fr 3.6rem 5.6rem',
+    alignItems: 'baseline',
+    columnGap: vars.space.sm,
+    fontFamily: vars.font.mono,
+    fontSize: '0.7rem',
+    fontVariantNumeric: 'tabular-nums',
+    lineHeight: 1.8,
+});
+
+export const pnlDetailName = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.64rem',
+    color: vars.color.mutedForeground,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    minWidth: 0,
+});
+
+export const pnlDetailQty = style({
+    textAlign: 'right',
+    color: vars.color.mutedForeground,
+});
+
+export const pnlDetailVal = style({
+    textAlign: 'right',
+    fontWeight: 600,
+});
+
+// ---- 預收券款/圈存 ----
+
+export const rsvHead = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.6rem',
+    fontWeight: 600,
+    letterSpacing: '0.04em',
+    color: vars.color.mutedForeground,
+    marginTop: '4px',
+});
+
+export const rsvRow = style({
+    display: 'grid',
+    gridTemplateColumns: '3.4rem 1fr auto',
+    alignItems: 'baseline',
+    columnGap: vars.space.sm,
+    fontFamily: vars.font.mono,
+    fontSize: '0.7rem',
+    fontVariantNumeric: 'tabular-nums',
+    lineHeight: 1.8,
+});
+
+export const rsvInfo = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.62rem',
+    color: vars.color.mutedForeground,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    minWidth: 0,
+});
+
+export const rsvVal = style({
+    textAlign: 'right',
+    whiteSpace: 'nowrap',
+});
+
+// 載入列：Orb＋文字
+export const loadingRow = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontFamily: vars.font.display,
+    fontSize: '0.66rem',
+    color: vars.color.mutedForeground,
+    padding: '4px 0',
 });
 
 // ---- dock 全域控制列（帳戶範圍／合併模式／市場篩選）＋摘要列 ----
