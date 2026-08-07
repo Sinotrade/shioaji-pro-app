@@ -55,6 +55,7 @@ import {
     type ServerStatus,
 } from '../lib/tauri';
 import { notify } from '../lib/trade';
+import { Orb } from './orb';
 import type { Health } from '../lib/types/health';
 import * as styles from './hud-header.css';
 
@@ -479,13 +480,13 @@ export function ServerManager({
             >
                 {updateState.phase === 'downloading' ||
                 updateState.phase === 'installing' ? (
-                    <span className={styles.spinner} />
+                    <Orb size={12} style={{ color: 'var(--amber, #e0a43c)' }} />
                 ) : updateState.phase === 'ready' ? (
                     <Download size={11} />
                 ) : updateState.phase === 'external' ? (
                     <ExternalLink size={11} />
                 ) : phase === 'starting' || phase === 'connecting' ? (
-                    <span className={styles.spinner} />
+                    <Orb size={12} style={{ color: 'var(--amber, #e0a43c)' }} />
                 ) : (
                     <span
                         className={styles.led[phase === 'ok' ? 'live' : 'down']}
@@ -544,7 +545,7 @@ export function ServerManager({
                         <div className={styles.srvPhaseRow}>
                             {phase === 'starting' ||
                             phase === 'connecting' ? (
-                                <span className={styles.spinner} />
+                                <Orb size={12} style={{ color: 'var(--amber, #e0a43c)' }} />
                             ) : (
                                 <span
                                     className={

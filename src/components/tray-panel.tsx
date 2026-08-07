@@ -27,6 +27,7 @@ import {
 import { Sparkline } from './sparkline';
 import * as panel from './panel.css';
 import * as styles from './tray-panel.css';
+import { Orb } from './orb';
 
 type SectionKey = 'positions' | 'watchlist' | 'movers';
 
@@ -288,7 +289,10 @@ export function TrayPanel() {
                             />
                         ))}
                         {items.length === 0 && (
-                            <span className={styles.empty}>清單載入中…</span>
+                            <span className={styles.empty}>
+                                <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                                清單載入中…
+                            </span>
                         )}
                     </>
                 )}

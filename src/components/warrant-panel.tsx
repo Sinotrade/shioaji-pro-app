@@ -15,6 +15,7 @@ import { fmtPrice } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './derivative-explorer.css';
 import { UnderlyingPicker } from './underlying-picker';
+import { Orb } from './orb';
 
 const WARRANT_UNDERLYING = 'sj-pro-warrant-underlying';
 
@@ -183,7 +184,10 @@ export function WarrantPanel({
                 <span>顯示最接近條件的 {filtered.length} 檔</span>
             </div>
             {loading ? (
-                <div className={styles.empty}>載入權證市場…</div>
+                <div className={styles.empty}>
+                    <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                    載入權證市場…
+                </div>
             ) : error ? (
                 <div className={styles.error}>權證資料載入失敗</div>
             ) : filtered.length === 0 ? (

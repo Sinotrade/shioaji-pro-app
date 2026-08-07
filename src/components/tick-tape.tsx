@@ -12,6 +12,7 @@ import { fmtInt, fmtPrice } from '../lib/utils/format';
 import { dateStrOffset } from '../lib/utils/kbars';
 import * as panel from './panel.css';
 import * as styles from './tick-tape.css';
+import { Orb } from './orb';
 
 const MAX_ROWS = 120;
 const BIG_LOT_FACTOR = 3;
@@ -156,7 +157,14 @@ export function TickTape({ contract }: { contract: ContractBase }) {
                     >
                         <span />
                         <span className={styles.time}>
-                            {loading ? '載入歷史成交…' : '今日尚無成交'}
+                            {loading ? (
+                                <>
+                                    <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                                    載入歷史成交…
+                                </>
+                            ) : (
+                                '今日尚無成交'
+                            )}
                         </span>
                         <span />
                     </span>

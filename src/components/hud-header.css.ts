@@ -94,23 +94,6 @@ export const led = styleVariants({
     ],
 });
 
-// refined activity spinner for 啟動中/連線中 — a thin rotating arc with a
-// soft glow, far calmer than a blinking dot
-const spin = keyframes({
-    '0%': { transform: 'rotate(0deg)' },
-    '100%': { transform: 'rotate(360deg)' },
-});
-
-export const spinner = style({
-    width: '11px',
-    height: '11px',
-    borderRadius: '50%',
-    border: '1.5px solid rgba(224, 164, 60, 0.18)',
-    borderTopColor: vars.color.amber,
-    animation: `${spin} 0.8s linear infinite`,
-    flexShrink: 0,
-    boxShadow: '0 0 6px rgba(224, 164, 60, 0.25)',
-});
 
 // indeterminate progress shimmer for the manager popover while starting
 const slide = keyframes({

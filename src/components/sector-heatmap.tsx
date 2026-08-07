@@ -27,6 +27,7 @@ import type { Snapshot } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as styles from './sector-heatmap.css';
+import { Orb } from './orb';
 
 const MAX_MEMBERS = 80;
 const CAT_KEY = 'sj-pro-heatmap-cat';
@@ -227,7 +228,10 @@ export function SectorHeatmap({
                         </button>
                     ))}
                     {sectorTiles.every((t) => t.pct === 0) && (
-                        <div className={dock.emptyState}>類股指數載入中…</div>
+                        <div className={dock.emptyState}>
+                        <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                        類股指數載入中…
+                    </div>
                     )}
                 </div>
             </div>

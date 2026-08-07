@@ -12,6 +12,7 @@ import { fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
 import * as styles from './option-chain.css';
+import { Orb } from './orb';
 
 interface OptContract extends ContractInfo {
     delivery_month: string;
@@ -168,7 +169,10 @@ export function OptionChain({
     }, [rows, atm === null ? 0 : Math.round(atm / 10)]);
 
     if (loading) {
-        return <div className={dock.emptyState}>載入 TXO 合約…</div>;
+        return <div className={dock.emptyState}>
+                <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                載入 TXO 合約…
+            </div>;
     }
     if (rows.length === 0) {
         return <div className={dock.emptyState}>無可用合約</div>;

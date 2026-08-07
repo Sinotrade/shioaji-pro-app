@@ -13,6 +13,7 @@ import { fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './derivative-explorer.css';
 import { UnderlyingPicker } from './underlying-picker';
+import { Orb } from './orb';
 
 const STOCK_FUTURE_UNDERLYING = 'sj-pro-stock-future-underlying';
 
@@ -130,7 +131,10 @@ export function StockFuturesPanel({
                 <span>{visible.length} 口合約可選</span>
             </div>
             {loading ? (
-                <div className={styles.empty}>載入個股期合約…</div>
+                <div className={styles.empty}>
+                    <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                    載入個股期合約…
+                </div>
             ) : error ? (
                 <div className={styles.error}>個股期合約載入失敗</div>
             ) : visible.length === 0 ? (

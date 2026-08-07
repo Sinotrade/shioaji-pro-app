@@ -18,6 +18,7 @@ import { fmtInt, fmtPrice } from '../lib/utils/format';
 import { dateStrOffset, wallClockToUtc } from '../lib/utils/kbars';
 import * as dock from './bottom-dock.css';
 import * as styles from './replay-panel.css';
+import { Orb } from './orb';
 
 interface ReplayTick {
     time: number;
@@ -262,7 +263,12 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
                         ? cur
                             ? `${fmtPrice(cur.price)} · ${fmtInt(idx)}/${fmtInt(ticks.length)}`
                             : `${fmtInt(ticks.length)} ticks`
-                        : '載入中…'}
+                        : (
+                              <>
+                                  <Orb size={10} style={{ marginRight: 5, verticalAlign: '-1px' }} />
+                                  載入中…
+                              </>
+                          )}
                 </span>
             </div>
             <div ref={hostRef} className={styles.chartHost} />

@@ -77,6 +77,7 @@ import {
 } from '../lib/utils/kbars';
 import * as panel from './panel.css';
 import * as styles from './candle-chart.css';
+import { Orb } from './orb';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
 // payload (a year of TXF ≈ 280k bars / 18MB) — keep the range tight enough
@@ -1483,6 +1484,7 @@ export function CandleChart({
             <div ref={hostRef} className={styles.chartHost}>
                 {loading && (
                     <div className={styles.emptyMsg}>
+                        <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
                         <span className={panel.mono}>
                             載入 {tf.label} K 線…
                         </span>

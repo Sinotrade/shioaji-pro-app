@@ -85,6 +85,7 @@ import {
     type Profile,
     type Workspace,
 } from './lib/workspace';
+import { Orb } from './components/orb';
 
 const GRID_COLS = 24;
 
@@ -947,6 +948,7 @@ export default function App() {
             <div className={grid.gridWrap} ref={containerRef}>
                 {booting && (
                     <div className={styles.loading}>
+                        <Orb size={20} />
                         <span>Shioaji Pro</span>
                         <span style={{ fontSize: '0.7rem' }}>
                             載入交易終端…

@@ -13,6 +13,7 @@ import { fmtPrice } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as ticket from './order-ticket.css';
 import * as styles from './opt-payoff.css';
+import { Orb } from './orb';
 
 interface Leg {
     id: string;
@@ -266,7 +267,10 @@ export function OptPayoff({ positions = [] }: { positions?: Position[] }) {
             <canvas ref={canvasRef} className={styles.chart} />
             <div className={styles.legList}>
                 {loadingPos && legs.length === 0 && (
-                    <span className={dock.emptyState}>載入持倉…</span>
+                    <span className={dock.emptyState}>
+                        <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                        載入持倉…
+                    </span>
                 )}
                 {!loadingPos && legs.length === 0 && (
                     <span className={dock.emptyState}>

@@ -18,6 +18,7 @@ import { SectorHeatmap } from './sector-heatmap';
 import { TickTape } from './tick-tape';
 import { VolProfile } from './vol-profile';
 import * as styles from './panel-library.css';
+import { Orb } from './orb';
 
 // feature flag: default on; flip off per-user via
 // localStorage.setItem('sj-pro-live-preview', 'off') or change the default
@@ -94,7 +95,10 @@ export function LivePanelPreview({
     } else if (withContract) {
         if (!contract) {
             return (
-                <div className={styles.livePreviewLoading}>載入 {code} …</div>
+                <div className={styles.livePreviewLoading}>
+                    <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                    載入 {code} …
+                </div>
             );
         }
         content = withContract(contract);
