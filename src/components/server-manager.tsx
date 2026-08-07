@@ -480,13 +480,13 @@ export function ServerManager({
             >
                 {updateState.phase === 'downloading' ||
                 updateState.phase === 'installing' ? (
-                    <Orb size={12} style={{ color: 'var(--amber, #e0a43c)' }} />
+                    <Orb size={12} variant='ring' style={{ color: 'var(--amber, #e0a43c)' }} />
                 ) : updateState.phase === 'ready' ? (
                     <Download size={11} />
                 ) : updateState.phase === 'external' ? (
                     <ExternalLink size={11} />
                 ) : phase === 'starting' || phase === 'connecting' ? (
-                    <Orb size={12} style={{ color: 'var(--amber, #e0a43c)' }} />
+                    <Orb size={12} variant='ring' style={{ color: 'var(--amber, #e0a43c)' }} />
                 ) : (
                     <span
                         className={styles.led[phase === 'ok' ? 'live' : 'down']}
@@ -545,7 +545,7 @@ export function ServerManager({
                         <div className={styles.srvPhaseRow}>
                             {phase === 'starting' ||
                             phase === 'connecting' ? (
-                                <Orb size={12} style={{ color: 'var(--amber, #e0a43c)' }} />
+                                <Orb size={12} variant='ring' style={{ color: 'var(--amber, #e0a43c)' }} />
                             ) : (
                                 <span
                                     className={
