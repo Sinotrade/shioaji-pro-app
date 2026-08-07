@@ -1,547 +1,47 @@
-// src/components/bottom-dock.tsx — positions / orders / account tabs
+// src/components/bottom-dock.tsx — positions / orders / account tabs.
+// 標題列常駐：帳戶範圍選單、合併｜分帳戶切換、市場篩選 chips、摘要列；
+// 持倉/委託表本體在 bottom-dock-positions.tsx / bottom-dock-orders.tsx
 
-import { Lock, Unlock } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePoll } from '../hooks/use-poll';
-import { useTradingLive } from '../hooks/use-stream';
 import {
     ensureAccounts,
     selectAccount,
     useAccounts,
 } from '../lib/account-store';
-import { ensureContract } from '../lib/contracts-cache';
 import {
     maskAccountId,
     maskMoney,
     usePrivacyMode,
     usePrivacyMoney,
 } from '../lib/privacy';
-import {
-    cancelOrder,
-    fetchSettlements,
-    updateOrderPrice,
-    updateOrderQty,
-    type Settlement,
-} from '../lib/shioaji';
-import {
-    notify,
-    placeQuickOrder,
-    placeStockExitByShares,
-} from '../lib/trade';
+import { fetchSettlements, type Settlement } from '../lib/shioaji';
 import type { Trade } from '../lib/types/order';
 import type {
     AccountBalance,
+    AccountedPosition,
     Margin,
     Position,
 } from '../lib/types/portfolio';
-import {
-    fmtInt,
-    fmtMoney,
-    fmtPrice,
-    fmtSigned,
-    fmtStockLots,
-} from '../lib/utils/format';
+import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
 import * as panel from './panel.css';
 import * as styles from './bottom-dock.css';
+import { OrdersPane } from './bottom-dock-orders';
+import { PositionsPane } from './bottom-dock-positions';
+import {
+    ACTIVE_STATUSES,
+    accountToRef,
+    isStockPosition,
+    positionAccountRef,
+    positionMarket,
+    refKey,
+    useDockPref,
+    type MarketFilter,
+    type ViewMode,
+} from './bottom-dock-shared';
 
 type TabKey = 'positions' | 'orders' | 'account';
-
-const ACTIVE_STATUSES = new Set([
-    'PendingSubmit',
-    'PreSubmitted',
-    'Submitted',
-    'PartFilled',
-]);
-
-function statusKind(status: string): 'ok' | 'pending' | 'bad' {
-    if (status === 'Filled') return 'ok';
-    if (ACTIVE_STATUSES.has(status)) return 'pending';
-    return 'bad';
-}
-
-function PositionsTable({
-    positions,
-    onChanged,
-    onSelectCode,
-}: {
-    positions: Position[];
-    onChanged: () => void;
-    onSelectCode: (code: string) => void;
-}) {
-    const [busyCode, setBusyCode] = useState<string | null>(null);
-    // 平/反 are one-click market orders on the whole position — keep them
-    // locked by default like 閃電下單 (issue #1: 存股族一秒反向很可怕)
-    const [actArmed, setActArmed] = useState(false);
-    const privMoney = usePrivacyMoney();
-    const live = useTradingLive();
-    // 股名 joined from the contract cache (issue #1: 只看 code 不友善)
-    const [names, setNames] = useState<Record<string, string>>({});
-    const codesKey = positions.map((p) => p.code).join(',');
-    useEffect(() => {
-        let alive = true;
-        void Promise.allSettled(
-            positions.map((p) => ensureContract(p.code)),
-        ).then((rs) => {
-            if (!alive) return;
-            const next: Record<string, string> = {};
-            for (const r of rs) {
-                if (r.status === 'fulfilled' && r.value.name) {
-                    next[r.value.code] = r.value.name;
-                }
-            }
-            setNames(next);
-        });
-        return () => {
-            alive = false;
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [codesKey]);
-    const act = async (p: Position, mode: 'close' | 'reverse') => {
-        if (busyCode) return;
-        setBusyCode(p.code);
-        try {
-            const contract = await ensureContract(p.code);
-            const exit = p.direction === 'Buy' ? 'Sell' : 'Buy';
-            const qty = mode === 'close' ? p.quantity : p.quantity * 2;
-            if (isStockPosition(p)) {
-                // shares → Common lots + IntradayOdd remainder
-                await placeStockExitByShares(contract, exit, qty);
-            } else {
-                await placeQuickOrder(contract, exit, null, qty);
-            }
-            notify({
-                kind: 'ok',
-                title: mode === 'close' ? '⏹ 平倉單已送出' : '🔄 反手單已送出',
-                body: `${p.code} 市價${exit === 'Buy' ? '買' : '賣'} ${
-                    isStockPosition(p) ? fmtStockLots(qty) : `${qty} 口`
-                }`,
-            });
-            onChanged();
-        } catch (e) {
-            notify({
-                kind: 'err',
-                title: mode === 'close' ? '平倉失敗' : '反手失敗',
-                body: e instanceof Error ? e.message : String(e),
-            });
-        } finally {
-            setBusyCode(null);
-        }
-    };
-    if (positions.length === 0) {
-        return <div className={styles.emptyState}>NO OPEN POSITIONS · 無持倉</div>;
-    }
-    const maxAbsPnl = Math.max(1, ...positions.map((p) => Math.abs(p.pnl)));
-    return (
-        <table className={styles.table}>
-            <thead>
-                <tr>
-                    <th className={styles.th}>代碼</th>
-                    <th className={styles.th}>名稱</th>
-                    <th className={styles.th}>方向</th>
-                    <th className={styles.th}>數量</th>
-                    <th className={styles.th}>成本</th>
-                    <th className={styles.th}>現價</th>
-                    <th className={styles.th}>損益</th>
-                    <th className={styles.th}>報酬率</th>
-                    <th className={styles.th} style={{ width: '18%' }}>
-                        損益分布
-                    </th>
-                    <th className={styles.th}>
-                        <button
-                            className={styles.cancelBtn}
-                            title={
-                                actArmed
-                                    ? '鎖定平/反按鍵（防誤觸）'
-                                    : '平/反為整倉市價單，預設鎖定 — 點此解鎖'
-                            }
-                            style={
-                                actArmed
-                                    ? {
-                                          color: vars.color.danger,
-                                          borderColor: vars.color.danger,
-                                      }
-                                    : undefined
-                            }
-                            onClick={() => setActArmed((v) => !v)}
-                        >
-                            {actArmed ? <Unlock size={10} /> : <Lock size={10} />}
-                        </button>
-                    </th>
-                </tr>
-            </thead>
-            <tbody>
-                {positions.map((p) => {
-                    const dir = p.pnl > 0 ? 'up' : p.pnl < 0 ? 'down' : 'flat';
-                    // 報酬率 = signed price move vs entry (works for both
-                    // stocks and futures without knowing the multiplier)
-                    const sign = p.direction === 'Buy' ? 1 : -1;
-                    const retPct =
-                        p.price > 0
-                            ? ((p.last_price - p.price) / p.price) * 100 * sign
-                            : 0;
-                    return (
-                        <tr
-                            key={`${p.code}-${p.id}`}
-                            className={styles.clickableRow}
-                            onClick={() => onSelectCode(p.code)}
-                            title='點擊連動圖表與下單面板'
-                        >
-                            <td className={styles.td}>{p.code}</td>
-                            <td className={styles.td}>
-                                {names[p.code] ?? ''}
-                            </td>
-                            <td
-                                className={`${styles.td} ${panel.dirText[p.direction === 'Buy' ? 'up' : 'down']}`}
-                            >
-                                {p.direction === 'Buy' ? '多 LONG' : '空 SHORT'}
-                            </td>
-                            <td className={`${styles.td} ${styles.qtyCell}`}>
-                                {maskMoney(
-                                    isStockPosition(p)
-                                        ? fmtStockLots(p.quantity)
-                                        : fmtInt(p.quantity),
-                                    privMoney,
-                                )}
-                            </td>
-                            <td className={styles.td}>{fmtPrice(p.price)}</td>
-                            <td className={styles.td}>
-                                {fmtPrice(p.last_price)}
-                            </td>
-                            <td
-                                className={`${styles.td} ${panel.dirText[dir]}`}
-                            >
-                                {maskMoney(fmtSigned(p.pnl, 0), privMoney)}
-                            </td>
-                            <td
-                                className={`${styles.td} ${panel.dirText[dir]}`}
-                            >
-                                {retPct > 0 ? '+' : ''}
-                                {retPct.toFixed(2)}%
-                            </td>
-                            <td className={styles.td}>
-                                <div className={styles.pnlBar}>
-                                    <div
-                                        className={styles.pnlFill}
-                                        style={{
-                                            left: p.pnl >= 0 ? '50%' : undefined,
-                                            right:
-                                                p.pnl < 0 ? '50%' : undefined,
-                                            width: `${(Math.abs(p.pnl) / maxAbsPnl) * 50}%`,
-                                            background:
-                                                p.pnl >= 0
-                                                    ? vars.color.up
-                                                    : vars.color.down,
-                                        }}
-                                    />
-                                </div>
-                            </td>
-                            <td className={styles.td}>
-                                <button
-                                    className={styles.cancelBtn}
-                                    disabled={
-                                        busyCode === p.code || !live || !actArmed
-                                    }
-                                    title={
-                                        !live
-                                            ? '行情未連線，暫停下單'
-                                            : !actArmed
-                                              ? '已鎖定 — 點表頭鎖頭解鎖平/反'
-                                              : '市價沖銷此倉位'
-                                    }
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        void act(p, 'close');
-                                    }}
-                                >
-                                    平
-                                </button>{' '}
-                                <button
-                                    className={styles.cancelBtn}
-                                    disabled={
-                                        busyCode === p.code || !live || !actArmed
-                                    }
-                                    title={
-                                        !live
-                                            ? '行情未連線，暫停下單'
-                                            : !actArmed
-                                              ? '已鎖定 — 點表頭鎖頭解鎖平/反'
-                                              : '市價反向兩倍（翻倉）'
-                                    }
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        void act(p, 'reverse');
-                                    }}
-                                >
-                                    反
-                                </button>
-                            </td>
-                        </tr>
-                    );
-                })}
-            </tbody>
-        </table>
-    );
-}
-
-// inline editor for a working order's qty (減量) or price (改價)
-function OrderEditor({
-    trade,
-    field,
-    onChanged,
-}: {
-    trade: Trade;
-    field: 'qty' | 'price';
-    onChanged: () => void;
-}) {
-    const [editing, setEditing] = useState(false);
-    const [val, setVal] = useState('');
-    if (!editing) {
-        return (
-            <button
-                className={styles.cancelBtn}
-                title={field === 'qty' ? '減量（輸入新數量）' : '改價（輸入新價格）'}
-                onClick={() => {
-                    setVal(
-                        field === 'qty'
-                            ? String(
-                                  trade.order.quantity -
-                                      trade.status.deal_quantity,
-                              )
-                            : String(
-                                  trade.status.modified_price ||
-                                      trade.order.price,
-                              ),
-                    );
-                    setEditing(true);
-                }}
-            >
-                {field === 'qty' ? '改量' : '改價'}
-            </button>
-        );
-    }
-    const submit = () => {
-        const n = Number(val);
-        const valid =
-            field === 'qty' ? Number.isInteger(n) && n >= 1 : n > 0;
-        if (valid) {
-            const req =
-                field === 'qty'
-                    ? updateOrderQty(trade.order.id, n)
-                    : updateOrderPrice(trade.order.id, n);
-            req.then(() => {
-                notify({
-                    kind: 'ok',
-                    title: field === 'qty' ? '✏️ 改量已送出' : '✏️ 改價已送出',
-                    body: `${trade.contract.code} → ${n}${field === 'qty' ? '（僅能減量）' : ''}`,
-                });
-                onChanged();
-            }).catch((err) =>
-                notify({
-                    kind: 'err',
-                    title: field === 'qty' ? '改量失敗' : '改價失敗',
-                    body: err instanceof Error ? err.message : String(err),
-                }),
-            );
-        }
-        setEditing(false);
-    };
-    return (
-        <input
-            autoFocus
-            className={styles.qtyInline}
-            value={val}
-            inputMode={field === 'qty' ? 'numeric' : 'decimal'}
-            onChange={(e) => setVal(e.target.value)}
-            onBlur={() => setEditing(false)}
-            onKeyDown={(e) => {
-                if (e.key === 'Escape') setEditing(false);
-                if (e.key === 'Enter') submit();
-            }}
-        />
-    );
-}
-
-// compact order-detail chip: 價別/效期 + 倉別(futures) / 單位(stocks)
-function orderDetail(t: Trade): string {
-    const parts: string[] = [];
-    if (t.order.price_type) parts.push(t.order.price_type);
-    if (t.order.order_type) parts.push(t.order.order_type);
-    if (t.order.octype && t.order.octype !== 'Auto') {
-        parts.push(
-            { New: '新倉', Cover: '平倉', DayTrade: '當沖' }[
-                t.order.octype
-            ] ?? t.order.octype,
-        );
-    }
-    if (t.order.order_lot && t.order.order_lot !== 'Common') {
-        parts.push(
-            { IntradayOdd: '零股', Odd: '零股', Fixing: '定盤', BlockTrade: '鉅額' }[
-                t.order.order_lot
-            ] ?? t.order.order_lot,
-        );
-    }
-    return parts.join(' ');
-}
-
-function OrdersTable({
-    trades,
-    onChanged,
-    onSelectCode,
-}: {
-    trades: Trade[];
-    onChanged: () => void;
-    onSelectCode: (code: string) => void;
-}) {
-    const [cancelling, setCancelling] = useState<string | null>(null);
-    if (trades.length === 0) {
-        return <div className={styles.emptyState}>NO ORDERS · 無委託</div>;
-    }
-    const doCancel = async (id: string) => {
-        setCancelling(id);
-        try {
-            await cancelOrder(id);
-            onChanged();
-        } catch {
-            // status refresh will surface reality
-        } finally {
-            setCancelling(null);
-        }
-    };
-    return (
-        <table className={styles.table}>
-            <thead>
-                <tr>
-                    <th className={styles.th}>代碼</th>
-                    <th className={styles.th}>買賣</th>
-                    <th className={styles.th}>類別</th>
-                    <th className={styles.th}>價格</th>
-                    <th className={styles.th}>委託量</th>
-                    <th className={styles.th}>成交</th>
-                    <th className={styles.th}>狀態</th>
-                    <th className={styles.th}>訊息</th>
-                    <th className={styles.th} />
-                </tr>
-            </thead>
-            <tbody>
-                {[...trades].reverse().map((t) => {
-                    const st = t.status.status;
-                    const fillPct =
-                        t.order.quantity > 0
-                            ? (t.status.deal_quantity / t.order.quantity) * 100
-                            : 0;
-                    return (
-                        <tr
-                            key={t.order.id}
-                            className={styles.clickableRow}
-                            onClick={() => onSelectCode(t.contract.code)}
-                            title='點擊連動圖表與下單面板'
-                        >
-                            <td className={styles.td}>{t.contract.code}</td>
-                            <td
-                                className={`${styles.td} ${panel.dirText[t.order.action === 'Buy' ? 'up' : 'down']}`}
-                            >
-                                {t.order.action === 'Buy' ? '買' : '賣'}
-                            </td>
-                            <td className={`${styles.td} ${styles.detailCell}`}>
-                                {orderDetail(t) || '—'}
-                            </td>
-                            <td className={styles.td}>
-                                {fmtPrice(
-                                    t.status.modified_price || t.order.price,
-                                )}
-                            </td>
-                            <td className={styles.td}>
-                                {fmtInt(t.order.quantity)}
-                            </td>
-                            <td className={styles.td}>
-                                <span className={styles.fillCell}>
-                                    {fmtInt(t.status.deal_quantity)}
-                                    {st === 'PartFilled' && (
-                                        <span className={styles.fillTrack}>
-                                            <span
-                                                className={styles.fillBar}
-                                                style={{
-                                                    width: `${fillPct}%`,
-                                                }}
-                                            />
-                                        </span>
-                                    )}
-                                </span>
-                            </td>
-                            <td className={styles.td}>
-                                <span
-                                    className={
-                                        styles.statusChip[statusKind(st)]
-                                    }
-                                >
-                                    {st}
-                                </span>
-                            </td>
-                            <td
-                                className={styles.td}
-                                style={{
-                                    maxWidth: '16rem',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                }}
-                            >
-                                {t.status.msg || '—'}
-                            </td>
-                            <td className={styles.td}>
-                                {ACTIVE_STATUSES.has(st) && (
-                                    <>
-                                        <span
-                                            onClick={(e) =>
-                                                e.stopPropagation()
-                                            }
-                                        >
-                                            {(t.order.price_type ?? 'LMT') ===
-                                                'LMT' && (
-                                                <>
-                                                    <OrderEditor
-                                                        trade={t}
-                                                        field='price'
-                                                        onChanged={onChanged}
-                                                    />{' '}
-                                                </>
-                                            )}
-                                            <OrderEditor
-                                                trade={t}
-                                                field='qty'
-                                                onChanged={onChanged}
-                                            />
-                                        </span>{' '}
-                                        <button
-                                            className={styles.cancelBtn}
-                                            disabled={
-                                                cancelling === t.order.id
-                                            }
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                doCancel(t.order.id);
-                                            }}
-                                        >
-                                            {cancelling === t.order.id
-                                                ? '…'
-                                                : 'CANCEL'}
-                                        </button>
-                                    </>
-                                )}
-                            </td>
-                        </tr>
-                    );
-                })}
-            </tbody>
-        </table>
-    );
-}
-
-// stock positions carry yd_quantity; futures ones don't
-function isStockPosition(p: Position): boolean {
-    return 'yd_quantity' in p;
-}
 
 // 1,234,567 → 123萬；2.3億 — readable at a glance
 function fmtCompact(n: number): string {
@@ -858,48 +358,6 @@ function AccountView({
     );
 }
 
-function AccountPicker({
-    type,
-    onChanged,
-}: {
-    type: 'S' | 'F';
-    onChanged: () => void;
-}) {
-    const { accounts, selectedStock, selectedFutures } = useAccounts();
-    const priv = usePrivacyMode();
-    useEffect(ensureAccounts, []);
-    const list = accounts.filter((a) => a.account_type === type);
-    if (list.length === 0) return null;
-    const selected = type === 'S' ? selectedStock : selectedFutures;
-    const key = selected ? `${selected.broker_id}-${selected.account_id}` : '';
-    return (
-        <select
-            className={styles.accountSelect}
-            title={type === 'S' ? '證券帳號' : '期貨帳號'}
-            value={key}
-            onChange={(e) => {
-                const acc = list.find(
-                    (a) => `${a.broker_id}-${a.account_id}` === e.target.value,
-                );
-                if (acc) {
-                    selectAccount(acc);
-                    onChanged();
-                }
-            }}
-        >
-            {list.map((a) => (
-                <option
-                    key={`${a.broker_id}-${a.account_id}`}
-                    value={`${a.broker_id}-${a.account_id}`}
-                >
-                    {type === 'S' ? '證' : '期'} {a.broker_id}-
-                    {maskAccountId(a.account_id, priv)}
-                </option>
-            ))}
-        </select>
-    );
-}
-
 export function BottomDock({
     positions,
     trades,
@@ -908,7 +366,7 @@ export function BottomDock({
     onTradesChanged,
     onSelectCode,
 }: {
-    positions: Position[];
+    positions: AccountedPosition[];
     trades: Trade[];
     balance?: AccountBalance;
     margin?: Margin;
@@ -916,6 +374,37 @@ export function BottomDock({
     onSelectCode: (code: string) => void;
 }) {
     const [tab, setTab] = useState<TabKey>('positions');
+    const { accounts, selectedStock, selectedFutures } = useAccounts();
+    useEffect(ensureAccounts, []);
+    const priv = usePrivacyMode();
+    const privMoney = usePrivacyMoney();
+    const [mode, setMode] = useDockPref<ViewMode>(
+        'mode',
+        ['merged', 'grouped'],
+        'merged',
+    );
+    const [market, setMarket] = useDockPref<MarketFilter>(
+        'market',
+        ['all', 'S', 'F'],
+        'all',
+    );
+    // 帳戶範圍：'' = 全部帳戶，其餘為 broker_id-account_id
+    const [scope, setScope] = useState('');
+    const tradable = accounts.filter(
+        (a) => a.account_type === 'S' || a.account_type === 'F',
+    );
+    useEffect(() => {
+        if (
+            scope &&
+            !tradable.some((a) => refKey(accountToRef(a)) === scope)
+        ) {
+            setScope('');
+        }
+    }, [scope, tradable]);
+    const scopeAccount =
+        tradable.find((a) => refKey(accountToRef(a)) === scope) ?? null;
+    const fallback = { stock: selectedStock, futures: selectedFutures };
+
     const activeOrders = trades.filter((t) =>
         ACTIVE_STATUSES.has(t.status.status),
     ).length;
@@ -924,6 +413,47 @@ export function BottomDock({
         { key: 'positions', label: `持倉 Positions [${positions.length}]` },
         { key: 'orders', label: `委託 Orders [${activeOrders}/${trades.length}]` },
         { key: 'account', label: '帳務 Account' },
+    ];
+
+    // ---- 摘要列：scope＋市場篩選後的彙總 ----
+    const sumRows = positions.filter((p) => {
+        if (market !== 'all' && positionMarket(p) !== market) return false;
+        if (scope) return refKey(positionAccountRef(p, fallback)) === scope;
+        return true;
+    });
+    const totalPnl = sumRows.reduce((s, p) => s + p.pnl, 0);
+    const stockRows = sumRows.filter(isStockPosition);
+    const hasFutRows = sumRows.length !== stockRows.length;
+    const stockValue = stockRows.reduce(
+        (s, p) =>
+            s + (p.direction === 'Sell' ? -1 : 1) * p.last_price * p.quantity,
+        0,
+    );
+    const stockCost = stockRows.reduce(
+        (s, p) => s + p.price * p.quantity,
+        0,
+    );
+    // 期貨是保證金交易、無成本基礎 — 只有純股票視圖才給報酬率%
+    const pnlPct =
+        !hasFutRows && stockCost > 0 ? (totalPnl / stockCost) * 100 : null;
+    const pnlDir = totalPnl > 0 ? 'up' : totalPnl < 0 ? 'down' : 'flat';
+    // 期貨帳戶指標只在範圍含期貨帳戶時顯示
+    const showFut =
+        market !== 'S' &&
+        (scope === '' || scopeAccount?.account_type === 'F') &&
+        !!margin;
+    const riskColor = margin
+        ? margin.risk_indicator < 100
+            ? vars.color.danger
+            : margin.risk_indicator < 200
+              ? vars.color.amber
+              : undefined
+        : undefined;
+
+    const marketChips: { key: MarketFilter; label: string }[] = [
+        { key: 'all', label: '全部' },
+        { key: 'S', label: '證券' },
+        { key: 'F', label: '期貨' },
     ];
 
     return (
@@ -939,32 +469,145 @@ export function BottomDock({
                     </button>
                 ))}
                 <span className={styles.tabSpacer} />
-                <AccountPicker type='S' onChanged={onTradesChanged} />
-                <AccountPicker type='F' onChanged={onTradesChanged} />
+                <select
+                    className={styles.accountSelect}
+                    title='帳戶範圍（選個別帳戶會同步下單面板）'
+                    value={scope}
+                    onChange={(e) => {
+                        const v = e.target.value;
+                        setScope(v);
+                        const acc = tradable.find(
+                            (a) => refKey(accountToRef(a)) === v,
+                        );
+                        if (acc) {
+                            // 個別帳戶：同步 account-store，下單面板跟著切
+                            selectAccount(acc);
+                            onTradesChanged();
+                        }
+                    }}
+                >
+                    <option value=''>全部帳戶</option>
+                    {tradable.map((a) => {
+                        const key = refKey(accountToRef(a));
+                        return (
+                            <option key={key} value={key}>
+                                {a.account_type === 'S' ? '[證]' : '[期]'}{' '}
+                                {a.broker_id}-
+                                {maskAccountId(a.account_id, priv)}
+                            </option>
+                        );
+                    })}
+                </select>
+                <span className={styles.ctrlGroup}>
+                    <button
+                        className={
+                            styles.ctrlOpt[mode === 'merged' ? 'on' : 'off']
+                        }
+                        onClick={() => setMode('merged')}
+                    >
+                        合併
+                    </button>
+                    <button
+                        className={
+                            styles.ctrlOpt[mode === 'grouped' ? 'on' : 'off']
+                        }
+                        onClick={() => setMode('grouped')}
+                    >
+                        分帳戶
+                    </button>
+                </span>
+                <span className={styles.ctrlGroup}>
+                    {marketChips.map((c) => (
+                        <button
+                            key={c.key}
+                            className={
+                                styles.ctrlOpt[market === c.key ? 'on' : 'off']
+                            }
+                            onClick={() => setMarket(c.key)}
+                        >
+                            {c.label}
+                        </button>
+                    ))}
+                </span>
             </div>
-            <div className={panel.panelBody}>
-                {tab === 'positions' && (
-                    <PositionsTable
-                        positions={positions}
-                        onChanged={onTradesChanged}
-                        onSelectCode={onSelectCode}
-                    />
+            <div className={styles.summaryRow}>
+                <span className={styles.sumItem}>
+                    <span className={styles.sumLabel}>總損益</span>
+                    <span
+                        className={`${styles.sumValue} ${panel.dirText[pnlDir]}`}
+                    >
+                        {maskMoney(fmtSigned(totalPnl, 0), privMoney)}
+                        {pnlPct !== null && (
+                            <span className={styles.sumSub}>
+                                {' '}
+                                ({pnlPct > 0 ? '+' : ''}
+                                {pnlPct.toFixed(2)}%)
+                            </span>
+                        )}
+                    </span>
+                </span>
+                {market !== 'F' && stockRows.length > 0 && (
+                    <span className={styles.sumItem}>
+                        <span className={styles.sumLabel}>總市值</span>
+                        <span className={styles.sumValue}>
+                            {maskMoney(
+                                fmtMoney(Math.round(stockValue)),
+                                privMoney,
+                            )}
+                        </span>
+                    </span>
                 )}
-                {tab === 'orders' && (
-                    <OrdersTable
-                        trades={trades}
-                        onChanged={onTradesChanged}
-                        onSelectCode={onSelectCode}
-                    />
+                {showFut && margin && (
+                    <span className={styles.sumItem}>
+                        <span className={styles.sumLabel}>期貨權益</span>
+                        <span className={styles.sumValue}>
+                            {maskMoney(fmtMoney(margin.equity), privMoney)}
+                        </span>
+                    </span>
                 )}
-                {tab === 'account' && (
+                {showFut && margin && (
+                    <span className={styles.sumItem}>
+                        <span className={styles.sumLabel}>風險指標</span>
+                        <span
+                            className={styles.sumValue}
+                            style={riskColor ? { color: riskColor } : undefined}
+                        >
+                            {margin.risk_indicator.toFixed(0)}%
+                        </span>
+                    </span>
+                )}
+            </div>
+            {tab === 'positions' && (
+                <PositionsPane
+                    positions={positions}
+                    mode={mode}
+                    market={market}
+                    scopeKey={scope}
+                    fallback={fallback}
+                    onChanged={onTradesChanged}
+                    onSelectCode={onSelectCode}
+                />
+            )}
+            {tab === 'orders' && (
+                <OrdersPane
+                    trades={trades}
+                    mode={mode}
+                    market={market}
+                    scopeKey={scope}
+                    fallback={fallback}
+                    onChanged={onTradesChanged}
+                    onSelectCode={onSelectCode}
+                />
+            )}
+            {tab === 'account' && (
+                <div className={panel.panelBody}>
                     <AccountView
                         balance={balance}
                         margin={margin}
                         positions={positions}
                     />
-                )}
-            </div>
+                </div>
+            )}
         </div>
     );
 }

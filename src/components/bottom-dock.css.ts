@@ -11,6 +11,8 @@ export const dock = style({
 
 export const tabBar = style({
     display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: vars.space.xs,
     padding: `0 ${vars.space.sm}`,
     borderBottom: `1px solid ${vars.color.border}`,
@@ -358,4 +360,312 @@ export const holdingFill = style({
 
 export const holdingValue = style({
     color: vars.color.mutedForeground,
+});
+
+// ---- dock 全域控制列（帳戶範圍／合併模式／市場篩選）＋摘要列 ----
+
+export const ctrlGroup = style({
+    display: 'flex',
+    gap: '2px',
+    alignSelf: 'center',
+    marginRight: '6px',
+});
+
+const ctrlOptBase = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.64rem',
+    fontWeight: 500,
+    padding: '2px 8px',
+    cursor: 'pointer',
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    color: vars.color.mutedForeground,
+    whiteSpace: 'nowrap',
+    transition: 'all 0.12s',
+});
+
+// 兩態/三態切換（合併｜分帳戶、全部｜證券｜期貨）— hud-header opt 語彙
+export const ctrlOpt = styleVariants({
+    off: [ctrlOptBase, { ':hover': { color: vars.color.foreground } }],
+    on: [
+        ctrlOptBase,
+        {
+            color: vars.color.accent,
+            borderColor: vars.color.accent,
+            background: vars.color.accentDim,
+            fontWeight: 600,
+        },
+    ],
+});
+
+export const summaryRow = style({
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    columnGap: vars.space.lg,
+    rowGap: '2px',
+    padding: `3px ${vars.space.sm}`,
+    borderBottom: `1px solid ${vars.color.border}`,
+    flexShrink: 0,
+});
+
+export const sumItem = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: '5px',
+    whiteSpace: 'nowrap',
+});
+
+export const sumLabel = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.6rem',
+    fontWeight: 500,
+    color: vars.color.mutedForeground,
+});
+
+export const sumValue = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
+    fontWeight: 600,
+    fontVariantNumeric: 'tabular-nums',
+});
+
+export const sumSub = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.62rem',
+    fontVariantNumeric: 'tabular-nums',
+});
+
+// ---- pane 骨架：內部捲動區＋固定底部批次動作列 ----
+
+export const dockBody = style({
+    flex: 1,
+    minHeight: 0,
+    display: 'flex',
+    flexDirection: 'column',
+});
+
+export const paneScroll = style({
+    flex: 1,
+    minHeight: 0,
+    overflow: 'auto',
+});
+
+export const batchBar = style({
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: vars.space.sm,
+    padding: `3px ${vars.space.sm}`,
+    borderTop: `1px solid ${vars.color.border}`,
+    background: vars.color.panel,
+    fontFamily: vars.font.display,
+    fontSize: '0.66rem',
+    color: vars.color.mutedForeground,
+    flexShrink: 0,
+});
+
+export const batchCount = style({
+    fontFamily: vars.font.mono,
+    fontVariantNumeric: 'tabular-nums',
+    color: vars.color.foreground,
+    fontWeight: 600,
+});
+
+export const batchSpacer = style({ flex: 1 });
+
+const batchBtnBase = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.64rem',
+    fontWeight: 600,
+    borderRadius: vars.radius.sm,
+    padding: '2px 10px',
+    cursor: 'pointer',
+    transition: 'all 0.12s',
+    ':disabled': { opacity: 0.4, cursor: 'not-allowed' },
+});
+
+// 兩段式確認：第一擊顯示筆數確認、第二擊執行（3 秒未確認自動復原）
+export const batchExec = styleVariants({
+    idle: [
+        batchBtnBase,
+        {
+            color: vars.color.danger,
+            background: 'transparent',
+            border: `1px solid ${vars.color.border}`,
+            selectors: {
+                '&:hover:not(:disabled)': {
+                    borderColor: vars.color.danger,
+                },
+            },
+        },
+    ],
+    confirm: [
+        batchBtnBase,
+        {
+            color: '#fff',
+            background: vars.color.danger,
+            border: `1px solid ${vars.color.danger}`,
+        },
+    ],
+});
+
+export const chk = style({
+    width: '12px',
+    height: '12px',
+    margin: 0,
+    accentColor: vars.color.accent,
+    cursor: 'pointer',
+    verticalAlign: 'middle',
+    ':disabled': { cursor: 'not-allowed', opacity: 0.35 },
+});
+
+export const busyRow = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontFamily: vars.font.mono,
+    fontSize: '0.66rem',
+    fontVariantNumeric: 'tabular-nums',
+    color: vars.color.amber,
+});
+
+// ---- 分帳戶區段 header ----
+
+export const groupHeader = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: vars.space.sm,
+    width: '100%',
+    padding: `3px ${vars.space.sm}`,
+    background: vars.color.inset,
+    border: 'none',
+    borderBottom: `1px solid ${vars.color.border}`,
+    fontFamily: vars.font.mono,
+    fontSize: '0.68rem',
+    fontVariantNumeric: 'tabular-nums',
+    color: vars.color.foreground,
+    cursor: 'pointer',
+    textAlign: 'left',
+    ':hover': { background: vars.color.muted },
+});
+
+export const groupTitle = style({
+    fontWeight: 600,
+    whiteSpace: 'nowrap',
+});
+
+export const groupStat = style({
+    color: vars.color.mutedForeground,
+    whiteSpace: 'nowrap',
+});
+
+export const groupSpacer = style({ flex: 1 });
+
+// ---- 委託：狀態篩選 chips 列 ----
+
+export const filterRow = style({
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '4px',
+    padding: `4px ${vars.space.sm}`,
+    borderBottom: `1px solid ${vars.color.border}`,
+});
+
+// ---- 窄版兩行卡片式 row ----
+
+export const cardRow = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+    padding: `4px ${vars.space.sm}`,
+    borderBottom: `1px solid rgba(34, 43, 55, 0.5)`,
+    cursor: 'pointer',
+    ':hover': { background: vars.color.muted },
+});
+
+export const cardLine = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: vars.space.sm,
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
+    fontVariantNumeric: 'tabular-nums',
+    minWidth: 0,
+});
+
+export const cardCode = style({
+    fontWeight: 600,
+    color: vars.color.foreground,
+    whiteSpace: 'nowrap',
+});
+
+export const cardName = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.66rem',
+    color: vars.color.mutedForeground,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    minWidth: 0,
+});
+
+export const cardSpacer = style({ flex: 1 });
+
+const dirBadgeBase = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.6rem',
+    fontWeight: 600,
+    padding: '0 5px',
+    borderRadius: vars.radius.sm,
+    whiteSpace: 'nowrap',
+});
+
+export const dirBadge = styleVariants({
+    up: [dirBadgeBase, { color: vars.color.up, background: vars.color.upDim }],
+    down: [
+        dirBadgeBase,
+        { color: vars.color.down, background: vars.color.downDim },
+    ],
+});
+
+// 現價/均價 疊排（窄版第二行）
+export const priceStack = style({
+    display: 'flex',
+    flexDirection: 'column',
+    lineHeight: 1.25,
+    fontSize: '0.64rem',
+    fontFamily: vars.font.mono,
+    fontVariantNumeric: 'tabular-nums',
+    color: vars.color.foreground,
+});
+
+export const priceStackLabel = style({
+    color: vars.color.mutedForeground,
+    marginRight: '4px',
+    fontSize: '0.58rem',
+    fontFamily: vars.font.display,
+});
+
+// ---- 委託：價格雙行（委託價／成交均價）與成交進度圈 ----
+
+export const priceDual = style({
+    display: 'inline-flex',
+    flexDirection: 'column',
+    lineHeight: 1.25,
+    alignItems: 'flex-end',
+});
+
+export const priceDualSub = style({
+    fontSize: '0.62rem',
+    color: vars.color.mutedForeground,
+});
+
+export const ringWrap = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    whiteSpace: 'nowrap',
 });

@@ -65,10 +65,11 @@ import {
     fetchTrades,
 } from './lib/shioaji';
 import { onOrderEvent } from './lib/stream';
+import { ensureAccounts, getAccountState } from './lib/account-store';
 import { notify } from './lib/trade';
 import type { ContractInfo } from './lib/types/contract';
 import type { Trade } from './lib/types/order';
-import type { Position } from './lib/types/portfolio';
+import type { AccountedPosition, Position } from './lib/types/portfolio';
 import {
     BLOCK_META,
     DEFAULT_WORKSPACE,
@@ -564,9 +565,29 @@ export default function App() {
         }
     }, [cachedSelected, selected]);
 
-    // portfolio polling (stock + futures merged)
-    const positionsPoll = usePoll<Position[]>(
+    // portfolio polling — one request per signed account, rows tagged with
+    // their source account so the dock can group/filter 分帳戶; falls back to
+    // the plain S/F pair until the account list has loaded
+    useEffect(ensureAccounts, []);
+    const positionsPoll = usePoll<AccountedPosition[]>(
         useCallback(async () => {
+            const tradable = getAccountState().accounts.filter(
+                (a) => a.account_type === 'S' || a.account_type === 'F',
+            );
+            if (tradable.length > 0) {
+                const rs = await Promise.allSettled(
+                    tradable.map(async (a) => {
+                        const ps = await fetchPositions(
+                            a.account_type as 'S' | 'F',
+                            a,
+                        );
+                        return ps.map((p) => ({ ...p, account: a }));
+                    }),
+                );
+                return rs.flatMap((r) =>
+                    r.status === 'fulfilled' ? r.value : [],
+                );
+            }
             const [st, fu] = await Promise.allSettled([
                 fetchPositions('S'),
                 fetchPositions('F'),

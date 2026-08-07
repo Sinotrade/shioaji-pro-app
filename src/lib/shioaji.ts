@@ -680,8 +680,16 @@ export function updateOrderQty(tradeId: string, quantity: number) {
     });
 }
 
-function accountBody(accountType: AccountTypeName) {
-    const acc = accountFor(accountType as 'S' | 'F');
+// explicit account selector — omitted falls back to the store's selected
+// account (then the server default). 全部帳戶 mode fans out one request per
+// account and merges client-side.
+export interface AccountSelector {
+    broker_id: string;
+    account_id: string;
+}
+
+function accountBody(accountType: AccountTypeName, account?: AccountSelector) {
+    const acc = account ?? accountFor(accountType as 'S' | 'F');
     return {
         account_type: accountType,
         broker_id: acc?.broker_id,
@@ -689,19 +697,28 @@ function accountBody(accountType: AccountTypeName) {
     };
 }
 
-export function fetchTrades(accountType: AccountTypeName) {
-    return apiPost<Trade[]>('/api/v1/order/trades', accountBody(accountType));
+export function fetchTrades(
+    accountType: AccountTypeName,
+    account?: AccountSelector,
+) {
+    return apiPost<Trade[]>(
+        '/api/v1/order/trades',
+        accountBody(accountType, account),
+    );
 }
 
 // ---- portfolio ----
 
-export function fetchPositions(accountType: AccountTypeName) {
+export function fetchPositions(
+    accountType: AccountTypeName,
+    account?: AccountSelector,
+) {
     // stocks use Share unit so odd lots aren't truncated (issue #2);
     // futures stay in contracts (Common)
     return apiPost<(StockPosition | FuturePosition)[]>(
         '/api/v1/portfolio/position_unit',
         {
-            ...accountBody(accountType),
+            ...accountBody(accountType, account),
             unit: accountType === 'S' ? 'Share' : 'Common',
         },
     );
