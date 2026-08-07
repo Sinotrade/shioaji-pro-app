@@ -439,6 +439,42 @@ function enqueueCapability(
     return next;
 }
 
+// The first subscribe after a server (re)start can race its warmup window:
+// the listener is bound but the derived-data plumbing isn't serving yet, so
+// the request hangs (apiPost has no timeout) or fails — and the panel then
+// sat on 訂閱中 forever (2026-08-07 盤中實測). Bound every attempt and retry
+// transient failures; explicit 4xx rejections are permanent and surface
+// immediately.
+const CAPABILITY_TIMEOUT_MS = 10_000;
+const CAPABILITY_RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 15_000];
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(
+            () => reject(new Error(`訂閱請求逾時（${ms / 1000} 秒）`)),
+            ms,
+        );
+        promise.then(
+            (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            (reason: unknown) => {
+                clearTimeout(timer);
+                reject(
+                    reason instanceof Error ? reason : new Error(String(reason)),
+                );
+            },
+        );
+    });
+}
+
+// apiPost errors lead with the HTTP status — 4xx means the request itself is
+// wrong (unsupported code, bad ranking) and retrying can't help
+function isPermanentApiError(reason: unknown): boolean {
+    return reason instanceof Error && /^4\d\d\b/.test(reason.message);
+}
+
 async function updateCapabilitySubscription(
     action: 'subscribe' | 'unsubscribe',
     path: string,
@@ -458,10 +494,29 @@ async function updateCapabilitySubscription(
         if (action === 'unsubscribe' && refs === 0) {
             return { success: true, message: 'Already unsubscribed' };
         }
-        const response = await apiPost<CapabilityResponse>(
-            `/api/v1/stream/${action}/${path}`,
-            body,
-        );
+        let response: CapabilityResponse;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                response = await withTimeout(
+                    apiPost<CapabilityResponse>(
+                        `/api/v1/stream/${action}/${path}`,
+                        body,
+                    ),
+                    CAPABILITY_TIMEOUT_MS,
+                );
+                break;
+            } catch (reason) {
+                const delay = CAPABILITY_RETRY_DELAYS_MS[attempt];
+                if (
+                    action !== 'subscribe' ||
+                    delay === undefined ||
+                    isPermanentApiError(reason)
+                ) {
+                    throw reason;
+                }
+                await new Promise((r) => setTimeout(r, delay));
+            }
+        }
         if (!response.success) {
             throw new Error(response.message || `${path} 訂閱操作失敗`);
         }
