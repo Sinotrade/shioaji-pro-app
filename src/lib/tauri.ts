@@ -1024,6 +1024,9 @@ export async function openPopout(type: string, code: string | null) {
     popoutCounter += 1;
     new WebviewWindow(`popout-${type}-${popoutCounter}`, {
         url: `index.html?${qs}`,
+        // Tauri's drag-drop interception eats in-page HTML5 drag on
+        // WKWebView (watchlist reorder) — no file-drop feature needs it
+        dragDropEnabled: false,
         title: `Shioaji Pro — ${type}${code ? ` · ${code}` : ''}`,
         width: 900,
         height: 620,
@@ -1085,6 +1088,7 @@ export async function openFlashTiles(
         popoutCounter += 1;
         new WebviewWindow(`popout-flashtile-${popoutCounter}`, {
             url: `index.html?${qs}`,
+            dragDropEnabled: false,
             title: `⚡ ${code}`,
             x,
             y,
