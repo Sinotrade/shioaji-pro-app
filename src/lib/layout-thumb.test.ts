@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { labelChars, layoutRows, thumbRects } from './layout-thumb';
-import { LAYOUT_PRESETS } from './workspace';
+import { GRID_COLS, LAYOUT_PRESETS, type Workspace } from './workspace';
 
 function preset(name: string) {
     const p = LAYOUT_PRESETS.find((c) => c.name === name);
@@ -64,5 +64,38 @@ describe('layout thumbnail geometry', () => {
         expect(labelChars({ w: 60, h: 20 }, 8)).toBe(7);
         expect(labelChars({ w: 60, h: 8 }, 8)).toBe(0); // too short
         expect(labelChars({ w: 14, h: 20 }, 8)).toBe(0); // too narrow
+    });
+
+    it('survives an empty workspace (no ÷0, no rects)', () => {
+        const empty: Workspace = { blocks: [], layout: [] };
+        expect(layoutRows(empty)).toBe(1);
+        expect(thumbRects(empty, 120, 80)).toEqual([]);
+    });
+
+    it('maps a single full-width panel to the whole box', () => {
+        const one: Workspace = {
+            blocks: [{ id: 'chart-1', type: 'chart', pin: null }],
+            layout: [{ i: 'chart-1', x: 0, y: 0, w: GRID_COLS, h: 10 }],
+        };
+        const [r] = thumbRects(one, 120, 80, 0);
+        expect(r).toMatchObject({ x: 0, y: 0, w: 120, h: 80 });
+    });
+
+    it('clamps degenerate zero-size items to visible slivers', () => {
+        const ws: Workspace = {
+            blocks: [{ id: 'tape-1', type: 'tape', pin: null }],
+            layout: [{ i: 'tape-1', x: 0, y: 0, w: 0, h: 0 }],
+        };
+        const [r] = thumbRects(ws, 120, 80, 2);
+        expect(r?.w).toBeGreaterThanOrEqual(1);
+        expect(r?.h).toBeGreaterThanOrEqual(1);
+    });
+
+    it('all presets stay inside the real grid column count', () => {
+        for (const p of LAYOUT_PRESETS) {
+            for (const l of p.workspace.layout) {
+                expect(l.x + l.w).toBeLessThanOrEqual(GRID_COLS);
+            }
+        }
     });
 });

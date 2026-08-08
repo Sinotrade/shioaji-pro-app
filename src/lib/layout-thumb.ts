@@ -5,9 +5,7 @@
 // for unit tests.
 
 import type { Workspace, BlockType } from './workspace';
-import { BLOCK_META } from './workspace';
-
-export const THUMB_GRID_COLS = 24;
+import { BLOCK_META, GRID_COLS } from './workspace';
 
 export interface ThumbRect {
     id: string;
@@ -31,7 +29,7 @@ export function thumbRects(
     gap = 2,
 ): ThumbRect[] {
     const rows = layoutRows(ws);
-    const sx = width / THUMB_GRID_COLS;
+    const sx = width / GRID_COLS;
     const sy = height / rows;
     const types = new Map(ws.blocks.map((b) => [b.id, b.type]));
     return ws.layout.flatMap((l) => {

@@ -173,7 +173,8 @@ function AppearanceSection() {
                 </div>
             ))}
             <span className={hud.emptyHint}>
-                logo、環境徽章、伺服器、風控與設定為固定項目，無法隱藏。
+                logo、環境徽章、伺服器、風控、新增面板與設定為固定項目，
+                無法隱藏。
             </span>
         </>
     );

@@ -73,6 +73,7 @@ import type { AccountedPosition, Position } from './lib/types/portfolio';
 import {
     BLOCK_META,
     DEFAULT_WORKSPACE,
+    GRID_COLS,
     LAYOUT_PRESETS,
     loadProfiles,
     loadWorkspace,
@@ -87,8 +88,6 @@ import {
     type Workspace,
 } from './lib/workspace';
 import { Orb } from './components/orb';
-
-const GRID_COLS = 24;
 
 const POPOUT_TYPES: ReadonlySet<string> = new Set([
     'chart',
@@ -893,10 +892,14 @@ export default function App() {
 
     const renameProfile = useCallback(
         (oldName: string, newName: string) => {
-            if (
-                oldName === newName ||
-                profiles.some((p) => p.name === newName)
-            ) {
+            if (oldName === newName) return;
+            if (profiles.some((p) => p.name === newName)) {
+                // silent revert would look like data loss — say why
+                notify({
+                    kind: 'err',
+                    title: '改名失敗',
+                    body: `已有同名版面「${newName}」`,
+                });
                 return;
             }
             const next = profiles.map((p) =>

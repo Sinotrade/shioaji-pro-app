@@ -172,6 +172,9 @@ export function LayoutLibrary({
     const [renameVal, setRenameVal] = useState('');
     const [saveName, setSaveName] = useState('');
     const [saveIcon, setSaveIcon] = useState<string | null>(null);
+    // untouched picker + overwrite → keep the existing profile's icon;
+    // only an explicit pick (or explicit un-pick) changes it
+    const [iconTouched, setIconTouched] = useState(false);
     // saving over an existing name needs an explicit second click
     const [overwriteArm, setOverwriteArm] = useState(false);
 
@@ -182,6 +185,7 @@ export function LayoutLibrary({
             setRenaming(null);
             setSaveName('');
             setSaveIcon(null);
+            setIconTouched(false);
             setOverwriteArm(false);
         }
     }, [open]);
@@ -206,9 +210,14 @@ export function LayoutLibrary({
             setOverwriteArm(true);
             return;
         }
-        onSaveProfile(trimmed, saveIcon ?? undefined);
+        const icon = iconTouched
+            ? (saveIcon ?? undefined)
+            : (saveIcon ??
+              profiles.find((p) => p.name === trimmed)?.icon);
+        onSaveProfile(trimmed, icon);
         setSaveName('');
         setSaveIcon(null);
+        setIconTouched(false);
         setOverwriteArm(false);
     };
 
@@ -545,13 +554,14 @@ export function LayoutLibrary({
                                                 ]
                                             }
                                             title={`角標 icon：${name}（再點一次取消）`}
-                                            onClick={() =>
+                                            onClick={() => {
+                                                setIconTouched(true);
                                                 setSaveIcon((cur) =>
                                                     cur === name
                                                         ? null
                                                         : name,
-                                                )
-                                            }
+                                                );
+                                            }}
                                         >
                                             <Icon size={13} />
                                         </button>

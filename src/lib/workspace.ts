@@ -2,6 +2,10 @@
 
 import type { LayoutItem } from 'react-grid-layout';
 
+// single source of truth for the main grid column count — the workspace
+// grid (App.tsx) and layout thumbnails (lib/layout-thumb.ts) must agree
+export const GRID_COLS = 24;
+
 export type BlockType =
     | 'watchlist'
     | 'movers'

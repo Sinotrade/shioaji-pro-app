@@ -227,8 +227,10 @@ export const flyout = style({
     borderRadius: vars.radius.md,
     background: vars.color.panelRaised,
     boxShadow: '0 18px 48px rgba(0, 0, 0, 0.35)',
+    // shell 是置中 680px：flyout 右緣 = vw/2 + 340 + 8 + 280，
+    // vw < 1256 就會被視窗右緣裁切 — 塞不下就整個藏起來
     '@media': {
-        'screen and (max-width: 1080px)': {
+        'screen and (max-width: 1255px)': {
             display: 'none',
         },
     },
