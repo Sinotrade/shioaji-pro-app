@@ -19,6 +19,11 @@ import {
     useAccounts,
 } from '../lib/account-store';
 import {
+    HEADER_ITEMS,
+    setHeaderItem,
+    useHeaderItems,
+} from '../lib/header-items';
+import {
     maskAccountId,
     maskMoney,
     maskName,
@@ -45,7 +50,6 @@ import {
     useToastScale,
     type ToastScale,
 } from '../lib/toast-prefs';
-import { LAYOUT_PRESETS } from '../lib/workspace';
 import { Orb } from './orb';
 import * as hud from './hud-header.css';
 import * as panel from './panel.css';
@@ -75,6 +79,7 @@ const TABS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
 function AppearanceSection() {
     const settings = useThemeSettings();
     const toastScale = useToastScale();
+    const headerItems = useHeaderItems();
     return (
         <>
             <span className={hud.settingLabel}>主題 Theme</span>
@@ -146,6 +151,30 @@ function AppearanceSection() {
                     </button>
                 ))}
             </div>
+            <span className={hud.settingLabel}>頂欄顯示 Header Items</span>
+            {HEADER_ITEMS.map((item) => (
+                <div key={item.key} className={hud.switchRow}>
+                    <span className={hud.switchLabel}>{item.label}</span>
+                    <button
+                        className={
+                            hud.switchTrack[
+                                headerItems[item.key] ? 'on' : 'off'
+                            ]
+                        }
+                        title={
+                            headerItems[item.key]
+                                ? `隱藏頂欄「${item.label}」`
+                                : `顯示頂欄「${item.label}」`
+                        }
+                        onClick={() =>
+                            setHeaderItem(item.key, !headerItems[item.key])
+                        }
+                    />
+                </div>
+            ))}
+            <span className={hud.emptyHint}>
+                logo、環境徽章、伺服器、風控與設定為固定項目，無法隱藏。
+            </span>
         </>
     );
 }
@@ -360,93 +389,32 @@ function RiskSection() {
 }
 
 export interface LayoutSectionProps {
-    profiles: string[];
-    onSaveProfile: (name: string) => void;
-    onLoadProfile: (name: string) => void;
-    onDeleteProfile: (name: string) => void;
     onResetWorkspace: () => void;
-    onLoadPreset: (name: string) => void;
+    // 開版面庫（presets/save/load/rename/delete 全在版面庫 dialog）
+    onOpenLayoutLibrary: () => void;
 }
 
 function LayoutSection({
-    profiles,
-    onSaveProfile,
-    onLoadProfile,
-    onDeleteProfile,
     onResetWorkspace,
-    onLoadPreset,
+    onOpenLayoutLibrary,
     onClose,
 }: LayoutSectionProps & { onClose: () => void }) {
-    const [name, setName] = useState('');
     return (
         <>
-            <span className={hud.settingLabel}>預設版面 Presets</span>
-            {LAYOUT_PRESETS.map((p) => (
-                <button
-                    key={p.name}
-                    className={hud.menuItem}
-                    title={p.desc}
-                    onClick={() => {
-                        onLoadPreset(p.name);
-                        onClose();
-                    }}
-                >
-                    {p.name}
-                    <span className={hud.presetDesc}>{p.desc}</span>
-                </button>
-            ))}
-            <span className={hud.settingLabel}>儲存目前版面 Save Layout</span>
-            <div className={hud.saveRow}>
-                <input
-                    className={hud.saveInput}
-                    placeholder='版面名稱'
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter' && name.trim()) {
-                            onSaveProfile(name.trim());
-                            setName('');
-                        }
-                    }}
-                />
-                <button
-                    className={hud.resetBtn}
-                    disabled={!name.trim()}
-                    onClick={() => {
-                        if (name.trim()) {
-                            onSaveProfile(name.trim());
-                            setName('');
-                        }
-                    }}
-                >
-                    儲存
-                </button>
-            </div>
-            <span className={hud.settingLabel}>版面列表 Saved Layouts</span>
-            {profiles.length === 0 && (
-                <span className={hud.emptyHint}>尚無儲存的版面</span>
-            )}
-            {profiles.map((p) => (
-                <div key={p} className={hud.profileRow}>
-                    <button
-                        className={hud.menuItem}
-                        style={{ flex: 1 }}
-                        onClick={() => {
-                            onLoadProfile(p);
-                            onClose();
-                        }}
-                    >
-                        {p}
-                    </button>
-                    <button
-                        className={hud.profileDelete}
-                        title='刪除此版面'
-                        onClick={() => onDeleteProfile(p)}
-                    >
-                        <X size={10} />
-                    </button>
-                </div>
-            ))}
+            <span className={hud.settingLabel}>版面 Layouts</span>
+            <button
+                className={hud.updateBtn}
+                onClick={() => {
+                    onClose();
+                    onOpenLayoutLibrary();
+                }}
+            >
+                <LayoutGrid size={13} /> 開啟版面庫…
+            </button>
+            <span className={hud.emptyHint}>
+                預設版面、儲存/切換/改名/刪除自訂版面都在版面庫；
+                頂欄的「版面」鈕可直接開啟。
+            </span>
             <button
                 className={hud.menuItem}
                 onClick={() => {

@@ -54,6 +54,9 @@ export interface Workspace {
 export interface Profile {
     name: string;
     workspace: Workspace;
+    // lucide icon name for the layout-library card badge; older saved
+    // profiles have no icon — absent means no badge (backward compatible)
+    icon?: string;
 }
 
 export type PanelCategory =
@@ -649,11 +652,17 @@ export function loadProfiles(): Profile[] {
         if (raw) {
             const arr = JSON.parse(raw);
             if (Array.isArray(arr)) {
-                return (arr as Profile[]).filter(
-                    (p) =>
-                        typeof p.name === 'string' &&
-                        validWorkspace(p.workspace),
-                );
+                return (arr as Profile[])
+                    .filter(
+                        (p) =>
+                            typeof p.name === 'string' &&
+                            validWorkspace(p.workspace),
+                    )
+                    .map((p) =>
+                        typeof p.icon === 'string' && p.icon
+                            ? p
+                            : { name: p.name, workspace: p.workspace },
+                    );
             }
         }
     } catch {

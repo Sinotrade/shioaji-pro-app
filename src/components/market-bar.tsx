@@ -3,6 +3,7 @@
 import { useCallback } from 'react';
 import { usePoll } from '../hooks/use-poll';
 import { useQuote } from '../hooks/use-stream';
+import { useHeaderItems } from '../lib/header-items';
 import { fetchSnapshots } from '../lib/shioaji';
 import { ensureContract } from '../lib/contracts-cache';
 import type { Snapshot } from '../lib/types/market';
@@ -11,6 +12,8 @@ import * as panel from './panel.css';
 import * as styles from './hud-header.css';
 
 export function MarketBar() {
+    // 頂欄自訂：加權/基差 chips 可各自關閉（settings → 外觀 → 頂欄顯示）
+    const headerItems = useHeaderItems();
     const { data } = usePoll<Snapshot[]>(
         useCallback(async () => {
             const contracts = await Promise.all([
@@ -50,6 +53,7 @@ export function MarketBar() {
             ? txfClose - indexClose
             : undefined;
 
+    if (!headerItems.marketIndex && !headerItems.marketBasis) return null;
     if (indexClose === undefined) return null;
     const dir =
         indexChange === undefined || indexChange === 0
@@ -62,13 +66,15 @@ export function MarketBar() {
 
     return (
         <>
-            <div className={styles.chip}>
-                <span className={styles.chipLabel}>加權</span>
-                <span className={panel.dirText[dir]}>
-                    {fmtPrice(indexClose)} {fmtPct(indexPct)}
-                </span>
-            </div>
-            {basis !== undefined && (
+            {headerItems.marketIndex && (
+                <div className={styles.chip}>
+                    <span className={styles.chipLabel}>加權</span>
+                    <span className={panel.dirText[dir]}>
+                        {fmtPrice(indexClose)} {fmtPct(indexPct)}
+                    </span>
+                </div>
+            )}
+            {headerItems.marketBasis && basis !== undefined && (
                 <div className={styles.chip} title='台指期 − 加權指數（價差）'>
                     <span className={styles.chipLabel}>基差</span>
                     <span className={panel.dirText[basisDir]}>

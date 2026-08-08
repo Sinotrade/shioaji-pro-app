@@ -2,9 +2,10 @@
 // 都收斂進統一設定 dialog（settings-dialog.tsx）；header 只留高頻操作：
 // 伺服器狀態、Kill Switch（一鍵鎖定/解鎖）、新增面板、閃電全開、設定。
 
-import { Lock, Settings, Unlock, Zap } from 'lucide-react';
+import { LayoutGrid, Lock, Settings, Unlock, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useStreamStatus } from '../hooks/use-stream';
+import { useHeaderItems } from '../lib/header-items';
 import { setRiskSettings, useRiskSettings } from '../lib/risk';
 import { fetchInfo } from '../lib/shioaji';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
@@ -16,6 +17,8 @@ import {
     type FlashTileLayout,
 } from '../lib/tauri';
 import { fmtMoney } from '../lib/utils/format';
+import type { Profile, Workspace } from '../lib/workspace';
+import { LayoutLibrary } from './layout-library';
 import { MarketBar } from './market-bar';
 import { ServerManager } from './server-manager';
 import { SettingsDialog } from './settings-dialog';
@@ -172,9 +175,11 @@ export function HudHeader({
     accBalance,
     onOpenPanelLibrary,
     profiles,
+    currentWorkspace,
     onSaveProfile,
     onLoadProfile,
     onDeleteProfile,
+    onRenameProfile,
     onResetWorkspace,
     onLoadPreset,
     flashCodes = [],
@@ -182,20 +187,24 @@ export function HudHeader({
     accBalance?: number;
     onOpenPanelLibrary: () => void;
     flashCodes?: string[];
-    profiles: string[];
-    onSaveProfile: (name: string) => void;
+    profiles: Profile[];
+    currentWorkspace: Workspace;
+    onSaveProfile: (name: string, icon?: string) => void;
     onLoadProfile: (name: string) => void;
     onDeleteProfile: (name: string) => void;
+    onRenameProfile: (oldName: string, newName: string) => void;
     onResetWorkspace: () => void;
     onLoadPreset: (name: string) => void;
 }) {
     const streamStatus = useStreamStatus();
     const privMoney = usePrivacyMoney();
+    const headerItems = useHeaderItems();
     const [simulation, setSimulation] = useState<boolean | null>(null);
     const [appVer, setAppVer] = useState('');
     const [now, setNow] = useState(() => new Date());
     const [serverMgrOpen, setServerMgrOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [layoutLibOpen, setLayoutLibOpen] = useState(false);
 
     useEffect(() => {
         let cleanup: (() => void) | undefined;
@@ -258,17 +267,19 @@ export function HudHeader({
 
             <div className={styles.spacer} />
 
-            {accBalance !== undefined && (
+            {headerItems.bankBalance && accBalance !== undefined && (
                 <div className={styles.chip}>
                     <span className={styles.chipLabel}>銀行水位</span>
                     <span>{maskMoney(fmtMoney(accBalance), privMoney)}</span>
                 </div>
             )}
 
-            <div className={styles.chip}>
-                <span className={styles.led[streamStatus]} />
-                <span>{STATUS_LABEL[streamStatus]}</span>
-            </div>
+            {headerItems.liveStatus && (
+                <div className={styles.chip}>
+                    <span className={styles.led[streamStatus]} />
+                    <span>{STATUS_LABEL[streamStatus]}</span>
+                </div>
+            )}
 
             <ServerManager
                 open={serverMgrOpen}
@@ -281,7 +292,17 @@ export function HudHeader({
             >
                 ＋ 新增面板
             </button>
-            {flashCodes.length > 0 && (
+            {headerItems.layoutLibrary && (
+                <button
+                    className={styles.resetBtn}
+                    title='版面庫（預設版面/我的版面/儲存目前版面）'
+                    onClick={() => setLayoutLibOpen(true)}
+                >
+                    <LayoutGrid size={11} style={{ verticalAlign: '-1px' }} />{' '}
+                    版面
+                </button>
+            )}
+            {headerItems.flashAll && flashCodes.length > 0 && (
                 <FlashTilesMenu flashCodes={flashCodes} />
             )}
             <button
@@ -294,17 +315,26 @@ export function HudHeader({
             <SettingsDialog
                 open={settingsOpen}
                 onClose={() => setSettingsOpen(false)}
+                onResetWorkspace={onResetWorkspace}
+                onOpenLayoutLibrary={() => setLayoutLibOpen(true)}
+            />
+            <LayoutLibrary
+                open={layoutLibOpen}
+                onClose={() => setLayoutLibOpen(false)}
                 profiles={profiles}
+                currentWorkspace={currentWorkspace}
                 onSaveProfile={onSaveProfile}
                 onLoadProfile={onLoadProfile}
                 onDeleteProfile={onDeleteProfile}
-                onResetWorkspace={onResetWorkspace}
+                onRenameProfile={onRenameProfile}
                 onLoadPreset={onLoadPreset}
             />
 
-            <span className={styles.clock}>
-                {now.toLocaleTimeString('en-GB', { hour12: false })}
-            </span>
+            {headerItems.clock && (
+                <span className={styles.clock}>
+                    {now.toLocaleTimeString('en-GB', { hour12: false })}
+                </span>
+            )}
         </header>
     );
 }

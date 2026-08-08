@@ -845,10 +845,14 @@ export default function App() {
     // ---- profiles ----
 
     const saveProfileAs = useCallback(
-        (name: string) => {
+        (name: string, icon?: string) => {
             const next = [
                 ...profiles.filter((p) => p.name !== name),
-                { name, workspace: structuredClone(workspace) },
+                {
+                    name,
+                    workspace: structuredClone(workspace),
+                    ...(icon ? { icon } : {}),
+                },
             ];
             setProfiles(next);
             saveProfiles(next);
@@ -883,6 +887,24 @@ export default function App() {
             const next = profiles.filter((p) => p.name !== name);
             setProfiles(next);
             saveProfiles(next);
+        },
+        [profiles],
+    );
+
+    const renameProfile = useCallback(
+        (oldName: string, newName: string) => {
+            if (
+                oldName === newName ||
+                profiles.some((p) => p.name === newName)
+            ) {
+                return;
+            }
+            const next = profiles.map((p) =>
+                p.name === oldName ? { ...p, name: newName } : p,
+            );
+            setProfiles(next);
+            saveProfiles(next);
+            trackActivity('版面改名', newName);
         },
         [profiles],
     );
@@ -947,10 +969,12 @@ export default function App() {
             <HudHeader
                 accBalance={balancePoll.data?.acc_balance}
                 onOpenPanelLibrary={() => setPanelLibraryOpen(true)}
-                profiles={profiles.map((p) => p.name)}
+                profiles={profiles}
+                currentWorkspace={workspace}
                 onSaveProfile={saveProfileAs}
                 onLoadProfile={loadProfile}
                 onDeleteProfile={deleteProfile}
+                onRenameProfile={renameProfile}
                 onResetWorkspace={resetWorkspace}
                 onLoadPreset={loadPreset}
                 flashCodes={items
