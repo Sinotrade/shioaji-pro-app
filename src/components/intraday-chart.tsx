@@ -948,17 +948,35 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                   sessionDate.getUTCDate(),
               ).padStart(2, '0')}`
             : null;
+    // 鎖漲停/跌停 → 現價亮燈（停板色底）
+    const hasLimits =
+        contract.limit_up > contract.limit_down && contract.limit_down > 0;
+    const locked =
+        shownPrice !== undefined && hasLimits
+            ? shownPrice >= contract.limit_up
+                ? ('up' as const)
+                : shownPrice <= contract.limit_down
+                  ? ('down' as const)
+                  : null
+            : null;
 
     return (
         <div className={styles.wrap}>
             <div className={styles.legend}>
+                <span className={styles.stats}>
                 {(sessionLabel || staleDate) && (
                     <span className={styles.sessionChip}>
                         {staleDate ? `${staleDate} ` : ''}
                         {sessionLabel ?? '日盤'}
                     </span>
                 )}
-                <span className={`${styles.price} ${panel.dirText[dir]}`}>
+                <span
+                    className={
+                        locked
+                            ? styles.lockPrice[locked]
+                            : `${styles.price} ${panel.dirText[dir]}`
+                    }
+                >
                     {shownPrice !== undefined ? fmtPrice(shownPrice) : '—'}
                 </span>
                 <span className={panel.dirText[dir]}>
@@ -1002,6 +1020,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                         {fmtClock(hover.time)}
                     </span>
                 )}
+                </span>
                 <span className={styles.toggles}>
                     <span className={styles.settingsWrap}>
                         <button

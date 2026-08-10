@@ -10,20 +10,30 @@ export const wrap = style({
     minHeight: 0,
 });
 
+// 固定單行 — legend 高度絕不能隨 hover chip 出現/數值變寬而換行，
+// 否則下方圖表高度會一直跳（stats 內層負責裁切溢出）
 export const legend = style({
     display: 'flex',
-    alignItems: 'baseline',
-    flexWrap: 'wrap',
-    columnGap: '10px',
-    rowGap: '2px',
+    alignItems: 'center',
+    columnGap: '8px',
     padding: `3px ${vars.space.sm}`,
     borderBottom: `1px solid ${vars.color.border}`,
     flexShrink: 0,
     fontFamily: vars.font.mono,
     fontSize: '0.68rem',
-    lineHeight: 1.4,
+    lineHeight: 1.5,
     whiteSpace: 'nowrap',
     // NOTE: 不能 overflow hidden — 齒輪的設定 popover 從這層冒出來
+});
+
+export const stats = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    columnGap: '10px',
+    flex: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
 });
 
 export const sessionChip = style({
@@ -50,6 +60,20 @@ export const hoverChip = style({
 export const price = style({
     fontSize: '0.85rem',
     fontWeight: 700,
+});
+
+// 鎖漲停/跌停亮燈 — 現價貼上停板色底
+const lockBase = style({
+    fontSize: '0.85rem',
+    fontWeight: 700,
+    padding: '0 6px',
+    borderRadius: vars.radius.sm,
+    color: '#fff',
+});
+
+export const lockPrice = styleVariants({
+    up: [lockBase, { background: vars.color.up }],
+    down: [lockBase, { background: vars.color.down }],
 });
 
 export const kv = style({
