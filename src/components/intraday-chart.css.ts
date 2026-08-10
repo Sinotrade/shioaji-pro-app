@@ -143,10 +143,47 @@ export const settingsLabel = style({
     minWidth: '2.2em',
 });
 
+// 自訂 range 滑桿：4px 軌道以 --sj-fill 漸層填到滑塊位置，
+// 滑塊是帶光暈的圓點，hover/拖曳時放大
 export const slider = style({
-    width: '96px',
-    accentColor: vars.color.accent,
+    WebkitAppearance: 'none',
+    appearance: 'none',
+    width: '110px',
+    height: '4px',
+    borderRadius: '2px',
+    background: `linear-gradient(to right, ${vars.color.accent} var(--sj-fill, 50%), ${vars.color.border} var(--sj-fill, 50%))`,
+    outline: 'none',
     cursor: 'pointer',
+    alignSelf: 'center',
+    selectors: {
+        '&::-webkit-slider-thumb': {
+            WebkitAppearance: 'none',
+            appearance: 'none',
+            width: '12px',
+            height: '12px',
+            borderRadius: '50%',
+            background: vars.color.background,
+            border: `2px solid ${vars.color.accent}`,
+            boxShadow: `0 0 0 2px ${vars.color.accentDim}`,
+            transition: 'transform 0.12s ease, box-shadow 0.12s ease',
+        },
+        '&:hover::-webkit-slider-thumb': {
+            transform: 'scale(1.2)',
+            boxShadow: `0 0 0 3px ${vars.color.accentDim}, 0 0 10px ${vars.color.accent}`,
+        },
+        '&:active::-webkit-slider-thumb': {
+            transform: 'scale(1.3)',
+            boxShadow: `0 0 0 4px ${vars.color.accentDim}, 0 0 14px ${vars.color.accent}`,
+        },
+        '&::-moz-range-thumb': {
+            width: '12px',
+            height: '12px',
+            borderRadius: '50%',
+            background: vars.color.background,
+            border: `2px solid ${vars.color.accent}`,
+            boxShadow: `0 0 0 2px ${vars.color.accentDim}`,
+        },
+    },
 });
 
 export const sliderVal = style({
@@ -154,6 +191,16 @@ export const sliderVal = style({
     color: vars.color.foreground,
     minWidth: '2em',
     textAlign: 'right',
+});
+
+// 即時粗細預覽 — 高度直接等於選擇的線寬 px
+export const widthPreview = style({
+    display: 'inline-block',
+    width: '18px',
+    borderRadius: '2px',
+    background: vars.color.accent,
+    alignSelf: 'center',
+    flexShrink: 0,
 });
 
 export const chartHost = style({

@@ -1154,6 +1154,11 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                                         <input
                                             type='range'
                                             className={styles.slider}
+                                            style={
+                                                {
+                                                    '--sj-fill': `${(((lineWidth - LINE_WIDTH_MIN) / (LINE_WIDTH_MAX - LINE_WIDTH_MIN)) * 100).toFixed(1)}%`,
+                                                } as React.CSSProperties
+                                            }
                                             min={LINE_WIDTH_MIN}
                                             max={LINE_WIDTH_MAX}
                                             step={0.5}
@@ -1163,6 +1168,12 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                                                     Number(e.target.value),
                                                 )
                                             }
+                                        />
+                                        <span
+                                            className={styles.widthPreview}
+                                            style={{
+                                                height: `${lineWidth}px`,
+                                            }}
                                         />
                                         <span className={styles.sliderVal}>
                                             {lineWidth.toFixed(1)}
