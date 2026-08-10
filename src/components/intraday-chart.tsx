@@ -209,6 +209,11 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 fontFamily: "'JetBrains Mono', monospace",
                 fontSize: 10,
                 attributionLogo: false,
+                panes: {
+                    separatorColor: c.border,
+                    separatorHoverColor: colorWithOpacity(c.crosshair, 15),
+                    enableResize: true,
+                },
             },
             grid: {
                 vertLines: { color: c.grid },
@@ -258,13 +263,12 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             original: () => AutoscaleInfo | null,
         ): AutoscaleInfo | null => {
             const lim = limitsRef.current;
-            // 漲跌停模式：軸固定整段區間，行情多小都看得到全幅
+            // 漲跌停模式：軸固定整段區間貼齊停板，行情多小都看得到全幅
             if (scaleModeRef.current === 'band' && lim) {
-                const margin = (lim.up - lim.down) * 0.01;
                 return {
                     priceRange: {
-                        minValue: lim.down - margin,
-                        maxValue: lim.up + margin,
+                        minValue: lim.down,
+                        maxValue: lim.up,
                     },
                 };
             }
@@ -470,12 +474,30 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             fillerSeriesRef.current?.removePriceLine(line);
         }
         limitLinesRef.current = [];
-        // 樣式互斥切換：分時線 vs 美國線
+        // 樣式切換：line=分時線；bars=美國線疊在透明漸層上（baseline
+        // 線色轉透明、保留填色，讓美國線下方也有紅綠漸層）
         priceSeriesRef.current?.applyOptions({
-            visible: chartStyle === 'line',
+            visible: true,
+            topLineColor: chartStyle === 'line' ? colors.up : 'transparent',
+            bottomLineColor:
+                chartStyle === 'line' ? colors.down : 'transparent',
+            lastValueVisible: chartStyle === 'line',
+            crosshairMarkerVisible: chartStyle === 'line',
         });
         barSeriesRef.current?.applyOptions({
             visible: chartStyle === 'bars',
+        });
+        // 漲跌停模式上下貼齊停板，不留多餘空間；自動模式保留呼吸感。
+        // 左右兩軸 margins 必須同步，% 與價格刻度才對齊
+        const sm =
+            scaleMode === 'band'
+                ? { top: 0.015, bottom: 0.015 }
+                : { top: 0.05, bottom: 0.05 };
+        chartRef.current?.priceScale('right').applyOptions({
+            scaleMargins: sm,
+        });
+        chartRef.current?.priceScale('left').applyOptions({
+            scaleMargins: sm,
         });
         // 量能軸刻度：股/期=口數張數（K/M 縮寫）、指數=成交額（億）
         volSeriesRef.current?.applyOptions({
@@ -971,4 +993,12 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             </div>
         </div>
     );
+}
+
+// HMR 對 imperative 的 chart 生命週期清不乾淨 — 熱更新會疊出第二個
+// chart（幽靈停板線/分隔線壓軸）。此模組一變更就強制整頁重載。
+if (import.meta.hot) {
+    import.meta.hot.accept(() => {
+        import.meta.hot?.invalidate();
+    });
 }
