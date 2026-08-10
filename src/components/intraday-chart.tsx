@@ -92,6 +92,10 @@ function loadScaleMode(): ScaleMode {
     }
 }
 
+// 收盤定盤可能印在收盤後幾分鐘（指數定盤 13:31–33）— 這段內的
+// kbar/tick 都併進最後一根 label，軸仍固定收在 win.end
+const CLOSE_GRACE = 240;
+
 const fmtClock = (t: number) => {
     const d = new Date(t * 1000);
     const hh = String(d.getUTCHours()).padStart(2, '0');
@@ -420,9 +424,6 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                     contract.security_type,
                     last.time,
                 );
-                // 收盤定盤可能印在收盤後幾分鐘的 kbar（指數定盤 13:31–33）
-                // — 併進最後一根 label，軸仍固定收在 win.end
-                const CLOSE_GRACE = 240;
                 const bars = all.filter(
                     (b) =>
                         b.time > win.start &&
@@ -579,16 +580,31 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         if (!Number.isFinite(p) || p <= 0) return;
         const t = wallClockToUtc(`${liveQuote.date}T${liveQuote.time}`);
         const stale = lastLabelRef.current;
-        // 換時段（夜→日、日→夜）或睡醒斷圖太久 → 整段重載，30s 節流
-        if (
-            t > win.end + 120 ||
-            (stale > 0 && tickBucket(win, t) > stale + 180)
-        ) {
+        const throttledReload = () => {
             if (Date.now() - lastReloadRef.current > 30_000) {
                 lastReloadRef.current = Date.now();
                 setReloadSeq((v) => v + 1);
             }
+        };
+        // 收盤 grace 之外的 tick：真的換時段（夜→日、日→夜、隔日開盤）
+        // 才整段重載；同時段的盤後零星成交（股票定盤 14:30）只丟棄，
+        // 否則每筆都會白打一次 kbars（30s 節流也擋不住反覆觸發）
+        if (t > win.end + CLOSE_GRACE) {
+            const next = sessionWindowFor(contract.security_type, t);
+            if (next.start !== win.start) throttledReload();
             return;
+        }
+        // 斷圖 >3 分鐘：僅在 total_volume 顯示真有漏量（睡醒/斷線補洞）
+        // 時重載 — 冷門股每隔幾分鐘一筆成交是常態，不該筆筆重載
+        if (stale > 0 && tickBucket(win, t) > stale + 180) {
+            const missedVolume =
+                !quote?.tick ||
+                (quote.tick.total_volume ?? 0) >
+                    cumVRef.current + (quote.tick.volume ?? 0);
+            if (missedVolume) {
+                throttledReload();
+                return;
+            }
         }
         if (t <= win.start) return;
         const label = tickBucket(win, t);
@@ -681,20 +697,28 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const shownAvg = hover ? hover.avg : live?.avg;
     const shownTotal = hover ? hover.total : live?.total;
     const sessionLabel =
-        contract.security_type === 'FUT' || contract.security_type === 'OPT'
-            ? win?.night
+        win &&
+        (contract.security_type === 'FUT' || contract.security_type === 'OPT')
+            ? win.night
                 ? '夜盤'
                 : '日盤'
             : null;
-    // 顯示的不是今天的時段（週末/收盤後看盤）→ 標日期提示
+    // 顯示的不是今天的時段（週末/收盤後看盤）→ 標日期提示。
+    // 夜盤跨午夜：起訖任一落在今天都算「今天的時段」，否則週二凌晨
+    // 正在交易的夜盤會被誤標成昨天的舊資料
+    const taiwanNow = new Date(Date.now() + 8 * 3600 * 1000);
+    const sameTwDay = (d: Date) =>
+        d.getUTCFullYear() === taiwanNow.getUTCFullYear() &&
+        d.getUTCMonth() === taiwanNow.getUTCMonth() &&
+        d.getUTCDate() === taiwanNow.getUTCDate();
     const sessionDate = win
         ? new Date((win.night ? win.start : win.end) * 1000)
         : null;
-    const taiwanNow = new Date(Date.now() + 8 * 3600 * 1000);
     const staleDate =
+        win &&
         sessionDate &&
-        (sessionDate.getUTCMonth() !== taiwanNow.getUTCMonth() ||
-            sessionDate.getUTCDate() !== taiwanNow.getUTCDate())
+        !sameTwDay(new Date(win.start * 1000)) &&
+        !sameTwDay(new Date(win.end * 1000))
             ? `${String(sessionDate.getUTCMonth() + 1).padStart(2, '0')}/${String(
                   sessionDate.getUTCDate(),
               ).padStart(2, '0')}`
