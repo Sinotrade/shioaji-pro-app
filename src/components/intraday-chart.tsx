@@ -124,6 +124,30 @@ function loadVolMode(): VolMode {
     }
 }
 
+// legend 顯示項目 — 窄面板時可關掉次要資訊，價格與漲跌恆顯示
+interface LegendItems {
+    avg: boolean;
+    hilo: boolean;
+    total: boolean;
+}
+const LEGEND_ITEMS_KEY = 'sj-pro-intraday-legend';
+
+function loadLegendItems(): LegendItems {
+    const def: LegendItems = { avg: true, hilo: true, total: true };
+    try {
+        const raw = localStorage.getItem(LEGEND_ITEMS_KEY);
+        if (!raw) return def;
+        const parsed = JSON.parse(raw) as Partial<LegendItems>;
+        return {
+            avg: parsed.avg !== false,
+            hilo: parsed.hilo !== false,
+            total: parsed.total !== false,
+        };
+    } catch {
+        return def;
+    }
+}
+
 // 0.5–4，步進 0.5。lightweight-charts 的 LineWidth 型別標成 1|2|3|4，
 // 但 renderer 直通 canvas lineWidth，小數實測有效（0.5 = 髮絲線）
 const LINE_WIDTH_MIN = 0.5;
@@ -227,6 +251,22 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         }
     };
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [legendItems, setLegendItems] =
+        useState<LegendItems>(loadLegendItems);
+    const toggleLegendItem = (k: keyof LegendItems) => {
+        setLegendItems((prev) => {
+            const next = { ...prev, [k]: !prev[k] };
+            try {
+                localStorage.setItem(
+                    LEGEND_ITEMS_KEY,
+                    JSON.stringify(next),
+                );
+            } catch {
+                // session only
+            }
+            return next;
+        });
+    };
     const [, setLegendSeq] = useState(0);
     const legendRafRef = useRef(false);
     const bumpLegend = () => {
@@ -987,7 +1027,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                         ? ` (${chgPct > 0 ? '+' : ''}${chgPct.toFixed(2)}%)`
                         : ''}
                 </span>
-                {!isIndex && (
+                {!isIndex && legendItems.avg && (
                     <span className={styles.kv}>
                         均{' '}
                         <span className={styles.avgVal}>
@@ -995,26 +1035,30 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                         </span>
                     </span>
                 )}
-                <span className={styles.kv}>
-                    高{' '}
-                    <span className={panel.dirText.up}>
-                        {live ? fmtPrice(live.high) : '—'}
-                    </span>{' '}
-                    低{' '}
-                    <span className={panel.dirText.down}>
-                        {live ? fmtPrice(live.low) : '—'}
+                {legendItems.hilo && (
+                    <span className={styles.kv}>
+                        高{' '}
+                        <span className={panel.dirText.up}>
+                            {live ? fmtPrice(live.high) : '—'}
+                        </span>{' '}
+                        低{' '}
+                        <span className={panel.dirText.down}>
+                            {live ? fmtPrice(live.low) : '—'}
+                        </span>
                     </span>
-                </span>
-                <span className={styles.kv}>
-                    {isIndex ? '額 ' : '量 '}
-                    <span className={styles.kvVal}>
-                        {shownTotal !== undefined
-                            ? isIndex
-                                ? fmtAmtYi(shownTotal)
-                                : fmtVol(shownTotal)
-                            : '—'}
+                )}
+                {legendItems.total && (
+                    <span className={styles.kv}>
+                        {isIndex ? '額 ' : '量 '}
+                        <span className={styles.kvVal}>
+                            {shownTotal !== undefined
+                                ? isIndex
+                                    ? fmtAmtYi(shownTotal)
+                                    : fmtVol(shownTotal)
+                                : '—'}
+                        </span>
                     </span>
-                </span>
+                )}
                 {hover && (
                     <span className={styles.hoverChip}>
                         {fmtClock(hover.time)}
@@ -1162,6 +1206,57 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                                             }
                                         >
                                             分欄
+                                        </button>
+                                    </span>
+                                    <span className={styles.settingsRow}>
+                                        <span
+                                            className={styles.settingsLabel}
+                                        >
+                                            顯示
+                                        </span>
+                                        {!isIndex && (
+                                            <button
+                                                className={
+                                                    styles.scaleBtn[
+                                                        legendItems.avg
+                                                            ? 'active'
+                                                            : 'normal'
+                                                    ]
+                                                }
+                                                onClick={() =>
+                                                    toggleLegendItem('avg')
+                                                }
+                                            >
+                                                均價
+                                            </button>
+                                        )}
+                                        <button
+                                            className={
+                                                styles.scaleBtn[
+                                                    legendItems.hilo
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            onClick={() =>
+                                                toggleLegendItem('hilo')
+                                            }
+                                        >
+                                            高低
+                                        </button>
+                                        <button
+                                            className={
+                                                styles.scaleBtn[
+                                                    legendItems.total
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            onClick={() =>
+                                                toggleLegendItem('total')
+                                            }
+                                        >
+                                            {isIndex ? '總額' : '總量'}
                                         </button>
                                     </span>
                                     <span className={styles.settingsRow}>
