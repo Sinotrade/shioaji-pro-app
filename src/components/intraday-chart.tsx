@@ -997,22 +997,6 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         <div className={styles.wrap}>
             <div className={styles.legend}>
                 <span className={styles.stats}>
-                <span
-                    className={styles.hoverChip[hover ? 'on' : 'idle']}
-                >
-                    {hover
-                        ? `${fmtClock(hover.time)} ${
-                              isIndex
-                                  ? fmtAmtYi(hover.total)
-                                  : `${fmtVol(hover.total)}${
-                                        contract.security_type === 'FUT' ||
-                                        contract.security_type === 'OPT'
-                                            ? '口'
-                                            : '張'
-                                    }`
-                          }`
-                        : ''}
-                </span>
                 {(sessionLabel || staleDate) && (
                     <span className={styles.sessionChip}>
                         {staleDate ? `${staleDate} ` : ''}
@@ -1305,6 +1289,19 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             </div>
             <div className={styles.chartHost}>
                 <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
+                {hover && (
+                    <span className={styles.hoverFloat}>
+                        {fmtClock(hover.time)}{' '}
+                        {isIndex
+                            ? fmtAmtYi(hover.total)
+                            : `${fmtVol(hover.total)}${
+                                  contract.security_type === 'FUT' ||
+                                  contract.security_type === 'OPT'
+                                      ? '口'
+                                      : '張'
+                              }`}
+                    </span>
+                )}
                 {loading && (
                     <div className={styles.emptyMsg}>
                         <Orb
