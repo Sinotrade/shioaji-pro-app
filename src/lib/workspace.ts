@@ -11,6 +11,7 @@ export type BlockType =
     | 'movers'
     | 'dock'
     | 'chart'
+    | 'intraday'
     | 'depth'
     | 'ticket'
     | 'tape'
@@ -120,6 +121,14 @@ export const BLOCK_META: Record<
         pinnable: true,
         singleton: false,
         defaultSize: { w: 10, h: 12, minW: 6, minH: 7 },
+    },
+    intraday: {
+        label: '當日走勢',
+        description: '分時走勢、均價線與量能',
+        category: 'market',
+        pinnable: true,
+        singleton: false,
+        defaultSize: { w: 8, h: 10, minW: 4, minH: 5 },
     },
     depth: {
         label: '五檔',

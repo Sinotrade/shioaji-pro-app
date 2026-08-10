@@ -150,6 +150,62 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             ))}
         </Frame>
     ),
+    intraday: (
+        <Frame>
+            <line
+                x1='6'
+                y1='36'
+                x2='114'
+                y2='36'
+                stroke={muted}
+                strokeOpacity='0.5'
+                strokeWidth='1'
+                strokeDasharray='3 2'
+            />
+            <path
+                d='M6 36 L16 30 L28 24 L40 27 L52 18 L64 23 L76 28 L88 34'
+                fill='none'
+                stroke={up}
+                strokeWidth='1.5'
+            />
+            <path
+                d='M6 36 L16 30 L28 24 L40 27 L52 18 L64 23 L76 28 L88 34 L88 36 Z'
+                fill={up}
+                fillOpacity='0.15'
+                stroke='none'
+            />
+            <path
+                d='M88 34 L96 40 L106 44 L114 41'
+                fill='none'
+                stroke={down}
+                strokeWidth='1.5'
+            />
+            <path
+                d='M88 36 L88 34 L96 40 L106 44 L114 41 L114 36 Z'
+                fill={down}
+                fillOpacity='0.15'
+                stroke='none'
+            />
+            <path
+                d='M6 36 L28 31 L52 27 L76 28 L96 31 L114 33'
+                fill='none'
+                stroke={accent}
+                strokeOpacity='0.8'
+                strokeWidth='1'
+            />
+            {[6, 9, 5, 11, 7, 4, 8, 5, 10, 6, 4, 7].map((h, i) => (
+                <rect
+                    key={i}
+                    x={7 + i * 9}
+                    y={70 - h}
+                    width='5'
+                    height={h}
+                    fill={i % 4 === 3 ? down : up}
+                    fillOpacity='0.45'
+                />
+            ))}
+        </Frame>
+    ),
     depth: (
         <Frame>
             {[0, 1, 2, 3, 4].map((i) => (

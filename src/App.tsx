@@ -12,6 +12,7 @@ import * as styles from './App.css';
 import * as grid from './grid.css';
 import { BottomDock } from './components/bottom-dock';
 import { CandleChart } from './components/candle-chart';
+import { IntradayChart } from './components/intraday-chart';
 import { CommandPalette } from './components/command-palette';
 import { DepthLadder } from './components/depth-ladder';
 import { EventToasts } from './components/event-toasts';
@@ -91,6 +92,7 @@ import { Orb } from './components/orb';
 
 const POPOUT_TYPES: ReadonlySet<string> = new Set([
     'chart',
+    'intraday',
     'depth',
     'ticket',
     'tape',
@@ -170,6 +172,12 @@ function BlockBody({
                         onOrdersChanged={dockProps.onTradesChanged}
                     />
                 </>
+            ) : (
+                <BlockPlaceholder />
+            );
+        case 'intraday':
+            return contract ? (
+                <IntradayChart contract={contract} />
             ) : (
                 <BlockPlaceholder />
             );
@@ -459,6 +467,9 @@ function PopoutView({
                         />
                     </>
                 );
+                break;
+            case 'intraday':
+                body = <IntradayChart contract={contract} />;
                 break;
             case 'depth':
                 body = <DepthLadder code={contract.code} />;

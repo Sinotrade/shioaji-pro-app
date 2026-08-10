@@ -9,6 +9,7 @@ import { ensureContract } from '../lib/contracts-cache';
 import type { ContractInfo } from '../lib/types/contract';
 import type { BlockType } from '../lib/workspace';
 import { CandleChart } from './candle-chart';
+import { IntradayChart } from './intraday-chart';
 import { ChipsCard } from './chips-card';
 import { DepthLadder } from './depth-ladder';
 import { MarketPulsePanel, MarketSignalPanel } from './market-pulse-panel';
@@ -44,6 +45,7 @@ const CONTRACT_PREVIEWS: Partial<
     chart: (contract) => (
         <CandleChart contract={contract} trades={[]} onOrdersChanged={noop} />
     ),
+    intraday: (contract) => <IntradayChart contract={contract} />,
     depth: (contract) => <DepthLadder code={contract.code} />,
     tape: (contract) => <TickTape contract={contract} />,
     chips: (contract) => <ChipsCard contract={contract} />,
