@@ -20,6 +20,7 @@ import {
     type ISeriesApi,
     type UTCTimestamp,
 } from 'lightweight-charts';
+import { Settings2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { colorWithOpacity } from '../lib/indicator-defs';
@@ -109,6 +110,32 @@ function loadChartStyle(): ChartStyle {
     }
 }
 
+// 量能顯示：overlay=疊在主圖下緣（無獨立軸）、pane=獨立分欄含 Y 軸
+type VolMode = 'overlay' | 'pane';
+const VOL_MODE_KEY = 'sj-pro-intraday-vol';
+
+function loadVolMode(): VolMode {
+    try {
+        return localStorage.getItem(VOL_MODE_KEY) === 'overlay'
+            ? 'overlay'
+            : 'pane';
+    } catch {
+        return 'pane';
+    }
+}
+
+type PriceLineWidth = 1 | 2 | 3 | 4;
+const LINE_WIDTH_KEY = 'sj-pro-intraday-linewidth';
+
+function loadLineWidth(): PriceLineWidth {
+    try {
+        const n = Number(localStorage.getItem(LINE_WIDTH_KEY));
+        return n === 1 || n === 2 || n === 3 || n === 4 ? n : 2;
+    } catch {
+        return 2;
+    }
+}
+
 // 收盤定盤可能印在收盤後幾分鐘（指數定盤 13:31–33）— 這段內的
 // kbar/tick 都併進最後一根 label，軸仍固定收在 win.end
 const CLOSE_GRACE = 240;
@@ -177,6 +204,25 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             // session only
         }
     };
+    const [volMode, setVolMode] = useState<VolMode>(loadVolMode);
+    const pickVolMode = (m: VolMode) => {
+        setVolMode(m);
+        try {
+            localStorage.setItem(VOL_MODE_KEY, m);
+        } catch {
+            // session only
+        }
+    };
+    const [lineWidth, setLineWidth] = useState<PriceLineWidth>(loadLineWidth);
+    const pickLineWidth = (w: PriceLineWidth) => {
+        setLineWidth(w);
+        try {
+            localStorage.setItem(LINE_WIDTH_KEY, String(w));
+        } catch {
+            // session only
+        }
+    };
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const [, setLegendSeq] = useState(0);
     const legendRafRef = useRef(false);
     const bumpLegend = () => {
@@ -194,6 +240,8 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const themeSettings = useThemeSettings();
     const colors = getChartColors(themeSettings);
     const themeKey = `${themeSettings.mode}-${themeSettings.convention}`;
+    // 顯示設定的組合鍵 — load effect 與 live guard 必須用同一份
+    const optsKey = `${themeKey}|${scaleMode}|${chartStyle}|${volMode}|${lineWidth}`;
     const isIndex = contract.security_type === 'IND';
     const avgColor = themeSettings.mode === 'light' ? '#b97f14' : '#e0a43c';
 
@@ -457,7 +505,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
 
     // ---- history load: pick the last session present in the data ----
     useEffect(() => {
-        const loadKey = `${contract.code}|${reloadSeq}|${themeKey}|${scaleMode}|${chartStyle}`;
+        const loadKey = `${contract.code}|${reloadSeq}|${optsKey}`;
         loadedKeyRef.current = '';
         sessionRef.current = null;
         liveRef.current = null;
@@ -487,12 +535,42 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         barSeriesRef.current?.applyOptions({
             visible: chartStyle === 'bars',
         });
-        // 漲跌停模式上下貼齊停板，不留多餘空間；自動模式保留呼吸感。
-        // 左右兩軸 margins 必須同步，% 與價格刻度才對齊
-        const sm =
-            scaleMode === 'band'
-                ? { top: 0.015, bottom: 0.015 }
-                : { top: 0.05, bottom: 0.05 };
+        priceSeriesRef.current?.applyOptions({ lineWidth });
+        // 量能顯示：pane=獨立分欄含 Y 軸；overlay=疊回主圖下緣無獨立軸
+        const vs = volSeriesRef.current;
+        if (vs) {
+            vs.moveToPane(volMode === 'pane' ? 1 : 0);
+            vs.applyOptions({
+                priceScaleId: volMode === 'pane' ? 'right' : 'vol',
+            });
+            if (volMode === 'pane') {
+                vs.priceScale().applyOptions({
+                    scaleMargins: { top: 0.15, bottom: 0 },
+                });
+                const panes = chartRef.current?.panes();
+                panes?.[0]?.setStretchFactor(78);
+                panes?.[1]?.setStretchFactor(22);
+            } else {
+                chartRef.current?.priceScale('vol').applyOptions({
+                    scaleMargins: { top: 0.78, bottom: 0 },
+                });
+            }
+        }
+        // 漲跌停模式上下貼齊停板，不留多餘空間；自動模式保留呼吸感；
+        // 量能疊圖時主圖下緣讓出量能區。左右兩軸 margins 必須同步，
+        // % 與價格刻度才對齊
+        const smBottom =
+            volMode === 'overlay'
+                ? scaleMode === 'band'
+                    ? 0.24
+                    : 0.26
+                : scaleMode === 'band'
+                  ? 0.015
+                  : 0.05;
+        const sm = {
+            top: scaleMode === 'band' ? 0.015 : 0.05,
+            bottom: smBottom,
+        };
         chartRef.current?.priceScale('right').applyOptions({
             scaleMargins: sm,
         });
@@ -678,7 +756,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contract, reloadSeq, themeKey, scaleMode, chartStyle]);
+    }, [contract, reloadSeq, optsKey]);
 
     // ---- live tick / index quote -> extend the current minute ----
     const liveQuote = quote?.tick ?? quote?.index;
@@ -688,7 +766,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         if ('simtrade' in liveQuote && liveQuote.simtrade) return;
         if (
             loadedKeyRef.current !==
-            `${contract.code}|${reloadSeq}|${themeKey}|${scaleMode}|${chartStyle}`
+            `${contract.code}|${reloadSeq}|${optsKey}`
         ) {
             return;
         }
@@ -969,6 +1047,90 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                                 </button>
                             </>
                         )}
+                    <span className={styles.settingsWrap}>
+                        <button
+                            className={styles.scaleBtn.normal}
+                            style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                            }}
+                            title='顯示設定（量能/線寬）'
+                            onClick={() => setSettingsOpen((v) => !v)}
+                        >
+                            <Settings2 size={11} />
+                        </button>
+                        {settingsOpen && (
+                            <>
+                                <span
+                                    className={styles.settingsBackdrop}
+                                    onClick={() => setSettingsOpen(false)}
+                                />
+                                <span className={styles.settingsPop}>
+                                    <span className={styles.settingsRow}>
+                                        <span
+                                            className={styles.settingsLabel}
+                                        >
+                                            量能
+                                        </span>
+                                        <button
+                                            className={
+                                                styles.scaleBtn[
+                                                    volMode === 'overlay'
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            title='量能疊在主圖下緣，不佔獨立空間'
+                                            onClick={() =>
+                                                pickVolMode('overlay')
+                                            }
+                                        >
+                                            疊圖
+                                        </button>
+                                        <button
+                                            className={
+                                                styles.scaleBtn[
+                                                    volMode === 'pane'
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            title='量能獨立分欄，含自己的 Y 軸刻度'
+                                            onClick={() =>
+                                                pickVolMode('pane')
+                                            }
+                                        >
+                                            分欄
+                                        </button>
+                                    </span>
+                                    <span className={styles.settingsRow}>
+                                        <span
+                                            className={styles.settingsLabel}
+                                        >
+                                            線寬
+                                        </span>
+                                        {([1, 2, 3, 4] as const).map((w) => (
+                                            <button
+                                                key={w}
+                                                className={
+                                                    styles.scaleBtn[
+                                                        lineWidth === w
+                                                            ? 'active'
+                                                            : 'normal'
+                                                    ]
+                                                }
+                                                onClick={() =>
+                                                    pickLineWidth(w)
+                                                }
+                                            >
+                                                {w}
+                                            </button>
+                                        ))}
+                                    </span>
+                                </span>
+                            </>
+                        )}
+                    </span>
                 </span>
             </div>
             <div className={styles.chartHost}>

@@ -23,7 +23,7 @@ export const legend = style({
     fontSize: '0.68rem',
     lineHeight: 1.4,
     whiteSpace: 'nowrap',
-    overflow: 'hidden',
+    // NOTE: 不能 overflow hidden — 齒輪的設定 popover 從這層冒出來
 });
 
 export const sessionChip = style({
@@ -102,6 +102,45 @@ export const scaleBtn = styleVariants({
             background: vars.color.muted,
         },
     ],
+});
+
+export const settingsWrap = style({
+    position: 'relative',
+    display: 'inline-flex',
+});
+
+export const settingsBackdrop = style({
+    position: 'fixed',
+    inset: 0,
+    zIndex: 29,
+});
+
+export const settingsPop = style({
+    position: 'absolute',
+    top: 'calc(100% + 4px)',
+    right: 0,
+    zIndex: 30,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    padding: '8px 10px',
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.md,
+    boxShadow: '0 6px 20px rgba(0, 0, 0, 0.35)',
+    whiteSpace: 'nowrap',
+});
+
+export const settingsRow = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '0.64rem',
+    color: vars.color.mutedForeground,
+});
+
+export const settingsLabel = style({
+    minWidth: '2.2em',
 });
 
 export const chartHost = style({
