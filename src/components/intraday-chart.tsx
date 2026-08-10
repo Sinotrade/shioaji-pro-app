@@ -801,10 +801,10 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                                             : 'normal'
                                     ]
                                 }
-                                title='Y 軸固定漲跌停區間並標出停板線'
+                                title='Y 軸固定為漲跌停整段區間並標出漲停/跌停線'
                                 onClick={() => pickScaleMode('band')}
                             >
-                                停板
+                                漲跌停
                             </button>
                         </span>
                     )}
