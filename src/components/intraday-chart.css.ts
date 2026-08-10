@@ -1,6 +1,6 @@
 // src/components/intraday-chart.css.ts
 
-import { style } from '@vanilla-extract/css';
+import { style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const wrap = style({
@@ -62,6 +62,38 @@ export const kvVal = style({
 
 export const avgVal = style({
     color: vars.color.amber,
+});
+
+export const scaleToggle = style({
+    display: 'inline-flex',
+    gap: '2px',
+    marginLeft: 'auto',
+    alignSelf: 'center',
+});
+
+const scaleBase = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.62rem',
+    fontWeight: 500,
+    padding: '1px 7px',
+    cursor: 'pointer',
+    background: 'transparent',
+    border: '1px solid transparent',
+    borderRadius: vars.radius.sm,
+    color: vars.color.mutedForeground,
+    transition: 'all 0.12s',
+    ':hover': { color: vars.color.foreground },
+});
+
+export const scaleBtn = styleVariants({
+    normal: [scaleBase],
+    active: [
+        scaleBase,
+        {
+            color: vars.color.foreground,
+            background: vars.color.muted,
+        },
+    ],
 });
 
 export const chartHost = style({

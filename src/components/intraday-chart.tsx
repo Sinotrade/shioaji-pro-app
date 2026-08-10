@@ -78,6 +78,20 @@ const fmtVol = (v: number) =>
     v.toLocaleString('en-US', { maximumFractionDigits: 0 });
 const fmtAmtYi = (v: number) => `${(v / 1e8).toFixed(1)}億`;
 
+// Y 軸縮放模式：auto=依資料對稱縮放（上限為停板）、band=固定漲跌停區間
+type ScaleMode = 'auto' | 'band';
+const SCALE_MODE_KEY = 'sj-pro-intraday-scale';
+
+function loadScaleMode(): ScaleMode {
+    try {
+        return localStorage.getItem(SCALE_MODE_KEY) === 'band'
+            ? 'band'
+            : 'auto';
+    } catch {
+        return 'auto';
+    }
+}
+
 const fmtClock = (t: number) => {
     const d = new Date(t * 1000);
     const hh = String(d.getUTCHours()).padStart(2, '0');
@@ -94,9 +108,12 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     const fillerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
     const refLineRef = useRef<IPriceLine | null>(null);
+    const limitLinesRef = useRef<IPriceLine[]>([]);
 
     const sessionRef = useRef<SessionWindow | null>(null);
     const refPriceRef = useRef(0);
+    // 漲跌停界線；Y 軸縮放的硬上限（其他家常見的「軸飆出去」就是沒 cap）
+    const limitsRef = useRef<{ up: number; down: number } | null>(null);
     const loadedKeyRef = useRef('');
     // live accumulation state
     const lastLabelRef = useRef(0);
@@ -111,6 +128,17 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const [loading, setLoading] = useState(false);
     const [empty, setEmpty] = useState(false);
     const [reloadSeq, setReloadSeq] = useState(0);
+    const [scaleMode, setScaleMode] = useState<ScaleMode>(loadScaleMode);
+    const scaleModeRef = useRef(scaleMode);
+    scaleModeRef.current = scaleMode;
+    const pickScaleMode = (m: ScaleMode) => {
+        setScaleMode(m);
+        try {
+            localStorage.setItem(SCALE_MODE_KEY, m);
+        } catch {
+            // session only
+        }
+    };
     const [, setLegendSeq] = useState(0);
     const legendRafRef = useRef(false);
     const bumpLegend = () => {
@@ -158,8 +186,17 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                     labelBackgroundColor: c.labelBg,
                 },
             },
-            rightPriceScale: { borderColor: c.border },
-            leftPriceScale: { visible: true, borderColor: c.border },
+            // 上緣收緊讓停板線貼頂；下緣 22% 讓價線不壓到量能區。
+            // 左右兩軸 margins 必須相同，% 與價格刻度才會對齊
+            rightPriceScale: {
+                borderColor: c.border,
+                scaleMargins: { top: 0.05, bottom: 0.22 },
+            },
+            leftPriceScale: {
+                visible: true,
+                borderColor: c.border,
+                scaleMargins: { top: 0.05, bottom: 0.22 },
+            },
             timeScale: {
                 borderColor: c.border,
                 timeVisible: true,
@@ -180,6 +217,17 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         const symmetric = (
             original: () => AutoscaleInfo | null,
         ): AutoscaleInfo | null => {
+            const lim = limitsRef.current;
+            // 停板模式：軸固定在漲跌停區間，行情多小都看得到全幅
+            if (scaleModeRef.current === 'band' && lim) {
+                const margin = (lim.up - lim.down) * 0.01;
+                return {
+                    priceRange: {
+                        minValue: lim.down - margin,
+                        maxValue: lim.up + margin,
+                    },
+                };
+            }
             const orig = original();
             const ref = refPriceRef.current;
             if (!orig?.priceRange || !ref) return orig;
@@ -188,10 +236,18 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 Math.abs(ref - orig.priceRange.minValue),
                 ref * 0.002,
             );
+            let pad = span * 1.08;
+            // 撐到漲跌停就到頂 — 鎖漲停時軸貼齊停板而不是繼續外擴
+            if (lim) {
+                pad = Math.min(
+                    pad,
+                    Math.max(lim.up - ref, ref - lim.down),
+                );
+            }
             return {
                 priceRange: {
-                    minValue: ref - span * 1.08,
-                    maxValue: ref + span * 1.08,
+                    minValue: ref - pad,
+                    maxValue: ref + pad,
                 },
             };
         };
@@ -232,6 +288,9 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
+            // 均價恆在高低之間 — 不參與縮放，否則原生 autoscale 會跟
+            // symmetric provider 的範圍做聯集，把軸撐歪
+            autoscaleInfoProvider: () => null,
         });
         const vol = chart.addSeries(HistogramSeries, {
             priceFormat: { type: 'volume' },
@@ -309,6 +368,9 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             volSeriesRef.current = null;
             fillerSeriesRef.current = null;
             refLineRef.current = null;
+            // price lines die with the chart — drop the stale handles so
+            // the next load doesn't try to remove them from a new series
+            limitLinesRef.current = [];
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [themeKey]);
@@ -325,7 +387,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
 
     // ---- history load: pick the last session present in the data ----
     useEffect(() => {
-        const loadKey = `${contract.code}|${reloadSeq}|${themeKey}`;
+        const loadKey = `${contract.code}|${reloadSeq}|${themeKey}|${scaleMode}`;
         loadedKeyRef.current = '';
         sessionRef.current = null;
         liveRef.current = null;
@@ -336,6 +398,11 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         cumVRef.current = 0;
         cumPVRef.current = 0;
         refPriceRef.current = 0;
+        limitsRef.current = null;
+        for (const line of limitLinesRef.current) {
+            priceSeriesRef.current?.removePriceLine(line);
+        }
+        limitLinesRef.current = [];
         setLoading(true);
         setEmpty(false);
         let cancelled = false;
@@ -431,6 +498,31 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                             : { time: m as UTCTimestamp },
                     ),
                 );
+                // 漲跌停：Y 軸 cap 兩種模式都用；界線只在停板模式畫
+                // （指數等無停板商品 limit 為 0 → 略過）
+                const lu = Number(contract.limit_up);
+                const ld = Number(contract.limit_down);
+                if (Number.isFinite(lu) && Number.isFinite(ld) && lu > ld && ld > 0) {
+                    limitsRef.current = { up: lu, down: ld };
+                }
+                if (limitsRef.current && scaleMode === 'band') {
+                    limitLinesRef.current = [
+                        priceSeriesRef.current.createPriceLine({
+                            price: lu,
+                            color: colors.up,
+                            lineWidth: 1,
+                            lineStyle: LineStyle.Dotted,
+                            axisLabelVisible: true,
+                        }),
+                        priceSeriesRef.current.createPriceLine({
+                            price: ld,
+                            color: colors.down,
+                            lineWidth: 1,
+                            lineStyle: LineStyle.Dotted,
+                            axisLabelVisible: true,
+                        }),
+                    ];
+                }
                 sessionRef.current = win;
                 const lastBar = bars[bars.length - 1];
                 if (lastBar) {
@@ -466,7 +558,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contract, reloadSeq, themeKey]);
+    }, [contract, reloadSeq, themeKey, scaleMode]);
 
     // ---- live tick / index quote -> extend the current minute ----
     const liveQuote = quote?.tick ?? quote?.index;
@@ -476,7 +568,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         if ('simtrade' in liveQuote && liveQuote.simtrade) return;
         if (
             loadedKeyRef.current !==
-            `${contract.code}|${reloadSeq}|${themeKey}`
+            `${contract.code}|${reloadSeq}|${themeKey}|${scaleMode}`
         ) {
             return;
         }
@@ -661,6 +753,37 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                         {fmtClock(hover.time)}
                     </span>
                 )}
+                {contract.limit_up > contract.limit_down &&
+                    contract.limit_down > 0 && (
+                        <span className={styles.scaleToggle}>
+                            <button
+                                className={
+                                    styles.scaleBtn[
+                                        scaleMode === 'auto'
+                                            ? 'active'
+                                            : 'normal'
+                                    ]
+                                }
+                                title='Y 軸依當日行情自動縮放'
+                                onClick={() => pickScaleMode('auto')}
+                            >
+                                自動
+                            </button>
+                            <button
+                                className={
+                                    styles.scaleBtn[
+                                        scaleMode === 'band'
+                                            ? 'active'
+                                            : 'normal'
+                                    ]
+                                }
+                                title='Y 軸固定漲跌停區間並標出停板線'
+                                onClick={() => pickScaleMode('band')}
+                            >
+                                停板
+                            </button>
+                        </span>
+                    )}
             </div>
             <div className={styles.chartHost}>
                 <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
