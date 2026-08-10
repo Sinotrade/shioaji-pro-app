@@ -14,6 +14,16 @@ export function diagnoseOutput(output: string): string | null {
         return '金鑰格式錯誤 — 請確認 API Key／Secret Key 完整貼上（沒有多餘空白或漏字）';
     if (/ca.*(password|passwd)|pfx/i.test(output))
         return '憑證載入失敗 — 請確認 Sinopac.pfx 與憑證密碼';
+    // 網路類要先判 — 上游把 Solace 連線逾時也包成
+    // "Authentication failed: Shioaji connect error"，若先比對登入失敗
+    // 會在斷網時誤導使用者去檢查金鑰/簽署（實際只是連不到主機）
+    if (
+        /timed? ?out|connection (refused|reset)|network is unreachable|failed to (lookup|resolve)|dns error/i.test(
+            output,
+        )
+    ) {
+        return '無法連線至永豐主機（網路連線逾時，與金鑰設定無關）— 請檢查網路（Wi-Fi/熱點訊號、VPN、防火牆），恢復後再按啟動';
+    }
     if (/Authentication failed|login validation error|LOGINING/i.test(output))
         return '登入失敗 — 請檢查金鑰是否正確、API 約定書是否已完成簽署、同帳號連線是否已達上限（5 條）';
     return null;
