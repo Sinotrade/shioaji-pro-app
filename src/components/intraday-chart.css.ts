@@ -64,11 +64,19 @@ export const avgVal = style({
     color: vars.color.amber,
 });
 
-export const scaleToggle = style({
+export const toggles = style({
     display: 'inline-flex',
     gap: '2px',
     marginLeft: 'auto',
     alignSelf: 'center',
+    alignItems: 'center',
+});
+
+export const toggleDivider = style({
+    width: '1px',
+    height: '10px',
+    margin: '0 3px',
+    background: vars.color.border,
 });
 
 const scaleBase = style({

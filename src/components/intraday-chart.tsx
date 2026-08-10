@@ -7,6 +7,7 @@
 // the night-session next-date filing quirk without wall-clock guessing).
 
 import {
+    BarSeries,
     BaselineSeries,
     ColorType,
     createChart,
@@ -40,6 +41,7 @@ import * as panel from './panel.css';
 
 interface MinBar {
     time: number;
+    open: number;
     close: number;
     high: number;
     low: number;
@@ -54,6 +56,7 @@ function kbarsToMinBars(k: KBars): MinBar[] {
         if (!dt) continue;
         out.push({
             time: wallClockToUtc(dt),
+            open: k.Open[i] ?? 0,
             close: k.Close[i] ?? 0,
             high: k.High[i] ?? 0,
             low: k.Low[i] ?? 0,
@@ -92,6 +95,20 @@ function loadScaleMode(): ScaleMode {
     }
 }
 
+// 圖形樣式：line=收盤分時線、bars=美國線（每分鐘 OHLC，高低不失真）
+type ChartStyle = 'line' | 'bars';
+const CHART_STYLE_KEY = 'sj-pro-intraday-style';
+
+function loadChartStyle(): ChartStyle {
+    try {
+        return localStorage.getItem(CHART_STYLE_KEY) === 'bars'
+            ? 'bars'
+            : 'line';
+    } catch {
+        return 'line';
+    }
+}
+
 // 收盤定盤可能印在收盤後幾分鐘（指數定盤 13:31–33）— 這段內的
 // kbar/tick 都併進最後一根 label，軸仍固定收在 win.end
 const CLOSE_GRACE = 240;
@@ -107,6 +124,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const hostRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const priceSeriesRef = useRef<ISeriesApi<'Baseline'> | null>(null);
+    const barSeriesRef = useRef<ISeriesApi<'Bar'> | null>(null);
     const pctSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
     const avgSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
     const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
@@ -122,6 +140,13 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     // live accumulation state
     const lastLabelRef = useRef(0);
     const minuteVolRef = useRef(0); // current-minute volume (IND: amount)
+    // current-minute OHLC，美國線的即時 bar
+    const minOhlcRef = useRef<{
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+    } | null>(null);
     const prevMinCloseRef = useRef(0); // previous bar close, for vol color
     const cumVRef = useRef(0);
     const cumPVRef = useRef(0);
@@ -139,6 +164,15 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         setScaleMode(m);
         try {
             localStorage.setItem(SCALE_MODE_KEY, m);
+        } catch {
+            // session only
+        }
+    };
+    const [chartStyle, setChartStyle] = useState<ChartStyle>(loadChartStyle);
+    const pickChartStyle = (s: ChartStyle) => {
+        setChartStyle(s);
+        try {
+            localStorage.setItem(CHART_STYLE_KEY, s);
         } catch {
             // session only
         }
@@ -190,16 +224,16 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                     labelBackgroundColor: c.labelBg,
                 },
             },
-            // 上緣收緊讓停板線貼頂；下緣 22% 讓價線不壓到量能區。
+            // 上下緣收緊讓停板線貼邊（量能已拆到獨立 pane）。
             // 左右兩軸 margins 必須相同，% 與價格刻度才會對齊
             rightPriceScale: {
                 borderColor: c.border,
-                scaleMargins: { top: 0.05, bottom: 0.22 },
+                scaleMargins: { top: 0.05, bottom: 0.05 },
             },
             leftPriceScale: {
                 visible: true,
                 borderColor: c.border,
-                scaleMargins: { top: 0.05, bottom: 0.22 },
+                scaleMargins: { top: 0.05, bottom: 0.05 },
             },
             timeScale: {
                 borderColor: c.border,
@@ -217,12 +251,14 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             autoSize: true,
         });
 
-        // 以參考價上下對稱縮放，紅綠振幅視覺上可比（經典走勢圖比例）
+        // 以參考價上下對稱縮放，紅綠振幅視覺上可比（經典走勢圖比例）。
+        // 範圍取自 session 真實高低（liveRef）而非序列資料 — 線圖模式
+        // 只畫 close，若按序列資料縮放會把盤中高低截掉
         const symmetric = (
             original: () => AutoscaleInfo | null,
         ): AutoscaleInfo | null => {
             const lim = limitsRef.current;
-            // 停板模式：軸固定在漲跌停區間，行情多小都看得到全幅
+            // 漲跌停模式：軸固定整段區間，行情多小都看得到全幅
             if (scaleModeRef.current === 'band' && lim) {
                 const margin = (lim.up - lim.down) * 0.01;
                 return {
@@ -232,12 +268,12 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                     },
                 };
             }
-            const orig = original();
             const ref = refPriceRef.current;
-            if (!orig?.priceRange || !ref) return orig;
+            const live = liveRef.current;
+            if (!ref || !live) return original();
             const span = Math.max(
-                Math.abs(orig.priceRange.maxValue - ref),
-                Math.abs(ref - orig.priceRange.minValue),
+                live.high - ref,
+                ref - live.low,
                 ref * 0.002,
             );
             let pad = span * 1.08;
@@ -268,6 +304,16 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             priceLineVisible: false,
             autoscaleInfoProvider: symmetric,
         });
+        // 美國線（每分鐘 OHLC）— 與分時線互斥顯示，資料同步餵兩邊
+        const bars = chart.addSeries(BarSeries, {
+            upColor: c.up,
+            downColor: c.down,
+            thinBars: false,
+            openVisible: true,
+            priceLineVisible: false,
+            autoscaleInfoProvider: symmetric,
+            visible: false,
+        });
         // 左軸 ±% — 鏡射收盤值的隱形序列，帶自訂 % formatter
         const pct = chart.addSeries(LineSeries, {
             priceScaleId: 'left',
@@ -296,15 +342,23 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             // symmetric provider 的範圍做聯集，把軸撐歪
             autoscaleInfoProvider: () => null,
         });
-        const vol = chart.addSeries(HistogramSeries, {
-            priceFormat: { type: 'volume' },
-            priceScaleId: 'vol',
-            priceLineVisible: false,
-            lastValueVisible: false,
+        // 量能放獨立 pane — 右軸才有量的刻度，主圖 % 軸也不會
+        // 延伸進量能區（priceFormat 依商品在 load 時套用）
+        const vol = chart.addSeries(
+            HistogramSeries,
+            {
+                priceFormat: { type: 'volume' },
+                priceLineVisible: false,
+                lastValueVisible: false,
+            },
+            1,
+        );
+        vol.priceScale().applyOptions({
+            scaleMargins: { top: 0.15, bottom: 0 },
         });
-        chart.priceScale('vol').applyOptions({
-            scaleMargins: { top: 0.8, bottom: 0 },
-        });
+        const panes = chart.panes();
+        panes[0]?.setStretchFactor(78);
+        panes[1]?.setStretchFactor(22);
         // 只負責把時間軸撐滿整個交易時段的 whitespace 序列
         const filler = chart.addSeries(LineSeries, {
             color: 'transparent',
@@ -313,7 +367,9 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             crosshairMarkerVisible: false,
             autoscaleInfoProvider: () => null,
         });
-        refLineRef.current = price.createPriceLine({
+        // 參考線/停板線掛在常駐的 filler 序列上 — 掛在 price/bars 上
+        // 的話，切換樣式把序列隱藏時線也會跟著消失
+        refLineRef.current = filler.createPriceLine({
             price: refPriceRef.current,
             color: c.text,
             lineWidth: 1,
@@ -329,10 +385,14 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 }
                 return;
             }
-            const p = param.seriesData.get(price) as
+            const lineDatum = param.seriesData.get(price) as
                 | { value?: number }
                 | undefined;
-            if (typeof p?.value !== 'number') {
+            const barDatum = param.seriesData.get(bars) as
+                | { close?: number }
+                | undefined;
+            const p = { value: lineDatum?.value ?? barDatum?.close };
+            if (typeof p.value !== 'number') {
                 if (hoverRef.current) {
                     hoverRef.current = null;
                     bumpLegendRef.current();
@@ -359,6 +419,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
 
         chartRef.current = chart;
         priceSeriesRef.current = price;
+        barSeriesRef.current = bars;
         pctSeriesRef.current = pct;
         avgSeriesRef.current = avg;
         volSeriesRef.current = vol;
@@ -367,6 +428,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             chart.remove();
             chartRef.current = null;
             priceSeriesRef.current = null;
+            barSeriesRef.current = null;
             pctSeriesRef.current = null;
             avgSeriesRef.current = null;
             volSeriesRef.current = null;
@@ -391,7 +453,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
 
     // ---- history load: pick the last session present in the data ----
     useEffect(() => {
-        const loadKey = `${contract.code}|${reloadSeq}|${themeKey}|${scaleMode}`;
+        const loadKey = `${contract.code}|${reloadSeq}|${themeKey}|${scaleMode}|${chartStyle}`;
         loadedKeyRef.current = '';
         sessionRef.current = null;
         liveRef.current = null;
@@ -403,10 +465,29 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         cumPVRef.current = 0;
         refPriceRef.current = 0;
         limitsRef.current = null;
+        minOhlcRef.current = null;
         for (const line of limitLinesRef.current) {
-            priceSeriesRef.current?.removePriceLine(line);
+            fillerSeriesRef.current?.removePriceLine(line);
         }
         limitLinesRef.current = [];
+        // 樣式互斥切換：分時線 vs 美國線
+        priceSeriesRef.current?.applyOptions({
+            visible: chartStyle === 'line',
+        });
+        barSeriesRef.current?.applyOptions({
+            visible: chartStyle === 'bars',
+        });
+        // 量能軸刻度：股/期=口數張數（K/M 縮寫）、指數=成交額（億）
+        volSeriesRef.current?.applyOptions({
+            priceFormat: isIndex
+                ? {
+                      type: 'custom',
+                      minMove: 1,
+                      formatter: (v: number) =>
+                          `${(v / 1e8).toFixed(v >= 1e9 ? 0 : v >= 1e8 ? 1 : 2)}億`,
+                  }
+                : { type: 'volume' },
+        });
         setLoading(true);
         setEmpty(false);
         let cancelled = false;
@@ -459,6 +540,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 let lo = Infinity;
                 let totAmt = 0;
                 const lineData = [];
+                const ohlcData = [];
                 const avgData = [];
                 const volData = [];
                 let prevClose = ref;
@@ -471,6 +553,13 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                     lo = Math.min(lo, b.low);
                     const t = b.time as UTCTimestamp;
                     lineData.push({ time: t, value: b.close });
+                    ohlcData.push({
+                        time: t,
+                        open: b.open,
+                        high: b.high,
+                        low: b.low,
+                        close: b.close,
+                    });
                     if (!isIndex && cumV > 0) {
                         avgData.push({ time: t, value: cumPV / cumV });
                     }
@@ -485,6 +574,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                     prevClose = b.close;
                 }
                 priceSeriesRef.current.setData(lineData);
+                barSeriesRef.current?.setData(ohlcData);
                 pctSeriesRef.current?.setData([...lineData]);
                 avgSeriesRef.current?.setData(avgData);
                 volSeriesRef.current?.setData(volData);
@@ -506,16 +596,17 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 if (Number.isFinite(lu) && Number.isFinite(ld) && lu > ld && ld > 0) {
                     limitsRef.current = { up: lu, down: ld };
                 }
-                if (limitsRef.current && scaleMode === 'band') {
+                const filler = fillerSeriesRef.current;
+                if (limitsRef.current && scaleMode === 'band' && filler) {
                     limitLinesRef.current = [
-                        priceSeriesRef.current.createPriceLine({
+                        filler.createPriceLine({
                             price: lu,
                             color: colors.up,
                             lineWidth: 1,
                             lineStyle: LineStyle.Dotted,
                             axisLabelVisible: true,
                         }),
-                        priceSeriesRef.current.createPriceLine({
+                        filler.createPriceLine({
                             price: ld,
                             color: colors.down,
                             lineWidth: 1,
@@ -531,6 +622,12 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                     minuteVolRef.current = isIndex
                         ? lastBar.amt || lastBar.vol
                         : lastBar.vol;
+                    minOhlcRef.current = {
+                        open: lastBar.open,
+                        high: lastBar.high,
+                        low: lastBar.low,
+                        close: lastBar.close,
+                    };
                     prevMinCloseRef.current =
                         bars[bars.length - 2]?.close ?? ref;
                     liveRef.current = {
@@ -559,7 +656,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contract, reloadSeq, themeKey, scaleMode]);
+    }, [contract, reloadSeq, themeKey, scaleMode, chartStyle]);
 
     // ---- live tick / index quote -> extend the current minute ----
     const liveQuote = quote?.tick ?? quote?.index;
@@ -569,7 +666,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         if ('simtrade' in liveQuote && liveQuote.simtrade) return;
         if (
             loadedKeyRef.current !==
-            `${contract.code}|${reloadSeq}|${themeKey}|${scaleMode}`
+            `${contract.code}|${reloadSeq}|${themeKey}|${scaleMode}|${chartStyle}`
         ) {
             return;
         }
@@ -625,8 +722,22 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             prevMinCloseRef.current = liveRef.current?.price ?? ref;
             lastLabelRef.current = label;
             minuteVolRef.current = size;
+            minOhlcRef.current = { open: p, high: p, low: p, close: p };
         } else {
             minuteVolRef.current += size;
+            const m = minOhlcRef.current;
+            if (m) {
+                m.high = Math.max(m.high, p);
+                m.low = Math.min(m.low, p);
+                m.close = p;
+            } else {
+                minOhlcRef.current = {
+                    open: p,
+                    high: p,
+                    low: p,
+                    close: p,
+                };
+            }
         }
         cumVRef.current += vol;
         cumPVRef.current += p * vol;
@@ -658,6 +769,10 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         const time = label as UTCTimestamp;
         try {
             series.update({ time, value: p });
+            const ohlc = minOhlcRef.current;
+            if (ohlc) {
+                barSeriesRef.current?.update({ time, ...ohlc });
+            }
             pctSeriesRef.current?.update({ time, value: p });
             if (avg !== null) {
                 avgSeriesRef.current?.update({ time, value: avg });
@@ -777,37 +892,62 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                         {fmtClock(hover.time)}
                     </span>
                 )}
-                {contract.limit_up > contract.limit_down &&
-                    contract.limit_down > 0 && (
-                        <span className={styles.scaleToggle}>
-                            <button
-                                className={
-                                    styles.scaleBtn[
-                                        scaleMode === 'auto'
-                                            ? 'active'
-                                            : 'normal'
-                                    ]
-                                }
-                                title='Y 軸依當日行情自動縮放'
-                                onClick={() => pickScaleMode('auto')}
-                            >
-                                自動
-                            </button>
-                            <button
-                                className={
-                                    styles.scaleBtn[
-                                        scaleMode === 'band'
-                                            ? 'active'
-                                            : 'normal'
-                                    ]
-                                }
-                                title='Y 軸固定為漲跌停整段區間並標出漲停/跌停線'
-                                onClick={() => pickScaleMode('band')}
-                            >
-                                漲跌停
-                            </button>
-                        </span>
-                    )}
+                <span className={styles.toggles}>
+                    <button
+                        className={
+                            styles.scaleBtn[
+                                chartStyle === 'line' ? 'active' : 'normal'
+                            ]
+                        }
+                        title='收盤價分時線'
+                        onClick={() => pickChartStyle('line')}
+                    >
+                        線圖
+                    </button>
+                    <button
+                        className={
+                            styles.scaleBtn[
+                                chartStyle === 'bars' ? 'active' : 'normal'
+                            ]
+                        }
+                        title='美國線 — 每分鐘開高低收，高低點不失真'
+                        onClick={() => pickChartStyle('bars')}
+                    >
+                        美國線
+                    </button>
+                    {contract.limit_up > contract.limit_down &&
+                        contract.limit_down > 0 && (
+                            <>
+                                <span className={styles.toggleDivider} />
+                                <button
+                                    className={
+                                        styles.scaleBtn[
+                                            scaleMode === 'auto'
+                                                ? 'active'
+                                                : 'normal'
+                                        ]
+                                    }
+                                    title='Y 軸依當日行情自動縮放'
+                                    onClick={() => pickScaleMode('auto')}
+                                >
+                                    自動
+                                </button>
+                                <button
+                                    className={
+                                        styles.scaleBtn[
+                                            scaleMode === 'band'
+                                                ? 'active'
+                                                : 'normal'
+                                        ]
+                                    }
+                                    title='Y 軸固定為漲跌停整段區間並標出漲停/跌停線'
+                                    onClick={() => pickScaleMode('band')}
+                                >
+                                    漲跌停
+                                </button>
+                            </>
+                        )}
+                </span>
             </div>
             <div className={styles.chartHost}>
                 <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
