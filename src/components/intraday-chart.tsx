@@ -124,13 +124,17 @@ function loadVolMode(): VolMode {
     }
 }
 
-type PriceLineWidth = 1 | 2 | 3 | 4;
+// 0.5–4，步進 0.5。lightweight-charts 的 LineWidth 型別標成 1|2|3|4，
+// 但 renderer 直通 canvas lineWidth，小數實測有效（0.5 = 髮絲線）
+const LINE_WIDTH_MIN = 0.5;
+const LINE_WIDTH_MAX = 4;
 const LINE_WIDTH_KEY = 'sj-pro-intraday-linewidth';
 
-function loadLineWidth(): PriceLineWidth {
+function loadLineWidth(): number {
     try {
         const n = Number(localStorage.getItem(LINE_WIDTH_KEY));
-        return n === 1 || n === 2 || n === 3 || n === 4 ? n : 2;
+        if (!Number.isFinite(n)) return 2;
+        return Math.min(LINE_WIDTH_MAX, Math.max(LINE_WIDTH_MIN, n));
     } catch {
         return 2;
     }
@@ -213,8 +217,8 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             // session only
         }
     };
-    const [lineWidth, setLineWidth] = useState<PriceLineWidth>(loadLineWidth);
-    const pickLineWidth = (w: PriceLineWidth) => {
+    const [lineWidth, setLineWidth] = useState<number>(loadLineWidth);
+    const pickLineWidth = (w: number) => {
         setLineWidth(w);
         try {
             localStorage.setItem(LINE_WIDTH_KEY, String(w));
@@ -240,8 +244,9 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const themeSettings = useThemeSettings();
     const colors = getChartColors(themeSettings);
     const themeKey = `${themeSettings.mode}-${themeSettings.convention}`;
-    // 顯示設定的組合鍵 — load effect 與 live guard 必須用同一份
-    const optsKey = `${themeKey}|${scaleMode}|${chartStyle}|${volMode}|${lineWidth}`;
+    // 顯示設定的組合鍵 — load effect 與 live guard 必須用同一份。
+    // 線寬不進 key：滑桿拖動連發，不能每步都整段重載
+    const optsKey = `${themeKey}|${scaleMode}|${chartStyle}|${volMode}`;
     const isIndex = contract.security_type === 'IND';
     const avgColor = themeSettings.mode === 'light' ? '#b97f14' : '#e0a43c';
 
@@ -535,7 +540,6 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         barSeriesRef.current?.applyOptions({
             visible: chartStyle === 'bars',
         });
-        priceSeriesRef.current?.applyOptions({ lineWidth });
         // 量能顯示：pane=獨立分欄含 Y 軸；overlay=疊回主圖下緣無獨立軸
         const vs = volSeriesRef.current;
         if (vs) {
@@ -556,16 +560,14 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 });
             }
         }
-        // 漲跌停模式上下貼齊停板，不留多餘空間；自動模式保留呼吸感；
-        // 量能疊圖時主圖下緣讓出量能區。左右兩軸 margins 必須同步，
-        // % 與價格刻度才對齊
+        // 漲跌停模式上下永遠貼齊停板 — 疊圖量能畫在停板區間「內」，
+        // 不把軸往下多開；自動模式疊圖時才讓出下緣避免線壓量。
+        // 左右兩軸 margins 必須同步，% 與價格刻度才對齊
         const smBottom =
-            volMode === 'overlay'
-                ? scaleMode === 'band'
-                    ? 0.24
-                    : 0.26
-                : scaleMode === 'band'
-                  ? 0.015
+            scaleMode === 'band'
+                ? 0.015
+                : volMode === 'overlay'
+                  ? 0.26
                   : 0.05;
         const sm = {
             top: scaleMode === 'band' ? 0.015 : 0.05,
@@ -757,6 +759,14 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, reloadSeq, optsKey]);
+
+    // 線寬即時套用 — 獨立於資料載入，滑桿拖動不觸發 refetch。
+    // optsKey 在 deps 裡是為了主題重建 chart 後把寬度補回去
+    useEffect(() => {
+        priceSeriesRef.current?.applyOptions({
+            lineWidth: lineWidth as unknown as 1 | 2 | 3 | 4,
+        });
+    }, [lineWidth, optsKey]);
 
     // ---- live tick / index quote -> extend the current minute ----
     const liveQuote = quote?.tick ?? quote?.index;
@@ -993,60 +1003,6 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                     </span>
                 )}
                 <span className={styles.toggles}>
-                    <button
-                        className={
-                            styles.scaleBtn[
-                                chartStyle === 'line' ? 'active' : 'normal'
-                            ]
-                        }
-                        title='收盤價分時線'
-                        onClick={() => pickChartStyle('line')}
-                    >
-                        線圖
-                    </button>
-                    <button
-                        className={
-                            styles.scaleBtn[
-                                chartStyle === 'bars' ? 'active' : 'normal'
-                            ]
-                        }
-                        title='美國線 — 每分鐘開高低收，高低點不失真'
-                        onClick={() => pickChartStyle('bars')}
-                    >
-                        美國線
-                    </button>
-                    {contract.limit_up > contract.limit_down &&
-                        contract.limit_down > 0 && (
-                            <>
-                                <span className={styles.toggleDivider} />
-                                <button
-                                    className={
-                                        styles.scaleBtn[
-                                            scaleMode === 'auto'
-                                                ? 'active'
-                                                : 'normal'
-                                        ]
-                                    }
-                                    title='Y 軸依當日行情自動縮放'
-                                    onClick={() => pickScaleMode('auto')}
-                                >
-                                    自動
-                                </button>
-                                <button
-                                    className={
-                                        styles.scaleBtn[
-                                            scaleMode === 'band'
-                                                ? 'active'
-                                                : 'normal'
-                                        ]
-                                    }
-                                    title='Y 軸固定為漲跌停整段區間並標出漲停/跌停線'
-                                    onClick={() => pickScaleMode('band')}
-                                >
-                                    漲跌停
-                                </button>
-                            </>
-                        )}
                     <span className={styles.settingsWrap}>
                         <button
                             className={styles.scaleBtn.normal}
@@ -1054,10 +1010,10 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                                 display: 'inline-flex',
                                 alignItems: 'center',
                             }}
-                            title='顯示設定（量能/線寬）'
+                            title='顯示設定（樣式/Y 軸/量能/線寬）'
                             onClick={() => setSettingsOpen((v) => !v)}
                         >
-                            <Settings2 size={11} />
+                            <Settings2 size={12} />
                         </button>
                         {settingsOpen && (
                             <>
@@ -1066,6 +1022,92 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                                     onClick={() => setSettingsOpen(false)}
                                 />
                                 <span className={styles.settingsPop}>
+                                    <span className={styles.settingsRow}>
+                                        <span
+                                            className={styles.settingsLabel}
+                                        >
+                                            樣式
+                                        </span>
+                                        <button
+                                            className={
+                                                styles.scaleBtn[
+                                                    chartStyle === 'line'
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            title='收盤價分時線'
+                                            onClick={() =>
+                                                pickChartStyle('line')
+                                            }
+                                        >
+                                            線圖
+                                        </button>
+                                        <button
+                                            className={
+                                                styles.scaleBtn[
+                                                    chartStyle === 'bars'
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            title='美國線 — 每分鐘開高低收，高低點不失真'
+                                            onClick={() =>
+                                                pickChartStyle('bars')
+                                            }
+                                        >
+                                            美國線
+                                        </button>
+                                    </span>
+                                    {contract.limit_up >
+                                        contract.limit_down &&
+                                        contract.limit_down > 0 && (
+                                            <span
+                                                className={
+                                                    styles.settingsRow
+                                                }
+                                            >
+                                                <span
+                                                    className={
+                                                        styles.settingsLabel
+                                                    }
+                                                >
+                                                    Y 軸
+                                                </span>
+                                                <button
+                                                    className={
+                                                        styles.scaleBtn[
+                                                            scaleMode ===
+                                                            'auto'
+                                                                ? 'active'
+                                                                : 'normal'
+                                                        ]
+                                                    }
+                                                    title='Y 軸依當日行情自動縮放'
+                                                    onClick={() =>
+                                                        pickScaleMode('auto')
+                                                    }
+                                                >
+                                                    自動
+                                                </button>
+                                                <button
+                                                    className={
+                                                        styles.scaleBtn[
+                                                            scaleMode ===
+                                                            'band'
+                                                                ? 'active'
+                                                                : 'normal'
+                                                        ]
+                                                    }
+                                                    title='Y 軸固定為漲跌停整段區間並標出漲停/跌停線'
+                                                    onClick={() =>
+                                                        pickScaleMode('band')
+                                                    }
+                                                >
+                                                    漲跌停
+                                                </button>
+                                            </span>
+                                        )}
                                     <span className={styles.settingsRow}>
                                         <span
                                             className={styles.settingsLabel}
@@ -1109,23 +1151,22 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                                         >
                                             線寬
                                         </span>
-                                        {([1, 2, 3, 4] as const).map((w) => (
-                                            <button
-                                                key={w}
-                                                className={
-                                                    styles.scaleBtn[
-                                                        lineWidth === w
-                                                            ? 'active'
-                                                            : 'normal'
-                                                    ]
-                                                }
-                                                onClick={() =>
-                                                    pickLineWidth(w)
-                                                }
-                                            >
-                                                {w}
-                                            </button>
-                                        ))}
+                                        <input
+                                            type='range'
+                                            className={styles.slider}
+                                            min={LINE_WIDTH_MIN}
+                                            max={LINE_WIDTH_MAX}
+                                            step={0.5}
+                                            value={lineWidth}
+                                            onChange={(e) =>
+                                                pickLineWidth(
+                                                    Number(e.target.value),
+                                                )
+                                            }
+                                        />
+                                        <span className={styles.sliderVal}>
+                                            {lineWidth.toFixed(1)}
+                                        </span>
                                     </span>
                                 </span>
                             </>

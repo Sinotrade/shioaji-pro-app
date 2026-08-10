@@ -143,6 +143,19 @@ export const settingsLabel = style({
     minWidth: '2.2em',
 });
 
+export const slider = style({
+    width: '96px',
+    accentColor: vars.color.accent,
+    cursor: 'pointer',
+});
+
+export const sliderVal = style({
+    fontFamily: vars.font.mono,
+    color: vars.color.foreground,
+    minWidth: '2em',
+    textAlign: 'right',
+});
+
 export const chartHost = style({
     flex: 1,
     minHeight: 0,
