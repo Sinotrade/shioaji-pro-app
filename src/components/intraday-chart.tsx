@@ -600,19 +600,11 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 });
             }
         }
-        // 漲跌停模式上下永遠貼齊停板 — 疊圖量能畫在停板區間「內」，
-        // 不把軸往下多開；自動模式疊圖時才讓出下緣避免線壓量。
-        // 左右兩軸 margins 必須同步，% 與價格刻度才對齊
-        const smBottom =
-            scaleMode === 'band'
-                ? 0.015
-                : volMode === 'overlay'
-                  ? 0.26
-                  : 0.05;
-        const sm = {
-            top: scaleMode === 'band' ? 0.015 : 0.05,
-            bottom: smBottom,
-        };
+        // 上下 margins 永遠等距 — ±% 才對稱（疊圖量能一律畫在價格區
+        // 下緣「內」，不另開空間打破比例）。左右兩軸 margins 必須同
+        // 步，% 與價格刻度才對齊
+        const smPad = scaleMode === 'band' ? 0.015 : 0.05;
+        const sm = { top: smPad, bottom: smPad };
         chartRef.current?.priceScale('right').applyOptions({
             scaleMargins: sm,
         });
@@ -960,7 +952,8 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const chgPct =
         chg !== undefined && refPrice ? (chg / refPrice) * 100 : undefined;
     const shownAvg = hover ? hover.avg : live?.avg;
-    const shownTotal = hover ? hover.total : live?.total;
+    // 量欄位恆為累計總量 — hover 的該分鐘單量另外放在最前面的 chip
+    const shownTotal = live?.total;
     const sessionLabel =
         win &&
         (contract.security_type === 'FUT' || contract.security_type === 'OPT')
@@ -1004,6 +997,22 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         <div className={styles.wrap}>
             <div className={styles.legend}>
                 <span className={styles.stats}>
+                <span
+                    className={styles.hoverChip[hover ? 'on' : 'idle']}
+                >
+                    {hover
+                        ? `${fmtClock(hover.time)} ${
+                              isIndex
+                                  ? fmtAmtYi(hover.total)
+                                  : `${fmtVol(hover.total)}${
+                                        contract.security_type === 'FUT' ||
+                                        contract.security_type === 'OPT'
+                                            ? '口'
+                                            : '張'
+                                    }`
+                          }`
+                        : ''}
+                </span>
                 {(sessionLabel || staleDate) && (
                     <span className={styles.sessionChip}>
                         {staleDate ? `${staleDate} ` : ''}
@@ -1057,11 +1066,6 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                                     : fmtVol(shownTotal)
                                 : '—'}
                         </span>
-                    </span>
-                )}
-                {hover && (
-                    <span className={styles.hoverChip}>
-                        {fmtClock(hover.time)}
                     </span>
                 )}
                 </span>

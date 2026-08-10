@@ -47,14 +47,32 @@ export const sessionChip = style({
     alignSelf: 'center',
 });
 
-export const hoverChip = style({
+// hover 槽位固定寬度且常駐 — 內容出現/消失或長短變化都不能推擠
+// 後面的統計數字（會跳來跳去）
+const hoverSlotBase = style({
     fontFamily: vars.font.mono,
     fontSize: '0.62rem',
     padding: '1px 6px',
     borderRadius: vars.radius.sm,
-    border: `1px solid ${vars.color.borderBright}`,
     color: vars.color.foreground,
     alignSelf: 'center',
+    display: 'inline-block',
+    width: '8.5em',
+    textAlign: 'center',
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+});
+
+export const hoverChip = styleVariants({
+    on: [
+        hoverSlotBase,
+        { border: `1px solid ${vars.color.borderBright}` },
+    ],
+    idle: [
+        hoverSlotBase,
+        { border: '1px solid transparent', visibility: 'hidden' },
+    ],
 });
 
 export const price = style({
