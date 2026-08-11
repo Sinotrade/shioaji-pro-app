@@ -55,14 +55,14 @@ import * as styles from './intraday-wall.css';
 
 const CLOSE_GRACE = 240;
 
-// 自訂排列的欄/列上限（10×10=100 格是硬上限 — 訂閱額度與渲染負載
-// 由使用者自行斟酌，popover 有每頁檔數提示）
+// 自訂排列上限：欄 10 × 列 5 = 50 格（訂閱額度與渲染負載的合理天花板）
 const WALL_DIM_MIN = 1;
-const WALL_DIM_MAX = 10;
+const WALL_COL_MAX = 10;
+const WALL_ROW_MAX = 5;
 
-function clampDim(n: number): number {
+function clampDim(n: number, max: number): number {
     if (!Number.isFinite(n)) return 2;
-    return Math.min(WALL_DIM_MAX, Math.max(WALL_DIM_MIN, Math.round(n)));
+    return Math.min(max, Math.max(WALL_DIM_MIN, Math.round(n)));
 }
 
 // ---- 三層顯示設定：單檔覆寫 → 類別全域 → 內建預設 ----
@@ -831,10 +831,10 @@ export function IntradayWallPanel({
     const [lists, setLists] = useState<ServerWatchlist[]>([]);
     const [listId, setListId] = useState(initialList ?? '');
     const [cols, setCols] = useState(() =>
-        clampDim(initialCols ?? 2),
+        clampDim(initialCols ?? 2, WALL_COL_MAX),
     );
     const [rows, setRows] = useState(() =>
-        clampDim(initialRows ?? 2),
+        clampDim(initialRows ?? 2, WALL_ROW_MAX),
     );
     const [layoutOpen, setLayoutOpen] = useState(false);
     const [page, setPage] = useState(0);
@@ -1054,20 +1054,20 @@ export function IntradayWallPanel({
                             <span className={styles.pop}>
                                 {(
                                     [
-                                        ['欄', cols, (n: number) => {
-                                            const c = clampDim(n);
+                                        ['欄', cols, WALL_COL_MAX, (n: number) => {
+                                            const c = clampDim(n, WALL_COL_MAX);
                                             setCols(c);
                                             setPage(0);
                                             applyConfig(list.id, c, rows);
                                         }],
-                                        ['列', rows, (n: number) => {
-                                            const r = clampDim(n);
+                                        ['列', rows, WALL_ROW_MAX, (n: number) => {
+                                            const r = clampDim(n, WALL_ROW_MAX);
                                             setRows(r);
                                             setPage(0);
                                             applyConfig(list.id, cols, r);
                                         }],
                                     ] as const
-                                ).map(([label, value, set]) => (
+                                ).map(([label, value, max, set]) => (
                                     <span
                                         key={label}
                                         className={styles.popRow}
@@ -1085,7 +1085,7 @@ export function IntradayWallPanel({
                                         </span>
                                         <button
                                             className={styles.stepBtn}
-                                            disabled={value >= WALL_DIM_MAX}
+                                            disabled={value >= max}
                                             onClick={() => set(value + 1)}
                                         >
                                             ＋
