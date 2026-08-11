@@ -385,6 +385,32 @@ function RiskSection() {
                 <br />
                 Kill Switch（鎖定下單）在畫面右上角「風控」鈕，一鍵鎖定/解鎖。
             </span>
+            <span className={hud.settingLabel}>快捷鍵 Hotkeys</span>
+            <div className={hud.switchRow}>
+                <span
+                    className={hud.switchLabel}
+                    title='0.6 秒內連按兩次 Esc 撤銷所有未成交委託'
+                >
+                    雙擊 Esc 全部刪單
+                </span>
+                <button
+                    className={
+                        hud.switchTrack[risk.escCancelAll ? 'on' : 'off']
+                    }
+                    title={
+                        risk.escCancelAll
+                            ? '關閉雙擊 Esc 全部刪單'
+                            : '啟用雙擊 Esc 全部刪單'
+                    }
+                    onClick={() =>
+                        setRiskSettings({ escCancelAll: !risk.escCancelAll })
+                    }
+                />
+            </div>
+            <span className={hud.emptyHint}>
+                預設關閉，避免誤觸；開啟後在非輸入狀態下 0.6 秒內連按兩次
+                Esc 會撤銷全部未成交委託（第一下會先跳提示）。
+            </span>
         </>
     );
 }
@@ -442,10 +468,15 @@ export function SettingsDialog({
     useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose();
+            if (e.key === 'Escape') {
+                // capture + preventDefault so the global Esc-Esc cancel-all
+                // hotkey ignores the press that closes this dialog
+                e.preventDefault();
+                onClose();
+            }
         };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
     }, [open, onClose]);
 
     if (!open) return null;
