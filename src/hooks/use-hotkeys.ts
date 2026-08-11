@@ -29,6 +29,9 @@ export function useHotkeys({
     useEffect(() => {
         let lastEsc = 0;
         const onKey = (e: KeyboardEvent) => {
+            // OS key auto-repeat must never count — holding Esc a beat too
+            // long would otherwise arm AND fire cancel-all in one press
+            if (e.repeat) return;
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
                 e.preventDefault();
                 onOpenPalette();
