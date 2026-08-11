@@ -84,8 +84,30 @@ function emitFullContractRefresh(
     });
 }
 
+// React 通知採 50ms 批次 — 開盤 tick 風暴（多面板×多檔訂閱）下逐筆
+// 同步喚醒所有 useSyncExternalStore 訂閱者，會被 React 19 判定成巢狀
+// 無限更新（Maximum update depth exceeded）而整頁炸掉。行情資料本身
+// （quotes map）仍逐筆即時寫入，只有「通知 React 重繪」合併節流。
+// 刻意用 setTimeout 而非 rAF：rAF 會夾進 React 併發渲染的 frame 節奏，
+// 啟動風暴時 flush 落在 render 中間仍會觸發巢狀更新告警。
+const QUOTE_FLUSH_MS = 50;
+const dirtyQuoteCodes = new Set<string>();
+let quoteFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushQuoteEmits() {
+    quoteFlushTimer = null;
+    const codes = Array.from(dirtyQuoteCodes);
+    dirtyQuoteCodes.clear();
+    for (const code of codes) {
+        quoteListeners.get(code)?.forEach((l) => l());
+    }
+}
+
 function emitQuote(code: string) {
-    quoteListeners.get(code)?.forEach((l) => l());
+    dirtyQuoteCodes.add(code);
+    if (quoteFlushTimer === null) {
+        quoteFlushTimer = setTimeout(flushQuoteEmits, QUOTE_FLUSH_MS);
+    }
 }
 
 function setStatus(s: StreamStatus) {

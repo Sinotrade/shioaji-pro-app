@@ -13,6 +13,7 @@ import * as grid from './grid.css';
 import { BottomDock } from './components/bottom-dock';
 import { CandleChart } from './components/candle-chart';
 import { IntradayChart } from './components/intraday-chart';
+import { IntradayWallPanel } from './components/intraday-wall';
 import { CommandPalette } from './components/command-palette';
 import { DepthLadder } from './components/depth-ladder';
 import { EventToasts } from './components/event-toasts';
@@ -137,6 +138,7 @@ function BlockBody({
     dockProps,
     onSelectCode,
     onPulseConfigChange,
+    onWallConfigChange,
     refreshTrading,
 }: {
     block: Block;
@@ -149,6 +151,12 @@ function BlockBody({
         id: string,
         sections: PulseSection[],
         weights: PulseSectionWeights,
+    ) => void;
+    onWallConfigChange: (
+        id: string,
+        list: string,
+        cols: number,
+        rows: number,
     ) => void;
     refreshTrading: () => void;
 }) {
@@ -180,6 +188,18 @@ function BlockBody({
                 <IntradayChart contract={contract} />
             ) : (
                 <BlockPlaceholder />
+            );
+        case 'intradaywall':
+            return (
+                <IntradayWallPanel
+                    onPick={onSelectCode}
+                    initialList={block.wallList}
+                    initialCols={block.wallCols}
+                    initialRows={block.wallRows}
+                    onConfigChange={(list, cols, rows) =>
+                        onWallConfigChange(block.id, list, cols, rows)
+                    }
+                />
             );
         case 'depth':
             return contract ? (
@@ -360,6 +380,12 @@ interface BlockViewProps {
         id: string,
         sections: PulseSection[],
         weights: PulseSectionWeights,
+    ) => void;
+    onWallConfigChange: (
+        id: string,
+        list: string,
+        cols: number,
+        rows: number,
     ) => void;
     refreshTrading: () => void;
 }
@@ -814,6 +840,20 @@ export default function App() {
         [workspace, updateWorkspace],
     );
 
+    const setBlockWallConfig = useCallback(
+        (id: string, wallList: string, wallCols: number, wallRows: number) => {
+            updateWorkspace({
+                ...workspace,
+                blocks: workspace.blocks.map((block) =>
+                    block.id === id
+                        ? { ...block, wallList, wallCols, wallRows }
+                        : block,
+                ),
+            });
+        },
+        [workspace, updateWorkspace],
+    );
+
     const setBlockPulseConfig = useCallback(
         (
             id: string,
@@ -1057,6 +1097,7 @@ export default function App() {
                                     dockProps={dockProps}
                                     onSelectCode={selectByCode}
                                     onPulseConfigChange={setBlockPulseConfig}
+                                    onWallConfigChange={setBlockWallConfig}
                                     refreshTrading={refreshTrading}
                                 />
                             </div>

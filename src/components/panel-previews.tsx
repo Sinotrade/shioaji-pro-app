@@ -206,6 +206,58 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             ))}
         </Frame>
     ),
+    intradaywall: (
+        <Frame>
+            {[0, 1, 2, 3].map((i) => {
+                const x = 6 + (i % 2) * 56;
+                const y = 6 + Math.floor(i / 2) * 34;
+                const upCell = i !== 2;
+                const c = upCell ? up : down;
+                return (
+                    <g key={i}>
+                        <rect
+                            x={x}
+                            y={y}
+                            width='52'
+                            height='30'
+                            rx='2'
+                            fill='none'
+                            stroke={border}
+                        />
+                        <line
+                            x1={x + 3}
+                            y1={y + 18}
+                            x2={x + 49}
+                            y2={y + 18}
+                            stroke={muted}
+                            strokeOpacity='0.4'
+                            strokeDasharray='2 2'
+                            strokeWidth='0.8'
+                        />
+                        <path
+                            d={
+                                upCell
+                                    ? `M${x + 3} ${y + 18} L${x + 14} ${y + 12} L${x + 26} ${y + 15} L${x + 38} ${y + 9} L${x + 49} ${y + 11}`
+                                    : `M${x + 3} ${y + 18} L${x + 14} ${y + 21} L${x + 26} ${y + 19} L${x + 38} ${y + 24} L${x + 49} ${y + 26}`
+                            }
+                            fill='none'
+                            stroke={c}
+                            strokeWidth='1.2'
+                        />
+                        <rect
+                            x={x + 3}
+                            y={y + 3}
+                            width='14'
+                            height='3'
+                            rx='1.5'
+                            fill={muted}
+                            fillOpacity='0.55'
+                        />
+                    </g>
+                );
+            })}
+        </Frame>
+    ),
     depth: (
         <Frame>
             {[0, 1, 2, 3, 4].map((i) => (

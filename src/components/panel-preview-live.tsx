@@ -10,6 +10,7 @@ import type { ContractInfo } from '../lib/types/contract';
 import type { BlockType } from '../lib/workspace';
 import { CandleChart } from './candle-chart';
 import { IntradayChart } from './intraday-chart';
+import { IntradayWallPanel } from './intraday-wall';
 import { ChipsCard } from './chips-card';
 import { DepthLadder } from './depth-ladder';
 import { MarketPulsePanel, MarketSignalPanel } from './market-pulse-panel';
@@ -32,6 +33,7 @@ export function livePreviewEnabled() {
 }
 
 const NO_CONTRACT_PREVIEWS: Partial<Record<BlockType, () => ReactElement>> = {
+    intradaywall: () => <IntradayWallPanel onPick={noop} />,
     movers: () => <ScannerPanel onPick={noop} />,
     heatmap: () => <SectorHeatmap onPick={noop} />,
     pulse: () => <MarketPulsePanel />,

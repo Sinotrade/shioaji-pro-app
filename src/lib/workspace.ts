@@ -12,6 +12,7 @@ export type BlockType =
     | 'dock'
     | 'chart'
     | 'intraday'
+    | 'intradaywall'
     | 'depth'
     | 'ticket'
     | 'tape'
@@ -49,6 +50,10 @@ export interface Block {
     pulseSections?: PulseSection[];
     pulseWeights?: Partial<PulseSectionWeights>;
     pulseIndex?: PulseIndexCode;
+    // 當日走勢牆的面板設定（清單/排列）— 跟版面一起持久化
+    wallList?: string;
+    wallCols?: number;
+    wallRows?: number;
 }
 
 export interface Workspace {
@@ -129,6 +134,14 @@ export const BLOCK_META: Record<
         pinnable: true,
         singleton: false,
         defaultSize: { w: 8, h: 10, minW: 4, minH: 5 },
+    },
+    intradaywall: {
+        label: '當日走勢牆',
+        description: '多檔分時走勢一次看，綁自選清單、可排列與翻頁',
+        category: 'market',
+        pinnable: false,
+        singleton: false,
+        defaultSize: { w: 12, h: 14, minW: 6, minH: 6 },
     },
     depth: {
         label: '五檔',
