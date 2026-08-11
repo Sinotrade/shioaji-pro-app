@@ -6,17 +6,25 @@
 // frame, live SSE updates, and a limit-lock lamp in the header.
 
 import {
+    BarSeries,
     BaselineSeries,
     ColorType,
     createChart,
+    HistogramSeries,
     LineSeries,
     LineStyle,
     type AutoscaleInfo,
+    type IPriceLine,
     type ISeriesApi,
     type UTCTimestamp,
 } from 'lightweight-charts';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+    resolveScaleMode,
+    type ScaleMode,
+} from './intraday-chart';
+import * as chartUi from './intraday-chart.css';
 import { useQuote } from '../hooks/use-stream';
 import { colorWithOpacity } from '../lib/indicator-defs';
 import { ensureContract } from '../lib/contracts-cache';
@@ -56,25 +64,148 @@ function clampDim(n: number): number {
     return Math.min(WALL_DIM_MAX, Math.max(WALL_DIM_MIN, Math.round(n)));
 }
 
+// ---- 三層顯示設定：單檔覆寫 → 類別全域 → 內建預設 ----
+// 類別：個股類（股票/權證/個股期選）、指數（現貨指數）、指數期貨（含
+// 指數選擇權）。Y 軸 'mem' = 跟隨單圖的每檔記憶與分類預設。
+
+type WallCat = 'equity' | 'index' | 'indexfut';
+
+function wallCatOf(c: ContractInfo): WallCat {
+    if (c.security_type === 'IND') return 'index';
+    if (c.security_type === 'STK' || c.security_type === 'WRT') {
+        return 'equity';
+    }
+    if (
+        (c.security_type === 'FUT' || c.security_type === 'OPT') &&
+        c.underlying_kind === 'S'
+    ) {
+        return 'equity';
+    }
+    return 'indexfut';
+}
+
+const WALL_CATS: { key: WallCat; label: string }[] = [
+    { key: 'equity', label: '個股' },
+    { key: 'index', label: '指數' },
+    { key: 'indexfut', label: '指數期貨' },
+];
+
+interface CellDisp {
+    style: 'line' | 'bars';
+    scale: 'mem' | ScaleMode;
+    vol: boolean;
+    width: number;
+}
+
+const CELL_DISP_BUILTIN: CellDisp = {
+    style: 'line',
+    scale: 'mem',
+    vol: true,
+    width: 1,
+};
+
+interface WallDispStore {
+    cat: Partial<Record<WallCat, Partial<CellDisp>>>;
+    perCode: Record<string, Partial<CellDisp>>;
+}
+
+const WALL_DISP_KEY = 'sj-pro-wall-display-v2';
+
+function loadWallDispStore(): WallDispStore {
+    try {
+        const raw = localStorage.getItem(WALL_DISP_KEY);
+        if (raw) {
+            const p = JSON.parse(raw) as Partial<WallDispStore>;
+            return { cat: p.cat ?? {}, perCode: p.perCode ?? {} };
+        }
+    } catch {
+        // fall through
+    }
+    return { cat: {}, perCode: {} };
+}
+
+function saveWallDispStore(s: WallDispStore) {
+    try {
+        localStorage.setItem(WALL_DISP_KEY, JSON.stringify(s));
+    } catch {
+        // session only
+    }
+}
+
+function mergeDisp(...layers: (Partial<CellDisp> | undefined)[]): CellDisp {
+    const out: CellDisp = { ...CELL_DISP_BUILTIN };
+    for (const layer of layers) {
+        if (!layer) continue;
+        if (layer.style === 'line' || layer.style === 'bars') {
+            out.style = layer.style;
+        }
+        if (
+            layer.scale === 'mem' ||
+            layer.scale === 'auto' ||
+            layer.scale === 'band'
+        ) {
+            out.scale = layer.scale;
+        }
+        if (typeof layer.vol === 'boolean') out.vol = layer.vol;
+        if (
+            Number.isFinite(layer.width) &&
+            layer.width! >= 0.5 &&
+            layer.width! <= 4
+        ) {
+            out.width = layer.width!;
+        }
+    }
+    return out;
+}
+
+function resolveCellDisp(
+    store: WallDispStore,
+    contract: ContractInfo,
+): CellDisp {
+    const cat = wallCatOf(contract);
+    return mergeDisp(store.cat[cat], store.perCode[contract.code]);
+}
+
+function dispKeyOf(d: CellDisp): string {
+    return `${d.style}|${d.scale}|${d.vol}|${d.width}`;
+}
+
 // ---- one compact intraday cell ----
 
-function MiniIntraday({ contract }: { contract: ContractInfo }) {
+function MiniIntraday({
+    contract,
+    disp,
+}: {
+    contract: ContractInfo;
+    disp: CellDisp;
+}) {
     const hostRef = useRef<HTMLDivElement>(null);
     const priceRef = useRef<ISeriesApi<'Baseline'> | null>(null);
+    const barsRef2 = useRef<ISeriesApi<'Bar'> | null>(null);
     const avgRef = useRef<ISeriesApi<'Line'> | null>(null);
+    const volRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     const fillerRef = useRef<ISeriesApi<'Line'> | null>(null);
     const chartApiRef = useRef<ReturnType<typeof createChart> | null>(null);
-    const refLineRef = useRef<ReturnType<
-        ISeriesApi<'Line'>['createPriceLine']
-    > | null>(null);
+    const refLineRef = useRef<IPriceLine | null>(null);
+    const limitLinesRef = useRef<IPriceLine[]>([]);
     const sessionRef = useRef<SessionWindow | null>(null);
     const refPriceRef = useRef(0);
     const limitsRef = useRef<{ up: number; down: number } | null>(null);
+    // 生效的 Y 軸模式（'mem' 解析後的結果）— provider 讀這個
+    const effScaleRef = useRef<ScaleMode>('auto');
     const hiRef = useRef(-Infinity);
     const loRef = useRef(Infinity);
     const lastLabelRef = useRef(0);
     const cumVRef = useRef(0);
     const cumPVRef = useRef(0);
+    const minVolRef = useRef(0);
+    const prevMinCloseRef = useRef(0);
+    const minOhlcRef = useRef<{
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+    } | null>(null);
     const loadedRef = useRef('');
     const lastReloadRef = useRef(0);
     const [reloadSeq, setReloadSeq] = useState(0);
@@ -85,8 +216,14 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
     const themeSettings = useThemeSettings();
     const colors = getChartColors(themeSettings);
     const themeKey = `${themeSettings.mode}-${themeSettings.convention}`;
+    const dispKey = dispKeyOf(disp);
     const isIndex = contract.security_type === 'IND';
     const avgColor = themeSettings.mode === 'light' ? '#b97f14' : '#e0a43c';
+    const showVol = disp.vol && !isIndex;
+    const lw = Math.min(
+        4,
+        Math.max(1, Math.round(disp.width)),
+    ) as 1 | 2 | 3 | 4;
 
     useEffect(() => {
         const host = hostRef.current;
@@ -110,7 +247,10 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
             },
             rightPriceScale: {
                 borderVisible: false,
-                scaleMargins: { top: 0.08, bottom: 0.08 },
+                scaleMargins: {
+                    top: 0.08,
+                    bottom: showVol ? 0.24 : 0.08,
+                },
             },
             leftPriceScale: { visible: false },
             // lockVisibleTimeRangeOnResize：排列切換/面板縮放時 autoSize
@@ -128,6 +268,16 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
         const symmetric = (
             original: () => AutoscaleInfo | null,
         ): AutoscaleInfo | null => {
+            const lim = limitsRef.current;
+            // 漲跌停模式：固定整段停板區間
+            if (effScaleRef.current === 'band' && lim) {
+                return {
+                    priceRange: {
+                        minValue: lim.down,
+                        maxValue: lim.up,
+                    },
+                };
+            }
             const ref = refPriceRef.current;
             if (!ref || hiRef.current === -Infinity) return original();
             const span = Math.max(
@@ -136,7 +286,6 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
                 ref * 0.002,
             );
             let pad = span * 1.08;
-            const lim = limitsRef.current;
             if (lim) {
                 pad = Math.min(
                     pad,
@@ -150,18 +299,29 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
                 },
             };
         };
+        const isLine = disp.style === 'line';
         const price = chart.addSeries(BaselineSeries, {
             baseValue: { type: 'price', price: refPriceRef.current },
-            topLineColor: c.up,
+            topLineColor: isLine ? c.up : 'transparent',
             topFillColor1: colorWithOpacity(c.up, 18),
             topFillColor2: colorWithOpacity(c.up, 2),
-            bottomLineColor: c.down,
+            bottomLineColor: isLine ? c.down : 'transparent',
             bottomFillColor1: colorWithOpacity(c.down, 2),
             bottomFillColor2: colorWithOpacity(c.down, 18),
-            lineWidth: 1,
+            lineWidth: lw,
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
+            autoscaleInfoProvider: symmetric,
+        });
+        const bars = chart.addSeries(BarSeries, {
+            upColor: c.up,
+            downColor: c.down,
+            thinBars: true,
+            openVisible: false,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            visible: disp.style === 'bars',
             autoscaleInfoProvider: symmetric,
         });
         const avg = chart.addSeries(LineSeries, {
@@ -172,6 +332,18 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
             crosshairMarkerVisible: false,
             autoscaleInfoProvider: () => null,
         });
+        const vol = showVol
+            ? chart.addSeries(HistogramSeries, {
+                  priceScaleId: 'vol',
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+              })
+            : null;
+        if (vol) {
+            vol.priceScale().applyOptions({
+                scaleMargins: { top: 0.78, bottom: 0 },
+            });
+        }
         const filler = chart.addSeries(LineSeries, {
             color: 'transparent',
             priceLineVisible: false,
@@ -188,21 +360,26 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
         });
         chartApiRef.current = chart;
         priceRef.current = price;
+        barsRef2.current = bars;
         avgRef.current = avg;
+        volRef.current = vol;
         fillerRef.current = filler;
         return () => {
             chart.remove();
             chartApiRef.current = null;
             priceRef.current = null;
+            barsRef2.current = null;
             avgRef.current = null;
+            volRef.current = null;
             fillerRef.current = null;
             refLineRef.current = null;
+            limitLinesRef.current = [];
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [themeKey]);
+    }, [themeKey, dispKey, isIndex]);
 
     useEffect(() => {
-        const loadKey = `${contract.code}|${reloadSeq}|${themeKey}`;
+        const loadKey = `${contract.code}|${reloadSeq}|${themeKey}|${dispKey}`;
         loadedRef.current = '';
         sessionRef.current = null;
         refPriceRef.current = 0;
@@ -212,6 +389,11 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
         lastLabelRef.current = 0;
         cumVRef.current = 0;
         cumPVRef.current = 0;
+        minVolRef.current = 0;
+        prevMinCloseRef.current = 0;
+        minOhlcRef.current = null;
+        effScaleRef.current =
+            disp.scale === 'mem' ? resolveScaleMode(contract) : disp.scale;
         setLoading(true);
         setEmpty(false);
         let cancelled = false;
@@ -255,36 +437,63 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
                     baseValue: { type: 'price', price: ref },
                 });
                 const lineData = [];
+                const ohlcData = [];
                 const avgData = [];
+                const volData = [];
                 let prevT = 0;
+                let prevClose = ref;
                 for (const b of bars) {
                     hiRef.current = Math.max(hiRef.current, b.high);
                     loRef.current = Math.min(loRef.current, b.low);
                     cumVRef.current += b.volume;
                     cumPVRef.current +=
                         ((b.high + b.low + b.close) / 3) * b.volume;
+                    const t = b.time as UTCTimestamp;
                     if (b.time === prevT) {
-                        // CLOSE_GRACE merge — last value wins
+                        // CLOSE_GRACE merge — last value wins / 併量
                         lineData[lineData.length - 1] = {
-                            time: b.time as UTCTimestamp,
+                            time: t,
                             value: b.close,
                         };
+                        const po = ohlcData[ohlcData.length - 1];
+                        if (po) {
+                            po.close = b.close;
+                            po.high = Math.max(po.high, b.high);
+                            po.low = Math.min(po.low, b.low);
+                        }
+                        const pv = volData[volData.length - 1];
+                        if (pv) pv.value += b.volume;
                         continue;
                     }
                     prevT = b.time;
-                    lineData.push({
-                        time: b.time as UTCTimestamp,
-                        value: b.close,
+                    lineData.push({ time: t, value: b.close });
+                    ohlcData.push({
+                        time: t,
+                        open: b.open,
+                        high: b.high,
+                        low: b.low,
+                        close: b.close,
                     });
+                    volData.push({
+                        time: t,
+                        value: b.volume,
+                        color:
+                            b.close >= prevClose
+                                ? colors.upVol
+                                : colors.downVol,
+                    });
+                    prevClose = b.close;
                     if (!isIndex && cumVRef.current > 0) {
                         avgData.push({
-                            time: b.time as UTCTimestamp,
+                            time: t,
                             value: cumPVRef.current / cumVRef.current,
                         });
                     }
                 }
                 priceRef.current.setData(lineData);
+                barsRef2.current?.setData(ohlcData);
                 avgRef.current?.setData(avgData);
+                volRef.current?.setData(volData);
                 const minutes = sessionMinutes(win);
                 fillerRef.current?.setData(
                     minutes.map((m, i) =>
@@ -294,9 +503,48 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
                     ),
                 );
                 refLineRef.current?.applyOptions({ price: ref });
+                // 漲跌停模式畫停板線（無軸標籤，小格不佔空間）
+                const filler = fillerRef.current;
+                for (const line of limitLinesRef.current) {
+                    filler?.removePriceLine(line);
+                }
+                limitLinesRef.current = [];
+                if (
+                    filler &&
+                    limitsRef.current &&
+                    effScaleRef.current === 'band'
+                ) {
+                    limitLinesRef.current = [
+                        filler.createPriceLine({
+                            price: limitsRef.current.up,
+                            color: colors.up,
+                            lineWidth: 1,
+                            lineStyle: LineStyle.Dotted,
+                            axisLabelVisible: false,
+                        }),
+                        filler.createPriceLine({
+                            price: limitsRef.current.down,
+                            color: colors.down,
+                            lineWidth: 1,
+                            lineStyle: LineStyle.Dotted,
+                            axisLabelVisible: false,
+                        }),
+                    ];
+                }
                 sessionRef.current = win;
                 const lastBar = bars[bars.length - 1];
                 lastLabelRef.current = lastBar?.time ?? 0;
+                if (lastBar) {
+                    minVolRef.current = lastBar.volume;
+                    prevMinCloseRef.current =
+                        bars[bars.length - 2]?.close ?? ref;
+                    minOhlcRef.current = {
+                        open: lastBar.open,
+                        high: lastBar.high,
+                        low: lastBar.low,
+                        close: lastBar.close,
+                    };
+                }
                 loadedRef.current = loadKey;
                 chartApiRef.current?.timeScale().fitContent();
             })
@@ -310,14 +558,15 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contract, reloadSeq, themeKey]);
+    }, [contract, reloadSeq, themeKey, dispKey]);
 
     const liveQuote = quote?.tick ?? quote?.index;
     useEffect(() => {
         if (!liveQuote || liveQuote.code !== contract.code) return;
         if ('simtrade' in liveQuote && liveQuote.simtrade) return;
         if (
-            loadedRef.current !== `${contract.code}|${reloadSeq}|${themeKey}`
+            loadedRef.current !==
+            `${contract.code}|${reloadSeq}|${themeKey}|${dispKey}`
         ) {
             return;
         }
@@ -341,7 +590,6 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
         if (t <= win.start) return;
         const label = tickBucket(win, t);
         if (label < lastLabelRef.current) return;
-        lastLabelRef.current = label;
         const chg = Number(quote?.tick?.price_chg);
         if (quote?.tick && Number.isFinite(chg) && p - chg > 0) {
             refPriceRef.current = p - chg;
@@ -352,11 +600,45 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
         hiRef.current = Math.max(hiRef.current, p);
         loRef.current = Math.min(loRef.current, p);
         const vol = quote?.tick?.volume ?? 0;
+        if (label > lastLabelRef.current) {
+            prevMinCloseRef.current =
+                minOhlcRef.current?.close ?? refPriceRef.current;
+            minVolRef.current = vol;
+            minOhlcRef.current = { open: p, high: p, low: p, close: p };
+        } else {
+            minVolRef.current += vol;
+            const m = minOhlcRef.current;
+            if (m) {
+                m.high = Math.max(m.high, p);
+                m.low = Math.min(m.low, p);
+                m.close = p;
+            } else {
+                minOhlcRef.current = {
+                    open: p,
+                    high: p,
+                    low: p,
+                    close: p,
+                };
+            }
+        }
+        lastLabelRef.current = label;
         cumVRef.current += vol;
         cumPVRef.current += p * vol;
         const time = label as UTCTimestamp;
         try {
             series.update({ time, value: p });
+            const ohlc = minOhlcRef.current;
+            if (ohlc) {
+                barsRef2.current?.update({ time, ...ohlc });
+            }
+            volRef.current?.update({
+                time,
+                value: minVolRef.current,
+                color:
+                    p >= prevMinCloseRef.current
+                        ? colors.upVol
+                        : colors.downVol,
+            });
             if (!isIndex) {
                 const tickAvg = Number(quote?.tick?.avg_price);
                 const avg =
@@ -399,9 +681,11 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
 function CellHead({
     contract,
     snap,
+    onGear,
 }: {
     contract: ContractInfo;
     snap?: Snapshot;
+    onGear?: () => void;
 }) {
     const quote = useQuote(contract.code);
     const tick = quote?.tick ?? quote?.index;
@@ -450,6 +734,18 @@ function CellHead({
                     ? `${chgPct > 0 ? '+' : ''}${chgPct.toFixed(2)}%`
                     : ''}
             </span>
+            {onGear && (
+                <button
+                    className={styles.cellGear}
+                    title={`單獨設定 ${contract.code} 的顯示`}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onGear();
+                    }}
+                >
+                    <Settings2 size={10} />
+                </button>
+            )}
         </div>
     );
 }
@@ -484,6 +780,54 @@ export function IntradayWallPanel({
     const [phase, setPhase] = useState<'boot' | 'ready' | 'error'>('boot');
     const onConfigChangeRef = useRef(onConfigChange);
     onConfigChangeRef.current = onConfigChange;
+    // 三層顯示設定：編輯目標 = 類別全域 或 單檔覆寫
+    const [dispStore, setDispStore] =
+        useState<WallDispStore>(loadWallDispStore);
+    const [dispOpen, setDispOpen] = useState(false);
+    const [editTarget, setEditTarget] = useState<
+        | { kind: 'cat'; cat: WallCat }
+        | { kind: 'code'; code: string; cat: WallCat }
+    >({ kind: 'cat', cat: 'equity' });
+    const patchDisp = (patch: Partial<CellDisp>) => {
+        setDispStore((prev) => {
+            const next: WallDispStore = {
+                cat: { ...prev.cat },
+                perCode: { ...prev.perCode },
+            };
+            if (editTarget.kind === 'cat') {
+                next.cat[editTarget.cat] = {
+                    ...next.cat[editTarget.cat],
+                    ...patch,
+                };
+            } else {
+                next.perCode[editTarget.code] = {
+                    ...next.perCode[editTarget.code],
+                    ...patch,
+                };
+            }
+            saveWallDispStore(next);
+            return next;
+        });
+    };
+    const clearCodeOverride = (code: string) => {
+        setDispStore((prev) => {
+            const next: WallDispStore = {
+                cat: { ...prev.cat },
+                perCode: { ...prev.perCode },
+            };
+            delete next.perCode[code];
+            saveWallDispStore(next);
+            return next;
+        });
+    };
+    // popover 顯示的是「目標的生效值」（單檔含類別繼承）
+    const targetEff: CellDisp =
+        editTarget.kind === 'cat'
+            ? mergeDisp(dispStore.cat[editTarget.cat])
+            : mergeDisp(
+                  dispStore.cat[editTarget.cat],
+                  dispStore.perCode[editTarget.code],
+              );
 
     // load server watchlists（重試 — server 可能還在暖機）
     useEffect(() => {
@@ -714,6 +1058,208 @@ export function IntradayWallPanel({
                 >
                     <ChevronRight size={12} />
                 </button>
+                <span className={chartUi.settingsWrap}>
+                    <button
+                        className={styles.pagerBtn}
+                        title='顯示設定 — 類別全域與單檔覆寫'
+                        onClick={() => setDispOpen((v) => !v)}
+                    >
+                        <Settings2 size={12} />
+                    </button>
+                    {dispOpen && (
+                        <>
+                            <span
+                                className={chartUi.settingsBackdrop}
+                                onClick={() => setDispOpen(false)}
+                            />
+                            <span className={chartUi.settingsPop}>
+                                <span className={chartUi.settingsRow}>
+                                    <span
+                                        className={chartUi.settingsLabel}
+                                    >
+                                        套用
+                                    </span>
+                                    {WALL_CATS.map((c) => (
+                                        <button
+                                            key={c.key}
+                                            className={
+                                                chartUi.scaleBtn[
+                                                    editTarget.kind ===
+                                                        'cat' &&
+                                                    editTarget.cat === c.key
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            onClick={() =>
+                                                setEditTarget({
+                                                    kind: 'cat',
+                                                    cat: c.key,
+                                                })
+                                            }
+                                        >
+                                            {c.label}
+                                        </button>
+                                    ))}
+                                </span>
+                                {editTarget.kind === 'code' && (
+                                    <span className={chartUi.settingsRow}>
+                                        <span
+                                            className={
+                                                chartUi.settingsLabel
+                                            }
+                                        >
+                                            單檔
+                                        </span>
+                                        <span
+                                            className={
+                                                chartUi.scaleBtn.active
+                                            }
+                                        >
+                                            {editTarget.code}
+                                        </span>
+                                        <button
+                                            className={
+                                                chartUi.scaleBtn.normal
+                                            }
+                                            title='移除此檔的覆寫，回到類別設定'
+                                            onClick={() =>
+                                                clearCodeOverride(
+                                                    editTarget.code,
+                                                )
+                                            }
+                                        >
+                                            清除覆寫
+                                        </button>
+                                    </span>
+                                )}
+                                <span className={chartUi.settingsRow}>
+                                    <span
+                                        className={chartUi.settingsLabel}
+                                    >
+                                        樣式
+                                    </span>
+                                    {(
+                                        [
+                                            ['line', '線圖'],
+                                            ['bars', '美國線'],
+                                        ] as const
+                                    ).map(([v, label]) => (
+                                        <button
+                                            key={v}
+                                            className={
+                                                chartUi.scaleBtn[
+                                                    targetEff.style === v
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            onClick={() =>
+                                                patchDisp({ style: v })
+                                            }
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </span>
+                                <span className={chartUi.settingsRow}>
+                                    <span
+                                        className={chartUi.settingsLabel}
+                                    >
+                                        Y 軸
+                                    </span>
+                                    {(
+                                        [
+                                            ['mem', '記憶'],
+                                            ['auto', '自動'],
+                                            ['band', '漲跌停'],
+                                        ] as const
+                                    ).map(([v, label]) => (
+                                        <button
+                                            key={v}
+                                            className={
+                                                chartUi.scaleBtn[
+                                                    targetEff.scale === v
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            title={
+                                                v === 'mem'
+                                                    ? '跟隨單圖的每檔記憶與分類預設'
+                                                    : undefined
+                                            }
+                                            onClick={() =>
+                                                patchDisp({ scale: v })
+                                            }
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </span>
+                                <span className={chartUi.settingsRow}>
+                                    <span
+                                        className={chartUi.settingsLabel}
+                                    >
+                                        量能
+                                    </span>
+                                    {(
+                                        [
+                                            [true, '顯示'],
+                                            [false, '隱藏'],
+                                        ] as const
+                                    ).map(([v, label]) => (
+                                        <button
+                                            key={label}
+                                            className={
+                                                chartUi.scaleBtn[
+                                                    targetEff.vol === v
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            onClick={() =>
+                                                patchDisp({ vol: v })
+                                            }
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </span>
+                                <span className={chartUi.settingsRow}>
+                                    <span
+                                        className={chartUi.settingsLabel}
+                                    >
+                                        線寬
+                                    </span>
+                                    <input
+                                        type='range'
+                                        className={chartUi.slider}
+                                        style={
+                                            {
+                                                '--sj-fill': `${(((targetEff.width - 0.5) / 3.5) * 100).toFixed(1)}%`,
+                                            } as React.CSSProperties
+                                        }
+                                        min={0.5}
+                                        max={4}
+                                        step={0.5}
+                                        value={targetEff.width}
+                                        onChange={(e) =>
+                                            patchDisp({
+                                                width: Number(
+                                                    e.target.value,
+                                                ),
+                                            })
+                                        }
+                                    />
+                                    <span className={chartUi.sliderVal}>
+                                        {targetEff.width.toFixed(1)}
+                                    </span>
+                                </span>
+                            </span>
+                        </>
+                    )}
+                </span>
             </div>
             {total === 0 ? (
                 <div className={styles.centerMsg}>
@@ -737,8 +1283,19 @@ export function IntradayWallPanel({
                             <CellHead
                                 contract={contract}
                                 snap={snaps.get(contract.code)}
+                                onGear={() => {
+                                    setEditTarget({
+                                        kind: 'code',
+                                        code: contract.code,
+                                        cat: wallCatOf(contract),
+                                    });
+                                    setDispOpen(true);
+                                }}
                             />
-                            <MiniIntraday contract={contract} />
+                            <MiniIntraday
+                                contract={contract}
+                                disp={resolveCellDisp(dispStore, contract)}
+                            />
                         </div>
                     ))}
                 </div>

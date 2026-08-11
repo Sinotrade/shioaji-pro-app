@@ -190,6 +190,26 @@ export const cellLock = styleVariants({
     down: [cellLockBase, { background: vars.color.down }],
 });
 
+// 單檔設定齒輪 — 平時隱形，滑過 cell 才浮現
+export const cellGear = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '1px 3px',
+    marginLeft: '2px',
+    background: 'transparent',
+    border: 'none',
+    borderRadius: vars.radius.sm,
+    color: vars.color.mutedForeground,
+    cursor: 'pointer',
+    opacity: 0,
+    transition: 'opacity 0.12s',
+    flexShrink: 0,
+    selectors: {
+        [`${cell}:hover &`]: { opacity: 1 },
+        '&:hover': { color: vars.color.foreground },
+    },
+});
+
 export const cellChart = style({
     flex: 1,
     minHeight: 0,

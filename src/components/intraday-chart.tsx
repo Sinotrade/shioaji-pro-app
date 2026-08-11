@@ -85,7 +85,7 @@ const fmtAmtYi = (v: number) => `${(v / 1e8).toFixed(1)}億`;
 // Y 軸縮放模式：auto=依資料對稱縮放（上限為停板）、band=固定漲跌停區間。
 // 依商品記憶：個股習慣看漲跌停全幅、指數/台指期習慣自動縮放 — 分類給
 // 預設值，使用者對單一商品的切換記在該檔，另可套用同類/全部或重設。
-type ScaleMode = 'auto' | 'band';
+export type ScaleMode = 'auto' | 'band';
 type ScaleCat = 'index' | 'equity';
 const SCALE_MEM_KEY = 'sj-pro-intraday-scale-mem';
 
@@ -132,7 +132,7 @@ function saveScaleMem(mem: ScaleMem) {
     }
 }
 
-function resolveScaleMode(contract: ContractInfo): ScaleMode {
+export function resolveScaleMode(contract: ContractInfo): ScaleMode {
     const mem = loadScaleMem();
     const cat = scaleCatOf(contract);
     return (
