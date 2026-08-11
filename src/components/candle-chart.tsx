@@ -121,6 +121,10 @@ export function CandleChart({
     const [tfIdx, setTfIdx] = useState(1); // default 5m
     const [empty, setEmpty] = useState(false);
     const [loading, setLoading] = useState(false);
+    // 歷史斷層自癒（issue #18）：開盤前抓的歷史可能缺少上游尚未發布的
+    // 跨午夜夜盤段，live 進來出現大斷層時補抓一次
+    const [historySeq, setHistorySeq] = useState(0);
+    const gapReloadAtRef = useRef(0);
     // ticks must NOT touch the series until history for the current
     // (symbol, timeframe) is in place — updating a freshly-switched series
     // with a bucket older than its last point makes lightweight-charts
@@ -579,7 +583,7 @@ export function CandleChart({
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contract, tf]);
+    }, [contract, tf, historySeq]);
 
     // Live trade/index quote -> update the current bar. Index products use
     // quote_idx rather than the regular tick stream in Shioaji 1.7.
@@ -608,6 +612,17 @@ export function CandleChart({
                 ? Math.floor(tickTime / 86400) * 86400
                 : Math.floor(tickTime / bucketSec) * bucketSec;
         let bar = lastBarRef.current;
+        // live 桶與歷史尾端出現 3 個桶以上的斷層（換時段/上游資料晚發布）
+        // → 排程一次歷史補抓把洞補起來；live 桶照常先畫，補抓完成後
+        // 整段重建。120s 節流避免上游持續缺料時反覆打
+        if (
+            bar &&
+            bucket - bar.time > bucketSec * 3 &&
+            Date.now() - gapReloadAtRef.current > 120_000
+        ) {
+            gapReloadAtRef.current = Date.now();
+            setHistorySeq((v) => v + 1);
+        }
         if (!bar || bucket > bar.time) {
             bar = {
                 time: bucket,
