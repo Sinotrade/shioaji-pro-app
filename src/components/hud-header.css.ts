@@ -43,14 +43,20 @@ export const versionWarn = style({
 
 export const spacer = style({ flex: 1 });
 
+// 頂欄所有 chip/按鈕的統一高度 — 字級與 padding 各異會造成 23/25px
+// 混排，邊框線上下參差（使用者回報的「水平不齊」）
+const HEADER_ITEM_H = '25px';
+
 export const chip = style({
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     gap: '6px',
     fontFamily: vars.font.mono,
     fontSize: '0.72rem',
     fontVariantNumeric: 'tabular-nums',
-    padding: '3px 10px',
+    padding: '0 10px',
+    height: HEADER_ITEM_H,
+    boxSizing: 'border-box',
     border: `1px solid ${vars.color.border}`,
     borderRadius: vars.radius.sm,
     background: vars.color.inset,
@@ -128,7 +134,11 @@ export const simBadge = style({
     border: `1px solid rgba(224, 164, 60, 0.45)`,
     background: 'rgba(224, 164, 60, 0.08)',
     borderRadius: vars.radius.sm,
-    padding: '3px 10px',
+    padding: '0 10px',
+    height: '25px',
+    boxSizing: 'border-box',
+    display: 'inline-flex',
+    alignItems: 'center',
 });
 
 export const prodBadge = style({
@@ -140,7 +150,11 @@ export const prodBadge = style({
     background: vars.color.up,
     border: `1px solid ${vars.color.up}`,
     borderRadius: vars.radius.sm,
-    padding: '3px 10px',
+    padding: '0 10px',
+    height: '25px',
+    boxSizing: 'border-box',
+    display: 'inline-flex',
+    alignItems: 'center',
 });
 
 export const settingsWrap = style({
@@ -251,7 +265,12 @@ export const killHeaderOn = style({
     background: vars.color.danger,
     border: `1px solid ${vars.color.danger}`,
     borderRadius: vars.radius.sm,
-    padding: '3px 10px',
+    padding: '0 10px',
+    height: '25px',
+    boxSizing: 'border-box',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     animation: 'pulse-glow 1.2s infinite',
@@ -428,7 +447,12 @@ export const resetBtn = style({
     background: 'transparent',
     border: `1px solid ${vars.color.border}`,
     borderRadius: vars.radius.sm,
-    padding: '3px 10px',
+    padding: '0 10px',
+    height: '25px',
+    boxSizing: 'border-box',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
     cursor: 'pointer',
     transition: 'all 0.12s',
     ':hover': {
