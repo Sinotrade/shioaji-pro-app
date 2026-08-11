@@ -42,7 +42,7 @@ import {
 } from '../lib/shioaji';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { ContractInfo } from '../lib/types/contract';
-import type { Snapshot } from '../lib/types/market';
+import type { KBars, Snapshot } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
 import {
     dateStrOffset,
@@ -208,6 +208,14 @@ function MiniIntraday({
     } | null>(null);
     const loadedRef = useRef('');
     const lastReloadRef = useRef(0);
+    // kbars 快取（30s TTL、快取 in-flight promise）— 顯示設定/主題變更
+    // 只需重建圖表，不必重打 API。線寬 slider 拖曳一次可觸發 6+ 次
+    // dispKey 變更 × 整頁 cell 數，未快取時實測 36 requests/秒起跳
+    const kbarsCacheRef = useRef<{
+        key: string;
+        at: number;
+        p: Promise<KBars>;
+    } | null>(null);
     const [reloadSeq, setReloadSeq] = useState(0);
     const [empty, setEmpty] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -397,7 +405,31 @@ function MiniIntraday({
         setLoading(true);
         setEmpty(false);
         let cancelled = false;
-        fetchKbars(contract, dateStrOffset(4), dateStrOffset(-1))
+        const dataKey = `${contract.code}|${reloadSeq}`;
+        const cached = kbarsCacheRef.current;
+        let kbarsP: Promise<KBars>;
+        if (
+            cached &&
+            cached.key === dataKey &&
+            Date.now() - cached.at < 30_000
+        ) {
+            kbarsP = cached.p;
+        } else {
+            kbarsP = fetchKbars(
+                contract,
+                dateStrOffset(4),
+                dateStrOffset(-1),
+            );
+            const entry = { key: dataKey, at: Date.now(), p: kbarsP };
+            kbarsCacheRef.current = entry;
+            // 失敗不留快取 — 下次 dispKey/theme 變更重試
+            kbarsP.catch(() => {
+                if (kbarsCacheRef.current === entry) {
+                    kbarsCacheRef.current = null;
+                }
+            });
+        }
+        kbarsP
             .then((k) => {
                 if (cancelled || !priceRef.current) return;
                 const all = kbarsToCandles(k);
