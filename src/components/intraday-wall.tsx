@@ -47,16 +47,14 @@ import * as styles from './intraday-wall.css';
 
 const CLOSE_GRACE = 240;
 
-// cols × rows presets — page size follows the arrangement
-export const WALL_LAYOUTS = [
-    { cols: 1, rows: 2 },
-    { cols: 2, rows: 1 },
-    { cols: 2, rows: 2 },
-    { cols: 3, rows: 2 },
-    { cols: 3, rows: 3 },
-    { cols: 4, rows: 3 },
-    { cols: 4, rows: 4 },
-] as const;
+// 自訂排列的欄/列上限 — 6×6=36 檔已是訂閱與可讀性的極限
+const WALL_DIM_MIN = 1;
+const WALL_DIM_MAX = 6;
+
+function clampDim(n: number): number {
+    if (!Number.isFinite(n)) return 2;
+    return Math.min(WALL_DIM_MAX, Math.max(WALL_DIM_MIN, Math.round(n)));
+}
 
 // ---- one compact intraday cell ----
 
@@ -473,8 +471,13 @@ export function IntradayWallPanel({
 }) {
     const [lists, setLists] = useState<ServerWatchlist[]>([]);
     const [listId, setListId] = useState(initialList ?? '');
-    const [cols, setCols] = useState(initialCols ?? 2);
-    const [rows, setRows] = useState(initialRows ?? 2);
+    const [cols, setCols] = useState(() =>
+        clampDim(initialCols ?? 2),
+    );
+    const [rows, setRows] = useState(() =>
+        clampDim(initialRows ?? 2),
+    );
+    const [layoutOpen, setLayoutOpen] = useState(false);
     const [page, setPage] = useState(0);
     const [cells, setCells] = useState<ContractInfo[]>([]);
     const [snaps, setSnaps] = useState<Map<string, Snapshot>>(new Map());
@@ -627,28 +630,68 @@ export function IntradayWallPanel({
                         </option>
                     ))}
                 </select>
-                <select
-                    className={styles.select}
-                    value={`${cols}x${rows}`}
-                    onChange={(e) => {
-                        const [c, r] = e.target.value
-                            .split('x')
-                            .map(Number);
-                        setCols(c ?? 2);
-                        setRows(r ?? 2);
-                        setPage(0);
-                        applyConfig(list.id, c ?? 2, r ?? 2);
-                    }}
-                >
-                    {WALL_LAYOUTS.map((l) => (
-                        <option
-                            key={`${l.cols}x${l.rows}`}
-                            value={`${l.cols}x${l.rows}`}
-                        >
-                            {l.cols}×{l.rows}
-                        </option>
-                    ))}
-                </select>
+                <span className={styles.layoutWrap}>
+                    <button
+                        className={styles.select}
+                        title='排列設定 — 自訂欄×列'
+                        onClick={() => setLayoutOpen((v) => !v)}
+                    >
+                        {cols}×{rows}
+                    </button>
+                    {layoutOpen && (
+                        <>
+                            <span
+                                className={styles.popBackdrop}
+                                onClick={() => setLayoutOpen(false)}
+                            />
+                            <span className={styles.pop}>
+                                {(
+                                    [
+                                        ['欄', cols, (n: number) => {
+                                            const c = clampDim(n);
+                                            setCols(c);
+                                            setPage(0);
+                                            applyConfig(list.id, c, rows);
+                                        }],
+                                        ['列', rows, (n: number) => {
+                                            const r = clampDim(n);
+                                            setRows(r);
+                                            setPage(0);
+                                            applyConfig(list.id, cols, r);
+                                        }],
+                                    ] as const
+                                ).map(([label, value, set]) => (
+                                    <span
+                                        key={label}
+                                        className={styles.popRow}
+                                    >
+                                        {label}
+                                        <button
+                                            className={styles.stepBtn}
+                                            disabled={value <= WALL_DIM_MIN}
+                                            onClick={() => set(value - 1)}
+                                        >
+                                            −
+                                        </button>
+                                        <span className={styles.stepVal}>
+                                            {value}
+                                        </span>
+                                        <button
+                                            className={styles.stepBtn}
+                                            disabled={value >= WALL_DIM_MAX}
+                                            onClick={() => set(value + 1)}
+                                        >
+                                            ＋
+                                        </button>
+                                    </span>
+                                ))}
+                                <span className={styles.popHint}>
+                                    每頁 {cols * rows} 檔
+                                </span>
+                            </span>
+                        </>
+                    )}
+                </span>
                 <span className={styles.spacer} />
                 <button
                     className={styles.pagerBtn}

@@ -59,6 +59,73 @@ export const pageInfo = style({
 
 export const spacer = style({ flex: 1 });
 
+// 自訂排列 popover（欄×列步進器）
+export const layoutWrap = style({
+    position: 'relative',
+    display: 'inline-flex',
+});
+
+export const popBackdrop = style({
+    position: 'fixed',
+    inset: 0,
+    zIndex: 29,
+});
+
+export const pop = style({
+    position: 'absolute',
+    top: 'calc(100% + 4px)',
+    left: 0,
+    zIndex: 30,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    padding: '8px 10px',
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.md,
+    boxShadow: '0 6px 20px rgba(0, 0, 0, 0.35)',
+    whiteSpace: 'nowrap',
+});
+
+export const popRow = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '0.66rem',
+    color: vars.color.mutedForeground,
+});
+
+export const stepBtn = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
+    width: '20px',
+    height: '18px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    color: vars.color.foreground,
+    transition: 'all 0.12s',
+    ':hover': { borderColor: vars.color.borderBright },
+    ':disabled': { opacity: 0.3, cursor: 'default' },
+});
+
+export const stepVal = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
+    minWidth: '1.4em',
+    textAlign: 'center',
+    color: vars.color.foreground,
+});
+
+export const popHint = style({
+    fontSize: '0.62rem',
+    color: vars.color.mutedForeground,
+});
+
 export const grid = style({
     flex: 1,
     minHeight: 0,
