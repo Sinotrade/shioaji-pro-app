@@ -1,4 +1,4 @@
-## v0.1.39 - 全新「當日走勢」面板
+## v0.1.39 - 全新「當日走勢」與「當日走勢牆」面板
 
 ![當日走勢 — 漲跌停模式](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.39/docs/images/release-0.1.39-intraday-band.png)
 
