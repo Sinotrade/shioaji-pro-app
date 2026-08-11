@@ -82,18 +82,64 @@ const fmtVol = (v: number) =>
     v.toLocaleString('en-US', { maximumFractionDigits: 0 });
 const fmtAmtYi = (v: number) => `${(v / 1e8).toFixed(1)}億`;
 
-// Y 軸縮放模式：auto=依資料對稱縮放（上限為停板）、band=固定漲跌停區間
+// Y 軸縮放模式：auto=依資料對稱縮放（上限為停板）、band=固定漲跌停區間。
+// 依商品記憶：個股習慣看漲跌停全幅、指數/台指期習慣自動縮放 — 分類給
+// 預設值，使用者對單一商品的切換記在該檔，另可套用同類/全部或重設。
 type ScaleMode = 'auto' | 'band';
-const SCALE_MODE_KEY = 'sj-pro-intraday-scale';
+type ScaleCat = 'index' | 'equity';
+const SCALE_MEM_KEY = 'sj-pro-intraday-scale-mem';
 
-function loadScaleMode(): ScaleMode {
-    try {
-        return localStorage.getItem(SCALE_MODE_KEY) === 'band'
-            ? 'band'
-            : 'auto';
-    } catch {
-        return 'auto';
+function scaleCatOf(c: ContractInfo): ScaleCat {
+    if (c.security_type === 'STK' || c.security_type === 'WRT') {
+        return 'equity';
     }
+    // 個股期/個股選擇權 underlying_kind 'S'；指數期選為 'I'
+    if (
+        (c.security_type === 'FUT' || c.security_type === 'OPT') &&
+        c.underlying_kind === 'S'
+    ) {
+        return 'equity';
+    }
+    return 'index';
+}
+
+interface ScaleMem {
+    perCode: Record<string, { m: ScaleMode; c: ScaleCat }>;
+    catDefault: Partial<Record<ScaleCat, ScaleMode>>;
+}
+
+function loadScaleMem(): ScaleMem {
+    try {
+        const raw = localStorage.getItem(SCALE_MEM_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw) as Partial<ScaleMem>;
+            return {
+                perCode: parsed.perCode ?? {},
+                catDefault: parsed.catDefault ?? {},
+            };
+        }
+    } catch {
+        // fall through
+    }
+    return { perCode: {}, catDefault: {} };
+}
+
+function saveScaleMem(mem: ScaleMem) {
+    try {
+        localStorage.setItem(SCALE_MEM_KEY, JSON.stringify(mem));
+    } catch {
+        // session only
+    }
+}
+
+function resolveScaleMode(contract: ContractInfo): ScaleMode {
+    const mem = loadScaleMem();
+    const cat = scaleCatOf(contract);
+    return (
+        mem.perCode[contract.code]?.m ??
+        mem.catDefault[cat] ??
+        (cat === 'equity' ? 'band' : 'auto')
+    );
 }
 
 // 圖形樣式：line=收盤分時線、bars=美國線（每分鐘 OHLC，高低不失真）
@@ -212,16 +258,52 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const [loading, setLoading] = useState(false);
     const [empty, setEmpty] = useState(false);
     const [reloadSeq, setReloadSeq] = useState(0);
-    const [scaleMode, setScaleMode] = useState<ScaleMode>(loadScaleMode);
+    // 依商品解析 Y 軸模式 — 換商品時在 render 階段同步重解（避免
+    // effect 慢半拍造成的雙重載入）
+    const [scaleState, setScaleState] = useState(() => ({
+        code: contract.code,
+        mode: resolveScaleMode(contract),
+    }));
+    if (scaleState.code !== contract.code) {
+        setScaleState({
+            code: contract.code,
+            mode: resolveScaleMode(contract),
+        });
+    }
+    const scaleMode = scaleState.mode;
     const scaleModeRef = useRef(scaleMode);
     scaleModeRef.current = scaleMode;
     const pickScaleMode = (m: ScaleMode) => {
-        setScaleMode(m);
+        setScaleState({ code: contract.code, mode: m });
+        const mem = loadScaleMem();
+        mem.perCode[contract.code] = { m, c: scaleCatOf(contract) };
+        saveScaleMem(mem);
+    };
+    const applyScaleToCat = () => {
+        const cat = scaleCatOf(contract);
+        const mem = loadScaleMem();
+        mem.catDefault[cat] = scaleMode;
+        mem.perCode = Object.fromEntries(
+            Object.entries(mem.perCode).filter(([, v]) => v.c !== cat),
+        );
+        saveScaleMem(mem);
+    };
+    const applyScaleToAll = () => {
+        saveScaleMem({
+            perCode: {},
+            catDefault: { index: scaleMode, equity: scaleMode },
+        });
+    };
+    const resetScaleMem = () => {
         try {
-            localStorage.setItem(SCALE_MODE_KEY, m);
+            localStorage.removeItem(SCALE_MEM_KEY);
         } catch {
-            // session only
+            // ignore
         }
+        setScaleState({
+            code: contract.code,
+            mode: resolveScaleMode(contract),
+        });
     };
     const [chartStyle, setChartStyle] = useState<ChartStyle>(loadChartStyle);
     const pickChartStyle = (s: ChartStyle) => {
@@ -1159,6 +1241,34 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                                                 </button>
                                             </span>
                                         )}
+                                    <span className={styles.settingsRow}>
+                                        <span
+                                            className={styles.settingsLabel}
+                                        >
+                                            記憶
+                                        </span>
+                                        <button
+                                            className={styles.scaleBtn.normal}
+                                            title={`把目前 Y 軸模式套用到整個${scaleCatOf(contract) === 'equity' ? '個股' : '指數'}類（並清除同類的單檔記憶）`}
+                                            onClick={applyScaleToCat}
+                                        >
+                                            套用同類
+                                        </button>
+                                        <button
+                                            className={styles.scaleBtn.normal}
+                                            title='把目前 Y 軸模式套用到所有商品（清除所有單檔記憶）'
+                                            onClick={applyScaleToAll}
+                                        >
+                                            套用全部
+                                        </button>
+                                        <button
+                                            className={styles.scaleBtn.normal}
+                                            title='清空 Y 軸記憶，回到預設（指數=自動、個股=漲跌停）'
+                                            onClick={resetScaleMem}
+                                        >
+                                            重設
+                                        </button>
+                                    </span>
                                     <span className={styles.settingsRow}>
                                         <span
                                             className={styles.settingsLabel}
