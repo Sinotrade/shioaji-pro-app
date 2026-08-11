@@ -55,9 +55,10 @@ import * as styles from './intraday-wall.css';
 
 const CLOSE_GRACE = 240;
 
-// 自訂排列的欄/列上限 — 6×6=36 檔已是訂閱與可讀性的極限
+// 自訂排列的欄/列上限（10×10=100 格是硬上限 — 訂閱額度與渲染負載
+// 由使用者自行斟酌，popover 有每頁檔數提示）
 const WALL_DIM_MIN = 1;
-const WALL_DIM_MAX = 6;
+const WALL_DIM_MAX = 10;
 
 function clampDim(n: number): number {
     if (!Number.isFinite(n)) return 2;
@@ -95,6 +96,8 @@ interface CellDisp {
     scale: 'mem' | ScaleMode;
     vol: boolean;
     width: number;
+    // Y 軸刻度：數字 / 相對昨收 % / 隱藏（讓出整格寬度）
+    axis: 'price' | 'pct' | 'hide';
 }
 
 const CELL_DISP_BUILTIN: CellDisp = {
@@ -102,6 +105,7 @@ const CELL_DISP_BUILTIN: CellDisp = {
     scale: 'mem',
     vol: true,
     width: 1,
+    axis: 'price',
 };
 
 interface WallDispStore {
@@ -154,6 +158,13 @@ function mergeDisp(...layers: (Partial<CellDisp> | undefined)[]): CellDisp {
         ) {
             out.width = layer.width!;
         }
+        if (
+            layer.axis === 'price' ||
+            layer.axis === 'pct' ||
+            layer.axis === 'hide'
+        ) {
+            out.axis = layer.axis;
+        }
     }
     return out;
 }
@@ -167,7 +178,7 @@ function resolveCellDisp(
 }
 
 function dispKeyOf(d: CellDisp): string {
-    return `${d.style}|${d.scale}|${d.vol}|${d.width}`;
+    return `${d.style}|${d.scale}|${d.vol}|${d.width}|${d.axis}`;
 }
 
 // ---- one compact intraday cell ----
@@ -228,10 +239,13 @@ function MiniIntraday({
     const isIndex = contract.security_type === 'IND';
     const avgColor = themeSettings.mode === 'light' ? '#b97f14' : '#e0a43c';
     const showVol = disp.vol && !isIndex;
-    const lw = Math.min(
-        4,
-        Math.max(1, Math.round(disp.width)),
-    ) as 1 | 2 | 3 | 4;
+    // lightweight-charts 型別標整數，但 renderer 直通 canvas lineWidth，
+    // 小數實測有效（與單圖同款 0.5 髮絲線）
+    const lw = Math.min(4, Math.max(0.5, disp.width)) as unknown as
+        | 1
+        | 2
+        | 3
+        | 4;
 
     useEffect(() => {
         const host = hostRef.current;
@@ -254,6 +268,7 @@ function MiniIntraday({
                 horzLine: { visible: false, labelVisible: false },
             },
             rightPriceScale: {
+                visible: disp.axis !== 'hide',
                 borderVisible: false,
                 scaleMargins: {
                     top: 0.08,
@@ -308,6 +323,20 @@ function MiniIntraday({
             };
         };
         const isLine = disp.style === 'line';
+        // 刻度 % 模式：軸標籤以相對昨收的漲跌幅呈現（軸取第一個序列的
+        // formatter — baseline 先加所以由它決定；bars 同步設定保險）
+        const pctFormat =
+            disp.axis === 'pct'
+                ? {
+                      type: 'custom' as const,
+                      minMove: 0.01,
+                      formatter: (p: number) => {
+                          const ref = refPriceRef.current;
+                          if (!ref) return '';
+                          return `${(((p - ref) / ref) * 100).toFixed(2)}%`;
+                      },
+                  }
+                : undefined;
         const price = chart.addSeries(BaselineSeries, {
             baseValue: { type: 'price', price: refPriceRef.current },
             topLineColor: isLine ? c.up : 'transparent',
@@ -321,6 +350,7 @@ function MiniIntraday({
             lastValueVisible: false,
             crosshairMarkerVisible: false,
             autoscaleInfoProvider: symmetric,
+            ...(pctFormat ? { priceFormat: pctFormat } : {}),
         });
         const bars = chart.addSeries(BarSeries, {
             upColor: c.up,
@@ -331,6 +361,7 @@ function MiniIntraday({
             lastValueVisible: false,
             visible: disp.style === 'bars',
             autoscaleInfoProvider: symmetric,
+            ...(pctFormat ? { priceFormat: pctFormat } : {}),
         });
         const avg = chart.addSeries(LineSeries, {
             color: avgColor,
@@ -1105,17 +1136,12 @@ export function IntradayWallPanel({
                                 onClick={() => setDispOpen(false)}
                             />
                             <span className={chartUi.settingsPop}>
-                                <span className={chartUi.settingsRow}>
-                                    <span
-                                        className={chartUi.settingsLabel}
-                                    >
-                                        套用
-                                    </span>
+                                <span className={styles.dispTabs}>
                                     {WALL_CATS.map((c) => (
                                         <button
                                             key={c.key}
                                             className={
-                                                chartUi.scaleBtn[
+                                                styles.dispTab[
                                                     editTarget.kind ===
                                                         'cat' &&
                                                     editTarget.cat === c.key
@@ -1123,6 +1149,7 @@ export function IntradayWallPanel({
                                                         : 'normal'
                                                 ]
                                             }
+                                            title={`${c.label}類的全域設定`}
                                             onClick={() =>
                                                 setEditTarget({
                                                     kind: 'cat',
@@ -1133,6 +1160,14 @@ export function IntradayWallPanel({
                                             {c.label}
                                         </button>
                                     ))}
+                                    {editTarget.kind === 'code' && (
+                                        <button
+                                            className={styles.dispTab.active}
+                                            title='此檔的單獨覆寫設定'
+                                        >
+                                            {editTarget.code}
+                                        </button>
+                                    )}
                                 </span>
                                 {editTarget.kind === 'code' && (
                                     <span className={chartUi.settingsRow}>
@@ -1143,12 +1178,16 @@ export function IntradayWallPanel({
                                         >
                                             單檔
                                         </span>
-                                        <span
-                                            className={
-                                                chartUi.scaleBtn.active
+                                        <span>
+                                            覆寫「
+                                            {
+                                                WALL_CATS.find(
+                                                    (c) =>
+                                                        c.key ===
+                                                        editTarget.cat,
+                                                )?.label
                                             }
-                                        >
-                                            {editTarget.code}
+                                            」類別設定
                                         </span>
                                         <button
                                             className={
@@ -1223,6 +1262,43 @@ export function IntradayWallPanel({
                                             }
                                             onClick={() =>
                                                 patchDisp({ scale: v })
+                                            }
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </span>
+                                <span className={chartUi.settingsRow}>
+                                    <span
+                                        className={chartUi.settingsLabel}
+                                    >
+                                        刻度
+                                    </span>
+                                    {(
+                                        [
+                                            ['price', '數字'],
+                                            ['pct', '%'],
+                                            ['hide', '隱藏'],
+                                        ] as const
+                                    ).map(([v, label]) => (
+                                        <button
+                                            key={v}
+                                            className={
+                                                chartUi.scaleBtn[
+                                                    targetEff.axis === v
+                                                        ? 'active'
+                                                        : 'normal'
+                                                ]
+                                            }
+                                            title={
+                                                v === 'hide'
+                                                    ? '隱藏 Y 軸刻度，圖表用滿整格寬度'
+                                                    : v === 'pct'
+                                                      ? '刻度顯示相對昨收的漲跌幅 %'
+                                                      : '刻度顯示價格數字'
+                                            }
+                                            onClick={() =>
+                                                patchDisp({ axis: v })
                                             }
                                         >
                                             {label}

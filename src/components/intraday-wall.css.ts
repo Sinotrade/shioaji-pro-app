@@ -190,6 +190,47 @@ export const cellLock = styleVariants({
     down: [cellLockBase, { background: vars.color.down }],
 });
 
+// 顯示設定 popover 的類別分頁籤 — 整排、active 底色＋下劃線，
+// 視覺上明確表達「上面選類別、下面是該類別的設定」
+export const dispTabs = style({
+    display: 'flex',
+    margin: '-8px -10px 4px',
+    borderBottom: `1px solid ${vars.color.border}`,
+    borderTopLeftRadius: vars.radius.md,
+    borderTopRightRadius: vars.radius.md,
+    overflow: 'hidden',
+});
+
+const dispTabBase = style({
+    flex: 1,
+    textAlign: 'center',
+    fontFamily: vars.font.body,
+    fontSize: '0.66rem',
+    fontWeight: 500,
+    padding: '6px 10px',
+    cursor: 'pointer',
+    background: 'transparent',
+    border: 'none',
+    borderBottom: '2px solid transparent',
+    color: vars.color.mutedForeground,
+    whiteSpace: 'nowrap',
+    transition: 'all 0.12s',
+    ':hover': { color: vars.color.foreground },
+});
+
+export const dispTab = styleVariants({
+    normal: [dispTabBase],
+    active: [
+        dispTabBase,
+        {
+            color: vars.color.foreground,
+            background: vars.color.inset,
+            borderBottomColor: vars.color.accent,
+            fontWeight: 600,
+        },
+    ],
+});
+
 // 單檔設定齒輪 — 平時隱形，滑過 cell 才浮現
 export const cellGear = style({
     display: 'inline-flex',
