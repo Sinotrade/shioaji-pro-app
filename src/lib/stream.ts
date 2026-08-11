@@ -532,3 +532,12 @@ export function onContractEvent(
         contractEventListeners.delete(listener);
     };
 }
+
+// 模組層有 SSE 連線、計時器與 listener 註冊 — HMR 熱換會疊出第二條
+// SSE 連線與殭屍 listener（每 tick 重複灌、CPU 飆高）。一變更就整頁
+// 重載，開發期不會再累積疊層。
+if (import.meta.hot) {
+    import.meta.hot.accept(() => {
+        import.meta.hot?.invalidate();
+    });
+}
