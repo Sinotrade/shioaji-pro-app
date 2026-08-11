@@ -19,7 +19,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { colorWithOpacity } from '../lib/indicator-defs';
-import { primeContract } from '../lib/contracts-cache';
+import { ensureContract } from '../lib/contracts-cache';
 import {
     sessionMinutes,
     sessionWindowFor,
@@ -28,14 +28,13 @@ import {
 } from '../lib/intraday-session';
 import {
     fetchKbars,
+    fetchSnapshots,
     fetchWatchlists,
-    resolveContract,
-    subscribeContractQuotes,
     type ServerWatchlist,
 } from '../lib/shioaji';
-import { registerCodeAlias } from '../lib/stream';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { ContractInfo } from '../lib/types/contract';
+import type { Snapshot } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
 import {
     dateStrOffset,
@@ -116,7 +115,14 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
                 scaleMargins: { top: 0.08, bottom: 0.08 },
             },
             leftPriceScale: { visible: false },
-            timeScale: { visible: false, minBarSpacing: 0.001 },
+            // lockVisibleTimeRangeOnResize：排列切換/面板縮放時 autoSize
+            // 觸發 resize，不鎖範圍的話 lightweight-charts 會保持 bar
+            // spacing 而讓時段框被裁掉或擠到一側（與完整版走勢圖同參數）
+            timeScale: {
+                visible: false,
+                minBarSpacing: 0.001,
+                lockVisibleTimeRangeOnResize: true,
+            },
             handleScroll: false,
             handleScale: false,
             autoSize: true,
@@ -389,16 +395,30 @@ function MiniIntraday({ contract }: { contract: ContractInfo }) {
 }
 
 // ---- cell header (price/chg from live quote, lamp on limit lock) ----
+// 開頁後尚無 tick（收盤後看盤、鎖死停板、冷門股）→ 退回 snapshot 的
+// 收盤/漲跌，否則整面牆的表頭會掛「—」直到各檔各自成交一筆
 
-function CellHead({ contract }: { contract: ContractInfo }) {
+function CellHead({
+    contract,
+    snap,
+}: {
+    contract: ContractInfo;
+    snap?: Snapshot;
+}) {
     const quote = useQuote(contract.code);
     const tick = quote?.tick ?? quote?.index;
-    const price = tick ? Number(tick.close) : NaN;
+    const price = tick
+        ? Number(tick.close)
+        : snap
+          ? Number(snap.close)
+          : NaN;
     const ref = quote?.tick
         ? Number(tick?.close) - Number(quote.tick.price_chg ?? 0)
         : quote?.index
           ? Number(quote.index.reference)
-          : Number(contract.reference);
+          : snap
+            ? Number(snap.close) - Number(snap.change_price ?? 0)
+            : Number(contract.reference);
     const hasPx = Number.isFinite(price) && price > 0;
     const chgPct =
         hasPx && Number.isFinite(ref) && ref > 0
@@ -457,9 +477,8 @@ export function IntradayWallPanel({
     const [rows, setRows] = useState(initialRows ?? 2);
     const [page, setPage] = useState(0);
     const [cells, setCells] = useState<ContractInfo[]>([]);
+    const [snaps, setSnaps] = useState<Map<string, Snapshot>>(new Map());
     const [phase, setPhase] = useState<'boot' | 'ready' | 'error'>('boot');
-    const resolvedRef = useRef(new Map<string, ContractInfo>());
-    const subscribedRef = useRef(new Set<string>());
     const onConfigChangeRef = useRef(onConfigChange);
     onConfigChangeRef.current = onConfigChange;
 
@@ -521,24 +540,16 @@ export function IntradayWallPanel({
             const out: ContractInfo[] = [];
             await Promise.allSettled(
                 slice.map(async (c) => {
-                    let info = resolvedRef.current.get(c.code);
-                    if (!info) {
-                        info = await resolveContract(
-                            c.code,
-                            c.security_type ?? undefined,
-                        );
-                        resolvedRef.current.set(c.code, info);
-                        primeContract(info);
-                        if (info.target_code) {
-                            registerCodeAlias(info.target_code, info.code);
-                        }
-                    }
-                    if (!subscribedRef.current.has(info.code)) {
-                        subscribedRef.current.add(info.code);
-                        await subscribeContractQuotes(info).catch(() => {
-                            subscribedRef.current.delete(info!.code);
-                        });
-                    }
+                    // 走共用 contract cache（ensureContract）而非自行
+                    // resolve+prime：自選清單已解析過的檔拿到「同一個物
+                    // 件」，alias 註冊與行情訂閱（含失敗重試）也在裡面。
+                    // 若在這裡 prime 新物件，App 的兩個 selected 同步
+                    // effect（items 版 vs cache 版）會互相覆寫，造成無限
+                    // re-render + K 線/走勢圖 kbars 風暴（QA 實測 28 req/s）
+                    const info = await ensureContract(
+                        c.code,
+                        c.security_type ?? undefined,
+                    );
                     out.push(info);
                 }),
             );
@@ -550,6 +561,25 @@ export function IntradayWallPanel({
                     (order.get(a.code) ?? 99) - (order.get(b.code) ?? 99),
             );
             setCells(out);
+            // 表頭的 snapshot 退路 — 失敗就算了（有 tick 就用不到）
+            fetchSnapshots(out)
+                .then((list) => {
+                    if (cancelled) return;
+                    const byCode = new Map(list.map((s) => [s.code, s]));
+                    setSnaps(
+                        new Map(
+                            out.flatMap((c) => {
+                                const s =
+                                    byCode.get(c.code) ??
+                                    (c.target_code
+                                        ? byCode.get(c.target_code)
+                                        : undefined);
+                                return s ? [[c.code, s] as const] : [];
+                            }),
+                        ),
+                    );
+                })
+                .catch(() => undefined);
         })();
         return () => {
             cancelled = true;
@@ -661,7 +691,10 @@ export function IntradayWallPanel({
                             title={`${contract.code} ${contract.name} — 點擊連動`}
                             onClick={() => onPick?.(contract.code)}
                         >
-                            <CellHead contract={contract} />
+                            <CellHead
+                                contract={contract}
+                                snap={snaps.get(contract.code)}
+                            />
                             <MiniIntraday contract={contract} />
                         </div>
                     ))}

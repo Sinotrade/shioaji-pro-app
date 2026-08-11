@@ -57,7 +57,11 @@ import { usePoll } from './hooks/use-poll';
 import { useWatchlist } from './hooks/use-watchlist';
 import { trackActivity } from './lib/activity';
 import { agentModule, backtestModule } from './lib/features';
-import { ensureContract, useContract } from './lib/contracts-cache';
+import {
+    ensureContract,
+    getCachedContract,
+    useContract,
+} from './lib/contracts-cache';
 import { reportDailyPnl } from './lib/risk';
 import { isTauri, openPopout } from './lib/tauri';
 import {
@@ -586,7 +590,18 @@ export default function App() {
             const refreshed = items.find(
                 (item) => item.contract.code === selected.code,
             );
-            if (refreshed && refreshed.contract !== selected) {
+            // 只在 items 的物件就是 contract cache 的最新物件時才採用 —
+            // 若其他面板（權證/個股期/走勢牆）對同一檔 prime 了另一個物
+            // 件，這裡採 items 版、下面的 cachedSelected effect 採 cache
+            // 版，兩個 effect 會互相覆寫成無限 re-render（K 線/走勢圖
+            // 每輪都重抓 kbars 的風暴）。cache 是唯一權威來源；自選清單
+            // 載入時本來就會把自己的物件 prime 進 cache，不會漏更新
+            if (
+                refreshed &&
+                refreshed.contract !== selected &&
+                (getCachedContract(selected.code) ?? refreshed.contract) ===
+                    refreshed.contract
+            ) {
                 setSelected(refreshed.contract);
             }
         }

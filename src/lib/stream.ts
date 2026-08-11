@@ -99,7 +99,15 @@ function flushQuoteEmits() {
     const codes = Array.from(dirtyQuoteCodes);
     dirtyQuoteCodes.clear();
     for (const code of codes) {
-        quoteListeners.get(code)?.forEach((l) => l());
+        quoteListeners.get(code)?.forEach((l) => {
+            // 單一 listener 拋錯不能中斷整批 flush — dirty set 已清空，
+            // 中斷會讓其他 code 的更新無聲丟失直到下一筆 tick
+            try {
+                l();
+            } catch (err) {
+                console.error('[stream] quote listener threw', err);
+            }
+        });
     }
 }
 
