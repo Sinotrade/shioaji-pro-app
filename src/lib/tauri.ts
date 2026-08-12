@@ -146,6 +146,15 @@ async function spawnServer(
     };
 }
 
+async function nativeOwnsHarnessSidecar(port: number): Promise<boolean> {
+    try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        return await invoke<boolean>('agent_harness_sidecar_owned', { port });
+    } catch {
+        return false;
+    }
+}
+
 // startup/login output lands in ~/.shioaji/sjpro-server-<port>.log now —
 // read it back for error surfacing and the CA-activation warning scan
 async function readServerLog(port: number): Promise<string> {
@@ -672,7 +681,10 @@ export async function serverStart(opts: {
             EXPECTED_SERVER_VERSION !== '' &&
             st.version !== undefined &&
             st.version !== EXPECTED_SERVER_VERSION;
-        const external = getSpawnPort() !== st.port;
+        const nativeHarnessOwned =
+            st.agentHarnessEnabled !== true ||
+            (await nativeOwnsHarnessSidecar(st.port));
+        const external = getSpawnPort() !== st.port || !nativeHarnessOwned;
         // An enabled external daemon was started with a different native
         // signing secret. Never attach and then fail every mutation.
         const harnessMismatch = external && st.agentHarnessEnabled === true;
