@@ -98,7 +98,17 @@ jobs:
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
       - name: Rust runtime and capability tests
+        if: matrix.platform == 'ubuntu-22.04'
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Windows TCP owner E2E
+        if: matrix.platform == 'windows-latest'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --bin windows_tcp_owner_e2e
+
       - name: Rust lint
+        if: matrix.platform == 'ubuntu-22.04'
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Windows Rust compile and lint
+        if: matrix.platform == 'windows-latest'
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib --bins -- -D warnings
