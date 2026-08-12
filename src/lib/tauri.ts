@@ -191,20 +191,12 @@ async function spawnServerViaChannels(
     } catch (e) {
         return { ok: false, output: `啟動失敗：${String(e)}` };
     }
-    // remember the child pid — a foreground `server start` never registers
-    // with the CLI daemon state, so stop/restart (even after an app relaunch)
-    // must kill this pid ourselves. Also hand it to the Rust side, which
-    // reaps the child on app exit (a parentless server zombifies: socket
-    // bound, HTTP dead — and squats the port for the next launch).
+    // Remember the child pid for legacy stop/restart behavior. This fallback
+    // intentionally cannot register a trusted harness sidecar: renderer-owned
+    // PID/port input must never establish the native signing boundary.
     if (child?.pid) {
         setServerPid(child.pid);
         setSpawnPort(port);
-        try {
-            const { invoke } = await import('@tauri-apps/api/core');
-            await invoke('register_server_pid', { pid: child.pid });
-        } catch {
-            // older shell without the command — exit reaping unavailable
-        }
     }
     // poll until the server answers, or it dies, or we give up (~45s covers a
     // production login + CA activation + contract load)
