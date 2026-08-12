@@ -30,10 +30,6 @@ import { notify } from './trade';
 
 export { isTauri } from './runtime';
 
-// Do not inject capability material into the server until the rshioaji team
-// approves and releases the matching protocol.
-const SERVER_TRADING_CAPABILITY_ENABLED = false;
-
 // poll /health until it answers, then reload — used after a fresh start so
 // every panel bootstraps cleanly instead of racing a server that's still
 // warming up (login + CA activation + contract load)
@@ -65,6 +61,7 @@ export interface ServerStatus {
     simulation?: boolean;
     version?: string;
     scheme?: ApiScheme;
+    agentHarnessEnabled?: boolean;
 }
 
 export interface SidecarResult {
@@ -378,6 +375,7 @@ export async function serverStatus(): Promise<ServerStatus | null> {
             simulation: hit.info.simulation,
             version: hit.info.version,
             scheme: hit.scheme,
+            agentHarnessEnabled: hit.info.agentHarnessEnabled,
             // only claim a pid for the server we spawned — an attached
             // external server has an unknown pid, and showing our stale
             // record for it is misleading
@@ -404,6 +402,7 @@ export async function serverStatus(): Promise<ServerStatus | null> {
                         simulation: hit.info.simulation,
                         version: hit.info.version,
                         scheme: hit.scheme,
+                        agentHarnessEnabled: hit.info.agentHarnessEnabled,
                         pid: st.pid,
                     };
                 }
@@ -448,7 +447,11 @@ async function probeFetch(
 async function probeInfo(
     port: number,
     scheme: ApiScheme = getApiScheme(),
-): Promise<{ version: string; simulation: boolean } | null> {
+): Promise<{
+    version: string;
+    simulation: boolean;
+    agentHarnessEnabled: boolean;
+} | null> {
     try {
         // generous timeout: at boot the plugin-http queue is congested and
         // a tight 1.5s deadline cancelled probes against LIVE servers —
@@ -462,12 +465,17 @@ async function probeInfo(
         const info = (await res.json()) as {
             version?: string;
             simulation?: boolean;
+            agent_harness?: { enabled?: boolean };
         };
         if (
             typeof info.version === 'string' &&
             typeof info.simulation === 'boolean'
         ) {
-            return { version: info.version, simulation: info.simulation };
+            return {
+                version: info.version,
+                simulation: info.simulation,
+                agentHarnessEnabled: info.agent_harness?.enabled === true,
+            };
         }
     } catch {
         // not answering
@@ -482,7 +490,11 @@ async function probeInfoEither(
     port: number,
     preferred: ApiScheme = getApiScheme(),
 ): Promise<{
-    info: { version: string; simulation: boolean };
+    info: {
+        version: string;
+        simulation: boolean;
+        agentHarnessEnabled: boolean;
+    };
     scheme: ApiScheme;
 } | null> {
     const other: ApiScheme = preferred === 'https' ? 'http' : 'https';
@@ -588,6 +600,7 @@ export async function serverStart(opts: {
                     simulation: hit.info.simulation,
                     version: hit.info.version,
                     scheme: hit.scheme,
+                    agentHarnessEnabled: hit.info.agentHarnessEnabled,
                     pid: getServerPid() ?? undefined,
                 };
                 break;
@@ -618,6 +631,7 @@ export async function serverStart(opts: {
                 // undefined and adopts an old-version orphan
                 version: found.info.version,
                 scheme: found.scheme,
+                agentHarnessEnabled: found.info.agentHarnessEnabled,
                 pid: getServerPid() ?? undefined,
             };
         }
@@ -644,6 +658,9 @@ export async function serverStart(opts: {
             st.version !== undefined &&
             st.version !== EXPECTED_SERVER_VERSION;
         const external = getSpawnPort() !== st.port;
+        // An enabled external daemon was started with a different native
+        // signing secret. Never attach and then fail every mutation.
+        const harnessMismatch = external && st.agentHarnessEnabled === true;
         // 金鑰 hash 領養檢查 (issue #16): our OWN spawn may still be logged
         // into the credentials it was STARTED with — after a re-login with a
         // different API key, adopting it shows the old account's data. Only
@@ -667,6 +684,7 @@ export async function serverStart(opts: {
             !schemeMismatch &&
             caOk &&
             !versionMismatch &&
+            !harnessMismatch &&
             !keyMismatch
         ) {
             // healthy, right mode, right version, CA live — just use it
@@ -679,7 +697,7 @@ export async function serverStart(opts: {
                 portChanged: setApiPort(st.port) || schemeChanged,
             };
         }
-        if (versionMismatch && external) {
+        if ((versionMismatch || harnessMismatch) && external) {
             // 使用者自己的 server 版本不符（例如 8080 上的舊 CLI）——
             // 絕不動它，直接往下走：在別的 port 起自帶 binary
         } else {
@@ -698,6 +716,8 @@ export async function serverStart(opts: {
                     ? '模式與設定不符'
                     : schemeMismatch
                       ? `連線協定不符（server ${stScheme}，需 ${wantScheme}）`
+                      : harnessMismatch
+                        ? 'Agent Harness 金鑰不屬於此 App instance'
                       : versionMismatch
                         ? `版本不符（server ${st.version}，需 ${EXPECTED_SERVER_VERSION}）`
                         : keyMismatch
@@ -754,22 +774,6 @@ export async function serverStart(opts: {
         SJ_HTTP_LOG: 'false',
         RUST_LOG: 'warn',
     };
-    if (SERVER_TRADING_CAPABILITY_ENABLED) {
-        try {
-            const { invoke } = await import('@tauri-apps/api/core');
-            const capability = await invoke<{
-                keyPath: string;
-                trustedCli?: string;
-            }>('agent_trading_environment');
-            // Only enable daemon enforcement when the app has a trusted
-            // bundled CLI and therefore a running peer-verified broker.
-            if (capability.trustedCli) {
-                env.SJ_AGENT_CAPABILITY_KEY_PATH = capability.keyPath;
-            }
-        } catch {
-            // Older desktop shells keep the server's backward-compatible mode.
-        }
-    }
     // CA certificate — required for production orders, ignored in simulation
     if (opts.caPath) {
         env.SJ_CA_PATH = opts.caPath;

@@ -13,10 +13,13 @@ export interface Health {
     // 1.7.2+
     ca_expires_in_days?: number;
     ca_expired?: boolean;
-    agent_capabilities?: {
-        version: number;
-        mutation_auth_required: boolean;
-        broker_transport: string;
-        daemon_instance_id?: string;
+    agent_harness: {
+        enabled: boolean;
+        mode: 'off' | 'production' | 'all';
+        capability_version: number;
+        capability_header: string;
+        digest_scheme: string;
+        audience: string | null;
+        max_ttl_seconds: number;
     };
 }
