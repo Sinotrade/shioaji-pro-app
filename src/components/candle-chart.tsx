@@ -650,10 +650,13 @@ export function CandleChart({
             `${liveQuote.date}T${liveQuote.time}`,
         );
         const bucketSec = tf.minutes * 60;
+        // close-label-right（與 aggregate/1 分 K 歷史同慣例）：成交 τ 屬
+        // 於哪個「收盤 label」桶 — floor 會把 live 桶標早一格，1 分 K
+        // 時甚至會併進前一分鐘的歷史 bar
         const bucket =
             tf.minutes >= 1440
                 ? Math.floor(tickTime / 86400) * 86400
-                : Math.floor(tickTime / bucketSec) * bucketSec;
+                : Math.floor(tickTime / bucketSec) * bucketSec + bucketSec;
         let bar = lastBarRef.current;
         // live 桶與歷史尾端出現 3 個桶以上的斷層（換時段/上游資料晚發布）
         // → 排程一次歷史補抓把洞補起來；live 桶照常先畫，補抓完成後

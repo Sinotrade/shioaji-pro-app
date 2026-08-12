@@ -33,6 +33,10 @@ export function kbarsToCandles(k: KBars): Candle[] {
 }
 
 // Aggregate 1-minute candles into N-minute or daily bars.
+// 1 分 K 是 close-label-right（label 08:46 = 08:45:00–08:45:59 成交），
+// N 分 K 必須沿用同一慣例：ceil 到桶的收盤 label（5 分 K = 08:50、
+// 08:55…13:45，08:50 那根 = label 08:46–08:50）。floor 會整體早移
+// 一分鐘且開盤桶只剩 4 根。日 K 維持日曆日。
 export function aggregate(candles: Candle[], minutes: number): Candle[] {
     if (minutes <= 1) return candles;
     const out: Candle[] = [];
@@ -42,7 +46,7 @@ export function aggregate(candles: Candle[], minutes: number): Candle[] {
         const bucket =
             minutes >= 1440
                 ? Math.floor(c.time / 86400) * 86400
-                : Math.floor(c.time / bucketSec) * bucketSec;
+                : Math.ceil(c.time / bucketSec) * bucketSec;
         if (!cur || cur.time !== bucket) {
             if (cur) out.push(cur);
             cur = { ...c, time: bucket };
