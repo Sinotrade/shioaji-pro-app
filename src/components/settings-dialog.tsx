@@ -3,6 +3,7 @@
 // 收斂到這裡；風控「規則」也在此（Kill Switch 留在 header，一鍵可達）。
 
 import {
+    Bot,
     LayoutGrid,
     Palette,
     RefreshCw,
@@ -50,6 +51,10 @@ import {
     useToastScale,
     type ToastScale,
 } from '../lib/toast-prefs';
+import {
+    isAgentHarnessEnabled,
+    setAgentHarnessEnabled,
+} from '../lib/tauri';
 import { Orb } from './orb';
 import * as hud from './hud-header.css';
 import * as panel from './panel.css';
@@ -66,13 +71,20 @@ const CONVENTION_OPTIONS: { key: Convention; label: string }[] = [
     { key: 'intl', label: '綠漲紅跌' },
 ];
 
-type SettingsTab = 'appearance' | 'soundPrivacy' | 'accounts' | 'risk' | 'layout';
+type SettingsTab =
+    | 'appearance'
+    | 'soundPrivacy'
+    | 'accounts'
+    | 'risk'
+    | 'agent'
+    | 'layout';
 
 const TABS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { key: 'appearance', label: '外觀', icon: <Palette size={13} /> },
     { key: 'soundPrivacy', label: '音效與隱私', icon: <Volume2 size={13} /> },
     { key: 'accounts', label: '帳號', icon: <UserRound size={13} /> },
     { key: 'risk', label: '風控', icon: <ShieldAlert size={13} /> },
+    { key: 'agent', label: 'Agent', icon: <Bot size={13} /> },
     { key: 'layout', label: '版面', icon: <LayoutGrid size={13} /> },
 ];
 
@@ -389,6 +401,48 @@ function RiskSection() {
     );
 }
 
+function AgentSection() {
+    const [enabled, setEnabled] = useState(isAgentHarnessEnabled());
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+
+    const toggle = async () => {
+        const next = !enabled;
+        setBusy(true);
+        setError('');
+        try {
+            await setAgentHarnessEnabled(next);
+            setEnabled(next);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <>
+            <span className={hud.settingLabel}>Agent Harness</span>
+            <div className={hud.switchRow}>
+                <span className={hud.switchLabel}>保護 Agent 下單操作</span>
+                <button
+                    className={hud.switchTrack[enabled ? 'on' : 'off']}
+                    disabled={busy}
+                    title={enabled ? '關閉 Agent Harness' : '開啟 Agent Harness'}
+                    onClick={() => void toggle()}
+                />
+            </div>
+            <span className={hud.emptyHint}>
+                關閉時，一般 UI 下單走原本的直接 HTTP 路徑；開啟後，Agent
+                與 UI 的交易 mutation 都需要一次性 capability。切換立即生效，
+                不需重啟伺服器。
+            </span>
+            {busy && <span className={hud.emptyHint}>切換中…</span>}
+            {error && <span className={styles.errorText}>{error}</span>}
+        </>
+    );
+}
+
 export interface LayoutSectionProps {
     onResetWorkspace: () => void;
     // 開版面庫（presets/save/load/rename/delete 全在版面庫 dialog）
@@ -484,6 +538,7 @@ export function SettingsDialog({
                         {tab === 'soundPrivacy' && <SoundPrivacySection />}
                         {tab === 'accounts' && <AccountsSection />}
                         {tab === 'risk' && <RiskSection />}
+                        {tab === 'agent' && <AgentSection />}
                         {tab === 'layout' && (
                             <LayoutSection {...layoutProps} onClose={onClose} />
                         )}

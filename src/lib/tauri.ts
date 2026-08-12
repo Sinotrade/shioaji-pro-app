@@ -10,6 +10,7 @@ import {
     DEFAULT_PORT,
     EXPECTED_SERVER_VERSION,
     LEGACY_PORT,
+    getApiBase,
     getApiPort,
     getApiScheme,
     getServerPid,
@@ -104,6 +105,7 @@ async function spawnServer(
     env: Record<string, string>,
     port: number,
     scheme: ApiScheme = 'http',
+    agentHarnessEnabled = false,
 ): Promise<SidecarResult> {
     const fullEnv = { NO_COLOR: '1', ...env };
     const { invoke } = await import('@tauri-apps/api/core');
@@ -113,6 +115,7 @@ async function spawnServer(
             args,
             env: fullEnv,
             port,
+            agentHarnessEnabled,
         });
     } catch (e) {
         if (/not found|unknown/i.test(String(e))) {
@@ -586,6 +589,7 @@ export async function serverStart(opts: {
     caPath?: string;
     caPasswd?: string;
     httpsEnabled?: boolean;
+    agentHarnessEnabled?: boolean;
 }): Promise<StartResult> {
     // when production+CA is requested, a daemon is only good enough to reuse
     // if its CA is actually active — otherwise orders 400 (issue #1)
@@ -807,7 +811,13 @@ export async function serverStart(opts: {
     const args = ['server', 'start', '--no-open'];
     if (opts.production) args.push('--production');
     // spawn (don't await to completion) — the start runs in foreground
-    const res = await spawnServer(args, env, port, wantScheme);
+    const res = await spawnServer(
+        args,
+        env,
+        port,
+        wantScheme,
+        opts.agentHarnessEnabled,
+    );
     if (res.ok) {
         // remember which credentials THIS spawn was started with (issue #16)
         // — null (no crypto.subtle) clears the record so a stale hash never
@@ -923,6 +933,7 @@ export interface DesktopSettings {
     caPath: string; // Sinopac.pfx — required for production orders
     caPasswd: string;
     httpsEnabled: boolean; // serve the sidecar over local HTTPS (mkcert)
+    agentHarnessEnabled: boolean; // runtime-toggleable; no server restart
 }
 
 const EMPTY_SETTINGS: DesktopSettings = {
@@ -933,13 +944,46 @@ const EMPTY_SETTINGS: DesktopSettings = {
     caPath: '',
     caPasswd: '',
     httpsEnabled: false,
+    agentHarnessEnabled: false,
 };
+
+const AGENT_HARNESS_UI_KEY = 'sj-agent-harness-enabled';
+const AGENT_HARNESS_UI_EVENT = 'sj-agent-harness-enabled-changed';
+let agentHarnessEnabledCache =
+    typeof localStorage !== 'undefined' &&
+    localStorage.getItem(AGENT_HARNESS_UI_KEY) === 'true';
+
+export function isAgentHarnessEnabled(): boolean {
+    return agentHarnessEnabledCache;
+}
+
+function cacheAgentHarnessEnabled(enabled: boolean) {
+    const changed = agentHarnessEnabledCache !== enabled;
+    agentHarnessEnabledCache = enabled;
+    localStorage.setItem(AGENT_HARNESS_UI_KEY, String(enabled));
+    if (changed) {
+        window.dispatchEvent(
+            new CustomEvent<boolean>(AGENT_HARNESS_UI_EVENT, {
+                detail: enabled,
+            }),
+        );
+    }
+}
+
+export function subscribeAgentHarnessEnabled(
+    listener: (enabled: boolean) => void,
+): () => void {
+    const handle = (event: Event) =>
+        listener((event as CustomEvent<boolean>).detail);
+    window.addEventListener(AGENT_HARNESS_UI_EVENT, handle);
+    return () => window.removeEventListener(AGENT_HARNESS_UI_EVENT, handle);
+}
 
 export async function loadDesktopSettings(): Promise<DesktopSettings> {
     if (!isTauri) return { ...EMPTY_SETTINGS };
     const { LazyStore } = await import('@tauri-apps/plugin-store');
     const store = new LazyStore('settings.json');
-    return {
+    const settings = {
         apiKey: (await store.get<string>('apiKey')) ?? '',
         secretKey: (await store.get<string>('secretKey')) ?? '',
         production: (await store.get<boolean>('production')) ?? false,
@@ -947,7 +991,11 @@ export async function loadDesktopSettings(): Promise<DesktopSettings> {
         caPath: (await store.get<string>('caPath')) ?? '',
         caPasswd: (await store.get<string>('caPasswd')) ?? '',
         httpsEnabled: (await store.get<boolean>('httpsEnabled')) ?? false,
+        agentHarnessEnabled:
+            (await store.get<boolean>('agentHarnessEnabled')) ?? false,
     };
+    cacheAgentHarnessEnabled(settings.agentHarnessEnabled);
+    return settings;
 }
 
 export async function saveDesktopSettings(s: DesktopSettings) {
@@ -961,7 +1009,20 @@ export async function saveDesktopSettings(s: DesktopSettings) {
     await store.set('caPath', s.caPath);
     await store.set('caPasswd', s.caPasswd);
     await store.set('httpsEnabled', s.httpsEnabled);
+    await store.set('agentHarnessEnabled', s.agentHarnessEnabled);
+    cacheAgentHarnessEnabled(s.agentHarnessEnabled);
     await store.save();
+}
+
+export async function setAgentHarnessEnabled(enabled: boolean): Promise<void> {
+    if (!isTauri) throw new Error('Agent Harness 只能由 Desktop native host 切換');
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('agent_harness_set_enabled', {
+        origin: new URL(getApiBase()).origin,
+        enabled,
+    });
+    const settings = await loadDesktopSettings();
+    await saveDesktopSettings({ ...settings, agentHarnessEnabled: enabled });
 }
 
 // native file picker for the Sinopac.pfx certificate

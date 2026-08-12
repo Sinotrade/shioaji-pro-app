@@ -1,6 +1,7 @@
 // src/lib/api.ts
 
 import { getApiBase, isTauri } from './runtime';
+import { isAgentHarnessEnabled } from './tauri';
 
 // resolved per request — the server port can move at runtime (e.g. the boot
 // flow discovers the default port occupied and starts on a fallback), and a
@@ -18,6 +19,14 @@ const AGENT_HARNESS_MUTATIONS = new Set([
     '/api/v1/order/reserve_stock',
     '/api/v1/order/reserve_earmarking',
 ]);
+
+export function shouldProxyAgentHarnessMutation(
+    desktop: boolean,
+    enabled: boolean,
+    path: string,
+): boolean {
+    return desktop && enabled && AGENT_HARNESS_MUTATIONS.has(path);
+}
 
 // The desktop webview enforces CORS but the shioaji server doesn't answer
 // preflight OPTIONS (405) — route requests through Tauri's Rust-side fetch,
@@ -64,7 +73,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
     // Serialize once in the WebView, then let the native bridge sign and send
     // these exact bytes. It also transparently sends unsigned when attached to
     // an older server whose harness is disabled.
-    if (isTauri && AGENT_HARNESS_MUTATIONS.has(path)) {
+    if (shouldProxyAgentHarnessMutation(isTauri, isAgentHarnessEnabled(), path)) {
         const bodyText = JSON.stringify(body);
         const { invoke } = await import('@tauri-apps/api/core');
         const proxied = await invoke<{ status: number; body: string }>(
