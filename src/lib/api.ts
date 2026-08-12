@@ -28,14 +28,7 @@ export function shouldProxyAgentHarnessMutation(
     return desktop && enabled && AGENT_HARNESS_MUTATIONS.has(path);
 }
 
-// The desktop webview enforces CORS but the shioaji server doesn't answer
-// preflight OPTIONS (405) — route requests through Tauri's Rust-side fetch,
-// which has no CORS, when running in the app.
 async function doFetch(url: string, init?: RequestInit): Promise<Response> {
-    if (isTauri) {
-        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-        return tauriFetch(url, init);
-    }
     return fetch(url, init);
 }
 
