@@ -35,7 +35,11 @@ import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { ContractInfo } from '../lib/types/contract';
 import type { KBars } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
-import { dateStrOffset, wallClockToUtc } from '../lib/utils/kbars';
+import {
+    dateStrOffset,
+    nowWallClockUtc,
+    wallClockToUtc,
+} from '../lib/utils/kbars';
 import { Orb } from './orb';
 import * as styles from './intraday-chart.css';
 import * as panel from './panel.css';
@@ -252,6 +256,9 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const cumVRef = useRef(0);
     const cumPVRef = useRef(0);
     const liveRef = useRef<Readout | null>(null);
+    // 試搓揭示（simtrade）— 不入圖，只在 legend 顯示「試搓 <價>」；
+    // 第一筆真實成交進來即清除
+    const simRef = useRef<{ price: number; chg?: number } | null>(null);
     const hoverRef = useRef<(Readout & { time: number }) | null>(null);
     const lastReloadRef = useRef(0);
     // 換時段重載的目標時段 — 試搓觸發切換時新時段還沒有 kbar，load
@@ -641,6 +648,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         loadedKeyRef.current = '';
         sessionRef.current = null;
         liveRef.current = null;
+        simRef.current = null;
         hoverRef.current = null;
         lastLabelRef.current = 0;
         minuteVolRef.current = 0;
@@ -724,6 +732,58 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         setLoading(true);
         setEmpty(false);
         let cancelled = false;
+        // 歷史拿不到（server 掛/上游未發布/冷門新掛牌）不能讓面板卡在
+        // 空白＋spinner：直接把「空的時段框架」開好 — 參考價/停板/時段
+        // 軸都來自 contract 與現在時間，並讓 loadedKey 成立，live tick
+        // 立刻開始作畫；歷史由排程重試補回後整段覆蓋
+        const scaffoldEmptyFrame = () => {
+            if (!priceSeriesRef.current || !fillerSeriesRef.current) return;
+            const ref = Number(contract.reference);
+            if (!Number.isFinite(ref) || ref <= 0) return;
+            const pend =
+                pendingWinRef.current?.code === contract.code
+                    ? pendingWinRef.current.start
+                    : 0;
+            const win = sessionWindowFor(
+                contract.security_type,
+                pend > 0 ? pend + 60 : nowWallClockUtc(),
+            );
+            applyRefPrice(ref);
+            const minutes = sessionMinutes(win);
+            fillerSeriesRef.current.setData(
+                minutes.map((m, i) =>
+                    i === 0 || i === minutes.length - 1
+                        ? { time: m as UTCTimestamp, value: ref }
+                        : { time: m as UTCTimestamp },
+                ),
+            );
+            const lu = Number(contract.limit_up);
+            const ld = Number(contract.limit_down);
+            if (Number.isFinite(lu) && Number.isFinite(ld) && lu > ld && ld > 0) {
+                limitsRef.current = { up: lu, down: ld };
+                if (scaleMode === 'band') {
+                    limitLinesRef.current = [
+                        fillerSeriesRef.current.createPriceLine({
+                            price: lu,
+                            color: colors.up,
+                            lineWidth: 1,
+                            lineStyle: LineStyle.Dotted,
+                            axisLabelVisible: true,
+                        }),
+                        fillerSeriesRef.current.createPriceLine({
+                            price: ld,
+                            color: colors.down,
+                            lineWidth: 1,
+                            lineStyle: LineStyle.Dotted,
+                            axisLabelVisible: true,
+                        }),
+                    ];
+                }
+            }
+            sessionRef.current = win;
+            loadedKeyRef.current = loadKey;
+            chartRef.current?.timeScale().fitContent();
+        };
         // range covers weekends/holidays and夜盤掛次日檔期的怪癖
         fetchKbars(contract, dateStrOffset(4), dateStrOffset(-1))
             .then((k) => {
@@ -735,9 +795,9 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                         ? pendingWinRef.current.start
                         : 0;
                 if (!last && !pend) {
+                    // 零 kbars — 開空框架讓 live 直接畫，60s 後補歷史
+                    scaffoldEmptyFrame();
                     setEmpty(true);
-                    // loadedKey 不成立時 live tick 進不了任何路徑 —
-                    // 零 kbars（上游未發布/冷門新掛牌）也要排重試自癒
                     retryTimerRef.current = window.setTimeout(
                         () => setReloadSeq((v) => v + 1),
                         60_000,
@@ -903,10 +963,10 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             })
             .catch(() => {
                 if (cancelled) return;
+                // kbars 連重試都失敗（server 掛/開盤壅塞）— 開空框架
+                // 讓 live tick 從現在開始畫，歷史 15s 後重試補回
+                scaffoldEmptyFrame();
                 setEmpty(true);
-                // kbars 連重試都失敗（開盤壅塞/斷線）— load 失敗後
-                // loadedKey 不成立，live tick 進不了重載路徑，不自動
-                // 排程就會永遠卡空狀態
                 retryTimerRef.current = window.setTimeout(
                     () => setReloadSeq((v) => v + 1),
                     15_000,
@@ -967,8 +1027,19 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             return;
         }
         // 試撮揭示價可以是天地價，畫進走勢會撐爆比例 — 只允許觸發
-        // 上面的換時段，不入圖、不進 gap 補洞判斷
-        if ('simtrade' in liveQuote && liveQuote.simtrade) return;
+        // 上面的換時段與 legend 的「試搓」讀值，不入圖、不進 gap 判斷
+        if ('simtrade' in liveQuote && liveQuote.simtrade) {
+            const sp = Number(liveQuote.close);
+            if (Number.isFinite(sp) && sp > 0) {
+                const sc = Number(quote?.tick?.price_chg);
+                simRef.current = {
+                    price: sp,
+                    chg: Number.isFinite(sc) ? sc : undefined,
+                };
+                bumpLegendRef.current();
+            }
+            return;
+        }
         const p = Number(liveQuote.close);
         if (!Number.isFinite(p) || p <= 0) return;
         // 斷圖 >3 分鐘：僅在 total_volume 顯示真有漏量（睡醒/斷線補洞）
@@ -986,6 +1057,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         if (t <= win.start) return;
         const label = tickBucket(win, t);
         if (label < lastLabelRef.current) return; // out-of-order tick
+        if (simRef.current) simRef.current = null; // 開盤了 — 試搓讀值退場
 
         // tick 才帶 price_chg — 用它回推最新參考價（比合約快取新鮮）
         const chg = Number(quote?.tick?.price_chg);
@@ -1082,6 +1154,11 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const live = liveRef.current;
     const hover = hoverRef.current;
     const refPrice = refPriceRef.current;
+    const sim = simRef.current;
+    const simPct =
+        sim?.chg !== undefined && sim.price - sim.chg > 0
+            ? (sim.chg / (sim.price - sim.chg)) * 100
+            : undefined;
     const shownPrice = hover?.price ?? live?.price;
     const dir =
         shownPrice === undefined || !refPrice || shownPrice === refPrice
@@ -1142,6 +1219,14 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                     <span className={styles.sessionChip}>
                         {staleDate ? `${staleDate} ` : ''}
                         {sessionLabel ?? '日盤'}
+                    </span>
+                )}
+                {sim && (
+                    <span className={styles.simChip}>
+                        試搓 {fmtPrice(sim.price)}
+                        {simPct !== undefined
+                            ? ` ${simPct > 0 ? '+' : ''}${simPct.toFixed(2)}%`
+                            : ''}
                     </span>
                 )}
                 <span

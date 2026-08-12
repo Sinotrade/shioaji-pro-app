@@ -613,8 +613,14 @@ export function CandleChart({
             })
             .catch(() => {
                 if (cancelled) return;
+                // clearSeries 已讓 live bars 可以從現在開始堆；歷史
+                // 15s 後自動重試（server 掛掉期間圖不再死等人工切換）
                 clearSeries();
                 setEmpty(true);
+                healTimerRef.current = window.setTimeout(
+                    () => setHistorySeq((v) => v + 1),
+                    15_000,
+                );
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -707,6 +713,9 @@ export function CandleChart({
             // a rejected update (e.g. timestamp older than the series tail)
             // must never take the app down — history reload will resync
         }
+        // 歷史載入失敗後 live bar 已開始堆 — 圖上有東西就不該再掛
+        // 「無 K 線資料」（同值 setState React 會 bail out）
+        setEmpty(false);
     }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
@@ -766,6 +775,9 @@ export function CandleChart({
         const bars = barsRef.current;
         if (bars.length === 0) {
             paneAssignRef.current = paneAssign; // no panes exist right now
+            // 讀值也要清 — 序列移除了但 legend 讀 legendMetaRef，不清
+            // 會殘留上一檔商品的指標數值（無 K 線資料卻顯示 MA 值）
+            legendMetaRef.current = new Map();
             setPaneTops({});
             return;
         }

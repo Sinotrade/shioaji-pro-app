@@ -180,6 +180,9 @@ const WatchRow = memo(function WatchRow({
                 </span>
             )}
             <span className={`${styles.price} ${panel.dirText[dir]}`}>
+                {tick?.simtrade ? (
+                    <span className={styles.simBadge}>試搓</span>
+                ) : null}
                 {fmtPrice(close)}
             </span>
             <span className={styles.name}>{item.contract.name}</span>

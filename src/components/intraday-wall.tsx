@@ -47,6 +47,7 @@ import { fmtPrice } from '../lib/utils/format';
 import {
     dateStrOffset,
     kbarsToCandles,
+    nowWallClockUtc,
     wallClockToUtc,
 } from '../lib/utils/kbars';
 import { Orb } from './orb';
@@ -440,6 +441,43 @@ function MiniIntraday({
         setLoading(true);
         setEmpty(false);
         let cancelled = false;
+        // 歷史拿不到時開好空的時段框架（參考價/停板/時段軸來自
+        // contract 與現在時間）並讓 loadedRef 成立 — live tick 立刻
+        // 作畫，歷史由重試補回
+        const scaffoldEmptyFrame = () => {
+            if (!priceRef.current || !fillerRef.current) return;
+            const ref = Number(contract.reference);
+            if (!Number.isFinite(ref) || ref <= 0) return;
+            const pend =
+                pendingWinRef.current?.code === contract.code
+                    ? pendingWinRef.current.start
+                    : 0;
+            const win = sessionWindowFor(
+                contract.security_type,
+                pend > 0 ? pend + 60 : nowWallClockUtc(),
+            );
+            refPriceRef.current = ref;
+            priceRef.current.applyOptions({
+                baseValue: { type: 'price', price: ref },
+            });
+            const minutes = sessionMinutes(win);
+            fillerRef.current.setData(
+                minutes.map((m, i) =>
+                    i === 0 || i === minutes.length - 1
+                        ? { time: m as UTCTimestamp, value: ref }
+                        : { time: m as UTCTimestamp },
+                ),
+            );
+            refLineRef.current?.applyOptions({ price: ref });
+            const lu = Number(contract.limit_up);
+            const ld = Number(contract.limit_down);
+            if (Number.isFinite(lu) && Number.isFinite(ld) && lu > ld && ld > 0) {
+                limitsRef.current = { up: lu, down: ld };
+            }
+            sessionRef.current = win;
+            loadedRef.current = loadKey;
+            chartApiRef.current?.timeScale().fitContent();
+        };
         const dataKey = `${contract.code}|${reloadSeq}`;
         const cached = kbarsCacheRef.current;
         let kbarsP: Promise<KBars>;
@@ -474,9 +512,9 @@ function MiniIntraday({
                         ? pendingWinRef.current.start
                         : 0;
                 if (!last && !pend) {
+                    // 零 kbars — 開空框架讓 live 直接畫，稍後補歷史
+                    scaffoldEmptyFrame();
                     setEmpty(true);
-                    // 零 kbars 也要排重試 — loadedRef 不成立時 live
-                    // tick 進不了任何路徑，不排程就永遠死格
                     retryTimerRef.current = window.setTimeout(
                         () => setReloadSeq((v) => v + 1),
                         60_000 + Math.random() * 30_000,
@@ -637,10 +675,10 @@ function MiniIntraday({
             })
             .catch(() => {
                 if (cancelled) return;
+                // 失敗 — 開空框架讓 live 直接畫；自動排程重試補歷史，
+                // 加 jitter 讓多格錯開，避免整面牆同秒齊發 kbars
+                scaffoldEmptyFrame();
                 setEmpty(true);
-                // load 失敗後 loadedRef 不成立、live tick 進不了重載
-                // 路徑 — 自動排程重試；加 jitter 讓多格錯開，避免
-                // 整面牆同秒齊發 kbars
                 retryTimerRef.current = window.setTimeout(
                     () => setReloadSeq((v) => v + 1),
                     15_000 + Math.random() * 15_000,
@@ -820,10 +858,12 @@ function CellHead({
                   ? ('down' as const)
                   : null
             : null;
+    const isSim = !!quote?.tick?.simtrade;
     return (
         <div className={styles.cellHead}>
             <span className={styles.cellCode}>{contract.code}</span>
             <span className={styles.cellName}>{contract.name}</span>
+            {isSim && <span className={styles.cellSim}>試搓</span>}
             <span
                 className={
                     locked
