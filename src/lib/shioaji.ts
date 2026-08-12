@@ -329,12 +329,33 @@ export function fetchSnapshots(contracts: ContractBase[]) {
     });
 }
 
-export function fetchKbars(contract: ContractBase, start: string, end: string) {
-    return apiPost<KBars>('/api/v1/data/kbars', {
-        contract: contractKey(contract),
-        start,
-        end,
-    });
+// 開盤壅塞時 kbars 可能懸住（無回應非錯誤）— 每次 10s timeout，
+// timeout/網路/5xx 以 2/4/8s 退避重試，4xx（參數/權限）直接拋出。
+// 比照 capability 訂閱懸住的修法；下單路徑絕不套用這種 abort。
+const KBARS_RETRY_DELAYS = [2000, 4000, 8000];
+
+export async function fetchKbars(
+    contract: ContractBase,
+    start: string,
+    end: string,
+    opts?: { timeoutMs?: number },
+): Promise<KBars> {
+    const body = { contract: contractKey(contract), start, end };
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await apiPost<KBars>('/api/v1/data/kbars', body, {
+                timeoutMs: opts?.timeoutMs ?? 10_000,
+            });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            // 4xx（參數/權限）不重試；( |$) 涵蓋無 reason phrase 的裸狀態碼
+            const is4xx = /^4\d\d( |$)/.test(msg);
+            if (is4xx || attempt >= KBARS_RETRY_DELAYS.length) throw e;
+            await new Promise((r) =>
+                setTimeout(r, KBARS_RETRY_DELAYS[attempt]),
+            );
+        }
+    }
 }
 
 export function fetchHistoryTicks(contract: ContractBase, date: string) {

@@ -57,6 +57,22 @@ export function aggregate(candles: Candle[], minutes: number): Candle[] {
     return out;
 }
 
+// 現在時刻的台灣牆鐘時間，用 wallClockToUtc 同款編碼（本機時區
+// 即台灣 — dateStrOffset 同一假設）
+export function nowWallClockUtc(): number {
+    const d = new Date();
+    return (
+        Date.UTC(
+            d.getFullYear(),
+            d.getMonth(),
+            d.getDate(),
+            d.getHours(),
+            d.getMinutes(),
+            d.getSeconds(),
+        ) / 1000
+    );
+}
+
 export function dateStrOffset(daysAgo: number): string {
     const d = new Date(Date.now() - daysAgo * 86400_000);
     const y = d.getFullYear();

@@ -254,6 +254,11 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const liveRef = useRef<Readout | null>(null);
     const hoverRef = useRef<(Readout & { time: number }) | null>(null);
     const lastReloadRef = useRef(0);
+    // 換時段重載的目標時段 — 試搓觸發切換時新時段還沒有 kbar，load
+    // 不能又依最後一根 kbar 選回上一段（會空轉重載）
+    const pendingWinRef = useRef<{ code: string; start: number } | null>(null);
+    const drawnCodeRef = useRef('');
+    const retryTimerRef = useRef(0);
 
     const [loading, setLoading] = useState(false);
     const [empty, setEmpty] = useState(false);
@@ -649,6 +654,18 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             fillerSeriesRef.current?.removePriceLine(line);
         }
         limitLinesRef.current = [];
+        // 換商品：清掉前一檔殘影 — 載入（或載入卡住）期間不能繼續
+        // 掛著別檔的走勢；同商品的設定/主題重載不清，切換才不閃
+        if (drawnCodeRef.current !== contract.code) {
+            drawnCodeRef.current = contract.code;
+            pendingWinRef.current = null;
+            priceSeriesRef.current?.setData([]);
+            barSeriesRef.current?.setData([]);
+            pctSeriesRef.current?.setData([]);
+            avgSeriesRef.current?.setData([]);
+            volSeriesRef.current?.setData([]);
+            fillerSeriesRef.current?.setData([]);
+        }
         // 樣式切換：line=分時線；bars=美國線疊在透明漸層上（baseline
         // 線色轉透明、保留填色，讓美國線下方也有紅綠漸層）
         priceSeriesRef.current?.applyOptions({
@@ -713,14 +730,30 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 if (cancelled || !priceSeriesRef.current) return;
                 const all = kbarsToMinBars(k);
                 const last = all[all.length - 1];
-                if (!last) {
+                const pend =
+                    pendingWinRef.current?.code === contract.code
+                        ? pendingWinRef.current.start
+                        : 0;
+                if (!last && !pend) {
                     setEmpty(true);
+                    // loadedKey 不成立時 live tick 進不了任何路徑 —
+                    // 零 kbars（上游未發布/冷門新掛牌）也要排重試自癒
+                    retryTimerRef.current = window.setTimeout(
+                        () => setReloadSeq((v) => v + 1),
+                        60_000,
+                    );
                     return;
                 }
-                const win = sessionWindowFor(
+                // 資料驅動選時段；但換時段重載帶著目標時段時（試搓/
+                // 開盤，新時段 kbar 還沒出）目標較新就用目標 — 畫出
+                // 空的新時段框架等第一筆成交
+                let win = sessionWindowFor(
                     contract.security_type,
-                    last.time,
+                    last ? last.time : pend + 60,
                 );
+                if (pend > win.start) {
+                    win = sessionWindowFor(contract.security_type, pend + 60);
+                }
                 const bars = all.filter(
                     (b) =>
                         b.time > win.start &&
@@ -747,7 +780,13 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 const ref =
                     Number(contract.reference) ||
                     bars[0]?.close ||
-                    last.close;
+                    last?.close ||
+                    0;
+                if (!Number.isFinite(ref) || ref <= 0) {
+                    // 沒參考價也沒任何 bar（極端）— 空狀態等下次重載
+                    setEmpty(true);
+                    return;
+                }
                 applyRefPrice(ref);
 
                 let cumV = 0;
@@ -863,13 +902,22 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 bumpLegendRef.current();
             })
             .catch(() => {
-                if (!cancelled) setEmpty(true);
+                if (cancelled) return;
+                setEmpty(true);
+                // kbars 連重試都失敗（開盤壅塞/斷線）— load 失敗後
+                // loadedKey 不成立，live tick 進不了重載路徑，不自動
+                // 排程就會永遠卡空狀態
+                retryTimerRef.current = window.setTimeout(
+                    () => setReloadSeq((v) => v + 1),
+                    15_000,
+                );
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
             });
         return () => {
             cancelled = true;
+            window.clearTimeout(retryTimerRef.current);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, reloadSeq, optsKey]);
@@ -886,8 +934,6 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const liveQuote = quote?.tick ?? quote?.index;
     useEffect(() => {
         if (!liveQuote || liveQuote.code !== contract.code) return;
-        // 試撮揭示價可以是天地價，畫進走勢會撐爆比例 — 一律排除
-        if ('simtrade' in liveQuote && liveQuote.simtrade) return;
         if (
             loadedKeyRef.current !==
             `${contract.code}|${reloadSeq}|${optsKey}`
@@ -897,8 +943,6 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         const win = sessionRef.current;
         const series = priceSeriesRef.current;
         if (!win || !series) return;
-        const p = Number(liveQuote.close);
-        if (!Number.isFinite(p) || p <= 0) return;
         const t = wallClockToUtc(`${liveQuote.date}T${liveQuote.time}`);
         const stale = lastLabelRef.current;
         const throttledReload = () => {
@@ -908,13 +952,25 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             }
         };
         // 收盤 grace 之外的 tick：真的換時段（夜→日、日→夜、隔日開盤）
-        // 才整段重載；同時段的盤後零星成交（股票定盤 14:30）只丟棄，
-        // 否則每筆都會白打一次 kbars（30s 節流也擋不住反覆觸發）
+        // 才整段重載 — 試搓 tick 也算數：08:30 第一筆試搓就切到新時段
+        // 框架，不必等正式開盤首筆成交。同時段的盤後零星成交（股票
+        // 定盤 14:30）只丟棄，否則每筆都會白打一次 kbars
         if (t > win.end + CLOSE_GRACE) {
             const next = sessionWindowFor(contract.security_type, t);
-            if (next.start !== win.start) throttledReload();
+            if (next.start !== win.start) {
+                pendingWinRef.current = {
+                    code: contract.code,
+                    start: next.start,
+                };
+                throttledReload();
+            }
             return;
         }
+        // 試撮揭示價可以是天地價，畫進走勢會撐爆比例 — 只允許觸發
+        // 上面的換時段，不入圖、不進 gap 補洞判斷
+        if ('simtrade' in liveQuote && liveQuote.simtrade) return;
+        const p = Number(liveQuote.close);
+        if (!Number.isFinite(p) || p <= 0) return;
         // 斷圖 >3 分鐘：僅在 total_volume 顯示真有漏量（睡醒/斷線補洞）
         // 時重載 — 冷門股每隔幾分鐘一筆成交是常態，不該筆筆重載
         if (stale > 0 && tickBucket(win, t) > stale + 180) {
@@ -1012,6 +1068,9 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         } catch {
             // series torn down mid-update (symbol/theme switch) — ignore
         }
+        // 空時段框架（試搓切換後等開盤）收到第一筆成交 → 清空狀態
+        // chip；同值 setState React 會 bail out，逐筆呼叫無代價
+        setEmpty(false);
         bumpLegendRef.current();
         // NOTE: 依賴 liveQuote 物件本身而非 quote.seq — seq 在 bidask 更新
         // 也會跳，若當 dep 會把同一筆 tick 的量重複累加

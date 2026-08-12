@@ -73,8 +73,10 @@ import {
     aggregate,
     dateStrOffset,
     kbarsToCandles,
+    nowWallClockUtc,
     wallClockToUtc,
 } from '../lib/utils/kbars';
+import { findKbarGap } from '../lib/intraday-session';
 import * as panel from './panel.css';
 import * as styles from './candle-chart.css';
 import { Orb } from './orb';
@@ -125,6 +127,12 @@ export function CandleChart({
     // 跨午夜夜盤段，live 進來出現大斷層時補抓一次
     const [historySeq, setHistorySeq] = useState(0);
     const gapReloadAtRef = useRef(0);
+    // 覆蓋率自癒（issue #18 二報）：live 斷層觸發的那次補抓常常太早
+    // （上游還沒發布），live bar 一堆積洞就變「內部洞」再也偵測不到 —
+    // 載入後直接驗覆蓋率，有缺口就退避排程重抓直到上游補齊（封頂）
+    const healAttemptsRef = useRef(0);
+    const healTimerRef = useRef(0);
+    const healKeyRef = useRef('');
     // ticks must NOT touch the series until history for the current
     // (symbol, timeframe) is in place — updating a freshly-switched series
     // with a bucket older than its last point makes lightweight-charts
@@ -510,6 +518,9 @@ export function CandleChart({
                 contract,
                 dateStrOffset(from),
                 dateStrOffset(oldestDay + 1),
+                // 長區間翻頁量大 — 放寬 timeout，timeout 誤計 dryPages
+                // 會讓無限捲動提早罷工
+                { timeoutMs: 30_000 },
             )
                 .then((k) => {
                     if (cancelled || loadedKeyRef.current !== loadKey) return;
@@ -546,7 +557,9 @@ export function CandleChart({
                 });
         };
 
-        fetchKbars(contract, dateStrOffset(tf.days), dateStrOffset(0))
+        fetchKbars(contract, dateStrOffset(tf.days), dateStrOffset(0), {
+            timeoutMs: 30_000, // 大週期初載可達數十天，不能用 10s
+        })
             .then((k) => {
                 if (cancelled || !candleSeriesRef.current) return;
                 const raw = kbarsToCandles(k);
@@ -562,6 +575,33 @@ export function CandleChart({
                 lastBarRef.current = bars[bars.length - 1] ?? null;
                 loadedKeyRef.current = loadKey;
                 loadMoreRef.current = loadMore;
+                // 覆蓋率自癒：換商品/週期歸零重驗；缺口存在就 3 分鐘
+                // （第 6 次起 10 分鐘）後重抓，上限 15 次（≈2h，涵蓋
+                // 上游最晚發布時點）；補齊即停
+                const healKey = `${contract.code}|${tf.minutes}`;
+                if (healKeyRef.current !== healKey) {
+                    healKeyRef.current = healKey;
+                    healAttemptsRef.current = 0;
+                }
+                // 1D 不跑覆蓋率自癒 — 240 天的重抓一次 ~2.7MB，稀疏
+                // 商品誤判時代價太高；分鐘級週期才是洞真正可見的地方
+                const gap =
+                    tf.minutes >= 1440
+                        ? null
+                        : findKbarGap(
+                              raw.map((b) => b.time),
+                              contract.security_type,
+                              nowWallClockUtc(),
+                          );
+                if (gap && healAttemptsRef.current < 15) {
+                    const n = healAttemptsRef.current++;
+                    healTimerRef.current = window.setTimeout(
+                        () => setHistorySeq((v) => v + 1),
+                        n < 5 ? 180_000 : 600_000,
+                    );
+                } else if (!gap) {
+                    healAttemptsRef.current = 0;
+                }
                 chartRef.current?.timeScale().scrollToRealTime();
                 // a manual price-axis drag disables autoScale and pins the
                 // range; without re-enabling it the prior symbol's price band
@@ -581,6 +621,9 @@ export function CandleChart({
             });
         return () => {
             cancelled = true;
+            // 換商品/週期時未觸發的 heal 重抓一併取消 — 殘留的 timer
+            // 會替新商品多打一次無意義的 historySeq 重載
+            window.clearTimeout(healTimerRef.current);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, tf, historySeq]);
