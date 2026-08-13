@@ -18,6 +18,8 @@ dist/
 .idea/
 
 # Tauri
+/modules/
+/src-tauri/
 src-tauri/target/
 src-tauri/binaries/
 src-tauri/gen/schemas/

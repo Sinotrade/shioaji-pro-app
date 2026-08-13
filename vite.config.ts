@@ -5,6 +5,7 @@ import path from 'node:path';
 import { vanillaExtractPlugin } from '@vanilla-extract/vite-plugin';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv, searchForWorkspaceRoot } from 'vite';
+import { configDefaults } from 'vitest/config';
 
 // closed-source modules (AI Agent, future tiered features) live in the
 // private repo, checked out into ./modules on desktop builds; open-source
@@ -85,6 +86,11 @@ export default defineConfig(({ mode }) => {
             ),
         },
         plugins: [vanillaExtractPlugin(), react()],
+        test: {
+            // The desktop overlay is mirrored here for Tauri dev/CI, but its
+            // Rust-adjacent Node tests use node:test rather than Vitest.
+            exclude: [...configDefaults.exclude, 'src-tauri/**'],
+        },
         resolve: {
             alias: {
                 '@modules': modulesTarget,
