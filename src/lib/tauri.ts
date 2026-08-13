@@ -146,13 +146,20 @@ async function spawnServer(
     };
 }
 
-async function nativeOwnsHarnessSidecar(port: number): Promise<boolean> {
+export async function nativeOwnsHarnessSidecar(port: number): Promise<boolean> {
     try {
         const { invoke } = await import('@tauri-apps/api/core');
         return await invoke<boolean>('agent_harness_sidecar_owned', { port });
     } catch {
         return false;
     }
+}
+
+export function harnessOwnershipCompatible(
+    agentHarnessEnabled: boolean,
+    nativeOwned: boolean,
+): boolean {
+    return !agentHarnessEnabled || nativeOwned;
 }
 
 // startup/login output lands in ~/.shioaji/sjpro-server-<port>.log now —
@@ -681,13 +688,15 @@ export async function serverStart(opts: {
             EXPECTED_SERVER_VERSION !== '' &&
             st.version !== undefined &&
             st.version !== EXPECTED_SERVER_VERSION;
-        const nativeHarnessOwned =
-            st.agentHarnessEnabled !== true ||
-            (await nativeOwnsHarnessSidecar(st.port));
-        const external = getSpawnPort() !== st.port || !nativeHarnessOwned;
-        // An enabled external daemon was started with a different native
-        // signing secret. Never attach and then fail every mutation.
-        const harnessMismatch = external && st.agentHarnessEnabled === true;
+        const nativeHarnessOwned = await nativeOwnsHarnessSidecar(st.port);
+        const harnessMismatch = !harnessOwnershipCompatible(
+            opts.agentHarnessEnabled === true,
+            nativeHarnessOwned,
+        );
+        const external = getSpawnPort() !== st.port || harnessMismatch;
+        // Harness authority belongs to one native App process and one
+        // sidecar generation. Never adopt a healthy daemon from a previous
+        // App instance: it verifies a different signing key.
         // 金鑰 hash 領養檢查 (issue #16): our OWN spawn may still be logged
         // into the credentials it was STARTED with — after a re-login with a
         // different API key, adopting it shows the old account's data. Only
@@ -724,7 +733,7 @@ export async function serverStart(opts: {
                 portChanged: setApiPort(st.port) || schemeChanged,
             };
         }
-        if ((versionMismatch || harnessMismatch) && external) {
+        if (versionMismatch && external) {
             // 使用者自己的 server 版本不符（例如 8080 上的舊 CLI）——
             // 絕不動它，直接往下走：在別的 port 起自帶 binary
         } else {
