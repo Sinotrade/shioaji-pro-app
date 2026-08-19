@@ -74,6 +74,20 @@ jobs:
           mv desktop_modules/src-tauri src-tauri
           rm -rf desktop_modules ~/.ssh/agent_key
 
+      # NSIS defaults to a per-user install resolved against the elevating
+      # account: on corporate machines where UAC credentials belong to a
+      # different admin user, the whole installer runs as that account, so the
+      # app lands in C:\Users\<admin>\AppData\Local (unreadable by the actual
+      # user) with shortcuts and the uninstall entry in the wrong profile.
+      # installMode "both" adds an install-scope page, so elevated installs
+      # can target Program Files (per-machine) while personal machines keep
+      # the per-user option. The overlay is copied next to tauri.conf.json,
+      # where Tauri merges platform config files automatically.
+      - name: Apply Windows installer config (NSIS installMode both)
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: cp .github/tauri.windows.conf.json src-tauri/tauri.windows.conf.json
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10
