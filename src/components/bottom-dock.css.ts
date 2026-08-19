@@ -428,9 +428,16 @@ export const pnlCount = style({
     color: vars.color.mutedForeground,
 });
 
+export const pnlToggleStatic = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: vars.space.sm,
+    minHeight: '1.8rem',
+});
+
 export const pnlDetailRow = style({
     display: 'grid',
-    gridTemplateColumns: '3.4rem 1fr 3.6rem 5.6rem',
+    gridTemplateColumns: '3.4rem 1fr 4.4rem 3.8rem 5.6rem',
     alignItems: 'baseline',
     columnGap: vars.space.sm,
     fontFamily: vars.font.mono,

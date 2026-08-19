@@ -51,6 +51,7 @@ function sortValue(p: AccountedPosition): number {
 }
 
 function retPctOf(p: AccountedPosition): number {
+    if (isStockPosition(p) && typeof p.pnl_pct === 'number') return p.pnl_pct;
     const sign = p.direction === 'Buy' ? 1 : -1;
     return p.price > 0
         ? ((p.last_price - p.price) / p.price) * 100 * sign
@@ -324,16 +325,20 @@ export function PositionsPane({
                             <td className={styles.td}>{p.code}</td>
                             {sz === 'wide' && (
                                 <td className={styles.td}>
-                                    {names[p.code] ?? ''}
+                                    {isStockPosition(p) && p.name
+                                        ? p.name
+                                        : names[p.code] ?? ''}
                                 </td>
                             )}
                             <td
                                 className={`${styles.td} ${panel.dirText[p.direction === 'Buy' ? 'up' : 'down']}`}
                             >
                                 {sz === 'wide'
-                                    ? p.direction === 'Buy'
-                                        ? '多 LONG'
-                                        : '空 SHORT'
+                                    ? `${p.direction === 'Buy' ? '多 LONG' : '空 SHORT'}${
+                                          isStockPosition(p) && p.position_type_label
+                                              ? ` / ${p.position_type_label}`
+                                              : ''
+                                      }`
                                     : p.direction === 'Buy'
                                       ? '多'
                                       : '空'}
@@ -469,7 +474,9 @@ export function PositionsPane({
                             </span>
                             <span className={styles.cardCode}>{p.code}</span>
                             <span className={styles.cardName}>
-                                {names[p.code] ?? ''}
+                                {isStockPosition(p) && p.name
+                                    ? p.name
+                                    : names[p.code] ?? ''}
                             </span>
                             <span
                                 className={
@@ -479,6 +486,9 @@ export function PositionsPane({
                                 }
                             >
                                 {p.direction === 'Buy' ? '多' : '空'}
+                                {isStockPosition(p) && p.position_type_label
+                                    ? `/${p.position_type_label}`
+                                    : ''}
                             </span>
                             <span className={styles.cardSpacer} />
                             <span className={styles.qtyCell}>

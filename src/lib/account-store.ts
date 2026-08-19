@@ -8,7 +8,7 @@
 // only ever uses signed accounts.
 
 import { useSyncExternalStore } from 'react';
-import { fetchAccounts } from './shioaji';
+import { fetchAccounts } from './kgi';
 import type { Account } from './types/portfolio';
 
 const STORAGE_KEY = 'sj-pro-accounts-selected';
@@ -141,3 +141,4 @@ export function useAccounts(): AccountState {
         () => state,
     );
 }
+

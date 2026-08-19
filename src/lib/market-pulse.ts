@@ -179,8 +179,7 @@ function handleScanner(raw: string) {
 }
 
 // Pulse events arrive on the app's single aggregate SSE connection
-// (stream.ts) — shioaji 1.7.2 carries enriched-index and scanner events
-// there, so no dedicated per-channel EventSources are needed.
+// (stream.ts), so no dedicated per-channel EventSources are needed.
 let marketStreamRefs = 0;
 let detachListeners: (() => void)[] = [];
 

@@ -3,8 +3,8 @@
     "configurations": [
         {
             "name": "dev",
-            "runtimeExecutable": "pnpm",
-            "runtimeArgs": ["dev"],
+            "runtimeExecutable": "npm",
+            "runtimeArgs": ["run", "dev"],
             "autoPort": true
         },
         {

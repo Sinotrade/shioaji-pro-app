@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { pickOptionLeg } from '../lib/option-pick';
-import { fetchOptions, fetchSnapshots } from '../lib/shioaji';
+import { fetchOptions, fetchSnapshots } from '../lib/kgi';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
@@ -302,3 +302,4 @@ export function OptionChain({
         </div>
     );
 }
+

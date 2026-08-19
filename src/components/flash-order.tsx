@@ -18,7 +18,7 @@ import {
 } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
-import { cancelOrder } from '../lib/shioaji';
+import { cancelOrder } from '../lib/kgi';
 import { getAliasFor, onOrderEvent } from '../lib/stream';
 import { notify, placeQuickOrder } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
@@ -760,3 +760,4 @@ export function FlashOrder({
         </div>
     );
 }
+

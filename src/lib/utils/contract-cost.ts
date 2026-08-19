@@ -58,3 +58,51 @@ export function stockTaxRate(contract: ContractInfo): number {
     }
     return 0.003;
 }
+
+export function stockOrderShares(quantity: number, oddLot: boolean): number {
+    return oddLot ? quantity : quantity * 1000;
+}
+
+export function stockOrderNotional(
+    limitPrice: number,
+    quantity: number,
+    oddLot: boolean,
+): number {
+    return limitPrice * stockOrderShares(quantity, oddLot);
+}
+
+// 漲停/跌停/買一/賣一 order-ticket price shortcuts — one pure function so
+// "what counts as a usable price" is defined once and unit-testable
+// directly, instead of only inline in the component. 0 is never a valid
+// limit/bid/ask (the backend normalizes an unavailable KGI limit price to
+// 0 — see backend/kgi_bridge/normalizers.py's number() NaN guard — so 0
+// here means "no verified value", not "the limit is zero").
+export function validShortcutPrice(
+    value: number | null | undefined,
+): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? value
+        : null;
+}
+
+export interface PriceShortcuts {
+    limitUp: number | null;
+    limitDown: number | null;
+    bid1: number | null;
+    ask1: number | null;
+}
+
+// Reads straight from the given contract/bid-ask snapshot every call —
+// deliberately takes no memoized/cached state, so calling it again for a
+// newly-selected symbol can never return the previous symbol's values.
+export function resolvePriceShortcuts(
+    contract: Pick<ContractInfo, 'limit_up' | 'limit_down'>,
+    bidAsk?: { bid_price?: string[]; ask_price?: string[] } | null,
+): PriceShortcuts {
+    return {
+        limitUp: validShortcutPrice(contract.limit_up),
+        limitDown: validShortcutPrice(contract.limit_down),
+        bid1: validShortcutPrice(Number(bidAsk?.bid_price?.[0])),
+        ask1: validShortcutPrice(Number(bidAsk?.ask_price?.[0])),
+    };
+}

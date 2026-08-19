@@ -28,8 +28,8 @@ export function startAnalytics() {
     window.gtag('js', new Date());
     window.gtag('config', GA_ID, {
         send_page_view: false,
-        app_name: 'shioaji-pro-app',
-        app_version: __SHIOAJI_APP_VERSION__,
+        app_name: 'kgi-pro-app',
+        app_version: __KGI_APP_VERSION__,
     });
 
     const script = document.createElement('script');
@@ -46,7 +46,7 @@ export function startAnalytics() {
 export function logAnalyticsEvent(name: string, params: Record<string, unknown> = {}) {
     if (!window.gtag) return;
     window.gtag('event', name, {
-        app_version: __SHIOAJI_APP_VERSION__,
+        app_version: __KGI_APP_VERSION__,
         runtime:
             typeof window !== 'undefined' && '__TAURI__' in window
                 ? 'tauri'

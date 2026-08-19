@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import { usePoll } from '../hooks/use-poll';
-import { apiPost } from '../lib/api';
+import { fetchProfitLoss } from '../lib/kgi';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { dateStrOffset } from '../lib/utils/kbars';
 import * as dock from './bottom-dock.css';
@@ -20,14 +20,8 @@ async function fetchPnl(): Promise<PnlRow[]> {
         end_date: dateStrOffset(0),
     };
     const [st, fu] = await Promise.allSettled([
-        apiPost<{ date: string; pnl: number }[]>(
-            '/api/v1/portfolio/profit_loss',
-            { ...body, account_type: 'S', unit: 'Common' },
-        ),
-        apiPost<{ date: string; pnl: number }[]>(
-            '/api/v1/portfolio/profit_loss',
-            { ...body, account_type: 'F' },
-        ),
+        fetchProfitLoss('S', undefined, body.begin_date, body.end_date),
+        fetchProfitLoss('F', undefined, body.begin_date, body.end_date),
     ]);
     const rows = [
         ...(st.status === 'fulfilled' ? st.value : []),

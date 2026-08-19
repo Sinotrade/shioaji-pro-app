@@ -21,7 +21,6 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, process.cwd(), '');
     return {
         base: env.VITE_BASE ?? '/',
-        // shioaji app upload flattens nested paths — emit a flat bundle.
         // target: old Intel Macs run older WKWebView (Safari 13–15 era);
         // Vite 8's default (baseline-widely-available ≈ Safari 16) emits
         // syntax those webviews cannot parse → white screen on launch (#4)
@@ -36,17 +35,7 @@ export default defineConfig(({ mode }) => {
                     process.env.STATSIG_CLIENT_KEY ??
                     '',
             ),
-            __SHIOAJI_APP_VERSION__: JSON.stringify(pkg.version ?? ''),
-            // bundled server version（repo 根目錄 SHIOAJI_VERSION —
-            // 與 CI 下載 sidecar 的同一個來源）— app 開機做版本握手
-            __SHIOAJI_SERVER_VERSION__: JSON.stringify(
-                fs
-                    .readFileSync(
-                        path.resolve(__dirname, 'SHIOAJI_VERSION'),
-                        'utf8',
-                    )
-                    .trim(),
-            ),
+            __KGI_APP_VERSION__: JSON.stringify(pkg.version ?? ''),
         },
         plugins: [vanillaExtractPlugin(), react()],
         resolve: {
@@ -61,11 +50,18 @@ export default defineConfig(({ mode }) => {
             // is never exposed to the LAN.
             host: '127.0.0.1',
             port: Number(process.env.PORT) || 5173,
+            watch: {
+                ignored: [
+                    '**/.venv311/**',
+                    '**/.venv/**',
+                    '**/__pycache__/**',
+                    '**/*.log',
+                ],
+            },
             proxy: {
-                // dev 打自帶 sidecar（scripts/dev-api.sh，與 CI 打包同版
-                // binary、port 21322）— 確保 API/UI 版本相符，不依賴使用
-                // 者自裝在 8080 的 CLI。要打別台時用 VITE_API_TARGET 蓋掉
-                '/api': env.VITE_API_TARGET ?? 'http://127.0.0.1:21322',
+                // React talks to the local KGI bridge. Override when testing a
+                // bridge on another host/port.
+                '/api': env.VITE_API_TARGET ?? 'http://127.0.0.1:21323',
             },
         },
     };

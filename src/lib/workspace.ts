@@ -28,6 +28,7 @@ export type BlockType =
     | 'combo'
     | 'notices'
     | 'debug'
+    | 'kgiStatus'
     | 'grid'
     | 'heatmap'
     | 'pulse'
@@ -263,6 +264,14 @@ export const BLOCK_META: Record<
         singleton: true,
         defaultSize: { w: 6, h: 11, minW: 4, minH: 7 },
     },
+    kgiStatus: {
+        label: 'KGI 狀態',
+        description: 'KGI Bridge、Codex 與更新狀態',
+        category: 'tools',
+        pinnable: false,
+        singleton: true,
+        defaultSize: { w: 6, h: 11, minW: 4, minH: 7 },
+    },
     grid: {
         label: '鋪單',
         description: '一次掛出階梯限價單',
@@ -313,7 +322,7 @@ export const BLOCK_META: Record<
     },
     assistant: {
         label: 'AI Agent',
-        description: 'AI 交易助理',
+        description: 'KGI 只讀工具助理',
         category: 'tools',
         pinnable: false,
         singleton: true,
@@ -380,7 +389,7 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
             blocks: [
                 { id: 'watch-2c', type: 'watchlist', pin: null },
                 { id: 'chart-2ca', type: 'chart', pin: null },
-                { id: 'chart-2cb', type: 'chart', pin: 'TXFR1' },
+                { id: 'chart-2cb', type: 'chart', pin: '2330' },
                 { id: 'movers-2c', type: 'movers', pin: null },
                 { id: 'dock-2c', type: 'dock', pin: null },
                 { id: 'ticket-2c', type: 'ticket', pin: null },
@@ -401,7 +410,7 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
         workspace: {
             blocks: [
                 { id: 'opt-ow', type: 'optchain', pin: null },
-                { id: 'chart-ow', type: 'chart', pin: 'TXFR1' },
+                { id: 'chart-ow', type: 'chart', pin: '2330' },
                 { id: 'ticket-ow', type: 'ticket', pin: null },
                 { id: 'depth-ow', type: 'depth', pin: null },
                 { id: 'dock-ow', type: 'dock', pin: null },
@@ -466,7 +475,7 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
             blocks: [
                 { id: 'watch-fm', type: 'watchlist', pin: null },
                 { id: 'flash-fm1', type: 'flash', pin: null },
-                { id: 'flash-fm2', type: 'flash', pin: 'TXFR1' },
+                { id: 'flash-fm2', type: 'flash', pin: '2330' },
                 { id: 'flash-fm3', type: 'flash', pin: '2330' },
                 { id: 'flash-fm4', type: 'flash', pin: '2454' },
             ],

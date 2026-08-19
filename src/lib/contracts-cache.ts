@@ -3,7 +3,7 @@
 // its quote streams once, and exposes a useSyncExternalStore hook.
 
 import { useSyncExternalStore } from 'react';
-import { resolveContract, subscribeContractQuotes } from './shioaji';
+import { resolveContract, subscribeContractQuotes } from './kgi';
 import { registerCodeAlias } from './stream';
 import type { ContractInfo, SecurityType } from './types/contract';
 
@@ -134,3 +134,4 @@ export function useContract(code: string | null): ContractInfo | undefined {
         () => (code ? cache.get(code) : undefined),
     );
 }
+

@@ -1,5 +1,5 @@
-// src/hooks/use-watchlist.ts — fully server-backed watchlists (CRUD works
-// on shioaji server ≥1.5.3). Every list is editable; edits sync via PUT.
+// src/hooks/use-watchlist.ts — fully bridge-backed watchlists. Every list is
+// editable; edits sync via PUT.
 // First run migrates the old local list / creates a default one.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -20,7 +20,9 @@ import {
     subscribeContractQuotes,
     syncWatchlist,
     type ServerWatchlist,
-} from '../lib/shioaji';
+} from '../lib/kgi';
+import { logKgiDebug } from '../lib/kgi-debug';
+import { normalizeQuoteState } from '../lib/quote-model';
 import { onContractEvent, registerCodeAlias } from '../lib/stream';
 import { notify } from '../lib/trade';
 import type { ContractInfo, SecurityType } from '../lib/types/contract';
@@ -38,7 +40,6 @@ const DEFAULT_SYMBOLS: { code: string; type: SecurityType }[] = [
     { code: '2454', type: 'STK' },
     { code: '2603', type: 'STK' },
     { code: '0050', type: 'STK' },
-    { code: 'TXFR1', type: 'FUT' },
 ];
 
 const LEGACY_KEY = 'sj-pro-watchlist';
@@ -79,7 +80,19 @@ export function useWatchlist() {
         if (contracts.length === 0) return;
         fetchSnapshots(contracts)
             .then((snaps) => {
+                logKgiDebug('[watchlist raw]', snaps);
                 const byCode = new Map(snaps.map((s) => [s.code, s]));
+                logKgiDebug(
+                    '[watchlist normalized]',
+                    contracts.map((contract) => {
+                        const snap =
+                            byCode.get(contract.code) ??
+                            (contract.target_code
+                                ? byCode.get(contract.target_code)
+                                : undefined);
+                        return normalizeQuoteState(undefined, snap, contract);
+                    }),
+                );
                 setItems((prev) =>
                     prev.map((i) => {
                         const snap =
@@ -335,9 +348,9 @@ export function useWatchlist() {
                         break;
                     } catch (e) {
                         lastErr = e;
-                        // A healthy HTTP server can still be waiting for its
-                        // Shioaji session. Keep retrying in the background,
-                        // but do not hold the entire terminal behind the boot
+                        // A healthy HTTP bridge can still be waiting for its
+                        // broker session. Keep retrying in the background, but
+                        // do not hold the entire terminal behind the boot
                         // screen for the full backoff window.
                         if (attempt === 0) setInitialLoading(false);
                         await new Promise((r) =>
@@ -443,3 +456,4 @@ export function useWatchlist() {
         deleteCurrentList,
     };
 }
+

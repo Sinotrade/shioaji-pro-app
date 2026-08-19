@@ -10,7 +10,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { closedModules } from '@modules';
-import { fetchAccounts } from './shioaji';
+import { fetchAccounts } from './kgi';
 
 export type Tier = 'free' | 'vip';
 
@@ -156,3 +156,4 @@ export function useFeature(key: string): FeatureState {
 // closed module accessors (undefined in open-source builds)
 export const agentModule = closedModules.agent;
 export const backtestModule = closedModules.backtest;
+

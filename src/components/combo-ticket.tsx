@@ -18,7 +18,7 @@ import {
     type ComboLeg,
     type ComboTrade,
     type ComboType,
-} from '../lib/shioaji';
+} from '../lib/kgi';
 import { assertTradingLive, notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtPrice } from '../lib/utils/format';
@@ -594,3 +594,4 @@ export function ComboTicket() {
         </div>
     );
 }
+

@@ -12,7 +12,7 @@ import {
     cancelOrder,
     placeFuturesOrder,
     placeStockOrder,
-} from '../lib/shioaji';
+} from '../lib/kgi';
 import { getAliasFor } from '../lib/stream';
 import { isFuturesContract, notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
@@ -391,3 +391,4 @@ export function GridTicket({
         </div>
     );
 }
+

@@ -40,14 +40,9 @@ export function FeatureGate({
             </span>
             {def?.desc && <span>{def.desc}</span>}
             {desktopOnly ? (
-                <a
-                    href='https://github.com/Sinotrade/shioaji-pro-app/releases/latest'
-                    target='_blank'
-                    rel='noopener'
-                    style={{ color: 'var(--accent, #4f8cff)' }}
-                >
-                    下載桌面版 →
-                </a>
+                <span style={{ fontSize: '0.7rem' }}>
+                    桌面版發佈流程待更新
+                </span>
             ) : (
                 <span style={{ fontSize: '0.7rem' }}>
                     請聯繫您的營業員了解 VIP 方案

@@ -6,7 +6,7 @@ import {
     fetchWarrants,
     normalizeContractCode,
     resolveContract,
-} from './shioaji';
+} from './kgi';
 import {
     loadStockCatalog,
     searchStocks,
@@ -276,3 +276,4 @@ export async function searchProducts(
         return true;
     }).slice(0, limit);
 }
+

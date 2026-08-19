@@ -7,12 +7,10 @@ import { useEffect, useState } from 'react';
 import { useStreamStatus } from '../hooks/use-stream';
 import { useHeaderItems } from '../lib/header-items';
 import { setRiskSettings, useRiskSettings } from '../lib/risk';
-import { fetchInfo } from '../lib/shioaji';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import {
     appVersion,
     checkForUpdates,
-    listenTrayEvents,
     openFlashTiles,
     type FlashTileLayout,
 } from '../lib/tauri';
@@ -20,7 +18,6 @@ import { fmtMoney } from '../lib/utils/format';
 import type { Profile, Workspace } from '../lib/workspace';
 import { LayoutLibrary } from './layout-library';
 import { MarketBar } from './market-bar';
-import { ServerManager } from './server-manager';
 import { SettingsDialog } from './settings-dialog';
 import * as styles from './hud-header.css';
 
@@ -184,7 +181,7 @@ export function HudHeader({
     onLoadPreset,
     flashCodes = [],
 }: {
-    accBalance?: number;
+    accBalance?: number | null;
     onOpenPanelLibrary: () => void;
     flashCodes?: string[];
     profiles: Profile[];
@@ -199,23 +196,14 @@ export function HudHeader({
     const streamStatus = useStreamStatus();
     const privMoney = usePrivacyMoney();
     const headerItems = useHeaderItems();
-    const [simulation, setSimulation] = useState<boolean | null>(null);
     const [appVer, setAppVer] = useState('');
     const [now, setNow] = useState(() => new Date());
-    const [serverMgrOpen, setServerMgrOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [layoutLibOpen, setLayoutLibOpen] = useState(false);
 
     useEffect(() => {
-        let cleanup: (() => void) | undefined;
-        listenTrayEvents(() => setServerMgrOpen(true)).then((un) => {
-            cleanup = un;
-        });
         const t = setTimeout(() => checkForUpdates(true), 8000);
-        return () => {
-            cleanup?.();
-            clearTimeout(t);
-        };
+        return () => clearTimeout(t);
     }, []);
 
     useEffect(() => {
@@ -223,32 +211,14 @@ export function HudHeader({
     }, []);
 
     useEffect(() => {
-        // retry until the server answers — a one-shot fetch loses the race
-        // against a daemon that is still starting after an app update
-        let done = false;
-        const load = () =>
-            fetchInfo()
-                .then((info) => {
-                    done = true;
-                    clearInterval(retry);
-                    setSimulation(info.simulation);
-                })
-                .catch(() => undefined);
-        const retry = setInterval(() => {
-            if (!done) void load();
-        }, 5000);
-        void load();
         const t = setInterval(() => setNow(new Date()), 1000);
-        return () => {
-            clearInterval(t);
-            clearInterval(retry);
-        };
+        return () => clearInterval(t);
     }, []);
 
     return (
         <header className={styles.header}>
             <div className={styles.logoBlock}>
-                <span className={styles.logoMain}>Shioaji Pro</span>
+                <span className={styles.logoMain}>KGI Pro</span>
                 <span className={styles.logoSub}>
                     交易終端
                     {appVer &&
@@ -256,21 +226,21 @@ export function HudHeader({
                 </span>
             </div>
 
-            {simulation !== null &&
-                (simulation ? (
-                    <span className={styles.simBadge}>模擬環境</span>
-                ) : (
-                    <span className={styles.prodBadge}>正式環境</span>
-                ))}
-
             <MarketBar />
 
             <div className={styles.spacer} />
 
-            {headerItems.bankBalance && accBalance !== undefined && (
+            {headerItems.settleBalance && accBalance !== undefined && (
                 <div className={styles.chip}>
-                    <span className={styles.chipLabel}>銀行水位</span>
-                    <span>{maskMoney(fmtMoney(accBalance), privMoney)}</span>
+                    {/* Sourced from Account.SettleAmtTrial (securities
+                        settlement trial amount) — not a linked bank
+                        balance, KGI's SDK has no such field. */}
+                    <span className={styles.chipLabel}>交割水位</span>
+                    <span>
+                        {accBalance === null
+                            ? '—'
+                            : maskMoney(fmtMoney(accBalance), privMoney)}
+                    </span>
                 </div>
             )}
 
@@ -281,10 +251,6 @@ export function HudHeader({
                 </div>
             )}
 
-            <ServerManager
-                open={serverMgrOpen}
-                onToggle={setServerMgrOpen}
-            />
             <KillSwitchButton />
             <button
                 className={styles.resetBtn}
@@ -338,3 +304,4 @@ export function HudHeader({
         </header>
     );
 }
+

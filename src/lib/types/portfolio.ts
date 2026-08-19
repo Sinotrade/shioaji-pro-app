@@ -14,13 +14,26 @@ export interface Account {
 export interface StockPosition {
     id: number;
     code: string;
+    name?: string;
     direction: 'Buy' | 'Sell';
+    // Canonical stock unit from the KGI bridge is shares. UI formatters may
+    // display whole lots as 張 and odd-lot remainders as 股.
     quantity: number;
+    quantity_unit?: 'shares';
     price: number;
     last_price: number;
+    market_value?: number | null;
     pnl: number;
+    pnl_pct?: number | null;
     yd_quantity: number;
     cond?: string;
+    position_type?: 'cash' | 'margin' | 'short' | 'lending';
+    position_type_label?: string;
+    // Shares within `quantity` that came from odd-lot (零股) executions.
+    // Odd-lot holdings settle into the same cash bucket as round lots in
+    // Taiwan, so this is a breakdown of the cash row, not a separate
+    // position — do not add it to `quantity`.
+    odd_lot_quantity?: number;
 }
 
 export interface FuturePosition {
@@ -40,9 +53,26 @@ export type Position = StockPosition | FuturePosition;
 export type AccountedPosition = Position & { account?: Account };
 
 export interface AccountBalance {
-    acc_balance: number;
+    // Today's settlement TRIAL net amount (KGI Account.SettleAmtTrial) —
+    // real when KGI has something to trial-settle today, null when it
+    // doesn't (most days). This is NOT a running cash balance; see
+    // bank_balance below for why no such balance exists in this SDK.
+    acc_balance: number | null;
+    available_balance?: number | null;
+    // KGI's Account API (kgisuperpy 2.1.0) has no linked bank-account
+    // balance field anywhere — verified by calling every method main.py
+    // wires onto api.Account. Always null; kept as an explicit field so
+    // the UI can render "API 未提供" from a real backend fact instead of
+    // a frontend assumption.
+    bank_balance?: number | null;
+    buying_power?: number | null;
+    total_assets?: number | null;
+    stock_market_value?: number | null;
+    realized_pnl?: number | null;
     date: string;
     errmsg: string;
+    raw_fields?: Record<string, string[]> | string[];
+    unavailable_fields?: string[];
 }
 
 export interface Margin {

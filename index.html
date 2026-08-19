@@ -2,7 +2,6 @@
 <html lang="zh-Hant">
     <head>
         <meta charset="UTF-8" />
-        <link rel="icon" type="image/png" href="/shioaji-logo.png" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -10,7 +9,7 @@
             href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
             rel="stylesheet"
         />
-        <title>Shioaji Pro — 交易終端</title>
+        <title>KGI Pro — 交易終端</title>
         <!--
             white-screen guard (#4): ES5 only — must parse on the oldest
             WKWebView. If the bundle dies before React mounts (SyntaxError /
@@ -51,7 +50,7 @@
                     );
                     title.appendChild(
                         document.createTextNode(
-                            'Shioaji Pro 啟動失敗 (startup failed)',
+                            'KGI Pro 啟動失敗 (startup failed)',
                         ),
                     );
                     var msg = document.createElement('pre');
@@ -67,8 +66,7 @@
                     hint.setAttribute('style', 'color:#9aa4ad');
                     hint.appendChild(
                         document.createTextNode(
-                            '請將上方錯誤訊息截圖回報至 ' +
-                                'github.com/Sinotrade/shioaji-pro-app/issues',
+                            '請將上方錯誤訊息截圖後附在專案 issue 中',
                         ),
                     );
                     box.appendChild(title);

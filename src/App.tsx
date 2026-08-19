@@ -1,4 +1,4 @@
-// src/App.tsx — Shioaji Pro trading terminal
+// src/App.tsx — KGI Pro trading terminal
 // Dynamic panel blocks on a draggable grid, with named layout profiles.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -12,6 +12,7 @@ import * as styles from './App.css';
 import * as grid from './grid.css';
 import { BottomDock } from './components/bottom-dock';
 import { CandleChart } from './components/candle-chart';
+import { AgentPanel } from './components/agent-panel';
 import { IntradayChart } from './components/intraday-chart';
 import { IntradayWallPanel } from './components/intraday-wall';
 import { CommandPalette } from './components/command-palette';
@@ -30,6 +31,7 @@ import { OrderTicket } from './components/order-ticket';
 import { ChipsCard } from './components/chips-card';
 import { ComboTicket } from './components/combo-ticket';
 import { DebugPanel } from './components/debug-panel';
+import { KgiStatusPanel } from './components/kgi-status-panel';
 import { GridTicket } from './components/grid-ticket';
 import { NoticeCenter } from './components/notice-center';
 import { FeatureGate } from './components/feature-gate';
@@ -69,7 +71,7 @@ import {
     fetchMargin,
     fetchPositions,
     fetchTrades,
-} from './lib/shioaji';
+} from './lib/kgi';
 import { onOrderEvent } from './lib/stream';
 import { ensureAccounts, getAccountState } from './lib/account-store';
 import { notify } from './lib/trade';
@@ -282,6 +284,8 @@ function BlockBody({
             return <NoticeCenter />;
         case 'debug':
             return <DebugPanel />;
+        case 'kgiStatus':
+            return <KgiStatusPanel />;
         case 'grid':
             return contract ? (
                 <GridTicket
@@ -325,10 +329,18 @@ function BlockBody({
             return <OptPayoff positions={dockProps.positions} />;
         case 'assistant': {
             const Panel = agentModule?.Panel;
+            if (Panel) {
+                return (
+                    <FeatureGate feature='agent'>
+                        <Panel />
+                    </FeatureGate>
+                );
+            }
             return (
-                <FeatureGate feature='agent'>
-                    {Panel ? <Panel /> : null}
-                </FeatureGate>
+                <AgentPanel
+                    selectedCode={contract?.code ?? null}
+                    onPick={onSelectCode}
+                />
             );
         }
         case 'replay':
@@ -562,7 +574,6 @@ export default function App() {
     const {
         items,
         loading,
-        initialLoading,
         addSymbol,
         removeSymbol,
         reorderSymbol,
@@ -627,7 +638,7 @@ export default function App() {
             const tradable = getAccountState().accounts.filter(
                 (a) =>
                     a.signed &&
-                    (a.account_type === 'S' || a.account_type === 'F'),
+                    a.account_type === 'S',
             );
             if (tradable.length > 0) {
                 const rs = await Promise.allSettled(
@@ -643,14 +654,8 @@ export default function App() {
                     r.status === 'fulfilled' ? r.value : [],
                 );
             }
-            const [st, fu] = await Promise.allSettled([
-                fetchPositions('S'),
-                fetchPositions('F'),
-            ]);
-            return [
-                ...(st.status === 'fulfilled' ? st.value : []),
-                ...(fu.status === 'fulfilled' ? fu.value : []),
-            ];
+            const st = await fetchPositions('S').catch(() => []);
+            return st;
         }, []),
         10000,
     );
@@ -659,14 +664,7 @@ export default function App() {
     // 帳戶時非選中帳戶的委託不會出現在委託 tab。現況一證一期沒有實害。
     const tradesPoll = usePoll<Trade[]>(
         useCallback(async () => {
-            const [s, f] = await Promise.allSettled([
-                fetchTrades('S'),
-                fetchTrades('F'),
-            ]);
-            return [
-                ...(s.status === 'fulfilled' ? s.value : []),
-                ...(f.status === 'fulfilled' ? f.value : []),
-            ];
+            return fetchTrades('S').catch(() => []);
         }, []),
         8000,
     );
@@ -998,7 +996,22 @@ export default function App() {
         [items],
     );
 
-    const booting = initialLoading;
+    // Was `initialLoading` from useWatchlist() — that flag only clears once
+    // EVERY watchlist symbol has been resolved AND had its quote
+    // subscribed (sequential HTTP calls, each funneled through the
+    // backend's single dedicated native-KGI worker thread alongside every
+    // other startup panel's own requests). Gating the entire app's first
+    // paint behind that measured 79s+ on a real account with 7 watchlist
+    // symbols + no positions data yet. The watchlist panel already renders
+    // its own "載入清單…" state independently while `loading` is true
+    // (see watchlist.tsx) — every other panel (positions/orders/account/
+    // heatmap/scanner/order-ticket) already falls back to
+    // <BlockPlaceholder/> when it has no bound contract yet, so there is
+    // nothing else here that actually needs the watchlist to be fully
+    // resolved before the rest of the trading UI can render. `mounted`
+    // (container measured — a synchronous DOM/ResizeObserver signal, no
+    // network round-trip) is the only real prerequisite.
+    const booting = !mounted;
 
     if (POPOUT_TYPE === 'traypanel') {
         return <TrayPanel />;
@@ -1070,7 +1083,7 @@ export default function App() {
                 {booting && (
                     <div className={styles.loading}>
                         <Orb size={20} />
-                        <span>Shioaji Pro</span>
+                        <span>KGI Pro</span>
                         <span style={{ fontSize: '0.7rem' }}>
                             載入交易終端…
                         </span>
@@ -1123,3 +1136,4 @@ export default function App() {
         </div>
     );
 }
+

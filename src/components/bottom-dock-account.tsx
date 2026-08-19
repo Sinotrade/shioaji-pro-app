@@ -7,6 +7,7 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePoll } from '../hooks/use-poll';
+import { ensureContract } from '../lib/contracts-cache';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import {
     fetchEarmarkingDetail,
@@ -17,7 +18,6 @@ import {
     fetchStockReserveDetail,
     fetchStockReserveSummary,
     fetchTradingLimits,
-    resolveContract,
     type AccountSelector,
     type EarmarkStocksDetail,
     type ProfitLoss,
@@ -25,14 +25,16 @@ import {
     type ReserveStocksSummary,
     type Settlement,
     type TradingLimits,
-} from '../lib/shioaji';
+} from '../lib/kgi';
+import { logKgiDebug } from '../lib/kgi-debug';
 import type {
     Account,
     AccountBalance,
     AccountedPosition,
     Margin,
 } from '../lib/types/portfolio';
-import { fmtMoney, fmtSigned } from '../lib/utils/format';
+import { fmtMoney, fmtSigned, fmtStockLots } from '../lib/utils/format';
+import { dateStrOffset } from '../lib/utils/kbars';
 import { vars } from '../theme.css';
 import * as panel from './panel.css';
 import * as styles from './bottom-dock.css';
@@ -43,6 +45,7 @@ import {
     type MarketFilter,
 } from './bottom-dock-shared';
 import { Orb } from './orb';
+import { RealizedPnlDialog } from './realized-pnl-dialog';
 
 // ---- helpers ----
 
@@ -123,6 +126,8 @@ function FundsSection({
     privMoney: boolean;
 }) {
     const money = (n: number) => maskMoney(fmtMoney(Math.round(n)), privMoney);
+    const maybeMoney = (n: number | null | undefined) =>
+        typeof n === 'number' && Number.isFinite(n) ? money(n) : '—';
     const signed = (n: number) => maskMoney(fmtSigned(n, 0), privMoney);
 
     // 股票市值（扣賣出方稅費估）— 沿用原帳務 tab 的估算
@@ -135,7 +140,7 @@ function FundsSection({
             return s + sign * gross * (1 - 0.001425 - taxRate);
         }, 0);
 
-    const cash = balance?.acc_balance ?? 0;
+    const cash = balance?.acc_balance;
     const futEquity = margin?.equity ?? 0;
     // 模擬環境 balance/margin 全 0 屬上游行為（server 不打真 API）—
     // 顯示「模擬模式無法查詢」小字而不是一排 $0
@@ -160,10 +165,16 @@ function FundsSection({
             : vars.color.down; // 綠 = 安全（台股綠跌語彙外，安全狀態沿用綠）
 
     const totalAssets =
-        (showStock ? stockValue + cash : 0) + (showFut ? futEquity : 0);
+        balance?.total_assets ??
+        ((showStock && cash !== null && cash !== undefined
+            ? stockValue + cash
+            : null) ??
+            (showFut ? futEquity : null));
     const showTotal =
-        totalAssets > 0 &&
-        ((showStock && stockValue > 0) || cash > 0 || futEquity > 0);
+        totalAssets !== null &&
+        totalAssets !== undefined &&
+        ((showStock && (stockValue !== 0 || cash !== null)) ||
+            (showFut && futEquity > 0));
 
     const hasAny = showStock || showFut;
     return (
@@ -175,7 +186,7 @@ function FundsSection({
                     {simBalanceBlank ? (
                         <div className={styles.fundRow}>
                             <span className={styles.fundLabel}>
-                                證券交割帳戶 Balance
+                                今日交割試算 Settlement Trial
                             </span>
                             <span className={styles.acctHint}>
                                 模擬模式無法查詢
@@ -183,10 +194,20 @@ function FundsSection({
                         </div>
                     ) : (
                         <Row
-                            label='證券交割帳戶 Balance'
-                            value={balance ? money(cash) : '—'}
+                            label='今日交割試算 Settlement Trial'
+                            value={balance ? maybeMoney(cash) : '—'}
                         />
                     )}
+                    {/* KGI SuperPy 未提供銀行/證券戶頭的即時可用現金餘額（已
+                        逐一查證 Account API 全部方法：BalanceStatement /
+                        ExecReport / Inventory / InventorySum / OrderReport /
+                        RealizePL / SettleAmt / SettleAmtDetail /
+                        SettleAmtTrial，皆無此欄位）。固定顯示未提供，不用
+                        0 或其他數字冒充。 */}
+                    <Row
+                        label='銀行帳戶餘額 Bank Balance'
+                        value='API 未提供'
+                    />
                     {stockValue !== 0 && (
                         <Row
                             label='股票市值（扣稅費估）'
@@ -259,7 +280,10 @@ function FundsSection({
             {showTotal && (
                 <>
                     <div className={styles.fundRule} />
-                    <Row label='資產市值 Total Assets' value={money(totalAssets)} />
+                    <Row
+                        label='資產市值 Total Assets'
+                        value={maybeMoney(totalAssets)}
+                    />
                 </>
             )}
         </section>
@@ -282,7 +306,7 @@ function SettleSection({
         return {
             t,
             date: hit ? settleDateLabel(hit.date) : bizDateLabel(t),
-            amount: hit?.amount ?? 0,
+            amount: hit ? hit.amount : null,
         };
     });
     return (
@@ -299,9 +323,15 @@ function SettleSection({
                         <span className={styles.settleTag}>T+{r.t}</span>
                         <span className={styles.settleDate}>{r.date}</span>
                         <span
-                            className={`${styles.settleAmount} ${panel.dirText[dirOfAmount(r.amount)]}`}
+                            className={`${styles.settleAmount} ${
+                                r.amount === null
+                                    ? ''
+                                    : panel.dirText[dirOfAmount(r.amount)]
+                            }`}
                         >
-                            {maskMoney(fmtSigned(r.amount, 0), privMoney)}
+                            {r.amount === null
+                                ? '—'
+                                : maskMoney(fmtSigned(r.amount, 0), privMoney)}
                         </span>
                     </div>
                 ))
@@ -319,12 +349,27 @@ interface PnlData {
     total: number;
 }
 
+function pnlRowText(row: AccountedPnl, names: Record<string, string>): string {
+    if ('descript' in row && row.descript) return row.descript;
+    if ('cond' in row && row.cond) return row.cond;
+    if ('name' in row && row.name) return row.name;
+    return names[row.code] ?? '';
+}
+
+function pnlRowPrice(row: AccountedPnl): number {
+    if ('price' in row) return Number(row.price) || 0;
+    if ('entry_price' in row) return Number(row.entry_price) || 0;
+    return 0;
+}
+
 function PnlSection({
     pnl,
     privMoney,
+    onOpenHistory,
 }: {
     pnl: PnlData | undefined;
     privMoney: boolean;
+    onOpenHistory: () => void;
 }) {
     const [open, setOpen] = useState(false);
     // 股名 lazy 解析：展開時才查、component 內快取，不訂閱行情
@@ -337,7 +382,7 @@ function PnlSection({
         if (codesKey.length === 0) return;
         let alive = true;
         void Promise.allSettled(
-            codesKey.map((code) => resolveContract(code)),
+            codesKey.map((code) => ensureContract(code)),
         ).then((rs) => {
             if (!alive) return;
             setNames((prev) => {
@@ -358,11 +403,36 @@ function PnlSection({
 
     return (
         <section className={styles.acctSection}>
-            <div className={styles.acctTitle}>今日已實現損益 Realized P&L</div>
+            <div className={styles.acctTitle}>
+                今日已實現損益 Realized P&L
+                <button
+                    className={styles.acctTitleNote}
+                    style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        font: 'inherit',
+                        color: 'inherit',
+                        padding: 0,
+                        textDecoration: 'underline',
+                    }}
+                    title='查詢任意日期區間的歷史已實現損益'
+                    onClick={onOpenHistory}
+                >
+                    查歷史 History
+                </button>
+            </div>
             {pnl === undefined ? (
                 <Loading text='載入已實現損益' />
             ) : pnl.rows.length === 0 ? (
-                <span className={styles.acctHint}>今日無已實現損益</span>
+                <div className={styles.pnlToggleStatic}>
+                    <span
+                        className={`${styles.pnlTotal} ${panel.dirText.flat}`}
+                    >
+                        {maskMoney(fmtSigned(0, 0), privMoney)}
+                    </span>
+                    <span className={styles.acctHint}>今日無已實現損益</span>
+                </div>
             ) : (
                 <>
                     <button
@@ -390,14 +460,18 @@ function PnlSection({
                                 key={`${r.market}-${r.id}-${'dseq' in r ? r.dseq : r.date}`}
                                 className={styles.pnlDetailRow}
                             >
-                                <span>{r.code}</span>
+                                <span title={r.date}>{r.code}</span>
                                 <span className={styles.pnlDetailName}>
-                                    {names[r.code] ?? ''}
+                                    {pnlRowText(r, names)}
                                 </span>
                                 <span className={styles.pnlDetailQty}>
                                     {/* 平倉筆的數量帶方向正負 — 顯示絕對值 */}
-                                    {Math.abs(r.quantity).toLocaleString()}
-                                    {r.market === 'S' ? '張' : '口'}
+                                    {r.market === 'S'
+                                        ? fmtStockLots(Math.abs(r.quantity))
+                                        : `${Math.abs(r.quantity).toLocaleString()}口`}
+                                </span>
+                                <span className={styles.pnlDetailQty}>
+                                    {pnlRowPrice(r) ? `@${pnlRowPrice(r)}` : r.date}
                                 </span>
                                 <span
                                     className={`${styles.pnlDetailVal} ${panel.dirText[dirOfAmount(r.pnl)]}`}
@@ -607,16 +681,23 @@ export function AccountPane({
     margin,
     market,
     scopeAccount,
+    hasFuturesAccount,
 }: {
     positions: AccountedPosition[];
     balance?: AccountBalance;
     margin?: Margin;
     market: MarketFilter;
     scopeAccount: Account | null;
+    hasFuturesAccount: boolean;
 }) {
     const privMoney = usePrivacyMoney();
     const { ref, width } = useMeasuredWidth();
     const wide = sizeClassOf(width) === 'wide';
+    const [historyOpen, setHistoryOpen] = useState(false);
+
+    useEffect(() => {
+        logKgiDebug('[account raw]', balance);
+    }, [balance]);
 
     // 模擬環境判斷：空狀態文案（無法查詢 vs 非交易時段）靠這個分流
     const [simulation, setSimulation] = useState<boolean | null>(null);
@@ -640,7 +721,9 @@ export function AccountPane({
     const showStock =
         market !== 'F' && (!scopeAccount || scopeAccount.account_type === 'S');
     const showFut =
-        market !== 'S' && (!scopeAccount || scopeAccount.account_type === 'F');
+        hasFuturesAccount &&
+        market !== 'S' &&
+        (!scopeAccount || scopeAccount.account_type === 'F');
 
     const stockSel: AccountSelector | undefined =
         scopeAccount?.account_type === 'S'
@@ -684,6 +767,7 @@ export function AccountPane({
         if (showFut) markets.push('F');
         const rows: AccountedPnl[] = [];
         let total = 0;
+        const today = dateStrOffset(0);
         await Promise.all(
             markets.map(async (m) => {
                 const sel =
@@ -694,10 +778,10 @@ export function AccountPane({
                           }
                         : undefined;
                 const [list, sum] = await Promise.all([
-                    fetchProfitLoss(m, sel).catch(
+                    fetchProfitLoss(m, sel, today, today).catch(
                         () => [] as ProfitLoss[],
                     ),
-                    fetchProfitLossSummary(m, sel).catch(() => null),
+                    fetchProfitLossSummary(m, sel, today, today).catch(() => null),
                 ]);
                 for (const r of list) rows.push({ ...r, market: m });
                 const haveSum =
@@ -786,7 +870,11 @@ export function AccountPane({
     );
     const right = (
         <div className={styles.acctCol}>
-            <PnlSection pnl={pnl} privMoney={privMoney} />
+            <PnlSection
+                pnl={pnl}
+                privMoney={privMoney}
+                onOpenHistory={() => setHistoryOpen(true)}
+            />
             {showStock && (
                 <ReserveSection
                     reserve={reserve}
@@ -805,6 +893,14 @@ export function AccountPane({
                 {left}
                 {right}
             </div>
+            {historyOpen && (
+                <RealizedPnlDialog
+                    onClose={() => setHistoryOpen(false)}
+                    scopeAccount={scopeAccount}
+                    hasFuturesAccount={hasFuturesAccount}
+                />
+            )}
         </div>
     );
 }
+

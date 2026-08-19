@@ -530,6 +530,32 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             ))}
         </Frame>
     ),
+    kgiStatus: (
+        <Frame>
+            {[0, 1, 2, 3].map((i) => (
+                <g key={i}>
+                    <rect
+                        x={10 + (i % 2) * 52}
+                        y={12 + Math.floor(i / 2) * 24}
+                        width='42'
+                        height='16'
+                        rx='3'
+                        fill={muted}
+                        fillOpacity='0.14'
+                    />
+                    <circle
+                        cx={18 + (i % 2) * 52}
+                        cy={20 + Math.floor(i / 2) * 24}
+                        r='3'
+                        fill={i === 2 ? down : up}
+                        fillOpacity='0.85'
+                    />
+                    <Ln x={25 + (i % 2) * 52} y={18 + Math.floor(i / 2) * 24} w={18} />
+                </g>
+            ))}
+            <rect x='10' y='60' width='100' height='5' rx='2' fill={accent} fillOpacity='0.55' />
+        </Frame>
+    ),
     grid: (
         <Frame>
             <line x1='60' y1='6' x2='60' y2='70' stroke={border} />

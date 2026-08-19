@@ -41,6 +41,7 @@ export interface StockOrderReq {
     order_cond?: StockOrderCond;
     daytrade_short?: boolean;
     custom_field?: string; // tag for app-managed orders (e.g. grid)
+    client_request_id?: string;
 }
 
 export interface FuturesOrderReq {
@@ -83,9 +84,11 @@ export interface OrderStatusInfo {
     order_quantity: number;
     deal_quantity: number;
     cancel_quantity: number;
+    remaining_quantity?: number;
     modified_price: number;
     msg: string;
     deals: Deal[];
+    order_id_present?: boolean;
 }
 
 export interface Trade {

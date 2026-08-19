@@ -118,6 +118,56 @@ export const segGroup = style({
     gap: '2px',
 });
 
+// 市價/買一/賣一/漲停/跌停 quick-price shortcuts, directly under the price
+// field. Momentary action buttons (unlike `seg`, nothing here stays
+// "selected") — disabled state covers "no verified data yet" (e.g. a
+// product with no price limit, or bid/ask not streamed yet).
+export const priceShortcutRow = style({
+    display: 'flex',
+    gap: '3px',
+});
+
+const priceShortcutBase = style({
+    flex: 1,
+    fontFamily: vars.font.body,
+    fontSize: '0.66rem',
+    fontWeight: 600,
+    padding: '4px 0',
+    cursor: 'pointer',
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    color: vars.color.mutedForeground,
+    transition: 'all 0.12s',
+});
+
+export const priceShortcutBtn = styleVariants({
+    normal: [
+        priceShortcutBase,
+        { ':hover': { color: vars.color.foreground, borderColor: vars.color.borderBright } },
+    ],
+    up: [
+        priceShortcutBase,
+        {
+            color: vars.color.up,
+            borderColor: vars.color.up,
+            ':hover': { background: vars.color.accentDim },
+        },
+    ],
+    down: [
+        priceShortcutBase,
+        {
+            color: vars.color.down,
+            borderColor: vars.color.down,
+            ':hover': { background: vars.color.accentDim },
+        },
+    ],
+    disabled: [
+        priceShortcutBase,
+        { opacity: 0.4, cursor: 'not-allowed' },
+    ],
+});
+
 const segBase = style({
     flex: 1,
     fontFamily: vars.font.body,

@@ -1,43 +1,11 @@
-## v0.1.39 - 全新「當日走勢」與「當日走勢牆」面板
+# Release Notes
 
-![當日走勢 — 漲跌停模式](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.39/docs/images/release-0.1.39-intraday-band.png)
+## KGI Migration Foundation
 
-### 當日走勢（分時圖）
-- 全新面板：以昨收參考價為基準的分時走勢，漲跌以紅綠分色與漸層呈現，搭配參考價虛線、均價線（VWAP）與量能圖；支援連動/釘選、多開與獨立視窗。
-- **固定時段軸**：股票/指數 09:00–13:30，期貨與選擇權自動判別日盤 08:45–13:45 或夜盤 15:00–05:00（跨午夜），開盤即呈現完整時段框架；換時段自動重載。
-- **Y 軸雙模式**：「自動」以參考價上下對稱縮放（上限鎖在漲跌停，極端行情軸不亂飆）；「漲跌停」固定整段停板區間並標出漲停/跌停虛線與軸標籤。預設依商品分類（個股/個股期=漲跌停、指數/指數期=自動），單檔切換自動記憶，並可一鍵套用同類、套用全部或重設。
-- **鎖停板亮燈**：現價觸及漲停/跌停時，面板價格以停板色底醒目提示。
-- **線圖／美國線**：分時線之外可切換每分鐘開高低收的美國線，日內高低點不因只畫收盤而失真；兩種樣式共用紅綠漸層底。
-- **量能雙模式**：獨立分欄（含量刻度，股票張數/期貨口數/指數成交額「億」）或疊在主圖下緣不佔空間。
-- 顯示自訂：均價/高低/總量可個別開關、線寬 0.5–4 滑桿調整，設定集中在面板右上的顯示設定並自動記憶。
-- 游標讀值：滑過任一分鐘顯示該分鐘價格、漲跌幅、均價與單量（浮動於圖表左下，不干擾版面）；指數面板自動隱藏均價與停板相關功能、金額以「億」計。
+- Migrated the application toward a KGI-only broker architecture.
+- Preserved the existing React terminal UI, charts, watchlists, indicators, scanner, and agent panel.
+- Added a local Python KGI bridge with mock and real client structure.
+- Kept all broker access read-only. Live order submission, modification, and cancellation are still disabled.
+- Added mock-mode development flow so the terminal runs without KGI production credentials.
 
-![當日走勢 — 夜盤美國線](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.39/docs/images/release-0.1.39-intraday-bars.png)
-
-![當日走勢牆](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.39/docs/images/release-0.1.39-wall.png)
-
-### 當日走勢牆
-- 一個面板同時看多檔分時走勢：綁定任一自選清單、欄×列自由自訂（各 1–10）、清單放不下自動分頁翻閱。
-- 每格為精簡分時圖（參考價基準紅綠、均價線、量能、固定時段框、即時更新），格頭顯示代碼/名稱/現價/漲跌幅，鎖漲跌停同樣亮燈；點擊任一格即連動全終端。
-- **三層顯示設定**：樣式（線圖/美國線）、Y 軸（記憶/自動/漲跌停）、刻度（數字/%/隱藏）、量能、線寬可依「類別全域」（個股含個股期/指數/指數期貨，分頁籤切換）分別設定，滑過任一格的齒輪還能對單一商品覆寫、隨時清除回到類別設定。
-- 清單與排列選擇跟著版面一起記憶。
-
-### 穩定性
-- **修正開盤行情風暴造成的畫面凍結/黑屏**：多面板×多檔訂閱時，逐筆行情同步喚醒所有畫面更新在極端流量下會觸發 React 巢狀更新保護而整頁崩潰，並連帶讓桌面版 IPC 降級推高 CPU。行情資料仍逐筆即時寫入，畫面重繪通知改為 50ms 批次（20Hz），肉眼無感但徹底消除崩潰與 CPU 飆高。
-
-### 其他修正
-- **K 線圖歷史斷層自癒（#18）**：開盤前載入的歷史可能缺少上游尚未發布的跨午夜夜盤段（00:00–05:00），過去這個洞會留一整天；現在偵測到 live 行情與歷史尾端出現斷層時會自動補抓，睡醒/斷線後的缺口也一併自癒。
-- 伺服器啟動失敗的診斷訊息：網路不通（連線逾時/拒絕/DNS 失敗）不再誤報為「請檢查金鑰/約定書」，明確提示為網路問題與排查方向。
-- 收盤定盤價（指數 13:31–33）正確併入走勢最後一根；冷門股與收盤後零星成交不再觸發不必要的資料重載。
-
-### 相容性
-- 內建 Shioaji Server `v1.7.2`。
-- 深色、純黑與淺色主題完整支援。
-
----
-
-⚠ 回測結果基於歷史資料與簡化成本假設，不代表未來績效；AI 分析僅供參考；自動下單請自行評估風險，盈虧自負。
-
-Shioaji Pro 桌面版 - 內建 shioaji server（sidecar）、伺服器管理介面、系統匣、自動更新。
-
-下載：macOS `.dmg` | Windows `.msi` / `.exe` | Linux `.AppImage` / `.deb` / `.rpm`
+Real KGI connectivity still requires live KGI access and verification against the official SuperPy API.

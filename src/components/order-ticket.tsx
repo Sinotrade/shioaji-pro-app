@@ -17,7 +17,12 @@ import { usePickedPrice } from '../lib/price-sync';
 import { maskAccountId, maskName, usePrivacyMode } from '../lib/privacy';
 import { selectAccount, useAccounts } from '../lib/account-store';
 import { checkOrderAllowed } from '../lib/risk';
-import { fetchInfo, placeFuturesOrder, placeStockOrder } from '../lib/shioaji';
+import {
+    fetchInfo,
+    newClientRequestId,
+    placeFuturesOrder,
+    placeStockOrder,
+} from '../lib/kgi';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Account } from '../lib/types/portfolio';
@@ -31,6 +36,9 @@ import type {
 import {
     contractMultiplier,
     futuresTaxRate,
+    resolvePriceShortcuts,
+    stockOrderNotional,
+    stockOrderShares,
     stockTaxRate,
 } from '../lib/utils/contract-cost';
 import { fmtPrice } from '../lib/utils/format';
@@ -51,6 +59,14 @@ export function OrderTicket({
     const quote = useQuote(contract.code);
     const live = useTradingLive();
 
+    // 漲停/跌停/買一/賣一 shortcut sources — always derived fresh from the
+    // current `contract`/`quote` props (never cached into local state), so
+    // a symbol switch can never leave a stale price behind.
+    const { limitUp, limitDown, bid1, ask1 } = resolvePriceShortcuts(
+        contract,
+        quote?.bidask,
+    );
+
     const [action, setAction] = useState<Action>('Buy');
     const [price, setPrice] = useState('');
     const [qty, setQty] = useState(1);
@@ -61,6 +77,7 @@ export function OrderTicket({
     const [octype, setOctype] = useState<FuturesOCType>('Auto');
     const [daytradeShort, setDaytradeShort] = useState(false);
     const [armed, setArmed] = useState(false);
+    const [clientRequestId, setClientRequestId] = useState('');
     const [busy, setBusy] = useState(false);
     const [bracketOn, setBracketOn] = useState(false);
     const [stopPrice, setStopPrice] = useState('');
@@ -196,8 +213,25 @@ export function OrderTicket({
         }
     }, [picked]);
 
+    // shared by 買一/賣一/漲停/跌停: switch to LMT (if not already) and fill
+    // the verified price — same "manual edit" semantics as typing into the
+    // price field (de-arms, marks touched so live-tick autofill won't
+    // overwrite it).
+    const applyShortcutPrice = (value: number | null) => {
+        if (value === null) return;
+        priceTouched.current = true;
+        if (priceType !== 'LMT') {
+            setPriceType('LMT');
+            setOrderType('ROD');
+        }
+        setPrice(String(value));
+        setArmed(false);
+        setSplitArmed(false);
+    };
+
     const execute = async () => {
         if (!armed) {
+            setClientRequestId(newClientRequestId('stock-order'));
             setArmed(true);
             setFeedback(null);
             return;
@@ -229,6 +263,8 @@ export function OrderTicket({
                       order_lot: orderLot,
                       order_cond:
                           orderCond !== 'Cash' ? orderCond : undefined,
+                      client_request_id:
+                          clientRequestId || newClientRequestId('stock-order'),
                       daytrade_short:
                           action === 'Sell' &&
                           daytradeShort &&
@@ -261,6 +297,7 @@ export function OrderTicket({
                 text: `✕ ${e instanceof Error ? e.message : String(e)}`,
             });
         } finally {
+            setClientRequestId('');
             setBusy(false);
         }
     };
@@ -387,6 +424,8 @@ export function OrderTicket({
                                       orderCond !== 'Cash'
                                           ? orderCond
                                           : undefined,
+                                  client_request_id:
+                                      newClientRequestId('stock-split-order'),
                                   daytrade_short:
                                       action === 'Sell' &&
                                       daytradeShort &&
@@ -580,6 +619,87 @@ export function OrderTicket({
                         +
                     </button>
                 </div>
+
+                {!isFutures && (
+                    <div className={styles.priceShortcutRow}>
+                        <button
+                            className={styles.priceShortcutBtn.normal}
+                            title='切換為市價單'
+                            onClick={() => {
+                                setPriceType('MKT');
+                                setOrderType('IOC');
+                                setArmed(false);
+                                setSplitArmed(false);
+                            }}
+                        >
+                            市價
+                        </button>
+                        <button
+                            className={
+                                styles.priceShortcutBtn[
+                                    bid1 !== null ? 'normal' : 'disabled'
+                                ]
+                            }
+                            disabled={bid1 === null}
+                            title={
+                                bid1 !== null
+                                    ? `填入委買一 ${fmtPrice(bid1)}`
+                                    : '尚無委買一資料'
+                            }
+                            onClick={() => applyShortcutPrice(bid1)}
+                        >
+                            買一
+                        </button>
+                        <button
+                            className={
+                                styles.priceShortcutBtn[
+                                    ask1 !== null ? 'normal' : 'disabled'
+                                ]
+                            }
+                            disabled={ask1 === null}
+                            title={
+                                ask1 !== null
+                                    ? `填入委賣一 ${fmtPrice(ask1)}`
+                                    : '尚無委賣一資料'
+                            }
+                            onClick={() => applyShortcutPrice(ask1)}
+                        >
+                            賣一
+                        </button>
+                        <button
+                            className={
+                                styles.priceShortcutBtn[
+                                    limitUp !== null ? 'up' : 'disabled'
+                                ]
+                            }
+                            disabled={limitUp === null}
+                            title={
+                                limitUp !== null
+                                    ? `填入漲停價 ${fmtPrice(limitUp)}`
+                                    : '此商品尚無驗證的漲停價資料'
+                            }
+                            onClick={() => applyShortcutPrice(limitUp)}
+                        >
+                            漲停
+                        </button>
+                        <button
+                            className={
+                                styles.priceShortcutBtn[
+                                    limitDown !== null ? 'down' : 'disabled'
+                                ]
+                            }
+                            disabled={limitDown === null}
+                            title={
+                                limitDown !== null
+                                    ? `填入跌停價 ${fmtPrice(limitDown)}`
+                                    : '此商品尚無驗證的跌停價資料'
+                            }
+                            onClick={() => applyShortcutPrice(limitDown)}
+                        >
+                            跌停
+                        </button>
+                    </div>
+                )}
 
                 <div className={styles.fieldRow}>
                     <span className={styles.fieldLabel}>數量{qtyUnit}</span>
@@ -1069,11 +1189,45 @@ export function OrderTicket({
                 <CostEstimate
                     contract={contract}
                     action={action}
-                    price={priceType === 'LMT' ? Number(price) : null}
+                    price={
+                        priceType === 'LMT'
+                            ? Number(price)
+                            : Number(liveClose)
+                    }
+                    priceType={priceType}
                     qty={splitOpen && splitMode === 'fixed' ? splitTotal : qty}
                     odd={!isFutures && orderLot === 'IntradayOdd'}
                     daytrade={!isFutures && daytradeShort}
                 />
+
+                {armed && !splitOpen && (
+                    <div className={styles.splitBox}>
+                        <span className={styles.previewTotal}>
+                            <span>
+                                {action === 'Buy' ? 'BUY' : 'SELL'}{' '}
+                                {contract.code}
+                            </span>
+                            <span>
+                                {qty}
+                                {qtyUnit}
+                            </span>
+                        </span>
+                        <span className={styles.previewRow}>
+                            <span>價別</span>
+                            <span>
+                                {priceType === 'LMT'
+                                    ? `LMT ${fmtPrice(Number(price))}`
+                                    : 'MKT'}
+                            </span>
+                        </span>
+                        <span className={styles.previewRow}>
+                            <span>條件 / 效期 / 單位</span>
+                            <span>
+                                {orderCond} / {orderType} / {orderLot}
+                            </span>
+                        </span>
+                    </div>
+                )}
 
                 {splitOpen ? (
                     <button
@@ -1140,6 +1294,7 @@ function CostEstimate({
     contract,
     action,
     price,
+    priceType,
     qty,
     odd,
     daytrade,
@@ -1147,6 +1302,7 @@ function CostEstimate({
     contract: ContractInfo;
     action: Action;
     price: number | null;
+    priceType: string;
     qty: number;
     odd: boolean;
     daytrade: boolean;
@@ -1178,8 +1334,8 @@ function CostEstimate({
             </span>
         );
     }
-    const shares = odd ? qty : qty * 1000;
-    const notional = price * shares;
+    const shares = stockOrderShares(qty, odd);
+    const notional = stockOrderNotional(price, qty, odd);
     const fee = Math.max(odd ? 1 : 20, Math.round(notional * 0.001425));
     const baseTaxRate = stockTaxRate(contract);
     // 一般股票當沖賣出減半；ETF 與權證固定 0.1%。
@@ -1189,7 +1345,9 @@ function CostEstimate({
     return (
         <span className={styles.costRow}>
             金額 {fmtPrice(notional, 0)} · 手續費 ≈ {fee}
-            {action === 'Sell' ? ` · 證交稅 ≈ ${tax}` : ''}（牌告價估算）
+            {action === 'Sell' ? ` · 證交稅 ≈ ${tax}` : ''}
+            {priceType === 'LMT' ? '（限價試算）' : '（市價參考估算）'}
         </span>
     );
 }
+

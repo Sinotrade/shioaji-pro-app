@@ -80,6 +80,7 @@ export function BottomDock({
         (a) =>
             a.signed && (a.account_type === 'S' || a.account_type === 'F'),
     );
+    const hasFuturesAccount = tradable.some((a) => a.account_type === 'F');
     const unsigned = accounts.filter(
         (a) =>
             !a.signed && (a.account_type === 'S' || a.account_type === 'F'),
@@ -130,6 +131,7 @@ export function BottomDock({
     const pnlDir = totalPnl > 0 ? 'up' : totalPnl < 0 ? 'down' : 'flat';
     // 期貨帳戶指標只在範圍含期貨帳戶時顯示
     const showFut =
+        hasFuturesAccount &&
         market !== 'S' &&
         (scope === '' || scopeAccount?.account_type === 'F') &&
         !!margin;
@@ -331,6 +333,7 @@ export function BottomDock({
                         margin={margin}
                         market={market}
                         scopeAccount={scopeAccount}
+                        hasFuturesAccount={hasFuturesAccount}
                     />
                 </div>
             )}

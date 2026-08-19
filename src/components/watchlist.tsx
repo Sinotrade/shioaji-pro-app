@@ -27,7 +27,8 @@ import {
 import { neighborCode } from '../lib/list-move';
 import { useQuote } from '../hooks/use-stream';
 import type { WatchItem } from '../hooks/use-watchlist';
-import type { ServerWatchlist } from '../lib/shioaji';
+import type { ServerWatchlist } from '../lib/kgi';
+import { normalizeQuoteState, quoteSortPercent } from '../lib/quote-model';
 import { getQuote } from '../lib/stream';
 import type { ContractInfo } from '../lib/types/contract';
 import type { SecurityType } from '../lib/types/contract';
@@ -46,17 +47,11 @@ type SortMode = 'custom' | 'desc' | 'asc';
 
 // live percent change for sorting — quote first, snapshot fallback
 function pctOf(item: WatchItem): number {
-    const q = getQuote(item.contract.code);
-    const ref = q?.index
-        ? Number(q.index.reference)
-        : item.contract.reference;
-    const close = q?.tick
-        ? Number(q.tick.close)
-        : q?.index
-          ? Number(q.index.close)
-          : item.snapshot?.close;
-    if (close !== undefined && ref) return ((close - ref) / ref) * 100;
-    return item.snapshot?.change_rate ?? 0;
+    return quoteSortPercent(
+        getQuote(item.contract.code),
+        item.snapshot,
+        item.contract,
+    );
 }
 
 const WatchRow = memo(function WatchRow({
@@ -92,30 +87,16 @@ const WatchRow = memo(function WatchRow({
     onDragEnd: () => void;
 }) {
     const quote = useQuote(item.contract.code);
-    const tick = quote?.tick;
-    const index = quote?.index;
-
-    const close = tick
-        ? Number(tick.close)
-        : index
-          ? Number(index.close)
-          : item.snapshot?.close;
-    const ref = index ? Number(index.reference) : item.contract.reference;
-    const chg = tick?.price_chg
-        ? Number(tick.price_chg)
-        : index
-          ? Number(index.close) - Number(index.reference)
-        : close !== undefined && ref
-          ? close - ref
-          : undefined;
-    // NEVER use tick.pct_chg — its unit differs between stk (％×100) and
-    // fop (％) streams; derive from the price change and reference instead
-    const pct =
-        chg !== undefined && ref
-            ? (chg / ref) * 100
-            : item.snapshot?.change_rate;
-
-    const dir = chg === undefined || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';
+    const normalized = normalizeQuoteState(
+        quote,
+        item.snapshot,
+        item.contract,
+    );
+    const close = normalized.price;
+    const ref = normalized.reference;
+    const chg = normalized.change;
+    const pct = normalized.changePercent;
+    const dir = normalized.direction;
     // the flash overlay is re-keyed by flashSeq so the animation replays on
     // every real deal — the row itself stays mounted (hover state survives)
     const flashDir = !quote?.flashSeq
@@ -172,8 +153,8 @@ const WatchRow = memo(function WatchRow({
                 <span className={styles.sparkCell}>
                     <Sparkline
                         contract={item.contract}
-                        last={close}
-                        reference={ref || undefined}
+                        last={close ?? undefined}
+                        reference={ref ?? undefined}
                         height={26}
                         stretch
                     />
@@ -681,3 +662,4 @@ export function Watchlist({
         </>
     );
 }
+

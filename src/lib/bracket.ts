@@ -3,7 +3,7 @@
 // is detected via order_event deals plus a trades-polling fallback.
 
 import { onOrderEvent } from './stream';
-import { fetchTrades } from './shioaji';
+import { fetchTrades } from './kgi';
 import { notify } from './trade';
 import { addTrigger } from './trigger-engine';
 import type { Action } from './types/order';
@@ -117,3 +117,4 @@ function ensureWatcher() {
         }
     });
 }
+

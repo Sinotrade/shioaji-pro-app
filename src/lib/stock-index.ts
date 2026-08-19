@@ -1,12 +1,15 @@
 // src/lib/stock-index.ts — Contract V2 stock catalog and optional typed info.
-// Base records stay lightweight; full StockInfo is loaded only by screens that
-// genuinely need category/rule fields (for example the sector heatmap).
+// The bulk /api/v1/data/contracts?security_type=STK response already carries
+// the full normalized row (name, category, ...) for every symbol — see
+// BrokerContractsQueryResponse in src/lib/broker/types.ts — so one call
+// populates the whole catalog's name+category. loadStockDetails()/
+// loadStockIndex() used to re-fetch each symbol individually
+// (fetchContractInfo per code) even for the entire STK universe (1000+
+// requests); that N+1 fan-out is gone — the per-code cache below is now
+// primed straight from the bulk catalog, and per-code fetchContractInfo is
+// only a fallback for a code that genuinely isn't in the bulk catalog.
 
-import {
-    fetchContractInfo,
-    fetchContracts,
-    fetchWarrantUnderlyings,
-} from './shioaji';
+import { fetchContractInfo, fetchContracts } from './kgi';
 
 export interface StockMeta {
     code: string;
@@ -18,32 +21,48 @@ export interface StockMeta {
 
 let catalogCache: StockMeta[] | null = null;
 let catalogLoading: Promise<StockMeta[]> | null = null;
-let detailsCache: StockMeta[] | null = null;
-let detailsLoading: Promise<StockMeta[]> | null = null;
 const detailByCode = new Map<string, StockMeta>();
 const detailLoadingByCode = new Map<string, Promise<StockMeta | null>>();
+
+// The bulk STK catalog is a real KGI-native round trip the FIRST time it's
+// requested each session (kgisuperpy's own Data.contract() cache is empty
+// until then), and every native KGI call in the backend is serialized onto
+// one dedicated worker thread (backend/kgi_bridge/clients.py's
+// _native_executor — required for TradeCom DLL thread-safety). If a
+// secondary panel (heatmap, scanner category tags) fires this on mount at
+// the same time as the watchlist/positions/order-ticket's own startup
+// calls, it can win that single-threaded queue and delay the primary
+// trading UI. Deferring the FIRST call to the browser's idle slot (falls
+// back to a short timeout where requestIdleCallback isn't available) lets
+// the critical-path requests reach the backend first without meaningfully
+// slowing the secondary panel — it was already a multi-second fetch.
+function whenIdle(): Promise<void> {
+    return new Promise((resolve) => {
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(() => resolve(), { timeout: 1500 });
+        } else {
+            setTimeout(resolve, 300);
+        }
+    });
+}
 
 export function loadStockCatalog(): Promise<StockMeta[]> {
     if (catalogCache) return Promise.resolve(catalogCache);
     if (catalogLoading) return catalogLoading;
-    catalogLoading = Promise.all([
-        fetchContracts('STK'),
-        fetchWarrantUnderlyings().catch(() => []),
-    ])
-        .then(([res, underlyings]) => {
-            const names = new Map(
-                underlyings
-                    .filter((row) => row.name)
-                    .map((row) => [row.underlying_code, row.name!]),
-            );
-            catalogCache = res.contracts
+    catalogLoading = whenIdle()
+        .then(() => fetchContracts('STK'))
+        .then((res) => {
+            const rows = res.contracts
                 .filter((c) => c.code)
                 .map((c) => ({
                     code: c.code,
-                    name: names.get(c.code) ?? c.code,
-                    category: '',
+                    name: c.name || c.code,
+                    category: c.category ?? '',
                     exchange: c.exchange ?? '',
+                    day_trade: c.day_trade,
                 }));
+            for (const row of rows) detailByCode.set(row.code, row);
+            catalogCache = rows;
             return catalogCache;
         })
         .catch((e) => {
@@ -55,6 +74,12 @@ export function loadStockCatalog(): Promise<StockMeta[]> {
 
 export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
     const unique = [...new Set(codes.filter(Boolean))];
+    // Prime detailByCode from the bulk catalog first so a caller asking
+    // for the whole catalog (loadStockIndex) or a scanner-result subset
+    // hits the already-cached rows instead of one request per symbol.
+    if (!catalogCache) {
+        await loadStockCatalog().catch(() => undefined);
+    }
     const load = (code: string) => {
         const cached = detailByCode.get(code);
         if (cached) return Promise.resolve(cached);
@@ -84,19 +109,7 @@ export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
 }
 
 export function loadStockIndex(): Promise<StockMeta[]> {
-    if (detailsCache) return Promise.resolve(detailsCache);
-    if (detailsLoading) return detailsLoading;
-    detailsLoading = loadStockCatalog()
-        .then((catalog) => loadStockDetails(catalog.map((stock) => stock.code)))
-        .then((details) => {
-            detailsCache = details;
-            return detailsCache;
-        })
-        .catch((error) => {
-            detailsLoading = null;
-            throw error;
-        });
-    return detailsLoading;
+    return loadStockCatalog();
 }
 
 // substring match on name, prefix match on code — ranked so the actual
@@ -224,3 +237,4 @@ export function categoryOf(
 ): string | null {
     return index.find((s) => s.code === code)?.category ?? null;
 }
+

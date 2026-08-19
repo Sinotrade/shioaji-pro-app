@@ -3,7 +3,6 @@
 
 import { useCallback } from 'react';
 import { usePoll } from '../hooks/use-poll';
-import { apiPost, apiGet } from '../lib/api';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtInt } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
@@ -32,28 +31,11 @@ interface ChipsData {
 }
 
 async function fetchChips(contract: ContractInfo): Promise<ChipsData> {
-    const key = {
-        security_type: contract.security_type,
-        exchange: contract.exchange,
-        code: contract.code,
-    };
-    const [credit, short, punish] = await Promise.allSettled([
-        apiPost<CreditEnquire[]>('/api/v1/data/credit_enquire', {
-            contracts: [key],
-        }),
-        apiPost<ShortSource[]>('/api/v1/data/short_stock_sources', {
-            contracts: [key],
-        }),
-        apiGet<{ code: string[] }>('/api/v1/data/regulatory_punish'),
-    ]);
+    void contract;
     return {
-        credit:
-            credit.status === 'fulfilled' ? credit.value[0] : undefined,
-        shortSource:
-            short.status === 'fulfilled' ? short.value[0] : undefined,
-        punished:
-            punish.status === 'fulfilled' &&
-            punish.value.code.includes(contract.code),
+        credit: undefined,
+        shortSource: undefined,
+        punished: false,
     };
 }
 

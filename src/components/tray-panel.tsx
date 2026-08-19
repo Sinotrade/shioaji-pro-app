@@ -12,7 +12,7 @@ import { isTauri } from '../lib/runtime';
 import {
     fetchPositions,
     fetchScanner,
-} from '../lib/shioaji';
+} from '../lib/kgi';
 import { getAliasFor } from '../lib/stream';
 import type { WatchItem } from '../hooks/use-watchlist';
 import type { ScannerItem } from '../lib/types/market';
@@ -37,8 +37,8 @@ const SECTIONS: { key: SectionKey; label: string }[] = [
     { key: 'movers', label: '排行榜' },
 ];
 
-const STORE_KEY = 'sj-pro-tray-sections';
-const SPARK_KEY = 'sj-pro-tray-spark';
+const STORE_KEY = 'kgi-pro-tray-sections';
+const SPARK_KEY = 'kgi-pro-tray-spark';
 
 function loadSections(): Set<SectionKey> {
     try {
@@ -180,7 +180,7 @@ export function TrayPanel() {
     return (
         <div className={styles.wrap}>
             <div className={styles.header}>
-                <span className={styles.title}>Shioaji Pro</span>
+                <span className={styles.title}>KGI Pro</span>
                 <span className={`${styles.headPnl} ${panel.dirText[pnlDir]}`}>
                     {positions.length > 0
                         ? `未實現 ${maskMoney(fmtSigned(Math.round(totalPnl), 0), privMoney)}`
@@ -343,3 +343,4 @@ export function TrayPanel() {
         </div>
     );
 }
+

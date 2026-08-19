@@ -2,7 +2,7 @@
 // them into readable report messages（委託/成交回報）shared by the toasts,
 // 通知中心 and bracket matching.
 //
-// The server (rshioaji) serializes `OrderEvent { state, data }` with serde's
+// Older bridge payloads serialize `OrderEvent { state, data }` with an
 // externally-tagged enum, so the event body sits one level under its variant
 // name — NOT flat:
 //   {"state":"FuturesOrder","data":{"FuturesOrder":{operation,order,status,contract}}}

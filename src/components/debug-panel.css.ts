@@ -76,3 +76,24 @@ export const eventDump = style({
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
 });
+
+export const actionButton = style({
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    background: vars.color.inset,
+    color: vars.color.foreground,
+    fontFamily: vars.font.display,
+    fontSize: '0.72rem',
+    fontWeight: 600,
+    padding: `${vars.space.xs} ${vars.space.sm}`,
+    cursor: 'pointer',
+    selectors: {
+        '&:disabled': {
+            cursor: 'default',
+            opacity: 0.55,
+        },
+        '&:hover:not(:disabled)': {
+            borderColor: vars.color.accent,
+        },
+    },
+});

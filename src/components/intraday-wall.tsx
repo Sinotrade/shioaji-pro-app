@@ -39,7 +39,7 @@ import {
     fetchSnapshots,
     fetchWatchlists,
     type ServerWatchlist,
-} from '../lib/shioaji';
+} from '../lib/kgi';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { ContractInfo } from '../lib/types/contract';
 import type { KBars, Snapshot } from '../lib/types/market';
@@ -1418,3 +1418,4 @@ if (import.meta.hot) {
         import.meta.hot?.invalidate();
     });
 }
+

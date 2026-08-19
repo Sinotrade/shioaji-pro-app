@@ -44,7 +44,7 @@ import {
     subscribeQuote,
     unsubscribeEnrichedIndex,
     unsubscribeMarketSignal,
-} from '../lib/shioaji';
+} from '../lib/kgi';
 import {
     loadStockDetails,
     sectorLabel,
@@ -2087,3 +2087,4 @@ export function MarketSignalPanel({
 }) {
     return <MarketPulsePanel onPick={onPick} fixedView="signals" />;
 }
+

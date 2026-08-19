@@ -3,11 +3,12 @@
 
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { ensureContract } from '../lib/contracts-cache';
 import {
     cancelOrder,
     updateOrderPrice,
     updateOrderQty,
-} from '../lib/shioaji';
+} from '../lib/kgi';
 import { usePrivacyMode } from '../lib/privacy';
 import { notify } from '../lib/trade';
 import type { Trade } from '../lib/types/order';
@@ -41,6 +42,15 @@ function statusBucket(t: Trade): Exclude<StatusFilter, 'all'> {
     if (ACTIVE_STATUSES.has(st)) return 'active';
     if (st === 'Filled') return 'filled';
     return 'dead';
+}
+
+function hasCancellableIdentity(t: Trade): boolean {
+    return Boolean(
+        t.status.order_id_present &&
+            t.order.id &&
+            t.contract.code &&
+            t.order.quantity > 0,
+    );
 }
 
 // 成交均價：OrderStatusInfo 無 avg_price 欄位，由 deals 加權平均回推；
@@ -131,6 +141,15 @@ function OrderEditor({
         const valid =
             field === 'qty' ? Number.isInteger(n) && n >= 1 : n > 0;
         if (valid) {
+            const label = field === 'qty' ? '改量' : '改價';
+            const detail =
+                field === 'qty'
+                    ? `${trade.contract.code} 新數量 ${n}`
+                    : `${trade.contract.code} 新價格 ${n}`;
+            if (!window.confirm(`確認送出${label}？\n${detail}`)) {
+                setEditing(false);
+                return;
+            }
             const req =
                 field === 'qty'
                     ? updateOrderQty(trade.order.id, n)
@@ -246,6 +265,35 @@ export function OrdersPane({
         return counts;
     }, [scoped]);
 
+    // 股名 joined from the shared contract cache — order rows carry no
+    // name of their own (Trade.contract has no `.name` field)
+    const [names, setNames] = useState<Record<string, string>>({});
+    const codesKey = [...new Set(scoped.map((t) => t.contract.code))].join(
+        ',',
+    );
+    useEffect(() => {
+        const codes = codesKey ? codesKey.split(',') : [];
+        if (codes.length === 0) return;
+        let alive = true;
+        void Promise.allSettled(codes.map((code) => ensureContract(code))).then(
+            (rs) => {
+                if (!alive) return;
+                setNames((prev) => {
+                    const next = { ...prev };
+                    for (const r of rs) {
+                        if (r.status === 'fulfilled' && r.value.name) {
+                            next[r.value.code] = r.value.name;
+                        }
+                    }
+                    return next;
+                });
+            },
+        );
+        return () => {
+            alive = false;
+        };
+    }, [codesKey]);
+
     // 最新在前；全部檢視時有效單置頂
     const rows = useMemo(() => {
         const newest = [...scoped].reverse();
@@ -288,7 +336,11 @@ export function OrdersPane({
         () =>
             new Set(
                 rows
-                    .filter((t) => ACTIVE_STATUSES.has(t.status.status))
+                    .filter(
+                        (t) =>
+                            ACTIVE_STATUSES.has(t.status.status) &&
+                            hasCancellableIdentity(t),
+                    )
                     .map((t) => t.order.id),
             ),
         [rows],
@@ -300,6 +352,7 @@ export function OrdersPane({
     };
 
     const doCancel = async (id: string) => {
+        if (!window.confirm(`確認取消委託？\n${id}`)) return;
         setCancelling(id);
         try {
             await cancelOrder(id);
@@ -361,7 +414,8 @@ export function OrdersPane({
     );
 
     const selectionCell = (t: Trade) => {
-        const active = ACTIVE_STATUSES.has(t.status.status);
+        const active =
+            ACTIVE_STATUSES.has(t.status.status) && hasCancellableIdentity(t);
         return (
             <input
                 type='checkbox'
@@ -390,7 +444,7 @@ export function OrdersPane({
 
     const actionsCell = (t: Trade, withEditors: boolean) => {
         const st = t.status.status;
-        if (!ACTIVE_STATUSES.has(st)) return null;
+        if (!ACTIVE_STATUSES.has(st) || !hasCancellableIdentity(t)) return null;
         return (
             <>
                 {withEditors && (
@@ -444,6 +498,7 @@ export function OrdersPane({
                         />
                     </th>
                     <th className={styles.th}>代碼</th>
+                    {size === 'wide' && <th className={styles.th}>名稱</th>}
                     <th className={styles.th}>買賣</th>
                     {size === 'wide' && <th className={styles.th}>類別</th>}
                     <th className={styles.th}>價格</th>
@@ -470,6 +525,11 @@ export function OrdersPane({
                                 {selectionCell(t)}
                             </td>
                             <td className={styles.td}>{t.contract.code}</td>
+                            {size === 'wide' && (
+                                <td className={styles.td}>
+                                    {names[t.contract.code] ?? ''}
+                                </td>
+                            )}
                             <td
                                 className={`${styles.td} ${panel.dirText[t.order.action === 'Buy' ? 'up' : 'down']}`}
                             >
@@ -534,6 +594,9 @@ export function OrdersPane({
                             </span>
                             <span className={styles.cardCode}>
                                 {t.contract.code}
+                            </span>
+                            <span className={styles.cardName}>
+                                {names[t.contract.code] ?? ''}
                             </span>
                             <span
                                 className={
@@ -743,3 +806,4 @@ export function OrdersPane({
         </div>
     );
 }
+

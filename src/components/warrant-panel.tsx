@@ -1,11 +1,7 @@
 import { Star } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { primeContract } from '../lib/contracts-cache';
-import {
-    fetchSnapshots,
-    fetchWarrants,
-    resolveContract,
-} from '../lib/shioaji';
+import { ensureContract, primeContract } from '../lib/contracts-cache';
+import { fetchSnapshots, fetchWarrants } from '../lib/kgi';
 import { loadStockCatalog, type StockMeta } from '../lib/stock-index';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
@@ -71,7 +67,7 @@ export function WarrantPanel({
         setError(false);
         Promise.all([
             fetchWarrants(underlying.code, { expiryFrom: todayStr() }),
-            resolveContract(underlying.code, 'STK')
+            ensureContract(underlying.code, 'STK')
                 .then((contract) => fetchSnapshots([contract]))
                 .then((rows) => rows[0] ?? null),
         ])
@@ -311,3 +307,4 @@ export function WarrantPanel({
         </div>
     );
 }
+

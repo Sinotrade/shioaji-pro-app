@@ -1,6 +1,9 @@
 // src/lib/utils/format.ts
 
-export function fmtPrice(v: number | string | undefined, digits?: number) {
+export function fmtPrice(
+    v: number | string | null | undefined,
+    digits?: number,
+) {
     if (v === undefined || v === null || v === '') return '—';
     const n = Number(v);
     if (Number.isNaN(n)) return '—';
@@ -11,12 +14,12 @@ export function fmtPrice(v: number | string | undefined, digits?: number) {
     });
 }
 
-export function fmtInt(v: number | undefined) {
+export function fmtInt(v: number | null | undefined) {
     if (v === undefined || v === null) return '—';
     return v.toLocaleString('en-US');
 }
 
-export function fmtSigned(v: number | string | undefined, digits = 2) {
+export function fmtSigned(v: number | string | null | undefined, digits = 2) {
     if (v === undefined || v === null || v === '') return '—';
     const n = Number(v);
     if (Number.isNaN(n)) return '—';
@@ -27,14 +30,14 @@ export function fmtSigned(v: number | string | undefined, digits = 2) {
     return n > 0 ? `+${s}` : s;
 }
 
-export function fmtPct(v: number | string | undefined) {
+export function fmtPct(v: number | string | null | undefined) {
     if (v === undefined || v === null || v === '') return '—';
     const n = Number(v);
     if (Number.isNaN(n)) return '—';
     return `${n > 0 ? '+' : ''}${n.toFixed(2)}%`;
 }
 
-export function fmtMoney(v: number | undefined) {
+export function fmtMoney(v: number | null | undefined) {
     if (v === undefined || v === null) return '—';
     return `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 }

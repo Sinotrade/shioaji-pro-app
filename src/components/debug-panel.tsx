@@ -4,8 +4,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePoll } from '../hooks/use-poll';
 import { useStreamStatus } from '../hooks/use-stream';
-import { getApiBase } from '../lib/runtime';
-import { fetchHealth, fetchInfo } from '../lib/shioaji';
+import { getKgiBackendBase } from '../lib/broker/config';
+import { fetchHealth, fetchInfo } from '../lib/kgi';
 import {
     getLastHeartbeat,
     getSubscriptionCount,
@@ -91,7 +91,7 @@ export function DebugPanel() {
         },
         { label: '行情速率', value: `${rate} 筆/秒` },
         { label: '訂閱數', value: String(getSubscriptionCount()) },
-        { label: 'API Base', value: getApiBase() || '(同源)' },
+        { label: 'KGI Bridge', value: getKgiBackendBase() },
         {
             label: '伺服器版本',
             value: info ? `${info.version}${info.simulation ? '（模擬）' : '（⚠ 正式）'}` : '—',
@@ -139,3 +139,4 @@ export function DebugPanel() {
         </div>
     );
 }
+

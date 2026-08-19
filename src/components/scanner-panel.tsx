@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { focusSector } from '../lib/sector-sync';
-import { fetchScanner } from '../lib/shioaji';
+import { logKgiDebug } from '../lib/kgi-debug';
+import { fetchScanner } from '../lib/kgi';
+import { normalizeScannerItem } from '../lib/quote-model';
 import {
     categoryOf,
     loadStockDetails,
@@ -14,8 +16,8 @@ import { fmtInt, fmtPct, fmtPrice } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './scanner-panel.css';
 
-// NOTE: the server's `ascending` flag is inverted (sinotrade/shioaji#207):
-// true → largest first. Encode the working values per mode here.
+// NOTE: the bridge's `ascending` flag keeps the historical frontend contract:
+// true -> largest first. Encode the working values per mode here.
 const MODES: { key: string; type: ScannerType; label: string; ascending: boolean }[] = [
     { key: 'gain', type: 'ChangePercentRank', label: '漲幅', ascending: true },
     { key: 'loss', type: 'ChangePercentRank', label: '跌幅', ascending: false },
@@ -47,8 +49,7 @@ async function fetchMulti(
         }
     }
     const out = [...byCode.values()].filter((it) => {
-        const ref = it.close - it.change_price;
-        const pctV = it.change_price && ref > 0 ? (it.change_price / ref) * 100 : 0;
+        const pctV = normalizeScannerItem(it).changePercent ?? 0;
         const pctOk = short ? pctV <= -minPct : pctV >= minPct;
         return (
             pctOk &&
@@ -57,10 +58,8 @@ async function fetchMulti(
         );
     });
     out.sort((a, b) => {
-        const refA = a.close - a.change_price;
-        const refB = b.close - b.change_price;
-        const pa = refA > 0 ? a.change_price / refA : 0;
-        const pb = refB > 0 ? b.change_price / refB : 0;
+        const pa = normalizeScannerItem(a).changePercent ?? 0;
+        const pb = normalizeScannerItem(b).changePercent ?? 0;
         return short ? pa - pb : pb - pa; // 放空：跌最多在前
     });
     return out.slice(0, 30);
@@ -84,7 +83,7 @@ export function ScannerPanel({
         () => localStorage.getItem(MODE_KEY) ?? 'gain',
     );
     const [items, setItems] = useState<ScannerItem[]>([]);
-    const [error, setError] = useState(false);
+    const [error, setError] = useState('');
     const [reloadSeq, setReloadSeq] = useState(0);
     const [picked, setPicked] = useState<string | null>(null);
     // 複選 thresholds (persisted)
@@ -126,7 +125,7 @@ export function ScannerPanel({
 
     useEffect(() => {
         let cancelled = false;
-        setError(false);
+        setError('');
         const load = () =>
             (mode.key === 'multi'
                 ? fetchMulti(minPct, minVolK, minAmtB, multiShort)
@@ -134,10 +133,21 @@ export function ScannerPanel({
             )
                 .then((d) => {
                     if (cancelled) return;
+                    logKgiDebug('[ranking raw]', d);
                     setItems(d);
-                    setError(false);
+                    setError('');
                 })
-                .catch(() => !cancelled && setError(true));
+                .catch((err: unknown) => {
+                    if (cancelled) return;
+                    const message =
+                        err instanceof Error ? err.message : String(err);
+                    setError(
+                        message.includes('此帳戶無排行資料權限') ||
+                            message.includes('D403')
+                            ? '此帳戶無排行資料權限'
+                            : '排行資料無法取得',
+                    );
+                });
         load();
         const t = setInterval(load, REFRESH_MS);
         return () => {
@@ -221,7 +231,7 @@ export function ScannerPanel({
             <div className={panel.panelBody}>
                 {error && (
                     <div className={styles.errorBox}>
-                        <span className={styles.scName}>排行資料無法取得</span>
+                        <span className={styles.scName}>{error}</span>
                         <button
                             className={styles.retryBtn}
                             onClick={() => setReloadSeq((s) => s + 1)}
@@ -231,18 +241,9 @@ export function ScannerPanel({
                     </div>
                 )}
                 {items.map((it, i) => {
-                    const dir =
-                        it.change_price > 0
-                            ? 'up'
-                            : it.change_price < 0
-                              ? 'down'
-                              : 'flat';
-                    // reference = close - change; guard zero/flat prices
-                    const ref = it.close - it.change_price;
-                    const pct =
-                        it.change_price && ref > 0
-                            ? (it.change_price / ref) * 100
-                            : 0;
+                    const normalized = normalizeScannerItem(it);
+                    const dir = normalized.direction;
+                    const pct = normalized.changePercent;
                     const sub =
                         mode.key === 'amt'
                             ? fmtAmount(it.total_amount)
@@ -300,3 +301,4 @@ export function ScannerPanel({
         </>
     );
 }
+

@@ -55,7 +55,7 @@ import {
 // 自訂指標註冊進 DEF_BY_TYPE，loadInstances() 的型別過濾才不會把它們丟掉
 import { subscribeCustoms } from '../lib/custom-indicators';
 import type { IndicatorPoint } from '../lib/indicators';
-import { cancelOrder, fetchKbars, updateOrderPrice } from '../lib/shioaji';
+import { cancelOrder, fetchKbars, updateOrderPrice } from '../lib/kgi';
 import { setPickedPrice } from '../lib/price-sync';
 import { notify, placeQuickOrder } from '../lib/trade';
 import {
@@ -120,6 +120,7 @@ export function CandleChart({
     const lastBarRef = useRef<Candle | null>(null);
     const [tfIdx, setTfIdx] = useState(1); // default 5m
     const [empty, setEmpty] = useState(false);
+    const [emptyMessage, setEmptyMessage] = useState('無 K 線資料');
     const [loading, setLoading] = useState(false);
     // 歷史斷層自癒（issue #18）：開盤前抓的歷史可能缺少上游尚未發布的
     // 跨午夜夜盤段，live 進來出現大斷層時補抓一次
@@ -463,6 +464,7 @@ export function CandleChart({
         lastBarRef.current = null;
         loadMoreRef.current = null;
         setEmpty(false);
+        setEmptyMessage('無 K 線資料');
         setLoading(true);
         const clearSeries = () => {
             // the series must never keep a stale timeframe's data — a later
@@ -510,6 +512,7 @@ export function CandleChart({
                 contract,
                 dateStrOffset(from),
                 dateStrOffset(oldestDay + 1),
+                tf.minutes,
             )
                 .then((k) => {
                     if (cancelled || loadedKeyRef.current !== loadKey) return;
@@ -546,13 +549,18 @@ export function CandleChart({
                 });
         };
 
-        fetchKbars(contract, dateStrOffset(tf.days), dateStrOffset(0))
+        fetchKbars(contract, dateStrOffset(tf.days), dateStrOffset(0), tf.minutes)
             .then((k) => {
                 if (cancelled || !candleSeriesRef.current) return;
                 const raw = kbarsToCandles(k);
                 const bars = aggregate(raw, tf.minutes);
                 if (bars.length === 0) {
                     clearSeries();
+                    if (k.capability?.historical === 'denied') {
+                        setEmptyMessage(
+                            `歷史 ${tf.label} K 線權限不足${k.capability.upstream_code ? ` (${k.capability.upstream_code})` : ''}，等待即時資料`,
+                        );
+                    }
                     setEmpty(true);
                     loadMoreRef.current = loadMore; // history may still exist
                     return;
@@ -571,9 +579,14 @@ export function CandleChart({
                     .priceScale()
                     .applyOptions({ autoScale: true });
             })
-            .catch(() => {
+            .catch((error) => {
                 if (cancelled) return;
                 clearSeries();
+                setEmptyMessage(
+                    error instanceof Error && error.message
+                        ? error.message
+                        : 'K 線資料無法取得',
+                );
                 setEmpty(true);
             })
             .finally(() => {
@@ -585,9 +598,13 @@ export function CandleChart({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, tf, historySeq]);
 
-    // Live trade/index quote -> update the current bar. Index products use
-    // quote_idx rather than the regular tick stream in Shioaji 1.7.
-    const liveQuote = quote?.tick ?? quote?.index;
+    // Live KBar/tick/index quote -> update the current bar. KGI real mode can
+    // provide KBars through SSE; ticks remain a fallback when KBar is sparse.
+    const liveKbar =
+        quote?.kbar && quote.kbar.timeframe === tf.minutes
+            ? quote.kbar
+            : undefined;
+    const liveQuote = liveKbar ?? quote?.tick ?? quote?.index;
     if (liveQuote && liveQuote.code === contract.code) {
         const p = Number(liveQuote.close);
         if (Number.isFinite(p)) lastPriceRef.current = p;
@@ -626,11 +643,11 @@ export function CandleChart({
         if (!bar || bucket > bar.time) {
             bar = {
                 time: bucket,
-                open: price,
-                high: price,
-                low: price,
+                open: liveKbar ? Number(liveKbar.open) : price,
+                high: liveKbar ? Number(liveKbar.high) : price,
+                low: liveKbar ? Number(liveKbar.low) : price,
                 close: price,
-                volume: quote?.tick?.volume ?? 0,
+                volume: liveKbar?.volume ?? quote?.tick?.volume ?? 0,
             };
             // a fresh bucket = the previous bar closed — keep barsRef in
             // sync (history paging re-attaches this tail) and recompute
@@ -638,12 +655,19 @@ export function CandleChart({
             barsRef.current.push(bar);
             setDataVersion((v) => v + 1);
         } else {
-            bar.high = Math.max(bar.high, price);
-            bar.low = Math.min(bar.low, price);
+            bar.high = liveKbar
+                ? Number(liveKbar.high)
+                : Math.max(bar.high, price);
+            bar.low = liveKbar
+                ? Number(liveKbar.low)
+                : Math.min(bar.low, price);
             bar.close = price;
-            bar.volume += quote?.tick?.volume ?? 0;
+            bar.volume = liveKbar
+                ? liveKbar.volume
+                : bar.volume + (quote?.tick?.volume ?? 0);
         }
         lastBarRef.current = bar;
+        setEmpty(false);
         try {
             series.update({
                 time: bar.time as UTCTimestamp,
@@ -661,7 +685,7 @@ export function CandleChart({
             // a rejected update (e.g. timestamp older than the series tail)
             // must never take the app down — history reload will resync
         }
-    }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes]);
+    }, [liveQuote, liveKbar, quote?.tick?.volume, contract.code, tf.minutes]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
     const [customVer, setCustomVer] = useState(0);
@@ -1507,7 +1531,7 @@ export function CandleChart({
                 )}
                 {empty && !loading && (
                     <div className={styles.emptyMsg}>
-                        <span className={panel.mono}>無 K 線資料</span>
+                        <span className={panel.mono}>{emptyMessage}</span>
                     </div>
                 )}
                 {mode !== 'observe' && (
@@ -1631,3 +1655,4 @@ export function CandleChart({
         </div>
     );
 }
+

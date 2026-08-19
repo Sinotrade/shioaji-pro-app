@@ -39,33 +39,48 @@ export const hint = style({
 export const gridBox = style({
     flex: 1,
     minHeight: 0,
-    overflowY: 'auto',
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(76px, 1fr))',
-    gap: '3px',
+    position: 'relative',
     padding: vars.space.sm,
-    alignContent: 'start',
+});
+
+// Treemap sizing (成交額/amount) — same d3-hierarchy squarified-treemap
+// convention as market-pulse-panel.tsx's industry contribution map, so a
+// tile's AREA carries meaning (size = amount) instead of every stock
+// rendering as an identical-size cell regardless of how much traded.
+export const treemap = style({
+    position: 'relative',
+    width: '100%',
+    height: '100%',
 });
 
 export const tile = style({
+    position: 'absolute',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'flex-start',
+    justifyContent: 'space-between',
     gap: '1px',
     padding: '5px 6px',
-    border: 'none',
+    border: `1px solid color-mix(in srgb, var(--heat-color) 58%, ${vars.color.border})`,
     borderRadius: vars.radius.sm,
     cursor: 'pointer',
     textAlign: 'left',
-    color: '#fff',
+    background: `color-mix(in srgb, var(--heat-color) var(--heat-alpha), ${vars.color.panel})`,
+    color: vars.color.foreground,
+    overflow: 'hidden',
     transition: 'transform 0.08s',
-    ':hover': { transform: 'scale(1.04)' },
+    fontVariantNumeric: 'tabular-nums',
+    ':hover': { transform: 'scale(1.03)', zIndex: 1 },
 });
 
 export const tileCode = style({
     fontFamily: vars.font.mono,
     fontSize: '0.7rem',
     fontWeight: 700,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    maxWidth: '100%',
 });
 
 export const tileName = style({
@@ -79,7 +94,9 @@ export const tileName = style({
 });
 
 export const tilePct = style({
+    alignSelf: 'flex-end',
     fontFamily: vars.font.mono,
     fontSize: '0.64rem',
-    fontWeight: 600,
+    fontWeight: 700,
+    color: 'var(--heat-color)',
 });

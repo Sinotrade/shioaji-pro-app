@@ -30,7 +30,7 @@ import {
     tickBucket,
     type SessionWindow,
 } from '../lib/intraday-session';
-import { fetchKbars } from '../lib/shioaji';
+import { fetchKbars } from '../lib/kgi';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { ContractInfo } from '../lib/types/contract';
 import type { KBars } from '../lib/types/market';
@@ -257,6 +257,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
 
     const [loading, setLoading] = useState(false);
     const [empty, setEmpty] = useState(false);
+    const [emptyMessage, setEmptyMessage] = useState<string | null>(null);
     const [reloadSeq, setReloadSeq] = useState(0);
     // 依商品解析 Y 軸模式 — 換商品時在 render 階段同步重解（避免
     // effect 慢半拍造成的雙重載入）
@@ -706,6 +707,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         });
         setLoading(true);
         setEmpty(false);
+        setEmptyMessage(null);
         let cancelled = false;
         // range covers weekends/holidays and夜盤掛次日檔期的怪癖
         fetchKbars(contract, dateStrOffset(4), dateStrOffset(-1))
@@ -714,6 +716,13 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 const all = kbarsToMinBars(k);
                 const last = all[all.length - 1];
                 if (!last) {
+                    if (k.capability?.historical === 'denied') {
+                        setEmptyMessage(
+                            `歷史分K權限不足${k.capability.upstream_code ? ` (${k.capability.upstream_code})` : ''}，等待即時資料`,
+                        );
+                    } else if (k.capability?.historical === 'unavailable') {
+                        setEmptyMessage('歷史分K暫時無法取得，等待即時資料');
+                    }
                     setEmpty(true);
                     return;
                 }
@@ -882,8 +891,9 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         });
     }, [lineWidth, optsKey]);
 
-    // ---- live tick / index quote -> extend the current minute ----
-    const liveQuote = quote?.tick ?? quote?.index;
+    // ---- live KBar / tick / index quote -> extend the current minute ----
+    const liveKbar = quote?.kbar?.timeframe === 1 ? quote.kbar : undefined;
+    const liveQuote = liveKbar ?? quote?.tick ?? quote?.index;
     useEffect(() => {
         if (!liveQuote || liveQuote.code !== contract.code) return;
         // 試撮揭示價可以是天地價，畫進走勢會撐爆比例 — 一律排除
@@ -940,29 +950,36 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         }
         const ref = refPriceRef.current;
 
-        const vol = quote?.tick?.volume ?? 0;
+        const vol = liveKbar?.volume ?? quote?.tick?.volume ?? 0;
         const size = isIndex ? Number(quote?.index?.amount ?? 0) : vol;
         if (label > lastLabelRef.current) {
             prevMinCloseRef.current = liveRef.current?.price ?? ref;
             lastLabelRef.current = label;
             minuteVolRef.current = size;
-            minOhlcRef.current = { open: p, high: p, low: p, close: p };
+            minOhlcRef.current = {
+                open: liveKbar ? Number(liveKbar.open) : p,
+                high: liveKbar ? Number(liveKbar.high) : p,
+                low: liveKbar ? Number(liveKbar.low) : p,
+                close: p,
+            };
         } else {
             minuteVolRef.current += size;
             const m = minOhlcRef.current;
             if (m) {
-                m.high = Math.max(m.high, p);
-                m.low = Math.min(m.low, p);
+                m.high = liveKbar ? Number(liveKbar.high) : Math.max(m.high, p);
+                m.low = liveKbar ? Number(liveKbar.low) : Math.min(m.low, p);
                 m.close = p;
             } else {
                 minOhlcRef.current = {
-                    open: p,
-                    high: p,
-                    low: p,
+                    open: liveKbar ? Number(liveKbar.open) : p,
+                    high: liveKbar ? Number(liveKbar.high) : p,
+                    low: liveKbar ? Number(liveKbar.low) : p,
                     close: p,
                 };
             }
         }
+        setEmpty(false);
+        setEmptyMessage(null);
         cumVRef.current += vol;
         cumPVRef.current += p * vol;
 
@@ -1016,7 +1033,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         // NOTE: 依賴 liveQuote 物件本身而非 quote.seq — seq 在 bidask 更新
         // 也會跳，若當 dep 會把同一筆 tick 的量重複累加
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [liveQuote, contract.code]);
+    }, [liveQuote, liveKbar, contract.code]);
 
     // ---- legend ----
     const win = sessionRef.current;
@@ -1426,7 +1443,9 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 )}
                 {empty && !loading && (
                     <div className={styles.emptyMsg}>
-                        <span className={panel.mono}>本時段尚無成交資料</span>
+                        <span className={panel.mono}>
+                            {emptyMessage ?? '本時段尚無成交資料'}
+                        </span>
                     </div>
                 )}
             </div>
@@ -1441,3 +1460,4 @@ if (import.meta.hot) {
         import.meta.hot?.invalidate();
     });
 }
+

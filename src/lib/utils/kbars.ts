@@ -15,11 +15,12 @@ export function wallClockToUtc(dt: string): number {
 }
 
 export function kbarsToCandles(k: KBars): Candle[] {
-    const out: Candle[] = [];
+    const byTime = new Map<number, Candle>();
     for (let i = 0; i < k.datetime.length; i++) {
         const dt = k.datetime[i];
         if (!dt) continue;
-        out.push({
+        const time = wallClockToUtc(dt);
+        byTime.set(time, {
             time: wallClockToUtc(dt),
             open: k.Open[i] ?? 0,
             high: k.High[i] ?? 0,
@@ -28,6 +29,7 @@ export function kbarsToCandles(k: KBars): Candle[] {
             volume: k.Volume[i] ?? 0,
         });
     }
+    const out = [...byTime.values()];
     out.sort((a, b) => a.time - b.time);
     return out;
 }

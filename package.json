@@ -1,13 +1,16 @@
 {
-    "name": "shioaji-pro-app",
+    "name": "kgi-pro-app",
     "private": true,
     "version": "0.0.0",
     "license": "AGPL-3.0-only",
     "type": "module",
     "scripts": {
         "dev": "vite",
+        "kgi:backend": "python -m backend.kgi_bridge.server --mode mock",
+        "kgi:backend:real": "python -m backend.kgi_bridge.server --mode real",
         "build": "tsc -b && vite build",
         "test": "vitest run",
+        "test:python": "python -m unittest discover backend/tests",
         "preview": "vite preview"
     },
     "dependencies": {

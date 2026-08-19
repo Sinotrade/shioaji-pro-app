@@ -7,7 +7,7 @@ import {
     fetchTrades,
     placeFuturesOrder,
     placeStockOrder,
-} from './shioaji';
+} from './kgi';
 import { getStreamStatus } from './stream';
 import type { ContractBase } from './types/contract';
 import {
@@ -196,3 +196,4 @@ export async function cancelAllOrders(): Promise<number> {
     });
     return ok;
 }
+

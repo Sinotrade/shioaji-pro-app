@@ -4,7 +4,7 @@
 // Big lots (≥3× the rolling average of visible rows) are highlighted.
 
 import { memo, useEffect, useMemo, useState } from 'react';
-import { fetchLastTicks } from '../lib/shioaji';
+import { fetchLastTicks } from '../lib/kgi';
 import { onAnyTick } from '../lib/stream';
 import type { ContractBase } from '../lib/types/contract';
 import type { HistoryTicks } from '../lib/types/tick';
@@ -183,3 +183,4 @@ export function TickTape({ contract }: { contract: ContractBase }) {
         </div>
     );
 }
+

@@ -4,7 +4,7 @@ import { primeContract } from '../lib/contracts-cache';
 import {
     fetchFutures,
     fetchSnapshots,
-} from '../lib/shioaji';
+} from '../lib/kgi';
 import { loadStockCatalog, type StockMeta } from '../lib/stock-index';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
@@ -244,3 +244,4 @@ export function StockFuturesPanel({
         </div>
     );
 }
+

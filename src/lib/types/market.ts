@@ -35,6 +35,12 @@ export interface KBars {
     Close: number[];
     Volume: number[];
     Amount: number[];
+    capability?: {
+        historical?: 'ok' | 'denied' | 'unavailable';
+        live?: 'available' | 'pending' | 'unavailable';
+        message?: string;
+        upstream_code?: string | null;
+    };
 }
 
 export interface Candle {
@@ -157,6 +163,7 @@ export interface ScannerItem {
     high: number;
     low: number;
     change_price: number;
+    change_rate?: number;
     change_type: number;
     average_price: number;
     price_range: number;
@@ -218,8 +225,22 @@ export interface SseBidAsk {
     simtrade?: boolean;
 }
 
-// Normalized SSE quote_idx event. Shioaji 1.7 sends QuoteIdxV1 fields in
-// PascalCase; stream.ts converts them to this lower-case frontend shape.
+// SSE kbar events (kbar)
+export interface SseKBar {
+    code: string;
+    date: string;
+    time: string;
+    timeframe: number;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    volume: number;
+    total_amount?: string;
+}
+
+// Normalized SSE index quote event. stream.ts converts upstream payloads into
+// this lower-case frontend shape.
 // Only standard price fields are guaranteed for every exchange index.
 export interface SseIndexQuote {
     code: string;
@@ -228,6 +249,8 @@ export interface SseIndexQuote {
     time: string;
     datetime?: string;
     reference: string;
+    change_price?: string;
+    change_rate?: string;
     open: string;
     high: string;
     low: string;

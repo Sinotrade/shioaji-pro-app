@@ -11,7 +11,7 @@ import {
 } from 'lightweight-charts';
 import { Pause, Play } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { fetchHistoryTicks } from '../lib/shioaji';
+import { fetchHistoryTicks } from '../lib/kgi';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { ContractBase } from '../lib/types/contract';
 import { fmtInt, fmtPrice } from '../lib/utils/format';
@@ -275,3 +275,4 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
         </div>
     );
 }
+

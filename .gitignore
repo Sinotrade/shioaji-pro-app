@@ -21,3 +21,16 @@ dist/
 src-tauri/target/
 src-tauri/binaries/
 src-tauri/gen/schemas/
+
+# Python backend (backend/kgi_bridge)
+__pycache__/
+*.pyc
+.venv/
+.venv*/
+*.egg-info/
+
+# kgisuperpy/TradeCom runtime artifacts dropped in the working directory
+# when the backend runs in real mode (login CA handshake resources, per-run
+# session logs) — not project source, regenerated every run.
+TradeCom.*.log
+errMsg.ini

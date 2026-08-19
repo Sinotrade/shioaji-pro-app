@@ -5,7 +5,7 @@
 // reference price is drawn as a dashed baseline and sets the color.
 
 import { useEffect, useRef, useState } from 'react';
-import { fetchKbars } from '../lib/shioaji';
+import { fetchKbars } from '../lib/kgi';
 import { useThemeSettings } from '../lib/theme-store';
 import type { ContractBase } from '../lib/types/contract';
 import { dateStrOffset } from '../lib/utils/kbars';
@@ -180,3 +180,4 @@ export function Sparkline({
         />
     );
 }
+
