@@ -10,6 +10,7 @@ import { OnboardingSetup } from './components/onboarding-setup';
 import './index.css';
 import { startAnalytics } from './lib/analytics';
 import { bootstrap } from './lib/boot';
+import { startStreamHealthWatch } from './lib/stream-health';
 import { isTauri, loadDesktopSettings } from './lib/tauri';
 import { initTheme } from './lib/theme-store';
 import { startTriggerEngine } from './lib/trigger-engine';
@@ -18,6 +19,7 @@ initTheme();
 startAnalytics();
 startTriggerEngine();
 bootstrap();
+startStreamHealthWatch();
 
 // A fresh desktop install has no API key saved yet — the dashboard would
 // otherwise render fully but every panel silently fails against a server

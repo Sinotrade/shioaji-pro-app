@@ -10,7 +10,10 @@ import {
     type OrderEventReport,
 } from './order-report';
 
-export type StreamStatus = 'connecting' | 'live' | 'down';
+// 'stale'：本機 SSE 連線正常（heartbeat 仍在跳）但上游行情已停止抵達，
+// 由 stream-health 的快照/SSE 背離偵測標記（issue #28）。只有真實行情
+// 事件能解除 stale（heartbeat 是 sidecar 自產的 keep-alive，證明不了上游）。
+export type StreamStatus = 'connecting' | 'live' | 'stale' | 'down';
 
 export interface ContractChangeEvent {
     event_id: string;
@@ -125,6 +128,39 @@ function setStatus(s: StreamStatus) {
     }
 }
 
+// 上游行情實際抵達，這是 stale 唯一的復原證據
+let lastUpstreamDataAt = 0;
+function noteUpstreamData() {
+    lastUpstreamDataAt = Date.now();
+    if (status === 'stale') setStatus('live');
+}
+
+export function getLastUpstreamDataAt(): number {
+    return lastUpstreamDataAt;
+}
+
+// stale 判定只在主視窗跑（stream-health），但閃電/popout 視窗是獨立的
+// JS context、各有一份本模組與下單閘門，用 BroadcastChannel 把降級
+// 同步過去（跨視窗先例：option-pick 的 sj-opt-pick）。復原不需廣播：
+// 上游恢復後各視窗自己的 SSE 就會收到行情，noteUpstreamData 就地解除。
+const staleChannel =
+    typeof BroadcastChannel !== 'undefined'
+        ? new BroadcastChannel('sj-stream-stale')
+        : null;
+staleChannel?.addEventListener('message', () => {
+    if (status === 'live') setStatus('stale');
+});
+
+// stream-health 判定上游失聯時降級。只降 live（down/connecting 已由
+// 既有重連迴圈負責，蓋掉會讓兩套機制互相打架）。呼叫端在失聯持續期間
+// 每輪重呼（setStatus 已去重）：本機 SSE 任何一次重連的 onopen 都會把
+// 狀態洗回 live，靠週期性重標把它拉回 stale，廣播同理（其他視窗可能
+// 剛被自己的重連洗掉）。
+export function markStreamStale() {
+    if (status === 'live') setStatus('stale');
+    staleChannel?.postMessage('stale');
+}
+
 function handleTick(raw: string) {
     const tick = JSON.parse(raw) as SseTick;
     if (tick.intraday_odd) return; // board shows regular-lot stream only
@@ -134,6 +170,7 @@ function handleTick(raw: string) {
 }
 
 function ingestTick(tick: SseTick) {
+    noteUpstreamData();
     const prev = quotes.get(tick.code);
     const prevClose = prev?.tick ? Number(prev.tick.close) : undefined;
     const close = Number(tick.close);
@@ -168,6 +205,7 @@ function handleBidAsk(raw: string) {
 }
 
 function ingestBidAsk(bidask: SseBidAsk) {
+    noteUpstreamData();
     const prev = quotes.get(bidask.code);
     quotes.set(bidask.code, {
         tick: prev?.tick,
@@ -246,6 +284,7 @@ export function normalizeIndexQuote(raw: string): SseIndexQuote {
 function handleIndexQuote(raw: string) {
     const index = normalizeIndexQuote(raw);
     if (!index.code || !Number.isFinite(Number(index.close))) return;
+    noteUpstreamData();
     const prev = quotes.get(index.code);
     const previousClose = prev?.index ? Number(prev.index.close) : undefined;
     const close = Number(index.close);
@@ -418,7 +457,9 @@ function connect() {
     });
     es.addEventListener('heartbeat', () => {
         lastHeartbeat = Date.now();
-        setStatus('live');
+        // heartbeat 是 sidecar 自產的 keep-alive，只證明本機層活著，
+        // 不能解除 stale（上游失聯時 heartbeat 照常抵達）
+        if (status !== 'stale') setStatus('live');
     });
     for (const name of namedListeners.keys()) {
         attachNamed(es, name);

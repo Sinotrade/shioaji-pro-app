@@ -81,7 +81,15 @@ export function isFuturesContract(contract: ContractBase): boolean {
 // (esp. with real money on the line) must not think a click went through
 // when it didn't (issue #2). UI also disables the buttons; this backs it up.
 export function assertTradingLive() {
-    if (getStreamStatus() !== 'live') {
+    const status = getStreamStatus();
+    // stale：本機連線是通的、等待不會恢復（issue #28），指引要與
+    // stream-health 的通知一致（手動重啟），不能叫使用者乾等
+    if (status === 'stale') {
+        throw new Error(
+            '上游行情停滯（STALE），已暫停下單保護，請到「伺服器」面板按「重啟」重建連線',
+        );
+    }
+    if (status !== 'live') {
         throw new Error('行情未連線（非 LIVE）— 為避免誤單已暫停下單，請待連線恢復');
     }
 }

@@ -448,10 +448,14 @@ function enqueueCapability(
 const CAPABILITY_TIMEOUT_MS = 10_000;
 const CAPABILITY_RETRY_DELAYS_MS = [2_000, 4_000, 8_000, 15_000];
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+export function withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    label = '訂閱請求',
+): Promise<T> {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(
-            () => reject(new Error(`訂閱請求逾時（${ms / 1000} 秒）`)),
+            () => reject(new Error(`${label}逾時（${ms / 1000} 秒）`)),
             ms,
         );
         promise.then(

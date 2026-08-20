@@ -16,7 +16,11 @@ import {
     useRef,
     useState,
 } from 'react';
-import { useQuote, useTradingLive } from '../hooks/use-stream';
+import {
+    useQuote,
+    useStreamStatus,
+    useTradingLive,
+} from '../hooks/use-stream';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { cancelOrder } from '../lib/shioaji';
 import { getAliasFor, onOrderEvent } from '../lib/stream';
@@ -180,6 +184,7 @@ export function FlashOrder({
 }) {
     const quote = useQuote(contract.code);
     const live = useTradingLive();
+    const streamStatus = useStreamStatus();
     const privMoney = usePrivacyMoney();
     const [qty, setQty] = useState(1);
     const [armed, setArmed] = useState(false);
@@ -608,7 +613,11 @@ export function FlashOrder({
                     onClick={() => setArmed((a) => !a)}
                 >
                     {!live ? (
-                        '⚠ 未連線'
+                        streamStatus === 'stale' ? (
+                            '⚠ 行情停滯'
+                        ) : (
+                            '⚠ 未連線'
+                        )
                     ) : armed ? (
                         <>
                             <Zap size={10} style={{ verticalAlign: '-1px' }} />{' '}
