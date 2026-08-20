@@ -19,7 +19,12 @@ import { appVersion } from '../lib/tauri';
 import * as dockStyles from './bottom-dock.css';
 import * as styles from './debug-panel.css';
 
-const STATUS_LABEL = { live: 'LIVE', connecting: 'SYNC', down: 'LOST' };
+const STATUS_LABEL = {
+    live: 'LIVE',
+    connecting: 'SYNC',
+    stale: 'STALE',
+    down: 'LOST',
+};
 
 export function DebugPanel() {
     const stream = useStreamStatus();

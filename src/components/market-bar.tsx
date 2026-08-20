@@ -1,12 +1,12 @@
 // src/components/market-bar.tsx — index / futures basis strip in the header
 
-import { useCallback } from 'react';
-import { usePoll } from '../hooks/use-poll';
+import { useSyncExternalStore } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { useHeaderItems } from '../lib/header-items';
-import { fetchSnapshots } from '../lib/shioaji';
-import { ensureContract } from '../lib/contracts-cache';
-import type { Snapshot } from '../lib/types/market';
+import {
+    getLatestSnapshots,
+    subscribeSnapshotStore,
+} from '../lib/stream-health';
 import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './hud-header.css';
@@ -14,16 +14,9 @@ import * as styles from './hud-header.css';
 export function MarketBar() {
     // 頂欄自訂：加權/基差 chips 可各自關閉（settings → 外觀 → 頂欄顯示）
     const headerItems = useHeaderItems();
-    const { data } = usePoll<Snapshot[]>(
-        useCallback(async () => {
-            const contracts = await Promise.all([
-                ensureContract('IX0001', 'IND'),
-                ensureContract('TXFR1', 'FUT'),
-            ]);
-            return fetchSnapshots(contracts);
-        }, []),
-        10000,
-    );
+    // 快照來自 stream-health 的共用輪詢（同兩檔、同 10 秒），顯示與
+    // 失聯偵測共用一條 REST 請求，避免對 sidecar 重複打
+    const data = useSyncExternalStore(subscribeSnapshotStore, getLatestSnapshots);
     const indexLive = useQuote('IX0001');
     const txfLive = useQuote('TXFR1');
 

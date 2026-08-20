@@ -91,6 +91,8 @@ export const led = styleVariants({
             animation: `${blink} 1s infinite`,
         },
     ],
+    // stale（本機通、上游行情停滯）：恆亮琥珀，與閃爍的 connecting 區分
+    stale: [ledBase, { background: vars.color.amber }],
     down: [
         ledBase,
         {

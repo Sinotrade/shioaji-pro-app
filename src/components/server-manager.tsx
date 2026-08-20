@@ -417,22 +417,27 @@ export function ServerManager({
     // quote stream means the server is up and serving — that must beat a
     // still-pending `busy` (the sidecar `server start` can stay awaited well
     // after the daemon is live), otherwise it sticks on 啟動中 forever.
-    const phase: 'starting' | 'connecting' | 'ok' | 'down' =
+    const phase: 'starting' | 'connecting' | 'ok' | 'stale' | 'down' =
         running && stream === 'live'
             ? 'ok'
-            : stream === 'live'
-              ? 'connecting' // data flowing, health not confirmed yet
-              : busy
-                ? 'starting'
-                : status?.running || stream === 'connecting'
-                  ? 'connecting'
-                  : 'down';
+            : stream === 'stale'
+              ? 'stale' // 本機通、上游行情停滯（issue #28）：需手動重啟，
+              // 不能演成會自癒的「連線中…」
+              : stream === 'live'
+                ? 'connecting' // data flowing, health not confirmed yet
+                : busy
+                  ? 'starting'
+                  : status?.running || stream === 'connecting'
+                    ? 'connecting'
+                    : 'down';
     const phaseLabel =
         phase === 'starting'
             ? '啟動中…'
             : phase === 'connecting'
               ? '連線中…'
-              : '伺服器';
+              : phase === 'stale'
+                ? '行情停滯'
+                : '伺服器';
     const updatePercent =
         updateState.totalBytes && updateState.downloadedBytes !== undefined
             ? Math.min(
@@ -501,7 +506,15 @@ export function ServerManager({
                     <Orb size={12} variant='ring' style={{ color: 'var(--amber, #e0a43c)' }} />
                 ) : (
                     <span
-                        className={styles.led[phase === 'ok' ? 'live' : 'down']}
+                        className={
+                            styles.led[
+                                phase === 'ok'
+                                    ? 'live'
+                                    : phase === 'stale'
+                                      ? 'stale'
+                                      : 'down'
+                            ]
+                        }
                     />
                 )}
                 {updateNeedsAttention ? updateHeaderLabel : phaseLabel}
@@ -562,7 +575,11 @@ export function ServerManager({
                                 <span
                                     className={
                                         styles.led[
-                                            phase === 'ok' ? 'live' : 'down'
+                                            phase === 'ok'
+                                                ? 'live'
+                                                : phase === 'stale'
+                                                  ? 'stale'
+                                                  : 'down'
                                         ]
                                     }
                                 />
@@ -573,9 +590,11 @@ export function ServerManager({
                                   ? status?.running
                                       ? '已啟動，等待行情連線'
                                       : '連線中'
-                                  : status?.running
-                                    ? '運行中'
-                                    : '未運行'}
+                                  : phase === 'stale'
+                                    ? '上游行情停滯，請按「重啟」重建連線'
+                                    : status?.running
+                                      ? '運行中'
+                                      : '未運行'}
                         </div>
                         {status?.running && (
                             <div className={styles.srvChipRow}>

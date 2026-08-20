@@ -27,6 +27,7 @@ import * as styles from './hud-header.css';
 const STATUS_LABEL = {
     live: 'LIVE',
     connecting: 'SYNC',
+    stale: 'STALE',
     down: 'LOST',
 } as const;
 
