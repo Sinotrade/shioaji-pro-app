@@ -55,6 +55,7 @@ import {
 // 自訂指標註冊進 DEF_BY_TYPE，loadInstances() 的型別過濾才不會把它們丟掉
 import { subscribeCustoms } from '../lib/custom-indicators';
 import type { IndicatorPoint } from '../lib/indicators';
+import { PriceBandPrimitive } from '../lib/price-band';
 import { cancelOrder, fetchKbars, updateOrderPrice } from '../lib/shioaji';
 import { setPickedPrice } from '../lib/price-sync';
 import { notify, placeQuickOrder } from '../lib/trade';
@@ -788,6 +789,51 @@ export function CandleChart({
                 const st = outputStyle(inst, def, o.key);
                 if (!st.visible) continue;
                 const color = colorWithOpacity(st.color, st.opacity);
+                // 價格帶（橫式長方形區域）：透明 anchor series 供座標/legend，
+                // 實際繪製交給 PriceBandPrimitive。下緣序列在 `<key>_lo`。
+                if (o.kind === 'band') {
+                    const top = lastVal(pts);
+                    const bottom = lastVal(out[`${o.key}_lo`] ?? []);
+                    if (top === undefined || bottom === undefined) continue;
+                    const anchor = chart.addSeries(
+                        LineSeries,
+                        {
+                            color: 'rgba(0,0,0,0)',
+                            lineVisible: false,
+                            crosshairMarkerVisible: false,
+                            autoscaleInfoProvider: () => null,
+                            ...labelOpts,
+                            ...priceFormatOpt,
+                        },
+                        pane,
+                    );
+                    anchor.setData(toLineData(pts));
+                    anchor.attachPrimitive(
+                        new PriceBandPrimitive({
+                            top,
+                            bottom,
+                            fillColor: colorWithOpacity(
+                                st.color,
+                                st.opacity,
+                            ),
+                            borderColor: color,
+                            borderStyle: o.border ?? 'solid',
+                            borderWidth: st.width,
+                        }),
+                    );
+                    indSeriesRef.current.push(
+                        anchor as ISeriesApi<'Line' | 'Histogram'>,
+                    );
+                    firstSeries ??= anchor as ISeriesApi<'Line' | 'Histogram'>;
+                    metas.push({
+                        label: o.label,
+                        color: st.color,
+                        series: anchor as ISeriesApi<'Line' | 'Histogram'>,
+                        last: (top + bottom) / 2,
+                        precision: inst.precision,
+                    });
+                    continue;
+                }
                 let s: ISeriesApi<'Line' | 'Histogram' | 'Area'>;
                 if (st.plot === 'histogram') {
                     s = chart.addSeries(

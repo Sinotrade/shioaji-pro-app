@@ -29,7 +29,7 @@ import {
 } from './indicators';
 import type { Candle } from './types/market';
 
-export type OutputKind = 'line' | 'dashed' | 'histogram' | 'points';
+export type OutputKind = 'line' | 'dashed' | 'histogram' | 'points' | 'band';
 
 export interface ParamDef {
     key: string;
@@ -48,6 +48,9 @@ export interface OutputDef {
     width?: 1 | 2;
     // histogram only: color positive/negative halves with up/down colors
     signed?: boolean;
+    // band only: 上下緣線型（預設 solid）。band 輸出的下緣序列放在
+    // compute 回傳的 `<key>_lo`，不另立 OutputDef。
+    border?: 'solid' | 'dashed';
 }
 
 export interface IndicatorDef {
@@ -210,6 +213,42 @@ export const INDICATOR_DEFS: IndicatorDef[] = [
         compute: (b, p) => {
             const r = keltner(b, p.period!, p.atrPeriod!, p.mult!);
             return { mid: r.mid, upper: r.upper, lower: r.lower };
+        },
+    },
+    {
+        type: 'txowall',
+        label: 'WALL TXO 牆',
+        short: 'WALL',
+        desc: '選擇權 OI 牆價位區域帶——履約價手動輸入，畫成橫式長方形',
+        aliases: ['wall', 'txo', 'oi', '牆', '壓力', '支撐', '選擇權'],
+        category: 'overlay',
+        params: [
+            { key: 'callWall', label: 'Call 壓力牆', def: 45500, min: 10000, max: 60000, step: 50 },
+            { key: 'putWall', label: 'Put 支撐牆', def: 44500, min: 10000, max: 60000, step: 50 },
+            { key: 'callWall2', label: 'Call 次牆（0 不畫）', def: 0, min: 0, max: 60000, step: 50 },
+            { key: 'putWall2', label: 'Put 次牆（0 不畫）', def: 0, min: 0, max: 60000, step: 50 },
+            { key: 'halfWidth', label: '區域半寬（點）', def: 25, min: 5, max: 200, step: 5 },
+        ],
+        outputs: [
+            { key: 'call', label: 'Call牆', kind: 'band', color: '#8a2a1a', width: 2 },
+            { key: 'put', label: 'Put牆', kind: 'band', color: '#5f5c26', width: 2 },
+            { key: 'call2', label: 'Call次牆', kind: 'band', color: '#a03d2a', border: 'dashed' },
+            { key: 'put2', label: 'Put次牆', kind: 'band', color: '#7a762f', border: 'dashed' },
+        ],
+        compute: (b, p) => {
+            const out: Record<string, IndicatorPoint[]> = {};
+            const constSer = (v: number): IndicatorPoint[] =>
+                b.map((bar) => ({ time: bar.time, value: v }));
+            const band = (key: string, wall: number) => {
+                if (!(wall > 0)) return; // 0 = 不畫
+                out[key] = constSer(wall + p.halfWidth!);
+                out[`${key}_lo`] = constSer(wall - p.halfWidth!);
+            };
+            band('call', p.callWall!);
+            band('put', p.putWall!);
+            band('call2', p.callWall2!);
+            band('put2', p.putWall2!);
+            return out;
         },
     },
     // ---- 副圖震盪 ----

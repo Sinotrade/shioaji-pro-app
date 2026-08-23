@@ -22,6 +22,7 @@ const KIND_LABEL: Record<OutputDef['kind'], string> = {
     dashed: '虛線',
     histogram: '柱狀',
     points: '圓點',
+    band: '區域帶',
 };
 
 const DEFAULT_SOURCE = `// 範例：雙 EMA 動能震盪（改成你自己的邏輯）
@@ -41,6 +42,7 @@ const HELP = [
     ['參數', 'p.參數名 — 在上方「參數」表定義，加入後可在指標設定裡調'],
     ['輸出', "plot('名稱', 序列, { kind:'line|dashed|histogram|points', color:'#rrggbb', signed:true, width:2 })"],
     ['水平線', 'hline(數值) — 副圖的參考水平線（如 RSI 的 30/70）'],
+    ['價格帶', "band('名稱', 上緣, 下緣, { color:'#rrggbb', border:'solid|dashed' }) — 主圖橫式區域，上下緣可用序列或常數"],
     ['均線', 'ta.sma(src,n)  ta.ema(src,n)  ta.wma(src,n)  ta.rma(src,n)'],
     ['統計', 'ta.stdev(src,n)  ta.highest(src,n)  ta.lowest(src,n)  ta.sum(src,n)'],
     ['動能', 'ta.change(src,n)  ta.roc(src,n)  ta.rsi(src,n)'],
@@ -142,6 +144,9 @@ export function CustomIndicatorEditor({
                             ? hint.color
                             : CUSTOM_PALETTE[i % CUSTOM_PALETTE.length]!),
                     ...(kept?.signed ?? hint.signed ? { signed: true } : {}),
+                    ...((kept?.border ?? hint.border)
+                        ? { border: (kept?.border ?? hint.border)! }
+                        : {}),
                     ...((kept?.width ?? hint.width)
                         ? { width: (kept?.width ?? hint.width) as 1 | 2 }
                         : {}),
@@ -184,6 +189,9 @@ export function CustomIndicatorEditor({
                             ? hint.color
                             : CUSTOM_PALETTE[i % CUSTOM_PALETTE.length]!),
                     ...(kept?.signed ?? hint.signed ? { signed: true } : {}),
+                    ...((kept?.border ?? hint.border)
+                        ? { border: (kept?.border ?? hint.border)! }
+                        : {}),
                     ...((kept?.width ?? hint.width)
                         ? { width: (kept?.width ?? hint.width) as 1 | 2 }
                         : {}),
