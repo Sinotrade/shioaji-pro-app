@@ -68,6 +68,7 @@ import {
     fetchAccountBalance,
     fetchMargin,
     fetchPositions,
+    fetchSnapshots,
     fetchTrades,
 } from './lib/shioaji';
 import { onOrderEvent } from './lib/stream';
@@ -755,9 +756,49 @@ export default function App() {
         [],
     );
 
+    // 庫存/排行榜/指令面板等非自選清單來源選中的商品沒有清單快照 —
+    // 收盤後（或訂閱後第一筆 tick 抵達前）報價板會整排「—」。補抓一次
+    // 性快照當 fallback；盤中有 live tick 時 QuoteBoard 本來就以 live
+    // 優先，快照僅墊底
+    const [fallbackSnap, setFallbackSnap] = useState<{
+        code: string;
+        snap: import('./lib/types/market').Snapshot;
+    } | null>(null);
+    useEffect(() => {
+        const c = selected;
+        if (!c) return;
+        // 只認 code 當依賴 — items 每輪快照輪詢都換 identity，跟著抖
+        // 會變成重複抓
+        if (
+            items.some(
+                (i) => i.contract.code === c.code && i.snapshot !== undefined,
+            )
+        ) {
+            return;
+        }
+        let cancelled = false;
+        void fetchSnapshots([c])
+            .then((snaps) => {
+                const s = snaps?.[0];
+                if (!cancelled && s) {
+                    setFallbackSnap({ code: c.code, snap: s });
+                }
+            })
+            .catch(() => {
+                // 快照拿不到就維持「—」— 不重試，選別檔再回來會再抓
+            });
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selected?.code]);
     const selectedSnapshot = useMemo(
-        () => items.find((i) => i.contract.code === selected?.code)?.snapshot,
-        [items, selected],
+        () =>
+            items.find((i) => i.contract.code === selected?.code)?.snapshot ??
+            (fallbackSnap && fallbackSnap.code === selected?.code
+                ? fallbackSnap.snap
+                : undefined),
+        [items, selected, fallbackSnap],
     );
 
     // ambient observation: one effect catches every selection path
