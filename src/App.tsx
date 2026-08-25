@@ -88,6 +88,7 @@ import {
     newBlockId,
     saveProfiles,
     saveWorkspace,
+    toRenderGeom,
     type Block,
     type BlockType,
     type PulseSection,
@@ -873,7 +874,6 @@ export default function App() {
     const colW = width > 0 ? width / renderCols : 53;
     const renderLayout = useMemo(() => {
         const typeOf = new Map(workspace.blocks.map((b) => [b.id, b.type]));
-        const toRender = density / GRID_LEGACY_SCALE; // k/12
         return workspace.layout.map((l) => {
             const meta = BLOCK_META[typeOf.get(l.i) as BlockType];
             // 最小寬錨定像素（24 欄 ×1280px 時代的等效值）— 在超寬幕
@@ -881,8 +881,7 @@ export default function App() {
             const minPx = (meta?.defaultSize.minW ?? 3) * (1280 / 24);
             return {
                 ...l,
-                x: Math.round(l.x * toRender),
-                w: Math.max(1, Math.round(l.w * toRender)),
+                ...toRenderGeom(l, density),
                 minW: Math.min(
                     Math.max(1, Math.ceil(minPx / colW)),
                     renderCols,
@@ -894,14 +893,34 @@ export default function App() {
         (next: Layout) => {
             const fromRender = GRID_LEGACY_SCALE / density; // 12/k，整數
             const prev = new Map(workspace.layout.map((l) => [l.i, l]));
-            const stored = next.map((l) => ({
-                ...(prev.get(l.i) ?? {}),
-                i: l.i,
-                x: Math.round(l.x * fromRender),
-                y: l.y,
-                w: Math.max(1, Math.round(l.w * fromRender)),
-                h: l.h,
-            }));
+            // RGL 在 mount 時必發一次 onLayoutChange（含跨密度舍入後的
+            // 座標）— 儲存值渲染後與回報一致的面板保留原值，精細版面
+            // 不會只因「開了 app」就被粗化回存
+            let changed = false;
+            const stored = next.map((l) => {
+                const p = prev.get(l.i);
+                if (p) {
+                    const g = toRenderGeom(p, density);
+                    if (
+                        g.x === l.x &&
+                        g.w === l.w &&
+                        p.y === l.y &&
+                        p.h === l.h
+                    ) {
+                        return p;
+                    }
+                }
+                changed = true;
+                return {
+                    ...(p ?? {}),
+                    i: l.i,
+                    x: Math.round(l.x * fromRender),
+                    y: l.y,
+                    w: Math.max(1, Math.round(l.w * fromRender)),
+                    h: l.h,
+                };
+            });
+            if (!changed && stored.length === workspace.layout.length) return;
             updateWorkspace({ ...workspace, layout: stored });
         },
         [workspace, updateWorkspace, density],

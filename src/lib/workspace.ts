@@ -27,6 +27,20 @@ export function upscaleLegacyWorkspace(w: Workspace): Workspace {
     return { ...w, layout: upscaleLayout(w.layout) };
 }
 
+// 288 欄儲存值 → 密度 k 的渲染座標。邊緣錨定舍入：x 與右緣各走同一個
+// 單調映射、w 取差值 — 相鄰面板共用的邊緣舍入後仍共用，絕不重疊。
+// （x/w 獨立舍入時，跨密度開啟可能產生 1 欄重疊 → RGL compaction 會把
+// 面板往下推一列並被 mount 觸發的 onLayoutChange 回存。）
+export function toRenderGeom(
+    l: { x: number; w: number },
+    density: number,
+): { x: number; w: number } {
+    const f = density / GRID_LEGACY_SCALE;
+    const x = Math.round(l.x * f);
+    const right = Math.round((l.x + l.w) * f);
+    return { x, w: Math.max(1, right - x) };
+}
+
 export type BlockType =
     | 'watchlist'
     | 'movers'
@@ -694,12 +708,17 @@ function validWorkspace(w: unknown): w is Workspace {
 }
 
 export function loadWorkspace(): Workspace {
+    // 兩個 key 各自 try — corrupt v3 不能擋掉 v2 fallback
     try {
         const raw = localStorage.getItem(WS_KEY);
         if (raw) {
             const w = JSON.parse(raw);
             if (validWorkspace(w)) return w;
         }
+    } catch {
+        // fall through to legacy
+    }
+    try {
         // 舊 24 欄存檔 → ×12 無損升階（v2 key 原樣保留，降版安全）
         const legacy = localStorage.getItem(WS_KEY_LEGACY);
         if (legacy) {
@@ -740,6 +759,10 @@ export function loadProfiles(): Profile[] {
             const out = parse(raw, false);
             if (out) return out;
         }
+    } catch {
+        // fall through to legacy
+    }
+    try {
         const legacy = localStorage.getItem(PROFILES_KEY_LEGACY);
         if (legacy) {
             const out = parse(legacy, true);
