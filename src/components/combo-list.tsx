@@ -73,12 +73,14 @@ export function ComboListPanel({
     useEffect(() => {
         const c = contract;
         if (!c) return;
+        // 任何新選擇（含期貨/非股票）都作廢在途的個股期查詢 — 否則
+        // 遲到的股票查詢會蓋掉更新的期貨選擇
+        const seq = ++followSeq.current;
         if (c.security_type === 'FUT') {
             if (c.root) applyRoot(c.root);
             return;
         }
         if (c.security_type !== 'STK') return;
-        const seq = ++followSeq.current;
         fetchFutures({ underlyingCode: c.code })
             .then((rows) => {
                 if (seq !== followSeq.current) return;
