@@ -147,6 +147,21 @@ export function orderFuturesLegs(
     return { legs: [a, b], swapped: false };
 }
 
+// TAIFEX 月份碼：尾碼 [A-L][0-9] — 字母 A=1月…L=12月、數字＝年份個位。
+// 組合 code（TXFI6/J6、MX4G6/MXFH6）兩段各取尾碼 → 「9月/10月」，
+// 一般使用者不用背月份碼也讀得懂近月配遠月。
+export function comboMonthsLabel(comboCode: string): string | null {
+    const [near, far] = comboCode.split('/');
+    if (!near || !far) return null;
+    const month = (code: string) => {
+        const m = /([A-L])(\d)$/.exec(code);
+        return m ? `${m[1]!.charCodeAt(0) - 64}月` : null;
+    };
+    const n = month(near);
+    const f = month(far);
+    return n && f ? `${n}/${f}` : null;
+}
+
 export interface LegQuoteL1 {
     bid: number;
     ask: number;

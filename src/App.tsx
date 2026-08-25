@@ -283,7 +283,7 @@ function BlockBody({
         case 'combo':
             return <ComboTicket />;
         case 'combolist':
-            return <ComboListPanel />;
+            return <ComboListPanel contract={contract} />;
         case 'notices':
             return <NoticeCenter />;
         case 'debug':
@@ -485,7 +485,7 @@ function PopoutView({
         // 下單面板等連動面板跟著動（issue #1: T 字要同時連動下單面板）
         body = <OptionChain onPick={broadcastSelectCode} />;
     else if (type === 'combo') body = <ComboTicket />;
-    else if (type === 'combolist') body = <ComboListPanel />;
+    else if (type === 'combolist') body = <ComboListPanel contract={contract} />;
     else if (
         contract?.security_type === 'IND' &&
         indexBlockMessage(type)

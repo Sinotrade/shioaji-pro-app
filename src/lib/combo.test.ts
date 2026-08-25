@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     comboCoefs,
+    comboMonthsLabel,
     deriveOptionShape,
     legActionsFor,
     orderFuturesLegs,
@@ -127,6 +128,19 @@ describe('deriveOptionShape — canonical 腳序與型別', () => {
     it('完全相同的腳 → 不合法', () => {
         const a = opt('TXO21800I6', 21800, 'C');
         expect(deriveOptionShape(a, { ...a }).error).toBeTruthy();
+    });
+});
+
+describe('comboMonthsLabel — 月份碼轉人話', () => {
+    it('標準組合 code 轉近/遠月標籤', () => {
+        expect(comboMonthsLabel('TXFI6/J6')).toBe('9月/10月');
+        expect(comboMonthsLabel('TXFL6/C7')).toBe('12月/3月');
+        // 跨變體完整第二段（週/月期貨）
+        expect(comboMonthsLabel('MX4G6/MXFH6')).toBe('7月/8月');
+    });
+    it('非組合格式回 null', () => {
+        expect(comboMonthsLabel('TXFI6')).toBeNull();
+        expect(comboMonthsLabel('XX/YY')).toBeNull();
     });
 });
 

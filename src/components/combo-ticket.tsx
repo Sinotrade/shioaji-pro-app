@@ -15,6 +15,7 @@ import { usePoll } from '../hooks/use-poll';
 import { ensureContract } from '../lib/contracts-cache';
 import {
     COMBO_TYPE_LABEL,
+    comboMonthsLabel,
     deriveOptionShape,
     legActionsFor,
     orderFuturesLegs,
@@ -36,10 +37,12 @@ import {
     type ComboType,
     type ManagedComboContract,
 } from '../lib/shioaji';
+import { usePickedPrice } from '../lib/price-sync';
 import { assertTradingLive, notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
+import { DepthLadder } from './depth-ladder';
 import * as styles from './order-ticket.css';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
@@ -94,7 +97,8 @@ function LegQuoteRow({
 const sideOk = (price: number, volume: number | undefined) =>
     Number.isFinite(price) && (volume ?? 0) > 0;
 
-// 原生組合商品 5 檔（簿有變動才會有事件；快照墊初始 L1）
+// 原生組合商品簿 — 有即時 BidAsk 就用標準五檔梯（DepthLadder，點價
+// 直接帶入淨價欄），還沒有事件時以快照墊一行 L1（明標「快照」）
 function ComboBook({
     code,
     snapshot,
@@ -104,61 +108,43 @@ function ComboBook({
 }) {
     const quote = useQuote(code);
     const ba = quote?.bidask;
-    // 薄簿常見單邊：以兩側最長者列檔，空側顯示 —（只走 bid 長度會把
-    // 多出來的賣檔吃掉、甚至整簿只剩賣時顯示成「等待行情」）
-    const levels = ba
-        ? Array.from(
-              { length: Math.max(ba.bid_price.length, ba.ask_price.length) },
-              (_, i) => ({
-                  bid: Number(ba.bid_price[i] ?? NaN),
-                  bidVol: ba.bid_volume[i] ?? 0,
-                  ask: Number(ba.ask_price[i] ?? NaN),
-                  askVol: ba.ask_volume[i] ?? 0,
-              }),
-          )
-        : snapshot
-          ? [
-                {
-                    bid: snapshot.buy_price,
-                    bidVol: snapshot.buy_volume,
-                    ask: snapshot.sell_price,
-                    askVol: snapshot.sell_volume,
-                },
-            ]
-          : [];
-    const rows = levels.filter(
-        (l) => sideOk(l.bid, l.bidVol) || sideOk(l.ask, l.askVol),
-    );
-    const last = quote?.tick ? Number(quote.tick.close) : snapshot?.close;
-    if (rows.length === 0 && last === undefined) {
-        return (
-            <span className={styles.costRow}>組合報價 {code}｜等待行情…</span>
-        );
-    }
+    const last = quote?.tick
+        ? Number(quote.tick.close)
+        : snapshot && snapshot.total_volume > 0
+          ? snapshot.close
+          : undefined;
+    const snapUsable =
+        !!snapshot &&
+        (sideOk(snapshot.buy_price, snapshot.buy_volume) ||
+            sideOk(snapshot.sell_price, snapshot.sell_volume));
     return (
         <div>
             <span className={styles.costRow}>
                 組合報價 {code}
                 {last !== undefined && <>｜成交 {fmtPrice(last)}</>}
-                {snapshot && !ba && <>（快照）</>}
             </span>
-            {rows.map((l, i) => (
-                <span key={i} className={styles.costRow}>
+            {ba ? (
+                <DepthLadder code={code} />
+            ) : snapUsable ? (
+                <span className={styles.costRow}>
+                    快照｜
                     <span className={panel.dirText.up}>
                         買{' '}
-                        {sideOk(l.bid, l.bidVol)
-                            ? `${fmtPrice(l.bid)}×${l.bidVol}`
+                        {sideOk(snapshot!.buy_price, snapshot!.buy_volume)
+                            ? `${fmtPrice(snapshot!.buy_price)}×${snapshot!.buy_volume}`
                             : '—'}
                     </span>
                     {'　'}
                     <span className={panel.dirText.down}>
                         賣{' '}
-                        {sideOk(l.ask, l.askVol)
-                            ? `${fmtPrice(l.ask)}×${l.askVol}`
+                        {sideOk(snapshot!.sell_price, snapshot!.sell_volume)
+                            ? `${fmtPrice(snapshot!.sell_price)}×${snapshot!.sell_volume}`
                             : '—'}
                     </span>
                 </span>
-            ))}
+            ) : (
+                <span className={styles.costRow}>等待組合行情…</span>
+            )}
         </div>
     );
 }
@@ -444,6 +430,16 @@ export function ComboTicket() {
         }
     }, [refQuote?.bid, refQuote?.ask, priceTouched, decimals]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // 組合五檔梯點價 → 直接帶入淨價（比照一般下單面板的點價行為）
+    const picked = usePickedPrice(resolution?.combo?.code ?? null);
+    useEffect(() => {
+        if (!picked) return;
+        setPriceTouched(true);
+        setPrice(String(picked.price));
+        setArmed(false);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [picked?.seq]);
+
     const ready =
         legs.every((l) => l.contract) &&
         !comboError &&
@@ -724,7 +720,13 @@ export function ComboTicket() {
             {effectiveType && !resolution?.ambiguous && (
                 <span className={styles.costRow}>
                     型別｜{COMBO_TYPE_LABEL[effectiveType]}
-                    {resolution?.combo && <>（{resolution.combo.code}）</>}
+                    {resolution?.combo && (
+                        <>
+                            {' '}
+                            {comboMonthsLabel(resolution.combo.code)}（
+                            {resolution.combo.code}）
+                        </>
+                    )}
                 </span>
             )}
 
@@ -734,7 +736,9 @@ export function ComboTicket() {
                     snapshot={comboSnapshot}
                 />
             )}
-            {synth && (
+            {/* 合成參考只在沒有原生組合簿時顯示（選擇權組合、或期貨簿
+                尚無行情）— 原生簿在場時它只是雜訊 */}
+            {synth && !nativeQuote?.bidask && (
                 <span className={styles.costRow}>
                     合成參考｜
                     <span className={panel.dirText.up}>
