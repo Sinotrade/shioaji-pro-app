@@ -686,24 +686,25 @@ export default function App() {
                 );
                 // server 的 list_trades 可能每次回整份快取 → 以委託 id
                 // 去重；重複時保留 order.account 與查詢帳戶一致的那筆
-                // （標籤才是真正的下單帳戶）
+                // （標籤才是真正的下單帳戶）。空 id 不合併、帳戶比對含
+                // broker_id（不同券商同帳號不可互撞）
+                const sameAcct = (t: AccountedTrade) =>
+                    t.order.account?.account_id === t.account?.account_id &&
+                    t.order.account?.broker_id === t.account?.broker_id;
                 const seen = new Map<string, AccountedTrade>();
+                const noId: AccountedTrade[] = [];
                 for (const t of all) {
                     const key = t.order.id;
+                    if (!key) {
+                        noId.push(t);
+                        continue;
+                    }
                     const prev = seen.get(key);
-                    const matches =
-                        t.order.account?.account_id === t.account?.account_id;
-                    if (!prev) {
-                        seen.set(key, t);
-                    } else if (
-                        matches &&
-                        prev.order.account?.account_id !==
-                            prev.account?.account_id
-                    ) {
+                    if (!prev || (sameAcct(t) && !sameAcct(prev))) {
                         seen.set(key, t);
                     }
                 }
-                return [...seen.values()];
+                return [...seen.values(), ...noId];
             }
             const [s, f] = await Promise.allSettled([
                 fetchTrades('S'),
