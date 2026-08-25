@@ -80,7 +80,8 @@ import type { AccountedPosition, Position } from './lib/types/portfolio';
 import {
     BLOCK_META,
     DEFAULT_WORKSPACE,
-    GRID_COLS,
+    GRID_LEGACY_COLS,
+    GRID_LEGACY_SCALE,
     LAYOUT_PRESETS,
     loadProfiles,
     loadWorkspace,
@@ -863,11 +864,47 @@ export default function App() {
         saveWorkspace(w);
     }, []);
 
+    // ---- 版面密度（超寬螢幕支援）----
+    // 儲存基準 288 欄；渲染依視窗寬選密度 k（cols=24k，每欄 ~40–55px）：
+    // 欄寬與最小寬不再跟著螢幕等比放大，超寬幕上面板可以縮得更窄、
+    // 拖拉步進更細。k 皆整除 12 → 同密度回存無損；跨密度僅一次舍入。
+    const density = width < 1800 ? 1 : width < 2800 ? 2 : width < 3900 ? 3 : 4;
+    const renderCols = GRID_LEGACY_COLS * density;
+    const colW = width > 0 ? width / renderCols : 53;
+    const renderLayout = useMemo(() => {
+        const typeOf = new Map(workspace.blocks.map((b) => [b.id, b.type]));
+        const toRender = density / GRID_LEGACY_SCALE; // k/12
+        return workspace.layout.map((l) => {
+            const meta = BLOCK_META[typeOf.get(l.i) as BlockType];
+            // 最小寬錨定像素（24 欄 ×1280px 時代的等效值）— 在超寬幕
+            // 不再是螢幕比例，自選清單等窄面板可以真正縮窄
+            const minPx = (meta?.defaultSize.minW ?? 3) * (1280 / 24);
+            return {
+                ...l,
+                x: Math.round(l.x * toRender),
+                w: Math.max(1, Math.round(l.w * toRender)),
+                minW: Math.min(
+                    Math.max(1, Math.ceil(minPx / colW)),
+                    renderCols,
+                ),
+            };
+        });
+    }, [workspace, density, colW, renderCols]);
     const onLayoutChange = useCallback(
         (next: Layout) => {
-            updateWorkspace({ ...workspace, layout: [...next] });
+            const fromRender = GRID_LEGACY_SCALE / density; // 12/k，整數
+            const prev = new Map(workspace.layout.map((l) => [l.i, l]));
+            const stored = next.map((l) => ({
+                ...(prev.get(l.i) ?? {}),
+                i: l.i,
+                x: Math.round(l.x * fromRender),
+                y: l.y,
+                w: Math.max(1, Math.round(l.w * fromRender)),
+                h: l.h,
+            }));
+            updateWorkspace({ ...workspace, layout: stored });
         },
-        [workspace, updateWorkspace],
+        [workspace, updateWorkspace, density],
     );
 
     const addBlock = useCallback(
@@ -885,9 +922,10 @@ export default function App() {
                 i: id,
                 x: 0,
                 y: Infinity, // RGL drops it at the bottom
-                w: meta.defaultSize.w,
+                // defaultSize 以 24 欄語意撰寫 → 存檔是 288 基準
+                w: meta.defaultSize.w * GRID_LEGACY_SCALE,
                 h: meta.defaultSize.h,
-                minW: meta.defaultSize.minW,
+                minW: meta.defaultSize.minW * GRID_LEGACY_SCALE,
                 minH: meta.defaultSize.minH,
             };
             updateWorkspace({
@@ -1165,10 +1203,10 @@ export default function App() {
                 )}
                 {!booting && mounted && (
                     <GridLayout
-                        layout={workspace.layout}
+                        layout={renderLayout}
                         width={width}
                         gridConfig={{
-                            cols: GRID_COLS,
+                            cols: renderCols,
                             rowHeight: 30,
                             margin: [6, 6],
                             containerPadding: [6, 6],

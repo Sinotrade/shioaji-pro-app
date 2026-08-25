@@ -2,9 +2,30 @@
 
 import type { LayoutItem } from 'react-grid-layout';
 
-// single source of truth for the main grid column count — the workspace
-// grid (App.tsx) and layout thumbnails (lib/layout-thumb.ts) must agree
-export const GRID_COLS = 24;
+// 版面座標底座（儲存基準）：288 欄 = 傳統 24 欄 × 12。
+// - 撰寫/舊存檔仍是 24 欄語意，載入時 ×12 無損升階
+// - App 渲染時依視窗寬選密度 k∈{1,2,3,4}（cols = 24k，每欄 ~40–55px，
+//   超寬螢幕的欄寬不再等比放大、拖拉步進更細）
+// - 12 可被 1/2/3/4/6 整除 → 任一密度的回存 ×(12/k) 都是整數（無損）；
+//   只有「跨密度」（換螢幕/跨機）才會有一次 ≤ 半欄的舍入
+// layout-thumb 以 GRID_COLS 做等比縮放，與儲存基準一致即可。
+export const GRID_COLS = 288;
+export const GRID_LEGACY_COLS = 24;
+export const GRID_LEGACY_SCALE = GRID_COLS / GRID_LEGACY_COLS; // 12
+
+function upscaleLayout(layout: LayoutItem[]): LayoutItem[] {
+    return layout.map((l) => ({
+        ...l,
+        x: l.x * GRID_LEGACY_SCALE,
+        w: l.w * GRID_LEGACY_SCALE,
+        ...(l.minW !== undefined ? { minW: l.minW * GRID_LEGACY_SCALE } : {}),
+        ...(l.maxW !== undefined ? { maxW: l.maxW * GRID_LEGACY_SCALE } : {}),
+    }));
+}
+
+export function upscaleLegacyWorkspace(w: Workspace): Workspace {
+    return { ...w, layout: upscaleLayout(w.layout) };
+}
 
 export type BlockType =
     | 'watchlist'
@@ -321,7 +342,9 @@ export const BLOCK_META: Record<
     },
 };
 
-export const DEFAULT_WORKSPACE: Workspace = {
+// 預設/內建版面一律以「傳統 24 欄」撰寫（好讀好改），匯出前統一
+// 升階到 288 基準 — 見檔頭說明
+const RAW_DEFAULT_WORKSPACE: Workspace = {
     blocks: [
         { id: 'watchlist-0', type: 'watchlist', pin: null },
         { id: 'movers-0', type: 'movers', pin: null },
@@ -342,12 +365,17 @@ export const DEFAULT_WORKSPACE: Workspace = {
     ],
 };
 
-// built-in layout presets for common trading workflows
-export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[] = [
+export const DEFAULT_WORKSPACE: Workspace = upscaleLegacyWorkspace(
+    RAW_DEFAULT_WORKSPACE,
+);
+
+// built-in layout presets for common trading workflows（24 欄撰寫，
+// 檔尾統一升階匯出）
+const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[] = [
     {
         name: '標準看盤',
         desc: '自選+排行 / K線+持倉 / 五檔+下單+明細',
-        workspace: DEFAULT_WORKSPACE,
+        workspace: RAW_DEFAULT_WORKSPACE,
     },
     {
         name: '當沖交易',
@@ -643,8 +671,18 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
     },
 ];
 
-const WS_KEY = 'sj-pro-workspace-v2';
-const PROFILES_KEY = 'sj-pro-profiles-v1';
+export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[] =
+    RAW_LAYOUT_PRESETS.map((p) => ({
+        ...p,
+        workspace: upscaleLegacyWorkspace(p.workspace),
+    }));
+
+// v3 = 288 欄基準；v2（24 欄）保留原樣供舊版 app 降版使用，讀到時
+// 無損升階。profiles 同理。
+const WS_KEY = 'sj-pro-workspace-v3';
+const WS_KEY_LEGACY = 'sj-pro-workspace-v2';
+const PROFILES_KEY = 'sj-pro-profiles-v2';
+const PROFILES_KEY_LEGACY = 'sj-pro-profiles-v1';
 
 function validWorkspace(w: unknown): w is Workspace {
     if (!w || typeof w !== 'object') return false;
@@ -662,6 +700,12 @@ export function loadWorkspace(): Workspace {
             const w = JSON.parse(raw);
             if (validWorkspace(w)) return w;
         }
+        // 舊 24 欄存檔 → ×12 無損升階（v2 key 原樣保留，降版安全）
+        const legacy = localStorage.getItem(WS_KEY_LEGACY);
+        if (legacy) {
+            const w = JSON.parse(legacy);
+            if (validWorkspace(w)) return upscaleLegacyWorkspace(w);
+        }
     } catch {
         // fall through
     }
@@ -673,23 +717,33 @@ export function saveWorkspace(w: Workspace) {
 }
 
 export function loadProfiles(): Profile[] {
+    const parse = (raw: string, legacy: boolean): Profile[] | null => {
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return null;
+        return (arr as Profile[])
+            .filter(
+                (p) =>
+                    typeof p.name === 'string' && validWorkspace(p.workspace),
+            )
+            .map((p) => {
+                const ws = legacy
+                    ? upscaleLegacyWorkspace(p.workspace)
+                    : p.workspace;
+                return typeof p.icon === 'string' && p.icon
+                    ? { ...p, workspace: ws }
+                    : { name: p.name, workspace: ws };
+            });
+    };
     try {
         const raw = localStorage.getItem(PROFILES_KEY);
         if (raw) {
-            const arr = JSON.parse(raw);
-            if (Array.isArray(arr)) {
-                return (arr as Profile[])
-                    .filter(
-                        (p) =>
-                            typeof p.name === 'string' &&
-                            validWorkspace(p.workspace),
-                    )
-                    .map((p) =>
-                        typeof p.icon === 'string' && p.icon
-                            ? p
-                            : { name: p.name, workspace: p.workspace },
-                    );
-            }
+            const out = parse(raw, false);
+            if (out) return out;
+        }
+        const legacy = localStorage.getItem(PROFILES_KEY_LEGACY);
+        if (legacy) {
+            const out = parse(legacy, true);
+            if (out) return out;
         }
     } catch {
         // fall through
