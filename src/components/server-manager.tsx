@@ -248,6 +248,12 @@ export function ServerManager({
                                     : `expires in ${health.ca_expires_in_days}d`
                             }`
                           : ''
+                  }${
+                      health.session_recovering
+                          ? ` · session RECOVERING (attempt ${
+                                health.session_recovery_attempts ?? '?'
+                            })`
+                          : ''
                   }`
                 : 'health: —',
             `stream: ${stream} · mode setting: ${
@@ -413,26 +419,33 @@ export function ServerManager({
     if (!isTauri) return null;
 
     const running = status?.running && status.healthy;
+    // 1.7.3+：後端 Solace session 斷線自癒中 — SSE 可能還掛著（甚至
+    // 還在收最後的行情）但資料端點全 500，指示燈不能是綠的（#28）
+    const sessionRecovering = !!status?.running && !!health?.session_recovering;
     // explicit lifecycle so starting/connecting never looks stuck. A LIVE
     // quote stream means the server is up and serving — that must beat a
     // still-pending `busy` (the sidecar `server start` can stay awaited well
     // after the daemon is live), otherwise it sticks on 啟動中 forever.
-    const phase: 'starting' | 'connecting' | 'ok' | 'down' =
-        running && stream === 'live'
-            ? 'ok'
-            : stream === 'live'
-              ? 'connecting' // data flowing, health not confirmed yet
-              : busy
-                ? 'starting'
-                : status?.running || stream === 'connecting'
-                  ? 'connecting'
-                  : 'down';
+    const phase: 'starting' | 'connecting' | 'recovering' | 'ok' | 'down' =
+        sessionRecovering
+            ? 'recovering'
+            : running && stream === 'live'
+              ? 'ok'
+              : stream === 'live'
+                ? 'connecting' // data flowing, health not confirmed yet
+                : busy
+                  ? 'starting'
+                  : status?.running || stream === 'connecting'
+                    ? 'connecting'
+                    : 'down';
     const phaseLabel =
         phase === 'starting'
             ? '啟動中…'
             : phase === 'connecting'
               ? '連線中…'
-              : '伺服器';
+              : phase === 'recovering'
+                ? '行情恢復中…'
+                : '伺服器';
     const updatePercent =
         updateState.totalBytes && updateState.downloadedBytes !== undefined
             ? Math.min(
@@ -497,7 +510,9 @@ export function ServerManager({
                     <Download size={11} />
                 ) : updateState.phase === 'external' ? (
                     <ExternalLink size={11} />
-                ) : phase === 'starting' || phase === 'connecting' ? (
+                ) : phase === 'starting' ||
+                  phase === 'connecting' ||
+                  phase === 'recovering' ? (
                     <Orb size={12} variant='ring' style={{ color: 'var(--amber, #e0a43c)' }} />
                 ) : (
                     <span
@@ -556,7 +571,8 @@ export function ServerManager({
                         )}
                         <div className={styles.srvPhaseRow}>
                             {phase === 'starting' ||
-                            phase === 'connecting' ? (
+                            phase === 'connecting' ||
+                            phase === 'recovering' ? (
                                 <Orb size={12} variant='ring' style={{ color: 'var(--amber, #e0a43c)' }} />
                             ) : (
                                 <span
@@ -569,13 +585,19 @@ export function ServerManager({
                             )}
                             {phase === 'starting'
                                 ? '啟動中 — 登入與載入合約約需 10–30 秒'
-                                : phase === 'connecting'
-                                  ? status?.running
-                                      ? '已啟動，等待行情連線'
-                                      : '連線中'
-                                  : status?.running
-                                    ? '運行中'
-                                    : '未運行'}
+                                : phase === 'recovering'
+                                  ? `行情連線中斷 — 自動恢復中${
+                                        health?.session_recovery_attempts
+                                            ? `（第 ${health.session_recovery_attempts} 次重試）`
+                                            : '…'
+                                    }`
+                                  : phase === 'connecting'
+                                    ? status?.running
+                                        ? '已啟動，等待行情連線'
+                                        : '連線中'
+                                    : status?.running
+                                      ? '運行中'
+                                      : '未運行'}
                         </div>
                         {status?.running && (
                             <div className={styles.srvChipRow}>
@@ -644,6 +666,7 @@ export function ServerManager({
                             </div>
                         )}
                         {(phase === 'starting' ||
+                            phase === 'recovering' ||
                             (phase === 'connecting' && status?.running)) && (
                             <span className={styles.progressTrack}>
                                 <span className={styles.progressGlider} />
