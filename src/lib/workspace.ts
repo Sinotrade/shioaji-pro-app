@@ -61,6 +61,7 @@ export type BlockType =
     | 'replay'
     | 'depthmap'
     | 'combo'
+    | 'combolist'
     | 'notices'
     | 'debug'
     | 'grid'
@@ -281,6 +282,14 @@ export const BLOCK_META: Record<
         pinnable: false,
         singleton: true,
         defaultSize: { w: 6, h: 14, minW: 5, minH: 10 },
+    },
+    combolist: {
+        label: '組合商品',
+        description: '交易所組合商品列表與報價，點列帶入組合單',
+        category: 'derivatives',
+        pinnable: false,
+        singleton: true,
+        defaultSize: { w: 6, h: 12, minW: 4, minH: 8 },
     },
     notices: {
         label: '通知中心',

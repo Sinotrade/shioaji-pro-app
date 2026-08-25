@@ -1033,6 +1033,13 @@ export function buildComboContract(legs: ManagedComboLegReq[]) {
     });
 }
 
+/** 枚舉一個期貨家族目前所有可交易的 managed 組合（近月在前）。 */
+export function fetchComboFutures(root: string) {
+    return apiGet<ManagedComboContract[]>(
+        `/api/v1/data/contracts/combo/futures?root=${encodeURIComponent(root)}&region=TW`,
+    );
+}
+
 function comboStreamBody(
     combo: Pick<ManagedComboContract, 'legs' | 'combo_type'>,
     quoteType: QuoteTypeName,
@@ -1073,13 +1080,23 @@ export function unsubscribeComboQuote(
     });
 }
 
+/** 原生組合商品批次快照（一整個家族一發，rate limit 友善）。 */
+export function fetchComboSnapshots(
+    combos: Pick<ManagedComboContract, 'legs' | 'combo_type'>[],
+) {
+    return apiPost<Snapshot[]>('/api/v1/data/snapshots', {
+        contracts: combos.map((c) => ({
+            legs: c.legs,
+            combo_type: c.combo_type,
+        })),
+    });
+}
+
 /** 原生組合商品快照 — 訂閱後簿未變動前的初始畫面。 */
 export function fetchComboSnapshot(
     combo: Pick<ManagedComboContract, 'legs' | 'combo_type'>,
 ) {
-    return apiPost<Snapshot[]>('/api/v1/data/snapshots', {
-        contracts: [{ legs: combo.legs, combo_type: combo.combo_type }],
-    }).then((arr) => arr[0] ?? null);
+    return fetchComboSnapshots([combo]).then((arr) => arr[0] ?? null);
 }
 
 export interface ComboOrderReq {

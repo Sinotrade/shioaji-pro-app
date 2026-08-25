@@ -28,6 +28,7 @@ import {
 } from './lib/option-pick';
 import { OrderTicket } from './components/order-ticket';
 import { ChipsCard } from './components/chips-card';
+import { ComboListPanel } from './components/combo-list';
 import { ComboTicket } from './components/combo-ticket';
 import { DebugPanel } from './components/debug-panel';
 import { GridTicket } from './components/grid-ticket';
@@ -281,6 +282,8 @@ function BlockBody({
             );
         case 'combo':
             return <ComboTicket />;
+        case 'combolist':
+            return <ComboListPanel />;
         case 'notices':
             return <NoticeCenter />;
         case 'debug':
@@ -482,6 +485,7 @@ function PopoutView({
         // 下單面板等連動面板跟著動（issue #1: T 字要同時連動下單面板）
         body = <OptionChain onPick={broadcastSelectCode} />;
     else if (type === 'combo') body = <ComboTicket />;
+    else if (type === 'combolist') body = <ComboListPanel />;
     else if (
         contract?.security_type === 'IND' &&
         indexBlockMessage(type)

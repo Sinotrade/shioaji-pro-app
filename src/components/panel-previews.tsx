@@ -492,6 +492,41 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             <rect x='88' y='31' width='20' height='14' rx='3' fill={accent} fillOpacity='0.6' />
         </Frame>
     ),
+    combolist: (
+        <Frame>
+            {[18, 32, 46, 60].map((y, i) => (
+                <g key={y}>
+                    <rect
+                        x='10'
+                        y={y - 4}
+                        width='34'
+                        height='8'
+                        rx='2'
+                        fill={muted}
+                        fillOpacity='0.5'
+                    />
+                    <rect
+                        x='52'
+                        y={y - 4}
+                        width='22'
+                        height='8'
+                        rx='2'
+                        fill={up}
+                        fillOpacity={0.75 - i * 0.12}
+                    />
+                    <rect
+                        x='80'
+                        y={y - 4}
+                        width='22'
+                        height='8'
+                        rx='2'
+                        fill={down}
+                        fillOpacity={0.75 - i * 0.12}
+                    />
+                </g>
+            ))}
+        </Frame>
+    ),
     notices: (
         <Frame>
             <path

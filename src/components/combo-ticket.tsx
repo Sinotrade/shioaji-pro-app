@@ -20,6 +20,7 @@ import {
     orderFuturesLegs,
     syntheticComboQuote,
 } from '../lib/combo';
+import { useComboPick } from '../lib/combo-pick';
 import { useOptionLegPick } from '../lib/option-pick';
 import {
     buildComboContract,
@@ -255,6 +256,23 @@ export function ComboTicket() {
     // other. Refs avoid re-subscribing the picker on every leg edit.
     const legsRef = useRef(legs);
     legsRef.current = legs;
+
+    // 組合商品列表點擊 → 兩腳整組帶入（canonical 序，明確意圖故不看
+    // locked）；解析後走既有 legKey 流程再過一次 server 驗證
+    const comboPick = useComboPick();
+    useEffect(() => {
+        if (!comboPick) return;
+        const [l0, l1] = comboPick.combo.legs;
+        if (!l0 || !l1) return;
+        setLegs([
+            { ...EMPTY_LEG, input: l0.code },
+            { ...EMPTY_LEG, input: l1.code },
+        ]);
+        setArmed(false);
+        void resolveCode(0, l0.code);
+        void resolveCode(1, l1.code);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [comboPick?.seq]);
     useEffect(() => {
         if (!linkChain || !optPick) return;
         const cur = legsRef.current;
