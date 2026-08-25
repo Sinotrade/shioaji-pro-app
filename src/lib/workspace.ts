@@ -247,7 +247,8 @@ export const BLOCK_META: Record<
         label: '個股期選擇器',
         description: '個股期貨標的瀏覽',
         category: 'derivatives',
-        pinnable: false,
+        // 標準 chrome 連動/釘選：不釘＝跟隨自選選擇切標的，釘＝固定
+        pinnable: true,
         singleton: true,
         defaultSize: { w: 9, h: 12, minW: 7, minH: 8 },
     },
@@ -287,7 +288,8 @@ export const BLOCK_META: Record<
         label: '組合商品',
         description: '交易所組合商品列表與報價，點列帶入組合單',
         category: 'derivatives',
-        pinnable: false,
+        // 標準 chrome 連動/釘選：不釘＝跟隨自選選擇切家族，釘＝固定
+        pinnable: true,
         singleton: true,
         defaultSize: { w: 6, h: 12, minW: 4, minH: 8 },
     },

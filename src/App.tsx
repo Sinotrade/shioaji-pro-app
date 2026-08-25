@@ -258,6 +258,7 @@ function BlockBody({
             return (
                 <StockFuturesPanel
                     onPick={onSelectCode}
+                    contract={contract}
                     onAdd={(selectedContract) =>
                         watchlistProps.onAdd(
                             selectedContract.code,

@@ -19,6 +19,7 @@ import {
     type ContractRoot,
     type ManagedComboContract,
 } from '../lib/shioaji';
+import type { StockMeta } from '../lib/stock-index';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
@@ -26,6 +27,7 @@ import { fmtPrice } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './derivative-explorer.css';
 import { Orb } from './orb';
+import { UnderlyingPicker } from './underlying-picker';
 
 const COMBO_LIST_ROOT = 'sj-pro-combo-list-root';
 
@@ -52,6 +54,8 @@ export function ComboListPanel({
     );
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
+    // 個股期搜尋器目前顯示的標的
+    const [underlying, setUnderlying] = useState<StockMeta | null>(null);
 
     const applyRoot = useCallback((next: string) => {
         setRoot((prev) => {
@@ -67,27 +71,55 @@ export function ComboListPanel({
             .catch(() => undefined); // 清單載不到仍可用預設 root
     }, []);
 
-    // 連動全域選取：點到期貨 → 跟它的家族；點到股票 → 查它的個股期
-    // 家族（沒有個股期就不動）。之後仍可手動下拉切換。
+    // 個股期查詢共用 seq — 新動作（連動/搜尋/手動切換）作廢在途查詢
     const followSeq = useRef(0);
+    const rootFromUnderlying = useCallback(
+        (stock: StockMeta, notFoundNote: boolean) => {
+            const seq = ++followSeq.current;
+            fetchFutures({ underlyingCode: stock.code })
+                .then((rows) => {
+                    if (seq !== followSeq.current) return;
+                    const r = rows.find((x) => x.root)?.root;
+                    if (r) {
+                        setUnderlying(stock);
+                        applyRoot(r);
+                    } else if (notFoundNote) {
+                        notify({
+                            kind: 'info',
+                            title: '沒有個股期',
+                            body: `${stock.code} ${stock.name} 目前沒有掛牌的個股期貨`,
+                        });
+                    }
+                })
+                .catch(() => undefined);
+        },
+        [applyRoot],
+    );
+
+    // 連動選取（標準 chrome 連動/釘選：不釘時 contract 跟隨自選選擇、
+    // 釘住時固定）：點到期貨 → 跟它的家族；點到股票 → 查它的個股期
+    // 家族（沒有就不動）。搜尋器與下拉是手動入口。
     useEffect(() => {
         const c = contract;
         if (!c) return;
-        // 任何新選擇（含期貨/非股票）都作廢在途的個股期查詢 — 否則
-        // 遲到的股票查詢會蓋掉更新的期貨選擇
-        const seq = ++followSeq.current;
         if (c.security_type === 'FUT') {
-            if (c.root) applyRoot(c.root);
+            followSeq.current++; // 作廢在途個股期查詢
+            if (c.root) {
+                setUnderlying(null);
+                applyRoot(c.root);
+            }
             return;
         }
         if (c.security_type !== 'STK') return;
-        fetchFutures({ underlyingCode: c.code })
-            .then((rows) => {
-                if (seq !== followSeq.current) return;
-                const r = rows.find((x) => x.root)?.root;
-                if (r) applyRoot(r);
-            })
-            .catch(() => undefined);
+        rootFromUnderlying(
+            {
+                code: c.code,
+                name: c.name,
+                category: c.category ?? '',
+                exchange: c.exchange ?? '',
+            },
+            false, // 連動撞到沒個股期的股票不彈通知，安靜不動
+        );
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract?.code]);
 
@@ -158,7 +190,11 @@ export function ComboListPanel({
                 <select
                     className={styles.select}
                     value={root}
-                    onChange={(e) => applyRoot(e.target.value)}
+                    onChange={(e) => {
+                        followSeq.current++; // 作廢在途個股期查詢
+                        setUnderlying(null);
+                        applyRoot(e.target.value);
+                    }}
                 >
                     {/* 清單未載入或存的 root 已下市 → 補現值選項不留空白 */}
                     {!roots.some((r) => r.root === root) && (
@@ -179,6 +215,15 @@ export function ComboListPanel({
                         ))}
                     </optgroup>
                 </select>
+            </div>
+            <div className={styles.toolbar}>
+                {/* 個股期主要入口：搜尋股票代碼/名稱 → 切到其個股期家族
+                   （兩百多個 root 靠下拉滾不現實）；手動動作不受連動開關
+                   影響 */}
+                <UnderlyingPicker
+                    value={underlying}
+                    onChange={(stock) => rootFromUnderlying(stock, true)}
+                />
             </div>
             <div className={styles.summary}>
                 <span className={styles.summaryStrong}>
