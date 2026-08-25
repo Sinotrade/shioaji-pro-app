@@ -22,7 +22,9 @@ export function UnderlyingPicker({
     }, []);
 
     useEffect(() => {
-        if (value) setInput(`${value.code} ${value.name}`);
+        // value 清空時同步清輸入框 — 外部（連動/手動切家族）改變狀態
+        // 後不留過期文字
+        setInput(value ? `${value.code} ${value.name}` : '');
     }, [value]);
 
     const suggestions = useMemo(() => {

@@ -14,6 +14,21 @@ export interface ContractBase {
     target_code: string | null;
 }
 
+// managed 組合商品（跨月價差等）的行情身分：行情 API（訂閱/快照/
+// ticks/kbars）需以腳陣列呼叫，一般合約沒有此欄位。code（如
+// TXFI6/J6）同時是 SSE 事件的身分。
+export interface ContractComboMeta {
+    code: string;
+    legs: {
+        security_type: SecurityType;
+        region: string;
+        exchange: string | null;
+        code: string;
+        target_code: string | null;
+    }[];
+    combo_type: string;
+}
+
 export interface Contract extends ContractBase {
     name: string;
     currency: Currency;
@@ -52,4 +67,7 @@ export interface ContractInfo extends Contract {
     listing_date?: string;
     issue_size?: number;
     financial?: string;
+    // 組合商品的合成合約（見 ContractComboMeta）— 有此欄位的合約
+    // 走組合行情路徑，且不可用一般下單面板下單
+    combo?: ContractComboMeta;
 }

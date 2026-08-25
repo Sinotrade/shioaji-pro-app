@@ -28,6 +28,7 @@ import {
 } from './lib/option-pick';
 import { OrderTicket } from './components/order-ticket';
 import { ChipsCard } from './components/chips-card';
+import { ComboListPanel } from './components/combo-list';
 import { ComboTicket } from './components/combo-ticket';
 import { DebugPanel } from './components/debug-panel';
 import { GridTicket } from './components/grid-ticket';
@@ -80,13 +81,15 @@ import type { AccountedPosition, Position } from './lib/types/portfolio';
 import {
     BLOCK_META,
     DEFAULT_WORKSPACE,
-    GRID_COLS,
+    GRID_LEGACY_COLS,
+    GRID_LEGACY_SCALE,
     LAYOUT_PRESETS,
     loadProfiles,
     loadWorkspace,
     newBlockId,
     saveProfiles,
     saveWorkspace,
+    toRenderGeom,
     type Block,
     type BlockType,
     type PulseSection,
@@ -167,6 +170,13 @@ function BlockBody({
 }) {
     if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
         return <IndexBlockUnavailable type={block.type} />;
+    }
+    if (contract?.combo && comboBlockMessage(block.type)) {
+        return (
+            <div className={styles.blockPlaceholder}>
+                {comboBlockMessage(block.type)}
+            </div>
+        );
     }
     switch (block.type) {
         case 'watchlist':
@@ -255,6 +265,7 @@ function BlockBody({
             return (
                 <StockFuturesPanel
                     onPick={onSelectCode}
+                    contract={contract}
                     onAdd={(selectedContract) =>
                         watchlistProps.onAdd(
                             selectedContract.code,
@@ -279,6 +290,10 @@ function BlockBody({
             );
         case 'combo':
             return <ComboTicket />;
+        case 'combolist':
+            return (
+                <ComboListPanel contract={contract} onPick={onSelectCode} />
+            );
         case 'notices':
             return <NoticeCenter />;
         case 'debug':
@@ -370,6 +385,15 @@ function IndexBlockUnavailable({ type }: { type: BlockType }) {
             {indexBlockMessage(type)}
         </div>
     );
+}
+
+// 組合商品是行情/圖表身分 — 下單類面板要導向組合單（整體 action ×
+// 組合型別的展開語意，一般單腿下單面板無法表達）
+function comboBlockMessage(type: BlockType): string | null {
+    if (type === 'ticket' || type === 'grid' || type === 'flash') {
+        return '組合商品請使用「組合單」面板下單';
+    }
+    return null;
 }
 
 interface BlockViewProps {
@@ -480,11 +504,24 @@ function PopoutView({
         // 下單面板等連動面板跟著動（issue #1: T 字要同時連動下單面板）
         body = <OptionChain onPick={broadcastSelectCode} />;
     else if (type === 'combo') body = <ComboTicket />;
+    else if (type === 'combolist')
+        body = (
+            <ComboListPanel
+                contract={contract}
+                onPick={broadcastSelectCode}
+            />
+        );
     else if (
         contract?.security_type === 'IND' &&
         indexBlockMessage(type)
     ) {
         body = <IndexBlockUnavailable type={type} />;
+    } else if (contract?.combo && comboBlockMessage(type)) {
+        body = (
+            <div className={styles.blockPlaceholder}>
+                {comboBlockMessage(type)}
+            </div>
+        );
     } else if (contract) {
         switch (type) {
             case 'chart':
@@ -863,11 +900,65 @@ export default function App() {
         saveWorkspace(w);
     }, []);
 
+    // ---- 版面密度（超寬螢幕支援）----
+    // 儲存基準 288 欄；渲染依視窗寬選密度 k（cols=24k，每欄 ~40–55px）：
+    // 欄寬與最小寬不再跟著螢幕等比放大，超寬幕上面板可以縮得更窄、
+    // 拖拉步進更細。k 皆整除 12 → 同密度回存無損；跨密度僅一次舍入。
+    const density = width < 1800 ? 1 : width < 2800 ? 2 : width < 3900 ? 3 : 4;
+    const renderCols = GRID_LEGACY_COLS * density;
+    const colW = width > 0 ? width / renderCols : 53;
+    const renderLayout = useMemo(() => {
+        const typeOf = new Map(workspace.blocks.map((b) => [b.id, b.type]));
+        return workspace.layout.map((l) => {
+            const meta = BLOCK_META[typeOf.get(l.i) as BlockType];
+            // 最小寬錨定像素（24 欄 ×1280px 時代的等效值）— 在超寬幕
+            // 不再是螢幕比例，自選清單等窄面板可以真正縮窄
+            const minPx = (meta?.defaultSize.minW ?? 3) * (1280 / 24);
+            return {
+                ...l,
+                ...toRenderGeom(l, density),
+                minW: Math.min(
+                    Math.max(1, Math.ceil(minPx / colW)),
+                    renderCols,
+                ),
+            };
+        });
+    }, [workspace, density, colW, renderCols]);
     const onLayoutChange = useCallback(
         (next: Layout) => {
-            updateWorkspace({ ...workspace, layout: [...next] });
+            const fromRender = GRID_LEGACY_SCALE / density; // 12/k，整數
+            const prev = new Map(workspace.layout.map((l) => [l.i, l]));
+            // RGL 在 mount 時必發一次 onLayoutChange（含跨密度舍入後的
+            // 座標）— 儲存值渲染後與回報一致的面板保留原值，精細版面
+            // 不會只因「開了 app」就被粗化回存
+            let changed = false;
+            const stored = next.map((l) => {
+                const p = prev.get(l.i);
+                if (p) {
+                    const g = toRenderGeom(p, density);
+                    if (
+                        g.x === l.x &&
+                        g.w === l.w &&
+                        p.y === l.y &&
+                        p.h === l.h
+                    ) {
+                        return p;
+                    }
+                }
+                changed = true;
+                return {
+                    ...(p ?? {}),
+                    i: l.i,
+                    x: Math.round(l.x * fromRender),
+                    y: l.y,
+                    w: Math.max(1, Math.round(l.w * fromRender)),
+                    h: l.h,
+                };
+            });
+            if (!changed && stored.length === workspace.layout.length) return;
+            updateWorkspace({ ...workspace, layout: stored });
         },
-        [workspace, updateWorkspace],
+        [workspace, updateWorkspace, density],
     );
 
     const addBlock = useCallback(
@@ -885,9 +976,10 @@ export default function App() {
                 i: id,
                 x: 0,
                 y: Infinity, // RGL drops it at the bottom
-                w: meta.defaultSize.w,
+                // defaultSize 以 24 欄語意撰寫 → 存檔是 288 基準
+                w: meta.defaultSize.w * GRID_LEGACY_SCALE,
                 h: meta.defaultSize.h,
-                minW: meta.defaultSize.minW,
+                minW: meta.defaultSize.minW * GRID_LEGACY_SCALE,
                 minH: meta.defaultSize.minH,
             };
             updateWorkspace({
@@ -1165,10 +1257,10 @@ export default function App() {
                 )}
                 {!booting && mounted && (
                     <GridLayout
-                        layout={workspace.layout}
+                        layout={renderLayout}
                         width={width}
                         gridConfig={{
-                            cols: GRID_COLS,
+                            cols: renderCols,
                             rowHeight: 30,
                             margin: [6, 6],
                             containerPadding: [6, 6],

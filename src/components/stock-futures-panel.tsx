@@ -26,11 +26,14 @@ function aliasRank(contract: ContractInfo) {
 export function StockFuturesPanel({
     onPick,
     onAdd,
+    contract,
 }: {
     onPick: (code: string) => void;
     onAdd: (contract: ContractInfo) => Promise<unknown>;
+    contract?: ContractInfo | null;
 }) {
     const [underlying, setUnderlying] = useState<StockMeta | null>(null);
+    const [catalog, setCatalog] = useState<StockMeta[]>([]);
     const [contracts, setContracts] = useState<ContractInfo[]>([]);
     const [snapshots, setSnapshots] = useState<Map<string, Snapshot>>(new Map());
     const [mode, setMode] = useState<'continuous' | 'all'>('continuous');
@@ -39,17 +42,36 @@ export function StockFuturesPanel({
 
     useEffect(() => {
         loadStockCatalog()
-            .then((catalog) => {
+            .then((rows) => {
+                setCatalog(rows);
                 const saved = localStorage.getItem(STOCK_FUTURE_UNDERLYING);
                 setUnderlying(
-                    catalog.find((stock) => stock.code === saved) ??
-                        catalog.find((stock) => stock.code === '2330') ??
-                        catalog[0] ??
+                    rows.find((stock) => stock.code === saved) ??
+                        rows.find((stock) => stock.code === '2330') ??
+                        rows[0] ??
                         null,
                 );
             })
             .catch(() => setError(true));
     }, []);
+
+    // 標準 chrome 連動/釘選：不釘時 contract 跟隨自選選擇 — 點到股票
+    // 直接跟；點到個股期跟它的標的。目錄查不到（無個股期）就不動。
+    useEffect(() => {
+        if (!contract || catalog.length === 0) return;
+        const code =
+            contract.security_type === 'STK'
+                ? contract.code
+                : contract.security_type === 'FUT'
+                  ? contract.underlying_code
+                  : null;
+        if (!code) return;
+        const stock = catalog.find((s) => s.code === code);
+        if (!stock) return;
+        setUnderlying((prev) => (prev?.code === stock.code ? prev : stock));
+        localStorage.setItem(STOCK_FUTURE_UNDERLYING, stock.code);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [contract?.code, catalog]);
 
     useEffect(() => {
         if (!underlying) return;

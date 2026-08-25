@@ -145,6 +145,15 @@ export function CandleChart({
     const themeKey = `${themeSettings.mode}-${themeSettings.convention}`;
     const [mode, setMode] = useState<TradeMode>('observe');
     const [tradeQty, setTradeQty] = useState(1);
+    // 組合商品（合成合約）只能用組合單下單 — 圖上禁用交易模式
+    const isCombo = Boolean((contract as { combo?: unknown }).combo);
+    // 在點價/停損/停利模式中切到組合商品 → 強制回觀察，殘留的交易
+    // 模式不能對組合圖繼續吃點擊
+    useEffect(() => {
+        if (isCombo && mode !== 'observe' && mode !== 'alert') {
+            setMode('observe');
+        }
+    }, [isCombo, mode]);
     const [instances, setInstances] =
         useState<IndicatorInstance[]>(loadInstances);
     const [pickerOpen, setPickerOpen] = useState(false);
@@ -1489,7 +1498,13 @@ export function CandleChart({
                     <Maximize2 size={12} />
                 </button>
                 <span className={styles.toolbarDivider} />
-                {TRADE_MODES.map((m) => (
+                {TRADE_MODES.filter(
+                    // 組合商品只能用組合單下單 — 圖上僅保留觀察/警示，
+                    // 點價買賣與觸價停損停利（flat code 會被 server 拒）
+                    // 一律不給
+                    (m) =>
+                        !isCombo || m.key === 'observe' || m.key === 'alert',
+                ).map((m) => (
                     <button
                         key={m.key}
                         className={
