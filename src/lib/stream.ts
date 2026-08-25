@@ -290,6 +290,16 @@ export function unregisterSubscription(code: string, quoteType: string) {
     subscriptionRegistry.delete(`${code}:${quoteType}`);
 }
 
+// 巢狀 body 的訂閱（如 managed 組合合約 {contract:{legs,...}}）— key 用
+// 組合 code（同時是 SSE 事件身分），body 原樣重播
+export function registerSubscriptionRaw(
+    code: string,
+    quoteType: string,
+    body: Record<string, unknown>,
+) {
+    subscriptionRegistry.set(`${code}:${quoteType}`, body);
+}
+
 export function registerCapabilitySubscription(
     key: string,
     path: string,
