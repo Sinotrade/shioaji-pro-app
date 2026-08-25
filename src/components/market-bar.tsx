@@ -67,7 +67,7 @@ export function MarketBar() {
     return (
         <>
             {headerItems.marketIndex && (
-                <div className={styles.chip}>
+                <div className={`${styles.chip} ${styles.infoAutoHide.last}`}>
                     <span className={styles.chipLabel}>加權</span>
                     <span className={panel.dirText[dir]}>
                         {fmtPrice(indexClose)} {fmtPct(indexPct)}
@@ -75,7 +75,10 @@ export function MarketBar() {
                 </div>
             )}
             {headerItems.marketBasis && basis !== undefined && (
-                <div className={styles.chip} title='台指期 − 加權指數（價差）'>
+                <div
+                    className={`${styles.chip} ${styles.infoAutoHide.first}`}
+                    title='台指期 − 加權指數（價差）'
+                >
                     <span className={styles.chipLabel}>基差</span>
                     <span className={panel.dirText[basisDir]}>
                         {fmtSigned(basis, 0)}

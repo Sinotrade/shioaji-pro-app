@@ -268,7 +268,7 @@ export function HudHeader({
             <div className={styles.spacer} />
 
             {headerItems.bankBalance && accBalance !== undefined && (
-                <div className={styles.chip}>
+                <div className={`${styles.chip} ${styles.infoAutoHide.second}`}>
                     <span className={styles.chipLabel}>銀行水位</span>
                     <span>{maskMoney(fmtMoney(accBalance), privMoney)}</span>
                 </div>
@@ -331,7 +331,7 @@ export function HudHeader({
             />
 
             {headerItems.clock && (
-                <span className={styles.clock}>
+                <span className={`${styles.clock} ${styles.infoAutoHide.first}`}>
                     {now.toLocaleTimeString('en-GB', { hour12: false })}
                 </span>
             )}
