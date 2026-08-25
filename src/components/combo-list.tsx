@@ -9,8 +9,9 @@
 // 個股期兩百多個 root 用滾的找不現實，連動才是主要動線。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { comboMonthsLabel } from '../lib/combo';
+import { comboContractInfo, comboMonthsLabel } from '../lib/combo';
 import { pickCombo } from '../lib/combo-pick';
+import { primeContract } from '../lib/contracts-cache';
 import {
     fetchComboFutures,
     fetchComboSnapshots,
@@ -41,8 +42,11 @@ const stripMonth = (name: string) => name.replace(/\s*\d{6}$/, '');
 
 export function ComboListPanel({
     contract,
+    onPick,
 }: {
     contract?: ContractInfo | null;
+    // 點列時把組合推上全域選取 — K 線/五檔/分時等連動面板跟著切
+    onPick?: (code: string) => void;
 }) {
     const [roots, setRoots] = useState<ContractRoot[]>([]);
     const [root, setRoot] = useState(
@@ -277,7 +281,18 @@ export function ComboListPanel({
                                         className={styles.row}
                                         title={`${rootLabel} ${months ?? combo.code}｜帶入組合單`}
                                         onClick={() => {
+                                            // 帶入組合單＋推上全域選取
+                                            // （K線/五檔/分時連動）。
+                                            // pickCombo 內建 prime，這裡
+                                            // 再以較完整名稱覆蓋
                                             pickCombo(combo);
+                                            primeContract(
+                                                comboContractInfo(
+                                                    combo,
+                                                    `${rootLabel} ${months ?? ''}`.trim(),
+                                                ),
+                                            );
+                                            onPick?.(combo.code);
                                             notify({
                                                 kind: 'info',
                                                 title: '🧩 已帶入組合單',

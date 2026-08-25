@@ -60,6 +60,16 @@ function contractKey(c: ContractBase) {
     };
 }
 
+// 行情 API 的 contract 參數：組合商品（帶 combo meta 的合成合約）
+// 需送腳陣列，一般合約送 flat key — 訂閱/快照/ticks/kbars 共用
+function marketDataContract(c: ContractBase) {
+    const combo = (c as { combo?: { legs: unknown; combo_type: unknown } })
+        .combo;
+    return combo
+        ? { legs: combo.legs, combo_type: combo.combo_type }
+        : contractKey(c);
+}
+
 function streamContractKey(c: ContractBase) {
     return {
         security_type: c.security_type,
@@ -326,7 +336,7 @@ export function fetchWarrantUnderlyings() {
 
 export function fetchSnapshots(contracts: ContractBase[]) {
     return apiPost<Snapshot[]>('/api/v1/data/snapshots', {
-        contracts: contracts.map(contractKey),
+        contracts: contracts.map(marketDataContract),
     });
 }
 
@@ -341,7 +351,7 @@ export async function fetchKbars(
     end: string,
     opts?: { timeoutMs?: number },
 ): Promise<KBars> {
-    const body = { contract: contractKey(contract), start, end };
+    const body = { contract: marketDataContract(contract), start, end };
     for (let attempt = 0; ; attempt++) {
         try {
             return await apiPost<KBars>('/api/v1/data/kbars', body, {
@@ -361,7 +371,7 @@ export async function fetchKbars(
 
 export function fetchHistoryTicks(contract: ContractBase, date: string) {
     return apiPost<HistoryTicks>('/api/v1/data/ticks', {
-        contract: contractKey(contract),
+        contract: marketDataContract(contract),
         date,
     });
 }
@@ -372,7 +382,7 @@ export function fetchLastTicks(
     date = todayStr(),
 ) {
     return apiPost<HistoryTicks>('/api/v1/data/ticks', {
-        contract: contractKey(contract),
+        contract: marketDataContract(contract),
         date,
         query_type: 'LastCount',
         last_cnt: count,
@@ -398,6 +408,14 @@ export function subscribeQuote(
     contract: ContractBase,
     quoteType: QuoteTypeName,
 ) {
+    // 組合商品走巢狀腳訂閱（flat code 如 TXFI6/J6 server 不認）
+    const comboMeta = (contract as { combo?: unknown }).combo;
+    if (comboMeta) {
+        return subscribeComboQuote(
+            comboMeta as Parameters<typeof subscribeComboQuote>[0],
+            quoteType,
+        );
+    }
     const body = {
         ...contractKey(contract),
         // empty string must become null — the server 500s on target_code ""
@@ -420,6 +438,13 @@ export function unsubscribeQuote(
     contract: ContractBase,
     quoteType: QuoteTypeName,
 ) {
+    const comboMeta = (contract as { combo?: unknown }).combo;
+    if (comboMeta) {
+        return unsubscribeComboQuote(
+            comboMeta as Parameters<typeof unsubscribeComboQuote>[0],
+            quoteType,
+        );
+    }
     return apiPost<SubscriptionResponse>('/api/v1/stream/unsubscribe', {
         ...contractKey(contract),
         quote_type: quoteType,

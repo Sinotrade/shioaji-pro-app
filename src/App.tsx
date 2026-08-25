@@ -171,6 +171,13 @@ function BlockBody({
     if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
         return <IndexBlockUnavailable type={block.type} />;
     }
+    if (contract?.combo && comboBlockMessage(block.type)) {
+        return (
+            <div className={styles.blockPlaceholder}>
+                {comboBlockMessage(block.type)}
+            </div>
+        );
+    }
     switch (block.type) {
         case 'watchlist':
             return <Watchlist {...watchlistProps} />;
@@ -284,7 +291,9 @@ function BlockBody({
         case 'combo':
             return <ComboTicket />;
         case 'combolist':
-            return <ComboListPanel contract={contract} />;
+            return (
+                <ComboListPanel contract={contract} onPick={onSelectCode} />
+            );
         case 'notices':
             return <NoticeCenter />;
         case 'debug':
@@ -376,6 +385,15 @@ function IndexBlockUnavailable({ type }: { type: BlockType }) {
             {indexBlockMessage(type)}
         </div>
     );
+}
+
+// 組合商品是行情/圖表身分 — 下單類面板要導向組合單（整體 action ×
+// 組合型別的展開語意，一般單腿下單面板無法表達）
+function comboBlockMessage(type: BlockType): string | null {
+    if (type === 'ticket' || type === 'grid' || type === 'flash') {
+        return '組合商品請使用「組合單」面板下單';
+    }
+    return null;
 }
 
 interface BlockViewProps {
@@ -486,12 +504,24 @@ function PopoutView({
         // 下單面板等連動面板跟著動（issue #1: T 字要同時連動下單面板）
         body = <OptionChain onPick={broadcastSelectCode} />;
     else if (type === 'combo') body = <ComboTicket />;
-    else if (type === 'combolist') body = <ComboListPanel contract={contract} />;
+    else if (type === 'combolist')
+        body = (
+            <ComboListPanel
+                contract={contract}
+                onPick={broadcastSelectCode}
+            />
+        );
     else if (
         contract?.security_type === 'IND' &&
         indexBlockMessage(type)
     ) {
         body = <IndexBlockUnavailable type={type} />;
+    } else if (contract?.combo && comboBlockMessage(type)) {
+        body = (
+            <div className={styles.blockPlaceholder}>
+                {comboBlockMessage(type)}
+            </div>
+        );
     } else if (contract) {
         switch (type) {
             case 'chart':

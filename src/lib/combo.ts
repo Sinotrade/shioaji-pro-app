@@ -15,7 +15,7 @@
 // 差額型（非 Straddle/Strangle）係數 = [−1, +1]：整體買進 ＝ 買正係數腳、
 // 賣負係數腳；和額型 ＝ 兩腳同向。
 
-import type { ComboType } from './shioaji';
+import type { ComboType, ManagedComboContract } from './shioaji';
 import type { ContractInfo } from './types/contract';
 
 export const COMBO_TYPE_LABEL: Record<ComboType, string> = {
@@ -160,6 +160,39 @@ export function comboMonthsLabel(comboCode: string): string | null {
     const n = month(near);
     const f = month(far);
     return n && f ? `${n}/${f}` : null;
+}
+
+/**
+ * managed 組合 → 合成 ContractInfo：讓組合能進全域選取/釘選系統，
+ * K 線、五檔、分時等面板照常連動（行情 API 層看到 combo meta 會
+ * 自動改送腳陣列）。一般下單面板看到 combo 欄位要擋下、導向組合單。
+ */
+export function comboContractInfo(
+    combo: ManagedComboContract,
+    name: string,
+): ContractInfo {
+    return {
+        code: combo.code,
+        name,
+        security_type: 'FUT',
+        exchange: 'TAIFEX',
+        region: 'TW',
+        target_code: null,
+        currency: 'TWD',
+        limit_up: 0,
+        limit_down: 0,
+        reference: 0,
+        day_trade: '',
+        update_date: '',
+        category: '',
+        margin_trading_balance: 0,
+        short_selling_balance: 0,
+        combo: {
+            code: combo.code,
+            legs: combo.legs,
+            combo_type: combo.combo_type,
+        },
+    };
 }
 
 export interface LegQuoteL1 {

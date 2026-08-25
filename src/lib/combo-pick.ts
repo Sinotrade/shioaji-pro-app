@@ -3,6 +3,8 @@
 // BroadcastChannel 跨視窗（popout 列表也能填主視窗的組合單）。
 
 import { useSyncExternalStore } from 'react';
+import { comboContractInfo, comboMonthsLabel } from './combo';
+import { primeContract } from './contracts-cache';
 import type { ManagedComboContract } from './shioaji';
 
 export interface ComboPick {
@@ -19,6 +21,11 @@ const channel =
         : null;
 
 function apply(combo: ManagedComboContract) {
+    // 讓本視窗的全域選取/釘選能解析組合 code（跨窗 pick 時對面視窗
+    // 的 cache 也要有）；來源面板若有更好的名稱會再覆蓋
+    primeContract(
+        comboContractInfo(combo, comboMonthsLabel(combo.code) ?? combo.code),
+    );
     current = { combo, seq: (current?.seq ?? 0) + 1 };
     listeners.forEach((l) => l());
 }

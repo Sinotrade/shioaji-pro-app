@@ -7,7 +7,7 @@
 // 選擇權組合行情編碼未實作 → client 端 canonical 排序＋合成參考價，
 // 下單時 server 以 Contract V2 Info 再驗一次。
 
-import { Crosshair, Link2, Lock, Unlock } from 'lucide-react';
+import { Crosshair, Link2, Lock, Unlock, Zap } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
@@ -44,8 +44,10 @@ import type { Snapshot } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
 import { DepthLadder } from './depth-ladder';
 import * as styles from './order-ticket.css';
+import * as css from './combo-ticket.css';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
+import { OptionStrategyBuilder } from './combo-strategy';
 
 interface LegState {
     input: string;
@@ -69,25 +71,24 @@ interface ComboResolution {
     ambiguous: ComboType[] | null;
 }
 
-function LegQuoteRow({
-    contract,
-    action,
-}: {
-    contract: ContractInfo;
-    action: 'Buy' | 'Sell' | null;
-}) {
+function LegQuoteRow({ contract }: { contract: ContractInfo }) {
     const quote = useQuote(contract.code);
     const ba = quote?.bidask;
     const bid = ba ? Number(ba.bid_price[0]) : undefined;
     const ask = ba ? Number(ba.ask_price[0]) : undefined;
     return (
-        <span className={styles.costRow}>
-            {action && (
-                <span className={panel.dirText[action === 'Buy' ? 'up' : 'down']}>
-                    {action === 'Buy' ? '買' : '賣'}{' '}
-                </span>
-            )}
-            {contract.name}｜買 {fmtPrice(bid)}／賣 {fmtPrice(ask)}
+        <span className={css.legQuoteRow}>
+            <span />
+            <span>
+                {contract.name}
+                {contract.delivery_month &&
+                !contract.name.includes(contract.delivery_month)
+                    ? ` ${contract.delivery_month}`
+                    : ''}
+            </span>
+            <span className={css.legQuoteRight}>
+                買 {fmtPrice(bid)}／賣 {fmtPrice(ask)}
+            </span>
         </span>
     );
 }
@@ -118,30 +119,31 @@ function ComboBook({
         (sideOk(snapshot.buy_price, snapshot.buy_volume) ||
             sideOk(snapshot.sell_price, snapshot.sell_volume));
     return (
-        <div>
-            <span className={styles.costRow}>
-                組合報價 {code}
-                {last !== undefined && <>｜成交 {fmtPrice(last)}</>}
+        <div className={css.section}>
+            <span className={css.sectionTitle}>
+                <span>
+                    組合簿
+                    {!ba && snapUsable && '（快照）'}
+                </span>
+                {last !== undefined && <span>成交 {fmtPrice(last)}</span>}
             </span>
             {ba ? (
                 <DepthLadder code={code} />
             ) : snapUsable ? (
-                <span className={styles.costRow}>
-                    快照｜
+                <div className={css.snapRow}>
                     <span className={panel.dirText.up}>
                         買{' '}
                         {sideOk(snapshot!.buy_price, snapshot!.buy_volume)
                             ? `${fmtPrice(snapshot!.buy_price)}×${snapshot!.buy_volume}`
                             : '—'}
                     </span>
-                    {'　'}
                     <span className={panel.dirText.down}>
                         賣{' '}
                         {sideOk(snapshot!.sell_price, snapshot!.sell_volume)
                             ? `${fmtPrice(snapshot!.sell_price)}×${snapshot!.sell_volume}`
                             : '—'}
                     </span>
-                </span>
+                </div>
             ) : (
                 <span className={styles.costRow}>等待組合行情…</span>
             )}
@@ -184,6 +186,11 @@ export function ComboTicket() {
     const [busy, setBusy] = useState(false);
     const [orderType, setOrderType] = useState<'IOC' | 'FOK' | 'ROD'>('IOC');
     const [linkChain, setLinkChain] = useState(false); // 連動 T 字
+    const [sbOpen, setSbOpen] = useState(false); // 選擇權策略快建
+    // 策略快建帶入時的型別意圖（曖昧 C+P 直接落 pickType，不用再手選）
+    const intentRef = useRef<{ key: string; type: ComboType | null } | null>(
+        null,
+    );
     const [resolution, setResolution] = useState<ComboResolution | null>(null);
     const [comboError, setComboError] = useState<string | null>(null);
     // 曖昧型別（同履約價 C+P）由使用者明選 — 跨式與轉換/逆轉的腳方向
@@ -386,10 +393,28 @@ export function ComboTicket() {
         (resolution?.ambiguous ? pickType : null) ??
         null;
     useEffect(() => {
-        setPickType(null);
+        // 策略快建帶入的曖昧型別意圖：兩腳（不論順序）與意圖相符就
+        // 直接套用，使用者不用再點一次跨式/轉逆。兩腳先後解析，
+        // 過渡態（只解析一腳）不清 intent — 等兩腳齊了才判斷
+        const codes = legs
+            .map((l) => l.contract?.code)
+            .filter((c): c is string => !!c)
+            .sort();
+        const intent = intentRef.current;
+        if (intent && codes.length === 2) {
+            if (intent.key === codes.join('|')) {
+                setPickType(intent.type);
+            } else {
+                setPickType(null);
+                intentRef.current = null;
+            }
+        } else {
+            setPickType(null);
+        }
         // 換組合後淨價回到自動帶入 — 殘留上一組的手動價會誤導
         setPriceTouched(false);
         setPrice('');
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [legKey]);
 
     const nativeQuote = useQuote(resolution?.combo?.code ?? null);
@@ -629,6 +654,14 @@ export function ComboTicket() {
         <div className={styles.body}>
             <div className={styles.fieldRow}>
                 <button
+                    className={styles.iconToggle[sbOpen ? 'on' : 'off']}
+                    title='選擇權策略快建：選策略與履約價，兩腳自動帶入'
+                    onClick={() => setSbOpen((v) => !v)}
+                    style={{ width: 'auto', padding: '2px 8px', gap: '4px' }}
+                >
+                    <Zap size={11} /> 策略快建
+                </button>
+                <button
                     className={styles.iconToggle[linkChain ? 'on' : 'off']}
                     title='連動選擇權 T 字：點 T 字報價自動填入未鎖定的腳'
                     onClick={() => setLinkChain((v) => !v)}
@@ -642,55 +675,78 @@ export function ComboTicket() {
                     </span>
                 )}
             </div>
-            {legs.map((leg, i) => (
-                <div key={i}>
-                    <div className={styles.fieldRow}>
-                        <span className={styles.fieldLabel}>
-                            腳 {i + 1}
-                            {legDirs && leg.contract && (
-                                <span
-                                    className={
-                                        panel.dirText[
-                                            legDirs[i] === 'Buy' ? 'up' : 'down'
-                                        ]
-                                    }
-                                >
-                                    {' '}
-                                    {legDirs[i] === 'Buy' ? '買' : '賣'}
-                                </span>
-                            )}
-                        </span>
-                        <input
-                            className={styles.numInput}
-                            placeholder='代碼 如 TXFF6 / TX417000C6'
-                            value={leg.input}
-                            style={leg.error ? { borderColor: 'var(--danger, #f23645)' } : undefined}
-                            onChange={(e) => setLeg(i, { input: e.target.value, contract: null })}
-                            onKeyDown={(e) => e.key === 'Enter' && resolveLeg(i)}
-                            onBlur={() => resolveLeg(i)}
-                        />
-                        {linkChain && (
-                            <button
-                                className={styles.iconToggle[leg.locked ? 'on' : 'off']}
-                                title={leg.locked ? '已鎖定（T 字點擊不覆寫）' : '鎖定此腳'}
-                                onClick={() => setLeg(i, { locked: !leg.locked })}
+            {sbOpen && (
+                <OptionStrategyBuilder
+                    onBuild={(codes, intended) => {
+                        intentRef.current = {
+                            key: [...codes].sort().join('|'),
+                            type: intended,
+                        };
+                        setLegs([
+                            { ...EMPTY_LEG, input: codes[0] },
+                            { ...EMPTY_LEG, input: codes[1] },
+                        ]);
+                        setArmed(false);
+                        void resolveCode(0, codes[0]);
+                        void resolveCode(1, codes[1]);
+                    }}
+                />
+            )}
+            <div className={css.section}>
+                {legs.map((leg, i) => (
+                    <div key={i}>
+                        <div className={css.legRow}>
+                            <span
+                                className={
+                                    css.dirChip[
+                                        legDirs && leg.contract
+                                            ? legDirs[i] === 'Buy'
+                                                ? 'buy'
+                                                : 'sell'
+                                            : 'none'
+                                    ]
+                                }
+                                title={
+                                    legDirs && leg.contract
+                                        ? `此腳將${legDirs[i] === 'Buy' ? '買進' : '賣出'}`
+                                        : `腳 ${i + 1}`
+                                }
                             >
-                                {leg.locked ? (
-                                    <Lock size={11} />
-                                ) : (
-                                    <Unlock size={11} />
-                                )}
-                            </button>
+                                {legDirs && leg.contract
+                                    ? legDirs[i] === 'Buy'
+                                        ? '買'
+                                        : '賣'
+                                    : i + 1}
+                            </span>
+                            <input
+                                className={styles.numInput}
+                                placeholder='代碼 如 TXFF6 / TX417000C6'
+                                value={leg.input}
+                                style={leg.error ? { borderColor: 'var(--danger, #f23645)' } : undefined}
+                                onChange={(e) => setLeg(i, { input: e.target.value, contract: null })}
+                                onKeyDown={(e) => e.key === 'Enter' && resolveLeg(i)}
+                                onBlur={() => resolveLeg(i)}
+                            />
+                            {linkChain && (
+                                <button
+                                    className={styles.iconToggle[leg.locked ? 'on' : 'off']}
+                                    title={leg.locked ? '已鎖定（T 字點擊不覆寫）' : '鎖定此腳'}
+                                    onClick={() => setLeg(i, { locked: !leg.locked })}
+                                >
+                                    {leg.locked ? (
+                                        <Lock size={11} />
+                                    ) : (
+                                        <Unlock size={11} />
+                                    )}
+                                </button>
+                            )}
+                        </div>
+                        {leg.contract && (
+                            <LegQuoteRow contract={leg.contract} />
                         )}
                     </div>
-                    {leg.contract && (
-                        <LegQuoteRow
-                            contract={leg.contract}
-                            action={legDirs ? legDirs[i]! : null}
-                        />
-                    )}
-                </div>
-            ))}
+                ))}
+            </div>
 
             {comboError && (
                 <span className={styles.costRow}>
@@ -718,16 +774,21 @@ export function ComboTicket() {
                 </div>
             )}
             {effectiveType && !resolution?.ambiguous && (
-                <span className={styles.costRow}>
-                    型別｜{COMBO_TYPE_LABEL[effectiveType]}
+                <div className={css.infoRow}>
+                    <span className={css.typeBadge}>
+                        {COMBO_TYPE_LABEL[effectiveType]}
+                    </span>
                     {resolution?.combo && (
                         <>
-                            {' '}
-                            {comboMonthsLabel(resolution.combo.code)}（
-                            {resolution.combo.code}）
+                            <span>
+                                {comboMonthsLabel(resolution.combo.code)}
+                            </span>
+                            <span className={css.infoCode}>
+                                {resolution.combo.code}
+                            </span>
                         </>
                     )}
-                </span>
+                </div>
             )}
 
             {resolution?.combo && (
@@ -739,17 +800,18 @@ export function ComboTicket() {
             {/* 合成參考只在沒有原生組合簿時顯示（選擇權組合、或期貨簿
                 尚無行情）— 原生簿在場時它只是雜訊 */}
             {synth && !nativeQuote?.bidask && (
-                <span className={styles.costRow}>
-                    合成參考｜
-                    <span className={panel.dirText.up}>
-                        {' '}買 {fmtPrice(synth.bid)}{' '}
+                <div className={css.synthRow}>
+                    <span>合成參考</span>
+                    <span className={`${css.synthCell} ${panel.dirText.up}`}>
+                        買 {fmtPrice(synth.bid)}
                     </span>
-                    ／
-                    <span className={panel.dirText.down}>
-                        {' '}賣 {fmtPrice(synth.ask)}{' '}
+                    <span className={css.synthCell}>
+                        中 {fmtPrice((synth.bid + synth.ask) / 2)}
                     </span>
-                    ｜中價 {fmtPrice((synth.bid + synth.ask) / 2)}
-                </span>
+                    <span className={`${css.synthCell} ${panel.dirText.down}`}>
+                        賣 {fmtPrice(synth.ask)}
+                    </span>
+                </div>
             )}
 
             <div className={styles.fieldRow}>
@@ -769,9 +831,24 @@ export function ComboTicket() {
                     ))}
                 </div>
             </div>
-            {dirSummary && (
-                <span className={styles.costRow}>
-                    {action === 'Buy' ? '買進' : '賣出'}組合 ＝ {dirSummary}
+            {legDirs && (
+                <span className={css.dirSummaryRow}>
+                    {action === 'Buy' ? '買進' : '賣出'}組合 ＝{' '}
+                    {legs.map((l, i) => (
+                        <span key={i}>
+                            {i > 0 && '＋'}
+                            <span
+                                className={
+                                    panel.dirText[
+                                        legDirs[i] === 'Buy' ? 'up' : 'down'
+                                    ]
+                                }
+                            >
+                                {legDirs[i] === 'Buy' ? '買' : '賣'}
+                            </span>
+                            {l.contract?.code}
+                        </span>
+                    ))}
                 </span>
             )}
             <div className={styles.fieldRow}>
