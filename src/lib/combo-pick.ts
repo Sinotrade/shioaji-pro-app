@@ -25,7 +25,14 @@ function apply(combo: ManagedComboContract) {
 
 channel?.addEventListener('message', (e) => {
     const c = e.data as ManagedComboContract | null;
-    if (c && Array.isArray(c.legs) && c.legs.length === 2) apply(c);
+    if (
+        c &&
+        Array.isArray(c.legs) &&
+        c.legs.length === 2 &&
+        c.legs.every((l) => l && typeof l.code === 'string' && l.code)
+    ) {
+        apply(c);
+    }
 });
 
 export function pickCombo(combo: ManagedComboContract) {

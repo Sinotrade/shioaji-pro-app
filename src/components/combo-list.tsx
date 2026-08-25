@@ -120,7 +120,9 @@ export function ComboListPanel() {
                         localStorage.setItem(COMBO_LIST_ROOT, e.target.value);
                     }}
                 >
-                    {roots.length === 0 && (
+                    {/* 清單未載入或存的 root 已下市 → 補一個現值選項，
+                        select 才不會顯示空白 */}
+                    {!roots.some((r) => r.root === root) && (
                         <option value={root}>{root}</option>
                     )}
                     {roots.map((r) => (
