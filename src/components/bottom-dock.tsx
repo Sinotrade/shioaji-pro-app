@@ -35,6 +35,8 @@ import {
     positionAccountRef,
     positionMarket,
     refKey,
+    tradeAccountRef,
+    tradeMarket,
     useDockPref,
     type MarketFilter,
     type ViewMode,
@@ -96,13 +98,23 @@ export function BottomDock({
         tradable.find((a) => refKey(accountToRef(a)) === scope) ?? null;
     const fallback = { stock: selectedStock, futures: selectedFutures };
 
-    const activeOrders = trades.filter((t) =>
+    // 計數器必須跟委託清單看同一份（市場/帳戶範圍過濾後）— 否則
+    // 「[0/4] 但清單顯示無委託」自相矛盾（issue #19）
+    const scopedTrades = trades.filter((t) => {
+        if (market !== 'all' && tradeMarket(t) !== market) return false;
+        if (scope) return refKey(tradeAccountRef(t, fallback)) === scope;
+        return true;
+    });
+    const activeOrders = scopedTrades.filter((t) =>
         ACTIVE_STATUSES.has(t.status.status),
     ).length;
 
     const tabs: { key: TabKey; label: string }[] = [
         { key: 'positions', label: `持倉 Positions [${positions.length}]` },
-        { key: 'orders', label: `委託 Orders [${activeOrders}/${trades.length}]` },
+        {
+            key: 'orders',
+            label: `委託 Orders [${activeOrders}/${scopedTrades.length}]`,
+        },
         { key: 'account', label: '帳務/交割 Account' },
     ];
 
@@ -310,6 +322,10 @@ export function BottomDock({
                     fallback={fallback}
                     onChanged={onTradesChanged}
                     onSelectCode={onSelectCode}
+                    onShowAll={() => {
+                        setMarket('all');
+                        setScope('');
+                    }}
                 />
             )}
             {tab === 'account' && (

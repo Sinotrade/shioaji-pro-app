@@ -75,7 +75,7 @@ import { onOrderEvent } from './lib/stream';
 import { ensureAccounts, getAccountState } from './lib/account-store';
 import { notify } from './lib/trade';
 import type { ContractInfo } from './lib/types/contract';
-import type { Trade } from './lib/types/order';
+import type { AccountedTrade, Trade } from './lib/types/order';
 import type { AccountedPosition, Position } from './lib/types/portfolio';
 import {
     BLOCK_META,
@@ -655,11 +655,56 @@ export default function App() {
         }, []),
         10000,
     );
-    // NOTE（已知限制）：trades 只查「目前選中」的證/期帳戶（accountBody 的
-    // accountFor fallback），沒有像 positions 一樣按帳戶 fan-out。同類型多
-    // 帳戶時非選中帳戶的委託不會出現在委託 tab。現況一證一期沒有實害。
-    const tradesPoll = usePoll<Trade[]>(
+    // trades 比照 positions 按簽署帳戶 fan-out（issue #19）— 分倉或多帳戶
+    // 下單時，非選中帳戶的委託過去查不到；每列標記查詢來源帳戶，dock 的
+    // 帳戶範圍篩選比對用清單同格式的帳號，不再受 order.account 格式差異
+    // 影響。帳號清單載入前退回舊的 S/F 對。
+    const tradesPoll = usePoll<AccountedTrade[]>(
         useCallback(async () => {
+            const tradable = getAccountState().accounts.filter(
+                (a) =>
+                    a.signed &&
+                    (a.account_type === 'S' || a.account_type === 'F'),
+            );
+            if (tradable.length > 0) {
+                const rs = await Promise.allSettled(
+                    tradable.map(async (a) => {
+                        const ts = await fetchTrades(
+                            a.account_type as 'S' | 'F',
+                            a,
+                        );
+                        return ts.map((t) => ({ ...t, account: a }));
+                    }),
+                );
+                if (rs.every((r) => r.status === 'rejected')) {
+                    // 全滅（rate limit/斷線）拋出 — usePoll 保留上一輪
+                    // 資料，不要把委託清單瞬間刷成「無委託」
+                    throw new Error('委託查詢失敗');
+                }
+                const all = rs.flatMap((r) =>
+                    r.status === 'fulfilled' ? r.value : [],
+                );
+                // server 的 list_trades 可能每次回整份快取 → 以委託 id
+                // 去重；重複時保留 order.account 與查詢帳戶一致的那筆
+                // （標籤才是真正的下單帳戶）
+                const seen = new Map<string, AccountedTrade>();
+                for (const t of all) {
+                    const key = t.order.id;
+                    const prev = seen.get(key);
+                    const matches =
+                        t.order.account?.account_id === t.account?.account_id;
+                    if (!prev) {
+                        seen.set(key, t);
+                    } else if (
+                        matches &&
+                        prev.order.account?.account_id !==
+                            prev.account?.account_id
+                    ) {
+                        seen.set(key, t);
+                    }
+                }
+                return [...seen.values()];
+            }
             const [s, f] = await Promise.allSettled([
                 fetchTrades('S'),
                 fetchTrades('F'),
