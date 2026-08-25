@@ -103,6 +103,22 @@ describe('deriveOptionShape — canonical 腳序與型別', () => {
             '202610',
         ]);
     });
+    it('同月不同週（週選）＝時間價差，依 delivery_date 排近先遠後', () => {
+        // 只比 delivery_month 會誤判成「兩腳完全相同」— QA round 6 MEDIUM
+        const week4 = {
+            ...opt('TX421800I6', 21800, 'C', '202609'),
+            delivery_date: '2026/09/23',
+        } as ContractInfo;
+        const monthly = {
+            ...opt('TXO21800I6', 21800, 'C', '202609'),
+            delivery_date: '2026/09/16',
+        } as ContractInfo;
+        const s = deriveOptionShape(week4, monthly);
+        expect(s.error).toBeNull();
+        expect(s.comboType).toBe('TimeSpread');
+        expect(s.swapped).toBe(true);
+        expect(s.legs.map((l) => l.code)).toEqual(['TXO21800I6', 'TX421800I6']);
+    });
     it('跨月但履約價不同 → 不合法', () => {
         const a = opt('TXO21000I6', 21000, 'C', '202609');
         const b = opt('TXO21800J6', 21800, 'C', '202610');

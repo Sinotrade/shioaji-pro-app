@@ -103,11 +103,17 @@ export function deriveOptionShape(
         };
     };
 
-    if (da !== db) {
-        // 跨月：僅同履約價同 Call/Put 是時間價差；近月在前。
+    // 時間比較用實際到期日優先 — 週選可以同月不同週（TX4 vs TXO 同月），
+    // 只比 delivery_month 會把合法的週跨月價差誤判成「兩腳完全相同」
+    const [ta, tb] =
+        a.delivery_date && b.delivery_date
+            ? [a.delivery_date, b.delivery_date]
+            : [da, db];
+    if (ta !== tb) {
+        // 跨期：僅同履約價同 Call/Put 是時間價差；近到期在前。
         // 週選/月選是否同家族由 server 驗（Weekly 變體也由 server 推導）。
         if (sa === sb && ca === cb) {
-            return ordered(da < db ? a : b, 'TimeSpread');
+            return ordered(ta < tb ? a : b, 'TimeSpread');
         }
         return shapeError(a, b, '跨月組合僅支援同履約價、同 Call/Put（時間價差）');
     }
@@ -127,13 +133,16 @@ export function deriveOptionShape(
     return shapeError(a, b, '兩腳完全相同，無法組成組合');
 }
 
-/** 期貨兩腳的 canonical 預排序（近月在前）；家族合法性交給 server 驗。 */
+/** 期貨兩腳的 canonical 預排序（近到期在前）；家族合法性交給 server 驗。 */
 export function orderFuturesLegs(
     a: ContractInfo,
     b: ContractInfo,
 ): { legs: [ContractInfo, ContractInfo]; swapped: boolean } {
-    const da = a.delivery_month ?? '';
-    const db = b.delivery_month ?? '';
+    // 到期日優先（週期貨同月不同週），缺才退回月份
+    const [da, db] =
+        a.delivery_date && b.delivery_date
+            ? [a.delivery_date, b.delivery_date]
+            : [a.delivery_month ?? '', b.delivery_month ?? ''];
     if (da && db && da > db) return { legs: [b, a], swapped: true };
     return { legs: [a, b], swapped: false };
 }

@@ -88,6 +88,11 @@ function LegQuoteRow({
     );
 }
 
+// 組合淨價可以是 0 或負值，價格本身不能當「這一側存在」的訊號 —
+// 用掛量判斷（空側量為 0）
+const sideOk = (price: number, volume: number | undefined) =>
+    Number.isFinite(price) && (volume ?? 0) > 0;
+
 // 原生組合商品 5 檔（簿有變動才會有事件；快照墊初始 L1）
 function ComboBook({
     code,
@@ -98,13 +103,18 @@ function ComboBook({
 }) {
     const quote = useQuote(code);
     const ba = quote?.bidask;
+    // 薄簿常見單邊：以兩側最長者列檔，空側顯示 —（只走 bid 長度會把
+    // 多出來的賣檔吃掉、甚至整簿只剩賣時顯示成「等待行情」）
     const levels = ba
-        ? ba.bid_price.map((bp, i) => ({
-              bid: Number(bp),
-              bidVol: ba.bid_volume[i] ?? 0,
-              ask: Number(ba.ask_price[i] ?? NaN),
-              askVol: ba.ask_volume[i] ?? 0,
-          }))
+        ? Array.from(
+              { length: Math.max(ba.bid_price.length, ba.ask_price.length) },
+              (_, i) => ({
+                  bid: Number(ba.bid_price[i] ?? NaN),
+                  bidVol: ba.bid_volume[i] ?? 0,
+                  ask: Number(ba.ask_price[i] ?? NaN),
+                  askVol: ba.ask_volume[i] ?? 0,
+              }),
+          )
         : snapshot
           ? [
                 {
@@ -115,8 +125,11 @@ function ComboBook({
                 },
             ]
           : [];
+    const rows = levels.filter(
+        (l) => sideOk(l.bid, l.bidVol) || sideOk(l.ask, l.askVol),
+    );
     const last = quote?.tick ? Number(quote.tick.close) : snapshot?.close;
-    if (levels.length === 0 && last === undefined) {
+    if (rows.length === 0 && last === undefined) {
         return (
             <span className={styles.costRow}>組合報價 {code}｜等待行情…</span>
         );
@@ -128,24 +141,29 @@ function ComboBook({
                 {last !== undefined && <>｜成交 {fmtPrice(last)}</>}
                 {snapshot && !ba && <>（快照）</>}
             </span>
-            {levels
-                .filter((l) => Number.isFinite(l.bid) || Number.isFinite(l.ask))
-                .map((l, i) => (
-                    <span key={i} className={styles.costRow}>
-                        <span className={panel.dirText.up}>
-                            買 {fmtPrice(l.bid)}×{l.bidVol}
-                        </span>
-                        {'　'}
-                        <span className={panel.dirText.down}>
-                            賣 {fmtPrice(l.ask)}×{l.askVol}
-                        </span>
+            {rows.map((l, i) => (
+                <span key={i} className={styles.costRow}>
+                    <span className={panel.dirText.up}>
+                        買{' '}
+                        {sideOk(l.bid, l.bidVol)
+                            ? `${fmtPrice(l.bid)}×${l.bidVol}`
+                            : '—'}
                     </span>
-                ))}
+                    {'　'}
+                    <span className={panel.dirText.down}>
+                        賣{' '}
+                        {sideOk(l.ask, l.askVol)
+                            ? `${fmtPrice(l.ask)}×${l.askVol}`
+                            : '—'}
+                    </span>
+                </span>
+            ))}
         </div>
     );
 }
 
-// 兩腳 L1 → canonical 合成報價（選擇權主用；期貨僅參考）
+// 兩腳 L1 → canonical 合成報價（選擇權主用；期貨僅參考）。
+// 任一腳單邊空簿即回 null — 缺一側的合成價會誤導到價監控
 function useSynthetic(
     legs: LegState[],
     comboType: ComboType | null,
@@ -156,7 +174,11 @@ function useSynthetic(
     const l1 = (q: typeof q0) => {
         const ba = q?.bidask;
         if (!ba) return null;
-        return { bid: Number(ba.bid_price[0]), ask: Number(ba.ask_price[0]) };
+        const bid = Number(ba.bid_price[0]);
+        const ask = Number(ba.ask_price[0]);
+        return sideOk(bid, ba.bid_volume[0]) && sideOk(ask, ba.ask_volume[0])
+            ? { bid, ask }
+            : null;
     };
     return syntheticComboQuote(comboType, [l1(q0), l1(q1)]);
 }
@@ -250,6 +272,8 @@ export function ComboTicket() {
     const legKey = legs
         .map((l) => `${l.contract?.security_type ?? ''}${l.contract?.code ?? ''}`)
         .join('|');
+    // server 說反序的自動換序每組腳只試一次（key 為無序腳對）
+    const swapTried = useRef(new Set<string>());
     useEffect(() => {
         const [a, b] = [legs[0]?.contract, legs[1]?.contract];
         setResolution(null);
@@ -312,8 +336,12 @@ export function ComboTicket() {
             } catch (e) {
                 if (stale) return;
                 const msg = e instanceof Error ? e.message : String(e);
-                if (/reversed/i.test(msg)) {
+                const pairKey = [a.code, b.code].sort().join('|');
+                if (/reversed/i.test(msg) && !swapTried.current.has(pairKey)) {
                     // server 認定的 canonical 序與本地排序不同（如同月週/月）
+                    // — 每組腳只自動換一次，換過還被拒就直接顯示錯誤，
+                    // 避免對無解訊息無限 ping-pong
+                    swapTried.current.add(pairKey);
                     setLegs((prev) => [prev[1]!, prev[0]!]);
                 } else {
                     setComboError(msg);
@@ -361,30 +389,32 @@ export function ComboTicket() {
     }, [legKey]);
 
     const nativeQuote = useQuote(resolution?.combo?.code ?? null);
-    const nativeL1 = (() => {
+    // 即時原生 L1（雙邊都有掛量才算）— 到價監控只吃這個或合成，
+    // 絕不吃快照：快照可能是前一節/收盤的殘值，盤前用它觸發等於
+    // 對死資料自動下單
+    const liveL1 = (() => {
         const ba = nativeQuote?.bidask;
-        if (ba) {
-            const bid = Number(ba.bid_price[0]);
-            const ask = Number(ba.ask_price[0]);
-            if (Number.isFinite(bid) && Number.isFinite(ask)) {
-                return { bid, ask };
-            }
-        }
-        if (
-            comboSnapshot &&
-            Number.isFinite(comboSnapshot.buy_price) &&
-            Number.isFinite(comboSnapshot.sell_price)
-        ) {
-            return {
-                bid: comboSnapshot.buy_price,
-                ask: comboSnapshot.sell_price,
-            };
-        }
-        return null;
+        if (!ba) return null;
+        const bid = Number(ba.bid_price[0]);
+        const ask = Number(ba.ask_price[0]);
+        return sideOk(bid, ba.bid_volume[0]) && sideOk(ask, ba.ask_volume[0])
+            ? { bid, ask }
+            : null;
     })();
+    const snapL1 =
+        comboSnapshot &&
+        sideOk(comboSnapshot.buy_price, comboSnapshot.buy_volume) &&
+        sideOk(comboSnapshot.sell_price, comboSnapshot.sell_volume)
+            ? {
+                  bid: comboSnapshot.buy_price,
+                  ask: comboSnapshot.sell_price,
+              }
+            : null;
     const synth = useSynthetic(legs, effectiveType);
-    // 下單/監控基準：期貨用原生組合簿，退而求其次合成
-    const refQuote = nativeL1 ?? synth;
+    // 淨價自動帶入：原生即時 → 快照 → 合成（快照只用於帶價，不觸發）
+    const refQuote = liveL1 ?? snapL1 ?? synth;
+    // 到價監控基準：只用即時資料
+    const watchQuote = liveL1 ?? synth;
 
     const hasOpt = legs.some((l) => l.contract?.security_type === 'OPT');
     const decimals = hasOpt ? 1 : 0;
@@ -456,13 +486,16 @@ export function ComboTicket() {
                   : null,
     });
 
-    // watcher: buy when the ASK drops to target; sell when the BID rises
+    // watcher: buy when the ASK drops to target; sell when the BID rises.
+    // 只認即時資料（原生簿或合成）— 快照殘值絕不當觸發依據
     useEffect(() => {
-        if (!watchOn || !refQuote || !ready) return;
+        if (!watchOn || !watchQuote || !ready) return;
         const target = Number(watchPrice);
         if (!Number.isFinite(target)) return;
         const hit =
-            action === 'Buy' ? refQuote.ask <= target : refQuote.bid >= target;
+            action === 'Buy'
+                ? watchQuote.ask <= target
+                : watchQuote.bid >= target;
         if (!hit) return;
         const w = watchRef.current;
         if (w.firing || Date.now() - w.lastFire < COOLDOWN_MS) return;
@@ -505,7 +538,7 @@ export function ComboTicket() {
             }
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [refQuote?.bid, refQuote?.ask, watchOn, watchPrice, action, qty, ready, attempts]);
+    }, [watchQuote?.bid, watchQuote?.ask, watchOn, watchPrice, action, qty, ready, attempts]);
 
     // disarm the watcher when the combo changes
     useEffect(() => {
@@ -521,13 +554,23 @@ export function ComboTicket() {
         }
         setArmed(false);
         if (!ready) return;
+        // 淨價可為 0 或負，但空白/非數字不可默默變 0 — LMT 0 在多數
+        // 組合是會成交的價位
+        const p = Number(price);
+        if (!price.trim() || !Number.isFinite(p)) {
+            notify({
+                kind: 'err',
+                title: '組合單未送出',
+                body: '請輸入有效淨價（可為 0 或負值）',
+            });
+            return;
+        }
         setBusy(true);
         try {
             assertTradingLive();
-            const p = Number(price);
             const trade = await placeComboOrder(buildOrderCombo(), {
                 action,
-                price: Number.isFinite(p) ? p : 0,
+                price: p,
                 quantity: qty,
                 price_type: 'LMT',
                 order_type: orderType,
