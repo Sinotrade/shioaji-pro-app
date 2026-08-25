@@ -4,7 +4,7 @@
 // 兩腳自動帶入組合單（canonical 順序＋策略型別意圖）。不用讀代碼、
 // 不用手打兩腳，垂直價差/跨式/勒式/轉逆/跨月都是三兩下完成。
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import {
     fetchOptionRoots,
@@ -147,17 +147,23 @@ export function OptionStrategyBuilder({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [strikes, atm === null ? 0 : Math.round(atm / 50)]);
 
-    // 月份/策略切換 → 履約價預設貼 ATM（價差/勒式的第二腳取上一檔）
+    // 月份/策略/商品切換 → 履約價預設貼 ATM（價差/勒式第二腳取上一
+    // 檔）。ATM 隨行情漂移「不」重設 — 開著面板時 TXF 跨 50 點就把
+    // 使用者手選的履約蓋掉、還連帶重帶兩腳，是實盤陷阱（QA10）。
+    // nearestIdx 由 ref 讀當下值，不進 deps。
+    const nearestIdxRef = useRef(nearestIdx);
+    nearestIdxRef.current = nearestIdx;
     useEffect(() => {
-        if (nearestIdx < 0) {
+        const idx = nearestIdxRef.current;
+        if (idx < 0) {
             setK1(null);
             setK2(null);
             return;
         }
-        setK1(strikes[nearestIdx] ?? null);
-        setK2(strikes[Math.min(nearestIdx + 1, strikes.length - 1)] ?? null);
+        setK1(strikes[idx] ?? null);
+        setK2(strikes[Math.min(idx + 1, strikes.length - 1)] ?? null);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [month, strategy, strikes.length === 0, nearestIdx]);
+    }, [root, month, strategy, strikes.length === 0]);
 
     useEffect(() => {
         const later = months.filter((m) => m > month);

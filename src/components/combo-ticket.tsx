@@ -32,7 +32,6 @@ import {
     placeComboOrder,
     subscribeComboQuote,
     subscribeQuote,
-    unsubscribeComboQuote,
     type ComboTrade,
     type ComboType,
     type ManagedComboContract,
@@ -220,9 +219,13 @@ export function ComboTicket() {
             prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)),
         );
 
+    // 每腳一個 epoch — 快速連按策略/列表時同腳可能有多個解析在途，
+    // 只有最新那筆能落地（否則慢的舊解析會蓋出 A/B 混腳）
+    const legEpochs = useRef([0, 0]);
     const resolveCode = async (i: number, raw: string) => {
         const code = raw.trim().toUpperCase();
         if (!code) return;
+        const epoch = ++legEpochs.current[i]!;
         try {
             let c = await ensureContract(code);
             if (c.security_type !== 'FUT' && c.security_type !== 'OPT') {
@@ -233,12 +236,14 @@ export function ComboTicket() {
             if (/R[12]$/.test(c.code) && c.target_code) {
                 c = await ensureContract(c.target_code);
             }
+            if (epoch !== legEpochs.current[i]) return; // 已被較新解析取代
             setLeg(i, { contract: c, error: false, input: c.code });
             await Promise.allSettled([
                 subscribeQuote(c, 'Tick'),
                 subscribeQuote(c, 'BidAsk'),
             ]);
         } catch {
+            if (epoch !== legEpochs.current[i]) return;
             setLeg(i, { contract: null, error: true });
         }
     };
@@ -365,27 +370,10 @@ export function ComboTicket() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [legKey]);
 
-    // 離開此組合時退訂原生組合報價（腳報價與其他面板共用，不退）
-    const comboRef = useRef<ManagedComboContract | null>(null);
-    useEffect(() => {
-        const prev = comboRef.current;
-        const cur = resolution?.combo ?? null;
-        if (prev && prev.code !== cur?.code) {
-            void unsubscribeComboQuote(prev, 'Tick').catch(() => undefined);
-            void unsubscribeComboQuote(prev, 'BidAsk').catch(() => undefined);
-        }
-        comboRef.current = cur;
-    }, [resolution?.combo]);
-    useEffect(
-        () => () => {
-            const c = comboRef.current;
-            if (c) {
-                void unsubscribeComboQuote(c, 'Tick').catch(() => undefined);
-                void unsubscribeComboQuote(c, 'BidAsk').catch(() => undefined);
-            }
-        },
-        [],
-    );
+    // 不退訂組合報價 — 與全 app「訂了就留」慣例一致。server 端退訂
+    // 沒有 refcount：這裡退訂會殺掉 K線/五檔等連動面板正在看的同一
+    // 組合流（凍結但看起來活著），且 contracts-cache 的 subscribed
+    // 集合會擋住重訂（QA round 10 MEDIUM）。
 
     // 生效的組合型別：期貨由 server、選擇權由推導、曖昧由使用者選
     const effectiveType: ComboType | null =

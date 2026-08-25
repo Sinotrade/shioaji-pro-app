@@ -177,6 +177,13 @@ export function useWatchlist() {
             resolved?: ContractInfo,
         ) => {
             const contract = resolved ?? (await resolveContract(code, type));
+            // 組合商品（合成合約）不能進自選 — server 端自選清單只收
+            // 一般合約 code，同步會 400；組合請用「組合商品」面板
+            if (contract.combo) {
+                throw new Error(
+                    '組合商品暫不支援加入自選，請使用「組合商品」面板',
+                );
+            }
             if (resolved) primeContract(resolved);
             if (items.some((i) => i.contract.code === contract.code)) {
                 return contract;
