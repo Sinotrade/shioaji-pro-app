@@ -163,6 +163,12 @@ export const prodBadge = style({
 
 export const settingsWrap = style({
     position: 'relative',
+    // block 容器包 inline-flex 按鈕會產生 line box — wrapper 高度吃到
+    // 字型 descender，WKWebView 的度量與 Chromium 不同會多出幾 px，
+    // 讓有 popover wrapper 的按鈕整群偏移（水平不齊）。flex 容器沒有
+    // line box，兩個引擎都是精確的內容高度
+    display: 'flex',
+    alignItems: 'center',
 });
 
 export const popover = style({
@@ -472,6 +478,12 @@ export const clock = style({
     fontWeight: 500,
     color: vars.color.foreground,
     fontVariantNumeric: 'tabular-nums',
+    // 與 chip/按鈕同一個 25px 盒模型垂直置中 — 純文字 span 的
+    // baseline 定位在 WKWebView 與 Chromium 不同，會上下漂
+    height: '25px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    whiteSpace: 'nowrap',
 });
 
 // 窄視窗時 header 維持單列：文字已全部 nowrap 不再折行，改依優先序
