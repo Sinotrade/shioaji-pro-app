@@ -378,14 +378,21 @@ function ensureBootstrap(index: ContractBase) {
     bootstrapInFlight.set(code, run);
 }
 
-// 日切：事件帶著比已知基準更新的交易日 → 該指數重建底一次。基準＝建底
-// snapshot 的 date，建底缺席（quota/error）時退而用最後見過的事件日 —
-// 新的一天有新的查詢額度，quota 狀態也在此重置。
+// 日切：事件帶著比已知基準更新的交易日 → 該指數重建底一次。基準取
+// 「建底 snapshot 的 date」與「最後見過的事件日」較新者 — 日切建底失敗
+// （429/error）時 snapshot 仍停在昨日，若只看 snapshot 會被今日的每個
+// 事件反覆重觸發、持續打 429（QA11）；以 lastEventDates 封頂後，同一個
+// 目標日只嘗試一次，下一個交易日（新額度）才再試。
 const lastEventDates = new Map<string, string>();
 
 function maybeRollover(code: string, eventDate: string) {
+    const bootstrapDate = bootstraps.get(code)?.date;
+    const lastDate = lastEventDates.get(code);
     const knownDate =
-        bootstraps.get(code)?.date ?? lastEventDates.get(code);
+        bootstrapDate !== undefined &&
+        (lastDate === undefined || bootstrapDate > lastDate)
+            ? bootstrapDate
+            : lastDate;
     lastEventDates.set(code, eventDate);
     if (knownDate === undefined || eventDate <= knownDate) return;
     if (bootstrapInFlight.has(code)) return;
