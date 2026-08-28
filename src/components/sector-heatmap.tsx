@@ -425,7 +425,13 @@ export function SectorHeatmap({
             ? drillGroup.size
             : drillGroup.points
         : 0;
-    const otherValue = drillGroup ? drillTotal - top10Sum : 0;
+    // 成交值餘量 clamp ≥0 — 群組整包與排行整包非同刻，節奏差可瞬現微負
+    // （貢獻模式不 clamp：負餘量是合法語意）
+    const otherValue = drillGroup
+        ? isAmountDrill
+            ? Math.max(0, drillTotal - top10Sum)
+            : drillTotal - top10Sum
+        : 0;
     const otherCount = drillGroup
         ? Math.max(0, drillGroup.itemCount - drillEntries.length)
         : 0;
