@@ -17,6 +17,7 @@ import {
     useState,
 } from 'react';
 import { useIndexComponents } from '../hooks/use-index-components';
+import { getIcBootstrapGroupWeights } from '../lib/index-components';
 import { useQuote } from '../hooks/use-stream';
 import { ensureContract } from '../lib/contracts-cache';
 import { useFocusedSector } from '../lib/sector-sync';
@@ -134,6 +135,7 @@ interface HeatLeaf {
     label: string;
     sub?: string;
     pct: number | null;
+    approx?: boolean; // 反推估算值 — 顯示 ≈ 前綴
     x0: number;
     y0: number;
     x1: number;
@@ -177,6 +179,7 @@ function HeatTreemap({ leaves }: { leaves: HeatLeaf[] }) {
                                     ]
                                 }`}
                             >
+                                {leaf.approx ? '≈' : ''}
                                 {fmtPct(leaf.pct)}
                             </span>
                         )}
@@ -428,6 +431,42 @@ export function SectorHeatmap({
         : 0;
     const fmtDrillValue = (value: number) =>
         isAmountDrill ? fmtAmount(value) : fmtPoints(value);
+    // 其他成員的加權漲跌幅反推：群組加權漲跌（wperf 串流）＝全員權重加權
+    // 平均，扣掉排行前 10 的權重×漲跌即得餘量。權重取建底參考權重（盤中
+    // 恆定）；兩串流節奏差（1s vs 5s）帶來的微小誤差以 ≈ 標示，並夾在
+    // 台股漲跌停幅度內防瞬間偏斜。
+    const drillGroupWeight = useMemo(
+        () =>
+            drillCat
+                ? getIcBootstrapGroupWeights(indexCode)?.get(drillCat)
+                : undefined,
+        // ic 每個 store 版本換新物件 — 建底抵達/日切後自動更新
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [drillCat, ic, indexCode],
+    );
+    const otherPct = useMemo(() => {
+        if (
+            drillGroupWeight === undefined ||
+            !drillGroup ||
+            drillEntries.length === 0
+        ) {
+            return null;
+        }
+        const topWeight = drillEntries.reduce(
+            (sum, entry) => sum + entry.weight_pct,
+            0,
+        );
+        const restWeight = drillGroupWeight - topWeight;
+        if (restWeight <= 1e-6) return null;
+        const topWeighted = drillEntries.reduce(
+            (sum, entry) => sum + entry.weight_pct * entry.pct_chg,
+            0,
+        );
+        const estimate =
+            (drillGroupWeight * drillGroup.pct - topWeighted) / restWeight;
+        if (!Number.isFinite(estimate)) return null;
+        return Math.max(-10, Math.min(10, estimate));
+    }, [drillEntries, drillGroup, drillGroupWeight]);
     const barScale = drillEntries.reduce(
         (max, entry) => Math.max(max, Math.abs(entry.value)),
         0,
@@ -454,7 +493,7 @@ export function SectorHeatmap({
             items.push({
                 key: 'other',
                 label: `其他成員（${otherCount} 檔）`,
-                pct: null,
+                pct: otherPct,
                 points: otherValue,
                 count: otherCount,
             });
@@ -469,12 +508,13 @@ export function SectorHeatmap({
             key: item.key,
             label: item.label,
             pct: item.pct,
+            approx: item.code === undefined && item.pct !== null,
             sub: isAmountDrill
                 ? fmtAmount(item.points)
                 : `${fmtPoints(item.points)} 點`,
             title:
                 item.code === undefined
-                    ? `${item.label}｜合計${isAmountDrill ? `成交 ${fmtAmount(item.points)}` : `貢獻 ${fmtPoints(item.points)} 點`}`
+                    ? `${item.label}｜合計${isAmountDrill ? `成交 ${fmtAmount(item.points)}` : `貢獻 ${fmtPoints(item.points)} 點`}${item.pct !== null ? `｜加權漲跌 ≈${fmtPct(item.pct)}（依群組加權與前10反推）` : ''}`
                     : `${item.label}｜${isAmountDrill ? `成交 ${fmtAmount(item.points)}` : `貢獻 ${fmtPoints(item.points)} 點`}｜漲跌 ${fmtPct(item.pct ?? 0)}`,
             onClick: item.code ? () => onPick?.(item.code!) : undefined,
         }));
@@ -484,6 +524,7 @@ export function SectorHeatmap({
         nameByCode,
         onPick,
         otherCount,
+        otherPct,
         otherValue,
         wallSize,
     ]);
@@ -810,9 +851,28 @@ export function SectorHeatmap({
                                         <div className={styles.summaryRow}>
                                             <span />
                                             <span
-                                                className={styles.summaryLabel}
+                                                className={styles.totalLabel}
                                             >
                                                 其他成員（{otherCount} 檔）
+                                            </span>
+                                            <span
+                                                className={`${styles.rankPct} ${
+                                                    otherPct === null
+                                                        ? ''
+                                                        : panel.dirText[
+                                                              otherPct > 0
+                                                                  ? 'up'
+                                                                  : otherPct <
+                                                                      0
+                                                                    ? 'down'
+                                                                    : 'flat'
+                                                          ]
+                                                }`}
+                                                title="依群組加權漲跌與前10檔反推的估算值"
+                                            >
+                                                {otherPct === null
+                                                    ? ''
+                                                    : `≈${fmtPct(otherPct)}`}
                                             </span>
                                             <span
                                                 className={`${styles.rankPoints} ${styles.summaryValue} ${

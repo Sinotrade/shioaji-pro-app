@@ -294,6 +294,21 @@ export function getIcSubError(code: string, projKey: string) {
     return subErrors.get(`${code}|${projKey}`);
 }
 
+// 群組參考權重（佔指數 %）— 參考市值基準、盤中恆定，由建底快照供應
+// （零額外查詢）。用於下鑽層反推「其他成員」的加權漲跌幅。
+export function getIcBootstrapGroupWeights(
+    code: string,
+): ReadonlyMap<string, number> | undefined {
+    const snapshot = bootstraps.get(code);
+    if (!snapshot) return undefined;
+    return new Map(
+        snapshot.groups.map((group) => [
+            group.category,
+            group.reference_weight_ppm / 10_000,
+        ]),
+    );
+}
+
 export function getIcBootstrapStatus(code: string): {
     status: IcBootstrapStatus;
     error?: string;
