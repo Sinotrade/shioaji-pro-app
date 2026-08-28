@@ -98,6 +98,7 @@ function heatStyle(pct: number, extra?: CSSProperties): CSSProperties {
 }
 
 function fmtAmount(value: number) {
+    if (value >= 1e12) return `${(value / 1e12).toFixed(2)} 兆`;
     if (value >= 1e8) return `${(value / 1e8).toFixed(value >= 1e10 ? 0 : 1)} 億`;
     if (value > 0) return `${Math.round(value / 1e4).toLocaleString('en-US')} 萬`;
     return '--';
@@ -251,8 +252,8 @@ export function SectorHeatmap({
     // 貢獻 AbsDesc10 與成交值 Desc10 兩種）
     const drillMetric: 'contribution' | 'amount' = sizeMetric;
     const projections = useMemo<IcProjection[]>(() => {
-        const list: IcProjection[] = [GM_CONTRIBUTION, GM_WPERF];
-        if (sizeMetric === 'amount') list.push(GM_AMOUNT);
+        // gm:amount 常駐：面積預設模式要用，且全景 header 的總成交值恆需
+        const list: IcProjection[] = [GM_CONTRIBUTION, GM_WPERF, GM_AMOUNT];
         if (drillCat) {
             list.push(
                 sizeMetric === 'amount'
@@ -279,8 +280,9 @@ export function SectorHeatmap({
     const ic = useIndexComponents(INDICES[indexCode], projections);
     const contributionState = ic.states[0];
     const wperfState = ic.states[1];
+    const amountState = ic.states[2];
     const sizeState =
-        sizeMetric === 'amount' ? ic.states[2] : contributionState;
+        sizeMetric === 'amount' ? amountState : contributionState;
     const drillState = drillCat
         ? ic.states[projections.length - 1]
         : undefined;
@@ -316,6 +318,23 @@ export function SectorHeatmap({
     const groupByCat = useMemo(
         () => new Map(groupRows.map((group) => [group.category, group])),
         [groupRows],
+    );
+    // 全景 header 加總：Σ群組成交值＝大盤總成交、Σ群組貢獻＝指數漲跌點
+    const totalAmount = useMemo(
+        () =>
+            (amountState?.groups ?? []).reduce(
+                (sum, group) => sum + group.value,
+                0,
+            ),
+        [amountState],
+    );
+    const totalPoints = useMemo(
+        () =>
+            (contributionState?.groups ?? []).reduce(
+                (sum, group) => sum + group.value,
+                0,
+            ),
+        [contributionState],
     );
     const isSimtrade =
         contributionState?.simtrade ||
@@ -610,6 +629,30 @@ export function SectorHeatmap({
                             ・色＝加權漲跌幅・點產業下鑽
                         </span>
                         <span className={styles.spacer} />
+                        {contributionState && (
+                            <span
+                                className={`${styles.totals} ${
+                                    panel.dirText[
+                                        totalPoints > 0
+                                            ? 'up'
+                                            : totalPoints < 0
+                                              ? 'down'
+                                              : 'flat'
+                                    ]
+                                }`}
+                                title="產業貢獻合計 ≈ 指數漲跌點數"
+                            >
+                                {fmtPoints(totalPoints)} 點
+                            </span>
+                        )}
+                        {totalAmount > 0 && (
+                            <span
+                                className={styles.totals}
+                                title="全市場成分合計（Σ產業群組）"
+                            >
+                                成交 {fmtAmount(totalAmount)}
+                            </span>
+                        )}
                         {isSimtrade && (
                             <span className={styles.simtrade}>試撮</span>
                         )}
@@ -787,9 +830,24 @@ export function SectorHeatmap({
                                                     className={
                                                         styles.barFillAmount
                                                     }
-                                                    style={{
-                                                        width: `${(ratio * 100).toFixed(1)}%`,
-                                                    }}
+                                                    style={
+                                                        {
+                                                            width: `${(ratio * 100).toFixed(1)}%`,
+                                                            '--bar-color':
+                                                                entry.pct_chg >
+                                                                0
+                                                                    ? vars.color
+                                                                          .up
+                                                                    : entry.pct_chg <
+                                                                        0
+                                                                      ? vars
+                                                                            .color
+                                                                            .down
+                                                                      : vars
+                                                                            .color
+                                                                            .flat,
+                                                        } as CSSProperties
+                                                    }
                                                 />
                                             </span>
                                         ) : (

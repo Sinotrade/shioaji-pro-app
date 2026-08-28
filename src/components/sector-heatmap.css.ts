@@ -69,6 +69,15 @@ export const segment = styleVariants({
     ],
 });
 
+// 不設 color — 讓並掛的 panel.dirText 方向色能生效（同權重 class 後者蓋前者）
+export const totals = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.62rem',
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+});
+
+
 export const simtrade = style({
     fontSize: '0.58rem',
     color: vars.color.danger,
@@ -287,10 +296,10 @@ export const barFillPos = style({
     borderRadius: '0 1px 1px 0',
 });
 
-// 成交值排行的單向 bar（非方向性 — 中性色）
+// 成交值排行的單向 bar — 長度＝成交值、顏色跟該股漲跌方向
 export const barFillAmount = style({
     height: '100%',
-    background: `color-mix(in srgb, ${vars.color.accent} 40%, transparent)`,
+    background: `color-mix(in srgb, var(--bar-color, ${vars.color.flat}) 55%, transparent)`,
     borderRadius: '1px',
     alignSelf: 'center',
 });
