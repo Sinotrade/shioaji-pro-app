@@ -52,11 +52,12 @@ const INDEX_LABELS: Record<PanoramaIndexCode, string> = {
     IX0043: '櫃買',
 };
 
-type SizeMetric = 'amount' | 'contribution' | 'weight';
+// 權重不設面積選項 — 它只是計算貢獻的係數（參考市值權重、盤中恆定），
+// 觀察「權值版圖」看貢獻/成交值即可
+type SizeMetric = 'amount' | 'contribution';
 const SIZE_METRICS: { value: SizeMetric; label: string }[] = [
     { value: 'amount', label: '成交值' },
     { value: 'contribution', label: '貢獻' },
-    { value: 'weight', label: '權重' },
 ];
 
 const CAT_KEY = 'sj-pro-heatmap-cat'; // 舊鍵沿用：最近下鑽的產業
@@ -74,7 +75,6 @@ const GM_WPERF: IcProjection = {
     metric: 'weighted_performance',
 };
 const GM_AMOUNT: IcProjection = { kind: 'group_metric', metric: 'amount' };
-const GM_WEIGHT: IcProjection = { kind: 'group_metric', metric: 'weight' };
 
 interface GroupRow {
     category: string;
@@ -232,12 +232,11 @@ export function SectorHeatmap({
     const [indexCode, setIndexCode] = useState<PanoramaIndexCode>(() =>
         localStorage.getItem(INDEX_KEY) === 'IX0043' ? 'IX0043' : 'IX0001',
     );
-    const [sizeMetric, setSizeMetric] = useState<SizeMetric>(() => {
-        const stored = localStorage.getItem(SIZE_KEY);
-        return stored === 'contribution' || stored === 'weight'
-            ? stored
-            : 'amount';
-    });
+    const [sizeMetric, setSizeMetric] = useState<SizeMetric>(() =>
+        localStorage.getItem(SIZE_KEY) === 'contribution'
+            ? 'contribution'
+            : 'amount',
+    );
     const [drillCat, setDrillCat] = useState<string | null>(null);
     const [nameByCode, setNameByCode] = useState<ReadonlyMap<string, string>>(
         () => new Map(),
@@ -245,19 +244,32 @@ export function SectorHeatmap({
     const { ref: rootRef, size: rootSize } = useBoxSize<HTMLDivElement>();
     const narrow = rootSize.width > 0 && rootSize.width < NARROW_PX;
 
+    // 下鑽排行指標跟隨面積選擇（群組內排行 published matrix 恰好就是
+    // 貢獻 AbsDesc10 與成交值 Desc10 兩種）
+    const drillMetric: 'contribution' | 'amount' = sizeMetric;
     const projections = useMemo<IcProjection[]>(() => {
         const list: IcProjection[] = [GM_CONTRIBUTION, GM_WPERF];
         if (sizeMetric === 'amount') list.push(GM_AMOUNT);
-        if (sizeMetric === 'weight') list.push(GM_WEIGHT);
         if (drillCat) {
-            list.push({
-                kind: 'ranking',
-                target: 'component',
-                metric: 'contribution',
-                order: 'abs_desc',
-                limit: 10,
-                group: drillCat,
-            });
+            list.push(
+                sizeMetric === 'amount'
+                    ? {
+                          kind: 'ranking',
+                          target: 'component',
+                          metric: 'amount',
+                          order: 'desc',
+                          limit: 10,
+                          group: drillCat,
+                      }
+                    : {
+                          kind: 'ranking',
+                          target: 'component',
+                          metric: 'contribution',
+                          order: 'abs_desc',
+                          limit: 10,
+                          group: drillCat,
+                      },
+            );
         }
         return list;
     }, [drillCat, sizeMetric]);
@@ -265,7 +277,7 @@ export function SectorHeatmap({
     const contributionState = ic.states[0];
     const wperfState = ic.states[1];
     const sizeState =
-        sizeMetric === 'contribution' ? contributionState : ic.states[2];
+        sizeMetric === 'amount' ? ic.states[2] : contributionState;
     const drillState = drillCat
         ? ic.states[projections.length - 1]
         : undefined;
@@ -385,8 +397,12 @@ export function SectorHeatmap({
                 key: group.category,
                 label: group.name,
                 pct: group.pct,
-                sub: `${fmtPoints(group.points)} 點`,
-                title: `${group.name}（${group.itemCount} 檔）｜加權漲跌 ${fmtPct(group.pct)}｜貢獻 ${fmtPoints(group.points)} 點${sizeMetric === 'amount' ? `｜成交 ${fmtAmount(group.size)}` : sizeMetric === 'weight' ? `｜權重 ${group.size.toFixed(2)}%` : ''}`,
+                // 角落數字跟著面積指標走：成交值模式顯示成交值、貢獻模式顯示貢獻點
+                sub:
+                    sizeMetric === 'amount'
+                        ? fmtAmount(group.size)
+                        : `${fmtPoints(group.points)} 點`,
+                title: `${group.name}（${group.itemCount} 檔）｜加權漲跌 ${fmtPct(group.pct)}｜貢獻 ${fmtPoints(group.points)} 點${sizeMetric === 'amount' ? `｜成交 ${fmtAmount(group.size)}` : ''}`,
                 onClick: () => {
                     setDrillCat(group.category);
                     localStorage.setItem(CAT_KEY, group.category);
@@ -398,11 +414,20 @@ export function SectorHeatmap({
     // ---- 下鑽層資料：10 檔主力＋餘量＋合計（與群組串流自洽） ----
     const drillGroup = drillCat ? groupByCat.get(drillCat) : undefined;
     const drillEntries = drillState?.entries ?? [];
+    const isAmountDrill = drillMetric === 'amount';
     const top10Sum = drillEntries.reduce((sum, entry) => sum + entry.value, 0);
-    const otherPoints = drillGroup ? drillGroup.points - top10Sum : 0;
+    // 餘量與合計跟著下鑽指標走：貢獻＝群組貢獻點、成交值＝群組總成交值
+    const drillTotal = drillGroup
+        ? isAmountDrill
+            ? drillGroup.size
+            : drillGroup.points
+        : 0;
+    const otherValue = drillGroup ? drillTotal - top10Sum : 0;
     const otherCount = drillGroup
         ? Math.max(0, drillGroup.itemCount - drillEntries.length)
         : 0;
+    const fmtDrillValue = (value: number) =>
+        isAmountDrill ? fmtAmount(value) : fmtPoints(value);
     const barScale = drillEntries.reduce(
         (max, entry) => Math.max(max, Math.abs(entry.value)),
         0,
@@ -425,12 +450,12 @@ export function SectorHeatmap({
             points: entry.value,
             code: entry.code,
         }));
-        if (otherCount > 0 && Math.abs(otherPoints) > 1e-9) {
+        if (otherCount > 0 && Math.abs(otherValue) > 1e-9) {
             items.push({
                 key: 'other',
                 label: `其他成員（${otherCount} 檔）`,
                 pct: null,
-                points: otherPoints,
+                points: otherValue,
                 count: otherCount,
             });
         }
@@ -444,14 +469,24 @@ export function SectorHeatmap({
             key: item.key,
             label: item.label,
             pct: item.pct,
-            sub: `${fmtPoints(item.points)} 點`,
+            sub: isAmountDrill
+                ? fmtAmount(item.points)
+                : `${fmtPoints(item.points)} 點`,
             title:
                 item.code === undefined
-                    ? `${item.label}｜合計貢獻 ${fmtPoints(item.points)} 點`
-                    : `${item.label}｜貢獻 ${fmtPoints(item.points)} 點｜漲跌 ${fmtPct(item.pct ?? 0)}`,
+                    ? `${item.label}｜合計${isAmountDrill ? `成交 ${fmtAmount(item.points)}` : `貢獻 ${fmtPoints(item.points)} 點`}`
+                    : `${item.label}｜${isAmountDrill ? `成交 ${fmtAmount(item.points)}` : `貢獻 ${fmtPoints(item.points)} 點`}｜漲跌 ${fmtPct(item.pct ?? 0)}`,
             onClick: item.code ? () => onPick?.(item.code!) : undefined,
         }));
-    }, [drillEntries, nameByCode, onPick, otherCount, otherPoints, wallSize]);
+    }, [
+        drillEntries,
+        isAmountDrill,
+        nameByCode,
+        onPick,
+        otherCount,
+        otherValue,
+        wallSize,
+    ]);
 
     const bootstrapPending =
         ic.bootstrap.status === 'pending' || ic.bootstrap.status === 'idle';
@@ -609,6 +644,31 @@ export function SectorHeatmap({
                             </span>
                         )}
                         <span className={styles.spacer} />
+                        <span className={styles.segmentGroup}>
+                            {SIZE_METRICS.map((metric) => (
+                                <button
+                                    key={metric.value}
+                                    className={
+                                        styles.segment[
+                                            metric.value === sizeMetric
+                                                ? 'on'
+                                                : 'off'
+                                        ]
+                                    }
+                                    aria-pressed={metric.value === sizeMetric}
+                                    title={`排行＝${metric.label}`}
+                                    onClick={() => {
+                                        setSizeMetric(metric.value);
+                                        localStorage.setItem(
+                                            SIZE_KEY,
+                                            metric.value,
+                                        );
+                                    }}
+                                >
+                                    {metric.label}
+                                </button>
+                            ))}
+                        </span>
                         {isSimtrade && (
                             <span className={styles.simtrade}>試撮</span>
                         )}
@@ -617,13 +677,15 @@ export function SectorHeatmap({
                         <div className={styles.rankPane[narrow ? 'column' : 'row']}>
                             <div className={styles.rankHeader}>
                                 <span />
-                                <span>主力貢獻</span>
+                                <span>
+                                    {isAmountDrill ? '成交值排行' : '主力貢獻'}
+                                </span>
                                 <span className={styles.rankHeaderCell}>
                                     漲跌幅
                                 </span>
                                 <span />
                                 <span className={styles.rankHeaderCell}>
-                                    貢獻（點）
+                                    {isAmountDrill ? '成交值' : '貢獻（點）'}
                                 </span>
                             </div>
                             {drillEntries.map((entry, idx) => {
@@ -672,43 +734,60 @@ export function SectorHeatmap({
                                         >
                                             {fmtPct(entry.pct_chg)}
                                         </span>
-                                        <span className={styles.barCell}>
-                                            <span
-                                                className={styles.barHalfNeg}
-                                            >
-                                                {entry.value < 0 && (
-                                                    <span
-                                                        className={
-                                                            styles.barFillNeg
-                                                        }
-                                                        style={{
-                                                            width: `${(ratio * 100).toFixed(1)}%`,
-                                                        }}
-                                                    />
-                                                )}
+                                        {isAmountDrill ? (
+                                            <span className={styles.barCell}>
+                                                <span
+                                                    className={
+                                                        styles.barFillAmount
+                                                    }
+                                                    style={{
+                                                        width: `${(ratio * 100).toFixed(1)}%`,
+                                                    }}
+                                                />
                                             </span>
-                                            <span
-                                                className={styles.barAxis}
-                                            />
-                                            <span
-                                                className={styles.barHalfPos}
-                                            >
-                                                {entry.value > 0 && (
-                                                    <span
-                                                        className={
-                                                            styles.barFillPos
-                                                        }
-                                                        style={{
-                                                            width: `${(ratio * 100).toFixed(1)}%`,
-                                                        }}
-                                                    />
-                                                )}
+                                        ) : (
+                                            <span className={styles.barCell}>
+                                                <span
+                                                    className={
+                                                        styles.barHalfNeg
+                                                    }
+                                                >
+                                                    {entry.value < 0 && (
+                                                        <span
+                                                            className={
+                                                                styles.barFillNeg
+                                                            }
+                                                            style={{
+                                                                width: `${(ratio * 100).toFixed(1)}%`,
+                                                            }}
+                                                        />
+                                                    )}
+                                                </span>
+                                                <span
+                                                    className={styles.barAxis}
+                                                />
+                                                <span
+                                                    className={
+                                                        styles.barHalfPos
+                                                    }
+                                                >
+                                                    {entry.value > 0 && (
+                                                        <span
+                                                            className={
+                                                                styles.barFillPos
+                                                            }
+                                                            style={{
+                                                                width: `${(ratio * 100).toFixed(1)}%`,
+                                                            }}
+                                                        />
+                                                    )}
+                                                </span>
                                             </span>
-                                        </span>
+                                        )}
                                         <span
-                                            className={`${styles.rankPoints} ${panel.dirText[dir]}`}
+                                            className={`${styles.rankPoints} ${isAmountDrill ? '' : panel.dirText[dir]}`}
                                         >
-                                            {fmtPoints(entry.value)}
+                                            {fmtDrillValue(entry.value)}
                                         </span>
                                     </button>
                                 );
@@ -716,11 +795,11 @@ export function SectorHeatmap({
                             {drillEntries.length === 0 && (
                                 <div className={styles.empty}>
                                     {icError ? (
-                                        '主力貢獻資料無法取得'
+                                        '排行資料無法取得'
                                     ) : (
                                         <>
                                             <Orb size={12} />
-                                            主力貢獻載入中…
+                                            排行載入中…
                                         </>
                                     )}
                                 </div>
@@ -735,25 +814,27 @@ export function SectorHeatmap({
                                             >
                                                 其他成員（{otherCount} 檔）
                                             </span>
-                                            <span />
                                             <span
-                                                className={`${styles.rankPoints} ${
-                                                    panel.dirText[
-                                                        otherPoints > 0
-                                                            ? 'up'
-                                                            : otherPoints < 0
-                                                              ? 'down'
-                                                              : 'flat'
-                                                    ]
+                                                className={`${styles.rankPoints} ${styles.summaryValue} ${
+                                                    isAmountDrill
+                                                        ? ''
+                                                        : panel.dirText[
+                                                              otherValue > 0
+                                                                  ? 'up'
+                                                                  : otherValue <
+                                                                      0
+                                                                    ? 'down'
+                                                                    : 'flat'
+                                                          ]
                                                 }`}
                                             >
-                                                {fmtPoints(otherPoints)}
+                                                {fmtDrillValue(otherValue)}
                                             </span>
                                         </div>
                                     )}
                                     <div className={styles.totalRow}>
                                         <span />
-                                        <span className={styles.summaryLabel}>
+                                        <span className={styles.totalLabel}>
                                             產業合計
                                         </span>
                                         <span
@@ -769,19 +850,21 @@ export function SectorHeatmap({
                                         >
                                             {fmtPct(drillGroup.pct)}
                                         </span>
-                                        <span />
                                         <span
-                                            className={`${styles.rankPoints} ${
-                                                panel.dirText[
-                                                    drillGroup.points > 0
-                                                        ? 'up'
-                                                        : drillGroup.points < 0
-                                                          ? 'down'
-                                                          : 'flat'
-                                                ]
+                                            className={`${styles.rankPoints} ${styles.summaryValue} ${
+                                                isAmountDrill
+                                                    ? ''
+                                                    : panel.dirText[
+                                                          drillGroup.points > 0
+                                                              ? 'up'
+                                                              : drillGroup.points <
+                                                                  0
+                                                                ? 'down'
+                                                                : 'flat'
+                                                      ]
                                             }`}
                                         >
-                                            {fmtPoints(drillGroup.points)}
+                                            {fmtDrillValue(drillTotal)}
                                         </span>
                                     </div>
                                 </>
@@ -792,7 +875,7 @@ export function SectorHeatmap({
                             {wallLeaves.length === 0 &&
                                 drillEntries.length > 0 && (
                                     <div className={styles.empty}>
-                                        等待貢獻分布
+                                        等待分布資料
                                     </div>
                                 )}
                         </div>

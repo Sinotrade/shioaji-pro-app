@@ -247,6 +247,24 @@ describe('projectFromSnapshot（官方查詢→串流映射）', () => {
         expect(state.entries?.[0]?.value).toBe(39.75);
     });
 
+    it('amount 群組內排行：value=成交值、同值以 code 升冪 tie-break', () => {
+        const state = projectFromSnapshot(snapshot(), {
+            kind: 'ranking',
+            target: 'component',
+            metric: 'amount',
+            order: 'desc',
+            limit: 10,
+            group: '24',
+        });
+        // fixture 三檔成交值相同（1,000,000）→ 官方 tie-break：code 升冪
+        expect(state.entries?.map((e) => e.code)).toEqual([
+            '2303',
+            '2330',
+            '2454',
+        ]);
+        expect(state.entries?.[0]?.value).toBe(1_000_000);
+    });
+
     it('帶出 snapshot 的日切/市場階段中繼資料', () => {
         const state = projectFromSnapshot(snapshot(), P25);
         expect(state.date).toBe('2026-08-28');

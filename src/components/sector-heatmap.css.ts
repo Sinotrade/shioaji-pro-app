@@ -287,6 +287,14 @@ export const barFillPos = style({
     borderRadius: '0 1px 1px 0',
 });
 
+// 成交值排行的單向 bar（非方向性 — 中性色）
+export const barFillAmount = style({
+    height: '100%',
+    background: `color-mix(in srgb, ${vars.color.accent} 40%, transparent)`,
+    borderRadius: '1px',
+    alignSelf: 'center',
+});
+
 export const barAxis = style({
     width: '1px',
     alignSelf: 'stretch',
@@ -323,6 +331,18 @@ export const totalRow = style([
         background: vars.color.panel,
     },
 ]);
+
+// 摘要列的值固定落在第 5 欄（與排行的值欄對齊），標籤自由跨欄
+export const summaryValue = style({
+    gridColumn: '5 / 6',
+});
+
+export const totalLabel = style({
+    gridColumn: '2 / 3',
+    fontFamily: vars.font.body,
+    textAlign: 'left',
+    whiteSpace: 'nowrap',
+});
 
 export const summaryLabel = style({
     gridColumn: '2 / 4',

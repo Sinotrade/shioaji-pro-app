@@ -111,8 +111,8 @@ export type IcProjection =
     | {
           kind: 'ranking';
           target: 'component';
-          metric: 'contribution';
-          order: 'positive_desc' | 'negative_asc' | 'abs_desc';
+          metric: 'contribution' | 'amount';
+          order: 'desc' | 'positive_desc' | 'negative_asc' | 'abs_desc';
           limit: number;
           group?: string;
       };

@@ -158,7 +158,13 @@ export function projectFromSnapshot(
                 projection.group === undefined ||
                 entry.category === projection.group,
         )
-        .map((entry) => ({ entry, value: num(entry.points) }));
+        .map((entry) => ({
+            entry,
+            value:
+                projection.metric === 'amount'
+                    ? entry.total_amount
+                    : num(entry.points),
+        }));
     if (projection.order === 'positive_desc') {
         rows = rows.filter((row) => row.value > 0);
     } else if (projection.order === 'negative_asc') {
