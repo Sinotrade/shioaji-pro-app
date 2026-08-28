@@ -32,6 +32,7 @@ import { ComboListPanel } from './components/combo-list';
 import { ComboTicket } from './components/combo-ticket';
 import { DebugPanel } from './components/debug-panel';
 import { GridTicket } from './components/grid-ticket';
+import { SpiderwebPanel } from './components/spiderweb-panel';
 import { NoticeCenter } from './components/notice-center';
 import { FeatureGate } from './components/feature-gate';
 import { OptPayoff } from './components/opt-payoff';
@@ -306,6 +307,12 @@ function BlockBody({
                     trades={dockProps.trades}
                     onOrdersChanged={dockProps.onTradesChanged}
                 />
+            ) : (
+                <BlockPlaceholder />
+            );
+        case 'spiderweb':
+            return contract ? (
+                <SpiderwebPanel contract={contract} />
             ) : (
                 <BlockPlaceholder />
             );
