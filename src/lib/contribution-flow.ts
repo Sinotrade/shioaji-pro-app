@@ -1,11 +1,23 @@
-import type { StockMeta } from './stock-index';
-import { sectorLabel } from './stock-index';
-import type {
-    IndexContributionEntry,
-    IndustryContributionEntry,
-} from './types/market';
+// contribution-flow — 貢獻傳導 sankey 的圖形建構。
+// 資料源（1.7.4 index_components）：成分股排行事件自帶 category（server
+// 真值，不再靠靜態 StockMeta join）；產業層來自 group_metric(contribution)
+// 串流（自帶中文名）。「其他」餘量＝群組總點數－已列示個股合計。
 
 export type ContributionDirection = 'up' | 'down';
+
+export interface FlowStock {
+    code: string;
+    name?: string;
+    category: string;
+    points: number;
+    pctChg: number;
+}
+
+export interface FlowGroup {
+    category: string; // 'other-up' / 'other-down' 為呼叫端合成的餘量群組
+    name: string;
+    points: number;
+}
 
 export interface ContributionFlowNode {
     id: string;
@@ -32,30 +44,24 @@ export interface ContributionFlowGraph {
 const MAX_STOCKS_PER_SECTOR = 5;
 
 export function buildContributionFlow(
-    entries: IndexContributionEntry[],
-    details: StockMeta[],
-    industries: IndustryContributionEntry[],
+    stocks: FlowStock[],
+    groups: FlowGroup[],
 ): ContributionFlowGraph {
-    const metaByCode = new Map(details.map((stock) => [stock.code, stock]));
     const nodes = new Map<string, ContributionFlowNode>();
     const links: ContributionFlowLink[] = [];
 
-    for (const industry of industries) {
-        if (!Number.isFinite(industry.points) || industry.points === 0) continue;
+    for (const group of groups) {
+        if (!Number.isFinite(group.points) || group.points === 0) continue;
         const direction: ContributionDirection =
-            industry.points > 0 ? 'up' : 'down';
-        const value = Math.abs(industry.points);
-        const category = industry.category.startsWith('other-')
-            ? industry.category
-            : industry.category.padStart(2, '0');
+            group.points > 0 ? 'up' : 'down';
+        const value = Math.abs(group.points);
         const rootId = `direction:${direction}`;
-        const sectorId = `sector:${direction}:${category}`;
+        const sectorId = `sector:${direction}:${group.category}`;
 
         if (!nodes.has(rootId)) {
             nodes.set(rootId, {
                 id: rootId,
-                label:
-                    direction === 'up' ? '上漲貢獻' : '下跌貢獻',
+                label: direction === 'up' ? '上漲貢獻' : '下跌貢獻',
                 kind: 'direction',
                 direction,
                 points: 0,
@@ -63,67 +69,57 @@ export function buildContributionFlow(
         }
         nodes.set(sectorId, {
             id: sectorId,
-            label: category.startsWith('other-')
-                ? '其他產業'
-                : sectorLabel(category),
+            label: group.name,
             kind: 'sector',
             direction,
             points: value,
         });
         nodes.get(rootId)!.points += value;
-        links.push({
-            source: rootId,
-            target: sectorId,
-            value,
-            direction,
-        });
+        links.push({ source: rootId, target: sectorId, value, direction });
 
-        const matching = entries
-            .filter((entry) => {
-                const meta = metaByCode.get(entry.code);
-                return (
-                    meta?.category?.padStart(2, '0') === category &&
-                    (entry.points > 0 ? 'up' : 'down') === direction &&
-                    entry.points !== 0
-                );
-            })
+        const matching = stocks
+            .filter(
+                (stock) =>
+                    stock.category === group.category &&
+                    stock.points !== 0 &&
+                    (stock.points > 0 ? 'up' : 'down') === direction,
+            )
             .sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
             .slice(0, MAX_STOCKS_PER_SECTOR);
         const rankedTotal = matching.reduce(
-            (sum, entry) => sum + Math.abs(entry.points),
+            (sum, stock) => sum + Math.abs(stock.points),
             0,
         );
         const scale = rankedTotal > value ? value / rankedTotal : 1;
 
-        for (const entry of matching) {
-            const meta = metaByCode.get(entry.code);
-            const stockId = `stock:${entry.code}`;
+        for (const stock of matching) {
+            const stockId = `stock:${stock.code}`;
             nodes.set(stockId, {
                 id: stockId,
-                label: `${entry.code} ${meta?.name || '名稱未取得'}`,
+                label: `${stock.code} ${stock.name || '名稱未取得'}`,
                 kind: 'stock',
                 direction,
-                points: Math.abs(entry.points),
-                code: entry.code,
-                pctChg: entry.pct_chg,
+                points: Math.abs(stock.points),
+                code: stock.code,
+                pctChg: stock.pctChg,
             });
             links.push({
                 source: sectorId,
                 target: stockId,
-                value: Math.abs(entry.points) * scale,
+                value: Math.abs(stock.points) * scale,
                 direction,
             });
         }
 
         const remainder = Math.max(0, value - rankedTotal);
         if (remainder > 0 || matching.length === 0) {
-            const otherId = `other:${direction}:${category}`;
+            const otherId = `other:${direction}:${group.category}`;
             const otherValue = matching.length === 0 ? value : remainder;
             nodes.set(otherId, {
                 id: otherId,
-                label: category.startsWith('other-')
+                label: group.category.startsWith('other-')
                     ? '其他產業成分股'
-                    : `其他${sectorLabel(category)}成分股`,
+                    : `其他${group.name}成分股`,
                 kind: 'stock',
                 direction,
                 points: otherValue,
@@ -137,8 +133,5 @@ export function buildContributionFlow(
         }
     }
 
-    return {
-        nodes: [...nodes.values()],
-        links,
-    };
+    return { nodes: [...nodes.values()], links };
 }

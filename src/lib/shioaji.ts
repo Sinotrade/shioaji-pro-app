@@ -625,6 +625,43 @@ export function unsubscribeEnrichedIndex(
     );
 }
 
+// index_components projection 訂閱（1.7.4）— 一條 (指數, 投影) 一個
+// capability key，ref-count／重連重播沿用既有 capability 基建。
+// projKey 由 index-components store 產生（同一投影必須產生同一 key）。
+export function subscribeIndexComponents(
+    contract: ContractBase,
+    projection: Record<string, unknown>,
+    projKey: string,
+) {
+    return updateCapabilitySubscription(
+        'subscribe',
+        'index_components',
+        `index_components:${contract.code}:${projKey}`,
+        { index: streamContractKey(contract), projection },
+    );
+}
+
+export function unsubscribeIndexComponents(
+    contract: ContractBase,
+    projection: Record<string, unknown>,
+    projKey: string,
+) {
+    return updateCapabilitySubscription(
+        'unsubscribe',
+        'index_components',
+        `index_components:${contract.code}:${projKey}`,
+        { index: streamContractKey(contract), projection },
+    );
+}
+
+// index_components 權威建底查詢 — 呼叫紀律見 docs/adr/0001：
+// 僅限首次與日切，429（日額度）不得重試，503（暖機）可退避重試
+export function fetchIndexComponents<T>(contract: ContractBase) {
+    return apiPost<T>('/api/v1/data/index_components', {
+        contract: contractKey(contract),
+    });
+}
+
 export function scannerSubscriptionBody(
     scanner: ScannerRule,
     exchange: ScannerExchange,

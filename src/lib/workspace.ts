@@ -72,7 +72,9 @@ export type BlockType =
     | 'backtest'
     | 'assistant';
 
-export type PulseSection = 'stocks' | 'industries' | 'flow';
+// 'industries' 區塊已移出市場脈動（產業地圖歸產業全景面板）— 舊存檔的
+// 'industries' 值由面板端讀時過濾、權重按比例併入其餘區塊
+export type PulseSection = 'stocks' | 'flow';
 export type PulseSectionWeights = Record<PulseSection, number>;
 export type PulseIndexCode = 'IX0001' | 'IX0043';
 
@@ -318,8 +320,8 @@ export const BLOCK_META: Record<
         defaultSize: { w: 5, h: 13, minW: 4, minH: 10 },
     },
     heatmap: {
-        label: '類股熱力圖',
-        description: '類股漲跌熱力圖',
+        label: '產業全景',
+        description: '產業資金與強弱地圖，點產業下鑽主力貢獻',
         category: 'market',
         pinnable: false,
         singleton: true,
@@ -554,7 +556,7 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
     },
     {
         name: '市場脈動',
-        desc: '上市＋上櫃並排，分別觀察成分股、產業分布與貢獻傳導',
+        desc: '上市＋上櫃並排，分別觀察成分股貢獻與貢獻傳導',
         workspace: {
             blocks: [
                 {
@@ -564,9 +566,8 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
                     pulseIndex: 'IX0001',
                     pulseSections: ['flow'],
                     pulseWeights: {
-                        stocks: 28,
-                        industries: 32,
-                        flow: 40,
+                        stocks: 41,
+                        flow: 59,
                     },
                 },
                 {
@@ -576,9 +577,8 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
                     pulseIndex: 'IX0043',
                     pulseSections: ['flow'],
                     pulseWeights: {
-                        stocks: 28,
-                        industries: 32,
-                        flow: 40,
+                        stocks: 41,
+                        flow: 59,
                     },
                 },
             ],
