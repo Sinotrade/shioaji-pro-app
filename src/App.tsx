@@ -35,6 +35,7 @@ import { GridTicket } from './components/grid-ticket';
 import { NoticeCenter } from './components/notice-center';
 import { FeatureGate } from './components/feature-gate';
 import { OptPayoff } from './components/opt-payoff';
+import { PanelErrorBoundary } from './components/panel-error-boundary';
 import { SectorHeatmap } from './components/sector-heatmap';
 import { PnlPanel } from './components/pnl-panel';
 import { VolProfile } from './components/vol-profile';
@@ -449,7 +450,9 @@ function BlockView(props: BlockViewProps) {
                         : undefined
                 }
             />
-            <BlockBody {...bodyProps} block={block} contract={contract} />
+            <PanelErrorBoundary label={meta.label}>
+                <BlockBody {...bodyProps} block={block} contract={contract} />
+            </PanelErrorBoundary>
         </section>
     );
 }
@@ -590,7 +593,9 @@ function PopoutView({
                 <PanelChrome
                     title={`${meta.label}${contract ? ` · ${contract.code}` : ''}`}
                 />
-                {body}
+                <PanelErrorBoundary label={meta.label}>
+                    {body}
+                </PanelErrorBoundary>
             </section>
         </div>
     );
