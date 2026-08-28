@@ -1,291 +1,804 @@
-// src/components/sector-heatmap.tsx — 類股熱力圖 (issue #2): pick a
-// sector from the contract files' categories, tiles colored by today's
-// percent change (intensity scales with magnitude), sized order by 成交額.
-// Click a tile to link the symbol everywhere.
+// src/components/sector-heatmap.tsx — 產業全景（原類股熱力圖，issue #2 原地
+// 升級）。資料源：shioaji 1.7.4 index_components 群組串流（1 秒），查詢僅
+// 建底（docs/adr/0001）。兩層：
+// - 全景層：產業 treemap — 面積可切換（成交值/|貢獻|/權重）、顏色＝加權
+//   漲跌幅、tile 標貢獻點；加權/櫃買切換。
+// - 下鑽層：點產業進入，左＝主力貢獻排行（該群 AbsDesc10 串流＋「其他成
+//   員」餘量＋產業合計自洽列）、右＝同 10 檔＋餘量磚的磁磚牆（面積＝
+//   |貢獻|）；窄面板退化為上下堆疊。header 掛官方類股指數為權威錨點。
+//   純串流 — 不掛成員報價、不輪詢 snapshot。
 
+import { hierarchy, treemap, treemapSquarify } from 'd3-hierarchy';
+import { AlertTriangle, ChevronLeft } from 'lucide-react';
 import {
-    useCallback,
+    type CSSProperties,
     useEffect,
     useMemo,
     useState,
-    useSyncExternalStore,
 } from 'react';
-import { usePoll } from '../hooks/use-poll';
+import { useIndexComponents } from '../hooks/use-index-components';
+import { useQuote } from '../hooks/use-stream';
 import { ensureContract } from '../lib/contracts-cache';
-import { fetchSnapshots } from '../lib/shioaji';
 import { useFocusedSector } from '../lib/sector-sync';
-import {
-    categoriesOf,
-    loadStockIndex,
-    sectorLabel,
-    SECTOR_INDICES,
-    type StockMeta,
-} from '../lib/stock-index';
-import { getQuote, subscribeQuoteStore } from '../lib/stream';
-import { getChartColors, useThemeSettings } from '../lib/theme-store';
-import type { Snapshot } from '../lib/types/market';
+import { subscribeQuote } from '../lib/shioaji';
+import { loadStockDetails, SECTOR_INDICES } from '../lib/stock-index';
+import type { ContractBase } from '../lib/types/contract';
+import type { IcProjection } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
-import * as dock from './bottom-dock.css';
-import * as styles from './sector-heatmap.css';
+import { vars } from '../theme.css';
 import { Orb } from './orb';
+import * as panel from './panel.css';
+import * as styles from './sector-heatmap.css';
 
-const MAX_MEMBERS = 80;
-const CAT_KEY = 'sj-pro-heatmap-cat';
-const SECTOR_INDEX_CODES = SECTOR_INDICES.map((sector) => sector.index);
+const INDICES: Record<'IX0001' | 'IX0043', ContractBase> = {
+    IX0001: {
+        security_type: 'IND',
+        region: 'TW',
+        exchange: 'TSE',
+        code: 'IX0001',
+        target_code: null,
+    },
+    IX0043: {
+        security_type: 'IND',
+        region: 'TW',
+        exchange: 'OTC',
+        code: 'IX0043',
+        target_code: null,
+    },
+};
+type PanoramaIndexCode = keyof typeof INDICES;
+const INDEX_LABELS: Record<PanoramaIndexCode, string> = {
+    IX0001: '加權',
+    IX0043: '櫃買',
+};
 
-function subscribeSectorQuoteStore(listener: () => void) {
-    const off = SECTOR_INDEX_CODES.map((code) =>
-        subscribeQuoteStore(code, listener),
+type SizeMetric = 'amount' | 'contribution' | 'weight';
+const SIZE_METRICS: { value: SizeMetric; label: string }[] = [
+    { value: 'amount', label: '成交值' },
+    { value: 'contribution', label: '貢獻' },
+    { value: 'weight', label: '權重' },
+];
+
+const CAT_KEY = 'sj-pro-heatmap-cat'; // 舊鍵沿用：最近下鑽的產業
+const SIZE_KEY = 'sj-pro-panorama-size';
+const INDEX_KEY = 'sj-pro-panorama-index';
+// 左右並排的最小面板寬 — 更窄就退化為上下堆疊
+const NARROW_PX = 520;
+
+const GM_CONTRIBUTION: IcProjection = {
+    kind: 'group_metric',
+    metric: 'contribution',
+};
+const GM_WPERF: IcProjection = {
+    kind: 'group_metric',
+    metric: 'weighted_performance',
+};
+const GM_AMOUNT: IcProjection = { kind: 'group_metric', metric: 'amount' };
+const GM_WEIGHT: IcProjection = { kind: 'group_metric', metric: 'weight' };
+
+interface GroupRow {
+    category: string;
+    name: string;
+    itemCount: number;
+    points: number;
+    pct: number;
+    size: number;
+}
+
+function heatStyle(pct: number, extra?: CSSProperties): CSSProperties {
+    const color =
+        pct > 0 ? vars.color.up : pct < 0 ? vars.color.down : vars.color.flat;
+    const alpha = 10 + Math.min(1, Math.abs(pct) / 4) * 46;
+    return {
+        '--heat-color': color,
+        '--heat-alpha': `${alpha.toFixed(0)}%`,
+        ...extra,
+    } as CSSProperties;
+}
+
+function fmtAmount(value: number) {
+    if (value >= 1e8) return `${(value / 1e8).toFixed(value >= 1e10 ? 0 : 1)} 億`;
+    if (value > 0) return `${Math.round(value / 1e4).toLocaleString('en-US')} 萬`;
+    return '--';
+}
+
+function fmtPoints(value: number) {
+    return `${value > 0 ? '+' : ''}${value.toFixed(2)}`;
+}
+
+function fmtPct(value: number) {
+    return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
+
+// callback ref：條件渲染的量測目標（下鑽磚牆）晚於元件 mount 才出現，
+// useRef+空依賴 effect 會掛不到 observer — 以元素 state 驅動重掛
+function useBoxSize<T extends HTMLElement>() {
+    const [element, setElement] = useState<T | null>(null);
+    const [size, setSize] = useState({ width: 0, height: 0 });
+    useEffect(() => {
+        if (!element || typeof ResizeObserver === 'undefined') return;
+        const update = () => {
+            const { width, height } = element.getBoundingClientRect();
+            setSize({ width: Math.floor(width), height: Math.floor(height) });
+        };
+        update();
+        const observer = new ResizeObserver(update);
+        observer.observe(element);
+        return () => observer.disconnect();
+    }, [element]);
+    return { ref: setElement, size };
+}
+
+interface HeatLeaf {
+    key: string;
+    label: string;
+    sub?: string;
+    pct: number | null;
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+    onClick?: () => void;
+    title: string;
+}
+
+// 共用 squarified treemap 渲染 — 全景層（產業）與下鑽磚牆（個股）皆用
+function HeatTreemap({ leaves }: { leaves: HeatLeaf[] }) {
+    return (
+        <>
+            {leaves.map((leaf) => {
+                const width = leaf.x1 - leaf.x0;
+                const height = leaf.y1 - leaf.y0;
+                return (
+                    <button
+                        key={leaf.key}
+                        className={styles.heatTile}
+                        style={heatStyle(leaf.pct ?? 0, {
+                            left: leaf.x0,
+                            top: leaf.y0,
+                            width,
+                            height,
+                        })}
+                        title={leaf.title}
+                        onClick={leaf.onClick}
+                    >
+                        {width >= 46 && height >= 24 && (
+                            <span className={styles.tileName}>{leaf.label}</span>
+                        )}
+                        {leaf.pct !== null && width >= 52 && height >= 38 && (
+                            <span
+                                className={`${styles.tilePct} ${
+                                    panel.dirText[
+                                        leaf.pct > 0
+                                            ? 'up'
+                                            : leaf.pct < 0
+                                              ? 'down'
+                                              : 'flat'
+                                    ]
+                                }`}
+                            >
+                                {fmtPct(leaf.pct)}
+                            </span>
+                        )}
+                        {leaf.sub !== undefined &&
+                            width >= 82 &&
+                            height >= 54 && (
+                                <span className={styles.tileSub}>
+                                    {leaf.sub}
+                                </span>
+                            )}
+                    </button>
+                );
+            })}
+        </>
     );
-    return () => off.forEach((unsubscribe) => unsubscribe());
 }
 
-function getSectorQuoteVersion() {
-    return SECTOR_INDEX_CODES.map(
-        (code) => getQuote(code)?.seq ?? 0,
-    ).join(':');
+function layoutTreemap<T>(
+    items: T[],
+    value: (item: T) => number,
+    width: number,
+    height: number,
+): { item: T; x0: number; y0: number; x1: number; y1: number }[] {
+    if (width <= 0 || height <= 0) return [];
+    type Datum = { item?: T; children?: Datum[] };
+    const root = hierarchy<Datum>({
+        children: items.map((item) => ({ item })),
+    })
+        .sum((datum) => (datum.item ? Math.max(0, value(datum.item)) : 0))
+        .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+    const laidOut = treemap<Datum>()
+        .tile(treemapSquarify.ratio(1.35))
+        .size([width, height])
+        .paddingInner(2)
+        .round(true)(root);
+    return laidOut
+        .leaves()
+        .filter((leaf) => (leaf.value ?? 0) > 0 && leaf.data.item !== undefined)
+        .map((leaf) => ({
+            item: leaf.data.item as T,
+            x0: leaf.x0,
+            y0: leaf.y0,
+            x1: leaf.x1,
+            y1: leaf.y1,
+        }));
 }
-
-const catLabel = sectorLabel;
 
 export function SectorHeatmap({
     onPick,
 }: {
     onPick?: (code: string) => void;
 }) {
-    const [index, setIndex] = useState<StockMeta[] | null>(null);
-    const [cat, setCat] = useState(
-        () => localStorage.getItem(CAT_KEY) ?? '24',
+    const [indexCode, setIndexCode] = useState<PanoramaIndexCode>(() =>
+        localStorage.getItem(INDEX_KEY) === 'IX0043' ? 'IX0043' : 'IX0001',
     );
-    // two levels (issue #2): 'overview' compares 類股 by their TWSE industry
-    // index; 'sector' drills into one sector's member stocks
-    const [view, setView] = useState<'overview' | 'sector'>('overview');
-    const theme = useThemeSettings();
-    const colors = getChartColors(theme);
-    const sectorQuoteVersion = useSyncExternalStore(
-        subscribeSectorQuoteStore,
-        getSectorQuoteVersion,
+    const [sizeMetric, setSizeMetric] = useState<SizeMetric>(() => {
+        const stored = localStorage.getItem(SIZE_KEY);
+        return stored === 'contribution' || stored === 'weight'
+            ? stored
+            : 'amount';
+    });
+    const [drillCat, setDrillCat] = useState<string | null>(null);
+    const [nameByCode, setNameByCode] = useState<ReadonlyMap<string, string>>(
+        () => new Map(),
     );
+    const { ref: rootRef, size: rootSize } = useBoxSize<HTMLDivElement>();
+    const narrow = rootSize.width > 0 && rootSize.width < NARROW_PX;
 
-    useEffect(() => {
-        loadStockIndex().then(setIndex).catch(() => undefined);
-    }, []);
+    const projections = useMemo<IcProjection[]>(() => {
+        const list: IcProjection[] = [GM_CONTRIBUTION, GM_WPERF];
+        if (sizeMetric === 'amount') list.push(GM_AMOUNT);
+        if (sizeMetric === 'weight') list.push(GM_WEIGHT);
+        if (drillCat) {
+            list.push({
+                kind: 'ranking',
+                target: 'component',
+                metric: 'contribution',
+                order: 'abs_desc',
+                limit: 10,
+                group: drillCat,
+            });
+        }
+        return list;
+    }, [drillCat, sizeMetric]);
+    const ic = useIndexComponents(INDICES[indexCode], projections);
+    const contributionState = ic.states[0];
+    const wperfState = ic.states[1];
+    const sizeState =
+        sizeMetric === 'contribution' ? contributionState : ic.states[2];
+    const drillState = drillCat
+        ? ic.states[projections.length - 1]
+        : undefined;
+    const icError =
+        ic.subErrors.find(Boolean) ??
+        (ic.bootstrap.status === 'error' || ic.bootstrap.status === 'quota'
+            ? ic.bootstrap.error
+            : undefined);
 
-    useEffect(() => {
-        if (view !== 'overview') return;
-        void Promise.allSettled(
-            SECTOR_INDEX_CODES.map((code) => ensureContract(code, 'IND')),
+    const groupRows = useMemo<GroupRow[]>(() => {
+        const base = contributionState?.groups ?? [];
+        const pctByCat = new Map(
+            (wperfState?.groups ?? []).map((group) => [
+                group.category,
+                group.value,
+            ]),
         );
-    }, [view]);
+        const sizeByCat = new Map(
+            (sizeState?.groups ?? []).map((group) => [
+                group.category,
+                group.value,
+            ]),
+        );
+        return base.map((group) => ({
+            category: group.category,
+            name: group.name,
+            itemCount: group.item_count,
+            points: group.value,
+            pct: pctByCat.get(group.category) ?? 0,
+            size: Math.abs(sizeByCat.get(group.category) ?? 0),
+        }));
+    }, [contributionState, sizeState, wperfState]);
+    const groupByCat = useMemo(
+        () => new Map(groupRows.map((group) => [group.category, group])),
+        [groupRows],
+    );
+    const isSimtrade =
+        contributionState?.simtrade ||
+        wperfState?.simtrade ||
+        drillState?.simtrade;
 
-    // jump here when a leaderboard row's 跳同類 fires (issue #2)
+    // 版面連動（跳同類）→ 直接下鑽該產業；類別碼可能帶前導零，數值化比對
     const focused = useFocusedSector();
     useEffect(() => {
-        if (focused?.category) {
-            setCat(focused.category);
-            setView('sector');
-            localStorage.setItem(CAT_KEY, focused.category);
+        if (!focused?.category) return;
+        const wanted = Number(focused.category);
+        if (!Number.isFinite(wanted)) return;
+        const match = groupRows.find(
+            (group) => Number(group.category) === wanted,
+        );
+        if (match) {
+            setDrillCat(match.category);
+            localStorage.setItem(CAT_KEY, match.category);
         }
+        // groupRows 故意不進依賴 — 只在連動事件觸發時反應一次
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [focused?.seq]);
 
-    // overview: snapshot every sector index, colored by today's change%
-    const overviewPoll = usePoll<Snapshot[]>(
-        useCallback(() => {
-            if (view !== 'overview') return Promise.resolve([]);
-            return fetchSnapshots(
-                SECTOR_INDICES.map((s) => ({
-                    security_type: 'IND' as const,
-                    exchange: 'TSE' as const,
-                    code: s.index,
-                    target_code: null,
-                })),
-            ).catch(() => []);
-        }, [view]),
-        20000,
-    );
-
-    const sectorTiles = useMemo(() => {
-        const byCode = new Map(
-            (overviewPoll.data ?? []).map((s) => [s.code, s]),
-        );
-        return SECTOR_INDICES.map((sec) => {
-            const s = byCode.get(sec.index);
-            const live = getQuote(sec.index)?.index;
-            const close = live ? Number(live.close) : s?.close;
-            const ref = live
-                ? Number(live.reference)
-                : s
-                  ? s.close - s.change_price
-                  : 0;
-            const pct =
-                close !== undefined && ref > 0
-                    ? ((close - ref) / ref) * 100
-                    : 0;
-            return {
-                ...sec,
-                amount: live?.amount_sum
-                    ? Number(live.amount_sum)
-                    : (s?.total_amount ?? 0),
-                pct,
-            };
-        }).sort((a, b) => b.pct - a.pct); // 最強類股在前
-    }, [overviewPoll.data, sectorQuoteVersion]);
-
-    const categories = useMemo(
-        () => (index ? categoriesOf(index).filter((c) => c.count >= 5) : []),
-        [index],
-    );
-    const members = useMemo(
-        () =>
-            (index ?? [])
-                .filter((s) => s.category === cat && s.code.length === 4)
-                .slice(0, MAX_MEMBERS),
-        [index, cat],
-    );
-
-    const snapsPoll = usePoll<Snapshot[]>(
-        useCallback(() => {
-            if (members.length === 0) return Promise.resolve([]);
-            return fetchSnapshots(
-                members.map((m) => ({
-                    security_type: 'STK' as const,
-                    exchange: (m.exchange || 'TSE') as 'TSE',
-                    code: m.code,
-                    target_code: null,
-                })),
-            ).catch(() => []);
-        }, [members]),
-        20000,
-    );
-
-    const tiles = useMemo(() => {
-        const byCode = new Map(
-            (snapsPoll.data ?? []).map((s) => [s.code, s]),
-        );
-        return members
-            .map((m) => {
-                const s = byCode.get(m.code);
-                const ref = s ? s.close - s.change_price : 0;
-                const pct =
-                    s && s.change_price && ref > 0
-                        ? (s.change_price / ref) * 100
-                        : 0;
-                return {
-                    code: m.code,
-                    name: m.name,
-                    close: s?.close ?? 0,
-                    amount: s?.total_amount ?? 0,
-                    pct,
-                };
+    // 下鑽排行的個股名稱（僅 10 檔，經 contracts 快取懶載）
+    const drillCodes = (drillState?.entries ?? [])
+        .map((entry) => entry.code)
+        .join(',');
+    useEffect(() => {
+        if (!drillCodes) return;
+        let active = true;
+        void loadStockDetails(drillCodes.split(','))
+            .then((details) => {
+                if (!active) return;
+                setNameByCode((current) => {
+                    const next = new Map(current);
+                    details.forEach((detail) =>
+                        next.set(detail.code, detail.name),
+                    );
+                    return next;
+                });
             })
-            .sort((a, b) => b.amount - a.amount);
-    }, [members, snapsPoll.data]);
+            .catch(() => undefined);
+        return () => {
+            active = false;
+        };
+    }, [drillCodes]);
 
-    // color intensity: ±5% saturates
-    const tileColor = (pct: number): string => {
-        const base = pct >= 0 ? colors.up : colors.down;
-        const alpha = Math.min(1, Math.abs(pct) / 5) * 0.75 + 0.08;
-        // base is '#rrggbb' — build rgba
-        const r = parseInt(base.slice(1, 3), 16);
-        const g = parseInt(base.slice(3, 5), 16);
-        const b = parseInt(base.slice(5, 7), 16);
-        return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
-    };
+    // 下鑽 header 的官方類股指數（僅上市有對應官方指數）
+    const officialSector =
+        drillCat && indexCode === 'IX0001'
+            ? SECTOR_INDICES.find(
+                  (sector) => Number(sector.category) === Number(drillCat),
+              )
+            : undefined;
+    useEffect(() => {
+        if (!officialSector) return;
+        void ensureContract(officialSector.index, 'IND')
+            .then((contract) => subscribeQuote(contract, 'Quote'))
+            .catch(() => undefined);
+    }, [officialSector?.index]);
+    const officialQuote = useQuote(officialSector?.index ?? null)?.index;
+    const officialClose = Number(officialQuote?.close);
+    const officialReference = Number(officialQuote?.reference);
+    const officialPct =
+        Number.isFinite(officialClose) &&
+        Number.isFinite(officialReference) &&
+        officialReference > 0
+            ? ((officialClose - officialReference) / officialReference) * 100
+            : null;
 
-    if (!index) {
-        return <div className={dock.emptyState}>載入商品分類…</div>;
-    }
+    const { ref: panoramaRef, size: panoramaSize } =
+        useBoxSize<HTMLDivElement>();
+    const panoramaLeaves = useMemo<HeatLeaf[]>(
+        () =>
+            layoutTreemap(
+                groupRows.filter((group) => group.size > 0),
+                (group) => group.size,
+                panoramaSize.width,
+                panoramaSize.height,
+            ).map(({ item: group, ...rect }) => ({
+                ...rect,
+                key: group.category,
+                label: group.name,
+                pct: group.pct,
+                sub: `${fmtPoints(group.points)} 點`,
+                title: `${group.name}（${group.itemCount} 檔）｜加權漲跌 ${fmtPct(group.pct)}｜貢獻 ${fmtPoints(group.points)} 點${sizeMetric === 'amount' ? `｜成交 ${fmtAmount(group.size)}` : sizeMetric === 'weight' ? `｜權重 ${group.size.toFixed(2)}%` : ''}`,
+                onClick: () => {
+                    setDrillCat(group.category);
+                    localStorage.setItem(CAT_KEY, group.category);
+                },
+            })),
+        [groupRows, panoramaSize, sizeMetric],
+    );
 
-    if (view === 'overview') {
-        return (
-            <div className={styles.wrap}>
-                <div className={styles.toolbar}>
-                    <span className={styles.catSelect} style={{ pointerEvents: 'none' }}>
-                        類股總覽
-                    </span>
-                    <span className={styles.hint}>
-                        各類股指數漲跌 · 點一下進該類股
-                    </span>
-                </div>
-                <div className={styles.gridBox}>
-                    {sectorTiles.map((t) => (
-                        <button
-                            key={t.index}
-                            className={styles.tile}
-                            style={{ background: tileColor(t.pct) }}
-                            title={`${t.label}指數（${t.pct >= 0 ? '+' : ''}${t.pct.toFixed(2)}%）`}
-                            onClick={() => {
-                                setCat(t.category);
-                                localStorage.setItem(CAT_KEY, t.category);
-                                setView('sector');
-                            }}
-                        >
-                            <span className={styles.tileName}>{t.label}</span>
-                            <span className={styles.tilePct}>
-                                {t.pct >= 0 ? '+' : ''}
-                                {t.pct.toFixed(2)}%
-                            </span>
-                        </button>
-                    ))}
-                    {sectorTiles.every((t) => t.pct === 0) && (
-                        <div className={dock.emptyState}>
-                        <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                        類股指數載入中…
-                    </div>
-                    )}
-                </div>
-            </div>
-        );
-    }
+    // ---- 下鑽層資料：10 檔主力＋餘量＋合計（與群組串流自洽） ----
+    const drillGroup = drillCat ? groupByCat.get(drillCat) : undefined;
+    const drillEntries = drillState?.entries ?? [];
+    const top10Sum = drillEntries.reduce((sum, entry) => sum + entry.value, 0);
+    const otherPoints = drillGroup ? drillGroup.points - top10Sum : 0;
+    const otherCount = drillGroup
+        ? Math.max(0, drillGroup.itemCount - drillEntries.length)
+        : 0;
+    const barScale = drillEntries.reduce(
+        (max, entry) => Math.max(max, Math.abs(entry.value)),
+        0,
+    );
+
+    const { ref: wallRef, size: wallSize } = useBoxSize<HTMLDivElement>();
+    const wallLeaves = useMemo<HeatLeaf[]>(() => {
+        type WallItem = {
+            key: string;
+            label: string;
+            pct: number | null;
+            points: number;
+            code?: string;
+            count?: number;
+        };
+        const items: WallItem[] = drillEntries.map((entry) => ({
+            key: entry.code,
+            label: `${entry.code} ${nameByCode.get(entry.code) ?? ''}`.trim(),
+            pct: entry.pct_chg,
+            points: entry.value,
+            code: entry.code,
+        }));
+        if (otherCount > 0 && Math.abs(otherPoints) > 1e-9) {
+            items.push({
+                key: 'other',
+                label: `其他成員（${otherCount} 檔）`,
+                pct: null,
+                points: otherPoints,
+                count: otherCount,
+            });
+        }
+        return layoutTreemap(
+            items,
+            (item) => Math.abs(item.points),
+            wallSize.width,
+            wallSize.height,
+        ).map(({ item, ...rect }) => ({
+            ...rect,
+            key: item.key,
+            label: item.label,
+            pct: item.pct,
+            sub: `${fmtPoints(item.points)} 點`,
+            title:
+                item.code === undefined
+                    ? `${item.label}｜合計貢獻 ${fmtPoints(item.points)} 點`
+                    : `${item.label}｜貢獻 ${fmtPoints(item.points)} 點｜漲跌 ${fmtPct(item.pct ?? 0)}`,
+            onClick: item.code ? () => onPick?.(item.code!) : undefined,
+        }));
+    }, [drillEntries, nameByCode, onPick, otherCount, otherPoints, wallSize]);
+
+    const bootstrapPending =
+        ic.bootstrap.status === 'pending' || ic.bootstrap.status === 'idle';
+
+    // ---- render ----
+
+    const drillView = drillCat !== null;
 
     return (
-        <div className={styles.wrap}>
-            <div className={styles.toolbar}>
-                <button
-                    className={styles.hint}
-                    style={{ cursor: 'pointer', background: 'none', border: 'none' }}
-                    onClick={() => setView('overview')}
-                    title='回類股總覽'
-                >
-                    ← 總覽
-                </button>
-                <select
-                    className={styles.catSelect}
-                    value={cat}
-                    onChange={(e) => {
-                        setCat(e.target.value);
-                        localStorage.setItem(CAT_KEY, e.target.value);
-                    }}
-                >
-                    {categories.map((c) => (
-                        <option key={c.category} value={c.category}>
-                            {catLabel(c.category)}（{c.count}）
-                        </option>
-                    ))}
-                </select>
-                <span className={styles.hint}>依成交額排序 · 色深=漲跌幅</span>
-            </div>
-            <div className={styles.gridBox}>
-                {tiles.map((t) => (
-                    <button
-                        key={t.code}
-                        className={styles.tile}
-                        style={{ background: tileColor(t.pct) }}
-                        title={`${t.name} ${fmtPrice(t.close)}（${t.pct >= 0 ? '+' : ''}${t.pct.toFixed(2)}%）`}
-                        onClick={() => onPick?.(t.code)}
-                    >
-                        <span className={styles.tileCode}>{t.code}</span>
-                        <span className={styles.tileName}>{t.name}</span>
-                        <span className={styles.tilePct}>
-                            {t.pct >= 0 ? '+' : ''}
-                            {t.pct.toFixed(1)}%
+        <div ref={rootRef} className={styles.wrap}>
+            {icError && (
+                <div className={styles.error}>
+                    <AlertTriangle size={12} />
+                    {icError}
+                </div>
+            )}
+            {!drillView ? (
+                <>
+                    <div className={styles.toolbar}>
+                        <span className={styles.segmentGroup}>
+                            {(
+                                Object.keys(INDICES) as PanoramaIndexCode[]
+                            ).map((code) => (
+                                <button
+                                    key={code}
+                                    className={
+                                        styles.segment[
+                                            code === indexCode ? 'on' : 'off'
+                                        ]
+                                    }
+                                    aria-pressed={code === indexCode}
+                                    onClick={() => {
+                                        setIndexCode(code);
+                                        setDrillCat(null);
+                                        localStorage.setItem(INDEX_KEY, code);
+                                    }}
+                                >
+                                    {INDEX_LABELS[code]}
+                                </button>
+                            ))}
                         </span>
-                    </button>
-                ))}
-                {tiles.length === 0 && (
-                    <div className={dock.emptyState}>此類股無資料</div>
-                )}
-            </div>
+                        <span className={styles.segmentGroup}>
+                            {SIZE_METRICS.map((metric) => (
+                                <button
+                                    key={metric.value}
+                                    className={
+                                        styles.segment[
+                                            metric.value === sizeMetric
+                                                ? 'on'
+                                                : 'off'
+                                        ]
+                                    }
+                                    aria-pressed={metric.value === sizeMetric}
+                                    title={`面積＝${metric.label}`}
+                                    onClick={() => {
+                                        setSizeMetric(metric.value);
+                                        localStorage.setItem(
+                                            SIZE_KEY,
+                                            metric.value,
+                                        );
+                                    }}
+                                >
+                                    {metric.label}
+                                </button>
+                            ))}
+                        </span>
+                        <span className={styles.hint}>
+                            面積＝
+                            {
+                                SIZE_METRICS.find(
+                                    (metric) => metric.value === sizeMetric,
+                                )!.label
+                            }
+                            ・色＝加權漲跌幅・點產業下鑽
+                        </span>
+                        <span className={styles.spacer} />
+                        {isSimtrade && (
+                            <span className={styles.simtrade}>試撮</span>
+                        )}
+                    </div>
+                    <div ref={panoramaRef} className={styles.treemapBox}>
+                        <HeatTreemap leaves={panoramaLeaves} />
+                        {panoramaLeaves.length === 0 && (
+                            <div className={styles.empty}>
+                                {bootstrapPending && !icError ? (
+                                    <>
+                                        <Orb size={12} />
+                                        產業資料載入中…
+                                    </>
+                                ) : (
+                                    '等待產業資料'
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </>
+            ) : (
+                <>
+                    <div className={styles.toolbar}>
+                        <button
+                            className={styles.backBtn}
+                            onClick={() => setDrillCat(null)}
+                            title="回產業全景"
+                        >
+                            <ChevronLeft size={13} />
+                            全景
+                        </button>
+                        <span className={styles.crumbName}>
+                            {drillGroup?.name ?? ''}
+                            {drillGroup && (
+                                <span className={styles.hint}>
+                                    {' '}
+                                    {drillGroup.itemCount} 檔
+                                </span>
+                            )}
+                        </span>
+                        {drillGroup && (
+                            <span
+                                className={`${styles.officialQuote} ${
+                                    panel.dirText[
+                                        drillGroup.pct > 0
+                                            ? 'up'
+                                            : drillGroup.pct < 0
+                                              ? 'down'
+                                              : 'flat'
+                                    ]
+                                }`}
+                                title="成分加權漲跌幅（自算）"
+                            >
+                                {fmtPct(drillGroup.pct)}
+                            </span>
+                        )}
+                        {officialSector && officialPct !== null && (
+                            <span
+                                className={styles.officialQuote}
+                                title={`官方${officialSector.label}類指數（${officialSector.index}）`}
+                            >
+                                <span className={styles.officialLabel}>
+                                    官方
+                                </span>
+                                <span
+                                    className={
+                                        panel.dirText[
+                                            officialPct > 0
+                                                ? 'up'
+                                                : officialPct < 0
+                                                  ? 'down'
+                                                  : 'flat'
+                                        ]
+                                    }
+                                >
+                                    {fmtPrice(officialClose)}（
+                                    {fmtPct(officialPct)}）
+                                </span>
+                            </span>
+                        )}
+                        <span className={styles.spacer} />
+                        {isSimtrade && (
+                            <span className={styles.simtrade}>試撮</span>
+                        )}
+                    </div>
+                    <div className={styles.drillBody[narrow ? 'column' : 'row']}>
+                        <div className={styles.rankPane[narrow ? 'column' : 'row']}>
+                            <div className={styles.rankHeader}>
+                                <span />
+                                <span>主力貢獻</span>
+                                <span className={styles.rankHeaderCell}>
+                                    漲跌幅
+                                </span>
+                                <span />
+                                <span className={styles.rankHeaderCell}>
+                                    貢獻（點）
+                                </span>
+                            </div>
+                            {drillEntries.map((entry, idx) => {
+                                const ratio =
+                                    barScale > 0
+                                        ? Math.min(
+                                              1,
+                                              Math.abs(entry.value) / barScale,
+                                          )
+                                        : 0;
+                                const dir =
+                                    entry.value > 0
+                                        ? 'up'
+                                        : entry.value < 0
+                                          ? 'down'
+                                          : 'flat';
+                                return (
+                                    <button
+                                        key={entry.code}
+                                        className={styles.rankRow}
+                                        title={`權重 ${entry.weight_pct.toFixed(2)}%`}
+                                        onClick={() => onPick?.(entry.code)}
+                                    >
+                                        <span className={styles.rankIndex}>
+                                            {idx + 1}
+                                        </span>
+                                        <span className={styles.rankCode}>
+                                            {entry.code}
+                                            <small
+                                                className={styles.rankName}
+                                            >
+                                                {nameByCode.get(entry.code) ??
+                                                    ''}
+                                            </small>
+                                        </span>
+                                        <span
+                                            className={`${styles.rankPct} ${
+                                                panel.dirText[
+                                                    entry.pct_chg > 0
+                                                        ? 'up'
+                                                        : entry.pct_chg < 0
+                                                          ? 'down'
+                                                          : 'flat'
+                                                ]
+                                            }`}
+                                        >
+                                            {fmtPct(entry.pct_chg)}
+                                        </span>
+                                        <span className={styles.barCell}>
+                                            <span
+                                                className={styles.barHalfNeg}
+                                            >
+                                                {entry.value < 0 && (
+                                                    <span
+                                                        className={
+                                                            styles.barFillNeg
+                                                        }
+                                                        style={{
+                                                            width: `${(ratio * 100).toFixed(1)}%`,
+                                                        }}
+                                                    />
+                                                )}
+                                            </span>
+                                            <span
+                                                className={styles.barAxis}
+                                            />
+                                            <span
+                                                className={styles.barHalfPos}
+                                            >
+                                                {entry.value > 0 && (
+                                                    <span
+                                                        className={
+                                                            styles.barFillPos
+                                                        }
+                                                        style={{
+                                                            width: `${(ratio * 100).toFixed(1)}%`,
+                                                        }}
+                                                    />
+                                                )}
+                                            </span>
+                                        </span>
+                                        <span
+                                            className={`${styles.rankPoints} ${panel.dirText[dir]}`}
+                                        >
+                                            {fmtPoints(entry.value)}
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                            {drillEntries.length === 0 && (
+                                <div className={styles.empty}>
+                                    {icError ? (
+                                        '主力貢獻資料無法取得'
+                                    ) : (
+                                        <>
+                                            <Orb size={12} />
+                                            主力貢獻載入中…
+                                        </>
+                                    )}
+                                </div>
+                            )}
+                            {drillEntries.length > 0 && drillGroup && (
+                                <>
+                                    {otherCount > 0 && (
+                                        <div className={styles.summaryRow}>
+                                            <span />
+                                            <span
+                                                className={styles.summaryLabel}
+                                            >
+                                                其他成員（{otherCount} 檔）
+                                            </span>
+                                            <span />
+                                            <span
+                                                className={`${styles.rankPoints} ${
+                                                    panel.dirText[
+                                                        otherPoints > 0
+                                                            ? 'up'
+                                                            : otherPoints < 0
+                                                              ? 'down'
+                                                              : 'flat'
+                                                    ]
+                                                }`}
+                                            >
+                                                {fmtPoints(otherPoints)}
+                                            </span>
+                                        </div>
+                                    )}
+                                    <div className={styles.totalRow}>
+                                        <span />
+                                        <span className={styles.summaryLabel}>
+                                            產業合計
+                                        </span>
+                                        <span
+                                            className={`${styles.rankPct} ${
+                                                panel.dirText[
+                                                    drillGroup.pct > 0
+                                                        ? 'up'
+                                                        : drillGroup.pct < 0
+                                                          ? 'down'
+                                                          : 'flat'
+                                                ]
+                                            }`}
+                                        >
+                                            {fmtPct(drillGroup.pct)}
+                                        </span>
+                                        <span />
+                                        <span
+                                            className={`${styles.rankPoints} ${
+                                                panel.dirText[
+                                                    drillGroup.points > 0
+                                                        ? 'up'
+                                                        : drillGroup.points < 0
+                                                          ? 'down'
+                                                          : 'flat'
+                                                ]
+                                            }`}
+                                        >
+                                            {fmtPoints(drillGroup.points)}
+                                        </span>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                        <div ref={wallRef} className={styles.wallPane}>
+                            <HeatTreemap leaves={wallLeaves} />
+                            {wallLeaves.length === 0 &&
+                                drillEntries.length > 0 && (
+                                    <div className={styles.empty}>
+                                        等待貢獻分布
+                                    </div>
+                                )}
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     );
 }

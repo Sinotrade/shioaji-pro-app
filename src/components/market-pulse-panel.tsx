@@ -3,7 +3,6 @@ import {
     ChevronDown,
     ChevronRight,
     GitBranch,
-    LayoutGrid,
     Link2,
     ListOrdered,
     SlidersHorizontal,
@@ -19,12 +18,12 @@ import {
     useRef,
     useState,
 } from 'react';
-import { hierarchy, treemap, treemapSquarify } from 'd3-hierarchy';
 import {
     sankey,
     sankeyLinkHorizontal,
     type SankeyGraph,
 } from 'd3-sankey';
+import { useIndexComponents } from '../hooks/use-index-components';
 import { useMarketPulseSnapshot } from '../hooks/use-market-pulse';
 import { useQuote } from '../hooks/use-stream';
 import { useThemeSettings } from '../lib/theme-store';
@@ -33,6 +32,8 @@ import {
     buildContributionFlow,
     type ContributionFlowLink,
     type ContributionFlowNode,
+    type FlowGroup,
+    type FlowStock,
 } from '../lib/contribution-flow';
 import {
     exchangeTimeDifferenceSeconds,
@@ -45,11 +46,7 @@ import {
     unsubscribeEnrichedIndex,
     unsubscribeMarketSignal,
 } from '../lib/shioaji';
-import {
-    loadStockDetails,
-    sectorLabel,
-    type StockMeta,
-} from '../lib/stock-index';
+import { loadStockDetails, type StockMeta } from '../lib/stock-index';
 import type { ContractBase } from '../lib/types/contract';
 import type {
     PulseIndexCode,
@@ -57,12 +54,11 @@ import type {
     PulseSectionWeights,
 } from '../lib/workspace';
 import type {
-    ContributionRanking,
-    IndexContributionEntry,
+    IcProjection,
+    IcRankingEntry,
     ScannerExchange,
     ScannerRule,
 } from '../lib/types/market';
-import type { IndustryContributionEntry } from '../lib/types/market';
 import { vars } from '../theme.css';
 import * as panel from './panel.css';
 import * as styles from './market-pulse-panel.css';
@@ -91,12 +87,54 @@ const INDICES: Record<'IX0001' | 'IX0043', ContractBase> = {
 };
 
 const INDEX_LABELS = { IX0001: '加權', IX0043: '櫃買' } as const;
-// The panel only ever subscribes these two rankings — top10/abs10 are
-// strict subsets of their union, so every view derives client-side.
-const CONTRIBUTION_RANKINGS: ContributionRanking[] = [
-    'positive25',
-    'negative25',
+// 每指數固定三條 index_components 投影：P25/N25 成分股貢獻排行（影響最大
+// /多空對照/傳導個股全由其聯集導出）＋群組貢獻（傳導的產業層與餘量）。
+// 建底/日切/重連語意在 index-components store（docs/adr/0001）。
+const PULSE_PROJECTIONS: IcProjection[] = [
+    {
+        kind: 'ranking',
+        target: 'component',
+        metric: 'contribution',
+        order: 'positive_desc',
+        limit: 25,
+    },
+    {
+        kind: 'ranking',
+        target: 'component',
+        metric: 'contribution',
+        order: 'negative_asc',
+        limit: 25,
+    },
+    { kind: 'group_metric', metric: 'contribution' },
 ];
+const NO_PROJECTIONS: IcProjection[] = [];
+
+// 面板內部的成分股列 — 由 IcRankingEntry 映射（value→points），欄位語意
+// 與畫面一致；abnormal＝非正常交易/非即時資料（僅低調提示，不佔版面）
+interface PulseDriver {
+    code: string;
+    category: string;
+    points: number;
+    pct_chg: number;
+    weightPct: number;
+    abnormal: boolean;
+}
+
+function toDriver(entry: IcRankingEntry): PulseDriver {
+    return {
+        code: entry.code,
+        category: entry.category,
+        points: entry.value,
+        pct_chg: entry.pct_chg,
+        weightPct: entry.weight_pct,
+        abnormal:
+            entry.trading_status !== 'active' || entry.data_status !== 'live',
+    };
+}
+
+function driverTitle(entry: PulseDriver) {
+    return `權重 ${entry.weightPct.toFixed(2)}%${entry.abnormal ? ' · 狀態異常' : ''}`;
+}
 const IMPACT_LIMIT = 10;
 // 影響最大 bars live in the numeric columns — max extent in rem
 const IMPACT_BAR_MAX_REM = 4.25;
@@ -105,16 +143,14 @@ const STOCKS_VIEWS: { value: StocksView; label: string }[] = [
     { value: 'sides', label: '多空對照' },
 ];
 const STOCK_DETAIL_BATCH_SIZE = 8;
-const PULSE_SECTIONS: PulseSection[] = ['stocks', 'industries', 'flow'];
+const PULSE_SECTIONS: PulseSection[] = ['stocks', 'flow'];
 const DEFAULT_SECTION_WEIGHTS: PulseSectionWeights = {
-    stocks: 28,
-    industries: 32,
-    flow: 40,
+    stocks: 41,
+    flow: 59,
 };
 const MIN_SECTION_WEIGHT = 12;
 const SECTION_LABELS: Record<PulseSection, string> = {
     stocks: '成分股貢獻',
-    industries: '產業貢獻分布',
     flow: '貢獻傳導',
 };
 
@@ -122,20 +158,27 @@ function initialPulseSections(
     sections: PulseSection[] | undefined,
     legacyVisualization: IndexVisualization,
 ): PulseSection[] {
+    // 舊存檔可能帶 'industries'（區塊已移至產業全景面板）— filter 直接淘汰
     const valid = PULSE_SECTIONS.filter((section) => sections?.includes(section));
     if (valid.length > 0) return valid;
-    return legacyVisualization === 'flow'
-        ? ['flow']
-        : ['stocks', 'industries'];
+    return legacyVisualization === 'flow' ? ['flow'] : ['stocks'];
 }
 
 function initialPulseWeights(
     weights: Partial<PulseSectionWeights> | undefined,
 ): PulseSectionWeights {
+    const stocks = weights?.stocks ?? DEFAULT_SECTION_WEIGHTS.stocks;
+    const flow = weights?.flow ?? DEFAULT_SECTION_WEIGHTS.flow;
+    // 舊存檔的 industries 權重按比例併入剩餘兩區（讀時升級，不改存檔）
+    const legacyIndustries =
+        (weights as Record<string, number | undefined> | undefined)?.[
+            'industries'
+        ] ?? 0;
+    const total = stocks + flow;
+    if (!(legacyIndustries > 0) || total <= 0) return { stocks, flow };
     return {
-        stocks: weights?.stocks ?? DEFAULT_SECTION_WEIGHTS.stocks,
-        industries: weights?.industries ?? DEFAULT_SECTION_WEIGHTS.industries,
-        flow: weights?.flow ?? DEFAULT_SECTION_WEIGHTS.flow,
+        stocks: stocks + (legacyIndustries * stocks) / total,
+        flow: flow + (legacyIndustries * flow) / total,
     };
 }
 const FAMILY_RULES: Record<SignalFamily, ScannerRule[]> = {
@@ -229,7 +272,7 @@ function ContributionSideColumn({
     onPick,
 }: {
     side: 'up' | 'down';
-    entries: IndexContributionEntry[];
+    entries: PulseDriver[];
     scale: number;
     stockByCode: ReadonlyMap<string, StockMeta>;
     namesPending: boolean;
@@ -259,6 +302,7 @@ function ContributionSideColumn({
                             } as CSSProperties
                         }
                         onClick={() => onPick?.(entry.code)}
+                        title={driverTitle(entry)}
                     >
                         <span className={styles.code}>
                             {entry.code}
@@ -297,121 +341,14 @@ function ContributionSideColumn({
     );
 }
 
-interface TreemapDatum {
-    name: string;
-    entry?: IndustryContributionEntry;
-    children?: TreemapDatum[];
-}
-
-function IndustryTreemap({ entries }: { entries: IndustryContributionEntry[] }) {
-    const ref = useRef<HTMLDivElement>(null);
-    const [size, setSize] = useState({ width: 0, height: 0 });
-
-    useEffect(() => {
-        const element = ref.current;
-        if (!element || typeof ResizeObserver === 'undefined') return;
-        const update = () => {
-            const { width, height } = element.getBoundingClientRect();
-            setSize({ width: Math.floor(width), height: Math.floor(height) });
-        };
-        update();
-        const observer = new ResizeObserver(update);
-        observer.observe(element);
-        return () => observer.disconnect();
-    }, []);
-
-    const layout = useMemo(() => {
-        if (size.width <= 0 || size.height <= 0) return [];
-        const visible = entries.filter((entry) => entry.points !== 0);
-        const root = hierarchy<TreemapDatum>({
-            name: 'industries',
-            children: visible.map((entry) => ({
-                name: sectorLabel(entry.category),
-                entry,
-            })),
-        })
-            .sum((datum) => Math.abs(datum.entry?.points ?? 0))
-            .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
-        const laidOut = treemap<TreemapDatum>()
-            .tile(treemapSquarify.ratio(1.35))
-            .size([size.width, size.height])
-            .paddingInner(2)
-            .round(true)(root);
-        const total = laidOut.value ?? 0;
-        const max = laidOut.leaves()[0]?.value ?? 0;
-        return laidOut.leaves().map((leaf) => ({
-            ...leaf,
-            entry: leaf.data.entry as IndustryContributionEntry,
-            share: total > 0 ? ((leaf.value ?? 0) / total) * 100 : 0,
-            intensity:
-                max > 0
-                    ? 18 + Math.sqrt((leaf.value ?? 0) / max) * 34
-                    : 18,
-        }));
-    }, [entries, size]);
-
-    return (
-        <div ref={ref} className={styles.treemap}>
-            {layout.map((leaf) => {
-                const width = leaf.x1 - leaf.x0;
-                const height = leaf.y1 - leaf.y0;
-                const entry = leaf.entry;
-                const style = {
-                    left: leaf.x0,
-                    top: leaf.y0,
-                    width,
-                    height,
-                    '--heat-color':
-                        entry.points > 0
-                            ? vars.color.up
-                            : entry.points < 0
-                              ? vars.color.down
-                              : vars.color.flat,
-                    '--heat-alpha': `${leaf.intensity.toFixed(0)}%`,
-                } as CSSProperties;
-                return (
-                    <div
-                        key={entry.category}
-                        className={styles.treemapTile}
-                        style={style}
-                        title={`${sectorLabel(entry.category)} ${entry.points > 0 ? '+' : ''}${entry.points.toFixed(2)} 點 · ${leaf.share.toFixed(2)}%`}
-                    >
-                        {width >= 48 && height >= 26 && (
-                            <span className={styles.treemapName}>
-                                {sectorLabel(entry.category)}
-                            </span>
-                        )}
-                        {width >= 58 && height >= 38 && (
-                            <strong className={styles.treemapPoints}>
-                                {entry.points > 0 ? '+' : ''}
-                                {entry.points.toFixed(2)}
-                            </strong>
-                        )}
-                        {width >= 92 && height >= 58 && (
-                            <span className={styles.treemapShare}>
-                                {leaf.share.toFixed(1)}%
-                            </span>
-                        )}
-                    </div>
-                );
-            })}
-            {layout.length === 0 && (
-                <div className={styles.empty}>等待產業貢獻資料</div>
-            )}
-        </div>
-    );
-}
-
 function ContributionSankey({
-    entries,
-    details,
-    industries,
+    stocks,
+    groups,
     showPercent,
     onPick,
 }: {
-    entries: IndexContributionEntry[];
-    details: StockMeta[];
-    industries: IndustryContributionEntry[];
+    stocks: FlowStock[];
+    groups: FlowGroup[];
     showPercent: boolean;
     onPick?: (code: string) => void;
 }) {
@@ -433,7 +370,7 @@ function ContributionSankey({
 
     const { fontScale } = useThemeSettings();
     const layout = useMemo(() => {
-        const flow = buildContributionFlow(entries, details, industries);
+        const flow = buildContributionFlow(stocks, groups);
         if (!flow.links.length || size.height <= 0) return null;
         // geometry follows the root font-size setting so SVG text (rem-
         // sized) keeps its reserved label space at any accessibility scale
@@ -468,7 +405,7 @@ function ContributionSankey({
                 links: flow.links.map((link) => ({ ...link })),
             }),
         };
-    }, [details, entries, fontScale, industries, showPercent, size]);
+    }, [fontScale, groups, showPercent, size, stocks]);
 
     const linkPath = useMemo(
         () => sankeyLinkHorizontal<ContributionFlowNode, ContributionFlowLink>(),
@@ -700,7 +637,6 @@ export function MarketPulsePanel({
     const latestSignalRef = useRef<string | null | undefined>(undefined);
     const [error, setError] = useState('');
     const [indexPending, setIndexPending] = useState(false);
-    const [contributionPending, setContributionPending] = useState(false);
     const [stockDetails, setStockDetails] = useState<StockMeta[]>([]);
     const [stockDetailsPending, setStockDetailsPending] = useState(false);
     const [nearMonthCode, setNearMonthCode] = useState('');
@@ -711,6 +647,11 @@ export function MarketPulsePanel({
         pending: false,
     });
     const index = INDICES[indexCode];
+    // index_components：P25/N25/群組貢獻三條投影（signals 檢視時零訂閱）
+    const ic = useIndexComponents(
+        index,
+        view === 'index' ? PULSE_PROJECTIONS : NO_PROJECTIONS,
+    );
     const officialIndex = useQuote(indexCode)?.index;
     const nearMonthQuote = useQuote(
         indexCode === 'IX0001' ? 'TXFR1' : null,
@@ -739,7 +680,6 @@ export function MarketPulsePanel({
         setIndexPending(true);
         void Promise.all([
             subscribeEnrichedIndex('calculated_index', index),
-            subscribeEnrichedIndex('industry_contribution', index),
             subscribeQuote(index, 'Quote'),
         ])
             .then(() => {
@@ -758,7 +698,6 @@ export function MarketPulsePanel({
             active = false;
             void Promise.allSettled([
                 unsubscribeEnrichedIndex('calculated_index', index),
-                unsubscribeEnrichedIndex('industry_contribution', index),
             ]);
         };
     }, [index, view]);
@@ -786,41 +725,6 @@ export function MarketPulsePanel({
             active = false;
         };
     }, [indexCode, view]);
-
-    useEffect(() => {
-        if (view !== 'index') return;
-        let active = true;
-        setContributionPending(true);
-        void Promise.all(
-            CONTRIBUTION_RANKINGS.map((value) =>
-                subscribeEnrichedIndex('index_contribution', index, value),
-            ),
-        )
-            .then(() => {
-                if (active) setContributionPending(false);
-            })
-            .catch((reason: unknown) => {
-                if (!active) return;
-                setContributionPending(false);
-                setError(
-                    reason instanceof Error
-                        ? reason.message
-                        : '成分股貢獻訂閱失敗',
-                );
-            });
-        return () => {
-            active = false;
-            void Promise.allSettled(
-                CONTRIBUTION_RANKINGS.map((value) =>
-                    unsubscribeEnrichedIndex(
-                        'index_contribution',
-                        index,
-                        value,
-                    ),
-                ),
-            );
-        };
-    }, [index, view]);
 
     useEffect(() => {
         if (view !== 'signals') return;
@@ -898,29 +802,27 @@ export function MarketPulsePanel({
         nearMonthPrice,
         calculated?.close,
     );
-    const positiveEvent = pulse.indexContribution.get(
-        `${indexCode}:positive25`,
-    );
-    const negativeEvent = pulse.indexContribution.get(
-        `${indexCode}:negative25`,
-    );
-    const industryContribution = pulse.industryContribution.get(indexCode);
+    const [positiveState, negativeState, groupState] = ic.states;
+    const icError =
+        ic.subErrors.find(Boolean) ??
+        (ic.bootstrap.status === 'error' || ic.bootstrap.status === 'quota'
+            ? ic.bootstrap.error
+            : undefined);
+    // 投影事件與建底皆未抵達且沒失敗 → 視為載入中
+    const contributionPending =
+        !positiveState && !negativeState && !groupState && !icError;
+    // 投影事件已依 published matrix 過濾排序（正/負值、排序、limit）—
+    // 這裡只做形狀映射，不重排
     const positiveDrivers = useMemo(
-        () =>
-            (positiveEvent?.entries ?? [])
-                .filter((entry) => entry.points > 0)
-                .sort((a, b) => b.points - a.points),
-        [positiveEvent],
+        () => (positiveState?.entries ?? []).map(toDriver),
+        [positiveState],
     );
     const negativeDrivers = useMemo(
-        () =>
-            (negativeEvent?.entries ?? [])
-                .filter((entry) => entry.points < 0)
-                .sort((a, b) => a.points - b.points),
-        [negativeEvent],
+        () => (negativeState?.entries ?? []).map(toDriver),
+        [negativeState],
     );
     const flowDrivers = useMemo(() => {
-        const byCode = new Map<string, IndexContributionEntry>();
+        const byCode = new Map<string, PulseDriver>();
         for (const entry of [...positiveDrivers, ...negativeDrivers]) {
             const current = byCode.get(entry.code);
             if (!current || Math.abs(entry.points) > Math.abs(current.points)) {
@@ -984,40 +886,60 @@ export function MarketPulsePanel({
         () => new Map(stockDetails.map((stock) => [stock.code, stock])),
         [stockDetails],
     );
-    const industries = useMemo(
-        () => [...(industryContribution?.entries ?? [])],
-        [industryContribution, pulse.version],
+    // 傳導個股：category 直接來自排行事件（server 真值），名稱懶載
+    const flowStocks = useMemo<FlowStock[]>(
+        () =>
+            flowDrivers.map((entry) => ({
+                code: entry.code,
+                name: stockByCode.get(entry.code)?.name,
+                category: entry.category,
+                points: entry.points,
+                pctChg: entry.pct_chg,
+            })),
+        [flowDrivers, stockByCode],
     );
-    const flowIndustries = useMemo(() => {
-        const sorted = [...industries].sort(
-            (a, b) => Math.abs(b.points) - Math.abs(a.points),
+    // 傳導的產業層：群組貢獻前 12 大＋「其他產業」餘量（up/down 分列）
+    const flowGroups = useMemo<FlowGroup[]>(() => {
+        const rows = (groupState?.groups ?? []).filter(
+            (group) => group.value !== 0,
         );
-        const visible = sorted.slice(0, 12);
+        const sorted = [...rows].sort(
+            (a, b) => Math.abs(b.value) - Math.abs(a.value),
+        );
+        const visible: FlowGroup[] = sorted.slice(0, 12).map((group) => ({
+            category: group.category,
+            name: group.name,
+            points: group.value,
+        }));
         const rest = sorted.slice(12);
         const otherUp = rest.reduce(
-            (sum, entry) => sum + Math.max(0, entry.points),
+            (sum, group) => sum + Math.max(0, group.value),
             0,
         );
         const otherDown = rest.reduce(
-            (sum, entry) => sum + Math.min(0, entry.points),
+            (sum, group) => sum + Math.min(0, group.value),
             0,
         );
         if (otherUp > 0) {
-            visible.push({ category: 'other-up', points: otherUp });
+            visible.push({
+                category: 'other-up',
+                name: '其他產業',
+                points: otherUp,
+            });
         }
         if (otherDown < 0) {
-            visible.push({ category: 'other-down', points: otherDown });
+            visible.push({
+                category: 'other-down',
+                name: '其他產業',
+                points: otherDown,
+            });
         }
         return visible;
-    }, [industries]);
-    const industryTotal = industries.reduce(
-        (total, entry) => total + Math.abs(entry.points),
-        0,
-    );
+    }, [groupState]);
     const contributionIsSimtrade =
-        positiveEvent?.simtrade ||
-        negativeEvent?.simtrade ||
-        industryContribution?.simtrade;
+        positiveState?.simtrade ||
+        negativeState?.simtrade ||
+        groupState?.simtrade;
     const enabledSignalRuleSet = new Set(enabledSignalRules);
     const enabledSignalExchangeSet = new Set(enabledSignalExchanges);
     const visibleSignals = pulse.signals
@@ -1197,10 +1119,10 @@ export function MarketPulsePanel({
 
     return (
         <div className={styles.root}>
-            {error && (
+            {(error || icError) && (
                 <div className={styles.error}>
                     <AlertTriangle size={13} />
-                    {error}
+                    {error || icError}
                 </div>
             )}
             {view === 'index' ? (
@@ -1237,16 +1159,6 @@ export function MarketPulsePanel({
                             title="顯示或隱藏成分股貢獻"
                         >
                             <ListOrdered size={12} /> 成分股貢獻
-                        </button>
-                        <button
-                            className={styles.control[
-                                sections.includes('industries') ? 'on' : 'off'
-                            ]}
-                            onClick={() => toggleSection('industries')}
-                            aria-pressed={sections.includes('industries')}
-                            title="顯示或隱藏產業貢獻分布"
-                        >
-                            <LayoutGrid size={12} /> 產業分布
                         </button>
                         <button
                             className={styles.control[
@@ -1576,6 +1488,9 @@ export function MarketPulsePanel({
                                                         onClick={() =>
                                                             onPick?.(entry.code)
                                                         }
+                                                        title={driverTitle(
+                                                            entry,
+                                                        )}
                                                     >
                                                         <span
                                                             className={styles.rank}
@@ -1634,32 +1549,6 @@ export function MarketPulsePanel({
                                             </div>
                                             )}
                                         </>
-                                    ) : section === 'industries' ? (
-                                        <>
-                                            <div
-                                                className={styles.sectionHeading}
-                                            >
-                                                <span>產業貢獻分布</span>
-                                                <span
-                                                    className={styles.areaLegend}
-                                                >
-                                                    面積＝絕對貢獻
-                                                    {industryTotal > 0 &&
-                                                        ` · ${industryTotal.toFixed(1)} 點`}
-                                                </span>
-                                            </div>
-                                            {industries.length > 0 ? (
-                                                <IndustryTreemap
-                                                    entries={industries}
-                                                />
-                                            ) : (
-                                                <div className={styles.empty}>
-                                                    {indexPending
-                                                        ? '訂閱中...'
-                                                        : '等待產業貢獻資料'}
-                                                </div>
-                                            )}
-                                        </>
                                     ) : (
                                         <>
                                             <div
@@ -1708,20 +1597,12 @@ export function MarketPulsePanel({
                                                     各產業展開前 5 大個股
                                                 </span>
                                             </div>
-                                            {stockDetailsPending &&
-                                            stockDetails.length === 0 ? (
-                                                <div className={styles.empty}>
-                                                    正在解析主要個股產業…
-                                                </div>
-                                            ) : (
-                                                <ContributionSankey
-                                                    entries={flowDrivers}
-                                                    details={stockDetails}
-                                                    industries={flowIndustries}
-                                                    showPercent={showFlowPercent}
-                                                    onPick={onPick}
-                                                />
-                                            )}
+                                            <ContributionSankey
+                                                stocks={flowStocks}
+                                                groups={flowGroups}
+                                                showPercent={showFlowPercent}
+                                                onPick={onPick}
+                                            />
                                         </>
                                     )}
                                 </section>
