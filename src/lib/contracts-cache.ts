@@ -5,7 +5,19 @@
 import { useSyncExternalStore } from 'react';
 import { resolveContract, subscribeContractQuotes } from './shioaji';
 import { registerCodeAlias } from './stream';
+import { prefetchTickBands } from './tick-bands';
 import type { ContractInfo, SecurityType } from './types/contract';
+
+// 期權合約一進 cache 就預取級距表 — 面板首次渲染（要等行情快照）前
+// bands 已就緒，render 期的 lazy prefetch 只是最後防線
+function prefetchBands(c: ContractInfo) {
+    if (
+        (c.security_type === 'FUT' || c.security_type === 'OPT') &&
+        c.tick_rule
+    ) {
+        prefetchTickBands(c.tick_rule, c.security_type);
+    }
+}
 
 const cache = new Map<string, ContractInfo>();
 const pending = new Map<string, Promise<ContractInfo>>();
@@ -26,6 +38,7 @@ export function primeContract(contract: ContractInfo) {
     if (contract.target_code) {
         registerCodeAlias(contract.target_code, contract.code);
     }
+    prefetchBands(contract);
     emit();
 }
 
@@ -113,6 +126,7 @@ export async function ensureContract(
         if (contract.target_code) {
             registerCodeAlias(contract.target_code, contract.code);
         }
+        prefetchBands(contract);
         ensureQuoteSubscription(contract);
         emit();
         return contract;

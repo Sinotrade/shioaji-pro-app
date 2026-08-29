@@ -25,6 +25,7 @@ import type { ContractInfo } from '../lib/types/contract';
 import { ACTIVE_ORDER_STATUSES, type Action, type Trade } from '../lib/types/order';
 import type { Position } from '../lib/types/portfolio';
 import { fmtInt, fmtPrice, fmtSigned } from '../lib/utils/format';
+import { useTickBandsVersion } from '../lib/tick-bands';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import * as styles from './flash-order.css';
 
@@ -252,6 +253,9 @@ export function FlashOrder({
     // limit-up/down. When one side is cut short by a limit, the other side
     // borrows the leftover rows so the window always stays full — the limit
     // price sticks to the top/bottom edge instead of leaving blank space.
+    // bandsVer：tick-bands 到貨時重算 — 盤後沒有行情跳動觸發時，
+    // 載入前用 fallback 格算出的 rows 才會被換成正確級距
+    const bandsVer = useTickBandsVersion();
     const rows = useMemo(() => {
         if (anchor === null) return [] as number[];
         // the anchor itself must stay inside the price limits
@@ -284,7 +288,7 @@ export function FlashOrder({
             center,
             ...downs.slice(0, nDown),
         ];
-    }, [anchor, rowCount, contract, limitUp, limitDown]);
+    }, [anchor, rowCount, contract, limitUp, limitDown, bandsVer]);
 
     const rowsRef = useRef(rows);
     rowsRef.current = rows;
