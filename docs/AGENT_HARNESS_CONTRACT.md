@@ -43,7 +43,12 @@ operation ID and must never be submitted again automatically.
 
 Until the broker exposes an immutable operation ID that survives an interrupted
 response, matching code/side/quantity/price is evidence only. Zero, one, or many
-payload-shaped matches all remain unresolved and require manual verification.
+payload matches cannot authorize a retry. `reconcile_order` therefore separates
+`mutation_idempotency_key` (the original uncertain trade) from
+`idempotency_key` (one reconciliation observation). Replaying one observation
+is stable; a later broker-state observation uses a new attempt key and may move
+the original mutation to a terminal reconciled state. Payload-shaped matches
+remain unresolved and require manual verification.
 
 Controlled auto is available only in simulation and only for the current App
 session. Risk rules still apply and may reject or require confirmation.
