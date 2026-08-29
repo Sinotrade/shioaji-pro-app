@@ -1,5 +1,6 @@
 // src/lib/trade.ts — one-shot order helper + in-app notification channel
 
+import { getAccountState } from './account-store';
 import { trackActivity } from './activity';
 import { checkOrderAllowed } from './risk';
 import {
@@ -174,14 +175,31 @@ export async function placeStockExitByShares(
 // cancel every working order across stock + futures accounts
 export async function cancelAllOrders(): Promise<number> {
     trackActivity('全刪委託');
-    const [st, fu] = await Promise.allSettled([
-        fetchTrades('S'),
-        fetchTrades('F'),
-    ]);
-    const all: Trade[] = [
-        ...(st.status === 'fulfilled' ? st.value : []),
-        ...(fu.status === 'fulfilled' ? fu.value : []),
-    ];
+    // 與 tradesPoll 同款帳戶 fan-out（issue #19）— dock 看得到的委託，
+    // 全刪就必須刪得到；只查選中帳戶會靜默漏掉其他帳戶的掛單，通知
+    // 卻顯示 N/N 像是全刪完
+    const tradable = getAccountState().accounts.filter(
+        (a) => a.signed && (a.account_type === 'S' || a.account_type === 'F'),
+    );
+    const fetches =
+        tradable.length > 0
+            ? tradable.map((a) =>
+                  fetchTrades(a.account_type as 'S' | 'F', a),
+              )
+            : [fetchTrades('S'), fetchTrades('F')];
+    const rs = await Promise.allSettled(fetches);
+    const merged = rs.flatMap((r) =>
+        r.status === 'fulfilled' ? r.value : [],
+    );
+    // server 可能每呼叫回整份快取 — 以委託 id 去重，空 id 不合併
+    const seen = new Set<string>();
+    const all: Trade[] = [];
+    for (const t of merged) {
+        const k = t.order.id;
+        if (k && seen.has(k)) continue;
+        if (k) seen.add(k);
+        all.push(t);
+    }
     const working = all.filter((t) =>
         ACTIVE_ORDER_STATUSES.has(t.status.status),
     );

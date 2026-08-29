@@ -1,0 +1,40 @@
+# 以唯讀 deploy key 拉取私有 repo（shioaji-pro-desktop）指定 SHA，
+# 疊入 modules/ 與 src-tauri/。release build 與 desktop-ci 共用同一份 —
+# 兩邊 overlay 行為若分岔，合成驗證的不變量就失真（PR #40 review S1/R1）。
+name: Overlay desktop modules
+description: Fetch the private desktop repo at an exact SHA and overlay modules/ + src-tauri/
+
+inputs:
+  ssh-key:
+    description: read-only deploy key for the private repo
+    required: true
+  sha:
+    description: full 40-char commit SHA to fetch
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SSH_KEY: ${{ inputs.ssh-key }}
+        DESKTOP_SHA: ${{ inputs.sha }}
+      run: |
+        set -o pipefail
+        if [ "${#DESKTOP_SHA}" -ne 40 ]; then
+          echo "desktop-overlay: invalid sha '${DESKTOP_SHA}'" >&2
+          exit 1
+        fi
+        mkdir -p ~/.ssh
+        echo "$SSH_KEY" > ~/.ssh/agent_key
+        chmod 600 ~/.ssh/agent_key
+        ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+        mkdir desktop_modules && cd desktop_modules
+        git init -q
+        GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" \
+          git fetch -q --depth 1 git@github.com:Yvictor/shioaji-pro-desktop.git "$DESKTOP_SHA"
+        git checkout -q FETCH_HEAD
+        cd ..
+        mv desktop_modules/modules modules
+        mv desktop_modules/src-tauri src-tauri
+        rm -rf desktop_modules ~/.ssh/agent_key

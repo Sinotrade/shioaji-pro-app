@@ -47,6 +47,20 @@ export const sessionChip = style({
     alignSelf: 'center',
 });
 
+// 試搓揭示讀值 — 琥珀色與正式成交明確區隔（開盤即消失）
+export const simChip = style({
+    fontFamily: vars.font.mono,
+    fontSize: '0.62rem',
+    fontWeight: 600,
+    padding: '1px 6px',
+    borderRadius: vars.radius.sm,
+    color: vars.color.amber,
+    border: '1px solid rgba(224, 164, 60, 0.45)',
+    background: 'rgba(224, 164, 60, 0.08)',
+    alignSelf: 'center',
+    whiteSpace: 'nowrap',
+});
+
 // hover 讀值浮在圖表左下角（時間軸上方）— 不佔 legend 空間，
 // 出現/消失也不影響任何版面
 export const hoverFloat = style({

@@ -1,8 +1,10 @@
 // src/hooks/use-hotkeys.ts — global trading hotkeys.
-// B/S: switch order tickets to buy/sell · Esc Esc: cancel all orders ·
-// Cmd/Ctrl+K: symbol palette. Ignored while typing in form fields.
+// B/S: switch order tickets to buy/sell · Esc Esc: cancel all orders
+// (opt-in via 風控 settings, default off) · Cmd/Ctrl+K: symbol palette.
+// Ignored while typing in form fields.
 
 import { useEffect } from 'react';
+import { getRiskSettings } from '../lib/risk';
 import { cancelAllOrders, notify } from '../lib/trade';
 
 export const TICKET_ACTION_EVENT = 'sj-ticket-action';
@@ -27,6 +29,9 @@ export function useHotkeys({
     useEffect(() => {
         let lastEsc = 0;
         const onKey = (e: KeyboardEvent) => {
+            // OS key auto-repeat must never count — holding Esc a beat too
+            // long would otherwise arm AND fire cancel-all in one press
+            if (e.repeat) return;
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
                 e.preventDefault();
                 onOpenPalette();
@@ -34,6 +39,10 @@ export function useHotkeys({
             }
             if (isTyping()) return;
             if (e.key === 'Escape') {
+                // dialogs claim their close-Esc via preventDefault — that
+                // press must not arm the cancel-all window
+                if (e.defaultPrevented) return;
+                if (!getRiskSettings().escCancelAll) return;
                 const now = performance.now();
                 if (now - lastEsc < 600) {
                     lastEsc = 0;

@@ -17,6 +17,8 @@ export const logoBlock = style({
     display: 'flex',
     alignItems: 'baseline',
     gap: vars.space.sm,
+    // 窄視窗時 flex 壓縮會讓副標逐字折行、header 長成兩列
+    whiteSpace: 'nowrap',
 });
 
 export const logoMain = style({
@@ -139,6 +141,7 @@ export const simBadge = style({
     boxSizing: 'border-box',
     display: 'inline-flex',
     alignItems: 'center',
+    whiteSpace: 'nowrap',
 });
 
 export const prodBadge = style({
@@ -155,10 +158,17 @@ export const prodBadge = style({
     boxSizing: 'border-box',
     display: 'inline-flex',
     alignItems: 'center',
+    whiteSpace: 'nowrap',
 });
 
 export const settingsWrap = style({
     position: 'relative',
+    // block 容器包 inline-flex 按鈕會產生 line box — wrapper 高度吃到
+    // 字型 descender，WKWebView 的度量與 Chromium 不同會多出幾 px，
+    // 讓有 popover wrapper 的按鈕整群偏移（水平不齊）。flex 容器沒有
+    // line box，兩個引擎都是精確的內容高度
+    display: 'flex',
+    alignItems: 'center',
 });
 
 export const popover = style({
@@ -454,6 +464,7 @@ export const resetBtn = style({
     alignItems: 'center',
     gap: '4px',
     cursor: 'pointer',
+    whiteSpace: 'nowrap',
     transition: 'all 0.12s',
     ':hover': {
         color: vars.color.foreground,
@@ -467,6 +478,31 @@ export const clock = style({
     fontWeight: 500,
     color: vars.color.foreground,
     fontVariantNumeric: 'tabular-nums',
+    // 與 chip/按鈕同一個 25px 盒模型垂直置中 — 純文字 span 的
+    // baseline 定位在 WKWebView 與 Chromium 不同，會上下漂
+    height: '25px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    whiteSpace: 'nowrap',
+});
+
+// 窄視窗時 header 維持單列：文字已全部 nowrap 不再折行，改依優先序
+// 自動收起純資訊項（互動按鈕與 LIVE 永遠保留、不會被裁切）。被收起
+// 的資訊各有替代入口：加權/基差可加自選或開行情面板、銀行水位在帳務
+// dock、時鐘看系統列；這幾項本來就能在 設定 → 頂欄顯示 手動關閉。
+export const infoAutoHide = styleVariants({
+    // 先收：基差、時鐘
+    first: {
+        '@media': { '(max-width: 1400px)': { display: 'none' } },
+    },
+    // 再收：銀行水位
+    second: {
+        '@media': { '(max-width: 1150px)': { display: 'none' } },
+    },
+    // 最後收：加權
+    last: {
+        '@media': { '(max-width: 1050px)': { display: 'none' } },
+    },
 });
 
 // ---- server manager：狀態卡 chips、switch 列與設定 dialog ----

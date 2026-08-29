@@ -4,7 +4,7 @@
 import { Lock, Unlock } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { maskAccountId } from '../lib/privacy';
-import type { Trade } from '../lib/types/order';
+import type { AccountedTrade, Trade } from '../lib/types/order';
 import type {
     Account,
     AccountedPosition,
@@ -151,8 +151,18 @@ export function tradeAccountRef(
     t: Trade,
     fallback: AccountFallback,
 ): AccountRef | null {
-    const oa = t.order.account;
     const type = tradeMarket(t);
+    // fan-out 標籤優先 — 帳號格式與 /auth/accounts 清單一致，scope
+    // 篩選的 refKey 比對不會因 order.account 的格式差異落空（issue #19）
+    const tagged = (t as AccountedTrade).account;
+    if (tagged?.broker_id && tagged.account_id) {
+        return {
+            type,
+            broker_id: tagged.broker_id,
+            account_id: tagged.account_id,
+        };
+    }
+    const oa = t.order.account;
     if (oa?.broker_id && oa.account_id) {
         return { type, broker_id: oa.broker_id, account_id: oa.account_id };
     }

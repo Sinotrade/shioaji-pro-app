@@ -204,6 +204,7 @@ export function OrdersPane({
     fallback,
     onChanged,
     onSelectCode,
+    onShowAll,
 }: {
     trades: Trade[];
     mode: ViewMode;
@@ -212,6 +213,8 @@ export function OrdersPane({
     fallback: AccountFallback;
     onChanged: () => void;
     onSelectCode: (code: string) => void;
+    // 重設市場/帳戶範圍（由 dock 持有那兩個 state）
+    onShowAll?: () => void;
 }) {
     const { ref: measureRef, width } = useMeasuredWidth();
     const size = sizeClassOf(width);
@@ -605,7 +608,29 @@ export function OrdersPane({
             <div className={styles.paneScroll}>
                 {rows.length === 0 ? (
                     <div className={styles.emptyState}>
-                        NO ORDERS · 無委託
+                        {trades.length === 0 ? (
+                            'NO ORDERS · 無委託'
+                        ) : (
+                            // 有抓到委託但被篩選隱藏 — 不講清楚會被當成
+                            // 「委託消失」回報（issue #19：持久化的狀態/
+                            // 市場偏好讓清單長期空白）
+                            <>
+                                {trades.length} 筆委託被
+                                {scoped.length === 0
+                                    ? '市場/帳戶範圍'
+                                    : '狀態'}
+                                篩選隱藏{' '}
+                                <button
+                                    className={styles.cancelBtn}
+                                    onClick={() => {
+                                        setStatusFilter('all');
+                                        onShowAll?.();
+                                    }}
+                                >
+                                    顯示全部
+                                </button>
+                            </>
+                        )}
                     </div>
                 ) : mode === 'grouped' ? (
                     groups.map((g) => {

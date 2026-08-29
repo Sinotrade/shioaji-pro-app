@@ -3,8 +3,6 @@ import {
     parseCalculatedIndexEvent,
     exchangeTimeDifferenceSeconds,
     futuresIndexBasis,
-    parseIndexContributionEvent,
-    parseIndustryContributionEvent,
     parseScannerMessage,
     scannerSignalKey,
 } from './market-pulse';
@@ -65,24 +63,15 @@ describe('live enriched-index payloads', () => {
         });
     });
 
-    it('parses live stock contribution points and ranking', () => {
-        const event = parseIndexContributionEvent(
-            '{"ranking":"abs10","code":"IX0043","date":"2026/07/31","time":"08:45:46.000000","entries":[{"code":"5274","price":14515,"reference":13205,"price_chg":1310,"pct_chg":9.920484664899659,"points":1.85}],"simtrade":true}',
+    it('normalizes the 1.7.4 string-decimal calculated index wire (live sample)', () => {
+        const event = parseCalculatedIndexEvent(
+            '{"code":"IX0001","date":"2026/08/28","time":"09:46:54.000000","open":"45975.23","high":"46585.87","low":"45975.23","close":"46342.59","total_amount":438959661110,"price_chg":"367.37","pct_chg":"0.8","simtrade":false}',
         );
-        expect(event.ranking).toBe('abs10');
-        expect(event.entries[0]).toMatchObject({ code: '5274', points: 1.85 });
-        expect(event.simtrade).toBe(true);
-    });
-
-    it('parses positive and negative industry heatmap values', () => {
-        const event = parseIndustryContributionEvent(
-            '{"code":"IX0001","date":"2026/07/31","time":"08:45:46.000000","entries":[{"category":"24","points":1340.4},{"category":"37","points":-0.46}],"simtrade":true,"index_close":42158.86,"index_price_chg":2225.56}',
-        );
-        expect(event.entries.map(({ category, points }) => [category, points])).toEqual([
-            ['24', 1340.4],
-            ['37', -0.46],
-        ]);
-        expect(event.simtrade).toBe(true);
+        expect(event.close).toBe(46342.59);
+        expect(event.price_chg).toBe(367.37);
+        expect(event.pct_chg).toBe(0.8);
+        expect(event.total_amount).toBe(438959661110);
+        expect(event.simtrade).toBe(false);
     });
 
     it('uses industry points for flow width and preserves the residual', () => {
@@ -90,28 +79,22 @@ describe('live enriched-index payloads', () => {
             [
                 {
                     code: '2330',
-                    price: 1000,
-                    reference: 990,
-                    price_chg: 10,
-                    pct_chg: 1.01,
+                    name: '台積電',
+                    category: '24',
                     points: 12,
+                    pctChg: 1.01,
                 },
                 {
                     code: '2454',
-                    price: 1500,
-                    reference: 1510,
-                    price_chg: -10,
-                    pct_chg: -0.66,
+                    name: '聯發科',
+                    category: '24',
                     points: -4,
+                    pctChg: -0.66,
                 },
             ],
             [
-                { code: '2330', name: '台積電', category: '24', exchange: 'TSE' },
-                { code: '2454', name: '聯發科', category: '24', exchange: 'TSE' },
-            ],
-            [
-                { category: '24', points: 16 },
-                { category: '24', points: -5 },
+                { category: '24', name: '半導體業', points: 16 },
+                { category: '24', name: '半導體業', points: -5 },
             ],
         );
         expect(flow.links).toEqual(
@@ -162,24 +145,17 @@ describe('live enriched-index payloads', () => {
     });
 
     it('expands only the five highest-contribution stocks under a sector', () => {
-        const entries = ['2330', '2454', '2303', '3711', '3037', '2379'].map(
+        const stocks = ['2330', '2454', '2303', '3711', '3037', '2379'].map(
             (code, index) => ({
                 code,
-                price: 100,
-                reference: 90,
-                price_chg: 10,
-                pct_chg: 10,
+                name: code,
+                category: '24',
                 points: 60 - index * 5,
+                pctChg: 10,
             }),
         );
-        const details = entries.map(({ code }) => ({
-            code,
-            name: code,
-            category: '24',
-            exchange: 'TSE',
-        }));
-        const flow = buildContributionFlow(entries, details, [
-            { category: '24', points: 300 },
+        const flow = buildContributionFlow(stocks, [
+            { category: '24', name: '半導體業', points: 300 },
         ]);
 
         const semiconductorStocks = flow.links.filter(

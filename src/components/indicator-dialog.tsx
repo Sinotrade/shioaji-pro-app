@@ -14,6 +14,8 @@ import {
     X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEscClose } from '../hooks/use-esc-close';
+import { createPortal } from 'react-dom';
 import {
     CUSTOM_PREFIX,
     customType,
@@ -105,13 +107,8 @@ export function IndicatorDialog({
 
     useEffect(() => {
         inputRef.current?.focus();
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose();
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+    useEscClose(onClose);
 
     const toggleFav = (type: string) => {
         setFavs((prev) => {
@@ -233,7 +230,10 @@ export function IndicatorDialog({
         );
     };
 
-    return (
+    // portal 到 body：面板（react-grid-item）有 transform，會把 fixed
+    // overlay 困在面板的 containing block / stacking context 裡 —
+    // 視窗溢出面板又被其他面板蓋住（issue #39）
+    return createPortal(
         <div
             className={styles.overlay}
             onMouseDown={(e) => {
@@ -343,7 +343,8 @@ export function IndicatorDialog({
                     onClose={() => setEditorFor(null)}
                 />
             )}
-        </div>
+        </div>,
+        document.body,
     );
 }
 
@@ -468,14 +469,7 @@ export function IndicatorSettingsModal({
     const [defaultsOpen, setDefaultsOpen] = useState(false);
     const [savedTip, setSavedTip] = useState(false);
 
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onCancel();
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    useEscClose(onCancel);
 
     if (!def) return null;
 
@@ -501,7 +495,8 @@ export function IndicatorSettingsModal({
         });
     };
 
-    return (
+    // 同 IndicatorDialog：portal 到 body 逃出面板的 transform 陷阱
+    return createPortal(
         <div
             className={styles.overlay}
             onMouseDown={(e) => {
@@ -857,6 +852,7 @@ export function IndicatorSettingsModal({
                     </div>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body,
     );
 }

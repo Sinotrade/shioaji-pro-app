@@ -6,6 +6,7 @@ import type {
     ContractBase,
     ContractInfo,
     SecurityType,
+    TickBandsResponse,
 } from './types/contract';
 import type { Health } from './types/health';
 import type {
@@ -35,6 +36,7 @@ import type {
 import {
     registerCapabilitySubscription,
     registerSubscription,
+    registerSubscriptionRaw,
     unregisterCapabilitySubscription,
     unregisterSubscription,
 } from './stream';
@@ -57,6 +59,16 @@ function contractKey(c: ContractBase) {
         code: c.code,
         target_code: c.target_code || null,
     };
+}
+
+// 行情 API 的 contract 參數：組合商品（帶 combo meta 的合成合約）
+// 需送腳陣列，一般合約送 flat key — 訂閱/快照/ticks/kbars 共用
+function marketDataContract(c: ContractBase) {
+    const combo = (c as { combo?: { legs: unknown; combo_type: unknown } })
+        .combo;
+    return combo
+        ? { legs: combo.legs, combo_type: combo.combo_type }
+        : contractKey(c);
 }
 
 function streamContractKey(c: ContractBase) {
@@ -193,6 +205,15 @@ export function fetchContractInfo(code: string, securityType?: SecurityType) {
     );
 }
 
+// FUT/OPT 跳動級距表 — rule 名稱來自 contract info 的 tick_rule
+export function fetchTickBands(rule: string, securityType: 'FUT' | 'OPT') {
+    return apiGet<TickBandsResponse>(
+        `/api/v1/data/contracts/tick-bands/${encodeURIComponent(rule)}${contractQuery(
+            { security_type: securityType, region: 'TW' },
+        )}`,
+    );
+}
+
 export function fetchContract(
     code: string,
     securityType: SecurityType = 'STK',
@@ -325,21 +346,42 @@ export function fetchWarrantUnderlyings() {
 
 export function fetchSnapshots(contracts: ContractBase[]) {
     return apiPost<Snapshot[]>('/api/v1/data/snapshots', {
-        contracts: contracts.map(contractKey),
+        contracts: contracts.map(marketDataContract),
     });
 }
 
-export function fetchKbars(contract: ContractBase, start: string, end: string) {
-    return apiPost<KBars>('/api/v1/data/kbars', {
-        contract: contractKey(contract),
-        start,
-        end,
-    });
+// 開盤壅塞時 kbars 可能懸住（無回應非錯誤）— 每次 10s timeout，
+// timeout/網路/5xx 以 2/4/8s 退避重試，4xx（參數/權限）直接拋出。
+// 比照 capability 訂閱懸住的修法；下單路徑絕不套用這種 abort。
+const KBARS_RETRY_DELAYS = [2000, 4000, 8000];
+
+export async function fetchKbars(
+    contract: ContractBase,
+    start: string,
+    end: string,
+    opts?: { timeoutMs?: number },
+): Promise<KBars> {
+    const body = { contract: marketDataContract(contract), start, end };
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await apiPost<KBars>('/api/v1/data/kbars', body, {
+                timeoutMs: opts?.timeoutMs ?? 10_000,
+            });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            // 4xx（參數/權限）不重試；( |$) 涵蓋無 reason phrase 的裸狀態碼
+            const is4xx = /^4\d\d( |$)/.test(msg);
+            if (is4xx || attempt >= KBARS_RETRY_DELAYS.length) throw e;
+            await new Promise((r) =>
+                setTimeout(r, KBARS_RETRY_DELAYS[attempt]),
+            );
+        }
+    }
 }
 
 export function fetchHistoryTicks(contract: ContractBase, date: string) {
     return apiPost<HistoryTicks>('/api/v1/data/ticks', {
-        contract: contractKey(contract),
+        contract: marketDataContract(contract),
         date,
     });
 }
@@ -350,7 +392,7 @@ export function fetchLastTicks(
     date = todayStr(),
 ) {
     return apiPost<HistoryTicks>('/api/v1/data/ticks', {
-        contract: contractKey(contract),
+        contract: marketDataContract(contract),
         date,
         query_type: 'LastCount',
         last_cnt: count,
@@ -376,6 +418,14 @@ export function subscribeQuote(
     contract: ContractBase,
     quoteType: QuoteTypeName,
 ) {
+    // 組合商品走巢狀腳訂閱（flat code 如 TXFI6/J6 server 不認）
+    const comboMeta = (contract as { combo?: unknown }).combo;
+    if (comboMeta) {
+        return subscribeComboQuote(
+            comboMeta as Parameters<typeof subscribeComboQuote>[0],
+            quoteType,
+        );
+    }
     const body = {
         ...contractKey(contract),
         // empty string must become null — the server 500s on target_code ""
@@ -398,6 +448,13 @@ export function unsubscribeQuote(
     contract: ContractBase,
     quoteType: QuoteTypeName,
 ) {
+    const comboMeta = (contract as { combo?: unknown }).combo;
+    if (comboMeta) {
+        return unsubscribeComboQuote(
+            comboMeta as Parameters<typeof unsubscribeComboQuote>[0],
+            quoteType,
+        );
+    }
     return apiPost<SubscriptionResponse>('/api/v1/stream/unsubscribe', {
         ...contractKey(contract),
         quote_type: quoteType,
@@ -576,6 +633,43 @@ export function unsubscribeEnrichedIndex(
         `${capability}:${contract.code}${suffix}`,
         body,
     );
+}
+
+// index_components projection 訂閱（1.7.4）— 一條 (指數, 投影) 一個
+// capability key，ref-count／重連重播沿用既有 capability 基建。
+// projKey 由 index-components store 產生（同一投影必須產生同一 key）。
+export function subscribeIndexComponents(
+    contract: ContractBase,
+    projection: Record<string, unknown>,
+    projKey: string,
+) {
+    return updateCapabilitySubscription(
+        'subscribe',
+        'index_components',
+        `index_components:${contract.code}:${projKey}`,
+        { index: streamContractKey(contract), projection },
+    );
+}
+
+export function unsubscribeIndexComponents(
+    contract: ContractBase,
+    projection: Record<string, unknown>,
+    projKey: string,
+) {
+    return updateCapabilitySubscription(
+        'unsubscribe',
+        'index_components',
+        `index_components:${contract.code}:${projKey}`,
+        { index: streamContractKey(contract), projection },
+    );
+}
+
+// index_components 權威建底查詢 — 呼叫紀律見 docs/adr/0001：
+// 僅限首次與日切，429（日額度）不得重試，503（暖機）可退避重試
+export function fetchIndexComponents<T>(contract: ContractBase) {
+    return apiPost<T>('/api/v1/data/index_components', {
+        contract: contractKey(contract),
+    });
 }
 
 export function scannerSubscriptionBody(
@@ -949,9 +1043,15 @@ export function fetchEarmarkingDetail(account?: AccountSelector) {
 }
 
 // ---- combo (spread) orders ----
+// 1.7.3 managed 語意（issue #32）：腳不帶 action，ComboOrder.action 是
+// 交易所 BS_Code，腳方向由 server 依組合型別展開。舊 directed 模式
+// （腳各帶 action、order action 被忽略）已不再使用 — 兩套 action 並存
+// 是誤操作根源。
 
 export interface ComboLeg {
-    action: 'Buy' | 'Sell';
+    // managed 下單的腳不帶 action；ComboTrade 回報的腳由 server 展開後
+    // 會帶實際方向
+    action?: 'Buy' | 'Sell';
     security_type: SecurityType;
     exchange: string | null;
     code: string;
@@ -966,6 +1066,111 @@ export type ComboType =
     | 'ConversionReversal'
     | 'WeeklyTimeSpread';
 
+export interface ManagedComboLegReq {
+    security_type: SecurityType;
+    region: string;
+    exchange: string | null;
+    code: string;
+    target_code: string | null;
+}
+
+// server 驗證後的 managed 組合合約 — code（如 TXFH6/I6）同時是 FOP SSE
+// 行情事件的身分，可直接餵 useQuote
+export interface ManagedComboContract {
+    code: string;
+    legs: ManagedComboLegReq[];
+    region: string;
+    exchange: string;
+    combo_type: ComboType;
+    managed: boolean;
+}
+
+export function comboLegReq(c: ContractBase): ManagedComboLegReq {
+    // R1/R2 連續月別名不能當組合腳 — server 會拒絕，先換成真實合約
+    const code =
+        c.target_code && /R[12]$/.test(c.code) ? c.target_code : c.code;
+    return {
+        security_type: c.security_type,
+        region: c.region ?? 'TW',
+        exchange: c.exchange,
+        code,
+        target_code: null,
+    };
+}
+
+/** server 端驗證兩腳並回 canonical 組合（期貨限定；反序回 400）。 */
+export function buildComboContract(legs: ManagedComboLegReq[]) {
+    return apiPost<ManagedComboContract>('/api/v1/data/contracts/combo', {
+        legs,
+    });
+}
+
+/** 枚舉一個期貨家族目前所有可交易的 managed 組合（近月在前）。 */
+export function fetchComboFutures(root: string) {
+    return apiGet<ManagedComboContract[]>(
+        `/api/v1/data/contracts/combo/futures?root=${encodeURIComponent(root)}&region=TW`,
+    );
+}
+
+function comboStreamBody(
+    combo: Pick<ManagedComboContract, 'legs' | 'combo_type'>,
+    quoteType: QuoteTypeName,
+) {
+    return {
+        contract: { legs: combo.legs, combo_type: combo.combo_type },
+        quote_type: quoteType,
+        intraday_odd: false,
+    };
+}
+
+export function subscribeComboQuote(
+    combo: Pick<ManagedComboContract, 'code' | 'legs' | 'combo_type'>,
+    quoteType: QuoteTypeName,
+) {
+    const body = comboStreamBody(combo, quoteType);
+    return apiPost<SubscriptionResponse>('/api/v1/stream/subscribe', body).then(
+        (response) => {
+            if (!response.success) {
+                throw new Error(response.message || '組合行情訂閱失敗');
+            }
+            registerSubscriptionRaw(combo.code, quoteType, body);
+            return response;
+        },
+    );
+}
+
+export function unsubscribeComboQuote(
+    combo: Pick<ManagedComboContract, 'code' | 'legs' | 'combo_type'>,
+    quoteType: QuoteTypeName,
+) {
+    return apiPost<SubscriptionResponse>(
+        '/api/v1/stream/unsubscribe',
+        comboStreamBody(combo, quoteType),
+    ).then((response) => {
+        unregisterSubscription(combo.code, quoteType);
+        return response;
+    });
+}
+
+/** 原生組合商品批次快照（一整個家族一發，rate limit 友善）。 */
+export function fetchComboSnapshots(
+    combos: Pick<ManagedComboContract, 'legs' | 'combo_type'>[],
+) {
+    return apiPost<Snapshot[]>('/api/v1/data/snapshots', {
+        contracts: combos.map((c) => ({
+            legs: c.legs,
+            combo_type: c.combo_type,
+        })),
+    });
+}
+
+/** 原生組合商品快照 — 訂閱後簿未變動前的初始畫面。 */
+export function fetchComboSnapshot(
+    combo: Pick<ManagedComboContract, 'legs' | 'combo_type'>,
+) {
+    return fetchComboSnapshots([combo]).then((arr) => arr[0] ?? null);
+}
+
 export interface ComboOrderReq {
     action: 'Buy' | 'Sell';
     price: number;
@@ -973,9 +1178,6 @@ export interface ComboOrderReq {
     price_type: 'LMT' | 'MKT' | 'MKP';
     order_type: 'ROD' | 'IOC' | 'FOK';
     octype?: 'Auto' | 'New' | 'Cover' | 'DayTrade';
-    // explicit strategy type — the server can't always auto-derive it from
-    // the legs（issue #1: 期貨轉倉 400 combo_type could not be auto-derived）
-    combo_type?: ComboType | null;
 }
 
 export interface ComboTrade {
@@ -990,16 +1192,21 @@ export interface ComboTrade {
     status: { id: string; status: string; msg?: string; [k: string]: unknown };
 }
 
-export function placeComboOrder(legs: ComboLeg[], order: ComboOrderReq) {
+/**
+ * managed 組合下單：actionless 腳＋整體 action。combo_type 僅在必要時
+ * 傳（曖昧 C+P 由使用者選、期貨用 server 驗證回的值）；未傳時 server
+ * 以 Contract V2 Info 推導（含 WeeklyTimeSpread 變體）。
+ */
+export function placeComboOrder(
+    combo: { legs: ManagedComboLegReq[]; combo_type?: ComboType | null },
+    order: ComboOrderReq,
+) {
     const acc = accountFor('F');
-    // R1/R2 alias legs must order the resolved real contract too
-    const resolved = legs.map((l) =>
-        l.target_code && /R[12]$/.test(l.code)
-            ? { ...l, code: l.target_code, target_code: null }
-            : l,
-    );
     return apiPost<ComboTrade>('/api/v1/order/place_comboorder', {
-        combo_contract: { legs: resolved },
+        combo_contract: {
+            legs: combo.legs,
+            ...(combo.combo_type ? { combo_type: combo.combo_type } : {}),
+        },
         order: { ...order, account: acc },
     }).then(ensureAccepted);
 }

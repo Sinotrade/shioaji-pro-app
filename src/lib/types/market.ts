@@ -96,6 +96,60 @@ export interface IndustryContributionEvent {
     index_price_chg: number;
 }
 
+// ---- index components（shioaji 1.7.4，docs/adr/0001 查詢紀律）----
+
+// 只型別化本 app 實際使用且已對 1.7.4 server 驗證過的組合 —
+// published matrix 是固定表，其餘組合 server 端 400
+export type IcGroupMetric =
+    | 'contribution'
+    | 'amount'
+    | 'weighted_performance'
+    | 'weight';
+
+export type IcProjection =
+    | { kind: 'group_metric'; metric: IcGroupMetric }
+    | {
+          kind: 'ranking';
+          target: 'component';
+          metric: 'contribution' | 'amount';
+          order: 'desc' | 'positive_desc' | 'negative_asc' | 'abs_desc';
+          limit: number;
+          group?: string;
+      };
+
+// 排行事件的成分股列（數值已由 wire 的 decimal 字串轉為 number）
+export interface IcRankingEntry {
+    code: string;
+    category: string;
+    value: number;
+    price: number;
+    reference: number;
+    price_chg: number;
+    pct_chg: number;
+    weight_pct: number; // reference_weight_ppm / 10_000
+    price_source: string;
+    trading_status: string;
+    data_status: string;
+}
+
+export interface IcGroupRow {
+    category: string;
+    name: string;
+    item_count: number;
+    value: number;
+}
+
+// 一條 (指數, 投影) 的目前狀態 — 事件整包替換，calculated_at 新者勝
+export interface IcProjectionState {
+    kind: 'ranking' | 'group_metric';
+    date: string;
+    calculatedAt: string;
+    marketPhase: string;
+    simtrade: boolean;
+    entries?: IcRankingEntry[];
+    groups?: IcGroupRow[];
+}
+
 export type ScannerRule =
     | 'bid_near_limit_up'
     | 'bid_touch_limit_up'

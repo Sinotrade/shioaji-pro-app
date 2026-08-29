@@ -94,6 +94,13 @@ export interface Trade {
     status: OrderStatusInfo;
 }
 
+// 委託列附上查詢來源帳戶（tradesPoll 按簽署帳戶 fan-out 後標記）—
+// 與 AccountedPosition 同款；帳戶格式與 /auth/accounts 清單一致，
+// dock 的帳戶範圍篩選比對不會因 order.account 格式差異落空
+export type AccountedTrade = Trade & {
+    account?: import('./portfolio').Account;
+};
+
 // statuses where the order is still working (cancellable / modifiable)
 export const ACTIVE_ORDER_STATUSES: ReadonlySet<string> = new Set([
     'PendingSubmit',

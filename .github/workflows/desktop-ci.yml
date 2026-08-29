@@ -1,0 +1,140 @@
+# 桌面合成驗證 — 兩個觸發源，守同一條不變量「私有 main 永遠可被
+# release 拉去 build」（docs/DEV.md）：
+# 1. 私有 repo（shioaji-pro-desktop）的 PR 透過 repository_dispatch 送來
+#    指定 SHA，驗完以 commit status 回報到私有 PR。
+# 2. 本 repo main 有 push 時，對私有 main HEAD 重驗 — public 側的變更
+#    也可能打破相容性，不能只在私有側變動時才驗。
+# Secrets：AGENT_SSH_KEY（唯讀 deploy key）＋ CI_BRIDGE_TOKEN（回報
+# status 用；權限見私有 repo docs/DEV.md 的 token 矩陣）。
+name: Desktop CI
+
+on:
+  repository_dispatch:
+    types: [desktop-pr]
+  push:
+    branches: [main]
+
+concurrency:
+  group: desktop-ci-${{ github.event.client_payload.pr || 'main' }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # dispatch 模式：payload 必須帶 sha（發送端契約），缺了 fail-fast；
+      # push 模式：對私有 main HEAD 解析
+      - name: Resolve target desktop sha
+        id: target
+        env:
+          AGENT_SSH_KEY: ${{ secrets.AGENT_SSH_KEY }}
+          PAYLOAD_SHA: ${{ github.event.client_payload.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -o pipefail
+          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
+            SHA="$PAYLOAD_SHA"
+            if [ "${#SHA}" -ne 40 ]; then
+              echo "dispatch payload missing/invalid sha: '$SHA'" >&2
+              exit 1
+            fi
+          else
+            mkdir -p ~/.ssh
+            echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
+            chmod 600 ~/.ssh/agent_key
+            ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+            SHA=$(GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" git ls-remote git@github.com:Yvictor/shioaji-pro-desktop.git refs/heads/main | cut -f1)
+            rm -f ~/.ssh/agent_key
+            if [ "${#SHA}" -ne 40 ]; then
+              echo "failed to resolve private main sha" >&2
+              exit 1
+            fi
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Report pending status
+        if: github.event_name == 'repository_dispatch'
+        env:
+          BRIDGE_TOKEN: ${{ secrets.CI_BRIDGE_TOKEN }}
+          SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer $BRIDGE_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/Yvictor/shioaji-pro-desktop/statuses/$SHA" \
+            -d "{\"state\":\"pending\",\"context\":\"desktop-ci\",\"description\":\"composite verify running\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            > /dev/null || echo "::warning::pending status report failed"
+
+      - name: Overlay private modules
+        uses: ./.github/actions/desktop-overlay
+        with:
+          ssh-key: ${{ secrets.AGENT_SSH_KEY }}
+          sha: ${{ steps.target.outputs.sha }}
+
+      # externalBin：tauri_build 的 build script 要求 sidecar 檔案實際存在，
+      # cargo check 也會跑 build script — 與 release 同源下載（linux 一套即可）
+      - name: Resolve sidecar version
+        run: echo "SHIOAJI_VERSION=$(cat SHIOAJI_VERSION | tr -d '[:space:]')" >> "$GITHUB_ENV"
+
+      - name: Download sidecars
+        run: |
+          mkdir -p src-tauri/binaries
+          curl -fsSL -o sidecar.tar.gz \
+            "https://github.com/sinotrade/shioaji/releases/download/${SHIOAJI_VERSION}/shioaji-${SHIOAJI_VERSION}-Linux-x86_64.tar.gz"
+          tar xzf sidecar.tar.gz
+          mv shioaji src-tauri/binaries/shioaji-x86_64-unknown-linux-gnu
+          chmod +x src-tauri/binaries/shioaji-x86_64-unknown-linux-gnu
+          curl -fsSL -o src-tauri/binaries/mkcert-x86_64-unknown-linux-gnu \
+            "https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-linux-amd64"
+          chmod +x src-tauri/binaries/mkcert-x86_64-unknown-linux-gnu
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck + build (with private modules)
+        run: pnpm run build
+
+      - name: Unit tests
+        run: pnpm test
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      # cancelled 不回報（留給接手的 run），其餘 success/failure 誠實打回；
+      # 回報失敗讓 step 紅 — CI_BRIDGE_TOKEN 過期絕不允許靜默（review A4）
+      - name: Report final status
+        if: always() && !cancelled() && github.event_name == 'repository_dispatch' && steps.target.outputs.sha != ''
+        env:
+          BRIDGE_TOKEN: ${{ secrets.CI_BRIDGE_TOKEN }}
+          SHA: ${{ steps.target.outputs.sha }}
+          STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer $BRIDGE_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/Yvictor/shioaji-pro-desktop/statuses/$SHA" \
+            -d "{\"state\":\"$STATE\",\"context\":\"desktop-ci\",\"description\":\"composite verify $STATE\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            > /dev/null

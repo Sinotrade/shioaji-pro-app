@@ -22,4 +22,8 @@ export interface Health {
         audience: string | null;
         max_ttl_seconds: number;
     };
+    // 1.7.3+ — Solace（行情/交易後端）session 斷線自癒狀態；恢復中時
+    // 資料端點會回 SessionNotEstablished 500，但 health 本身仍可回應
+    session_recovering?: boolean;
+    session_recovery_attempts?: number;
 }

@@ -50,6 +50,19 @@ export const name = style({
     whiteSpace: 'nowrap',
 });
 
+// 試搓揭示標記 — 價格是試撮值時掛在價格前，開盤自動消失
+export const simBadge = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.56rem',
+    fontWeight: 600,
+    padding: '0 3px',
+    marginRight: 3,
+    borderRadius: vars.radius.sm,
+    color: vars.color.amber,
+    border: '1px solid rgba(224, 164, 60, 0.45)',
+    whiteSpace: 'nowrap',
+});
+
 export const price = style({
     fontFamily: vars.font.mono,
     fontSize: '0.82rem',

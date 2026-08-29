@@ -28,12 +28,14 @@ import {
 } from './lib/option-pick';
 import { OrderTicket } from './components/order-ticket';
 import { ChipsCard } from './components/chips-card';
+import { ComboListPanel } from './components/combo-list';
 import { ComboTicket } from './components/combo-ticket';
 import { DebugPanel } from './components/debug-panel';
 import { GridTicket } from './components/grid-ticket';
 import { NoticeCenter } from './components/notice-center';
 import { FeatureGate } from './components/feature-gate';
 import { OptPayoff } from './components/opt-payoff';
+import { PanelErrorBoundary } from './components/panel-error-boundary';
 import { SectorHeatmap } from './components/sector-heatmap';
 import { PnlPanel } from './components/pnl-panel';
 import { VolProfile } from './components/vol-profile';
@@ -68,24 +70,27 @@ import {
     fetchAccountBalance,
     fetchMargin,
     fetchPositions,
+    fetchSnapshots,
     fetchTrades,
 } from './lib/shioaji';
 import { onOrderEvent } from './lib/stream';
 import { ensureAccounts, getAccountState } from './lib/account-store';
 import { notify } from './lib/trade';
 import type { ContractInfo } from './lib/types/contract';
-import type { Trade } from './lib/types/order';
+import type { AccountedTrade, Trade } from './lib/types/order';
 import type { AccountedPosition, Position } from './lib/types/portfolio';
 import {
     BLOCK_META,
     DEFAULT_WORKSPACE,
-    GRID_COLS,
+    GRID_LEGACY_COLS,
+    GRID_LEGACY_SCALE,
     LAYOUT_PRESETS,
     loadProfiles,
     loadWorkspace,
     newBlockId,
     saveProfiles,
     saveWorkspace,
+    toRenderGeom,
     type Block,
     type BlockType,
     type PulseSection,
@@ -166,6 +171,13 @@ function BlockBody({
 }) {
     if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
         return <IndexBlockUnavailable type={block.type} />;
+    }
+    if (contract?.combo && comboBlockMessage(block.type)) {
+        return (
+            <div className={styles.blockPlaceholder}>
+                {comboBlockMessage(block.type)}
+            </div>
+        );
     }
     switch (block.type) {
         case 'watchlist':
@@ -254,6 +266,7 @@ function BlockBody({
             return (
                 <StockFuturesPanel
                     onPick={onSelectCode}
+                    contract={contract}
                     onAdd={(selectedContract) =>
                         watchlistProps.onAdd(
                             selectedContract.code,
@@ -278,6 +291,10 @@ function BlockBody({
             );
         case 'combo':
             return <ComboTicket />;
+        case 'combolist':
+            return (
+                <ComboListPanel contract={contract} onPick={onSelectCode} />
+            );
         case 'notices':
             return <NoticeCenter />;
         case 'debug':
@@ -371,6 +388,15 @@ function IndexBlockUnavailable({ type }: { type: BlockType }) {
     );
 }
 
+// 組合商品是行情/圖表身分 — 下單類面板要導向組合單（整體 action ×
+// 組合型別的展開語意，一般單腿下單面板無法表達）
+function comboBlockMessage(type: BlockType): string | null {
+    if (type === 'ticket' || type === 'grid' || type === 'flash') {
+        return '組合商品請使用「組合單」面板下單';
+    }
+    return null;
+}
+
 interface BlockViewProps {
     block: Block;
     selected: ContractInfo | null;
@@ -424,7 +450,9 @@ function BlockView(props: BlockViewProps) {
                         : undefined
                 }
             />
-            <BlockBody {...bodyProps} block={block} contract={contract} />
+            <PanelErrorBoundary label={meta.label}>
+                <BlockBody {...bodyProps} block={block} contract={contract} />
+            </PanelErrorBoundary>
         </section>
     );
 }
@@ -479,11 +507,24 @@ function PopoutView({
         // 下單面板等連動面板跟著動（issue #1: T 字要同時連動下單面板）
         body = <OptionChain onPick={broadcastSelectCode} />;
     else if (type === 'combo') body = <ComboTicket />;
+    else if (type === 'combolist')
+        body = (
+            <ComboListPanel
+                contract={contract}
+                onPick={broadcastSelectCode}
+            />
+        );
     else if (
         contract?.security_type === 'IND' &&
         indexBlockMessage(type)
     ) {
         body = <IndexBlockUnavailable type={type} />;
+    } else if (contract?.combo && comboBlockMessage(type)) {
+        body = (
+            <div className={styles.blockPlaceholder}>
+                {comboBlockMessage(type)}
+            </div>
+        );
     } else if (contract) {
         switch (type) {
             case 'chart':
@@ -552,7 +593,9 @@ function PopoutView({
                 <PanelChrome
                     title={`${meta.label}${contract ? ` · ${contract.code}` : ''}`}
                 />
-                {body}
+                <PanelErrorBoundary label={meta.label}>
+                    {body}
+                </PanelErrorBoundary>
             </section>
         </div>
     );
@@ -654,11 +697,57 @@ export default function App() {
         }, []),
         10000,
     );
-    // NOTE（已知限制）：trades 只查「目前選中」的證/期帳戶（accountBody 的
-    // accountFor fallback），沒有像 positions 一樣按帳戶 fan-out。同類型多
-    // 帳戶時非選中帳戶的委託不會出現在委託 tab。現況一證一期沒有實害。
-    const tradesPoll = usePoll<Trade[]>(
+    // trades 比照 positions 按簽署帳戶 fan-out（issue #19）— 分倉或多帳戶
+    // 下單時，非選中帳戶的委託過去查不到；每列標記查詢來源帳戶，dock 的
+    // 帳戶範圍篩選比對用清單同格式的帳號，不再受 order.account 格式差異
+    // 影響。帳號清單載入前退回舊的 S/F 對。
+    const tradesPoll = usePoll<AccountedTrade[]>(
         useCallback(async () => {
+            const tradable = getAccountState().accounts.filter(
+                (a) =>
+                    a.signed &&
+                    (a.account_type === 'S' || a.account_type === 'F'),
+            );
+            if (tradable.length > 0) {
+                const rs = await Promise.allSettled(
+                    tradable.map(async (a) => {
+                        const ts = await fetchTrades(
+                            a.account_type as 'S' | 'F',
+                            a,
+                        );
+                        return ts.map((t) => ({ ...t, account: a }));
+                    }),
+                );
+                if (rs.every((r) => r.status === 'rejected')) {
+                    // 全滅（rate limit/斷線）拋出 — usePoll 保留上一輪
+                    // 資料，不要把委託清單瞬間刷成「無委託」
+                    throw new Error('委託查詢失敗');
+                }
+                const all = rs.flatMap((r) =>
+                    r.status === 'fulfilled' ? r.value : [],
+                );
+                // server 的 list_trades 可能每次回整份快取 → 以委託 id
+                // 去重；重複時保留 order.account 與查詢帳戶一致的那筆
+                // （標籤才是真正的下單帳戶）。空 id 不合併、帳戶比對含
+                // broker_id（不同券商同帳號不可互撞）
+                const sameAcct = (t: AccountedTrade) =>
+                    t.order.account?.account_id === t.account?.account_id &&
+                    t.order.account?.broker_id === t.account?.broker_id;
+                const seen = new Map<string, AccountedTrade>();
+                const noId: AccountedTrade[] = [];
+                for (const t of all) {
+                    const key = t.order.id;
+                    if (!key) {
+                        noId.push(t);
+                        continue;
+                    }
+                    const prev = seen.get(key);
+                    if (!prev || (sameAcct(t) && !sameAcct(prev))) {
+                        seen.set(key, t);
+                    }
+                }
+                return [...seen.values(), ...noId];
+            }
             const [s, f] = await Promise.allSettled([
                 fetchTrades('S'),
                 fetchTrades('F'),
@@ -755,9 +844,49 @@ export default function App() {
         [],
     );
 
+    // 庫存/排行榜/指令面板等非自選清單來源選中的商品沒有清單快照 —
+    // 收盤後（或訂閱後第一筆 tick 抵達前）報價板會整排「—」。補抓一次
+    // 性快照當 fallback；盤中有 live tick 時 QuoteBoard 本來就以 live
+    // 優先，快照僅墊底
+    const [fallbackSnap, setFallbackSnap] = useState<{
+        code: string;
+        snap: import('./lib/types/market').Snapshot;
+    } | null>(null);
+    useEffect(() => {
+        const c = selected;
+        if (!c) return;
+        // 只認 code 當依賴 — items 每輪快照輪詢都換 identity，跟著抖
+        // 會變成重複抓
+        if (
+            items.some(
+                (i) => i.contract.code === c.code && i.snapshot !== undefined,
+            )
+        ) {
+            return;
+        }
+        let cancelled = false;
+        void fetchSnapshots([c])
+            .then((snaps) => {
+                const s = snaps?.[0];
+                if (!cancelled && s) {
+                    setFallbackSnap({ code: c.code, snap: s });
+                }
+            })
+            .catch(() => {
+                // 快照拿不到就維持「—」— 不重試，選別檔再回來會再抓
+            });
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selected?.code]);
     const selectedSnapshot = useMemo(
-        () => items.find((i) => i.contract.code === selected?.code)?.snapshot,
-        [items, selected],
+        () =>
+            items.find((i) => i.contract.code === selected?.code)?.snapshot ??
+            (fallbackSnap && fallbackSnap.code === selected?.code
+                ? fallbackSnap.snap
+                : undefined),
+        [items, selected, fallbackSnap],
     );
 
     // ambient observation: one effect catches every selection path
@@ -776,11 +905,65 @@ export default function App() {
         saveWorkspace(w);
     }, []);
 
+    // ---- 版面密度（超寬螢幕支援）----
+    // 儲存基準 288 欄；渲染依視窗寬選密度 k（cols=24k，每欄 ~40–55px）：
+    // 欄寬與最小寬不再跟著螢幕等比放大，超寬幕上面板可以縮得更窄、
+    // 拖拉步進更細。k 皆整除 12 → 同密度回存無損；跨密度僅一次舍入。
+    const density = width < 1800 ? 1 : width < 2800 ? 2 : width < 3900 ? 3 : 4;
+    const renderCols = GRID_LEGACY_COLS * density;
+    const colW = width > 0 ? width / renderCols : 53;
+    const renderLayout = useMemo(() => {
+        const typeOf = new Map(workspace.blocks.map((b) => [b.id, b.type]));
+        return workspace.layout.map((l) => {
+            const meta = BLOCK_META[typeOf.get(l.i) as BlockType];
+            // 最小寬錨定像素（24 欄 ×1280px 時代的等效值）— 在超寬幕
+            // 不再是螢幕比例，自選清單等窄面板可以真正縮窄
+            const minPx = (meta?.defaultSize.minW ?? 3) * (1280 / 24);
+            return {
+                ...l,
+                ...toRenderGeom(l, density),
+                minW: Math.min(
+                    Math.max(1, Math.ceil(minPx / colW)),
+                    renderCols,
+                ),
+            };
+        });
+    }, [workspace, density, colW, renderCols]);
     const onLayoutChange = useCallback(
         (next: Layout) => {
-            updateWorkspace({ ...workspace, layout: [...next] });
+            const fromRender = GRID_LEGACY_SCALE / density; // 12/k，整數
+            const prev = new Map(workspace.layout.map((l) => [l.i, l]));
+            // RGL 在 mount 時必發一次 onLayoutChange（含跨密度舍入後的
+            // 座標）— 儲存值渲染後與回報一致的面板保留原值，精細版面
+            // 不會只因「開了 app」就被粗化回存
+            let changed = false;
+            const stored = next.map((l) => {
+                const p = prev.get(l.i);
+                if (p) {
+                    const g = toRenderGeom(p, density);
+                    if (
+                        g.x === l.x &&
+                        g.w === l.w &&
+                        p.y === l.y &&
+                        p.h === l.h
+                    ) {
+                        return p;
+                    }
+                }
+                changed = true;
+                return {
+                    ...(p ?? {}),
+                    i: l.i,
+                    x: Math.round(l.x * fromRender),
+                    y: l.y,
+                    w: Math.max(1, Math.round(l.w * fromRender)),
+                    h: l.h,
+                };
+            });
+            if (!changed && stored.length === workspace.layout.length) return;
+            updateWorkspace({ ...workspace, layout: stored });
         },
-        [workspace, updateWorkspace],
+        [workspace, updateWorkspace, density],
     );
 
     const addBlock = useCallback(
@@ -798,9 +981,10 @@ export default function App() {
                 i: id,
                 x: 0,
                 y: Infinity, // RGL drops it at the bottom
-                w: meta.defaultSize.w,
+                // defaultSize 以 24 欄語意撰寫 → 存檔是 288 基準
+                w: meta.defaultSize.w * GRID_LEGACY_SCALE,
                 h: meta.defaultSize.h,
-                minW: meta.defaultSize.minW,
+                minW: meta.defaultSize.minW * GRID_LEGACY_SCALE,
                 minH: meta.defaultSize.minH,
             };
             updateWorkspace({
@@ -1078,10 +1262,10 @@ export default function App() {
                 )}
                 {!booting && mounted && (
                     <GridLayout
-                        layout={workspace.layout}
+                        layout={renderLayout}
                         width={width}
                         gridConfig={{
-                            cols: GRID_COLS,
+                            cols: renderCols,
                             rowHeight: 30,
                             margin: [6, 6],
                             containerPadding: [6, 6],

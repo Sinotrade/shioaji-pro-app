@@ -1,8 +1,6 @@
 import { ensureStream, onStreamEvent } from './stream';
 import type {
     CalculatedIndexEvent,
-    IndexContributionEvent,
-    IndustryContributionEvent,
     ScannerGapEvent,
     ScannerSignalEvent,
 } from './types/market';
@@ -12,15 +10,11 @@ type Listener = () => void;
 export interface MarketPulseSnapshot {
     version: number;
     calculated: ReadonlyMap<string, CalculatedIndexEvent>;
-    indexContribution: ReadonlyMap<string, IndexContributionEvent>;
-    industryContribution: ReadonlyMap<string, IndustryContributionEvent>;
     signals: readonly ScannerSignalEvent[];
     gap?: ScannerGapEvent;
 }
 
 const calculated = new Map<string, CalculatedIndexEvent>();
-const indexContribution = new Map<string, IndexContributionEvent>();
-const industryContribution = new Map<string, IndustryContributionEvent>();
 const signals: ScannerSignalEvent[] = [];
 const listeners = new Set<Listener>();
 const seenSignals = new Set<string>();
@@ -29,8 +23,6 @@ let gap: ScannerGapEvent | undefined;
 let snapshot: MarketPulseSnapshot = {
     version,
     calculated,
-    indexContribution,
-    industryContribution,
     signals,
 };
 
@@ -39,8 +31,6 @@ function emitPulse() {
     snapshot = {
         version,
         calculated,
-        indexContribution,
-        industryContribution,
         signals,
         gap,
     };
@@ -58,16 +48,23 @@ function setMapEvent<T extends { code: string }>(
     emitPulse();
 }
 
-export function parseCalculatedIndexEvent(raw: string) {
-    return JSON.parse(raw) as CalculatedIndexEvent;
-}
-
-export function parseIndexContributionEvent(raw: string) {
-    return JSON.parse(raw) as IndexContributionEvent;
-}
-
-export function parseIndustryContributionEvent(raw: string) {
-    return JSON.parse(raw) as IndustryContributionEvent;
+// 1.7.4 起 calculated_index 的數值欄位與其他行情串流一致改為 decimal
+// 字串（1.7.2/1.7.3 是裸數字）— 統一 Number() 正規化，兩版 wire 都吃
+export function parseCalculatedIndexEvent(raw: string): CalculatedIndexEvent {
+    const event = JSON.parse(raw) as Record<string, unknown>;
+    return {
+        code: String(event.code ?? ''),
+        date: String(event.date ?? ''),
+        time: String(event.time ?? ''),
+        open: Number(event.open),
+        high: Number(event.high),
+        low: Number(event.low),
+        close: Number(event.close),
+        total_amount: Number(event.total_amount),
+        price_chg: Number(event.price_chg),
+        pct_chg: Number(event.pct_chg),
+        simtrade: Boolean(event.simtrade),
+    };
 }
 
 export function exchangeTimeDifferenceSeconds(
@@ -100,13 +97,6 @@ export function futuresIndexBasis(
     return Number.isFinite(futuresPrice) && Number.isFinite(indexValue)
         ? Number(futuresPrice) - Number(indexValue)
         : null;
-}
-
-function handleIndexContribution(raw: string) {
-    const event = parseIndexContributionEvent(raw);
-    if (!event.code || !event.ranking) return;
-    indexContribution.set(`${event.code}:${event.ranking}`, event);
-    emitPulse();
 }
 
 export function scannerSignalKey(signal: ScannerSignalEvent) {
@@ -190,14 +180,6 @@ function ensureMarketPulseStreams() {
     detachListeners = [
         onStreamEvent('calculated_index', (raw) =>
             setMapEvent(calculated, raw, parseCalculatedIndexEvent),
-        ),
-        onStreamEvent('index_contribution', handleIndexContribution),
-        onStreamEvent('industry_contribution', (raw) =>
-            setMapEvent(
-                industryContribution,
-                raw,
-                parseIndustryContributionEvent,
-            ),
         ),
         onStreamEvent('scanner', handleScanner),
     ];

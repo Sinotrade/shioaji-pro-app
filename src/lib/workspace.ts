@@ -2,9 +2,44 @@
 
 import type { LayoutItem } from 'react-grid-layout';
 
-// single source of truth for the main grid column count — the workspace
-// grid (App.tsx) and layout thumbnails (lib/layout-thumb.ts) must agree
-export const GRID_COLS = 24;
+// 版面座標底座（儲存基準）：288 欄 = 傳統 24 欄 × 12。
+// - 撰寫/舊存檔仍是 24 欄語意，載入時 ×12 無損升階
+// - App 渲染時依視窗寬選密度 k∈{1,2,3,4}（cols = 24k，每欄 ~40–55px，
+//   超寬螢幕的欄寬不再等比放大、拖拉步進更細）
+// - 12 可被 1/2/3/4/6 整除 → 任一密度的回存 ×(12/k) 都是整數（無損）；
+//   只有「跨密度」（換螢幕/跨機）才會有一次 ≤ 半欄的舍入
+// layout-thumb 以 GRID_COLS 做等比縮放，與儲存基準一致即可。
+export const GRID_COLS = 288;
+export const GRID_LEGACY_COLS = 24;
+export const GRID_LEGACY_SCALE = GRID_COLS / GRID_LEGACY_COLS; // 12
+
+function upscaleLayout(layout: LayoutItem[]): LayoutItem[] {
+    return layout.map((l) => ({
+        ...l,
+        x: l.x * GRID_LEGACY_SCALE,
+        w: l.w * GRID_LEGACY_SCALE,
+        ...(l.minW !== undefined ? { minW: l.minW * GRID_LEGACY_SCALE } : {}),
+        ...(l.maxW !== undefined ? { maxW: l.maxW * GRID_LEGACY_SCALE } : {}),
+    }));
+}
+
+export function upscaleLegacyWorkspace(w: Workspace): Workspace {
+    return { ...w, layout: upscaleLayout(w.layout) };
+}
+
+// 288 欄儲存值 → 密度 k 的渲染座標。邊緣錨定舍入：x 與右緣各走同一個
+// 單調映射、w 取差值 — 相鄰面板共用的邊緣舍入後仍共用，絕不重疊。
+// （x/w 獨立舍入時，跨密度開啟可能產生 1 欄重疊 → RGL compaction 會把
+// 面板往下推一列並被 mount 觸發的 onLayoutChange 回存。）
+export function toRenderGeom(
+    l: { x: number; w: number },
+    density: number,
+): { x: number; w: number } {
+    const f = density / GRID_LEGACY_SCALE;
+    const x = Math.round(l.x * f);
+    const right = Math.round((l.x + l.w) * f);
+    return { x, w: Math.max(1, right - x) };
+}
 
 export type BlockType =
     | 'watchlist'
@@ -26,6 +61,7 @@ export type BlockType =
     | 'replay'
     | 'depthmap'
     | 'combo'
+    | 'combolist'
     | 'notices'
     | 'debug'
     | 'grid'
@@ -36,7 +72,9 @@ export type BlockType =
     | 'backtest'
     | 'assistant';
 
-export type PulseSection = 'stocks' | 'industries' | 'flow';
+// 'industries' 區塊已移出市場脈動（產業地圖歸產業全景面板）— 舊存檔的
+// 'industries' 值由面板端讀時過濾、權重按比例併入其餘區塊
+export type PulseSection = 'stocks' | 'flow';
 export type PulseSectionWeights = Record<PulseSection, number>;
 export type PulseIndexCode = 'IX0001' | 'IX0043';
 
@@ -211,7 +249,8 @@ export const BLOCK_META: Record<
         label: '個股期選擇器',
         description: '個股期貨標的瀏覽',
         category: 'derivatives',
-        pinnable: false,
+        // 標準 chrome 連動/釘選：不釘＝跟隨自選選擇切標的，釘＝固定
+        pinnable: true,
         singleton: true,
         defaultSize: { w: 9, h: 12, minW: 7, minH: 8 },
     },
@@ -247,6 +286,15 @@ export const BLOCK_META: Record<
         singleton: true,
         defaultSize: { w: 6, h: 14, minW: 5, minH: 10 },
     },
+    combolist: {
+        label: '組合商品',
+        description: '交易所組合商品列表與報價，點列帶入組合單',
+        category: 'derivatives',
+        // 標準 chrome 連動/釘選：不釘＝跟隨自選選擇切家族，釘＝固定
+        pinnable: true,
+        singleton: true,
+        defaultSize: { w: 6, h: 12, minW: 4, minH: 8 },
+    },
     notices: {
         label: '通知中心',
         description: '警示與系統通知',
@@ -272,8 +320,8 @@ export const BLOCK_META: Record<
         defaultSize: { w: 5, h: 13, minW: 4, minH: 10 },
     },
     heatmap: {
-        label: '類股熱力圖',
-        description: '類股漲跌熱力圖',
+        label: '產業全景',
+        description: '產業資金與強弱地圖，點產業下鑽主力貢獻',
         category: 'market',
         pinnable: false,
         singleton: true,
@@ -321,7 +369,9 @@ export const BLOCK_META: Record<
     },
 };
 
-export const DEFAULT_WORKSPACE: Workspace = {
+// 預設/內建版面一律以「傳統 24 欄」撰寫（好讀好改），匯出前統一
+// 升階到 288 基準 — 見檔頭說明
+const RAW_DEFAULT_WORKSPACE: Workspace = {
     blocks: [
         { id: 'watchlist-0', type: 'watchlist', pin: null },
         { id: 'movers-0', type: 'movers', pin: null },
@@ -342,12 +392,17 @@ export const DEFAULT_WORKSPACE: Workspace = {
     ],
 };
 
-// built-in layout presets for common trading workflows
-export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[] = [
+export const DEFAULT_WORKSPACE: Workspace = upscaleLegacyWorkspace(
+    RAW_DEFAULT_WORKSPACE,
+);
+
+// built-in layout presets for common trading workflows（24 欄撰寫，
+// 檔尾統一升階匯出）
+const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[] = [
     {
         name: '標準看盤',
         desc: '自選+排行 / K線+持倉 / 五檔+下單+明細',
-        workspace: DEFAULT_WORKSPACE,
+        workspace: RAW_DEFAULT_WORKSPACE,
     },
     {
         name: '當沖交易',
@@ -501,7 +556,7 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
     },
     {
         name: '市場脈動',
-        desc: '上市＋上櫃並排，分別觀察成分股、產業分布與貢獻傳導',
+        desc: '上市＋上櫃並排，分別觀察成分股貢獻與貢獻傳導',
         workspace: {
             blocks: [
                 {
@@ -511,9 +566,8 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
                     pulseIndex: 'IX0001',
                     pulseSections: ['flow'],
                     pulseWeights: {
-                        stocks: 28,
-                        industries: 32,
-                        flow: 40,
+                        stocks: 41,
+                        flow: 59,
                     },
                 },
                 {
@@ -523,9 +577,8 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
                     pulseIndex: 'IX0043',
                     pulseSections: ['flow'],
                     pulseWeights: {
-                        stocks: 28,
-                        industries: 32,
-                        flow: 40,
+                        stocks: 41,
+                        flow: 59,
                     },
                 },
             ],
@@ -643,8 +696,18 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
     },
 ];
 
-const WS_KEY = 'sj-pro-workspace-v2';
-const PROFILES_KEY = 'sj-pro-profiles-v1';
+export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[] =
+    RAW_LAYOUT_PRESETS.map((p) => ({
+        ...p,
+        workspace: upscaleLegacyWorkspace(p.workspace),
+    }));
+
+// v3 = 288 欄基準；v2（24 欄）保留原樣供舊版 app 降版使用，讀到時
+// 無損升階。profiles 同理。
+const WS_KEY = 'sj-pro-workspace-v3';
+const WS_KEY_LEGACY = 'sj-pro-workspace-v2';
+const PROFILES_KEY = 'sj-pro-profiles-v2';
+const PROFILES_KEY_LEGACY = 'sj-pro-profiles-v1';
 
 function validWorkspace(w: unknown): w is Workspace {
     if (!w || typeof w !== 'object') return false;
@@ -656,11 +719,22 @@ function validWorkspace(w: unknown): w is Workspace {
 }
 
 export function loadWorkspace(): Workspace {
+    // 兩個 key 各自 try — corrupt v3 不能擋掉 v2 fallback
     try {
         const raw = localStorage.getItem(WS_KEY);
         if (raw) {
             const w = JSON.parse(raw);
             if (validWorkspace(w)) return w;
+        }
+    } catch {
+        // fall through to legacy
+    }
+    try {
+        // 舊 24 欄存檔 → ×12 無損升階（v2 key 原樣保留，降版安全）
+        const legacy = localStorage.getItem(WS_KEY_LEGACY);
+        if (legacy) {
+            const w = JSON.parse(legacy);
+            if (validWorkspace(w)) return upscaleLegacyWorkspace(w);
         }
     } catch {
         // fall through
@@ -673,23 +747,37 @@ export function saveWorkspace(w: Workspace) {
 }
 
 export function loadProfiles(): Profile[] {
+    const parse = (raw: string, legacy: boolean): Profile[] | null => {
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return null;
+        return (arr as Profile[])
+            .filter(
+                (p) =>
+                    typeof p.name === 'string' && validWorkspace(p.workspace),
+            )
+            .map((p) => {
+                const ws = legacy
+                    ? upscaleLegacyWorkspace(p.workspace)
+                    : p.workspace;
+                return typeof p.icon === 'string' && p.icon
+                    ? { ...p, workspace: ws }
+                    : { name: p.name, workspace: ws };
+            });
+    };
     try {
         const raw = localStorage.getItem(PROFILES_KEY);
         if (raw) {
-            const arr = JSON.parse(raw);
-            if (Array.isArray(arr)) {
-                return (arr as Profile[])
-                    .filter(
-                        (p) =>
-                            typeof p.name === 'string' &&
-                            validWorkspace(p.workspace),
-                    )
-                    .map((p) =>
-                        typeof p.icon === 'string' && p.icon
-                            ? p
-                            : { name: p.name, workspace: p.workspace },
-                    );
-            }
+            const out = parse(raw, false);
+            if (out) return out;
+        }
+    } catch {
+        // fall through to legacy
+    }
+    try {
+        const legacy = localStorage.getItem(PROFILES_KEY_LEGACY);
+        if (legacy) {
+            const out = parse(legacy, true);
+            if (out) return out;
         }
     } catch {
         // fall through

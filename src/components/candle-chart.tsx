@@ -73,8 +73,10 @@ import {
     aggregate,
     dateStrOffset,
     kbarsToCandles,
+    nowWallClockUtc,
     wallClockToUtc,
 } from '../lib/utils/kbars';
+import { findKbarGap } from '../lib/intraday-session';
 import * as panel from './panel.css';
 import * as styles from './candle-chart.css';
 import { Orb } from './orb';
@@ -125,6 +127,12 @@ export function CandleChart({
     // 跨午夜夜盤段，live 進來出現大斷層時補抓一次
     const [historySeq, setHistorySeq] = useState(0);
     const gapReloadAtRef = useRef(0);
+    // 覆蓋率自癒（issue #18 二報）：live 斷層觸發的那次補抓常常太早
+    // （上游還沒發布），live bar 一堆積洞就變「內部洞」再也偵測不到 —
+    // 載入後直接驗覆蓋率，有缺口就退避排程重抓直到上游補齊（封頂）
+    const healAttemptsRef = useRef(0);
+    const healTimerRef = useRef(0);
+    const healKeyRef = useRef('');
     // ticks must NOT touch the series until history for the current
     // (symbol, timeframe) is in place — updating a freshly-switched series
     // with a bucket older than its last point makes lightweight-charts
@@ -137,6 +145,15 @@ export function CandleChart({
     const themeKey = `${themeSettings.mode}-${themeSettings.convention}`;
     const [mode, setMode] = useState<TradeMode>('observe');
     const [tradeQty, setTradeQty] = useState(1);
+    // 組合商品（合成合約）只能用組合單下單 — 圖上禁用交易模式
+    const isCombo = Boolean((contract as { combo?: unknown }).combo);
+    // 在點價/停損/停利模式中切到組合商品 → 強制回觀察，殘留的交易
+    // 模式不能對組合圖繼續吃點擊
+    useEffect(() => {
+        if (isCombo && mode !== 'observe' && mode !== 'alert') {
+            setMode('observe');
+        }
+    }, [isCombo, mode]);
     const [instances, setInstances] =
         useState<IndicatorInstance[]>(loadInstances);
     const [pickerOpen, setPickerOpen] = useState(false);
@@ -510,6 +527,9 @@ export function CandleChart({
                 contract,
                 dateStrOffset(from),
                 dateStrOffset(oldestDay + 1),
+                // 長區間翻頁量大 — 放寬 timeout，timeout 誤計 dryPages
+                // 會讓無限捲動提早罷工
+                { timeoutMs: 30_000 },
             )
                 .then((k) => {
                     if (cancelled || loadedKeyRef.current !== loadKey) return;
@@ -546,7 +566,9 @@ export function CandleChart({
                 });
         };
 
-        fetchKbars(contract, dateStrOffset(tf.days), dateStrOffset(0))
+        fetchKbars(contract, dateStrOffset(tf.days), dateStrOffset(0), {
+            timeoutMs: 30_000, // 大週期初載可達數十天，不能用 10s
+        })
             .then((k) => {
                 if (cancelled || !candleSeriesRef.current) return;
                 const raw = kbarsToCandles(k);
@@ -562,6 +584,33 @@ export function CandleChart({
                 lastBarRef.current = bars[bars.length - 1] ?? null;
                 loadedKeyRef.current = loadKey;
                 loadMoreRef.current = loadMore;
+                // 覆蓋率自癒：換商品/週期歸零重驗；缺口存在就 3 分鐘
+                // （第 6 次起 10 分鐘）後重抓，上限 15 次（≈2h，涵蓋
+                // 上游最晚發布時點）；補齊即停
+                const healKey = `${contract.code}|${tf.minutes}`;
+                if (healKeyRef.current !== healKey) {
+                    healKeyRef.current = healKey;
+                    healAttemptsRef.current = 0;
+                }
+                // 1D 不跑覆蓋率自癒 — 240 天的重抓一次 ~2.7MB，稀疏
+                // 商品誤判時代價太高；分鐘級週期才是洞真正可見的地方
+                const gap =
+                    tf.minutes >= 1440
+                        ? null
+                        : findKbarGap(
+                              raw.map((b) => b.time),
+                              contract.security_type,
+                              nowWallClockUtc(),
+                          );
+                if (gap && healAttemptsRef.current < 15) {
+                    const n = healAttemptsRef.current++;
+                    healTimerRef.current = window.setTimeout(
+                        () => setHistorySeq((v) => v + 1),
+                        n < 5 ? 180_000 : 600_000,
+                    );
+                } else if (!gap) {
+                    healAttemptsRef.current = 0;
+                }
                 chartRef.current?.timeScale().scrollToRealTime();
                 // a manual price-axis drag disables autoScale and pins the
                 // range; without re-enabling it the prior symbol's price band
@@ -573,14 +622,23 @@ export function CandleChart({
             })
             .catch(() => {
                 if (cancelled) return;
+                // clearSeries 已讓 live bars 可以從現在開始堆；歷史
+                // 15s 後自動重試（server 掛掉期間圖不再死等人工切換）
                 clearSeries();
                 setEmpty(true);
+                healTimerRef.current = window.setTimeout(
+                    () => setHistorySeq((v) => v + 1),
+                    15_000,
+                );
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
             });
         return () => {
             cancelled = true;
+            // 換商品/週期時未觸發的 heal 重抓一併取消 — 殘留的 timer
+            // 會替新商品多打一次無意義的 historySeq 重載
+            window.clearTimeout(healTimerRef.current);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, tf, historySeq]);
@@ -607,10 +665,13 @@ export function CandleChart({
             `${liveQuote.date}T${liveQuote.time}`,
         );
         const bucketSec = tf.minutes * 60;
+        // close-label-right（與 aggregate/1 分 K 歷史同慣例）：成交 τ 屬
+        // 於哪個「收盤 label」桶 — floor 會把 live 桶標早一格，1 分 K
+        // 時甚至會併進前一分鐘的歷史 bar
         const bucket =
             tf.minutes >= 1440
                 ? Math.floor(tickTime / 86400) * 86400
-                : Math.floor(tickTime / bucketSec) * bucketSec;
+                : Math.floor(tickTime / bucketSec) * bucketSec + bucketSec;
         let bar = lastBarRef.current;
         // live 桶與歷史尾端出現 3 個桶以上的斷層（換時段/上游資料晚發布）
         // → 排程一次歷史補抓把洞補起來；live 桶照常先畫，補抓完成後
@@ -661,6 +722,9 @@ export function CandleChart({
             // a rejected update (e.g. timestamp older than the series tail)
             // must never take the app down — history reload will resync
         }
+        // 歷史載入失敗後 live bar 已開始堆 — 圖上有東西就不該再掛
+        // 「無 K 線資料」（同值 setState React 會 bail out）
+        setEmpty(false);
     }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
@@ -720,6 +784,9 @@ export function CandleChart({
         const bars = barsRef.current;
         if (bars.length === 0) {
             paneAssignRef.current = paneAssign; // no panes exist right now
+            // 讀值也要清 — 序列移除了但 legend 讀 legendMetaRef，不清
+            // 會殘留上一檔商品的指標數值（無 K 線資料卻顯示 MA 值）
+            legendMetaRef.current = new Map();
             setPaneTops({});
             return;
         }
@@ -1431,7 +1498,13 @@ export function CandleChart({
                     <Maximize2 size={12} />
                 </button>
                 <span className={styles.toolbarDivider} />
-                {TRADE_MODES.map((m) => (
+                {TRADE_MODES.filter(
+                    // 組合商品只能用組合單下單 — 圖上僅保留觀察/警示，
+                    // 點價買賣與觸價停損停利（flat code 會被 server 拒）
+                    // 一律不給
+                    (m) =>
+                        !isCombo || m.key === 'observe' || m.key === 'alert',
+                ).map((m) => (
                     <button
                         key={m.key}
                         className={

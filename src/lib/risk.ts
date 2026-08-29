@@ -9,6 +9,7 @@ export interface RiskSettings {
     maxQty: number; // per-order quantity cap (0 = unlimited)
     maxDailyLoss: number; // positive number, TWD (0 = unlimited)
     locked: boolean; // manual kill switch — blocks ALL orders
+    escCancelAll: boolean; // Esc×2 cancels all working orders — opt-in
 }
 
 const STORAGE_KEY = 'sj-pro-risk';
@@ -23,17 +24,34 @@ function load(): RiskSettings {
                 maxQty: Number(s.maxQty) || 0,
                 maxDailyLoss: Number(s.maxDailyLoss) || 0,
                 locked: !!s.locked,
+                escCancelAll: !!s.escCancelAll,
             };
         }
     } catch {
         // defaults
     }
-    return { enabled: false, maxQty: 0, maxDailyLoss: 0, locked: false };
+    return {
+        enabled: false,
+        maxQty: 0,
+        maxDailyLoss: 0,
+        locked: false,
+        escCancelAll: false,
+    };
 }
 
 let settings = load();
 let dailyPnl = 0; // fed by App from position/margin polling
 const listeners = new Set<() => void>();
+
+// cross-window sync — popouts share localStorage but not module state;
+// without this, toggling the kill switch or the Esc-Esc hotkey in one
+// window never reaches already-open popout windows.
+window.addEventListener('storage', (e) => {
+    if (e.key === STORAGE_KEY) {
+        settings = load();
+        emit();
+    }
+});
 
 function emit() {
     listeners.forEach((l) => l());

@@ -57,8 +57,13 @@ export function QuoteBoard({
         index?.volume ??
         snapshot?.total_volume;
     const bidask = quote?.bidask;
-    const bid1 = bidask ? Number(bidask.bid_price[0]) : undefined;
-    const ask1 = bidask ? Number(bidask.ask_price[0]) : undefined;
+    // 收盤後沒有 bidask stream — 快照的最後委買/賣價墊底（0 = 無報價）
+    const bid1 = bidask
+        ? Number(bidask.bid_price[0])
+        : snapshot?.buy_price || undefined;
+    const ask1 = bidask
+        ? Number(bidask.ask_price[0])
+        : snapshot?.sell_price || undefined;
 
     const dir =
         chg === undefined || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';

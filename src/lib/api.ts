@@ -29,6 +29,10 @@ export function shouldProxyAgentHarnessMutation(
 }
 
 async function doFetch(url: string, init?: RequestInit): Promise<Response> {
+    if (isTauri) {
+        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+        return tauriFetch(url, init);
+    }
     return fetch(url, init);
 }
 
@@ -62,7 +66,11 @@ export async function apiGet<T>(path: string): Promise<T> {
     return res.json() as Promise<T>;
 }
 
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+export async function apiPost<T>(
+    path: string,
+    body: unknown,
+    opts?: { timeoutMs?: number },
+): Promise<T> {
     // Serialize once in the WebView, then let the native bridge sign and send
     // these exact bytes. It also transparently sends unsigned when attached to
     // an older server whose harness is disabled.
@@ -84,6 +92,11 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        // opt-in only — order paths must never abort an in-flight request
+        // (an aborted POST tells us nothing about whether it was executed)
+        signal: opts?.timeoutMs
+            ? AbortSignal.timeout(opts.timeoutMs)
+            : undefined,
     });
     if (!res.ok) await throwApiError(res);
     return res.json() as Promise<T>;
