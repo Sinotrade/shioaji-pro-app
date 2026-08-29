@@ -16,13 +16,33 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      desktop_sha: ${{ steps.desktop.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+      # 解析私有 repo main 的 SHA 一次 — 之後四個 build 全部釘同一顆，
+      # build 期間私有 main 變動不會造成混版；desktop-rev.txt 供發佈
+      # 追溯（下次發佈用它盤點私有側變更，見 docs/RELEASE.md）
+      - name: Resolve desktop revision
+        id: desktop
+        env:
+          AGENT_SSH_KEY: ${{ secrets.AGENT_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
+          chmod 600 ~/.ssh/agent_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          SHA=$(GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" git ls-remote git@github.com:Yvictor/shioaji-pro-desktop.git refs/heads/main | cut -f1)
+          rm -f ~/.ssh/agent_key
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "shioaji-pro-desktop@${SHA:0:7}" > desktop-rev.txt
+          cat desktop-rev.txt
       - name: Create draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create '${{ github.ref_name }}'             --repo '${{ github.repository }}'             --draft --title 'Shioaji Pro ${{ github.ref_name }}'             --notes-file RELEASE_NOTES.md           || echo "release already exists (re-run)"
+          gh release upload '${{ github.ref_name }}'             --repo '${{ github.repository }}' desktop-rev.txt --clobber
 
   build:
     needs: create-release
@@ -68,11 +88,43 @@ jobs:
           echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
           chmod 600 ~/.ssh/agent_key
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          mkdir desktop_modules && cd desktop_modules
+          git init -q
           GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" \
-            git clone --depth 1 git@github.com:Yvictor/shioaji-pro-desktop.git desktop_modules
+            git fetch -q --depth 1 git@github.com:Yvictor/shioaji-pro-desktop.git '${{ needs.create-release.outputs.desktop_sha }}'
+          git checkout -q FETCH_HEAD
+          cd ..
           mv desktop_modules/modules modules
           mv desktop_modules/src-tauri src-tauri
           rm -rf desktop_modules ~/.ssh/agent_key
+
+      # Tag 即版本（docs/RELEASE.md）：從 tag 名解析版本注入 tauri.conf.json，
+      # repo 裡不存在任何版本檔；workflow_dispatch（非 tag）沿用檔內值
+      - name: Inject app version from tag (unix)
+        if: startsWith(github.ref, 'refs/tags/') && matrix.platform != 'windows-latest'
+        env:
+          APP_VERSION_REF: ${{ github.ref_name }}
+        run: |
+          export APP_VERSION="${APP_VERSION_REF#v}"
+          python3 -c "
+          import json, os
+          p = 'src-tauri/tauri.conf.json'
+          conf = json.load(open(p))
+          conf['version'] = os.environ['APP_VERSION']
+          json.dump(conf, open(p, 'w'), indent=2, ensure_ascii=False)
+          print('version ->', conf['version'])
+          "
+
+      - name: Inject app version from tag (windows)
+        if: startsWith(github.ref, 'refs/tags/') && matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $p = 'src-tauri/tauri.conf.json'
+          $conf = Get-Content $p -Raw | ConvertFrom-Json
+          $conf.version = $version
+          $conf | ConvertTo-Json -Depth 64 | Set-Content $p
+          Write-Host "version -> $version"
 
       - uses: pnpm/action-setup@v4
         with:

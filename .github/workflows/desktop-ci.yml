@@ -1,0 +1,95 @@
+# 桌面合成驗證 — 由私有 repo（shioaji-pro-desktop）的 PR 透過
+# repository_dispatch 觸發：public main ＋ 私有 PR 的 modules/src-tauri
+# 疊起來跑完整檢查，驗證「私有 main 永遠可被 release 拉去 build」的
+# 不變量（docs/DEV.md）。結果以 commit status 回報到私有 PR
+# （CI_BRIDGE_TOKEN：私有 repo 的 commit statuses:write）。
+name: Desktop CI
+
+on:
+  repository_dispatch:
+    types: [desktop-pr]
+
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report pending status
+        if: github.event.client_payload.sha != ''
+        env:
+          BRIDGE_TOKEN: ${{ secrets.CI_BRIDGE_TOKEN }}
+          SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer $BRIDGE_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/Yvictor/shioaji-pro-desktop/statuses/$SHA" \
+            -d "{\"state\":\"pending\",\"context\":\"desktop-ci\",\"description\":\"composite verify running\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            > /dev/null || echo "status report failed (token missing?)"
+
+      - name: Overlay private modules at PR ref
+        env:
+          AGENT_SSH_KEY: ${{ secrets.AGENT_SSH_KEY }}
+          DESKTOP_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
+          chmod 600 ~/.ssh/agent_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          mkdir desktop_modules && cd desktop_modules
+          git init -q
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" \
+            git fetch -q --depth 1 git@github.com:Yvictor/shioaji-pro-desktop.git "$DESKTOP_SHA"
+          git checkout -q FETCH_HEAD
+          cd ..
+          mv desktop_modules/modules modules
+          mv desktop_modules/src-tauri src-tauri
+          rm -rf desktop_modules ~/.ssh/agent_key
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck + build (with private modules)
+        run: pnpm run build
+
+      - name: Unit tests
+        run: pnpm test
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Report final status
+        if: always() && github.event.client_payload.sha != ''
+        env:
+          BRIDGE_TOKEN: ${{ secrets.CI_BRIDGE_TOKEN }}
+          SHA: ${{ github.event.client_payload.sha }}
+          STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer $BRIDGE_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/Yvictor/shioaji-pro-desktop/statuses/$SHA" \
+            -d "{\"state\":\"$STATE\",\"context\":\"desktop-ci\",\"description\":\"composite verify $STATE\",\"target_url\":\"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            > /dev/null || echo "status report failed (token missing?)"

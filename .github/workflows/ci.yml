@@ -1,0 +1,30 @@
+# PR 品質門檻 — main 的 required status check（docs/DEV.md）。
+# 純前端檢查，不碰私有 repo；桌面合成驗證見 desktop-ci.yml。
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck + build
+        run: pnpm run build
+
+      - name: Unit tests
+        run: pnpm test
