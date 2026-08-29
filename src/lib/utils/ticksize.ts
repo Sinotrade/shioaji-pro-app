@@ -1,22 +1,19 @@
-// src/lib/utils/ticksize.ts — TW market tick size tables
+// src/lib/utils/ticksize.ts — TW market tick sizes
+//
+// 期權（FUT/OPT）級距不寫死：以 server tick-bands API 為權威（skill 紀律
+// 「Do not hard-code futures tick sizes」）— tick_rule 命名的級距表由
+// lib/tick-bands 快取，尚未載入時 fallback 到 contract.tick。現貨（STK/
+// ETF）交易所級距表 server 不提供，維持本地表。
 
+import { bandTickFor, prefetchTickBands } from '../tick-bands';
 import type { ContractBase, ContractInfo } from '../types/contract';
 
-// 有 info metadata（TAIFEX 1.7 的 tick_rule/spec_kind 等）時能選對級距表；
-// 仍接受只有 ContractBase 的呼叫端（metadata 缺席 → 走舊 fallback）
+// 有 info metadata（tick_rule/tick）時走 server 級距；仍接受只有
+// ContractBase 的呼叫端（metadata 缺席 → 走舊 fallback）
 type TickContract = ContractBase &
-    Partial<
-        Pick<
-            ContractInfo,
-            | 'tick_rule'
-            | 'tick'
-            | 'underlying_kind'
-            | 'spec_kind'
-            | 'underlying_code'
-        >
-    >;
+    Partial<Pick<ContractInfo, 'tick_rule' | 'tick' | 'underlying_kind'>>;
 
-// TWSE/TPEX equities；個股期同級距（TAIFEX tw_stock_fut_price_band）
+// TWSE/TPEX equities
 function stockTick(price: number): number {
     if (price < 10) return 0.01;
     if (price < 50) return 0.05;
@@ -32,28 +29,23 @@ function etfTick(price: number): number {
 }
 
 export function tickSizeFor(contract: TickContract, price: number): number {
-    if (contract.security_type === 'FUT') {
-        // 個股期跳動跟現股同級距，以 server 的 tick_rule 為準；沒有
-        // metadata 的舊資料用 underlying_kind 'S' 判別，但要排除 ETF 期
-        // （級距不同，交給下面的 server tick fallback）
-        const isEtfFut =
-            contract.spec_kind === 'etf_fut' ||
-            (contract.underlying_code ?? '').startsWith('00');
-        if (
-            contract.tick_rule === 'tw_stock_fut_price_band' ||
-            (!contract.tick_rule &&
-                !isEtfFut &&
-                (contract.spec_kind === 'stock_fut' ||
-                    contract.underlying_kind === 'S'))
-        ) {
-            return stockTick(price);
+    const st = contract.security_type;
+    if (st === 'FUT' || st === 'OPT') {
+        // banded 商品（個股期 tw_stock_fut_price_band、TXO premium band
+        // 等）：查 server 級距表；未載入先預取（冪等），本輪先走 fallback
+        if (contract.tick_rule) {
+            prefetchTickBands(contract.tick_rule, st);
+            const bt = bandTickFor(contract.tick_rule, price);
+            if (bt !== undefined) return bt;
         }
-        // 非 1 點跳動的其他期貨（ETF 期等）以 server 提供的 tick 為準
+        // fixed basis（指數期等）或 bands 尚未載入：server 給的 tick
+        //（banded 商品的 tick 為參考價所在 band，帶內正確）
         const t = Number(contract.tick);
         if (Number.isFinite(t) && t > 0) return t;
-        return 1; // TXF/MXF/TMF index futures
+        // 無 metadata 的舊資料最後防線
+        if (st === 'OPT') return price >= 10 ? 1 : 0.1;
+        return contract.underlying_kind === 'S' ? stockTick(price) : 1;
     }
-    if (contract.security_type === 'OPT') return price >= 10 ? 1 : 0.1;
     if (contract.code.startsWith('00')) return etfTick(price);
     return stockTick(price);
 }

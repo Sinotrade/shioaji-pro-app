@@ -71,3 +71,19 @@ export interface ContractInfo extends Contract {
     // 走組合行情路徑，且不可用一般下單面板下單
     combo?: ContractComboMeta;
 }
+
+// FUT/OPT 跳動級距（server tick-bands API）；max=null 為最上層 band
+export interface TickBand {
+    min: number;
+    max: number | null;
+    tick: number;
+}
+
+export interface TickBandsResponse {
+    region: string;
+    security_type: SecurityType;
+    rule: string;
+    // 'price'（期貨依價格）或 'premium'（選擇權依權利金）— 查表語意相同
+    basis: string;
+    bands: TickBand[];
+}
