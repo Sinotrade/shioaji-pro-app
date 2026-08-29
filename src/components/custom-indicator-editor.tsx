@@ -3,7 +3,7 @@
 // 驗證（2 秒逾時擋無窮迴圈）並自動偵測 plot()/hline() 的輸出。
 
 import { HelpCircle, Plus, Trash2, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useEscClose } from '../hooks/use-esc-close';
 import {
     CUSTOM_PALETTE,
