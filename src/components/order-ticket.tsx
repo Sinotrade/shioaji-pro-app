@@ -34,6 +34,7 @@ import {
     stockTaxRate,
 } from '../lib/utils/contract-cost';
 import { fmtPrice } from '../lib/utils/format';
+import { stepPrice } from '../lib/utils/ticksize';
 import * as panel from './panel.css';
 import * as styles from './order-ticket.css';
 
@@ -545,7 +546,14 @@ export function OrderTicket({
                             priceTouched.current = true;
                             setPrice((p) =>
                                 String(
-                                    Math.max(0, Number(p || 0) - 1),
+                                    Math.max(
+                                        0,
+                                        stepPrice(
+                                            contract,
+                                            Number(p || 0),
+                                            -1,
+                                        ),
+                                    ),
                                 ),
                             );
                             // stepper is a manual price edit — de-arm like
@@ -572,7 +580,11 @@ export function OrderTicket({
                         className={styles.stepBtn}
                         onClick={() => {
                             priceTouched.current = true;
-                            setPrice((p) => String(Number(p || 0) + 1));
+                            setPrice((p) =>
+                                String(
+                                    stepPrice(contract, Number(p || 0), 1),
+                                ),
+                            );
                             setArmed(false);
                             setSplitArmed(false);
                         }}

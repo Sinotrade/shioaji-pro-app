@@ -45,6 +45,26 @@ describe('tickSizeFor — futures', () => {
         expect(tickSizeFor(legacy, 130)).toBe(0.5);
     });
 
+    it('缺 tick_rule 也缺 underlying_kind 時 spec_kind=stock_fut 同樣判別', () => {
+        const legacy = {
+            ...ccfi6,
+            tick_rule: undefined,
+            tick: undefined,
+            underlying_kind: undefined,
+        };
+        expect(tickSizeFor(legacy, 130)).toBe(0.5);
+    });
+
+    it('server tick 為字串時照樣可用（1.7.x 數值字串化容錯）', () => {
+        const stringTick = {
+            ...txf,
+            code: 'ZFFR1',
+            underlying_kind: undefined,
+            tick: '0.25' as unknown as number,
+        };
+        expect(tickSizeFor(stringTick, 300)).toBe(0.25);
+    });
+
     it('ETF 期不套現股級距，用 server 提供的 tick', () => {
         const etfFut = {
             ...ccfi6,

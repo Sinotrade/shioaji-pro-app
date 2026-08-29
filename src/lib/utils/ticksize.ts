@@ -43,7 +43,8 @@ export function tickSizeFor(contract: TickContract, price: number): number {
             contract.tick_rule === 'tw_stock_fut_price_band' ||
             (!contract.tick_rule &&
                 !isEtfFut &&
-                contract.underlying_kind === 'S')
+                (contract.spec_kind === 'stock_fut' ||
+                    contract.underlying_kind === 'S'))
         ) {
             return stockTick(price);
         }
