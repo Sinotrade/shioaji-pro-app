@@ -58,6 +58,7 @@ import { useHotkeys } from './hooks/use-hotkeys';
 import { usePoll } from './hooks/use-poll';
 import { useWatchlist } from './hooks/use-watchlist';
 import { trackActivity } from './lib/activity';
+import { registerAgentAppCommandHost } from './lib/agent-app-command';
 import { agentModule, backtestModule } from './lib/features';
 import {
     ensureContract,
@@ -620,6 +621,14 @@ export default function App() {
     const cachedSelected = useContract(selected?.code ?? null);
     const [workspace, setWorkspace] = useState<Workspace>(loadWorkspace);
     const [profiles, setProfiles] = useState<Profile[]>(loadProfiles);
+    const selectedRef = useRef(selected);
+    selectedRef.current = selected;
+    const workspaceRef = useRef(workspace);
+    workspaceRef.current = workspace;
+    const profilesRef = useRef(profiles);
+    profilesRef.current = profiles;
+    const itemsRef = useRef(items);
+    itemsRef.current = items;
     const { width, containerRef, mounted } = useContainerWidth();
 
     // first loaded watchlist item becomes the active symbol
@@ -901,6 +910,7 @@ export default function App() {
     // ---- workspace ops ----
 
     const updateWorkspace = useCallback((w: Workspace) => {
+        workspaceRef.current = w;
         setWorkspace(w);
         saveWorkspace(w);
     }, []);
@@ -1129,6 +1139,37 @@ export default function App() {
             }
         },
         [profiles, updateWorkspace],
+    );
+
+    // Private native runtimes use this semantic request/response boundary.
+    // It deliberately exposes workspace intentions, never DOM coordinates or
+    // keyboard automation, and every mutation flows through the same persisted
+    // React state path as direct user interaction.
+    useEffect(
+        () =>
+            registerAgentAppCommandHost(window, {
+                getWorkspace: () => workspaceRef.current,
+                getProfiles: () => profilesRef.current,
+                getSelectedContract: () => selectedRef.current,
+                getPresetNames: () =>
+                    LAYOUT_PRESETS.map((preset) => preset.name),
+                getPreset: (name) =>
+                    LAYOUT_PRESETS.find((preset) => preset.name === name)
+                        ?.workspace,
+                resolveContract: async (code) => {
+                    const existing = itemsRef.current.find(
+                        (item) => item.contract.code === code,
+                    );
+                    return existing?.contract ?? ensureContract(code);
+                },
+                selectContract: (contract) => {
+                    selectedRef.current = contract;
+                    setSelected(contract);
+                },
+                updateWorkspace,
+                createPanelId: newBlockId,
+            }),
+        [updateWorkspace],
     );
 
     const deleteProfile = useCallback(
