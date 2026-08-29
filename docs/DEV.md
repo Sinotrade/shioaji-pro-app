@@ -10,8 +10,9 @@
    所有變更（含文件、發佈 notes）一律走 PR。
 2. **main 永遠是綠的、永遠可發佈** — 任何時刻都可能對 main 打 tag 出版
    （見 [RELEASE.md](RELEASE.md)），merge 進 main 等同宣告「可出貨」。
-3. **merge 一律 merge commit（`--merge`）** — 禁 squash / rebase。
-   保留原 commit SHA 是發佈追溯與 tag 祖先關係的前提。
+3. **PR 合進 main 一律 merge commit（`--merge`）** — 禁 squash merge／
+   rebase merge。保留功能分支 commit SHA 是發佈追溯與 tag 祖先關係的
+   前提；開發分支同步 main 的 rebase 規則見下節。
 
 ## 分支與 worktree
 
@@ -27,6 +28,21 @@
   ```
 
   agent 開發使用內建 worktree 機制，效果等同。
+
+### 開發分支同步 main
+
+- 尚未推送、只有單一開發者使用、且未被其他 repo／分支以 SHA 引用的
+  短期開發分支，應定期同步最新 main：
+
+  ```bash
+  git fetch origin
+  git rebase origin/main
+  ```
+
+- 分支一旦已推送共享、開啟 PR／進入 review，或被跨 repo pin 指向，
+  就必須保留既有 SHA，改用 `git merge origin/main` 同步；不得 force-push
+  重寫已共享歷史。
+- PR 最終仍以 merge commit 合進 main；開發分支曾 rebase 不改變這項規則。
 
 ## PR 與 review
 
