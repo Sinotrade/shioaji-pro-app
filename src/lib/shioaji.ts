@@ -6,6 +6,7 @@ import type {
     ContractBase,
     ContractInfo,
     SecurityType,
+    TickBandsResponse,
 } from './types/contract';
 import type { Health } from './types/health';
 import type {
@@ -201,6 +202,15 @@ export function fetchContractInfo(code: string, securityType?: SecurityType) {
             security_type: securityType ?? undefined,
             region: 'TW',
         })}`,
+    );
+}
+
+// FUT/OPT 跳動級距表 — rule 名稱來自 contract info 的 tick_rule
+export function fetchTickBands(rule: string, securityType: 'FUT' | 'OPT') {
+    return apiGet<TickBandsResponse>(
+        `/api/v1/data/contracts/tick-bands/${encodeURIComponent(rule)}${contractQuery(
+            { security_type: securityType, region: 'TW' },
+        )}`,
     );
 }
 
