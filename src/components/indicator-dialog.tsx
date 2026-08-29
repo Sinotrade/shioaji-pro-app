@@ -14,6 +14,7 @@ import {
     X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEscClose } from '../hooks/use-esc-close';
 import { createPortal } from 'react-dom';
 import {
     CUSTOM_PREFIX,
@@ -106,13 +107,8 @@ export function IndicatorDialog({
 
     useEffect(() => {
         inputRef.current?.focus();
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose();
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+    useEscClose(onClose);
 
     const toggleFav = (type: string) => {
         setFavs((prev) => {
@@ -473,14 +469,7 @@ export function IndicatorSettingsModal({
     const [defaultsOpen, setDefaultsOpen] = useState(false);
     const [savedTip, setSavedTip] = useState(false);
 
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onCancel();
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    useEscClose(onCancel);
 
     if (!def) return null;
 
