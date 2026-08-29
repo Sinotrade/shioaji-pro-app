@@ -28,6 +28,12 @@ gh release download v<上一版> --pattern desktop-rev.txt -O -  # 上一版的�
 release notes 必須涵蓋兩邊的變更 — 純私有側的改動也構成一次合法發佈
 （public 可以只有 notes commit）。
 
+`desktop-rev.txt` 格式：行 1 `shioaji-pro-desktop@<short-sha>`（人讀），
+行 2 完整 SHA（機器用）。**為什麼是 asset 不是 release body**：body 會被
+tauri-action 與 publish job 兩度覆寫，放 body 必被洗掉 — 不要「優化」搬家。
+**Bootstrap**：上一版早於此機制（≤ v0.1.43）沒有這個 asset — 首次改用
+私有 repo 的 log 人工盤點起點，之後就有據可查。
+
 ### 2. 前置檢查
 
 `tsc -b`、`vitest run`、`vite build` 全綠（release PR 的 CI 也會再跑一次）。
@@ -67,6 +73,8 @@ Tag 觸發 `Release Desktop App` workflow：
   上傳 `desktop-rev.txt`（內容 `shioaji-pro-desktop@<sha>`，追溯用）。
 - `build` ×4（macOS arm64/x64、Windows、Linux）：拉私有 repo 指定 SHA、
   從 tag 注入版本、build＋簽章＋上傳。
+- **Re-run 安全**：release 已帶 `desktop-rev.txt` 時，重跑會沿用第一輪
+  記錄的私有 SHA（不重新解析）— 追溯與 assets 保持一致。
 - `publish`：重建 `latest.json`、以 tag 上的 `RELEASE_NOTES.md` 套內文、
   去 draft 上線。
 

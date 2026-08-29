@@ -27,17 +27,32 @@ jobs:
         id: desktop
         env:
           AGENT_SSH_KEY: ${{ secrets.AGENT_SSH_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p ~/.ssh
-          echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
-          chmod 600 ~/.ssh/agent_key
-          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
-          SHA=$(GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" git ls-remote git@github.com:Yvictor/shioaji-pro-desktop.git refs/heads/main | cut -f1)
-          rm -f ~/.ssh/agent_key
+          set -o pipefail
+          # Re-run 冪等：release 已帶 desktop-rev.txt 就沿用第一輪的 SHA —
+          # 重跑期間私有 main 可能已前進，重新解析會讓追溯與既有 assets 說謊
+          if gh release download '${{ github.ref_name }}' --repo '${{ github.repository }}' --pattern desktop-rev.txt --output desktop-rev.txt 2>/dev/null; then
+            SHA=$(sed -n '2p' desktop-rev.txt)
+            echo "reusing recorded desktop revision"
+          else
+            mkdir -p ~/.ssh
+            echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
+            chmod 600 ~/.ssh/agent_key
+            ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+            SHA=$(GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" git ls-remote git@github.com:Yvictor/shioaji-pro-desktop.git refs/heads/main | cut -f1)
+            rm -f ~/.ssh/agent_key
+            # 行1＝人讀契約（short SHA）；行2＝完整 SHA（build 釘定與 re-run 沿用）
+            printf 'shioaji-pro-desktop@%s\n%s\n' "${SHA:0:7}" "$SHA" > desktop-rev.txt
+          fi
+          if [ "${#SHA}" -ne 40 ]; then
+            echo "failed to resolve desktop revision (got '$SHA')" >&2
+            exit 1
+          fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "shioaji-pro-desktop@${SHA:0:7}" > desktop-rev.txt
           cat desktop-rev.txt
       - name: Create draft release
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -78,53 +93,13 @@ jobs:
       - uses: actions/checkout@v4
 
       # the desktop layer (Tauri shell + AI Agent) is closed-source — pull
-      # it in via a read-only deploy key so the desktop build is complete
+      # it in via the shared overlay action, pinned to the SHA resolved once
+      # in create-release（四平台保證同一顆，與 desktop-ci 共用同段邏輯）
       - name: Checkout desktop modules (private)
-        shell: bash
-        env:
-          AGENT_SSH_KEY: ${{ secrets.AGENT_SSH_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
-          chmod 600 ~/.ssh/agent_key
-          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
-          mkdir desktop_modules && cd desktop_modules
-          git init -q
-          GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" \
-            git fetch -q --depth 1 git@github.com:Yvictor/shioaji-pro-desktop.git '${{ needs.create-release.outputs.desktop_sha }}'
-          git checkout -q FETCH_HEAD
-          cd ..
-          mv desktop_modules/modules modules
-          mv desktop_modules/src-tauri src-tauri
-          rm -rf desktop_modules ~/.ssh/agent_key
-
-      # Tag 即版本（docs/RELEASE.md）：從 tag 名解析版本注入 tauri.conf.json，
-      # repo 裡不存在任何版本檔；workflow_dispatch（非 tag）沿用檔內值
-      - name: Inject app version from tag (unix)
-        if: startsWith(github.ref, 'refs/tags/') && matrix.platform != 'windows-latest'
-        env:
-          APP_VERSION_REF: ${{ github.ref_name }}
-        run: |
-          export APP_VERSION="${APP_VERSION_REF#v}"
-          python3 -c "
-          import json, os
-          p = 'src-tauri/tauri.conf.json'
-          conf = json.load(open(p))
-          conf['version'] = os.environ['APP_VERSION']
-          json.dump(conf, open(p, 'w'), indent=2, ensure_ascii=False)
-          print('version ->', conf['version'])
-          "
-
-      - name: Inject app version from tag (windows)
-        if: startsWith(github.ref, 'refs/tags/') && matrix.platform == 'windows-latest'
-        shell: pwsh
-        run: |
-          $version = $env:GITHUB_REF_NAME -replace '^v', ''
-          $p = 'src-tauri/tauri.conf.json'
-          $conf = Get-Content $p -Raw | ConvertFrom-Json
-          $conf.version = $version
-          $conf | ConvertTo-Json -Depth 64 | Set-Content $p
-          Write-Host "version -> $version"
+        uses: ./.github/actions/desktop-overlay
+        with:
+          ssh-key: ${{ secrets.AGENT_SSH_KEY }}
+          sha: ${{ needs.create-release.outputs.desktop_sha }}
 
       - uses: pnpm/action-setup@v4
         with:
@@ -134,6 +109,24 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+
+      # Tag 即版本（docs/RELEASE.md）：從 tag 名解析版本注入 tauri.conf.json，
+      # repo 裡不存在任何版本檔；workflow_dispatch（非 tag）沿用檔內值。
+      # 單一 node 步驟四平台同路（bash + node 在所有 runner 皆可用）
+      - name: Inject app version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const conf = JSON.parse(fs.readFileSync(p, 'utf8'));
+            conf.version = process.env.TAG_NAME.replace(/^v/, '');
+            fs.writeFileSync(p, JSON.stringify(conf, null, 2) + '\n');
+            console.log('version ->', conf.version);
+          "
 
       - uses: dtolnay/rust-toolchain@stable
         with:
