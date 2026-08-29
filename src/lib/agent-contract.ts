@@ -12,6 +12,9 @@ export const AGENT_APP_TOOL_CAPABILITIES = [
 export type AgentAppToolCapability =
     (typeof AGENT_APP_TOOL_CAPABILITIES)[number];
 
+export const AGENT_APP_TOOL_EFFECTS = ['read', 'mutation'] as const;
+export type AgentAppToolEffect = (typeof AGENT_APP_TOOL_EFFECTS)[number];
+
 export type AgentTradeOperationState =
     | 'previewed'
     | 'awaiting_confirmation'

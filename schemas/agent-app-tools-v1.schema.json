@@ -3,7 +3,14 @@
   "$id": "https://github.com/Sinotrade/shioaji-pro-app/schemas/agent-app-tools-v1.schema.json",
   "title": "Shioaji Pro Agent App Tool",
   "type": "object",
-  "required": ["contractVersion", "name", "description", "capability", "inputSchema"],
+  "required": [
+    "contractVersion",
+    "name",
+    "description",
+    "capability",
+    "effect",
+    "inputSchema"
+  ],
   "properties": {
     "contractVersion": { "const": 1 },
     "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" },
@@ -18,6 +25,7 @@
         "trade.execute"
       ]
     },
+    "effect": { "enum": ["read", "mutation"] },
     "inputSchema": { "type": "object" }
   },
   "additionalProperties": false
