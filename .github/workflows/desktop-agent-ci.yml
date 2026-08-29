@@ -1,10 +1,14 @@
 name: desktop-agent-ci
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
       - 'codex/**'
+      - 'feat/**'
   workflow_dispatch:
 
 jobs:
@@ -48,6 +52,9 @@ jobs:
           test "$(git -C desktop_modules rev-parse HEAD)" = "$DESKTOP_REF"
           mv desktop_modules/modules modules
           mv desktop_modules/src-tauri src-tauri
+          if [[ -d desktop_modules/plugins ]]; then
+            mv desktop_modules/plugins plugins
+          fi
           rm -rf desktop_modules ~/.ssh/agent_key
 
       - uses: pnpm/action-setup@v4
@@ -90,6 +97,16 @@ jobs:
 
       - name: Frontend production build
         run: pnpm build
+
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Official agent plugin contract tests
+        shell: bash
+        run: |
+          if [[ -f plugins/shioaji-pro/test/manifest-consistency.test.mjs ]]; then
+            node --test plugins/shioaji-pro/test/manifest-consistency.test.mjs
+          fi
 
       - name: Pi permission policy tests
         run: node --test src-tauri/src/pi_policy_extension.test.mjs
