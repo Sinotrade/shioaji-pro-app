@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { harnessOwnershipCompatible } from './tauri';
+import { harnessOwnershipCompatible } from './sidecar-ownership';
 
 describe('Agent Harness sidecar ownership', () => {
     it('rejects an orphan daemon when a new App instance enables Harness', () => {

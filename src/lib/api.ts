@@ -1,7 +1,7 @@
 // src/lib/api.ts
 
 import { getApiBase, isTauri } from './runtime';
-import { isAgentHarnessEnabled } from './tauri';
+import { isAgentHarnessEnabled } from './agent-harness-state';
 
 // resolved per request — the server port can move at runtime (e.g. the boot
 // flow discovers the default port occupied and starts on a fallback), and a

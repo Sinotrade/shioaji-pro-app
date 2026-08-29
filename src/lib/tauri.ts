@@ -27,9 +27,16 @@ import {
     setStoredSpawnKeyHash,
     shouldForceRespawn,
 } from './spawn-keys';
+import { cacheAgentHarnessEnabled } from './agent-harness-state';
+import { harnessOwnershipCompatible } from './sidecar-ownership';
 import { notify } from './trade';
 
 export { isTauri } from './runtime';
+export {
+    isAgentHarnessEnabled,
+    subscribeAgentHarnessEnabled,
+} from './agent-harness-state';
+export { harnessOwnershipCompatible } from './sidecar-ownership';
 
 // poll /health until it answers, then reload — used after a fresh start so
 // every panel bootstraps cleanly instead of racing a server that's still
@@ -153,13 +160,6 @@ export async function nativeOwnsHarnessSidecar(port: number): Promise<boolean> {
     } catch {
         return false;
     }
-}
-
-export function harnessOwnershipCompatible(
-    agentHarnessEnabled: boolean,
-    nativeOwned: boolean,
-): boolean {
-    return !agentHarnessEnabled || nativeOwned;
 }
 
 // startup/login output lands in ~/.shioaji/sjpro-server-<port>.log now —
@@ -959,38 +959,6 @@ const EMPTY_SETTINGS: DesktopSettings = {
     httpsEnabled: false,
     agentHarnessEnabled: false,
 };
-
-const AGENT_HARNESS_UI_KEY = 'sj-agent-harness-enabled';
-const AGENT_HARNESS_UI_EVENT = 'sj-agent-harness-enabled-changed';
-let agentHarnessEnabledCache =
-    typeof localStorage !== 'undefined' &&
-    localStorage.getItem(AGENT_HARNESS_UI_KEY) === 'true';
-
-export function isAgentHarnessEnabled(): boolean {
-    return agentHarnessEnabledCache;
-}
-
-function cacheAgentHarnessEnabled(enabled: boolean) {
-    const changed = agentHarnessEnabledCache !== enabled;
-    agentHarnessEnabledCache = enabled;
-    localStorage.setItem(AGENT_HARNESS_UI_KEY, String(enabled));
-    if (changed) {
-        window.dispatchEvent(
-            new CustomEvent<boolean>(AGENT_HARNESS_UI_EVENT, {
-                detail: enabled,
-            }),
-        );
-    }
-}
-
-export function subscribeAgentHarnessEnabled(
-    listener: (enabled: boolean) => void,
-): () => void {
-    const handle = (event: Event) =>
-        listener((event as CustomEvent<boolean>).detail);
-    window.addEventListener(AGENT_HARNESS_UI_EVENT, handle);
-    return () => window.removeEventListener(AGENT_HARNESS_UI_EVENT, handle);
-}
 
 export async function loadDesktopSettings(): Promise<DesktopSettings> {
     if (!isTauri) return { ...EMPTY_SETTINGS };
