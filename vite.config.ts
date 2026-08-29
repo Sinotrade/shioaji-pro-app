@@ -89,7 +89,11 @@ export default defineConfig(({ mode }) => {
         test: {
             // The desktop overlay is mirrored here for Tauri dev/CI, but its
             // Rust-adjacent Node tests use node:test rather than Vitest.
-            exclude: [...configDefaults.exclude, 'src-tauri/**'],
+            exclude: [
+                ...configDefaults.exclude,
+                'src-tauri/**',
+                'plugins/**/test/*.test.mjs',
+            ],
         },
         resolve: {
             alias: {

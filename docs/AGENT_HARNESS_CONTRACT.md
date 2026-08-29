@@ -3,6 +3,8 @@
 Shioaji Pro exposes semantic App Tools to provider-native runtimes. The public
 contract is versioned independently from React components, Tauri commands, and
 provider transports so Codex and Claude use the same authorization vocabulary.
+The corresponding trust boundaries and residual risks are documented in
+[`AGENT_HARNESS_THREAT_MODEL.md`](AGENT_HARNESS_THREAT_MODEL.md).
 
 ## Capability tiers
 
