@@ -108,9 +108,13 @@ It complements the versioned tool contract in
   On Unix, a hard App crash can still leave a deliberately detached descendant
   that escaped the provider process group; the next launch revokes its Harness
   runtime credentials, but OS-level containment is a post-Phase-1 item.
-- Durable idempotency entries are intentionally bounded and fail closed when
-  capacity is exhausted. Operators must reconcile and clear completed history;
-  automatic archival/compaction is deferred beyond Phase 1.
+- Durable idempotency storage has hard total-record and serialized UTF-8 byte
+  limits. Unresolved mutations are never evicted. Completed replay guards are
+  retained for seven days by default and pruned on the first subsequent store
+  access after expiry; capacity does not evict them early, so new mutations
+  fail closed while the retained set is full. Oversized completed results are
+  reduced to digest-only guards: duplicate execution remains blocked during
+  retention, but the original result cannot be replayed.
 - A crash between an external broker accepting a mutation and receipt
   persistence can leave an unknown outcome. The only safe response is to pause,
   query current broker/order state, and reconcile the original operation ID.
