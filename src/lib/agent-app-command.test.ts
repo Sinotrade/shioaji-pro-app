@@ -26,8 +26,11 @@ const contract = (code: string, name = `Name ${code}`): ContractInfo =>
         security_type: 'STK',
     }) as ContractInfo;
 
-function fixture() {
-    let workspace: Workspace = {
+function fixture(options: {
+    workspace?: Workspace;
+    profileWorkspace?: Workspace;
+} = {}) {
+    let workspace: Workspace = options.workspace ?? {
         blocks: [
             { id: 'chart-1', type: 'chart', pin: null },
             { id: 'watchlist-1', type: 'watchlist', pin: null },
@@ -38,7 +41,7 @@ function fixture() {
         ],
     };
     let selected: ContractInfo | null = contract('2330', '台積電');
-    const profileWorkspace: Workspace = {
+    const profileWorkspace: Workspace = options.profileWorkspace ?? {
         blocks: [{ id: 'depth-p', type: 'depth', pin: '2317' }],
         layout: [{ i: 'depth-p', x: 0, y: 0, w: 96, h: 10 }],
     };
@@ -322,6 +325,48 @@ describe('semantic workspace commands', () => {
                 context,
             ),
         ).rejects.toMatchObject({ code: 'not_found' });
+    });
+
+    it('preserves the live Agent when the target already has another Agent', async () => {
+        const live: Workspace = {
+            blocks: [
+                { id: 'assistant-live', type: 'assistant', pin: null },
+                { id: 'chart-live', type: 'chart', pin: null },
+            ],
+            layout: [
+                { i: 'assistant-live', x: 0, y: 0, w: 72, h: 14 },
+                { i: 'chart-live', x: 72, y: 0, w: 96, h: 14 },
+            ],
+        };
+        const target: Workspace = {
+            blocks: [
+                { id: 'assistant-saved', type: 'assistant', pin: null },
+            ],
+            layout: [
+                { i: 'assistant-saved', x: 0, y: 0, w: 72, h: 14 },
+            ],
+        };
+        const { context, workspace } = fixture({
+            workspace: live,
+            profileWorkspace: target,
+        });
+
+        await executeAgentAppCommand(
+            {
+                name: 'apply_layout',
+                args: { source: 'profile', name: '我的版面' },
+            },
+            context,
+        );
+
+        expect(workspace().blocks.map((block) => block.id)).toEqual([
+            'assistant-saved',
+            'assistant-live',
+        ]);
+        expect(workspace().layout.map((item) => item.i)).toEqual([
+            'assistant-saved',
+            'assistant-live',
+        ]);
     });
 });
 

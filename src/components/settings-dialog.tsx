@@ -463,44 +463,6 @@ function AgentSection() {
     const [enabled, setEnabled] = useState(isAgentHarnessEnabled());
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
-    // Agent 下單核可開關 — 狀態存在 native（app config），WebView 只是
-    // 顯示層；null = 尚未載入或非桌面環境
-    const [requireApproval, setRequireApproval] = useState<boolean | null>(
-        null,
-    );
-    const [approvalBusy, setApprovalBusy] = useState(false);
-
-    useEffect(() => {
-        if (!isTauri) return;
-        let cancelled = false;
-        void import('@tauri-apps/api/core').then(({ invoke }) =>
-            invoke<boolean>('agent_approval_get_mode')
-                .then((mode) => {
-                    if (!cancelled) setRequireApproval(mode);
-                })
-                .catch(() => undefined),
-        );
-        return () => {
-            cancelled = true;
-        };
-    }, []);
-
-    const toggleApproval = async () => {
-        if (requireApproval === null) return;
-        setApprovalBusy(true);
-        setError('');
-        try {
-            const { invoke } = await import('@tauri-apps/api/core');
-            const next = await invoke<boolean>('agent_approval_set_mode', {
-                require: !requireApproval,
-            });
-            setRequireApproval(next);
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-            setApprovalBusy(false);
-        }
-    };
 
     const [note, setNote] = useState('');
     const toggle = async () => {
@@ -544,45 +506,29 @@ function AgentSection() {
                 與 UI 的交易 mutation 都需要一次性 capability。切換立即
                 生效，不需重啟伺服器。
             </span>
-            {requireApproval !== null && (
-                <>
-                    <div className={hud.switchRow}>
-                        <span
-                            className={hud.switchLabel}
-                            title='Agent 在正式環境的每筆交易先經核可視窗，由你核准或拒絕'
-                        >
-                            Agent 下單核可
-                        </span>
-                        <button
-                            className={
-                                hud.switchTrack[
-                                    requireApproval ? 'on' : 'off'
-                                ]
-                            }
-                            disabled={approvalBusy}
-                            title={
-                                requireApproval
-                                    ? '關閉核可（全自動，需再次確認）'
-                                    : '啟用 Agent 下單核可'
-                            }
-                            onClick={() => void toggleApproval()}
-                        />
-                    </div>
-                    <span className={hud.emptyHint}>
-                        開啟（預設）時 Agent 的正式環境交易逐筆跳核可視窗
-                        — 第一級是可視化委託內容，技術細節可展開。關閉＝
-                        全自動放行（需經原生確認，所有放行都寫入稽核）。
-                        模擬環境不經核可。此開關與「手動下單確認」（設定
-                        → 風控）互相獨立。
-                    </span>
-                </>
-            )}
+            <div className={hud.switchRow}>
+                <span
+                    className={hud.switchLabel}
+                    title='Agent 在正式環境的每筆交易都需由獨立核可視窗確認'
+                >
+                    正式環境逐筆核可
+                </span>
+                <button
+                    className={hud.switchTrack.on}
+                    disabled
+                    title='Phase 1 安全基線：正式環境固定開啟'
+                />
+            </div>
+            <span className={hud.emptyHint}>
+                正式環境固定逐筆顯示可視化核可視窗，無法關閉。自動交易僅限
+                模擬環境，且每次 App 重啟都會恢復為「交易確認」。此安全邊界與
+                「手動下單確認」（設定 → 風控）互相獨立。
+            </span>
             {busy && (
                 <span className={hud.emptyHint}>
                     切換中…（若需重啟伺服器約 10–60 秒）
                 </span>
             )}
-            {approvalBusy && <span className={hud.emptyHint}>切換中…</span>}
             {note && <span className={hud.emptyHint}>{note}</span>}
             {error && <span className={styles.errorText}>{error}</span>}
         </>

@@ -84,11 +84,18 @@ export function requestOrderConfirm(
         );
     }
     return new Promise<boolean>((resolve) => {
+        // Reserve synchronously before the first await. A cold simulation
+        // cache may take hundreds of milliseconds; without this placeholder,
+        // two same-tick orders can both pass the guard and one promise is
+        // overwritten forever.
+        const current: PendingConfirm = {
+            request: { ...request, simulation: simulationCache },
+            resolve,
+        };
+        pending = current;
         const start = () => {
-            pending = {
-                request: { ...request, simulation: simulationCache },
-                resolve,
-            };
+            if (pending !== current) return;
+            current.request = { ...request, simulation: simulationCache };
             emit();
         };
         // 環境資訊最多等 800ms — 拿不到就以未知呈現

@@ -372,16 +372,17 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
                 );
             }
             const next = structuredClone(target);
-            // 套用的版面若沒有 Agent 面板，把現行的帶過去 — 換版面
-            // 不能把 Agent 自己（與進行中呼叫的回應通道）換掉
+            // 把所有現行 Agent 面板按 id 帶過去。目標版面可能已有另一個
+            // Agent，但仍不能換掉正在執行此 MCP 呼叫的那一個，否則其
+            // component-owned response channel 會在回覆前被卸載。
             const current = context.getWorkspace();
-            const liveAssistant = current.blocks.find(
+            const liveAssistants = current.blocks.filter(
                 (block) => block.type === 'assistant',
             );
-            if (
-                liveAssistant &&
-                !next.blocks.some((block) => block.type === 'assistant')
-            ) {
+            for (const liveAssistant of liveAssistants) {
+                if (next.blocks.some((block) => block.id === liveAssistant.id)) {
+                    continue;
+                }
                 const currentItem = current.layout.find(
                     (item) => item.i === liveAssistant.id,
                 );

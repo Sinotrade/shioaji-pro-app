@@ -64,6 +64,16 @@ describe('requestOrderConfirm', () => {
         await first;
     });
 
+    it('cold cache 下同一 tick 的第二筆也會直接 reject', async () => {
+        setSimulationCacheForTest(null);
+        const first = requestOrderConfirm(req);
+        await expect(
+            requestOrderConfirm({ ...req, code: '2330' }),
+        ).rejects.toThrow('已有待確認的委託');
+        resolveOrderConfirm(false);
+        await expect(first).resolves.toBe(false);
+    });
+
     it('環境快取已知時帶入 simulation flag', async () => {
         setSimulationCacheForTest(false);
         const promise = requestOrderConfirm(req);
