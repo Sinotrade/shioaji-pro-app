@@ -23,9 +23,12 @@ It complements the versioned tool contract in
    refresh tokens, API keys, MCP bearers, and broker credentials never cross
    Tauri serialization into JavaScript. The provider runtime receives only its
    own revocable MCP capability. Broker API keys and the Harness signing secret
-   are not injected into provider children. Because the current sidecar exposes
-   its signing secret through its process environment, production native Agent
-   runtimes fail closed until one-shot pipe/native IPC bootstrap is available.
+   are not injected into provider children. The sidecar receives a fresh
+   generation-scoped signing secret on every native spawn; stopping or replacing
+   that generation invalidates every token signed by the previous key. Because
+   the current sidecar still exposes its active secret through its process
+   environment, production native Agent runtimes fail closed until one-shot
+   pipe/native IPC bootstrap is available.
 2. Each provider runtime receives a separate random MCP bearer. It is stored as
    a digest in MCP native memory and revoked with the runtime. Exact bearer
    forms are retained only in the runtime host for centralized event redaction;
@@ -63,7 +66,7 @@ It complements the versioned tool contract in
 | Provider invokes an unadvertised or malformed tool | Per-runtime registry plus recursive top-level JSON Schema validation. |
 | Model retries a timed-out order | Durable idempotency state and explicit reconciliation prevent a second execution. |
 | A payload-shaped order is mistaken for the original operation | Payload matches are evidence only. Without an immutable broker operation ID the mutation remains unresolved and cannot be retried automatically. |
-| Provider attempts a production order | Native runtime startup rejects a verified production sidecar before spawning the provider. Server restart is already blocked while any native runtime is active. |
+| Provider attempts a production order | Native runtime startup rejects a verified production sidecar before spawning the provider. Server restart is already blocked while any native runtime is active, and a secret retained from an earlier simulation generation cannot authenticate against a later generation. |
 | Main WebView forges or auto-clicks the agent approval | Approval UI runs in a separate native-created window. Rust tracks whether the privileged window was created by the native manager, destroys a pre-existing forged label, and both approval commands require the label plus the native marker. Displayed content comes only from Rust state. |
 | Compromised WebView relaxes the approval mode | Production Agent runtime is unavailable; simulation controlled-auto is session-scoped. |
 | Compromised WebView orders via the UI signing proxy | Accepted residual risk equivalent to the pre-Harness posture (the WebView could always place orders over direct HTTP). The UI capability signature attests WebView origin, not per-order human intent. |
@@ -95,8 +98,10 @@ It complements the versioned tool contract in
   contract. The sidecar launch environment also contains broker bootstrap
   credentials such as `SJ_API_KEY`, `SJ_SEC_KEY`, and certificate secrets;
   these are scrubbed from provider children but remain visible to a same-user
-  process that can inspect the sidecar environment. Phase 1 therefore limits
-  every Agent provider and mutation path to simulation. Production
+  process that can inspect the sidecar environment. The secret is rotated on
+  every sidecar generation so material exposed by a simulation sidecar cannot
+  authenticate to a later sidecar. Phase 1 nevertheless limits every Agent
+  provider and mutation path to simulation. Production
   provider support is blocked on inherited-pipe/native-IPC bootstrap and is not
   an accepted production residual.
 - The native audit checkpoint detects deletion and tail truncation while its
@@ -104,10 +109,12 @@ It complements the versioned tool contract in
   A same-user process able to restore a previously valid key, log, and
   checkpoint snapshot together can roll the audit state back; hardware-backed
   or remote anchoring is a later hardening item.
-- Provider process trees are terminated recursively during an orderly stop.
-  On Unix, a hard App crash can still leave a deliberately detached descendant
-  that escaped the provider process group; the next launch revokes its Harness
-  runtime credentials, but OS-level containment is a post-Phase-1 item.
+- Provider process groups are terminated during an orderly stop. On Unix, a
+  deliberately detached `setsid()` descendant can escape that group during an
+  orderly stop, and a hard App crash can also leave descendants behind. Runtime
+  MCP credentials and the sidecar generation secret are revoked immediately,
+  so a survivor cannot retain App Tool or trading authority; stronger OS-level
+  containment remains a post-Phase-1 item.
 - Durable idempotency storage has hard total-record and serialized UTF-8 byte
   limits. Unresolved mutations are never evicted. Completed replay guards are
   retained for seven days by default and pruned on the first subsequent store

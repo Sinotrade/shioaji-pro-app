@@ -50,8 +50,11 @@ identical to the TypeScript constants consumed by the application.
 
 The desktop host provides one authenticated loopback MCP endpoint. Every native
 runtime receives a distinct short-lived bearer through its native MCP header
-configuration, not an inherited child-process environment variable. Tokens are
-never returned to the WebView and are revoked when the runtime stops. Tool
+configuration, not an inherited child-process environment variable. Depending
+on the provider's native protocol, that configuration can reside in an
+owner-only temporary file or process argv and may therefore be observable to a
+same-user process. Tokens are never returned to the WebView and are revoked when
+the runtime stops. Tool
 calls use typed JSON arguments and semantic names; coordinate
 automation, raw key capture, and virtual Bash commands are outside this
 contract.
