@@ -31,6 +31,11 @@ describe('public Agent Harness contract', () => {
         expect(appToolSchema.properties.capability.enum).toEqual(
             AGENT_APP_TOOL_CAPABILITIES,
         );
+        expect(appToolSchema.properties.name.maxLength).toBe(128);
+        expect(
+            appToolSchema.allOf[0]!.then.properties.inputSchema.properties
+                .required.contains.const,
+        ).toBe('idempotency_key');
         expect(appToolSchema.required).toContain('effect');
         expect(appToolSchema.properties.effect.enum).toEqual([
             'read',

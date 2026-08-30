@@ -13,7 +13,11 @@
   ],
   "properties": {
     "contractVersion": { "const": 1 },
-    "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" },
+    "name": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_.-]*$"
+    },
     "description": { "type": "string", "minLength": 1 },
     "capability": {
       "enum": [
@@ -28,5 +32,26 @@
     "effect": { "enum": ["read", "mutation"] },
     "inputSchema": { "type": "object" }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "effect": { "const": "mutation" } },
+        "required": ["effect"]
+      },
+      "then": {
+        "properties": {
+          "inputSchema": {
+            "required": ["required"],
+            "properties": {
+              "required": {
+                "type": "array",
+                "contains": { "const": "idempotency_key" }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": false
 }
