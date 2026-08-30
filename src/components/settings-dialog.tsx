@@ -38,6 +38,7 @@ import {
     setRiskSettings,
     useRiskSettings,
 } from '../lib/risk';
+import { isTauri } from '../lib/runtime';
 import { setSoundEnabled, soundEnabled } from '../lib/sounds';
 import {
     setThemeSettings,
@@ -397,6 +398,37 @@ function RiskSection() {
                 <br />
                 Kill Switch（鎖定下單）在畫面右上角「風控」鈕，一鍵鎖定/解鎖。
             </span>
+            <span className={hud.settingLabel}>下單確認</span>
+            <div className={hud.switchRow}>
+                <span
+                    className={hud.switchLabel}
+                    title='手動下單前顯示可視化委託確認（方向/商品/價格/數量）；停損停利等自動觸發單不受影響'
+                >
+                    手動下單確認
+                </span>
+                <button
+                    className={
+                        hud.switchTrack[
+                            risk.confirmManualOrders ? 'on' : 'off'
+                        ]
+                    }
+                    title={
+                        risk.confirmManualOrders
+                            ? '關閉手動下單確認'
+                            : '啟用手動下單確認'
+                    }
+                    onClick={() =>
+                        setRiskSettings({
+                            confirmManualOrders: !risk.confirmManualOrders,
+                        })
+                    }
+                />
+            </div>
+            <span className={hud.emptyHint}>
+                預設關閉（維持快速下單）。開啟後閃電下單、下單面板、
+                圖表點價、平倉與鋪單都會先跳委託確認；停損/停利等
+                自動觸發單與 Agent 下單不經過此確認。
+            </span>
             <span className={hud.settingLabel}>快捷鍵 Hotkeys</span>
             <div className={hud.switchRow}>
                 <span
@@ -431,6 +463,44 @@ function AgentSection() {
     const [enabled, setEnabled] = useState(isAgentHarnessEnabled());
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
+    // Agent 下單核可開關 — 狀態存在 native（app config），WebView 只是
+    // 顯示層；null = 尚未載入或非桌面環境
+    const [requireApproval, setRequireApproval] = useState<boolean | null>(
+        null,
+    );
+    const [approvalBusy, setApprovalBusy] = useState(false);
+
+    useEffect(() => {
+        if (!isTauri) return;
+        let cancelled = false;
+        void import('@tauri-apps/api/core').then(({ invoke }) =>
+            invoke<boolean>('agent_approval_get_mode')
+                .then((mode) => {
+                    if (!cancelled) setRequireApproval(mode);
+                })
+                .catch(() => undefined),
+        );
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const toggleApproval = async () => {
+        if (requireApproval === null) return;
+        setApprovalBusy(true);
+        setError('');
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const next = await invoke<boolean>('agent_approval_set_mode', {
+                require: !requireApproval,
+            });
+            setRequireApproval(next);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+            setApprovalBusy(false);
+        }
+    };
 
     const toggle = async () => {
         const next = !enabled;
@@ -460,11 +530,45 @@ function AgentSection() {
             </div>
             <span className={hud.emptyHint}>
                 關閉時，一般 UI 下單走原本的直接 HTTP 路徑；開啟後，Agent
-                與 UI 的交易 mutation 都需要一次性 capability。切換立即生效，
-                不需重啟伺服器。正式環境的每筆操作都會顯示 exact payload
-                要求原生確認；超過 4 KiB 的 payload 會直接拒絕。
+                與 UI 的交易 mutation 都需要一次性 capability。切換立即
+                生效，不需重啟伺服器。
             </span>
-            {busy && <span className={hud.emptyHint}>切換中…</span>}
+            {requireApproval !== null && (
+                <>
+                    <div className={hud.switchRow}>
+                        <span
+                            className={hud.switchLabel}
+                            title='Agent 在正式環境的每筆交易先經核可視窗，由你核准或拒絕'
+                        >
+                            Agent 下單核可
+                        </span>
+                        <button
+                            className={
+                                hud.switchTrack[
+                                    requireApproval ? 'on' : 'off'
+                                ]
+                            }
+                            disabled={approvalBusy}
+                            title={
+                                requireApproval
+                                    ? '關閉核可（全自動，需再次確認）'
+                                    : '啟用 Agent 下單核可'
+                            }
+                            onClick={() => void toggleApproval()}
+                        />
+                    </div>
+                    <span className={hud.emptyHint}>
+                        開啟（預設）時 Agent 的正式環境交易逐筆跳核可視窗
+                        — 第一級是可視化委託內容，技術細節可展開。關閉＝
+                        全自動放行（需經原生確認，所有放行都寫入稽核）。
+                        模擬環境不經核可。此開關與「手動下單確認」（設定
+                        → 風控）互相獨立。
+                    </span>
+                </>
+            )}
+            {(busy || approvalBusy) && (
+                <span className={hud.emptyHint}>切換中…</span>
+            )}
             {error && <span className={styles.errorText}>{error}</span>}
         </>
     );

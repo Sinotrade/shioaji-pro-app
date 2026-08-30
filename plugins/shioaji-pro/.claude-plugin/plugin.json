@@ -1,0 +1,20 @@
+{
+  "name": "shioaji-pro",
+  "version": "0.1.0",
+  "description": "Official Shioaji Pro skill for safe semantic control through the App's native MCP tools.",
+  "author": {
+    "name": "Sinotrade",
+    "url": "https://github.com/Sinotrade"
+  },
+  "homepage": "https://github.com/Sinotrade/shioaji-pro-app",
+  "repository": "https://github.com/Sinotrade/shioaji-pro-app",
+  "license": "MIT",
+  "keywords": [
+    "shioaji-pro",
+    "trading",
+    "taiwan",
+    "mcp",
+    "agent"
+  ],
+  "skills": "./skills/"
+}

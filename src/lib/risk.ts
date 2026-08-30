@@ -10,6 +10,7 @@ export interface RiskSettings {
     maxDailyLoss: number; // positive number, TWD (0 = unlimited)
     locked: boolean; // manual kill switch — blocks ALL orders
     escCancelAll: boolean; // Esc×2 cancels all working orders — opt-in
+    confirmManualOrders: boolean; // 手動下單前跳可視化委託確認 — opt-in
 }
 
 const STORAGE_KEY = 'sj-pro-risk';
@@ -25,6 +26,7 @@ function load(): RiskSettings {
                 maxDailyLoss: Number(s.maxDailyLoss) || 0,
                 locked: !!s.locked,
                 escCancelAll: !!s.escCancelAll,
+                confirmManualOrders: !!s.confirmManualOrders,
             };
         }
     } catch {
@@ -36,6 +38,7 @@ function load(): RiskSettings {
         maxDailyLoss: 0,
         locked: false,
         escCancelAll: false,
+        confirmManualOrders: false,
     };
 }
 

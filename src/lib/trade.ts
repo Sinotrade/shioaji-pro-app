@@ -2,7 +2,8 @@
 
 import { getAccountState } from './account-store';
 import { trackActivity } from './activity';
-import { checkOrderAllowed } from './risk';
+import { requestOrderConfirm } from './order-confirm';
+import { checkOrderAllowed, getRiskSettings } from './risk';
 import {
     cancelOrder,
     fetchTrades,
@@ -10,7 +11,7 @@ import {
     placeStockOrder,
 } from './shioaji';
 import { getStreamStatus } from './stream';
-import type { ContractBase } from './types/contract';
+import type { ContractBase, ContractInfo } from './types/contract';
 import {
     ACTIVE_ORDER_STATUSES,
     type Action,
@@ -87,12 +88,54 @@ export function assertTradingLive() {
     }
 }
 
+// 手動下單確認被取消 — 呼叫端的錯誤通知會顯示這個訊息
+export class OrderConfirmCancelled extends Error {
+    constructor() {
+        super('已取消下單');
+        this.name = 'OrderConfirmCancelled';
+    }
+}
+
+function orderUnit(contract: ContractBase, orderLot?: StockOrderLot): string {
+    if (isFuturesContract(contract)) return '口';
+    return orderLot === 'IntradayOdd' || orderLot === 'Odd' ? '股' : '張';
+}
+
+// 可視化委託確認（RiskSettings.confirmManualOrders opt-in）— 只攔手動
+// 路徑；自動路徑（trigger-engine/bracket）觸發時使用者可能不在場，
+// 彈窗＝錯過行情，一律 source:'auto' 跳過
+async function confirmManualOrder(
+    contract: ContractBase,
+    action: Action,
+    price: number | null,
+    quantity: number,
+    orderLot?: StockOrderLot,
+    note?: string,
+): Promise<void> {
+    if (!getRiskSettings().confirmManualOrders) return;
+    const approved = await requestOrderConfirm({
+        code: contract.code,
+        name: (contract as Partial<ContractInfo>).name,
+        action,
+        price,
+        quantity,
+        unit: orderUnit(contract, orderLot),
+        note,
+    });
+    if (!approved) throw new OrderConfirmCancelled();
+}
+
 export async function placeQuickOrder(
     contract: ContractBase,
     action: Action,
     price: number | null,
     quantity: number,
-    opts?: { bypassRisk?: boolean; orderLot?: StockOrderLot },
+    opts?: {
+        bypassRisk?: boolean;
+        orderLot?: StockOrderLot;
+        // 'auto' = 系統觸發（停損/停利等），永不彈手動確認
+        source?: 'manual' | 'auto';
+    },
 ): Promise<Trade> {
     assertTradingLive();
     if (contract.security_type === 'IND') {
@@ -101,6 +144,15 @@ export async function placeQuickOrder(
     if (!opts?.bypassRisk) {
         const blocked = checkOrderAllowed(quantity);
         if (blocked) throw new Error(blocked);
+    }
+    if ((opts?.source ?? 'manual') === 'manual') {
+        await confirmManualOrder(
+            contract,
+            action,
+            price,
+            quantity,
+            opts?.orderLot,
+        );
     }
     trackActivity(
         '下單',
@@ -153,9 +205,25 @@ export async function placeStockExitByShares(
     assertTradingLive();
     const lots = Math.floor(shares / 1000);
     const odd = shares % 1000;
+    // 拆單前先做一次合併的手動確認（整張市價＋零股限價兩腳只問一次，
+    // 內層 placeQuickOrder 一律 source:'auto' 免得連問兩次）
+    await confirmManualOrder(
+        contract,
+        action,
+        null,
+        shares,
+        'IntradayOdd',
+        lots > 0 && odd > 0
+            ? `拆為 ${lots} 張市價＋${odd} 股盤中零股限價`
+            : undefined,
+    );
     const out: Trade[] = [];
     if (lots > 0) {
-        out.push(await placeQuickOrder(contract, action, null, lots));
+        out.push(
+            await placeQuickOrder(contract, action, null, lots, {
+                source: 'auto',
+            }),
+        );
     }
     if (odd > 0) {
         const limitPrice =
@@ -166,6 +234,7 @@ export async function placeStockExitByShares(
         out.push(
             await placeQuickOrder(contract, action, limitPrice, odd, {
                 orderLot: 'IntradayOdd',
+                source: 'auto',
             }),
         );
     }

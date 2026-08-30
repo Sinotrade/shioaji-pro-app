@@ -17,6 +17,7 @@ import { IntradayWallPanel } from './components/intraday-wall';
 import { CommandPalette } from './components/command-palette';
 import { DepthLadder } from './components/depth-ladder';
 import { EventToasts } from './components/event-toasts';
+import { OrderConfirmHost } from './components/order-confirm-dialog';
 import { FlashOrder } from './components/flash-order';
 import { HudHeader } from './components/hud-header';
 import { OptionChain } from './components/option-chain';
@@ -594,6 +595,7 @@ function PopoutView({
     return (
         <div className={styles.shell}>
             <EventToasts />
+            <OrderConfirmHost />
             <section className={panel.panel} style={{ flex: 1, margin: 6 }}>
                 <PanelChrome
                     title={`${meta.label}${contract ? ` · ${contract.code}` : ''}`}
@@ -1287,6 +1289,7 @@ export default function App() {
                     .map((i) => i.contract.code)}
             />
             <EventToasts onEvent={refreshTrading} />
+            <OrderConfirmHost />
             <CommandPalette
                 open={paletteOpen}
                 onClose={() => setPaletteOpen(false)}

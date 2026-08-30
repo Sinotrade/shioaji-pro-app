@@ -34,6 +34,11 @@ export default defineConfig(({ mode }) => {
             assetsDir: '',
             target: ['es2020', 'safari13'],
             rolldownOptions: {
+                // agent-approval 獨立視窗頁（docs/design/order-confirm-split.md）
+                input: {
+                    main: path.resolve(__dirname, 'index.html'),
+                    approval: path.resolve(__dirname, 'approval.html'),
+                },
                 output: {
                     codeSplitting: {
                         groups: [

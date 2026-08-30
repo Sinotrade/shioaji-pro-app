@@ -30,8 +30,17 @@ It complements the versioned tool contract in
    outside the runtime's registry.
 4. Shell/filesystem permission never implies an App capability. Market,
    account, UI, task, preview, and trade execution are independently granted.
-5. Production mutations require an App-owned exact-payload confirmation.
-   Controlled auto is simulation-only and expires when the App/runtime stops.
+5. Agent-initiated production mutations require user approval on an App-owned
+   native surface (the `agent-approval` window — a separate webview the main
+   WebView cannot script; its content comes only from Rust state). The
+   first-level view is a visual order summary; the exact payload is available
+   behind a detail expander. Approval can be disabled (full-auto) only through
+   a natively persisted, natively confirmed, audited mode switch. Manual UI
+   mutations are signed as UI-origin without a per-order native prompt; the
+   optional visual order confirmation (`RiskSettings.confirmManualOrders`) is
+   a WebView UX aid, not a security boundary (see
+   docs/design/order-confirm-split.md). Controlled auto is simulation-only
+   and expires when the App/runtime stops.
 6. Every mutation carries a stable idempotency key. A pending or ambiguous
    operation is reconciled; it is never blindly retried after timeout or restart.
 7. Native audit records persist only redacted metadata and request digests in a
@@ -53,7 +62,10 @@ It complements the versioned tool contract in
 | Provider invokes an unadvertised or malformed tool | Per-runtime registry plus recursive top-level JSON Schema validation. |
 | Model retries a timed-out order | Durable idempotency state and explicit reconciliation prevent a second execution. |
 | A payload-shaped order is mistaken for the original operation | Payload matches are evidence only. Without an immutable broker operation ID the mutation remains unresolved and cannot be retried automatically. |
-| Production order bypasses provider prompts | The App confirmation and native one-use trading grant are independent of provider approval caches. |
+| Production order bypasses provider prompts | The App-owned approval window and native one-use trading grant are independent of provider approval caches. |
+| Main WebView forges or auto-clicks the agent approval | Approval UI runs in a separate native-created window; `agent_approval_pending`/`agent_approval_respond` reject every caller whose window label is not `agent-approval`, and the displayed content is read from Rust state only. |
+| Compromised WebView relaxes the approval mode | The require-approval flag persists in a native config file, never WebView storage; relaxing it requires a native confirmation dialog and writes an audit record. |
+| Compromised WebView orders via the UI signing proxy | Accepted residual risk equivalent to the pre-Harness posture (the WebView could always place orders over direct HTTP). The UI capability signature attests WebView origin, not per-order human intent. |
 | Provider shell calls the sidecar directly | Trading/admin commands are denied by `run_shell`; native runtimes receive no broker credential; server-linked runtimes require the current Harness to remain enabled. |
 | User profile redirects `shioaji` to another binary | Native host binds approved argv to the bundled CLI in an isolated shell profile. |
 | App restarts during autonomous work | Pending grants expire, controlled auto pauses, and restored context starts read-only until reconciled/regranted. |
