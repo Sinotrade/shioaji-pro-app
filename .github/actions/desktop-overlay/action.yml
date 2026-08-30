@@ -36,6 +36,10 @@ runs:
           git fetch -q --depth 1 git@github.com:Yvictor/shioaji-pro-desktop.git "$DESKTOP_SHA"
         git checkout -q FETCH_HEAD
         cd ..
+        # Public feature branches may already track generated mirrors. Always
+        # replace them atomically so `mv` cannot silently create
+        # modules/modules or plugins/plugins.
+        rm -rf modules src-tauri plugins
         mv desktop_modules/modules modules
         mv desktop_modules/src-tauri src-tauri
         if [[ -d desktop_modules/plugins ]]; then

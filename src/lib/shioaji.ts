@@ -745,26 +745,35 @@ export function placeStockOrder(
     contract: ContractBase,
     order: StockOrderReq,
     account?: Account,
+    opts?: { agentInitiated?: boolean },
 ) {
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: contractKey(contract),
         stock_order: { ...order, account: account ?? accountFor('S') },
-    }).then(ensureAccepted);
+    }, opts).then(ensureAccepted);
 }
 
 export function placeFuturesOrder(
     contract: ContractBase,
     order: FuturesOrderReq,
     account?: Account,
+    opts?: { agentInitiated?: boolean },
 ) {
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: orderableKey(contract),
         futures_order: { ...order, account: account ?? accountFor('F') },
-    }).then(ensureAccepted);
+    }, opts).then(ensureAccepted);
 }
 
-export function cancelOrder(tradeId: string) {
-    return apiPost<Trade>('/api/v1/order/cancel_order', { trade_id: tradeId });
+export function cancelOrder(
+    tradeId: string,
+    opts?: { agentInitiated?: boolean },
+) {
+    return apiPost<Trade>(
+        '/api/v1/order/cancel_order',
+        { trade_id: tradeId },
+        opts,
+    );
 }
 
 export function updateOrderPrice(tradeId: string, price: number) {

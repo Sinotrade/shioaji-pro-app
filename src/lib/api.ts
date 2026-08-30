@@ -69,7 +69,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 export async function apiPost<T>(
     path: string,
     body: unknown,
-    opts?: { timeoutMs?: number },
+    opts?: { timeoutMs?: number; agentInitiated?: boolean },
 ): Promise<T> {
     // Serialize once in the WebView, then let the native bridge sign and send
     // these exact bytes. The native bridge fails closed when Harness is absent
@@ -77,10 +77,27 @@ export async function apiPost<T>(
     if (shouldProxyAgentHarnessMutation(isTauri, isAgentHarnessEnabled(), path)) {
         const bodyText = JSON.stringify(body);
         const { invoke } = await import('@tauri-apps/api/core');
-        const proxied = await invoke<{ status: number; body: string }>(
-            'agent_harness_post',
-            { url: base() + path, body: bodyText },
-        );
+        let proxied: { status: number; body: string };
+        try {
+            proxied = await invoke<{ status: number; body: string }>(
+                'agent_harness_post',
+                {
+                    url: base() + path,
+                    body: bodyText,
+                    agentInitiated: opts?.agentInitiated === true,
+                },
+            );
+        } catch (error) {
+            const message = String(error);
+            const marker = 'AGENT_MUTATION_NOT_STARTED:';
+            if (message.startsWith(marker)) {
+                throw Object.assign(
+                    new Error(message.slice(marker.length).trim()),
+                    { mutationNotStarted: true },
+                );
+            }
+            throw error;
+        }
         const res = new Response(proxied.body, {
             status: proxied.status,
             headers: { 'Content-Type': 'application/json' },

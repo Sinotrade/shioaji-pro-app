@@ -7,6 +7,7 @@ WORKSPACE_DIR="$(dirname "$ROOT_DIR")"
 DESKTOP_DIR="${SHIOAJI_PRO_DESKTOP_DIR:-$WORKSPACE_DIR/shioaji-pro-agent-harness}"
 SERVER_DIR="${SHIOAJI_SERVER_DIR:-$WORKSPACE_DIR/shioaji-agent-permission}"
 TARGET_TRIPLE="aarch64-apple-darwin"
+APP_PROCESS="${SHIOAJI_PRO_APP_PROCESS:-Shioaji Pro}"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     echo "This QA launcher currently supports Apple Silicon macOS only." >&2

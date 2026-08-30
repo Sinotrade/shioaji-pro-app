@@ -64,7 +64,7 @@ It complements the versioned tool contract in
 | A payload-shaped order is mistaken for the original operation | Payload matches are evidence only. Without an immutable broker operation ID the mutation remains unresolved and cannot be retried automatically. |
 | Production order bypasses provider prompts | The App-owned approval window and native one-use trading grant are independent of provider approval caches. |
 | Main WebView forges or auto-clicks the agent approval | Approval UI runs in a separate native-created window; `agent_approval_pending`/`agent_approval_respond` reject every caller whose window label is not `agent-approval`, and the displayed content is read from Rust state only. |
-| Compromised WebView relaxes the approval mode | The require-approval flag persists in a native config file, never WebView storage; relaxing it requires a native confirmation dialog and writes an audit record. |
+| Compromised WebView relaxes the approval mode | Phase 1 production approval cannot be disabled. Native state resets to required on every launch and the mode command rejects relaxation; simulation controlled-auto is session-scoped. |
 | Compromised WebView orders via the UI signing proxy | Accepted residual risk equivalent to the pre-Harness posture (the WebView could always place orders over direct HTTP). The UI capability signature attests WebView origin, not per-order human intent. |
 | Provider shell calls the sidecar directly | Trading/admin commands are denied by `run_shell`; native runtimes receive no broker credential; server-linked runtimes require the current Harness to remain enabled. |
 | User profile redirects `shioaji` to another binary | Native host binds approved argv to the bundled CLI in an isolated shell profile. |

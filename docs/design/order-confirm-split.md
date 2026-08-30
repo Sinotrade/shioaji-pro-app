@@ -2,7 +2,8 @@
 
 維護者決定（2026-08-30，PR #50 review）：
 
-1. 手動下單確認與 Agent 下單核准是**兩個獨立控制項**，分開開關。
+1. 手動下單確認與 Agent 下單核准是**兩條獨立路徑**。手動確認可由
+   使用者開關；Phase 1 正式環境的 Agent 核准固定逐筆啟用。
 2. 使用者看到的確認一律是**可視化委託確認**（方向/商品/價格/數量/帳戶），
    不是 raw payload＋digest 的技術框。
 3. Agent 發起、需使用者核可的下單同理 — 第一級友善介面，
@@ -58,12 +59,9 @@ Harness 開啟＋正式環境時，`agent_harness_post` 對**每筆 UI 手動下
 - IPC：`agent_approval_pending()`／`agent_approval_respond(id, approved)`
   — **兩者皆驗 `window.label() == "agent-approval"`**，主 WebView 呼叫
   一律拒絕。Rust 端 oneshot 佇列；關窗＝拒絕；TTL 到期＝拒絕。
-- **開關（Agent 下單核准）**：native 持久化（app config dir，
-  不放 WebView localStorage — 否則被汙染 WebView 可自行關掉核可）。
-  預設 **ON**；ON→OFF（全自動模式）本身要過一次 native 確認框並寫
-  audit；OFF 時 production grant 直接放行（使用者明示承擔）。
-  模擬環境維持現行：不彈核可。
-- 設定 → Agent 分頁顯示開關（讀寫皆走 native command）。
+- **Phase 1 正式環境固定逐筆核可**：舊版即使留下 disabled 設定，App
+  啟動也會忽略並恢復 fail-closed；native command 拒絕關閉。模擬環境
+  的 controlled-auto 只在當次 session 生效，不跨 App restart 復權。
 
 ### 建置
 
@@ -75,5 +73,5 @@ Harness 開啟＋正式環境時，`agent_harness_post` 對**每筆 UI 手動下
 
 - 自動單（trigger-engine/bracket）不受 A 影響。
 - 模擬環境不彈 Agent 核可（現行為）。
-- A 關閉＋B 開啟＝手動單零彈窗、Agent 單必核可 — 兩者完全獨立。
+- 手動確認關閉時，手動單不彈窗；正式環境 Agent 單仍必須逐筆核可。
 - 核可視窗內容來源只能是 Rust state，絕不接受主 WebView 供給的顯示值。

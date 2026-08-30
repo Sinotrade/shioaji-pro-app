@@ -36,9 +36,24 @@ describe('agent harness native POST proxy', () => {
         expect(mocks.invoke).toHaveBeenCalledWith('agent_harness_post', {
             url: 'http://127.0.0.1:21322/api/v1/order/place_order',
             body: '{"code":"2330","quantity":1}',
+            agentInitiated: false,
         });
         expect(browserFetch).not.toHaveBeenCalled();
         browserFetch.mockRestore();
+    });
+
+    it('marks an Agent mutation for native production approval', async () => {
+        mocks.invoke.mockResolvedValue({ status: 200, body: '{}' });
+
+        await apiPost('/api/v1/order/place_order', { code: '2330' }, {
+            agentInitiated: true,
+        });
+
+        expect(mocks.invoke).toHaveBeenCalledWith('agent_harness_post', {
+            url: 'http://127.0.0.1:21322/api/v1/order/place_order',
+            body: '{"code":"2330"}',
+            agentInitiated: true,
+        });
     });
 
     it('surfaces a rejected native mutation without direct HTTP fallback', async () => {
@@ -53,5 +68,21 @@ describe('agent harness native POST proxy', () => {
         ).rejects.toThrow('403 capability denied');
         expect(browserFetch).not.toHaveBeenCalled();
         browserFetch.mockRestore();
+    });
+
+    it('marks native approval denial as a mutation that never started', async () => {
+        mocks.invoke.mockRejectedValue(
+            'AGENT_MUTATION_NOT_STARTED: 使用者未核准這筆 Agent 交易',
+        );
+
+        const error = await apiPost(
+            '/api/v1/order/place_order',
+            { code: '2330' },
+            { agentInitiated: true },
+        ).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toMatchObject({ mutationNotStarted: true });
+        expect((error as Error).message).toContain('使用者未核准');
     });
 });
