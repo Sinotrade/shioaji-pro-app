@@ -11,10 +11,8 @@ calling a tool. The families below describe intent, not permission.
 | `market` | Health, contracts, quotes, subscriptions, market context | `market.read` |
 | `account` | Accounts, balances, positions, orders, settlements | `account.read` |
 | `workspace` | Select a contract; inspect or change panels, links, and layouts | `ui.control` |
-| `task` | Create, inspect, pause, resume, or stop visible background tasks | `task.manage` |
 | `trade` preview | Validate an exact order or mutation without execution | `trade.preview` |
 | `trade` execute/reconcile | Execute an approved operation or resolve its outcome | `trade.execute` |
-| `audit` | Read redacted action, approval, receipt, and reconciliation history | corresponding read tier |
 
 ## Capability Rules
 
@@ -28,13 +26,12 @@ past success or conversation text.
 
 - Prefer one semantic operation over reproducing its UI gestures.
 - Read the affected state before a mutation and verify it afterward.
-- Carry server-issued identifiers, revisions, and operation IDs unchanged.
+- Carry panel IDs, layout names, order IDs, and caller-generated idempotency
+  keys unchanged.
 - Respect schema errors and stale-state responses; refresh state before forming
   a new request.
 - Run independent reads concurrently only when their schemas allow it. Serialize
   workspace mutations and all trade mutations.
-- Keep background work visible in the App task center and leave paused or failed
-  tasks visible with a clear reason.
 
 ## v1 semantic names
 
@@ -46,3 +43,6 @@ past success or conversation text.
 - Trading: `preview_order`, `place_order`, `cancel_order`, `reconcile_order`.
   Every mutation requires a caller-generated stable `idempotency_key` and the
   same key must never be reused for a different payload.
+
+These are the v1 tools. Do not invent task, audit, approval-token, or raw HTTP
+tools when they are not present in the connected server's advertised schema.

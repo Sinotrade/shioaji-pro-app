@@ -92,8 +92,11 @@ It complements the versioned tool contract in
   own launch environment.
 - The Shioaji sidecar currently receives `SJ_AGENT_HARNESS_SECRET` through its
   process environment because that is the server's supported bootstrap
-  contract. Another process already compromised under the same OS user may
-  inspect it, so Phase 1 limits native providers to simulation. Production
+  contract. The sidecar launch environment also contains broker bootstrap
+  credentials such as `SJ_API_KEY`, `SJ_SEC_KEY`, and certificate secrets;
+  these are scrubbed from provider children but remain visible to a same-user
+  process that can inspect the sidecar environment. Phase 1 therefore limits
+  every Agent provider and mutation path to simulation. Production
   provider support is blocked on inherited-pipe/native-IPC bootstrap and is not
   an accepted production residual.
 - The native audit checkpoint detects deletion and tail truncation while its

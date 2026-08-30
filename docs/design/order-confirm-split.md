@@ -8,7 +8,8 @@
 > through one-shot pipe/native IPC instead of a reusable process environment.
 
 1. 手動下單確認與 Agent 下單核准是**兩條獨立路徑**。手動確認可由
-   使用者開關；Phase 1 正式環境的 Agent 核准固定逐筆啟用。
+   使用者開關；Phase 1 的 Agent 交易只在已驗證的模擬環境提供，正式或
+   未知環境直接拒絕。正式 Agent 核准 UI 是後續安全 bootstrap 的 staged code。
 2. 使用者看到的確認一律是**可視化委託確認**（方向/商品/價格/數量/帳戶），
    不是 raw payload＋digest 的技術框。
 3. Agent 發起、需使用者核可的下單同理 — 第一級友善介面，
@@ -16,10 +17,9 @@
 
 ## 現況（本設計要改掉的）
 
-Harness 開啟＋正式環境時，`agent_harness_post` 對**每筆 UI 手動下單**
-彈 native NSAlert（title＋raw JSON＋digest）；Agent 交易 grant
-（`confirm_production_grant`）也是同款技術框。兩者共用同一條路、
-不可分別控制、皆非可視化。
+舊設計在 Harness 開啟＋正式環境時，讓 `agent_harness_post` 對 UI 手動
+下單彈 native NSAlert，Agent grant 也使用同一技術框。現行設計已把人工
+下單 UX 與 Agent authority 拆開；本版不授予任何正式環境 Agent mutation。
 
 ## 設計
 
@@ -42,12 +42,14 @@ Harness 開啟＋正式環境時，`agent_harness_post` 對**每筆 UI 手動下
 - 純 UX 安全帶，**不是**安全邊界（WebView 內的確認擋不了被汙染的
   WebView）— 威脅模型見 C。
 
-### B. `agent_harness_post` 移除逐筆 native 確認（private）
+### B. `agent_harness_post` 與 Phase 1 authority（private）
 
-- 刪除 UI mutation 代理路徑上的 `confirm_native_action` 與 4 KiB
-  顯示限制（保留 64 KiB 純健全性上限，與對話框無關）。
-- 語意修正：UI capability 簽章證明「請求來自本 App 的 WebView」，
-  **不再**隱含逐筆人工核可。逐筆確認由 A 的 UX 開關提供。
+- UI 手動 mutation 維持既有終端行為；native MCP 已 claim/executing 的
+  Agent mutation 在正式或未知環境一律 fail closed，即使 renderer 偽造
+  `agent_initiated=false` 也不能繞過。
+- UI capability 簽章只證明「請求來自本 App 的 WebView」，不代表 Agent
+  authority 或逐筆人工核可。Agent authority 由 native runtime/MCP context
+  與已驗證的 sidecar generation 決定。
 - `docs/AGENT_HARNESS_THREAT_MODEL.md` 同步改寫該假設；
   被汙染 WebView 經簽章代理下單的暴露面回到與無 harness 時
   （WebView 直發 HTTP）等價 — harness 的職責是管 **Agent** 權限。
@@ -64,9 +66,10 @@ Harness 開啟＋正式環境時，`agent_harness_post` 對**每筆 UI 手動下
 - IPC：`agent_approval_pending()`／`agent_approval_respond(id, approved)`
   — **兩者皆驗 `window.label() == "agent-approval"`**，主 WebView 呼叫
   一律拒絕。Rust 端 oneshot 佇列；關窗＝拒絕；TTL 到期＝拒絕。
-- **Phase 1 正式環境固定逐筆核可**：舊版即使留下 disabled 設定，App
-  啟動也會忽略並恢復 fail-closed；native command 拒絕關閉。模擬環境
-  的 controlled-auto 只在當次 session 生效，不跨 App restart 復權。
+- **Phase 1 正式環境不提供 Agent 交易**：`confirm_production_grant` 與所有
+  Agent broker mutation 都 fail closed。核可視窗保留給後續 sidecar one-shot
+  secret bootstrap 完成後的 production contract，不擴張本版 authority。
+- 模擬環境的 controlled-auto 只在當次 session 生效，不跨 App restart 復權。
 
 ### 建置
 
@@ -77,6 +80,6 @@ Harness 開啟＋正式環境時，`agent_harness_post` 對**每筆 UI 手動下
 ## 不變式
 
 - 自動單（trigger-engine/bracket）不受 A 影響。
-- 模擬環境不彈 Agent 核可（現行為）。
-- 手動確認關閉時，手動單不彈窗；正式環境 Agent 單仍必須逐筆核可。
+- 模擬環境依 confirm/auto policy 顯示 App proposal 或執行；正式/未知環境拒絕。
+- 手動確認關閉時，人工手動單不彈窗；這不會啟用正式環境 Agent 交易。
 - 核可視窗內容來源只能是 Rust state，絕不接受主 WebView 供給的顯示值。

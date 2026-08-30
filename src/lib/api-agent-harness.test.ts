@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     invoke: vi.fn(),
+    harnessEnabled: true,
 }));
 
 vi.mock('./runtime', () => ({
@@ -9,7 +10,7 @@ vi.mock('./runtime', () => ({
     isTauri: true,
 }));
 vi.mock('./agent-harness-state', () => ({
-    isAgentHarnessEnabled: () => true,
+    isAgentHarnessEnabled: () => mocks.harnessEnabled,
 }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 
@@ -18,6 +19,7 @@ import { apiPost } from './api';
 describe('agent harness native POST proxy', () => {
     beforeEach(() => {
         mocks.invoke.mockReset();
+        mocks.harnessEnabled = true;
     });
 
     it('sends the exact serialized mutation through the native bridge', async () => {
@@ -84,5 +86,22 @@ describe('agent harness native POST proxy', () => {
         expect(error).toBeInstanceOf(Error);
         expect(error).toMatchObject({ mutationNotStarted: true });
         expect((error as Error).message).toContain('使用者未核准');
+    });
+
+    it('never falls back to unsigned HTTP for an Agent mutation', async () => {
+        mocks.harnessEnabled = false;
+        const browserFetch = vi.spyOn(globalThis, 'fetch');
+
+        const error = await apiPost(
+            '/api/v1/order/place_order',
+            { code: '2330' },
+            { agentInitiated: true },
+        ).catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toMatchObject({ mutationNotStarted: true });
+        expect(mocks.invoke).not.toHaveBeenCalled();
+        expect(browserFetch).not.toHaveBeenCalled();
+        browserFetch.mockRestore();
     });
 });

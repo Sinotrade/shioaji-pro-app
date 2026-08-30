@@ -28,6 +28,20 @@ export function shouldProxyAgentHarnessMutation(
     return desktop && enabled && AGENT_HARNESS_MUTATIONS.has(path);
 }
 
+export function shouldRejectUnsignedAgentMutation(
+    desktop: boolean,
+    enabled: boolean,
+    path: string,
+    agentInitiated: boolean,
+): boolean {
+    return (
+        desktop &&
+        agentInitiated &&
+        !enabled &&
+        AGENT_HARNESS_MUTATIONS.has(path)
+    );
+}
+
 async function doFetch(url: string, init?: RequestInit): Promise<Response> {
     if (isTauri) {
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
@@ -71,10 +85,24 @@ export async function apiPost<T>(
     body: unknown,
     opts?: { timeoutMs?: number; agentInitiated?: boolean },
 ): Promise<T> {
+    const harnessEnabled = isAgentHarnessEnabled();
+    if (
+        shouldRejectUnsignedAgentMutation(
+            isTauri,
+            harnessEnabled,
+            path,
+            opts?.agentInitiated === true,
+        )
+    ) {
+        throw Object.assign(
+            new Error('Agent Harness 未啟用，拒絕 unsigned Agent mutation'),
+            { mutationNotStarted: true },
+        );
+    }
     // Serialize once in the WebView, then let the native bridge sign and send
     // these exact bytes. The native bridge fails closed when Harness is absent
     // or disabled; it never falls back to an unsigned protected mutation.
-    if (shouldProxyAgentHarnessMutation(isTauri, isAgentHarnessEnabled(), path)) {
+    if (shouldProxyAgentHarnessMutation(isTauri, harnessEnabled, path)) {
         const bodyText = JSON.stringify(body);
         const { invoke } = await import('@tauri-apps/api/core');
         let proxied: { status: number; body: string };
