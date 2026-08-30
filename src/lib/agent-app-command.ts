@@ -305,7 +305,16 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
         case 'remove_panel': {
             const { id } = args as AgentAppCommandMap['remove_panel']['args'];
             const workspace = context.getWorkspace();
-            findPanel(context, id);
+            const removing = findPanel(context, id);
+            // Agent 不能移除自己的面板：面板卸載會砍斷進行中的 MCP
+            // 回應通道（呼叫端永遠等不到結果），也會關掉使用者正在看
+            // 的對話
+            if (removing.type === 'assistant') {
+                throw new AgentAppCommandError(
+                    'unsupported',
+                    '不能移除 AI Agent 自己的面板',
+                );
+            }
             context.updateWorkspace({
                 blocks: workspace.blocks.filter((block) => block.id !== id),
                 layout: workspace.layout.filter((item) => item.i !== id),
@@ -363,6 +372,38 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
                 );
             }
             const next = structuredClone(target);
+            // 套用的版面若沒有 Agent 面板，把現行的帶過去 — 換版面
+            // 不能把 Agent 自己（與進行中呼叫的回應通道）換掉
+            const current = context.getWorkspace();
+            const liveAssistant = current.blocks.find(
+                (block) => block.type === 'assistant',
+            );
+            if (
+                liveAssistant &&
+                !next.blocks.some((block) => block.type === 'assistant')
+            ) {
+                const currentItem = current.layout.find(
+                    (item) => item.i === liveAssistant.id,
+                );
+                const maxY = next.layout.reduce(
+                    (acc, item) => Math.max(acc, item.y + item.h),
+                    0,
+                );
+                next.blocks.push(structuredClone(liveAssistant));
+                next.layout.push(
+                    currentItem
+                        ? { ...structuredClone(currentItem), x: 0, y: maxY }
+                        : {
+                              i: liveAssistant.id,
+                              x: 0,
+                              y: maxY,
+                              w: 72,
+                              h: 14,
+                              minW: 36,
+                              minH: 8,
+                          },
+                );
+            }
             context.updateWorkspace(next);
             return {
                 source,
