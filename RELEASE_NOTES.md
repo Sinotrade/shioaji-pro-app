@@ -20,8 +20,6 @@ Shioaji Pro 的 AI Agent 不再只是包一層聊天 API。桌面版現在可直
 - 核准視窗由 Tauri native 建立，主 WebView 與模型不能自行偽造「已確認」。關窗、逾時或環境不明一律拒絕。
 - 模糊的網路／券商結果不會自動重送；App 保留待核對紀錄，讓使用者確認券商端結果後再決定是否可用同一 idempotency key 重試。
 
-![Agent 下單安全設定](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.45/docs/images/release-0.1.45-agent-safety.png)
-
 ### Phase 1 安全界線
 
 - Agent 交易目前只在已驗證的**模擬環境**提供；受限的模擬自動模式仍通過數量、價格、頻率與帳戶風控。
