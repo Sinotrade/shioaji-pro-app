@@ -20,7 +20,10 @@ It complements the versioned tool contract in
 1. The WebView can observe only coarse provider login status. Access tokens,
    refresh tokens, API keys, MCP bearers, and broker credentials never cross
    Tauri serialization into JavaScript. The provider runtime receives only its
-   own revocable MCP capability; it receives no trading-broker credential.
+   own revocable MCP capability. Broker API keys and the Harness signing secret
+   are not injected into provider children, but Phase 1 does not claim secrecy
+   from an already-compromised same-OS-user process that inspects the sidecar's
+   environment.
 2. Each provider runtime receives a separate random MCP bearer. It is stored as
    a digest in MCP native memory and revoked with the runtime. Exact bearer
    forms are retained only in the runtime host for centralized event redaction;
@@ -63,10 +66,10 @@ It complements the versioned tool contract in
 | Model retries a timed-out order | Durable idempotency state and explicit reconciliation prevent a second execution. |
 | A payload-shaped order is mistaken for the original operation | Payload matches are evidence only. Without an immutable broker operation ID the mutation remains unresolved and cannot be retried automatically. |
 | Production order bypasses provider prompts | The App-owned approval window and native one-use trading grant are independent of provider approval caches. |
-| Main WebView forges or auto-clicks the agent approval | Approval UI runs in a separate native-created window; `agent_approval_pending`/`agent_approval_respond` reject every caller whose window label is not `agent-approval`, and the displayed content is read from Rust state only. |
+| Main WebView forges or auto-clicks the agent approval | Approval UI runs in a separate native-created window. Rust tracks whether the privileged window was created by the native manager, destroys a pre-existing forged label, and both approval commands require the label plus the native marker. Displayed content comes only from Rust state. |
 | Compromised WebView relaxes the approval mode | Phase 1 production approval cannot be disabled. Native state resets to required on every launch and the mode command rejects relaxation; simulation controlled-auto is session-scoped. |
 | Compromised WebView orders via the UI signing proxy | Accepted residual risk equivalent to the pre-Harness posture (the WebView could always place orders over direct HTTP). The UI capability signature attests WebView origin, not per-order human intent. |
-| Provider shell calls the sidecar directly | Trading/admin commands are denied by `run_shell`; native runtimes receive no broker credential; server-linked runtimes require the current Harness to remain enabled. |
+| Provider shell calls the sidecar directly | Native App Tools remain the supported trading path and `run_shell` blocks recognizable trading/admin commands. This lexical filter is defense in depth, not a capability boundary; a compromised same-user process may inspect the sidecar environment as documented under residual risk. |
 | User profile redirects `shioaji` to another binary | Native host binds approved argv to the bundled CLI in an isolated shell profile. |
 | App restarts during autonomous work | Pending grants expire, controlled auto pauses, and restored context starts read-only until reconciled/regranted. |
 | Audit log is edited, truncated, removed, recomputed without the native key, or symlinked | Keyed-chain and MACed-checkpoint verification, JSONL terminator checks, `O_NOFOLLOW`, and startup verification fail closed. |
@@ -87,7 +90,26 @@ It complements the versioned tool contract in
 - Provider-native MCP authentication is capability isolation between runtimes,
   not secrecy from the provider process or its same-user descendants. A
   compromised provider can exercise its own advertised tools until revocation,
-  but receives neither broker credentials nor another runtime's bearer.
+  but receives neither broker API keys nor another runtime's bearer through its
+  own launch environment.
+- The Shioaji sidecar currently receives `SJ_AGENT_HARNESS_SECRET` through its
+  process environment because that is the server's supported bootstrap
+  contract. Provider children do not inherit it, but another process already
+  compromised under the same OS user may inspect the sidecar environment and
+  forge Harness signatures. Moving bootstrap to an inherited pipe/native IPC is
+  a post-Phase-1 server integration hardening item.
+- The native audit checkpoint detects deletion and tail truncation while its
+  current key/checkpoint survive, but it is not an external monotonic counter.
+  A same-user process able to restore a previously valid key, log, and
+  checkpoint snapshot together can roll the audit state back; hardware-backed
+  or remote anchoring is a later hardening item.
+- Provider process trees are terminated recursively during an orderly stop.
+  On Unix, a hard App crash can still leave a deliberately detached descendant
+  that escaped the provider process group; the next launch revokes its Harness
+  runtime credentials, but OS-level containment is a post-Phase-1 item.
+- Durable idempotency entries are intentionally bounded and fail closed when
+  capacity is exhausted. Operators must reconcile and clear completed history;
+  automatic archival/compaction is deferred beyond Phase 1.
 - A crash between an external broker accepting a mutation and receipt
   persistence can leave an unknown outcome. The only safe response is to pause,
   query current broker/order state, and reconcile the original operation ID.
@@ -99,5 +121,7 @@ It complements the versioned tool contract in
 - Native tests cover bearer isolation/revocation, broker PID and sidecar binding,
   exact request digests, reconnect journals, audit tamper detection, and auth-file
   permissions.
-- Composite CI runs frontend build/tests, plugin contract tests, Rust tests,
-  formatting, and warning-free Clippy on the supported desktop matrices.
+- Composite CI runs frontend build/tests and plugin contracts on Linux and
+  Windows; the complete Rust suite runs on Linux, while Windows runs the TCP
+  owner and Job Object E2Es plus warning-free library/binary Clippy. macOS is
+  exercised by the signed release build rather than this PR matrix.

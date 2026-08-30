@@ -8,6 +8,7 @@
 // 純 UX 安全帶，不是安全邊界：WebView 內的確認擋不了被汙染的 WebView。
 
 import { fetchInfo } from './shioaji';
+import { getAccountState } from './account-store';
 import type { Action } from './types/order';
 
 export interface OrderConfirmRequest {
@@ -16,9 +17,12 @@ export interface OrderConfirmRequest {
     action: Action;
     // null = 市價
     price: number | null;
+    // 複數限價委託可用明確區間覆寫單一價格顯示
+    priceLabel?: string;
     quantity: number;
     // 口/張/股（或組合描述，如「1 張＋234 股」）
     unit: string;
+    accountLabel?: string;
     // 額外說明（盤中零股、平倉等）
     note?: string;
     // true=模擬、false=正式、null=未知（server 未回應）
@@ -58,6 +62,15 @@ export function resolveOrderConfirm(approved: boolean): void {
 let simulationCache: boolean | null = null;
 let simulationInflight: Promise<void> | null = null;
 
+function selectedAccountLabel(unit: string): string | undefined {
+    const state = getAccountState();
+    const account = unit === '口' ? state.selectedFutures : state.selectedStock;
+    if (!account) return undefined;
+    const id = account.account_id;
+    const masked = id.length > 4 ? `${'*'.repeat(id.length - 4)}${id.slice(-4)}` : id;
+    return `${account.broker_id}-${masked}`;
+}
+
 function primeSimulation(): Promise<void> {
     if (simulationCache !== null) return Promise.resolve();
     simulationInflight ??= fetchInfo()
@@ -88,14 +101,18 @@ export function requestOrderConfirm(
         // cache may take hundreds of milliseconds; without this placeholder,
         // two same-tick orders can both pass the guard and one promise is
         // overwritten forever.
+        const withAccount = {
+            ...request,
+            accountLabel: request.accountLabel ?? selectedAccountLabel(request.unit),
+        };
         const current: PendingConfirm = {
-            request: { ...request, simulation: simulationCache },
+            request: { ...withAccount, simulation: simulationCache },
             resolve,
         };
         pending = current;
         const start = () => {
             if (pending !== current) return;
-            current.request = { ...request, simulation: simulationCache };
+            current.request = { ...withAccount, simulation: simulationCache };
             emit();
         };
         // 環境資訊最多等 800ms — 拿不到就以未知呈現

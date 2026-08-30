@@ -118,15 +118,27 @@ function ApprovalApp() {
     const [detailOpen, setDetailOpen] = useState(false);
     const [remaining, setRemaining] = useState<number | null>(null);
     const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     const refresh = () =>
         invoke<ApprovalRequest | null>('agent_approval_pending')
             .then((next) => {
+                setError(null);
                 setRequest(next);
                 setDetailOpen(false);
-                setRemaining(next ? Math.round(next.ttlMs / 1000) : null);
+                setRemaining(
+                    next
+                        ? Math.round(
+                              Math.min(300_000, Math.max(15_000, next.ttlMs)) /
+                                  1000,
+                          )
+                        : null,
+                );
             })
-            .catch(() => setRequest(PREVIEW_REQUEST));
+            .catch((cause) => {
+                setError(cause instanceof Error ? cause.message : String(cause));
+                setRequest(PREVIEW_REQUEST);
+            });
 
     useEffect(() => {
         if (PREVIEW_REQUEST) {
@@ -154,8 +166,11 @@ function ApprovalApp() {
     const respond = (approved: boolean) => {
         if (!request || busy) return;
         setBusy(true);
+        setError(null);
         invoke('agent_approval_respond', { id: request.id, approved })
-            .catch(() => undefined)
+            .catch((cause) => {
+                setError(cause instanceof Error ? cause.message : String(cause));
+            })
             .finally(() => {
                 setBusy(false);
                 void refresh();
@@ -176,6 +191,11 @@ function ApprovalApp() {
 
     return (
         <div className={styles.shell}>
+            {error && (
+                <div className={styles.error} role="alert">
+                    核可未送出：{error}
+                </div>
+            )}
             <div className={styles.header}>
                 Agent 交易核可
                 <span

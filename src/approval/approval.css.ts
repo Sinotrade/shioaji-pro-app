@@ -27,6 +27,15 @@ export const empty = style({
     color: vars.color.mutedForeground,
 });
 
+export const error = style({
+    padding: '8px 10px',
+    fontSize: '0.72rem',
+    color: vars.color.down,
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.down}`,
+    borderRadius: vars.radius.sm,
+});
+
 export const header = style({
     display: 'flex',
     alignItems: 'center',

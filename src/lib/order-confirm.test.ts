@@ -84,4 +84,20 @@ describe('requestOrderConfirm', () => {
         resolveOrderConfirm(false);
         await promise;
     });
+
+    it('保留整批限價區間供確認視窗顯示', async () => {
+        const promise = requestOrderConfirm({
+            ...req,
+            price: null,
+            priceLabel: '128.5 ～ 132.5 限價',
+        });
+        await vi.waitFor(() =>
+            expect(getPendingOrderConfirm()).not.toBeNull(),
+        );
+        expect(getPendingOrderConfirm()?.priceLabel).toBe(
+            '128.5 ～ 132.5 限價',
+        );
+        resolveOrderConfirm(false);
+        await promise;
+    });
 });

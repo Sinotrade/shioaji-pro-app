@@ -27,9 +27,14 @@ function ConfirmModal({ request }: { request: OrderConfirmRequest }) {
                 if (e.target === e.currentTarget) resolveOrderConfirm(false);
             }}
         >
-            <div className={styles.dialog}>
+            <div
+                className={styles.dialog}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="order-confirm-title"
+            >
                 <div className={styles.header}>
-                    委託確認
+                    <span id="order-confirm-title">委託確認</span>
                     {request.simulation !== null && (
                         <span
                             className={
@@ -55,11 +60,20 @@ function ConfirmModal({ request }: { request: OrderConfirmRequest }) {
                     <div className={styles.detailRow}>
                         <span>價格</span>
                         <span className={styles.detailValue}>
-                            {request.price === null
-                                ? '市價'
-                                : fmtPrice(request.price)}
+                            {request.priceLabel ??
+                                (request.price === null
+                                    ? '市價'
+                                    : fmtPrice(request.price))}
                         </span>
                     </div>
+                    {request.accountLabel && (
+                        <div className={styles.detailRow}>
+                            <span>帳戶</span>
+                            <span className={styles.detailValue}>
+                                {request.accountLabel}
+                            </span>
+                        </div>
+                    )}
                     <div className={styles.detailRow}>
                         <span>數量</span>
                         <span className={styles.detailValue}>
@@ -73,13 +87,13 @@ function ConfirmModal({ request }: { request: OrderConfirmRequest }) {
                 <div className={styles.footer}>
                     <button
                         className={styles.cancelBtn}
+                        autoFocus
                         onClick={() => resolveOrderConfirm(false)}
                     >
                         取消
                     </button>
                     <button
                         className={styles.confirmBtn[dir]}
-                        autoFocus
                         onClick={() => resolveOrderConfirm(true)}
                     >
                         確認{request.action === 'Buy' ? '買進' : '賣出'}
