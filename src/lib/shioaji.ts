@@ -734,7 +734,10 @@ function ensureAccepted<
     T extends { status: { status: string; msg?: string } },
 >(t: T): T {
     if (t.status?.status === 'Failed') {
-        throw new Error(t.status.msg || '委託被拒絕（Failed）');
+        throw Object.assign(
+            new Error(t.status.msg || '委託被拒絕（Failed）'),
+            { mutationNotStarted: true as const },
+        );
     }
     return t;
 }

@@ -72,6 +72,14 @@ export function notify(n: AppNotice) {
     noticeListeners.forEach((l) => l(n));
 }
 
+function mutationNotStartedError(message: string): Error & {
+    mutationNotStarted: true;
+} {
+    return Object.assign(new Error(message), {
+        mutationNotStarted: true as const,
+    });
+}
+
 export function isFuturesContract(contract: ContractBase): boolean {
     return (
         contract.security_type === 'FUT' || contract.security_type === 'OPT'
@@ -85,7 +93,9 @@ export function isFuturesContract(contract: ContractBase): boolean {
 // when it didn't (issue #2). UI also disables the buttons; this backs it up.
 export function assertTradingLive() {
     if (getStreamStatus() !== 'live') {
-        throw new Error('行情未連線（非 LIVE）— 為避免誤單已暫停下單，請待連線恢復');
+        throw mutationNotStartedError(
+            '行情未連線（非 LIVE）— 為避免誤單已暫停下單，請待連線恢復',
+        );
     }
 }
 
@@ -141,11 +151,11 @@ export async function placeQuickOrder(
 ): Promise<Trade> {
     assertTradingLive();
     if (contract.security_type === 'IND') {
-        throw new Error('指數商品僅提供行情，不可下單');
+        throw mutationNotStartedError('指數商品僅提供行情，不可下單');
     }
     if (!opts?.bypassRisk) {
         const blocked = checkOrderAllowed(quantity);
-        if (blocked) throw new Error(blocked);
+        if (blocked) throw mutationNotStartedError(blocked);
     }
     if ((opts?.source ?? 'manual') === 'manual') {
         await confirmManualOrder(

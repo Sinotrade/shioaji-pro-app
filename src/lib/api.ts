@@ -69,8 +69,9 @@ async function throwApiError(res: Response): Promise<never> {
     } catch {
         // non-JSON body — fall back to status text
     }
-    throw new Error(
-        `${res.status} ${detail || res.statusText}`.trim(),
+    throw Object.assign(
+        new Error(`${res.status} ${detail || res.statusText}`.trim()),
+        { status: res.status },
     );
 }
 
