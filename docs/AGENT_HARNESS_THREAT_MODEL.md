@@ -48,9 +48,11 @@ It complements the versioned tool contract in
 6. Every mutation carries a stable idempotency key. A pending or ambiguous
    operation is reconciled; it is never blindly retried after timeout or restart.
 7. Native audit records persist only redacted metadata and request digests in a
-   `0600`, no-symlink JSONL chain with keyed entry hashes and a separately MACed
-   head checkpoint. Missing logs, missing checkpoints, edits, and valid tail
-   removal fail closed.
+   bounded sequence of `0600`, no-symlink JSONL segments with keyed entry hashes
+   and a separately MACed active-tail checkpoint. Startup verifies the complete
+   cross-segment chain once; constant-time appends authenticate the cached tail.
+   Missing logs or segments, missing checkpoints, edits, and valid tail removal
+   fail closed.
 8. A runtime that can reach the trading sidecar starts only after native code
    verifies the current App-owned sidecar generation and an enabled Harness.
    Disabling Harness is rejected while a native runtime is active.
@@ -122,6 +124,9 @@ It complements the versioned tool contract in
   fail closed while the retained set is full. Oversized completed results are
   reduced to digest-only guards: duplicate execution remains blocked during
   retention, but the original result cannot be replayed.
+- Unknown outcomes appear in the Agent panel and require the human to verify
+  broker records before closing them. Manual closure preserves the original
+  duplicate guard and never retries the same idempotency key.
 - A crash between an external broker accepting a mutation and receipt
   persistence can leave an unknown outcome. The only safe response is to pause,
   query current broker/order state, and reconcile the original operation ID.
