@@ -9,7 +9,7 @@ Shioaji Pro 的 AI Agent 不再只是包一層聊天 API。桌面版現在可直
 - 官方 Shioaji Pro skill／plugin 可安裝到 Codex 與 Claude Code；Pi 使用對應的 native policy。
 - Codex 訂閱模型改由 native app-server 的 `model/list` 動態載入，不再受 App 內建清單限制；GPT-5.6 系列與之後新增的帳號可用模型會自動出現（#20）。
 
-![AI Agent 技能面板](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.45/docs/images/release-0.1.45-agent-skills.png)
+![AI Agent 原生 runtime 與交易權限設定](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.45/docs/images/release-0.1.45-agent-settings.jpg)
 
 ### 交易核准是人看得懂的介面
 
@@ -19,6 +19,8 @@ Shioaji Pro 的 AI Agent 不再只是包一層聊天 API。桌面版現在可直
 - Agent 提案以方向、商品、價格、數量、帳戶與環境為第一層資訊；完整 payload 與 digest 收在技術細節。
 - 核准視窗由 Tauri native 建立，主 WebView 與模型不能自行偽造「已確認」。關窗、逾時或環境不明一律拒絕。
 - 模糊的網路／券商結果不會自動重送；App 保留待核對紀錄，讓使用者確認券商端結果後再決定是否可用同一 idempotency key 重試。
+
+![Agent 下單安全設定](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.45/docs/images/release-0.1.45-agent-safety.png)
 
 ### Phase 1 安全界線
 
