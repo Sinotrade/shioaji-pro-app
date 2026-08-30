@@ -21,7 +21,9 @@ import {
 import { onOrderEvent } from './stream';
 import {
     loadDesktopSettings,
+    harnessOwnershipCompatible,
     localTlsCertExists,
+    nativeOwnsHarnessSidecar,
     serverStart,
     serverStatus,
 } from './tauri';
@@ -106,6 +108,11 @@ async function run() {
                     ? scheme === 'https' ||
                       !(await localTlsCertExists().catch(() => false))
                     : scheme === 'http';
+                const harnessOwned = harnessOwnershipCompatible(
+                    settings.agentHarnessEnabled,
+                    !!status?.port &&
+                        (await nativeOwnsHarnessSidecar(status.port)),
+                );
                 // identity match: right mode, right listener scheme, right
                 // version — health is judged separately so a server that is
                 // merely WARMING UP (login + contract load, /health not yet
@@ -116,6 +123,7 @@ async function run() {
                     status?.running &&
                     status.simulation === !settings.production &&
                     schemeOk &&
+                    harnessOwned &&
                     // version handshake — 不接版本不符的 server（例如
                     // 使用者 8080 上的舊 CLI），改起自帶 sidecar
                     (EXPECTED_SERVER_VERSION === '' ||

@@ -1,0 +1,128 @@
+name: desktop-agent-ci
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - 'codex/**'
+      - 'feat/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  combined-agent:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            sidecar: shioaji-x86_64-unknown-linux-gnu
+            mkcert: mkcert-x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            sidecar: shioaji-x86_64-pc-windows-msvc.exe
+            mkcert: mkcert-x86_64-pc-windows-msvc.exe
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned desktop SHA
+        id: desktop-ref
+        shell: bash
+        run: |
+          DESKTOP_REF="$(tr -d '[:space:]' < DESKTOP_MODULES_REF)"
+          if [[ ! "$DESKTOP_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "DESKTOP_MODULES_REF must contain one full commit SHA" >&2
+            exit 1
+          fi
+          echo "sha=$DESKTOP_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned desktop modules
+        uses: ./.github/actions/desktop-overlay
+        with:
+          ssh-key: ${{ secrets.AGENT_SSH_KEY }}
+          sha: ${{ steps.desktop-ref.outputs.sha }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stage test sidecar
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          mkdir -p src-tauri/binaries
+          install -m 755 /bin/true "src-tauri/binaries/${{ matrix.sidecar }}"
+          install -m 755 /bin/true "src-tauri/binaries/${{ matrix.mkcert }}"
+
+      - name: Stage test sidecar (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          Copy-Item "$env:SystemRoot/System32/where.exe" "src-tauri/binaries/${{ matrix.sidecar }}"
+          Copy-Item "$env:SystemRoot/System32/where.exe" "src-tauri/binaries/${{ matrix.mkcert }}"
+
+      - name: Frontend production build
+        run: pnpm build
+
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Official agent plugin contract tests
+        shell: bash
+        run: |
+          if [[ -f plugins/shioaji-pro/test/manifest-consistency.test.mjs ]]; then
+            node --test plugins/shioaji-pro/test/manifest-consistency.test.mjs
+          fi
+
+      - name: Pi permission policy tests
+        run: node --test src-tauri/src/pi_policy_extension.test.mjs
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Rust runtime and capability tests
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Windows TCP owner E2E
+        if: matrix.platform == 'windows-latest'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --bin windows_tcp_owner_e2e
+
+      - name: Windows agent Job Object E2E
+        if: matrix.platform == 'windows-latest'
+        run: cargo run --manifest-path src-tauri/Cargo.toml --bin windows_agent_job_e2e
+
+      - name: Rust lint
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Windows Rust compile and lint
+        if: matrix.platform == 'windows-latest'
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib --bins -- -D warnings

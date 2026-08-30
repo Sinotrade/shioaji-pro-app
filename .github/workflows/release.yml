@@ -39,14 +39,19 @@ jobs:
             mkdir -p ~/.ssh
             echo "$AGENT_SSH_KEY" > ~/.ssh/agent_key
             chmod 600 ~/.ssh/agent_key
+            trap 'rm -f ~/.ssh/agent_key' EXIT
             ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
             SHA=$(GIT_SSH_COMMAND="ssh -i ~/.ssh/agent_key -o IdentitiesOnly=yes" git ls-remote git@github.com:Yvictor/shioaji-pro-desktop.git refs/heads/main | cut -f1)
-            rm -f ~/.ssh/agent_key
             # 行1＝人讀契約（short SHA）；行2＝完整 SHA（build 釘定與 re-run 沿用）
             printf 'shioaji-pro-desktop@%s\n%s\n' "${SHA:0:7}" "$SHA" > desktop-rev.txt
           fi
           if [ "${#SHA}" -ne 40 ]; then
             echo "failed to resolve desktop revision (got '$SHA')" >&2
+            exit 1
+          fi
+          PIN=$(tr -d '[:space:]' < DESKTOP_MODULES_REF)
+          if [ "$SHA" != "$PIN" ]; then
+            echo "release blocked: private main $SHA != DESKTOP_MODULES_REF $PIN" >&2
             exit 1
           fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"

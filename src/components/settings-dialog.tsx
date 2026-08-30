@@ -3,6 +3,7 @@
 // 收斂到這裡；風控「規則」也在此（Kill Switch 留在 header，一鍵可達）。
 
 import {
+    Bot,
     LayoutGrid,
     Palette,
     RefreshCw,
@@ -37,6 +38,7 @@ import {
     setRiskSettings,
     useRiskSettings,
 } from '../lib/risk';
+import { isTauri } from '../lib/runtime';
 import { setSoundEnabled, soundEnabled } from '../lib/sounds';
 import {
     setThemeSettings,
@@ -50,6 +52,10 @@ import {
     useToastScale,
     type ToastScale,
 } from '../lib/toast-prefs';
+import {
+    isAgentHarnessEnabled,
+    setAgentHarnessEnabled,
+} from '../lib/tauri';
 import { Orb } from './orb';
 import * as hud from './hud-header.css';
 import * as panel from './panel.css';
@@ -66,13 +72,20 @@ const CONVENTION_OPTIONS: { key: Convention; label: string }[] = [
     { key: 'intl', label: '綠漲紅跌' },
 ];
 
-type SettingsTab = 'appearance' | 'soundPrivacy' | 'accounts' | 'risk' | 'layout';
+type SettingsTab =
+    | 'appearance'
+    | 'soundPrivacy'
+    | 'accounts'
+    | 'risk'
+    | 'agent'
+    | 'layout';
 
 const TABS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { key: 'appearance', label: '外觀', icon: <Palette size={13} /> },
     { key: 'soundPrivacy', label: '音效與隱私', icon: <Volume2 size={13} /> },
     { key: 'accounts', label: '帳號', icon: <UserRound size={13} /> },
     { key: 'risk', label: '風控', icon: <ShieldAlert size={13} /> },
+    { key: 'agent', label: 'Agent', icon: <Bot size={13} /> },
     { key: 'layout', label: '版面', icon: <LayoutGrid size={13} /> },
 ];
 
@@ -385,6 +398,37 @@ function RiskSection() {
                 <br />
                 Kill Switch（鎖定下單）在畫面右上角「風控」鈕，一鍵鎖定/解鎖。
             </span>
+            <span className={hud.settingLabel}>下單確認</span>
+            <div className={hud.switchRow}>
+                <span
+                    className={hud.switchLabel}
+                    title='手動下單前顯示可視化委託確認（方向/商品/價格/數量）；停損停利等自動觸發單不受影響'
+                >
+                    手動下單確認
+                </span>
+                <button
+                    className={
+                        hud.switchTrack[
+                            risk.confirmManualOrders ? 'on' : 'off'
+                        ]
+                    }
+                    title={
+                        risk.confirmManualOrders
+                            ? '關閉手動下單確認'
+                            : '啟用手動下單確認'
+                    }
+                    onClick={() =>
+                        setRiskSettings({
+                            confirmManualOrders: !risk.confirmManualOrders,
+                        })
+                    }
+                />
+            </div>
+            <span className={hud.emptyHint}>
+                預設關閉（維持快速下單）。開啟後閃電下單、下單面板、
+                圖表點價、平倉與鋪單都會先跳委託確認；停損/停利等
+                自動觸發單與 Agent 下單不經過此確認。
+            </span>
             <span className={hud.settingLabel}>快捷鍵 Hotkeys</span>
             <div className={hud.switchRow}>
                 <span
@@ -411,6 +455,82 @@ function RiskSection() {
                 預設關閉，避免誤觸；開啟後在非輸入狀態下 0.6 秒內連按兩次
                 Esc 會撤銷全部未成交委託（第一下會先跳提示）。
             </span>
+        </>
+    );
+}
+
+function AgentSection() {
+    const [enabled, setEnabled] = useState(isAgentHarnessEnabled());
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+
+    const [note, setNote] = useState('');
+    const toggle = async () => {
+        const next = !enabled;
+        setBusy(true);
+        setError('');
+        setNote('');
+        try {
+            const res = await setAgentHarnessEnabled(next);
+            setEnabled(next);
+            if (res.restarted) {
+                // 撿到孤兒 sidecar（上次 app 異常退出）— 已透過 native
+                // spawn 重啟以取得 harness 所有權
+                setNote('伺服器已自動重啟以建立 Agent Harness 所有權');
+            }
+            if (res.portChanged) {
+                // API base 換了 port — 全面重載讓每個面板接上新伺服器
+                window.location.reload();
+            }
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <>
+            <span className={hud.settingLabel}>Agent Harness</span>
+            <div className={hud.switchRow}>
+                <span className={hud.switchLabel}>保護 Agent 下單操作</span>
+                <button
+                    className={hud.switchTrack[enabled ? 'on' : 'off']}
+                    disabled={busy}
+                    title={enabled ? '關閉 Agent Harness' : '開啟 Agent Harness'}
+                    onClick={() => void toggle()}
+                />
+            </div>
+            <span className={hud.emptyHint}>
+                關閉時，一般 UI 下單走原本的直接 HTTP 路徑；開啟後，Agent
+                與 UI 的交易 mutation 都需要一次性 capability。切換立即
+                生效，不需重啟伺服器。
+            </span>
+            <div className={hud.switchRow}>
+                <span
+                    className={hud.switchLabel}
+                    title='Agent 在正式環境的每筆交易都需由獨立核可視窗確認'
+                >
+                    正式環境逐筆核可
+                </span>
+                <button
+                    className={hud.switchTrack.on}
+                    disabled
+                    title='Phase 1 安全基線：正式環境固定開啟'
+                />
+            </div>
+            <span className={hud.emptyHint}>
+                正式環境固定逐筆顯示可視化核可視窗，無法關閉。自動交易僅限
+                模擬環境，且每次 App 重啟都會恢復為「交易確認」。此安全邊界與
+                「手動下單確認」（設定 → 風控）互相獨立。
+            </span>
+            {busy && (
+                <span className={hud.emptyHint}>
+                    切換中…（若需重啟伺服器約 10–60 秒）
+                </span>
+            )}
+            {note && <span className={hud.emptyHint}>{note}</span>}
+            {error && <span className={styles.errorText}>{error}</span>}
         </>
     );
 }
@@ -515,6 +635,7 @@ export function SettingsDialog({
                         {tab === 'soundPrivacy' && <SoundPrivacySection />}
                         {tab === 'accounts' && <AccountsSection />}
                         {tab === 'risk' && <RiskSection />}
+                        {tab === 'agent' && <AgentSection />}
                         {tab === 'layout' && (
                             <LayoutSection {...layoutProps} onClose={onClose} />
                         )}

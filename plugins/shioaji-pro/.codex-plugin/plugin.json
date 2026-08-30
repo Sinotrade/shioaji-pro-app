@@ -1,0 +1,39 @@
+{
+  "name": "shioaji-pro",
+  "version": "0.1.0",
+  "description": "Official Shioaji Pro skill for safe semantic control through the App's native MCP tools.",
+  "author": {
+    "name": "Sinotrade",
+    "url": "https://github.com/Sinotrade"
+  },
+  "homepage": "https://github.com/Sinotrade/shioaji-pro-app",
+  "repository": "https://github.com/Sinotrade/shioaji-pro-app",
+  "license": "MIT",
+  "keywords": [
+    "shioaji-pro",
+    "trading",
+    "taiwan",
+    "mcp",
+    "agent"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Shioaji Pro",
+    "shortDescription": "Safe semantic control for Shioaji Pro",
+    "longDescription": "Observe and control Shioaji Pro through versioned native MCP tools with capability-scoped permissions and guarded trade execution.",
+    "developerName": "Sinotrade",
+    "category": "Finance",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/Sinotrade/shioaji-pro-app",
+    "brandColor": "#D71920",
+    "defaultPrompt": [
+      "Analyze the current Shioaji Pro workspace.",
+      "Help me prepare a safe simulated trade.",
+      "Organize my Shioaji Pro trading workspace."
+    ]
+  }
+}

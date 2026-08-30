@@ -10,6 +10,7 @@ import {
     DEFAULT_PORT,
     EXPECTED_SERVER_VERSION,
     LEGACY_PORT,
+    getApiBase,
     getApiPort,
     getApiScheme,
     getServerPid,
@@ -26,9 +27,19 @@ import {
     setStoredSpawnKeyHash,
     shouldForceRespawn,
 } from './spawn-keys';
+import { cacheAgentHarnessEnabled } from './agent-harness-state';
+import {
+    harnessOwnershipCompatible,
+    recoverHarnessOwnership,
+} from './sidecar-ownership';
 import { notify } from './trade';
 
 export { isTauri } from './runtime';
+export {
+    isAgentHarnessEnabled,
+    subscribeAgentHarnessEnabled,
+} from './agent-harness-state';
+export { harnessOwnershipCompatible } from './sidecar-ownership';
 
 // poll /health until it answers, then reload — used after a fresh start so
 // every panel bootstraps cleanly instead of racing a server that's still
@@ -61,6 +72,7 @@ export interface ServerStatus {
     simulation?: boolean;
     version?: string;
     scheme?: ApiScheme;
+    agentHarnessEnabled?: boolean;
 }
 
 export interface SidecarResult {
@@ -103,6 +115,7 @@ async function spawnServer(
     env: Record<string, string>,
     port: number,
     scheme: ApiScheme = 'http',
+    agentHarnessEnabled = false,
 ): Promise<SidecarResult> {
     const fullEnv = { NO_COLOR: '1', ...env };
     const { invoke } = await import('@tauri-apps/api/core');
@@ -112,6 +125,7 @@ async function spawnServer(
             args,
             env: fullEnv,
             port,
+            agentHarnessEnabled,
         });
     } catch (e) {
         if (/not found|unknown/i.test(String(e))) {
@@ -140,6 +154,41 @@ async function spawnServer(
         ok: false,
         output: `${await readServerLog(port)}\n啟動逾時（45 秒未就緒）`.trim(),
     };
+}
+
+export async function nativeOwnsHarnessSidecar(port: number): Promise<boolean> {
+    try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        return await invoke<boolean>('agent_harness_sidecar_owned', { port });
+    } catch {
+        return false;
+    }
+}
+
+// Agent Harness ownership recovery — after a crash/force-quit the next app
+// launch ADOPTS the healthy orphan sidecar (good for plain trading), but the
+// harness signing boundary is process-local, so every harness entry point
+// dead-ends with 「需要目前 App instance 自己啟動的…」 until the server is
+// respawned by THIS process. Restart through serverStart: its harnessMismatch
+// branch stops the unowned daemon only with full is-shioaji ownership proof
+// (foreign servers are refused, fail-closed) and spawns fresh natively.
+// Single-flight so a settings toggle and an agent start racing each other
+// (or a boot-time restore) never stack concurrent respawns.
+let harnessRecoveryInFlight: Promise<StartResult | null> | null = null;
+export function ensureHarnessOwnedServer(): Promise<StartResult | null> {
+    if (!harnessRecoveryInFlight) {
+        harnessRecoveryInFlight = recoverHarnessOwnership({
+            nativeOwned: () => nativeOwnsHarnessSidecar(getApiPort()),
+            loadSettings: loadDesktopSettings,
+            restart: async () => {
+                const settings = await loadDesktopSettings();
+                return serverStart({ ...settings, agentHarnessEnabled: true });
+            },
+        }).finally(() => {
+            harnessRecoveryInFlight = null;
+        });
+    }
+    return harnessRecoveryInFlight;
 }
 
 // startup/login output lands in ~/.shioaji/sjpro-server-<port>.log now —
@@ -187,20 +236,12 @@ async function spawnServerViaChannels(
     } catch (e) {
         return { ok: false, output: `啟動失敗：${String(e)}` };
     }
-    // remember the child pid — a foreground `server start` never registers
-    // with the CLI daemon state, so stop/restart (even after an app relaunch)
-    // must kill this pid ourselves. Also hand it to the Rust side, which
-    // reaps the child on app exit (a parentless server zombifies: socket
-    // bound, HTTP dead — and squats the port for the next launch).
+    // Remember the child pid for legacy stop/restart behavior. This fallback
+    // intentionally cannot register a trusted harness sidecar: renderer-owned
+    // PID/port input must never establish the native signing boundary.
     if (child?.pid) {
         setServerPid(child.pid);
         setSpawnPort(port);
-        try {
-            const { invoke } = await import('@tauri-apps/api/core');
-            await invoke('register_server_pid', { pid: child.pid });
-        } catch {
-            // older shell without the command — exit reaping unavailable
-        }
     }
     // poll until the server answers, or it dies, or we give up (~45s covers a
     // production login + CA activation + contract load)
@@ -374,6 +415,7 @@ export async function serverStatus(): Promise<ServerStatus | null> {
             simulation: hit.info.simulation,
             version: hit.info.version,
             scheme: hit.scheme,
+            agentHarnessEnabled: hit.info.agentHarnessEnabled,
             // only claim a pid for the server we spawned — an attached
             // external server has an unknown pid, and showing our stale
             // record for it is misleading
@@ -400,6 +442,7 @@ export async function serverStatus(): Promise<ServerStatus | null> {
                         simulation: hit.info.simulation,
                         version: hit.info.version,
                         scheme: hit.scheme,
+                        agentHarnessEnabled: hit.info.agentHarnessEnabled,
                         pid: st.pid,
                     };
                 }
@@ -421,19 +464,23 @@ async function probeFetch(
     url: string,
     timeoutMs: number,
 ): Promise<Response> {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
     try {
-        return await tauriFetch(url, {
-            signal: AbortSignal.timeout(timeoutMs),
-        });
+        return await tauriFetchWithTimeout(url, timeoutMs);
     } catch (err) {
         if (url.startsWith('https://')) {
+            const controller = new AbortController();
+            const timer = window.setTimeout(
+                () => controller.abort(),
+                timeoutMs,
+            );
             try {
                 return await fetch(url, {
-                    signal: AbortSignal.timeout(timeoutMs),
+                    signal: controller.signal,
                 });
             } catch (err2) {
                 throw err2;
+            } finally {
+                window.clearTimeout(timer);
             }
         }
         throw err;
@@ -444,7 +491,11 @@ async function probeFetch(
 async function probeInfo(
     port: number,
     scheme: ApiScheme = getApiScheme(),
-): Promise<{ version: string; simulation: boolean } | null> {
+): Promise<{
+    version: string;
+    simulation: boolean;
+    agentHarnessEnabled: boolean;
+} | null> {
     try {
         // generous timeout: at boot the plugin-http queue is congested and
         // a tight 1.5s deadline cancelled probes against LIVE servers —
@@ -458,12 +509,17 @@ async function probeInfo(
         const info = (await res.json()) as {
             version?: string;
             simulation?: boolean;
+            agent_harness?: { enabled?: boolean };
         };
         if (
             typeof info.version === 'string' &&
             typeof info.simulation === 'boolean'
         ) {
-            return { version: info.version, simulation: info.simulation };
+            return {
+                version: info.version,
+                simulation: info.simulation,
+                agentHarnessEnabled: info.agent_harness?.enabled === true,
+            };
         }
     } catch {
         // not answering
@@ -478,7 +534,11 @@ async function probeInfoEither(
     port: number,
     preferred: ApiScheme = getApiScheme(),
 ): Promise<{
-    info: { version: string; simulation: boolean };
+    info: {
+        version: string;
+        simulation: boolean;
+        agentHarnessEnabled: boolean;
+    };
     scheme: ApiScheme;
 } | null> {
     const other: ApiScheme = preferred === 'https' ? 'http' : 'https';
@@ -538,6 +598,21 @@ async function caActive(
     }
 }
 
+// AbortSignal.timeout() cannot be cancelled after a request settles. With the
+// Tauri HTTP plugin, its later abort event attempts to close an already-freed
+// Rust resource and surfaces as an unhandled "resource id ... is invalid"
+// rejection. Own the timer so successful probes clear it immediately.
+async function tauriFetchWithTimeout(url: string, timeoutMs: number) {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await tauriFetch(url, { signal: controller.signal });
+    } finally {
+        window.clearTimeout(timer);
+    }
+}
+
 export interface StartResult extends SidecarResult {
     port: number;
     attached: boolean; // an existing shioaji server was reused
@@ -551,6 +626,7 @@ export async function serverStart(opts: {
     caPath?: string;
     caPasswd?: string;
     httpsEnabled?: boolean;
+    agentHarnessEnabled?: boolean;
 }): Promise<StartResult> {
     // when production+CA is requested, a daemon is only good enough to reuse
     // if its CA is actually active — otherwise orders 400 (issue #1)
@@ -584,6 +660,7 @@ export async function serverStart(opts: {
                     simulation: hit.info.simulation,
                     version: hit.info.version,
                     scheme: hit.scheme,
+                    agentHarnessEnabled: hit.info.agentHarnessEnabled,
                     pid: getServerPid() ?? undefined,
                 };
                 break;
@@ -614,6 +691,7 @@ export async function serverStart(opts: {
                 // undefined and adopts an old-version orphan
                 version: found.info.version,
                 scheme: found.scheme,
+                agentHarnessEnabled: found.info.agentHarnessEnabled,
                 pid: getServerPid() ?? undefined,
             };
         }
@@ -639,7 +717,15 @@ export async function serverStart(opts: {
             EXPECTED_SERVER_VERSION !== '' &&
             st.version !== undefined &&
             st.version !== EXPECTED_SERVER_VERSION;
-        const external = getSpawnPort() !== st.port;
+        const nativeHarnessOwned = await nativeOwnsHarnessSidecar(st.port);
+        const harnessMismatch = !harnessOwnershipCompatible(
+            opts.agentHarnessEnabled === true,
+            nativeHarnessOwned,
+        );
+        const external = getSpawnPort() !== st.port || harnessMismatch;
+        // Harness authority belongs to one native App process and one
+        // sidecar generation. Never adopt a healthy daemon from a previous
+        // App instance: it verifies a different signing key.
         // 金鑰 hash 領養檢查 (issue #16): our OWN spawn may still be logged
         // into the credentials it was STARTED with — after a re-login with a
         // different API key, adopting it shows the old account's data. Only
@@ -663,6 +749,7 @@ export async function serverStart(opts: {
             !schemeMismatch &&
             caOk &&
             !versionMismatch &&
+            !harnessMismatch &&
             !keyMismatch
         ) {
             // healthy, right mode, right version, CA live — just use it
@@ -694,6 +781,8 @@ export async function serverStart(opts: {
                     ? '模式與設定不符'
                     : schemeMismatch
                       ? `連線協定不符（server ${stScheme}，需 ${wantScheme}）`
+                      : harnessMismatch
+                        ? 'Agent Harness 金鑰不屬於此 App instance'
                       : versionMismatch
                         ? `版本不符（server ${st.version}，需 ${EXPECTED_SERVER_VERSION}）`
                         : keyMismatch
@@ -764,7 +853,13 @@ export async function serverStart(opts: {
     const args = ['server', 'start', '--no-open'];
     if (opts.production) args.push('--production');
     // spawn (don't await to completion) — the start runs in foreground
-    const res = await spawnServer(args, env, port, wantScheme);
+    const res = await spawnServer(
+        args,
+        env,
+        port,
+        wantScheme,
+        opts.agentHarnessEnabled,
+    );
     if (res.ok) {
         // remember which credentials THIS spawn was started with (issue #16)
         // — null (no crypto.subtle) clears the record so a stale hash never
@@ -880,6 +975,7 @@ export interface DesktopSettings {
     caPath: string; // Sinopac.pfx — required for production orders
     caPasswd: string;
     httpsEnabled: boolean; // serve the sidecar over local HTTPS (mkcert)
+    agentHarnessEnabled: boolean; // runtime-toggleable; no server restart
 }
 
 const EMPTY_SETTINGS: DesktopSettings = {
@@ -890,13 +986,14 @@ const EMPTY_SETTINGS: DesktopSettings = {
     caPath: '',
     caPasswd: '',
     httpsEnabled: false,
+    agentHarnessEnabled: false,
 };
 
 export async function loadDesktopSettings(): Promise<DesktopSettings> {
     if (!isTauri) return { ...EMPTY_SETTINGS };
     const { LazyStore } = await import('@tauri-apps/plugin-store');
     const store = new LazyStore('settings.json');
-    return {
+    const settings = {
         apiKey: (await store.get<string>('apiKey')) ?? '',
         secretKey: (await store.get<string>('secretKey')) ?? '',
         production: (await store.get<boolean>('production')) ?? false,
@@ -904,7 +1001,11 @@ export async function loadDesktopSettings(): Promise<DesktopSettings> {
         caPath: (await store.get<string>('caPath')) ?? '',
         caPasswd: (await store.get<string>('caPasswd')) ?? '',
         httpsEnabled: (await store.get<boolean>('httpsEnabled')) ?? false,
+        agentHarnessEnabled:
+            (await store.get<boolean>('agentHarnessEnabled')) ?? false,
     };
+    cacheAgentHarnessEnabled(settings.agentHarnessEnabled);
+    return settings;
 }
 
 export async function saveDesktopSettings(s: DesktopSettings) {
@@ -918,7 +1019,39 @@ export async function saveDesktopSettings(s: DesktopSettings) {
     await store.set('caPath', s.caPath);
     await store.set('caPasswd', s.caPasswd);
     await store.set('httpsEnabled', s.httpsEnabled);
+    await store.set('agentHarnessEnabled', s.agentHarnessEnabled);
+    cacheAgentHarnessEnabled(s.agentHarnessEnabled);
     await store.save();
+}
+
+export interface SetAgentHarnessResult {
+    // ownership recovery respawned the sidecar (adopted orphan → owned)
+    restarted: boolean;
+    // the API base moved with the respawn — caller should reload the page
+    portChanged: boolean;
+}
+
+export async function setAgentHarnessEnabled(
+    enabled: boolean,
+): Promise<SetAgentHarnessResult> {
+    if (!isTauri) throw new Error('Agent Harness 只能由 Desktop native host 切換');
+    // Enabling against an ADOPTED sidecar (crash/force-quit orphan) used to
+    // dead-end on the native ownership check with no way out of the settings
+    // dialog — recover by respawning natively first. Disable is left as-is:
+    // an unowned sidecar cannot be signed for either way, and the existing
+    // error already points at the server restart.
+    const recovered = enabled ? await ensureHarnessOwnedServer() : null;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('agent_harness_set_enabled', {
+        origin: new URL(getApiBase()).origin,
+        enabled,
+    });
+    const settings = await loadDesktopSettings();
+    await saveDesktopSettings({ ...settings, agentHarnessEnabled: enabled });
+    return {
+        restarted: recovered !== null,
+        portChanged: recovered?.portChanged ?? false,
+    };
 }
 
 // native file picker for the Sinopac.pfx certificate
@@ -1187,6 +1320,18 @@ function updateDownloadProgress(event: DownloadEvent) {
 
 export async function checkForUpdates(silent: boolean) {
     if (!isTauri || updateInFlight) return;
+    // dev build（vite dev / target/debug）不檢查更新 — 否則 dev 環境會
+    // 下載正式版並在重啟時把 debug app 換掉
+    if (import.meta.env.DEV) {
+        if (!silent) {
+            notify({
+                kind: 'info',
+                title: 'Dev build 不檢查更新',
+                body: '開發模式跳過自動更新，避免被正式版取代',
+            });
+        }
+        return;
+    }
     if (appUpdateState.phase === 'ready') {
         if (!silent) {
             notify({

@@ -118,3 +118,9 @@ export const unsignedTag = style({
     fontSize: '0.6rem',
     color: vars.color.amber,
 });
+
+export const errorText = style({
+    fontSize: '0.68rem',
+    color: vars.color.danger,
+    whiteSpace: 'pre-wrap',
+});

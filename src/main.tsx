@@ -4,7 +4,7 @@
 // AbortSignal.timeout, …) before any dependency module evaluates
 import './lib/polyfills';
 import { StrictMode, useEffect, useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import { createRoot, type Root } from 'react-dom/client';
 import App from './App';
 import { OnboardingSetup } from './components/onboarding-setup';
 import './index.css';
@@ -44,7 +44,13 @@ if (!rootElement) {
     throw new Error('Root element #root not found');
 }
 
-createRoot(rootElement).render(
+// Vite can re-evaluate this entry module during HMR. Keep the Root on the DOM
+// node so a hot update renders into the existing tree instead of calling
+// createRoot twice (which also duplicated background bootstrap side effects).
+const rootHost = rootElement as HTMLElement & { __shioajiRoot?: Root };
+const root = rootHost.__shioajiRoot ?? createRoot(rootHost);
+rootHost.__shioajiRoot = root;
+root.render(
     <StrictMode>
         <AppGate />
     </StrictMode>,

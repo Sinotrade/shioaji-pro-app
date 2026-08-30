@@ -83,3 +83,20 @@ test coverage 門檻、quality metrics 等。落地時更新本節。
   repo 權限。
 - 私有 repo 的 PR 會透過 `repository_dispatch` 觸發本 repo 的
   `desktop-ci.yml` 做合成驗證（詳見私有 repo 的 DEV.md）。
+
+### 公私 paired PR 的 merge 順序
+
+同一功能同時修改 public/private 時，兩個 PR 必須先以
+`DESKTOP_MODULES_REF` 的 immutable private SHA 完成合成 CI、review 與 QA，
+再依下列順序落地：
+
+1. private PR **用 merge commit** 合進 private `main`，禁止 squash/rebase
+   merge，並暫停任何 `v*` tag。
+2. 取得 private `origin/main` 新的 merge-commit SHA，把本 repo PR 的
+   `DESKTOP_MODULES_REF` 更新到該 SHA，重跑 public Linux/Windows composite
+   CI，確認 release overlay 可由 private main 重現。
+3. public PR 用 merge commit 合進 public `main`。兩邊 main 都落地且 CI
+   綠後，才允許進入 [RELEASE.md](RELEASE.md) 的 tag 發佈流程。
+
+不得先 merge public、不得讓 release workflow 的 private-main HEAD 與
+`DESKTOP_MODULES_REF` 指向不同實作，也不得在 paired PR 僅落地一側時打 tag。

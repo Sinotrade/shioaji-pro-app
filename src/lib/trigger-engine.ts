@@ -116,6 +116,7 @@ async function fire(t: TriggerOrder, lastPrice: number) {
         const contract = await ensureContract(t.code);
         const trade = await placeQuickOrder(contract, t.action, null, t.quantity, {
             bypassRisk: true, // protective exit — never blocked by kill switch
+            source: 'auto', // 觸價自動單 — 使用者可能不在場，不彈確認
         });
         notify({
             kind: 'ok',

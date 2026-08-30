@@ -1,6 +1,7 @@
 // src/lib/api.ts
 
 import { getApiBase, isTauri } from './runtime';
+import { isAgentHarnessEnabled } from './agent-harness-state';
 
 // resolved per request — the server port can move at runtime (e.g. the boot
 // flow discovers the default port occupied and starts on a fallback), and a
@@ -8,9 +9,39 @@ import { getApiBase, isTauri } from './runtime';
 // (the stuck-at-載入交易終端 bug)
 const base = () => getApiBase();
 
-// The desktop webview enforces CORS but the shioaji server doesn't answer
-// preflight OPTIONS (405) — route requests through Tauri's Rust-side fetch,
-// which has no CORS, when running in the app.
+const AGENT_HARNESS_MUTATIONS = new Set([
+    '/api/v1/order/place_order',
+    '/api/v1/order/cancel_order',
+    '/api/v1/order/update_price',
+    '/api/v1/order/update_qty',
+    '/api/v1/order/place_comboorder',
+    '/api/v1/order/cancel_comboorder',
+    '/api/v1/order/reserve_stock',
+    '/api/v1/order/reserve_earmarking',
+]);
+
+export function shouldProxyAgentHarnessMutation(
+    desktop: boolean,
+    enabled: boolean,
+    path: string,
+): boolean {
+    return desktop && enabled && AGENT_HARNESS_MUTATIONS.has(path);
+}
+
+export function shouldRejectUnsignedAgentMutation(
+    desktop: boolean,
+    enabled: boolean,
+    path: string,
+    agentInitiated: boolean,
+): boolean {
+    return (
+        desktop &&
+        agentInitiated &&
+        !enabled &&
+        AGENT_HARNESS_MUTATIONS.has(path)
+    );
+}
+
 async function doFetch(url: string, init?: RequestInit): Promise<Response> {
     if (isTauri) {
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
@@ -38,8 +69,9 @@ async function throwApiError(res: Response): Promise<never> {
     } catch {
         // non-JSON body — fall back to status text
     }
-    throw new Error(
-        `${res.status} ${detail || res.statusText}`.trim(),
+    throw Object.assign(
+        new Error(`${res.status} ${detail || res.statusText}`.trim()),
+        { status: res.status },
     );
 }
 
@@ -52,8 +84,56 @@ export async function apiGet<T>(path: string): Promise<T> {
 export async function apiPost<T>(
     path: string,
     body: unknown,
-    opts?: { timeoutMs?: number },
+    opts?: { timeoutMs?: number; agentInitiated?: boolean },
 ): Promise<T> {
+    const harnessEnabled = isAgentHarnessEnabled();
+    if (
+        shouldRejectUnsignedAgentMutation(
+            isTauri,
+            harnessEnabled,
+            path,
+            opts?.agentInitiated === true,
+        )
+    ) {
+        throw Object.assign(
+            new Error('Agent Harness 未啟用，拒絕 unsigned Agent mutation'),
+            { mutationNotStarted: true },
+        );
+    }
+    // Serialize once in the WebView, then let the native bridge sign and send
+    // these exact bytes. The native bridge fails closed when Harness is absent
+    // or disabled; it never falls back to an unsigned protected mutation.
+    if (shouldProxyAgentHarnessMutation(isTauri, harnessEnabled, path)) {
+        const bodyText = JSON.stringify(body);
+        const { invoke } = await import('@tauri-apps/api/core');
+        let proxied: { status: number; body: string };
+        try {
+            proxied = await invoke<{ status: number; body: string }>(
+                'agent_harness_post',
+                {
+                    url: base() + path,
+                    body: bodyText,
+                    agentInitiated: opts?.agentInitiated === true,
+                },
+            );
+        } catch (error) {
+            const message = String(error);
+            const marker = 'AGENT_MUTATION_NOT_STARTED:';
+            if (message.startsWith(marker)) {
+                throw Object.assign(
+                    new Error(message.slice(marker.length).trim()),
+                    { mutationNotStarted: true },
+                );
+            }
+            throw error;
+        }
+        const res = new Response(proxied.body, {
+            status: proxied.status,
+            headers: { 'Content-Type': 'application/json' },
+        });
+        if (!res.ok) await throwApiError(res);
+        return res.json() as Promise<T>;
+    }
     const res = await doFetch(base() + path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

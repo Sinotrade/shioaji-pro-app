@@ -16,7 +16,8 @@ import { registerBracket } from '../lib/bracket';
 import { usePickedPrice } from '../lib/price-sync';
 import { maskAccountId, maskName, usePrivacyMode } from '../lib/privacy';
 import { selectAccount, useAccounts } from '../lib/account-store';
-import { checkOrderAllowed } from '../lib/risk';
+import { requestOrderConfirm } from '../lib/order-confirm';
+import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
 import { fetchInfo, placeFuturesOrder, placeStockOrder } from '../lib/shioaji';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
@@ -212,6 +213,26 @@ export function OrderTicket({
             if (priceType === 'LMT' && (!Number.isFinite(p) || p <= 0)) {
                 throw new Error('限價單需要有效價格');
             }
+            if (getRiskSettings().confirmManualOrders) {
+                const approved = await requestOrderConfirm({
+                    code: contract.code,
+                    name: contract.name,
+                    action,
+                    price: priceType === 'LMT' ? p : null,
+                    quantity: qty,
+                    unit: isFutures
+                        ? '口'
+                        : orderLot === 'IntradayOdd'
+                          ? '股'
+                          : '張',
+                    note: `${orderType}${
+                        !isFutures && orderCond !== 'Cash'
+                            ? `・${orderCond === 'MarginTrading' ? '融資' : '融券'}`
+                            : ''
+                    }${!isFutures && daytradeShort && action === 'Sell' ? '・現股當沖' : ''}`,
+                });
+                if (!approved) throw new Error('已取消下單');
+            }
             const trade = isFutures
                 ? await placeFuturesOrder(contract, {
                       action,
@@ -347,6 +368,19 @@ export function OrderTicket({
             const p = priceType === 'LMT' ? Number(price) : 0;
             if (priceType === 'LMT' && (!Number.isFinite(p) || p <= 0)) {
                 throw new Error('限價單需要有效價格');
+            }
+            // 分倉整批確認一次（逐戶迴圈內不再問）
+            if (getRiskSettings().confirmManualOrders) {
+                const approved = await requestOrderConfirm({
+                    code: contract.code,
+                    name: contract.name,
+                    action,
+                    price: priceType === 'LMT' ? p : null,
+                    quantity: splitTotal,
+                    unit: isFutures ? '口' : '張',
+                    note: `分倉送出 ${allocation.length} 個帳戶`,
+                });
+                if (!approved) throw new Error('已取消下單');
             }
             const ok: string[] = [];
             const fail: string[] = [];

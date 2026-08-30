@@ -3,8 +3,8 @@
 ## 原則
 
 - **發佈只有一種**：對本 repo 的 main 打 `vX.Y.Z` tag。私有 repo
-  （`shioaji-pro-desktop`）永不自行發版 — 它的變更由下一次 public tag
-  自動收割（release CI 拉其 main HEAD）。
+  （`shioaji-pro-desktop`）永不自行發版 — release CI 只接受 public tag
+  內 `DESKTOP_MODULES_REF` 指向、且可由 private main 解析出的精確 commit。
 - **Tag 即版本**：版本號不存在任何檔案裡。release CI 從 tag 名解析
   版本並注入 `tauri.conf.json` 後才 build。repo 裡（含私有 repo）
   **沒有任何要 bump 的版本檔**。
@@ -68,8 +68,9 @@ git tag vX.Y.Z && git push origin vX.Y.Z
 
 Tag 觸發 `Release Desktop App` workflow：
 
-- `create-release`：建 draft release、解析私有 repo main 的 SHA
-  （之後四個 build 全部釘在這顆 SHA，不受 build 期間私有 main 變動影響）、
+- `create-release`：建 draft release、讀取 tag 內 `DESKTOP_MODULES_REF`，並驗證
+  該 SHA 與當下 private main 一致（不一致直接 fail closed）；之後四個 build
+  全部釘在這顆 SHA，不受 build 期間私有 main 變動影響，
   上傳 `desktop-rev.txt`（內容 `shioaji-pro-desktop@<sha>`，追溯用）。
 - `build` ×4（macOS arm64/x64、Windows、Linux）：拉私有 repo 指定 SHA、
   從 tag 注入版本、build＋簽章＋上傳。

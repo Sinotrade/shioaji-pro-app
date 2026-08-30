@@ -7,7 +7,8 @@
 import { RefreshCw, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
-import { checkOrderAllowed } from '../lib/risk';
+import { requestOrderConfirm } from '../lib/order-confirm';
+import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
 import {
     cancelOrder,
     placeFuturesOrder,
@@ -145,8 +146,25 @@ export function GridTicket({
             notify({ kind: 'err', title: '風控阻擋', body: blocked });
             return;
         }
-        setBusy(true);
         const prices = desiredPrices(last);
+        // 手動鋪單整批確認一次（動態跟隨的補單不屬手動，不再問）
+        if (getRiskSettings().confirmManualOrders && prices.length > 0) {
+            const priceRange = `${fmtPrice(Math.min(...prices))} ～ ${fmtPrice(
+                Math.max(...prices),
+            )} 限價`;
+            const approved = await requestOrderConfirm({
+                code: contract.code,
+                name: contract.name,
+                action: side,
+                price: null,
+                priceLabel: priceRange,
+                quantity: qtyPer * prices.length,
+                unit: isFuturesContract(contract) ? '口' : '張',
+                note: `網格鋪單 ${prices.length} 檔 × ${qtyPer}`,
+            }).catch(() => false);
+            if (!approved) return;
+        }
+        setBusy(true);
         let ok = 0;
         for (const price of prices) {
             try {

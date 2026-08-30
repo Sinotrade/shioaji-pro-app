@@ -734,7 +734,10 @@ function ensureAccepted<
     T extends { status: { status: string; msg?: string } },
 >(t: T): T {
     if (t.status?.status === 'Failed') {
-        throw new Error(t.status.msg || '委託被拒絕（Failed）');
+        throw Object.assign(
+            new Error(t.status.msg || '委託被拒絕（Failed）'),
+            { mutationNotStarted: true as const },
+        );
     }
     return t;
 }
@@ -745,26 +748,35 @@ export function placeStockOrder(
     contract: ContractBase,
     order: StockOrderReq,
     account?: Account,
+    opts?: { agentInitiated?: boolean },
 ) {
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: contractKey(contract),
         stock_order: { ...order, account: account ?? accountFor('S') },
-    }).then(ensureAccepted);
+    }, opts).then(ensureAccepted);
 }
 
 export function placeFuturesOrder(
     contract: ContractBase,
     order: FuturesOrderReq,
     account?: Account,
+    opts?: { agentInitiated?: boolean },
 ) {
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: orderableKey(contract),
         futures_order: { ...order, account: account ?? accountFor('F') },
-    }).then(ensureAccepted);
+    }, opts).then(ensureAccepted);
 }
 
-export function cancelOrder(tradeId: string) {
-    return apiPost<Trade>('/api/v1/order/cancel_order', { trade_id: tradeId });
+export function cancelOrder(
+    tradeId: string,
+    opts?: { agentInitiated?: boolean },
+) {
+    return apiPost<Trade>(
+        '/api/v1/order/cancel_order',
+        { trade_id: tradeId },
+        opts,
+    );
 }
 
 export function updateOrderPrice(tradeId: string, price: number) {

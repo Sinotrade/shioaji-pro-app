@@ -17,6 +17,7 @@ import { IntradayWallPanel } from './components/intraday-wall';
 import { CommandPalette } from './components/command-palette';
 import { DepthLadder } from './components/depth-ladder';
 import { EventToasts } from './components/event-toasts';
+import { OrderConfirmHost } from './components/order-confirm-dialog';
 import { FlashOrder } from './components/flash-order';
 import { HudHeader } from './components/hud-header';
 import { OptionChain } from './components/option-chain';
@@ -58,6 +59,11 @@ import { useHotkeys } from './hooks/use-hotkeys';
 import { usePoll } from './hooks/use-poll';
 import { useWatchlist } from './hooks/use-watchlist';
 import { trackActivity } from './lib/activity';
+import { registerAgentAppCommandHost } from './lib/agent-app-command';
+import {
+    isAgentHarnessEnabled,
+    subscribeAgentHarnessEnabled,
+} from './lib/agent-harness-state';
 import { agentModule, backtestModule } from './lib/features';
 import {
     ensureContract,
@@ -589,6 +595,7 @@ function PopoutView({
     return (
         <div className={styles.shell}>
             <EventToasts />
+            <OrderConfirmHost />
             <section className={panel.panel} style={{ flex: 1, margin: 6 }}>
                 <PanelChrome
                     title={`${meta.label}${contract ? ` · ${contract.code}` : ''}`}
@@ -617,10 +624,26 @@ export default function App() {
         deleteCurrentList,
     } = useWatchlist();
     const [selected, setSelected] = useState<ContractInfo | null>(null);
+    const [agentHarnessEnabled, setAgentHarnessEnabledState] = useState(
+        isAgentHarnessEnabled,
+    );
     const cachedSelected = useContract(selected?.code ?? null);
     const [workspace, setWorkspace] = useState<Workspace>(loadWorkspace);
     const [profiles, setProfiles] = useState<Profile[]>(loadProfiles);
+    const selectedRef = useRef(selected);
+    selectedRef.current = selected;
+    const workspaceRef = useRef(workspace);
+    workspaceRef.current = workspace;
+    const profilesRef = useRef(profiles);
+    profilesRef.current = profiles;
+    const itemsRef = useRef(items);
+    itemsRef.current = items;
     const { width, containerRef, mounted } = useContainerWidth();
+
+    useEffect(
+        () => subscribeAgentHarnessEnabled(setAgentHarnessEnabledState),
+        [],
+    );
 
     // first loaded watchlist item becomes the active symbol
     useEffect(() => {
@@ -901,6 +924,7 @@ export default function App() {
     // ---- workspace ops ----
 
     const updateWorkspace = useCallback((w: Workspace) => {
+        workspaceRef.current = w;
         setWorkspace(w);
         saveWorkspace(w);
     }, []);
@@ -1131,6 +1155,36 @@ export default function App() {
         [profiles, updateWorkspace],
     );
 
+    // Enabled private native runtimes use this semantic request/response boundary.
+    // It deliberately exposes workspace intentions, never DOM coordinates or
+    // keyboard automation, and every mutation flows through the same persisted
+    // React state path as direct user interaction.
+    useEffect(() => {
+        if (!isTauri || !agentHarnessEnabled) return;
+        return registerAgentAppCommandHost(window, {
+                getWorkspace: () => workspaceRef.current,
+                getProfiles: () => profilesRef.current,
+                getSelectedContract: () => selectedRef.current,
+                getPresetNames: () =>
+                    LAYOUT_PRESETS.map((preset) => preset.name),
+                getPreset: (name) =>
+                    LAYOUT_PRESETS.find((preset) => preset.name === name)
+                        ?.workspace,
+                resolveContract: async (code) => {
+                    const existing = itemsRef.current.find(
+                        (item) => item.contract.code === code,
+                    );
+                    return existing?.contract ?? ensureContract(code);
+                },
+                selectContract: (contract) => {
+                    selectedRef.current = contract;
+                    setSelected(contract);
+                },
+                updateWorkspace,
+                createPanelId: newBlockId,
+        });
+    }, [agentHarnessEnabled, updateWorkspace]);
+
     const deleteProfile = useCallback(
         (name: string) => {
             const next = profiles.filter((p) => p.name !== name);
@@ -1235,6 +1289,7 @@ export default function App() {
                     .map((i) => i.contract.code)}
             />
             <EventToasts onEvent={refreshTrading} />
+            <OrderConfirmHost />
             <CommandPalette
                 open={paletteOpen}
                 onClose={() => setPaletteOpen(false)}

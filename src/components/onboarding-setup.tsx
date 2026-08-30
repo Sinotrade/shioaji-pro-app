@@ -36,6 +36,7 @@ const EMPTY: DesktopSettings = {
     caPath: '',
     caPasswd: '',
     httpsEnabled: false,
+    agentHarnessEnabled: false,
 };
 
 export function OnboardingSetup() {

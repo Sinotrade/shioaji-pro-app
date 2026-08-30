@@ -48,6 +48,7 @@ import {
     reloadWhenHealthy,
     restartAndInstallUpdate,
     saveDesktopSettings,
+    subscribeAgentHarnessEnabled,
     serverStart,
     serverStatus,
     serverStop,
@@ -83,6 +84,7 @@ export function ServerManager({
         caPath: '',
         caPasswd: '',
         httpsEnabled: false,
+        agentHarnessEnabled: false,
     });
     const [busy, setBusy] = useState(false);
     const [lastOutput, setLastOutput] = useState('');
@@ -200,6 +202,17 @@ export function ServerManager({
     useEffect(() => {
         loadDesktopSettings().then(setSettings);
     }, []);
+
+    useEffect(
+        () =>
+            subscribeAgentHarnessEnabled((agentHarnessEnabled) =>
+                setSettings((current) => ({
+                    ...current,
+                    agentHarnessEnabled,
+                })),
+            ),
+        [],
+    );
 
     const persist = (next: Partial<DesktopSettings>) => {
         const merged = { ...settings, ...next };

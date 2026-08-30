@@ -13,6 +13,15 @@ export interface Health {
     // 1.7.2+
     ca_expires_in_days?: number;
     ca_expired?: boolean;
+    agent_harness?: {
+        enabled: boolean;
+        mode: 'off' | 'production' | 'all';
+        capability_version: number;
+        capability_header: string;
+        digest_scheme: string;
+        audience: string | null;
+        max_ttl_seconds: number;
+    };
     // 1.7.3+ — Solace（行情/交易後端）session 斷線自癒狀態；恢復中時
     // 資料端點會回 SessionNotEstablished 500，但 health 本身仍可回應
     session_recovering?: boolean;
