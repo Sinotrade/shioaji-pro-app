@@ -115,6 +115,10 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: cargo test --manifest-path src-tauri/Cargo.toml --bin windows_tcp_owner_e2e
 
+      - name: Windows agent Job Object E2E
+        if: matrix.platform == 'windows-latest'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib windows_job_contains_immediate_descendant_before_root_runs
+
       - name: Rust lint
         if: matrix.platform == 'ubuntu-22.04'
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
