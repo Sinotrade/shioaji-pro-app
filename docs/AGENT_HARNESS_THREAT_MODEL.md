@@ -1,6 +1,8 @@
 # Agent Harness threat model
 
 This document defines the Phase 1 security boundary for provider-native agents.
+This release enables native Agent runtimes only against a verified simulation
+server. Production remains available to the human terminal, not to providers.
 It complements the versioned tool contract in
 [`AGENT_HARNESS_CONTRACT.md`](AGENT_HARNESS_CONTRACT.md).
 
@@ -8,7 +10,7 @@ It complements the versioned tool contract in
 
 | Component | Trust and responsibility |
 | --- | --- |
-| User | Grants workspace access and confirms production mutations on an App-owned surface. |
+| User | Grants workspace access and controls simulated Agent mutations. |
 | Tauri host | Trusted computing base. Owns provider processes, provider credentials, MCP authority, trading grants, audit writes, and process cleanup. |
 | React WebView | App code, but not a credential boundary. It receives redacted semantic calls and renders confirmations; provider and broker secrets must never cross into it. |
 | Codex / Claude process and descendants | One provider trust principal. It necessarily holds its short-lived runtime-scoped MCP capability, and same-user child shells may inspect the provider's argv or temporary native config. Provider output and skill text remain untrusted input to the host even though descendants share the provider's authority. |
@@ -21,9 +23,9 @@ It complements the versioned tool contract in
    refresh tokens, API keys, MCP bearers, and broker credentials never cross
    Tauri serialization into JavaScript. The provider runtime receives only its
    own revocable MCP capability. Broker API keys and the Harness signing secret
-   are not injected into provider children, but Phase 1 does not claim secrecy
-   from an already-compromised same-OS-user process that inspects the sidecar's
-   environment.
+   are not injected into provider children. Because the current sidecar exposes
+   its signing secret through its process environment, production native Agent
+   runtimes fail closed until one-shot pipe/native IPC bootstrap is available.
 2. Each provider runtime receives a separate random MCP bearer. It is stored as
    a digest in MCP native memory and revoked with the runtime. Exact bearer
    forms are retained only in the runtime host for centralized event redaction;
@@ -33,16 +35,12 @@ It complements the versioned tool contract in
    outside the runtime's registry.
 4. Shell/filesystem permission never implies an App capability. Market,
    account, UI, task, preview, and trade execution are independently granted.
-5. Agent-initiated production mutations require user approval on an App-owned
-   native surface (the `agent-approval` window — a separate webview the main
-   WebView cannot script; its content comes only from Rust state). The
-   first-level view is a visual order summary; the exact payload is available
-   behind a detail expander. Approval can be disabled (full-auto) only through
-   a natively persisted, natively confirmed, audited mode switch. Manual UI
-   mutations are signed as UI-origin without a per-order native prompt; the
-   optional visual order confirmation (`RiskSettings.confirmManualOrders`) is
-   a WebView UX aid, not a security boundary (see
-   docs/design/order-confirm-split.md). Controlled auto is simulation-only
+5. Agent-initiated production mutations are unavailable in Phase 1. Native
+   startup verifies the sidecar environment and rejects production before a
+   provider process is spawned. The independent `agent-approval` window and
+   exact-payload approval code remain staged for the later server bootstrap
+   contract; they do not expand this release's authority. Manual UI mutations
+   remain available to the human terminal. Controlled auto is simulation-only
    and expires when the App/runtime stops.
 6. Every mutation carries a stable idempotency key. A pending or ambiguous
    operation is reconciled; it is never blindly retried after timeout or restart.
@@ -65,11 +63,11 @@ It complements the versioned tool contract in
 | Provider invokes an unadvertised or malformed tool | Per-runtime registry plus recursive top-level JSON Schema validation. |
 | Model retries a timed-out order | Durable idempotency state and explicit reconciliation prevent a second execution. |
 | A payload-shaped order is mistaken for the original operation | Payload matches are evidence only. Without an immutable broker operation ID the mutation remains unresolved and cannot be retried automatically. |
-| Production order bypasses provider prompts | The App-owned approval window and native one-use trading grant are independent of provider approval caches. |
+| Provider attempts a production order | Native runtime startup rejects a verified production sidecar before spawning the provider. Server restart is already blocked while any native runtime is active. |
 | Main WebView forges or auto-clicks the agent approval | Approval UI runs in a separate native-created window. Rust tracks whether the privileged window was created by the native manager, destroys a pre-existing forged label, and both approval commands require the label plus the native marker. Displayed content comes only from Rust state. |
-| Compromised WebView relaxes the approval mode | Phase 1 production approval cannot be disabled. Native state resets to required on every launch and the mode command rejects relaxation; simulation controlled-auto is session-scoped. |
+| Compromised WebView relaxes the approval mode | Production Agent runtime is unavailable; simulation controlled-auto is session-scoped. |
 | Compromised WebView orders via the UI signing proxy | Accepted residual risk equivalent to the pre-Harness posture (the WebView could always place orders over direct HTTP). The UI capability signature attests WebView origin, not per-order human intent. |
-| Provider shell calls the sidecar directly | Native App Tools remain the supported trading path and `run_shell` blocks recognizable trading/admin commands. This lexical filter is defense in depth, not a capability boundary; a compromised same-user process may inspect the sidecar environment as documented under residual risk. |
+| Provider shell calls the sidecar directly | The provider may run only beside a verified simulation sidecar. Native App Tools remain the supported path and `run_shell` lexical blocking is defense in depth. |
 | User profile redirects `shioaji` to another binary | Native host binds approved argv to the bundled CLI in an isolated shell profile. |
 | App restarts during autonomous work | Pending grants expire, controlled auto pauses, and restored context starts read-only until reconciled/regranted. |
 | Audit log is edited, truncated, removed, recomputed without the native key, or symlinked | Keyed-chain and MACed-checkpoint verification, JSONL terminator checks, `O_NOFOLLOW`, and startup verification fail closed. |
@@ -94,10 +92,10 @@ It complements the versioned tool contract in
   own launch environment.
 - The Shioaji sidecar currently receives `SJ_AGENT_HARNESS_SECRET` through its
   process environment because that is the server's supported bootstrap
-  contract. Provider children do not inherit it, but another process already
-  compromised under the same OS user may inspect the sidecar environment and
-  forge Harness signatures. Moving bootstrap to an inherited pipe/native IPC is
-  a post-Phase-1 server integration hardening item.
+  contract. Another process already compromised under the same OS user may
+  inspect it, so Phase 1 limits native providers to simulation. Production
+  provider support is blocked on inherited-pipe/native-IPC bootstrap and is not
+  an accepted production residual.
 - The native audit checkpoint detects deletion and tail truncation while its
   current key/checkpoint survive, but it is not an external monotonic counter.
   A same-user process able to restore a previously valid key, log, and

@@ -58,9 +58,12 @@ contract.
 
 ## Trading lifecycle
 
-Every mutation uses a client operation ID and exact request digest. A production
-operation requires an independent exact-payload confirmation. An interrupted or
-timed-out mutation enters `unknown_outcome`; it may only be reconciled by its
+Every mutation uses a client operation ID and exact request digest. Phase 1
+native Agent runtimes are simulation-only; startup against a production server
+fails before the provider process is spawned. The independent production
+exact-payload confirmation contract remains staged but does not grant production
+authority until the sidecar supports one-shot secret bootstrap. An interrupted
+or timed-out mutation enters `unknown_outcome`; it may only be reconciled by its
 operation ID and must never be submitted again automatically.
 
 Until the broker exposes an immutable operation ID that survives an interrupted

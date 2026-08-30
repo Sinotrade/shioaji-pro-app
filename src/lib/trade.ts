@@ -12,6 +12,7 @@ import {
 } from './shioaji';
 import { getStreamStatus } from './stream';
 import type { ContractBase, ContractInfo } from './types/contract';
+import type { Account } from './types/portfolio';
 import {
     ACTIVE_ORDER_STATUSES,
     type Action,
@@ -133,6 +134,7 @@ export async function placeQuickOrder(
     opts?: {
         bypassRisk?: boolean;
         orderLot?: StockOrderLot;
+        account?: Account;
         // 'auto' = 系統觸發（停損/停利等），永不彈手動確認
         source?: 'manual' | 'auto' | 'agent';
     },
@@ -167,6 +169,7 @@ export async function placeQuickOrder(
         market,
         opts?.orderLot,
         opts?.source === 'agent',
+        opts?.account,
     );
 }
 
@@ -178,6 +181,7 @@ async function sendOrder(
     market: boolean,
     orderLot?: StockOrderLot,
     agentInitiated = false,
+    account?: Account,
 ): Promise<Trade> {
     if (contract.security_type === 'IND') {
         throw new Error('指數商品僅提供行情，不可下單');
@@ -190,7 +194,7 @@ async function sendOrder(
               price_type: market ? 'MKT' : 'LMT',
               order_type: market ? 'IOC' : 'ROD',
               octype: 'Auto',
-          }, undefined, { agentInitiated })
+          }, account, { agentInitiated })
         : await placeStockOrder(contract, {
               action,
               price: price ?? 0,
@@ -198,7 +202,7 @@ async function sendOrder(
               price_type: market ? 'MKT' : 'LMT',
               order_type: market ? 'IOC' : 'ROD',
               order_lot: orderLot ?? 'Common',
-          }, undefined, { agentInitiated });
+          }, account, { agentInitiated });
     return trade;
 }
 

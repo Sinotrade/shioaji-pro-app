@@ -2,6 +2,11 @@
 
 維護者決定（2026-08-30，PR #50 review）：
 
+> Release boundary: the confirmation UI is implemented for the future
+> production contract, but Phase 1 native Agent runtimes are simulation-only.
+> Production startup fails closed until the sidecar accepts its signing secret
+> through one-shot pipe/native IPC instead of a reusable process environment.
+
 1. 手動下單確認與 Agent 下單核准是**兩條獨立路徑**。手動確認可由
    使用者開關；Phase 1 正式環境的 Agent 核准固定逐筆啟用。
 2. 使用者看到的確認一律是**可視化委託確認**（方向/商品/價格/數量/帳戶），
