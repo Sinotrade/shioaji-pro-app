@@ -315,9 +315,8 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
         case 'set_panel_pin': {
             const { id, code } =
                 args as AgentAppCommandMap['set_panel_pin']['args'];
-            const workspace = context.getWorkspace();
-            const panel = findPanel(context, id);
-            if (!BLOCK_META[panel.type].pinnable) {
+            const initialPanel = findPanel(context, id);
+            if (!BLOCK_META[initialPanel.type].pinnable) {
                 throw new AgentAppCommandError(
                     'unsupported',
                     `Panel ${id} does not support pinning`,
@@ -326,6 +325,17 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
             const pin = code
                 ? (await resolveValidContract(context, code)).code
                 : null;
+            // Contract resolution may cross the network. Re-read after the
+            // await so a concurrent user layout edit is never overwritten by
+            // the pre-resolution workspace snapshot.
+            const workspace = context.getWorkspace();
+            const panel = findPanel(context, id);
+            if (!BLOCK_META[panel.type].pinnable) {
+                throw new AgentAppCommandError(
+                    'unsupported',
+                    `Panel ${id} does not support pinning`,
+                );
+            }
             const updated = { ...panel, pin };
             context.updateWorkspace({
                 ...workspace,
@@ -410,22 +420,23 @@ export function registerAgentAppCommandHost(
     options: { cacheSize?: number } = {},
 ): () => void {
     let active = true;
-    const cacheSize = Math.max(1, options.cacheSize ?? 256);
+    const cacheSize = Math.max(1, options.cacheSize ?? 4_096);
     const requests = new Map<
         string,
         {
             fingerprint: string;
             response: Promise<AgentAppCommandResponse>;
             settled: boolean;
+            retain: boolean;
         }
     >();
 
-    const trimCompletedRequests = () => {
-        if (requests.size <= cacheSize) return;
+    const trimCompletedReads = (targetSize: number) => {
+        if (requests.size <= targetSize) return;
         for (const [requestId, entry] of requests) {
-            if (!entry.settled) continue;
+            if (!entry.settled || entry.retain) continue;
             requests.delete(requestId);
-            if (requests.size <= cacheSize) break;
+            if (requests.size <= targetSize) break;
         }
     };
 
@@ -472,6 +483,25 @@ export function registerAgentAppCommandHost(
             return;
         }
 
+        // Mutation request ids are retained for the host lifetime so an old
+        // replay cannot execute the side effect again. Completed reads are the
+        // only evictable entries; in-flight and mutation entries count toward
+        // the same hard cap to bound memory under a noisy caller.
+        trimCompletedReads(cacheSize - 1);
+        if (requests.size >= cacheSize) {
+            respond(
+                failedResponse(
+                    request.requestId,
+                    request.command.name,
+                    new AgentAppCommandError(
+                        'conflict',
+                        'App command request capacity is exhausted',
+                    ),
+                ),
+            );
+            return;
+        }
+
         const response = executeAgentAppCommand(request.command, context)
             .then(
                 (result): AgentAppCommandResponse => ({
@@ -484,12 +514,19 @@ export function registerAgentAppCommandHost(
             .catch((error) =>
                 failedResponse(request.requestId, request.command.name, error),
             );
-        const entry = { fingerprint, response, settled: false };
+        const entry = {
+            fingerprint,
+            response,
+            settled: false,
+            retain:
+                request.command.name !== 'get_app_state' &&
+                request.command.name !== 'list_panels',
+        };
         requests.set(request.requestId, entry);
         void response.then((result) => {
             entry.settled = true;
             respond(result);
-            trimCompletedRequests();
+            trimCompletedReads(cacheSize);
         });
     };
 

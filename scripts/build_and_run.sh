@@ -7,7 +7,6 @@ WORKSPACE_DIR="$(dirname "$ROOT_DIR")"
 DESKTOP_DIR="${SHIOAJI_PRO_DESKTOP_DIR:-$WORKSPACE_DIR/shioaji-pro-agent-harness}"
 SERVER_DIR="${SHIOAJI_SERVER_DIR:-$WORKSPACE_DIR/shioaji-agent-permission}"
 TARGET_TRIPLE="aarch64-apple-darwin"
-APP_PROCESS="shioaji-pro-app"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     echo "This QA launcher currently supports Apple Silicon macOS only." >&2
@@ -78,8 +77,6 @@ if [[ ! -x "$MKCERT_BIN" ]]; then
         https://github.com/FiloSottile/mkcert/releases/download/v1.4.4/mkcert-v1.4.4-darwin-arm64
     chmod +x "$MKCERT_BIN"
 fi
-
-pkill -x "$APP_PROCESS" >/dev/null 2>&1 || true
 
 case "$MODE" in
     run)

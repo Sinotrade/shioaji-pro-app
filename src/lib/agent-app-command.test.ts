@@ -213,7 +213,7 @@ describe('semantic workspace commands', () => {
     });
 
     it('pins only pinnable panels to resolvable contracts', async () => {
-        const { context, workspace } = fixture();
+        const { context, workspace, resolveContract } = fixture();
         await expect(
             executeAgentAppCommand(
                 {
@@ -226,6 +226,50 @@ describe('semantic workspace commands', () => {
             panel: { id: 'chart-1', type: 'chart', pin: '2317' },
         });
         expect(workspace().blocks[0]?.pin).toBe('2317');
+        await expect(
+            executeAgentAppCommand(
+                {
+                    name: 'set_panel_pin',
+                    args: { id: 'chart-1', code: null },
+                },
+                context,
+            ),
+        ).resolves.toEqual({
+            panel: { id: 'chart-1', type: 'chart', pin: null },
+        });
+        expect(workspace().blocks[0]?.pin).toBeNull();
+
+        resolveContract.mockImplementationOnce(async (code: string) => {
+            const current = context.getWorkspace();
+            context.updateWorkspace({
+                blocks: [
+                    ...current.blocks,
+                    { id: 'depth-concurrent', type: 'depth', pin: null },
+                ],
+                layout: [
+                    ...current.layout,
+                    {
+                        i: 'depth-concurrent',
+                        x: 0,
+                        y: 20,
+                        w: 96,
+                        h: 10,
+                    },
+                ],
+            });
+            return contract(code);
+        });
+        await executeAgentAppCommand(
+            {
+                name: 'set_panel_pin',
+                args: { id: 'chart-1', code: '2454' },
+            },
+            context,
+        );
+        expect(
+            workspace().blocks.find((panel) => panel.id === 'depth-concurrent'),
+        ).toBeDefined();
+        expect(workspace().blocks[0]?.pin).toBe('2454');
         await expect(
             executeAgentAppCommand(
                 {
@@ -300,6 +344,46 @@ describe('CustomEvent request/response transport', () => {
 
         const completed = await requestAgentAppCommand(target, request);
         expect(completed).toEqual(first);
+        expect(resolveContract).toHaveBeenCalledTimes(1);
+        stop();
+    });
+
+    it('never evicts completed mutations and bounds pending requests', async () => {
+        const target = new EventTarget();
+        const { context, resolveContract } = fixture();
+        let release!: (value: ContractInfo) => void;
+        resolveContract.mockImplementationOnce(
+            () =>
+                new Promise<ContractInfo>((resolve) => {
+                    release = resolve;
+                }),
+        );
+        const stop = registerAgentAppCommandHost(target, context, {
+            cacheSize: 1,
+        });
+        const mutation = {
+            requestId: 'retained-mutation',
+            command: {
+                name: 'select_contract' as const,
+                args: { code: '2317' },
+            },
+        };
+        const pending = requestAgentAppCommand(target, mutation);
+        await Promise.resolve();
+        await expect(
+            requestAgentAppCommand(target, {
+                requestId: 'over-capacity',
+                command: { name: 'list_panels', args: {} },
+            }),
+        ).resolves.toMatchObject({
+            ok: false,
+            error: { code: 'conflict' },
+        });
+        release(contract('2317'));
+        const first = await pending;
+        await expect(requestAgentAppCommand(target, mutation)).resolves.toEqual(
+            first,
+        );
         expect(resolveContract).toHaveBeenCalledTimes(1);
         stop();
     });

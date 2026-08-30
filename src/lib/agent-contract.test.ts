@@ -25,6 +25,12 @@ describe('public Agent Harness contract', () => {
         expect(isAgentAppToolCapability('trade.execute')).toBe(true);
         expect(isAgentAppToolCapability('shell.anything')).toBe(false);
         expect(AGENT_APP_TOOL_EFFECTS).toEqual(['read', 'mutation']);
+        expect(appToolSchema.properties.contractVersion.const).toBe(
+            AGENT_APP_TOOL_CONTRACT_VERSION,
+        );
+        expect(appToolSchema.properties.capability.enum).toEqual(
+            AGENT_APP_TOOL_CAPABILITIES,
+        );
         expect(appToolSchema.required).toContain('effect');
         expect(appToolSchema.properties.effect.enum).toEqual([
             'read',

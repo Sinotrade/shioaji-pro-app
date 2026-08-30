@@ -24,6 +24,28 @@ Every registered tool also declares `effect: read | mutation`. Native MCP
 validation rejects unknown effects and requires `idempotency_key` in the input
 schema of every mutation, independent of its capability tier.
 
+The machine-readable registry contract lives at
+[`schemas/agent-app-tools-v1.schema.json`](../schemas/agent-app-tools-v1.schema.json).
+For example, a valid read tool is:
+
+```json
+{
+  "contractVersion": 1,
+  "name": "workspace.list_panels",
+  "description": "List the panels in the active workspace",
+  "capability": "ui.control",
+  "effect": "read",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}
+```
+
+The contract test asserts that the schema's version and capability enum remain
+identical to the TypeScript constants consumed by the application.
+
 ## Native transport
 
 The desktop host provides one authenticated loopback MCP endpoint. Every native

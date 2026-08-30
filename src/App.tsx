@@ -59,6 +59,10 @@ import { usePoll } from './hooks/use-poll';
 import { useWatchlist } from './hooks/use-watchlist';
 import { trackActivity } from './lib/activity';
 import { registerAgentAppCommandHost } from './lib/agent-app-command';
+import {
+    isAgentHarnessEnabled,
+    subscribeAgentHarnessEnabled,
+} from './lib/agent-harness-state';
 import { agentModule, backtestModule } from './lib/features';
 import {
     ensureContract,
@@ -618,6 +622,9 @@ export default function App() {
         deleteCurrentList,
     } = useWatchlist();
     const [selected, setSelected] = useState<ContractInfo | null>(null);
+    const [agentHarnessEnabled, setAgentHarnessEnabledState] = useState(
+        isAgentHarnessEnabled,
+    );
     const cachedSelected = useContract(selected?.code ?? null);
     const [workspace, setWorkspace] = useState<Workspace>(loadWorkspace);
     const [profiles, setProfiles] = useState<Profile[]>(loadProfiles);
@@ -630,6 +637,11 @@ export default function App() {
     const itemsRef = useRef(items);
     itemsRef.current = items;
     const { width, containerRef, mounted } = useContainerWidth();
+
+    useEffect(
+        () => subscribeAgentHarnessEnabled(setAgentHarnessEnabledState),
+        [],
+    );
 
     // first loaded watchlist item becomes the active symbol
     useEffect(() => {
@@ -1141,13 +1153,13 @@ export default function App() {
         [profiles, updateWorkspace],
     );
 
-    // Private native runtimes use this semantic request/response boundary.
+    // Enabled private native runtimes use this semantic request/response boundary.
     // It deliberately exposes workspace intentions, never DOM coordinates or
     // keyboard automation, and every mutation flows through the same persisted
     // React state path as direct user interaction.
-    useEffect(
-        () =>
-            registerAgentAppCommandHost(window, {
+    useEffect(() => {
+        if (!isTauri || !agentHarnessEnabled) return;
+        return registerAgentAppCommandHost(window, {
                 getWorkspace: () => workspaceRef.current,
                 getProfiles: () => profilesRef.current,
                 getSelectedContract: () => selectedRef.current,
@@ -1168,9 +1180,8 @@ export default function App() {
                 },
                 updateWorkspace,
                 createPanelId: newBlockId,
-            }),
-        [updateWorkspace],
-    );
+        });
+    }, [agentHarnessEnabled, updateWorkspace]);
 
     const deleteProfile = useCallback(
         (name: string) => {

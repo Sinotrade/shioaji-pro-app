@@ -72,8 +72,8 @@ export async function apiPost<T>(
     opts?: { timeoutMs?: number },
 ): Promise<T> {
     // Serialize once in the WebView, then let the native bridge sign and send
-    // these exact bytes. It also transparently sends unsigned when attached to
-    // an older server whose harness is disabled.
+    // these exact bytes. The native bridge fails closed when Harness is absent
+    // or disabled; it never falls back to an unsigned protected mutation.
     if (shouldProxyAgentHarnessMutation(isTauri, isAgentHarnessEnabled(), path)) {
         const bodyText = JSON.stringify(body);
         const { invoke } = await import('@tauri-apps/api/core');

@@ -461,7 +461,8 @@ function AgentSection() {
             <span className={hud.emptyHint}>
                 關閉時，一般 UI 下單走原本的直接 HTTP 路徑；開啟後，Agent
                 與 UI 的交易 mutation 都需要一次性 capability。切換立即生效，
-                不需重啟伺服器。
+                不需重啟伺服器。正式環境的每筆操作都會顯示 exact payload
+                要求原生確認；超過 4 KiB 的 payload 會直接拒絕。
             </span>
             {busy && <span className={hud.emptyHint}>切換中…</span>}
             {error && <span className={styles.errorText}>{error}</span>}

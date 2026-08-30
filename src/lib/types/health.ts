@@ -13,7 +13,7 @@ export interface Health {
     // 1.7.2+
     ca_expires_in_days?: number;
     ca_expired?: boolean;
-    agent_harness: {
+    agent_harness?: {
         enabled: boolean;
         mode: 'off' | 'production' | 'all';
         capability_version: number;
