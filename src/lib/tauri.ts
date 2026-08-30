@@ -28,7 +28,10 @@ import {
     shouldForceRespawn,
 } from './spawn-keys';
 import { cacheAgentHarnessEnabled } from './agent-harness-state';
-import { harnessOwnershipCompatible } from './sidecar-ownership';
+import {
+    harnessOwnershipCompatible,
+    recoverHarnessOwnership,
+} from './sidecar-ownership';
 import { notify } from './trade';
 
 export { isTauri } from './runtime';
@@ -160,6 +163,32 @@ export async function nativeOwnsHarnessSidecar(port: number): Promise<boolean> {
     } catch {
         return false;
     }
+}
+
+// Agent Harness ownership recovery — after a crash/force-quit the next app
+// launch ADOPTS the healthy orphan sidecar (good for plain trading), but the
+// harness signing boundary is process-local, so every harness entry point
+// dead-ends with 「需要目前 App instance 自己啟動的…」 until the server is
+// respawned by THIS process. Restart through serverStart: its harnessMismatch
+// branch stops the unowned daemon only with full is-shioaji ownership proof
+// (foreign servers are refused, fail-closed) and spawns fresh natively.
+// Single-flight so a settings toggle and an agent start racing each other
+// (or a boot-time restore) never stack concurrent respawns.
+let harnessRecoveryInFlight: Promise<StartResult | null> | null = null;
+export function ensureHarnessOwnedServer(): Promise<StartResult | null> {
+    if (!harnessRecoveryInFlight) {
+        harnessRecoveryInFlight = recoverHarnessOwnership({
+            nativeOwned: () => nativeOwnsHarnessSidecar(getApiPort()),
+            loadSettings: loadDesktopSettings,
+            restart: async () => {
+                const settings = await loadDesktopSettings();
+                return serverStart({ ...settings, agentHarnessEnabled: true });
+            },
+        }).finally(() => {
+            harnessRecoveryInFlight = null;
+        });
+    }
+    return harnessRecoveryInFlight;
 }
 
 // startup/login output lands in ~/.shioaji/sjpro-server-<port>.log now —
@@ -995,8 +1024,23 @@ export async function saveDesktopSettings(s: DesktopSettings) {
     await store.save();
 }
 
-export async function setAgentHarnessEnabled(enabled: boolean): Promise<void> {
+export interface SetAgentHarnessResult {
+    // ownership recovery respawned the sidecar (adopted orphan → owned)
+    restarted: boolean;
+    // the API base moved with the respawn — caller should reload the page
+    portChanged: boolean;
+}
+
+export async function setAgentHarnessEnabled(
+    enabled: boolean,
+): Promise<SetAgentHarnessResult> {
     if (!isTauri) throw new Error('Agent Harness 只能由 Desktop native host 切換');
+    // Enabling against an ADOPTED sidecar (crash/force-quit orphan) used to
+    // dead-end on the native ownership check with no way out of the settings
+    // dialog — recover by respawning natively first. Disable is left as-is:
+    // an unowned sidecar cannot be signed for either way, and the existing
+    // error already points at the server restart.
+    const recovered = enabled ? await ensureHarnessOwnedServer() : null;
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('agent_harness_set_enabled', {
         origin: new URL(getApiBase()).origin,
@@ -1004,6 +1048,10 @@ export async function setAgentHarnessEnabled(enabled: boolean): Promise<void> {
     });
     const settings = await loadDesktopSettings();
     await saveDesktopSettings({ ...settings, agentHarnessEnabled: enabled });
+    return {
+        restarted: recovered !== null,
+        portChanged: recovered?.portChanged ?? false,
+    };
 }
 
 // native file picker for the Sinopac.pfx certificate
@@ -1272,6 +1320,18 @@ function updateDownloadProgress(event: DownloadEvent) {
 
 export async function checkForUpdates(silent: boolean) {
     if (!isTauri || updateInFlight) return;
+    // dev build（vite dev / target/debug）不檢查更新 — 否則 dev 環境會
+    // 下載正式版並在重啟時把 debug app 換掉
+    if (import.meta.env.DEV) {
+        if (!silent) {
+            notify({
+                kind: 'info',
+                title: 'Dev build 不檢查更新',
+                body: '開發模式跳過自動更新，避免被正式版取代',
+            });
+        }
+        return;
+    }
     if (appUpdateState.phase === 'ready') {
         if (!silent) {
             notify({

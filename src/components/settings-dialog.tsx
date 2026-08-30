@@ -502,13 +502,24 @@ function AgentSection() {
         }
     };
 
+    const [note, setNote] = useState('');
     const toggle = async () => {
         const next = !enabled;
         setBusy(true);
         setError('');
+        setNote('');
         try {
-            await setAgentHarnessEnabled(next);
+            const res = await setAgentHarnessEnabled(next);
             setEnabled(next);
+            if (res.restarted) {
+                // 撿到孤兒 sidecar（上次 app 異常退出）— 已透過 native
+                // spawn 重啟以取得 harness 所有權
+                setNote('伺服器已自動重啟以建立 Agent Harness 所有權');
+            }
+            if (res.portChanged) {
+                // API base 換了 port — 全面重載讓每個面板接上新伺服器
+                window.location.reload();
+            }
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
         } finally {
@@ -566,9 +577,13 @@ function AgentSection() {
                     </span>
                 </>
             )}
-            {(busy || approvalBusy) && (
-                <span className={hud.emptyHint}>切換中…</span>
+            {busy && (
+                <span className={hud.emptyHint}>
+                    切換中…（若需重啟伺服器約 10–60 秒）
+                </span>
             )}
+            {approvalBusy && <span className={hud.emptyHint}>切換中…</span>}
+            {note && <span className={hud.emptyHint}>{note}</span>}
             {error && <span className={styles.errorText}>{error}</span>}
         </>
     );
