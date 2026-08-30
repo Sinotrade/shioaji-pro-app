@@ -360,13 +360,18 @@ describe('semantic workspace commands', () => {
         );
 
         expect(workspace().blocks.map((block) => block.id)).toEqual([
-            'assistant-saved',
             'assistant-live',
         ]);
         expect(workspace().layout.map((item) => item.i)).toEqual([
-            'assistant-saved',
             'assistant-live',
         ]);
+        expect(workspace().layout[0]).toMatchObject({
+            i: 'assistant-live',
+            x: 0,
+            y: 0,
+            w: 72,
+            h: 14,
+        });
     });
 });
 

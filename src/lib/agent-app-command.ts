@@ -372,17 +372,32 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
                 );
             }
             const next = structuredClone(target);
-            // 把所有現行 Agent 面板按 id 帶過去。目標版面可能已有另一個
-            // Agent，但仍不能換掉正在執行此 MCP 呼叫的那一個，否則其
-            // component-owned response channel 會在回覆前被卸載。
+            // Agent 是 singleton。目標版面若有另一個 Agent，就沿用它的
+            // 版面槽位但換成目前 live Agent 的 id；這樣既不會卸載正在
+            // 執行此 MCP 呼叫的 component-owned response channel，也不會
+            // 為了保活而製造兩個 Agent。
             const current = context.getWorkspace();
-            const liveAssistants = current.blocks.filter(
+            const liveAssistant = current.blocks.find(
                 (block) => block.type === 'assistant',
             );
-            for (const liveAssistant of liveAssistants) {
-                if (next.blocks.some((block) => block.id === liveAssistant.id)) {
-                    continue;
-                }
+            if (liveAssistant) {
+                const targetAssistantIds = new Set(
+                    next.blocks
+                        .filter((block) => block.type === 'assistant')
+                        .map((block) => block.id),
+                );
+                const targetSlot = next.layout.find((item) =>
+                    targetAssistantIds.has(item.i),
+                );
+                next.blocks = [
+                    ...next.blocks.filter(
+                        (block) => block.type !== 'assistant',
+                    ),
+                    structuredClone(liveAssistant),
+                ];
+                next.layout = next.layout.filter(
+                    (item) => !targetAssistantIds.has(item.i),
+                );
                 const currentItem = current.layout.find(
                     (item) => item.i === liveAssistant.id,
                 );
@@ -390,9 +405,10 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
                     (acc, item) => Math.max(acc, item.y + item.h),
                     0,
                 );
-                next.blocks.push(structuredClone(liveAssistant));
                 next.layout.push(
-                    currentItem
+                    targetSlot
+                        ? { ...structuredClone(targetSlot), i: liveAssistant.id }
+                        : currentItem
                         ? { ...structuredClone(currentItem), x: 0, y: maxY }
                         : {
                               i: liveAssistant.id,
