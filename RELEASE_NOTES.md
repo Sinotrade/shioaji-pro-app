@@ -9,7 +9,7 @@ Shioaji Pro 的 AI Agent 不再只是包一層聊天 API。桌面版現在可直
 - 官方 Shioaji Pro skill／plugin 可安裝到 Codex 與 Claude Code；Pi 使用對應的 native policy。
 - Codex 訂閱模型改由 native app-server 的 `model/list` 動態載入，不再受 App 內建清單限制；GPT-5.6 系列與之後新增的帳號可用模型會自動出現（#20）。
 
-![AI Agent 技能面板](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.45/docs/shot-agent-skills.png)
+![AI Agent 技能面板](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.45/docs/images/release-0.1.45-agent-skills.png)
 
 ### 交易核准是人看得懂的介面
 
