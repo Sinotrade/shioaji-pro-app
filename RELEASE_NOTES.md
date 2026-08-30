@@ -1,33 +1,54 @@
-## v0.1.44 - 個股期價格級距與技術指標視窗修正
+## v0.1.45 - 原生 AI Agent 工作區、技能與交易安全邊界
 
-### 期權完整價位：級距以伺服器 tick-bands 為權威（#38）
+### Codex、Claude Code、Pi Agent 原生接入
 
-個股期（如聯電期貨）的價格先前一律以 1 點跳動，0.5 跳動的價位完全不出現 — 閃電下單階梯等於少了一半可下單的價格。現在期貨與選擇權的級距一律吃伺服器的 tick-bands 規則（交易所改制自動跟上，不再寫死在程式裡）：
+Shioaji Pro 的 AI Agent 不再只是包一層聊天 API。桌面版現在可直接使用 Codex、Claude Code 與 Pi Agent 的原生 runtime，保留各自的登入、模型、推理與工具能力，並由 App 統一提供交易工作區與安全邊界。
 
-- 個股期照 2024/7 新制：未滿 10 元 0.01／10–50 元 0.05／50–100 元 0.1／100–500 元 0.5／**500–2500 元 1／2500 元以上 5**，跨級距邊界自動換檔。
-- 選擇權權利金級距同步修正（TXO 10–50 點跳 0.5、50–500 點跳 1、500–1000 點跳 5、1000 點以上跳 10 等，先前一律 1 點）。
-- 下單面板的價格加減鈕同步修正 — 原本對所有商品一律 ±1，現與階梯走同一級距引擎；K 線圖點價下單的價位對齊也吃同一引擎。ETF 期貨與指數期貨各依其跳動單位，不受影響。
+- Provider-neutral App Tools：行情、帳戶、版面、技能與交易語意使用同一份版本化契約。
+- Agent 對話支援 session 保存、resume／fork、工具執行紀錄、技能選單與背景任務。
+- 官方 Shioaji Pro skill／plugin 可安裝到 Codex 與 Claude Code；Pi 使用對應的 native policy。
+- Codex 訂閱模型改由 native app-server 的 `model/list` 動態載入，不再受 App 內建清單限制；GPT-5.6 系列與之後新增的帳號可用模型會自動出現（#20）。
 
-![閃電下單個股期階梯](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.44/docs/images/release-0.1.44-flash-ladder.png)
+![AI Agent 原生 runtime 與交易權限設定](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.45/docs/images/release-0.1.45-agent-settings.png)
 
-### K 線圖：技術指標視窗不再被面板蓋住（#39）
+### 交易核准是人看得懂的介面
 
-K 線面板縮小後打開技術指標選擇視窗，視窗會超出面板範圍、又可能被其他面板蓋過去，導致底部的指標選不到。技術指標選擇視窗與指標設定視窗現改為全視窗置中的頂層對話框 — 任何面板配置下都完整可見、永遠在最上層，指標設定的圖上即時預覽照常運作。
+手動下單確認與 Agent 下單核准已拆成兩套互不混用的控制：
 
-![技術指標視窗](https://raw.githubusercontent.com/Sinotrade/shioaji-pro-app/v0.1.44/docs/images/release-0.1.44-indicator-dialog.png)
+- 手動操作使用原有的可視化委託確認，可在風控設定中控制。
+- Agent 提案以方向、商品、價格、數量、帳戶與環境為第一層資訊；完整 payload 與 digest 收在技術細節。
+- 核准視窗由 Tauri native 建立，主 WebView 與模型不能自行偽造「已確認」。關窗、逾時或環境不明一律拒絕。
+- 模糊的網路／券商結果不會自動重送；App 保留待核對紀錄，讓使用者確認券商端結果後再決定是否可用同一 idempotency key 重試。
 
-### Esc 行為修正（下單安全）
+### Phase 1 安全界線
 
-- 疊層視窗按 Esc 只關最上層 — 在指標選單上開自訂指標編輯器時，Esc 不再連鎖把兩層一起關掉（未存的指標程式碼不會遺失）。
-- 關閉視窗的那一下 Esc 不再誤武裝「Esc-Esc 全部刪單」快捷鍵（啟用該選項時，關窗後 0.6 秒內再按 Esc 不會誤觸全刪單）。
+- Agent 交易目前只在已驗證的**模擬環境**提供；受限的模擬自動模式仍通過數量、價格、頻率與帳戶風控。
+- 正式環境 Agent mutation 維持 fail-closed；人類在交易終端內原有的正式下單不受影響。
+- 正式環境逐筆 Agent 核准將在 Shioaji server 支援 one-shot／native IPC secret bootstrap 後開放；正式環境不會提供免確認的全自動權限。
 
-### 開發基建
+這個界線避免同一使用者下執行的 provider process 取得 sidecar reusable signing secret 後繞過逐筆核准。它是刻意的安全限制，不是 UI 少接一個按鈕。
 
-- 開發與發佈流程文件化（`docs/DEV.md`、`docs/RELEASE.md`）；main 分支全面 PR-only＋CI 必經，發佈附 `desktop-rev.txt` 追溯桌面層版本。
+### 稽核、冪等與程序隔離
+
+- capability secret 隨 sidecar generation 輪替；server restart、runtime stop／exit 會撤銷權限。
+- mutation 在外部副作用前持久化 intent，並按環境、帳戶、工具與 idempotency key 隔離。
+- keyed audit chain 使用分段輪替與 checkpoint；啟動或人工驗證會做完整檢查，日常 append 維持固定成本。
+- Codex／Claude／Pi process tree 在 macOS／Linux 以 process group、Windows 以 Job Object 管理；停止 runtime 會清理 descendants、pending calls 與短期憑證。
+- Linux、Windows exact-head composite CI 已涵蓋 frontend、Rust、plugin、Pi policy、Windows TCP owner 與 Job Object E2E。
+
+### 開發與發佈治理
+
+- public／private repo 使用不可變 SHA pin；private 先 merge，public repin 並重跑跨平台 composite 後才能 merge 或打 tag。
+- Release build 會再次驗證 `DESKTOP_MODULES_REF` 等於 private `main`，不一致直接停止。
+
+### 相容性
+
+- 內建 Shioaji Server `v1.7.4`；既有手動交易、行情與版面功能不受 Agent Harness 權限影響。
+- 深色、純黑與淺色主題完整支援。
 
 ---
 
-⚠ 組合單為真實下單（模擬環境不支援組合單），送出前請確認每腳方向；到價監控會自動送單，請盯緊成交回報。回測結果基於歷史資料與簡化成本假設，不代表未來績效；AI 分析僅供參考；自動下單請自行評估風險，盈虧自負。
+⚠ Agent 分析與工具輸出僅供參考；模擬自動仍可能產生非預期委託，請先設定風控上限並核對成交結果。正式環境目前不開放 Agent 下單；人類手動正式下單仍會動用真實資金。組合單為真實下單（模擬環境不支援組合單），送出前請確認每腳方向；到價監控會自動送單，請盯緊成交回報。回測結果基於歷史資料與簡化成本假設，不代表未來績效；自動下單請自行評估風險，盈虧自負。
 
 Shioaji Pro 桌面版 - 內建 shioaji server（sidecar）、伺服器管理介面、系統匣、自動更新。
 
