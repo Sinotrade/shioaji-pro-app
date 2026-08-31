@@ -667,9 +667,14 @@ export function unsubscribeIndexComponents(
 // index_components 權威建底查詢 — 呼叫紀律見 docs/adr/0001：
 // 僅限首次與日切，429（日額度）不得重試，503（暖機）可退避重試
 export function fetchIndexComponents<T>(contract: ContractBase) {
-    return apiPost<T>('/api/v1/data/index_components', {
-        contract: contractKey(contract),
-    });
+    return apiPost<T>(
+        '/api/v1/data/index_components',
+        { contract: contractKey(contract) },
+        // Panels mount while desktop boot may still replace an incompatible
+        // sidecar. A request caught on the retiring process can otherwise
+        // remain pending forever and prevent the store's retry loop.
+        { timeoutMs: 5_000 },
+    );
 }
 
 export function scannerSubscriptionBody(
