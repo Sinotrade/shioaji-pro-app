@@ -96,3 +96,23 @@ without storing credentials or raw account secrets. Keyed entry hashes plus a
 MACed head checkpoint detect record edits, complete-tail removal, and whole-log
 deletion. Approval/receipt lifecycle fields remain a follow-up before this log
 can be treated as a complete compliance journal.
+
+## Phase skill parity gate
+
+Every later Agent Harness or Agent Strategy phase must ship its skill surface
+with its semantic tools. A phase is not complete until all of the following are
+true:
+
+1. The App's built-in Agent prompt routes the new capability and states its
+   material limits.
+2. The provider-neutral `shioaji-pro` plugin teaches the same workflow through
+   one shared `SKILL.md` and references tree installed natively by Codex and
+   Claude Code.
+3. Tool schemas remain the source of truth for names and arguments; skill text
+   adds workflow, safety, interpretation, and progressive-disclosure guidance
+   without inventing authority.
+4. Contract tests cover tool discoverability, reference packaging, capability
+   denial, and the bounded behavior needed to keep large results out of Agent
+   context.
+5. QA exercises the capability through at least one native provider, and both
+   provider manifests are validated before merge.
