@@ -86,6 +86,7 @@ type StrategyRun = {
 type AssetDataManifest = {
   asset: AssetRef
   interval: string
+  range: { from: string; to: string }
   dataSource: string
   dataVersion: string
   availabilityGaps: DataGap[]
@@ -95,6 +96,25 @@ type RunDataManifest = {
   primaryAsset: string
   calendar: 'union' | 'intersection'
   assets: AssetDataManifest[]
+}
+
+type RunManifest = {
+  executionMode: 'portfolio'
+  universeSpec: UniverseSpec
+  resolvedUniverse: ResolvedUniverse
+  data: RunDataManifest
+  execution: {
+    defaults: ExecutionAssumptions
+    assetOverrides: Record<string, Partial<ExecutionAssumptions>>
+  }
+  parentBatchJobId?: string
+}
+
+type BacktestBatchJob = {
+  id: string
+  executionMode: 'batch'
+  childRunIds: string[]
+  status: StrategyRun['status']
 }
 ```
 
@@ -175,7 +195,7 @@ Run manifest 固定:
 - strategy artifact/revision、source hash 及 engine contract version
 - universe spec 與 resolved universe
 - primary asset、對齊 calendar 及每個 asset 的 interval、日期、資料來源／版本／availability gaps
-- params、capital、sizing、fees、tax、slippage、lot/tick/multiplier
+- params、capital、sizing,以及 common execution defaults 加每個 asset 的 fees、tax、slippage、lot/tick/multiplier overrides
 - App、engine 與 result schema version
 - started/completed time、status、錯誤與取消原因
 
@@ -206,7 +226,7 @@ Run manifest 固定:
 - `get_backtest_result`
 - `compare_backtest_runs`
 
-`run_strategy_backtest` 接受 `UniverseSpec` 並建立共享時間軸、資金與持倉的 Portfolio Run;單商品請求只是 universe 含一個 asset。`run_strategy_backtest_batch` 明確建立多個互相獨立的單商品 Portfolio Run,不得彙整後標示為多商品 Portfolio Run。兩者的 request、receipt、manifest 與 deep link 都必須帶 `executionMode: 'portfolio' | 'batch'`,讓 UI 與 Agent 無法混淆語意。
+`run_strategy_backtest` 接受 `UniverseSpec` 並建立共享時間軸、資金與持倉的 Portfolio Run;單商品請求只是 universe 含一個 asset,其 request、receipt 與 manifest 固定帶 `executionMode: 'portfolio'`。`run_strategy_backtest_batch` 建立 `BacktestBatchJob`,其 request、receipt 與 job 帶 `executionMode: 'batch'`,並以 `childRunIds` 指向多個互相獨立的單商品 Portfolio Run。每個 child manifest 仍是 `portfolio`,另以 `parentBatchJobId` 連回 batch。不得把 batch 彙整結果標示為多商品 Portfolio Run。
 
 交易與 equity 使用分頁／降採樣,避免大量結果塞滿模型 context。每次 mutation 具 idempotency key,每個完成回覆帶 run deep link。
 
