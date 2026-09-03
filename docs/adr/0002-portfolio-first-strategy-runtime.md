@@ -54,7 +54,7 @@ Strategy DSL
 
 ## 分期約束
 
-第一期可以只在 UI 完整開放單商品流程,但核心 interface、型別、run manifest 與測試不得假設只有一個商品。第一期至少包含一個雙商品 pair/spread contract test,證明資料對齊、具名資產及意圖管線可容納多商品。多商品 UI、完整資料載入與動態 universe 可後續交付。
+第一期可以只在 UI 完整開放單商品流程,但核心 interface、型別、run manifest 與測試不得假設只有一個商品。第一期必須交付一條可執行的最小 portfolio vertical slice:以 synthetic bars 執行雙商品 pair/spread 策略,實際通過統一時間軸、availability mask、sequential runtime、intent normalization、最小共享資金 planner 及成交模擬,並驗證兩個商品的 fills、positions 與 per-asset attribution。只驗證型別可容納兩個 symbol 不算通過。多商品 UI、正式資料載入、完整 portfolio risk/planner 與動態 universe 可後續交付。
 
 ## 後果
 

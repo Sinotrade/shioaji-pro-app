@@ -82,6 +82,20 @@ type StrategyRun = {
   status: 'queued' | 'fetching' | 'running' | 'completed' | 'failed' | 'cancelled'
   resultId?: string
 }
+
+type AssetDataManifest = {
+  asset: AssetRef
+  interval: string
+  dataSource: string
+  dataVersion: string
+  availabilityGaps: DataGap[]
+}
+
+type RunDataManifest = {
+  primaryAsset: string
+  calendar: 'union' | 'intersection'
+  assets: AssetDataManifest[]
+}
 ```
 
 Dynamic universe 是保留契約,不在第一期實作。`ResolvedUniverse` 與 run manifest 永遠保存實際商品,所以未來動態選股仍可重現。
@@ -125,10 +139,9 @@ Position state 至少包含 `side`、`quantity`、`weight`、`avgPrice`、
 ```js
 targetWeight('2330', 0.4)
 targetWeight('2454', 0.3)
-targetWeight('cash', 0.3)
 ```
 
-`targetQuantity` 表示明確數量。未來若加入 `targetExposure`,其正負值與 gross/net 語意必須先形成獨立契約。禁止 `targetPosition('2330', 0.4)` 這種無法辨識數量或權重的寫法。
+`targetWeight` 只接受可交易的 strategy asset,正值為多方、負值為空方;未配置的可用資金自然保留為現金,現金不是 `AssetRef` 或可交易 intent。planner 依 run 的 leverage/gross/net 限制驗證整體目標。`targetQuantity` 表示明確數量。未來若加入 `targetExposure`,其正負值與 gross/net 語意必須先形成獨立契約。禁止 `targetPosition('2330', 0.4)` 這種無法辨識數量或權重的寫法。
 
 ## Runtime And Execution
 
@@ -161,7 +174,7 @@ Run manifest 固定:
 
 - strategy artifact/revision、source hash 及 engine contract version
 - universe spec 與 resolved universe
-- symbol、interval、日期、資料來源／版本／缺漏
+- primary asset、對齊 calendar 及每個 asset 的 interval、日期、資料來源／版本／availability gaps
 - params、capital、sizing、fees、tax、slippage、lot/tick/multiplier
 - App、engine 與 result schema version
 - started/completed time、status、錯誤與取消原因
@@ -193,6 +206,8 @@ Run manifest 固定:
 - `get_backtest_result`
 - `compare_backtest_runs`
 
+`run_strategy_backtest` 接受 `UniverseSpec` 並建立共享時間軸、資金與持倉的 Portfolio Run;單商品請求只是 universe 含一個 asset。`run_strategy_backtest_batch` 明確建立多個互相獨立的單商品 Portfolio Run,不得彙整後標示為多商品 Portfolio Run。兩者的 request、receipt、manifest 與 deep link 都必須帶 `executionMode: 'portfolio' | 'batch'`,讓 UI 與 Agent 無法混淆語意。
+
 交易與 equity 使用分頁／降採樣,避免大量結果塞滿模型 context。每次 mutation 具 idempotency key,每個完成回覆帶 run deep link。
 
 高階 `author_and_test_strategy`、`optimize_strategy` 可由 App 內編排原子操作,但不得另有不同回測語意。
@@ -223,7 +238,7 @@ Agent 回覆必須列出 artifact/run、商品、週期、資料期間、revisio
 
 - 定義 strategy asset、universe、intent、revision、run manifest contracts。
 - 引入 sequential execution core 與既有 Signal DSL adapter。
-- 完成單商品 compatibility tests 及最小雙商品 pair/spread contract test。
+- 完成單商品 compatibility tests,以及可執行的最小雙商品 pair/spread vertical slice:synthetic bars 必須通過時間軸與 availability 對齊、sequential runtime、intent normalization、最小共享資金 planner 與成交模擬,並斷言兩個商品的 fills、positions、portfolio result 及 per-asset attribution;只有多 symbol 型別測試不算完成。
 - 抽出 IndicatorInstanceService,讓 Agent 可建立後直接掛載、讀回及調整。
 - 不交付多商品 UI,但 code 和 interface 不得以唯一 bars/position 為核心假設。
 
@@ -238,7 +253,7 @@ Agent 回覆必須列出 artifact/run、商品、週期、資料期間、revisio
 ### Phase 3: optimization and portfolio delivery
 
 - Batch jobs、Grid/Random、train/test、敏感度與報告匯出。
-- Static multi-asset portfolio data loading、共享資金 planner、per-asset attribution。
+- Static multi-asset production data loading,擴充 Phase 1 planner 的 lot、槓桿、同時訊號、部分成交與 portfolio risk 規則,並完成 production-grade per-asset attribution。
 - 動態 universe 僅在 selector 與 survivorship-bias 規則完成後開放。
 
 ### Phase 4: forward testing
