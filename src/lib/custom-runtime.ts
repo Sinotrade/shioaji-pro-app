@@ -8,9 +8,11 @@ import type { Ser } from './ta';
 
 export interface PlotHint {
     color?: string;
-    kind?: 'line' | 'dashed' | 'histogram' | 'points';
+    kind?: 'line' | 'dashed' | 'histogram' | 'points' | 'band';
     signed?: boolean;
     width?: 1 | 2;
+    // band only: 上下緣線型
+    border?: 'solid' | 'dashed';
 }
 
 export interface CustomRunResult {
@@ -37,7 +39,7 @@ const cache = new Map<string, Compiled>();
 
 // destructure the ctx so user code reads like Pine: close / p.len / ta.sma()
 const PREAMBLE =
-    'const {bars,time,open,high,low,close,volume,hl2,hlc3,ohlc4,p,ta,plot,hline}=ctx;';
+    'const {bars,time,open,high,low,close,volume,hl2,hlc3,ohlc4,p,ta,plot,hline,band}=ctx;';
 
 function compile(source: string): Compiled {
     let fn = cache.get(source);
@@ -107,6 +109,48 @@ export function runCustom(
         if (typeof v === 'number' && Number.isFinite(v)) levels.push(v);
     };
 
+    // band('名稱', 上緣序列或常數, 下緣序列或常數, opts) — 主圖價格帶。
+    // 常數自動展開成整條序列；下緣存到 `<name>_lo`（不進 order，
+    // 由 chart 的 band 分支一起取用）。
+    const band = (
+        name: unknown,
+        upper: unknown,
+        lower: unknown,
+        opts?: PlotHint,
+    ) => {
+        if (typeof name !== 'string' || name.trim() === '') {
+            throw new Error('band() 第一個參數要是輸出名稱字串');
+        }
+        const toSer = (v: unknown, which: string): Ser => {
+            if (typeof v === 'number' && Number.isFinite(v)) {
+                return new Array<number | null>(n).fill(v);
+            }
+            if (!Array.isArray(v)) {
+                throw new Error(
+                    `band('${name}') ${which}要是序列（陣列）或數字`,
+                );
+            }
+            const ser: Ser = new Array(n).fill(null);
+            for (let i = 0; i < n; i++) {
+                const x = (v as unknown[])[i];
+                ser[i] =
+                    typeof x === 'number' && Number.isFinite(x) ? x : null;
+            }
+            return ser;
+        };
+        if (!(name in outputs)) order.push(name);
+        outputs[name] = toSer(upper, '上緣');
+        outputs[`${name}_lo`] = toSer(lower, '下緣');
+        hints[name] = {
+            kind: 'band',
+            ...(opts && typeof opts.color === 'string'
+                ? { color: opts.color }
+                : {}),
+            ...(opts?.border ? { border: opts.border } : {}),
+            ...(opts?.width ? { width: opts.width } : {}),
+        };
+    };
+
     const ctx = {
         bars,
         time: bars.time,
@@ -122,6 +166,7 @@ export function runCustom(
         ta,
         plot,
         hline,
+        band,
     };
 
     try {
@@ -135,7 +180,7 @@ export function runCustom(
     if (order.length === 0) {
         return {
             ...EMPTY,
-            error: '程式碼沒有呼叫 plot() — 至少要輸出一條序列',
+            error: '程式碼沒有呼叫 plot() / band() — 至少要輸出一條序列',
         };
     }
     return { outputs, order, hints, levels };
