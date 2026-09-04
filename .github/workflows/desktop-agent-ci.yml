@@ -108,7 +108,6 @@ jobs:
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
       - name: Rust runtime and capability tests
-        if: matrix.platform == 'ubuntu-22.04'
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Windows TCP owner E2E

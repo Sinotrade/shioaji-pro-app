@@ -101,6 +101,9 @@ Shioaji 1.7.1 的即時計算指數、成分股與產業貢獻，現在整合成
 
 - **AI Agent** — 多供應商（Claude / Codex）agentic 對話、shioaji 技能市集、
   排程任務、操作觀察學習（桌面版專屬）
+- **Codex 訂閱免手動裝 CLI** — 安裝新版 ChatGPT Desktop 並登入 ChatGPT，
+  AI Agent 設定頁會偵測 App 內建 Codex runtime、檢查登入與官方 skill；
+  也可繼續使用獨立安裝的 Codex CLI（舊版 ChatGPT Classic 不含 Codex）
 - **策略回測** — 用 JS 寫進出場策略（與自訂指標同一套 `ta` 函式庫）、
   含手續費/證交稅/期交稅/滑價的回測引擎（訊號收盤成立、次根開盤成交，
   無未來函數）、單商品與自選清單多商品整合績效（合併權益曲線＋可排序
