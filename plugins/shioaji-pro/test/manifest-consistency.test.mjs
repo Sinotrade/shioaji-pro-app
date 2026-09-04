@@ -30,6 +30,7 @@ test("the shared skill and required safety references are bundled", async () => 
   const files = [
     "skills/shioaji-pro/SKILL.md",
     "skills/shioaji-pro/references/MCP_TOOLS.md",
+    "skills/shioaji-pro/references/CONTENT_AND_BACKTEST.md",
     "skills/shioaji-pro/references/SAFETY.md",
     "skills/shioaji-pro/references/PRIVACY.md"
   ];
@@ -38,4 +39,33 @@ test("the shared skill and required safety references are bundled", async () => 
     const contents = await readFile(new URL(file, pluginRoot), "utf8");
     assert.ok(contents.trim().length > 0, `${file} must not be empty`);
   }
+});
+
+test("the skill routes native content and bounded backtest reads", async () => {
+  const skill = await readFile(
+    new URL("skills/shioaji-pro/SKILL.md", pluginRoot),
+    "utf8"
+  );
+  const reference = await readFile(
+    new URL(
+      "skills/shioaji-pro/references/CONTENT_AND_BACKTEST.md",
+      pluginRoot
+    ),
+    "utf8"
+  );
+
+  assert.match(skill, /CONTENT_AND_BACKTEST\.md/);
+  for (const tool of [
+    "save_custom_indicator",
+    "save_strategy",
+    "get_backtest_result",
+    "list_backtest_symbol_results",
+    "get_backtest_trades"
+  ]) {
+    assert.match(reference, new RegExp(`\\b${tool}\\b`));
+  }
+  assert.match(reference, /ephemeral/);
+  assert.match(reference, /not a Portfolio Run/);
+  assert.match(reference, /maximum is 100/);
+  assert.match(reference, /latest 500 trades per symbol/);
 });
