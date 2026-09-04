@@ -1,13 +1,14 @@
 // index-components 純函式測試 — payload 取自 2026-08-28 對 1.7.4
 // dev server 的實測樣本（wire decimal 一律字串）
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     parseIcEvent,
     projectFromSnapshot,
     projectionKey,
     type RawIndexComponentsSnapshot,
 } from './index-components';
+import { fetchIndexComponents } from './shioaji';
 import type { IcProjection } from './types/market';
 
 const P25: IcProjection = {
@@ -17,6 +18,33 @@ const P25: IcProjection = {
     order: 'positive_desc',
     limit: 25,
 };
+
+afterEach(() => {
+    vi.unstubAllGlobals();
+});
+
+describe('index_components 建底查詢', () => {
+    it('帶逾時訊號，避免 server 切換時永久停在 pending', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(
+            new Response(JSON.stringify(snapshot()), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            }),
+        );
+        vi.stubGlobal('fetch', fetchMock);
+
+        await fetchIndexComponents({
+            security_type: 'IND',
+            region: 'TW',
+            exchange: 'TSE',
+            code: 'IX0001',
+            target_code: null,
+        });
+
+        const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+        expect(init?.signal).toBeInstanceOf(AbortSignal);
+    });
+});
 
 describe('projectionKey', () => {
     it('對同一投影產生穩定 key，含群組後綴', () => {

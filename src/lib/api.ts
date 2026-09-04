@@ -50,6 +50,23 @@ async function doFetch(url: string, init?: RequestInit): Promise<Response> {
     return fetch(url, init);
 }
 
+async function doFetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeoutMs?: number,
+): Promise<Response> {
+    if (!timeoutMs) return doFetch(url, init);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await doFetch(url, { ...init, signal: controller.signal });
+    } finally {
+        // Tauri plugin-http forwards late aborts to Rust. Clear the timer once
+        // the request settles so it cannot cancel an already-freed resource.
+        clearTimeout(timer);
+    }
+}
+
 // shioaji errors come back as JSON: {"code":400,"message":"...","details":...}
 // surface that message instead of a bare "400 Bad Request" — the message is
 // what tells you it's CA / unsigned account / bad params (issue #1 support)
@@ -134,16 +151,17 @@ export async function apiPost<T>(
         if (!res.ok) await throwApiError(res);
         return res.json() as Promise<T>;
     }
-    const res = await doFetch(base() + path, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+    const res = await doFetchWithTimeout(
+        base() + path,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        },
         // opt-in only — order paths must never abort an in-flight request
         // (an aborted POST tells us nothing about whether it was executed)
-        signal: opts?.timeoutMs
-            ? AbortSignal.timeout(opts.timeoutMs)
-            : undefined,
-    });
+        opts?.timeoutMs,
+    );
     if (!res.ok) await throwApiError(res);
     return res.json() as Promise<T>;
 }
