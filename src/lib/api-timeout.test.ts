@@ -54,8 +54,11 @@ describe('apiPost timeout', () => {
         );
 
         const request = apiPost('/api/v1/agent/test', {}, { timeoutMs: 100 });
+        const rejection = expect(request).rejects.toMatchObject({
+            name: 'AbortError',
+        });
         await vi.advanceTimersByTimeAsync(100);
 
-        await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+        await rejection;
     });
 });
