@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentAppCommandResponse } from './agent-contract';
+import type { AgentAppCommand, AgentAppCommandResponse } from './agent-contract';
 import {
     AGENT_APP_COMMAND_REQUEST_EVENT,
     AGENT_APP_COMMAND_RESPONSE_EVENT,
@@ -8,6 +8,7 @@ import {
     executeAgentAppCommand,
     parseAgentAppCommandRequest,
     registerAgentAppCommandHost,
+    registerOnboardingAppStateHost,
     requestAgentAppCommand,
     type AgentAppCommandContext,
 } from './agent-app-command';
@@ -18,6 +19,88 @@ import {
     type Profile,
     type Workspace,
 } from './workspace';
+
+describe('read-only App host lifecycle', () => {
+    it('does not execute queued mutations after immediate unregister', async () => {
+        const target = new EventTarget();
+        const { context, workspace } = fixture();
+        const before = structuredClone(workspace());
+        const update = vi.spyOn(context, 'updateWorkspace');
+        const responses = vi.fn();
+        target.addEventListener(AGENT_APP_COMMAND_RESPONSE_EVENT, responses);
+        const stop = registerAgentAppCommandHost(target, context);
+        target.dispatchEvent(new CustomEvent(AGENT_APP_COMMAND_REQUEST_EVENT, {
+            detail: { requestId: 'queued-mutation', command: { name: 'add_panel', args: { type: 'chart' } } },
+        }));
+        stop();
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        expect(update).not.toHaveBeenCalled();
+        expect(workspace()).toEqual(before);
+        expect(responses).not.toHaveBeenCalled();
+    });
+
+    it('does not invoke a queued state reader after immediate unregister', async () => {
+        const target = new EventTarget();
+        const read = vi.fn(() => ({ selectedContract: null, panels: [], layoutPresets: [], layoutProfiles: [] }));
+        const stop = registerAgentAppCommandHost(target, read);
+        target.dispatchEvent(new CustomEvent(AGENT_APP_COMMAND_REQUEST_EVENT, {
+            detail: { requestId: 'queued-read', command: { name: 'get_app_state', args: {} } },
+        }));
+        stop();
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        expect(read).not.toHaveBeenCalled();
+    });
+
+    it('requires a real host and serves the unmounted onboarding workspace', async () => {
+        const target = new EventTarget();
+        const query = () => requestAgentAppCommand(target, {
+            requestId: 'boot-state', command: { name: 'get_app_state', args: {} },
+        }, { timeoutMs: 10 });
+        expect((await query()).ok).toBe(false);
+        const stop = registerOnboardingAppStateHost(target);
+        try {
+            expect(await query()).toEqual({
+                requestId: 'boot-state', command: 'get_app_state', ok: true,
+                result: { selectedContract: null, panels: [], layoutPresets: [], layoutProfiles: [] },
+            });
+            expect((await requestAgentAppCommand(target, {
+                requestId: 'boot-mutation', command: { name: 'add_panel', args: { type: 'chart' } },
+            })).ok).toBe(false);
+        } finally { stop(); }
+        expect((await query()).ok).toBe(false);
+    });
+
+    it('reads actual workspace with Harness off but rejects every other command', async () => {
+        const preset = LAYOUT_PRESETS[0];
+        if (!preset) throw new Error('Expected a real layout preset for the mutation test');
+        const { context, resolveContract } = fixture();
+        const target = new EventTarget();
+        const unregister = registerAgentAppCommandHost(target, context, { readOnly: true });
+        try {
+            const response = await requestAgentAppCommand(target, {
+                requestId: 'state', command: { name: 'get_app_state', args: {} },
+            });
+            expect(response).toEqual({ requestId: 'state', command: 'get_app_state', ok: true,
+                result: { selectedContract: { code: '2330', name: '台積電', securityType: 'STK' },
+                    panels: [{ id: 'chart-1', type: 'chart', pin: null }, { id: 'watchlist-1', type: 'watchlist', pin: null }],
+                    layoutPresets: LAYOUT_PRESETS.map(p => p.name), layoutProfiles: ['我的版面'] } });
+            const forbidden: AgentAppCommand[] = [
+                { name: 'list_panels', args: {} },
+                { name: 'select_contract', args: { code: '2317' } },
+                { name: 'add_panel', args: { type: 'chart' } },
+                { name: 'remove_panel', args: { id: 'chart-1' } },
+                { name: 'set_panel_pin', args: { id: 'chart-1', code: '2317' } },
+                { name: 'apply_layout', args: { source: 'preset', name: preset.name } },
+            ];
+            for (const command of forbidden) {
+                expect((await requestAgentAppCommand(target, { requestId: command.name, command })).ok).toBe(false);
+            }
+            expect(resolveContract).not.toHaveBeenCalled();
+            expect(context.getWorkspace().blocks).toHaveLength(2);
+            expect(context.getSelectedContract()?.code).toBe('2330');
+        } finally { unregister(); }
+    });
+});
 
 const contract = (code: string, name = `Name ${code}`): ContractInfo =>
     ({
