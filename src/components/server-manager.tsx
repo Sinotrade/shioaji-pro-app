@@ -84,7 +84,7 @@ export function ServerManager({
         caPath: '',
         caPasswd: '',
         httpsEnabled: false,
-        agentHarnessEnabled: false,
+        agentHarnessEnabled: true,
     });
     const [busy, setBusy] = useState(false);
     const [lastOutput, setLastOutput] = useState('');

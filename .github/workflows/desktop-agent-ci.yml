@@ -104,11 +104,13 @@ jobs:
       - name: Pi permission policy tests
         run: node --test src-tauri/src/pi_policy_extension.test.mjs
 
+      - name: Pi native onboarding protocol tests
+        run: node --test src-tauri/src/pi_onboarding_extension.test.mjs
+
       - name: Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
       - name: Rust runtime and capability tests
-        if: matrix.platform == 'ubuntu-22.04'
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Windows TCP owner E2E

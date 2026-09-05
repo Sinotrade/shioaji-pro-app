@@ -25,6 +25,7 @@ export interface ClosedModules {
     agent?: {
         Panel: React.ComponentType<{
             initialPrompt?: string;
+            onboarding?: boolean;
             visibleTabs?: string[];
         }>;
         ensureScheduler: () => void;

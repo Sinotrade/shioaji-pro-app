@@ -5,6 +5,14 @@ let enabledCache =
     typeof localStorage !== 'undefined' &&
     localStorage.getItem(STORAGE_KEY) === 'true';
 
+export function resolveAgentHarnessSetting(
+    stored: boolean | null | undefined,
+    safeDefaultMigrated = true,
+): boolean {
+    if (!safeDefaultMigrated) return true;
+    return stored ?? true;
+}
+
 export function isAgentHarnessEnabled(): boolean {
     return enabledCache;
 }

@@ -27,7 +27,10 @@ import {
     setStoredSpawnKeyHash,
     shouldForceRespawn,
 } from './spawn-keys';
-import { cacheAgentHarnessEnabled } from './agent-harness-state';
+import {
+    cacheAgentHarnessEnabled,
+    resolveAgentHarnessSetting,
+} from './agent-harness-state';
 import {
     harnessOwnershipCompatible,
     recoverHarnessOwnership,
@@ -115,7 +118,7 @@ async function spawnServer(
     env: Record<string, string>,
     port: number,
     scheme: ApiScheme = 'http',
-    agentHarnessEnabled = false,
+    agentHarnessEnabled = true,
 ): Promise<SidecarResult> {
     const fullEnv = { NO_COLOR: '1', ...env };
     const { invoke } = await import('@tauri-apps/api/core');
@@ -986,13 +989,27 @@ const EMPTY_SETTINGS: DesktopSettings = {
     caPath: '',
     caPasswd: '',
     httpsEnabled: false,
-    agentHarnessEnabled: false,
+    agentHarnessEnabled: true,
 };
 
 export async function loadDesktopSettings(): Promise<DesktopSettings> {
     if (!isTauri) return { ...EMPTY_SETTINGS };
     const { LazyStore } = await import('@tauri-apps/plugin-store');
     const store = new LazyStore('settings.json');
+    const safeDefaultMigrated =
+        (await store.get<boolean>('agentHarnessSafeDefaultV1')) ?? false;
+    const storedAgentHarnessEnabled = await store.get<boolean>(
+        'agentHarnessEnabled',
+    );
+    const agentHarnessEnabled = resolveAgentHarnessSetting(
+        storedAgentHarnessEnabled,
+        safeDefaultMigrated,
+    );
+    if (!safeDefaultMigrated) {
+        await store.set('agentHarnessEnabled', agentHarnessEnabled);
+        await store.set('agentHarnessSafeDefaultV1', true);
+        await store.save();
+    }
     const settings = {
         apiKey: (await store.get<string>('apiKey')) ?? '',
         secretKey: (await store.get<string>('secretKey')) ?? '',
@@ -1001,8 +1018,7 @@ export async function loadDesktopSettings(): Promise<DesktopSettings> {
         caPath: (await store.get<string>('caPath')) ?? '',
         caPasswd: (await store.get<string>('caPasswd')) ?? '',
         httpsEnabled: (await store.get<boolean>('httpsEnabled')) ?? false,
-        agentHarnessEnabled:
-            (await store.get<boolean>('agentHarnessEnabled')) ?? false,
+        agentHarnessEnabled,
     };
     cacheAgentHarnessEnabled(settings.agentHarnessEnabled);
     return settings;
