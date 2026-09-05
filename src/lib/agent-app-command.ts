@@ -474,8 +474,8 @@ function failedResponse(
 
 export function registerAgentAppCommandHost(
     target: EventTarget,
-    context: AgentAppCommandContext,
-    options: { cacheSize?: number } = {},
+    context: AgentAppCommandContext | (() => AgentAppState),
+    options: { cacheSize?: number; readOnly?: boolean } = {},
 ): () => void {
     let active = true;
     const cacheSize = Math.max(1, options.cacheSize ?? 4_096);
@@ -560,7 +560,18 @@ export function registerAgentAppCommandHost(
             return;
         }
 
-        const response = executeAgentAppCommand(request.command, context)
+        const response = Promise.resolve().then(() => {
+            if (!active) {
+                throw new AgentAppCommandError('unsupported', 'App command host is no longer active');
+            }
+            if ((options.readOnly || typeof context === 'function') &&
+                request.command.name !== 'get_app_state') {
+                throw new AgentAppCommandError('unsupported', 'Only read-only App state is available');
+            }
+            return typeof context === 'function'
+                ? context()
+                : executeAgentAppCommand(request.command, context);
+        })
             .then(
                 (result): AgentAppCommandResponse => ({
                     requestId: request.requestId,
@@ -593,6 +604,17 @@ export function registerAgentAppCommandHost(
         active = false;
         target.removeEventListener(AGENT_APP_COMMAND_REQUEST_EVENT, listener);
     };
+}
+
+export function registerOnboardingAppStateHost(target: EventTarget): () => void {
+    // The first-run gate mounts no workspace, selection, or layout controls.
+    // Do not report persisted/default panels as if they were mounted.
+    return registerAgentAppCommandHost(target, () => ({
+        selectedContract: null,
+        panels: [],
+        layoutPresets: [],
+        layoutProfiles: [],
+    }));
 }
 
 export function requestAgentAppCommand<K extends AgentAppCommandName>(
