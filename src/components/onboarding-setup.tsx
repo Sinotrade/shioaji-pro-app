@@ -4,7 +4,8 @@
 // server was never even asked to start (see App.tsx's AppGate).
 
 import { Bot, Eye, EyeOff, FileUp, KeyRound } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { registerOnboardingAppStateHost } from '../lib/agent-app-command';
 import { agentModule } from '../lib/features';
 import {
     diagnoseOutput,
@@ -13,6 +14,7 @@ import {
 } from '../lib/server-diagnostics';
 import {
     pickCaFile,
+    isTauri,
     pickEnvFile,
     reloadWhenHealthy,
     saveDesktopSettings,
@@ -40,6 +42,10 @@ const EMPTY: DesktopSettings = {
 };
 
 export function OnboardingSetup() {
+    useEffect(() => {
+        if (!isTauri) return;
+        return registerOnboardingAppStateHost(window);
+    }, []);
     const [settings, setSettings] = useState<DesktopSettings>(EMPTY);
     const [showKey, setShowKey] = useState(false);
     const [showSecret, setShowSecret] = useState(false);
@@ -303,6 +309,7 @@ export function OnboardingSetup() {
                         <div className={styles.agentBody}>
                             <FeatureGate feature='agent'>
                                 <AgentPanel
+                                    onboarding
                                     initialPrompt={AGENT_STARTER_PROMPT}
                                     visibleTabs={['chat', 'settings']}
                                 />

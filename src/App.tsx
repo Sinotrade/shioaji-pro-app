@@ -1155,12 +1155,13 @@ export default function App() {
         [profiles, updateWorkspace],
     );
 
-    // Enabled private native runtimes use this semantic request/response boundary.
+    // App-state reads remain available during setup with Harness disabled.
+    // Other commands require Harness through this semantic request/response boundary.
     // It deliberately exposes workspace intentions, never DOM coordinates or
     // keyboard automation, and every mutation flows through the same persisted
     // React state path as direct user interaction.
     useEffect(() => {
-        if (!isTauri || !agentHarnessEnabled) return;
+        if (!isTauri) return;
         return registerAgentAppCommandHost(window, {
                 getWorkspace: () => workspaceRef.current,
                 getProfiles: () => profilesRef.current,
@@ -1182,7 +1183,7 @@ export default function App() {
                 },
                 updateWorkspace,
                 createPanelId: newBlockId,
-        });
+        }, { readOnly: !agentHarnessEnabled });
     }, [agentHarnessEnabled, updateWorkspace]);
 
     const deleteProfile = useCallback(
