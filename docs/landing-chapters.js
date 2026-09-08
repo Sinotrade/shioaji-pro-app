@@ -10,6 +10,8 @@
   const nav = document.createElement('nav'); nav.className = 'stream-nav'; nav.setAttribute('aria-label','功能展示');
   const counter = document.createElement('div'); counter.className = 'stream-counter'; counter.setAttribute('aria-hidden','true');
   stage.append(counter, deck, nav); stream.append(stage); sources[0].before(stream);
+  const rig=document.createElement('div');rig.className='stream-rig';rig.setAttribute('aria-hidden','true');
+  rig.innerHTML='<i></i><i></i><i></i><div class=stream-floor></div>';stage.prepend(rig);
   const slides = sources.map((source,index) => {
     const id = source.id;
     const marker = document.createElement('div'); marker.className='stream-marker'; marker.dataset.anchor=id; stream.append(marker);
@@ -28,8 +30,20 @@
     media.querySelectorAll('img').forEach(img=>{img.loading='eager';});
     slide.append(copy,media);deck.append(slide);
     const button=document.createElement('button');button.type='button';button.textContent=names[index];button.addEventListener('click',()=>marker.scrollIntoView({behavior:'smooth'}));nav.append(button);
-    return {source,id,marker,slide,button};
+    return {source,id,marker,slide,button,copy,media,figures:[...media.children]};
   });
+    // Each boundary has its own camera path. Poses are [x%, y%, z, pitch, yaw, roll].
+    const paths=[
+      {name:'unfold',out:[-12,18,-600,48,-18,-8],into:[18,-20,-850,-35,28,8]},
+      {name:'dive',out:[0,0,650,0,-12,0],into:[0,0,-1200,12,0,0]},
+      {name:'orbit',out:[-65,-12,-420,-12,78,-9],into:[65,15,-600,18,-78,9]},
+      {name:'crane',out:[0,-65,-350,-65,0,0],into:[0,65,-650,65,0,0]},
+      {name:'bank',out:[-28,12,-750,20,-25,-32],into:[28,-12,-750,-20,25,32]},
+      {name:'hinge',out:[32,0,-480,0,-85,12],into:[-32,0,-480,0,85,-12]},
+      {name:'rise',out:[0,48,-800,55,20,0],into:[0,-48,-800,-55,-20,0]},
+      {name:'tunnel',out:[0,0,750,-12,0,-12],into:[0,0,-1400,0,20,12]},
+      {name:'helix',out:[-45,-32,-650,35,65,-22],into:[45,32,-900,-35,-65,22]},
+    ];
   let frame=0, enabled=false, step=0, active=-1;
   function layout() {
     const oldTop=stream.getBoundingClientRect().top;
@@ -54,13 +68,31 @@
     // A readable resting interval, then a full depth rotation into the next face.
     const t=Math.max(0,Math.min(1,(fraction-.35)/.65));const eased=t*t*(3-2*t);
     const next=base+(eased>=.5?1:0);
-    slides.forEach(({slide,button},i)=>{
-      const distance=i-base-eased;const visible=Math.abs(distance)<1;
+    const path=paths[Math.min(base,paths.length-1)];
+    stage.dataset.transition=path.name;
+    const transform=(pose,amount)=>`translate3d(${pose[0]*amount}%,${pose[1]*amount}%,${pose[2]*amount}px) rotateX(${pose[3]*amount}deg) rotateY(${pose[4]*amount}deg) rotateZ(${pose[5]*amount}deg)`;
+    slides.forEach(({slide,button,copy,media,figures},i)=>{
+      const outgoing=i===base, incoming=i===base+1;
+      const visible=outgoing || (incoming && eased>0);
+      const amount=outgoing?eased:1-eased;
+      const pose=outgoing?path.out:path.into;
       slide.style.visibility=visible?'visible':'hidden';
-      slide.style.opacity=String(visible?Math.pow(1-Math.abs(distance),.6):0);
-      slide.style.transform=`translate3d(${distance*52}%,0,${-Math.abs(distance)*380}px) rotateY(${distance*-72}deg)`;
+      slide.style.opacity='1';slide.style.transform='none';
+      // Text clears before the next caption arrives; media keeps moving through depth.
+      copy.style.opacity=String(visible?Math.max(0,1-amount*2.4):0);
+      copy.style.transform=`translate3d(0,${(outgoing?-1:1)*amount*45}px,0)`;
+      media.style.opacity=String(visible?Math.max(0,1-amount*1.15):0);
+      media.style.transform=transform(pose,amount);
+      figures.forEach((figure,j)=>{
+        const spread=(j-(media.children.length-1)/2)*amount;
+        figure.style.setProperty('--panel-pose',`translate3d(${spread*80}px,${spread*35}px,${Math.abs(spread)*150}px) rotateY(${spread*30}deg)`);
+      });
       slide.inert=i!==next;slide.setAttribute('aria-hidden',String(i!==next));button.setAttribute('aria-current',i===next?'step':'false');
     });
+    const energy=Math.sin(eased*Math.PI);
+    rig.style.setProperty('--rig-radius',`${50-energy*(path.name==='dive'||path.name==='tunnel'?48:20)}%`);
+    rig.style.opacity=String(.16+energy*.5);
+    rig.style.transform=`perspective(1200px) translateZ(${-energy*160}px) rotateX(${path.out[3]*energy*.45}deg) rotateY(${path.out[4]*energy*.45}deg) rotateZ(${path.out[5]*energy}deg)`;
     counter.textContent=`${String(next+1).padStart(2,'0')} — ${String(slides.length).padStart(2,'0')}`;
     stage.style.setProperty('--stream-turn',`${eased*180}deg`);
     if(active!==next){active=next;const button=slides[next].button;nav.scrollTo({left:button.offsetLeft-nav.clientWidth/2+button.offsetWidth/2,behavior:'instant'});}

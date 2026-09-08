@@ -41,3 +41,17 @@
 .stream-media>.agent-image>a,.stream-media>.agent-skills-image>a { height:auto; }
 .stream-media>figure { opacity:1!important; transform:none!important; filter:none!important; }
 .stream-slide[data-feature="agent"] h2 { font-size:clamp(28px,3vw,44px); }
+/* Shared camera volume. Captions remain in a separate, readable plane. */
+.stream-slide { transform-style:preserve-3d; will-change:auto; }
+.stream-media { transform-style:preserve-3d; will-change:transform,opacity; transform-origin:50% 50%; }
+.stream-media>figure { transform:var(--panel-pose,none)!important; transition:none; }
+.stream-copy { will-change:transform,opacity; }
+.stream-rig { position:absolute; inset:16% -5% 4% 25%; pointer-events:none; transform-style:preserve-3d; }
+.stream-rig>i { position:absolute; inset:8%; border:1px solid #8aaedc55; border-radius:50%; box-shadow:0 0 35px #7fbdff0a; }
+.stream-rig>i:nth-child(1) { transform:rotateX(64deg); }
+.stream-rig>i:nth-child(2) { transform:rotateY(65deg) rotateX(15deg); }
+.stream-rig>i:nth-child(3) { inset:18%; transform:rotateY(-40deg) rotateX(-35deg); }
+.stream-floor { position:absolute; inset:45% -40% -70%; background:linear-gradient(#799bc21c 1px,transparent 1px),linear-gradient(90deg,#799bc21c 1px,transparent 1px); background-size:65px 65px; transform:rotateX(75deg) translateZ(-100px); mask-image:radial-gradient(ellipse,#000,transparent 68%); }
+.stream-rig>i { border-radius:var(--rig-radius,50%); }
+
+@media(max-width:760px) { .stream-rig { inset:35% -35% 5% -35%; } }
