@@ -14,6 +14,8 @@ export interface Health {
     ca_expires_in_days?: number;
     ca_expired?: boolean;
     agent_harness?: {
+        /** Effective secret transport; absent/unknown is not production-safe. */
+        bootstrap?: 'environment' | 'one_shot_ipc' | (string & {});
         enabled: boolean;
         mode: 'off' | 'production' | 'all';
         capability_version: number;
