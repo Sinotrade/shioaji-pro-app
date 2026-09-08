@@ -16,10 +16,18 @@ import { analyticsEnabled } from '../lib/analytics';
 import { useTier } from '../lib/features';
 import type { OrderEventReport } from '../lib/order-report';
 import { appVersion } from '../lib/tauri';
+import { notify } from '../lib/trade';
+import { buildFeedbackUrl, formatDiagnostics } from '../lib/feedback';
 import * as dockStyles from './bottom-dock.css';
+import * as panelStyles from './panel.css';
 import * as styles from './debug-panel.css';
 
 const STATUS_LABEL = { live: 'LIVE', connecting: 'SYNC', down: 'LOST' };
+
+// 「回報問題」表單模板（部署方自設），可含 {diag} {ver} {os} {env} {tier}
+// 占位。未設定時按鈕不渲染，預設不露出任何特定表單。
+const FEEDBACK_FORM_URL =
+    (import.meta.env.VITE_FEEDBACK_FORM_URL as string | undefined) ?? '';
 
 export function DebugPanel() {
     const stream = useStreamStatus();
@@ -112,6 +120,55 @@ export function DebugPanel() {
         },
     ];
 
+    const reportIssue = async () => {
+        // webview 的 navigator.platform 會說謊（Apple Silicon 回 MacIntel），
+        // 跟 server-manager 一樣向 Rust 側拿真實 OS/arch，拿不到再退回
+        let host: string = navigator.platform;
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            host = await invoke<string>('host_info');
+        } catch {
+            // web build 或舊版 shell 沒這個 command
+        }
+        const ctx = {
+            ver,
+            os: host,
+            env: info ? (info.simulation ? 'sim' : 'prod') : 'unknown',
+            tier,
+            stream: STATUS_LABEL[stream],
+            heartbeatAge: hbAge,
+            rate,
+            serverVersion: info ? `v${info.version}` : '',
+            tokenHours:
+                typeof tokenSeconds === 'number'
+                    ? Math.round(tokenSeconds / 3600)
+                    : null,
+            apiBase: getApiBase(),
+        } as const;
+        const diag = formatDiagnostics(ctx);
+        try {
+            await navigator.clipboard.writeText(diag);
+            notify({
+                kind: 'ok',
+                title: '已複製診斷資訊',
+                body: '貼到回報表的「診斷資訊」欄即可',
+            });
+        } catch {
+            notify({
+                kind: 'err',
+                title: '複製失敗',
+                body: '請手動截圖面板內容',
+            });
+        }
+        const url = buildFeedbackUrl(FEEDBACK_FORM_URL, ctx, diag);
+        try {
+            const { open } = await import('@tauri-apps/plugin-shell');
+            await open(url);
+        } catch {
+            window.open(url, '_blank', 'noopener');
+        }
+    };
+
     return (
         <div className={styles.wrap}>
             <div className={styles.grid}>
@@ -126,6 +183,15 @@ export function DebugPanel() {
                     </div>
                 ))}
             </div>
+            {FEEDBACK_FORM_URL && (
+                <button
+                    type="button"
+                    className={panelStyles.btn}
+                    onClick={() => void reportIssue()}
+                >
+                    回報問題
+                </button>
+            )}
             <span className={styles.sectionTitle}>最近 order_event</span>
             {events.length === 0 && (
                 <span className={dockStyles.emptyState}>尚無事件</span>
