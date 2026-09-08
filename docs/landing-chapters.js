@@ -22,7 +22,7 @@
     const description=source.querySelector('.story-copy>p') || source.querySelector('.section-intro>p, .section-intro>div>p');
     if(description) copy.append(description.cloneNode(true));
     const list=source.querySelector('.story-copy ul'); if(list) copy.append(list.cloneNode(true));
-    if(id==='strategy') { const p=document.createElement('p'); p.className='stream-detail'; p.textContent='描述想法 → AI 建立指標與策略 → 在回測面板驗證 → AI 解讀結果'; copy.append(p); }
+    if(id==='strategy') { const p=document.createElement('p'); p.className='stream-detail'; p.textContent='成本設定：手續費、稅、滑價。查看逐筆交易與 K 線進出場標記，再請 AI 解讀結果。'; copy.append(p); }
     if(id==='agent') { const p=document.createElement('p'); p.className='stream-detail'; p.textContent='保存與分支對話 · 技能與背景任務 · 原生指標與策略建立 · 回測結果查詢';copy.append(p); }
     const media = document.createElement('div'); media.className='stream-media';
     source.querySelectorAll('.story-scene>figure, .execution-gallery>figure, .research-gallery>figure, .agent-visual>figure').forEach(figure => media.append(figure.cloneNode(true)));

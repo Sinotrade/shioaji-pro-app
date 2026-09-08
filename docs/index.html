@@ -102,7 +102,7 @@
 <section class="section wrap story-section" id="accounts" data-story="slide"><div class="section-intro"><div><span class="section-number">07 / ACCOUNTS & CONTROL</span><h2>持倉、委託、風險，<br>都在掌握之中。</h2></div><p>交易前確認，交易中控管，交易後核對。</p></div><div class="story-scene"><figure><a href="images/release-0.1.38-dock.png" target="_blank" rel="noopener"><img src="images/release-0.1.38-dock.png" alt="真實多帳戶持倉面板，包含合併與分帳戶檢視" loading="lazy"></a><figcaption>桌面版實際畫面 · ACCOUNTS & CONTROL</figcaption></figure><div class="story-copy"><h3>把多帳戶與交易控管留在工作區。</h3><p>合併或分帳戶查看持倉與回報，核對損益、額度和交割。透過單筆與日虧上限、鎖單及 OCO 停損停利，管理委託流程。</p><ul><li>多帳戶持倉 · 分倉下單 · 逐戶回報</li><li>平倉／反手 · 批次刪單 · 委託改量</li><li>帳務與交割日曆 · 權益數與保證金</li><li>Kill Switch · 兩段確認 · 斷線鎖定下單</li></ul></div></div></section>
 <section class="wrap section strategy-section" id="strategy"><div class="section-intro"><div><span class="section-number">08 / AI STRATEGY</span><h2>說出交易想法，<br>讓 AI 建立策略。</h2></div><p>用對話建立指標與進出場規則，<br>再用歷史資料回測驗證，讓 AI 協助解讀結果。</p></div>
 <div class="research-gallery"><figure><a href="images/release-0.1.44-indicator-dialog.png" target="_blank" rel="noopener"><img src="images/release-0.1.44-indicator-dialog.png" alt="技術指標選擇視窗實際畫面" loading="lazy"></a><figcaption>技術指標 · 自訂參數與圖表預覽</figcaption></figure><figure class="idea-flow"><div class="idea-example"><span>策略想法示例</span><blockquote>「用 20／60 均線交叉建立策略，<br>把週期與停損設成可調參數。」</blockquote><ol><li><b>AI 建立</b><span>產生原生策略，驗證格式與規則。</span></li><li><b>回測驗證</b><span>選商品、期間與成本，在面板執行。</span></li><li><b>對話調整</b><span>請 AI 分析結果，再修改你的假設。</span></li></ol></div><figcaption>操作流程示意 · 回測由面板執行</figcaption></figure></div>
-<div class="research-detail"><article><h3>01　描述你的想法</h3><p>告訴 Agent 想觀察的訊號、進出場條件與參數，由 AI 建立 App 原生指標或策略，依驗證回饋修正。</p></article><article><h3>02　回測驗證</h3><p>在回測面板選擇商品、期間與成本假設，執行後查看績效與逐筆交易。批次回測為各商品獨立測試。</p></article><article><h3>03　用結果繼續研究</h3><p>請 AI 讀取最新回測結果、核對成本與交易明細，再調整策略。結果查詢工具本身不會啟動回測。</p></article></div>
+<div class="research-detail"><article><h3>01　描述你的想法</h3><p>告訴 Agent 想觀察的訊號、進出場條件與參數，由 AI 建立 App 原生指標或策略，依驗證回饋修正。</p></article><article><h3>02　回測驗證</h3><p>設定手續費、稅與滑價後，查看績效、逐筆交易與 K 線進出場標記。批次回測為各商品獨立測試。</p></article><article><h3>03　用結果繼續研究</h3><p>請 AI 讀取最新回測結果、核對成本與交易明細，再調整策略。結果查詢工具本身不會啟動回測。</p></article></div>
 <p class="note">回測與損益試算基於歷史資料或簡化假設，不代表未來績效。</p>
 </section>
 <section class="agent-section" id="agent">
@@ -181,6 +181,7 @@
 </svg>
 </a>
 </section>
+<section class="wrap section desktop-essentials" id="desktop"><div class="section-intro"><div><span class="section-number">DESKTOP NATIVE</span><h2>裝好 App，<br>接上你的交易環境。</h2></div><p>內建 Shioaji 連線服務，<br>不必另外安裝 Python 或啟動命令列。</p></div><div class="desktop-benefits"><article><h3>連線管理</h3><p>在 App 內設定金鑰、啟停服務、查看健康狀態，管理模擬與正式環境。</p></article><article><h3>系統匣常駐</h3><p>收起主視窗後仍可從系統匣叫回 App、開啟伺服器管理與檢查更新。</p></article><article><h3>通知與診斷</h3><p>委託回報、系統事件和連線診斷集中查看，追蹤操作後發生的事。</p></article><article><h3>內建更新</h3><p>啟動時檢查新版本，透過簽章驗證安裝更新。</p></article></div></section>
 <section class="section wrap downloads" id="downloads">
 <div class="section-intro">
 <div><span class="section-number">DOWNLOAD</span>
@@ -232,11 +233,14 @@
 </article>
 </div>
 <p id="download-status" class="note" role="status">下載連結預設開啟 GitHub 最新版本頁。</p>
-<div class="onboarding">
-<p><strong>01　安裝桌面版</strong>下載符合系統與處理器的安裝檔。</p>
-<p><strong>02　設定 API Key</strong>至 <a href="https://www.sinotrade.com.tw/newweb/PythonAPIKey/">永豐金證券</a> 申請，於 App 內完成伺服器設定。</p>
-<p><strong>03　連線模擬環境</strong>尚未取得 API Key，也可先使用 AI 助理的設定引導。</p>
-</div>
+<div class="start-guide" id="getting-started">
+<div class="start-heading"><div><span class="section-number">GETTING STARTED</span><h3>第一次使用，從這裡開始。</h3></div><a class="text-link" href="https://sinotrade.github.io/zh/tutor/prepare/token/" target="_blank" rel="noopener">API Key 申請圖文教學 ↗</a></div>
+<div class="start-steps">
+<article><span>01</span><h4>準備帳戶與金鑰</h4><p>需要永豐證券或期貨帳戶。登入 API 管理頁，新增 API Key，完成驗證並設定帳戶與權限。</p><a href="https://www.sinotrade.com.tw/newweb/PythonAPIKey/" target="_blank" rel="noopener">前往 API 管理 ↗</a><small>Secret Key 僅在建立時顯示，請妥善保存。</small></article>
+<article><span>02</span><h4>完成 API 開通</h4><p>依交易商品完成 API 約定書簽署；證券與期貨需分別辦理。</p><a href="https://sinotrade.github.io/zh/tutor/prepare/terms/" target="_blank" rel="noopener">條款簽署與測試教學 ↗</a></article>
+<article><span>03</span><h4>在 App 內設定</h4><p>安裝桌面版後，開啟「伺服器」管理介面，在本機填入 API Key 與 Secret Key，先使用模擬環境確認連線，再依官方教學完成登入與下單測試。</p><small>金鑰填在 App，不需貼到 AI 對話。</small></article>
+<article><span>04</span><h4>準備正式環境</h4><p>完成開通與測試後，再確認正式環境權限、下載並設定 CA 憑證。只用模擬環境時不需啟用 CA。</p><a href="https://sinotrade.github.io/zh/tutor/prepare/token/" target="_blank" rel="noopener">金鑰與憑證教學 ↗</a></article>
+</div></div>
 </section>
 </main>
 <footer>
@@ -245,6 +249,8 @@
 <a class="brand" href="#">SHIOAJI <span>Pro</span>
 </a>
 <div class="footer-links">
+<a href="#getting-started">開始使用</a>
+<a href="https://sinotrade.github.io/zh/tutor/prepare/token/">API Key 教學</a>
 <a href="https://sinotrade.github.io/">API 文件</a>
 <a href="https://github.com/Sinotrade/shioaji-pro-app">原始碼</a>
 <a href="https://github.com/Sinotrade/shioaji-pro-app/issues">問題回報</a><span>© 2026 SinoPac Securities</span>

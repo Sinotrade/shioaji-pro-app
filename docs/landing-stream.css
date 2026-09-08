@@ -75,3 +75,18 @@
 .market-model-ready .stream-rig,.market-model-ready::before { display:none; }
 .market-model-ready { background:radial-gradient(ellipse at 58% 48%,#29436040,transparent 65%),#080d14; }
 @media(max-width:760px) { .market-model { inset:15% -30% 0; width:160%; height:75%; } }
+.desktop-benefits,.start-steps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:30px; }
+.desktop-benefits article { border-top:1px solid #d2e4fa26; padding-top:24px; }
+.desktop-benefits h3 { font-size:18px; font-weight:500; margin-bottom:14px; }
+.desktop-benefits p,.start-steps p { font-size:13px; line-height:1.9; color:#9dacc0; }
+.start-guide { margin-top:64px; padding-top:38px; border-top:1px solid #d2e4fa26; scroll-margin-top:10px; }
+.start-heading { display:flex; justify-content:space-between; align-items:center; gap:30px; margin-bottom:35px; }
+.start-heading h3 { font-size:27px; font-weight:500; }
+.start-heading .section-number { margin-bottom:12px; }
+.start-steps article>span { display:block; color:#7087a2; font:12px ui-monospace,monospace; margin-bottom:18px; }
+.start-steps h4 { font-size:16px; font-weight:500; margin:0 0 13px; }
+.start-steps a { display:inline-block; margin-top:18px; font-size:12px; color:#c3d8f0; text-decoration:underline; text-underline-offset:5px; }
+.start-steps small { display:block; margin-top:16px; color:#8495ab; font-size:11px; line-height:1.7; }
+.footer-links { flex-wrap:wrap; }
+@media(max-width:1000px) { .desktop-benefits,.start-steps { grid-template-columns:repeat(2,minmax(0,1fr)); gap:30px; } .start-heading { align-items:flex-start; flex-direction:column; gap:20px; } }
+@media(max-width:550px) { .desktop-benefits,.start-steps { grid-template-columns:1fr; } .start-steps article { padding-bottom:22px; border-bottom:1px solid #d2e4fa15; } }
