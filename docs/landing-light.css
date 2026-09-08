@@ -1,16 +1,24 @@
-.appearance-control { display:flex; align-items:center; gap:5px; flex-shrink:0; color:#b4c2d5; }
-.appearance-control>span { font-size:18px; }
-.appearance-control select { font:inherit; font-size:11px; color:inherit; background:transparent; border:0; padding:6px 0; width:78px; cursor:pointer; color-scheme:dark; }
-.appearance-control select:focus-visible { outline:2px solid #8dafd3; outline-offset:3px; border-radius:4px; }
+/* Custom glass appearance menu, shared across both palettes. */
+.appearance-control { position:relative; flex-shrink:0; color:#bdcadb; }
+#appearance { display:flex; align-items:center; gap:8px; padding:7px 9px; border:1px solid #acc8e52b; border-radius:8px; background:#c7e0ff08; color:inherit; font:inherit; font-size:11px; }
+#appearance>span:first-child { font-size:17px; line-height:1; }
+#appearance:hover,#appearance[aria-expanded="true"] { background:#c7e0ff14; border-color:#b7d1ee4f; }
+#appearance-menu { position:absolute; top:calc(100% + 12px); right:0; width:148px; padding:6px; background:linear-gradient(135deg,#263547ed,#111b2bef); border:1px solid #d2e6fc30; border-radius:12px; box-shadow:inset 0 1px 0 #ffffff20,0 14px 40px #0005; backdrop-filter:blur(24px) saturate(150%); -webkit-backdrop-filter:blur(24px) saturate(150%); }
+#appearance-menu[hidden] { display:none; }
+#appearance-menu button { display:flex; align-items:center; gap:12px; width:100%; padding:9px 10px; color:#d5e1ee; font:inherit; font-size:12px; border:0; border-radius:7px; background:transparent; text-align:left; }
+#appearance-menu button:hover,#appearance-menu button:focus-visible { background:#d1e6ff17; outline:0; }
+#appearance-menu button[aria-checked="true"] { background:#c5ddf31a; }
+.appearance-check { margin-left:auto; opacity:0; }
+[aria-checked="true"]>.appearance-check { opacity:1; }
 .header .nav { gap:18px; }
 @media(max-width:1100px) { .nav-links { gap:14px; font-size:12px; } .nav-links>a:last-child { display:none; } }
-@media(max-width:760px) { .appearance-control { margin-left:auto; } .header .nav { gap:10px; } .appearance-control select { width:65px; font-size:10px; } .header .nav-download { gap:8px; padding:6px 10px; } }
-@media(max-width:370px) { .header .brand { font-size:17px; } .appearance-control>span { display:none; } .header .nav { padding-inline:14px; gap:8px; } }
+@media(max-width:760px) { .appearance-control { margin-left:auto; } .header .nav { gap:10px; } #appearance { gap:5px; padding:7px; } .header .nav-download { gap:8px; padding:6px 10px; } }
+@media(max-width:370px) { .header .brand { font-size:17px; } #appearance>span:first-child { display:none; } .header .nav { padding-inline:14px; gap:8px; } }
 :root[data-appearance="light"] { color-scheme:light; --bg:#f4f6f8; --surface:#fff; --fg:#172332; --muted:#56667b; --line:#233c571c; --accent:#385a80; }
 html[data-appearance="light"] body { background:#f4f6f8; color:#172332; }
 html[data-appearance="light"] .header { background:linear-gradient(115deg,#ffffffb8,#e4ebf18f 55%,#ffffffb8); border-bottom-color:#3e52682b; box-shadow:inset 0 1px #fff,0 6px 25px #243b5010; }
 html[data-appearance="light"] :is(.brand span,.nav-links,.appearance-control) { color:#46576a; }
-html[data-appearance="light"] .appearance-control select { color-scheme:light; }
+
 html[data-appearance="light"] :is(.nav-links a:hover,.footer-links a:hover) { color:#152e4b; }
 html[data-appearance="light"] .hero::before { background:radial-gradient(ellipse at 65% 35%,#a2bdd52c,transparent 65%); }
 html[data-appearance="light"] .hero h1 { color:#182532; }
@@ -31,7 +39,7 @@ html[data-appearance="light"] .agent-orbits span { color:#556e86; }
 html[data-appearance="light"] :is(.console-line,.console-footer) { color:#455c71; border-color:#738fa529; }
 html[data-appearance="light"] .console-line.tool { color:#466986; }
 html[data-appearance="light"] .console-line.done { color:#3c7366; }
-html[data-appearance="light"] .console-cursor { background:#55789b; }
+html[data-appearance="light"] .console-caret { background:#55789b; }
 html[data-appearance="light"] .terminal { background:#eef2f5; border-color:#526a8335; box-shadow:0 30px 70px #20395224; }
 html[data-appearance="light"] :is(.terminal-top,.terminal figcaption,.theme-switch) { background:#e6edf3dc; color:#4b6077; border-color:#657f9826; }
 html[data-appearance="light"] .theme-switch button { color:#52657a; }
@@ -60,3 +68,17 @@ html[data-appearance="light"] .hero-release>span { color:#435d76; border-color:#
 html[data-appearance="light"] .release-heading>a { color:#536a82; }
 html[data-appearance="light"] .note { color:#596c80!important; }
 html[data-appearance="light"] :is(.execution-card figcaption strong,.runtime-list,.permission-note>span) { color:#334e68; }
+
+html[data-appearance="light"] #appearance { background:#ffffff70; color:#3c5268; border-color:#6e8ba333; }
+html[data-appearance="light"] #appearance-menu { background:linear-gradient(135deg,#fffffff5,#eaf0f6ed); border-color:#718ba438; box-shadow:inset 0 1px #fff,0 14px 40px #23405925; }
+html[data-appearance="light"] #appearance-menu button { color:#314960; }
+html[data-appearance="light"] #appearance-menu button:is(:hover,:focus-visible,[aria-checked="true"]) { background:#678bae1b; }
+/* Graphite/platinum orbits: visible moving satellites against pearl glass. */
+html[data-appearance="light"] .agent-orbits i { border-color:#456782b8; box-shadow:0 0 8px #54789810; }
+html[data-appearance="light"] .agent-orbits i:nth-child(2) { border-color:#7c758c99; }
+html[data-appearance="light"] .agent-orbits i:nth-child(3) { border-color:#6b889aa8; }
+html[data-appearance="light"] .agent-orbits i::after { background:#3b617f; box-shadow:0 0 0 2px #ffffffc9,0 0 10px 2px #577b9a50; }
+html[data-appearance="light"] .agent-orbits b { background:radial-gradient(circle at 30% 25%,#eef5fa 0%,#819bac 32%,#3b566f 66%,#22374d 100%); box-shadow:inset -2px -2px 4px #172f4850,0 0 0 1px #66859a36,0 5px 14px #42647b30; }
+html[data-appearance="light"] .agent-orbits { background:radial-gradient(ellipse,#9aafc419,transparent 68%); }
+
+html[data-appearance="light"] .capability-rail>a:hover { background:#e0e9f2; color:#172f47; }
