@@ -65,6 +65,7 @@ export type BlockType =
     | 'notices'
     | 'debug'
     | 'grid'
+    | 'spiderweb'
     | 'heatmap'
     | 'pulse'
     | 'signals'
@@ -318,6 +319,14 @@ export const BLOCK_META: Record<
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 13, minW: 4, minH: 10 },
+    },
+    spiderweb: {
+        label: '蛛網交易',
+        description: '多檔位自動反向出場策略（需App開啟）',
+        category: 'trading',
+        pinnable: true,
+        singleton: false,
+        defaultSize: { w: 7, h: 16, minW: 6, minH: 12 },
     },
     heatmap: {
         label: '產業全景',
