@@ -11,7 +11,10 @@
 <meta property="og:type" content="website">
 <link rel="canonical" href="https://sinotrade.github.io/shioaji-pro-app/">
 <link rel="stylesheet" href="landing.css">
+<link rel="stylesheet" href="landing-scenes.css">
+<script src="landing-webgl.js" defer></script>
 <script src="landing.js" defer></script>
+<script src="landing-demo.js" defer></script>
 </head>
 <body>
 <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -42,43 +45,43 @@
 </header>
 <main id="main">
 <section class="hero wrap" aria-labelledby="hero-title">
+<canvas id="hero-webgl" aria-hidden="true"></canvas>
 <canvas id="hero-bg" aria-hidden="true">
 </canvas>
 <div class="hero-top">
-<div>
-<h1 id="hero-title">專業交易終端。<br><span>現在，內建 AI Agent。</span>
-</h1>
-<p class="hero-description">台股、期貨、選擇權。從即時行情、委託執行到策略回測，<br class="desktop-break">整合在可自由配置的桌面工作區。</p>
+<a class="hero-release" href="https://github.com/Sinotrade/shioaji-pro-app/releases/tag/v0.1.46"><span>v0.1.46</span> 原生 AI 助理設定與回測結果查詢 <svg class="icon"><use href="#external"/></svg></a>
+<h1 id="hero-title">Shioaji <span>Pro</span></h1>
+<p class="hero-subtitle">專業交易終端，原生 Agent 工作區。</p>
+<p class="hero-description">台股、期貨、選擇權。<br class="mobile-break">行情分析、專業下單與策略回測。</p>
+<div class="hero-actions"><a class="button primary" href="#downloads">下載桌面版 <svg class="icon"><use href="#download"/></svg></a><a class="button explore" href="#workspace">探索完整功能 <svg class="icon"><use href="#arrow"/></svg></a></div>
+<p class="hero-platforms">macOS · Windows · Linux</p>
 </div>
-<div class="hero-action">
-<a class="button primary" href="#downloads">下載 Shioaji Pro <svg class="icon"><use href="#download"/>
-</svg>
-</a>
-<p>macOS · Windows · Linux</p>
-<a class="release-link" href="https://github.com/Sinotrade/shioaji-pro-app/releases/tag/v0.1.46">v0.1.46 更新內容 <svg class="icon"><use href="#arrow"/>
-</svg>
-</a>
-</div>
-</div>
+<div class="showroom-track">
+<div class="showroom-stage">
+<div class="stage-light" aria-hidden="true"></div>
+<div class="stage-plane" aria-hidden="true"></div>
 <figure class="terminal">
-<div class="terminal-top"><span>Shioaji Pro</span><span>交易工作區</span>
-<div class="theme-switch" role="group" aria-label="產品截圖主題">
-<button type="button" aria-pressed="true" data-theme="dark">深色</button>
-<button type="button" aria-pressed="false" data-theme="light">淺色</button>
-</div>
-</div>
-<a href="shot-terminal-dark.png" id="terminal-link" target="_blank" rel="noopener" aria-label="開啟交易工作區完整截圖"><img id="terminal-image" src="shot-terminal-dark.png" alt="Shioaji Pro 實際交易工作區：自選清單、雙 K 線圖、五檔、下單與持倉面板" width="3200" height="2000" fetchpriority="high">
-</a>
-<figcaption><span>桌面版實際畫面 · 模擬環境</span><span>自由配置面板 / 多商品連動 / 深淺主題</span>
-</figcaption>
+<div class="terminal-top"><span>Shioaji Pro</span><span>交易工作區</span><div class="theme-switch" role="group" aria-label="產品截圖主題"><button type="button" aria-pressed="true" data-theme="dark">深色</button><button type="button" aria-pressed="false" data-theme="light">淺色</button></div></div>
+<a href="shot-terminal-dark.png" id="terminal-link" target="_blank" rel="noopener" aria-label="開啟交易工作區完整截圖"><img id="terminal-image" src="shot-terminal-dark.png" alt="Shioaji Pro 實際交易工作區：自選清單、雙 K 線圖、五檔、下單與持倉面板" width="3200" height="2000" fetchpriority="high"></a>
+<figcaption><span>桌面版實際畫面 · 模擬環境</span><span>自由配置面板 / 多商品連動 / 深淺主題</span></figcaption>
 </figure>
-<div class="product-index"><span>股票 · 期貨 · 選擇權</span><span>Codex · Claude Code · Pi Agent</span><span>交易介面開源</span>
+<div class="floating-panel floating-market demo-card" aria-label="走勢動畫，使用示意資料"><div class="floating-label"><span class="demo-dot"></span> 行情走勢 <small>示意</small></div><div class="spark-heading"><span>INDEX</span><span class="spark-change">盤中走勢</span></div><canvas id="market-spark" aria-hidden="true"></canvas><div class="spark-footer"><span>09:00</span><span>10:30</span><span>12:00</span><span>13:30</span></div></div>
+<div class="floating-panel floating-flash demo-card" aria-label="委託簿動畫，使用示意資料"><div class="floating-label"><span class="demo-dot"></span> 委託簿 <small>示意</small></div><div class="book-header"><span>委買量</span><span>價格</span><span>委賣量</span></div><div id="demo-book" aria-hidden="true"></div></div>
+<div class="floating-panel floating-agent demo-card" aria-label="AI 研究工作流程動畫示意，非實際執行"><div class="floating-label"><span class="demo-dot"></span> AI Agent <small>流程示意</small></div><div id="demo-console" aria-hidden="true"></div><div class="console-footer"><span class="console-orbit" aria-hidden="true"></span><span>行情 · 指標 · 回測結果</span></div></div>
+<div class="stage-caption"><span>多面板交易工作區</span><span class="stage-caption-detail">面板自由配置，商品同步連動。</span><span class="scroll-cue" aria-hidden="true">SCROLL TO EXPLORE <i></i></span></div>
+</div>
+</div>
+<div class="capability-rail">
+<a href="#workspace"><span class="capability-number">01</span><h2>行情分析</h2><p>市場脈動 · 產業全景 · 盤中雷達</p><svg class="icon"><use href="#arrow"/></svg></a>
+<a href="#execution"><span class="capability-number">02</span><h2>專業下單</h2><p>閃電下單 · 鋪單 · 組合商品</p><svg class="icon"><use href="#arrow"/></svg></a>
+<a href="#strategy"><span class="capability-number">03</span><h2>策略研究</h2><p>自訂指標 · 策略回測 · 損益試算</p><svg class="icon"><use href="#arrow"/></svg></a>
+<a href="#agent"><span class="capability-number">04</span><h2>原生 AI Agent</h2><p>Codex · Claude Code · Pi Agent</p><svg class="icon"><use href="#arrow"/></svg></a>
 </div>
 </section>
 <section class="section wrap" id="workspace">
 <div class="section-intro">
 <div><span class="section-number">01 / 工作區</span>
-<h2>行情與交易，<br>在同一個畫面。</h2>
+<h2>從整個市場，<br>看到每一檔。</h2>
 </div>
 <p>從產業與個股貢獻觀察市場，連動 K 線、五檔與下單面板。<br>依商品、策略與螢幕尺寸，配置你的看盤版面。</p>
 </div>
@@ -165,11 +168,22 @@
 </div>
 </div>
 </section>
+
+<section class="execution-section" id="execution"><div class="wrap section">
+<div class="section-intro"><div><span class="section-number">EXECUTION</span><h2>閃電下單。<br>鋪單。組合單。</h2></div><div><p>從價格階梯直接委託，以鋪單管理多檔價位。<br>組合商品有自己的報價、K 線與五檔，<br>每腳方向在送出前清楚呈現。</p><a class="text-link" href="https://github.com/Sinotrade/shioaji-pro-app/releases/tag/v0.1.44">最新價格級距更新 <svg class="icon"><use href="#external"/></svg></a></div></div>
+<div class="execution-gallery"><figure class="execution-card"><a href="shot-flash.png" target="_blank" rel="noopener"><img src="shot-flash.png" alt="閃電下單真實價格階梯與持倉資訊" width="652" height="996" loading="lazy"></a><figcaption><strong>點價委託</strong><span>價格階梯 · 持倉損益 · 快捷刪單</span></figcaption></figure><figure class="execution-card"><a href="shot-grid.png" target="_blank" rel="noopener"><img src="shot-grid.png" alt="鋪單面板真實畫面" width="652" height="924" loading="lazy"></a><figcaption><strong>多檔鋪單</strong><span>檔數與間隔 · 動態跟隨 · 風控設定</span></figcaption></figure><figure class="execution-card"><a href="images/release-0.1.42-strategy.png" target="_blank" rel="noopener"><img src="images/release-0.1.42-strategy.png" alt="選擇權組合策略快建真實畫面" width="988" height="1572" loading="lazy"></a><figcaption><strong>組合策略快建</strong><span>價差 · 跨式 · 勒式 · 轉逆 · 跨月</span></figcaption></figure></div>
+<p class="note execution-note">以上為桌面版實際畫面。手動正式下單會動用真實資金；組合單不支援模擬環境。</p>
+</div></section>
+<section class="wrap section strategy-section" id="strategy"><div class="section-intro"><div><span class="section-number">RESEARCH</span><h2>指標自己寫。<br>策略自己驗。</h2></div><p>原生技術指標、自訂程式與含成本的策略回測。<br>選擇權部位，先看結算損益曲線。</p></div>
+<div class="research-gallery"><figure><a href="images/release-0.1.44-indicator-dialog.png" target="_blank" rel="noopener"><img src="images/release-0.1.44-indicator-dialog.png" alt="技術指標選擇視窗實際畫面" loading="lazy"></a><figcaption>技術指標 · 自訂參數與圖表預覽</figcaption></figure><figure><a href="shot-payoff.png" target="_blank" rel="noopener"><img src="shot-payoff.png" alt="選擇權結算損益圖與模擬部位實際畫面" width="1050" height="924" loading="lazy"></a><figcaption>選擇權損益圖 · 模擬部位試算</figcaption></figure></div>
+<div class="research-detail"><article><h3>JavaScript 自訂指標</h3><p>搭配技術分析函式庫，撰寫訊號、驗證輸出，與內建指標一起使用。</p></article><article><h3>含成本策略回測</h3><p>納入手續費、稅與滑價，查看績效與交易明細。批次回測為各商品獨立測試。</p></article><article><h3>Agent 解讀結果</h3><p>查詢最新回測的參數、成本假設與逐商品結果。此查詢工具不會啟動回測。</p></article></div>
+<p class="note">回測與損益試算基於歷史資料或簡化假設，不代表未來績效。</p>
+</section>
 <section class="agent-section" id="agent">
 <div class="wrap section">
 <div class="section-intro">
 <div><span class="section-number">02 / AI AGENT</span>
-<h2>原生 AI Agent，<br>接入交易工作區。</h2>
+<h2>Codex. Claude Code. Pi.<br><span>直接在終端裡工作。</span></h2>
 </div>
 <p>Codex、Claude Code 與 Pi Agent 原生整合。<br>在 App 內完成安裝、登入、模型選擇與連線測試。</p>
 </div>
@@ -193,11 +207,11 @@
 <p>Agent 下單目前僅限已驗證的模擬環境。正式環境 Agent 下單尚未開放。</p>
 </div>
 </div>
-<figure class="agent-image">
+<div class="agent-visual"><figure class="agent-skills-image"><a href="shot-agent-skills.png" target="_blank" rel="noopener"><img src="shot-agent-skills.png" alt="原生 Agent 技能選單實際畫面" width="918" height="996" loading="lazy"></a><figcaption>技能 · 開盤巡檢、庫存健檢、收盤總結</figcaption></figure><figure class="agent-image">
 <a href="images/release-0.1.45-agent-settings.png" target="_blank" rel="noopener"><img src="images/release-0.1.45-agent-settings.png" alt="v0.1.45 AI Agent 設定實際畫面：原生服務、模型及獨立交易權限" width="866" height="852" loading="lazy">
 </a>
 <figcaption>原生 Agent 與權限設定 · v0.1.45 實際畫面</figcaption>
-</figure>
+</figure></div>
 </div>
 <div class="research">
 <div><span class="section-number">策略研究</span>

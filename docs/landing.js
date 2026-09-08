@@ -85,18 +85,19 @@
     }
     function animate(time) {
       frame = 0;
-      if (motion.matches || document.hidden || !visible) return;
+      if (motion.matches || document.hidden || !visible || document.documentElement.classList.contains('webgl-ready')) return;
       if (time - lastTime >= 32) { paint(time); lastTime = time; }
       frame = requestAnimationFrame(animate);
     }
     function sync() {
       cancelAnimationFrame(frame); frame = 0;
-      if (!motion.matches && !document.hidden && visible) frame = requestAnimationFrame(animate);
+      if (!motion.matches && !document.hidden && visible && !document.documentElement.classList.contains('webgl-ready')) frame = requestAnimationFrame(animate);
       else if (motion.matches) paint(0);
     }
     size();
     window.addEventListener('resize', size, { passive: true });
     document.addEventListener('visibilitychange', sync);
+    document.getElementById('hero-webgl')?.addEventListener('webglcontextlost', sync);
     motion.addEventListener('change', sync);
     if ('IntersectionObserver' in window) {
       new IntersectionObserver(entries => { visible = entries[0].isIntersecting; sync(); }).observe(canvas);
@@ -110,8 +111,10 @@
   progress.setAttribute('aria-hidden', 'true');
   document.body.append(progress);
   const hero = document.querySelector('.hero');
+  const showroom = document.querySelector('.showroom-track');
+  const stage = document.querySelector('.showroom-stage');
   const agentSection = document.querySelector('.agent-section');
-  const targets = [...document.querySelectorAll('.section-intro>div, .section-intro>p, .feature-panel>figure, .feature-copy, .agent-copy, .agent-image, .research, .release-row, .download-grid article, .onboarding p')];
+  const targets = [...document.querySelectorAll('.section-intro>div, .section-intro>p, .feature-panel>figure, .feature-copy, .agent-copy, .agent-image, .research, .release-row, .download-grid article, .onboarding p, .execution-card, .research-gallery figure')];
   const nearby = new Set(targets);
   if ('IntersectionObserver' in window) {
     const observer = new IntersectionObserver(entries => entries.forEach(entry => {
@@ -131,11 +134,27 @@
     root.style.setProperty('--page-progress', String(clamp(scrollY / Math.max(1, root.scrollHeight - viewport))));
     document.body.classList.toggle('scroll-ready', !motion.matches);
     if (motion.matches) return;
-    const heroProgress = clamp(scrollY / (small ? 450 : 650));
+    const heroProgress = clamp(scrollY / (small ? 500 : 700));
     hero.style.setProperty('--hero-opacity', String(1 - heroProgress * .85));
     hero.style.setProperty('--hero-shift', `${heroProgress * (small ? 12 : 42)}px`);
     hero.style.setProperty('--terminal-scale', String(.965 + clamp(scrollY / 300) * .035));
     hero.style.setProperty('--terminal-tilt', `${3 * (1 - clamp(scrollY / 300))}deg`);
+    const scene = small ? 0 : clamp((85 - showroom.getBoundingClientRect().top) / Math.max(1, showroom.offsetHeight - stage.offsetHeight));
+    const focus = 1 - Math.pow(1 - scene, 2);
+    stage.style.setProperty('--scene-rx', `${10 * (1 - focus)}deg`);
+    stage.style.setProperty('--scene-ry', `${-5 * (1 - focus)}deg`);
+    stage.style.setProperty('--scene-rz', `${-1.5 * (1 - focus)}deg`);
+    stage.style.setProperty('--scene-scale', String(.92 + focus * .08));
+    stage.style.setProperty('--float-left', `${-focus * 140}px`);
+    stage.style.setProperty('--float-right', `${focus * 140}px`);
+    stage.style.setProperty('--float-up', `${-focus * 75}px`);
+    stage.style.setProperty('--float-down', `${focus * 70}px`);
+    stage.style.setProperty('--float-opacity', String(1 - clamp((scene - .15) / .65)));
+    const focused = scene >= .9;
+    if (stage.classList.contains('scene-focused') !== focused) {
+      stage.classList.toggle('scene-focused', focused);
+      stage.dispatchEvent(new Event('scenevisibilitychange'));
+    }
     const agentTop = agentSection.getBoundingClientRect().top;
     const agentProgress = clamp((viewport - agentTop) / (viewport + agentSection.offsetHeight));
     agentSection.style.setProperty('--agent-parallax', `${(agentProgress - .5) * (small ? 0 : -38)}px`);
@@ -143,7 +162,7 @@
     const measurements = [...nearby].filter(target => target.getClientRects().length).map(target => {
       let top = 0;
       for (let element = target; element; element = element.offsetParent) top += element.offsetTop;
-      const siblings = target.parentElement.matches('.download-grid, .onboarding') ? [...target.parentElement.children] : [];
+      const siblings = target.parentElement.matches('.download-grid, .onboarding, .execution-gallery, .research-gallery') ? [...target.parentElement.children] : [];
       const stagger = small ? 0 : Math.max(0, siblings.indexOf(target)) * 28;
       return [target, top - scrollY + stagger];
     });
@@ -152,6 +171,7 @@
       const eased = 1 - Math.pow(1 - amount, 3);
       target.style.setProperty('--reveal-opacity', String(.12 + eased * .88));
       target.style.setProperty('--reveal-shift', `${(1 - eased) * (small ? 20 : 48)}px`);
+      if (target.classList.contains('execution-card')) target.style.setProperty('--execution-tilt', `${(1-eased)*12}deg`);
     });
   }
   function requestScrollUpdate() { if (!scrollFrame) scrollFrame = requestAnimationFrame(updateScroll); }
