@@ -15,14 +15,14 @@
     varying float vEdge;
     void main() {
       vec3 p = aPosition;
-      float t = uTime * .13;
+      float t = uTime * .32;
       float ridge = sin(p.x*.14 + p.z*.10 + t)*1.7 + sin(p.x*.29 - p.z*.08 - t*.7)*.85;
       float detail = sin(p.x*.72 + p.z*.34 + t*.8)*.13;
       p.y = ridge + detail - 1.9;
       vHeight = (ridge+2.6)/5.2;
       vEdge = 1. - smoothstep(24.,43.,abs(p.x));
       p.x -= uPointer.x * 1.2;
-      p.y -= 5.8 + uPointer.y * .45;
+      p.y -= 3.9 + uPointer.y * .45;
       p.z -= 15. + uScroll*3.;
       float angle = .22 + uScroll*.035;
       float yy = cos(angle)*p.y - sin(angle)*p.z;
@@ -47,7 +47,7 @@
         if(distance>.5) discard;
         alpha *= (1. - smoothstep(.0,.5,distance))*.95;
         color += .15;
-      } else { alpha *= .25; }
+      } else { alpha *= .58; }
       gl_FragColor = vec4(color,alpha);
     }
   `;
@@ -99,7 +99,7 @@
     }
     if(!motion.matches)frame=requestAnimationFrame(draw);
   }
-  function sync() {cancelAnimationFrame(frame);frame=0;last=0;if(!lost&&!document.hidden&&visible)frame=requestAnimationFrame(draw);}
+  function sync() {hero.classList.toggle('scene-paused',document.hidden||!visible);cancelAnimationFrame(frame);frame=0;last=0;if(!lost&&!document.hidden&&visible)frame=requestAnimationFrame(draw);}
   function resize() {const ratio=Math.min(devicePixelRatio||1,1.5);canvas.width=Math.round(canvas.clientWidth*ratio);canvas.height=Math.round(canvas.clientHeight*ratio);gl.viewport(0,0,canvas.width,canvas.height);sync();}
   hero.addEventListener('pointermove',event=>{if(!fine.matches||motion.matches)return;const rect=hero.getBoundingClientRect();pointerX=Math.max(-1,Math.min(1,(event.clientX-rect.left)/rect.width*2-1));pointerY=Math.max(-1,Math.min(1,event.clientY/innerHeight*2-1));},{passive:true});
   hero.addEventListener('pointerleave',()=>{pointerX=0;pointerY=0;});
