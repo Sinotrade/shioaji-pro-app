@@ -71,3 +71,7 @@
 .stream-volume b:nth-child(3) { transform:rotateX(180deg) translateZ(230px); }
 .stream-volume b:nth-child(4) { transform:rotateX(270deg) translateZ(230px); }
 @media(max-width:760px) { .header .nav { height:52px; padding-inline:20px; } .header .brand { font-size:20px; } }
+.market-model { position:absolute; inset:5% 0 0; width:100%; height:90%; pointer-events:none; }
+.market-model-ready .stream-rig,.market-model-ready::before { display:none; }
+.market-model-ready { background:radial-gradient(ellipse at 58% 48%,#29436040,transparent 65%),#080d14; }
+@media(max-width:760px) { .market-model { inset:15% -30% 0; width:160%; height:75%; } }

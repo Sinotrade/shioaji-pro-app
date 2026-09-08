@@ -89,6 +89,8 @@
       slide.inert=i!==next;slide.setAttribute('aria-hidden',String(i!==next));button.setAttribute('aria-current',i===next?'step':'false');
     });
     const energy=Math.sin(eased*Math.PI);
+    stage.dataset.modelProgress=String(position);
+    stage.dataset.modelEnergy=String(energy);
     rig.style.setProperty('--rig-radius',`${50-energy*(path.name==='dive'||path.name==='tunnel'?48:20)}%`);
     rig.style.opacity=String(.35+energy*.35);
     rig.style.transform=`perspective(1200px) translateZ(${-energy*160}px) rotateX(${path.out[3]*energy*.45}deg) rotateY(${path.out[4]*energy*.45}deg) rotateZ(${path.out[5]*energy}deg)`;
