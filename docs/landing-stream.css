@@ -55,3 +55,19 @@
 .stream-rig>i { border-radius:var(--rig-radius,50%); }
 
 @media(max-width:760px) { .stream-rig { inset:35% -35% 5% -35%; } }
+/* Compact navigation and softly curved, translucent controls. */
+.header .nav { height:56px; padding-inline:28px; gap:24px; }
+.header .brand { font-size:21px; }
+.header .nav-download { min-height:32px; padding:6px 14px; gap:12px; }
+.hero-actions .button,.header .nav-download { border-radius:9px; overflow:hidden; background:radial-gradient(ellipse at 85% 120%,#c9e6ff30,transparent 65%),linear-gradient(120deg,#eff7ff1f,#a7c6e606 45%,#e6f5ff1f); border:1px solid #cfe5fc32!important; backdrop-filter:blur(14px) saturate(190%); -webkit-backdrop-filter:blur(14px) saturate(190%); box-shadow:inset 0 1px 1px #ffffff50,inset 0 -2px 5px #b5d9f51c,0 5px 18px #0004!important; }
+.hero-actions .button::before,.header .nav-download::before { content:""; position:absolute; inset:1px 2px auto; height:45%; border-radius:7px 7px 50% 50%; background:linear-gradient(#ffffff17,#ffffff03); pointer-events:none; }
+.header .nav-download::after { background:linear-gradient(115deg,transparent 10%,#ffffff24 45%,transparent 65%); background-size:250% 100%; }
+@media(prefers-reduced-motion:no-preference) { .header .nav-download::after { animation:glass-reflection 6s ease-in-out infinite; } }
+.stream-slide { transform-origin:50% 50%; will-change:transform,opacity; }
+.stream-volume { position:absolute; width:75%; height:75%; left:10%; top:10%; transform-style:preserve-3d; }
+.stream-volume b { position:absolute; inset:0; border:1px solid #9cc8ee70; background:linear-gradient(#8bbcea0b 1px,transparent 1px),linear-gradient(90deg,#8bbcea0b 1px,transparent 1px); background-size:70px 70px; backface-visibility:visible; }
+.stream-volume b:nth-child(1) { transform:translateZ(230px); }
+.stream-volume b:nth-child(2) { transform:rotateX(90deg) translateZ(230px); }
+.stream-volume b:nth-child(3) { transform:rotateX(180deg) translateZ(230px); }
+.stream-volume b:nth-child(4) { transform:rotateX(270deg) translateZ(230px); }
+@media(max-width:760px) { .header .nav { height:52px; padding-inline:20px; } .header .brand { font-size:20px; } }

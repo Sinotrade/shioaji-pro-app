@@ -3,7 +3,7 @@
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
   const sources = [...document.querySelectorAll('[data-story], #execution, #strategy, #agent')];
   if (!sources.length) return;
-  const names = ['工作區','市場脈動','產業全景','盤中雷達','走勢牆','價格階梯','組合到價監控','多帳戶','AI 策略','AI Agent'];
+  const names = ['工作區','市場脈動','產業全景','盤中雷達','走勢牆','價格階梯','多帳戶','AI 策略','AI Agent'];
   const stream = document.createElement('div'); stream.className = 'feature-stream';
   const stage = document.createElement('div'); stage.className = 'stream-stage';
   const deck = document.createElement('div'); deck.className = 'stream-deck';
@@ -11,7 +11,7 @@
   const counter = document.createElement('div'); counter.className = 'stream-counter'; counter.setAttribute('aria-hidden','true');
   stage.append(counter, deck, nav); stream.append(stage); sources[0].before(stream);
   const rig=document.createElement('div');rig.className='stream-rig';rig.setAttribute('aria-hidden','true');
-  rig.innerHTML='<i></i><i></i><i></i><div class=stream-floor></div>';stage.prepend(rig);
+  rig.innerHTML='<i></i><i></i><i></i><div class=stream-floor></div><div class=stream-volume><b></b><b></b><b></b><b></b></div>';stage.prepend(rig);
   const slides = sources.map((source,index) => {
     const id = source.id;
     const marker = document.createElement('div'); marker.className='stream-marker'; marker.dataset.anchor=id; stream.append(marker);
@@ -34,15 +34,14 @@
   });
     // Each boundary has its own camera path. Poses are [x%, y%, z, pitch, yaw, roll].
     const paths=[
-      {name:'unfold',out:[-12,18,-600,48,-18,-8],into:[18,-20,-850,-35,28,8]},
-      {name:'dive',out:[0,0,650,0,-12,0],into:[0,0,-1200,12,0,0]},
-      {name:'orbit',out:[-65,-12,-420,-12,78,-9],into:[65,15,-600,18,-78,9]},
-      {name:'crane',out:[0,-65,-350,-65,0,0],into:[0,65,-650,65,0,0]},
-      {name:'bank',out:[-28,12,-750,20,-25,-32],into:[28,-12,-750,-20,25,32]},
-      {name:'hinge',out:[32,0,-480,0,-85,12],into:[-32,0,-480,0,85,-12]},
-      {name:'rise',out:[0,48,-800,55,20,0],into:[0,-48,-800,-55,-20,0]},
-      {name:'tunnel',out:[0,0,750,-12,0,-12],into:[0,0,-1400,0,20,12]},
-      {name:'helix',out:[-45,-32,-650,35,65,-22],into:[45,32,-900,-35,-65,22]},
+      {name:'unfold',out:[-8,-120,-400,72,-12,-6],into:[8,120,-500,-72,12,6]},
+      {name:'dive',out:[0,-130,180,60,0,0],into:[0,120,-700,-48,0,0]},
+      {name:'orbit',out:[-24,-115,-450,65,42,-12],into:[24,115,-450,-65,-42,12]},
+      {name:'crane',out:[0,-135,-300,88,0,0],into:[0,135,-300,-88,0,0]},
+      {name:'bank',out:[-18,-125,-500,68,-20,-18],into:[18,125,-500,-68,20,18]},
+      {name:'rise',out:[10,-130,-450,78,20,0],into:[-10,130,-450,-78,-20,0]},
+      {name:'tunnel',out:[0,-120,220,58,0,-8],into:[0,120,-850,-58,0,8]},
+      {name:'helix',out:[-28,-120,-550,72,48,-18],into:[28,120,-550,-72,-48,18]},
     ];
   let frame=0, enabled=false, step=0, active=-1;
   function layout() {
@@ -77,12 +76,12 @@
       const amount=outgoing?eased:1-eased;
       const pose=outgoing?path.out:path.into;
       slide.style.visibility=visible?'visible':'hidden';
-      slide.style.opacity='1';slide.style.transform='none';
+      slide.style.opacity=String(visible?Math.min(1,(1-amount)*5):0);slide.style.transform=transform(pose,amount);
       // Text clears before the next caption arrives; media keeps moving through depth.
-      copy.style.opacity=String(visible?Math.max(0,1-amount*2.4):0);
-      copy.style.transform=`translate3d(0,${(outgoing?-1:1)*amount*45}px,0)`;
-      media.style.opacity=String(visible?Math.max(0,1-amount*1.15):0);
-      media.style.transform=transform(pose,amount);
+      copy.style.opacity='1';
+      copy.style.transform='translateZ(25px)';
+      media.style.opacity='1';
+      media.style.transform=`translateZ(${35+amount*65}px)`;
       figures.forEach((figure,j)=>{
         const spread=(j-(media.children.length-1)/2)*amount;
         figure.style.setProperty('--panel-pose',`translate3d(${spread*80}px,${spread*35}px,${Math.abs(spread)*150}px) rotateY(${spread*30}deg)`);
@@ -91,8 +90,9 @@
     });
     const energy=Math.sin(eased*Math.PI);
     rig.style.setProperty('--rig-radius',`${50-energy*(path.name==='dive'||path.name==='tunnel'?48:20)}%`);
-    rig.style.opacity=String(.16+energy*.5);
+    rig.style.opacity=String(.35+energy*.35);
     rig.style.transform=`perspective(1200px) translateZ(${-energy*160}px) rotateX(${path.out[3]*energy*.45}deg) rotateY(${path.out[4]*energy*.45}deg) rotateZ(${path.out[5]*energy}deg)`;
+    rig.querySelector('.stream-volume').style.transform=`translate3d(0,${-energy*100}px,-280px) rotateX(${position*90}deg) rotateY(${18+Math.sin(position)*16}deg)`;
     counter.textContent=`${String(next+1).padStart(2,'0')} — ${String(slides.length).padStart(2,'0')}`;
     stage.style.setProperty('--stream-turn',`${eased*180}deg`);
     if(active!==next){active=next;const button=slides[next].button;nav.scrollTo({left:button.offsetLeft-nav.clientWidth/2+button.offsetWidth/2,behavior:'instant'});}
