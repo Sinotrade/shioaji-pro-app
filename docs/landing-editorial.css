@@ -1,13 +1,13 @@
 /* Shared brand typography, clear glass controls, and a complete scroll narrative. */
-:root { --brand-font:"Bodoni 72","Didot","Times New Roman",serif; }
-.brand,.hero h1,.hero h1 span { font-family:var(--brand-font); font-weight:400; font-style:normal; letter-spacing:.055em; }
+:root { --brand-font:"Helvetica Neue",Arial,sans-serif; }
+.brand,.hero h1,.hero h1 span { font-family:var(--brand-font); font-weight:300; font-style:normal; letter-spacing:.065em; }
 .brand { font-size:25px; }
-.brand span { font-weight:400; letter-spacing:.01em; color:#c7d1df; }
+.brand span { font-weight:300; letter-spacing:.01em; color:#c7d1df; }
 .hero h1 span { font-size:1em; letter-spacing:.01em; }
 .hero h1 { font-size:clamp(46px,6.3vw,96px); }
 .header { background:linear-gradient(115deg,#e2efff20,#1d2d4575 48%,#dbeeff13); border-bottom:1px solid #e2f0ff55; backdrop-filter:blur(26px) saturate(160%); -webkit-backdrop-filter:blur(26px) saturate(160%); box-shadow:inset 0 1px 0 #ffffff45,0 8px 30px #0003; }
-.button,.hero-actions .button,.nav-download { position:relative; border-radius:2px; border:1px solid #e6f2ff65; background:linear-gradient(135deg,#f0f7ff26,#b4d5ff0c 48%,#e6f3ff20); color:#edf5ff; backdrop-filter:blur(20px) saturate(180%); -webkit-backdrop-filter:blur(20px) saturate(180%); box-shadow:inset 0 1px 1px #ffffff85,inset 0 -1px 1px #bbd9ff35,0 8px 28px #0004; }
-.button.primary { background:linear-gradient(125deg,#f6fbff45,#b7d4f823 48%,#eef8ff36); color:#fff; border-color:#e8f5ffad; box-shadow:inset 0 1px 0 #fff9,inset 0 -1px 0 #b2d9ff70,0 0 28px #96c8ff20,0 9px 32px #0004; text-shadow:0 1px 8px #071425; }
+.button,.hero-actions .button,.nav-download { position:relative; border-radius:2px; border:1px solid #e6f2ff28; background:linear-gradient(135deg,#f0f7ff26,#b4d5ff0c 48%,#e6f3ff20); color:#edf5ff; backdrop-filter:blur(20px) saturate(180%); -webkit-backdrop-filter:blur(20px) saturate(180%); box-shadow:inset 0 1px 1px #ffffff30,inset 0 -1px 1px #bbd9ff35,0 8px 28px #0004; }
+.button.primary { background:linear-gradient(125deg,#f6fbff45,#b7d4f823 48%,#eef8ff36); color:#fff; border-color:#e8f5ff38; box-shadow:inset 0 1px 0 #ffffff38,inset 0 -1px 0 #b2d9ff20,0 0 28px #96c8ff20,0 9px 32px #0004; text-shadow:0 1px 8px #071425; }
 .button.primary:hover { background:linear-gradient(125deg,#ffffff66,#cde6ff30,#ffffff50); color:#fff; }
 .button::after { content:""; position:absolute; inset:0; pointer-events:none; background:linear-gradient(115deg,transparent 15%,#ffffff1c 35%,transparent 55%); background-size:250% 100%; }
 @media(prefers-reduced-motion:no-preference) { .button.primary::after { animation:glass-reflection 6s ease-in-out infinite; } }
@@ -44,7 +44,7 @@
 .product-chapter { border-radius:0; overflow-x:clip; }
 .execution-card>a,.research-gallery figure>a,.agent-skills-image>a,.agent-image>a,.showroom-stage .terminal,.hero>.demo-shelf .floating-agent { border-radius:2px!important; }
 .theme-switch,.theme-switch button,.terminal-top,.terminal figcaption { border-radius:2px; }
-.downloads h2 { font-family:var(--brand-font); font-weight:400; }
+.downloads h2 { font-family:var(--brand-font); font-weight:300; }
 .downloads .button { border-radius:2px; }
 .idea-example { min-height:420px; padding:30px; border:1px solid #d0e4ff45; background:linear-gradient(140deg,#c3ddff19,#111b2ba8); box-shadow:inset 0 1px 0 #ffffff35; }
 .idea-example>span { color:#8fa8ca; font-size:11px; letter-spacing:.08em; }
