@@ -3,7 +3,7 @@
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
   const clamp = value => Math.max(0, Math.min(1, value));
   const definitions = [
-    ['workspace', '.tabs, .feature-panel', '.feature-panel:not([hidden])>figure, .feature-panel:not([hidden])>.feature-copy'],
+    ...[...document.querySelectorAll('[data-story]')].map(section => [section.id, '.story-scene', '.story-scene>figure, .story-copy']),
     ['execution', '.execution-gallery', '.execution-card'],
     ['strategy', '.research-gallery', '.research-gallery figure'],
     ['agent', '.agent-visual', '.agent-skills-image, .agent-image'],
