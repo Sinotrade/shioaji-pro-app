@@ -88,3 +88,10 @@
 .footer-links { flex-wrap:wrap; }
 @media(max-width:1000px) { .start-steps { grid-template-columns:repeat(2,minmax(0,1fr)); gap:30px; } .start-heading { align-items:flex-start; flex-direction:column; gap:20px; } }
 @media(max-width:550px) { .start-steps { grid-template-columns:1fr; } .start-steps article { padding-bottom:22px; border-bottom:1px solid #d2e4fa15; } }
+
+.ai-setup-option { display:grid; grid-template-columns:1.3fr 1fr; gap:32px; align-items:center; padding:24px; margin-bottom:35px; border:1px solid #a8c4e023; border-radius:8px; background:linear-gradient(120deg,#adcdf00b,#adcdf003); }
+.ai-setup-option .section-number { margin-bottom:12px; }
+.ai-setup-option h4 { font-size:17px; font-weight:500; margin:0 0 12px; }
+.ai-setup-option p { color:#9dacc0; font-size:13px; line-height:1.85; }
+.ai-setup-option blockquote { margin:0; padding-left:22px; border-left:1px solid #b6d2ef50; font-size:16px; line-height:1.8; color:#d9e6f5; }
+@media(max-width:760px) { .ai-setup-option { grid-template-columns:1fr; gap:20px; padding:22px; } }
