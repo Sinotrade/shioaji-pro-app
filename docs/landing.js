@@ -140,11 +140,12 @@
     hero.style.setProperty('--terminal-scale', String(.965 + clamp(scrollY / 300) * .035));
     hero.style.setProperty('--terminal-tilt', `${3 * (1 - clamp(scrollY / 300))}deg`);
     const scene = small ? 0 : clamp((85 - showroom.getBoundingClientRect().top) / Math.max(1, showroom.offsetHeight - stage.offsetHeight));
-    const focus = 1 - Math.pow(1 - scene, 2);
-    stage.style.setProperty('--scene-rx', `${10 * (1 - focus)}deg`);
-    stage.style.setProperty('--scene-ry', `${-5 * (1 - focus)}deg`);
+    const focus = scene * scene * (3 - 2 * scene);
+    hero.style.setProperty('--camera-progress', String(scene));
+    stage.style.setProperty('--scene-rx', `${24 * (1 - focus)}deg`);
+    stage.style.setProperty('--scene-ry', `${-12 * (1 - focus)}deg`);
     stage.style.setProperty('--scene-rz', `${-1.5 * (1 - focus)}deg`);
-    stage.style.setProperty('--scene-scale', String(.92 + focus * .08));
+    stage.style.setProperty('--scene-scale', String(.78 + focus * .22));
     const agentTop = agentSection.getBoundingClientRect().top;
     const agentProgress = clamp((viewport - agentTop) / (viewport + agentSection.offsetHeight));
     agentSection.style.setProperty('--agent-parallax', `${(agentProgress - .5) * (small ? 0 : -38)}px`);
@@ -161,6 +162,9 @@
       const eased = 1 - Math.pow(1 - amount, 3);
       target.style.setProperty('--reveal-opacity', String(.12 + eased * .88));
       target.style.setProperty('--reveal-shift', `${(1 - eased) * (small ? 20 : 48)}px`);
+      target.style.setProperty('--image-inset', `${(1 - eased) * 9}%`);
+      target.style.setProperty('--image-scale', String(1.08 - eased * .08));
+      target.style.setProperty('--reveal-tilt', `${(1 - eased) * (small ? 0 : 16)}deg`);
       if (target.classList.contains('execution-card')) target.style.setProperty('--execution-tilt', `${(1-eased)*12}deg`);
     });
   }

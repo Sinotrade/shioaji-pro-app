@@ -10,11 +10,13 @@
     uniform float uAspect;
     uniform vec2 uPointer;
     uniform float uScroll;
+    uniform mediump float uPoints;
     varying float vDepth;
     varying float vHeight;
     varying float vEdge;
     void main() {
       vec3 p = aPosition;
+      if (uPoints > .5) p.z = -mod(-p.z - uTime * 2., 70.) + 5.;
       float t = uTime * .32;
       float ridge = sin(p.x*.14 + p.z*.10 + t)*1.7 + sin(p.x*.29 - p.z*.08 - t*.7)*.85;
       float detail = sin(p.x*.72 + p.z*.34 + t*.8)*.13;
@@ -23,8 +25,8 @@
       vEdge = 1. - smoothstep(24.,43.,abs(p.x));
       p.x -= uPointer.x * 1.2;
       p.y -= 3.9 + uPointer.y * .45;
-      p.z -= 15. + uScroll*3.;
-      float angle = .22 + uScroll*.035;
+      p.z -= 15. - uScroll*6.;
+      float angle = .22 + uScroll*.12;
       float yy = cos(angle)*p.y - sin(angle)*p.z;
       float zz = sin(angle)*p.y + cos(angle)*p.z;
       float near = .5; float far = 150.; float focal = 1.7;
@@ -35,7 +37,7 @@
   `;
   const fragment = `
     precision mediump float;
-    uniform float uPoints;
+    uniform mediump float uPoints;
     varying float vDepth;
     varying float vHeight;
     varying float vEdge;
