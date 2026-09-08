@@ -25,9 +25,15 @@
     if(id==='strategy') { const p=document.createElement('p'); p.className='stream-detail'; p.textContent='成本設定：手續費、稅、滑價。查看逐筆交易與 K 線進出場標記，再請 AI 解讀結果。'; copy.append(p); }
     if(id==='agent') { const p=document.createElement('p'); p.className='stream-detail'; p.textContent='保存與分支對話 · 技能與背景任務 · 原生指標與策略建立 · 回測結果查詢';copy.append(p); }
     const media = document.createElement('div'); media.className='stream-media';
-    source.querySelectorAll('.story-scene>figure, .execution-gallery>figure, .research-gallery>figure, .agent-visual>figure').forEach(figure => media.append(figure.cloneNode(true)));
+    source.querySelectorAll('.story-scene>figure, .execution-gallery>figure, .research-gallery>figure, .agent-visual>figure').forEach(figure => {
+      const clone=figure.cloneNode(true);
+      clone.querySelectorAll('img').forEach(img=>{
+        img.dataset.streamSrc=img.getAttribute('src');img.removeAttribute('src');
+        img.decoding='async';img.loading='eager';
+      });
+      media.append(clone);
+    });
     media.querySelectorAll('[id]').forEach(node=>node.removeAttribute('id'));
-    media.querySelectorAll('img').forEach(img=>{img.loading='eager';});
     slide.append(copy,media);deck.append(slide);
     const button=document.createElement('button');button.type='button';button.textContent=names[index];button.addEventListener('click',()=>marker.scrollIntoView({behavior:'smooth'}));nav.append(button);
     return {source,id,marker,slide,button,copy,media,figures:[...media.children]};
@@ -62,8 +68,17 @@
   function schedule(){if(!frame)frame=requestAnimationFrame(render);}
   function render(){
     frame=0;if(!enabled)return;
-    const position=Math.max(0,Math.min(slides.length-1,-stream.getBoundingClientRect().top/step));
+    const streamTop=stream.getBoundingClientRect().top;
+    const position=Math.max(0,Math.min(slides.length-1,-streamTop/step));
     const base=Math.floor(position), fraction=position-base;
+    // Warm the adjacent views before a transition, without competing with the hero.
+    if(streamTop<innerHeight*1.5) {
+      slides.slice(Math.max(0,base-1),base+3).forEach(({media})=>{
+        media.querySelectorAll('img[data-stream-src]').forEach(img=>{
+          img.src=img.dataset.streamSrc;delete img.dataset.streamSrc;
+        });
+      });
+    }
     // A readable resting interval, then a full depth rotation into the next face.
     const t=Math.max(0,Math.min(1,(fraction-.35)/.65));const eased=t*t*(3-2*t);
     const next=base+(eased>=.5?1:0);
