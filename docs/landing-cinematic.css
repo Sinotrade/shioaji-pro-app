@@ -9,7 +9,7 @@
 .hero-description { max-width:480px; }
 .hero-actions { margin-top:30px; }
 .hero-actions .button { border-radius:6px; min-height:48px; }
-.hero>.demo-shelf { z-index:2; inset:82px max(5%,calc((100vw - 1440px) / 2 + 32px)) auto auto; width:min(35%,490px); height:auto; overflow:visible; mask-image:none; opacity:1; perspective:1000px; }
+.hero>.demo-shelf { z-index:2; inset:82px max(10%,calc((100vw - 1440px) / 2 + 104px)) auto auto; width:min(35%,490px); height:auto; overflow:visible; mask-image:none; opacity:1; perspective:1000px; }
 .hero>.demo-shelf .floating-market,.hero>.demo-shelf .floating-flash { display:none; }
 .hero>.demo-shelf .floating-agent { position:relative; inset:auto; width:100%; transform:rotateY(-9deg) rotateX(4deg); border-radius:12px; background:linear-gradient(140deg,#b3d3ff16,#0d1726e8 55%); box-shadow:inset 0 1px 0 #d3e8ff70,0 35px 80px #0008,0 0 50px #649acf15; }
 .hero>.demo-shelf .floating-label { height:40px; font-size:12px; padding-inline:18px; }
@@ -64,7 +64,7 @@
 @media(max-width:1100px) {
  .hero { padding-top:55px; }
  .hero-top { padding-left:0; min-height:410px; }
- .hero>.demo-shelf { right:3%; width:35%; top:65px; }
+ .hero>.demo-shelf { right:9%; width:35%; top:65px; }
  .hero-release { font-size:10px; gap:7px; }
  .hero h1 { font-size:clamp(44px,6.3vw,69px); }
  .hero-description { max-width:360px; font-size:13px; }
