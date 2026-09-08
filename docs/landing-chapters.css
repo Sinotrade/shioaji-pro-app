@@ -1,0 +1,52 @@
+/* Each feature has its own stage and choreography, with space reserved in flow. */
+.product-chapter { position:relative; isolation:isolate; }
+.product-chapter::after { content:""; position:absolute; left:0; right:0; top:0; height:1px; background:linear-gradient(90deg,transparent,#a7c8f27a,transparent); transform:scaleX(var(--chapter-progress,1)); pointer-events:none; }
+.product-chapter .section-intro { padding-bottom:30px; border-bottom:1px solid #8da9cf1c; }
+.chapter-track { position:relative; margin-top:48px; min-width:0; }
+.chapter-stage { position:relative; display:flow-root; perspective:1600px; }
+.chapter-stage>.tabs,.chapter-stage>.execution-gallery,.chapter-stage>.research-gallery { margin-top:0; }
+.chapter-pinned>.chapter-stage { position:sticky; top:110px; }
+.chapter-stage .feature-panel { margin-top:28px; }
+.chapter-stage .execution-gallery,.chapter-stage .research-gallery { padding:26px 14px 0; }
+.chapter-stage .execution-card,.chapter-stage .research-gallery figure { min-width:0; }
+.chapter-stage .feature-panel>figure>a { height:min(53vh,540px)!important; }
+.chapter-stage .execution-card>a { height:min(49vh,440px); }
+.chapter-stage .research-gallery figure>a { height:min(44vh,420px); }
+#workspace::before,#strategy::before { content:""; position:absolute; z-index:-1; inset:180px 0 0; background:radial-gradient(ellipse at 30% 30%,#35659722,transparent 65%); transform:translateY(var(--chapter-glow-y,0px)); pointer-events:none; }
+#execution { background:radial-gradient(ellipse at 70% 50%,#34476460,transparent 65%),#0c111a; }
+#strategy::before { background:radial-gradient(ellipse at 70% 40%,#5d608b28,transparent 65%); }
+#agent .chapter-track { margin-top:0; }
+.agent-grid>.chapter-track { min-width:0; }
+.research-detail { margin-top:54px; }
+@media(prefers-reduced-motion:no-preference) {
+ .chapters-ready #workspace .feature-panel>figure { opacity:var(--chapter-opacity,1); transform:perspective(1600px) translateX(var(--chapter-x,0px)) rotateY(var(--chapter-angle,0deg)) scale(var(--chapter-scale,1)); transform-origin:right center; }
+ .chapters-ready #workspace .feature-copy { opacity:var(--chapter-opacity,1); transform:translate3d(0,var(--chapter-y,0px),0); }
+ .chapters-ready #workspace .feature-panel>figure>a { clip-path:inset(0 var(--chapter-inset,0%) 0 0); }
+ .chapters-ready #workspace .feature-panel>figure>a img { transform:none; }
+ .chapters-ready #execution .execution-card { opacity:var(--chapter-opacity,1); transform:perspective(1600px) translateY(var(--chapter-y,0px)) rotateY(var(--chapter-angle,0deg)) rotateZ(var(--chapter-bank,0deg)) scale(var(--chapter-scale,1)); transform-origin:center bottom; }
+ .chapters-ready #execution .execution-card>a { transform:none; }
+ .chapters-ready #strategy .research-gallery figure { opacity:var(--chapter-opacity,1); transform:perspective(1600px) translateX(var(--chapter-x,0px)) rotateY(var(--chapter-angle,0deg)) scale(var(--chapter-scale,1)); }
+ .chapters-ready #strategy .research-gallery figure>a { clip-path:inset(var(--chapter-inset,0%) 0 0); }
+ .chapters-ready #strategy .research-gallery img { transform:none; }
+ .chapters-ready #agent .agent-visual>figure { opacity:var(--chapter-opacity,1); transform:perspective(1400px) translateY(var(--chapter-y,0px)) rotateX(var(--chapter-angle,0deg)) scale(var(--chapter-scale,1)); transform-origin:center top; }
+}
+@media(max-width:1000px) {
+ .chapter-track { margin-top:32px; }
+ .chapter-stage .feature-panel>figure>a { height:auto!important; min-height:250px; }
+ .chapter-stage .execution-card>a { height:350px; }
+ .chapter-stage .research-gallery figure>a { height:340px; }
+}
+@media(max-width:760px) {
+ .product-chapter .section-intro { padding-bottom:22px; }
+ .chapter-stage .execution-gallery,.chapter-stage .research-gallery { padding:0; }
+ .chapter-stage .execution-card>a { height:380px; }
+ .chapter-stage .research-gallery figure>a { height:310px; }
+ .chapter-stage .feature-panel>figure>a { min-height:0; }
+ #agent .chapter-track { margin-top:0; }
+}
+@media(prefers-reduced-motion:reduce) {
+ .chapter-track { height:auto!important; }
+ .chapter-pinned>.chapter-stage { position:relative; top:0; }
+ .product-chapter::after { transform:none; }
+ #workspace::before,#strategy::before { transform:none; }
+}
