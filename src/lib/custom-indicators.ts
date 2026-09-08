@@ -129,13 +129,18 @@ function toDef(c: CustomIndicator): IndicatorDef {
             if (res.error) throw new Error(res.error);
             const out: Record<string, IndicatorPoint[]> = {};
             for (const o of outputs) {
-                const ser = res.outputs[o.key];
-                if (!ser) continue;
-                out[o.key] = bars.map((b, i) =>
-                    ser[i] === null || ser[i] === undefined
-                        ? { time: b.time }
-                        : { time: b.time, value: ser[i]! },
-                );
+                // band 輸出多帶一條下緣序列 `<key>_lo`
+                const keys =
+                    o.kind === 'band' ? [o.key, `${o.key}_lo`] : [o.key];
+                for (const k of keys) {
+                    const ser = res.outputs[k];
+                    if (!ser) continue;
+                    out[k] = bars.map((b, i) =>
+                        ser[i] === null || ser[i] === undefined
+                            ? { time: b.time }
+                            : { time: b.time, value: ser[i]! },
+                    );
+                }
             }
             return out;
         },
