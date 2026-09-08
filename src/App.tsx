@@ -60,6 +60,10 @@ import { usePoll } from './hooks/use-poll';
 import { useWatchlist } from './hooks/use-watchlist';
 import { trackActivity } from './lib/activity';
 import { registerAgentAppCommandHost } from './lib/agent-app-command';
+import { initializeIndicatorPanels, IndicatorInstanceService } from './lib/indicator-instance-service';
+import { IndicatorInstanceContext } from './lib/indicator-instance-context';
+import { registerIndicatorCommandHost } from './lib/indicator-command';
+import { subscribeCustoms } from './lib/custom-indicators';
 import {
     isAgentHarnessEnabled,
     subscribeAgentHarnessEnabled,
@@ -197,6 +201,7 @@ function BlockBody({
                 <>
                     <QuoteBoard contract={contract} snapshot={snapshot} />
                     <CandleChart
+                        panelId={block.id}
                         contract={contract}
                         trades={dockProps.trades}
                         onOrdersChanged={dockProps.onTradesChanged}
@@ -628,7 +633,7 @@ export default function App() {
         isAgentHarnessEnabled,
     );
     const cachedSelected = useContract(selected?.code ?? null);
-    const [workspace, setWorkspace] = useState<Workspace>(loadWorkspace);
+    const [workspace, setWorkspace] = useState<Workspace>(() => initializeIndicatorPanels(loadWorkspace()));
     const [profiles, setProfiles] = useState<Profile[]>(loadProfiles);
     const selectedRef = useRef(selected);
     selectedRef.current = selected;
@@ -924,10 +929,22 @@ export default function App() {
     // ---- workspace ops ----
 
     const updateWorkspace = useCallback((w: Workspace) => {
+        w = initializeIndicatorPanels(w);
         workspaceRef.current = w;
         setWorkspace(w);
         saveWorkspace(w);
     }, []);
+
+    const indicatorService = useMemo(() => new IndicatorInstanceService({
+        getWorkspace: () => workspaceRef.current,
+        updateWorkspace,
+    }), [updateWorkspace]);
+    useEffect(() => { indicatorService.notify(); }, [indicatorService, workspace]);
+    useEffect(() => subscribeCustoms(() => indicatorService.pruneMissingDefinitions()), [indicatorService]);
+    useEffect(() => {
+        if (!isTauri || !agentHarnessEnabled) return;
+        return registerIndicatorCommandHost(window, indicatorService);
+    }, [indicatorService, agentHarnessEnabled]);
 
     // ---- 版面密度（超寬螢幕支援）----
     // 儲存基準 288 欄；渲染依視窗寬選密度 k（cols=24k，每欄 ~40–55px）：
@@ -1274,6 +1291,7 @@ export default function App() {
 
     return (
         <div className={styles.shell}>
+            <IndicatorInstanceContext.Provider value={indicatorService}>
             <HudHeader
                 accBalance={balancePoll.data?.acc_balance}
                 onOpenPanelLibrary={() => setPanelLibraryOpen(true)}
@@ -1360,6 +1378,7 @@ export default function App() {
                     </GridLayout>
                 )}
             </div>
+            </IndicatorInstanceContext.Provider>
         </div>
     );
 }

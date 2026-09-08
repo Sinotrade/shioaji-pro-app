@@ -80,6 +80,8 @@ export type PulseIndexCode = 'IX0001' | 'IX0043';
 
 export interface Block {
     id: string;
+    // Panel-local indicator state travels with saved workspace profiles.
+    indicatorState?: import('./indicator-instance-service').IndicatorPanelState;
     type: BlockType;
     // null → follows the globally selected symbol; string → pinned to a code
     pin: string | null;

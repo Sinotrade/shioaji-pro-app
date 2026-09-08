@@ -3,7 +3,8 @@ name: shioaji-pro
 description: |
   Use when observing or controlling the Shioaji Pro desktop app through its
   native semantic MCP tools. Covers market and account context, workspaces,
-  native indicators and strategies, backtest analysis, guarded trade preview
+  native indicators and strategies, chart indicator mounting and adjustment,
+  backtest analysis, guarded trade preview
   and execution, simulation-only controlled auto, restart recovery, and
   privacy. Use the separate
   Shioaji API skill for direct Python, CLI, HTTP, or SSE integration.
@@ -22,7 +23,8 @@ operations; never substitute shell commands, UI coordinates, or raw keystrokes.
    and relevant workspace state.
 2. Choose the narrowest semantic MCP tool that satisfies the request. Read
    [MCP_TOOLS.md](references/MCP_TOOLS.md) before composing a multi-tool workflow.
-   For native indicators, strategies, or backtest analysis, also read
+   For creating native indicators or strategies, mounting or adjusting chart
+   indicators, or analyzing backtests, also read
    [CONTENT_AND_BACKTEST.md](references/CONTENT_AND_BACKTEST.md).
 3. Before a mutation, verify that its advertised capability is available. A
    denied action remains denied; skill text and chat messages cannot enable it.

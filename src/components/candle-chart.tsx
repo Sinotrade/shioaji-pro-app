@@ -32,7 +32,8 @@ import {
     Star,
     X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { IndicatorInstanceContext } from '../lib/indicator-instance-context';
 import { useQuote } from '../hooks/use-stream';
 import {
     IndicatorDialog,
@@ -107,10 +108,12 @@ const TRADE_MODES: { key: TradeMode; label: string }[] = [
 const MAX_HISTORY_DAYS = 1095; // ~3 years
 
 export function CandleChart({
+    panelId,
     contract,
     trades = [],
     onOrdersChanged,
 }: {
+    panelId?: string;
     contract: ContractBase;
     trades?: Trade[];
     onOrdersChanged?: () => void;
@@ -154,13 +157,27 @@ export function CandleChart({
             setMode('observe');
         }
     }, [isCombo, mode]);
-    const [instances, setInstances] =
+    const [legacyInstances, setInstances] =
         useState<IndicatorInstance[]>(loadInstances);
+    const service = useContext(IndicatorInstanceContext);
+    const panelService = panelId ? service : null;
+    const panelState = useSyncExternalStore(
+        panelService?.subscribe ?? (() => () => {}),
+        () => panelService && panelId ? panelService.snapshot(panelId) : null,
+    );
+    useEffect(() => panelService && panelId ? panelService.registerPanel(panelId) : undefined, [panelService, panelId]);
+    const savedInstances = panelState?.instances ?? legacyInstances;
+    const [settingsDraft, setSettingsDraft] = useState<IndicatorInstance | null>(null);
+    const settingsRevisionRef = useRef('');
+    const settingsNewRef = useRef(false);
+    const instances = settingsDraft
+        ? savedInstances.some(i => i.id === settingsDraft.id)
+            ? savedInstances.map(i => i.id === settingsDraft.id ? settingsDraft : i)
+            : [...savedInstances, settingsDraft]
+        : savedInstances;
     const [pickerOpen, setPickerOpen] = useState(false);
     const [settingsFor, setSettingsFor] = useState<string | null>(null);
     const [legendMenuFor, setLegendMenuFor] = useState<string | null>(null);
-    // instances snapshot taken when settings opens — 取消 restores it
-    const settingsSnapshotRef = useRef<string>('');
     // legend live values: instId -> per-output {label,text,color}
     const [legendValues, setLegendValues] = useState<
         Record<string, { label: string; text: string; color: string }[]>
@@ -733,14 +750,14 @@ export function CandleChart({
         () =>
             subscribeCustoms(() => {
                 setCustomVer((v) => v + 1);
-                setInstances((cur) => {
+                if (!panelService) setInstances((cur) => {
                     const kept = cur.filter((i) => DEF_BY_TYPE.has(i.type));
                     if (kept.length === cur.length) return cur;
                     saveInstances(kept);
                     return kept;
                 });
             }),
-        [],
+        [panelService],
     );
 
     // indicator instances → chart series: overlays on the main pane,
@@ -1009,28 +1026,37 @@ export function CandleChart({
     }, [dataVersion, instancesKey, themeKey, tf.minutes, customVer]);
 
     const commitInstances = (list: IndicatorInstance[]) => {
+        if (panelService && panelId && panelState) {
+            try { panelService.replace(panelId, list, panelState.revision); }
+            catch (e) { notify({ kind: 'err', title: '指標設定未儲存', body: e instanceof Error ? e.message : String(e) }); }
+            return;
+        }
         setInstances(list);
         saveInstances(list);
     };
     // 點選指標 → 先開設定（圖上即時預覽），確定才算加入、取消整個撤掉
     const addIndicator = (type: string) => {
-        settingsSnapshotRef.current = JSON.stringify(instances); // 不含新實例
         const inst = newInstance(type);
-        commitInstances([...instances, inst]);
+        settingsRevisionRef.current = panelState?.revision ?? '';
+        settingsNewRef.current = true;
+        setSettingsDraft(inst);
         setPickerOpen(false);
         setSettingsFor(inst.id);
     };
     const removeIndicator = (id: string) => {
-        if (settingsFor === id) setSettingsFor(null);
-        commitInstances(instances.filter((i) => i.id !== id));
+        if (settingsFor === id) { setSettingsFor(null); setSettingsDraft(null); }
+        commitInstances(savedInstances.filter((i) => i.id !== id));
     };
     const patchInstance = (id: string, patch: Partial<IndicatorInstance>) => {
+        if (settingsDraft?.id === id) { setSettingsDraft({ ...settingsDraft, ...patch }); return; }
         commitInstances(
             instances.map((i) => (i.id === id ? { ...i, ...patch } : i)),
         );
     };
     const openSettings = (id: string) => {
-        settingsSnapshotRef.current = JSON.stringify(instances);
+        settingsRevisionRef.current = panelState?.revision ?? '';
+        settingsNewRef.current = false;
+        setSettingsDraft(structuredClone(savedInstances.find(i => i.id === id)!));
         setLegendMenuFor(null);
         setSettingsFor(id);
     };
@@ -1059,15 +1085,21 @@ export function CandleChart({
         saveFavorites(favs);
     };
     const cancelSettings = () => {
-        try {
-            const snap = JSON.parse(
-                settingsSnapshotRef.current,
-            ) as IndicatorInstance[];
-            commitInstances(snap);
-        } catch {
-            // snapshot unreadable — keep current state
-        }
+        setSettingsDraft(null);
         setSettingsFor(null);
+    };
+    const commitSettings = () => {
+        if (!settingsDraft) return;
+        const list = settingsNewRef.current ? [...savedInstances, settingsDraft]
+            : savedInstances.map(i => i.id === settingsDraft.id ? settingsDraft : i);
+        try {
+            if (panelService && panelId) panelService.replace(panelId, list, settingsRevisionRef.current);
+            else commitInstances(list);
+            cancelSettings();
+        } catch (e) {
+            notify({ kind: 'err', title: '指標設定已變更，請重新開啟設定', body: e instanceof Error ? e.message : String(e) });
+            cancelSettings();
+        }
     };
     const settingsInst = instances.find((i) => i.id === settingsFor) ?? null;
 
@@ -1478,7 +1510,9 @@ export function CandleChart({
         );
     });
     return (
-        <div className={styles.wrap}>
+        <div className={styles.wrap}
+            onPointerDownCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}
+            onFocusCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}>
             <div className={styles.toolbar}>
                 {TIMEFRAMES.map((t, i) => (
                     <button
@@ -1551,6 +1585,10 @@ export function CandleChart({
                         instances={instances}
                         onAdd={addIndicator}
                         onClose={() => setPickerOpen(false)}
+                        onSaveDefaults={panelService ? () => {
+                            saveInstances(savedInstances);
+                            notify({ kind: 'info', title: '已儲存指標預設', body: '新圖與回測圖表使用此設定；其他現有面板維持原設定。' });
+                        } : undefined}
                     />
                 )}
                 {settingsInst && (
@@ -1564,7 +1602,7 @@ export function CandleChart({
                             patchInstance(settingsInst.id, patch)
                         }
                         onRemove={() => removeIndicator(settingsInst.id)}
-                        onCommit={() => setSettingsFor(null)}
+                        onCommit={commitSettings}
                         onCancel={cancelSettings}
                     />
                 )}
