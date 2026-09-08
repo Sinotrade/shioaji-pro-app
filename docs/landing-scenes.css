@@ -8,7 +8,7 @@
 .hero-release>span { color:#e3ebf7; padding-right:12px; border-right:1px solid #ffffff25; font-family:ui-monospace,monospace; }
 .hero-release .icon { width:13px; }
 .hero h1 { font-size:clamp(86px,10.6vw,148px); font-weight:550; letter-spacing:-.045em; line-height:1.04; color:#f3f6fa; }
-.hero h1 span { color:transparent; background:linear-gradient(140deg,#fff 8%,#d8e4f5 28%,#7891b1 63%,#d4dfef 94%); background-clip:text; font-weight:350; }
+.hero h1 span { display:inline-block; padding-right:.12em; margin-right:-.12em; color:transparent; background:linear-gradient(140deg,#fff 8%,#d8e4f5 28%,#7891b1 63%,#d4dfef 94%); background-clip:text; font-weight:350; }
 .hero-subtitle { font-size:24px; font-weight:450; color:#d1d9e5; letter-spacing:.035em; margin-top:24px; }
 .hero-description { font-size:14px; margin-top:10px; color:#8597ae; }
 .hero-actions { display:flex; gap:12px; margin-top:24px; }
@@ -268,3 +268,11 @@
 @media(prefers-reduced-motion:reduce) {
  .showroom-track { height:auto; padding-bottom:0; }
 }
+
+/* Ambient demos stay in the opening background; the centre is masked for copy. */
+.hero>.demo-shelf { position:absolute; inset:45px 0 auto; height:490px; display:block; padding:0; overflow:hidden; pointer-events:none; z-index:-1; opacity:.4; mask-image:linear-gradient(90deg,#000,transparent 28%,transparent 72%,#000); }
+.hero>.demo-shelf .floating-panel { position:absolute; margin:0; }
+.hero>.demo-shelf .floating-market { width:250px; left:-45px; right:auto; top:45px; transform:rotate(-8deg); }
+.hero>.demo-shelf .floating-flash { width:220px; right:-35px; left:auto; top:15px; transform:rotate(8deg); }
+.hero>.demo-shelf .floating-agent { width:330px; right:-30px; left:auto; top:315px; transform:rotate(5deg); }
+@media(max-width:760px) { .hero>.demo-shelf { display:none; } }
