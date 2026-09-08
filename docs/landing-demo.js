@@ -1,6 +1,6 @@
 // Presentation-only animations. No network, broker connection, or order actions.
 (() => {
-  const stage = document.querySelector('.showroom-stage');
+  const stage = document.querySelector('.demo-shelf');
   const book = document.getElementById('demo-book');
   const consoleBox = document.getElementById('demo-console');
   const canvas = document.getElementById('market-spark');
@@ -36,7 +36,7 @@
   let lines = [];
   function renderConsole(typing) {
     consoleBox.replaceChildren();
-    lines.slice(-4).forEach(([type, text], index, visibleLines) => {
+    lines.slice(-3).forEach(([type, text], index, visibleLines) => {
       const line = document.createElement('div'); line.className = `console-line ${type}`; line.textContent = text;
       if (typing && index === visibleLines.length - 1) {
         const caret = document.createElement('span'); caret.className = 'console-caret'; line.append(caret);
@@ -91,7 +91,7 @@
   let frame=0,last=0,elapsed=0,ticks=0,visible=true;
   function animate(time) {
     frame=0;
-    if(document.hidden || !visible || motion.matches || stage.classList.contains('scene-focused')) return;
+    if(document.hidden || !visible || motion.matches) return;
     const delta=Math.min(80,time-last||16);last=time;elapsed+=delta;consoleElapsed+=delta;
     if(elapsed>480) {
       elapsed=0;ticks++;updateBook();
@@ -103,12 +103,11 @@
   }
   function sync() {
     cancelAnimationFrame(frame);frame=0;last=0;
-    stage.classList.toggle('scene-paused',document.hidden||!visible||motion.matches||stage.classList.contains('scene-focused'));
+    stage.classList.toggle('scene-paused',document.hidden||!visible||motion.matches);
     if(motion.matches) {lines=script.slice(0,3).map(entry=>[...entry]);renderConsole(false);drawSpark();}
-    else if(visible&&!document.hidden&&!stage.classList.contains('scene-focused')) frame=requestAnimationFrame(animate);
+    else if(visible&&!document.hidden) frame=requestAnimationFrame(animate);
   }
   updateBook();size();
-  stage.addEventListener('scenevisibilitychange',sync);
   if('IntersectionObserver' in window) new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;sync();}).observe(stage);
   motion.addEventListener('change',()=>{scriptIndex=0;character=0;pause=0;consoleElapsed=0;lines=[];sync();});document.addEventListener('visibilitychange',sync);addEventListener('resize',size,{passive:true});sync();
 })();

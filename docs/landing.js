@@ -145,16 +145,6 @@
     stage.style.setProperty('--scene-ry', `${-5 * (1 - focus)}deg`);
     stage.style.setProperty('--scene-rz', `${-1.5 * (1 - focus)}deg`);
     stage.style.setProperty('--scene-scale', String(.92 + focus * .08));
-    stage.style.setProperty('--float-left', `${-focus * 140}px`);
-    stage.style.setProperty('--float-right', `${focus * 140}px`);
-    stage.style.setProperty('--float-up', `${-focus * 75}px`);
-    stage.style.setProperty('--float-down', `${focus * 70}px`);
-    stage.style.setProperty('--float-opacity', String(1 - clamp((scene - .15) / .65)));
-    const focused = scene >= .9;
-    if (stage.classList.contains('scene-focused') !== focused) {
-      stage.classList.toggle('scene-focused', focused);
-      stage.dispatchEvent(new Event('scenevisibilitychange'));
-    }
     const agentTop = agentSection.getBoundingClientRect().top;
     const agentProgress = clamp((viewport - agentTop) / (viewport + agentSection.offsetHeight));
     agentSection.style.setProperty('--agent-parallax', `${(agentProgress - .5) * (small ? 0 : -38)}px`);
