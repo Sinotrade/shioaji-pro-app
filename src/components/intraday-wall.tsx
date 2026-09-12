@@ -1,3 +1,4 @@
+import { fetchChartHistory, nextChartHistoryRevision } from '../lib/chart-history';
 // src/components/intraday-wall.tsx — 當日走勢牆: a grid of compact
 // intraday (分時) charts driven by a chosen watchlist, with a
 // configurable layout (cols×rows) and paging when the list doesn't fit.
@@ -20,14 +21,9 @@ import {
 } from 'lightweight-charts';
 import { ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-    resolveScaleMode,
-    type ScaleMode,
-} from './intraday-chart';
-import * as chartUi from './intraday-chart.css';
 import { useQuote } from '../hooks/use-stream';
-import { colorWithOpacity } from '../lib/indicator-defs';
 import { ensureContract } from '../lib/contracts-cache';
+import { colorWithOpacity } from '../lib/indicator-defs';
 import {
     sessionMinutes,
     sessionWindowFor,
@@ -35,10 +31,9 @@ import {
     type SessionWindow,
 } from '../lib/intraday-session';
 import {
-    fetchKbars,
     fetchSnapshots,
     fetchWatchlists,
-    type ServerWatchlist,
+    type ServerWatchlist
 } from '../lib/shioaji';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { ContractInfo } from '../lib/types/contract';
@@ -50,9 +45,14 @@ import {
     nowWallClockUtc,
     wallClockToUtc,
 } from '../lib/utils/kbars';
+import {
+    resolveScaleMode,
+    type ScaleMode,
+} from './intraday-chart';
+import * as chartUi from './intraday-chart.css';
+import * as styles from './intraday-wall.css';
 import { Orb } from './orb';
 import * as panel from './panel.css';
-import * as styles from './intraday-wall.css';
 
 const CLOSE_GRACE = 240;
 
@@ -223,7 +223,6 @@ function MiniIntraday({
     // 換時段重載的目標時段 — 試搓觸發切換時新時段還沒有 kbar，load
     // 不能又依最後一根 kbar 選回上一段（會空轉重載）
     const pendingWinRef = useRef<{ code: string; start: number } | null>(null);
-    const retryTimerRef = useRef(0);
     // kbars 快取（30s TTL、快取 in-flight promise）— 顯示設定/主題變更
     // 只需重建圖表，不必重打 API。線寬 slider 拖曳一次可觸發 6+ 次
     // dispKey 變更 × 整頁 cell 數，未快取時實測 36 requests/秒起跳
@@ -443,7 +442,7 @@ function MiniIntraday({
         let cancelled = false;
         // 歷史拿不到時開好空的時段框架（參考價/停板/時段軸來自
         // contract 與現在時間）並讓 loadedRef 成立 — live tick 立刻
-        // 作畫，歷史由重試補回
+        // 作畫，歷史可手動更新
         const scaffoldEmptyFrame = () => {
             if (!priceRef.current || !fillerRef.current) return;
             const ref = Number(contract.reference);
@@ -478,30 +477,7 @@ function MiniIntraday({
             loadedRef.current = loadKey;
             chartApiRef.current?.timeScale().fitContent();
         };
-        const dataKey = `${contract.code}|${reloadSeq}`;
-        const cached = kbarsCacheRef.current;
-        let kbarsP: Promise<KBars>;
-        if (
-            cached &&
-            cached.key === dataKey &&
-            Date.now() - cached.at < 30_000
-        ) {
-            kbarsP = cached.p;
-        } else {
-            kbarsP = fetchKbars(
-                contract,
-                dateStrOffset(4),
-                dateStrOffset(-1),
-            );
-            const entry = { key: dataKey, at: Date.now(), p: kbarsP };
-            kbarsCacheRef.current = entry;
-            // 失敗不留快取 — 下次 dispKey/theme 變更重試
-            kbarsP.catch(() => {
-                if (kbarsCacheRef.current === entry) {
-                    kbarsCacheRef.current = null;
-                }
-            });
-        }
+        const kbarsP = fetchChartHistory(contract, dateStrOffset(4), dateStrOffset(-1), { revision: reloadSeq });
         kbarsP
             .then((k) => {
                 if (cancelled || !priceRef.current) return;
@@ -515,10 +491,6 @@ function MiniIntraday({
                     // 零 kbars — 開空框架讓 live 直接畫，稍後補歷史
                     scaffoldEmptyFrame();
                     setEmpty(true);
-                    retryTimerRef.current = window.setTimeout(
-                        () => setReloadSeq((v) => v + 1),
-                        60_000 + Math.random() * 30_000,
-                    );
                     return;
                 }
                 // 資料驅動選時段；換時段重載帶目標時段（試搓/開盤，
@@ -675,21 +647,15 @@ function MiniIntraday({
             })
             .catch(() => {
                 if (cancelled) return;
-                // 失敗 — 開空框架讓 live 直接畫；自動排程重試補歷史，
-                // 加 jitter 讓多格錯開，避免整面牆同秒齊發 kbars
+                // 失敗 — 開空框架讓 live 直接畫，歷史由使用者手動更新
                 scaffoldEmptyFrame();
                 setEmpty(true);
-                retryTimerRef.current = window.setTimeout(
-                    () => setReloadSeq((v) => v + 1),
-                    15_000 + Math.random() * 15_000,
-                );
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
             });
         return () => {
             cancelled = true;
-            window.clearTimeout(retryTimerRef.current);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, reloadSeq, themeKey, dispKey]);
@@ -719,7 +685,7 @@ function MiniIntraday({
                     start: next.start,
                 };
                 lastReloadRef.current = Date.now();
-                setReloadSeq((v) => v + 1);
+                setReloadSeq(nextChartHistoryRevision());
             }
             return;
         }
@@ -810,7 +776,7 @@ function MiniIntraday({
             {empty && !loading && (
                 <div className={styles.centerMsg} style={{ position: 'absolute', inset: 0 }}>
                     <span className={panel.mono}>無資料</span>
-                </div>
+                <button className={panel.btn} onClick={() => setReloadSeq(nextChartHistoryRevision())}>更新歷史</button></div>
             )}
         </div>
     );

@@ -1,3 +1,4 @@
+import { fetchChartHistory, nextChartHistoryRevision } from '../lib/chart-history';
 // src/components/intraday-chart.tsx — 當日走勢圖 (intraday time-price
 // chart): baseline line vs 昨收參考價 with red/green fills, VWAP-style
 // average line, volume strip, fixed full-session time axis. History from
@@ -30,7 +31,6 @@ import {
     tickBucket,
     type SessionWindow,
 } from '../lib/intraday-session';
-import { fetchKbars } from '../lib/shioaji';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { ContractInfo } from '../lib/types/contract';
 import type { KBars } from '../lib/types/market';
@@ -40,8 +40,8 @@ import {
     nowWallClockUtc,
     wallClockToUtc,
 } from '../lib/utils/kbars';
-import { Orb } from './orb';
 import * as styles from './intraday-chart.css';
+import { Orb } from './orb';
 import * as panel from './panel.css';
 
 interface MinBar {
@@ -265,7 +265,6 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     // 不能又依最後一根 kbar 選回上一段（會空轉重載）
     const pendingWinRef = useRef<{ code: string; start: number } | null>(null);
     const drawnCodeRef = useRef('');
-    const retryTimerRef = useRef(0);
 
     const [loading, setLoading] = useState(false);
     const [empty, setEmpty] = useState(false);
@@ -735,7 +734,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         // 歷史拿不到（server 掛/上游未發布/冷門新掛牌）不能讓面板卡在
         // 空白＋spinner：直接把「空的時段框架」開好 — 參考價/停板/時段
         // 軸都來自 contract 與現在時間，並讓 loadedKey 成立，live tick
-        // 立刻開始作畫；歷史由排程重試補回後整段覆蓋
+        // 立刻開始作畫；手動更新歷史後整段覆蓋
         const scaffoldEmptyFrame = () => {
             if (!priceSeriesRef.current || !fillerSeriesRef.current) return;
             const ref = Number(contract.reference);
@@ -785,7 +784,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             chartRef.current?.timeScale().fitContent();
         };
         // range covers weekends/holidays and夜盤掛次日檔期的怪癖
-        fetchKbars(contract, dateStrOffset(4), dateStrOffset(-1))
+        fetchChartHistory(contract, dateStrOffset(4), dateStrOffset(-1), { revision: reloadSeq })
             .then((k) => {
                 if (cancelled || !priceSeriesRef.current) return;
                 const all = kbarsToMinBars(k);
@@ -798,10 +797,6 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                     // 零 kbars — 開空框架讓 live 直接畫，60s 後補歷史
                     scaffoldEmptyFrame();
                     setEmpty(true);
-                    retryTimerRef.current = window.setTimeout(
-                        () => setReloadSeq((v) => v + 1),
-                        60_000,
-                    );
                     return;
                 }
                 // 資料驅動選時段；但換時段重載帶著目標時段時（試搓/
@@ -964,20 +959,15 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             .catch(() => {
                 if (cancelled) return;
                 // kbars 連重試都失敗（server 掛/開盤壅塞）— 開空框架
-                // 讓 live tick 從現在開始畫，歷史 15s 後重試補回
+                // 讓 live tick 從現在開始畫，歷史由使用者手動更新
                 scaffoldEmptyFrame();
                 setEmpty(true);
-                retryTimerRef.current = window.setTimeout(
-                    () => setReloadSeq((v) => v + 1),
-                    15_000,
-                );
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
             });
         return () => {
             cancelled = true;
-            window.clearTimeout(retryTimerRef.current);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, reloadSeq, optsKey]);
@@ -1008,7 +998,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         const throttledReload = () => {
             if (Date.now() - lastReloadRef.current > 30_000) {
                 lastReloadRef.current = Date.now();
-                setReloadSeq((v) => v + 1);
+                setReloadSeq(nextChartHistoryRevision());
             }
         };
         // 收盤 grace 之外的 tick：真的換時段（夜→日、日→夜、隔日開盤）
@@ -1213,6 +1203,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
 
     return (
         <div className={styles.wrap}>
+            <button className={panel.btn} disabled={loading} onClick={() => setReloadSeq(nextChartHistoryRevision())}>更新歷史</button>
             <div className={styles.legend}>
                 <span className={styles.stats}>
                 {(sessionLabel || staleDate) && (

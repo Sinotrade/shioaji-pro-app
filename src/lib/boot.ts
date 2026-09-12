@@ -4,12 +4,6 @@
 //    reload once it comes up so every panel bootstraps cleanly. Transient
 //    outages after a healthy boot are handled by the SSE self-heal instead.
 
-import {
-    fetchAccounts,
-    fetchHealth,
-    fetchInfo,
-    subscribeTradeEvents,
-} from './shioaji';
 import { agentModule } from './features';
 import { describeOrderReport } from './order-report';
 import {
@@ -18,10 +12,16 @@ import {
     setApiPort,
     setApiScheme,
 } from './runtime';
+import {
+    fetchAccounts,
+    fetchHealth,
+    fetchInfo,
+    subscribeTradeEvents,
+} from './shioaji';
 import { onOrderEvent } from './stream';
 import {
-    loadDesktopSettings,
     harnessOwnershipCompatible,
+    loadDesktopSettings,
     localTlsCertExists,
     nativeOwnsHarnessSidecar,
     serverStart,
@@ -215,7 +215,7 @@ async function run() {
     try {
         await fetchHealth();
         if (await serverVersionOk()) {
-            void subscribeProductionTradeEvents();
+            // The shared trading store subscribes before its initial snapshot.
             return; // server was up at boot — components loaded normally
         }
         // wrong-version server answering on the persisted port — fall
@@ -288,17 +288,18 @@ async function serverVersionOk(): Promise<boolean> {
 
 // In production the order_event SSE stream only emits heartbeats until
 // each account is explicitly subscribed (no-op in simulation).
-async function subscribeProductionTradeEvents() {
+export async function subscribeProductionTradeEvents() {
     try {
         const info = await fetchInfo();
         if (info.simulation) return;
         const accounts = await fetchAccounts();
-        await Promise.allSettled(
+        await Promise.all(
             accounts
                 .filter((a) => a.signed)
                 .map((a) => subscribeTradeEvents(a)),
         );
-    } catch {
-        // best-effort — order events fall back to trade polling
+    } catch (error) {
+        notify({ kind: 'err', title: '委託回報訂閱失敗', body: '資料可能過期；請使用「向券商重新確認」重試。' });
+        throw error;
     }
 }

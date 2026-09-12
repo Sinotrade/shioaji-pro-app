@@ -1,3 +1,4 @@
+import { useDisplayBook } from '../hooks/use-display-book';
 // src/components/combo-ticket.tsx — 期貨/選擇權組合單（managed 語意，issue #32）
 //
 // 腳不帶買賣別：整體 買進/賣出組合 是唯一方向，兩腳實際方向由
@@ -10,11 +11,12 @@
 import { Crosshair, Link2, Lock, Unlock, Zap } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
+import { useQuery } from '../hooks/use-query';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
-import { usePoll } from '../hooks/use-poll';
-import { ensureContract } from '../lib/contracts-cache';
+import { useAccounts } from '../lib/account-store';
 import {
     COMBO_TYPE_LABEL,
+    comboContractInfo,
     comboMonthsLabel,
     deriveOptionShape,
     legActionsFor,
@@ -22,7 +24,10 @@ import {
     syntheticComboQuote,
 } from '../lib/combo';
 import { useComboPick } from '../lib/combo-pick';
+import { ensureContract } from '../lib/contracts-cache';
 import { useOptionLegPick } from '../lib/option-pick';
+import { usePickedPrice } from '../lib/price-sync';
+import { retainContractQuotes } from '../lib/quote-ownership';
 import {
     buildComboContract,
     cancelComboOrder,
@@ -30,23 +35,20 @@ import {
     fetchComboSnapshot,
     fetchComboTrades,
     placeComboOrder,
-    subscribeComboQuote,
-    subscribeQuote,
     type ComboTrade,
     type ComboType,
-    type ManagedComboContract,
+    type ManagedComboContract
 } from '../lib/shioaji';
-import { usePickedPrice } from '../lib/price-sync';
 import { assertTradingLive, notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
+import * as dock from './bottom-dock.css';
+import { OptionStrategyBuilder } from './combo-strategy';
+import * as css from './combo-ticket.css';
 import { DepthLadder } from './depth-ladder';
 import * as styles from './order-ticket.css';
-import * as css from './combo-ticket.css';
-import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
-import { OptionStrategyBuilder } from './combo-strategy';
 
 interface LegState {
     input: string;
@@ -71,10 +73,9 @@ interface ComboResolution {
 }
 
 function LegQuoteRow({ contract }: { contract: ContractInfo }) {
-    const quote = useQuote(contract.code);
-    const ba = quote?.bidask;
-    const bid = ba ? Number(ba.bid_price[0]) : undefined;
-    const ask = ba ? Number(ba.ask_price[0]) : undefined;
+    const { book } = useDisplayBook(contract.code, undefined, contract);
+    const bid = book?.bids[0]?.price;
+    const ask = book?.asks[0]?.price;
     return (
         <span className={css.legQuoteRow}>
             <span />
@@ -86,7 +87,7 @@ function LegQuoteRow({ contract }: { contract: ContractInfo }) {
                     : ''}
             </span>
             <span className={css.legQuoteRight}>
-                買 {fmtPrice(bid)}／賣 {fmtPrice(ask)}
+                買 {fmtPrice(bid)}／賣 {fmtPrice(ask)}{book?.source === 'snapshot' && '（快照）'}
             </span>
         </span>
     );
@@ -100,52 +101,26 @@ const sideOk = (price: number, volume: number | undefined) =>
 // 原生組合商品簿 — 有即時 BidAsk 就用標準五檔梯（DepthLadder，點價
 // 直接帶入淨價欄），還沒有事件時以快照墊一行 L1（明標「快照」）
 function ComboBook({
-    code,
+    combo,
     snapshot,
 }: {
-    code: string;
+    combo: ManagedComboContract;
     snapshot: Snapshot | null;
 }) {
-    const quote = useQuote(code);
-    const ba = quote?.bidask;
+    const contract = comboContractInfo(combo, combo.code);
+    const { quote, snapshot: initialSnapshot, book } = useDisplayBook(combo.code, snapshot ?? undefined, contract);
     const last = quote?.tick
         ? Number(quote.tick.close)
-        : snapshot && snapshot.total_volume > 0
-          ? snapshot.close
+        : initialSnapshot && initialSnapshot.total_volume > 0
+          ? initialSnapshot.close
           : undefined;
-    const snapUsable =
-        !!snapshot &&
-        (sideOk(snapshot.buy_price, snapshot.buy_volume) ||
-            sideOk(snapshot.sell_price, snapshot.sell_volume));
     return (
         <div className={css.section}>
             <span className={css.sectionTitle}>
-                <span>
-                    組合簿
-                    {!ba && snapUsable && '（快照）'}
-                </span>
+                <span>組合簿</span>
                 {last !== undefined && <span>成交 {fmtPrice(last)}</span>}
             </span>
-            {ba ? (
-                <DepthLadder code={code} />
-            ) : snapUsable ? (
-                <div className={css.snapRow}>
-                    <span className={panel.dirText.up}>
-                        買{' '}
-                        {sideOk(snapshot!.buy_price, snapshot!.buy_volume)
-                            ? `${fmtPrice(snapshot!.buy_price)}×${snapshot!.buy_volume}`
-                            : '—'}
-                    </span>
-                    <span className={panel.dirText.down}>
-                        賣{' '}
-                        {sideOk(snapshot!.sell_price, snapshot!.sell_volume)
-                            ? `${fmtPrice(snapshot!.sell_price)}×${snapshot!.sell_volume}`
-                            : '—'}
-                    </span>
-                </div>
-            ) : (
-                <span className={styles.costRow}>等待組合行情…</span>
-            )}
+            {book ? <DepthLadder code={combo.code} snapshot={initialSnapshot} contract={contract} /> : <span className={styles.costRow}>等待組合行情…</span>}
         </div>
     );
 }
@@ -199,9 +174,10 @@ export function ComboTicket() {
     const live = useTradingLive();
     const optPick = useOptionLegPick();
 
-    const tradesPoll = usePoll<ComboTrade[]>(
-        useCallback(() => fetchComboTrades().catch(() => []), []),
-        10000,
+    const { selectedFutures } = useAccounts();
+    const tradesQuery = useQuery<ComboTrade[]>(
+        useCallback(() => fetchComboTrades(), [selectedFutures]),
+        `combo-trades:${selectedFutures?.broker_id}:${selectedFutures?.account_id}`, !!selectedFutures,
     );
 
     // 到價監控 (issue #2): combos only fill IOC, so watch the book and fire
@@ -238,10 +214,6 @@ export function ComboTicket() {
             }
             if (epoch !== legEpochs.current[i]) return; // 已被較新解析取代
             setLeg(i, { contract: c, error: false, input: c.code });
-            await Promise.allSettled([
-                subscribeQuote(c, 'Tick'),
-                subscribeQuote(c, 'BidAsk'),
-            ]);
         } catch {
             if (epoch !== legEpochs.current[i]) return;
             setLeg(i, { contract: null, error: true });
@@ -343,10 +315,7 @@ export function ComboTicket() {
                     comboType: combo.combo_type,
                     ambiguous: null,
                 });
-                await Promise.allSettled([
-                    subscribeComboQuote(combo, 'Tick'),
-                    subscribeComboQuote(combo, 'BidAsk'),
-                ]);
+
                 const snap = await fetchComboSnapshot(combo).catch(() => null);
                 if (!stale) setComboSnapshot(snap);
             } catch (e) {
@@ -370,10 +339,11 @@ export function ComboTicket() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [legKey]);
 
-    // 不退訂組合報價 — 與全 app「訂了就留」慣例一致。server 端退訂
-    // 沒有 refcount：這裡退訂會殺掉 K線/五檔等連動面板正在看的同一
-    // 組合流（凍結但看起來活著），且 contracts-cache 的 subscribed
-    // 集合會擋住重訂（QA round 10 MEDIUM）。
+    useEffect(() => {
+        const combo = resolution?.combo;
+        if (!combo) return;
+        return retainContractQuotes({ security_type: 'FUT', exchange: 'TAIFEX', code: combo.code, target_code: null, combo } as import('../lib/types/contract').ContractBase);
+    }, [resolution?.combo]);
 
     // 生效的組合型別：期貨由 server、選擇權由推導、曖昧由使用者選
     const effectiveType: ComboType | null =
@@ -553,7 +523,7 @@ export function ComboTicket() {
                     title: `🎯 到價觸發第 ${attempts + 1} 次`,
                     body: `${action === 'Buy' ? '買進' : '賣出'}組合（${dirSummary}）${qty} @ ${target}（${trade.status.status}）— 請確認成交，避免重複下單`,
                 });
-                tradesPoll.refresh();
+                // Active reports update normal orders; combo state can be reconciled manually.
             } catch (e) {
                 notify({
                     kind: 'err',
@@ -608,7 +578,7 @@ export function ComboTicket() {
                 title: '🧩 組合單已送出',
                 body: `${trade.status.status} #${trade.order.seqno || trade.order.id.slice(0, 8)}`,
             });
-            tradesPoll.refresh();
+            // Active reports update normal orders; combo state can be reconciled manually.
         } catch (e) {
             notify({
                 kind: 'err',
@@ -631,15 +601,17 @@ export function ComboTicket() {
                 body: e instanceof Error ? e.message : String(e),
             });
         }
-        tradesPoll.refresh();
+        // Active reports update normal orders; combo state can be reconciled manually.
     };
 
-    const working = (tradesPoll.data ?? []).filter((t) =>
+    const working = (tradesQuery.data ?? []).filter((t) =>
         ACTIVE_COMBO.has(t.status.status),
     );
 
     return (
         <div className={styles.body}>
+            <button className={panel.btn} disabled={tradesQuery.loading} onClick={() => void tradesQuery.refresh()}>向券商重新確認組合委託</button>
+            <span role="status">{tradesQuery.error || '組合委託為查詢快照，成交／取消後請手動確認'}</span>
             <div className={styles.fieldRow}>
                 <button
                     className={styles.iconToggle[sbOpen ? 'on' : 'off']}
@@ -781,7 +753,7 @@ export function ComboTicket() {
 
             {resolution?.combo && (
                 <ComboBook
-                    code={resolution.combo.code}
+                    combo={resolution.combo}
                     snapshot={comboSnapshot}
                 />
             )}

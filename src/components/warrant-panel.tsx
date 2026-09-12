@@ -1,5 +1,6 @@
 import { Star } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLiveSnapshots } from '../hooks/use-live-snapshots';
 import { primeContract } from '../lib/contracts-cache';
 import {
     fetchSnapshots,
@@ -12,10 +13,10 @@ import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 import { todayStr } from '../lib/utils/date';
 import { fmtPrice } from '../lib/utils/format';
-import * as panel from './panel.css';
 import * as styles from './derivative-explorer.css';
-import { UnderlyingPicker } from './underlying-picker';
 import { Orb } from './orb';
+import * as panel from './panel.css';
+import { UnderlyingPicker } from './underlying-picker';
 
 const WARRANT_UNDERLYING = 'sj-pro-warrant-underlying';
 
@@ -44,7 +45,6 @@ export function WarrantPanel({
     const [underlying, setUnderlying] = useState<StockMeta | null>(null);
     const [contracts, setContracts] = useState<ContractInfo[]>([]);
     const [underlyingQuote, setUnderlyingQuote] = useState<Snapshot | null>(null);
-    const [snapshots, setSnapshots] = useState<Map<string, Snapshot>>(new Map());
     const [right, setRight] = useState<'all' | 'C' | 'P'>('all');
     const [expiryDays, setExpiryDays] = useState(180);
     const [sort, setSort] = useState<'moneyness' | 'expiry'>('moneyness');
@@ -67,6 +67,8 @@ export function WarrantPanel({
 
     useEffect(() => {
         if (!underlying) return;
+        let active = true;
+        setContracts([]);
         setLoading(true);
         setError(false);
         Promise.all([
@@ -76,15 +78,18 @@ export function WarrantPanel({
                 .then((rows) => rows[0] ?? null),
         ])
             .then(([rows, quote]) => {
+                if (!active) return;
                 setContracts(rows);
                 setUnderlyingQuote(quote);
             })
             .catch(() => {
+                if (!active) return;
                 setContracts([]);
                 setUnderlyingQuote(null);
                 setError(true);
             })
-            .finally(() => setLoading(false));
+            .finally(() => { if (active) setLoading(false); });
+        return () => { active = false; };
     }, [underlying]);
 
     const filtered = useMemo(() => {
@@ -110,30 +115,13 @@ export function WarrantPanel({
             .slice(0, 60);
     }, [contracts, expiryDays, right, sort, underlyingQuote]);
 
-    const visibleKey = filtered.map((contract) => contract.code).join(',');
-    const refresh = useCallback(async () => {
-        if (!visibleKey) {
-            setSnapshots(new Map());
-            return;
-        }
-        try {
-            const rows = await fetchSnapshots(filtered.slice(0, 60));
-            setSnapshots(new Map(rows.map((row) => [row.code, row])));
-        } catch {
-            // Keep the latest successful quote set.
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visibleKey]);
-
-    useEffect(() => {
-        void refresh();
-        const timer = setInterval(refresh, 8000);
-        return () => clearInterval(timer);
-    }, [refresh]);
+    const { snapshots: snapshots, refresh: refreshQuotes, loading: quotesLoading, error: quotesError } = useLiveSnapshots(filtered.slice(0, 60));
 
     return (
         <div className={styles.wrap}>
             <div className={styles.toolbar}>
+                <button className={panel.btn} disabled={quotesLoading} onClick={() => void refreshQuotes()}>更新報價</button>
+                {quotesError && <span role="status">{quotesError}；保留上次報價</span>}
                 <UnderlyingPicker
                     value={underlying}
                     onChange={(stock) => {

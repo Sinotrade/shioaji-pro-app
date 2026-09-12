@@ -4,6 +4,7 @@
 // 帳務/交割 tab 在 bottom-dock-account.tsx
 
 import { useEffect, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import {
     ensureAccounts,
     selectAccount,
@@ -15,6 +16,7 @@ import {
     usePrivacyMode,
     usePrivacyMoney,
 } from '../lib/privacy';
+import { refreshTradingState, useTradingState } from '../lib/trading-state';
 import type { Trade } from '../lib/types/order';
 import type {
     AccountBalance,
@@ -23,9 +25,7 @@ import type {
 } from '../lib/types/portfolio';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
-import * as panel from './panel.css';
-import * as styles from './bottom-dock.css';
-import { AccountPane } from './bottom-dock-account';
+import { AccountPane, type AccountRefreshControls } from './bottom-dock-account';
 import { OrdersPane } from './bottom-dock-orders';
 import { PositionsPane } from './bottom-dock-positions';
 import {
@@ -41,6 +41,8 @@ import {
     type MarketFilter,
     type ViewMode,
 } from './bottom-dock-shared';
+import * as styles from './bottom-dock.css';
+import * as panel from './panel.css';
 
 type TabKey = 'positions' | 'orders' | 'account';
 
@@ -59,7 +61,16 @@ export function BottomDock({
     onTradesChanged: () => void;
     onSelectCode: (code: string) => void;
 }) {
+    const portfolio = useTradingState();
     const [tab, setTab] = useState<TabKey>('positions');
+    const [accountRefresh, setAccountRefresh] = useState<AccountRefreshControls | null>(null);
+    const queryStatus = portfolio.queries[tab];
+    const refreshing = portfolio.loading || (tab === 'account' && !!accountRefresh?.loading);
+    const tabLabel = { positions: '持倉', orders: '委託', account: '帳務' }[tab];
+    const refreshTab = () => {
+        void refreshTradingState(tab);
+        if (tab === 'account') void accountRefresh?.refresh();
+    };
     const { accounts, selectedStock, selectedFutures } = useAccounts();
     useEffect(ensureAccounts, []);
     const priv = usePrivacyMode();
@@ -176,6 +187,10 @@ export function BottomDock({
                         {t.label}
                     </button>
                 ))}
+                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }} title={queryStatus.error ?? (tab === 'positions' ? '持倉依成交與行情在本機估算' : tab === 'orders' ? '委託依主動回報更新' : '帳務為上次查詢快照')}>
+                    {queryStatus.needsReconcile || (tab === 'account' && accountRefresh?.error) ? '待對帳' : tab === 'positions' ? '即時估算' : tab === 'orders' ? '即時回報' : '帳務快照'}
+                    {queryStatus.updatedAt ? ` · 查詢 ${new Date(queryStatus.updatedAt).toLocaleTimeString()}` : ' · 尚未查詢'}
+                </span>
                 <span className={styles.tabSpacer} />
                 <select
                     className={styles.accountSelect}
@@ -252,6 +267,17 @@ export function BottomDock({
                         </button>
                     ))}
                 </span>
+                <button
+                    type='button'
+                    className={styles.refreshButton}
+                    aria-label={`更新${tabLabel}`}
+                    aria-busy={refreshing}
+                    title={refreshing ? '更新中…' : `更新${tabLabel}`}
+                    disabled={refreshing}
+                    onClick={refreshTab}
+                >
+                    <RefreshCw size={14} aria-hidden='true' className={refreshing ? styles.refreshSpinning : undefined} />
+                </button>
             </div>
             <div className={styles.summaryRow}>
                 <span className={styles.sumItem}>
@@ -302,6 +328,7 @@ export function BottomDock({
                     </span>
                 )}
             </div>
+            {queryStatus.error && <div role="status" style={{ padding: '4px 10px', fontSize: 12 }}>{queryStatus.error}</div>}
             {tab === 'positions' && (
                 <PositionsPane
                     positions={positions}
@@ -347,6 +374,7 @@ export function BottomDock({
                         margin={margin}
                         market={market}
                         scopeAccount={scopeAccount}
+                        onRefreshControls={setAccountRefresh}
                     />
                 </div>
             )}

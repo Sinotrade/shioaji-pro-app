@@ -48,7 +48,7 @@ const CONTRACT_PREVIEWS: Partial<
         <CandleChart contract={contract} trades={[]} onOrdersChanged={noop} />
     ),
     intraday: (contract) => <IntradayChart contract={contract} />,
-    depth: (contract) => <DepthLadder code={contract.code} />,
+    depth: (contract) => <DepthLadder contract={contract} code={contract.code} />,
     tape: (contract) => <TickTape contract={contract} />,
     chips: (contract) => <ChipsCard contract={contract} />,
     volprofile: (contract) => <VolProfile contract={contract} />,

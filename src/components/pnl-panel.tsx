@@ -1,8 +1,10 @@
 // src/components/pnl-panel.tsx — realized P&L analytics (30 days)
 
 import { useCallback } from 'react';
-import { usePoll } from '../hooks/use-poll';
+import { useQuery } from '../hooks/use-query';
+import { useAccounts } from '../lib/account-store';
 import { apiPost } from '../lib/api';
+import type { Account } from '../lib/types/portfolio';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { dateStrOffset } from '../lib/utils/kbars';
 import * as dock from './bottom-dock.css';
@@ -14,28 +16,17 @@ interface PnlRow {
     pnl: number;
 }
 
-async function fetchPnl(): Promise<PnlRow[]> {
-    const body = {
-        begin_date: dateStrOffset(30),
-        end_date: dateStrOffset(0),
-    };
-    const [st, fu] = await Promise.allSettled([
-        apiPost<{ date: string; pnl: number }[]>(
-            '/api/v1/portfolio/profit_loss',
-            { ...body, account_type: 'S', unit: 'Common' },
-        ),
-        apiPost<{ date: string; pnl: number }[]>(
-            '/api/v1/portfolio/profit_loss',
-            { ...body, account_type: 'F' },
-        ),
-    ]);
-    const rows = [
-        ...(st.status === 'fulfilled' ? st.value : []),
-        ...(fu.status === 'fulfilled' ? fu.value : []),
-    ];
-    return rows
-        .map((r) => ({ date: r.date, pnl: Number(r.pnl) || 0 }))
-        .sort((a, b) => a.date.localeCompare(b.date));
+async function fetchPnl(accounts: Account[]): Promise<PnlRow[]> {
+    const rows: PnlRow[] = [];
+    for (const account of accounts) {
+        const result = await apiPost<PnlRow[]>('/api/v1/portfolio/profit_loss', {
+            begin_date: dateStrOffset(30), end_date: dateStrOffset(0),
+            account_type: account.account_type, broker_id: account.broker_id,
+            account_id: account.account_id, ...(account.account_type === 'S' ? { unit: 'Common' } : {}),
+        });
+        rows.push(...result);
+    }
+    return rows.map(r => ({ date: r.date, pnl: Number(r.pnl) || 0 })).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function EquityCurve({ rows }: { rows: PnlRow[] }) {
@@ -84,10 +75,13 @@ function EquityCurve({ rows }: { rows: PnlRow[] }) {
 }
 
 export function PnlPanel() {
-    const { data, error } = usePoll<PnlRow[]>(
-        useCallback(() => fetchPnl(), []),
-        60000,
+    const { accounts } = useAccounts();
+    const signed = accounts.filter(a => a.signed && ['S', 'F'].includes(a.account_type));
+    const key = signed.map(a => `${a.account_type}:${a.broker_id}:${a.account_id}`).join(',');
+    const { data, error, loading, refresh } = useQuery<PnlRow[]>(
+        useCallback(() => fetchPnl(signed), [key]), `pnl-30d:${key}`, signed.length > 0,
     );
+    const controls = <><button className={panel.btn} disabled={loading} onClick={() => void refresh()}>更新已實現損益</button>{error && <span role="status">查詢失敗，保留上次資料：{error}</span>}</>;
     const rows = data ?? [];
     const total = rows.reduce((s, r) => s + r.pnl, 0);
     const wins = rows.filter((r) => r.pnl > 0);
@@ -104,15 +98,15 @@ export function PnlPanel() {
 
     if (rows.length === 0) {
         return (
-            <div className={dock.emptyState}>
-                {error ? '損益資料無法取得' : '近 30 日無已實現損益'}
+            <div className={dock.emptyState}>{controls}
+                {loading ? '載入中…' : error ? '損益資料無法取得' : data ? '近 30 日無已實現損益' : '尚無帳戶資料'}
             </div>
         );
     }
 
     const dir = total > 0 ? 'up' : total < 0 ? 'down' : 'flat';
     return (
-        <div className={panel.panelBody}>
+        <div className={panel.panelBody}>{controls}
             <div className={styles.summary}>
                 <div className={styles.bigStat}>
                     <span className={styles.bigLabel}>30 日已實現損益</span>

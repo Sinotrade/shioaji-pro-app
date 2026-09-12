@@ -1,18 +1,18 @@
+import { useLiveSnapshots } from '../hooks/use-live-snapshots';
 // src/components/option-chain.tsx — TXO option chain (T 字報價表).
 // Loads the OPT contract list once (cached), shows strikes around ATM for
 // a selectable expiry, refreshes quotes via batched snapshots.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { pickOptionLeg } from '../lib/option-pick';
-import { fetchOptions, fetchSnapshots } from '../lib/shioaji';
+import { fetchOptions } from '../lib/shioaji';
 import type { ContractInfo } from '../lib/types/contract';
-import type { Snapshot } from '../lib/types/market';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
-import * as panel from './panel.css';
 import * as styles from './option-chain.css';
 import { Orb } from './orb';
+import * as panel from './panel.css';
 
 interface OptContract extends ContractInfo {
     delivery_month: string;
@@ -59,7 +59,6 @@ export function OptionChain({
     const [month, setMonth] = useState(
         () => localStorage.getItem(MONTH_KEY) ?? '',
     );
-    const [snaps, setSnaps] = useState<Map<string, Snapshot>>(new Map());
     const [loading, setLoading] = useState(true);
     const txf = useQuote('TXFR1');
 
@@ -120,37 +119,7 @@ export function OptionChain({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contracts, month, atm === null ? 0 : Math.round(atm / 100)]);
 
-    // snapshot polling for visible contracts
-    const codesKey = rows
-        .flatMap((r) => [r.call?.code, r.put?.code])
-        .filter(Boolean)
-        .join(',');
-    const refreshSnaps = useCallback(async () => {
-        if (!codesKey) return;
-        const targets = rows
-            .flatMap((r) => [r.call, r.put])
-            .filter((c): c is OptContract => !!c)
-            .map((c) => ({
-                security_type: 'OPT' as const,
-                exchange: c.exchange,
-                code: c.code,
-                target_code: null,
-                region: c.region,
-            }));
-        try {
-            const result = await fetchSnapshots(targets);
-            setSnaps(new Map(result.map((s) => [s.code, s])));
-        } catch {
-            // keep last snapshot set
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [codesKey]);
-
-    useEffect(() => {
-        refreshSnaps();
-        const t = setInterval(refreshSnaps, 5000);
-        return () => clearInterval(t);
-    }, [refreshSnaps]);
+    const { snapshots: snaps, refresh: refreshQuotes, loading: quotesLoading, error: quotesError } = useLiveSnapshots(rows.flatMap(r => [r.call, r.put]).filter((c): c is OptContract => !!c));
 
     // the strike closest to ATM — exact, not a fixed point distance
     const nearestStrike = useMemo(() => {
@@ -208,6 +177,8 @@ export function OptionChain({
 
     return (
         <div className={styles.wrap}>
+                <button className={panel.btn} disabled={quotesLoading} onClick={() => void refreshQuotes()}>更新報價</button>
+                {quotesError && <span role="status">{quotesError}；保留上次報價</span>}
             <div className={styles.toolbar}>
                 {months.map((m) => (
                     <button

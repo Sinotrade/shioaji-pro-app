@@ -131,3 +131,20 @@ test coverage 門檻、quality metrics 等。落地時更新本節。
   `5173` 的 dev origin。其他 port 使用 Vite 同來源 `/api` proxy，設定
   `VITE_STREAM_BASE` 為 dev origin，`VITE_API_TARGET` 為本次 sidecar origin；
   健康檢查與歷史資料正常不能代替 SSE 的 LIVE／heartbeat 驗證。
+
+## 每次開發交付：備妥可試用的 dev App
+
+- 每次完成功能或修正，都要把 dev App 更新到本次工作分支，實際開啟並
+  驗證可操作後再交付；只有 PR、CI 或隔離 browser fixture 不算完成 dev 交付。
+- 純前端變更沿用相容的原生 dev shell，切換其 Vite 到本次 worktree；
+  private/native 有變更時須用精確 pin 重建相容的 dev App。主 checkout
+  保持乾淨，不為了試用 merge 或發布。
+- 更新前辨識 dev App、Vite、sidecar 的實際 PID／port／模式。保留使用者
+  的正式 App、交易伺服器與其他工作；不使用真實下單作驗證。若必要操作
+  會影響活躍策略或 Agent，先說明具體影響，依既有授權判斷是否需確認。
+- 更新後核對畫面 build identity、sidecar 版本、SSE LIVE／新 heartbeat、
+  主要變更面板及錯誤狀態；回報實際驗證範圍，不把模擬／CI 當成原生
+  登入、真實回報或乾淨機器 QA。
+- 交付時提供 App 名稱、build identity 與啟動方式，保留供使用者實測的
+  dev App／Vite 及其 worktree。關閉額外的隔離 QA 程序；使用者結束實測
+  或已切換替代版本後，再清理已合併且乾淨、沒有程序依賴的 worktree。

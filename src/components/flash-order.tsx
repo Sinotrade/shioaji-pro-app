@@ -16,16 +16,18 @@ import {
     useRef,
     useState,
 } from 'react';
-import { useQuote, useTradingLive } from '../hooks/use-stream';
+import { useTradingLive } from '../hooks/use-stream';
+import { useDisplayBook } from '../hooks/use-display-book';
+import type { Snapshot } from '../lib/types/market';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { cancelOrder } from '../lib/shioaji';
-import { getAliasFor, onOrderEvent } from '../lib/stream';
+import { getAliasFor } from '../lib/stream';
+import { useTickBandsVersion } from '../lib/tick-bands';
 import { notify, placeQuickOrder } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import { ACTIVE_ORDER_STATUSES, type Action, type Trade } from '../lib/types/order';
 import type { Position } from '../lib/types/portfolio';
 import { fmtInt, fmtPrice, fmtSigned } from '../lib/utils/format';
-import { useTickBandsVersion } from '../lib/tick-bands';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import * as styles from './flash-order.css';
 
@@ -170,16 +172,18 @@ const FlashRow = memo(function FlashRow({
 
 export function FlashOrder({
     contract,
+    snapshot,
     trades = [],
     positions = [],
     onOrdersChanged,
 }: {
     contract: ContractInfo;
+    snapshot?: Snapshot;
     trades?: Trade[];
     positions?: Position[];
     onOrdersChanged?: () => void;
 }) {
-    const quote = useQuote(contract.code);
+    const { quote, snapshot: initialSnapshot, book: display } = useDisplayBook(contract.code, snapshot, contract);
     const live = useTradingLive();
     const privMoney = usePrivacyMoney();
     const [qty, setQty] = useState(1);
@@ -191,7 +195,7 @@ export function FlashOrder({
 
     const last = quote?.tick
         ? Number(quote.tick.close)
-        : contract.reference || null;
+        : initialSnapshot?.close || contract.reference || null;
     const lastVol = quote?.tick ? quote.tick.volume : 0;
     const limitUp = contract.limit_up || 0;
     const limitDown = contract.limit_down || 0;
@@ -355,19 +359,16 @@ export function FlashOrder({
     // 5-level book lookup + totals
     const book = useMemo(() => {
         const map = new Map<string, { bid?: number; ask?: number }>();
-        const ba = quote?.bidask;
-        if (ba) {
-            ba.bid_price.forEach((p, i) => {
-                const key = keyOf(Number(p));
-                map.set(key, { ...map.get(key), bid: ba.bid_volume[i] });
-            });
-            ba.ask_price.forEach((p, i) => {
-                const key = keyOf(Number(p));
-                map.set(key, { ...map.get(key), ask: ba.ask_volume[i] });
-            });
+        for (const { price, vol } of display?.bids ?? []) {
+            const key = keyOf(price);
+            map.set(key, { ...map.get(key), bid: vol });
+        }
+        for (const { price, vol } of display?.asks ?? []) {
+            const key = keyOf(price);
+            map.set(key, { ...map.get(key), ask: vol });
         }
         return map;
-    }, [quote?.bidask]);
+    }, [display]);
 
     const { maxVol, sumBid, sumAsk } = useMemo(() => {
         let m = 1;
@@ -448,22 +449,6 @@ export function FlashOrder({
         return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl };
     }, [positions, contract]);
 
-    // refresh working orders promptly after any order event (debounced —
-    // a burst of events triggers one refresh). The delay is jittered per
-    // instance so eight 閃電全開 windows don't all refetch in the same
-    // instant when a fill lands.
-    useEffect(() => {
-        const delay = 400 + Math.floor(Math.random() * 900);
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        const off = onOrderEvent(() => {
-            if (timer) clearTimeout(timer);
-            timer = setTimeout(() => onOrdersChangedRef.current?.(), delay);
-        });
-        return () => {
-            off();
-            if (timer) clearTimeout(timer);
-        };
-    }, []);
 
     // ---- order actions (all gated by the arm toggle) ----
 
@@ -753,6 +738,7 @@ export function FlashOrder({
                 )}
             </div>
             <div className={styles.totalsRow}>
+                {display?.source === 'snapshot' && <span title={display.time}>快照一檔</span>}
                 <span className={styles.totalBid}>Σ買 {fmtInt(sumBid)}</span>
                 <span className={styles.totalAsk}>Σ賣 {fmtInt(sumAsk)}</span>
             </div>

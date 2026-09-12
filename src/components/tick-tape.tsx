@@ -1,3 +1,4 @@
+import { retainQuote } from '../lib/quote-ownership';
 // src/components/tick-tape.tsx — time & sales feed.
 // Preloads today's recent history ticks, then streams live deals on top.
 // Times show full microsecond precision (HH:MM:SS.ffffff).
@@ -10,9 +11,9 @@ import type { ContractBase } from '../lib/types/contract';
 import type { HistoryTicks } from '../lib/types/tick';
 import { fmtInt, fmtPrice } from '../lib/utils/format';
 import { dateStrOffset } from '../lib/utils/kbars';
+import { Orb } from './orb';
 import * as panel from './panel.css';
 import * as styles from './tick-tape.css';
-import { Orb } from './orb';
 
 const MAX_ROWS = 120;
 const BIG_LOT_FACTOR = 3;
@@ -119,6 +120,7 @@ export function TickTape({ contract }: { contract: ContractBase }) {
                 if (!cancelled) setLoading(false);
             });
 
+        const releaseQuote = retainQuote(contract, 'Tick');
         const off = onAnyTick((tick) => {
             if (tick.code !== contract.code) return;
             setRows((prev) =>
@@ -137,6 +139,7 @@ export function TickTape({ contract }: { contract: ContractBase }) {
         return () => {
             cancelled = true;
             off();
+            releaseQuote();
         };
     }, [contract]);
 

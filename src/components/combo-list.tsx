@@ -1,3 +1,4 @@
+import { useLiveSnapshots } from '../hooks/use-live-snapshots';
 // src/components/combo-list.tsx — 交易所組合商品列表（issue #32）
 //
 // 枚舉一個期貨家族目前所有可交易的 managed 組合（跨月價差），批次快照
@@ -23,11 +24,10 @@ import {
 import type { StockMeta } from '../lib/stock-index';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
-import type { Snapshot } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
-import * as panel from './panel.css';
 import * as styles from './derivative-explorer.css';
 import { Orb } from './orb';
+import * as panel from './panel.css';
 import { UnderlyingPicker } from './underlying-picker';
 
 const COMBO_LIST_ROOT = 'sj-pro-combo-list-root';
@@ -53,9 +53,6 @@ export function ComboListPanel({
         () => localStorage.getItem(COMBO_LIST_ROOT) || 'TXF',
     );
     const [combos, setCombos] = useState<ManagedComboContract[]>([]);
-    const [snapshots, setSnapshots] = useState<Map<string, Snapshot>>(
-        new Map(),
-    );
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
     // 個股期搜尋器目前顯示的標的
@@ -149,26 +146,10 @@ export function ComboListPanel({
         };
     }, [root]);
 
-    const comboKey = combos.map((c) => c.code).join(',');
-    const refresh = useCallback(async () => {
-        if (combos.length === 0) {
-            setSnapshots(new Map());
-            return;
-        }
-        try {
-            const rows = await fetchComboSnapshots(combos);
-            setSnapshots(new Map(rows.map((row) => [row.code, row])));
-        } catch {
-            // 保留上一輪成功的報價
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [comboKey]);
-
-    useEffect(() => {
-        void refresh();
-        const timer = setInterval(refresh, 5000);
-        return () => clearInterval(timer);
-    }, [refresh]);
+    const { snapshots, refresh: refreshQuotes, loading: quotesLoading, error: quotesError } = useLiveSnapshots(
+        combos.map(combo => ({ security_type: 'FUT', exchange: 'TAIFEX', code: combo.code, target_code: null, combo })),
+        () => fetchComboSnapshots(combos),
+    );
 
     // 有市場的排前面（總量降冪），零市場的沉底但仍可點（都可下單）
     const sorted = useMemo(() => {
@@ -191,6 +172,8 @@ export function ComboListPanel({
     return (
         <div className={styles.wrap}>
             <div className={styles.toolbar}>
+                <button className={panel.btn} disabled={quotesLoading} onClick={() => void refreshQuotes()}>更新報價</button>
+                {quotesError && <span role="status">{quotesError}；保留上次報價</span>}
                 <select
                     className={styles.select}
                     value={root}

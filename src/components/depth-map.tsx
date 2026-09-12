@@ -3,7 +3,8 @@
 // where order walls build up and get pulled.
 
 import { useEffect, useRef } from 'react';
-import { subscribeQuoteStore, getQuote } from '../lib/stream';
+import { useDisplayBook } from '../hooks/use-display-book';
+import type { Snapshot } from '../lib/types/market';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { ContractBase } from '../lib/types/contract';
 import * as styles from './depth-map.css';
@@ -16,7 +17,11 @@ interface Column {
 
 const MAX_COLS = 360; // ~ minutes of book history at 1 col/update batch
 
-export function DepthMap({ contract }: { contract: ContractBase }) {
+export function DepthMap({ contract, snapshot }: { contract: ContractBase; snapshot?: Snapshot }) {
+    const { book, quote } = useDisplayBook(contract.code, snapshot, contract);
+    const current = useRef({ book, quote });
+    current.current = { book, quote };
+    const appendRef = useRef<() => void>(() => undefined);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const colsRef = useRef<Column[]>([]);
     const themeSettings = useThemeSettings();
@@ -54,14 +59,14 @@ export function DepthMap({ contract }: { contract: ContractBase }) {
             let maxVol = 1;
             for (const c of cols) {
                 for (const lv of [...c.bids, ...c.asks]) {
-                    if (lv.price <= 0) continue;
+                    if (lv.vol <= 0 || !Number.isFinite(lv.price)) continue;
                     min = Math.min(min, lv.price);
                     max = Math.max(max, lv.price);
                     maxVol = Math.max(maxVol, lv.vol);
                 }
             }
-            if (!Number.isFinite(min) || max <= min) return;
-            const pad = (max - min) * 0.05;
+            if (!Number.isFinite(min)) return;
+            const pad = Math.max((max - min) * 0.05, max === min ? Math.max(Math.abs(min) * 0.001, 1) : 0);
             min -= pad;
             max += pad;
 
@@ -80,7 +85,7 @@ export function DepthMap({ contract }: { contract: ContractBase }) {
                     [c.asks, colors.down],
                 ] as const) {
                     for (const lv of levels) {
-                        if (lv.price <= 0) continue;
+                        if (lv.vol <= 0 || !Number.isFinite(lv.price)) continue;
                         const alpha = Math.min(
                             0.85,
                             0.12 + (lv.vol / maxVol) * 0.75,
@@ -109,20 +114,17 @@ export function DepthMap({ contract }: { contract: ContractBase }) {
             if (!raf) raf = requestAnimationFrame(draw);
         };
 
-        const off = subscribeQuoteStore(contract.code, () => {
-            const q = getQuote(contract.code);
-            const ba = q?.bidask;
-            if (!ba) return;
+        let previous = '';
+        const append = () => {
+            const { book, quote } = current.current;
+            if (!book) return;
+            const identity = JSON.stringify(book);
+            if (identity === previous) return;
+            previous = identity;
             colsRef.current.push({
-                bids: ba.bid_price.map((p, i) => ({
-                    price: Number(p),
-                    vol: ba.bid_volume[i] ?? 0,
-                })),
-                asks: ba.ask_price.map((p, i) => ({
-                    price: Number(p),
-                    vol: ba.ask_volume[i] ?? 0,
-                })),
-                last: q?.tick ? Number(q.tick.close) : null,
+                bids: book.bids,
+                asks: book.asks,
+                last: book.source === 'stream' && quote?.tick ? Number(quote.tick.close) : null,
             });
             if (colsRef.current.length > MAX_COLS) {
                 colsRef.current.splice(
@@ -131,22 +133,25 @@ export function DepthMap({ contract }: { contract: ContractBase }) {
                 );
             }
             schedule();
-        });
+        };
+        appendRef.current = append;
+        append();
 
         const resize = new ResizeObserver(schedule);
         if (canvasRef.current) resize.observe(canvasRef.current);
         return () => {
-            off();
+            appendRef.current = () => undefined;
             resize.disconnect();
             if (raf) cancelAnimationFrame(raf);
         };
     }, [contract.code]);
+    useEffect(() => { appendRef.current(); }, [book]);
 
     return (
         <div className={styles.wrap}>
             <canvas ref={canvasRef} className={styles.canvas} />
             <span className={styles.hint}>
-                即時累積五檔掛單熱圖 — 越亮代表掛單越厚（開啟後開始記錄）
+                {book?.source === 'snapshot' ? '快照一檔 — 等待即時五檔（不含歷史深度）' : '即時累積五檔掛單熱圖 — 越亮代表掛單越厚（開啟後開始記錄）'}
             </span>
         </div>
     );

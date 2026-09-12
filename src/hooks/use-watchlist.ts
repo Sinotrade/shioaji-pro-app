@@ -9,17 +9,16 @@ import {
     refreshCachedContracts,
 } from '../lib/contracts-cache';
 import {
+    addWatchlistContracts,
     createWatchlist,
     deleteWatchlist,
     fetchSnapshots,
     fetchWatchlists,
-    addWatchlistContracts,
     removeWatchlistContracts,
     renameWatchlist,
     resolveContract as resolveContractV2,
-    subscribeContractQuotes,
     syncWatchlist,
-    type ServerWatchlist,
+    type ServerWatchlist
 } from '../lib/shioaji';
 import { onContractEvent, registerCodeAlias } from '../lib/stream';
 import { notify } from '../lib/trade';
@@ -58,7 +57,6 @@ export function useWatchlist() {
     const [initialLoading, setInitialLoading] = useState(true);
     const [serverLists, setServerLists] = useState<ServerWatchlist[]>([]);
     const [activeListId, setActiveListId] = useState<string>('');
-    const subscribed = useRef(new Set<string>());
     const initStarted = useRef(false);
     const loadSeq = useRef(0);
     const activeIdRef = useRef('');
@@ -69,10 +67,6 @@ export function useWatchlist() {
             registerCodeAlias(contract.target_code, contract.code);
         }
         primeContract(contract);
-        if (!subscribed.current.has(contract.code)) {
-            subscribed.current.add(contract.code);
-            await subscribeContractQuotes(contract);
-        }
     }, []);
 
     const attachSnapshots = useCallback((contracts: ContractInfo[]) => {
