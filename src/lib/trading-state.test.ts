@@ -61,6 +61,75 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('shared trading state with isolated broker fixtures', () => {
+    it('marks both orders and positions stale for a futures deal arriving before order metadata', async () => {
+        mocks.account.account_type = 'F';
+        mocks.positions.mockResolvedValueOnce([]); mocks.margin.mockResolvedValue({ equity: 100 });
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState(); });
+        expect(store.getTradingState().queries.orders.needsReconcile).toBe(false);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+        const calls = [mocks.positions.mock.calls.length, mocks.trades.mock.calls.length];
+        await emit(normalizeOrderEvent({ state: 'FuturesDeal', data: { FuturesDeal: {
+            trade_id: 'unknown-future', seqno: 'unknown', ordno: 'unknown', exchange_seq: 'early-fill',
+            broker_id: 'fixture', account_id: 'a', code: 'TXF', full_code: 'TXFI6',
+            action: 'Buy', price: 200, quantity: 1, ts: epoch + 3,
+        } } })!);
+        for (const scope of ['orders', 'positions'] as const) {
+            expect(store.getTradingState().queries[scope].needsReconcile).toBe(true);
+            expect(store.getTradingState().queries[scope].error).toBeTruthy();
+        }
+        expect([mocks.positions.mock.calls.length, mocks.trades.mock.calls.length]).toEqual(calls);
+    });
+    it.each(['positions', 'orders', 'account'] as const)('refreshes only the requested %s endpoints', async scope => {
+        const before = [mocks.positions.mock.calls.length, mocks.trades.mock.calls.length, mocks.balance.mock.calls.length, mocks.margin.mock.calls.length];
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState(scope); });
+        const after = [mocks.positions.mock.calls.length, mocks.trades.mock.calls.length, mocks.balance.mock.calls.length, mocks.margin.mock.calls.length];
+        expect(after.map((n, i) => n - before[i]!)).toEqual(scope === 'positions' ? [1, 0, 0, 0] : scope === 'orders' ? [0, 1, 0, 0] : [0, 0, 1, 0]);
+        if (scope === 'account') {
+            mocks.account.account_type = 'F'; mocks.margin.mockResolvedValue({ equity: 100 });
+            vi.advanceTimersByTime(1500);
+            await act(async () => { await store.refreshTradingState('account'); });
+            expect(mocks.positions.mock.calls.length).toBe(after[0]); expect(mocks.trades.mock.calls.length).toBe(after[1]);
+            expect(mocks.balance.mock.calls.length).toBe(after[2]); expect(mocks.margin.mock.calls.length).toBe(after[3]! + 1);
+        }
+    });
+    it('does not clear another scope error or update its timestamp after successful orders refresh', async () => {
+        vi.advanceTimersByTime(1500); mocks.positions.mockRejectedValueOnce(new Error('offline'));
+        await act(async () => { await store.refreshTradingState('positions'); });
+        const positions = { ...store.getTradingState().queries.positions };
+        const account = { ...store.getTradingState().queries.account };
+        expect(positions.error).toBeTruthy(); expect(positions.needsReconcile).toBe(true);
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        expect(store.getTradingState().queries.positions).toEqual(positions);
+        expect(store.getTradingState().queries.account).toEqual(account);
+        expect(store.getTradingState().queries.orders.error).toBeNull();
+        expect(store.getTradingState().needsReconcile).toBe(true);
+    });
+    it('projects positions from reports while only orders are being queried', async () => {
+        const pending = deferred<never[]>(); mocks.trades.mockImplementationOnce(() => pending.promise);
+        vi.advanceTimersByTime(1500); let refresh!: Promise<void>;
+        const positionCalls = mocks.positions.mock.calls.length;
+        const fundsCalls = mocks.balance.mock.calls.length;
+        await act(async () => { refresh = store.refreshTradingState('orders'); });
+        await emit(order()); await emit(deal());
+        expect(store.getTradingState().positions[0]!.quantity).toBe(2000);
+        await act(async () => { pending.resolve([]); await refresh; });
+        expect(store.getTradingState().positions[0]!.quantity).toBe(2000);
+        expect(mocks.positions.mock.calls.length).toBe(positionCalls); expect(mocks.balance.mock.calls.length).toBe(fundsCalls);
+    });
+    it('coalesces same-scope requests and enforces its cooldown without queued work', async () => {
+        const pending = deferred<never[]>(); mocks.trades.mockImplementationOnce(() => pending.promise);
+        vi.advanceTimersByTime(1500); let first!: Promise<void>; let second!: Promise<void>;
+        await act(async () => { first = store.refreshTradingState('orders'); second = store.refreshTradingState('orders'); });
+        expect(first).toBe(second);
+        expect(mocks.trades).toHaveBeenCalledTimes(2);
+        await act(async () => { pending.resolve([]); await first; await store.refreshTradingState('orders'); vi.advanceTimersByTime(1499); await store.refreshTradingState('orders'); });
+        expect(mocks.trades).toHaveBeenCalledTimes(2);
+        await act(async () => { vi.advanceTimersByTime(1); await store.refreshTradingState('orders'); });
+        expect(mocks.trades).toHaveBeenCalledTimes(3);
+    });
     it.each(['order-first', 'order-after', 'response-after'])('replays all cold futures fills exactly once: %s', async path => {
         mocks.account.account_type = 'F';
         mocks.positions.mockResolvedValueOnce([]);

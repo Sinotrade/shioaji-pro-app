@@ -29,6 +29,8 @@
 
 ## 證據與驗證範圍
 
+- 右側更新圖示只查目前分頁：持倉不查委託／資金，委託不查持倉／資金，帳務整合資金與帳務明細更新。回歸測試核對各類端點次數、其他分頁錯誤與時間不變、查詢中回報仍投影持倉，以及缺委託 metadata 時兩個受影響分頁皆標記待對帳。
+
 - 現場 monitoring 唯讀樣本與限制詳見 ADR0002；未觀測到接近每日 bytes 額度，未證明 #57 根因。
 - 獨立 review 和 QA 已覆蓋 order/position projection、query single-flight、失敗保留、snapshot/event race、舊事件、overflow、斷線，以及行情與history scope。以合成 wire fixtures/mock 驗證，不宣稱實際 broker 回報重播或真實下單。
 - 本機 `pnpm build`（含 `tsc -b`）與 `pnpm test` 通過：37 個檔案通過、1 個跳過；285 tests 通過、2 個跳過。既有 build chunk size / ineffective dynamic import 警告仍存在。

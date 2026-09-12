@@ -13,7 +13,7 @@
 ## 決策
 
 - 主視窗持有共享 positions、trades、餘額及保證金快照。已簽署帳戶逐一初始化；小視窗與 Tray 以同 origin BroadcastChannel 鏡像，不各自啟動主頁或帳務輪詢。
-- `/order/trades` 執行 `update_status` 是正常校正行為：首次查詢建立委託清單；右側「更新帳戶資料」圖示才再查。操作有 loading/disabled、共用 single-flight、完成後短暫 cooldown，不排隊補查。
+- `/order/trades` 執行 `update_status` 是正常校正行為：首次查詢建立委託清單；委託分頁右側更新圖示才再查。持倉分頁只查持倉；帳務分頁更新餘額、保證金及帳務明細，不連帶查委託或持倉。各分頁保留自己的查詢時間、錯誤與待對帳狀態。操作有 loading/disabled、共用 single-flight、各分頁完成後短暫 cooldown，不排隊補查。
 - 收到 order/deal 回報不觸發 HTTP 帳務查詢。一般委託由帳戶＋委託身分匹配；成交以 exchange sequence 去重，支援部分成交及成交先於委託。原始報告缺欄位、合約不符、成交量矛盾時保留資料並標示待確認。
 - position_unit 股票以 Share 為單位；成交 Common lot 轉股，Odd/IntradayOdd 保留股數。現股 Cash 與可明確判斷 New/Cover/Auto 的期貨成交作本機增量。信用/Netting、組合成交、無法判斷的 hedged Auto 不猜測部位。
 - 現價使用非試撮成交 tick；未實現 P&L 在券商基準上加上價差×數量×乘數×方向，報酬率由持倉現價/成本更新。這是估算，不推算權威現金、手續費、稅、保證金或已實現損益。期貨乘數不足不假定為 1。

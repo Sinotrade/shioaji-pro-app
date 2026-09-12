@@ -25,7 +25,7 @@ import type {
 } from '../lib/types/portfolio';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
-import { AccountPane } from './bottom-dock-account';
+import { AccountPane, type AccountRefreshControls } from './bottom-dock-account';
 import { OrdersPane } from './bottom-dock-orders';
 import { PositionsPane } from './bottom-dock-positions';
 import {
@@ -63,6 +63,14 @@ export function BottomDock({
 }) {
     const portfolio = useTradingState();
     const [tab, setTab] = useState<TabKey>('positions');
+    const [accountRefresh, setAccountRefresh] = useState<AccountRefreshControls | null>(null);
+    const queryStatus = portfolio.queries[tab];
+    const refreshing = portfolio.loading || (tab === 'account' && !!accountRefresh?.loading);
+    const tabLabel = { positions: '持倉', orders: '委託', account: '帳務' }[tab];
+    const refreshTab = () => {
+        void refreshTradingState(tab);
+        if (tab === 'account') void accountRefresh?.refresh();
+    };
     const { accounts, selectedStock, selectedFutures } = useAccounts();
     useEffect(ensureAccounts, []);
     const priv = usePrivacyMode();
@@ -179,9 +187,9 @@ export function BottomDock({
                         {t.label}
                     </button>
                 ))}
-                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }} title={portfolio.error ?? '持倉依成交與行情在本機估算；餘額及保證金為上次查詢值'}>
-                    {portfolio.needsReconcile ? '待對帳' : '即時估算'}
-                    {portfolio.updatedAt ? ` · 查詢 ${new Date(portfolio.updatedAt).toLocaleTimeString()}` : ' · 尚未查詢'}
+                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }} title={queryStatus.error ?? (tab === 'positions' ? '持倉依成交與行情在本機估算' : tab === 'orders' ? '委託依主動回報更新' : '帳務為上次查詢快照')}>
+                    {queryStatus.needsReconcile || (tab === 'account' && accountRefresh?.error) ? '待對帳' : tab === 'positions' ? '即時估算' : tab === 'orders' ? '即時回報' : '帳務快照'}
+                    {queryStatus.updatedAt ? ` · 查詢 ${new Date(queryStatus.updatedAt).toLocaleTimeString()}` : ' · 尚未查詢'}
                 </span>
                 <span className={styles.tabSpacer} />
                 <select
@@ -262,13 +270,13 @@ export function BottomDock({
                 <button
                     type='button'
                     className={styles.refreshButton}
-                    aria-label='更新帳戶資料'
-                    aria-busy={portfolio.loading}
-                    title={portfolio.loading ? '更新中…' : '更新持倉、委託、餘額與保證金'}
-                    disabled={portfolio.loading}
-                    onClick={() => void refreshTradingState()}
+                    aria-label={`更新${tabLabel}`}
+                    aria-busy={refreshing}
+                    title={refreshing ? '更新中…' : `更新${tabLabel}`}
+                    disabled={refreshing}
+                    onClick={refreshTab}
                 >
-                    <RefreshCw size={14} aria-hidden='true' className={portfolio.loading ? styles.refreshSpinning : undefined} />
+                    <RefreshCw size={14} aria-hidden='true' className={refreshing ? styles.refreshSpinning : undefined} />
                 </button>
             </div>
             <div className={styles.summaryRow}>
@@ -320,7 +328,7 @@ export function BottomDock({
                     </span>
                 )}
             </div>
-            {portfolio.error && <div role="status" style={{ padding: '4px 10px', fontSize: 12 }}>{portfolio.error}</div>}
+            {queryStatus.error && <div role="status" style={{ padding: '4px 10px', fontSize: 12 }}>{queryStatus.error}</div>}
             {tab === 'positions' && (
                 <PositionsPane
                     positions={positions}
@@ -366,6 +374,7 @@ export function BottomDock({
                         margin={margin}
                         market={market}
                         scopeAccount={scopeAccount}
+                        onRefreshControls={setAccountRefresh}
                     />
                 </div>
             )}

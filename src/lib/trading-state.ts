@@ -13,7 +13,12 @@ import type { OrderEventReport } from './order-report';
 import type { AccountBalance, AccountedPosition, Margin } from './types/portfolio';
 import type { AccountedTrade } from './types/order';
 
+export type TradingQueryScope = 'positions' | 'orders' | 'account';
+export interface TradingQueryStatus { updatedAt: number | null; needsReconcile: boolean; error: string | null }
+const queryScopes: TradingQueryScope[] = ['positions', 'orders', 'account'];
+const emptyQuery = (): TradingQueryStatus => ({ updatedAt: null, needsReconcile: false, error: null });
 export interface TradingState {
+    queries: Record<TradingQueryScope, TradingQueryStatus>;
     positions: AccountedPosition[];
     trades: AccountedTrade[];
     balance?: AccountBalance;
@@ -25,10 +30,19 @@ export interface TradingState {
     needsReconcile: boolean;
     error: string | null;
 }
-let state: TradingState = { positions: [], trades: [], updatedAt: null, loading: false, needsReconcile: false, error: null };
+let state: TradingState = { queries: { positions: emptyQuery(), orders: emptyQuery(), account: emptyQuery() }, positions: [], trades: [], updatedAt: null, loading: false, needsReconcile: false, error: null };
 const listeners = new Set<() => void>();
 const isMirror = typeof location !== 'undefined' && new URLSearchParams(location.search).has('popout');
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-trading-state:${getApiBase()}`) : null;
+function updateQuery(scope: TradingQueryScope, patch: Partial<TradingQueryStatus>) {
+    const queries = { ...state.queries, [scope]: { ...state.queries[scope], ...patch } };
+    state = { ...state, queries,
+        needsReconcile: queryScopes.some(key => queries[key].needsReconcile),
+        error: [...new Set(queryScopes.map(key => queries[key].error).filter(Boolean))].join('；') || null,
+        updatedAt: Math.max(...queryScopes.map(key => queries[key].updatedAt ?? 0)) || null,
+    };
+}
+function markStale(scope: TradingQueryScope, error: string) { updateQuery(scope, { needsReconcile: true, error }); }
 let publishTimer: ReturnType<typeof setTimeout> | null = null;
 function publish() {
     listeners.forEach(l => l());
@@ -43,7 +57,7 @@ channel?.addEventListener('message', e => {
         state = e.data.state;
         publish();
     } else if (!isMirror && e.data?.kind === 'request') publish();
-    else if (!isMirror && e.data?.kind === 'refresh') void refreshTradingState();
+    else if (!isMirror && e.data?.kind === 'refresh' && queryScopes.includes(e.data.scope)) void refreshTradingState(e.data.scope);
 });
 
 let inFlight: Promise<void> | null = null;
@@ -55,7 +69,7 @@ const orderTimes = new Map<string, number>();
 let queryEvents: OrderEventReport[] | null = null;
 let queryOverflow = false;
 let connectionEpoch = 0;
-let nextRefreshAt = 0;
+const nextRefreshAt: Record<TradingQueryScope, number> = { positions: 0, orders: 0, account: 0 };
 let eventSequence = 0;
 const accountKey = (a: { broker_id: string; account_id: string; account_type: string }) => `${a.account_type}:${a.broker_id}:${a.account_id}`;
 
@@ -72,29 +86,35 @@ function prepareQuotes() {
     }
 }
 
-/** Explicit reconciliation. Repeated clicks share one operation, never queue. */
-export function refreshTradingState(): Promise<void> {
-    if (isMirror) { channel?.postMessage({ kind: 'refresh' }); return Promise.resolve(); }
+/** Initial connection reads all groups; manual actions reconcile only their tab. */
+export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): Promise<void> {
+    if (isMirror) {
+        if (scope !== 'all') channel?.postMessage({ kind: 'refresh', scope });
+        return Promise.resolve();
+    }
     if (inFlight) return inFlight;
-    if (Date.now() < nextRefreshAt) return Promise.resolve();
+    const targets = scope === 'all' ? queryScopes : [scope];
+    if (targets.some(key => Date.now() < nextRefreshAt[key])) return Promise.resolve();
+    const readPositions = targets.includes('positions');
+    const readOrders = targets.includes('orders');
+    const readAccount = targets.includes('account');
     inFlight = (async () => {
         const before = eventSequence;
         const connectionBefore = connectionEpoch;
-        state = { ...state, loading: true, error: null };
+        state = { ...state, loading: true };
+        for (const key of targets) updateQuery(key, { error: null });
         publish();
-        const errors: string[] = [];
-        queryEvents = [];
+        const errors: Record<TradingQueryScope, string[]> = { positions: [], orders: [], account: [] };
+        queryEvents = readOrders ? [] : null;
         queryOverflow = false;
         try {
-            await subscribeProductionTradeEvents();
+            if (readPositions || readOrders) await subscribeProductionTradeEvents();
             if (!getAccountState().accounts.length) await refreshAccounts();
             const accounts = getAccountState().accounts.filter(a => a.signed && ['S', 'F'].includes(a.account_type));
             if (!accounts.length) throw new Error('尚未取得可查詢帳戶；請連線後按更新');
-            // Sequential account reads prevent a multi-account manual refresh
-            // from producing an unbounded burst. Keep failed accounts' rows.
             for (const account of accounts) {
                 const matches = (a: typeof account | undefined) => a && accountKey(a) === accountKey(account);
-                try {
+                if (readPositions) try {
                     const positionStart = eventSequence;
                     const hadSnapshot = snapshotEnds.has(accountKey(account));
                     const positions = await fetchPositions(account.account_type as 'S' | 'F', account);
@@ -102,47 +122,48 @@ export function refreshTradingState(): Promise<void> {
                         snapshotEnds.set(accountKey(account), Date.now() / 1000);
                         state = { ...state, positions: [...state.positions.filter(p => !matches(p.account)), ...positions.map(p => ({ ...p, account }))] };
                     }
-                    // No server watermark exists. With an established baseline,
-                    // retain the live projection if a report races this query.
-                    // Never add a fill on top of a snapshot that may include it.
-                    if (positionStart !== eventSequence) errors.push('持倉查詢期間收到回報，保留即時估算；快照邊界待確認');
-                } catch { errors.push(`${account.account_type} 持倉查詢失敗，保留上次資料`); }
-                try {
+                    // Without a server watermark, do not add a fill on top of
+                    // a snapshot that might already include it.
+                    if (positionStart !== eventSequence) errors.positions.push('持倉查詢期間收到回報，保留即時估算；快照邊界待確認');
+                } catch { errors.positions.push(`${account.account_type} 持倉查詢失敗，保留上次資料`); }
+                if (readOrders) try {
                     const trades = await fetchTrades(account.account_type as 'S' | 'F', account);
                     let merged = [...state.trades.filter(t => !matches(t.account)), ...trades
                         .filter(t => !t.order.account || (t.order.account.account_id === account.account_id && t.order.account.broker_id === account.broker_id))
                         .map(t => ({ ...t, account }))];
-                    // Reapply reports received during the request. Fill sequence
-                    // IDs already present in the snapshot are idempotent.
                     for (const report of queryEvents ?? []) {
                         const projected = report.kind === 'order'
                             ? projectOrderReport(merged, report, accounts) : projectTradeDeal(merged, report);
                         if (projected) merged = projected;
-                        else errors.push('委託更新期間有無法銜接的回報，保留本地資料待確認');
+                        else errors.orders.push('委託更新期間有無法銜接的回報，保留本地資料待確認');
                     }
-                    // An unresolved event must not be overwritten by an older response.
-                    if (!queryOverflow && !errors.some(e => e.includes('無法銜接'))) state = { ...state, trades: merged };
-                } catch { errors.push(`${account.account_type} 委託查詢失敗，保留上次資料`); }
+                    if (!queryOverflow && !errors.orders.some(e => e.includes('無法銜接'))) state = { ...state, trades: merged };
+                } catch { errors.orders.push(`${account.account_type} 委託查詢失敗，保留上次資料`); }
             }
-            const stock = getAccountState().selectedStock ?? accounts.find(a => a.account_type === 'S');
-            const future = getAccountState().selectedFutures ?? accounts.find(a => a.account_type === 'F');
-            if (stock) {
-                try { state = { ...state, balance: await fetchAccountBalance(stock), balanceAccount: accountKey(stock) }; }
-                catch { errors.push('餘額查詢失敗，保留上次資料'); }
+            if (readAccount) {
+                const stock = getAccountState().selectedStock ?? accounts.find(a => a.account_type === 'S');
+                const future = getAccountState().selectedFutures ?? accounts.find(a => a.account_type === 'F');
+                if (stock) {
+                    try { state = { ...state, balance: await fetchAccountBalance(stock), balanceAccount: accountKey(stock) }; }
+                    catch { errors.account.push('餘額查詢失敗，保留上次資料'); }
+                }
+                if (future) {
+                    try { state = { ...state, margin: await fetchMargin(future), marginAccount: accountKey(future) }; }
+                    catch { errors.account.push('保證金查詢失敗，保留上次資料'); }
+                }
             }
-            if (future) {
-                try { state = { ...state, margin: await fetchMargin(future), marginAccount: accountKey(future) }; }
-                catch { errors.push('保證金查詢失敗，保留上次資料'); }
-            }
-            state = { ...state, updatedAt: Date.now() };
-            prepareQuotes();
-        } catch (e) { errors.push(e instanceof Error ? e.message : String(e)); }
-        if (queryOverflow) errors.push('更新期间回報過多，已保留即時資料；請稍後手動確認');
-        if (connectionBefore !== connectionEpoch || getStreamStatus() !== 'live') errors.push('串流曾中斷，資料可能不完整；請連線後手動確認');
-        state = { ...state, loading: false, needsReconcile: errors.length > 0 || before !== eventSequence,
-            error: errors.join('；') || (before !== eventSequence ? '更新期間收到回報，快照邊界不明；請確認後手動對帳' : null) };
+            if (readPositions) prepareQuotes();
+        } catch (e) { for (const key of targets) errors[key].push(e instanceof Error ? e.message : String(e)); }
+        if (queryOverflow && readOrders) errors.orders.push('更新期間回報過多，已保留即時資料；請稍後手動確認');
+        for (const key of targets) {
+            if (connectionBefore !== connectionEpoch || getStreamStatus() !== 'live') errors[key].push('串流曾中斷，資料可能不完整；請連線後手動確認');
+            if (before !== eventSequence) errors[key].push('更新期間收到回報，快照邊界不明；請確認後手動對帳');
+            updateQuery(key, { needsReconcile: errors[key].length > 0, error: errors[key].join('；') || null,
+                ...(errors[key].length === 0 ? { updatedAt: Date.now() } : {}) });
+        }
+        state = { ...state, loading: false };
         publish();
-    })().finally(() => { queryEvents = null; nextRefreshAt = Date.now() + 1500; inFlight = null; });
+    })().finally(() => { queryEvents = null; for (const key of targets) nextRefreshAt[key] = Date.now() + 1500; inFlight = null; });
     return inFlight;
 }
 
@@ -153,7 +174,10 @@ function applyDeal(report: OrderEventReport) {
     const fill = positionFill(report, getAccountState().accounts, state.trades);
     const trades = projectTradeDeal(state.trades, report);
     if (trades) state = { ...state, trades };
-    else if (pendingDeals.size < 500) pendingDeals.set(JSON.stringify(report.raw), report);
+    else {
+        markStale('orders', '成交回報缺少委託資料，委託狀態待對帳');
+        if (pendingDeals.size < 500) pendingDeals.set(JSON.stringify(report.raw), report);
+    }
     if (fill && seenFills.has(fill.key)) return;
     const cutoff = fill && snapshotEnds.get(accountKey(fill.account));
     const c = fill && getCachedContract(fill.code);
@@ -178,10 +202,9 @@ function applyDeal(report: OrderEventReport) {
     if (next && fill && seenFills.size < 10000) {
         seenFills.add(fill.key);
         state = { ...state, positions: next };
-        if (!trades) state = { ...state, needsReconcile: true, error: '成交已反映持倉估算；委託狀態待對帳' };
         prepareQuotes();
     } else {
-        state = { ...state, needsReconcile: true, error: '成交資料或快照邊界不足，持倉待手動對帳' };
+        markStale('positions', '成交資料或快照邊界不足，持倉待手動對帳');
         // Deal-before-order is documented. Retain a bounded pending set;
         // receiving order metadata later can resolve it without any query.
         if (!fill && pendingDeals.size < 500) pendingDeals.set(JSON.stringify(report.raw), report);
@@ -234,7 +257,7 @@ function start() {
                 for (const [key2, deal] of [...pendingDeals]) {
                     if (deal.kind === 'deal' && deal.tradeId === report.id) { pendingDeals.delete(key2); applyDeal(deal); }
                 }
-            } else state = { ...state, needsReconcile: true, error: '回報已收到；委託快照待手動對帳' };
+            } else markStale('orders', '回報已收到；委託快照待手動對帳');
         }
         schedulePublish();
     });
@@ -257,7 +280,7 @@ function start() {
         if (live && !hasConnected) { hasConnected = true; void refreshTradingState(); }
         else if (!live && hasConnected) {
             connectionEpoch++;
-            state = { ...state, needsReconcile: true, error: '串流曾中斷；重新連線後請手動對帳' };
+            for (const key of queryScopes) markStale(key, '串流曾中斷；重新連線後請手動對帳');
             publish();
         }
     };

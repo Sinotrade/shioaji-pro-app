@@ -601,18 +601,26 @@ function ReserveSection({
 
 // ---- pane 本體 ----
 
+export interface AccountRefreshControls {
+    refresh: () => Promise<void>;
+    loading: boolean;
+    error: string | null;
+}
+
 export function AccountPane({
     positions,
     balance,
     margin,
     market,
     scopeAccount,
+    onRefreshControls,
 }: {
     positions: AccountedPosition[];
     balance?: AccountBalance;
     margin?: Margin;
     market: MarketFilter;
     scopeAccount: Account | null;
+    onRefreshControls?: (controls: AccountRefreshControls | null) => void;
 }) {
     const privMoney = usePrivacyMoney();
     const { ref, width } = useMeasuredWidth();
@@ -745,6 +753,16 @@ export function AccountPane({
         `reserves:${selKey}:${showStock}`,
     );
 
+    const refreshReports = useCallback(async () => {
+        await Promise.all([refreshSettle(), refreshPnl(), refreshLimits(), refreshReserve()]);
+    }, [refreshSettle, refreshPnl, refreshLimits, refreshReserve]);
+    const reportsLoading = loadingSettle || loadingPnl || loadingLimits || loadingReserve;
+    const reportsError = [errorSettle, errorPnl, errorLimits, errorReserve].filter(Boolean).join('；') || null;
+    useEffect(() => {
+        onRefreshControls?.({ refresh: refreshReports, loading: reportsLoading, error: reportsError });
+        return () => onRefreshControls?.(null);
+    }, [onRefreshControls, refreshReports, reportsLoading, reportsError]);
+
     const left = (
         <div className={styles.acctCol}>
             <FundsSection
@@ -787,11 +805,7 @@ export function AccountPane({
 
     return (
         <div ref={ref}>
-            <button className={panel.btn} type="button" disabled={loadingSettle || loadingPnl || loadingLimits || loadingReserve}
-                onClick={() => { void refreshSettle(); void refreshPnl(); void refreshLimits(); void refreshReserve(); }}>
-                更新帳務明細
-            </button>
-            <span role="status">{[errorSettle, errorPnl, errorLimits, errorReserve].filter(Boolean).join('；')}</span>
+            {reportsError && <span role="status">{reportsError}</span>}
             <div
                 className={`${styles.acctWrap} ${wide ? styles.acctWrapWide : ''}`}
             >
