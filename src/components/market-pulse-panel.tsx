@@ -1,4 +1,9 @@
 import {
+    sankey,
+    type SankeyGraph,
+    sankeyLinkHorizontal,
+} from 'd3-sankey';
+import {
     AlertTriangle,
     ChevronDown,
     ChevronRight,
@@ -18,15 +23,9 @@ import {
     useRef,
     useState,
 } from 'react';
-import {
-    sankey,
-    sankeyLinkHorizontal,
-    type SankeyGraph,
-} from 'd3-sankey';
 import { useIndexComponents } from '../hooks/use-index-components';
 import { useMarketPulseSnapshot } from '../hooks/use-market-pulse';
 import { useQuote } from '../hooks/use-stream';
-import { useThemeSettings } from '../lib/theme-store';
 import { ensureContract } from '../lib/contracts-cache';
 import {
     buildContributionFlow,
@@ -42,26 +41,26 @@ import {
 import {
     subscribeEnrichedIndex,
     subscribeMarketSignal,
-    subscribeQuote,
     unsubscribeEnrichedIndex,
-    unsubscribeMarketSignal,
+    unsubscribeMarketSignal
 } from '../lib/shioaji';
 import { loadStockDetails, type StockMeta } from '../lib/stock-index';
+import { useThemeSettings } from '../lib/theme-store';
 import type { ContractBase } from '../lib/types/contract';
-import type {
-    PulseIndexCode,
-    PulseSection,
-    PulseSectionWeights,
-} from '../lib/workspace';
 import type {
     IcProjection,
     IcRankingEntry,
     ScannerExchange,
     ScannerRule,
 } from '../lib/types/market';
+import type {
+    PulseIndexCode,
+    PulseSection,
+    PulseSectionWeights,
+} from '../lib/workspace';
 import { vars } from '../theme.css';
-import * as panel from './panel.css';
 import * as styles from './market-pulse-panel.css';
+import * as panel from './panel.css';
 
 type PulseView = 'index' | 'signals';
 type IndexVisualization = 'distribution' | 'flow';
@@ -680,7 +679,6 @@ export function MarketPulsePanel({
         setIndexPending(true);
         void Promise.all([
             subscribeEnrichedIndex('calculated_index', index),
-            subscribeQuote(index, 'Quote'),
         ])
             .then(() => {
                 if (active) setIndexPending(false);

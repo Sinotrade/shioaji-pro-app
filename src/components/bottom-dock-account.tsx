@@ -6,7 +6,7 @@
 
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { usePoll } from '../hooks/use-poll';
+import { useQuery } from '../hooks/use-query';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import {
     fetchEarmarkingDetail,
@@ -34,15 +34,15 @@ import type {
 } from '../lib/types/portfolio';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
-import * as panel from './panel.css';
-import * as styles from './bottom-dock.css';
 import {
     isStockPosition,
     sizeClassOf,
     useMeasuredWidth,
     type MarketFilter,
 } from './bottom-dock-shared';
+import * as styles from './bottom-dock.css';
 import { Orb } from './orb';
+import * as panel from './panel.css';
 
 // ---- helpers ----
 
@@ -661,17 +661,17 @@ export function AccountPane({
     );
 
     // 交割行事曆（證券）
-    const { data: settlements, refresh: refreshSettle } = usePoll<
+    const { data: settlements, refresh: refreshSettle, loading: loadingSettle, error: errorSettle } = useQuery<
         Settlement[]
     >(
         useCallback(
             () =>
                 showStock
-                    ? fetchSettlements().catch(() => [])
+                    ? fetchSettlements(stockSel)
                     : Promise.resolve([]),
-            [showStock],
+            [showStock, selKey],
         ),
-        60000,
+        `settlements:${selKey}:${showStock}`,
     );
 
     // 今日已實現損益：profit_loss 給列表/筆數；profitloss_sum 給權威總額。
@@ -694,10 +694,8 @@ export function AccountPane({
                           }
                         : undefined;
                 const [list, sum] = await Promise.all([
-                    fetchProfitLoss(m, sel).catch(
-                        () => [] as ProfitLoss[],
-                    ),
-                    fetchProfitLossSummary(m, sel).catch(() => null),
+                    fetchProfitLoss(m, sel),
+                    fetchProfitLossSummary(m, sel),
                 ]);
                 for (const r of list) rows.push({ ...r, market: m });
                 const haveSum =
@@ -712,50 +710,40 @@ export function AccountPane({
         return { rows, total };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showStock, showFut, selKey]);
-    const { data: pnl, refresh: refreshPnl } = usePoll<PnlData>(
+    const { data: pnl, refresh: refreshPnl, loading: loadingPnl, error: errorPnl } = useQuery<PnlData>(
         pnlFetcher,
-        30000,
+        `realized-pnl:${selKey}:${showStock}:${showFut}`,
     );
 
     // 交易額度（證券）
-    const { data: limits, refresh: refreshLimits } = usePoll<TradingLimits | null>(
+    const { data: limits, refresh: refreshLimits, loading: loadingLimits, error: errorLimits } = useQuery<TradingLimits | null>(
         useCallback(
             () =>
                 showStock
-                    ? fetchTradingLimits(stockSel).catch(() => null)
+                    ? fetchTradingLimits(stockSel)
                     : Promise.resolve(null),
             // eslint-disable-next-line react-hooks/exhaustive-deps
             [showStock, selKey],
         ),
-        60000,
+        `trading-limits:${selKey}:${showStock}`,
     );
 
     // 預收券款/圈存（證券、查詢類）— 個別 catch，任一失敗不拖垮整區
-    const { data: reserve, refresh: refreshReserve } = usePoll<ReserveData>(
+    const { data: reserve, refresh: refreshReserve, loading: loadingReserve, error: errorReserve } = useQuery<ReserveData>(
         useCallback(async () => {
             if (!showStock) {
                 return { summary: null, detail: null, earmark: null };
             }
             const [summary, detail, earmark] = await Promise.all([
-                fetchStockReserveSummary(stockSel).catch(() => null),
-                fetchStockReserveDetail(stockSel).catch(() => null),
-                fetchEarmarkingDetail(stockSel).catch(() => null),
+                fetchStockReserveSummary(stockSel),
+                fetchStockReserveDetail(stockSel),
+                fetchEarmarkingDetail(stockSel),
             ]);
             return { summary, detail, earmark };
             // eslint-disable-next-line react-hooks/exhaustive-deps
         }, [showStock, selKey]),
-        60000,
+        `reserves:${selKey}:${showStock}`,
     );
-
-    // usePoll 換 fetcher 不會立即重跑（interval 綁定 stable run）—
-    // 帳戶範圍/市場篩選切換時主動 refresh，不等下一個 tick
-    useEffect(() => {
-        refreshSettle();
-        refreshPnl();
-        refreshLimits();
-        refreshReserve();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selKey, showStock, showFut]);
 
     const left = (
         <div className={styles.acctCol}>
@@ -799,6 +787,11 @@ export function AccountPane({
 
     return (
         <div ref={ref}>
+            <button className={panel.btn} type="button" disabled={loadingSettle || loadingPnl || loadingLimits || loadingReserve}
+                onClick={() => { void refreshSettle(); void refreshPnl(); void refreshLimits(); void refreshReserve(); }}>
+                更新帳務明細
+            </button>
+            <span role="status">{[errorSettle, errorPnl, errorLimits, errorReserve].filter(Boolean).join('；')}</span>
             <div
                 className={`${styles.acctWrap} ${wide ? styles.acctWrapWide : ''}`}
             >

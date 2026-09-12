@@ -19,13 +19,13 @@ import {
 import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { cancelOrder } from '../lib/shioaji';
-import { getAliasFor, onOrderEvent } from '../lib/stream';
+import { getAliasFor } from '../lib/stream';
+import { useTickBandsVersion } from '../lib/tick-bands';
 import { notify, placeQuickOrder } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import { ACTIVE_ORDER_STATUSES, type Action, type Trade } from '../lib/types/order';
 import type { Position } from '../lib/types/portfolio';
 import { fmtInt, fmtPrice, fmtSigned } from '../lib/utils/format';
-import { useTickBandsVersion } from '../lib/tick-bands';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import * as styles from './flash-order.css';
 
@@ -448,22 +448,6 @@ export function FlashOrder({
         return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl };
     }, [positions, contract]);
 
-    // refresh working orders promptly after any order event (debounced —
-    // a burst of events triggers one refresh). The delay is jittered per
-    // instance so eight 閃電全開 windows don't all refetch in the same
-    // instant when a fill lands.
-    useEffect(() => {
-        const delay = 400 + Math.floor(Math.random() * 900);
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        const off = onOrderEvent(() => {
-            if (timer) clearTimeout(timer);
-            timer = setTimeout(() => onOrdersChangedRef.current?.(), delay);
-        });
-        return () => {
-            off();
-            if (timer) clearTimeout(timer);
-        };
-    }, []);
 
     // ---- order actions (all gated by the arm toggle) ----
 

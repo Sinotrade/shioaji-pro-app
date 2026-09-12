@@ -3,7 +3,7 @@
 // its quote streams once, and exposes a useSyncExternalStore hook.
 
 import { useSyncExternalStore } from 'react';
-import { resolveContract, subscribeContractQuotes } from './shioaji';
+import { resolveContract } from './shioaji';
 import { registerCodeAlias } from './stream';
 import { prefetchTickBands } from './tick-bands';
 import type { ContractInfo, SecurityType } from './types/contract';
@@ -21,8 +21,6 @@ function prefetchBands(c: ContractInfo) {
 
 const cache = new Map<string, ContractInfo>();
 const pending = new Map<string, Promise<ContractInfo>>();
-const subscribed = new Set<string>();
-const subscriptionPending = new Set<string>();
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -40,23 +38,6 @@ export function primeContract(contract: ContractInfo) {
     }
     prefetchBands(contract);
     emit();
-}
-
-function ensureQuoteSubscription(contract: ContractInfo) {
-    if (
-        subscribed.has(contract.code) ||
-        subscriptionPending.has(contract.code)
-    ) {
-        return;
-    }
-    subscriptionPending.add(contract.code);
-    void subscribeContractQuotes(contract)
-        .then((results) => {
-            if (results.some((result) => result.status === 'fulfilled')) {
-                subscribed.add(contract.code);
-            }
-        })
-        .finally(() => subscriptionPending.delete(contract.code));
 }
 
 export async function refreshCachedContracts(
@@ -110,7 +91,6 @@ export async function ensureContract(
         if (hit.target_code) {
             registerCodeAlias(hit.target_code, hit.code);
         }
-        ensureQuoteSubscription(hit);
         return hit;
     }
     const pendingKey = `${type ?? 'AUTO'}:${code}`;
@@ -127,7 +107,6 @@ export async function ensureContract(
             registerCodeAlias(contract.target_code, contract.code);
         }
         prefetchBands(contract);
-        ensureQuoteSubscription(contract);
         emit();
         return contract;
     })();

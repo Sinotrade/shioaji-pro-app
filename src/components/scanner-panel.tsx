@@ -1,3 +1,4 @@
+import { useQuery } from '../hooks/use-query';
 // src/components/scanner-panel.tsx — market movers leaderboard
 
 import { useEffect, useMemo, useState } from 'react';
@@ -34,19 +35,21 @@ async function fetchMulti(
     minAmtB: number,
     short: boolean,
 ): Promise<ScannerItem[]> {
-    const [pct, vol, amt] = await Promise.allSettled([
+    const [pct, vol, amt] = await Promise.all([
         fetchScanner('ChangePercentRank', 100, !short),
         fetchScanner('VolumeRank', 100, true),
         fetchScanner('AmountRank', 100, true),
     ]);
     const byCode = new Map<string, ScannerItem>();
     for (const r of [pct, vol, amt]) {
-        if (r.status !== 'fulfilled') continue;
-        for (const it of r.value) {
+        for (const it of r) {
             if (!byCode.has(it.code)) byCode.set(it.code, it);
         }
     }
-    const out = [...byCode.values()].filter((it) => {
+    return [...byCode.values()];
+}
+function filterMulti(rows: ScannerItem[], minPct: number, minVolK: number, minAmtB: number, short: boolean) {
+    const out = rows.filter((it) => {
         const ref = it.close - it.change_price;
         const pctV = it.change_price && ref > 0 ? (it.change_price / ref) * 100 : 0;
         const pctOk = short ? pctV <= -minPct : pctV >= minPct;
@@ -83,9 +86,6 @@ export function ScannerPanel({
     const [modeKey, setModeKey] = useState(
         () => localStorage.getItem(MODE_KEY) ?? 'gain',
     );
-    const [items, setItems] = useState<ScannerItem[]>([]);
-    const [error, setError] = useState(false);
-    const [reloadSeq, setReloadSeq] = useState(0);
     const [picked, setPicked] = useState<string | null>(null);
     // 複選 thresholds (persisted)
     const [minPct, setMinPct] = useState(
@@ -102,6 +102,12 @@ export function ScannerPanel({
     );
     const [index, setIndex] = useState<StockMeta[] | null>(null);
     const mode = MODES.find((m) => m.key === modeKey) ?? MODES[0]!;
+    const query = useQuery(() => mode.key === 'multi' ? fetchMulti(0, 0, 0, multiShort) : fetchScanner(mode.type, 20, mode.ascending),
+        `scanner:${mode.key}:${mode.key === 'multi' ? multiShort : mode.ascending}`, true);
+    const error = query.error;
+    const items = useMemo(() => mode.key === 'multi' ? filterMulti(query.data ?? [], minPct, minVolK, minAmtB, multiShort) : query.data ?? [],
+        [query.data, mode.key, minPct, minVolK, minAmtB, multiShort]);
+
 
     // Contract V2: fetch typed StockInfo only for the visible scanner rows.
     useEffect(() => {
@@ -124,31 +130,10 @@ export function ScannerPanel({
         return m;
     }, [items, index]);
 
-    useEffect(() => {
-        let cancelled = false;
-        setError(false);
-        const load = () =>
-            (mode.key === 'multi'
-                ? fetchMulti(minPct, minVolK, minAmtB, multiShort)
-                : fetchScanner(mode.type, 20, mode.ascending)
-            )
-                .then((d) => {
-                    if (cancelled) return;
-                    setItems(d);
-                    setError(false);
-                })
-                .catch(() => !cancelled && setError(true));
-        load();
-        const t = setInterval(load, REFRESH_MS);
-        return () => {
-            cancelled = true;
-            clearInterval(t);
-        };
-    }, [mode, reloadSeq, minPct, minVolK, minAmtB, multiShort]);
-
     return (
         <>
             <div className={styles.switcher}>
+                <button className={panel.btn} disabled={query.loading} onClick={() => void query.refresh()}>更新排行</button>
                 {MODES.map((m) => (
                     <button
                         key={m.key}
@@ -224,7 +209,7 @@ export function ScannerPanel({
                         <span className={styles.scName}>排行資料無法取得</span>
                         <button
                             className={styles.retryBtn}
-                            onClick={() => setReloadSeq((s) => s + 1)}
+                            disabled={query.loading} onClick={() => void query.refresh()}
                         >
                             重試
                         </button>

@@ -1,3 +1,4 @@
+import { fetchChartHistory } from '../lib/chart-history';
 // src/components/candle-chart.tsx — K-bar candlestick + volume chart
 // (lightweight-charts v5), live-updated from the SSE tick stream.
 
@@ -33,12 +34,7 @@ import {
     X,
 } from 'lucide-react';
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { IndicatorInstanceContext } from '../lib/indicator-instance-context';
 import { useQuote } from '../hooks/use-stream';
-import {
-    IndicatorDialog,
-    IndicatorSettingsModal,
-} from './indicator-dialog';
 import {
     colorWithOpacity,
     DEF_BY_TYPE,
@@ -52,12 +48,18 @@ import {
     saveInstances,
     type IndicatorInstance,
 } from '../lib/indicator-defs';
+import { IndicatorInstanceContext } from '../lib/indicator-instance-context';
+import {
+    IndicatorDialog,
+    IndicatorSettingsModal,
+} from './indicator-dialog';
 // side-effect import順序：custom-indicators 在 module 載入時就把已存的
 // 自訂指標註冊進 DEF_BY_TYPE，loadInstances() 的型別過濾才不會把它們丟掉
 import { subscribeCustoms } from '../lib/custom-indicators';
 import type { IndicatorPoint } from '../lib/indicators';
-import { cancelOrder, fetchKbars, updateOrderPrice } from '../lib/shioaji';
 import { setPickedPrice } from '../lib/price-sync';
+import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
+import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import { notify, placeQuickOrder } from '../lib/trade';
 import {
     addTrigger,
@@ -68,19 +70,16 @@ import type { ContractBase } from '../lib/types/contract';
 import type { Candle } from '../lib/types/market';
 import { ACTIVE_ORDER_STATUSES, type Trade } from '../lib/types/order';
 import { fmtPrice } from '../lib/utils/format';
-import { roundToTick } from '../lib/utils/ticksize';
-import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import {
     aggregate,
     dateStrOffset,
     kbarsToCandles,
-    nowWallClockUtc,
-    wallClockToUtc,
+    wallClockToUtc
 } from '../lib/utils/kbars';
-import { findKbarGap } from '../lib/intraday-session';
-import * as panel from './panel.css';
+import { roundToTick } from '../lib/utils/ticksize';
 import * as styles from './candle-chart.css';
 import { Orb } from './orb';
+import * as panel from './panel.css';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
 // payload (a year of TXF ≈ 280k bars / 18MB) — keep the range tight enough
@@ -133,9 +132,6 @@ export function CandleChart({
     // 覆蓋率自癒（issue #18 二報）：live 斷層觸發的那次補抓常常太早
     // （上游還沒發布），live bar 一堆積洞就變「內部洞」再也偵測不到 —
     // 載入後直接驗覆蓋率，有缺口就退避排程重抓直到上游補齊（封頂）
-    const healAttemptsRef = useRef(0);
-    const healTimerRef = useRef(0);
-    const healKeyRef = useRef('');
     // ticks must NOT touch the series until history for the current
     // (symbol, timeframe) is in place — updating a freshly-switched series
     // with a bucket older than its last point makes lightweight-charts
@@ -540,7 +536,7 @@ export function CandleChart({
             if (dryPages >= 3 || oldestDay >= MAX_HISTORY_DAYS) return;
             fetching = true;
             const from = Math.min(oldestDay + tf.days, MAX_HISTORY_DAYS);
-            fetchKbars(
+            fetchChartHistory(
                 contract,
                 dateStrOffset(from),
                 dateStrOffset(oldestDay + 1),
@@ -583,7 +579,8 @@ export function CandleChart({
                 });
         };
 
-        fetchKbars(contract, dateStrOffset(tf.days), dateStrOffset(0), {
+        fetchChartHistory(contract, dateStrOffset(tf.days), dateStrOffset(0), {
+            revision: historySeq,
             timeoutMs: 30_000, // 大週期初載可達數十天，不能用 10s
         })
             .then((k) => {
@@ -601,33 +598,6 @@ export function CandleChart({
                 lastBarRef.current = bars[bars.length - 1] ?? null;
                 loadedKeyRef.current = loadKey;
                 loadMoreRef.current = loadMore;
-                // 覆蓋率自癒：換商品/週期歸零重驗；缺口存在就 3 分鐘
-                // （第 6 次起 10 分鐘）後重抓，上限 15 次（≈2h，涵蓋
-                // 上游最晚發布時點）；補齊即停
-                const healKey = `${contract.code}|${tf.minutes}`;
-                if (healKeyRef.current !== healKey) {
-                    healKeyRef.current = healKey;
-                    healAttemptsRef.current = 0;
-                }
-                // 1D 不跑覆蓋率自癒 — 240 天的重抓一次 ~2.7MB，稀疏
-                // 商品誤判時代價太高；分鐘級週期才是洞真正可見的地方
-                const gap =
-                    tf.minutes >= 1440
-                        ? null
-                        : findKbarGap(
-                              raw.map((b) => b.time),
-                              contract.security_type,
-                              nowWallClockUtc(),
-                          );
-                if (gap && healAttemptsRef.current < 15) {
-                    const n = healAttemptsRef.current++;
-                    healTimerRef.current = window.setTimeout(
-                        () => setHistorySeq((v) => v + 1),
-                        n < 5 ? 180_000 : 600_000,
-                    );
-                } else if (!gap) {
-                    healAttemptsRef.current = 0;
-                }
                 chartRef.current?.timeScale().scrollToRealTime();
                 // a manual price-axis drag disables autoScale and pins the
                 // range; without re-enabling it the prior symbol's price band
@@ -639,23 +609,15 @@ export function CandleChart({
             })
             .catch(() => {
                 if (cancelled) return;
-                // clearSeries 已讓 live bars 可以從現在開始堆；歷史
-                // 15s 後自動重試（server 掛掉期間圖不再死等人工切換）
+                // 保留即時作畫；歷史查詢失敗後由使用者手動更新。
                 clearSeries();
                 setEmpty(true);
-                healTimerRef.current = window.setTimeout(
-                    () => setHistorySeq((v) => v + 1),
-                    15_000,
-                );
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
             });
         return () => {
             cancelled = true;
-            // 換商品/週期時未觸發的 heal 重抓一併取消 — 殘留的 timer
-            // 會替新商品多打一次無意義的 historySeq 重載
-            window.clearTimeout(healTimerRef.current);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, tf, historySeq]);
@@ -1514,6 +1476,7 @@ export function CandleChart({
             onPointerDownCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}
             onFocusCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}>
             <div className={styles.toolbar}>
+                <button className={panel.btn} disabled={loading} onClick={() => setHistorySeq(v => v + 1)}>更新歷史</button>
                 {TIMEFRAMES.map((t, i) => (
                     <button
                         key={t.label}

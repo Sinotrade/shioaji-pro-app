@@ -1,0 +1,509 @@
+{
+  "source": "Read-only OpenAPI from locally running Shioaji server 1.7.5, verified /api/v1/info; 2026-09-12. Schema only, no account data or live order payload.",
+  "schemas": {
+    "shioaji.api.api_v1.order.callback.CallPut": {
+      "type": "string",
+      "enum": [
+        "Future",
+        "OptionCall",
+        "OptionPut"
+      ]
+    },
+    "shioaji.api.api_v1.order.callback.EventOrderStatus": {
+      "type": "object",
+      "required": [
+        "id",
+        "exchange_ts"
+      ],
+      "properties": {
+        "cancel_quantity": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "exchange_ts": {
+          "type": "number",
+          "format": "double"
+        },
+        "id": {
+          "type": "string"
+        },
+        "modified_price": {
+          "type": "number",
+          "format": "double"
+        },
+        "order_quantity": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "web_id": {
+          "type": "string"
+        }
+      }
+    },
+    "shioaji.api.api_v1.order.callback.FuturesDealEvent": {
+      "type": "object",
+      "required": [
+        "trade_id",
+        "seqno",
+        "ordno",
+        "exchange_seq",
+        "action",
+        "code",
+        "price",
+        "quantity",
+        "security_type",
+        "ts"
+      ],
+      "properties": {
+        "account_id": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.Action"
+        },
+        "broker_id": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "combo": {
+          "type": "boolean"
+        },
+        "delivery_month": {
+          "type": "string"
+        },
+        "exchange_seq": {
+          "type": "string"
+        },
+        "full_code": {
+          "type": "string"
+        },
+        "market_type": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.MarketType"
+        },
+        "option_right": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.CallPut"
+        },
+        "ordno": {
+          "type": "string"
+        },
+        "price": {
+          "type": "number",
+          "format": "double"
+        },
+        "quantity": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "security_type": {
+          "$ref": "#/components/schemas/shioaji.api.SecurityType"
+        },
+        "seqno": {
+          "type": "string"
+        },
+        "strike_price": {
+          "type": "number",
+          "format": "double"
+        },
+        "subaccount": {
+          "type": "string"
+        },
+        "trade_id": {
+          "type": "string"
+        },
+        "ts": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "shioaji.api.api_v1.order.callback.FuturesEventContract": {
+      "type": "object",
+      "required": [
+        "security_type",
+        "code",
+        "exchange"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "delivery_date": {
+          "type": "string"
+        },
+        "delivery_month": {
+          "type": "string"
+        },
+        "exchange": {
+          "type": "string"
+        },
+        "full_code": {
+          "type": "string"
+        },
+        "option_right": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.CallPut"
+        },
+        "security_type": {
+          "$ref": "#/components/schemas/shioaji.api.SecurityType"
+        },
+        "strike_price": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "shioaji.api.api_v1.order.callback.FuturesOrderDetail": {
+      "type": "object",
+      "required": [
+        "id",
+        "seqno",
+        "ordno",
+        "account",
+        "action",
+        "price",
+        "quantity",
+        "order_type",
+        "price_type",
+        "oc_type"
+      ],
+      "properties": {
+        "account": {
+          "$ref": "#/components/schemas/shioaji.api.Account"
+        },
+        "action": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.Action"
+        },
+        "combo": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "market_type": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.MarketType"
+        },
+        "oc_type": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.FuturesOCType"
+        },
+        "order_type": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.OrderType"
+        },
+        "ordno": {
+          "type": "string"
+        },
+        "price": {
+          "type": "number",
+          "format": "double"
+        },
+        "price_type": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.FuturesReportPriceType"
+        },
+        "quantity": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "seqno": {
+          "type": "string"
+        },
+        "subaccount": {
+          "type": "string"
+        }
+      }
+    },
+    "shioaji.api.api_v1.order.callback.FuturesOrderEvent": {
+      "type": "object",
+      "required": [
+        "operation",
+        "order",
+        "status",
+        "contract"
+      ],
+      "properties": {
+        "contract": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.FuturesEventContract"
+        },
+        "operation": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.OperationResponse"
+        },
+        "order": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.FuturesOrderDetail"
+        },
+        "status": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.EventOrderStatus"
+        }
+      }
+    },
+    "shioaji.api.api_v1.order.callback.FuturesReportPriceType": {
+      "type": "string",
+      "enum": [
+        "LMT",
+        "MKT",
+        "MKP",
+        "UPD",
+        "UPL",
+        "UPM",
+        "UPP",
+        "CXL",
+        "CXP",
+        "CXQ"
+      ]
+    },
+    "shioaji.api.api_v1.order.callback.MarketType": {
+      "type": "string",
+      "enum": [
+        "Day",
+        "Night"
+      ]
+    },
+    "shioaji.api.api_v1.order.callback.OpType": {
+      "type": "string",
+      "enum": [
+        "New",
+        "Cancel",
+        "UpdateQty",
+        "UpdatePrice",
+        "Reject"
+      ]
+    },
+    "shioaji.api.api_v1.order.callback.OperationResponse": {
+      "type": "object",
+      "required": [
+        "op_type",
+        "op_code",
+        "op_msg"
+      ],
+      "properties": {
+        "op_code": {
+          "type": "string"
+        },
+        "op_msg": {
+          "type": "string"
+        },
+        "op_type": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.OpType"
+        }
+      }
+    },
+    "shioaji.api.api_v1.order.callback.OrderEventData": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "StockOrder"
+          ],
+          "properties": {
+            "StockOrder": {
+              "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.StockOrderEvent"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "StockDeal"
+          ],
+          "properties": {
+            "StockDeal": {
+              "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.StockDealEvent"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "FuturesOrder"
+          ],
+          "properties": {
+            "FuturesOrder": {
+              "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.FuturesOrderEvent"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "FuturesDeal"
+          ],
+          "properties": {
+            "FuturesDeal": {
+              "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.FuturesDealEvent"
+            }
+          }
+        }
+      ]
+    },
+    "shioaji.api.api_v1.order.callback.StockDealEvent": {
+      "type": "object",
+      "required": [
+        "trade_id",
+        "seqno",
+        "ordno",
+        "exchange_seq",
+        "action",
+        "code",
+        "order_cond",
+        "order_lot",
+        "price",
+        "quantity",
+        "ts"
+      ],
+      "properties": {
+        "account_id": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.Action"
+        },
+        "broker_id": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "custom_field": {
+          "type": "string"
+        },
+        "exchange_seq": {
+          "type": "string"
+        },
+        "order_cond": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.StockOrderCond"
+        },
+        "order_lot": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.StockOrderLot"
+        },
+        "ordno": {
+          "type": "string"
+        },
+        "price": {
+          "type": "number",
+          "format": "double"
+        },
+        "quantity": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "seqno": {
+          "type": "string"
+        },
+        "trade_id": {
+          "type": "string"
+        },
+        "ts": {
+          "type": "number",
+          "format": "double"
+        },
+        "web_id": {
+          "type": "string"
+        }
+      }
+    },
+    "shioaji.api.api_v1.order.callback.StockEventContract": {
+      "type": "object",
+      "required": [
+        "exchange",
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "exchange": {
+          "$ref": "#/components/schemas/shioaji.api.Exchange"
+        },
+        "name": {
+          "type": "string"
+        },
+        "security_type": {
+          "$ref": "#/components/schemas/shioaji.api.SecurityType"
+        },
+        "symbol": {
+          "type": "string"
+        }
+      }
+    },
+    "shioaji.api.api_v1.order.callback.StockOrderDetail": {
+      "type": "object",
+      "required": [
+        "id",
+        "seqno",
+        "ordno",
+        "account",
+        "action",
+        "price",
+        "quantity",
+        "order_type",
+        "price_type",
+        "order_cond",
+        "order_lot"
+      ],
+      "properties": {
+        "account": {
+          "$ref": "#/components/schemas/shioaji.api.Account"
+        },
+        "action": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.Action"
+        },
+        "custom_field": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "order_cond": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.StockOrderCond"
+        },
+        "order_lot": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.StockOrderLot"
+        },
+        "order_type": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.OrderType"
+        },
+        "ordno": {
+          "type": "string"
+        },
+        "price": {
+          "type": "number",
+          "format": "double"
+        },
+        "price_type": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.types.StockPriceType"
+        },
+        "quantity": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "seqno": {
+          "type": "string"
+        }
+      }
+    },
+    "shioaji.api.api_v1.order.callback.StockOrderEvent": {
+      "type": "object",
+      "required": [
+        "operation",
+        "order",
+        "status",
+        "contract"
+      ],
+      "properties": {
+        "contract": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.StockEventContract"
+        },
+        "operation": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.OperationResponse"
+        },
+        "order": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.StockOrderDetail"
+        },
+        "status": {
+          "$ref": "#/components/schemas/shioaji.api.api_v1.order.callback.EventOrderStatus"
+        }
+      }
+    }
+  }
+}

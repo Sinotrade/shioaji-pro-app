@@ -2,21 +2,20 @@
 // Sections are user-configurable (gear): 持倉損益 / 自選清單 / 排行榜.
 // Clicking any symbol focuses the main window and links it everywhere.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { usePoll } from '../hooks/use-poll';
-import { useQuote } from '../hooks/use-stream';
-import { useWatchlist } from '../hooks/use-watchlist';
 import { Maximize2, Settings2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '../hooks/use-query';
+import { useQuote } from '../hooks/use-stream';
+import type { WatchItem } from '../hooks/use-watchlist';
+import { useWatchlist } from '../hooks/use-watchlist';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { isTauri } from '../lib/runtime';
 import {
-    fetchPositions,
-    fetchScanner,
+    fetchScanner
 } from '../lib/shioaji';
 import { getAliasFor } from '../lib/stream';
-import type { WatchItem } from '../hooks/use-watchlist';
+import { useTradingState } from '../lib/trading-state';
 import type { ScannerItem } from '../lib/types/market';
-import type { Position } from '../lib/types/portfolio';
 import {
     fmtInt,
     fmtPct,
@@ -24,10 +23,10 @@ import {
     fmtSigned,
     fmtStockLots,
 } from '../lib/utils/format';
-import { Sparkline } from './sparkline';
-import * as panel from './panel.css';
-import * as styles from './tray-panel.css';
 import { Orb } from './orb';
+import * as panel from './panel.css';
+import { Sparkline } from './sparkline';
+import * as styles from './tray-panel.css';
 
 type SectionKey = 'positions' | 'watchlist' | 'movers';
 
@@ -118,20 +117,8 @@ export function TrayPanel() {
     const privMoney = usePrivacyMoney();
     const { items } = useWatchlist();
 
-    const positionsPoll = usePoll<Position[]>(
-        useCallback(async () => {
-            const [st, fu] = await Promise.allSettled([
-                fetchPositions('S'),
-                fetchPositions('F'),
-            ]);
-            return [
-                ...(st.status === 'fulfilled' ? st.value : []),
-                ...(fu.status === 'fulfilled' ? fu.value : []),
-            ];
-        }, []),
-        8000,
-    );
-    const moversPoll = usePoll<ScannerItem[]>(
+    const positionsPoll = { data: useTradingState().positions };
+    const moversPoll = useQuery<ScannerItem[]>(
         useCallback(
             () =>
                 sections.has('movers')
@@ -139,7 +126,7 @@ export function TrayPanel() {
                     : Promise.resolve([]),
             [sections],
         ),
-        30000,
+        'tray-movers', sections.has('movers'),
     );
 
     const positions = positionsPoll.data ?? [];
@@ -180,6 +167,7 @@ export function TrayPanel() {
     return (
         <div className={styles.wrap}>
             <div className={styles.header}>
+                <button className={panel.btn} disabled={moversPoll.loading} onClick={() => void moversPoll.refresh()}>更新排行</button>
                 <span className={styles.title}>Shioaji Pro</span>
                 <span className={`${styles.headPnl} ${panel.dirText[pnlDir]}`}>
                     {positions.length > 0

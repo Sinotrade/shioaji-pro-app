@@ -17,11 +17,9 @@ import {
     useState,
 } from 'react';
 import { useIndexComponents } from '../hooks/use-index-components';
-import { getIcBootstrapGroupWeights } from '../lib/index-components';
 import { useQuote } from '../hooks/use-stream';
-import { ensureContract } from '../lib/contracts-cache';
+import { getIcBootstrapGroupWeights } from '../lib/index-components';
 import { useFocusedSector } from '../lib/sector-sync';
-import { subscribeQuote } from '../lib/shioaji';
 import { loadStockDetails, SECTOR_INDICES } from '../lib/stock-index';
 import type { ContractBase } from '../lib/types/contract';
 import type { IcProjection } from '../lib/types/market';
@@ -389,12 +387,6 @@ export function SectorHeatmap({
                   (sector) => Number(sector.category) === Number(drillCat),
               )
             : undefined;
-    useEffect(() => {
-        if (!officialSector) return;
-        void ensureContract(officialSector.index, 'IND')
-            .then((contract) => subscribeQuote(contract, 'Quote'))
-            .catch(() => undefined);
-    }, [officialSector?.index]);
     const officialQuote = useQuote(officialSector?.index ?? null)?.index;
     const officialClose = Number(officialQuote?.close);
     const officialReference = Number(officialQuote?.reference);

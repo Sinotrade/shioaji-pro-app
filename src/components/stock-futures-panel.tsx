@@ -1,19 +1,18 @@
 import { Star } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLiveSnapshots } from '../hooks/use-live-snapshots';
 import { primeContract } from '../lib/contracts-cache';
 import {
-    fetchFutures,
-    fetchSnapshots,
+    fetchFutures
 } from '../lib/shioaji';
 import { loadStockCatalog, type StockMeta } from '../lib/stock-index';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
-import type { Snapshot } from '../lib/types/market';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
-import * as panel from './panel.css';
 import * as styles from './derivative-explorer.css';
-import { UnderlyingPicker } from './underlying-picker';
 import { Orb } from './orb';
+import * as panel from './panel.css';
+import { UnderlyingPicker } from './underlying-picker';
 
 const STOCK_FUTURE_UNDERLYING = 'sj-pro-stock-future-underlying';
 
@@ -35,7 +34,6 @@ export function StockFuturesPanel({
     const [underlying, setUnderlying] = useState<StockMeta | null>(null);
     const [catalog, setCatalog] = useState<StockMeta[]>([]);
     const [contracts, setContracts] = useState<ContractInfo[]>([]);
-    const [snapshots, setSnapshots] = useState<Map<string, Snapshot>>(new Map());
     const [mode, setMode] = useState<'continuous' | 'all'>('continuous');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
@@ -75,15 +73,19 @@ export function StockFuturesPanel({
 
     useEffect(() => {
         if (!underlying) return;
+        let active = true;
+        setContracts([]);
         setLoading(true);
         setError(false);
         fetchFutures({ underlyingCode: underlying.code })
-            .then((rows) => setContracts(rows))
+            .then((rows) => { if (active) setContracts(rows); })
             .catch(() => {
+                if (!active) return;
                 setContracts([]);
                 setError(true);
             })
-            .finally(() => setLoading(false));
+            .finally(() => { if (active) setLoading(false); });
+        return () => { active = false; };
     }, [underlying]);
 
     const visible = useMemo(() => {
@@ -99,32 +101,15 @@ export function StockFuturesPanel({
         );
     }, [contracts, mode]);
 
-    const visibleKey = visible.map((contract) => contract.code).join(',');
-    const refresh = useCallback(async () => {
-        if (!visibleKey) {
-            setSnapshots(new Map());
-            return;
-        }
-        try {
-            const rows = await fetchSnapshots(visible.slice(0, 40));
-            setSnapshots(new Map(rows.map((row) => [row.code, row])));
-        } catch {
-            // Keep the latest successful quote set.
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visibleKey]);
-
-    useEffect(() => {
-        void refresh();
-        const timer = setInterval(refresh, 5000);
-        return () => clearInterval(timer);
-    }, [refresh]);
+    const { snapshots: snapshots, refresh: refreshQuotes, loading: quotesLoading, error: quotesError } = useLiveSnapshots(visible.slice(0, 40));
 
     const roots = new Set(contracts.map((contract) => contract.root).filter(Boolean));
 
     return (
         <div className={styles.wrap}>
             <div className={styles.toolbar}>
+                <button className={panel.btn} disabled={quotesLoading} onClick={() => void refreshQuotes()}>更新報價</button>
+                {quotesError && <span role="status">{quotesError}；保留上次報價</span>}
                 <UnderlyingPicker
                     value={underlying}
                     onChange={(stock) => {

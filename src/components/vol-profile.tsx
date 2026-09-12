@@ -1,3 +1,4 @@
+import { retainQuote } from '../lib/quote-ownership';
 // src/components/vol-profile.tsx — 分價量表 + 內外盤比.
 // Aggregates today's history ticks once, then accumulates live ticks.
 
@@ -72,6 +73,7 @@ export function VolProfile({ contract }: { contract: ContractBase }) {
         };
         void load();
 
+        const releaseQuote = retainQuote(contract, 'Tick');
         const off = onAnyTick((tick) => {
             if (tick.code !== contract.code) return;
             addTo(prof, Number(tick.close), tick.volume, tick.tick_type);
@@ -80,6 +82,7 @@ export function VolProfile({ contract }: { contract: ContractBase }) {
         return () => {
             cancelled = true;
             off();
+            releaseQuote();
         };
     }, [contract]);
 

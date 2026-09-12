@@ -1,6 +1,9 @@
 // src/hooks/use-stream.ts — bind components to the SSE quote store
 
 import { useEffect, useSyncExternalStore } from 'react';
+import { ensureContract } from '../lib/contracts-cache';
+import { retainContractQuotes } from '../lib/quote-ownership';
+import type { QuoteState, StreamStatus } from '../lib/stream';
 import {
     ensureStream,
     getQuote,
@@ -8,7 +11,6 @@ import {
     subscribeQuoteStore,
     subscribeStatusStore,
 } from '../lib/stream';
-import type { QuoteState, StreamStatus } from '../lib/stream';
 
 export function useStreamStatus(): StreamStatus {
     useEffect(ensureStream, []);
@@ -23,7 +25,13 @@ export function useTradingLive(): boolean {
 }
 
 export function useQuote(code: string | null): QuoteState | undefined {
-    useEffect(ensureStream, []);
+    useEffect(() => {
+        ensureStream();
+        let active = true;
+        let release: (() => void) | undefined;
+        if (code) void ensureContract(code).then(c => { if (active) release = retainContractQuotes(c); }).catch(() => undefined);
+        return () => { active = false; release?.(); };
+    }, [code]);
     return useSyncExternalStore(
         (listener) =>
             code ? subscribeQuoteStore(code, listener) : () => undefined,

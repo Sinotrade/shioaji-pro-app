@@ -1,7 +1,15 @@
+import { observeTradeResponse } from './trade-observations';
 // src/lib/shioaji.ts
 
 import { accountFor } from './account-store';
 import { apiDelete, apiGet, apiPost, apiPut } from './api';
+import {
+    registerCapabilitySubscription,
+    registerSubscription,
+    registerSubscriptionRaw,
+    unregisterCapabilitySubscription,
+    unregisterSubscription,
+} from './stream';
 import type {
     ContractBase,
     ContractInfo,
@@ -10,12 +18,12 @@ import type {
 } from './types/contract';
 import type { Health } from './types/health';
 import type {
-    KBars,
     ContributionRanking,
+    KBars,
     QuoteTypeName,
     ScannerExchange,
-    ScannerRule,
     ScannerItem,
+    ScannerRule,
     ScannerType,
     Snapshot,
     SubscriptionResponse,
@@ -33,13 +41,6 @@ import type {
     Margin,
     StockPosition,
 } from './types/portfolio';
-import {
-    registerCapabilitySubscription,
-    registerSubscription,
-    registerSubscriptionRaw,
-    unregisterCapabilitySubscription,
-    unregisterSubscription,
-} from './stream';
 import type { HistoryTicks } from './types/tick';
 import { todayStr } from './utils/date';
 
@@ -751,10 +752,11 @@ export function placeStockOrder(
     account?: Account,
     opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
 ) {
+    const selected = account ?? accountFor('S');
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: contractKey(contract),
-        stock_order: { ...order, account: account ?? accountFor('S') },
-    }, opts).then(ensureAccepted);
+        stock_order: { ...order, account: selected },
+    }, opts).then(ensureAccepted).then(trade => observeTradeResponse(trade, selected));
 }
 
 export function placeFuturesOrder(
@@ -763,10 +765,11 @@ export function placeFuturesOrder(
     account?: Account,
     opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
 ) {
+    const selected = account ?? accountFor('F');
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: orderableKey(contract),
-        futures_order: { ...order, account: account ?? accountFor('F') },
-    }, opts).then(ensureAccepted);
+        futures_order: { ...order, account: selected },
+    }, opts).then(ensureAccepted).then(trade => observeTradeResponse(trade, selected));
 }
 
 export function cancelOrder(
@@ -838,15 +841,15 @@ export function fetchPositions(
     );
 }
 
-export function fetchAccountBalance() {
+export function fetchAccountBalance(account?: AccountSelector) {
     return apiPost<AccountBalance>(
         '/api/v1/portfolio/account_balance',
-        accountBody('S'),
+        accountBody('S', account),
     );
 }
 
-export function fetchMargin() {
-    return apiPost<Margin>('/api/v1/portfolio/margin', accountBody('F'));
+export function fetchMargin(account?: AccountSelector) {
+    return apiPost<Margin>('/api/v1/portfolio/margin', accountBody('F', account));
 }
 
 export interface Settlement {
@@ -856,10 +859,10 @@ export interface Settlement {
     T: number;
 }
 
-export function fetchSettlements() {
+export function fetchSettlements(account?: AccountSelector) {
     return apiPost<Settlement[]>(
         '/api/v1/portfolio/settlements',
-        accountBody('S'),
+        accountBody('S', account),
     );
 }
 

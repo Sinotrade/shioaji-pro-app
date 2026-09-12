@@ -9,86 +9,79 @@ import GridLayout, {
 } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import * as styles from './App.css';
-import * as grid from './grid.css';
 import { BottomDock } from './components/bottom-dock';
 import { CandleChart } from './components/candle-chart';
-import { IntradayChart } from './components/intraday-chart';
-import { IntradayWallPanel } from './components/intraday-wall';
-import { CommandPalette } from './components/command-palette';
-import { DepthLadder } from './components/depth-ladder';
-import { EventToasts } from './components/event-toasts';
-import { OrderConfirmHost } from './components/order-confirm-dialog';
-import { FlashOrder } from './components/flash-order';
-import { HudHeader } from './components/hud-header';
-import { OptionChain } from './components/option-chain';
-import { PanelLibrary } from './components/panel-library';
-import * as libraryStyles from './components/panel-library.css';
-import {
-    broadcastSelectCode,
-    onBroadcastSelectCode,
-} from './lib/option-pick';
-import { OrderTicket } from './components/order-ticket';
 import { ChipsCard } from './components/chips-card';
 import { ComboListPanel } from './components/combo-list';
 import { ComboTicket } from './components/combo-ticket';
+import { CommandPalette } from './components/command-palette';
 import { DebugPanel } from './components/debug-panel';
-import { GridTicket } from './components/grid-ticket';
-import { NoticeCenter } from './components/notice-center';
-import { FeatureGate } from './components/feature-gate';
-import { OptPayoff } from './components/opt-payoff';
-import { PanelErrorBoundary } from './components/panel-error-boundary';
-import { SectorHeatmap } from './components/sector-heatmap';
-import { PnlPanel } from './components/pnl-panel';
-import { VolProfile } from './components/vol-profile';
-import { ReplayPanel } from './components/replay-panel';
+import { DepthLadder } from './components/depth-ladder';
 import { DepthMap } from './components/depth-map';
-import { PanelChrome } from './components/panel-chrome';
-import { QuoteBoard } from './components/quote-board';
-import { ScannerPanel } from './components/scanner-panel';
-import { TickTape } from './components/tick-tape';
-import { TrayPanel } from './components/tray-panel';
-import { Watchlist } from './components/watchlist';
-import { StockFuturesPanel } from './components/stock-futures-panel';
-import { WarrantPanel } from './components/warrant-panel';
+import { EventToasts } from './components/event-toasts';
+import { FeatureGate } from './components/feature-gate';
+import { FlashOrder } from './components/flash-order';
+import { GridTicket } from './components/grid-ticket';
+import { HudHeader } from './components/hud-header';
+import { IntradayChart } from './components/intraday-chart';
+import { IntradayWallPanel } from './components/intraday-wall';
 import {
     MarketPulsePanel,
     MarketSignalPanel,
 } from './components/market-pulse-panel';
+import { NoticeCenter } from './components/notice-center';
+import { OptPayoff } from './components/opt-payoff';
+import { OptionChain } from './components/option-chain';
+import { Orb } from './components/orb';
+import { OrderConfirmHost } from './components/order-confirm-dialog';
+import { OrderTicket } from './components/order-ticket';
+import { PanelChrome } from './components/panel-chrome';
+import { PanelErrorBoundary } from './components/panel-error-boundary';
+import { PanelLibrary } from './components/panel-library';
+import * as libraryStyles from './components/panel-library.css';
 import * as panel from './components/panel.css';
+import { PnlPanel } from './components/pnl-panel';
+import { QuoteBoard } from './components/quote-board';
+import { ReplayPanel } from './components/replay-panel';
+import { ScannerPanel } from './components/scanner-panel';
+import { SectorHeatmap } from './components/sector-heatmap';
+import { StockFuturesPanel } from './components/stock-futures-panel';
+import { TickTape } from './components/tick-tape';
+import { TrayPanel } from './components/tray-panel';
+import { VolProfile } from './components/vol-profile';
+import { WarrantPanel } from './components/warrant-panel';
+import { Watchlist } from './components/watchlist';
+import * as grid from './grid.css';
 import { useHotkeys } from './hooks/use-hotkeys';
-import { usePoll } from './hooks/use-poll';
 import { useWatchlist } from './hooks/use-watchlist';
 import { trackActivity } from './lib/activity';
 import { registerAgentAppCommandHost } from './lib/agent-app-command';
-import { initializeIndicatorPanels, IndicatorInstanceService } from './lib/indicator-instance-service';
-import { IndicatorInstanceContext } from './lib/indicator-instance-context';
-import { registerIndicatorCommandHost } from './lib/indicator-command';
-import { subscribeCustoms } from './lib/custom-indicators';
 import {
     isAgentHarnessEnabled,
     subscribeAgentHarnessEnabled,
 } from './lib/agent-harness-state';
-import { agentModule, backtestModule } from './lib/features';
 import {
     ensureContract,
     getCachedContract,
     useContract,
 } from './lib/contracts-cache';
-import { reportDailyPnl } from './lib/risk';
-import { isTauri, openPopout } from './lib/tauri';
+import { subscribeCustoms } from './lib/custom-indicators';
+import { agentModule, backtestModule } from './lib/features';
+import { registerIndicatorCommandHost } from './lib/indicator-command';
+import { IndicatorInstanceContext } from './lib/indicator-instance-context';
+import { IndicatorInstanceService, initializeIndicatorPanels } from './lib/indicator-instance-service';
 import {
-    fetchAccountBalance,
-    fetchMargin,
-    fetchPositions,
-    fetchSnapshots,
-    fetchTrades,
+    broadcastSelectCode,
+    onBroadcastSelectCode,
+} from './lib/option-pick';
+import { reportDailyPnl } from './lib/risk';
+import {
+    fetchSnapshots
 } from './lib/shioaji';
-import { onOrderEvent } from './lib/stream';
-import { ensureAccounts, getAccountState } from './lib/account-store';
+import { isTauri, openPopout } from './lib/tauri';
 import { notify } from './lib/trade';
+import { tradingActionObserved, useTradingState } from './lib/trading-state';
 import type { ContractInfo } from './lib/types/contract';
-import type { AccountedTrade, Trade } from './lib/types/order';
-import type { AccountedPosition, Position } from './lib/types/portfolio';
 import {
     BLOCK_META,
     DEFAULT_WORKSPACE,
@@ -103,12 +96,11 @@ import {
     toRenderGeom,
     type Block,
     type BlockType,
+    type Profile,
     type PulseSection,
     type PulseSectionWeights,
-    type Profile,
     type Workspace,
 } from './lib/workspace';
-import { Orb } from './components/orb';
 
 const POPOUT_TYPES: ReadonlySet<string> = new Set([
     'chart',
@@ -479,36 +471,9 @@ function PopoutView({
     useEffect(() => {
         if (code) ensureContract(code).catch(() => undefined);
     }, [code]);
-    // popouts can run 8+ at once (閃電全開) — longer intervals with a
-    // per-window jitter so they don't hammer the upstream accounting
-    // rate limit (25 req/5s) in lockstep
-    const [pollJitter] = useState(() => Math.floor(Math.random() * 6000));
-    const tradesPoll = usePoll<Trade[]>(
-        useCallback(async () => {
-            const [s, f] = await Promise.allSettled([
-                fetchTrades('S'),
-                fetchTrades('F'),
-            ]);
-            return [
-                ...(s.status === 'fulfilled' ? s.value : []),
-                ...(f.status === 'fulfilled' ? f.value : []),
-            ];
-        }, []),
-        12000 + pollJitter,
-    );
-    const popoutPositionsPoll = usePoll<Position[]>(
-        useCallback(async () => {
-            const [st, fu] = await Promise.allSettled([
-                fetchPositions('S'),
-                fetchPositions('F'),
-            ]);
-            return [
-                ...(st.status === 'fulfilled' ? st.value : []),
-                ...(fu.status === 'fulfilled' ? fu.value : []),
-            ];
-        }, []),
-        20000 + pollJitter,
-    );
+    const trading = useTradingState();
+    const tradesState = { data: trading.trades, refresh: tradingActionObserved };
+    const popoutPositionsState = { data: trading.positions, refresh: tradingActionObserved };
     const meta = BLOCK_META[type];
 
     let body: React.ReactNode = <BlockPlaceholder />;
@@ -544,8 +509,8 @@ function PopoutView({
                         <QuoteBoard contract={contract} />
                         <CandleChart
                             contract={contract}
-                            trades={tradesPoll.data ?? []}
-                            onOrdersChanged={tradesPoll.refresh}
+                            trades={tradesState.data ?? []}
+                            onOrdersChanged={tradesState.refresh}
                         />
                     </>
                 );
@@ -560,7 +525,7 @@ function PopoutView({
                 body = (
                     <OrderTicket
                         contract={contract}
-                        onPlaced={tradesPoll.refresh}
+                        onPlaced={tradesState.refresh}
                     />
                 );
                 break;
@@ -571,11 +536,11 @@ function PopoutView({
                 body = (
                     <FlashOrder
                         contract={contract}
-                        trades={tradesPoll.data ?? []}
-                        positions={popoutPositionsPoll.data ?? []}
+                        trades={tradesState.data ?? []}
+                        positions={popoutPositionsState.data ?? []}
                         onOrdersChanged={() => {
-                            tradesPoll.refresh();
-                            popoutPositionsPoll.refresh();
+                            tradesState.refresh();
+                            popoutPositionsState.refresh();
                         }}
                     />
                 );
@@ -614,6 +579,14 @@ function PopoutView({
 }
 
 export default function App() {
+    if (POPOUT_TYPE === 'traypanel') return <TrayPanel />;
+    if (POPOUT_TYPE && POPOUT_TYPES.has(POPOUT_TYPE)) {
+        return <PopoutView type={POPOUT_TYPE as BlockType} code={POPOUT_CODE} />;
+    }
+    return <MainApp />;
+}
+
+function MainApp() {
     const {
         items,
         loading,
@@ -687,144 +660,22 @@ export default function App() {
         }
     }, [cachedSelected, selected]);
 
-    // portfolio polling — one request per signed account, rows tagged with
-    // their source account so the dock can group/filter 分帳戶; falls back to
-    // the plain S/F pair until the account list has loaded
-    useEffect(ensureAccounts, []);
-    const positionsPoll = usePoll<AccountedPosition[]>(
-        useCallback(async () => {
-            // signed only — the store now keeps unsigned accounts for
-            // display, but they can't be queried for positions/orders
-            const tradable = getAccountState().accounts.filter(
-                (a) =>
-                    a.signed &&
-                    (a.account_type === 'S' || a.account_type === 'F'),
-            );
-            if (tradable.length > 0) {
-                const rs = await Promise.allSettled(
-                    tradable.map(async (a) => {
-                        const ps = await fetchPositions(
-                            a.account_type as 'S' | 'F',
-                            a,
-                        );
-                        return ps.map((p) => ({ ...p, account: a }));
-                    }),
-                );
-                return rs.flatMap((r) =>
-                    r.status === 'fulfilled' ? r.value : [],
-                );
-            }
-            const [st, fu] = await Promise.allSettled([
-                fetchPositions('S'),
-                fetchPositions('F'),
-            ]);
-            return [
-                ...(st.status === 'fulfilled' ? st.value : []),
-                ...(fu.status === 'fulfilled' ? fu.value : []),
-            ];
-        }, []),
-        10000,
-    );
-    // trades 比照 positions 按簽署帳戶 fan-out（issue #19）— 分倉或多帳戶
-    // 下單時，非選中帳戶的委託過去查不到；每列標記查詢來源帳戶，dock 的
-    // 帳戶範圍篩選比對用清單同格式的帳號，不再受 order.account 格式差異
-    // 影響。帳號清單載入前退回舊的 S/F 對。
-    const tradesPoll = usePoll<AccountedTrade[]>(
-        useCallback(async () => {
-            const tradable = getAccountState().accounts.filter(
-                (a) =>
-                    a.signed &&
-                    (a.account_type === 'S' || a.account_type === 'F'),
-            );
-            if (tradable.length > 0) {
-                const rs = await Promise.allSettled(
-                    tradable.map(async (a) => {
-                        const ts = await fetchTrades(
-                            a.account_type as 'S' | 'F',
-                            a,
-                        );
-                        return ts.map((t) => ({ ...t, account: a }));
-                    }),
-                );
-                if (rs.every((r) => r.status === 'rejected')) {
-                    // 全滅（rate limit/斷線）拋出 — usePoll 保留上一輪
-                    // 資料，不要把委託清單瞬間刷成「無委託」
-                    throw new Error('委託查詢失敗');
-                }
-                const all = rs.flatMap((r) =>
-                    r.status === 'fulfilled' ? r.value : [],
-                );
-                // server 的 list_trades 可能每次回整份快取 → 以委託 id
-                // 去重；重複時保留 order.account 與查詢帳戶一致的那筆
-                // （標籤才是真正的下單帳戶）。空 id 不合併、帳戶比對含
-                // broker_id（不同券商同帳號不可互撞）
-                const sameAcct = (t: AccountedTrade) =>
-                    t.order.account?.account_id === t.account?.account_id &&
-                    t.order.account?.broker_id === t.account?.broker_id;
-                const seen = new Map<string, AccountedTrade>();
-                const noId: AccountedTrade[] = [];
-                for (const t of all) {
-                    const key = t.order.id;
-                    if (!key) {
-                        noId.push(t);
-                        continue;
-                    }
-                    const prev = seen.get(key);
-                    if (!prev || (sameAcct(t) && !sameAcct(prev))) {
-                        seen.set(key, t);
-                    }
-                }
-                return [...seen.values(), ...noId];
-            }
-            const [s, f] = await Promise.allSettled([
-                fetchTrades('S'),
-                fetchTrades('F'),
-            ]);
-            return [
-                ...(s.status === 'fulfilled' ? s.value : []),
-                ...(f.status === 'fulfilled' ? f.value : []),
-            ];
-        }, []),
-        8000,
-    );
-    const balancePoll = usePoll(
-        useCallback(() => fetchAccountBalance(), []),
-        60000,
-    );
-    const marginPoll = usePoll(useCallback(() => fetchMargin(), []), 30000);
-
-    const refreshTrading = useCallback(() => {
-        tradesPoll.refresh();
-        positionsPoll.refresh();
-        balancePoll.refresh();
-        marginPoll.refresh();
-    }, [tradesPoll, positionsPoll, balancePoll, marginPoll]);
-    const refreshTradingRef = useRef(refreshTrading);
-    refreshTradingRef.current = refreshTrading;
-
-    // order events drive an immediate (debounced) refresh — fills and
-    // cancels reach every panel within ~0.5s instead of the next poll
-    useEffect(() => {
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        const off = onOrderEvent(() => {
-            if (timer) clearTimeout(timer);
-            timer = setTimeout(() => refreshTradingRef.current(), 500);
-        });
-        return () => {
-            off();
-            if (timer) clearTimeout(timer);
-        };
-    }, []);
+    const trading = useTradingState();
+    const positionsState = { data: trading.positions };
+    const tradesState = { data: trading.trades };
+    const balanceState = { data: trading.balance };
+    const marginState = { data: trading.margin };
+    const refreshTrading = tradingActionObserved;
 
     // feed risk engine: unrealized position P&L + futures settle P&L
     useEffect(() => {
-        const unrealized = (positionsPoll.data ?? []).reduce(
+        const unrealized = (positionsState.data ?? []).reduce(
             (sum, p) => sum + (p.pnl || 0),
             0,
         );
-        const settle = marginPoll.data?.future_settle_profitloss ?? 0;
+        const settle = marginState.data?.future_settle_profitloss ?? 0;
         reportDailyPnl(unrealized + settle);
-    }, [positionsPoll.data, marginPoll.data]);
+    }, [positionsState.data, marginState.data]);
 
     // select & link a symbol WITHOUT adding it to the watchlist
     const selectByCode = useCallback(
@@ -1256,14 +1107,6 @@ export default function App() {
 
     const booting = initialLoading;
 
-    if (POPOUT_TYPE === 'traypanel') {
-        return <TrayPanel />;
-    }
-    if (POPOUT_TYPE && POPOUT_TYPES.has(POPOUT_TYPE)) {
-        return (
-            <PopoutView type={POPOUT_TYPE as BlockType} code={POPOUT_CODE} />
-        );
-    }
 
     const watchlistProps = {
         items,
@@ -1281,10 +1124,10 @@ export default function App() {
         loading,
     };
     const dockProps = {
-        positions: positionsPoll.data ?? [],
-        trades: tradesPoll.data ?? [],
-        balance: balancePoll.data,
-        margin: marginPoll.data,
+        positions: positionsState.data ?? [],
+        trades: tradesState.data ?? [],
+        balance: balanceState.data,
+        margin: marginState.data,
         onTradesChanged: refreshTrading,
         onSelectCode: selectByCode,
     };
@@ -1293,7 +1136,7 @@ export default function App() {
         <div className={styles.shell}>
             <IndicatorInstanceContext.Provider value={indicatorService}>
             <HudHeader
-                accBalance={balancePoll.data?.acc_balance}
+                accBalance={balanceState.data?.acc_balance}
                 onOpenPanelLibrary={() => setPanelLibraryOpen(true)}
                 profiles={profiles}
                 currentWorkspace={workspace}
@@ -1307,7 +1150,7 @@ export default function App() {
                     .filter((i) => i.contract.security_type !== 'IND')
                     .map((i) => i.contract.code)}
             />
-            <EventToasts onEvent={refreshTrading} />
+<EventToasts />
             <OrderConfirmHost />
             <CommandPalette
                 open={paletteOpen}

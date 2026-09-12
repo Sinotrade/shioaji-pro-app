@@ -15,6 +15,7 @@ import {
     usePrivacyMode,
     usePrivacyMoney,
 } from '../lib/privacy';
+import { refreshTradingState, useTradingState } from '../lib/trading-state';
 import type { Trade } from '../lib/types/order';
 import type {
     AccountBalance,
@@ -23,8 +24,6 @@ import type {
 } from '../lib/types/portfolio';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
-import * as panel from './panel.css';
-import * as styles from './bottom-dock.css';
 import { AccountPane } from './bottom-dock-account';
 import { OrdersPane } from './bottom-dock-orders';
 import { PositionsPane } from './bottom-dock-positions';
@@ -41,6 +40,8 @@ import {
     type MarketFilter,
     type ViewMode,
 } from './bottom-dock-shared';
+import * as styles from './bottom-dock.css';
+import * as panel from './panel.css';
 
 type TabKey = 'positions' | 'orders' | 'account';
 
@@ -59,6 +60,7 @@ export function BottomDock({
     onTradesChanged: () => void;
     onSelectCode: (code: string) => void;
 }) {
+    const portfolio = useTradingState();
     const [tab, setTab] = useState<TabKey>('positions');
     const { accounts, selectedStock, selectedFutures } = useAccounts();
     useEffect(ensureAccounts, []);
@@ -167,6 +169,9 @@ export function BottomDock({
     return (
         <div className={styles.dock}>
             <div className={styles.tabBar}>
+                <button className={styles.tab['off']} disabled={portfolio.loading} onClick={() => void refreshTradingState()}>
+                    {portfolio.loading ? '更新中…' : '向券商重新確認'}
+                </button>
                 {tabs.map((t) => (
                     <button
                         key={t.key}
@@ -176,6 +181,10 @@ export function BottomDock({
                         {t.label}
                     </button>
                 ))}
+                <span style={{ fontSize: 11, whiteSpace: 'nowrap' }} title={portfolio.error ?? '持倉依成交與行情在本機估算；餘額及保證金為上次查詢值'}>
+                    {portfolio.needsReconcile ? '待對帳' : '即時估算'}
+                    {portfolio.updatedAt ? ` · 查詢 ${new Date(portfolio.updatedAt).toLocaleTimeString()}` : ' · 尚未查詢'}
+                </span>
                 <span className={styles.tabSpacer} />
                 <select
                     className={styles.accountSelect}
@@ -302,6 +311,7 @@ export function BottomDock({
                     </span>
                 )}
             </div>
+            {portfolio.error && <div role="status" style={{ padding: '4px 10px', fontSize: 12 }}>{portfolio.error}</div>}
             {tab === 'positions' && (
                 <PositionsPane
                     positions={positions}

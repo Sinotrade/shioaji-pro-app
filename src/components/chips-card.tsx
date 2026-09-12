@@ -2,8 +2,8 @@
 // sources, regulatory punish flag (stocks only)
 
 import { useCallback } from 'react';
-import { usePoll } from '../hooks/use-poll';
-import { apiPost, apiGet } from '../lib/api';
+import { useQuery } from '../hooks/use-query';
+import { apiGet, apiPost } from '../lib/api';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtInt } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
@@ -28,7 +28,8 @@ interface ShortSource {
 interface ChipsData {
     credit?: CreditEnquire;
     shortSource?: ShortSource;
-    punished: boolean;
+    punished: boolean | null;
+    errors: string[];
 }
 
 async function fetchChips(contract: ContractInfo): Promise<ChipsData> {
@@ -47,20 +48,20 @@ async function fetchChips(contract: ContractInfo): Promise<ChipsData> {
         apiGet<{ code: string[] }>('/api/v1/data/regulatory_punish'),
     ]);
     return {
+        errors: [credit.status === 'rejected' ? '融資券查詢失敗' : '', short.status === 'rejected' ? '券源查詢失敗' : '', punish.status === 'rejected' ? '處置查詢失敗' : ''].filter(Boolean),
         credit:
             credit.status === 'fulfilled' ? credit.value[0] : undefined,
         shortSource:
             short.status === 'fulfilled' ? short.value[0] : undefined,
         punished:
-            punish.status === 'fulfilled' &&
-            punish.value.code.includes(contract.code),
+            punish.status === 'fulfilled' ? punish.value.code.includes(contract.code) : null,
     };
 }
 
 export function ChipsCard({ contract }: { contract: ContractInfo }) {
-    const { data } = usePoll<ChipsData>(
+    const { data, error, loading, refresh } = useQuery<ChipsData>(
         useCallback(() => fetchChips(contract), [contract]),
-        60000,
+        `chips:${contract.code}`, contract.security_type === 'STK',
     );
 
     if (contract.security_type !== 'STK') {
@@ -68,15 +69,14 @@ export function ChipsCard({ contract }: { contract: ContractInfo }) {
             <div className={dock.emptyState}>籌碼資訊僅支援股票商品</div>
         );
     }
-    if (!data) {
-        return <div className={dock.emptyState}>載入籌碼資訊…</div>;
-    }
+    const control = <><button className={panel.btn} disabled={loading} onClick={() => void refresh()}>更新籌碼</button>{(error || data?.errors.length) ? <span role="status">{error || data?.errors.join("；")}</span> : null}</>;
+    if (!data) return <div className={dock.emptyState}>{control}{loading ? '載入籌碼資訊…' : '尚無資料'}</div>;
 
     const items: { label: string; value: string; warn?: boolean }[] = [
         {
             label: '處置/警示',
-            value: data.punished ? '⚠ 處置股' : '正常',
-            warn: data.punished,
+            value: data.punished === null ? '未知（查詢失敗）' : data.punished ? '⚠ 處置股' : '正常',
+            warn: data.punished === true,
         },
         {
             label: '當沖資格',
@@ -119,7 +119,7 @@ export function ChipsCard({ contract }: { contract: ContractInfo }) {
     }
 
     return (
-        <div className={panel.panelBody}>
+        <div className={panel.panelBody}>{control}
             <div className={dock.accountGrid}>
                 {items.map((it) => (
                     <div key={it.label} className={dock.statCard}>
