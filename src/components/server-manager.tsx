@@ -91,6 +91,7 @@ export function ServerManager({
     const [confirmLogout, setConfirmLogout] = useState(false);
     const logoutInFlight = useRef(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const settingsButton = useRef<HTMLButtonElement>(null);
     const [settingsLoaded, setSettingsLoaded] = useState(false);
     const [settingsLoadError, setSettingsLoadError] = useState('');
     const [savedForRestart, setSavedForRestart] = useState(false);
@@ -936,6 +937,7 @@ export function ServerManager({
                         <button
                             className={styles.updateBtn}
                             disabled={!settingsLoaded || busy}
+                            ref={settingsButton}
                             onClick={() => { setReadyLines([]); setSettingsOpen(true); }}
                         >
                             <Settings size={13} />
@@ -944,7 +946,12 @@ export function ServerManager({
                     </div>
                     {settingsOpen && <ServerSettingsDialog
                         settings={settings} status={status} busy={busy || httpsBusy}
-                        onSave={saveConnectionSettings} onClose={() => setSettingsOpen(false)}
+                        onSave={saveConnectionSettings} onClose={() => {
+                            setSettingsOpen(false);
+                            // macOS does not necessarily focus a button on click.
+                            // Restore explicitly after the popover becomes visible.
+                            requestAnimationFrame(() => settingsButton.current?.focus());
+                        }}
                     >
                         <details className={dialogStyles.details}>
                             <summary>目前連線診斷</summary>
