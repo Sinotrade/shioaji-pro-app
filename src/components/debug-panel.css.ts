@@ -6,11 +6,14 @@ import { vars } from '../theme.css';
 export const wrap = style({
     display: 'flex',
     flexDirection: 'column',
-    gap: vars.space.xs,
-    padding: vars.space.sm,
+    gap: 14,
+    padding: 14,
     overflowY: 'auto',
     minHeight: 0,
 });
+
+export const connection = style({ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: '0.7rem', color: vars.color.mutedForeground });
+export const details = style({ borderTop: `1px solid ${vars.color.border}`, paddingTop: 10, fontSize: '0.75rem', cursor: 'pointer' });
 
 export const grid = style({
     display: 'grid',
@@ -75,14 +78,4 @@ export const eventDump = style({
     padding: `3px ${vars.space.sm}`,
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
-});
-
-export const monitorButton = style({
-    color: vars.color.foreground, background: vars.color.inset,
-    border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.sm,
-    padding: vars.space.sm, cursor: 'pointer', textAlign: 'left',
-});
-export const monitorFrame = style({
-    width: '100%', minHeight: 640, flexShrink: 0,
-    border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.sm,
 });

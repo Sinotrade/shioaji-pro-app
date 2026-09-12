@@ -115,6 +115,9 @@ export function DebugPanel() {
 
     return (
         <div className={styles.wrap}>
+            <div className={styles.connection}><strong>SSE {STATUS_LABEL[stream]}</strong><span>心跳 {hbAge === null ? '未知' : `${hbAge}s 前`} · 接收 {rate} 筆/秒</span></div>
+            <ServerMonitor />
+            <details className={styles.details}><summary>App 與連線診斷</summary>
             <div className={styles.grid}>
                 {rows.map((r) => (
                     <div key={r.label} className={styles.row}>
@@ -127,8 +130,8 @@ export function DebugPanel() {
                     </div>
                 ))}
             </div>
-            <ServerMonitor />
-            <span className={styles.sectionTitle}>最近 order_event</span>
+            </details>
+            <details className={styles.details}><summary>最近委託事件 · {events.length} 筆</summary>
             {events.length === 0 && (
                 <span className={dockStyles.emptyState}>尚無事件</span>
             )}
@@ -138,6 +141,7 @@ export function DebugPanel() {
                     {JSON.stringify(e.data.raw ?? e.data).slice(0, 220)}
                 </pre>
             ))}
+            </details>
         </div>
     );
 }

@@ -90,8 +90,8 @@ async function throwApiError(res: Response): Promise<never> {
     );
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
-    const res = await doFetch(base() + path);
+export async function apiGet<T>(path: string, opts?: { signal?: AbortSignal; headers?: HeadersInit }): Promise<T> {
+    const res = await doFetch(base() + path, opts);
     if (!res.ok) await throwApiError(res);
     return res.json() as Promise<T>;
 }

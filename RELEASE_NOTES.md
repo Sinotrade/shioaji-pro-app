@@ -4,6 +4,7 @@
 
 - 內建 sidecar 升級至 1.7.5，採用新版原生一次性 pipe bootstrap，Agent 簽章祕密不再透過 sidecar 環境變數傳遞。
 - Debug 面板新增 API 已用／剩餘流量、額度與連線數；無法取得資料時明確顯示未知，不以零取代。
+- Debug 重排為流量額度、短窗查詢完成量、端點異常與訂閱診斷；接近流量上限有提醒，缺口／停錄／限流原因未知分開呈現，可暫停監控。
 - 可展開內建 Server Dashboard 查看 Overview、Activity 與 Subscriptions；收合或隱藏頁面會卸載 Dashboard，避免持續收集。串流未收集、暫停與歷史缺口不代表零流量。
 - 同步上游權證訂閱及空 tick 處理修正。
 
