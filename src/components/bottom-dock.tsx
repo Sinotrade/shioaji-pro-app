@@ -4,6 +4,7 @@
 // 帳務/交割 tab 在 bottom-dock-account.tsx
 
 import { useEffect, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import {
     ensureAccounts,
     selectAccount,
@@ -169,9 +170,6 @@ export function BottomDock({
     return (
         <div className={styles.dock}>
             <div className={styles.tabBar}>
-                <button className={styles.tab['off']} disabled={portfolio.loading} onClick={() => void refreshTradingState()}>
-                    {portfolio.loading ? '更新中…' : '向券商重新確認'}
-                </button>
                 {tabs.map((t) => (
                     <button
                         key={t.key}
@@ -261,6 +259,17 @@ export function BottomDock({
                         </button>
                     ))}
                 </span>
+                <button
+                    type='button'
+                    className={styles.refreshButton}
+                    aria-label='更新帳戶資料'
+                    aria-busy={portfolio.loading}
+                    title={portfolio.loading ? '更新中…' : '更新持倉、委託、餘額與保證金'}
+                    disabled={portfolio.loading}
+                    onClick={() => void refreshTradingState()}
+                >
+                    <RefreshCw size={14} aria-hidden='true' className={portfolio.loading ? styles.refreshSpinning : undefined} />
+                </button>
             </div>
             <div className={styles.summaryRow}>
                 <span className={styles.sumItem}>
