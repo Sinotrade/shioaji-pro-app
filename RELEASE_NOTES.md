@@ -31,8 +31,8 @@
 
 ### 候選版驗證狀態
 
-- 已完成 macOS arm64 真正 1.7.5 pipe bootstrap 與唯讀 monitor API smoke；UI QA 使用隔離 fixture，未送出真實委託。
-- **這份內容先備妥供確認，尚未發布。** 整合後原生 provider 指標操作、production provider 流程、四平台實機 approval／Dashboard 與乾淨機器驗收仍須完成，不能沿用 v0.1.46 的 QA 豁免。
+- 已完成 macOS arm64 真正 1.7.5 pipe bootstrap、唯讀 monitor API smoke，以及原生 Codex 的圖表指標掛載／調整／內容確認移除；另有隔離 fixture 測試，未送出真實委託。
+- **這份內容先備妥供確認，尚未發布。** production provider 交易授權流程、四平台實機 approval／Dashboard 與乾淨機器驗收仍須完成，不能沿用 v0.1.46 的 QA 豁免。
 - 完整測試、review 與 CI 結果記於 paired PR；尚未驗證範圍見 docs/agent-harness-production-qa.md。
 
 ---

@@ -62,3 +62,41 @@ Native mutation schemas require idempotency keys; replay is payload-checked.
   native-provider evidence/limitations, required public CI, Linux/Windows
   composite CI and the private `desktop-ci` status. No merge or release is
   authorized by this implementation.
+
+## v0.1.47 integration QA — 2026-09-12
+
+Public #77 and private #9 are included in candidate #81/#10 with merge
+history preserved. Integration exposed and fixed two native-path regressions:
+
+- The Harness's internal `_native_call_id` reached the strict indicator host;
+  private now removes that transport metadata before chart dispatch, without
+  relaxing public argument validation or trading call identity.
+- Under `ask`, tool permission and content consent reused one approval ID.
+  The UI remembered the first decision and displayed the second as approved
+  while its waiter remained blocked. Content consent now has a distinct ID.
+
+`src/lib/indicator-native-integration.test.ts` exercises the actual private
+bridge, tools, event transport, public host and service under `auto_safe` and
+`ask`, including replay, revision updates, focus changes and unique approval
+IDs. It runs with the desktop overlay in Linux/Windows composite CI; the
+public-only checkout explicitly skips this cross-repo test. The event target
+and programmatic approval driver are test substitutes, not native QA.
+
+Native QA also used the existing macOS 26.6.2 arm64 dev App, ChatGPT-bundled
+Codex CLI 0.153.4, GPT-5.6-Sol / Medium, public `0f9539e` plus the approval-ID
+fix from private `efe6390`. With Agent permission `ask` and trading
+`readonly`, Codex created an additional IX0001 chart, mounted SMA(5), read the
+instance/revision, changed it to SMA(10), hid it, moved it to index 0 and read
+back the result. The chart controls displayed MA(10) and the show action.
+The first removal reproduced the approval-ID bug and was stopped; after the
+fix, a fresh read and new idempotency key produced separate actionable tool
+and content confirmations, and the exact test instance was removed.
+
+The existing sidecar was in production because the maintainer had selected
+it; this QA performed local chart operations only, without account queries or
+order mutations. It does not certify production trading approval, the full
+Codex/Claude/Pi matrix, clean-machine onboarding or other desktop platforms.
+Codex did use read-only shell commands to read its installed skill despite the
+QA prompt asking for no shell; chart mutations themselves used native App
+tools. This is not evidence of shell isolation. Prior numerical fixtures also
+do not resolve #35 without its original strategy and dataset.

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerIndicatorCommandHost } from './indicator-command';
 import { IndicatorInstanceService, initializeIndicatorPanels } from './indicator-instance-service';
 
@@ -14,7 +14,7 @@ let cleanup = () => {};
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe.skipIf(!hasOverlay)('native bridge to real indicator host', () => {
-    beforeAll(() => {
+    beforeEach(() => {
         const storage = new Map<string, string>();
         vi.stubGlobal('localStorage', {
             getItem: (key: string) => storage.get(key) ?? null,
@@ -23,7 +23,7 @@ describe.skipIf(!hasOverlay)('native bridge to real indicator host', () => {
         });
     });
 
-    it('lists, mounts, updates and confirms removal without leaking native call metadata', async () => {
+    it.each(['auto_safe', 'ask'])('lists, mounts, updates and confirms removal with %s permission', async permission => {
         const target = new EventTarget();
         vi.stubGlobal('window', target);
         const { NativeAppToolBridge } = await import(bridgePath);
@@ -41,13 +41,13 @@ describe.skipIf(!hasOverlay)('native bridge to real indicator host', () => {
         cleanup = registerIndicatorCommandHost(target, service);
         const approvals: string[] = [];
         const bridge = new NativeAppToolBridge({
-            providerLabel: 'integration', policy: 'readonly', permission: 'auto_safe',
+            providerLabel: 'integration', policy: 'readonly', permission,
             signal: new AbortController().signal, runtimeScope: () => 'integration-runtime',
-            emit: (blocks: Array<{ type: string; id?: string }>) => {
+            emit: (blocks: Array<{ type: string; id?: string; title?: string }>) => {
                 for (const block of blocks) if (block.type === 'approval' && block.id) {
                     approvals.push(block.id);
                     // Approval changes focus, proving removal remains bound to A.
-                    service.focus('chart-b');
+                    if (block.title === '移除圖表指標') service.focus('chart-b');
                     setTimeout(() => resolveApproval(block.id, true), 0);
                 }
             },
@@ -71,7 +71,10 @@ describe.skipIf(!hasOverlay)('native bridge to real indicator host', () => {
             idempotency_key: 'remove-one',
         }, 'remove');
         expect(removed.success).toBe(true);
-        expect(approvals).toHaveLength(1);
+        expect(approvals).toHaveLength(permission === 'ask' ? 5 : 1);
+        // The UI retains each decision by ID. Reusing the permission ID for
+        // content confirmation would show an already-approved, blocked card.
+        expect(new Set(approvals).size).toBe(approvals.length);
         expect(service.snapshot('chart-a').instances).toEqual([]);
         expect(service.snapshot('chart-b')).toEqual({ revision: 'b0', instances: [] });
     });
