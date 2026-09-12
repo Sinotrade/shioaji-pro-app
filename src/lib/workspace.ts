@@ -305,7 +305,7 @@ export const BLOCK_META: Record<
     },
     debug: {
         label: '診斷 Debug',
-        description: '連線與訂閱狀態診斷',
+        description: 'API 用量、查詢壓力、異常與連線診斷',
         category: 'tools',
         pinnable: false,
         singleton: true,

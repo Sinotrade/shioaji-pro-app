@@ -86,12 +86,12 @@ export function DebugPanel() {
             warn: stream !== 'live',
         },
         {
-            label: '心跳',
+            label: '心跳（約 30s 一次）',
             value: hbAge === null ? '—' : `${hbAge}s 前`,
-            warn: hbAge !== null && hbAge > 15,
+            warn: hbAge !== null && hbAge > 60,
         },
-        { label: '行情速率', value: `${rate} 筆/秒` },
-        { label: '訂閱數', value: String(getSubscriptionCount()) },
+        { label: 'App 成交 Tick 更新', value: `${rate} 筆/秒（不含 Quote／五檔）` },
+        { label: 'App 訂閱登記', value: String(getSubscriptionCount()) },
         { label: 'API Base', value: getApiBase() || '(同源)' },
         {
             label: '伺服器版本',
@@ -115,7 +115,7 @@ export function DebugPanel() {
 
     return (
         <div className={styles.wrap}>
-            <div className={styles.connection}><strong>SSE {STATUS_LABEL[stream]}</strong><span>心跳 {hbAge === null ? '未知' : `${hbAge}s 前`} · 接收 {rate} 筆/秒</span></div>
+            <div className={styles.connection}><strong>SSE {STATUS_LABEL[stream]}</strong><span>心跳 {hbAge === null ? '未知' : `${hbAge}s 前`}（約 30s 一次）· 成交更新 {rate} 筆/秒</span></div>
             <ServerMonitor />
             <details className={styles.details}><summary>App 與連線診斷</summary>
             <div className={styles.grid}>
