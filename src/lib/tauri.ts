@@ -903,18 +903,38 @@ export async function serverStart(opts: {
     };
 }
 
-// Stop the running server. Our own spawn is killed by pid/path proof; an
-// EXTERNAL server (the user's own CLI) is only stopped when the call carries
-// explicit user intent (`allowExternal` — the 停止/重啟 buttons), via the
-// CLI's own `server stop`. Automatic flows (boot restart on mode mismatch)
-// must never take the user's server down behind their back.
+// Explicit user server changes also end idle provider processes. A completed
+// conversation can still own a running native runtime and trading authority.
+// Native stop drains pending effects, revokes grants and emits runtime_stopped.
+export async function stopAgentsForServerChange(): Promise<void> {
+    if (!isTauri) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    type Runtime = { runtimeId: string; status: string };
+    const runtimes = await invoke<Runtime[]>('agent_runtime_list');
+    for (const runtime of runtimes) {
+        if (runtime.status === 'running') {
+            await invoke<boolean>('agent_runtime_stop', { runtimeId: runtime.runtimeId });
+        }
+    }
+    const remaining = await invoke<Runtime[]>('agent_runtime_list');
+    if (remaining.some(runtime => runtime.status === 'running')) {
+        throw new Error('Agent 尚未停止，伺服器未變更。請停止正在執行的 Agent 後再試。');
+    }
+}
+
+// Stop only an App-owned server through the native ownership/lifecycle guard.
+// Never retry a native refusal through the CLI: that bypasses the lifecycle
+// lock and could stop an external server after a new Agent has started.
 export async function serverStop(opts?: {
-    allowExternal?: boolean;
+    stopAgents?: boolean; // explicit UI action only; automatic recovery must not stop agents
 }): Promise<SidecarResult> {
     if (!isTauri) return { ok: false, output: '' };
+    if (opts?.stopAgents) {
+        try { await stopAgentsForServerChange(); }
+        catch (e) { return { ok: false, output: `無法停止 Agent：${String(e)}` }; }
+    }
     const st = await serverStatus();
     let killNote = '';
-    let killErr = '';
     const pid = getServerPid();
     // resolve the victim by port (survives lost pid records from older app
     // versions); the remembered pid is only a fallback for a server that is
@@ -931,17 +951,9 @@ export async function serverStop(opts?: {
             setSpawnPort(null);
             if (killed) killNote = `已終止伺服器（:${port}）`;
         } catch (e) {
-            // ownership refused (external shioaji / foreign service) — keep
-            // the explanation; the pid record stays in case it referred to a
-            // not-yet-listening child
-            killErr = String(e);
+            // Preserve ownership records and the native explanation on refusal.
+            return { ok: false, output: String(e) };
         }
-    }
-    // the CLI can stop servers it registered itself (its daemon file tracks
-    // the last `server start`, including external foreground ones on ≥1.5.5)
-    // — explicit user intent only
-    if (opts?.allowExternal) {
-        await sidecar(['server', 'stop']);
     }
     if (st?.running && st.port) {
         const deadline = Date.now() + 5000;
@@ -958,8 +970,7 @@ export async function serverStop(opts?: {
             ok: false,
             output: [
                 killNote,
-                killErr,
-                `:${st.port} 上的伺服器仍在運行${opts?.allowExternal ? '，請手動停止（終端機 Ctrl+C）' : ''}`,
+                `:${st.port} 上的伺服器仍在運行`,
             ]
                 .filter(Boolean)
                 .join('\n'),
