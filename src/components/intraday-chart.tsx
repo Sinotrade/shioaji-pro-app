@@ -1,4 +1,4 @@
-import { fetchChartHistory } from '../lib/chart-history';
+import { fetchChartHistory, nextChartHistoryRevision } from '../lib/chart-history';
 // src/components/intraday-chart.tsx — 當日走勢圖 (intraday time-price
 // chart): baseline line vs 昨收參考價 with red/green fills, VWAP-style
 // average line, volume strip, fixed full-session time axis. History from
@@ -998,7 +998,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         const throttledReload = () => {
             if (Date.now() - lastReloadRef.current > 30_000) {
                 lastReloadRef.current = Date.now();
-                setReloadSeq((v) => v + 1);
+                setReloadSeq(nextChartHistoryRevision());
             }
         };
         // 收盤 grace 之外的 tick：真的換時段（夜→日、日→夜、隔日開盤）
@@ -1203,7 +1203,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
 
     return (
         <div className={styles.wrap}>
-            <button className={panel.btn} disabled={loading} onClick={() => setReloadSeq(v => v + 1)}>更新歷史</button>
+            <button className={panel.btn} disabled={loading} onClick={() => setReloadSeq(nextChartHistoryRevision())}>更新歷史</button>
             <div className={styles.legend}>
                 <span className={styles.stats}>
                 {(sessionLabel || staleDate) && (

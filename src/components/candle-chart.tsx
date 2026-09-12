@@ -1,4 +1,4 @@
-import { fetchChartHistory } from '../lib/chart-history';
+import { fetchChartHistory, nextChartHistoryRevision } from '../lib/chart-history';
 // src/components/candle-chart.tsx — K-bar candlestick + volume chart
 // (lightweight-charts v5), live-updated from the SSE tick stream.
 
@@ -661,7 +661,7 @@ export function CandleChart({
             Date.now() - gapReloadAtRef.current > 120_000
         ) {
             gapReloadAtRef.current = Date.now();
-            setHistorySeq((v) => v + 1);
+            setHistorySeq(nextChartHistoryRevision());
         }
         if (!bar || bucket > bar.time) {
             bar = {
@@ -1476,7 +1476,7 @@ export function CandleChart({
             onPointerDownCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}
             onFocusCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}>
             <div className={styles.toolbar}>
-                <button className={panel.btn} disabled={loading} onClick={() => setHistorySeq(v => v + 1)}>更新歷史</button>
+                <button className={panel.btn} disabled={loading} onClick={() => setHistorySeq(nextChartHistoryRevision())}>更新歷史</button>
                 {TIMEFRAMES.map((t, i) => (
                     <button
                         key={t.label}

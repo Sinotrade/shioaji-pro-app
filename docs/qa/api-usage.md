@@ -31,9 +31,9 @@
 
 - 現場 monitoring 唯讀樣本與限制詳見 ADR0002；未觀測到接近每日 bytes 額度，未證明 #57 根因。
 - 獨立 review 和 QA 已覆蓋 order/position projection、query single-flight、失敗保留、snapshot/event race、舊事件、overflow、斷線，以及行情與history scope。以合成 wire fixtures/mock 驗證，不宣稱實際 broker 回報重播或真實下單。
-- 本機 `pnpm build`（含 `tsc -b`）與 `pnpm test` 通過：37 個檔案通過、1 個跳過；284 tests 通過、2 個跳過。既有 build chunk size / ineffective dynamic import 警告仍存在。
+- 本機 `pnpm build`（含 `tsc -b`）與 `pnpm test` 通過：37 個檔案通過、1 個跳過；285 tests 通過、2 個跳過。既有 build chunk size / ineffective dynamic import 警告仍存在。
 - 隔離 browser QA：Chromium、1360×850、localhost:5191，所有 API/SSE 使用 fixture，代理指向未使用的本機 port。61 秒閒置只初始化 positions/trades 各一次；tick 改變現價與損益不查帳；新增 flash popout 不重查帳；手動 503 保留數據並顯示待對帳。650×850 會被既有桌面 grid 水平裁切，未宣稱窄畫面通過。
 - 1.7.5 schema fixture 擷取自現場 `/openapi.json`，只保存 callback schema，沒有帳號或委託資料。測試的回報內容為依 schema 製作的合成案例；這不等於 DEV.md 所要求的實際 broker wire 回報驗收，盤中去識別回報重播仍待補。
-- 本機疊入 pinned private commit 後，production build 通過、64 個測試檔／547 tests 通過；官方 plugin contract tests 3/3 通過。未啟動 native runtime。
+- 本機疊入 pinned private commit 後，production build 通過、64 個測試檔／548 tests 通過；官方 plugin contract tests 3/3 通過。未啟動 native runtime。
 - 公開 CI 與 Linux/Windows 合成檢查結果記錄於 PR 最終 head；尚未成功的檢查不得當作完成。
 - 原生登入、乾淨機器、SDK 與 App 長時間共存的 #57 情境及正式盤中 fill/reconnect 邊界尚未驗收。本次不使用真實下單作測試，無 tag／release。

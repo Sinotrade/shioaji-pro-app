@@ -13,6 +13,17 @@ describe('chart history request sharing', () => {
         await fetchChartHistory({ ...contract }, '2026-09-01', '2026-09-12');
         expect(mocks.fetch).toHaveBeenCalledOnce();
     });
+    it('gives separate panels fresh revisions instead of reusing local counter 1', async () => {
+        const { fetchChartHistory, nextChartHistoryRevision } = await import('./chart-history');
+        const first = nextChartHistoryRevision();
+        await fetchChartHistory(contract, '2026-09-01', '2026-09-12', { revision: first });
+        const second = nextChartHistoryRevision();
+        await fetchChartHistory(contract, '2026-09-01', '2026-09-12', { revision: second });
+        expect(first).not.toBe(second);
+        expect(mocks.fetch).toHaveBeenCalledTimes(2);
+        await fetchChartHistory(contract, '2026-09-01', '2026-09-12', { revision: second });
+        expect(mocks.fetch).toHaveBeenCalledTimes(2);
+    });
     it('caches failures but allows an explicit manual revision, date or server change', async () => {
         const { fetchChartHistory } = await import('./chart-history');
         mocks.fetch.mockRejectedValueOnce(new Error('offline'));

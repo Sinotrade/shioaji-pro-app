@@ -3,6 +3,11 @@ import { fetchKbars } from './shioaji';
 import type { ContractBase } from './types/contract';
 import type { KBars } from './types/market';
 
+let revision = 0;
+// Shared across mounted charts: a manual refresh must not reuse another
+// panel's earlier local counter value and return its old cached history.
+export const nextChartHistoryRevision = () => ++revision;
+
 const requests = new Map<string, Promise<KBars>>();
 /** Presentation rebuilds reuse history, including failures. A manual revision
  * or a new date range explicitly permits another bounded fetchKbars attempt. */
