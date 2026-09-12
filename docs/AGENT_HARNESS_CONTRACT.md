@@ -61,11 +61,17 @@ contract.
 
 ## Trading lifecycle
 
-Every mutation uses a client operation ID and exact request digest. Phase 1
-native Agent runtimes are simulation-only; startup against a production server
-fails before the provider process is spawned. The independent production
-exact-payload confirmation contract remains staged but does not grant production
-authority until the sidecar supports one-shot secret bootstrap. An interrupted
+Every mutation uses a client operation ID and exact request digest. Production
+native runtimes require an App-owned sidecar reporting `bootstrap=one_shot_ipc`.
+The host retains the exact serialized body. Confirm mode uses the independent
+`agent-approval` window for each production mutation. Explicit Auto selection
+requests a native session grant on its first production mutation; that window
+authorizes the displayed mutation and subsequent risk-checked place/cancel calls
+for the same runtime, generation and account. The grant never crosses into the
+provider or WebView. Production proposals expire after 15 seconds. Native
+snapshot timestamp and price checks reject stale or changed quotes before
+dispatch; cancellation rechecks broker status and remaining quantity.
+Missing or legacy bootstrap fails closed. An interrupted
 or timed-out mutation enters `unknown_outcome`; it may only be reconciled by its
 operation ID and must never be submitted again automatically.
 
@@ -78,8 +84,11 @@ is stable; a later broker-state observation uses a new attempt key and may move
 the original mutation to a terminal reconciled state. Payload-shaped matches
 remain unresolved and require manual verification.
 
-Controlled auto is available only in simulation and only for the current App
-session. Risk rules still apply and may reject or require confirmation.
+Controlled auto is available in simulation and in production after the user
+grants the native scope above. It is never restored from persisted settings.
+Account/environment changes, renderer reload and runtime stop revoke authority.
+Risk rules still apply and may reject or require confirmation. Raw CLI trading
+remains unavailable in production; semantic App Tools are the execution path.
 
 ## Restart policy
 

@@ -147,6 +147,8 @@ export async function placeQuickOrder(
         account?: Account;
         // 'auto' = 系統觸發（停損/停利等），永不彈手動確認
         source?: 'manual' | 'auto' | 'agent';
+        agentCallId?: string;
+        agentAuto?: boolean;
     },
 ): Promise<Trade> {
     assertTradingLive();
@@ -180,6 +182,9 @@ export async function placeQuickOrder(
         opts?.orderLot,
         opts?.source === 'agent',
         opts?.account,
+        opts?.agentCallId
+            ? { agentCallId: opts.agentCallId, agentAuto: opts.agentAuto }
+            : undefined,
     );
 }
 
@@ -192,6 +197,7 @@ async function sendOrder(
     orderLot?: StockOrderLot,
     agentInitiated = false,
     account?: Account,
+    agentContext?: { agentCallId?: string; agentAuto?: boolean },
 ): Promise<Trade> {
     if (contract.security_type === 'IND') {
         throw new Error('指數商品僅提供行情，不可下單');
@@ -204,7 +210,7 @@ async function sendOrder(
               price_type: market ? 'MKT' : 'LMT',
               order_type: market ? 'IOC' : 'ROD',
               octype: 'Auto',
-          }, account, { agentInitiated })
+          }, account, { agentInitiated, ...agentContext })
         : await placeStockOrder(contract, {
               action,
               price: price ?? 0,
@@ -212,7 +218,7 @@ async function sendOrder(
               price_type: market ? 'MKT' : 'LMT',
               order_type: market ? 'IOC' : 'ROD',
               order_lot: orderLot ?? 'Common',
-          }, account, { agentInitiated });
+          }, account, { agentInitiated, ...agentContext });
     return trade;
 }
 

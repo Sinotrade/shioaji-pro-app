@@ -76,3 +76,13 @@ export const eventDump = style({
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
 });
+
+export const monitorButton = style({
+    color: vars.color.foreground, background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.sm,
+    padding: vars.space.sm, cursor: 'pointer', textAlign: 'left',
+});
+export const monitorFrame = style({
+    width: '100%', minHeight: 640, flexShrink: 0,
+    border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.sm,
+});

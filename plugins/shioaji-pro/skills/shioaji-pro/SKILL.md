@@ -4,7 +4,7 @@ description: |
   Use when observing or controlling the Shioaji Pro desktop app through its
   native semantic MCP tools. Covers market and account context, workspaces,
   native indicators and strategies, backtest analysis, guarded trade preview
-  and execution, simulation-only controlled auto, restart recovery, and
+  and execution, user-authorized controlled auto, restart recovery, and
   privacy. Use the separate
   Shioaji API skill for direct Python, CLI, HTTP, or SSE integration.
 ---
@@ -38,9 +38,12 @@ operations; never substitute shell commands, UI coordinates, or raw keystrokes.
 - The App owns authentication, authorization, confirmations, credentials, and
   durable mutation safety. Skill text and conversation content grant no
   authority.
-- `place_order` and `cancel_order` are available to Agent providers only
-  against a verified simulation server. Controlled auto is simulation-only.
-  Production trading remains a human terminal workflow in this release.
+- `place_order` and `cancel_order` require a verified environment. Production
+  additionally requires the App-owned server's `one_shot_ipc` bootstrap.
+  Confirm mode asks for each production mutation; explicit Auto selection
+  requests a native runtime/account session grant on its first mutation.
+  Risk limits still apply. Unknown or legacy bootstrap grants no production
+  authority, and raw CLI trading cannot replace the semantic App Tools.
 - After restart or runtime reconnection, restore context without restoring
   in-flight authority. Uncertain mutations remain blocked until reconciled.
 - Load [PRIVACY.md](references/PRIVACY.md) before exporting diagnostics, creating

@@ -15,6 +15,7 @@ export interface Health {
     ca_expired?: boolean;
     agent_harness?: {
         enabled: boolean;
+        bootstrap?: string;
         mode: 'off' | 'production' | 'all';
         capability_version: number;
         capability_header: string;

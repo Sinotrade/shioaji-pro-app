@@ -18,6 +18,7 @@ import type { OrderEventReport } from '../lib/order-report';
 import { appVersion } from '../lib/tauri';
 import * as dockStyles from './bottom-dock.css';
 import * as styles from './debug-panel.css';
+import { ServerMonitor } from './server-monitor';
 
 const STATUS_LABEL = { live: 'LIVE', connecting: 'SYNC', down: 'LOST' };
 
@@ -126,6 +127,7 @@ export function DebugPanel() {
                     </div>
                 ))}
             </div>
+            <ServerMonitor />
             <span className={styles.sectionTitle}>最近 order_event</span>
             {events.length === 0 && (
                 <span className={dockStyles.emptyState}>尚無事件</span>

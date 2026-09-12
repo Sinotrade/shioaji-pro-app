@@ -49,6 +49,7 @@ export interface ServerInfo {
     description: string;
     protocols: string[];
     simulation: boolean;
+    agent_harness?: Health['agent_harness'];
 }
 
 function contractKey(c: ContractBase) {
@@ -748,7 +749,7 @@ export function placeStockOrder(
     contract: ContractBase,
     order: StockOrderReq,
     account?: Account,
-    opts?: { agentInitiated?: boolean },
+    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
 ) {
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: contractKey(contract),
@@ -760,7 +761,7 @@ export function placeFuturesOrder(
     contract: ContractBase,
     order: FuturesOrderReq,
     account?: Account,
-    opts?: { agentInitiated?: boolean },
+    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
 ) {
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: orderableKey(contract),
@@ -770,7 +771,7 @@ export function placeFuturesOrder(
 
 export function cancelOrder(
     tradeId: string,
-    opts?: { agentInitiated?: boolean },
+    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
 ) {
     return apiPost<Trade>(
         '/api/v1/order/cancel_order',

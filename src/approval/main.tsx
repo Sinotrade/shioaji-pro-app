@@ -29,15 +29,21 @@ function parseOrderSummary(payload: unknown): {
     code: string;
     price: number | null;
     quantity: number;
+    unit: string;
+    orderType: string;
+    effect: string;
 } | null {
     if (!payload || typeof payload !== 'object') return null;
     const p = payload as {
-        contract?: { code?: unknown };
+        contract?: { code?: unknown; security_type?: unknown };
         order?: {
             action?: unknown;
             price?: unknown;
             quantity?: unknown;
             price_type?: unknown;
+            order_type?: unknown;
+            octype?: unknown;
+            order_lot?: unknown;
         };
         stock_order?: unknown;
         futures_order?: unknown;
@@ -62,6 +68,9 @@ function parseOrderSummary(payload: unknown): {
         code,
         price: market || !Number.isFinite(price) ? null : price,
         quantity,
+        unit: p.contract?.security_type === 'STK' ? '張' : '口',
+        orderType: String(order.order_type ?? '—'),
+        effect: String(order.octype ?? order.order_lot ?? '—'),
     };
 }
 
@@ -128,8 +137,8 @@ function ApprovalApp() {
                 setDetailOpen(false);
                 setRemaining(
                     next
-                        ? Math.round(
-                              Math.min(300_000, Math.max(15_000, next.ttlMs)) /
+                        ? Math.ceil(
+                              Math.min(300_000, Math.max(0, next.ttlMs)) /
                                   1000,
                           )
                         : null,
@@ -213,6 +222,11 @@ function ApprovalApp() {
                 </span>
             </div>
             <div className={styles.card}>
+                {request.kind === 'auto_session' && (
+                    <div className={styles.hint}>
+                        授權正式 Auto：送出本筆後，此 Agent 在本次 runtime、目前帳戶可依風控自動下單／刪單，不再逐筆詢問。停止 Agent、切換帳戶或重新啟動即失效。
+                    </div>
+                )}
                 {summary ? (
                     <>
                         <div className={styles.actionLine[dir]}>
@@ -230,8 +244,12 @@ function ApprovalApp() {
                         <div className={styles.row}>
                             <span>數量</span>
                             <span className={styles.value}>
-                                {summary.quantity.toLocaleString()}
+                                {summary.quantity.toLocaleString()} {summary.unit}
                             </span>
+                        </div>
+                        <div className={styles.row}>
+                            <span>委託條件／倉別或交易單位</span>
+                            <span className={styles.value}>{summary.orderType} · {summary.effect}</span>
                         </div>
                     </>
                 ) : (
@@ -293,10 +311,10 @@ function ApprovalApp() {
                 </button>
                 <button
                     className={styles.approveBtn}
-                    disabled={busy}
+                    disabled={busy || remaining === 0}
                     onClick={() => respond(true)}
                 >
-                    核准
+                    {request.kind === 'auto_session' ? '授權本次 Auto 並送出' : '核准'}
                 </button>
             </div>
             <div className={styles.hint}>
