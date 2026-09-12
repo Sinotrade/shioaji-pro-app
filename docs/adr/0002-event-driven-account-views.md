@@ -6,7 +6,7 @@
 
 #75 的舊版行為讓主視窗、小視窗與回報 handler 各自呼叫整份帳務查詢，容易形成尖峰。1.7.5 monitoring 的 backend 是上游呼叫觀測，incoming 是 HTTP 請求觀測；不可相加。一次 snapshot 批次含多商品也不等於多次 HTTP。
 
-本次唯讀現場樣本要求 15 分鐘 window，但 backend 實際只有約 350.4 秒 coverage：`update_status` 90、`position_unit` 72、snapshots 35、scanner 24、balance 7、margin 13、profit_loss 4、profitloss_sum 4。這是背景查詢存在的證據，**不是完整 15 分鐘統計，也不能從 2 秒彙總反推精確 5 秒限流峰值**。同次 usage 為 59,966,387 / 2,147,483,648 bytes（約 2.8%），connections 3，不能宣稱當時每日流量即將耗盡。
+本機唯讀 monitoring 樣本確認存在持續的 update_status、positions、snapshots 與 scanner 呼叫。樣本未覆蓋完整要求期間，不能從彙總資料反推精確限流峰值，也未證明每日 bytes 額度接近耗盡。原始數字留在本機，不公開貼入 issue。
 
 #57 的 App＋Python SDK 約 20 分鐘斷線與 token refresh 503 是相關症狀。目前沒有證據可把它判定為同一根因；App public/private 未找到固定 20 分鐘重登入，sidecar token 機制不在這兩個 repo 的實作中。
 
