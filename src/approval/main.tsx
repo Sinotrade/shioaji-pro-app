@@ -68,7 +68,9 @@ function parseOrderSummary(payload: unknown): {
         code,
         price: market || !Number.isFinite(price) ? null : price,
         quantity,
-        unit: p.contract?.security_type === 'STK' ? '張' : '口',
+        unit: p.contract?.security_type === 'STK'
+            ? (['Odd', 'IntradayOdd'].includes(String(order.order_lot)) ? '股' : '張')
+            : '口',
         orderType: String(order.order_type ?? '—'),
         effect: String(order.octype ?? order.order_lot ?? '—'),
     };

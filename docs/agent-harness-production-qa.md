@@ -22,6 +22,22 @@ issue #51's original production-Auto prohibition is superseded by that decision.
 - Rust loopback/process tests run outside the restrictive local sandbox.
   Fixture tests do not certify the real native provider or broker.
 
+## Review dispositions
+
+Independent security review and Claude Code final source review found no
+remaining blocking source defect after the fixes recorded in the PR. QA agent
+approved its frontend fixture scope. This is not approval of the native gates.
+
+- Lifecycle read lock spans a proposal: accepted bounded liveness tradeoff
+  (production TTL 15 seconds); generation changes still fail closed.
+- The first non-blocking transport poll is synchronized with revocation:
+  accepted dispatch boundary; once started, the request is allowed to report
+  its result rather than being cancelled into an ambiguous outcome.
+- Cancellation compares current status/remaining quantity with the displayed
+  proposal. A fill during approval deliberately requires a fresh proposal.
+- Native Dashboard origin isolation/CSP behavior remains an explicit real
+  WebView gate, not established by the browser fixture.
+
 ## Required remaining native gates before merge/release
 
 1. Fresh native Codex, Claude Code and Pi sessions against the candidate:
