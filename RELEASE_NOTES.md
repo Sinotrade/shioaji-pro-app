@@ -1,4 +1,4 @@
-## v0.1.47 - Shioaji 1.7.5、用量監控與正式環境 Agent 授權
+## v0.1.47 - Shioaji 1.7.5、用量監控、正式 Agent 與圖表指標控制
 
 ### Shioaji 1.7.5 與 Server Dashboard
 
@@ -17,6 +17,12 @@
 - 不確定的送單結果只能查核，不能自動重送。正式交易使用語意 App Tools；shell 權限不提供直接 CLI 下單能力。
 - 官方 skill/plugin 與內建 Agent 指引同步以上流程。
 
+### 圖表指標與回測
+
+- Agent 可掛載、讀取、調整、隱藏、排序及移除圖表指標；每個 K 線面板獨立保存設定，切換 workspace 後仍保留。
+- 以面板與 revision 核對修改目標，避免焦點切換或並行編輯覆蓋其他圖表；移除指標與覆蓋共用定義需內容確認。
+- 修正回測最大百分比回撤與最後一根 K 棒持倉曝險計算，新增手算數值基線。這是單商品引擎修正，多商品仍為各自獨立回測。
+
 ### 官網與文件
 
 - 開發版改以 `dev · commit` 識別目前 build，避免顯示過期的原生占位版本；正式版仍以 release tag 為準。
@@ -26,7 +32,7 @@
 ### 候選版驗證狀態
 
 - 已完成 macOS arm64 真正 1.7.5 pipe bootstrap 與唯讀 monitor API smoke；UI QA 使用隔離 fixture，未送出真實委託。
-- **這份內容先備妥供確認，尚未發布。** 原生 production provider 流程、四平台實機 approval／Dashboard 與乾淨機器驗收仍須完成，不能沿用 v0.1.46 的 QA 豁免。
+- **這份內容先備妥供確認，尚未發布。** 整合後原生 provider 指標操作、production provider 流程、四平台實機 approval／Dashboard 與乾淨機器驗收仍須完成，不能沿用 v0.1.46 的 QA 豁免。
 - 完整測試、review 與 CI 結果記於 paired PR；尚未驗證範圍見 docs/agent-harness-production-qa.md。
 
 ---
