@@ -1,7 +1,9 @@
 // vite.config.ts
 
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import { buildVersionLabel } from './src/lib/build-version';
 import { vanillaExtractPlugin } from '@vanilla-extract/vite-plugin';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv, searchForWorkspaceRoot } from 'vite';
@@ -22,8 +24,21 @@ const pkg = JSON.parse(
     fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'),
 ) as { version?: string };
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
     const env = loadEnv(mode, process.cwd(), '');
+    let revision: string | undefined;
+    let dirty = false;
+    try {
+        revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: __dirname, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'], { cwd: __dirname, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().length > 0;
+    } catch {
+        // Source archives remain explicitly dev/unknown, never a stale release.
+    }
+    const displayVersion = buildVersionLabel({
+        command, revision, dirty,
+        refType: process.env.GITHUB_REF_TYPE,
+        refName: process.env.GITHUB_REF_NAME,
+    });
     return {
         base: env.VITE_BASE ?? '/',
         // shioaji app upload flattens nested paths — emit a flat bundle.
@@ -79,6 +94,7 @@ export default defineConfig(({ mode }) => {
                     '',
             ),
             __SHIOAJI_APP_VERSION__: JSON.stringify(pkg.version ?? ''),
+            __SHIOAJI_BUILD_VERSION__: JSON.stringify(displayVersion),
             // bundled server version（repo 根目錄 SHIOAJI_VERSION —
             // 與 CI 下載 sidecar 的同一個來源）— app 開機做版本握手
             __SHIOAJI_SERVER_VERSION__: JSON.stringify(

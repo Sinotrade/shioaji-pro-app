@@ -74,7 +74,7 @@ export function DebugPanel() {
     const contractCount = health?.contract_count;
 
     const rows: { label: string; value: string; warn?: boolean }[] = [
-        { label: 'App 版本', value: ver ? `v${ver}` : '—' },
+        { label: 'App 版本', value: ver || '—' },
         { label: '方案', value: tier === 'vip' ? 'VIP' : 'Free' },
         {
             label: 'GA 即時',
