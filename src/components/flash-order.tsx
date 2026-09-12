@@ -16,7 +16,9 @@ import {
     useRef,
     useState,
 } from 'react';
-import { useQuote, useTradingLive } from '../hooks/use-stream';
+import { useTradingLive } from '../hooks/use-stream';
+import { useDisplayBook } from '../hooks/use-display-book';
+import type { Snapshot } from '../lib/types/market';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { cancelOrder } from '../lib/shioaji';
 import { getAliasFor } from '../lib/stream';
@@ -170,16 +172,18 @@ const FlashRow = memo(function FlashRow({
 
 export function FlashOrder({
     contract,
+    snapshot,
     trades = [],
     positions = [],
     onOrdersChanged,
 }: {
     contract: ContractInfo;
+    snapshot?: Snapshot;
     trades?: Trade[];
     positions?: Position[];
     onOrdersChanged?: () => void;
 }) {
-    const quote = useQuote(contract.code);
+    const { quote, snapshot: initialSnapshot, book: display } = useDisplayBook(contract.code, snapshot, contract);
     const live = useTradingLive();
     const privMoney = usePrivacyMoney();
     const [qty, setQty] = useState(1);
@@ -191,7 +195,7 @@ export function FlashOrder({
 
     const last = quote?.tick
         ? Number(quote.tick.close)
-        : contract.reference || null;
+        : initialSnapshot?.close || contract.reference || null;
     const lastVol = quote?.tick ? quote.tick.volume : 0;
     const limitUp = contract.limit_up || 0;
     const limitDown = contract.limit_down || 0;
@@ -355,19 +359,16 @@ export function FlashOrder({
     // 5-level book lookup + totals
     const book = useMemo(() => {
         const map = new Map<string, { bid?: number; ask?: number }>();
-        const ba = quote?.bidask;
-        if (ba) {
-            ba.bid_price.forEach((p, i) => {
-                const key = keyOf(Number(p));
-                map.set(key, { ...map.get(key), bid: ba.bid_volume[i] });
-            });
-            ba.ask_price.forEach((p, i) => {
-                const key = keyOf(Number(p));
-                map.set(key, { ...map.get(key), ask: ba.ask_volume[i] });
-            });
+        for (const { price, vol } of display?.bids ?? []) {
+            const key = keyOf(price);
+            map.set(key, { ...map.get(key), bid: vol });
+        }
+        for (const { price, vol } of display?.asks ?? []) {
+            const key = keyOf(price);
+            map.set(key, { ...map.get(key), ask: vol });
         }
         return map;
-    }, [quote?.bidask]);
+    }, [display]);
 
     const { maxVol, sumBid, sumAsk } = useMemo(() => {
         let m = 1;
@@ -737,6 +738,7 @@ export function FlashOrder({
                 )}
             </div>
             <div className={styles.totalsRow}>
+                {display?.source === 'snapshot' && <span title={display.time}>快照一檔</span>}
                 <span className={styles.totalBid}>Σ買 {fmtInt(sumBid)}</span>
                 <span className={styles.totalAsk}>Σ賣 {fmtInt(sumAsk)}</span>
             </div>

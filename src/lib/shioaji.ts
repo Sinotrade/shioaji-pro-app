@@ -1,3 +1,4 @@
+import { observeMarketSnapshots } from './market-snapshot-store';
 import { observeTradeResponse } from './trade-observations';
 // src/lib/shioaji.ts
 
@@ -347,9 +348,9 @@ export function fetchWarrantUnderlyings() {
 // ---- market data ----
 
 export function fetchSnapshots(contracts: ContractBase[]) {
-    return apiPost<Snapshot[]>('/api/v1/data/snapshots', {
+    return observeMarketSnapshots(contracts, apiPost<Snapshot[]>('/api/v1/data/snapshots', {
         contracts: contracts.map(marketDataContract),
-    });
+    }));
 }
 
 // 開盤壅塞時 kbars 可能懸住（無回應非錯誤）— 每次 10s timeout，

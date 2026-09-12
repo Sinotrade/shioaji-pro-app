@@ -20,6 +20,7 @@
 | 組合商品列表 | 每 5 秒整個家族快照 | #99 首次＋原生組合訂閱、手動更新 |
 | 權證列表 | 每 8 秒最多 60 商品一批快照 | #100 首次＋SSE、手動更新、切標的舊回應隔離 |
 | 組合委託 | 每 10 秒 /order/combotrades | #101 首次／手動、明示查詢快照；未宣稱此端點必定執行 update_status |
+| 五檔／閃電／報價板／組合腳／深度熱圖 | 首筆 BidAsk 前空白或只有價沒有量 | #105 共用現有 HTTP snapshot，以一檔價量墊底；熱圖只記一個快照觀測點，SSE 接手後空側保持空白 |
 | Bracket | 有 pending 時每 4 秒查 S/F trades | #102 使用者決定另案，本次保留；不是已解決項目 |
 | Grid／combo 到價 | armed 使用者策略、按差異下單 | 保留執行時機及安全檢查；不以省 quota 改變策略 |
 | Watchlist sorting／replay | 本機排序/回放 timer | 保留，不產生券商查詢 |
@@ -39,3 +40,12 @@
 - 本機疊入 pinned private commit 後，production build 通過、64 個測試檔／548 tests 通過；官方 plugin contract tests 3/3 通過。未啟動 native runtime。
 - 公開 CI 與 Linux/Windows 合成檢查結果記錄於 PR 最終 head；尚未成功的檢查不得當作完成。
 - 原生登入、乾淨機器、SDK 與 App 長時間共存的 #57 情境及正式盤中 fill/reconnect 邊界尚未驗收。本次不使用真實下單作測試，無 tag／release。
+
+## #105 初始買賣檔顯示
+
+- `fetchSnapshots` 的原始回應由顯示快取觀測，同商品 consumer 共用進行中的 batch／一次性 query。已有 snapshot 不追加查詢；無定時或 reconnect 補查。快取與 single-flight 為同一 WebView 範圍。
+- 主頁、固定商品、小視窗、面板預覽採相同 DepthLadder 路徑；閃電使用相同價量投影，補 snapshot close 作價格梯初始位置。報價板補齊掛量，組合腳與組合簿保留零／負價；明示「快照一檔」，不是完整五檔或新 SSE。
+- 深度熱圖只加入當時 L1 的一個觀測點，不填歷史；BidAsk 後才累積五檔。Tick 不重複加入相同委託簿。
+- 時間比較使用原始 HTTP snapshot，不使用 watchlist 合成 Tick 後的 datetime；明確空側不從舊快照復活。API base／商品／target alias 隔離，舊 server 晚到回應不寫進新 server 快取。
+- display fallback 不寫入原始 stream。組合到價監控、一般下單確認與 #102 保護單路徑不變。實際 sidecar OpenAPI 確認 snapshot 的 buy_price/buy_volume、sell_price/sell_volume 與 datetime 型別；測試內容仍為合成行情。
+- 獨立 review 已修正 Tick 錯誤淘汰五檔與冷 cache 組合零負價被過濾；QA 已覆蓋 renderer 真實面板 L1／SSE 切換、來源提示與零下單呼叫。原生／CI 最終結果見 PR #103。

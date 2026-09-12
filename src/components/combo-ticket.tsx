@@ -1,3 +1,4 @@
+import { useDisplayBook } from '../hooks/use-display-book';
 // src/components/combo-ticket.tsx — 期貨/選擇權組合單（managed 語意，issue #32）
 //
 // 腳不帶買賣別：整體 買進/賣出組合 是唯一方向，兩腳實際方向由
@@ -15,6 +16,7 @@ import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { useAccounts } from '../lib/account-store';
 import {
     COMBO_TYPE_LABEL,
+    comboContractInfo,
     comboMonthsLabel,
     deriveOptionShape,
     legActionsFor,
@@ -71,10 +73,9 @@ interface ComboResolution {
 }
 
 function LegQuoteRow({ contract }: { contract: ContractInfo }) {
-    const quote = useQuote(contract.code);
-    const ba = quote?.bidask;
-    const bid = ba ? Number(ba.bid_price[0]) : undefined;
-    const ask = ba ? Number(ba.ask_price[0]) : undefined;
+    const { book } = useDisplayBook(contract.code, undefined, contract);
+    const bid = book?.bids[0]?.price;
+    const ask = book?.asks[0]?.price;
     return (
         <span className={css.legQuoteRow}>
             <span />
@@ -86,7 +87,7 @@ function LegQuoteRow({ contract }: { contract: ContractInfo }) {
                     : ''}
             </span>
             <span className={css.legQuoteRight}>
-                買 {fmtPrice(bid)}／賣 {fmtPrice(ask)}
+                買 {fmtPrice(bid)}／賣 {fmtPrice(ask)}{book?.source === 'snapshot' && '（快照）'}
             </span>
         </span>
     );
@@ -100,52 +101,26 @@ const sideOk = (price: number, volume: number | undefined) =>
 // 原生組合商品簿 — 有即時 BidAsk 就用標準五檔梯（DepthLadder，點價
 // 直接帶入淨價欄），還沒有事件時以快照墊一行 L1（明標「快照」）
 function ComboBook({
-    code,
+    combo,
     snapshot,
 }: {
-    code: string;
+    combo: ManagedComboContract;
     snapshot: Snapshot | null;
 }) {
-    const quote = useQuote(code);
-    const ba = quote?.bidask;
+    const contract = comboContractInfo(combo, combo.code);
+    const { quote, snapshot: initialSnapshot, book } = useDisplayBook(combo.code, snapshot ?? undefined, contract);
     const last = quote?.tick
         ? Number(quote.tick.close)
-        : snapshot && snapshot.total_volume > 0
-          ? snapshot.close
+        : initialSnapshot && initialSnapshot.total_volume > 0
+          ? initialSnapshot.close
           : undefined;
-    const snapUsable =
-        !!snapshot &&
-        (sideOk(snapshot.buy_price, snapshot.buy_volume) ||
-            sideOk(snapshot.sell_price, snapshot.sell_volume));
     return (
         <div className={css.section}>
             <span className={css.sectionTitle}>
-                <span>
-                    組合簿
-                    {!ba && snapUsable && '（快照）'}
-                </span>
+                <span>組合簿</span>
                 {last !== undefined && <span>成交 {fmtPrice(last)}</span>}
             </span>
-            {ba ? (
-                <DepthLadder code={code} />
-            ) : snapUsable ? (
-                <div className={css.snapRow}>
-                    <span className={panel.dirText.up}>
-                        買{' '}
-                        {sideOk(snapshot!.buy_price, snapshot!.buy_volume)
-                            ? `${fmtPrice(snapshot!.buy_price)}×${snapshot!.buy_volume}`
-                            : '—'}
-                    </span>
-                    <span className={panel.dirText.down}>
-                        賣{' '}
-                        {sideOk(snapshot!.sell_price, snapshot!.sell_volume)
-                            ? `${fmtPrice(snapshot!.sell_price)}×${snapshot!.sell_volume}`
-                            : '—'}
-                    </span>
-                </div>
-            ) : (
-                <span className={styles.costRow}>等待組合行情…</span>
-            )}
+            {book ? <DepthLadder code={combo.code} snapshot={initialSnapshot} contract={contract} /> : <span className={styles.costRow}>等待組合行情…</span>}
         </div>
     );
 }
@@ -778,7 +753,7 @@ export function ComboTicket() {
 
             {resolution?.combo && (
                 <ComboBook
-                    code={resolution.combo.code}
+                    combo={resolution.combo}
                     snapshot={comboSnapshot}
                 />
             )}

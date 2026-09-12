@@ -32,7 +32,7 @@ describe('snapshot plus stream projection', () => {
         await mount([stk, fut]); const before = renders;
         await act(async () => {
             for (const c of [stk, fut]) {
-                mocks.quotes.set(c.code, { tick: { date: '2026-09-12', time: '09:00:01', close: 110, price_chg: 10, pct_chg: c === stk ? 10 : 0.1, volume: 2, total_volume: 10 }, bidask: { date: '2026-09-12', time: '09:00:01', bid_price: [109], ask_price: [111], bid_volume: [3], ask_volume: [4] } });
+                mocks.quotes.set(c.code, { tick: { date: '2026-09-12', time: '09:00:01', close: 110, price_chg: 10, pct_chg: c === stk ? 10 : 0.1, volume: 2, total_volume: 10 }, bidask: { code: c.code, date: '2026-09-12', time: '09:00:01', bid_price: [109], ask_price: [111], bid_volume: [3], ask_volume: [4] } });
                 for (let i = 0; i < 10; i++) mocks.callbacks.get(c.code)!();
             }
             vi.advanceTimersByTime(99);
@@ -63,12 +63,20 @@ describe('snapshot plus stream projection', () => {
     });
     it('updates book-only events before the next tick', async () => {
         await mount([stk]);
-        await act(async () => { mocks.quotes.set(stk.code, { bidask: { date: '2026-09-12', time: '09:00:01', bid_price: [98], ask_price: [102], bid_volume: [8], ask_volume: [9] } }); mocks.callbacks.get(stk.code)!(); vi.advanceTimersByTime(100); });
+        await act(async () => { mocks.quotes.set(stk.code, { bidask: { code: stk.code, date: '2026-09-12', time: '09:00:01', bid_price: [98], ask_price: [102], bid_volume: [8], ask_volume: [9] } }); mocks.callbacks.get(stk.code)!(); vi.advanceTimersByTime(100); });
         expect(value.snapshots.get(stk.code)).toMatchObject({ close: 100, buy_price: 98, sell_price: 102, buy_volume: 8, sell_volume: 9 });
+    });
+    it('clears an explicitly empty stream side instead of reviving snapshot price or volume', async () => {
+        await mount([stk]);
+        await act(async () => {
+            mocks.quotes.set(stk.code, { bidask: { code: stk.code, date: '2026-09-12', time: '09:00:01', bid_price: [], bid_volume: [], ask_price: [102], ask_volume: [9] } });
+            mocks.callbacks.get(stk.code)!(); vi.advanceTimersByTime(100);
+        });
+        expect(value.snapshots.get(stk.code)).toMatchObject({ buy_price: 0, buy_volume: 0, sell_price: 102, sell_volume: 9 });
     });
     it('does not let an older or undated cached quote overwrite a fresh snapshot', async () => {
         mocks.quotes.set(stk.code, { tick: { date: '2026-09-11', time: '13:30:00', close: 90, price_chg: -10 },
-            bidask: { bid_price: [89], ask_price: [91], bid_volume: [2], ask_volume: [2] } });
+            bidask: { code: stk.code, bid_price: [89], ask_price: [91], bid_volume: [2], ask_volume: [2] } });
         await mount([stk]);
         expect(value.snapshots.get(stk.code)).toMatchObject({ close: 100, buy_price: 99, sell_price: 101 });
         await act(async () => { mocks.quotes.set(stk.code, { tick: { close: 80 } }); mocks.callbacks.get(stk.code)!(); vi.advanceTimersByTime(100); });

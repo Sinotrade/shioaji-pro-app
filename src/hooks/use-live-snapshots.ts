@@ -7,13 +7,8 @@ import { registerCodeAlias } from '../lib/stream';
 import type { ContractBase } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 
-// Broker market timestamps are Taiwan local time unless an offset is supplied.
-function marketTime(date: string | undefined, time?: string): number {
-    if (!date) return NaN;
-    const value = (time ? `${date}T${time}` : date).replaceAll('/', '-').replace(' ', 'T');
-    const normalized = value.replace(/(\.\d{3})\d+/, '$1');
-    return Date.parse(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}+08:00`);
-}
+import { displayBook, marketTime } from '../lib/display-book';
+
 function atLeastSnapshot(event: { date?: string; time?: string; datetime?: string }, snapshot: Snapshot) {
     const eventTime = marketTime(event.datetime ?? event.date, event.datetime ? undefined : event.time);
     const snapshotTime = marketTime(snapshot.datetime);
@@ -44,9 +39,12 @@ export function useLiveSnapshots(contracts: ContractBase[], fetcher?: () => Prom
             if (!baseline) continue; // No fabricated zeros while the initial query failed.
             const finite = (v: unknown, fallback: number) => v !== undefined && Number.isFinite(Number(v)) ? Number(v) : fallback;
             const book = quote?.bidask;
-            if (book && !book.simtrade && atLeastSnapshot(book, baseline)) baseline = { ...baseline,
-                buy_price: finite(book.bid_price[0], baseline.buy_price), buy_volume: finite(book.bid_volume[0], baseline.buy_volume),
-                sell_price: finite(book.ask_price[0], baseline.sell_price), sell_volume: finite(book.ask_volume[0], baseline.sell_volume) };
+            if (book && !book.simtrade && atLeastSnapshot(book, baseline)) {
+                const display = displayBook(contract.code, undefined, book, contract.target_code, 'combo' in contract && !!contract.combo);
+                baseline = { ...baseline,
+                    buy_price: display?.bids[0]?.price ?? 0, buy_volume: display?.bids[0]?.vol ?? 0,
+                    sell_price: display?.asks[0]?.price ?? 0, sell_volume: display?.asks[0]?.vol ?? 0 };
+            }
             if (quote?.index && atLeastSnapshot(quote.index, baseline)) {
                 const close = Number(quote.index.close), reference = Number(quote.index.reference);
                 if (Number.isFinite(close) && close > 0 && reference > 0) result.set(contract.code, {

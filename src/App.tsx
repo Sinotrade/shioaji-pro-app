@@ -222,7 +222,7 @@ function BlockBody({
             );
         case 'depth':
             return contract ? (
-                <DepthLadder code={contract.code} />
+                <DepthLadder contract={contract} code={contract.code} snapshot={snapshot} />
             ) : (
                 <BlockPlaceholder />
             );
@@ -241,6 +241,7 @@ function BlockBody({
         case 'flash':
             return contract ? (
                 <FlashOrder
+                    snapshot={snapshot}
                     contract={contract}
                     trades={dockProps.trades}
                     positions={dockProps.positions}
@@ -359,7 +360,7 @@ function BlockBody({
             );
         case 'depthmap':
             return contract ? (
-                <DepthMap contract={contract} />
+                <DepthMap contract={contract} snapshot={snapshot} />
             ) : (
                 <BlockPlaceholder />
             );
@@ -519,7 +520,7 @@ function PopoutView({
                 body = <IntradayChart contract={contract} />;
                 break;
             case 'depth':
-                body = <DepthLadder code={contract.code} />;
+                body = <DepthLadder contract={contract} code={contract.code} />;
                 break;
             case 'ticket':
                 body = (

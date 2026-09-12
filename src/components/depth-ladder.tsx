@@ -2,29 +2,21 @@
 // Clicking a price loads it into the order ticket.
 
 import { useMemo } from 'react';
-import { useQuote } from '../hooks/use-stream';
+import { useDisplayBook } from '../hooks/use-display-book';
+import type { ContractBase } from '../lib/types/contract';
+import type { Snapshot } from '../lib/types/market';
 import { setPickedPrice } from '../lib/price-sync';
 import { fmtInt, fmtPrice } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './depth-ladder.css';
 
-export function DepthLadder({ code }: { code: string }) {
+export function DepthLadder({ code, snapshot, contract }: { code: string; snapshot?: Snapshot; contract?: ContractBase }) {
     const onPickPrice = (price: number) => setPickedPrice(code, price);
-    const quote = useQuote(code);
-    const ba = quote?.bidask;
+    const { book } = useDisplayBook(code, snapshot, contract);
 
     const { bids, asks, maxVol, totalBid, totalAsk, spread } = useMemo(() => {
-        // 「檔位存在」以掛量判斷，不看價格真值 — 一般商品的空檔以
-        // 價 0/量 0 填充，而組合商品（跨月價差）的價位可以合法為
-        // 0 或負值，用價格 truthiness 會把真實檔位當成空檔
-        const bids = (ba?.bid_price ?? []).map((p, i) => ({
-            price: Number(p),
-            vol: ba?.bid_volume[i] ?? 0,
-        }));
-        const asks = (ba?.ask_price ?? []).map((p, i) => ({
-            price: Number(p),
-            vol: ba?.ask_volume[i] ?? 0,
-        }));
+        const bids = book?.bids ?? [];
+        const asks = book?.asks ?? [];
         const maxVol = Math.max(
             1,
             ...bids.map((b) => b.vol),
@@ -39,7 +31,7 @@ export function DepthLadder({ code }: { code: string }) {
                 ? Number((a1 - b1).toFixed(2))
                 : null;
         return { bids, asks, maxVol, totalBid, totalAsk, spread };
-    }, [ba]);
+    }, [book]);
 
     // bid share of the 5-level book — the "買賣力道" gauge
     const bidShare =
@@ -49,6 +41,7 @@ export function DepthLadder({ code }: { code: string }) {
 
     return (
         <div className={styles.grid}>
+                {book?.source === 'snapshot' && <span title={book.time}>快照一檔</span>}
                 <div className={styles.headerRow}>
                     <span>買量</span>
                     <span style={{ textAlign: 'right' }}>BID</span>
@@ -116,7 +109,7 @@ export function DepthLadder({ code }: { code: string }) {
             </div>
             <div
                 className={styles.forceTrack}
-                title={`五檔買賣力道 買${bidShare.toFixed(0)}%`}
+                title={`${book?.source === 'snapshot' ? '快照一檔' : '五檔'}買賣力道 買${bidShare.toFixed(0)}%`}
             >
                 <div
                     className={styles.forceBid}
