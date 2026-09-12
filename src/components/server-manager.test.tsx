@@ -24,6 +24,7 @@ describe('server settings edit and apply workflow', () => {
     beforeEach(() => {
         vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
         vi.stubGlobal('window', new EventTarget());
+        vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
         vi.clearAllMocks();
         mocks.load.mockResolvedValue({ ...initial }); mocks.save.mockResolvedValue(undefined);
         mocks.status.mockResolvedValue({ running: true, healthy: true, simulation: false, scheme: 'http', port: 21322 });
