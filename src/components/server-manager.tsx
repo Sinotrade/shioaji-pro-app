@@ -47,6 +47,7 @@ import {
     serverStart,
     serverStatus,
     serverStop,
+    stopAgentsForServerChange,
     subscribeAppUpdateState,
     type DesktopSettings,
     type ServerStatus,
@@ -95,6 +96,7 @@ export function ServerManager({
     const [settingsLoaded, setSettingsLoaded] = useState(false);
     const [settingsLoadError, setSettingsLoadError] = useState('');
     const [savedForRestart, setSavedForRestart] = useState(false);
+    const restartError = useRef('');
     const updateState = useSyncExternalStore(
         subscribeAppUpdateState,
         getAppUpdateState,
@@ -276,7 +278,7 @@ export function ServerManager({
     // (two-click confirm mirrors watchlist.tsx's delete-list pattern).
     // Logout also STOPS our own server (issue #16): leaving it running means
     // the next login adopts a server still logged into the OLD credentials.
-    // serverStop() without allowExternal never touches a user's own daemon.
+    // Native ownership checks keep external daemons outside App stop actions.
     const doLogout = () => {
         if (busy || logoutInFlight.current) return;
         if (!confirmLogout) {
@@ -288,7 +290,7 @@ export function ServerManager({
         setConfirmLogout(false);
         void (async () => {
             try {
-                const stopped = await serverStop();
+                const stopped = await serverStop({ stopAgents: true });
                 if (!stopped.ok) throw new Error(stopped.output || '無法停止本機伺服器');
                 const current = await loadDesktopSettings();
                 await saveDesktopSettings({ ...current, apiKey: '', secretKey: '' });
@@ -354,7 +356,7 @@ export function ServerManager({
     const doStop = async () => {
         setBusy(true);
         try {
-            const res = await serverStop({ allowExternal: true });
+            const res = await serverStop({ stopAgents: true });
             setLastOutput(res.output.slice(-600));
             notify({
                 kind: res.ok ? 'ok' : 'err',
@@ -368,18 +370,21 @@ export function ServerManager({
     };
 
     const doRestart = async (cfg: DesktopSettings = settings) => {
+        restartError.current = '';
         const error = validateDesktopSettings(cfg);
         if (error) { notify({ kind: 'err', ...error }); return false; }
         setBusy(true);
         try {
-            const stopped = await serverStop({ allowExternal: true });
+            const stopped = await serverStop({ stopAgents: true });
             if (!stopped.ok) {
+                restartError.current = stopped.output;
                 notify({ kind: 'err', title: '未能停止伺服器，已取消重啟', body: stopped.output.slice(-200) });
                 return false;
             }
             await new Promise(resolve => setTimeout(resolve, 1200));
             return await doStart(cfg);
         } catch (e) {
+            restartError.current = e instanceof Error ? e.message : String(e);
             notify({ kind: 'err', title: '重啟失敗', body: e instanceof Error ? e.message : String(e) });
             return false;
         } finally { setBusy(false); }
@@ -387,6 +392,7 @@ export function ServerManager({
 
     const saveConnectionSettings = async (draft: ServerConnectionSettings, apply: boolean) => {
         if (logoutInFlight.current) throw new Error('正在登出，請等待完成。');
+        restartError.current = '';
         // Re-read settings so saving this form cannot revert another panel's
         // Harness/autostart/TLS setting while the dialog was open.
         const current = await loadDesktopSettings();
@@ -394,13 +400,15 @@ export function ServerManager({
         if (apply) {
             const error = validateDesktopSettings(next);
             if (error) throw new Error(`${error.title}：${error.body}`);
+            // Do not save a new environment if a native Agent cannot be stopped.
+            await stopAgentsForServerChange();
         }
         await saveDesktopSettings(next);
         setSettings(next);
         setSavedForRestart(true);
         if (apply) {
             const ok = status?.running ? await doRestart(next) : await doStart(next);
-            if (!ok) throw new Error('設定已儲存，但伺服器未能套用。請查看狀態面板的錯誤後再試。');
+            if (!ok) throw new Error(`設定已儲存，但伺服器未能套用。${restartError.current || '請查看狀態面板的錯誤後再試。'}`);
         }
     };
 
@@ -754,6 +762,7 @@ export function ServerManager({
                                 停止
                             </button>
                         </div>
+                        <p className={styles.emptyHint}>重啟或停止會一併停止本 App 的 Agent，並撤銷本次 Auto 授權。</p>
 
                         <div className={styles.switchRow}>
                             <span className={styles.switchLabel}>
@@ -946,6 +955,7 @@ export function ServerManager({
                     </div>
                     {settingsOpen && <ServerSettingsDialog
                         settings={settings} status={status} busy={busy || httpsBusy}
+                        pendingApply={savedForRestart || (!!status?.running && status.simulation === settings.production)}
                         onSave={saveConnectionSettings} onClose={() => {
                             setSettingsOpen(false);
                             // macOS does not necessarily focus a button on click.
@@ -975,7 +985,7 @@ export function ServerManager({
                         </details>
                         <details className={dialogStyles.details}>
                             <summary>登出這個 App</summary>
-                            <p className={dialogStyles.hint}>清除本機儲存的 API 金鑰，並停止此 App 管理的伺服器。</p>
+                            <p className={dialogStyles.hint}>停止此 App 的 Agent、清除本機儲存的 API 金鑰，並停止此 App 管理的伺服器。</p>
                             <button className={confirmLogout ? styles.killBtnOn : styles.killBtnOff} onClick={doLogout}><LogOut size={14} />{confirmLogout ? '確認登出並清除金鑰' : '登出並清除金鑰'}</button>
                             {confirmLogout && <button className={dialogStyles.button} onClick={() => setConfirmLogout(false)}>取消登出</button>}
                         </details>

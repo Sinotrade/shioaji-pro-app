@@ -9,8 +9,8 @@ export const connectionSettings = (settings: DesktopSettings): ServerConnectionS
     caPath: settings.caPath, caPasswd: settings.caPasswd,
 });
 
-export function ServerSettingsDialog({ settings, status, busy, onSave, onClose, children }: {
-    settings: DesktopSettings; status: ServerStatus | null | undefined; busy: boolean;
+export function ServerSettingsDialog({ settings, status, busy, pendingApply = false, onSave, onClose, children }: {
+    settings: DesktopSettings; status: ServerStatus | null | undefined; busy: boolean; pendingApply?: boolean;
     onSave: (draft: ServerConnectionSettings, apply: boolean) => Promise<void>;
     onClose: () => void; children?: ReactNode;
 }) {
@@ -110,13 +110,13 @@ export function ServerSettingsDialog({ settings, status, busy, onSave, onClose, 
             </fieldset></div>
             <footer className={s.footer}>
                 {error && <div className={s.warning} role="alert">{error}</div>}
-                <p className={s.hint} role="status">{message || (dirty ? '有尚未儲存的變更' : '目前沒有未儲存的變更')}</p>
+                <p className={s.hint} role="status">{message || (dirty ? '有尚未儲存的變更' : pendingApply ? '設定已儲存，尚未套用到目前伺服器。' : '目前沒有未儲存的變更')}</p>
                 <div className={s.actions}>
                     <button className={s.button} disabled={locked} onClick={onClose}>{dirty ? '取消變更' : '關閉'}</button>
                     <button className={s.button} disabled={locked || !dirty} onClick={() => void submit(false)}>僅儲存</button>
                     <button className={s.primary} disabled={locked || !status} onClick={() => void submit(true)}>{pending ? '處理中…' : status?.running ? '儲存並重啟' : '儲存並啟動'}</button>
                 </div>
-                <p className={s.hint}>重啟會暫時中斷行情與 Agent 連線；既有委託不會因此撤銷。</p>
+                <p className={s.hint}>重啟會停止本 App 的 Agent、撤銷本次 Auto 授權，並暫時中斷行情；既有委託不會因此撤銷。</p>
             </footer>
         </div>
     </>;

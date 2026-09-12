@@ -1,10 +1,11 @@
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), notify: vi.fn(), info: vi.fn() }));
+const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn() }));
 vi.mock('../lib/tauri', () => ({
     isTauri: true, appVersion: async () => 'dev · test',
     loadDesktopSettings: mocks.load, saveDesktopSettings: mocks.save,
+    stopAgentsForServerChange: mocks.prepare,
     serverStart: mocks.start, serverStop: mocks.stop, serverStatus: mocks.status,
     pickEnvFile: mocks.env, pickCaFile: vi.fn(),
     subscribeAgentHarnessEnabled: () => () => {}, subscribeAppUpdateState: () => () => {},
@@ -26,6 +27,7 @@ describe('server settings edit and apply workflow', () => {
         vi.stubGlobal('window', new EventTarget());
         vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
         vi.clearAllMocks();
+        mocks.prepare.mockResolvedValue(undefined);
         mocks.load.mockResolvedValue({ ...initial }); mocks.save.mockResolvedValue(undefined);
         mocks.status.mockResolvedValue({ running: true, healthy: true, simulation: false, scheme: 'http', port: 21322 });
         mocks.start.mockResolvedValue({ ok: true, output: '', port: 21322, attached: true });
@@ -68,6 +70,32 @@ describe('server settings edit and apply workflow', () => {
         expect(text()).toContain('磁碟無法寫入');
         expect(view.root.findByType(ServerSettingsDialog).findAllByType('input')[0]!.props.value).toBe('changed-key');
         expect(mocks.stop).not.toHaveBeenCalled();
+    });
+    it('does not persist the new environment when stopping native Agents fails', async () => {
+        mocks.load.mockResolvedValue({ ...initial, production: true });
+        await open();
+        await act(async () => button('模擬環境').props.onClick());
+        mocks.prepare.mockRejectedValue(new Error('Agent 無法停止'));
+        await act(async () => button('儲存並重啟').props.onClick());
+        expect(text()).toContain('Agent 無法停止');
+        expect(text()).toContain('有尚未儲存的變更');
+        expect(mocks.save).not.toHaveBeenCalled();
+        expect(mocks.stop).not.toHaveBeenCalled();
+        expect(mocks.start).not.toHaveBeenCalled();
+    });
+    it('switches to simulation through Agent shutdown, save, stop and start in order', async () => {
+        mocks.load.mockResolvedValue({ ...initial, production: true });
+        await open();
+        await act(async () => button('模擬環境').props.onClick());
+        await act(async () => {
+            button('儲存並重啟').props.onClick();
+            await vi.waitFor(() => expect(mocks.start).toHaveBeenCalled(), { timeout: 2500 });
+        });
+        expect(mocks.prepare.mock.invocationCallOrder[0]).toBeLessThan(mocks.save.mock.invocationCallOrder[0]!);
+        expect(mocks.save.mock.invocationCallOrder[0]).toBeLessThan(mocks.stop.mock.invocationCallOrder[0]!);
+        expect(mocks.stop.mock.invocationCallOrder[0]).toBeLessThan(mocks.start.mock.invocationCallOrder[0]!);
+        expect(mocks.stop).toHaveBeenCalledWith({ stopAgents: true });
+        expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({ production: false }));
     });
     it('does not start after stop fails, and makes partial apply failure visible', async () => {
         await open(); mocks.stop.mockResolvedValue({ ok: false, output: 'owned server busy' });
