@@ -103,3 +103,11 @@ Tag 觸發 `Release Desktop App` workflow：
 - tag 打錯／CI 失敗要重來：`gh release delete vX.Y.Z`、
   `git push origin :refs/tags/vX.Y.Z`，修正後重打 tag。
   **已上線（非 draft）的版本不刪** — 有問題直接出下一版。
+
+## 開發版本與正式版本的顯示
+
+未發布的 dev／本機 debug／untagged build 使用 `dev · <commit>`，不顯示
+Tauri 設定檔的占位版本。正式 tag build 的 frontend build identity 與
+native bundle version 必須同源於 `vX.Y.Z`；前者保留 `v` 顯示，後者由
+既有 CI 注入不帶 `v` 的 SemVer。`RELEASE_NOTES.md` 的預計版本不是發布
+證據，也不影響 dev 顯示。交付驗收步驟見 [DEV.md](DEV.md)。

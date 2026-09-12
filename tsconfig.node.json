@@ -16,5 +16,5 @@
         "noEmit": true,
         "types": ["node"]
     },
-    "include": ["vite.config.ts"]
+    "include": ["vite.config.ts", "src/lib/build-version.ts"]
 }

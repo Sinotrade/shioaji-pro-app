@@ -90,8 +90,8 @@ async function throwApiError(res: Response): Promise<never> {
     );
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
-    const res = await doFetch(base() + path);
+export async function apiGet<T>(path: string, opts?: { signal?: AbortSignal; headers?: HeadersInit }): Promise<T> {
+    const res = await doFetch(base() + path, opts);
     if (!res.ok) await throwApiError(res);
     return res.json() as Promise<T>;
 }
@@ -99,7 +99,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 export async function apiPost<T>(
     path: string,
     body: unknown,
-    opts?: { timeoutMs?: number; agentInitiated?: boolean },
+    opts?: { timeoutMs?: number; agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
 ): Promise<T> {
     const harnessEnabled = isAgentHarnessEnabled();
     if (
@@ -129,6 +129,7 @@ export async function apiPost<T>(
                     url: base() + path,
                     body: bodyText,
                     agentInitiated: opts?.agentInitiated === true,
+                    ...(opts?.agentCallId ? { agentCallId: opts.agentCallId, agentAuto: opts.agentAuto === true } : {}),
                 },
             );
         } catch (error) {

@@ -80,6 +80,8 @@ export type PulseIndexCode = 'IX0001' | 'IX0043';
 
 export interface Block {
     id: string;
+    // Panel-local indicator state travels with saved workspace profiles.
+    indicatorState?: import('./indicator-instance-service').IndicatorPanelState;
     type: BlockType;
     // null → follows the globally selected symbol; string → pinned to a code
     pin: string | null;
@@ -305,7 +307,7 @@ export const BLOCK_META: Record<
     },
     debug: {
         label: '診斷 Debug',
-        description: '連線與訂閱狀態診斷',
+        description: 'API 用量、查詢壓力、異常與連線診斷',
         category: 'tools',
         pinnable: false,
         singleton: true,

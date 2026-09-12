@@ -88,10 +88,12 @@ export function IndicatorDialog({
     instances,
     onAdd,
     onClose,
+    onSaveDefaults,
 }: {
     instances: IndicatorInstance[];
     onAdd: (type: string) => void;
     onClose: () => void;
+    onSaveDefaults?: () => void;
 }) {
     const [query, setQuery] = useState('');
     const [category, setCategory] = useState<Category>('all');
@@ -335,6 +337,7 @@ export function IndicatorDialog({
                 <div className={styles.footer}>
                     <span>點擊指標開啟設定，確定後加入；同型可加多個（不同參數）</span>
                     <span>已啟用 {instances.length} 個</span>
+                    {onSaveDefaults && <button type='button' onClick={onSaveDefaults}>存為新圖／回測預設</button>}
                 </div>
             </div>
             {editorFor && (

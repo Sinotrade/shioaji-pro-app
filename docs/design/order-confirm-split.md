@@ -1,85 +1,41 @@
-# 下單確認分離 — 手動 UI 確認 vs Agent 核可
+# 手動確認與 Agent 核可
 
-維護者決定（2026-08-30，PR #50 review）：
+本次 1.7.5 candidate 更新 #51：維護者明確選擇正式環境也提供 Auto。
+前提是使用者授權，不從既有模擬或持久設定恢復正式交易權限。
 
-> Release boundary: the confirmation UI is implemented for the future
-> production contract, but Phase 1 native Agent runtimes are simulation-only.
-> Production startup fails closed until the sidecar accepts its signing secret
-> through one-shot pipe/native IPC instead of a reusable process environment.
+## 人工交易
 
-1. 手動下單確認與 Agent 下單核准是**兩條獨立路徑**。手動確認可由
-   使用者開關；Phase 1 的 Agent 交易只在已驗證的模擬環境提供，正式或
-   未知環境直接拒絕。正式 Agent 核准 UI 是後續安全 bootstrap 的 staged code。
-2. 使用者看到的確認一律是**可視化委託確認**（方向/商品/價格/數量/帳戶），
-   不是 raw payload＋digest 的技術框。
-3. Agent 發起、需使用者核可的下單同理 — 第一級友善介面，
-   技術細節（exact payload、BLAKE3）收進 detail 展開。
+`RiskSettings.confirmManualOrders` 保持獨立。手動票券、點價、平倉使用
+既有可視化確認；系統停損／停利與 bracket 不增加互動視窗。
+人工 HTTP body 仍由 native proxy 簽送，不授予 Agent capability。
 
-## 現況（本設計要改掉的）
+## Agent 語意交易
 
-舊設計在 Harness 開啟＋正式環境時，讓 `agent_harness_post` 對 UI 手動
-下單彈 native NSAlert，Agent grant 也使用同一技術框。現行設計已把人工
-下單 UX 與 Agent authority 拆開；本版不授予任何正式環境 Agent mutation。
+- 模擬 confirm／auto 保留既有流程與風控。
+- 正式 native runtime 必須驗證 App-owned sidecar generation、enabled
+  Harness 與 `bootstrap=one_shot_ipc`，不可降級為 environment secret。
+- 正式 `place_order`／`cancel_order` 綁定原生保存的工具呼叫、runtime、
+  operation 與參數。合約由 native 查詢，連續月轉實際 target；帳戶由
+  sidecar 重新確認。一次 call ID 僅消耗一次，保留原 body bytes 簽送。
+- confirm 每筆開獨立 `agent-approval` 視窗，內容由 Rust retained state
+  提供；主 WebView 不能呼叫 pending/respond。核可來源由 window label
+  與 native-created marker 驗證。
+- Auto 首筆顯示原生授權視窗，明確說明會送出該筆與允許後續同一 runtime、
+  generation、帳戶的風控通過交易。帳戶、環境、runtime、renderer lifecycle
+  改變即失效。風控是可信 App 的 TypeScript policy，並非 native 完整風控引擎。
+- 送出前再確認 call、runtime、generation、帳戶／委託與撤權 epoch。
+  拒絕、關窗、重新載入與到期在送出前回 `mutationNotStarted`。
+- 送出後中斷或無法保存結果屬於 unknown outcome，走既有 durable
+  idempotency／reconciliation；不自動重送。
 
-## 設計
+## 視窗
 
-### A. 手動下單確認（public，風控設定）
+第一級呈現環境、操作、商品、方向、價格、數量、遮罩帳戶、runtime
+與剩餘時間。Auto 額外顯示此次授權範圍。exact payload 留在技術詳情。
+倒數使用 Rust 回傳的剩餘 TTL；到期停用核准，最終有效性仍由 native 判斷。
 
-- `RiskSettings.confirmManualOrders: boolean`，預設 `false`（維持現行
-  快速流）。設定 → 風控 分頁新增開關。
-- 新元件 `order-confirm-dialog`：promise 服務
-  `requestOrderConfirm(summary): Promise<boolean>`＋App 掛載的 host。
-  內容：方向（買/賣、紅綠）、商品碼＋名稱、價格（限價值或「市價」）、
-  數量＋單位、委託條件、帳戶（遮罩）、環境 badge（正式/模擬）。
-  Esc＝取消（走 `useEscClose`，不誤武裝 Esc-Esc 刪單）、確認鈕送出。
-- 攔截點＝**手動**下單路徑：
-  - `placeQuickOrder` 新增 `source: 'manual' | 'auto'`；
-    trigger-engine（停損/停利觸發）與 bracket 傳 `'auto'` **絕不彈窗**
-    （自動單觸發時使用者可能不在場，彈窗＝錯過行情）。
-  - flash-order／candle-chart 點價／bottom-dock 平倉 → `'manual'`。
-  - order-ticket／grid-ticket 直呼 `placeStock/FuturesOrder` 前自行
-    `requestOrderConfirm`。
-- 純 UX 安全帶，**不是**安全邊界（WebView 內的確認擋不了被汙染的
-  WebView）— 威脅模型見 C。
+`approval.html` 是獨立 Vite entry，不載入主 App bundle。重新載入核可
+頁會拒絕待處理請求；不存在沿用舊頁面授權的路徑。
 
-### B. `agent_harness_post` 與 Phase 1 authority（private）
-
-- UI 手動 mutation 維持既有終端行為；native MCP 已 claim/executing 的
-  Agent mutation 在正式或未知環境一律 fail closed，即使 renderer 偽造
-  `agent_initiated=false` 也不能繞過。
-- UI capability 簽章只證明「請求來自本 App 的 WebView」，不代表 Agent
-  authority 或逐筆人工核可。Agent authority 由 native runtime/MCP context
-  與已驗證的 sidecar generation 決定。
-- `docs/AGENT_HARNESS_THREAT_MODEL.md` 同步改寫該假設；
-  被汙染 WebView 經簽章代理下單的暴露面回到與無 harness 時
-  （WebView 直發 HTTP）等價 — harness 的職責是管 **Agent** 權限。
-
-### C. Agent 核可視窗（private＋public approval 頁）
-
-- `confirm_production_grant` 的 NSAlert 換成**獨立 Tauri 視窗**
-  （label `agent-approval`，always-on-top，載入 `approval.html`）。
-  獨立視窗＝主 WebView 無法 script／偽造其內容 — 信任邊界保留。
-- 第一級（可視化）：操作種類（下單→方向/商品/數量/價格；非交易
-  操作→操作名）、發起 runtime、帳戶（遮罩）、環境 badge、TTL 倒數。
-- 「技術細節」展開：runtime_id/pid、operation、raw payload
-  pretty JSON、ttl_ms。
-- IPC：`agent_approval_pending()`／`agent_approval_respond(id, approved)`
-  — **兩者皆驗 `window.label() == "agent-approval"`**，主 WebView 呼叫
-  一律拒絕。Rust 端 oneshot 佇列；關窗＝拒絕；TTL 到期＝拒絕。
-- **Phase 1 正式環境不提供 Agent 交易**：`confirm_production_grant` 與所有
-  Agent broker mutation 都 fail closed。核可視窗保留給後續 sidecar one-shot
-  secret bootstrap 完成後的 production contract，不擴張本版 authority。
-- 模擬環境的 controlled-auto 只在當次 session 生效，不跨 App restart 復權。
-
-### 建置
-
-- `approval.html` 為 vite 第二進入點（MPA input），
-  `src/approval/` 內自足小頁（不載主 app bundle）。
-- Tauri prod 載 dist 內 `approval.html`；dev 載 devUrl 同路徑。
-
-## 不變式
-
-- 自動單（trigger-engine/bracket）不受 A 影響。
-- 模擬環境依 confirm/auto policy 顯示 App proposal 或執行；正式/未知環境拒絕。
-- 手動確認關閉時，人工手動單不彈窗；這不會啟用正式環境 Agent 交易。
-- 核可視窗內容來源只能是 Rust state，絕不接受主 WebView 供給的顯示值。
+原生 CLI grant/exchange 仍拒絕正式環境。本版不提供 raw shell/CLI 的
+正式 Auto，也不讓 provider 取得 broker signing secret 或可重用 token。

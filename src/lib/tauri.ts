@@ -1253,21 +1253,12 @@ export async function openFlashTiles(
 
 // ---- app version (for support: shown in the server panel & debug) ----
 
-let cachedVersion: string | null = null;
-
 export async function appVersion(): Promise<string> {
-    if (cachedVersion) return cachedVersion;
-    if (isTauri) {
-        try {
-            const { getVersion } = await import('@tauri-apps/api/app');
-            cachedVersion = await getVersion();
-            return cachedVersion;
-        } catch {
-            // fall through
-        }
-    }
-    cachedVersion = 'dev';
-    return cachedVersion;
+    // Only the public release tag defines a published App version. Native
+    // getVersion() also returns the schema placeholder in local/debug builds.
+    return typeof __SHIOAJI_BUILD_VERSION__ === 'string'
+        ? __SHIOAJI_BUILD_VERSION__
+        : 'dev · unknown';
 }
 
 // ---- auto-update ----

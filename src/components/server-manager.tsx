@@ -242,7 +242,7 @@ export function ServerManager({
             // older shell without the command
         }
         const lines = [
-            `Shioaji Pro v${ver || '?'} · ${host}`,
+            `Shioaji Pro ${ver || '?'} · ${host}`,
             status?.running
                 ? `server: running v${status.version ?? '?'} (expected v${
                       EXPECTED_SERVER_VERSION || '—'
@@ -569,7 +569,7 @@ export function ServerManager({
                                     {serverVersion
                                         ? `Server v${serverVersion}`
                                         : 'Server —'}
-                                    {ver && ` · App v${ver}`}
+                                    {ver && ` · App ${ver}`}
                                 </span>
                             )}
                         </span>

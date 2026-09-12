@@ -100,3 +100,22 @@ test coverage 門檻、quality metrics 等。落地時更新本節。
 
 不得先 merge public、不得讓 release workflow 的 private-main HEAD 與
 `DESKTOP_MODULES_REF` 指向不同實作，也不得在 paired PR 僅落地一側時打 tag。
+
+## Dev／候選版的版本識別
+
+- App 畫面與複製診斷統一使用 build identity。`vite dev`、未帶 release tag
+  的 `vite build`、本機 debug bundle 都顯示 `dev · <public short SHA>`；
+  build／dev server 啟動時有未提交內容則加 `+dirty`，無 Git metadata 顯示
+  `dev · unknown`。commit 後重新啟動 Vite 才會更新這份 build-time identity。
+- Tauri／Cargo／package.json 的占位版本不能當成候選版版本對外顯示；
+  不得為了畫面好看而手動 bump 成預計發布的版本。候選版說明可寫預計版本，
+  但它仍是未發布的 dev build。
+- 正式 release build 只從 GitHub tag context（`GITHUB_REF_TYPE=tag`、
+  `GITHUB_REF_NAME=vX.Y.Z`）顯示 `vX.Y.Z`，與 native bundle 的 tag 注入一致。
+- 交付 dev App 給人驗收前，確認伺服器面板、Debug、頁首與複製診斷均顯示
+  相同 build identity，並分開核對 sidecar 的 `SHIOAJI_VERSION`。不得把舊
+  Tauri 占位值（例如 0.1.43）誤認為當前 App build。
+- 自訂 Vite port 時也要驗證原生 WebView SSE 的 Origin；sidecar 預設接受
+  `5173` 的 dev origin。其他 port 使用 Vite 同來源 `/api` proxy，設定
+  `VITE_STREAM_BASE` 為 dev origin，`VITE_API_TARGET` 為本次 sidecar origin；
+  健康檢查與歷史資料正常不能代替 SSE 的 LIVE／heartbeat 驗證。

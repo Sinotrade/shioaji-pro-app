@@ -5,8 +5,9 @@ Tracking: [#68](https://github.com/Sinotrade/shioaji-pro-app/issues/68),
 [Claude Code #69](https://github.com/Sinotrade/shioaji-pro-app/issues/69),
 [Pi #70](https://github.com/Sinotrade/shioaji-pro-app/issues/70).
 
-The maintainer authorized release with Windows native/manual QA deferred until
-after publication. Existing-Mac native QA and automated CI are the release
+For v0.1.46 only, the maintainer authorized release with Windows native/manual
+QA deferred until after publication. This historical exception grants no waiver
+for later releases, including the production Harness candidate. Existing-Mac native QA and automated CI are the release
 evidence, not full cross-platform or clean-machine certification. Keep tracking
 issues open until their remaining acceptance checks pass; compilation, mocked
 UI tests, or runtime version checks alone are insufficient.

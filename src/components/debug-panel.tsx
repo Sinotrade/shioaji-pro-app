@@ -18,6 +18,7 @@ import type { OrderEventReport } from '../lib/order-report';
 import { appVersion } from '../lib/tauri';
 import * as dockStyles from './bottom-dock.css';
 import * as styles from './debug-panel.css';
+import { ServerMonitor } from './server-monitor';
 
 const STATUS_LABEL = { live: 'LIVE', connecting: 'SYNC', down: 'LOST' };
 
@@ -73,7 +74,7 @@ export function DebugPanel() {
     const contractCount = health?.contract_count;
 
     const rows: { label: string; value: string; warn?: boolean }[] = [
-        { label: 'App 版本', value: ver ? `v${ver}` : '—' },
+        { label: 'App 版本', value: ver || '—' },
         { label: '方案', value: tier === 'vip' ? 'VIP' : 'Free' },
         {
             label: 'GA 即時',
@@ -85,12 +86,12 @@ export function DebugPanel() {
             warn: stream !== 'live',
         },
         {
-            label: '心跳',
+            label: '心跳（約 30s 一次）',
             value: hbAge === null ? '—' : `${hbAge}s 前`,
-            warn: hbAge !== null && hbAge > 15,
+            warn: hbAge !== null && hbAge > 60,
         },
-        { label: '行情速率', value: `${rate} 筆/秒` },
-        { label: '訂閱數', value: String(getSubscriptionCount()) },
+        { label: 'App 成交 Tick 更新', value: `${rate} 筆/秒（不含 Quote／五檔）` },
+        { label: 'App 訂閱登記', value: String(getSubscriptionCount()) },
         { label: 'API Base', value: getApiBase() || '(同源)' },
         {
             label: '伺服器版本',
@@ -114,6 +115,9 @@ export function DebugPanel() {
 
     return (
         <div className={styles.wrap}>
+            <div className={styles.connection}><strong>SSE {STATUS_LABEL[stream]}</strong><span>心跳 {hbAge === null ? '未知' : `${hbAge}s 前`}（約 30s 一次）· 成交更新 {rate} 筆/秒</span></div>
+            <ServerMonitor />
+            <details className={styles.details}><summary>App 與連線診斷</summary>
             <div className={styles.grid}>
                 {rows.map((r) => (
                     <div key={r.label} className={styles.row}>
@@ -126,7 +130,8 @@ export function DebugPanel() {
                     </div>
                 ))}
             </div>
-            <span className={styles.sectionTitle}>最近 order_event</span>
+            </details>
+            <details className={styles.details}><summary>最近委託事件 · {events.length} 筆</summary>
             {events.length === 0 && (
                 <span className={dockStyles.emptyState}>尚無事件</span>
             )}
@@ -136,6 +141,7 @@ export function DebugPanel() {
                     {JSON.stringify(e.data.raw ?? e.data).slice(0, 220)}
                 </pre>
             ))}
+            </details>
         </div>
     );
 }

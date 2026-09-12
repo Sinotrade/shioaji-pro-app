@@ -72,6 +72,27 @@ describe('agent harness native POST proxy', () => {
         browserFetch.mockRestore();
     });
 
+    it('passes native call identity and Auto request without changing body bytes', async () => {
+        mocks.invoke.mockResolvedValue({ status: 200, body: '{}' });
+        await apiPost('/api/v1/order/cancel_order', { trade_id: 't-1' }, {
+            agentInitiated: true, agentCallId: 'call-1', agentAuto: true,
+        });
+        expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('agent_harness_post', {
+            url: 'http://127.0.0.1:21322/api/v1/order/cancel_order',
+            body: '{"trade_id":"t-1"}',
+            agentInitiated: true, agentCallId: 'call-1', agentAuto: true,
+        });
+    });
+
+    it('preserves ambiguous native failures without retry or not-started classification', async () => {
+        mocks.invoke.mockRejectedValue('UI trading proxy request failed: timeout');
+        const error = await apiPost('/api/v1/order/place_order', { code: '2330' }, {
+            agentInitiated: true, agentCallId: 'call-2', agentAuto: true,
+        }).catch((caught: unknown) => caught);
+        expect(error).toBe('UI trading proxy request failed: timeout');
+        expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    });
+
     it('marks native approval denial as a mutation that never started', async () => {
         mocks.invoke.mockRejectedValue(
             'AGENT_MUTATION_NOT_STARTED: 使用者未核准這筆 Agent 交易',

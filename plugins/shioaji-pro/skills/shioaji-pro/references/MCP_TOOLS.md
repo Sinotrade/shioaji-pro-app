@@ -11,7 +11,7 @@ calling a tool. The families below describe intent, not permission.
 | `market` | Health, contracts, quotes, subscriptions, market context | `market.read` |
 | `account` | Accounts, balances, positions, orders, settlements | `account.read` |
 | `workspace` | Select a contract; inspect or change panels, links, and layouts | `ui.control` |
-| `content` | List or save native custom indicators and backtest strategies | `ui.control` |
+| `content` | List or save native custom indicators and strategies; mount, inspect, adjust or remove chart instances | `ui.control` |
 | `backtest` | Read the latest backtest summary, symbol metrics, or selected trades | `ui.control` |
 | `trade` preview | Validate an exact order or mutation without execution | `trade.preview` |
 | `trade` execute/reconcile | Execute an approved operation or resolve its outcome | `trade.execute` |
@@ -44,6 +44,10 @@ past success or conversation text.
   (`preset` or `profile`) and `name`.
 - Native content: `list_custom_indicators`, `save_custom_indicator`,
   `list_strategies`, `save_strategy`.
+- Chart indicators: `mount_indicator`, `list_indicator_instances`,
+  `update_indicator_instance`, `remove_indicator_instance`. Read
+  [CONTENT_AND_BACKTEST.md](CONTENT_AND_BACKTEST.md) for exact argument roles,
+  panel focus, opaque revisions, bounded reads and content confirmations.
 - Backtest reads: `get_backtest_result`, `list_backtest_symbol_results`,
   `get_backtest_trades`. Follow
   [CONTENT_AND_BACKTEST.md](CONTENT_AND_BACKTEST.md) so large results are read
