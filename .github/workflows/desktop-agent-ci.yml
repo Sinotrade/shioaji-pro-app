@@ -7,12 +7,11 @@ on:
   push:
     branches:
       - main
-      - 'codex/**'
-      - 'feat/**'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  # PR updates replace older runs of that PR; manual runs cannot cancel PR checks.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

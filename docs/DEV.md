@@ -84,6 +84,18 @@ test coverage 門檻、quality metrics 等。落地時更新本節。
 - 私有 repo 的 PR 會透過 `repository_dispatch` 觸發本 repo 的
   `desktop-ci.yml` 做合成驗證（詳見私有 repo 的 DEV.md）。
 
+### Desktop Agent CI 觸發與驗收
+
+- `desktop-agent-ci.yml` 在指向 main 的 PR 開啟／更新時跑 Linux/Windows
+  合成測試；push 只監聽 main，避免開發分支同一個 commit 同時觸發 push
+  與 PR 兩輪，互相取消後在 PR 留下紅叉。
+- 尚未開 PR 的分支若要合成驗證，使用 `workflow_dispatch` 手動選擇分支。
+- concurrency 依 workflow、事件與 PR 編號／ref 分組。新 commit 可取消
+  同 PR 的舊 run，但手動執行、main push 與其他 PR 不互相取消。
+- 回報 CI 完成前，核對最新 PR head 的完整 check rollup；若仍有 failed、
+  cancelled 或 pending，不得只挑成功的 run 宣告全綠。取消原因與重跑結果
+  須寫回 PR，等待所有檢查完成後再交付。
+
 ### 公私 paired PR 的 merge 順序
 
 同一功能同時修改 public/private 時，兩個 PR 必須先以
