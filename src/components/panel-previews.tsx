@@ -594,6 +594,44 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             ))}
         </Frame>
     ),
+    spiderweb: (
+        <Frame>
+            {/* Entry orders (left) connected to exit orders (right) */}
+            {[0, 1, 2, 3, 4].map((i) => (
+                <g key={i}>
+                    <rect
+                        x={12}
+                        y={10 + i * 11}
+                        width='28'
+                        height='6'
+                        rx='1'
+                        fill={up}
+                        fillOpacity={i === 2 ? 0.9 : 0.5}
+                    />
+                    <line
+                        x1='40'
+                        y1={13 + i * 11}
+                        x2='68'
+                        y2={13 + i * 11}
+                        stroke={muted}
+                        strokeOpacity='0.3'
+                        strokeDasharray='2,2'
+                    />
+                    <rect
+                        x={68}
+                        y={10 + i * 11}
+                        width='28'
+                        height='6'
+                        rx='1'
+                        fill={down}
+                        fillOpacity={i === 2 ? 0.5 : 0.25}
+                    />
+                </g>
+            ))}
+            {/* Active position indicator */}
+            <circle cx='54' cy='24' r='3' fill={accent} fillOpacity='0.8' />
+        </Frame>
+    ),
     heatmap: (
         <Frame>
             <rect x='8' y='8' width='56' height='40' fill={down} fillOpacity='0.55' />

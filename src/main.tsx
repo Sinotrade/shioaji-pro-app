@@ -13,10 +13,12 @@ import { bootstrap } from './lib/boot';
 import { isTauri, loadDesktopSettings } from './lib/tauri';
 import { initTheme } from './lib/theme-store';
 import { startTriggerEngine } from './lib/trigger-engine';
+import { startSpiderwebEngine } from './lib/spiderweb-engine';
 
 initTheme();
 startAnalytics();
 startTriggerEngine();
+startSpiderwebEngine();
 bootstrap();
 
 // A fresh desktop install has no API key saved yet — the dashboard would
