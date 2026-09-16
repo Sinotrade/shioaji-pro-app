@@ -241,7 +241,7 @@ export function OrderTicket({
                       price_type: priceType as 'LMT' | 'MKT' | 'MKP',
                       order_type: orderType,
                       octype,
-                  })
+                  }, undefined, { orderIntent: 'manual' })
                 : await placeStockOrder(contract, {
                       action,
                       price: p,
@@ -257,7 +257,7 @@ export function OrderTicket({
                           orderCond === 'Cash'
                               ? true
                               : undefined,
-                  });
+                  }, undefined, { orderIntent: 'manual' });
             setFeedback({
                 kind: 'ok',
                 text: `▸ ${trade.status.status} #${trade.order.seqno || trade.order.id.slice(0, 8)}`,
@@ -408,6 +408,7 @@ export function OrderTicket({
                                   octype,
                               },
                               account,
+                              { orderIntent: 'manual' },
                           )
                         : await placeStockOrder(
                               contract,
@@ -430,6 +431,7 @@ export function OrderTicket({
                                           : undefined,
                               },
                               account,
+                              { orderIntent: 'manual' },
                           );
                     ok.push(
                         `${label} ${q}${qtyUnit} #${trade.order.seqno || trade.order.id.slice(0, 8)}`,

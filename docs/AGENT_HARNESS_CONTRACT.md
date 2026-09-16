@@ -75,6 +75,14 @@ Missing or legacy bootstrap fails closed. An interrupted
 or timed-out mutation enters `unknown_outcome`; it may only be reconciled by its
 operation ID and must never be submitted again automatically.
 
+A cancellation response is terminal success only after a broker readback no
+longer contains the order, or reports `Cancelled` and its cumulative cancelled
+quantity covers the quantity that remained after fills. An HTTP `200` or `cancelled=true` payload
+alone is not confirmation. If readback does not confirm either condition, the
+call must fail as `CANCEL_UNCONFIRMED`, retain the original mutation as
+`unknown_outcome`, and require `reconcile_order`; it must not retry cancellation
+automatically.
+
 Until the broker exposes an immutable operation ID that survives an interrupted
 response, matching code/side/quantity/price is evidence only. Zero, one, or many
 payload matches cannot authorize a retry. `reconcile_order` therefore separates

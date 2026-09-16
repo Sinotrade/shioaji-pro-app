@@ -31,6 +31,7 @@ export interface QuoteState {
     lastDir: 1 | -1 | 0; // direction of last price move, for flash effects
     seq: number; // bumps on every update (tick or bidask)
     flashSeq: number; // bumps only on real trades (not simtrade/bidask)
+    updatedAt?: number; // local receive time for fail-closed order freshness
 }
 
 type Listener = () => void;
@@ -152,6 +153,7 @@ function ingestTick(tick: SseTick) {
         lastDir,
         seq: (prev?.seq ?? 0) + 1,
         flashSeq: (prev?.flashSeq ?? 0) + (isRealTrade ? 1 : 0),
+        updatedAt: Date.now(),
     });
     emitQuote(tick.code);
     if (isRealTrade) {
@@ -176,6 +178,7 @@ function ingestBidAsk(bidask: SseBidAsk) {
         lastDir: prev?.lastDir ?? 0,
         seq: (prev?.seq ?? 0) + 1,
         flashSeq: prev?.flashSeq ?? 0,
+        updatedAt: Date.now(),
     });
     emitQuote(bidask.code);
 }

@@ -43,18 +43,22 @@ function load(): RiskSettings {
 }
 
 let settings = load();
-let dailyPnl = 0; // fed by App from position/margin polling
+// null means the broker position/margin snapshots are not both confirmed.
+// Treating that state as zero would silently disable the daily-loss gate.
+let dailyPnl: number | null = null; // fed by App from position/margin polling
 const listeners = new Set<() => void>();
 
 // cross-window sync — popouts share localStorage but not module state;
 // without this, toggling the kill switch or the Esc-Esc hotkey in one
 // window never reaches already-open popout windows.
-window.addEventListener('storage', (e) => {
-    if (e.key === STORAGE_KEY) {
-        settings = load();
-        emit();
-    }
-});
+if (typeof window !== 'undefined') {
+    window.addEventListener('storage', (e) => {
+        if (e.key === STORAGE_KEY) {
+            settings = load();
+            emit();
+        }
+    });
+}
 
 function emit() {
     listeners.forEach((l) => l());
@@ -66,9 +70,10 @@ export function setRiskSettings(next: Partial<RiskSettings>) {
     emit();
 }
 
-export function reportDailyPnl(pnl: number) {
-    if (pnl !== dailyPnl) {
-        dailyPnl = pnl;
+export function reportDailyPnl(pnl: number | null) {
+    const next = pnl !== null && Number.isFinite(pnl) ? pnl : null;
+    if (next !== dailyPnl) {
+        dailyPnl = next;
         emit();
     }
 }
@@ -77,7 +82,7 @@ export function getRiskSettings(): RiskSettings {
     return settings;
 }
 
-export function getDailyPnl(): number {
+export function getDailyPnl(): number | null {
     return dailyPnl;
 }
 
@@ -100,7 +105,14 @@ export function checkOrderAllowed(quantity: number): string | null {
     if (settings.maxQty > 0 && quantity > settings.maxQty) {
         return `超過單筆上限 ${settings.maxQty}（本筆 ${quantity}）`;
     }
-    if (settings.maxDailyLoss > 0 && dailyPnl <= -settings.maxDailyLoss) {
+    if (settings.maxDailyLoss > 0 && dailyPnl === null) {
+        return '當日損益尚未由券商持倉與保證金回讀確認，下單封鎖';
+    }
+    if (
+        settings.maxDailyLoss > 0
+        && dailyPnl !== null
+        && dailyPnl <= -settings.maxDailyLoss
+    ) {
         return `當日虧損 ${Math.round(dailyPnl)} 已達上限 -${settings.maxDailyLoss}，下單封鎖`;
     }
     return null;

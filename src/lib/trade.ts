@@ -150,7 +150,7 @@ export async function placeQuickOrder(
         account?: Account;
         ocType?: FuturesOCType;
         // 'auto' = 系統觸發（停損/停利等），永不彈手動確認
-        source?: 'manual' | 'auto' | 'agent';
+        source?: 'manual' | 'confirmed-manual' | 'auto' | 'agent';
         agentCallId?: string;
         agentAuto?: boolean;
     },
@@ -171,7 +171,8 @@ export async function placeQuickOrder(
         const blocked = checkOrderAllowed(quantity);
         if (blocked) throw mutationNotStartedError(blocked);
     }
-    if ((opts?.source ?? 'manual') === 'manual') {
+    const source = opts?.source ?? 'manual';
+    if (source === 'manual') {
         await confirmManualOrder(
             contract,
             action,
@@ -196,7 +197,7 @@ export async function placeQuickOrder(
         quantity,
         market,
         opts?.orderLot,
-        opts?.source === 'agent',
+        source,
         capturedAccount,
         opts?.agentCallId
             ? { agentCallId: opts.agentCallId, agentAuto: opts.agentAuto }
@@ -212,7 +213,7 @@ async function sendOrder(
     quantity: number,
     market: boolean,
     orderLot?: StockOrderLot,
-    agentInitiated = false,
+    source: 'manual' | 'confirmed-manual' | 'auto' | 'agent' = 'manual',
     account?: Account,
     agentContext?: { agentCallId?: string; agentAuto?: boolean },
     ocType: FuturesOCType = 'Auto',
@@ -228,7 +229,13 @@ async function sendOrder(
               price_type: market ? 'MKT' : 'LMT',
               order_type: market ? 'IOC' : 'ROD',
               octype: ocType,
-          }, account, { agentInitiated, ...agentContext })
+          }, account, {
+              agentInitiated: source === 'agent',
+              orderIntent: source === 'manual' || source === 'confirmed-manual'
+                  ? 'manual'
+                  : source === 'agent' ? 'agent' : 'automation',
+              ...agentContext,
+          })
         : await placeStockOrder(contract, {
               action,
               price: price ?? 0,
@@ -236,7 +243,13 @@ async function sendOrder(
               price_type: market ? 'MKT' : 'LMT',
               order_type: market ? 'IOC' : 'ROD',
               order_lot: orderLot ?? 'Common',
-          }, account, { agentInitiated, ...agentContext });
+          }, account, {
+              agentInitiated: source === 'agent',
+              orderIntent: source === 'manual' || source === 'confirmed-manual'
+                  ? 'manual'
+                  : source === 'agent' ? 'agent' : 'automation',
+              ...agentContext,
+          });
     return trade;
 }
 
@@ -261,7 +274,7 @@ export async function placeStockExitByShares(
     const limitPrice = action === 'Sell' ? contract.limit_down : contract.limit_up;
     if (odd && (!Number.isFinite(limitPrice) || !limitPrice || limitPrice <= 0)) throw mutationNotStartedError('零股需要有效漲跌停價，尚未送出任何分單');
     // 拆單前先做一次合併的手動確認（整張市價＋零股限價兩腳只問一次，
-    // 內層 placeQuickOrder 一律 source:'auto' 免得連問兩次）
+    // 內層 placeQuickOrder 標記為已完成整批人工確認，免得連問兩次。
     await confirmManualOrder(
         contract,
         action,
@@ -278,7 +291,7 @@ export async function placeStockExitByShares(
     if (lots > 0) {
         out.push(
             await placeQuickOrder(contract, action, null, lots, {
-                source: 'auto',
+                source: 'confirmed-manual',
                 account: capturedAccount,
             }),
         );
@@ -291,7 +304,7 @@ export async function placeStockExitByShares(
         out.push(
             await placeQuickOrder(contract, action, limitPrice, odd, {
                 orderLot: 'IntradayOdd',
-                source: 'auto',
+                source: 'confirmed-manual',
                 account: capturedAccount,
             }),
         );

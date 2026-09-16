@@ -668,15 +668,32 @@ function MainApp() {
     const marginState = { data: trading.margin };
     const refreshTrading = tradingActionObserved;
 
-    // feed risk engine: unrealized position P&L + futures settle P&L
+    // Feed the risk engine only after both authoritative broker snapshots are
+    // known-good. Initial empty state and failed/stale reads are UNKNOWN, not 0.
     useEffect(() => {
+        const positionQuery = trading.queries.positions;
+        const accountQuery = trading.queries.account;
+        const pnlKnown = positionQuery.updatedAt !== null
+            && !positionQuery.needsReconcile
+            && accountQuery.updatedAt !== null
+            && !accountQuery.needsReconcile
+            && marginState.data !== undefined;
+        if (!pnlKnown) {
+            reportDailyPnl(null);
+            return;
+        }
         const unrealized = (positionsState.data ?? []).reduce(
             (sum, p) => sum + (p.pnl || 0),
             0,
         );
         const settle = marginState.data?.future_settle_profitloss ?? 0;
         reportDailyPnl(unrealized + settle);
-    }, [positionsState.data, marginState.data]);
+    }, [
+        positionsState.data,
+        marginState.data,
+        trading.queries.positions,
+        trading.queries.account,
+    ]);
 
     // select & link a symbol WITHOUT adding it to the watchlist
     const selectByCode = useCallback(

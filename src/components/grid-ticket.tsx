@@ -113,7 +113,10 @@ export function GridTicket({
         return out;
     };
 
-    const placeAt = async (price: number) => {
+    const placeAt = async (
+        price: number,
+        orderIntent: 'manual' | 'automation',
+    ) => {
         recentPlace.current.set(keyOf(price), Date.now());
         const c = contractRef.current;
         const p = paramsRef.current;
@@ -130,13 +133,13 @@ export function GridTicket({
                 ...req,
                 price_type: 'LMT',
                 octype: 'Auto',
-            });
+            }, undefined, { orderIntent });
         }
         return placeStockOrder(c, {
             ...req,
             price_type: 'LMT',
             order_lot: 'Common',
-        });
+        }, undefined, { orderIntent });
     };
 
     const layGrid = async () => {
@@ -168,7 +171,7 @@ export function GridTicket({
         let ok = 0;
         for (const price of prices) {
             try {
-                await placeAt(price);
+                await placeAt(price, 'manual');
                 ok += 1;
             } catch (e) {
                 notify({
@@ -195,9 +198,9 @@ export function GridTicket({
         );
         const ok = results.filter((r) => r.status === 'fulfilled').length;
         notify({
-            kind: 'ok',
+            kind: ok === gridOrders.length ? 'ok' : 'err',
             title: '🧹 鋪單全撤',
-            body: `已送出 ${ok}/${gridOrders.length} 筆刪單`,
+            body: `已確認 ${ok}/${gridOrders.length} 筆刪單`,
         });
         setBusy(false);
         setFollow(false);
@@ -236,7 +239,21 @@ export function GridTicket({
                     const k = keyOf(t.status.modified_price || t.order.price);
                     if (!desired.has(k)) {
                         ops += 1;
-                        await cancelOrder(t.order.id).catch(() => undefined);
+                        try {
+                            await cancelOrder(t.order.id);
+                        } catch (error) {
+                            setFollow(false);
+                            notify({
+                                kind: 'err',
+                                title: '動態跟隨已停止：刪單未確認',
+                                body:
+                                    error instanceof Error
+                                        ? error.message
+                                        : String(error),
+                            });
+                            onChangedRef.current?.();
+                            return;
+                        }
                     }
                 }
                 const now = Date.now();
@@ -249,7 +266,14 @@ export function GridTicket({
                     // (the poll hasn't caught up — re-placing would double)
                     if (!have.has(k) && !recentPlace.current.has(k)) {
                         ops += 1;
-                        await placeAt(Number(k)).catch(() => undefined);
+                        await placeAt(Number(k), 'automation').catch((error) => {
+                            setFollow(false);
+                            notify({
+                                kind: 'err',
+                                title: '動態跟隨已停止：補單遭拒',
+                                body: error instanceof Error ? error.message : String(error),
+                            });
+                        });
                     }
                 }
                 if (ops > 0) onChangedRef.current?.();

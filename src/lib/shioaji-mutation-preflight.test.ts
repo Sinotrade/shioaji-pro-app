@@ -9,16 +9,18 @@ vi.mock('./trading-state',()=>({getTradingState:()=>({trades:m.rows})}));
 import { cancelOrder, updateOrderPrice, updateOrderQty } from './shioaji';
 const account:Account={account_type:'F',broker_id:'fixture',account_id:'owner',signed:true,username:'',person_id:''};
 const row = ():AccountedTrade => ({account,contract:{code:'QEFI6',security_type:'FUT',exchange:'TAIFEX',target_code:null},order:{id:'fixture',action:'Buy',price:489,seqno:'seq',ordno:'ord',quantity:3,account},status:{status:'Submitted',id:'fixture',status_code:'00',msg:'',order_ts:1700000000,order_quantity:3,modified_price:0,deals:[],deal_quantity:0,cancel_quantity:0}} as AccountedTrade);
-beforeEach(()=>{vi.clearAllMocks();m.base='fixture';m.accounts=[account];m.rows=[row()];m.post.mockImplementation(async path=>path==='/api/v1/order/trades'?[row()]:row());
+const cancelledRow = ():AccountedTrade => ({...row(),status:{...row().status,status:'Cancelled',cancel_quantity:3}});
+beforeEach(()=>{vi.clearAllMocks();m.base='fixture';m.accounts=[account];m.rows=[row()];let tradeReads=0;m.post.mockImplementation(async path=>{
+ if(path==='/api/v1/order/trades'){tradeReads++;return tradeReads===1?[row()]:[cancelledRow()];}return row();});
  vi.stubGlobal('navigator',{locks:{request:(_n: string,_o:unknown,cb:(v:object)=>unknown)=>cb({})}});
 });
 afterEach(()=>vi.unstubAllGlobals());
-it.each([['cancel',()=>cancelOrder('fixture')],['price',()=>updateOrderPrice('fixture',489)],['quantity',()=>updateOrderQty('fixture',1)]] as const)('preflights exact owner once before futures %s',async(_name,call)=>{
+it.each([['cancel',3,()=>cancelOrder('fixture')],['price',2,()=>updateOrderPrice('fixture',489)],['quantity',2,()=>updateOrderQty('fixture',1)]] as const)('preflights exact owner once before futures %s',async(_name,calls,call)=>{
  await call();expect(m.post.mock.calls[0]).toEqual(['/api/v1/order/trades',{account_type:'F',broker_id:'fixture',account_id:'owner'}]);
- expect(m.post).toHaveBeenCalledTimes(2);expect(m.post.mock.calls[1]![1].trade_id).toBe('fixture');
+ expect(m.post).toHaveBeenCalledTimes(calls);expect(m.post.mock.calls[1]![1].trade_id).toBe('fixture');
 });
 it('preserves quantity intent',async()=>{await updateOrderQty('fixture',1);expect(m.post.mock.calls[1]![1]).toEqual({trade_id:'fixture',quantity:1});});
-it('does not query for stocks',async()=>{const stock={...account,account_type:'S'};m.accounts=[stock];m.rows=[{...row(),account:stock,order:{...row().order,account:stock},contract:{code:'2330',security_type:'STK',exchange:'TSE',target_code:null}} as AccountedTrade];await cancelOrder('fixture');expect(m.post).toHaveBeenCalledTimes(1);expect(m.post.mock.calls[0]![0]).toBe('/api/v1/order/cancel_order');});
+it('does not preflight-query stocks but does verify the cancellation afterwards',async()=>{const stock={...account,account_type:'S'};m.accounts=[stock];m.rows=[{...row(),account:stock,order:{...row().order,account:stock},contract:{code:'2330',security_type:'STK',exchange:'TSE',target_code:null}} as AccountedTrade];m.post.mockImplementation(async path=>path==='/api/v1/order/trades'?[]:row());await cancelOrder('fixture');expect(m.post).toHaveBeenCalledTimes(2);expect(m.post.mock.calls[0]![0]).toBe('/api/v1/order/cancel_order');expect(m.post.mock.calls[1]![0]).toBe('/api/v1/order/trades');});
 it.each(['missing','other-account','terminal','zero','identifiers','base-change','query-failure','partial','reduced','live-changed','action','latest-failed'])('does not mutate after %s reconciliation',async mode=>{
  const snapshot=row();if(mode==='other-account')snapshot.order.account={...account,account_id:'other'};
  if(mode==='terminal')snapshot.status.status='Cancelled';if(mode==='zero')snapshot.status.cancel_quantity=3;
@@ -31,9 +33,9 @@ it.each(['missing','other-account','terminal','zero','identifiers','base-change'
 });
 it('does not guess an unknown trade or account',async()=>{m.rows=[];await expect(cancelOrder('fixture')).rejects.toThrow();expect(m.post).not.toHaveBeenCalled();});
 it('holds the local gate during reconciliation and never queues a second mutation',async()=>{
- let resolve!:(v:AccountedTrade[])=>void;m.post.mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+	let resolve!:(v:AccountedTrade[])=>void;m.post.mockImplementationOnce(()=>new Promise(r=>{resolve=r;})).mockResolvedValueOnce(row()).mockResolvedValueOnce([cancelledRow()]);
  const first=cancelOrder('fixture');await vi.waitFor(()=>expect(m.post).toHaveBeenCalledTimes(1));
- await expect(updateOrderQty('fixture',1)).rejects.toThrow('已有');resolve([row()]);await first;expect(m.post).toHaveBeenCalledTimes(2);
+ await expect(updateOrderQty('fixture',1)).rejects.toThrow('已有');resolve([row()]);await first;expect(m.post).toHaveBeenCalledTimes(3);
 });
 
 it('marks a failed reconciliation as not dispatched while preserving its error',async()=>{
@@ -54,7 +56,7 @@ it.each(['seqno','ordno'] as const)('rejects latest SSE replacing known %s while
  await expect(cancelOrder('fixture')).rejects.toMatchObject({mutationNotStarted:true});expect(m.post).toHaveBeenCalledTimes(1);
 });
 it('allows reconciliation to hydrate empty baseline identifiers',async()=>{
- m.rows=[{...row(),order:{...row().order,seqno:'',ordno:''}}];await cancelOrder('fixture');expect(m.post).toHaveBeenCalledTimes(2);
+	m.rows=[{...row(),order:{...row().order,seqno:'',ordno:''}}];await cancelOrder('fixture');expect(m.post).toHaveBeenCalledTimes(3);
 });
 it('rejects disagreement between newly hydrated latest SSE and snapshot identifiers',async()=>{
  m.rows=[{...row(),order:{...row().order,seqno:'',ordno:''}}];

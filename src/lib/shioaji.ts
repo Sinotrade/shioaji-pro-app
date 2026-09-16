@@ -4,14 +4,32 @@ import { observeTradeMutation } from './trade-mutations';
 import { observeMarketSnapshots } from './market-snapshot-store';
 import { observeTradeResponse } from './trade-observations';
 import { beginServerInfoRequest, observeServerInfo } from './server-info-store';
+import {
+    tradeMatchesId,
+    waitForCancellationConfirmation,
+} from './cancel-verification';
+import {
+    assertExplicitOrderContract,
+    assertFreshOrderQuote,
+    assertKnownOrderEnvironment,
+    assertProductionOrderIntent,
+    assertProductionRiskConfigured,
+    assertTradingStreamLive,
+    assertValidOrderQuantity,
+    orderMutationNotStarted,
+    type OrderIntent,
+} from './order-safety';
 // src/lib/shioaji.ts
 
 import { accountFor, getAccountState } from './account-store';
 import { apiDelete, apiGet, apiPost, apiPut } from './api';
+import { getRiskSettings } from './risk';
 import {
     registerCapabilitySubscription,
     registerSubscription,
     registerSubscriptionRaw,
+    getStreamStatus,
+    getQuote,
     unregisterCapabilitySubscription,
     unregisterSubscription,
 } from './stream';
@@ -742,6 +760,27 @@ function orderableKey(c: ContractBase) {
     return key;
 }
 
+async function assertOrderEnvironmentAvailable() {
+    try {
+        const simulation = assertKnownOrderEnvironment(await fetchInfo());
+        assertProductionRiskConfigured(simulation, getRiskSettings());
+        return simulation;
+    } catch (error) {
+        if (
+            error instanceof Error
+            && 'mutationNotStarted' in error
+            && error.mutationNotStarted === true
+        ) {
+            throw error;
+        }
+        throw orderMutationNotStarted(
+            `無法確認交易環境，已拒絕送單：${
+                error instanceof Error ? error.message : String(error)
+            }`,
+        );
+    }
+}
+
 // place_order can return HTTP 200 with an immediately-rejected trade:
 // status "Failed" and the real reason only in status.msg（CA 問題、未簽署、
 // 價格不合法…）。Turn that into a thrown error so every order path's
@@ -760,12 +799,17 @@ function ensureAccepted<
 
 // `account` routes the order to an explicit account (split orders / 分倉);
 // omitted keeps the existing behavior — the store's selected account.
-export function placeStockOrder(
+export async function placeStockOrder(
     contract: ContractBase,
     order: StockOrderReq,
     account?: Account,
-    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
+    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean; orderIntent?: OrderIntent },
 ) {
+    assertValidOrderQuantity(order.quantity);
+    assertTradingStreamLive(getStreamStatus());
+    assertFreshOrderQuote(getQuote(contract.code)?.updatedAt);
+    const simulation = await assertOrderEnvironmentAvailable();
+    assertProductionOrderIntent(simulation, opts?.orderIntent);
     const selected = account ?? accountFor('S');
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: contractKey(contract),
@@ -773,12 +817,18 @@ export function placeStockOrder(
     }, opts).then(ensureAccepted).then(trade => observeTradeResponse(trade, selected));
 }
 
-export function placeFuturesOrder(
+export async function placeFuturesOrder(
     contract: ContractBase,
     order: FuturesOrderReq,
     account?: Account,
-    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
+    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean; orderIntent?: OrderIntent },
 ) {
+    assertExplicitOrderContract(contract);
+    assertValidOrderQuantity(order.quantity);
+    assertTradingStreamLive(getStreamStatus());
+    assertFreshOrderQuote(getQuote(contract.code)?.updatedAt);
+    const simulation = await assertOrderEnvironmentAvailable();
+    assertProductionOrderIntent(simulation, opts?.orderIntent);
     const selected = account ?? accountFor('F');
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: orderableKey(contract),
@@ -851,11 +901,80 @@ export function cancelOrder(
     return observeTradeMutation(tradeId, async () => {
         const base = await prepareOrderMutation(tradeId);
         if (base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
-        return apiPost<Trade>(
+        const { getTradingState } = await import('./trading-state');
+        const matches = getTradingState().trades.filter((trade) =>
+            tradeMatchesId(trade, tradeId),
+        );
+        if (matches.length !== 1) {
+            throw Object.assign(
+                new Error(`撤單未送出：${tradeId} 委託或帳戶歸屬不明`),
+                { mutationNotStarted: true as const },
+            );
+        }
+        const before = matches[0]!;
+        const reference = before.account ?? before.order.account;
+        const account = getAccountState().accounts.find((candidate) =>
+            candidate.signed
+            && reference
+            && candidate.account_type === reference.account_type
+            && candidate.broker_id === reference.broker_id
+            && candidate.account_id === reference.account_id,
+        );
+        if (!account || (account.account_type !== 'F' && account.account_type !== 'S')) {
+            throw Object.assign(
+                new Error(`撤單未送出：${tradeId} 無法固定已驗證的券商帳戶`),
+                { mutationNotStarted: true as const },
+            );
+        }
+        const market = account.account_type;
+        if (base !== getApiBase()) {
+            throw Object.assign(
+                new Error('伺服器已切換，未送出撤單'),
+                { mutationNotStarted: true as const },
+            );
+        }
+    const brokerResponse = await apiPost<unknown>(
         '/api/v1/order/cancel_order',
         { trade_id: tradeId },
         opts,
-    ); });
+    );
+    const verification = await waitForCancellationConfirmation(
+        tradeId,
+        before,
+        () => {
+            if (base !== getApiBase()) {
+                throw new Error('撤單後伺服器已切換，結果無法確認');
+            }
+            if (!getAccountState().accounts.some((candidate) =>
+                candidate.signed
+                && candidate.account_type === account.account_type
+                && candidate.broker_id === account.broker_id
+                && candidate.account_id === account.account_id,
+            )) {
+                throw new Error('撤單後帳戶已不可用，結果無法確認');
+            }
+            return fetchTrades(market, account);
+        },
+    );
+        if (verification.trade) return verification.trade;
+        const orderQuantity = Number.isFinite(before.status.order_quantity)
+            && before.status.order_quantity > 0
+            ? before.status.order_quantity
+            : before.order.quantity;
+        const cancelQuantity = Math.max(
+            before.status.cancel_quantity,
+            orderQuantity - before.status.deal_quantity,
+        );
+        return {
+            ...before,
+            status: {
+                ...before.status,
+                status: 'Cancelled',
+                cancel_quantity: cancelQuantity,
+                msg: before.status.msg || `券商回讀已確認委託消失（${String(brokerResponse ? 'ack' : 'no-ack')}）`,
+            },
+        };
+    });
 }
 
 export function updateOrderPrice(tradeId: string, price: number) {

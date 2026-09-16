@@ -35,17 +35,23 @@ function ConfirmModal({ request }: { request: OrderConfirmRequest }) {
             >
                 <div className={styles.header}>
                     <span id="order-confirm-title">委託確認</span>
-                    {request.simulation !== null && (
-                        <span
-                            className={
-                                styles.envBadge[
-                                    request.simulation ? 'sim' : 'prod'
-                                ]
-                            }
-                        >
-                            {request.simulation ? '模擬環境' : '正式環境'}
-                        </span>
-                    )}
+                    <span
+                        className={
+                            styles.envBadge[
+                                request.simulation === null
+                                    ? 'unknown'
+                                    : request.simulation
+                                      ? 'sim'
+                                      : 'prod'
+                            ]
+                        }
+                    >
+                        {request.simulation === null
+                            ? '交易環境未確認'
+                            : request.simulation
+                              ? '模擬環境'
+                              : '正式環境'}
+                    </span>
                 </div>
                 <div className={styles.body}>
                     <div className={styles.actionLine[dir]}>
@@ -94,9 +100,12 @@ function ConfirmModal({ request }: { request: OrderConfirmRequest }) {
                     </button>
                     <button
                         className={styles.confirmBtn[dir]}
+                        disabled={request.simulation === null}
                         onClick={() => resolveOrderConfirm(true)}
                     >
-                        確認{request.action === 'Buy' ? '買進' : '賣出'}
+                        {request.simulation === null
+                            ? '等待環境確認'
+                            : `確認${request.action === 'Buy' ? '買進' : '賣出'}`}
                     </button>
                 </div>
             </div>

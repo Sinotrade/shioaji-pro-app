@@ -52,6 +52,14 @@ export const envBadge = styleVariants({
         color: vars.color.down,
         border: `1px solid ${vars.color.down}`,
     },
+    unknown: {
+        fontSize: '0.66rem',
+        fontWeight: 600,
+        padding: '2px 8px',
+        borderRadius: vars.radius.sm,
+        color: vars.color.down,
+        border: `1px solid ${vars.color.down}`,
+    },
 });
 
 export const body = style({
@@ -140,6 +148,7 @@ export const confirmBtn = styleVariants({
         padding: '8px 0',
         cursor: 'pointer',
         ':hover': { filter: 'brightness(1.1)' },
+        ':disabled': { cursor: 'not-allowed', filter: 'grayscale(1)', opacity: 0.5 },
     },
     down: {
         flex: 2,
@@ -153,5 +162,6 @@ export const confirmBtn = styleVariants({
         padding: '8px 0',
         cursor: 'pointer',
         ':hover': { filter: 'brightness(1.1)' },
+        ':disabled': { cursor: 'not-allowed', filter: 'grayscale(1)', opacity: 0.5 },
     },
 });

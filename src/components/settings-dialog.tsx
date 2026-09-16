@@ -391,7 +391,9 @@ function RiskSection() {
             </div>
             <span className={hud.emptyHint}>
                 目前當日損益估算：
-                {maskMoney(Math.round(dailyPnl).toLocaleString(), privMoney)}
+                {dailyPnl === null
+                    ? '尚未確認'
+                    : maskMoney(Math.round(dailyPnl).toLocaleString(), privMoney)}
                 （持倉未實現＋期貨平倉）
                 <br />
                 停損/停利觸價單不受風控封鎖。
