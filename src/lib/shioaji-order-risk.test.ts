@@ -3,6 +3,7 @@ import type { Account } from './types/portfolio';
 
 const m = vi.hoisted(() => ({
     blocked: null as string | null,
+    simulation: true,
     post: vi.fn(),
     check: vi.fn((quantity: number) => {
         void quantity;
@@ -17,7 +18,7 @@ vi.mock('./api', () => ({
         version: 'fixture',
         description: '',
         protocols: [],
-        simulation: true,
+        simulation: m.simulation,
     })),
     apiPost: m.post,
     apiPut: vi.fn(),
@@ -25,11 +26,11 @@ vi.mock('./api', () => ({
 vi.mock('./risk', () => ({
     checkOrderAllowed: m.check,
     getRiskSettings: () => ({
-        enabled: false,
-        maxQty: 0,
-        maxDailyLoss: 0,
+        enabled: true,
+        maxQty: 1,
+        maxDailyLoss: 5_000,
         locked: false,
-        confirmManualOrders: false,
+        confirmManualOrders: true,
     }),
 }));
 vi.mock('./stream', () => ({
@@ -51,7 +52,7 @@ vi.mock('./account-store', () => ({
 }));
 vi.mock('./trade-observations', () => ({ observeTradeResponse: vi.fn() }));
 
-import { placeFuturesOrder, placeStockOrder } from './shioaji';
+import { placeComboOrder, placeFuturesOrder, placeStockOrder } from './shioaji';
 
 const account: Account = {
     account_type: 'F',
@@ -65,6 +66,7 @@ const account: Account = {
 beforeEach(() => {
     vi.clearAllMocks();
     m.blocked = '風控狀態已在確認期間改變，下單封鎖';
+    m.simulation = true;
 });
 
 it('rechecks risk at the low-level futures mutation boundary', async () => {
@@ -110,5 +112,39 @@ it('rechecks risk at the low-level stock mutation boundary', async () => {
     )).rejects.toThrow('風控狀態已在確認期間改變');
 
     expect(m.check).toHaveBeenCalledWith(2);
+    expect(m.post).not.toHaveBeenCalled();
+});
+
+it('blocks combo orders in the conservative production pilot', async () => {
+    m.blocked = null;
+    m.simulation = false;
+
+    await expect(placeComboOrder({
+        legs: [
+            {
+                security_type: 'FUT',
+                region: 'TW',
+                exchange: 'TAIFEX',
+                code: 'TXFJ6',
+                target_code: null,
+            },
+            {
+                security_type: 'FUT',
+                region: 'TW',
+                exchange: 'TAIFEX',
+                code: 'TXFK6',
+                target_code: null,
+            },
+        ],
+        combo_type: 'TimeSpread',
+    }, {
+        action: 'Buy',
+        price: 10,
+        quantity: 1,
+        price_type: 'LMT',
+        order_type: 'ROD',
+    })).rejects.toThrow('不開放組合委託');
+
+    expect(m.check).not.toHaveBeenCalled();
     expect(m.post).not.toHaveBeenCalled();
 });

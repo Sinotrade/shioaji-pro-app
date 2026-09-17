@@ -1431,10 +1431,19 @@ export interface ComboTrade {
  * 傳（曖昧 C+P 由使用者選、期貨用 server 驗證回的值）；未傳時 server
  * 以 Contract V2 Info 推導（含 WeeklyTimeSpread 變體）。
  */
-export function placeComboOrder(
+export async function placeComboOrder(
     combo: { legs: ManagedComboLegReq[]; combo_type?: ComboType | null },
     order: ComboOrderReq,
 ) {
+    assertValidOrderQuantity(order.quantity);
+    assertTradingStreamLive(getStreamStatus());
+    const simulation = await assertOrderEnvironmentAvailable();
+    if (!simulation) {
+        throw orderMutationNotStarted(
+            '保守實單試行僅允許單一明確月份契約，不開放組合委託',
+        );
+    }
+    assertOrderRiskAllowed(order.quantity);
     const acc = accountFor('F');
     return apiPost<ComboTrade>('/api/v1/order/place_comboorder', {
         combo_contract: {
