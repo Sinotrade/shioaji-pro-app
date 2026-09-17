@@ -61,8 +61,6 @@ export interface BadgePosition {
     direction: 'Buy' | 'Sell';
     quantity: number;
     price: number; // 進場均價
-    // 平倉是市價單、不可逆，所以按下 ✕ 之後先進入待確認狀態，再按一次才送
-    arming: boolean;
     unit: string; // 「口」或「股」— 期貨與股票的計量單位不同
 }
 
@@ -89,9 +87,7 @@ export function buildBadgeSpecs(
             price: p.price,
             color: p.direction === 'Buy' ? colors.up : colors.down,
             // 進場均價不是掛單價，拖不動 — 給握把等於騙人
-            text: p.arming
-                ? '再按 ✕ 平倉'
-                : `持${p.direction === 'Buy' ? '多' : '空'}${p.quantity}${p.unit}`,
+            text: `持${p.direction === 'Buy' ? '多' : '空'}${p.quantity}${p.unit}`,
             draggable: false,
             cancellable: true,
         });

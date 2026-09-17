@@ -174,7 +174,6 @@ describe('持倉標籤', () => {
         direction: 'Buy' as const,
         quantity: 3,
         price: 23000,
-        arming: false,
         unit: '口',
     };
 
@@ -203,11 +202,6 @@ describe('持倉標籤', () => {
         const [box] = layout([s!], { 23000: 100 });
         expect(box!.drag).toBeNull();
         expect(box!.close).not.toBeNull();
-    });
-
-    it('上膛後標籤改講「再按 ✕ 平倉」— 市價平倉不該一下就送出', () => {
-        const [s] = buildBadgeSpecs([], [], COLORS, [{ ...pos, arming: true }]);
-        expect(s!.text).toBe('再按 ✕ 平倉');
     });
 
     it('id 以商品代碼為鍵，同一檔只會有一個持倉標籤', () => {

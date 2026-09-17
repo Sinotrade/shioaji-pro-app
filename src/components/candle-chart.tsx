@@ -128,8 +128,6 @@ const TRADE_MODES: { key: TradeMode; label: string }[] = [
 const MAX_HISTORY_DAYS = 1095; // ~3 years
 
 const SHOW_POSITION_KEY = 'sj-pro-chart-show-position';
-// ✕ 上膛之後多久自動退膛 — 短到不會忘記，長到來得及按第二下
-const CLOSE_ARM_MS = 5000;
 
 export function CandleChart({
     panelId,
@@ -283,12 +281,7 @@ export function CandleChart({
     );
     const positionsRef = useRef(positions);
     positionsRef.current = positions;
-    // 平倉是不可逆的市價單 — ✕ 第一下只是上膛，第二下才送出
-    const [armedClose, setArmedClose] = useState<string | null>(null);
-    const armTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    useEffect(() => () => {
-        if (armTimerRef.current) clearTimeout(armTimerRef.current);
-    }, []);
+
     const orderLinesRef = useRef(new Map<string, IPriceLine>());
     const onOrdersChangedRef = useRef(onOrdersChanged);
     onOrdersChangedRef.current = onOrdersChanged;
@@ -514,7 +507,6 @@ export function CandleChart({
               direction: p.direction,
               quantity: p.quantity,
               price: p.price,
-              arming: armedClose === p.code,
               unit: isStockPosition(p) ? '股' : '口',
           }))
         : [];
@@ -561,8 +553,8 @@ export function CandleChart({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [badgeKey]);
 
-    // 進場均價線。線型與委託線（實線）、觸價線（短虛線）刻意分開，價格軸
-    // 上的色塊標籤則跟其他價格線一樣由 lightweight-charts 畫。
+    // 進場均價線。虛線樣式與停損停利線一致（都是「這個價位是參考」的線），
+    // 靠顏色與標籤區分；價格軸上的色塊標籤由 lightweight-charts 畫。
     const positionKey = JSON.stringify(
         positions.map((p) => [p.code, p.direction, p.price, p.quantity]),
     );
@@ -574,7 +566,7 @@ export function CandleChart({
                 price: p.price,
                 color: p.direction === 'Buy' ? colors.up : colors.down,
                 lineWidth: 2,
-                lineStyle: 3, // large dashed
+                lineStyle: 2, // dashed — 與停損停利線同一種虛線
                 axisLabelVisible: true,
             }),
         );
@@ -584,22 +576,12 @@ export function CandleChart({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [positionKey, showPosition, themeKey, contract.code]);
 
-    // 平倉：✕ 第一下上膛、第二下才真的送市價單。送出後才撤這檔的停損停利
-    // —— 反過來先撤、萬一平倉沒送成，部位就會裸奔。
+    // 平倉：按 ✕ 直接送市價單。送出成功之後才撤這檔的停損停利 —— 反過來
+    // 先撤、萬一平倉沒送成，部位就會裸奔。
     const closePositionRef = useRef<(code: string) => void>(() => {});
     closePositionRef.current = (code: string) => {
         const p = positionsRef.current.find((x) => x.code === code);
         if (!p) return;
-        if (armTimerRef.current) clearTimeout(armTimerRef.current);
-        if (armedClose !== code) {
-            setArmedClose(code);
-            armTimerRef.current = setTimeout(
-                () => setArmedClose(null),
-                CLOSE_ARM_MS,
-            );
-            return;
-        }
-        setArmedClose(null);
         void (async () => {
             try {
                 const { exit, qty } = await closePositionAtMarket(p, 'close');
