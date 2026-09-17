@@ -117,13 +117,25 @@ export const qtyInput = style({
     ':focus': { borderColor: vars.color.accent },
 });
 
-// 指標按鈕獨立靠右（它屬於圖表工具，不屬於交易模式群）
-export const indicatorBtn = styleVariants({
+// 圖表工具（顯示倉位、指標）整組靠右 — 它們不屬於交易模式群。
+// 靠右由這組的第一顆負責推，後面的緊貼著它排。
+export const posBtn = styleVariants({
     normal: [modeBase, { marginLeft: 'auto' }],
     active: [
         modeBase,
         {
             marginLeft: 'auto',
+            color: vars.color.foreground,
+            background: vars.color.muted,
+        },
+    ],
+});
+
+export const indicatorBtn = styleVariants({
+    normal: [modeBase],
+    active: [
+        modeBase,
+        {
             color: vars.color.foreground,
             background: vars.color.muted,
         },

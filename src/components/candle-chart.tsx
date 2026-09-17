@@ -64,22 +64,28 @@ import { LineBadgeLayer } from '../lib/chart-line-badge-layer';
 import {
     buildBadgeSpecs,
     hitBadge,
+    type BadgePosition,
     parseBadgeId,
     type BadgeSpec,
 } from '../lib/chart-line-badges';
+import { futuresRootCode } from '../lib/chart-drawings';
+import { closePositionAtMarket } from '../lib/position-exit';
 import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import { notify, placeQuickOrder } from '../lib/trade';
 import {
     addTrigger,
+    cancelProtectiveTriggers,
     removeTrigger,
     updateTriggerPrice,
     useTriggers,
     wouldFireAt,
 } from '../lib/trigger-engine';
+import { useTradingState } from '../lib/trading-state';
 import type { ContractBase } from '../lib/types/contract';
 import type { Candle } from '../lib/types/market';
 import type { Trade } from '../lib/types/order';
+import { isStockPosition, type AccountedPosition } from '../lib/types/portfolio';
 import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
 import { fmtPrice } from '../lib/utils/format';
 import {
@@ -120,6 +126,10 @@ const TRADE_MODES: { key: TradeMode; label: string }[] = [
 
 // keep paging until this floor — one page per fetch, spans widen with tf
 const MAX_HISTORY_DAYS = 1095; // ~3 years
+
+const SHOW_POSITION_KEY = 'sj-pro-chart-show-position';
+// ✕ 上膛之後多久自動退膛 — 短到不會忘記，長到來得及按第二下
+const CLOSE_ARM_MS = 5000;
 
 export function CandleChart({
     panelId,
@@ -239,6 +249,46 @@ export function CandleChart({
     workingOrdersRef.current = workingOrders;
     const triggersRef = useRef(triggers);
     triggersRef.current = triggers;
+
+    // 顯示倉位（頂端工具列開關）。存 localStorage，關掉重開維持原樣；這是
+    // 個人偏好而不是交易狀態，不需要跨視窗即時同步，所以不走 storage 事件
+    const [showPosition, setShowPosition] = useState(() => {
+        try {
+            return localStorage.getItem(SHOW_POSITION_KEY) === '1';
+        } catch {
+            return false;
+        }
+    });
+    useEffect(() => {
+        try {
+            localStorage.setItem(SHOW_POSITION_KEY, showPosition ? '1' : '0');
+        } catch {
+            // 隱私模式下寫不進去 — 這一次的開關照常生效，只是記不住
+        }
+    }, [showPosition]);
+
+    const allPositions = useTradingState().positions;
+    // 這張圖對應的持倉。期貨常態是看連續月（TXFR1）的圖、持有月份合約
+    // （TXFI6）的倉，所以期貨用根代碼比對，不然圖上永遠看不到自己的倉。
+    const positions = useMemo(
+        () =>
+            allPositions.filter(
+                (p) =>
+                    p.code === contract.code ||
+                    (!!contract.target_code && p.code === contract.target_code) ||
+                    (contract.security_type === 'FUT' &&
+                        futuresRootCode(p.code) === futuresRootCode(contract.code)),
+            ),
+        [allPositions, contract.code, contract.target_code, contract.security_type],
+    );
+    const positionsRef = useRef(positions);
+    positionsRef.current = positions;
+    // 平倉是不可逆的市價單 — ✕ 第一下只是上膛，第二下才送出
+    const [armedClose, setArmedClose] = useState<string | null>(null);
+    const armTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => () => {
+        if (armTimerRef.current) clearTimeout(armTimerRef.current);
+    }, []);
     const orderLinesRef = useRef(new Map<string, IPriceLine>());
     const onOrdersChangedRef = useRef(onOrdersChanged);
     onOrdersChangedRef.current = onOrdersChanged;
@@ -458,6 +508,16 @@ export function CandleChart({
     const badgeLayerRef = useRef<LineBadgeLayer | null>(null);
     const triggerLinesRef = useRef(new Map<string, IPriceLine>());
 
+    const badgePositions: BadgePosition[] = showPosition
+        ? positions.map((p) => ({
+              code: p.code,
+              direction: p.direction,
+              quantity: p.quantity,
+              price: p.price,
+              arming: armedClose === p.code,
+              unit: isStockPosition(p) ? '股' : '口',
+          }))
+        : [];
     const badgeSpecs = buildBadgeSpecs(
         workingOrders.map((t) => ({
             id: t.order.id,
@@ -473,6 +533,7 @@ export function CandleChart({
             take: colors.crosshair,
             alert: '#8b94a7',
         },
+        badgePositions,
     );
     const badgeSpecsRef = useRef<BadgeSpec[]>(badgeSpecs);
     badgeSpecsRef.current = badgeSpecs;
@@ -499,6 +560,74 @@ export function CandleChart({
         badgeLayerRef.current?.setSpecs(badgeSpecsRef.current);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [badgeKey]);
+
+    // 進場均價線。線型與委託線（實線）、觸價線（短虛線）刻意分開，價格軸
+    // 上的色塊標籤則跟其他價格線一樣由 lightweight-charts 畫。
+    const positionKey = JSON.stringify(
+        positions.map((p) => [p.code, p.direction, p.price, p.quantity]),
+    );
+    useEffect(() => {
+        const series = candleSeriesRef.current;
+        if (!series || !showPosition) return;
+        const lines = positionsRef.current.map((p) =>
+            series.createPriceLine({
+                price: p.price,
+                color: p.direction === 'Buy' ? colors.up : colors.down,
+                lineWidth: 2,
+                lineStyle: 3, // large dashed
+                axisLabelVisible: true,
+            }),
+        );
+        return () => {
+            for (const line of lines) series.removePriceLine(line);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [positionKey, showPosition, themeKey, contract.code]);
+
+    // 平倉：✕ 第一下上膛、第二下才真的送市價單。送出後才撤這檔的停損停利
+    // —— 反過來先撤、萬一平倉沒送成，部位就會裸奔。
+    const closePositionRef = useRef<(code: string) => void>(() => {});
+    closePositionRef.current = (code: string) => {
+        const p = positionsRef.current.find((x) => x.code === code);
+        if (!p) return;
+        if (armTimerRef.current) clearTimeout(armTimerRef.current);
+        if (armedClose !== code) {
+            setArmedClose(code);
+            armTimerRef.current = setTimeout(
+                () => setArmedClose(null),
+                CLOSE_ARM_MS,
+            );
+            return;
+        }
+        setArmedClose(null);
+        void (async () => {
+            try {
+                const { exit, qty } = await closePositionAtMarket(p, 'close');
+                const c = contractRef.current;
+                const dropped = cancelProtectiveTriggers([
+                    p.code,
+                    c.code,
+                    c.target_code ?? '',
+                ]);
+                notify({
+                    kind: 'ok',
+                    title: '⏹ 平倉單已送出',
+                    body: `${p.code} 市價${exit === 'Buy' ? '買' : '賣'} ${qty}${
+                        isStockPosition(p) ? '股' : '口'
+                    }${dropped.length ? `｜已撤 ${dropped.length} 筆停損停利` : ''}`,
+                });
+                onOrdersChangedRef.current?.();
+            } catch (e) {
+                notify({
+                    kind: 'err',
+                    title: '平倉未完整確認',
+                    body: `可能已有部分委託送出或結果未知，請手動核對，勿直接重送。${
+                        e instanceof Error ? e.message : String(e)
+                    }`,
+                });
+            }
+        })();
+    };
 
     // 標籤互動：握把（或線身）上下拖曳改價、✕ 撤單
     useEffect(() => {
@@ -541,6 +670,10 @@ export function CandleChart({
         const cancelBadge = (badge: string) => {
             const parsed = parseBadgeId(badge);
             if (!parsed) return;
+            if (parsed.source === 'position') {
+                closePositionRef.current(parsed.id);
+                return;
+            }
             if (parsed.source === 'trigger') {
                 const t = triggersRef.current.find((x) => x.id === parsed.id);
                 removeTrigger(parsed.id);
@@ -1695,6 +1828,20 @@ export function CandleChart({
                         }}
                     />
                 </label>
+                <button
+                    className={styles.posBtn[showPosition ? 'active' : 'normal']}
+                    title={
+                        positions.length > 0
+                            ? '在圖上標出進場均價，並可直接平倉'
+                            : '在圖上標出進場均價（目前這檔沒有持倉）'
+                    }
+                    onClick={() => setShowPosition(!showPosition)}
+                >
+                    顯示倉位
+                    {showPosition && positions.length > 0
+                        ? ` ${positions.length}`
+                        : ''}
+                </button>
                 <button
                     className={
                         styles.indicatorBtn[

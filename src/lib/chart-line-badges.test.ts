@@ -167,3 +167,65 @@ describe('標籤內容', () => {
         expect(parseBadgeId('x')).toBeNull();
     });
 });
+
+describe('持倉標籤', () => {
+    const pos = {
+        code: 'TXFI6',
+        direction: 'Buy' as const,
+        quantity: 3,
+        price: 23000,
+        arming: false,
+        unit: '口',
+    };
+
+    it('標出方向與口數，用漲跌色', () => {
+        const [s] = buildBadgeSpecs([], [], COLORS, [pos]);
+        expect(s!.text).toBe('持多3口');
+        expect(s!.color).toBe(COLORS.up);
+        expect(s!.price).toBe(23000);
+    });
+
+    it('空單用跌色、寫「空」', () => {
+        const [s] = buildBadgeSpecs([], [], COLORS, [{ ...pos, direction: 'Sell' }]);
+        expect(s!.text).toBe('持空3口');
+        expect(s!.color).toBe(COLORS.down);
+    });
+
+    it('股票用「股」— 期貨論口、股票論股', () => {
+        const [s] = buildBadgeSpecs([], [], COLORS, [{ ...pos, unit: '股', quantity: 2000 }]);
+        expect(s!.text).toBe('持多2000股');
+    });
+
+    it('拖不動但撤得掉 — 進場均價不是掛單價', () => {
+        const [s] = buildBadgeSpecs([], [], COLORS, [pos]);
+        expect(s!.draggable).toBe(false);
+        expect(s!.cancellable).toBe(true);
+        const [box] = layout([s!], { 23000: 100 });
+        expect(box!.drag).toBeNull();
+        expect(box!.close).not.toBeNull();
+    });
+
+    it('上膛後標籤改講「再按 ✕ 平倉」— 市價平倉不該一下就送出', () => {
+        const [s] = buildBadgeSpecs([], [], COLORS, [{ ...pos, arming: true }]);
+        expect(s!.text).toBe('再按 ✕ 平倉');
+    });
+
+    it('id 以商品代碼為鍵，同一檔只會有一個持倉標籤', () => {
+        const specs = buildBadgeSpecs([], [], COLORS, [pos]);
+        expect(specs[0]!.id).toBe('position:TXFI6');
+        expect(parseBadgeId('position:TXFI6')).toEqual({
+            source: 'position',
+            id: 'TXFI6',
+        });
+    });
+
+    it('持倉排在委託與觸價之前 — 先畫的疊在下層，按鈕不會被蓋住', () => {
+        const specs = buildBadgeSpecs(
+            [{ id: 'o1', action: 'Buy', price: 100, quantity: 1 }],
+            [{ id: 't1', kind: 'stop', action: 'Sell', price: 90, quantity: 1 }],
+            COLORS,
+            [pos],
+        );
+        expect(specs.map((s) => s.id)).toEqual(['position:TXFI6', 'order:o1', 'trigger:t1']);
+    });
+});

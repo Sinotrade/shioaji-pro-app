@@ -2,7 +2,8 @@
 //
 // 委託單、停損停利、警示三種價格線在圖上都只是一條線加一段文字，要改價
 // 得盲拖、要刪掉得跑去左上角的清單。這裡把那段文字換成一個可以互動的
-// 標籤：文字 ＋ 拖曳握把 ＋ 取消鈕。
+// 標籤：文字 ＋ 拖曳握把 ＋ 取消鈕。持倉的進場均價線也用同一套標籤，
+// 只是沒有握把（均價不是掛單價，拖不動）。
 //
 // 版面計算刻意做成純函式並把文字寬度量測注入，命中判定才能在沒有 canvas
 // 的測試環境下驗證（本專案測試環境沒有 jsdom）。畫與點的座標由同一份
@@ -26,7 +27,7 @@ export interface BadgeRect {
 
 // 標籤 id 帶上來源，命中之後才知道該去撤委託還是刪觸價單。委託單 id 由
 // 券商給、觸價單 id 由本地產生，兩邊不保證不撞號，所以加前綴分開。
-export type BadgeSource = 'order' | 'trigger';
+export type BadgeSource = 'order' | 'trigger' | 'position';
 
 export function badgeId(source: BadgeSource, id: string): string {
     return `${source}:${id}`;
@@ -36,7 +37,7 @@ export function parseBadgeId(value: string): { source: BadgeSource; id: string }
     const i = value.indexOf(':');
     if (i < 0) return null;
     const source = value.slice(0, i);
-    if (source !== 'order' && source !== 'trigger') return null;
+    if (source !== 'order' && source !== 'trigger' && source !== 'position') return null;
     return { source, id: value.slice(i + 1) };
 }
 
@@ -55,6 +56,16 @@ export interface BadgeTrigger {
     quantity: number;
 }
 
+export interface BadgePosition {
+    code: string;
+    direction: 'Buy' | 'Sell';
+    quantity: number;
+    price: number; // 進場均價
+    // 平倉是市價單、不可逆，所以按下 ✕ 之後先進入待確認狀態，再按一次才送
+    arming: boolean;
+    unit: string; // 「口」或「股」— 期貨與股票的計量單位不同
+}
+
 export interface BadgeColors {
     up: string;
     down: string;
@@ -69,8 +80,22 @@ export function buildBadgeSpecs(
     orders: readonly BadgeOrder[],
     triggers: readonly BadgeTrigger[],
     colors: BadgeColors,
+    positions: readonly BadgePosition[] = [],
 ): BadgeSpec[] {
     const specs: BadgeSpec[] = [];
+    for (const p of positions) {
+        specs.push({
+            id: badgeId('position', p.code),
+            price: p.price,
+            color: p.direction === 'Buy' ? colors.up : colors.down,
+            // 進場均價不是掛單價，拖不動 — 給握把等於騙人
+            text: p.arming
+                ? '再按 ✕ 平倉'
+                : `持${p.direction === 'Buy' ? '多' : '空'}${p.quantity}${p.unit}`,
+            draggable: false,
+            cancellable: true,
+        });
+    }
     for (const o of orders) {
         specs.push({
             id: badgeId('order', o.id),

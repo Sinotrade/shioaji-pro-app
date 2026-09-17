@@ -11,9 +11,14 @@ vi.mock('./stream', () => ({ onAnyTick: vi.fn() }));
 vi.mock('./trade', () => ({ notify: vi.fn(), placeQuickOrder: vi.fn() }));
 vi.mock('./contracts-cache', () => ({ ensureContract: vi.fn() }));
 
-const { addTrigger, getTriggers, removeTrigger, updateTriggerPrice, wouldFireAt } = await import(
-    './trigger-engine'
-);
+const {
+    addTrigger,
+    cancelProtectiveTriggers,
+    getTriggers,
+    removeTrigger,
+    updateTriggerPrice,
+    wouldFireAt,
+} = await import('./trigger-engine');
 
 beforeEach(() => {
     for (const t of getTriggers()) removeTrigger(t.id);
@@ -80,5 +85,54 @@ describe('「放手就觸發」的判斷', () => {
     it('剛好等於現價算觸發 — 引擎用的是 <= / >=，兩邊要一致', () => {
         expect(wouldFireAt('below', 23050, 23050)).toBe(true);
         expect(wouldFireAt('above', 23050, 23050)).toBe(true);
+    });
+});
+
+describe('平倉後撤掉保護單', () => {
+    const add = (over: Partial<Parameters<typeof addTrigger>[0]> = {}) =>
+        addTrigger({
+            code: 'TXFI6',
+            condition: 'below',
+            price: 23000,
+            action: 'Sell',
+            quantity: 1,
+            kind: 'stop',
+            ...over,
+        });
+
+    it('撤掉停損與停利 — 部位沒了還留著會開出反向新倉', () => {
+        add({ kind: 'stop' });
+        add({ kind: 'take', condition: 'above', price: 23500 });
+        const removed = cancelProtectiveTriggers(['TXFI6']);
+        expect(removed).toHaveLength(2);
+        expect(getTriggers()).toHaveLength(0);
+    });
+
+    it('警示留著 — 那只是通知，不會送單', () => {
+        add({ kind: 'alert' });
+        add({ kind: 'stop' });
+        cancelProtectiveTriggers(['TXFI6']);
+        expect(getTriggers().map((t) => t.kind)).toEqual(['alert']);
+    });
+
+    it('不碰其他商品的保護單', () => {
+        add({ code: 'TXFI6' });
+        add({ code: 'MXFI6' });
+        cancelProtectiveTriggers(['TXFI6']);
+        expect(getTriggers().map((t) => t.code)).toEqual(['MXFI6']);
+    });
+
+    it('一次收多個代碼 — 連續月別名與月份合約指同一個部位', () => {
+        add({ code: 'TXFR1' });
+        add({ code: 'TXFI6' });
+        expect(cancelProtectiveTriggers(['TXFI6', 'TXFR1', ''])).toHaveLength(2);
+        expect(getTriggers()).toHaveLength(0);
+    });
+
+    it('沒有可撤的就回空陣列，不寫 localStorage', () => {
+        add({ code: 'TXFI6', kind: 'alert' });
+        store.delete('sj-pro-triggers');
+        expect(cancelProtectiveTriggers(['TXFI6'])).toEqual([]);
+        expect(store.has('sj-pro-triggers')).toBe(false);
     });
 });

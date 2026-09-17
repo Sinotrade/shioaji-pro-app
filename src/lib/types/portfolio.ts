@@ -35,6 +35,13 @@ export interface FuturePosition {
 
 export type Position = StockPosition | FuturePosition;
 
+// 股票持倉才有 yd_quantity。放在型別檔是刻意的：判斷市場別的地方遍布
+// 元件與 lib，擺進任何會 import trade／stream 的模組都會把整條副作用鏈
+// （window、SSE）拖進純函式的測試裡
+export function isStockPosition(p: Position): p is StockPosition {
+    return 'yd_quantity' in p;
+}
+
 // position_unit 回應不含帳戶欄位 — 多帳戶合併查詢時由呼叫端標上來源帳戶，
 // dock 分帳戶檢視／帳戶範圍篩選都靠這個 tag
 export type AccountedPosition = Position & { account?: Account };

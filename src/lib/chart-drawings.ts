@@ -109,14 +109,20 @@ const SETTINGS_KEY = 'sj-pro-chart-drawing-settings';
 // 選擇權不收斂 — TXO21000I6 與 TXO21500I6 是不同履約價，不是同一商品。
 const FUT_CODE = /^([A-Z]{2,4})(?:R[12]|[A-X]\d)$/;
 
+// TXFR1／TXFI6 → TXF；不是期貨月份代碼就原樣回傳
+export function futuresRootCode(code: string): string {
+    const upper = code.toUpperCase();
+    const m = FUT_CODE.exec(upper);
+    return m ? m[1]! : upper;
+}
+
 export function drawingSymbolKey(
     contract: Pick<ContractBase, 'code' | 'security_type'>,
     share: boolean,
 ): string {
     const code = contract.code.toUpperCase();
     if (!share || contract.security_type !== 'FUT') return code;
-    const m = FUT_CODE.exec(code);
-    return m ? m[1]! : code;
+    return futuresRootCode(code);
 }
 
 // ── 儲存 ─────────────────────────────────────────────────────────────

@@ -91,6 +91,21 @@ export function updateTriggerPrice(id: string, price: number): TriggerOrder | nu
     return updated;
 }
 
+// 平倉之後還留著的停損停利會在下次觸價時開出一筆反向新倉 —— 部位已經
+// 沒了，保護單就必須一起收掉。警示不動：那只是通知，留著不會送單。
+//
+// 期貨的連續月別名（TXFR1）與月份合約（TXFF6）指同一個部位，所以收哪些
+// 代碼由呼叫端決定，這裡照單全收。
+export function cancelProtectiveTriggers(codes: readonly string[]): TriggerOrder[] {
+    const wanted = new Set(codes.filter(Boolean));
+    const removed = triggers.filter((t) => t.kind !== 'alert' && wanted.has(t.code));
+    if (!removed.length) return [];
+    const ids = new Set(removed.map((t) => t.id));
+    triggers = triggers.filter((t) => !ids.has(t.id));
+    persist();
+    return removed;
+}
+
 export function removeTrigger(id: string) {
     triggers = triggers.filter((t) => t.id !== id);
     persist();
