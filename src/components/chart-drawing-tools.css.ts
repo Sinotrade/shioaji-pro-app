@@ -1,69 +1,83 @@
-// src/components/chart-drawing-tools.css.ts — 畫圖工具列與樣式面板
+// src/components/chart-drawing-tools.css.ts — 畫圖工具列（圖表左側直排）
+//
+// TradingView 式的左側工具列：貼著 K 線圖左緣的窄直排，選工具、改樣式、
+// 處理選取中的物件都在這一條上。
 
 import { style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
-const toolBase = style({
-    fontFamily: vars.font.body,
-    fontSize: '0.66rem',
-    fontWeight: 500,
+// 直排本體 — 固定寬度，佔位而非浮動（浮動會蓋住最左邊那幾根 K 棒）
+export const rail = style({
+    position: 'relative',
+    zIndex: 6,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '1px',
+    flexShrink: 0,
+    padding: '4px 3px',
+    borderRight: `1px solid ${vars.color.border}`,
+    background: vars.color.panel,
+});
+
+const btnBase = style({
     display: 'inline-flex',
     alignItems: 'center',
-    padding: '2px 7px',
+    justifyContent: 'center',
+    width: '26px',
+    height: '24px',
     cursor: 'pointer',
     background: 'transparent',
     border: '1px solid transparent',
     borderRadius: vars.radius.sm,
     color: vars.color.mutedForeground,
     transition: 'all 0.12s',
-    ':hover': { color: vars.color.foreground },
+    ':hover': { color: vars.color.foreground, background: vars.color.muted },
 });
 
-export const toolBtn = styleVariants({
-    normal: [toolBase],
-    // 武裝中的畫圖工具沿用交易模式那組的視覺語彙（琥珀＝等你點圖）
+export const railBtn = styleVariants({
+    normal: [btnBase],
+    // 武裝中的工具沿用交易模式那組的視覺語彙（琥珀＝等你點圖）
     armed: [
-        toolBase,
+        btnBase,
         {
             color: '#1a1304',
             background: vars.color.amber,
             borderColor: vars.color.amber,
-            fontWeight: 600,
+            ':hover': { color: '#1a1304', background: vars.color.amber },
         },
     ],
+    active: [btnBase, { color: vars.color.foreground, background: vars.color.muted }],
     disabled: [
-        toolBase,
-        { opacity: 0.4, cursor: 'not-allowed', ':hover': { color: vars.color.mutedForeground } },
+        btnBase,
+        {
+            opacity: 0.35,
+            cursor: 'not-allowed',
+            ':hover': { color: vars.color.mutedForeground, background: 'transparent' },
+        },
     ],
 });
 
-export const iconBtn = style([toolBase, { padding: '2px 5px' }]);
-
-export const wrap = style({
-    position: 'relative',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '2px',
+export const railDivider = style({
+    width: '18px',
+    height: '1px',
+    margin: '3px 0',
+    background: vars.color.border,
+    flexShrink: 0,
 });
 
-export const swatchBtn = style({
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '4px',
-    padding: '2px 6px',
-    cursor: 'pointer',
-    background: 'transparent',
-    border: `1px solid ${vars.color.border}`,
-    borderRadius: vars.radius.sm,
-    fontSize: '0.64rem',
-    color: vars.color.mutedForeground,
-    ':hover': { color: vars.color.foreground },
-});
+// 樣式鈕上的色塊 — 直接顯示目前顏色，不用打開面板就看得到
+export const swatchBtn = style([
+    btnBase,
+    {
+        ':hover': { background: vars.color.muted },
+    },
+]);
 
 export const swatchDot = style({
-    width: '10px',
-    height: '10px',
-    borderRadius: '2px',
+    width: '14px',
+    height: '14px',
+    borderRadius: '3px',
     border: `1px solid ${vars.color.border}`,
 });
 
@@ -73,10 +87,11 @@ export const backdrop = style({
     zIndex: 29,
 });
 
+// 面板從直排往右彈出（往下會被圖表下緣切掉）
 export const pop = style({
     position: 'absolute',
-    top: 'calc(100% + 4px)',
-    left: 0,
+    left: 'calc(100% + 4px)',
+    top: 0,
     zIndex: 30,
     display: 'flex',
     flexDirection: 'column',
@@ -87,6 +102,13 @@ export const pop = style({
     borderRadius: vars.radius.md,
     boxShadow: '0 6px 20px rgba(0, 0, 0, 0.35)',
     whiteSpace: 'nowrap',
+});
+
+export const popWrap = style({
+    position: 'relative',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
 });
 
 export const row = style({
@@ -168,7 +190,7 @@ export const slider = style({
     },
 });
 
-// 樣式面板內的水平分隔（工具列上的垂直分隔用 candle-chart.css 那支）
+// 樣式面板內的水平分隔
 export const popDivider = style({
     height: '1px',
     margin: '2px 0',
@@ -176,7 +198,7 @@ export const popDivider = style({
 });
 
 export const priceInput = style({
-    width: '5.2rem',
+    width: '5.4rem',
     fontFamily: vars.font.mono,
     fontSize: '0.66rem',
     fontWeight: 600,

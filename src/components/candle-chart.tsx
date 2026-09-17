@@ -1537,8 +1537,6 @@ export function CandleChart({
                         {m.label}
                     </button>
                 ))}
-                <span className={styles.toolbarDivider} />
-                <ChartDrawingTools api={drawings} />
                 <label
                     className={styles.qtyWrap}
                     title='圖表下單數量（點價買賣/停損/停利的口數或張數）'
@@ -1592,6 +1590,8 @@ export function CandleChart({
                 )}
                 <RefreshButton label="更新歷史" loading={loading} onClick={() => setHistorySeq(nextChartHistoryRevision())} />
             </div>
+            <div className={styles.chartRow}>
+            <ChartDrawingTools api={drawings} />
             <div ref={hostRef} className={styles.chartHost}>
                 {loading && (
                     <div className={styles.emptyMsg}>
@@ -1722,6 +1722,7 @@ export function CandleChart({
                         </div>
                     );
                 })}
+            </div>
             </div>
         </div>
     );

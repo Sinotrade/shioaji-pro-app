@@ -200,9 +200,19 @@ export const triggerRemove = style({
     ':hover': { color: vars.color.danger },
 });
 
+// 左側畫圖工具列與圖表本體並排。工具列佔位而不是浮在圖上 — 浮動會蓋住
+// 最左邊那幾根 K 棒，往左拖載入更舊歷史時特別礙事。
+export const chartRow = style({
+    display: 'flex',
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+});
+
 export const chartHost = style({
     flex: 1,
     minHeight: 0,
+    minWidth: 0,
     position: 'relative',
 });
 
