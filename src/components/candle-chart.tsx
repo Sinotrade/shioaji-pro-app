@@ -96,10 +96,12 @@ const TIMEFRAMES = [
     { label: '1D', minutes: 1440, days: 240 },
 ] as const;
 
+// 圖表一次只在一種模式：交易模式（頂端工具列武裝）或畫圖／瀏覽模式
+// （左側工具列）。'observe' 不是頂端的按鈕，而是「沒有武裝交易工具」的
+// 中性狀態 — 中性時圖表就歸左側工具列管。
 type TradeMode = 'observe' | 'buy' | 'sell' | 'stop' | 'take' | 'alert';
 
 const TRADE_MODES: { key: TradeMode; label: string }[] = [
-    { key: 'observe', label: '游標' },
     { key: 'buy', label: '點價買' },
     { key: 'sell', label: '點價賣' },
     { key: 'stop', label: '停損' },
@@ -450,6 +452,7 @@ export function CandleChart({
         seriesRef: candleSeriesRef,
         getTimes: () => barTimesRef.current,
         tradeArmed: mode !== 'observe',
+        onEnterDrawingMode: () => setMode('observe'),
     });
 
     // keep latest theme readable inside the chart-creation effect
@@ -1515,24 +1518,18 @@ export function CandleChart({
                 </button>
                 <span className={styles.toolbarDivider} />
                 {TRADE_MODES.filter(
-                    // 組合商品只能用組合單下單 — 圖上僅保留觀察/警示，
+                    // 組合商品只能用組合單下單 — 圖上僅保留警示，
                     // 點價買賣與觸價停損停利（flat code 會被 server 拒）
                     // 一律不給
-                    (m) =>
-                        !isCombo || m.key === 'observe' || m.key === 'alert',
+                    (m) => !isCombo || m.key === 'alert',
                 ).map((m) => (
                     <button
                         key={m.key}
-                        className={
-                            styles.modeBtn[
-                                mode === m.key
-                                    ? m.key === 'observe'
-                                        ? 'active'
-                                        : 'armed'
-                                    : 'normal'
-                            ]
-                        }
-                        onClick={() => setMode(m.key)}
+                        className={styles.modeBtn[mode === m.key ? 'armed' : 'normal']}
+                        title={`交易模式：${m.label}`}
+                        // 再按一次退出交易模式。頂端不再有「游標」按鈕，
+                        // 這是留在頂端的解除方式（另一個是點左側工具列）
+                        onClick={() => setMode(mode === m.key ? 'observe' : m.key)}
                     >
                         {m.label}
                     </button>
@@ -1608,11 +1605,23 @@ export function CandleChart({
                 )}
                 {mode !== 'observe' && (
                     <div className={styles.modeHint}>
+                        交易模式 ·{' '}
                         {mode === 'buy' && '點擊圖表價位 → 限價買進'}
                         {mode === 'sell' && '點擊圖表價位 → 限價賣出'}
                         {mode === 'stop' && '點擊價位掛停損（觸價市價單）'}
                         {mode === 'take' && '點擊價位掛停利（觸價市價單）'}
                         {mode === 'alert' && '點擊價位設定到價警示（只通知不下單）'}
+                    </div>
+                )}
+                {mode === 'observe' && drawings.tool && (
+                    <div className={styles.drawHint}>
+                        畫圖模式 ·{' '}
+                        {drawings.tool === 'horizontal'
+                            ? '點擊價位放置水平線'
+                            : drawings.tool === 'box'
+                              ? '點兩下決定方框的兩個對角'
+                              : '點兩下決定起點與終點'}
+                        （Esc 取消）
                     </div>
                 )}
                 {(workingOrders.length > 0 ||

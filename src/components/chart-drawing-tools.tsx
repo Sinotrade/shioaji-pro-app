@@ -42,10 +42,10 @@ export function ChartDrawingTools({ api }: { api: ChartDrawingsApi }) {
     const isHorizontal = selected?.tool === 'horizontal';
 
     return (
-        <div className={styles.rail}>
+        <div className={styles.rail} title='畫圖／瀏覽模式'>
             <button
                 className={styles.railBtn[api.tool === null ? 'active' : 'normal']}
-                title='游標（選取、拖曳既有物件）'
+                title='游標 — 畫圖／瀏覽模式：選取、拖曳既有物件（並解除交易模式）'
                 aria-label='游標'
                 onClick={() => api.setTool(null)}
             >

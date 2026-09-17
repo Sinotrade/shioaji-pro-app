@@ -65,6 +65,9 @@ export function useChartDrawings(opts: {
     // 交易模式（點價買賣／停損／停利／警示）武裝時交出滑鼠 — 那一下
     // 點擊屬於下單，畫圖不能攔截
     tradeArmed: boolean;
+    // 使用者動了左側工具列 = 要回畫圖／瀏覽模式，請頂端解除交易模式。
+    // 兩種模式一次只能有一種生效。
+    onEnterDrawingMode: () => void;
 }): ChartDrawingsApi {
     const { contract, hostRef, chartRef, seriesRef, getTimes, tradeArmed } = opts;
 
@@ -459,8 +462,14 @@ export function useChartDrawings(opts: {
         setDrawingSettings({ shareContinuousMonth: v });
     }, []);
 
+    const onEnterDrawingModeRef = useRef(opts.onEnterDrawingMode);
+    onEnterDrawingModeRef.current = opts.onEnterDrawingMode;
+
     const setToolChecked = useCallback((t: DrawingTool | null) => {
         draftRef.current = null; // 換工具丟掉畫到一半的物件
+        // 動到左側工具列就離開交易模式 — 包含按「游標」，那是這一側的
+        // 中性狀態，也是從交易模式脫身的方式之一
+        onEnterDrawingModeRef.current();
         setTool(t);
         if (t) setSelectedId(null);
     }, []);

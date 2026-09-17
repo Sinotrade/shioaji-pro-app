@@ -147,6 +147,18 @@ export const modeHint = style({
     pointerEvents: 'none',
 });
 
+// 畫圖模式的提示：與交易模式同一個位置，但用中性的面板色，不搶琥珀
+// 那組「武裝中、下一下會下單」的警示語彙
+export const drawHint = style([
+    modeHint,
+    {
+        color: vars.color.foreground,
+        background: 'color-mix(in srgb, ' + vars.color.panelRaised + ' 92%, transparent)',
+        border: `1px solid ${vars.color.border}`,
+        fontWeight: 500,
+    },
+]);
+
 export const triggerList = style({
     position: 'absolute',
     top: '8px',
