@@ -7,6 +7,7 @@ import {
     assertProductionOrderIntent,
     assertProductionRiskConfigured,
     assertTradingStreamLive,
+    assertUsableOrderQuote,
     assertValidOrderQuantity,
 } from './order-safety';
 import type { ContractBase } from './types/contract';
@@ -94,5 +95,34 @@ describe('order safety preflight', () => {
         expect(() => assertFreshOrderQuote(84_999, 100_000)).toThrow('15 秒內');
         expect(() => assertFreshOrderQuote(undefined, 100_000)).toThrow('15 秒內');
         expect(() => assertFreshOrderQuote(100_001, 100_000)).toThrow('15 秒內');
+    });
+
+    it('requires the executable book side for market orders', () => {
+        const fresh = 100_000;
+        expect(() => assertUsableOrderQuote({
+            updatedAt: fresh,
+            bidask: { bid_price: ['45900'], ask_price: ['45904'] },
+        }, 'Buy', 'MKT', fresh)).not.toThrow();
+        expect(() => assertUsableOrderQuote({
+            updatedAt: fresh,
+            bidask: { bid_price: ['45900'], ask_price: [] },
+        }, 'Buy', 'MKT', fresh)).toThrow('賣一');
+        expect(() => assertUsableOrderQuote({
+            updatedAt: fresh,
+            bidask: { bid_price: [], ask_price: ['45904'] },
+        }, 'Sell', 'MKP', fresh)).toThrow('買一');
+    });
+
+    it('requires at least one valid live price for limit orders', () => {
+        const fresh = 100_000;
+        expect(() => assertUsableOrderQuote({
+            updatedAt: fresh,
+            tick: { close: '45902' },
+        }, 'Buy', 'LMT', fresh)).not.toThrow();
+        expect(() => assertUsableOrderQuote({
+            updatedAt: fresh,
+            tick: { close: '' },
+            bidask: { bid_price: [], ask_price: [] },
+        }, 'Buy', 'LMT', fresh)).toThrow('沒有有效');
     });
 });

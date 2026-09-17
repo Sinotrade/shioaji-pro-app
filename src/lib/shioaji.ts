@@ -10,11 +10,11 @@ import {
 } from './cancel-verification';
 import {
     assertExplicitOrderContract,
-    assertFreshOrderQuote,
     assertKnownOrderEnvironment,
     assertProductionOrderIntent,
     assertProductionRiskConfigured,
     assertTradingStreamLive,
+    assertUsableOrderQuote,
     assertValidOrderQuantity,
     orderMutationNotStarted,
     type OrderIntent,
@@ -807,7 +807,11 @@ export async function placeStockOrder(
 ) {
     assertValidOrderQuantity(order.quantity);
     assertTradingStreamLive(getStreamStatus());
-    assertFreshOrderQuote(getQuote(contract.code)?.updatedAt);
+    assertUsableOrderQuote(
+        getQuote(contract.code),
+        order.action,
+        order.price_type,
+    );
     const simulation = await assertOrderEnvironmentAvailable();
     assertProductionOrderIntent(simulation, opts?.orderIntent);
     const selected = account ?? accountFor('S');
@@ -826,7 +830,11 @@ export async function placeFuturesOrder(
     assertExplicitOrderContract(contract);
     assertValidOrderQuantity(order.quantity);
     assertTradingStreamLive(getStreamStatus());
-    assertFreshOrderQuote(getQuote(contract.code)?.updatedAt);
+    assertUsableOrderQuote(
+        getQuote(contract.code),
+        order.action,
+        order.price_type,
+    );
     const simulation = await assertOrderEnvironmentAvailable();
     assertProductionOrderIntent(simulation, opts?.orderIntent);
     const selected = account ?? accountFor('F');

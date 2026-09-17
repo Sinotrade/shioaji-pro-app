@@ -81,6 +81,54 @@ export function assertFreshOrderQuote(
     }
 }
 
+export interface OrderQuoteSnapshot {
+    updatedAt?: number;
+    tick?: { close?: unknown };
+    bidask?: {
+        bid_price?: readonly unknown[];
+        ask_price?: readonly unknown[];
+    };
+}
+
+function positivePrice(value: unknown) {
+    const price = Number(value);
+    return Number.isFinite(price) && price > 0;
+}
+
+export function assertUsableOrderQuote(
+    quote: OrderQuoteSnapshot | undefined,
+    action: 'Buy' | 'Sell',
+    priceType: string,
+    now = Date.now(),
+) {
+    assertFreshOrderQuote(quote?.updatedAt, now);
+
+    const bestBid = quote?.bidask?.bid_price?.[0];
+    const bestAsk = quote?.bidask?.ask_price?.[0];
+    const marketOrder = priceType === 'MKT' || priceType === 'MKP';
+    if (marketOrder) {
+        const executableSide = action === 'Buy' ? bestAsk : bestBid;
+        if (!positivePrice(executableSide)) {
+            throw orderMutationNotStarted(
+                action === 'Buy'
+                    ? '市價買單缺少有效賣一，已拒絕送單'
+                    : '市價賣單缺少有效買一，已拒絕送單',
+            );
+        }
+        return;
+    }
+
+    if (
+        !positivePrice(quote?.tick?.close)
+        && !positivePrice(bestBid)
+        && !positivePrice(bestAsk)
+    ) {
+        throw orderMutationNotStarted(
+            '即時行情沒有有效成交價或買賣價，已拒絕送單',
+        );
+    }
+}
+
 export function assertValidOrderQuantity(quantity: number) {
     if (!Number.isInteger(quantity) || quantity <= 0) {
         throw orderMutationNotStarted('委託數量必須是正整數');
