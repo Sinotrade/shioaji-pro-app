@@ -35,6 +35,7 @@ import {
     X,
 } from 'lucide-react';
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useChartDrawings } from '../hooks/use-chart-drawings';
 import { useQuote } from '../hooks/use-stream';
 import {
     colorWithOpacity,
@@ -80,6 +81,7 @@ import {
 } from '../lib/utils/kbars';
 import { roundToTick } from '../lib/utils/ticksize';
 import * as styles from './candle-chart.css';
+import { ChartDrawingTools } from './chart-drawing-tools';
 import { Orb } from './orb';
 import * as panel from './panel.css';
 
@@ -433,6 +435,22 @@ export function CandleChart({
             volSeriesRef.current = null;
         };
     }, []);
+
+    // 畫圖工具（issue #122 二／三）。必須接在建立圖表的 effect 之後宣告：
+    // 同一個元件的 effect 依宣告順序執行，掛 primitive 時 candleSeriesRef
+    // 才已經有值。
+    const barTimesRef = useRef<number[]>([]);
+    useEffect(() => {
+        barTimesRef.current = barsRef.current.map((b) => b.time);
+    }, [dataVersion]);
+    const drawings = useChartDrawings({
+        contract,
+        hostRef,
+        chartRef,
+        seriesRef: candleSeriesRef,
+        getTimes: () => barTimesRef.current,
+        tradeArmed: mode !== 'observe',
+    });
 
     // keep latest theme readable inside the chart-creation effect
     const themeSettingsRef = useRef(themeSettings);
@@ -1519,6 +1537,8 @@ export function CandleChart({
                         {m.label}
                     </button>
                 ))}
+                <span className={styles.toolbarDivider} />
+                <ChartDrawingTools api={drawings} />
                 <label
                     className={styles.qtyWrap}
                     title='圖表下單數量（點價買賣/停損/停利的口數或張數）'
