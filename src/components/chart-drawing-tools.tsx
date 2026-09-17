@@ -40,6 +40,14 @@ export function ChartDrawingTools({ api }: { api: ChartDrawingsApi }) {
                 樣式
             </button>
 
+            {selected?.tool === 'horizontal' && !selected.locked && (
+                <PriceInput
+                    key={selected.id}
+                    price={selected.anchors[0]!.price}
+                    onCommit={api.setSelectedPrice}
+                />
+            )}
+
             {selected && (
                 <>
                     <button
@@ -173,5 +181,39 @@ export function ChartDrawingTools({ api }: { api: ChartDrawingsApi }) {
                 </>
             )}
         </span>
+    );
+}
+
+// 水平線的精確價格輸入。編輯中走 local state，不然每打一個字就把線移到
+// 半成品價位（打「25100」時會先跳到 2 元、25 元…）；Enter／失焦才送出，
+// Esc 還原。
+function PriceInput({ price, onCommit }: { price: number; onCommit: (p: number) => void }) {
+    const [draft, setDraft] = useState<string | null>(null);
+    const commit = () => {
+        if (draft === null) return;
+        const v = Number(draft);
+        if (Number.isFinite(v) && v > 0) onCommit(v);
+        setDraft(null);
+    };
+    return (
+        <input
+            className={styles.priceInput}
+            value={draft ?? String(price)}
+            inputMode='decimal'
+            title='水平線價格（Enter 套用，會吸附到合法跳動價位）'
+            aria-label='水平線價格'
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                    commit();
+                    e.currentTarget.blur();
+                } else if (e.key === 'Escape') {
+                    setDraft(null); // 還原輸入
+                    e.currentTarget.blur();
+                    e.stopPropagation(); // 不連帶取消圖上的選取
+                }
+            }}
+        />
     );
 }

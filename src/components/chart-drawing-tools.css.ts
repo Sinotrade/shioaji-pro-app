@@ -175,6 +175,21 @@ export const popDivider = style({
     background: vars.color.border,
 });
 
+export const priceInput = style({
+    width: '5.2rem',
+    fontFamily: vars.font.mono,
+    fontSize: '0.66rem',
+    fontWeight: 600,
+    textAlign: 'right',
+    color: vars.color.foreground,
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    padding: '1px 6px',
+    outline: 'none',
+    ':focus': { borderColor: vars.color.accent },
+});
+
 export const hint = style({
     fontSize: '0.6rem',
     color: vars.color.mutedForeground,

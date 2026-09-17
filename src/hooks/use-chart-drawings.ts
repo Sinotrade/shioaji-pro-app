@@ -49,6 +49,8 @@ export interface ChartDrawingsApi {
     duplicate: () => void;
     remove: () => void;
     clearAll: () => void;
+    // 水平線可直接輸入精確價格（拖曳只能拖到游標所在的價位）
+    setSelectedPrice: (price: number) => void;
     symbolKey: string;
     shareContinuousMonth: boolean;
     setShareContinuousMonth: (v: boolean) => void;
@@ -437,6 +439,17 @@ export function useChartDrawings(opts: {
         setSelectedId(null);
     }, []);
 
+    // 輸入框改價：同樣吸附到合法跳動價位，與拖曳的結果一致
+    const setSelectedPrice = useCallback((price: number) => {
+        const { symbolKey: key, selectedId: id, drawings: list, contract: c } = stateRef.current;
+        const target = list.find((d) => d.id === id);
+        if (!target || target.locked || !Number.isFinite(price)) return;
+        const snapped = roundToTick(c, price);
+        updateDrawing(key, target.id, {
+            anchors: target.anchors.map((a) => ({ ...a, price: snapped })),
+        });
+    }, []);
+
     const clearAll = useCallback(() => {
         clearDrawings(stateRef.current.symbolKey);
         setSelectedId(null);
@@ -464,6 +477,7 @@ export function useChartDrawings(opts: {
         duplicate,
         remove,
         clearAll,
+        setSelectedPrice,
         symbolKey,
         shareContinuousMonth: settings.shareContinuousMonth,
         setShareContinuousMonth,
