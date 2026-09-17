@@ -3,8 +3,10 @@ import {
     __resetDrawingsForTest,
     addDrawing,
     clearDrawings,
+    contrastTextColor,
     DEFAULT_DRAWING_STYLE,
     drawingSymbolKey,
+    DRAWING_PALETTE,
     duplicateDrawing,
     getDrawings,
     removeDrawing,
@@ -135,5 +137,25 @@ describe('畫圖物件的增刪改', () => {
         });
         expect(() => addDrawing('TXF', 'trend', anchors, DEFAULT_DRAWING_STYLE)).not.toThrow();
         expect(getDrawings('TXF')).toHaveLength(1);
+    });
+});
+
+describe('價格軸標籤的字色', () => {
+    it('跟著 lightweight-charts 的門檻走 — 深色底白字、亮色底黑字', () => {
+        expect(contrastTextColor('#2962ff')).toBe('#ffffff'); // 藍
+        expect(contrastTextColor('#ef5350')).toBe('#ffffff'); // 紅
+        expect(contrastTextColor('#ffb300')).toBe('#000000'); // 黃 — 白字會糊掉
+        expect(contrastTextColor('#00bcd4')).toBe('#ffffff'); // 青
+    });
+
+    it('色盤裡每個顏色都挑得到字色，不會因格式落到預設值', () => {
+        for (const c of DRAWING_PALETTE) {
+            expect(['#000000', '#ffffff']).toContain(contrastTextColor(c));
+        }
+    });
+
+    it('看不懂的色值退回白字，不丟例外', () => {
+        expect(contrastTextColor('rgba(0,0,0,.5)')).toBe('#ffffff');
+        expect(contrastTextColor('')).toBe('#ffffff');
     });
 });

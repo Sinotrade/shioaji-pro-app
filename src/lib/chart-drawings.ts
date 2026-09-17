@@ -47,7 +47,7 @@ export interface Drawing {
     tool: DrawingTool;
     anchors: DrawingAnchor[];
     style: DrawingStyle;
-    locked: boolean; // 鎖定：不可選取、拖曳、刪除
+    locked: boolean; // 鎖定：不可拖曳、改價、刪除（仍可選取與改樣式）
     hidden: boolean; // 隱藏：不繪製，但仍保存
     createdAt: number;
 }
@@ -66,6 +66,17 @@ export const DRAWING_PALETTE = [
     '#ab47bc',
     '#9e9e9e',
 ] as const;
+
+// 價格軸標籤的字色。刻意照抄 lightweight-charts 內部的 generateContrastColors
+// （NTSC 灰階加權、門檻 160），我們的標籤才會跟現價、委託單價格線那些
+// 內建標籤長得一模一樣；自己另訂一套門檻會出現同色系標籤字色不同的怪畫面。
+export function contrastTextColor(hex: string): string {
+    const m = /^#([0-9a-f]{6})$/i.exec(hex.trim());
+    if (!m) return '#ffffff';
+    const n = parseInt(m[1]!, 16);
+    const gray = 0.199 * ((n >> 16) & 255) + 0.687 * ((n >> 8) & 255) + 0.114 * (n & 255);
+    return gray > 160 ? '#000000' : '#ffffff';
+}
 
 export const DEFAULT_DRAWING_STYLE: DrawingStyle = {
     color: DRAWING_PALETTE[0],

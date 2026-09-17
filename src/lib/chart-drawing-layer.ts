@@ -8,6 +8,7 @@
 import type {
     IPrimitivePaneRenderer,
     IPrimitivePaneView,
+    ISeriesPrimitiveAxisView,
     ISeriesApi,
     ISeriesPrimitive,
     IChartApi,
@@ -17,7 +18,13 @@ import type {
     SeriesType,
     Time,
 } from 'lightweight-charts';
-import type { Drawing, DrawingAnchor, DrawingStyle, DrawingTool } from './chart-drawings';
+import {
+    contrastTextColor,
+    type Drawing,
+    type DrawingAnchor,
+    type DrawingStyle,
+    type DrawingTool,
+} from './chart-drawings';
 import {
     ANCHOR_RADIUS,
     estimateBarSeconds,
@@ -172,6 +179,36 @@ class DrawingPaneView implements IPrimitivePaneView {
     }
 }
 
+// 水平線在價格軸上的色塊標籤 — 與現價游標、委託單價格線同一種呈現，
+// 線是什麼顏色，標籤就是什麼顏色，一眼看得出這個價位屬於哪一條線。
+//
+// 物件本身可變（座標每次重繪都在動）：lightweight-charts 用陣列 reference
+// 當快取鍵，每次都 new 一批會讓它每幀重建標籤，所以只在「有哪些線」變了
+// 的時候換陣列，座標就地更新。
+class DrawingAxisView implements ISeriesPrimitiveAxisView {
+    y = 0;
+    label = '';
+    color = '#ffffff';
+    ok = false; // 價位在可視範圍外時 priceToCoordinate 會回 null
+    coordinate(): number {
+        return this.y;
+    }
+    text(): string {
+        return this.label;
+    }
+    textColor(): string {
+        return contrastTextColor(this.color);
+    }
+    backColor(): string {
+        return this.color;
+    }
+    visible(): boolean {
+        return this.ok;
+    }
+}
+
+const NO_AXIS_VIEWS: readonly ISeriesPrimitiveAxisView[] = [];
+
 export class DrawingLayer implements ISeriesPrimitive<Time> {
     state: DrawingLayerState = EMPTY_STATE;
     paneSize: PaneSize = { width: 0, height: 0 };
@@ -180,6 +217,8 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
     private _requestUpdate: (() => void) | null = null;
     private _canvas: HTMLCanvasElement | null = null;
     private readonly _views: DrawingPaneView[];
+    private _axisViews: DrawingAxisView[] = [];
+    private _axisKey = '';
 
     // getTimes：目前圖上 K 棒的時間陣列（遞增）。切換週期／載入更舊的
     // 歷史都會換一份，所以用 callback 每次重讀，不快照。
@@ -198,10 +237,54 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
         this._chart = null;
         this._requestUpdate = null;
         this._canvas = null;
+        this._axisViews = [];
+        this._axisKey = '';
     }
 
     paneViews(): readonly IPrimitivePaneView[] {
         return this._views;
+    }
+
+    // 只有水平線有標籤：斜線與方框沒有單一價位可標，硬標一個（例如端點）
+    // 反而會在拖曳時跳來跳去。繪製中的水平線也標，跟游標十字線一樣即時。
+    priceAxisViews(): readonly ISeriesPrimitiveAxisView[] {
+        const series = this._series;
+        if (!series) return NO_AXIS_VIEWS;
+        const rows: { id: string; price: number; color: string }[] = [];
+        for (const d of this.state.drawings) {
+            if (d.tool !== 'horizontal' || d.hidden) continue;
+            const price = d.anchors[0]?.price;
+            if (price === undefined) continue;
+            rows.push({ id: d.id, price, color: d.style.color });
+        }
+        const draft = this.state.draft;
+        if (draft?.tool === 'horizontal') {
+            const price = draft.anchors[0]?.price;
+            if (price !== undefined) {
+                rows.push({ id: 'draft', price, color: draft.style.color });
+            }
+        }
+        if (!rows.length) {
+            this._axisKey = '';
+            this._axisViews = [];
+            return NO_AXIS_VIEWS;
+        }
+        // 價格不進 key：改價時標籤文字跟著 format 出來就好，不必換陣列
+        const key = rows.map((r) => `${r.id}|${r.color}`).join(';');
+        if (key !== this._axisKey) {
+            this._axisKey = key;
+            this._axisViews = rows.map(() => new DrawingAxisView());
+        }
+        const formatter = series.priceFormatter();
+        rows.forEach((r, i) => {
+            const view = this._axisViews[i]!;
+            const y = series.priceToCoordinate(r.price);
+            view.ok = y !== null;
+            view.y = y ?? 0;
+            view.label = formatter.format(r.price);
+            view.color = r.color;
+        });
+        return this._axisViews;
     }
 
     setState(state: DrawingLayerState): void {
