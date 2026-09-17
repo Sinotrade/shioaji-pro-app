@@ -23,7 +23,7 @@ import {
 
 import { accountFor, getAccountState } from './account-store';
 import { apiDelete, apiGet, apiPost, apiPut } from './api';
-import { getRiskSettings } from './risk';
+import { checkOrderAllowed, getRiskSettings } from './risk';
 import {
     registerCapabilitySubscription,
     registerSubscription,
@@ -781,6 +781,14 @@ async function assertOrderEnvironmentAvailable() {
     }
 }
 
+// Re-evaluate mutable risk state at the lowest public order boundary. UI
+// callers perform an earlier check for feedback, but the lock, daily PnL, or
+// configured quantity cap can change while a confirmation dialog is open.
+function assertOrderRiskAllowed(quantity: number) {
+    const blocked = checkOrderAllowed(quantity);
+    if (blocked) throw orderMutationNotStarted(blocked);
+}
+
 // place_order can return HTTP 200 with an immediately-rejected trade:
 // status "Failed" and the real reason only in status.msg（CA 問題、未簽署、
 // 價格不合法…）。Turn that into a thrown error so every order path's
@@ -814,6 +822,7 @@ export async function placeStockOrder(
     );
     const simulation = await assertOrderEnvironmentAvailable();
     assertProductionOrderIntent(simulation, opts?.orderIntent);
+    assertOrderRiskAllowed(order.quantity);
     const selected = account ?? accountFor('S');
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: contractKey(contract),
@@ -837,6 +846,7 @@ export async function placeFuturesOrder(
     );
     const simulation = await assertOrderEnvironmentAvailable();
     assertProductionOrderIntent(simulation, opts?.orderIntent);
+    assertOrderRiskAllowed(order.quantity);
     const selected = account ?? accountFor('F');
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: orderableKey(contract),
