@@ -810,6 +810,15 @@ function assertOrderAccount(
     return selected;
 }
 
+async function assertSimulationOnlyMutation(operation: string) {
+    const simulation = await assertOrderEnvironmentAvailable();
+    if (!simulation) {
+        throw orderMutationNotStarted(
+            `保守實單試行不開放${operation}；請使用具權威回讀的流程處理`,
+        );
+    }
+}
+
 // place_order can return HTTP 200 with an immediately-rejected trade:
 // status "Failed" and the real reason only in status.msg（CA 問題、未簽署、
 // 價格不合法…）。Turn that into a thrown error so every order path's
@@ -1018,6 +1027,7 @@ export function cancelOrder(
 
 export function updateOrderPrice(tradeId: string, price: number) {
     return observeTradeMutation(tradeId, async () => {
+        await assertSimulationOnlyMutation('改價');
         const base = await prepareOrderMutation(tradeId);
         if (base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
         return apiPost<Trade>('/api/v1/order/update_price', {
@@ -1028,6 +1038,7 @@ export function updateOrderPrice(tradeId: string, price: number) {
 
 export function updateOrderQty(tradeId: string, quantity: number) {
     return observeTradeMutation(tradeId, async () => {
+        await assertSimulationOnlyMutation('改量');
         const base = await prepareOrderMutation(tradeId);
         if (base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
         return apiPost<Trade>('/api/v1/order/update_qty', {
@@ -1475,7 +1486,8 @@ export async function placeComboOrder(
     }).then(ensureAccepted);
 }
 
-export function cancelComboOrder(tradeId: string) {
+export async function cancelComboOrder(tradeId: string) {
+    await assertSimulationOnlyMutation('組合撤單');
     return apiPost<ComboTrade>('/api/v1/order/cancel_comboorder', {
         trade_id: tradeId,
     });

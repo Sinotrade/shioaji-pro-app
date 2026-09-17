@@ -3,7 +3,12 @@ import type { Account } from './types/portfolio';
 import type { AccountedTrade } from './types/order';
 const m = vi.hoisted(() => ({ base:'fixture',rows:[] as AccountedTrade[],accounts:[] as Account[],post:vi.fn() }));
 vi.mock('./runtime', async original => ({...await original<object>(),getApiBase:()=>m.base}));
-vi.mock('./api',()=>({apiPost:m.post,apiGet:vi.fn(),apiPut:vi.fn(),apiDelete:vi.fn()}));
+vi.mock('./api',()=>({
+ apiPost:m.post,
+ apiGet:vi.fn(async()=>({name:'fixture',version:'fixture',description:'',protocols:[],simulation:true})),
+ apiPut:vi.fn(),
+ apiDelete:vi.fn(),
+}));
 vi.mock('./account-store',()=>({accountFor:vi.fn(()=>{throw new Error('no selected fallback');}),getAccountState:()=>({accounts:m.accounts})}));
 vi.mock('./trading-state',()=>({getTradingState:()=>({trades:m.rows})}));
 import { cancelOrder, updateOrderPrice, updateOrderQty } from './shioaji';

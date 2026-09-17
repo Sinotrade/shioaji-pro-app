@@ -54,8 +54,20 @@ vi.mock('./account-store', () => ({
     getAccountState: () => ({ accounts: m.accounts }),
 }));
 vi.mock('./trade-observations', () => ({ observeTradeResponse: vi.fn() }));
+vi.mock('./trade-mutations', () => ({
+    observeTradeMutation: vi.fn((_tradeId: string, mutate: () => unknown) =>
+        mutate(),
+    ),
+}));
 
-import { placeComboOrder, placeFuturesOrder, placeStockOrder } from './shioaji';
+import {
+    cancelComboOrder,
+    placeComboOrder,
+    placeFuturesOrder,
+    placeStockOrder,
+    updateOrderPrice,
+    updateOrderQty,
+} from './shioaji';
 
 const account: Account = {
     account_type: 'F',
@@ -175,5 +187,20 @@ it('rejects an account that disappeared while confirmation was open', async () =
         { orderIntent: 'manual' },
     )).rejects.toMatchObject({ mutationNotStarted: true });
 
+    expect(m.post).not.toHaveBeenCalled();
+});
+
+it.each([
+    ['改價', () => updateOrderPrice('trade-id', 45_901)],
+    ['改量', () => updateOrderQty('trade-id', 1)],
+    ['組合撤單', () => cancelComboOrder('combo-trade-id')],
+] as const)('blocks %s without authoritative readback in production', async (
+    operation,
+    mutate,
+) => {
+    m.blocked = null;
+    m.simulation = false;
+
+    await expect(mutate()).rejects.toThrow(`不開放${operation}`);
     expect(m.post).not.toHaveBeenCalled();
 });
