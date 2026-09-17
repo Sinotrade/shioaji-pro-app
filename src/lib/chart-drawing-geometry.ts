@@ -210,6 +210,30 @@ export function hitTest(
     return inside ? { kind: 'body' } : null;
 }
 
+// 從一疊物件裡挑出游標點到的那個。後畫的疊在上面，所以從尾端往前找。
+//
+// 篩選規則只有一條：隱藏的跳過。**鎖定的照樣選得到** — 鎖定擋的是拖曳，
+// 不是選取；選不到就沒辦法解鎖或改樣式，物件會永遠黏在圖上拿不掉。
+export function pickDrawing<
+    T extends { tool: DrawingTool; anchors: DrawingAnchor[]; hidden: boolean },
+>(
+    list: readonly T[],
+    projector: Projector,
+    size: PaneSize,
+    at: Point,
+    tolerance = HIT_TOLERANCE,
+): { drawing: T; hit: Hit; points: Point[] } | null {
+    for (let i = list.length - 1; i >= 0; i--) {
+        const d = list[i]!;
+        if (d.hidden) continue;
+        const points = projectAnchors(projector, d.anchors);
+        if (!points) continue;
+        const hit = hitTest(d.tool, points, size, at, tolerance);
+        if (hit) return { drawing: d, hit, points };
+    }
+    return null;
+}
+
 // ── 拖曳 ─────────────────────────────────────────────────────────────
 //
 // 位移一律在畫面座標算完再換回時間／價格：時間軸有缺口、價格軸可能是

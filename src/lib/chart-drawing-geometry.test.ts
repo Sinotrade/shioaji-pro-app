@@ -6,6 +6,7 @@ import {
     estimateBarSeconds,
     hitTest,
     logicalToTime,
+    pickDrawing,
     projectAnchors,
     shapeOf,
     timeToLogical,
@@ -217,6 +218,58 @@ describe('命中判定', () => {
         expect(distanceToSegment({ x: 0, y: 100 }, a, b)).toBe(100);
         expect(distanceToSegment({ x: 150, y: 110 }, a, b)).toBe(10);
         expect(distanceToSegment({ x: 100, y: 110 }, a, a)).toBe(10); // 退化線段
+    });
+});
+
+describe('從一疊物件裡挑出點到的那個', () => {
+    const obj = (id: string, price: number, patch: Partial<{ hidden: boolean }> = {}) => ({
+        id,
+        tool: 'horizontal' as const,
+        anchors: [{ time: 1000, price }],
+        hidden: false,
+        ...patch,
+    });
+    // projector：price 250 → y 150、price 200 → y 200
+    const at = (y: number) => ({ x: 400, y });
+
+    it('鎖定的物件照樣選得到 — 否則永遠解不了鎖、拿不掉', () => {
+        // 鎖定與否根本不是 pickDrawing 的判斷條件，帶了 locked 也一樣選得到
+        const locked = { ...obj('a', 250), locked: true };
+        expect(pickDrawing([locked], projector, SIZE, at(150))?.drawing.id).toBe('a');
+    });
+
+    it('隱藏的物件跳過 — 看不見就不該點得到', () => {
+        expect(pickDrawing([obj('a', 250, { hidden: true })], projector, SIZE, at(150))).toBeNull();
+    });
+
+    it('重疊時後畫的優先（畫在上面的先選到）', () => {
+        const list = [obj('older', 250), obj('newer', 250)];
+        expect(pickDrawing(list, projector, SIZE, at(150))?.drawing.id).toBe('newer');
+    });
+
+    it('沒點到任何物件時回 null', () => {
+        expect(pickDrawing([obj('a', 250)], projector, SIZE, at(10))).toBeNull();
+    });
+
+    it('回傳的控制點座標可直接拿去當拖曳起點', () => {
+        const picked = pickDrawing([obj('a', 250)], projector, SIZE, at(150))!;
+        expect(picked.points).toEqual([{ x: 100, y: 150 }]);
+        // 水平線橫貫整個 pane，離錨點很遠的 x 點到的是線身
+        expect(picked.hit).toEqual({ kind: 'body' });
+        // 錨點附近才抓得到控制點
+        expect(pickDrawing([obj('a', 250)], projector, SIZE, { x: 100, y: 150 })!.hit).toEqual({
+            kind: 'anchor',
+            index: 0,
+        });
+    });
+
+    it('投影不出來的物件跳過，不會中斷後面的搜尋', () => {
+        const broken: Projector = {
+            ...projector,
+            yOfPrice: (p) => (p === 999 ? null : 400 - p),
+        };
+        const list = [obj('good', 250), obj('broken', 999)];
+        expect(pickDrawing(list, broken, SIZE, at(150))?.drawing.id).toBe('good');
     });
 });
 

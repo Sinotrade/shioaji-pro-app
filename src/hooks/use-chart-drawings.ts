@@ -23,8 +23,7 @@ import {
 } from '../lib/chart-drawings';
 import {
     dragPoints,
-    hitTest,
-    projectAnchors,
+    pickDrawing,
     unprojectPoint,
     type DragPlan,
     type Point,
@@ -42,6 +41,7 @@ export interface ChartDrawingsApi {
     setTool: (t: DrawingTool | null) => void;
     drawings: Drawing[];
     selected: Drawing | null;
+    select: (id: string | null) => void;
     style: DrawingStyle; // 選取中物件的樣式，沒選取時是下一個新物件的預設
     applyStyle: (patch: Partial<DrawingStyle>) => void;
     toggleLock: () => void;
@@ -151,21 +151,11 @@ export function useChartDrawings(opts: {
             return { time: anchor.time, price: snapPrice(t, anchor.price) };
         };
 
-        // 後畫的疊在上面 — 命中判定就要從最上面開始找
         const pick = (pt: Point) => {
             const layer = layerOf();
             const projector = layer?.projector();
             if (!layer || !projector) return null;
-            const list = stateRef.current.drawings;
-            for (let i = list.length - 1; i >= 0; i--) {
-                const d = list[i]!;
-                if (d.hidden || d.locked) continue;
-                const pts = projectAnchors(projector, d.anchors);
-                if (!pts) continue;
-                const hit = hitTest(d.tool, pts, layer.paneSize, pt);
-                if (hit) return { drawing: d, hit, pts };
-            }
-            return null;
+            return pickDrawing(stateRef.current.drawings, projector, layer.paneSize, pt);
         };
 
         let drag: { id: string; tool: DrawingTool; plan: DragPlan } | null = null;
@@ -245,14 +235,20 @@ export function useChartDrawings(opts: {
                 if (stateRef.current.selectedId) setSelectedId(null);
                 return;
             }
+            setSelectedId(picked.drawing.id);
+            if (picked.drawing.locked) {
+                // 選起來就好，不攔截這一下 — 大面積的鎖定方框若吃掉事件，
+                // 在它上面就再也拖不動圖表了。鎖定＝不能動它，不是不能
+                // 動圖表
+                return;
+            }
             e.preventDefault();
             e.stopPropagation();
-            setSelectedId(picked.drawing.id);
             setChartInteractive(false);
             drag = {
                 id: picked.drawing.id,
                 tool: picked.drawing.tool,
-                plan: { hit: picked.hit, startPoints: picked.pts, startAt: pt },
+                plan: { hit: picked.hit, startPoints: picked.points, startAt: pt },
             };
 
             const move = (ev: MouseEvent) => {
@@ -299,8 +295,19 @@ export function useChartDrawings(opts: {
             // 游標顯示的是畫圖、按下去卻是改價
             if (host.style.cursor === 'ns-resize') return;
             const picked = pick(pt);
-            if (picked) host.style.cursor = picked.hit.kind === 'anchor' ? 'grab' : 'move';
-            else if (host.style.cursor === 'grab' || host.style.cursor === 'move') {
+            if (picked) {
+                // 鎖定的物件點得到但拖不動 — 游標用 pointer 表示「可選取」，
+                // 不要用 move／grab 暗示可以拖
+                host.style.cursor = picked.drawing.locked
+                    ? 'pointer'
+                    : picked.hit.kind === 'anchor'
+                      ? 'grab'
+                      : 'move';
+            } else if (
+                host.style.cursor === 'grab' ||
+                host.style.cursor === 'move' ||
+                host.style.cursor === 'pointer'
+            ) {
                 host.style.cursor = '';
             }
         };
@@ -386,7 +393,9 @@ export function useChartDrawings(opts: {
         (patch: Partial<DrawingStyle>) => {
             const current = stateRef.current;
             const target = current.drawings.find((d) => d.id === current.selectedId);
-            if (target && !target.locked) {
+            // 鎖定的物件仍可改樣式 — 鎖定擋的是「位置被誤拖」，顏色線寬
+            // 改了不會弄丟任何東西
+            if (target) {
                 updateDrawing(current.symbolKey, target.id, {
                     style: { ...target.style, ...patch },
                 });
@@ -436,11 +445,15 @@ export function useChartDrawings(opts: {
     }, []);
 
     const remove = useCallback(() => {
-        const { symbolKey: key, selectedId: id } = stateRef.current;
+        const { symbolKey: key, selectedId: id, drawings: list } = stateRef.current;
         if (!id) return;
+        // 鎖定＝防誤刪（一鍵清除也留著它們），要刪先解鎖
+        if (list.find((d) => d.id === id)?.locked) return;
         removeDrawing(key, id);
         setSelectedId(null);
     }, []);
+
+    const select = useCallback((id: string | null) => setSelectedId(id), []);
 
     // 輸入框改價：同樣吸附到合法跳動價位，與拖曳的結果一致
     const setSelectedPrice = useCallback((price: number) => {
@@ -479,6 +492,7 @@ export function useChartDrawings(opts: {
         setTool: setToolChecked,
         drawings,
         selected,
+        select,
         style,
         applyStyle,
         toggleLock,

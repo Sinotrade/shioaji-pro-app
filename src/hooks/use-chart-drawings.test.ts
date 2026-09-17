@@ -2,7 +2,7 @@ import { createElement, createRef } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useChartDrawings, type ChartDrawingsApi } from './use-chart-drawings';
-import { __resetDrawingsForTest } from '../lib/chart-drawings';
+import { __resetDrawingsForTest, addDrawing, DEFAULT_DRAWING_STYLE } from '../lib/chart-drawings';
 import type { ContractBase } from '../lib/types/contract';
 
 // 圖表相關的 ref 一律給 null：本檔只驗模式互斥與對外操作，不碰 canvas。
@@ -126,6 +126,64 @@ describe('交易模式與畫圖模式一次只有一種', () => {
         });
         expect(api.tool).toBeNull();
         expect(onEnterDrawingMode).not.toHaveBeenCalled();
+    });
+});
+
+describe('鎖定只擋移動，不擋選取與編輯', () => {
+    async function mountWithLocked() {
+        let api!: ChartDrawingsApi;
+        await mount({
+            receive: (v) => (api = v),
+            tradeArmed: false,
+            onEnterDrawingMode: vi.fn(),
+        });
+        const created = addDrawing(
+            api.symbolKey,
+            'trend',
+            [
+                { time: 1000, price: 25000 },
+                { time: 2000, price: 25100 },
+            ],
+            DEFAULT_DRAWING_STYLE,
+        );
+        await act(async () => api.select(created.id));
+        await act(async () => api.toggleLock());
+        return { api: () => api, id: created.id };
+    }
+
+    it('鎖定後仍選得到，且能解鎖 — 不會永遠黏在圖上', async () => {
+        const { api, id } = await mountWithLocked();
+        expect(api().selected?.locked).toBe(true);
+        await act(async () => api().toggleLock());
+        expect(api().selected?.id).toBe(id);
+        expect(api().selected?.locked).toBe(false);
+    });
+
+    it('鎖定中仍可改樣式 — 鎖的是位置，不是顏色', async () => {
+        const { api } = await mountWithLocked();
+        await act(async () => api().applyStyle({ color: '#ef5350', width: 4 }));
+        expect(api().selected?.locked).toBe(true);
+        expect(api().selected?.style.color).toBe('#ef5350');
+        expect(api().selected?.style.width).toBe(4);
+    });
+
+    it('鎖定中不可刪除也不可改價，解鎖後才可以', async () => {
+        const { api, id } = await mountWithLocked();
+        await act(async () => api().setSelectedPrice(24000));
+        await act(async () => api().remove());
+        expect(api().drawings.map((d) => d.id)).toEqual([id]);
+        expect(api().selected?.anchors[0]!.price).toBe(25000);
+
+        await act(async () => api().toggleLock());
+        await act(async () => api().remove());
+        expect(api().drawings).toEqual([]);
+    });
+
+    it('隱藏的物件不影響鎖定語意，兩者各自獨立', async () => {
+        const { api } = await mountWithLocked();
+        await act(async () => api().toggleHidden());
+        expect(api().selected?.hidden).toBe(true);
+        expect(api().selected?.locked).toBe(true);
     });
 });
 

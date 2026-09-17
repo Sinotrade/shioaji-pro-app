@@ -117,7 +117,9 @@ class DrawingRenderer implements IPrimitivePaneRenderer {
         ctx.strokeStyle = style.color;
         // 選取中加粗一點當作視覺回饋；鎖定的物件畫淡一些
         ctx.lineWidth = (style.width + (selected ? 1 : 0)) * hr;
-        ctx.globalAlpha = locked ? 0.55 : 1;
+        // 鎖定的物件畫淡一些表示「不會被拖到」；但選取中要看得清楚
+        // （選它通常就是為了解鎖或改樣式），所以選取時不淡化
+        ctx.globalAlpha = locked && !selected ? 0.55 : 1;
         ctx.setLineDash(style.dash === 'dashed' ? [6 * hr, 4 * hr] : []);
         if (shape.kind === 'line') {
             ctx.beginPath();
