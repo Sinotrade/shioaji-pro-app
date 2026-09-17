@@ -789,6 +789,27 @@ function assertOrderRiskAllowed(quantity: number) {
     if (blocked) throw orderMutationNotStarted(blocked);
 }
 
+function assertOrderAccount(
+    type: 'S' | 'F',
+    candidate?: Account,
+): Account {
+    const selected = candidate ?? accountFor(type);
+    const valid = selected?.signed
+        && selected.account_type === type
+        && getAccountState().accounts.some(account =>
+            account.signed
+            && account.account_type === type
+            && account.broker_id === selected.broker_id
+            && account.account_id === selected.account_id,
+        );
+    if (!selected || !valid) {
+        throw orderMutationNotStarted(
+            '下單帳戶未明確驗證或已不可用，請重新整理並選擇帳戶',
+        );
+    }
+    return selected;
+}
+
 // place_order can return HTTP 200 with an immediately-rejected trade:
 // status "Failed" and the real reason only in status.msg（CA 問題、未簽署、
 // 價格不合法…）。Turn that into a thrown error so every order path's
@@ -823,7 +844,7 @@ export async function placeStockOrder(
     const simulation = await assertOrderEnvironmentAvailable();
     assertProductionOrderIntent(simulation, opts?.orderIntent);
     assertOrderRiskAllowed(order.quantity);
-    const selected = account ?? accountFor('S');
+    const selected = assertOrderAccount('S', account);
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: contractKey(contract),
         stock_order: { ...order, account: selected },
@@ -847,7 +868,7 @@ export async function placeFuturesOrder(
     const simulation = await assertOrderEnvironmentAvailable();
     assertProductionOrderIntent(simulation, opts?.orderIntent);
     assertOrderRiskAllowed(order.quantity);
-    const selected = account ?? accountFor('F');
+    const selected = assertOrderAccount('F', account);
     return apiPost<Trade>('/api/v1/order/place_order', {
         contract: orderableKey(contract),
         futures_order: { ...order, account: selected },
@@ -1444,7 +1465,7 @@ export async function placeComboOrder(
         );
     }
     assertOrderRiskAllowed(order.quantity);
-    const acc = accountFor('F');
+    const acc = assertOrderAccount('F');
     return apiPost<ComboTrade>('/api/v1/order/place_comboorder', {
         combo_contract: {
             legs: combo.legs,

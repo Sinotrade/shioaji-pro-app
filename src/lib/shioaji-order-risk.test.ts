@@ -4,6 +4,7 @@ import type { Account } from './types/portfolio';
 const m = vi.hoisted(() => ({
     blocked: null as string | null,
     simulation: true,
+    accounts: [] as Account[],
     post: vi.fn(),
     check: vi.fn((quantity: number) => {
         void quantity;
@@ -47,8 +48,10 @@ vi.mock('./stream', () => ({
     unregisterSubscription: vi.fn(),
 }));
 vi.mock('./account-store', () => ({
-    accountFor: vi.fn(),
-    getAccountState: () => ({ accounts: [] }),
+    accountFor: vi.fn((type: string) =>
+        m.accounts.find(account => account.account_type === type),
+    ),
+    getAccountState: () => ({ accounts: m.accounts }),
 }));
 vi.mock('./trade-observations', () => ({ observeTradeResponse: vi.fn() }));
 
@@ -67,6 +70,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     m.blocked = '風控狀態已在確認期間改變，下單封鎖';
     m.simulation = true;
+    m.accounts = [account];
 });
 
 it('rechecks risk at the low-level futures mutation boundary', async () => {
@@ -146,5 +150,30 @@ it('blocks combo orders in the conservative production pilot', async () => {
     })).rejects.toThrow('不開放組合委託');
 
     expect(m.check).not.toHaveBeenCalled();
+    expect(m.post).not.toHaveBeenCalled();
+});
+
+it('rejects an account that disappeared while confirmation was open', async () => {
+    m.blocked = null;
+    const stale = { ...account, account_id: 'stale-owner' };
+
+    await expect(placeFuturesOrder(
+        {
+            code: 'TXFJ6',
+            security_type: 'FUT',
+            exchange: 'TAIFEX',
+            target_code: null,
+        },
+        {
+            action: 'Buy',
+            price: 45_900,
+            quantity: 1,
+            price_type: 'LMT',
+            order_type: 'ROD',
+        },
+        stale,
+        { orderIntent: 'manual' },
+    )).rejects.toMatchObject({ mutationNotStarted: true });
+
     expect(m.post).not.toHaveBeenCalled();
 });
