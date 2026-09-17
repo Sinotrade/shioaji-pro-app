@@ -60,13 +60,22 @@ import {
 import { subscribeCustoms } from '../lib/custom-indicators';
 import type { IndicatorPoint } from '../lib/indicators';
 import { setPickedPrice } from '../lib/price-sync';
+import { LineBadgeLayer } from '../lib/chart-line-badge-layer';
+import {
+    buildBadgeSpecs,
+    hitBadge,
+    parseBadgeId,
+    type BadgeSpec,
+} from '../lib/chart-line-badges';
 import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import { notify, placeQuickOrder } from '../lib/trade';
 import {
     addTrigger,
     removeTrigger,
+    updateTriggerPrice,
     useTriggers,
+    wouldFireAt,
 } from '../lib/trigger-engine';
 import type { ContractBase } from '../lib/types/contract';
 import type { Candle } from '../lib/types/market';
@@ -228,6 +237,8 @@ export function CandleChart({
     );
     const workingOrdersRef = useRef(workingOrders);
     workingOrdersRef.current = workingOrders;
+    const triggersRef = useRef(triggers);
+    triggersRef.current = triggers;
     const orderLinesRef = useRef(new Map<string, IPriceLine>());
     const onOrdersChangedRef = useRef(onOrdersChanged);
     onOrdersChangedRef.current = onOrdersChanged;
@@ -435,6 +446,251 @@ export function CandleChart({
             chartRef.current = null;
             candleSeriesRef.current = null;
             volSeriesRef.current = null;
+        };
+    }, []);
+
+    // 價格線上的操作標籤（委託單、停損停利、警示）。
+    //
+    // 宣告位置有兩個限制：必須在建立圖表的 effect 之後（掛 primitive 需要
+    // candleSeriesRef 已有值），且必須在畫圖工具之前（同一個 host 上的
+    // capture handler 依註冊順序觸發，標籤要先搶到，畫圖那邊看到
+    // defaultPrevented 就會讓路）。
+    const badgeLayerRef = useRef<LineBadgeLayer | null>(null);
+    const triggerLinesRef = useRef(new Map<string, IPriceLine>());
+
+    const badgeSpecs = buildBadgeSpecs(
+        workingOrders.map((t) => ({
+            id: t.order.id,
+            action: t.order.action,
+            price: t.status.modified_price || t.order.price,
+            quantity: remainingWorkingOrderQuantity(t),
+        })),
+        triggers,
+        {
+            up: colors.up,
+            down: colors.down,
+            stop: '#e0a43c',
+            take: colors.crosshair,
+            alert: '#8b94a7',
+        },
+    );
+    const badgeSpecsRef = useRef<BadgeSpec[]>(badgeSpecs);
+    badgeSpecsRef.current = badgeSpecs;
+    const badgeKey = JSON.stringify(badgeSpecs);
+
+    useEffect(() => {
+        const series = candleSeriesRef.current;
+        if (!series) return;
+        const layer = new LineBadgeLayer();
+        series.attachPrimitive(layer);
+        badgeLayerRef.current = layer;
+        layer.setSpecs(badgeSpecsRef.current);
+        return () => {
+            try {
+                series.detachPrimitive(layer);
+            } catch {
+                // 圖表已銷毀，primitive 也隨之消失
+            }
+            badgeLayerRef.current = null;
+        };
+    }, []);
+
+    useEffect(() => {
+        badgeLayerRef.current?.setSpecs(badgeSpecsRef.current);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [badgeKey]);
+
+    // 標籤互動：握把（或線身）上下拖曳改價、✕ 撤單
+    useEffect(() => {
+        const host = hostRef.current;
+        if (!host) return;
+        let activeMove: ((e: MouseEvent) => void) | null = null;
+        let activeUp: (() => void) | null = null;
+        let dragging = false;
+
+        const lineOf = (source: string, id: string) =>
+            source === 'order'
+                ? orderLinesRef.current.get(id)
+                : triggerLinesRef.current.get(id);
+
+        const setChartInteractive = (on: boolean) =>
+            chartRef.current?.applyOptions({
+                handleScroll: on,
+                handleScale: on,
+            });
+
+        const hitAt = (e: MouseEvent) => {
+            const layer = badgeLayerRef.current;
+            const pt = layer?.pointOf(e);
+            if (!layer || !pt) return null;
+            return hitBadge(layer.boxes, pt);
+        };
+
+        // 拖曳中先只動畫面：線與標籤跟著游標，真正送單留到放手
+        const preview = (badge: string, price: number) => {
+            const parsed = parseBadgeId(badge);
+            if (!parsed) return;
+            lineOf(parsed.source, parsed.id)?.applyOptions({ price });
+            badgeLayerRef.current?.setSpecs(
+                badgeSpecsRef.current.map((s) =>
+                    s.id === badge ? { ...s, price } : s,
+                ),
+            );
+        };
+
+        const cancelBadge = (badge: string) => {
+            const parsed = parseBadgeId(badge);
+            if (!parsed) return;
+            if (parsed.source === 'trigger') {
+                const t = triggersRef.current.find((x) => x.id === parsed.id);
+                removeTrigger(parsed.id);
+                notify({
+                    kind: 'ok',
+                    title: '🗑 觸價單已移除',
+                    body: t
+                        ? `${t.code} ${t.condition === 'below' ? '≤' : '≥'}${fmtPrice(t.price)}`
+                        : '',
+                });
+                return;
+            }
+            const trade = workingOrdersRef.current.find(
+                (t) => t.order.id === parsed.id,
+            );
+            const price = trade
+                ? trade.status.modified_price || trade.order.price
+                : 0;
+            cancelOrder(parsed.id)
+                .then(() => {
+                    notify({
+                        kind: 'ok',
+                        title: '🗑 刪單已送出',
+                        body: `${contractRef.current.code} @${fmtPrice(price)}`,
+                    });
+                    onOrdersChangedRef.current?.();
+                })
+                .catch((err) =>
+                    notify({
+                        kind: 'err',
+                        title: '刪單失敗',
+                        body: err instanceof Error ? err.message : String(err),
+                    }),
+                );
+        };
+
+        const commit = (badge: string, price: number, original: number) => {
+            const parsed = parseBadgeId(badge);
+            if (!parsed || price === original) return;
+            if (parsed.source === 'trigger') {
+                const t = triggersRef.current.find((x) => x.id === parsed.id);
+                if (!t) return;
+                const last = lastPriceRef.current;
+                // 把停損從現價下方拖到上方，條件不會跟著翻面 — 放手當下
+                // 就成立，等於立刻市價出場。這不是使用者要的，退回原價。
+                if (last !== null && wouldFireAt(t.condition, price, last)) {
+                    preview(badge, original);
+                    notify({
+                        kind: 'err',
+                        title: '改價未生效',
+                        body: `${fmtPrice(price)} 會立刻觸發（現價 ${fmtPrice(last)}），已退回 ${fmtPrice(original)}`,
+                    });
+                    return;
+                }
+                updateTriggerPrice(parsed.id, price);
+                notify({
+                    kind: 'ok',
+                    title: '✏️ 觸價單已改價',
+                    body: `${t.code} ${fmtPrice(original)} → ${fmtPrice(price)}`,
+                });
+                return;
+            }
+            updateOrderPrice(parsed.id, price)
+                .then(() => {
+                    notify({
+                        kind: 'ok',
+                        title: '✏️ 改價已送出',
+                        body: `${contractRef.current.code} ${fmtPrice(original)} → ${fmtPrice(price)}`,
+                    });
+                    onOrdersChangedRef.current?.();
+                })
+                .catch((err) => {
+                    notify({
+                        kind: 'err',
+                        title: '改價失敗',
+                        body: err instanceof Error ? err.message : String(err),
+                    });
+                    onOrdersChangedRef.current?.();
+                });
+        };
+
+        const hover = (e: MouseEvent) => {
+            if (dragging) return;
+            const hit = hitAt(e);
+            if (!hit) {
+                delete host.dataset.lineBadge;
+                if (
+                    host.style.cursor === 'ns-resize' ||
+                    host.style.cursor === 'pointer'
+                ) {
+                    host.style.cursor = '';
+                }
+                return;
+            }
+            // 讓畫圖那邊知道游標停在價格線標籤上，別把游標換成畫圖的樣子
+            host.dataset.lineBadge = hit.part;
+            host.style.cursor = hit.part === 'close' ? 'pointer' : 'ns-resize';
+        };
+
+        const down = (e: MouseEvent) => {
+            if (e.button !== 0) return;
+            const layer = badgeLayerRef.current;
+            const hit = hitAt(e);
+            if (!hit || !layer) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (hit.part === 'close') {
+                cancelBadge(hit.box.spec.id);
+                return;
+            }
+            const badge = hit.box.spec.id;
+            const original = hit.box.spec.price;
+            let price = original;
+            dragging = true;
+            setChartInteractive(false);
+
+            const move = (ev: MouseEvent) => {
+                const series = candleSeriesRef.current;
+                const pt = layer.pointOf(ev);
+                if (!series || !pt) return;
+                const raw = series.coordinateToPrice(pt.y);
+                if (raw === null) return;
+                price = roundToTick(contractRef.current, Number(raw));
+                preview(badge, price);
+            };
+            const up = () => {
+                document.removeEventListener('mousemove', move, true);
+                document.removeEventListener('mouseup', up, true);
+                activeMove = null;
+                activeUp = null;
+                dragging = false;
+                setChartInteractive(true);
+                commit(badge, price, original);
+            };
+            document.addEventListener('mousemove', move, true);
+            document.addEventListener('mouseup', up, true);
+            activeMove = move;
+            activeUp = up;
+        };
+
+        host.addEventListener('mousedown', down, true); // capture：搶在平移之前
+        host.addEventListener('mousemove', hover, true);
+        return () => {
+            host.removeEventListener('mousedown', down, true);
+            host.removeEventListener('mousemove', hover, true);
+            // 拖到一半被卸載 — document 上的 listener 也要收掉
+            if (activeMove) {
+                document.removeEventListener('mousemove', activeMove, true);
+            }
+            if (activeUp) document.removeEventListener('mouseup', activeUp, true);
         };
     }, []);
 
@@ -1111,7 +1367,6 @@ export function CandleChart({
         const lines = new Map<string, IPriceLine>();
         for (const t of workingOrdersRef.current) {
             const price = t.status.modified_price || t.order.price;
-            const remaining = remainingWorkingOrderQuantity(t);
             lines.set(
                 t.order.id,
                 series.createPriceLine({
@@ -1120,7 +1375,6 @@ export function CandleChart({
                     lineWidth: 2,
                     lineStyle: 0, // solid
                     axisLabelVisible: true,
-                    title: `${t.order.action === 'Buy' ? '買' : '賣'}${remaining} ⠿`,
                 }),
             );
         }
@@ -1132,142 +1386,34 @@ export function CandleChart({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [orderKey, themeKey, contract.code]);
 
-    // drag an order line to modify its price
-    useEffect(() => {
-        const host = hostRef.current;
-        if (!host) return;
-        let dragging: { trade: Trade; line: IPriceLine; price: number } | null =
-            null;
-        // active document listeners — removed on unmount if a drag is live
-        let activeMove: ((e: MouseEvent) => void) | null = null;
-        let activeUp: (() => void) | null = null;
-
-        const yOf = (e: MouseEvent) =>
-            e.clientY - host.getBoundingClientRect().top;
-
-        const findNear = (y: number) => {
-            const series = candleSeriesRef.current;
-            if (!series) return null;
-            for (const t of workingOrdersRef.current) {
-                const line = orderLinesRef.current.get(t.order.id);
-                if (!line) continue;
-                const coord = series.priceToCoordinate(line.options().price);
-                if (coord !== null && Math.abs(coord - y) <= 6) {
-                    return { trade: t, line };
-                }
-            }
-            return null;
-        };
-
-        const hover = (e: MouseEvent) => {
-            if (dragging) return;
-            host.style.cursor = findNear(yOf(e)) ? 'ns-resize' : '';
-        };
-
-        const down = (e: MouseEvent) => {
-            if (e.button !== 0) return;
-            const hit = findNear(yOf(e));
-            if (!hit) return;
-            e.preventDefault();
-            e.stopPropagation();
-            chartRef.current?.applyOptions({
-                handleScroll: false,
-                handleScale: false,
-            });
-            dragging = {
-                trade: hit.trade,
-                line: hit.line,
-                price: hit.line.options().price,
-            };
-
-            const move = (ev: MouseEvent) => {
-                const series = candleSeriesRef.current;
-                if (!series || !dragging) return;
-                const raw = series.coordinateToPrice(yOf(ev));
-                if (raw === null) return;
-                const np = roundToTick(contractRef.current, Number(raw));
-                dragging.price = np;
-                dragging.line.applyOptions({ price: np });
-            };
-            const up = () => {
-                document.removeEventListener('mousemove', move, true);
-                document.removeEventListener('mouseup', up, true);
-                activeMove = null;
-                activeUp = null;
-                chartRef.current?.applyOptions({
-                    handleScroll: true,
-                    handleScale: true,
-                });
-                const d = dragging;
-                dragging = null;
-                if (!d) return;
-                const orig =
-                    d.trade.status.modified_price || d.trade.order.price;
-                if (d.price === orig) return;
-                updateOrderPrice(d.trade.order.id, d.price)
-                    .then(() => {
-                        notify({
-                            kind: 'ok',
-                            title: '✏️ 改價已送出',
-                            body: `${d.trade.contract.code} ${fmtPrice(orig)} → ${fmtPrice(d.price)}`,
-                        });
-                        onOrdersChangedRef.current?.();
-                    })
-                    .catch((err) => {
-                        notify({
-                            kind: 'err',
-                            title: '改價失敗',
-                            body:
-                                err instanceof Error
-                                    ? err.message
-                                    : String(err),
-                        });
-                        onOrdersChangedRef.current?.();
-                    });
-            };
-            document.addEventListener('mousemove', move, true);
-            document.addEventListener('mouseup', up, true);
-            activeMove = move;
-            activeUp = up;
-        };
-
-        host.addEventListener('mousedown', down, true); // capture: beat chart pan
-        host.addEventListener('mousemove', hover, true);
-        return () => {
-            host.removeEventListener('mousedown', down, true);
-            host.removeEventListener('mousemove', hover, true);
-            // unmounted mid-drag — drop the document listeners too
-            if (activeMove) {
-                document.removeEventListener('mousemove', activeMove, true);
-            }
-            if (activeUp) document.removeEventListener('mouseup', activeUp, true);
-        };
-    }, []);
-
     // draw trigger price lines on the candle series
     useEffect(() => {
         const series = candleSeriesRef.current;
         if (!series) return;
-        const lines = triggers.map((t) =>
-            series.createPriceLine({
-                price: t.price,
-                color:
-                    t.kind === 'stop'
-                        ? '#e0a43c'
-                        : t.kind === 'alert'
-                          ? '#8b94a7'
-                          : colors.crosshair,
-                lineWidth: 1,
-                lineStyle: 2, // dashed
-                axisLabelVisible: true,
-                title:
-                    t.kind === 'alert'
-                        ? '警示'
-                        : `${t.kind === 'stop' ? '停損' : '停利'}${t.action === 'Buy' ? '買' : '賣'}${t.quantity}`,
-            }),
-        );
+        // 標籤文字由 primitive 畫（帶握把與 ✕），這裡不再設 title，不然
+        // 同一段字會被畫兩次
+        const lines = new Map<string, IPriceLine>();
+        for (const t of triggers) {
+            lines.set(
+                t.id,
+                series.createPriceLine({
+                    price: t.price,
+                    color:
+                        t.kind === 'stop'
+                            ? '#e0a43c'
+                            : t.kind === 'alert'
+                              ? '#8b94a7'
+                              : colors.crosshair,
+                    lineWidth: 1,
+                    lineStyle: 2, // dashed
+                    axisLabelVisible: true,
+                }),
+            );
+        }
+        triggerLinesRef.current = lines;
         return () => {
-            for (const line of lines) series.removePriceLine(line);
+            for (const line of lines.values()) series.removePriceLine(line);
+            triggerLinesRef.current = new Map();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [JSON.stringify(triggers), themeKey, contract.code]);

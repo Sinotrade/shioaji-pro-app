@@ -290,10 +290,10 @@ export function useChartDrawings(opts: {
                 host.style.cursor = 'crosshair';
                 return;
             }
-            // 委託線拖曳的 handler 先跑且在 mousedown 有優先權（它會
-            // preventDefault）。它把游標設成 ns-resize 時就別蓋掉，不然
-            // 游標顯示的是畫圖、按下去卻是改價
-            if (host.style.cursor === 'ns-resize') return;
+            // 價格線標籤的 handler 先註冊、先跑，游標停在它上面時由它決定
+            // 游標樣式（它也會 preventDefault 吃掉 mousedown）。這裡不蓋掉，
+            // 不然游標顯示的是畫圖、按下去卻是改價或撤單
+            if (host.dataset.lineBadge) return;
             const picked = pick(pt);
             if (picked) {
                 // 鎖定的物件點得到但拖不動 — 游標用 pointer 表示「可選取」，
