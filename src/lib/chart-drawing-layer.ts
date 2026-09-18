@@ -28,10 +28,13 @@ import {
 import {
     ANCHOR_RADIUS,
     estimateBarSeconds,
+    logicalOfX,
     logicalToTime,
+    measureXAxis,
     projectAnchors,
     shapeOf,
     timeToLogical,
+    xOfLogical,
     type PaneSize,
     type Point,
     type Projector,
@@ -306,8 +309,10 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
         return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
     }
 
-    // 時間／價格 ↔ 畫面座標。時間方向刻意繞過 timeToCoordinate()：
-    // 它只認 K 棒格點上的時間，錨點落在別的週期或棒與棒之間就回 null。
+    // 時間／價格 ↔ 畫面座標。時間方向刻意繞過 timeToCoordinate() 與
+    // logicalToCoordinate()：前者只認 K 棒格點上的時間，後者只認整數
+    // logical（小數一律回 0＝pane 左緣），錨點落在別的週期或棒與棒之間
+    // 就會消失或被釘在畫面最左邊。改成自己量出 logical→x 的線性映射。
     projector(): Projector | null {
         const series = this._series;
         const chart = this._chart;
@@ -315,19 +320,19 @@ export class DrawingLayer implements ISeriesPrimitive<Time> {
         const timeScale = chart.timeScale();
         const times = this._getTimes();
         const bar = estimateBarSeconds(times);
+        // 一幀內時間軸不會動 — 量一次給下面兩個方向共用
+        const axis = measureXAxis((logical) => timeScale.logicalToCoordinate(logical as Logical));
         return {
             xOfTime: (time) => {
-                if (!times.length) return null;
+                if (!times.length || !axis) return null;
                 const logical = timeToLogical(times, bar, time);
                 if (!Number.isFinite(logical)) return null;
-                return timeScale.logicalToCoordinate(logical as Logical);
+                return xOfLogical(axis, logical);
             },
             yOfPrice: (price) => series.priceToCoordinate(price),
             timeOfX: (x) => {
-                if (!times.length) return null;
-                const logical = timeScale.coordinateToLogical(x);
-                if (logical === null) return null;
-                return logicalToTime(times, bar, logical);
+                if (!times.length || !axis) return null;
+                return logicalToTime(times, bar, logicalOfX(axis, x));
             },
             priceOfY: (y) => {
                 const p = series.coordinateToPrice(y);

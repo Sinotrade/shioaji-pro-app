@@ -5,12 +5,15 @@ import {
     dragPoints,
     estimateBarSeconds,
     hitTest,
+    logicalOfX,
     logicalToTime,
+    measureXAxis,
     pickDrawing,
     projectAnchors,
     shapeOf,
     timeToLogical,
     unprojectPoint,
+    xOfLogical,
     type PaneSize,
     type Point,
     type Projector,
@@ -83,6 +86,40 @@ describe('跨週期保持同一個時間／價格位置（issue #122 三）', ()
         expect(l).toBeGreaterThan(2);
         expect(l).toBeLessThan(3);
         expect(logicalToTime(daily, DAY, l)).toBeCloseTo(midday, 6);
+    });
+});
+
+describe('logical index ↔ 畫面 x', () => {
+    // lightweight-charts 的 logicalToCoordinate()：非整數 logical 一律回 0
+    // （pane 左緣），這正是小週期畫的斜線切到大週期時端點黏在最左邊的原因
+    const BAR_SPACING = 8;
+    const ORIGIN = 30;
+    const integerOnly = (logical: number) =>
+        Number.isInteger(logical) ? ORIGIN + logical * BAR_SPACING : 0;
+
+    it('用兩個整數 logical 量出線性映射', () => {
+        const map = measureXAxis(integerOnly);
+        expect(map).toEqual({ origin: ORIGIN, barSpacing: BAR_SPACING });
+    });
+
+    it('小數 logical 也有正確座標 — 不再掉回 pane 左緣', () => {
+        const map = measureXAxis(integerOnly)!;
+        expect(xOfLogical(map, 2.5)).toBe(ORIGIN + 2.5 * BAR_SPACING);
+        expect(xOfLogical(map, -1.25)).toBe(ORIGIN - 1.25 * BAR_SPACING);
+        // 直接問圖表會拿到 0，兩者差很多 — 這就是那個 bug
+        expect(integerOnly(2.5)).toBe(0);
+    });
+
+    it('logicalOfX 是 xOfLogical 的反函式（拖曳時換回時間座標）', () => {
+        const map = measureXAxis(integerOnly)!;
+        for (const l of [-3.5, 0, 1.75, 42]) {
+            expect(logicalOfX(map, xOfLogical(map, l))).toBeCloseTo(l, 10);
+        }
+    });
+
+    it('時間軸還空著（回 null）或量不出棒距時回 null，呼叫端跳過投影', () => {
+        expect(measureXAxis(() => null)).toBeNull();
+        expect(measureXAxis(() => 100)).toBeNull(); // barSpacing = 0
     });
 });
 

@@ -257,3 +257,36 @@ export function dragPoints(plan: DragPlan, at: Point): Point[] {
     }
     return plan.startPoints.map((p) => ({ x: p.x + dx, y: p.y + dy }));
 }
+
+// ── logical index ↔ 畫面 x ────────────────────────────────────────────
+//
+// lightweight-charts 的 timeScale.logicalToCoordinate() 只認整數 logical：
+// 內部 indexToCoordinate() 對非整數直接回 0，也就是 pane 的左緣。切到
+// 大週期時，小週期存下的時間會落在兩根 K 棒之間（小數 logical），端點
+// 就被釘在畫面最左邊、跟著平移一起跑。coordinateToLogical() 反向也會
+// Math.ceil() 成整數，拖曳時被量化到整棒。
+//
+// logical → x 在同一幀內是線性的（x = 左緣 + logical × barSpacing），所以
+// 拿兩個整數 logical 量出這條直線，小數自己算，兩個方向都精確。
+export interface XAxisMap {
+    origin: number; // logical 0 的 x
+    barSpacing: number; // 每根 K 棒的像素寬
+}
+
+// at 由呼叫端包成 timeScale.logicalToCoordinate；time scale 還空著時回 null
+export function measureXAxis(at: (logical: number) => number | null): XAxisMap | null {
+    const a = at(0);
+    const b = at(1);
+    if (a === null || b === null || !Number.isFinite(a) || !Number.isFinite(b)) return null;
+    const barSpacing = b - a;
+    if (!(barSpacing > 0)) return null;
+    return { origin: a, barSpacing };
+}
+
+export function xOfLogical(map: XAxisMap, logical: number): number {
+    return map.origin + logical * map.barSpacing;
+}
+
+export function logicalOfX(map: XAxisMap, x: number): number {
+    return (x - map.origin) / map.barSpacing;
+}
