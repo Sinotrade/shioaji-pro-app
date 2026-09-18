@@ -5,13 +5,10 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTradingLive } from '../hooks/use-stream';
 import { ensureContract } from '../lib/contracts-cache';
+import { closePositionAtMarket, type ExitMode } from '../lib/position-exit';
 import { maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import { useServerInfo, yesterdayQuantityNotice } from '../lib/server-info-store';
-import {
-    notify,
-    placeQuickOrder,
-    placeStockExitByShares,
-} from '../lib/trade';
+import { notify } from '../lib/trade';
 import type { AccountedPosition } from '../lib/types/portfolio';
 import {
     fmtInt,
@@ -181,30 +178,10 @@ export function PositionsPane({
         setSelected(allSelected ? new Set() : new Set(rows.map(posKey)));
     };
 
-    // 捕捉列本身的帳戶；不得以目前選取帳戶補猜持倉歸屬。
-    const closeOne = async (p: AccountedPosition, mode2: 'close' | 'reverse') => {
-        const account = p.account;
-        if (!account?.signed || !account.broker_id || !account.account_id || !['S', 'F'].includes(account.account_type)) {
-            throw new Error('持倉帳戶歸屬不明，未送出委託');
-        }
-        if ((isStockPosition(p) ? 'S' : 'F') !== account.account_type) throw new Error('持倉單位與帳戶市場不符，未送出委託');
-        if (!Number.isInteger(p.quantity) || p.quantity <= 0 || !['Buy', 'Sell'].includes(p.direction)) {
-            throw new Error('持倉數量或方向不明，未送出委託');
-        }
-        if (isStockPosition(p) && (mode2 === 'reverse' || !('cond' in p) || p.cond !== 'Cash')) {
-            throw new Error('股票反手或信用持倉請分開確認交易條件，未送出委託');
-        }
-        const contract = await ensureContract(p.code);
-        if ((contract.security_type === 'STK' ? 'S' : 'F') !== account.account_type) throw new Error('商品與持倉帳戶市場不符，未送出委託');
-        const exit = p.direction === 'Buy' ? 'Sell' : 'Buy';
-        if (isStockPosition(p)) {
-            await placeStockExitByShares(contract, exit, p.quantity, account);
-        } else {
-            await placeQuickOrder(contract, exit, null, mode2 === 'reverse' ? p.quantity * 2 : p.quantity,
-                { account, ocType: mode2 === 'reverse' ? 'Auto' : 'Cover' });
-        }
-        return { exit, qty: mode2 === 'reverse' ? p.quantity * 2 : p.quantity };
-    };
+    // 捕捉列本身的帳戶；不得以目前選取帳戶補猜持倉歸屬。實作在
+    // lib/position-exit，與 K 線圖上的平倉共用同一套驗證
+    const closeOne = (p: AccountedPosition, mode2: ExitMode) =>
+        closePositionAtMarket(p, mode2);
 
     // 平/反 are one-click market orders on the whole position — locked by
     // default like 閃電下單 (issue #1: 存股族一秒反向很可怕)

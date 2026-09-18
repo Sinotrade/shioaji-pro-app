@@ -68,6 +68,44 @@ export function addTrigger(t: Omit<TriggerOrder, 'id'>): TriggerOrder {
     return trigger;
 }
 
+// 這個價位會不會「一放手就觸發」。拖曳觸價單時先問過它：把停損從現價
+// 下方拖到上方，條件（below）並不會跟著翻面，放手當下就會立刻成立而送出
+// 市價單 — 使用者要的是改價，不是現在就成交。
+export function wouldFireAt(
+    condition: TriggerOrder['condition'],
+    triggerPrice: number,
+    lastPrice: number,
+): boolean {
+    return condition === 'below' ? lastPrice <= triggerPrice : lastPrice >= triggerPrice;
+}
+
+// 只改價，不動 condition／action／OCO group：拖曳是調整價位，不是改單性質
+export function updateTriggerPrice(id: string, price: number): TriggerOrder | null {
+    let updated: TriggerOrder | null = null;
+    triggers = triggers.map((t) => {
+        if (t.id !== id) return t;
+        updated = { ...t, price };
+        return updated;
+    });
+    if (updated) persist();
+    return updated;
+}
+
+// 平倉之後還留著的停損停利會在下次觸價時開出一筆反向新倉 —— 部位已經
+// 沒了，保護單就必須一起收掉。警示不動：那只是通知，留著不會送單。
+//
+// 期貨的連續月別名（TXFR1）與月份合約（TXFF6）指同一個部位，所以收哪些
+// 代碼由呼叫端決定，這裡照單全收。
+export function cancelProtectiveTriggers(codes: readonly string[]): TriggerOrder[] {
+    const wanted = new Set(codes.filter(Boolean));
+    const removed = triggers.filter((t) => t.kind !== 'alert' && wanted.has(t.code));
+    if (!removed.length) return [];
+    const ids = new Set(removed.map((t) => t.id));
+    triggers = triggers.filter((t) => !ids.has(t.id));
+    persist();
+    return removed;
+}
+
 export function removeTrigger(id: string) {
     triggers = triggers.filter((t) => t.id !== id);
     persist();

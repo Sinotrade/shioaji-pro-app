@@ -4,12 +4,12 @@
 import { Lock, Unlock } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { maskAccountId } from '../lib/privacy';
+import { isStockPosition } from '../lib/types/portfolio';
 import type { AccountedTrade, Trade } from '../lib/types/order';
 import type {
     Account,
     AccountedPosition,
     Position,
-    StockPosition,
 } from '../lib/types/portfolio';
 import { vars } from '../theme.css';
 import * as styles from './bottom-dock.css';
@@ -27,10 +27,9 @@ export function statusKind(status: string): 'ok' | 'pending' | 'bad' {
     return 'bad';
 }
 
-// stock positions carry yd_quantity; futures ones don't
-export function isStockPosition(p: Position): p is StockPosition {
-    return 'yd_quantity' in p;
-}
+// stock positions carry yd_quantity; futures ones don't。定義放在
+// lib/position-exit（平倉驗證要用），這裡沿用同一份，不要各判各的
+export { isStockPosition } from '../lib/types/portfolio';
 
 export type MarketFilter = 'all' | 'S' | 'F';
 export type ViewMode = 'merged' | 'grouped';
