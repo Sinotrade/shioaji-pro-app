@@ -84,7 +84,7 @@ import { tradingActionObserved, useTradingState } from './lib/trading-state';
 import type { ContractInfo } from './lib/types/contract';
 import {
     BLOCK_META,
-    DEFAULT_WORKSPACE,
+    ACTIVE_DEFAULT_WORKSPACE,
     GRID_LEGACY_COLS,
     GRID_LEGACY_SCALE,
     LAYOUT_PRESETS,
@@ -965,7 +965,7 @@ function MainApp() {
     );
 
     const resetWorkspace = useCallback(() => {
-        updateWorkspace(structuredClone(DEFAULT_WORKSPACE));
+        updateWorkspace(structuredClone(ACTIVE_DEFAULT_WORKSPACE));
     }, [updateWorkspace]);
 
     const loadPreset = useCallback(

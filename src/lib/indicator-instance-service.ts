@@ -4,12 +4,59 @@ import type { Workspace } from './workspace';
 export interface IndicatorPanelState {
     revision: string;
     instances: IndicatorInstance[];
+    // A panel-only seed marker lets the research layout receive its initial
+    // indicators once without restoring them after the user removes one.
+    presetVersion?: string;
 }
 export class IndicatorControlError extends Error {
     constructor(readonly code: string, message: string) { super(message); }
 }
 const copy = <T,>(value: T): T => structuredClone(value);
 const EMPTY: IndicatorPanelState = { revision: '', instances: [] };
+const V9_RESEARCH_PRESET = 'v9-research-v2';
+
+function v9ResearchInstances(): IndicatorInstance[] {
+    const ema8 = newInstance('ema');
+    ema8.params.period = 8;
+    return [
+        newInstance('vwap'),
+        ema8,
+        newInstance('bbi'),
+        newInstance('boll'),
+        newInstance('atrdefense'),
+        newInstance('v9macd'),
+        newInstance('v9kdj'),
+        newInstance('v8trend'),
+    ];
+}
+
+function hasParams(instance: IndicatorInstance, expected: Record<string, number>) {
+    return Object.entries(expected).every(([key, value]) => instance.params[key] === value);
+}
+
+// Only replace the exact v1 default bundle. A chart with any customised
+// setting stays intact; new visual layers are merely added below.
+function isUntouchedV1Bundle(instances: IndicatorInstance[]) {
+    if (instances.length !== 5) return false;
+    return instances.some(i => i.type === 'vwap')
+        && instances.some(i => i.type === 'ema' && hasParams(i, { period: 20 }))
+        && instances.some(i => i.type === 'supertrend' && hasParams(i, { period: 10, mult: 3 }))
+        && instances.some(i => i.type === 'macd' && hasParams(i, { fast: 12, slow: 26, signal: 9 }))
+        && instances.some(i => i.type === 'kd' && hasParams(i, { period: 9, k: 3, d: 3 }));
+}
+
+function mergeV9ResearchInstances(instances: IndicatorInstance[]): IndicatorInstance[] {
+    if (isUntouchedV1Bundle(instances)) return v9ResearchInstances();
+    const present = new Set(instances.map((instance) => instance.type));
+    return [
+        ...instances,
+        // An existing generic MACD/KDJ may be intentionally tuned. In that
+        // case keep it and add only the missing V9-only visual layers.
+        ...v9ResearchInstances().filter((instance) => !present.has(instance.type)
+            && !((instance.type === 'v9macd' && present.has('macd'))
+                || (instance.type === 'v9kdj' && present.has('kd')))),
+    ];
+}
 
 // Seed each legacy chart separately. Global defaults remain available to
 // popouts, previews and the backtest chart; editing a panel never writes them.
@@ -18,10 +65,21 @@ export function initializeIndicatorPanels(workspace: Workspace): Workspace {
     const blocks = workspace.blocks.map(block => {
         if (block.type !== 'chart') return block;
         const old = block.indicatorState;
-        const instances = old ? old.instances.filter(i => DEF_BY_TYPE.has(i.type)) : copy(loadInstances());
-        if (old && instances.length === old.instances.length) return block;
+        let instances = old
+            ? old.instances.filter(i => DEF_BY_TYPE.has(i.type))
+            : copy(loadInstances());
+        const shouldSeedV9 = block.id === 'chart-v9' && old?.presetVersion !== V9_RESEARCH_PRESET;
+        if (shouldSeedV9) instances = mergeV9ResearchInstances(instances);
+        if (old && instances.length === old.instances.length && !shouldSeedV9) return block;
         changed = true;
-        return { ...block, indicatorState: { revision: crypto.randomUUID(), instances } };
+        return {
+            ...block,
+            indicatorState: {
+                revision: crypto.randomUUID(),
+                instances,
+                ...(block.id === 'chart-v9' ? { presetVersion: V9_RESEARCH_PRESET } : {}),
+            },
+        };
     });
     return changed ? { ...workspace, blocks } : workspace;
 }
@@ -78,7 +136,11 @@ export class IndicatorInstanceService {
             const previous = current.instances.find(i => i.id === instance.id);
             if (!previous || previous.type !== instance.type || JSON.stringify(previous.params) !== JSON.stringify(instance.params)) this.parameters(instance.type, instance.params);
         }
-        const state = { revision: crypto.randomUUID(), instances: copy(instances) };
+        const state = {
+            revision: crypto.randomUUID(),
+            instances: copy(instances),
+            ...(current.presetVersion ? { presetVersion: current.presetVersion } : {}),
+        };
         this.context.updateWorkspace({ ...workspace, blocks: workspace.blocks.map(b => b.id === id ? { ...b, indicatorState: state } : b) });
         this.notify();
         return state;

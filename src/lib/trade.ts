@@ -6,7 +6,7 @@ import { cancellationSummary } from './trade-mutations';
 import { getAccountState } from './account-store';
 import { trackActivity } from './activity';
 import { requestOrderConfirm } from './order-confirm';
-import { checkOrderAllowed, getRiskSettings } from './risk';
+import { checkOrderAllowed, getRiskSettings, readOnlyBlockReason } from './risk';
 import {
     cancelOrder,
     fetchTrades,
@@ -155,6 +155,8 @@ export async function placeQuickOrder(
         agentAuto?: boolean;
     },
 ): Promise<Trade> {
+    const readOnlyBlock = readOnlyBlockReason();
+    if (readOnlyBlock) throw mutationNotStartedError(readOnlyBlock);
     const startedBase = getApiBase();
     const capturedAccount = opts?.account ?? (isFuturesContract(contract) ? getAccountState().selectedFutures : getAccountState().selectedStock) ?? undefined;
     assertTradingLive();
@@ -183,6 +185,8 @@ export async function placeQuickOrder(
     assertTradingLive();
     if (getApiBase() !== startedBase) throw mutationNotStartedError('確認期間伺服器已切換，請重新確認');
     if (capturedAccount && !getAccountState().accounts.some(a => a.signed && a.account_type === capturedAccount.account_type && a.broker_id === capturedAccount.broker_id && a.account_id === capturedAccount.account_id)) throw mutationNotStartedError('帳戶已不可用，請重新確認');
+    const finalReadOnlyBlock = readOnlyBlockReason();
+    if (finalReadOnlyBlock) throw mutationNotStartedError(finalReadOnlyBlock);
     if (!opts?.bypassRisk) { const blocked = checkOrderAllowed(quantity); if (blocked) throw mutationNotStartedError(blocked); }
     trackActivity(
         '下單',

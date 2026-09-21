@@ -6,7 +6,7 @@ vi.mock('./runtime', () => ({ getApiBase: () => m.base }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts, selectedStock: m.selected, selectedFutures: m.selected?.account_type === 'F' ? m.selected : undefined }) }));
 vi.mock('./activity', () => ({ trackActivity: vi.fn() }));
 vi.mock('./order-confirm', () => ({ requestOrderConfirm: m.confirm }));
-vi.mock('./risk', () => ({ checkOrderAllowed: m.risk, getRiskSettings: () => ({ confirmManualOrders: true }) }));
+vi.mock('./risk', () => ({ checkOrderAllowed: m.risk, getRiskSettings: () => ({ confirmManualOrders: true }), readOnlyBlockReason: () => null }));
 vi.mock('./stream', () => ({ getStreamStatus: () => m.live }));
 vi.mock('./shioaji', () => ({ placeStockOrder: m.stock, placeFuturesOrder: m.future, fetchTrades: m.fetch, cancelOrder: m.cancel }));
 import { placeStockExitByShares, placeQuickOrder, cancelAllOrders, onNotice } from './trade';

@@ -119,6 +119,26 @@ export function vwap(bars: Candle[]): IndicatorPoint[] {
     return out;
 }
 
+// V9 畫面使用的 BBI：MA(3)、MA(6)、MA(12)、MA(24) 的平均。
+// 原 V9 對前段資料採用「可用根數」的 SMA，因此這裡也從第一根開始
+// 回傳數值，讓歷史不足 24 根時畫面不會留一大片空白。
+export function bbi(
+    bars: Candle[],
+    periods: readonly number[] = [3, 6, 12, 24],
+): IndicatorPoint[] {
+    if (periods.length === 0) return [];
+    const closes = bars.map((bar) => bar.close);
+    return bars.map((bar, index) => {
+        const value = periods.reduce((total, period) => {
+            const start = Math.max(0, index - period + 1);
+            let sum = 0;
+            for (let i = start; i <= index; i++) sum += closes[i]!;
+            return total + sum / (index - start + 1);
+        }, 0) / periods.length;
+        return { time: bar.time, value };
+    });
+}
+
 // Parabolic SAR (Wilder)
 export function sar(bars: Candle[], step = 0.02, max = 0.2): IndicatorPoint[] {
     const out: IndicatorPoint[] = [];
@@ -256,18 +276,30 @@ export function keltner(
 }
 
 // SuperTrend — two series (up-trend line below price / down-trend line above)
-// with whitespace gaps so the inactive side isn't drawn
+// with whitespace gaps so the inactive side isn't drawn. `flips` records the
+// first bar whose confirmed close flips the trend; presentation-only.
+export interface SuperTrendFlip {
+    time: number;
+    /** 1 = close reclaimed the upper band (bear→bull, long entry); -1 = close broke the lower band (bull→bear, long exit) */
+    direction: 1 | -1;
+}
+
 export function supertrend(
     bars: Candle[],
     period = 10,
     mult = 3,
-): { up: IndicatorPoint[]; down: IndicatorPoint[] } {
+): { up: IndicatorPoint[]; down: IndicatorPoint[]; flips: SuperTrendFlip[] } {
     const atrLine = rma(trueRanges(bars), period);
     const up: IndicatorPoint[] = [];
     const down: IndicatorPoint[] = [];
+    const flips: SuperTrendFlip[] = [];
+    // Standard SuperTrend ratchet vs the previous *closed* bar: the lower band
+    // (support) only rises and the upper band (resistance) only falls; once the
+    // prior close breaks a band, that band is allowed to reset instead of being
+    // pinned at the old level (pinning it whipsaws flips inside a strong trend).
     let prevUpper = NaN;
     let prevLower = NaN;
-    let trendUp = true;
+    let trend: 1 | -1 = 1;
     let prevClose = NaN;
     for (let i = 0; i < bars.length; i++) {
         const b = bars[i]!;
@@ -279,22 +311,203 @@ export function supertrend(
             continue;
         }
         const mid = (b.high + b.low) / 2;
-        let upper = mid + mult * a;
-        let lower = mid - mult * a;
-        // band ratchet
-        if (!Number.isNaN(prevUpper) && (upper > prevUpper || prevClose > prevUpper)) {
-            upper = Math.min(upper, prevUpper);
+        const basicUpper = mid + mult * a;
+        const basicLower = mid - mult * a;
+        let upper: number;
+        let lower: number;
+        if (Number.isNaN(prevUpper)) {
+            upper = basicUpper;
+            lower = basicLower;
+        } else {
+            lower = basicLower > prevLower || prevClose < prevLower ? basicLower : prevLower;
+            upper = basicUpper < prevUpper || prevClose > prevUpper ? basicUpper : prevUpper;
         }
-        if (!Number.isNaN(prevLower) && (lower < prevLower || prevClose < prevLower)) {
-            lower = Math.max(lower, prevLower);
+        // Flip only on this bar's confirmed close; the 買/平 marker is a long
+        // entry/exit reference for the following bar, never an order.
+        let nextTrend: 1 | -1 = trend;
+        if (trend === -1 && b.close > upper) {
+            nextTrend = 1;
+        } else if (trend === 1 && b.close < lower) {
+            nextTrend = -1;
         }
-        if (trendUp && b.close < lower) trendUp = false;
-        else if (!trendUp && b.close > upper) trendUp = true;
-        up.push(trendUp ? { time: b.time, value: lower } : { time: b.time });
-        down.push(trendUp ? { time: b.time } : { time: b.time, value: upper });
+        if (nextTrend !== trend) {
+            flips.push({ time: b.time, direction: nextTrend });
+        }
+        trend = nextTrend;
+        up.push(trend === 1 ? { time: b.time, value: lower } : { time: b.time });
+        down.push(trend === 1 ? { time: b.time } : { time: b.time, value: upper });
         prevUpper = upper;
         prevLower = lower;
         prevClose = b.close;
+    }
+    return { up, down, flips };
+}
+
+function v9Ema(values: number[], period: number): number[] {
+    const alpha = 2 / (period + 1);
+    const out: number[] = [];
+    for (let index = 0; index < values.length; index++) {
+        const value = values[index]!;
+        out.push(index === 0 ? value : value * alpha + out[index - 1]! * (1 - alpha));
+    }
+    return out;
+}
+
+function taiwanSessionKey(time: number): string {
+    // The Shioaji stock feed is UTC seconds. Shift before deriving a day so
+    // day-boundary calculations remain stable for Taiwan market data.
+    return new Date((time + 8 * 60 * 60) * 1000).toISOString().slice(0, 10);
+}
+
+/** V9 KDJ: RSV then EMA smoothing, matching the original V9 chart formula. */
+export function v9Kdj(
+    bars: Candle[],
+    rsvPeriod = 45,
+    kPeriod = 9,
+    dPeriod = 9,
+): { k: IndicatorPoint[]; d: IndicatorPoint[]; j: IndicatorPoint[] } {
+    const rsv = bars.map((bar, index) => {
+        if (index < rsvPeriod - 1) return 50;
+        let high = -Infinity;
+        let low = Infinity;
+        for (let i = index - rsvPeriod + 1; i <= index; i++) {
+            high = Math.max(high, bars[i]!.high);
+            low = Math.min(low, bars[i]!.low);
+        }
+        return high > low ? ((bar.close - low) / (high - low)) * 100 : 50;
+    });
+    const kValues = v9Ema(rsv, kPeriod);
+    const dValues = v9Ema(kValues, dPeriod);
+    return {
+        k: bars.map((bar, index) => ({ time: bar.time, value: kValues[index] })),
+        d: bars.map((bar, index) => ({ time: bar.time, value: dValues[index] })),
+        j: bars.map((bar, index) => ({ time: bar.time, value: 3 * kValues[index]! - 2 * dValues[index]! })),
+    };
+}
+
+function v9Rsi(values: number[], period = 9): number[] {
+    const out = new Array(values.length).fill(50);
+    let gain = 0;
+    let loss = 0;
+    for (let index = 1; index < values.length; index++) {
+        const change = values[index]! - values[index - 1]!;
+        const up = Math.max(0, change);
+        const down = Math.max(0, -change);
+        if (index <= period) {
+            gain += up;
+            loss += down;
+        } else {
+            gain = (gain * (period - 1) + up) / period;
+            loss = (loss * (period - 1) + down) / period;
+        }
+        if (index >= period) out[index] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
+    }
+    return out;
+}
+
+/** V8 多空線：V9 的視覺確認分數，非進出場策略。 */
+export function v8CompositeTrend(bars: Candle[]): IndicatorPoint[] {
+    const weighted = bars.map((bar) => (bar.high + bar.low + 2 * bar.close) / 4);
+    const fast = v9Ema(weighted, 45);
+    const slow = v9Ema(weighted, 117);
+    const dif = fast.map((value, index) => value - slow[index]!);
+    const dea = v9Ema(dif, 17);
+    const osc = dif.map((value, index) => value - dea[index]!);
+    const kd = v9Kdj(bars);
+    const kValues = kd.k.map((point) => point.value!);
+    const dValues = kd.d.map((point) => point.value!);
+    const rsiValues = v9Rsi(bars.map((bar) => bar.close));
+    const raw = bars.map((_, index) => {
+        const recent = osc.slice(Math.max(0, index - 29), index + 1).map(Math.abs);
+        const scale = Math.max(0.000001, ...recent);
+        const macdScore = Math.max(0, Math.min(100, 50 + (osc[index]! / scale) * 42));
+        const kdjScore = Math.max(0, Math.min(100,
+            50 + (kValues[index]! - dValues[index]!) * 1.8 + (kValues[index]! - 50) * 0.35,
+        ));
+        return Math.max(0, Math.min(100,
+            rsiValues[index]! * 0.35 + kdjScore * 0.35 + macdScore * 0.30,
+        ));
+    });
+    const smoothed = v9Ema(raw, 3);
+    return bars.map((bar, index) => ({ time: bar.time, value: smoothed[index] }));
+}
+
+/**
+ * V9 ATR 防守線的研究版圖層。只根據 V8 多空線的確認方向繪製防守軌，
+ * 不產生下單、警示或回測訊號。
+ */
+export function v9AtrDefense(
+    bars: Candle[],
+    period = 14,
+    multiple = 2,
+): { up: IndicatorPoint[]; down: IndicatorPoint[] } {
+    const trend = v8CompositeTrend(bars).map((point) => point.value ?? 50);
+    const up: IndicatorPoint[] = [];
+    const down: IndicatorPoint[] = [];
+    const alpha = 2 / (period + 1);
+    let atrValue = 0;
+    let previousKey = '';
+    let previousClose = 0;
+    let visualSide = 0;
+    let pending = 0;
+    let pendingCount = 0;
+    let side = 0;
+    let defense = 0;
+    let blockedSide = 0;
+    for (let index = 0; index < bars.length; index++) {
+        const bar = bars[index]!;
+        const key = taiwanSessionKey(bar.time);
+        const newSession = key !== previousKey;
+        const tr = newSession || index === 0
+            ? bar.high - bar.low
+            : Math.max(bar.high - bar.low, Math.abs(bar.high - previousClose), Math.abs(bar.low - previousClose));
+        atrValue = newSession ? tr : tr * alpha + atrValue * (1 - alpha);
+        if (newSession) {
+            visualSide = 0;
+            pending = 0;
+            pendingCount = 0;
+            side = 0;
+            defense = 0;
+            blockedSide = 0;
+            previousKey = key;
+        }
+        const rawSide = trend[index]! >= 55 ? 1 : trend[index]! <= 45 ? -1 : 0;
+        if (rawSide === visualSide) {
+            pending = 0;
+            pendingCount = 0;
+        } else if (rawSide === pending) {
+            pendingCount += 1;
+        } else {
+            pending = rawSide;
+            pendingCount = 1;
+        }
+        if (pendingCount >= 2) {
+            visualSide = pending;
+            pending = 0;
+            pendingCount = 0;
+        }
+        if (blockedSide !== 0 && visualSide !== blockedSide) blockedSide = 0;
+        if (side === 1 && defense > 0 && bar.close < defense) {
+            blockedSide = 1;
+            side = 0;
+            defense = 0;
+        } else if (side === -1 && defense > 0 && bar.close > defense) {
+            blockedSide = -1;
+            side = 0;
+            defense = 0;
+        }
+        if (visualSide === 1 && blockedSide !== 1) {
+            const candidate = bar.high - atrValue * multiple;
+            defense = side === 1 && defense > 0 ? Math.max(defense, candidate) : candidate;
+            side = 1;
+        } else if (visualSide === -1 && blockedSide !== -1) {
+            const candidate = bar.low + atrValue * multiple;
+            defense = side === -1 && defense > 0 ? Math.min(defense, candidate) : candidate;
+            side = -1;
+        }
+        up.push(side === 1 ? { time: bar.time, value: defense - atrValue * 0.1 } : { time: bar.time });
+        down.push(side === -1 ? { time: bar.time, value: defense + atrValue * 0.1 } : { time: bar.time });
+        previousClose = bar.close;
     }
     return { up, down };
 }
@@ -354,7 +567,7 @@ export function stoch(
     kPeriod = 9,
     kSmooth = 3,
     dPeriod = 3,
-): { k: IndicatorPoint[]; d: IndicatorPoint[] } {
+): { k: IndicatorPoint[]; d: IndicatorPoint[]; j: IndicatorPoint[] } {
     const rsv: IndicatorPoint[] = [];
     for (let i = kPeriod - 1; i < bars.length; i++) {
         let hi = -Infinity;
@@ -371,7 +584,13 @@ export function stoch(
     }
     const k = smaOf(rsv, kSmooth);
     const d = smaOf(k, dPeriod);
-    return { k, d };
+    const dAt = new Map(d.map((p) => [p.time, p.value]));
+    const j = k.flatMap((point) => {
+        const dValue = dAt.get(point.time);
+        if (point.value === undefined || dValue === undefined) return [];
+        return [{ time: point.time, value: 3 * point.value - 2 * dValue }];
+    });
+    return { k, d, j };
 }
 
 function smaOf(points: IndicatorPoint[], period: number): IndicatorPoint[] {

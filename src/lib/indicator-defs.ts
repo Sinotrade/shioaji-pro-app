@@ -5,6 +5,7 @@
 
 import {
     atr,
+    bbi,
     bias,
     bollinger,
     cci,
@@ -22,6 +23,9 @@ import {
     stoch,
     stochRsi,
     supertrend,
+    v8CompositeTrend,
+    v9AtrDefense,
+    v9Kdj,
     vwap,
     willr,
     wma,
@@ -137,6 +141,17 @@ export const INDICATOR_DEFS: IndicatorDef[] = [
         compute: (b) => ({ line: vwap(b) }),
     },
     {
+        type: 'bbi',
+        label: 'BBI 多空均線',
+        short: 'BBI',
+        desc: 'MA(3/6/12/24) 的平均，沿用 V9 主圖趨勢基準',
+        aliases: ['bbi', 'bull bear index', '多空均線', '多空指標'],
+        category: 'overlay',
+        params: [],
+        outputs: [{ key: 'line', label: 'BBI', kind: 'line', color: '#a78bfa', width: 2 }],
+        compute: (b) => ({ line: bbi(b) }),
+    },
+    {
         type: 'sar',
         label: 'SAR 拋物線',
         short: 'SAR',
@@ -154,10 +169,10 @@ export const INDICATOR_DEFS: IndicatorDef[] = [
     },
     {
         type: 'supertrend',
-        label: 'SuperTrend 超級趨勢',
-        short: 'ST',
-        desc: 'ATR 通道趨勢線，多空翻轉一目了然',
-        aliases: ['supertrend', 'st', '超級趨勢'],
+        label: '多空趨勢線 SuperTrend',
+        short: '多空線',
+        desc: 'ATR 趨勢線，多空翻轉的研究參考',
+        aliases: ['supertrend', 'st', '多空線', '超級趨勢'],
         category: 'overlay',
         params: [
             { key: 'period', label: 'ATR 週期', def: 10, min: 1, max: 100 },
@@ -169,6 +184,26 @@ export const INDICATOR_DEFS: IndicatorDef[] = [
         ],
         compute: (b, p) => {
             const r = supertrend(b, p.period!, p.mult!);
+            return { up: r.up, down: r.down };
+        },
+    },
+    {
+        type: 'atrdefense',
+        label: 'ATR 防守線（研究）',
+        short: 'ATR防守',
+        desc: '以 V8 多空線方向帶出的 ATR 防守軌；純研究視覺，不產生交易訊號',
+        aliases: ['atr defense', 'atr防守', 'v9', '防守線', '風控線'],
+        category: 'overlay',
+        params: [
+            { key: 'period', label: 'ATR 週期', def: 14, min: 1, max: 100 },
+            { key: 'mult', label: 'ATR 倍數', def: 2, min: 0.5, max: 10, step: 0.5 },
+        ],
+        outputs: [
+            { key: 'up', label: '多方防守', kind: 'line', color: '#4ade80', width: 2 },
+            { key: 'down', label: '空方防守', kind: 'line', color: '#fb7185', width: 2 },
+        ],
+        compute: (b, p) => {
+            const r = v9AtrDefense(b, p.period!, p.mult!);
             return { up: r.up, down: r.down };
         },
     },
@@ -237,6 +272,34 @@ export const INDICATOR_DEFS: IndicatorDef[] = [
         },
     },
     {
+        type: 'v9macd',
+        label: 'V9 MACD ×8',
+        short: 'MACD×8',
+        desc: 'V9 研究版 MACD(45,117,21)，柱狀動能放大 8 倍以利觀察',
+        aliases: ['v9 macd', 'macd x8', 'macd×8', 'dif', 'dea'],
+        category: 'pane',
+        params: [
+            { key: 'fast', label: '快線', def: 45, min: 1, max: 100 },
+            { key: 'slow', label: '慢線', def: 117, min: 2, max: 200 },
+            { key: 'signal', label: '訊號線', def: 21, min: 1, max: 100 },
+            { key: 'histScale', label: '柱狀倍數', def: 8, min: 1, max: 20 },
+        ],
+        outputs: [
+            { key: 'hist', label: '柱狀×8', kind: 'histogram', color: '#8b94a7', signed: true },
+            { key: 'macd', label: 'DIF', kind: 'line', color: '#f6c94c' },
+            { key: 'signal', label: 'DEA', kind: 'line', color: '#70a5ff' },
+        ],
+        levels: [0],
+        compute: (b, p) => {
+            const r = macd(b, p.fast!, p.slow!, p.signal!);
+            return {
+                macd: r.macd,
+                signal: r.signal,
+                hist: r.hist.map((point) => ({ ...point, value: point.value === undefined ? undefined : point.value * p.histScale! })),
+            };
+        },
+    },
+    {
         type: 'rsi',
         label: 'RSI 相對強弱',
         short: 'RSI',
@@ -250,10 +313,10 @@ export const INDICATOR_DEFS: IndicatorDef[] = [
     },
     {
         type: 'kd',
-        label: 'KD 隨機指標',
-        short: 'KD',
-        desc: '台股慣用 (9,3,3)，K/D 交叉與 20/80 鈍化',
-        aliases: ['kd', 'stochastic', 'stoch', '隨機', '威廉KD'],
+        label: 'KDJ 隨機指標',
+        short: 'KDJ',
+        desc: '台股慣用 (9,3,3)，K/D/J 與 20/80 超買超賣區',
+        aliases: ['kd', 'kdj', 'stochastic', 'stoch', '隨機', '威廉KD'],
         category: 'pane',
         params: [
             { key: 'period', label: 'RSV 週期', def: 9, min: 1, max: 100 },
@@ -263,12 +326,48 @@ export const INDICATOR_DEFS: IndicatorDef[] = [
         outputs: [
             { key: 'k', label: 'K', kind: 'line', color: '#3d8bff' },
             { key: 'd', label: 'D', kind: 'line', color: '#e0a43c' },
+            { key: 'j', label: 'J', kind: 'line', color: '#b06fff' },
         ],
         levels: [20, 80],
         compute: (b, p) => {
             const r = stoch(b, p.period!, p.k!, p.d!);
-            return { k: r.k, d: r.d };
+            return { k: r.k, d: r.d, j: r.j };
         },
+    },
+    {
+        type: 'v9kdj',
+        label: 'V9 KDJ',
+        short: 'KDJ',
+        desc: 'V9 KDJ(45,9,9)：RSV 後以 EMA 平滑，保留 K/D/J 三線',
+        aliases: ['v9 kdj', 'kdj 45 9 9', 'kd', '隨機', '威廉kd'],
+        category: 'pane',
+        params: [
+            { key: 'period', label: 'RSV 週期', def: 45, min: 1, max: 100 },
+            { key: 'k', label: 'K EMA', def: 9, min: 1, max: 50 },
+            { key: 'd', label: 'D EMA', def: 9, min: 1, max: 50 },
+        ],
+        outputs: [
+            { key: 'k', label: 'K', kind: 'line', color: '#f6c94c' },
+            { key: 'd', label: 'D', kind: 'line', color: '#70a5ff' },
+            { key: 'j', label: 'J', kind: 'line', color: '#e879f9' },
+        ],
+        levels: [20, 80],
+        compute: (b, p) => {
+            const r = v9Kdj(b, p.period!, p.k!, p.d!);
+            return { k: r.k, d: r.d, j: r.j };
+        },
+    },
+    {
+        type: 'v8trend',
+        label: 'V8 多空線（研究）',
+        short: 'V8多空線',
+        desc: 'RSI、KDJ、MACD 綜合的 0–100 視覺方向線；45/55 為研究區間',
+        aliases: ['v8 trend', 'v8 多空線', 'v9 多空', 'composite trend'],
+        category: 'pane',
+        params: [],
+        outputs: [{ key: 'line', label: 'V8多空線', kind: 'line', color: '#f78b92', width: 2 }],
+        levels: [45, 55],
+        compute: (b) => ({ line: v8CompositeTrend(b) }),
     },
     {
         type: 'stochrsi',

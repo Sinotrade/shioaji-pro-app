@@ -7,6 +7,7 @@ import {
     AreaSeries,
     CandlestickSeries,
     ColorType,
+    createSeriesMarkers,
     createChart,
     HistogramSeries,
     LineSeries,
@@ -14,9 +15,11 @@ import {
     LineType,
     type IChartApi,
     type IPriceLine,
+    type ISeriesMarkersPluginApi,
     type ISeriesApi,
     type MouseEventParams,
     type SeriesDataItemTypeMap,
+    type Time,
     type UTCTimestamp,
 } from 'lightweight-charts';
 import {
@@ -36,6 +39,8 @@ import {
 } from 'lucide-react';
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuote } from '../hooks/use-stream';
+import { useV9ResearchFlow } from '../hooks/use-v9-research-flow';
+import { ResearchMarkerControls } from './research-marker-controls';
 import {
     colorWithOpacity,
     DEF_BY_TYPE,
@@ -76,9 +81,17 @@ import {
     aggregate,
     dateStrOffset,
     kbarsToCandles,
-    wallClockToUtc
+    wallClockToUtc,
+    nowWallClockUtc,
 } from '../lib/utils/kbars';
+import { researchLevels, toHeikinAshi, v9TrendTint } from '../lib/utils/research-chart';
+import {
+    v9KbarMarkers, completedResearchBars, researchTickBucket, selectResearchMarkers,
+    DEFAULT_MARKER_OPTIONS, researchMarkerGap, mergeResearchMarkerLabels,
+    supertrendTradeMarkers, supertrendShortTradeMarkers,
+} from '../lib/utils/v9-chart-markers';
 import { roundToTick } from '../lib/utils/ticksize';
+import { V9_RESEARCH_MODE } from '../lib/workspace';
 import * as styles from './candle-chart.css';
 import { Orb } from './orb';
 import * as panel from './panel.css';
@@ -95,6 +108,7 @@ const TIMEFRAMES = [
 ] as const;
 
 type TradeMode = 'observe' | 'buy' | 'sell' | 'stop' | 'take' | 'alert';
+type CandleStyle = 'standard' | 'heikinAshi';
 
 const TRADE_MODES: { key: TradeMode; label: string }[] = [
     { key: 'observe', label: '游標' },
@@ -123,8 +137,16 @@ export function CandleChart({
     const chartRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+    const v9MarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+    const v9VolumeMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+    // V9 多空底色：滿高的淡色 histogram（獨立 overlay 價格軸），繪製在 K 棒底層。
+    const v9TintRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     const lastBarRef = useRef<Candle | null>(null);
+    const displayBarsRef = useRef<Candle[]>([]);
     const [tfIdx, setTfIdx] = useState(1); // default 5m
+    const [candleStyle, setCandleStyle] = useState<CandleStyle>(
+        V9_RESEARCH_MODE ? 'heikinAshi' : 'standard',
+    );
     const [empty, setEmpty] = useState(false);
     const [loading, setLoading] = useState(false);
     // 歷史斷層自癒（issue #18）：開盤前抓的歷史可能缺少上游尚未發布的
@@ -141,6 +163,16 @@ export function CandleChart({
     const loadedKeyRef = useRef('');
     const quote = useQuote(contract.code);
     const tf = TIMEFRAMES[tfIdx] ?? TIMEFRAMES[1];
+    const flow = useV9ResearchFlow(contract.code, contract.security_type, tf.minutes, V9_RESEARCH_MODE);
+    const [markerOptions, setMarkerOptions] = useState(DEFAULT_MARKER_OPTIONS);
+    const [markerGap, setMarkerGap] = useState(5);
+    // Local clock only: finish the last bar even if no further tick arrives.
+    const [researchMinute, setResearchMinute] = useState(() => Math.floor(nowWallClockUtc() / 60));
+    useEffect(() => {
+        if (!V9_RESEARCH_MODE) return;
+        const timer = setInterval(() => setResearchMinute(Math.floor(nowWallClockUtc() / 60)), 5000);
+        return () => clearInterval(timer);
+    }, []);
     const themeSettings = useThemeSettings();
     const colors = getChartColors(themeSettings);
     const themeKey = `${themeSettings.mode}-${themeSettings.convention}`;
@@ -308,6 +340,22 @@ export function CandleChart({
             },
             autoSize: true,
         });
+        // V9 多空底色：先於 K 棒建立，淡色滿高柱畫在最底層；用獨立 overlay 軸
+        // （v9bg，scaleMargins 0/0）撐滿整個圖區且不影響主價格座標，中性／暖機
+        // 段不給點。純研究視覺、不下單。
+        if (V9_RESEARCH_MODE) {
+            const tint = chart.addSeries(HistogramSeries, {
+                priceScaleId: 'v9bg',
+                priceLineVisible: false,
+                lastValueVisible: false,
+                baseLineVisible: false,
+                priceFormat: { type: 'price' },
+            });
+            chart.priceScale('v9bg').applyOptions({
+                scaleMargins: { top: 0, bottom: 0 },
+            });
+            v9TintRef.current = tint;
+        }
         const candles = chart.addSeries(CandlestickSeries, {
             upColor: c.up,
             downColor: c.down,
@@ -323,9 +371,20 @@ export function CandleChart({
         chart.priceScale('vol').applyOptions({
             scaleMargins: { top: 0.82, bottom: 0 },
         });
+        if (V9_RESEARCH_MODE) {
+            chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.12, bottom: 0.24 } });
+        }
         chartRef.current = chart;
         candleSeriesRef.current = candles;
         volSeriesRef.current = vol;
+        v9MarkersRef.current = createSeriesMarkers(candles, [], {
+            autoScale: false,
+            zOrder: 'top',
+        });
+        v9VolumeMarkersRef.current = createSeriesMarkers(vol, [], {
+            autoScale: false,
+            zOrder: 'top',
+        });
 
         chart.subscribeClick((param) => {
             const m = modeRef.current;
@@ -422,15 +481,30 @@ export function CandleChart({
 
         // TradingView-style infinite history: panning near the left edge
         // pulls an older page of kbars (handler injected by the load effect)
+        const updateMarkerGap = () => {
+            const range = chart.timeScale().getVisibleLogicalRange();
+            if (V9_RESEARCH_MODE && range) {
+                setMarkerGap(researchMarkerGap(range.to - range.from, chart.timeScale().width()));
+            }
+        };
+        const markerResize = new ResizeObserver(updateMarkerGap);
+        markerResize.observe(hostRef.current!);
         chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+            updateMarkerGap();
             if (range && range.from < 30) loadMoreRef.current?.();
         });
 
         return () => {
+            markerResize.disconnect();
+            v9MarkersRef.current?.detach();
+            v9MarkersRef.current = null;
+            v9VolumeMarkersRef.current?.detach();
+            v9VolumeMarkersRef.current = null;
             chart.remove();
             chartRef.current = null;
             candleSeriesRef.current = null;
             volSeriesRef.current = null;
+            v9TintRef.current = null;
         };
     }, []);
 
@@ -492,6 +566,8 @@ export function CandleChart({
         let cancelled = false;
         const loadKey = `${contract.code}|${tf.minutes}`;
         loadedKeyRef.current = ''; // freeze tick updates while loading
+        v9MarkersRef.current?.setMarkers([]);
+        v9VolumeMarkersRef.current?.setMarkers([]);
         lastBarRef.current = null;
         loadMoreRef.current = null;
         setEmpty(false);
@@ -503,6 +579,7 @@ export function CandleChart({
             candleSeriesRef.current?.setData([]);
             volSeriesRef.current?.setData([]);
             barsRef.current = [];
+            displayBarsRef.current = [];
             rawRef.current = [];
             setDataVersion((v) => v + 1);
             loadedKeyRef.current = loadKey; // live bars may build from here
@@ -624,6 +701,57 @@ export function CandleChart({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, tf, historySeq]);
 
+    // 平均 K 只轉換圖形。所有指標與研究水平線仍使用原始 OHLC，確保
+    // VWAP、MACD、KDJ 與盤後覆盤不會因為顯示方式而改變。
+    useEffect(() => {
+        const raw = barsRef.current;
+        const display = candleStyle === 'heikinAshi' ? toHeikinAshi(raw) : raw;
+        displayBarsRef.current = display;
+        candleSeriesRef.current?.setData(
+            display.map((bar) => ({
+                time: bar.time as UTCTimestamp,
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+            })),
+        );
+    }, [dataVersion, candleStyle]);
+
+    // Cache K-bar calculations independently of 4 Hz live Tick batches.
+    // Scope guards prevent old-symbol/timeframe markers reappearing during load.
+    const researchBars = useMemo(() => {
+        if (!V9_RESEARCH_MODE || loadedKeyRef.current !== `${contract.code}|${tf.minutes}`) return [];
+        return completedResearchBars(barsRef.current, tf.minutes, researchMinute * 60);
+    }, [dataVersion, contract.code, tf.minutes, researchMinute, loading]);
+    const kbarMarkers = useMemo(() => v9KbarMarkers(researchBars), [researchBars]);
+    // SuperTrend(10,3) 翻轉的研究用「買／平」（做多）與「賣／補」（放空）標記，
+    // 與 V9 預設多空趨勢線同參數；同翻轉點兩側皆開時會合併成 平·賣／買·補。
+    const trendMarkers = useMemo(() => supertrendTradeMarkers(researchBars), [researchBars]);
+    const shortTrendMarkers = useMemo(() => supertrendShortTradeMarkers(researchBars), [researchBars]);
+    const researchMarkers = useMemo(() => {
+        if (!V9_RESEARCH_MODE || loadedKeyRef.current !== `${contract.code}|${tf.minutes}`) return [];
+        return selectResearchMarkers([...kbarMarkers, ...trendMarkers, ...shortTrendMarkers, ...flow.markers],
+            barsRef.current.map(bar => bar.time), markerOptions, markerGap);
+    }, [kbarMarkers, trendMarkers, shortTrendMarkers, flow, markerOptions, markerGap, dataVersion, contract.code, tf.minutes, loading]);
+    useEffect(() => {
+        const ready = V9_RESEARCH_MODE && loadedKeyRef.current === `${contract.code}|${tf.minutes}`;
+        const markers = ready ? researchMarkers : [];
+        v9MarkersRef.current?.setMarkers(mergeResearchMarkerLabels(markers.filter(marker => marker.group !== 'volume'))
+                .map(marker => ({
+                    ...marker,
+                    time: marker.time as UTCTimestamp,
+                    size: marker.group === 'flow' ? 1.2 : 1,
+                })));
+        v9VolumeMarkersRef.current?.setMarkers(markers.filter(marker => marker.group === 'volume')
+                .map(marker => ({
+                    ...marker, time: marker.time as UTCTimestamp,
+                    // Keep the label above the volume bar so it isn't clipped
+                    // below the chart; arrow shape still conveys attack direction.
+                    position: 'aboveBar' as const, size: 0.8,
+                })));
+    }, [researchMarkers, contract.code, tf.minutes]);
+
     // Live trade/index quote -> update the current bar. Index products use
     // quote_idx rather than the regular tick stream in Shioaji 1.7.
     const liveQuote = quote?.tick ?? quote?.index;
@@ -649,11 +777,9 @@ export function CandleChart({
         // close-label-right（與 aggregate/1 分 K 歷史同慣例）：成交 τ 屬
         // 於哪個「收盤 label」桶 — floor 會把 live 桶標早一格，1 分 K
         // 時甚至會併進前一分鐘的歷史 bar
-        const bucket =
-            tf.minutes >= 1440
-                ? Math.floor(tickTime / 86400) * 86400
-                : Math.floor(tickTime / bucketSec) * bucketSec + bucketSec;
+        const bucket = researchTickBucket(tickTime, tf.minutes, contract.security_type);
         let bar = lastBarRef.current;
+        if (!Number.isFinite(bucket) || (bar && bucket < bar.time)) return;
         // live 桶與歷史尾端出現 3 個桶以上的斷層（換時段/上游資料晚發布）
         // → 排程一次歷史補抓把洞補起來；live 桶照常先畫，補抓完成後
         // 整段重建。120s 節流避免上游持續缺料時反覆打
@@ -686,13 +812,35 @@ export function CandleChart({
             bar.volume += quote?.tick?.volume ?? 0;
         }
         lastBarRef.current = bar;
+        const displayBar = (() => {
+            if (candleStyle === 'standard') return bar!;
+            const index = barsRef.current.length - 1;
+            const previous = displayBarsRef.current[index - 1];
+            const existing = displayBarsRef.current[index];
+            const close = (bar!.open + bar!.high + bar!.low + bar!.close) / 4;
+            const open = existing?.time === bar!.time
+                ? existing.open
+                : previous
+                  ? (previous.open + previous.close) / 2
+                  : (bar!.open + bar!.close) / 2;
+            const next: Candle = {
+                time: bar!.time,
+                open,
+                high: Math.max(bar!.high, open, close),
+                low: Math.min(bar!.low, open, close),
+                close,
+                volume: bar!.volume,
+            };
+            displayBarsRef.current[index] = next;
+            return next;
+        })();
         try {
             series.update({
-                time: bar.time as UTCTimestamp,
-                open: bar.open,
-                high: bar.high,
-                low: bar.low,
-                close: bar.close,
+                time: displayBar.time as UTCTimestamp,
+                open: displayBar.open,
+                high: displayBar.high,
+                low: displayBar.low,
+                close: displayBar.close,
             });
             volSeriesRef.current?.update({
                 time: bar.time as UTCTimestamp,
@@ -706,6 +854,8 @@ export function CandleChart({
         // 歷史載入失敗後 live bar 已開始堆 — 圖上有東西就不該再掛
         // 「無 K 線資料」（同值 setState React 會 bail out）
         setEmpty(false);
+    // Style-only switches are handled by the display-bar effect above. Replaying
+    // the same quote here would add its volume again whenever 平均K is toggled.
     }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
@@ -1251,6 +1401,51 @@ export function CandleChart({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [JSON.stringify(triggers), themeKey, contract.code]);
 
+    // V9 研究圖層：昨高、昨低、昨收、今日開盤與前五分鐘開盤區間。
+    // 線只提供市場結構參考，沒有下單行為。
+    useEffect(() => {
+        const series = candleSeriesRef.current;
+        if (!series) return;
+        const source = rawRef.current.length > 0 ? rawRef.current : barsRef.current;
+        const lines = researchLevels(source).map((level) =>
+            series.createPriceLine({
+                price: level.price,
+                color: level.kind === 'open'
+                    ? '#e0a43c'
+                    : level.kind === 'opening-range'
+                      ? '#3d8bff'
+                      : '#8b94a7',
+                lineWidth: level.kind === 'open' ? 2 : 1,
+                lineStyle: level.kind === 'previous'
+                    ? LineStyle.Dashed
+                    : LineStyle.Dotted,
+                axisLabelVisible: true,
+                title: level.title,
+            }),
+        );
+        return () => {
+            for (const line of lines) series.removePriceLine(line);
+        };
+    }, [dataVersion, themeKey, contract.code]);
+
+    // V9 多空底色：方向與 ATR 防守線同源（v9AtrDefense 的 V8 確認 side），只染
+    // 已收棒；多頭淡綠、空頭淡紅、中性／暖機不染。切商品／時框或關閉時清空。
+    useEffect(() => {
+        const series = v9TintRef.current;
+        if (!series) return;
+        if (!V9_RESEARCH_MODE || !markerOptions.tint) {
+            series.setData([]);
+            return;
+        }
+        series.setData(v9TrendTint(researchBars)
+            .filter(point => point.side !== 0)
+            .map(point => ({
+                time: point.time as UTCTimestamp,
+                value: 1,
+                color: point.side === 1 ? 'rgba(31,210,134,0.08)' : 'rgba(255,77,106,0.08)',
+            })));
+    }, [researchBars, markerOptions.tint, dataVersion, contract.code, tf.minutes]);
+
     // 單列 legend（主圖堆疊與各副圖 pane 共用同一套列與控制）
     const renderLegendRow = (inst: IndicatorInstance) => {
         const def = DEF_BY_TYPE.get(inst.type);
@@ -1488,6 +1683,14 @@ export function CandleChart({
                     </button>
                 ))}
                 <button
+                    className={styles.tfBtn[candleStyle === 'heikinAshi' ? 'active' : 'normal']}
+                    onClick={() => setCandleStyle((current) =>
+                        current === 'standard' ? 'heikinAshi' : 'standard')}
+                    title='切換一般 K 與平均 K；指標仍以原始 OHLC 計算'
+                >
+                    {candleStyle === 'heikinAshi' ? '平均K' : '一般K'}
+                </button>
+                <button
                     className={styles.iconBtn}
                     onClick={resetView}
                     title='重設視圖（自動縮放）'
@@ -1495,14 +1698,15 @@ export function CandleChart({
                 >
                     <Maximize2 size={12} />
                 </button>
-                <span className={styles.toolbarDivider} />
-                {TRADE_MODES.filter(
+                {!V9_RESEARCH_MODE && <>
+                    <span className={styles.toolbarDivider} />
+                    {TRADE_MODES.filter(
                     // 組合商品只能用組合單下單 — 圖上僅保留觀察/警示，
                     // 點價買賣與觸價停損停利（flat code 會被 server 拒）
                     // 一律不給
                     (m) =>
                         !isCombo || m.key === 'observe' || m.key === 'alert',
-                ).map((m) => (
+                    ).map((m) => (
                     <button
                         key={m.key}
                         className={
@@ -1518,8 +1722,8 @@ export function CandleChart({
                     >
                         {m.label}
                     </button>
-                ))}
-                <label
+                    ))}
+                    <label
                     className={styles.qtyWrap}
                     title='圖表下單數量（點價買賣/停損/停利的口數或張數）'
                 >
@@ -1533,7 +1737,8 @@ export function CandleChart({
                             if (Number.isInteger(v) && v >= 1) setTradeQty(v);
                         }}
                     />
-                </label>
+                    </label>
+                </>}
                 <button
                     className={
                         styles.indicatorBtn[
@@ -1572,6 +1777,9 @@ export function CandleChart({
                 )}
                 <RefreshButton label="更新歷史" loading={loading} onClick={() => setHistorySeq(nextChartHistoryRevision())} />
             </div>
+            {V9_RESEARCH_MODE && <ResearchMarkerControls options={markerOptions}
+                onChange={setMarkerOptions} flow={flow} markers={researchMarkers}
+                barCount={researchBars.filter(bar => bar.volume > 0).length} loading={loading} />}
             <div ref={hostRef} className={styles.chartHost}>
                 {loading && (
                     <div className={styles.emptyMsg}>

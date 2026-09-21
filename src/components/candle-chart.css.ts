@@ -12,6 +12,7 @@ export const wrap = style({
 
 export const toolbar = style({
     display: 'flex',
+    flexWrap: 'wrap',
     gap: '2px',
     padding: `4px ${vars.space.sm}`,
     borderBottom: `1px solid ${vars.color.border}`,

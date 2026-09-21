@@ -398,9 +398,56 @@ export const DEFAULT_WORKSPACE: Workspace = upscaleLegacyWorkspace(
     RAW_DEFAULT_WORKSPACE,
 );
 
+// V9 研究版：專注於「選股 → 主圖 → 微結構 → 市場背景」。
+// 不放任何下單、持倉或帳務元件；排行榜、產業全景與指數成分股脈動則保留，
+// 讓研究時仍可交叉確認個股與整體市場狀態。
+const RAW_V9_RESEARCH_WORKSPACE: Workspace = {
+    blocks: [
+        { id: 'watch-v9', type: 'watchlist', pin: null },
+        { id: 'movers-v9', type: 'movers', pin: null },
+        { id: 'chart-v9', type: 'chart', pin: null },
+        { id: 'depth-v9', type: 'depth', pin: null },
+        { id: 'tape-v9', type: 'tape', pin: null },
+        { id: 'heatmap-v9', type: 'heatmap', pin: null },
+        {
+            id: 'pulse-v9',
+            type: 'pulse',
+            pin: null,
+            pulseIndex: 'IX0001',
+            pulseSections: ['stocks', 'flow'],
+            pulseWeights: { stocks: 50, flow: 50 },
+        },
+    ],
+    layout: [
+        { i: 'watch-v9', x: 0, y: 0, w: 4, h: 15, minW: 3, minH: 6 },
+        { i: 'movers-v9', x: 0, y: 15, w: 4, h: 10, minW: 3, minH: 5 },
+        { i: 'chart-v9', x: 4, y: 0, w: 13, h: 16, minW: 6, minH: 7 },
+        { i: 'depth-v9', x: 17, y: 0, w: 7, h: 8, minW: 4, minH: 7 },
+        { i: 'tape-v9', x: 17, y: 8, w: 7, h: 8, minW: 3, minH: 4 },
+        { i: 'heatmap-v9', x: 4, y: 16, w: 13, h: 9, minW: 5, minH: 6 },
+        { i: 'pulse-v9', x: 17, y: 16, w: 7, h: 9, minW: 7, minH: 7 },
+    ],
+};
+
+export const V9_RESEARCH_WORKSPACE: Workspace = upscaleLegacyWorkspace(
+    RAW_V9_RESEARCH_WORKSPACE,
+);
+
+// 此旗標只在本機研究啟動腳本啟用；正式 Pro 仍使用原本預設與儲存空間。
+export const V9_RESEARCH_MODE =
+    import.meta.env.VITE_V9_RESEARCH_MODE === 'true';
+export const ACTIVE_DEFAULT_WORKSPACE = V9_RESEARCH_MODE
+    ? V9_RESEARCH_WORKSPACE
+    : DEFAULT_WORKSPACE;
+
 // built-in layout presets for common trading workflows（24 欄撰寫，
 // 檔尾統一升階匯出）
 const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[] = [
+    {
+        name: 'V9 研究看盤',
+        desc: '自選+排行 / 主 K 線+五檔明細 / 產業與指數成分股',
+        workspace: RAW_V9_RESEARCH_WORKSPACE,
+    },
     {
         name: '標準看盤',
         desc: '自選+排行 / K線+持倉 / 五檔+下單+明細',
@@ -708,6 +755,7 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
 // 無損升階。profiles 同理。
 const WS_KEY = 'sj-pro-workspace-v3';
 const WS_KEY_LEGACY = 'sj-pro-workspace-v2';
+const WS_KEY_V9_RESEARCH = 'sj-pro-workspace-v9-research-v1';
 const PROFILES_KEY = 'sj-pro-profiles-v2';
 const PROFILES_KEY_LEGACY = 'sj-pro-profiles-v1';
 
@@ -721,6 +769,19 @@ function validWorkspace(w: unknown): w is Workspace {
 }
 
 export function loadWorkspace(): Workspace {
+    // 研究版與完整交易版各自儲存，切換啟動方式不會覆蓋另一邊的拖拉配置。
+    if (V9_RESEARCH_MODE) {
+        try {
+            const raw = localStorage.getItem(WS_KEY_V9_RESEARCH);
+            if (raw) {
+                const w = JSON.parse(raw);
+                if (validWorkspace(w)) return w;
+            }
+        } catch {
+            // fall through to the V9 research default
+        }
+        return structuredClone(V9_RESEARCH_WORKSPACE);
+    }
     // 兩個 key 各自 try — corrupt v3 不能擋掉 v2 fallback
     try {
         const raw = localStorage.getItem(WS_KEY);
@@ -745,7 +806,10 @@ export function loadWorkspace(): Workspace {
 }
 
 export function saveWorkspace(w: Workspace) {
-    localStorage.setItem(WS_KEY, JSON.stringify(w));
+    localStorage.setItem(
+        V9_RESEARCH_MODE ? WS_KEY_V9_RESEARCH : WS_KEY,
+        JSON.stringify(w),
+    );
 }
 
 export function loadProfiles(): Profile[] {

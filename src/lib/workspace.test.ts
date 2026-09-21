@@ -7,7 +7,7 @@ import {
     GRID_LEGACY_COLS,
     GRID_LEGACY_SCALE,
     LAYOUT_PRESETS,
-    loadWorkspace,
+    V9_RESEARCH_WORKSPACE,
     toRenderGeom,
     upscaleLegacyWorkspace,
     type Workspace,
@@ -73,9 +73,14 @@ describe('grid base upscale', () => {
 });
 
 describe('loadWorkspace fallback', () => {
-    afterEach(() => vi.unstubAllGlobals());
+    afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules(); });
 
-    it('corrupt v3 JSON does not block the v2 legacy fallback', () => {
+    it('corrupt v3 JSON does not block the v2 legacy fallback in standard mode', async () => {
+        // This assertion concerns the standard workspace. V9 intentionally uses
+        // isolated storage and must not inherit a legacy trading/account layout.
+        vi.stubEnv('VITE_V9_RESEARCH_MODE', 'false');
+        vi.resetModules();
+        const { loadWorkspace: loadStandardWorkspace } = await import('./workspace');
         const store = new Map<string, string>();
         vi.stubGlobal('localStorage', {
             getItem: (k: string) => store.get(k) ?? null,
@@ -87,10 +92,39 @@ describe('loadWorkspace fallback', () => {
         };
         store.set('sj-pro-workspace-v3', '{corrupt');
         store.set('sj-pro-workspace-v2', JSON.stringify(legacy));
-        const w = loadWorkspace();
+        const w = loadStandardWorkspace();
         // 讀到 v2 並 ×12 升階，而不是掉回預設版面
         expect(w.layout[0]!.i).toBe('a');
         expect(w.layout[0]!.x).toBe(48);
         expect(w.layout[0]!.w).toBe(60);
+    });
+
+    it('does not import the old trading layout into V9 research mode', async () => {
+        vi.stubEnv('VITE_V9_RESEARCH_MODE', 'true');
+        vi.resetModules();
+        const { loadWorkspace: loadResearchWorkspace } = await import('./workspace');
+        vi.stubGlobal('localStorage', { getItem: (key: string) => key === 'sj-pro-workspace-v2'
+            ? JSON.stringify({ blocks: [{ id: 'old-ticket', type: 'ticket', pin: null }], layout: [] }) : null,
+            setItem: vi.fn() });
+        expect(loadResearchWorkspace().blocks.some(block => block.type === 'ticket')).toBe(false);
+        expect(loadResearchWorkspace().blocks.some(block => block.id === 'watch-v9')).toBe(true);
+    });
+});
+
+describe('V9 research workspace', () => {
+    it('keeps market context while excluding trading and account panels', () => {
+        const types = V9_RESEARCH_WORKSPACE.blocks.map((block) => block.type);
+        expect(types).toEqual(
+            expect.arrayContaining([
+                'watchlist',
+                'movers',
+                'chart',
+                'depth',
+                'tape',
+                'heatmap',
+                'pulse',
+            ]),
+        );
+        expect(types).not.toEqual(expect.arrayContaining(['ticket', 'flash', 'dock']));
     });
 });

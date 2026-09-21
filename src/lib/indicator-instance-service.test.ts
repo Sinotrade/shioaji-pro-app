@@ -66,6 +66,26 @@ describe('IndicatorInstanceService', () => {
         expect(ws.blocks[1]!.indicatorState!.instances).toHaveLength(1);
     });
 
+    it('seeds the V9 research chart once without overwriting later removals', () => {
+        const ws = initializeIndicatorPanels({ blocks: [
+            { id: 'chart-v9', type: 'chart', pin: null },
+        ], layout: [] });
+        const seeded = ws.blocks[0]!.indicatorState!;
+        expect(seeded.instances.map((instance) => instance.type)).toEqual(
+            expect.arrayContaining(['vwap', 'ema', 'bbi', 'boll', 'atrdefense', 'v9macd', 'v9kdj', 'v8trend']),
+        );
+        expect(seeded.instances.find((instance) => instance.type === 'ema')!.params.period).toBe(8);
+        expect(seeded.presetVersion).toBe('v9-research-v2');
+        const removed = {
+            ...ws,
+            blocks: [{ ...ws.blocks[0]!, indicatorState: {
+                ...seeded,
+                instances: seeded.instances.filter((instance) => instance.type !== 'v9macd'),
+            } }],
+        };
+        expect(initializeIndicatorPanels(removed)).toBe(removed);
+    });
+
     it('updates, reorders, hides and removes one instance, with revisions and notifications', () => {
         const { service } = setup();
         const listener = vi.fn();

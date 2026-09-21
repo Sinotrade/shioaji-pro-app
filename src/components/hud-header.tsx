@@ -6,7 +6,7 @@ import { LayoutGrid, Lock, Settings, Unlock, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useStreamStatus } from '../hooks/use-stream';
 import { useHeaderItems } from '../lib/header-items';
-import { setRiskSettings, useRiskSettings } from '../lib/risk';
+import { READ_ONLY_MODE, setRiskSettings, useRiskSettings } from '../lib/risk';
 import { fetchInfo } from '../lib/shioaji';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import {
@@ -17,7 +17,11 @@ import {
     type FlashTileLayout,
 } from '../lib/tauri';
 import { fmtMoney } from '../lib/utils/format';
-import type { Profile, Workspace } from '../lib/workspace';
+import {
+    V9_RESEARCH_MODE,
+    type Profile,
+    type Workspace,
+} from '../lib/workspace';
 import { LayoutLibrary } from './layout-library';
 import { MarketBar } from './market-bar';
 import { ServerManager } from './server-manager';
@@ -250,7 +254,7 @@ export function HudHeader({
             <div className={styles.logoBlock}>
                 <span className={styles.logoMain}>Shioaji Pro</span>
                 <span className={styles.logoSub}>
-                    交易終端
+                    {V9_RESEARCH_MODE ? 'V9 研究看盤' : '交易終端'}
                     {appVer && ` · App ${appVer}`}
                 </span>
             </div>
@@ -284,7 +288,11 @@ export function HudHeader({
                 open={serverMgrOpen}
                 onToggle={setServerMgrOpen}
             />
-            <KillSwitchButton />
+            {READ_ONLY_MODE ? (
+                <span className={styles.simBadge}>唯讀研究</span>
+            ) : (
+                <KillSwitchButton />
+            )}
             <button
                 className={styles.resetBtn}
                 onClick={onOpenPanelLibrary}
@@ -301,7 +309,7 @@ export function HudHeader({
                     版面
                 </button>
             )}
-            {headerItems.flashAll && flashCodes.length > 0 && (
+            {!V9_RESEARCH_MODE && headerItems.flashAll && flashCodes.length > 0 && (
                 <FlashTilesMenu flashCodes={flashCodes} />
             )}
             <button

@@ -14,6 +14,13 @@ export interface RiskSettings {
 }
 
 const STORAGE_KEY = 'sj-pro-risk';
+// Local research sessions can opt into a hard read-only UI. Unlike the
+// user-toggleable kill switch, this flag cannot be cleared from the screen.
+export const READ_ONLY_MODE = import.meta.env.VITE_READ_ONLY === 'true';
+
+export function readOnlyBlockReason(): string | null {
+    return READ_ONLY_MODE ? '唯讀研究模式 — 本機已停用所有下單' : null;
+}
 
 function load(): RiskSettings {
     try {
@@ -93,6 +100,8 @@ export function useRiskSettings(): RiskSettings {
 
 // returns an error message when the order must be blocked, null when OK
 export function checkOrderAllowed(quantity: number): string | null {
+    const readOnlyBlock = readOnlyBlockReason();
+    if (readOnlyBlock) return readOnlyBlock;
     if (settings.locked) {
         return '風控鎖啟動中 — 所有下單已封鎖';
     }
