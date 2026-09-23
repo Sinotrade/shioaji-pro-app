@@ -53,7 +53,12 @@ export function claimExecutor(name: string): ExecutorClaim {
         settle(); // standby: mirror now, take over when the executor leaves
         void locks.request(name, hold).catch(() => undefined);
         return undefined;
-    }).catch(() => settle());
+    }).catch(() => {
+        // A rejected first attempt is not proof another window executes:
+        // stay a mirror for now but still queue for the lock.
+        settle();
+        void locks.request(name, hold).catch(() => undefined);
+    });
     claim = { settled, acquired };
     return claim;
 }
