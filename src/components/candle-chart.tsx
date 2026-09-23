@@ -58,7 +58,7 @@ import {
 // 自訂指標註冊進 DEF_BY_TYPE，loadInstances() 的型別過濾才不會把它們丟掉
 import { subscribeCustoms } from '../lib/custom-indicators';
 import type { IndicatorPoint } from '../lib/indicators';
-import { setPickedPrice } from '../lib/price-sync';
+import { setHoverPickedPrice, setPickedPrice } from '../lib/price-sync';
 import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import { notify, placeQuickOrder } from '../lib/trade';
@@ -417,7 +417,8 @@ export function CandleChart({
             const raw = candles.coordinateToPrice(param.point.y);
             if (raw === null) return;
             const c = contractRef.current;
-            setPickedPrice(c.code, roundToTick(c, Number(raw)));
+            // 游標移動帶價受設定控制（#58，預設關閉）；點擊帶價不受影響
+            setHoverPickedPrice(c.code, roundToTick(c, Number(raw)));
         });
 
         // TradingView-style infinite history: panning near the left edge

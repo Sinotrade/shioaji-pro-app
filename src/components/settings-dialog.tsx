@@ -53,6 +53,10 @@ import {
     type ToastScale,
 } from '../lib/toast-prefs';
 import {
+    setChartHoverPricePick,
+    useChartHoverPricePick,
+} from '../lib/chart-price-prefs';
+import {
     isAgentHarnessEnabled,
     setAgentHarnessEnabled,
 } from '../lib/tauri';
@@ -344,6 +348,7 @@ function AccountsSection() {
 
 function RiskSection() {
     const risk = useRiskSettings();
+    const hoverPricePick = useChartHoverPricePick();
     const dailyPnl = getDailyPnl();
     // 金額遮蔽也要蓋住這裡的損益估算 — 隱私開關不該在設定 dialog 裡漏底
     const privMoney = usePrivacyMoney();
@@ -428,6 +433,29 @@ function RiskSection() {
                 預設關閉（維持快速下單）。開啟後閃電下單、下單面板、
                 圖表點價、平倉與鋪單都會先跳委託確認；停損/停利等
                 自動觸發單與 Agent 下單不經過此確認。
+            </span>
+            <span className={hud.settingLabel}>圖表帶價 Chart Price</span>
+            <div className={hud.switchRow}>
+                <span
+                    className={hud.switchLabel}
+                    title='在 K 線圖上移動游標時，把十字線價位即時帶入同商品的下單面板'
+                >
+                    游標移動帶價
+                </span>
+                <button
+                    className={hud.switchTrack[hoverPricePick ? 'on' : 'off']}
+                    aria-label='游標移動帶價'
+                    aria-pressed={hoverPricePick}
+                    title={
+                        hoverPricePick
+                            ? '關閉游標移動帶價（只在點擊圖表時帶價）'
+                            : '啟用游標移動帶價'
+                    }
+                    onClick={() => setChartHoverPricePick(!hoverPricePick)}
+                />
+            </div>
+            <span className={hud.emptyHint}>
+                {'預設關閉，避免游標掃過圖表時改寫已填好的委託價；關閉時仍可點擊 K 線圖或五檔帶價。'}
             </span>
             <span className={hud.settingLabel}>快捷鍵 Hotkeys</span>
             <div className={hud.switchRow}>

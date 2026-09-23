@@ -8,6 +8,8 @@ import * as styles from './panel-chrome.css';
 
 export function PanelChrome({
     title,
+    symbolCode,
+    symbolName,
     pinnable = false,
     pin,
     currentCode,
@@ -17,6 +19,10 @@ export function PanelChrome({
     children,
 }: {
     title: string;
+    /** 商品代碼：窄面板時不截斷；鎖定時由鎖定輸入框顯示 */
+    symbolCode?: string | null;
+    /** 商品名稱（#125）：接在代碼後、省略號截斷；極窄時改隱藏面板名稱 */
+    symbolName?: string | null;
     pinnable?: boolean;
     pin?: string | null;
     currentCode?: string | null;
@@ -26,14 +32,39 @@ export function PanelChrome({
     children?: React.ReactNode;
 }) {
     const [editCode, setEditCode] = useState(pin ?? '');
+    // 鎖定時代碼已顯示在鎖定輸入框，標題不重複，把空間留給商品名稱
+    const pinned = pinnable && !!onPinChange && pin !== null && pin !== undefined;
+    const showCode = !!symbolCode && !pinned;
+    const showName = !!symbolCode && !!symbolName;
+    // 面板名稱只在旁邊還有代碼或名稱時才可於極窄時隱藏
+    const hasSymbol = showCode || showName;
+    const fullTitle = [title, symbolCode, symbolName]
+        .filter(Boolean)
+        .join(' · ');
     useEffect(() => setEditCode(pin ?? ''), [pin]);
 
     return (
         <div className={`${panel.panelTitle} drag-handle`}>
             <span className={panel.panelTitleDeco} />
-            <span className={styles.titleText}>{title}</span>
-            {children}
-            <span className={styles.spacer} />
+            <span className={styles.titleGroup}>
+                <span
+                    className={
+                        hasSymbol ? styles.symbolLabel : styles.titleText
+                    }
+                    title={symbolCode ? fullTitle : undefined}
+                >
+                    {title}
+                </span>
+                {showCode && (
+                    <span className={styles.symbolCode}>{symbolCode}</span>
+                )}
+                {showName && (
+                    <span className={styles.symbolName} title={fullTitle}>
+                        {symbolName}
+                    </span>
+                )}
+                {children}
+            </span>
             {pinnable &&
                 onPinChange &&
                 (pin === null || pin === undefined ? (
