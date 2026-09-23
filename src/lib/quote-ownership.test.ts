@@ -21,7 +21,7 @@ describe('quote ownership shared consumers', () => {
         await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(1));
         a(); await Promise.resolve(); await Promise.resolve();
         expect(mocks.unsubscribe).not.toHaveBeenCalled();
-        b(); await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
+        b(); await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1), { timeout: 4000 });
     });
     it('preserves an already-active legacy trigger Tick when the last panel closes', async () => {
         vi.stubGlobal('localStorage', { getItem: (key: string) => key === 'sj-pro-triggers' ? JSON.stringify([{ code: contract.code, enabled: true }]) : null });
@@ -29,7 +29,7 @@ describe('quote ownership shared consumers', () => {
         const tick = retainQuote(contract, 'Tick'); const book = retainQuote(contract, 'BidAsk');
         await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(2));
         tick(); book();
-        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1), { timeout: 4000 });
         expect(mocks.unsubscribe).toHaveBeenCalledWith(contract, 'BidAsk');
         expect(mocks.subscribe).toHaveBeenCalledTimes(2);
     });
@@ -42,7 +42,7 @@ describe('quote ownership shared consumers', () => {
         await Promise.resolve(); await Promise.resolve();
         expect(mocks.unsubscribe).not.toHaveBeenCalled();
         second();
-        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1), { timeout: 4000 });
         second();
         expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
     });
@@ -54,6 +54,24 @@ describe('quote ownership shared consumers', () => {
         mocks.changed?.();
         await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(2));
         release();
-        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    });
+    it('does not churn unsubscribe+subscribe when a consumer re-retains within the grace (reconnect remount)', async () => {
+        vi.useFakeTimers();
+        try {
+            const { retainQuote, RELEASE_GRACE_MS } = await import('./quote-ownership');
+            const first = retainQuote(contract, 'Tick');
+            await vi.advanceTimersByTimeAsync(0);
+            expect(mocks.subscribe).toHaveBeenCalledTimes(1);
+            first(); // remount: release now, re-retain after an async lookup
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS / 3);
+            const again = retainQuote(contract, 'Tick');
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS * 2);
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+            expect(mocks.subscribe).toHaveBeenCalledTimes(1);
+            again();
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS + 10);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
+        } finally { vi.useRealTimers(); }
     });
 });

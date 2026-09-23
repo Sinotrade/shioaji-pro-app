@@ -47,7 +47,8 @@ export function projectOrderReport(rows: AccountedTrade[], report: OrderEventRep
     if (old && ['Cancelled', 'Filled'].includes(old.status.status)) return rows;
     let cancelled = old?.status.cancel_quantity ?? 0;
     if (report.opType === 'UpdateQty') {
-        // Native 1.7.5 reports cancel_quantity as this operation's reduction.
+        // Native 1.7.5 and 1.7.6 report cancel_quantity as this operation's
+        // reduction (1.7.6 simulation: quantity 2 → UpdateQty cancel 1, order 1).
         // With no fills, its post-reduction order_quantity gives an idempotent
         // absolute total. Its meaning after fills is not yet wire-verified.
         if (deals > 0 || !num(rec(body?.status)?.order_quantity) || report.orderQuantity > quantity) return null;
@@ -92,8 +93,11 @@ export function projectTradeDeal(rows: AccountedTrade[], report: OrderEventRepor
     if (code !== (old.contract.target_code || old.contract.code)) return null;
     if (old.status.deals.some(d => d.seq === seq)) return rows;
     const quantity = old.status.deal_quantity + report.quantity;
-    if (quantity + old.status.cancel_quantity > old.status.order_quantity) return null;
+    // Trade.order.quantity is the original quantity (cancels accumulate in
+    // cancel_quantity). HTTP status.order_quantity is not: 1.7.6 simulation
+    // returns 0 for filled and reduced rows from both refresh modes.
+    if (quantity + old.status.cancel_quantity > old.order.quantity) return null;
     return rows.map(t => t !== old ? t : { ...t, status: { ...t.status, deal_quantity: quantity,
-        status: statusOf(t.status.order_quantity, quantity, t.status.cancel_quantity),
+        status: statusOf(t.order.quantity, quantity, t.status.cancel_quantity),
         deals: [...t.status.deals, { seq, ts: report.ts!, quantity: report.quantity, price: report.price }] } });
 }

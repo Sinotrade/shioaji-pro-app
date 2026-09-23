@@ -8,6 +8,7 @@ import { getApiBase } from '../lib/runtime';
 import { fetchHealth, fetchInfo } from '../lib/shioaji';
 import {
     getLastHeartbeat,
+    getStreamWatchdog,
     getSubscriptionCount,
     onAnyTick,
     onOrderEvent,
@@ -20,7 +21,7 @@ import * as dockStyles from './bottom-dock.css';
 import * as styles from './debug-panel.css';
 import { ServerMonitor } from './server-monitor';
 
-const STATUS_LABEL = { live: 'LIVE', connecting: 'SYNC', down: 'LOST' };
+const STATUS_LABEL = { live: 'LIVE', connecting: 'SYNC', down: 'LOST', stale: 'STALE' };
 
 export function DebugPanel() {
     const stream = useStreamStatus();
@@ -69,6 +70,7 @@ export function DebugPanel() {
     const tier = useTier();
     const hb = getLastHeartbeat();
     const hbAge = hb ? Math.round((Date.now() - hb) / 1000) : null;
+    const watchdog = getStreamWatchdog();
     const rate = (tickTimes.current.length / 5).toFixed(1);
     const tokenSeconds = health?.token_expires_in_seconds;
     const contractCount = health?.contract_count;
@@ -89,6 +91,13 @@ export function DebugPanel() {
             label: '心跳（約 30s 一次）',
             value: hbAge === null ? '—' : `${hbAge}s 前`,
             warn: hbAge !== null && hbAge > 60,
+        },
+        {
+            label: '心跳 watchdog',
+            value: watchdog.silentConnections > 0
+                ? `連續 ${watchdog.silentConnections} 次連線未收到心跳；重試間隔 ${Math.round(watchdog.retryDelayMs / 1000)}s`
+                : `${Math.round(watchdog.staleAfterMs / 1000)}s 無事件視為 STALE`,
+            warn: watchdog.silentConnections > 0,
         },
         { label: 'App 成交 Tick 更新', value: `${rate} 筆/秒（不含 Quote／五檔）` },
         { label: 'App 訂閱登記', value: String(getSubscriptionCount()) },

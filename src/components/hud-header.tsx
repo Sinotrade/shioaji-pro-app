@@ -28,6 +28,7 @@ const STATUS_LABEL = {
     live: 'LIVE',
     connecting: 'SYNC',
     down: 'LOST',
+    stale: 'STALE',
 } as const;
 
 function Menu({

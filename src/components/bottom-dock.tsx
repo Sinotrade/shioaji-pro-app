@@ -17,7 +17,14 @@ import {
     usePrivacyMode,
     usePrivacyMoney,
 } from '../lib/privacy';
-import { refreshTradingState, useTradingState } from '../lib/trading-state';
+import { RECONCILE_REASON_LABELS, refreshTradingState, useTradingState, type ReconcileReason } from '../lib/trading-state';
+
+// 待對帳 names its distinct causes (#85); the tooltip keeps the full messages.
+function reconcileLabel(reasons: readonly ReconcileReason[] | undefined) {
+    const labels = (reasons ?? []).map(r => RECONCILE_REASON_LABELS[r]).filter(Boolean);
+    if (!labels.length) return '待對帳';
+    return `待對帳：${labels.slice(0, 2).join('、')}${labels.length > 2 ? ` 等 ${labels.length} 項` : ''}`;
+}
 import type { Trade } from '../lib/types/order';
 import type {
     AccountBalance,
@@ -192,7 +199,7 @@ export function BottomDock({
                     </button>
                 ))}
                 <span style={{ fontSize: 11, whiteSpace: 'nowrap' }} title={queryStatus.error ?? (tab === 'positions' ? '持倉依成交與行情在本機估算' : tab === 'orders' ? '委託依主動回報更新' : '帳務為上次查詢快照')}>
-                    {queryStatus.needsReconcile || (tab === 'account' && accountRefresh?.error) ? '待對帳' : tab === 'positions' ? '即時估算' : tab === 'orders' ? '即時回報' : '帳務快照'}
+                    {queryStatus.needsReconcile || (tab === 'account' && accountRefresh?.error) ? reconcileLabel(queryStatus.reasons) : tab === 'positions' ? '即時估算' : tab === 'orders' ? '即時回報' : '帳務快照'}
                     {queryStatus.updatedAt ? ` · 查詢 ${new Date(queryStatus.updatedAt).toLocaleTimeString()}` : ' · 尚未查詢'}
                 </span>
                 <span className={styles.tabSpacer} />
