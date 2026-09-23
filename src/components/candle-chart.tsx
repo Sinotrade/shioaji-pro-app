@@ -63,6 +63,7 @@ import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import { notify, placeQuickOrder } from '../lib/trade';
 import { isCancelUnconfirmed } from '../lib/cancel-verification';
+import { cancellationSummary } from '../lib/trade-mutations';
 import {
     addTrigger,
     removeTrigger,
@@ -1629,11 +1630,14 @@ export function CandleChart({
                                         title='刪單'
                                         onClick={() =>
                                             cancelOrder(t.order.id)
-                                                .then(() => {
+                                                .then((trade) => {
+                                                    // Cancelled, filled first, or a working-looking
+                                                    // broker status whose cancel covers everything.
+                                                    const summary = cancellationSummary([{ status: 'fulfilled', value: trade }]);
                                                     notify({
-                                                        kind: 'ok',
-                                                        title: '已確認刪單',
-                                                        body: `${t.contract.code} @${fmtPrice(price)}`,
+                                                        kind: summary.kind,
+                                                        title: '刪單結果',
+                                                        body: `${t.contract.code} @${fmtPrice(price)}：${summary.body}`,
                                                     });
                                                     onOrdersChangedRef.current?.();
                                                 })

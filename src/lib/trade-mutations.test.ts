@@ -95,3 +95,12 @@ it('flags only read-back confirmed results as confirmed', async () => {
         expect(events.filter(e => e.phase === 'settled').map(e => e.confirmed)).toEqual([undefined, true]);
     } finally { off(); }
 });
+
+it('counts a zero-remaining Submitted read-back as confirmed and shows the raw broker status', async () => {
+    const { cancellationSummary: summary, cancellationOutcome: outcome } = await import('./trade-mutations');
+    const row = { order: { id: 'fixture', quantity: 2 }, status: { status: 'Submitted', cancel_quantity: 2, deal_quantity: 0 } } as unknown as Trade;
+    expect(outcome(row)).toBe('confirmed');
+    expect(summary([{ status: 'fulfilled', value: row }])).toEqual({ kind: 'ok', body: '已確認取消 1 筆（1 筆券商狀態仍為 Submitted，取消量已涵蓋全部）。' });
+    const partial = { order: { id: 'fixture', quantity: 2 }, status: { status: 'Submitted', cancel_quantity: 1, deal_quantity: 0 } } as unknown as Trade;
+    expect(outcome(partial)).toBe('pending');
+});

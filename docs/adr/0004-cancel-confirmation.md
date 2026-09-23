@@ -6,7 +6,8 @@
 ## 背景
 
 #120：Agent `cancel_order` 在 HTTP 成功後就回 `cancelled=true`，但事後回讀，同一筆委託仍是 Submitted、
-取消量 0。#116：閃電逐價刪單與全刪只拿到 HTTP 回應，因此一律顯示「送出待確認」，trading-state 也常留下
+取消量 0。維護者其後確認這個 Submitted＋取消量 0 是測試環境的問題；正確的做法是依 1.7.6 skill，從回報投影的
+Trade cache 確認取消，也就是本 ADR 的做法。#116：閃電逐價刪單與全刪只拿到 HTTP 回應，因此一律顯示「送出待確認」，trading-state 也常留下
 「改刪待確認」。1.7.6 模擬實測：`/order/cancel_order` 的回應是 Submitted、`cancel_quantity` 0；sidecar Trade
 cache（`refresh:false`）大約 0.3–1.4 秒後變成 Cancelled、取消量 1。
 
@@ -17,10 +18,16 @@ PR #121 用回讀確認的方向正確，但把「委託從清單消失」當成
 
 - `cancelOrder` 在 `observeTradeMutation` 內送出 HTTP 刪單後，呼叫 `verifyCancellation`
   （`src/lib/cancel-verification.ts`）。
-- **確認條件**：同帳戶讀到的列，order.id 與帳戶都相同，沒有任何剩餘：狀態為 Cancelled，或在刪單生效前已
-  Filled（「已全部成交、無可取消」，屬已知結果，不是結果未知），而且累計 `cancel_quantity`＋成交量 ≥
-  max(本地原量, 回讀 `order.quantity`)。成交沒有和刪單競爭時，這等於「取消量涵蓋刪單前剩餘量（原量減開始時
-  的成交量）」。`status.order_quantity` 不使用，因為 1.7.6 HTTP 列會回 0。回讀列的已成交量比本地少時，不算證據。
+- **確認條件**：同帳戶讀到的列，order.id 與帳戶都相同，沒有任何剩餘：累計 `cancel_quantity`＋成交量 ≥
+  max(本地原量, 回讀 `order.quantity`)，而且符合其一：
+  - 狀態為 Cancelled；
+  - 狀態為 Filled（刪單生效前已全部成交，回報「已全部成交、無可取消」，屬已知結果）；
+  - `cancel_quantity` > 0 且不是 PendingSubmit。sidecar 重啟後 update_status 會把減量後刪單的委託回成
+    Submitted、取消量等於委託量（Shioaji#234 型態）；委託表自 v0.1.48 已把零剩餘列視為非有效委託。此時保留
+    券商原始狀態，結果與提示附註「券商狀態仍為 Submitted，取消量已涵蓋全部」。
+  成交沒有和刪單競爭時，這等於「取消量涵蓋刪單前剩餘量（原量減開始時的成交量）」。`status.order_quantity`
+  不使用（1.7.6 HTTP 列回 0）。回讀列的已成交量比本地少時不算證據。Submitted＋取消量 0、部分取消、
+  PendingSubmit 都不算確認。
 - **不算確認**：委託不在 cache、同 id 對應多列、別的帳戶、讀取失敗、伺服器或帳戶已切換。不會從本地資料合成
   Cancelled。
 - **讀取順序**：先讀 `refresh:false`，約 300ms 一次，最長約 3 秒（sidecar cache，不耗帳務額度）。仍未確認就讀

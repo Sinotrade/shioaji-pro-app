@@ -13,7 +13,7 @@ import { projectOrderReport, projectTradeDeal } from './order-projection';
 import { parseEventId, reportLedger } from './report-ledger';
 import { remainingWorkingOrderQuantity } from './working-order-quantity';
 import { takeMutationIntent, type MutationIntent } from './mutation-intent';
-import { readMark } from './cancel-verification';
+import { cancelledByQuantity, readMark } from './cancel-verification';
 import type { OrderEventReport } from './order-report';
 import type { Account, AccountBalance, AccountedPosition, AccountFunds, Margin } from './types/portfolio';
 import type { AccountedTrade, Trade, TradeCacheHealth } from './types/order';
@@ -620,7 +620,7 @@ function releasePendingDeals(tradeId: string) {
  *  conservative "待確認" path. */
 function applyConfirmedCancellation(trade: AccountedTrade): boolean {
     const ref = trade.account ?? trade.order.account;
-    if (!ref || (trade.status.status !== 'Cancelled' && trade.status.status !== 'Filled')) return false;
+    if (!ref || (trade.status.status !== 'Cancelled' && trade.status.status !== 'Filled' && !cancelledByQuantity(trade))) return false;
     const rows = state.trades.filter(t => t.order.id === trade.order.id && t.account && accountKey(t.account) === accountKey(ref));
     if (rows.length > 1) return false;
     const current = rows[0];

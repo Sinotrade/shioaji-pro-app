@@ -1,13 +1,16 @@
 import { getApiBase } from './runtime';
 import type { Trade } from './types/order';
+import { brokerStatusNote, cancelledByQuantity } from './cancel-verification';
 
 export type MutationOutcome = 'confirmed' | 'filled' | 'pending' | 'unknown';
 /** A resolved HTTP request alone is not a broker cancellation acknowledgement.
  *  cancelOrder resolves only with a read-back row with nothing left working:
- *  Cancelled, or Filled before the cancel took effect (#120). */
+ *  Cancelled, Filled before the cancel took effect, or a working-looking status
+ *  whose cancel_quantity already covers everything (#120, Shioaji#234). */
 export function cancellationOutcome(trade: Trade): MutationOutcome {
     if (trade?.status?.status === 'Cancelled') return 'confirmed';
     if (trade?.status?.status === 'Filled') return 'filled';
+    if (cancelledByQuantity(trade)) return 'confirmed';
     if (['Submitted', 'PreSubmitted', 'PendingSubmit', 'PartFilled'].includes(trade?.status?.status)) return 'pending';
     return 'unknown';
 }
@@ -15,16 +18,22 @@ const flag = (reason: unknown, key: 'mutationNotStarted' | 'mutationOutcomeUnkno
     typeof reason === 'object' && reason !== null && (reason as Record<string, unknown>)[key] === true;
 export function cancellationSummary(results: PromiseSettledResult<Trade>[]) {
     let confirmed = 0, filled = 0, unconfirmed = 0, notSent = 0, unknown = 0;
+    const notes = new Map<string, number>();
     for (const result of results) {
         if (result.status === 'fulfilled') {
             const outcome = cancellationOutcome(result.value);
-            if (outcome === 'confirmed') confirmed++; else if (outcome === 'filled') filled++;
+            if (outcome === 'confirmed') {
+                confirmed++;
+                const note = brokerStatusNote(result.value);
+                if (note) notes.set(note, (notes.get(note) ?? 0) + 1);
+            } else if (outcome === 'filled') filled++;
             else if (outcome === 'pending') unconfirmed++; else unknown++;
         } else if (flag(result.reason, 'mutationNotStarted')) notSent++;
         else if (flag(result.reason, 'mutationOutcomeUnknown')) unconfirmed++;
         else unknown++;
     }
-    const parts = [`已確認取消 ${confirmed} 筆`];
+    const detail = [...notes].map(([note, n]) => `（${n} 筆${note}）`).join('');
+    const parts = [`已確認取消 ${confirmed} 筆${detail}`];
     if (filled) parts.push(`已全部成交、無可取消 ${filled} 筆`);
     if (unconfirmed) parts.push(`已送出未確認 ${unconfirmed} 筆`);
     if (notSent) parts.push(`未送出 ${notSent} 筆`);

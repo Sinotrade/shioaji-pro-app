@@ -1,5 +1,5 @@
 {
- "_note": "Shioaji 1.7.6 simulation sidecar, 2026-09-23. Captured via HTTP /order/cancel_order and /order/trades refresh:false (TXF far-from-market ROD limit orders). Identities, order ids/seqno/ordno, CA and timestamps replaced; statuses and quantities unchanged. Simulation only: not production evidence (Shioaji#234 still open).",
+ "_note": "Shioaji 1.7.6 simulation sidecar, 2026-09-23. Captured via HTTP /order/cancel_order and /order/trades refresh:false (TXF far-from-market ROD limit orders). Identities, order ids/seqno/ordno, CA and timestamps replaced; statuses and quantities unchanged. Simulation only: not production evidence (Shioaji#234 still open). reducedCancelledAfterRestart234 is DERIVED (not captured by this agent): the reducedCancelled row with status set back to Submitted, matching what the final gate observed from update_status (refresh:true) after a simulation sidecar restart — Submitted with cancel_quantity equal to the order quantity (Shioaji#234 pattern).",
  "cacheBefore": {
   "contract": {
    "security_type": "FUT",
@@ -296,6 +296,50 @@
   "status": {
    "id": "fx04",
    "status": "Cancelled",
+   "status_code": "00",
+   "web_id": "",
+   "order_ts": 1790000010.0,
+   "msg": "",
+   "modified_ts": 0.0,
+   "modified_price": 0.0,
+   "order_quantity": 0,
+   "deal_quantity": 0,
+   "cancel_quantity": 2,
+   "deals": []
+  }
+ },
+ "reducedCancelledAfterRestart234": {
+  "contract": {
+   "security_type": "FUT",
+   "region": "TW",
+   "exchange": "TAIFEX",
+   "code": "TXFJ6",
+   "target_code": ""
+  },
+  "order": {
+   "id": "fx04",
+   "seqno": "fx05",
+   "ordno": "fx06",
+   "action": "Buy",
+   "price": 45011.0,
+   "quantity": 2,
+   "order_type": "ROD",
+   "price_type": "LMT",
+   "custom_field": "",
+   "account": {
+    "account_type": "F",
+    "person_id": "fixture",
+    "broker_id": "fixture",
+    "account_id": "fixture",
+    "signed": true,
+    "username": ""
+   },
+   "ca": "",
+   "octype": "Auto"
+  },
+  "status": {
+   "id": "fx04",
+   "status": "Submitted",
    "status_code": "00",
    "web_id": "",
    "order_ts": 1790000010.0,

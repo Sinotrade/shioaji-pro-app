@@ -23,10 +23,12 @@
 | 刪單後 health | `Unknown`（FuturesDeal NoBaseline，沒有成交時屬正常）；因此不能拿 Healthy 當作可用 cache 的前提 |
 | 重啟後（無基準、cache 不可信）批次刪單，修正前 | 協調者 final gate 在 UI 實測：同帳戶 4 筆批次刪單共 7 次 `refresh:true`（4 前置＋3 確認），monitor 的 update_status 為 7 |
 | 同上，修正後（node 呼叫實際 `cancelOrders`，trading-state 以 fixture 模擬無基準） | 4 筆與 12 筆各一批：client 端 `refresh:true` 各 **2** 次（1 前置＋1 確認），全部 Cancelled；sidecar monitor（source=backend）的 `update_status` 每批 +2（0→2、2→4），`cancel_order` 共 16＝4＋12；測試委託全數取消、無殘留 |
+| 模擬 sidecar 重啟後的 update_status（協調者 final gate 觀察，非本 agent 擷取） | 減量後刪單的委託回成 Submitted、`cancel_quantity` 等於委託量（Shioaji#234 型態）；舊規則只認 Cancelled 而判未確認，已改為零剩餘即確認並保留原始狀態 |
 | 瀏覽器 UI（隔離 Vite 5197 → 21326，非原生） | 手動更新委託後按委託列 CANCEL：網路為 cancel＋2 次 cache 讀；提示「刪單結果：已確認取消 1 筆。」；委託數 0；沒有「待對帳」「改刪待確認」 |
 
 去識別 fixture：`src/lib/fixtures/native-simulation-cancel-readback-1.7.6.json`（HTTP 刪單回應、刪單前後的 cache 列、
-減量後刪單序列）。
+減量後刪單序列）。其中 `reducedCancelledAfterRestart234` 是**推導**列（把擷取到的減量後已取消列的狀態改回 Submitted，
+對應 final gate 的觀察），不是本 agent 擷取的原始回報。
 
 ## 自動測試（mock）
 
@@ -70,3 +72,7 @@
 
 Final gate（協調者）：重啟後批次刪單 4 筆產生 7 次 `refresh:true`。修正為 `cancelOrders` 批次屏障（全批送出後每帳戶
 一次確認讀取）與依基準遺失時點共用的前置讀取；1.7.6 模擬以 monitor 量測 4 筆與 12 筆各 2 次（見上表）。
+
+維護者確認 #120 的 Submitted＋取消量 0 是測試環境問題；正解是依 1.7.6 skill 以回報投影的 cache 確認（本 PR）。
+依 final gate 觀察，確認規則放寬為「零剩餘，且 Cancelled 或（取消量 > 0 且非 PendingSubmit）」，保留券商原始狀態並在
+提示附註；public 與 private Agent 規則一致。測試：#234 型態確認；Submitted＋取消量 0、部分取消、PendingSubmit 不確認。

@@ -367,6 +367,17 @@ describe('read-back confirmed cancellation (#120 / #116)', () => {
         expect(reasons('orders')).not.toContain('mutation-outcome');
         expect(mocks.trades.mock.calls.length).toBe(queries);
     });
+    it('applies a confirmed zero-remaining Submitted read-back (Shioaji#234 pattern) without 改刪待確認', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        await act(async () => { await observeTradeMutation(old.order.id, async () => markConfirmedCancellation(
+            { ...old, status: { ...old.status, status: 'Submitted' as const, cancel_quantity: 3 } })); vi.advanceTimersByTime(50); });
+        const row = store.getTradingState().trades[0]!;
+        expect(row.status).toMatchObject({ status: 'Submitted', cancel_quantity: 3 });
+        expect(reasons('orders')).not.toContain('mutation-outcome');
+        const { remainingWorkingOrderQuantity } = await import('./working-order-quantity');
+        expect(remainingWorkingOrderQuantity(row)).toBe(0);
+    });
     it('falls back to 改刪待確認 when the local row already knows more fills than the read-back', async () => {
         await emit(order()); const old = store.getTradingState().trades[0]!;
         const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');

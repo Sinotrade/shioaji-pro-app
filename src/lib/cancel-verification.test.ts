@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+    brokerStatusNote,
     CancelUnconfirmedError,
     findOrderRow,
     isConfirmedCancellation,
@@ -50,11 +51,13 @@ describe('cancel confirmation rule', () => {
         expect(requiredCancelQuantity(row({ order_quantity: 0 }, { quantity: 3 }))).toBe(3);
         expect(requiredCancelQuantity(row({ deal_quantity: 1 }, { quantity: 3 }))).toBe(2);
     });
-    it('accepts Cancelled only when cumulative cancel_quantity covers the remainder', () => {
+    it('accepts only when cumulative cancel_quantity plus fills leave nothing', () => {
         const before = row({ deal_quantity: 1 }, { quantity: 3 });
         expect(isConfirmedCancellation(before, row({ status: 'Cancelled', deal_quantity: 1, cancel_quantity: 2 }, { quantity: 3 }))).toBe(true);
         expect(isConfirmedCancellation(before, row({ status: 'Cancelled', deal_quantity: 1, cancel_quantity: 1 }, { quantity: 3 }))).toBe(false);
-        expect(isConfirmedCancellation(before, row({ status: 'Submitted', deal_quantity: 1, cancel_quantity: 2 }, { quantity: 3 }))).toBe(false);
+        // Working-looking status whose cancel covers the rest (Shioaji#234 pattern).
+        expect(isConfirmedCancellation(before, row({ status: 'Submitted', deal_quantity: 1, cancel_quantity: 2 }, { quantity: 3 }))).toBe(true);
+        expect(isConfirmedCancellation(before, row({ status: 'Submitted', deal_quantity: 1, cancel_quantity: 1 }, { quantity: 3 }))).toBe(false);
         // A read-back behind the local fill count is not evidence.
         expect(isConfirmedCancellation(before, row({ status: 'Cancelled', deal_quantity: 0, cancel_quantity: 3 }, { quantity: 3 }))).toBe(false);
         expect(isConfirmedCancellation(before, null)).toBe(false);
@@ -268,6 +271,24 @@ describe('1.7.6 simulation read-back fixture (de-identified, regression only)', 
         expect(requiredCancelQuantity(before)).toBe(2);
         expect(isConfirmedCancellation(before, fixture.reducedCancelResponse!)).toBe(false);
         expect(isConfirmedCancellation(before, fixture.reducedCancelled!)).toBe(true);
+    });
+    it('confirms the Shioaji#234 pattern: Submitted but cumulative cancel_quantity covers the order', async () => {
+        const before = fixture.reducedBefore!;
+        const row234 = fixture.reducedCancelledAfterRestart234!;
+        expect(row234.status).toMatchObject({ status: 'Submitted', cancel_quantity: 2, deal_quantity: 0 });
+        expect(isConfirmedCancellation(before, row234)).toBe(true);
+        expect(brokerStatusNote(row234)).toBe('券商狀態仍為 Submitted，取消量已涵蓋全部');
+        const d = deps({ cache: async () => [fixture.reducedCancelResponse!], refresh: async () => [row234] }, { cacheTrusted: () => false });
+        await expect(verifyCancellation(before, fxAccount, d.value)).resolves.toMatchObject({ source: 'refresh', trade: { status: { status: 'Submitted' } } });
+    });
+    it('keeps Submitted with cancel 0, a partial cancel, and PendingSubmit unconfirmed', () => {
+        const before = fixture.cacheBefore!;
+        const r = (status: Partial<Trade['status']>) => ({ ...fixture.cacheBefore!, status: { ...fixture.cacheBefore!.status, ...status } }) as Trade;
+        expect(isConfirmedCancellation(before, r({ status: 'Submitted', cancel_quantity: 0 }))).toBe(false);
+        const two = { ...fixture.reducedBefore!, status: { ...fixture.reducedBefore!.status, cancel_quantity: 1 } } as Trade;
+        expect(isConfirmedCancellation(fixture.reducedBefore!, two)).toBe(false); // 1 of 2 cancelled
+        expect(isConfirmedCancellation(before, r({ status: 'PendingSubmit', cancel_quantity: 1 }))).toBe(false);
+        expect(isConfirmedCancellation(before, r({ status: 'Submitted', cancel_quantity: 1 }))).toBe(true);
     });
     it('confirms from the cache read that follows the projected Cancel', async () => {
         const cache = vi.fn().mockResolvedValueOnce([fixture.cancelResponse]).mockResolvedValue([fixture.cacheCancelled]);

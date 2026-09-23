@@ -127,20 +127,41 @@ export function findOrderRow(rows: Trade[], tradeId: string, account: CancelAcco
     return matches.length === 1 ? matches[0]! : null;
 }
 
-/** Nothing of the order is left working: Cancelled, or Filled before the
- *  cancel could take effect (a known result, not an unknown one). Cumulative
- *  cancel_quantity plus fills must cover the order — this equals "covers the
- *  quantity remaining at the start" unless a fill raced the cancel. The larger
- *  of the local and read-back order.quantity is used, so a row that reports a
- *  reduced quantity cannot make the requirement smaller. */
+/** Cancelled without saying so: the broker status is not Cancelled/Filled but
+ *  the row's own cumulative cancel_quantity (> 0) plus fills cover the order,
+ *  and it is past PendingSubmit. After a sidecar restart update_status can
+ *  return reduce-then-cancel orders this way (the Shioaji#234 pattern); the
+ *  order table already treats such zero-remaining rows as not working. */
+export function cancelledByQuantity(row: Trade, quantity = row?.order?.quantity): boolean {
+    const status = row?.status;
+    if (!status || status.status === 'Cancelled' || status.status === 'Filled' || status.status === 'PendingSubmit') return false;
+    const { cancel_quantity: cancelled, deal_quantity: dealt } = status;
+    return Number.isFinite(cancelled) && Number.isFinite(dealt) && Number.isFinite(quantity)
+        && cancelled > 0 && cancelled + dealt >= quantity;
+}
+/** Display detail when the broker status still reads as working. */
+export function brokerStatusNote(row: Trade): string | null {
+    return cancelledByQuantity(row) ? `券商狀態仍為 ${row.status.status}，取消量已涵蓋全部` : null;
+}
+
+/** Nothing of the order is left working. Same order id and account (checked
+ *  by findOrderRow), cumulative cancel_quantity plus fills cover
+ *  max(local, read-back) order.quantity — so a row reporting a reduced
+ *  quantity cannot shrink the requirement, and a fill racing the cancel still
+ *  counts — and one of:
+ *  - status Cancelled;
+ *  - status Filled (filled before the cancel took effect: a known result);
+ *  - cancel_quantity > 0 and not PendingSubmit (cancelledByQuantity).
+ *  A read-back behind the local fill count is never evidence. */
 export function isConfirmedCancellation(before: Trade, row: Trade | null): row is Trade {
-    if (!row || (row.status?.status !== 'Cancelled' && row.status?.status !== 'Filled')) return false;
-    const { cancel_quantity: cancelled, deal_quantity: dealt } = row.status;
+    if (!row?.status) return false;
+    const { status, cancel_quantity: cancelled, deal_quantity: dealt } = row.status;
     if (!Number.isFinite(cancelled) || !Number.isFinite(dealt)) return false;
-    // A cache row behind the local projection is not evidence.
     if (dealt < before.status.deal_quantity) return false;
     const quantity = Math.max(before.order.quantity, Number.isFinite(row.order?.quantity) ? row.order.quantity : 0);
-    return cancelled + dealt >= quantity;
+    if (cancelled + dealt < quantity) return false;
+    if (status === 'Cancelled' || status === 'Filled') return true;
+    return cancelledByQuantity(row, quantity);
 }
 
 // Reads are shared per account so a batch (flash 全刪, 鋪單全撤, 全部刪單,
