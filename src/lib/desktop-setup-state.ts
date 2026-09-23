@@ -30,16 +30,34 @@ export function cacheDesktopConfigured(configured: boolean): void {
     }
 }
 
-/** Fires in this window (custom event) and in other windows (`storage`). */
+/**
+ * Fires in this window (custom event), in other windows (`storage`), and
+ * whenever this window regains focus or becomes visible. The tray panel is
+ * hidden and reused, never reloaded, so a re-read on show does not depend on
+ * the cross-window `storage` event reaching a hidden WebView.
+ */
 export function subscribeDesktopConfigured(listener: () => void): () => void {
     if (typeof window === 'undefined') return () => undefined;
     const onStorage = (event: StorageEvent) => {
         if (event.key === STORAGE_KEY || event.key === null) listener();
     };
+    const onVisibility = () => {
+        if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+            listener();
+        }
+    };
     window.addEventListener(CHANGE_EVENT, listener);
     window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', listener);
+    if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', onVisibility);
+    }
     return () => {
         window.removeEventListener(CHANGE_EVENT, listener);
         window.removeEventListener('storage', onStorage);
+        window.removeEventListener('focus', listener);
+        if (typeof document !== 'undefined') {
+            document.removeEventListener('visibilitychange', onVisibility);
+        }
     };
 }

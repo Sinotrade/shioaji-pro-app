@@ -94,7 +94,47 @@ describe('child windows never read settings.json', () => {
     });
 });
 
+describe('reused hidden tray window', () => {
+    it.each(['focus', 'visibilitychange'])(
+        're-reads the flag on %s without relying on a storage event',
+        async (trigger) => {
+            mocks.search = '?popout=traypanel';
+            mocks.label = 'tray';
+            const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+            vi.stubGlobal('document', doc);
+            await mount();
+            expect(text()).toContain('請在主視窗完成設定');
+
+            // Another window wrote the flag, but no storage/custom event
+            // reached this hidden WebView.
+            localStorage.setItem('sj-desktop-configured', 'true');
+            expect(text()).toContain('請在主視窗完成設定');
+
+            await act(async () => {
+                if (trigger === 'focus') window.dispatchEvent(new Event('focus'));
+                else doc.dispatchEvent(new Event('visibilitychange'));
+            });
+            expect(text()).toContain('APP');
+            expect(mocks.load).not.toHaveBeenCalled();
+        },
+    );
+});
+
 describe('main window still loads settings', () => {
+    it('shows a zh-TW error with retry instead of a blank page or setup when the read fails', async () => {
+        mocks.label = 'main';
+        mocks.load.mockRejectedValueOnce(new Error('store unavailable'));
+        await mount();
+        expect(text()).toContain('無法讀取本機設定');
+        expect(text()).not.toContain('ONBOARDING');
+        expect(text()).not.toContain('APP');
+
+        mocks.load.mockResolvedValueOnce({ apiKey: 'k', secretKey: 's' });
+        await act(async () => view!.root.findByType('button').props.onClick());
+        expect(mocks.load).toHaveBeenCalledTimes(2);
+        expect(text()).toContain('APP');
+    });
+
     it('opens the dashboard when keys exist', async () => {
         mocks.label = 'main';
         mocks.load.mockResolvedValue({ apiKey: 'k', secretKey: 's' });

@@ -13,7 +13,10 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import App from './App';
-import { ChildSetupNotice } from './components/child-setup-notice';
+import {
+    ChildSetupNotice,
+    SettingsLoadError,
+} from './components/child-setup-notice';
 import { OnboardingSetup } from './components/onboarding-setup';
 import {
     readDesktopConfigured,
@@ -22,18 +25,41 @@ import {
 import { isTauri, loadDesktopSettings } from './lib/tauri';
 import { isChildWindow } from './lib/window-role';
 
+type MainGateState = 'loading' | 'setup' | 'app' | 'error';
+
 function MainWindowGate() {
-    const [needsSetup, setNeedsSetup] = useState<boolean | null>(
-        isTauri ? null : false,
+    const [state, setState] = useState<MainGateState>(
+        isTauri ? 'loading' : 'app',
     );
+    const [attempt, setAttempt] = useState(0);
     useEffect(() => {
         if (!isTauri) return;
-        void loadDesktopSettings().then((s) =>
-            setNeedsSetup(!s.apiKey || !s.secretKey),
+        let cancelled = false;
+        loadDesktopSettings()
+            .then((s) => {
+                if (!cancelled) setState(!s.apiKey || !s.secretKey ? 'setup' : 'app');
+            })
+            .catch(() => {
+                // Never fall through to first-run setup here: a transient read
+                // failure must not invite the user to overwrite saved keys.
+                if (!cancelled) setState('error');
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [attempt]);
+    if (state === 'loading') return null; // instant local read, no flash
+    if (state === 'error') {
+        return (
+            <SettingsLoadError
+                onRetry={() => {
+                    setState('loading');
+                    setAttempt((n) => n + 1);
+                }}
+            />
         );
-    }, []);
-    if (needsSetup === null) return null; // instant local read, no flash
-    return needsSetup ? <OnboardingSetup /> : <App />;
+    }
+    return state === 'setup' ? <OnboardingSetup /> : <App />;
 }
 
 function ChildWindowGate() {
