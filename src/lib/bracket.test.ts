@@ -25,6 +25,7 @@ const m = vi.hoisted(() => ({
     refreshed: vi.fn(),
     health: vi.fn(),
     subscribe: vi.fn(),
+    healthCheck: vi.fn(),
     ensure: vi.fn(),
     cancel: vi.fn(),
     positions: { rows: [] as unknown[], updatedAt: null as number | null, needsReconcile: false },
@@ -49,7 +50,7 @@ vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accoun
 vi.mock('./trade', () => ({ notify: m.notify, placeQuickOrder: m.place }));
 vi.mock('./contracts-cache', () => ({ ensureContract: m.ensure }));
 vi.mock('./quote-ownership', () => ({ retainQuote: () => () => undefined }));
-vi.mock('./trading-state', () => ({ tradeCacheContinuous: () => m.continuous, getTradingState: () => ({ positions: m.positions.rows,
+vi.mock('./trading-state', () => ({ tradeCacheContinuous: () => m.continuous, checkTradeCacheHealth: m.healthCheck, getTradingState: () => ({ positions: m.positions.rows,
     queries: { positions: { updatedAt: m.positions.updatedAt, needsReconcile: m.positions.needsReconcile, error: null } } }) }));
 vi.mock('./shioaji', () => ({
     fetchTrades: (_type: string, account: unknown, opts: { refresh: boolean }) => opts.refresh ? m.refreshed(account) : m.cached(account),
@@ -131,7 +132,8 @@ beforeEach(() => {
     m.status = 'live'; m.accounts = [F1, F2, S1]; m.base = 'http://sim.invalid'; m.search = '';
     m.env = 'http://sim.invalid|simulation'; m.lockGranted = true; m.continuous = true;
     m.positions = { rows: [], updatedAt: null, needsReconcile: false };
-    for (const f of [m.place, m.notify, m.cached, m.refreshed, m.health, m.subscribe, m.ensure, m.cancel]) f.mockReset();
+    for (const f of [m.place, m.notify, m.cached, m.refreshed, m.health, m.subscribe, m.ensure, m.cancel, m.healthCheck]) f.mockReset();
+    m.healthCheck.mockResolvedValue(undefined);
     m.cancel.mockResolvedValue({});
     m.cached.mockResolvedValue([cacheTrade('fixture-f1', F1, []), cacheTrade('fixture-f9', F2, [])]); m.refreshed.mockResolvedValue([]); m.health.mockResolvedValue(healthy);
     m.subscribe.mockResolvedValue({}); m.ensure.mockResolvedValue(TXF);
@@ -261,7 +263,7 @@ describe('protection confirmation state', () => {
         expect(p.entryClosed).toBe(false);
     });
 
-    it('Degraded cache health and NotSubscribed are surfaced (subscribe attempted once)', async () => {
+    it('Degraded cache health and NotSubscribed are surfaced; resubscribe is left to trading-state', async () => {
         await boot();
         m.health.mockResolvedValueOnce({ state: 'Degraded', reasons: [{ event_type: 'FuturesDeal', reason: 'SequenceGap' }] });
         const plan = await bracket.registerBracket(spec(F1));
@@ -270,8 +272,22 @@ describe('protection confirmation state', () => {
         m.health.mockResolvedValue({ state: 'Unknown', reasons: [{ event_type: 'FuturesDeal', reason: 'NotSubscribed' }] });
         const other = await bracket.registerBracket(spec(F2, 'fixture-f9'));
         await flush();
-        expect(m.subscribe).toHaveBeenCalledTimes(1);
+        expect(m.subscribe).not.toHaveBeenCalled(); // bracket never calls subscribe_trade itself
+        expect(m.healthCheck).toHaveBeenCalledWith('manual'); // trading-state's single-flight path
         expect(planOf(other.id).issues.map(i => i.code)).toEqual(['not-subscribed']);
+    });
+
+    it('on reconnect the bracket adds no subscribe_trade of its own (no duplicate with trading-state)', async () => {
+        await boot();
+        await bracket.registerBracket(spec(F1));
+        await bracket.registerBracket(spec(F2, 'fixture-f9'));
+        await flush();
+        m.health.mockResolvedValue({ state: 'Unknown', reasons: [{ event_type: 'FuturesDeal', reason: 'NotSubscribed' }] });
+        m.status = 'down'; m.statusChanged.forEach(cb => cb()); await flush();
+        m.status = 'live'; m.statusChanged.forEach(cb => cb()); await flush();
+        expect(m.subscribe).not.toHaveBeenCalled();
+        // every NotSubscribed read funnels into the one coalescing trading-state check
+        expect(m.healthCheck.mock.calls.every(([t]) => t === 'manual')).toBe(true);
     });
 
     it('untrackable (no event_id, e.g. 1.7.5) reports still count fills but never look confirmed', async () => {

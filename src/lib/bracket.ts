@@ -17,10 +17,9 @@
 //   resent automatically.
 
 import { useSyncExternalStore } from 'react';
-import { subscribeTradeReports } from './boot';
 import { reportLedger } from './report-ledger';
 import { cancelOrder, fetchTradeCacheHealth, fetchTrades } from './shioaji';
-import { tradeCacheContinuous } from './trading-state';
+import { checkTradeCacheHealth, tradeCacheContinuous } from './trading-state';
 import {
     accountRefKey,
     addIssue,
@@ -277,11 +276,13 @@ function applyHealth(account: AccountRef, env: string, health: TradeCacheHealth,
 }
 
 async function checkHealth(account: AccountRef, env: string) {
-    let health = await fetchTradeCacheHealth(account.account_type, account);
+    const health = await fetchTradeCacheHealth(account.account_type, account);
     if (health.reasons.some(r => r.reason === 'NotSubscribed')) {
-        // boot.ts subscribes every signed account in every mode (#128); this
-        // only repeats that idempotent call if the subscription was lost.
-        try { await subscribeTradeReports(); health = await fetchTradeCacheHealth(account.account_type, account); } catch { /* keep first result */ }
+        // Never subscribe here: trading-state owns (re)subscription and its
+        // single-flight health check coalesces with a reconnect already in
+        // progress, so each account is subscribed once. The plan stays
+        // unconfirmed (not-subscribed) until an explicit reconcile.
+        void checkTradeCacheHealth('manual');
     }
     if (currentProtectionEnv() === env) applyHealth(account, env, health, Date.now());
     return health;
