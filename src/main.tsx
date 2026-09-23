@@ -12,11 +12,14 @@ import { startAnalytics } from './lib/analytics';
 import { bootstrap } from './lib/boot';
 import { isTauri, loadDesktopSettings } from './lib/tauri';
 import { initTheme } from './lib/theme-store';
+import { startBracketRuntime } from './lib/bracket';
 import { startTriggerEngine } from './lib/trigger-engine';
 
 initTheme();
 startAnalytics();
+// both are no-ops outside the main window (#102: main-only execution)
 startTriggerEngine();
+startBracketRuntime();
 bootstrap();
 
 // A fresh desktop install has no API key saved yet — the dashboard would

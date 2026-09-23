@@ -1,6 +1,6 @@
 # ADR 0002 — 帳戶畫面以回報與行情更新，查詢只做初始化與人工校正
 
-狀態：本次候選版；保護單追蹤 #102 依使用者決定另案。
+狀態：本次候選版；保護單追蹤 #102 另以 Shioaji 1.7.6 event_id／Trade cache 實作（見下方「#102 保護單」），原生驗收未完成。
 
 ## 原因與證據
 
@@ -28,4 +28,14 @@
 
 Grid follow、使用者啟用的組合到價策略、native production 執行前/核准後的權威檢查、Agent 明確要求的 read-only 查核不改為 UI 快取。健康、info、monitor 診斷輪詢是本機觀測，不當成券商會計查詢刪除。
 
-使用者明確將 #102 保護單另案；既有 pending bracket 的 4 秒查詢仍存在，不可宣稱整個 App 所有帳務背景來源已歸零。多 origin、主視窗崩潰與 WebView 非正常結束無 ACK 的鏡像/訂閱清理仍需 native 驗收；不能把 browser fixture 當原生實測。
+#102 保護單原先另案；其 4 秒 pending 查詢已由下節的回報驅動追蹤取代，但原生驗收完成前不可宣稱整個 App 所有帳務背景來源已歸零。多 origin、主視窗崩潰與 WebView 非正常結束無 ACK 的鏡像/訂閱清理仍需 native 驗收；不能把 browser fixture 當原生實測。
+
+## #102 保護單（Shioaji 1.7.6 起）
+
+- 括號單待成交不再每 4 秒查 S/F trades。進場成交來自 order/deal 回報：先以完整非空 `event_id` 在同一 API base 去重，再以 `<委託 id>:<exchange_seq>` 累積部分成交；帳戶、商品與買賣別須與登記時固定的帳戶一致，缺欄位不計入並標示。
+- 只在登記、App 重新載入、串流恢復時各做一次 `/order/trades` `refresh:false`（server Trade cache，無上游呼叫）與 `trade_cache_health`；`NotSubscribed` 時對該帳戶補一次 `subscribe_trade`。`refresh:true`（update_status）只在使用者按「對帳」時執行。
+- 串流中斷、序號跳號、無可追蹤 event_id、快取 Degraded/NotSubscribed、重新載入或查無委託，均標示「保護未確認完整」；只有使用者對帳後快取 Healthy 才清除。跳號只代表可能漏回報。
+- 觸價單只由主視窗執行；小視窗、閃電與 Tray 以具 ACK 與指令 id 去重的 BroadcastChannel 指令新增／移除，並顯示主視窗鏡像。OCO 同 tick 原子處理，已觸發群組持久化且不再重掛或重送。停損／停利固定建立時的伺服器、帳戶與可交易代碼；舊資料缺帳戶者暫停不執行。期貨出場用 Cover；股票括號單僅限現股整張。試撮 tick 不觸發。
+- 出場依「環境／帳戶／商品／方向」保留數量，括號單出場以已確認持倉扣除保留量為上限；送單結果未知保留數量、明示需對帳，永不自動重送；進場於出場觸發後的成交與未完成出場列為未保護量。
+- 證據界線：synthetic／mock 與 1.7.6 模擬環境 browser 單次端到端；原生 App、正式環境、多視窗異常退出與實際保護單 QA 未完成。
+

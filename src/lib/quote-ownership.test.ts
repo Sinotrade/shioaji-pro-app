@@ -23,15 +23,17 @@ describe('quote ownership shared consumers', () => {
         expect(mocks.unsubscribe).not.toHaveBeenCalled();
         b(); await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
     });
-    it('preserves an already-active legacy trigger Tick when the last panel closes', async () => {
-        vi.stubGlobal('localStorage', { getItem: (key: string) => key === 'sj-pro-triggers' ? JSON.stringify([{ code: contract.code, enabled: true }]) : null });
+    it('keeps a protection trigger Tick held by the main-window engine when the last panel closes (#102)', async () => {
         const { retainQuote } = await import('./quote-ownership');
+        const engineHold = retainQuote(contract, 'Tick'); // trigger-engine syncQuotes()
         const tick = retainQuote(contract, 'Tick'); const book = retainQuote(contract, 'BidAsk');
         await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(2));
         tick(); book();
         await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
         expect(mocks.unsubscribe).toHaveBeenCalledWith(contract, 'BidAsk');
-        expect(mocks.subscribe).toHaveBeenCalledTimes(2);
+        engineHold();
+        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(2));
+        expect(mocks.unsubscribe).toHaveBeenLastCalledWith(contract, 'Tick');
     });
     it('subscribes once and releases only when the last local consumer leaves', async () => {
         const { retainQuote } = await import('./quote-ownership');

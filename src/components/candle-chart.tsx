@@ -389,7 +389,7 @@ export function CandleChart({
                     action: below ? 'Sell' : 'Buy',
                     quantity: qty,
                     kind: 'stop',
-                });
+                }, c);
             } else {
                 addTrigger({
                     code: c.code,
@@ -398,7 +398,7 @@ export function CandleChart({
                     action: below ? 'Buy' : 'Sell',
                     quantity: qty,
                     kind: 'take',
-                });
+                }, c);
             }
         });
 
@@ -1667,6 +1667,9 @@ export function CandleChart({
                                     {fmtPrice(t.price)}
                                     {t.kind !== 'alert' &&
                                         ` ${t.action === 'Buy' ? '買' : '賣'}${t.quantity}`}
+                                    {t.suspended && (
+                                        <span title={t.suspended}> 未啟用</span>
+                                    )}
                                 </span>
                                 <button
                                     className={styles.triggerRemove}

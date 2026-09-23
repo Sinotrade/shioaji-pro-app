@@ -21,15 +21,6 @@ function sync() {
     queue = queue.catch(() => undefined).then(async () => {
         const desired = new Map<string, Desired>();
         for (const set of clients.values()) for (const [key, value] of set) desired.set(key, value);
-        // Legacy trigger execution is explicitly deferred to #102. Preserve
-        // its existing tick feed when a viewing panel closes; this only keeps
-        // an already-active subscription, and does not start/change a strategy.
-        try {
-            const triggers: unknown = JSON.parse(localStorage.getItem('sj-pro-triggers') ?? '[]');
-            if (Array.isArray(triggers)) for (const [key, value] of active) {
-                if (value.type === 'Tick' && triggers.some(t => t?.code === value.contract.code)) desired.set(key, value);
-            }
-        } catch { /* no persisted legacy consumer */ }
         for (const [key, value] of active) if (!desired.has(key)) {
             try { await unsubscribeQuote(value.contract, value.type); active.delete(key); } catch { /* preserve ownership for a later retry */ }
         }
