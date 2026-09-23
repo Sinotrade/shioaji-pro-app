@@ -62,6 +62,7 @@ import { setPickedPrice } from '../lib/price-sync';
 import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import { notify, placeQuickOrder } from '../lib/trade';
+import { isCancelUnconfirmed } from '../lib/cancel-verification';
 import {
     addTrigger,
     removeTrigger,
@@ -1631,7 +1632,7 @@ export function CandleChart({
                                                 .then(() => {
                                                     notify({
                                                         kind: 'ok',
-                                                        title: '🗑 刪單已送出',
+                                                        title: '🗑 已確認刪單',
                                                         body: `${t.contract.code} @${fmtPrice(price)}`,
                                                     });
                                                     onOrdersChangedRef.current?.();
@@ -1639,7 +1640,7 @@ export function CandleChart({
                                                 .catch((e) =>
                                                     notify({
                                                         kind: 'err',
-                                                        title: '刪單失敗',
+                                                        title: isCancelUnconfirmed(e) ? '刪單未確認' : '刪單失敗',
                                                         body:
                                                             e instanceof Error
                                                                 ? e.message

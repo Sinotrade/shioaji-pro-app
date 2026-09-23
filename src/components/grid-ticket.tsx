@@ -8,6 +8,7 @@ import { RefreshCw, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { requestOrderConfirm } from '../lib/order-confirm';
+import { cancellationSummary } from '../lib/trade-mutations';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
 import {
     cancelOrder,
@@ -193,11 +194,11 @@ export function GridTicket({
         const results = await Promise.allSettled(
             gridOrders.map((t) => cancelOrder(t.order.id)),
         );
-        const ok = results.filter((r) => r.status === 'fulfilled').length;
+        const summary = cancellationSummary(results);
         notify({
-            kind: 'ok',
+            kind: summary.kind,
             title: '🧹 鋪單全撤',
-            body: `已送出 ${ok}/${gridOrders.length} 筆刪單`,
+            body: summary.body,
         });
         setBusy(false);
         setFollow(false);

@@ -68,3 +68,28 @@ it('a lost remote settled event cannot retain a gate after the window releases i
     await expect(mutations.observeTradeMutation('remote', request)).resolves.toEqual(trade('Cancelled'));
     expect(request).toHaveBeenCalledOnce();
 });
+
+it('summarises confirmed, sent-but-unconfirmed, not-sent and unknown cancellations separately', async () => {
+    const { cancellationSummary: summary } = await import('./trade-mutations');
+    const unconfirmed = Object.assign(new Error('刪單已送出但未確認取消'), { code: 'CANCEL_UNCONFIRMED', mutationOutcomeUnknown: true });
+    const notSent = Object.assign(new Error('委託或帳戶歸屬不明'), { mutationNotStarted: true });
+    expect(summary([{ status: 'fulfilled', value: trade('Cancelled') }, { status: 'fulfilled', value: trade('Cancelled') }]))
+        .toEqual({ kind: 'ok', body: '已確認取消 2 筆。' });
+    const mixed = summary([{ status: 'fulfilled', value: trade('Cancelled') }, { status: 'rejected', reason: unconfirmed },
+        { status: 'rejected', reason: notSent }, { status: 'rejected', reason: new Error('timeout') }]);
+    expect(mixed.kind).toBe('err');
+    expect(mixed.body).toBe('已確認取消 1 筆；已送出未確認 1 筆；未送出 1 筆；失敗或結果未知 1 筆。未確認項目請手動更新委託核對，勿自動重送。');
+    expect(summary([{ status: 'rejected', reason: notSent }]).kind).toBe('info');
+});
+it('flags only read-back confirmed results as confirmed', async () => {
+    vi.resetModules();
+    vi.stubGlobal('BroadcastChannel', undefined);
+    const m = await import('./trade-mutations');
+    const events: { phase: string; confirmed?: boolean }[] = [];
+    const off = m.onTradeMutation(e => events.push(e));
+    try {
+        await m.observeTradeMutation('plain', async () => trade('Cancelled'));
+        await m.observeTradeMutation('verified', async () => m.markConfirmedCancellation(trade('Cancelled')));
+        expect(events.filter(e => e.phase === 'settled').map(e => e.confirmed)).toEqual([undefined, true]);
+    } finally { off(); }
+});

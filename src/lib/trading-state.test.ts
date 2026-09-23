@@ -339,6 +339,52 @@ it('marks positions stale when cancellation HTTP reports a fill missing from SSE
     expect(store.getTradingState().queries.positions.needsReconcile).toBe(true);
     expect(store.getTradingState().queries.positions.error).toContain('新增成交');
 });
+describe('read-back confirmed cancellation (#120 / #116)', () => {
+    const reasons = (scope: 'orders' | 'positions') => store.getTradingState().queries[scope].reasons;
+    const cancelled = (old: ReturnType<typeof store.getTradingState>['trades'][number], status: Record<string, unknown> = {}) =>
+        ({ ...old, status: { ...old.status, status: 'Cancelled' as const, cancel_quantity: 3, order_quantity: 0, ...status } });
+    it('does not raise 改刪待確認 when the Cancel report landed while the cancel was being confirmed', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        const delayed = deferred<typeof old>();
+        const request = observeTradeMutation(old.order.id, () => delayed.promise);
+        await emit(order('new', 100, epoch + 3, 'Cancel'));
+        await act(async () => { delayed.resolve(markConfirmedCancellation(cancelled(old))); await request; vi.advanceTimersByTime(50); });
+        expect(reasons('orders')).not.toContain('mutation-outcome');
+        expect(store.getTradingState().trades[0]!.status.status).toBe('Cancelled');
+    });
+    it('applies a confirmed cancellation even after unrelated reports, keeping the local order quantity', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        const delayed = deferred<typeof old>();
+        const request = observeTradeMutation(old.order.id, () => delayed.promise);
+        await emit(order('other'));
+        const queries = mocks.trades.mock.calls.length;
+        await act(async () => { delayed.resolve(markConfirmedCancellation(cancelled(old))); await request; vi.advanceTimersByTime(50); });
+        const row = store.getTradingState().trades.find(t => t.order.id === 'new')!;
+        expect(row.status).toMatchObject({ status: 'Cancelled', cancel_quantity: 3, order_quantity: 3 });
+        expect(row.order.quantity).toBe(3);
+        expect(reasons('orders')).not.toContain('mutation-outcome');
+        expect(mocks.trades.mock.calls.length).toBe(queries);
+    });
+    it('falls back to 改刪待確認 when the local row already knows more fills than the read-back', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        const delayed = deferred<typeof old>();
+        const request = observeTradeMutation(old.order.id, () => delayed.promise);
+        await emit(deal());
+        await act(async () => { delayed.resolve(markConfirmedCancellation(cancelled(old))); await request; vi.advanceTimersByTime(50); });
+        expect(store.getTradingState().trades[0]!.status.deal_quantity).toBe(1);
+        expect(reasons('orders')).toContain('mutation-outcome');
+    });
+    it('an unconfirmed cancel (rejected CANCEL_UNCONFIRMED) keeps 改刪待確認', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation } = await import('./trade-mutations');
+        await act(async () => { await observeTradeMutation(old.order.id, async () => { throw Object.assign(new Error('unconfirmed'), { code: 'CANCEL_UNCONFIRMED', mutationOutcomeUnknown: true }); }).catch(() => undefined); vi.advanceTimersByTime(50); });
+        expect(reasons('orders')).toContain('mutation-outcome');
+        expect(store.getTradingState().trades[0]).toBe(old);
+    });
+});
 it('replays sanitized native New with empty full_code after matching PendingSubmit HTTP metadata', async () => {
     const fixture = (await import('./fixtures/native-simulation-order-1.7.5.json')).default;
     mocks.account.account_type = 'F'; mocks.account.account_id = 'fixture'; mocks.account.broker_id = 'fixture';

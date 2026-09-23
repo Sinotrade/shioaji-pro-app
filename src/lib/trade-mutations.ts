@@ -2,22 +2,44 @@ import { getApiBase } from './runtime';
 import type { Trade } from './types/order';
 
 export type MutationOutcome = 'confirmed' | 'pending' | 'unknown';
-/** A resolved HTTP request alone is not a broker cancellation acknowledgement. */
+/** A resolved HTTP request alone is not a broker cancellation acknowledgement.
+ *  cancelOrder resolves only with a read-back-confirmed Cancelled row (#120). */
 export function cancellationOutcome(trade: Trade): MutationOutcome {
     if (trade?.status?.status === 'Cancelled') return 'confirmed';
     if (['Submitted', 'PreSubmitted', 'PendingSubmit', 'PartFilled'].includes(trade?.status?.status)) return 'pending';
     return 'unknown';
 }
+const flag = (reason: unknown, key: 'mutationNotStarted' | 'mutationOutcomeUnknown') =>
+    typeof reason === 'object' && reason !== null && (reason as Record<string, unknown>)[key] === true;
 export function cancellationSummary(results: PromiseSettledResult<Trade>[]) {
-    let confirmed = 0, pending = 0, unknown = 0;
+    let confirmed = 0, unconfirmed = 0, notSent = 0, unknown = 0;
     for (const result of results) {
-        const outcome = result.status === 'fulfilled' ? cancellationOutcome(result.value) : 'unknown';
-        if (outcome === 'confirmed') confirmed++; else if (outcome === 'pending') pending++; else unknown++;
+        if (result.status === 'fulfilled') {
+            const outcome = cancellationOutcome(result.value);
+            if (outcome === 'confirmed') confirmed++; else if (outcome === 'pending') unconfirmed++; else unknown++;
+        } else if (flag(result.reason, 'mutationNotStarted')) notSent++;
+        else if (flag(result.reason, 'mutationOutcomeUnknown')) unconfirmed++;
+        else unknown++;
     }
-    return { kind: unknown ? 'err' as const : pending ? 'info' as const : 'ok' as const,
-        body: `已確認取消 ${confirmed} 筆；送出待確認 ${pending} 筆；失敗或結果未知 ${unknown} 筆。未確認項目請手動更新委託，勿自動重送。` };
+    const parts = [`已確認取消 ${confirmed} 筆`];
+    if (unconfirmed) parts.push(`已送出未確認 ${unconfirmed} 筆`);
+    if (notSent) parts.push(`未送出 ${notSent} 筆`);
+    if (unknown) parts.push(`失敗或結果未知 ${unknown} 筆`);
+    const unresolved = unconfirmed + unknown;
+    return {
+        kind: unresolved ? 'err' as const : notSent ? 'info' as const : 'ok' as const,
+        body: `${parts.join('；')}。${unresolved ? '未確認項目請手動更新委託核對，勿自動重送。' : ''}`,
+    };
 }
-export interface MutationObservation { token: string; base: string; tradeId: string; phase: 'begin' | 'settled'; trade?: Trade }
+// Results that cancelOrder read back and confirmed (same id/account, Cancelled,
+// cancel_quantity covering the remaining quantity). Only these may overtake
+// reports that arrived while the request was in flight.
+const confirmedResults = new WeakSet<Trade>();
+export function markConfirmedCancellation<T extends Trade>(trade: T): T {
+    confirmedResults.add(trade);
+    return trade;
+}
+export interface MutationObservation { token: string; base: string; tradeId: string; phase: 'begin' | 'settled'; trade?: Trade; confirmed?: boolean }
 const pendingIds = new Map<string, string>();
 const listeners = new Set<(event: MutationObservation) => void>();
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-trade-mutations:${getApiBase()}`) : null;
@@ -37,7 +59,7 @@ function dispatchTradeMutation(tradeId: string, request: () => Promise<Trade>): 
     let pending: Promise<Trade>;
     try { pending = request(); } catch (error) { pending = Promise.reject(error); }
     return pending.then(trade => {
-        publish({ ...context, phase: 'settled', trade }); return trade;
+        publish({ ...context, phase: 'settled', trade, ...(confirmedResults.has(trade) ? { confirmed: true } : {}) }); return trade;
     }, error => { publish({ ...context, phase: 'settled' }); throw error; }).finally(() => {
         if (pendingIds.get(tradeId) === context.token) pendingIds.delete(tradeId);
     });

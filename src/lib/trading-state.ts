@@ -141,9 +141,12 @@ const MSG = {
 };
 
 let publishTimer: ReturnType<typeof setTimeout> | null = null;
+// Mirrors (popouts) have no report ledger; they borrow the main window's
+// cache-continuity verdict for cancel confirmation (cancelCacheTrusted).
+let mirroredCacheContinuous = false;
 function publish() {
     listeners.forEach(l => l());
-    if (!isMirror) channel?.postMessage({ kind: 'state', state });
+    if (!isMirror) channel?.postMessage({ kind: 'state', state, cacheContinuous: tradeCacheContinuous() });
 }
 function schedulePublish() {
     if (!publishTimer) publishTimer = setTimeout(() => { publishTimer = null; publish(); }, 50);
@@ -152,6 +155,7 @@ channel?.addEventListener('message', e => {
     if (isMirror && e.data?.kind === 'state' && Array.isArray(e.data.state?.positions)
         && Array.isArray(e.data.state?.trades)) {
         state = e.data.state;
+        mirroredCacheContinuous = e.data.cacheContinuous === true;
         publish();
     } else if (!isMirror && e.data?.kind === 'request') publish();
     else if (!isMirror && e.data?.kind === 'refresh' && queryScopes.includes(e.data.scope)) void refreshTradingState(e.data.scope);
@@ -535,6 +539,29 @@ function releasePendingDeals(tradeId: string) {
         if (deal.kind === 'deal' && deal.tradeId === tradeId) { pendingDeals.delete(key); applyDeal(deal); }
     }
 }
+/** A cancellation that cancelOrder read back from the order's own account
+ *  (Cancelled, cancel_quantity covering the remainder). Reports that arrived
+ *  meanwhile (usually the Cancel itself) do not make it "pending": it is
+ *  terminal, so it may replace the row unless the row already knows more fills
+ *  or cancellations than the read-back row. Returns false to fall back to the
+ *  conservative "待確認" path. */
+function applyConfirmedCancellation(trade: AccountedTrade): boolean {
+    const ref = trade.account ?? trade.order.account;
+    if (!ref || trade.status.status !== 'Cancelled') return false;
+    const rows = state.trades.filter(t => t.order.id === trade.order.id && t.account && accountKey(t.account) === accountKey(ref));
+    if (rows.length > 1) return false;
+    const current = rows[0];
+    if (!current) return true; // already gone from the view (e.g. a newer snapshot); nothing to correct
+    if (trade.status.deal_quantity < current.status.deal_quantity || trade.status.cancel_quantity < current.status.cancel_quantity) return false;
+    if (trade.status.deal_quantity > current.status.deal_quantity) raise('positions', 'mutation-outcome', '刪單回讀包含新增成交；持倉尚待回報或手動對帳');
+    // Keep the local order (original quantity, metadata); 1.7.6 HTTP rows can
+    // carry status.order_quantity 0, which must not overwrite a known value.
+    const status = { ...current.status, ...trade.status,
+        order_quantity: trade.status.order_quantity > 0 ? trade.status.order_quantity : current.status.order_quantity,
+        deals: (trade.status.deals?.length ?? 0) >= current.status.deals.length ? trade.status.deals : current.status.deals };
+    state = { ...state, trades: state.trades.map(t => t === current ? { ...current, status } : t) };
+    return true;
+}
 function start() {
     if (started) return;
     started = true;
@@ -551,6 +578,11 @@ function start() {
         const old = baseline?.trade;
         mutationBaselines.delete(event.token);
         const trade = event.trade;
+        if (event.confirmed && trade?.order.id === event.tradeId && applyConfirmedCancellation(trade)) {
+            if (queryEvents) queryOverflow = true;
+            schedulePublish();
+            return;
+        }
         const account = trade?.order?.account;
         // Preserve every newer SSE/snapshot result. Never insert an unknown or
         // ambiguously scoped response, nor turn an old working state into finality.
@@ -702,6 +734,17 @@ export const getTradingState = () => state;
 /** Cache-only order reads (refresh:false) are trustworthy only while this App
  *  holds an authoritative baseline on the same sidecar instance and has not
  *  missed reports since; callers must still require every health Healthy. */
+/** Whether cancel confirmation may read the sidecar cache (refresh:false).
+ *  Otherwise it goes straight to one refresh:true read. */
+export function cancelCacheTrusted() {
+    return isMirror ? mirroredCacheContinuous : tradeCacheContinuous();
+}
+/** Local projection shows this account's order Cancelled (report-driven).
+ *  Timing hint only — never a cancellation confirmation. */
+export function locallyCancelled(tradeId: string, account: { account_type: string; broker_id: string; account_id: string }) {
+    return state.trades.some(t => t.order.id === tradeId && t.account && accountKey(t.account) === accountKey(account)
+        && t.status.status === 'Cancelled');
+}
 export function tradeCacheContinuous() {
     return !isMirror && ordersBaseline && getStreamStatus() === 'live' && !reasonState.orders.has('disconnect');
 }

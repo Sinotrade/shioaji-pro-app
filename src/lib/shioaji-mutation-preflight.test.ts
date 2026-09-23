@@ -1,17 +1,22 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Account } from './types/portfolio';
 import type { AccountedTrade } from './types/order';
-const m = vi.hoisted(() => ({ base: 'fixture', rows: [] as AccountedTrade[], accounts: [] as Account[], post: vi.fn() }));
+const m = vi.hoisted(() => ({ base: 'fixture', rows: [] as AccountedTrade[], accounts: [] as Account[], post: vi.fn(), trusted: true,
+    readback: null as null | ((body: Record<string, unknown>) => unknown) }));
 vi.mock('./runtime', async original => ({ ...await original<object>(), getApiBase: () => m.base }));
 vi.mock('./api', () => ({ apiPost: m.post, apiGet: vi.fn(), apiPut: vi.fn(), apiDelete: vi.fn() }));
 vi.mock('./account-store', () => ({ accountFor: vi.fn(() => { throw new Error('no selected fallback'); }), getAccountState: () => ({ accounts: m.accounts }) }));
-vi.mock('./trading-state', () => ({ getTradingState: () => ({ trades: m.rows }) }));
+vi.mock('./trading-state', () => ({ getTradingState: () => ({ trades: m.rows }), cancelCacheTrusted: () => m.trusted, locallyCancelled: () => false }));
 import { cancelOrder, fetchTradeCacheHealth, fetchTrades, updateOrderPrice, updateOrderQty } from './shioaji';
 const account: Account = { account_type: 'F', broker_id: 'fixture', account_id: 'owner', signed: true, username: '', person_id: '' };
 const row = (): AccountedTrade => ({ account, contract: { code: 'QEFI6', security_type: 'FUT', exchange: 'TAIFEX', target_code: null }, order: { id: 'fixture', action: 'Buy', price: 489, seqno: 'seq', ordno: 'ord', quantity: 3, account }, status: { status: 'Submitted', id: 'fixture', status_code: '00', msg: '', order_ts: 1700000000, order_quantity: 3, modified_price: 0, deals: [], deal_quantity: 0, cancel_quantity: 0 } } as AccountedTrade);
 beforeEach(() => {
-    vi.clearAllMocks(); m.base = 'fixture'; m.accounts = [account]; m.rows = [row()];
-    m.post.mockImplementation(async () => row());
+    vi.clearAllMocks(); m.base = 'fixture'; m.accounts = [account]; m.rows = [row()]; m.trusted = true;
+    // cancel_order answers like 1.7.6 (still Submitted); the cache read-back
+    // shows the projected Cancel for the same order and account.
+    m.readback = () => [{ ...row(), account: undefined, status: { ...row().status, status: 'Cancelled', cancel_quantity: 3, order_quantity: 0 } }];
+    m.post.mockImplementation(async (path: string, body: Record<string, unknown>) => path === '/api/v1/order/trades' ? m.readback!(body)
+        : path === '/api/v1/order/trade_cache_health' ? { state: 'Healthy', reasons: [] } : row());
     vi.stubGlobal('navigator', { locks: { request: (_n: string, _o: unknown, cb: (v: object) => unknown) => cb({}) } });
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -25,16 +30,20 @@ it.each([
     ['quantity', () => updateOrderQty('fixture', 1), '/api/v1/order/update_qty', { trade_id: 'fixture', quantity: 1 }],
 ] as const)('sends futures %s directly without an update_status preflight', async (_name, call, path, body) => {
     await call();
-    expect(m.post).toHaveBeenCalledTimes(1);
     expect(m.post.mock.calls[0]![0]).toBe(path);
     expect(m.post.mock.calls[0]![1]).toEqual(body);
-    expect(m.post.mock.calls.some(c => c[0] === '/api/v1/order/trades')).toBe(false);
+    // No broker reconciliation before the request; a cancel only reads the
+    // sidecar cache afterwards to confirm it.
+    expect(m.post.mock.calls.some(c => c[0] === '/api/v1/order/trades' && c[1].refresh !== false)).toBe(false);
+    if (path !== '/api/v1/order/cancel_order') expect(m.post).toHaveBeenCalledTimes(1);
 });
 it('sends stock mutations directly as before', async () => {
     const stock = { ...account, account_type: 'S' }; m.accounts = [stock];
     m.rows = [{ ...row(), account: stock, order: { ...row().order, account: stock }, contract: { code: '2330', security_type: 'STK', exchange: 'TSE', target_code: null } } as AccountedTrade];
+    m.readback = () => [{ ...m.rows[0]!, status: { ...m.rows[0]!.status, status: 'Cancelled', cancel_quantity: 3 } }];
     await cancelOrder('fixture');
-    expect(m.post).toHaveBeenCalledTimes(1); expect(m.post.mock.calls[0]![0]).toBe('/api/v1/order/cancel_order');
+    expect(m.post.mock.calls.map(c => c[0])).toEqual(['/api/v1/order/cancel_order', '/api/v1/order/trades']);
+    expect(m.post.mock.calls[1]![1]).toMatchObject({ account_type: 'S', refresh: false });
 });
 it('does not guess an unknown trade or account', async () => { m.rows = []; await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true }); expect(m.post).not.toHaveBeenCalled(); });
 it('refuses an ambiguous local order', async () => { m.rows = [row(), { ...row(), account: { ...account, account_id: 'other' } }]; await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true }); expect(m.post).not.toHaveBeenCalled(); });
@@ -57,7 +66,55 @@ it('refuses when the server switched before dispatch', async () => {
 it('holds the local gate while a mutation is in flight and never queues a second one', async () => {
     let resolve!: (v: AccountedTrade) => void; m.post.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
     const first = cancelOrder('fixture'); await vi.waitFor(() => expect(m.post).toHaveBeenCalledTimes(1));
-    await expect(updateOrderQty('fixture', 1)).rejects.toThrow('已有'); resolve(row()); await first; expect(m.post).toHaveBeenCalledTimes(1);
+    await expect(updateOrderQty('fixture', 1)).rejects.toThrow('已有'); resolve(row()); await first;
+    expect(m.post.mock.calls.filter(c => c[0] !== '/api/v1/order/trades').map(c => c[0])).toEqual(['/api/v1/order/cancel_order']);
+});
+
+describe('cancel confirmation (#120 / #116)', () => {
+    afterEach(() => vi.useRealTimers());
+    it('resolves with the read-back Cancelled row of the same account, read from the cache only', async () => {
+        const { onTradeMutation } = await import('./trade-mutations');
+        const events: { phase: string; confirmed?: boolean }[] = [];
+        const off = onTradeMutation(e => events.push(e));
+        try {
+            const trade = await cancelOrder('fixture');
+            expect(trade.status).toMatchObject({ status: 'Cancelled', cancel_quantity: 3 });
+            expect(trade).toMatchObject({ account });
+            expect(m.post.mock.calls.map(c => c[0])).toEqual(['/api/v1/order/cancel_order', '/api/v1/order/trades']);
+            expect(m.post.mock.calls[1]![1]).toEqual({ account_type: 'F', broker_id: 'fixture', account_id: 'owner', refresh: false });
+            expect(events.map(e => [e.phase, e.confirmed])).toEqual([['begin', undefined], ['settled', true]]);
+        } finally { off(); }
+    });
+    it('rejects CANCEL_UNCONFIRMED after one refresh:true when the order stays Submitted, and never resends', async () => {
+        vi.useFakeTimers();
+        m.readback = () => [row()];
+        const settled = cancelOrder('fixture').catch(e => e);
+        await vi.advanceTimersByTimeAsync(5_000);
+        const error = await settled;
+        expect(error).toMatchObject({ code: 'CANCEL_UNCONFIRMED', mutationOutcomeUnknown: true });
+        expect(error).not.toHaveProperty('mutationNotStarted');
+        const paths = m.post.mock.calls.map(c => [c[0], c[1].refresh]);
+        expect(paths.filter(([p]) => p === '/api/v1/order/cancel_order')).toHaveLength(1);
+        expect(paths.filter(([p, r]) => p === '/api/v1/order/trades' && r === true)).toHaveLength(1);
+        expect(paths.filter(([p]) => p === '/api/v1/order/trade_cache_health')).toHaveLength(1);
+    });
+    it('goes straight to one refresh:true read when the cache baseline is not continuous', async () => {
+        vi.useFakeTimers();
+        m.trusted = false;
+        const settled = cancelOrder('fixture');
+        await vi.advanceTimersByTimeAsync(5_000);
+        await expect(settled).resolves.toMatchObject({ status: { status: 'Cancelled' } });
+        const reads = m.post.mock.calls.filter(c => c[0] === '/api/v1/order/trades').map(c => c[1].refresh);
+        expect(reads).toEqual([true]);
+        expect(m.post.mock.calls.some(c => c[0] === '/api/v1/order/trade_cache_health')).toBe(false);
+    });
+    it('keeps a missing order unconfirmed instead of fabricating a cancellation', async () => {
+        vi.useFakeTimers();
+        m.readback = () => [];
+        const settled = cancelOrder('fixture').catch(e => e);
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(await settled).toMatchObject({ code: 'CANCEL_UNCONFIRMED', details: { missing: true } });
+    });
 });
 
 it('sends refresh only when explicitly chosen and keeps the server default otherwise', async () => {

@@ -1,5 +1,6 @@
 import { getApiBase } from './runtime';
-import { observeTradeMutation } from './trade-mutations';
+import { markConfirmedCancellation, observeTradeMutation } from './trade-mutations';
+import { verifyCancellation } from './cancel-verification';
 import { observeMarketSnapshots } from './market-snapshot-store';
 import { observeTradeResponse } from './trade-observations';
 import { beginServerInfoRequest, observeServerInfo } from './server-info-store';
@@ -792,7 +793,7 @@ export function placeFuturesOrder(
  * The request still needs one unambiguous local order of a signed account
  * whose market matches the product, on the server that is still current.
  */
-async function prepareOrderMutation(tradeId: string): Promise<string> {
+async function prepareOrderMutation(tradeId: string): Promise<{ base: string; trade: Trade; account: Account }> {
     const base = getApiBase();
     const refuse = (message: string): never => { throw Object.assign(new Error(message), { mutationNotStarted: true }); };
     const { getTradingState } = await import('./trading-state');
@@ -808,26 +809,48 @@ async function prepareOrderMutation(tradeId: string): Promise<string> {
     if (!account) refuse('缺少已驗證的委託帳戶，未送出改刪單');
     const futures = ['FUT', 'OPT'].includes(trade.contract.security_type ?? '');
     if (account!.account_type !== (futures ? 'F' : 'S')) refuse('商品與委託帳戶不符，未送出改刪單');
-    return base;
+    return { base, trade, account: account! };
 }
 
+/** Resolves only with a read-back-confirmed cancellation (#120/#116): the
+ *  order's own account row is Cancelled and cancel_quantity covers what was
+ *  remaining. Otherwise rejects with CANCEL_UNCONFIRMED (mutationOutcomeUnknown)
+ *  — the cancel was sent, its effect is unknown, and it is never resent. */
 export function cancelOrder(
     tradeId: string,
     opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
 ) {
     return observeTradeMutation(tradeId, async () => {
-        const base = await prepareOrderMutation(tradeId);
+        const { base, trade: before, account } = await prepareOrderMutation(tradeId);
+        const { cancelCacheTrusted, locallyCancelled } = await import('./trading-state');
         if (base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
-        return apiPost<Trade>(
-        '/api/v1/order/cancel_order',
-        { trade_id: tradeId },
-        opts,
-    ); });
+        await apiPost<Trade>(
+            '/api/v1/order/cancel_order',
+            { trade_id: tradeId },
+            opts,
+        );
+        const type = account.account_type as 'S' | 'F';
+        const { trade } = await verifyCancellation(before, account, {
+            scope: base,
+            cacheTrusted: cancelCacheTrusted,
+            locallyCancelled: () => locallyCancelled(tradeId, account),
+            guard: () => {
+                if (base !== getApiBase()) throw new Error('刪單後伺服器已切換');
+                if (!getAccountState().accounts.some(a => a.signed && a.account_type === type
+                    && a.broker_id === account.broker_id && a.account_id === account.account_id)) {
+                    throw new Error('刪單後委託帳戶已不可用');
+                }
+            },
+            readTrades: refresh => fetchTrades(type, account, { refresh }),
+            readHealth: () => fetchTradeCacheHealth(type, account),
+        });
+        return markConfirmedCancellation({ ...trade, account });
+    });
 }
 
 export function updateOrderPrice(tradeId: string, price: number) {
     return observeTradeMutation(tradeId, async () => {
-        const base = await prepareOrderMutation(tradeId);
+        const { base } = await prepareOrderMutation(tradeId);
         if (base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
         return apiPost<Trade>('/api/v1/order/update_price', {
         trade_id: tradeId,
@@ -837,7 +860,7 @@ export function updateOrderPrice(tradeId: string, price: number) {
 
 export function updateOrderQty(tradeId: string, quantity: number) {
     return observeTradeMutation(tradeId, async () => {
-        const base = await prepareOrderMutation(tradeId);
+        const { base } = await prepareOrderMutation(tradeId);
         if (base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
         return apiPost<Trade>('/api/v1/order/update_qty', {
         trade_id: tradeId,
