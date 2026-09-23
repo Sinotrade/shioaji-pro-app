@@ -101,7 +101,12 @@ as operations on an existing order (刪單／改價／減量) with the product, 
 original order, and the remaining unfilled quantity. The native summary
 carries an explicit `operation` and `remaining_quantity`; when a legacy summary
 omits them the window derives both from the request operation and the order
-status. It never renders the original order's side as a new buy or sell.
+status. It never renders the original order's side as a new buy or sell. The
+outer request operation is authoritative: if the summary declares a different
+`operation`, the window shows only the operation label. The window can already
+render `update_price` and `update_qty`, but production does not accept them
+yet: native proposal validation admits only `place_order` and `cancel_order`
+and rejects every other Agent mutation before an approval is shown.
 
 Controlled auto is available in simulation and in production after the user
 grants the native scope above. It is never restored from persisted settings.

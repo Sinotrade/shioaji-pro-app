@@ -49,6 +49,7 @@ export interface NewOrderSummary {
     kind: 'new';
     action: 'Buy' | 'Sell';
     code: string;
+    market: boolean;
     price: number | null;
     quantity: number;
     unit: string;
@@ -63,6 +64,7 @@ export interface ModifySummary {
     name: string | null;
     original: {
         action: 'Buy' | 'Sell' | null;
+        market: boolean;
         price: number | null;
         quantity: number | null;
     };
@@ -92,12 +94,12 @@ function parseNewOrder(payload: unknown): NewOrderSummary | null {
     const quantity = Number(order.quantity);
     if (!Number.isFinite(quantity) || quantity <= 0) return null;
     const market = order.price_type === 'MKT' || order.price_type === 'MKP';
-    const price = Number(order.price);
     return {
         kind: 'new',
         action: order.action,
         code,
-        price: market || !Number.isFinite(price) ? null : price,
+        market,
+        price: market ? null : num(order.price),
         quantity,
         unit: unitOf(contract, order),
         orderType: String(order.order_type ?? '—'),
@@ -106,14 +108,17 @@ function parseNewOrder(payload: unknown): NewOrderSummary | null {
 }
 
 // 刪改單 payload：{operation, remaining_quantity, contract, order, status,
-// request}。舊版 native 只送後四欄，剩餘量改由 status 推算。
+// request}。舊版 native 只送後四欄，剩餘量改由 status 推算；沒有
+// status 就無從得知成交／取消量，顯示 — 而不是原委託量。
 function parseModification(operation: string, payload: unknown): ModifySummary {
     const p = obj(payload);
     const contract = obj(p?.contract);
     const order = obj(p?.order);
     const status = obj(p?.status);
     const request = obj(p?.request);
-    const ordered = num(status?.order_quantity) ?? num(order?.quantity);
+    const ordered = status
+        ? (num(status.order_quantity) ?? num(order?.quantity))
+        : null;
     const derived =
         ordered === null
             ? null
@@ -135,6 +140,7 @@ function parseModification(operation: string, payload: unknown): ModifySummary {
         name: typeof contract?.name === 'string' && contract.name ? contract.name : null,
         original: {
             action,
+            market,
             price: market ? null : num(order?.price),
             quantity: num(order?.quantity),
         },
@@ -146,12 +152,17 @@ function parseModification(operation: string, payload: unknown): ModifySummary {
     };
 }
 
-/** 依操作類型解析核可內容；payload.operation 優先於外層 operation。 */
+/**
+ * 依操作類型解析核可內容。外層 request.operation（Rust 核可狀態）是唯一
+ * 依據；payload.operation 只是摘要附註，若與外層不一致就不解析內容，
+ * 只顯示操作名稱 — 絕不在「核准刪單」上方畫出新單卡。
+ */
 export function summarizeApproval(
     request: Pick<ApprovalRequest, 'operation' | 'payload'>,
 ): NewOrderSummary | ModifySummary | null {
+    const operation = request.operation;
     const declared = obj(request.payload)?.operation;
-    const operation = typeof declared === 'string' ? declared : request.operation;
+    if (declared !== undefined && declared !== operation) return null;
     if (MODIFY_OPERATIONS.has(operation)) {
         return parseModification(operation, request.payload);
     }
@@ -184,6 +195,12 @@ function qty(value: number | null, unit: string): string {
     return value === null ? '—' : `${value.toLocaleString()} ${unit}`;
 }
 
+// 市價只由 price_type 決定；限價卻缺價格時顯示 —，不猜成市價。
+function priceLabel(market: boolean, price: number | null): string {
+    if (market) return '市價';
+    return price === null ? '—' : fmtPrice(price);
+}
+
 function sideLabel(action: 'Buy' | 'Sell' | null): string {
     return action === 'Buy' ? '買進' : action === 'Sell' ? '賣出' : '—';
 }
@@ -199,7 +216,7 @@ function Row({ label, value }: { label: string; value: string }) {
 
 function ModifyDetails({ summary }: { summary: ModifySummary }) {
     const { original, unit, remaining } = summary;
-    const originalPrice = original.price === null ? '市價' : fmtPrice(original.price);
+    const originalPrice = priceLabel(original.market, original.price);
     return (
         <>
             <div className={styles.opLine}>
@@ -257,7 +274,7 @@ function NewOrderDetails({ summary }: { summary: NewOrderSummary }) {
             </div>
             <Row
                 label="價格"
-                value={summary.price === null ? '市價' : fmtPrice(summary.price)}
+                value={priceLabel(summary.market, summary.price)}
             />
             <Row label="數量" value={qty(summary.quantity, summary.unit)} />
             <Row

@@ -77,16 +77,60 @@ describe('Agent 核可視窗：刪改單（A-03）', () => {
         expect(html).toContain('核准減量');
     });
 
-    it('payload 宣告的操作優先，缺資料時顯示 — 而非猜測', () => {
-        const summary = summarizeApproval({
-            operation: 'cancel_order',
-            payload: { operation: 'cancel_order', request: { trade_id: 'x' } },
+    it('缺少 status 時剩餘量顯示 —，不以原委託量代替', () => {
+        const payload = {
+            contract: { security_type: 'STK', code: '2330' },
+            order: { action: 'Buy', price: 1000, quantity: 5, price_type: 'LMT', order_type: 'ROD' },
+            request: { trade_id: 'x' },
+        };
+        expect(summarizeApproval({ operation: 'cancel_order', payload })).toMatchObject({
+            kind: 'modify',
+            remaining: null,
         });
-        expect(summary).toMatchObject({ kind: 'modify', remaining: null, code: null });
-        const html = text(
-            render({ ...APPROVAL_FIXTURES.cancel!, payload: { request: { trade_id: 'x' } } }),
-        );
+        const html = text(render({ ...APPROVAL_FIXTURES.cancel!, payload }));
         expect(html).toContain('刪除剩餘未成交 —');
+        expect(html).not.toContain('刪除剩餘未成交 5 張');
+        const bare = text(render({ ...APPROVAL_FIXTURES.cancel!, payload: { request: { trade_id: 'x' } } }));
+        expect(bare).toContain('刪除剩餘未成交 —');
+    });
+
+    it('外層 operation 為準；payload.operation 不一致時只顯示操作名稱', () => {
+        const mismatched: ApprovalRequest = {
+            ...APPROVAL_FIXTURES.cancel!,
+            payload: { ...(APPROVAL_FIXTURES.place!.payload as object), operation: 'place_order' },
+        };
+        expect(summarizeApproval(mismatched)).toBeNull();
+        const html = text(render(mismatched));
+        expect(html).not.toMatch(/買進\s*CCFI6/);
+        expect(html).not.toContain('原委託');
+        expect(html).toContain('刪單 操作 刪單');
+        expect(html).toContain('核准刪單');
+        // 反向：外層是新單、payload 宣稱刪單，也不畫刪單卡
+        const reversed: ApprovalRequest = {
+            ...APPROVAL_FIXTURES.place!,
+            payload: APPROVAL_FIXTURES.cancel!.payload,
+        };
+        expect(summarizeApproval(reversed)).toBeNull();
+        expect(text(render(reversed))).not.toContain('刪除剩餘未成交');
+    });
+
+    it('限價缺價格顯示 —；只有 MKT／MKP 顯示市價', () => {
+        const order = { ...(APPROVAL_FIXTURES.cancel!.payload as { order: object }).order } as Record<string, unknown>;
+        delete order.price;
+        const noPrice = { ...APPROVAL_FIXTURES.cancel!, payload: { ...(APPROVAL_FIXTURES.cancel!.payload as object), order } };
+        const html = text(render(noPrice));
+        expect(html).toContain('原委託 買進 — × 5 張');
+        expect(html).not.toContain('市價');
+        for (const priceType of ['MKT', 'MKP']) {
+            const market = { ...APPROVAL_FIXTURES.cancel!, payload: { ...(APPROVAL_FIXTURES.cancel!.payload as object), order: { ...order, price_type: priceType } } };
+            expect(text(render(market))).toContain('原委託 買進 市價 × 5 張');
+        }
+        const place = APPROVAL_FIXTURES.place!.payload as { futures_order: Record<string, unknown> };
+        const { price: _omit, ...futuresOrder } = place.futures_order;
+        const newNoPrice = text(render({ ...APPROVAL_FIXTURES.place!, payload: { ...place, futures_order: futuresOrder } }));
+        expect(newNoPrice).toContain('價格 —');
+        const newMarket = text(render({ ...APPROVAL_FIXTURES.place!, payload: { ...place, futures_order: { ...futuresOrder, price_type: 'MKT', order_type: 'IOC' } } }));
+        expect(newMarket).toContain('價格 市價');
     });
 
     it('期貨刪單以口為單位', () => {
