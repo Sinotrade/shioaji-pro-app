@@ -84,6 +84,25 @@ is stable; a later broker-state observation uses a new attempt key and may move
 the original mutation to a terminal reconciled state. Payload-shaped matches
 remain unresolved and require manual verification.
 
+Production per-order confirmation has a deliberate limitation: the last price
+and best bid/ask captured for the proposal must equal the values re-read after
+approval, and the whole round trip — including opening the approval window —
+must finish within the 15-second proposal lifetime. On an actively ticking
+product a human approval often misses that window. The order is then not sent,
+the user sees 「報價已變動，請重新確認」 (or its 15-second variant), and the
+Agent must re-propose at the new quote. The rule is not relaxed to a tolerance
+band, because the user would otherwise authorize a price they never saw. Every
+refusal names its cause — user denied, window closed, expired, quote changed,
+runtime stopped or authority revoked, or risk check — and states that the
+order was not sent.
+
+The approval window renders `cancel_order`, `update_price`, and `update_qty`
+as operations on an existing order (刪單／改價／減量) with the product, the
+original order, and the remaining unfilled quantity. The native summary
+carries an explicit `operation` and `remaining_quantity`; when a legacy summary
+omits them the window derives both from the request operation and the order
+status. It never renders the original order's side as a new buy or sell.
+
 Controlled auto is available in simulation and in production after the user
 grants the native scope above. It is never restored from persisted settings.
 Account/environment changes, renderer reload and runtime stop revoke authority.
