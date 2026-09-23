@@ -62,6 +62,8 @@ export interface BracketExit {
     quantity: number; // requested exit quantity
     filled: number;
     fills: Record<string, number>;
+    fillTs?: Record<string, number>; // fill identity → exchange ts (epoch s)
+    fillConflict?: boolean; // event-only fill could not be matched to a cache row
     orderId?: string;
     detail?: string;
     acknowledged?: boolean; // user confirmed an unknown outcome by hand
@@ -85,8 +87,10 @@ export interface BracketPlan {
     takePrice: number | null;
     group: string; // OCO group id of the protection triggers
     fills: Record<string, number>;
+    fillTs?: Record<string, number>; // fill identity → exchange ts (epoch s)
     filled: number;
     entryClosed: boolean;
+    entryCancel?: 'sending' | 'unconfirmed'; // user-requested cancel of the working rest
     exit: BracketExit | null;
     issues: BracketIssue[];
     dismissed?: boolean;
@@ -131,6 +135,7 @@ export function unprotectedQuantity(p: BracketPlan): number {
 /** Entry quantity still working after the exit fired: any later fill of it
  * is unprotected. Shown with a manual cancel; never cancelled automatically. */
 export function workingEntryAfterExit(p: BracketPlan): number {
+    // counts until the entry is confirmed closed (a pending cancel is not enough)
     if (!p.exit || p.entryClosed) return 0;
     return Math.max(0, p.quantity - p.filled);
 }
@@ -150,6 +155,7 @@ export interface FillEvidence {
     orderId: string;
     key: string; // fill identity
     quantity: number;
+    ts?: number; // exchange fill time (epoch s): pairs an event-only fill with its cache row
     flagged?: BracketIssueCode; // counted but could not be fully verified
 }
 
@@ -194,9 +200,9 @@ export function matchDeal(report: OrderEventReport, orderId: string, account: Ac
     if (report.action !== action) return { kind: 'mismatch', detail: '成交回報買賣別與委託不符，未計入' };
     if (!Number.isSafeInteger(report.quantity) || report.quantity <= 0) return { kind: 'mismatch', detail: '成交回報數量無效，未計入' };
     const seq = text(reportBody(report)?.exchange_seq);
-    if (seq) return { kind: 'fill', fill: { orderId, key: `${orderId}:${seq}`, quantity: report.quantity } };
+    if (seq) return { kind: 'fill', fill: { orderId, key: `${orderId}:${seq}`, quantity: report.quantity, ts: report.ts } };
     if (report.eventId) {
-        return { kind: 'fill', fill: { orderId, key: `event:${report.eventId}`, quantity: report.quantity, flagged: 'report-mismatch' } };
+        return { kind: 'fill', fill: { orderId, key: `event:${report.eventId}`, quantity: report.quantity, ts: report.ts, flagged: 'report-mismatch' } };
     }
     return { kind: 'mismatch', detail: '成交回報沒有成交序號與事件 ID，無法去重，未計入' };
 }
@@ -205,7 +211,8 @@ export function matchDeal(report: OrderEventReport, orderId: string, account: Ac
 export function fillsFromTrade(trade: Trade): FillEvidence[] {
     return (trade.status.deals ?? [])
         .filter(d => typeof d.seq === 'string' && d.seq && Number.isSafeInteger(d.quantity) && d.quantity > 0)
-        .map(d => ({ orderId: trade.order.id, key: `${trade.order.id}:${d.seq}`, quantity: d.quantity }));
+        .map(d => ({ orderId: trade.order.id, key: `${trade.order.id}:${d.seq}`, quantity: d.quantity,
+            ts: typeof d.ts === 'number' && Number.isFinite(d.ts) ? d.ts : undefined }));
 }
 
 export function tradeMatchesPlan(trade: Trade, p: Pick<BracketPlan, 'account' | 'orderId' | 'orderCode' | 'action'>): boolean {
@@ -216,30 +223,43 @@ export function tradeMatchesPlan(trade: Trade, p: Pick<BracketPlan, 'account' | 
     return trade.order.action === p.action;
 }
 
-/** Add a fill to a fill set, keeping ONE identity per real fill: the
- * preferred identity is `<orderId>:<exchange_seq>`. A fill that was only
- * known by its event_id (report without exchange_seq) is re-keyed when a
- * seq-keyed row of the same quantity arrives (e.g. from the Trade cache)
- * instead of being counted twice. Returns null when nothing is added. */
-export function mergeFill(fills: Record<string, number>, fill: FillEvidence): { fills: Record<string, number>; added: number } | null {
+/** Add a fill to a fill set, keeping ONE identity per real fill. The
+ * preferred identity is `<orderId>:<exchange_seq>`. A fill known only by its
+ * event_id (report without exchange_seq) and a seq-keyed row (e.g. the Trade
+ * cache) are the same fill only when quantity AND exchange fill time match
+ * exactly; then the event key is replaced (either arrival order). Without
+ * such a match both are kept (could double count) and `conflict` is set so
+ * the caller marks protection unconfirmed. Returns null when already known. */
+const SAME_TS = 1e-6;
+export function mergeFill(fills: Record<string, number>, fillTs: Record<string, number> | undefined, fill: FillEvidence):
+    { fills: Record<string, number>; fillTs: Record<string, number>; added: number; conflict: boolean } | null {
     if (fills[fill.key] !== undefined) return null;
-    if (!fill.key.startsWith('event:')) {
-        const provisional = Object.keys(fills).find(k => k.startsWith('event:') && fills[k] === fill.quantity);
-        if (provisional) {
-            const next = { ...fills, [fill.key]: fill.quantity };
-            delete next[provisional];
-            return { fills: next, added: 0 };
-        }
+    const times = { ...(fillTs ?? {}) };
+    const isEvent = (k: string) => k.startsWith('event:');
+    const sameFill = (k: string) => fills[k] === fill.quantity && fill.ts !== undefined
+        && times[k] !== undefined && Math.abs(times[k]! - fill.ts) < SAME_TS;
+    const counterpart = Object.keys(fills).find(k => isEvent(k) !== isEvent(fill.key) && sameFill(k));
+    if (counterpart) {
+        if (isEvent(fill.key)) return null; // the seq-keyed identity is already counted
+        const next = { ...fills, [fill.key]: fill.quantity };
+        delete next[counterpart];
+        delete times[counterpart];
+        if (fill.ts !== undefined) times[fill.key] = fill.ts;
+        return { fills: next, fillTs: times, added: 0, conflict: false };
     }
-    return { fills: { ...fills, [fill.key]: fill.quantity }, added: fill.quantity };
+    // an event-only fill that no seq row explains (or vice versa) may be the same fill
+    const conflict = Object.keys(fills).some(k => isEvent(k) !== isEvent(fill.key) && fills[k] === fill.quantity);
+    if (fill.ts !== undefined) times[fill.key] = fill.ts;
+    return { fills: { ...fills, [fill.key]: fill.quantity }, fillTs: times, added: fill.quantity, conflict };
 }
 
 /** Accumulate one entry fill. Idempotent by fill identity. */
 export function applyEntryFill(p: BracketPlan, fill: FillEvidence, now: number): BracketPlan {
     if (fill.orderId !== p.orderId) return p;
-    const merged = mergeFill(p.fills, fill);
+    const merged = mergeFill(p.fills, p.fillTs, fill);
     if (!merged) return p;
-    let next: BracketPlan = { ...p, fills: merged.fills, filled: p.filled + merged.added, updatedAt: now };
+    let next: BracketPlan = { ...p, fills: merged.fills, fillTs: merged.fillTs, filled: p.filled + merged.added, updatedAt: now };
+    if (merged.conflict) next = addIssue(next, 'report-mismatch', '成交回報與委託快取無法對應為同一筆（可能重複計算）；請對帳', now);
     if (fill.flagged) next = addIssue(next, fill.flagged, '成交回報缺少成交序號，僅以事件 ID 去重；請對帳確認', now);
     if (next.filled > next.quantity) next = addIssue(next, 'overfill', `成交累計 ${next.filled} 超過委託量 ${next.quantity}，保護量以委託量為上限`, now);
     // Protection is only extended while no exit has started; after that a
@@ -252,7 +272,7 @@ export function applyEntryOrderReport(p: BracketPlan, report: OrderEventReport, 
     if (report.kind !== 'order' || report.id !== p.orderId || report.market !== p.market) return p;
     if (reportAccountMatches(report, p.account) === false) return p;
     if ((report.opType === 'New' && report.failed) || (report.opType === 'Cancel' && !report.failed)) {
-        return p.entryClosed ? p : { ...p, entryClosed: true, updatedAt: now };
+        return p.entryClosed ? p : { ...p, entryClosed: true, entryCancel: undefined, updatedAt: now };
     }
     return p;
 }
@@ -273,11 +293,12 @@ export function applyEntryTrade(p: BracketPlan, trade: Trade, now: number): Brac
 /** Exit fills (from the exit order id). Idempotent by fill identity. */
 export function applyExitFill<E extends BracketExit>(exit: E, fill: FillEvidence, now: number): E {
     if (exit.orderId !== fill.orderId) return exit;
-    const merged = mergeFill(exit.fills, fill);
+    const merged = mergeFill(exit.fills, exit.fillTs, fill);
     if (!merged) return exit;
     const filled = exit.filled + merged.added;
     const status: ExitStatus = filled >= exit.quantity ? 'filled' : exit.status;
-    return { ...exit, fills: merged.fills, filled, status, at: now };
+    return { ...exit, fills: merged.fills, fillTs: merged.fillTs, filled, status, at: now,
+        ...(merged.conflict ? { fillConflict: true } : {}) };
 }
 
 /** Exit order report: a failed New or a successful Cancel ends the exit. */
@@ -288,5 +309,5 @@ export function applyExitOrderReport<E extends BracketExit>(exit: E, report: Ord
     if (!ended || exit.status === 'filled' || exit.status === 'incomplete') return exit;
     if (exit.filled >= exit.quantity) return { ...exit, status: 'filled', at: now };
     return { ...exit, status: 'incomplete', at: now,
-        detail: report.failed ? (report.opMsg || '出場委託失敗') : `出場委託已結束，未成交 ${exit.quantity - exit.filled}` };
+        detail: report.failed ? (report.opMsg || '出場委託失敗') : `出場委託已結束，剩餘 ${exit.quantity - exit.filled} 待確認；請按「對帳」確認` };
 }

@@ -69,3 +69,13 @@ export const button = style({
     ':hover': { borderColor: vars.color.borderBright },
     ':disabled': { opacity: 0.5, cursor: 'default' },
 });
+
+export const banner = style({
+    padding: '5px 8px',
+    borderRadius: vars.radius.sm,
+    border: `1px solid ${vars.color.danger}`,
+    background: vars.color.inset,
+    color: vars.color.danger,
+    fontSize: '0.74rem',
+    fontWeight: 700,
+});

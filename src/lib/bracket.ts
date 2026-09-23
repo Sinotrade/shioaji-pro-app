@@ -148,7 +148,8 @@ type Command =
     | { op: 'register'; spec: BracketSpec }
     | { op: 'reconcile'; id: string }
     | { op: 'dismiss'; id: string }
-    | { op: 'ack-exit'; id: string };
+    | { op: 'ack-exit'; id: string }
+    | { op: 'cancel-entry'; id: string };
 
 const bus = createCommandBus<Command, BracketPlan[]>({
     channel: typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-brackets:${getApiBase()}`) : null,
@@ -203,7 +204,7 @@ function syncProtection(before: BracketPlan | undefined, p: BracketPlan) {
     const late = unprotectedQuantity(p) - (before ? unprotectedQuantity(before) : 0);
     if (late > 0) {
         notify({ kind: 'err', title: '括號單有未保護部位',
-            body: `${p.quoteCode} ${unprotectedQuantity(p)} 未受保護（出場已觸發或未完成）；請手動處理，系統不會自動重送` });
+            body: `${p.quoteCode} ${unprotectedQuantity(p)} 可能未受保護（待確認）；請先按「對帳」確認實際成交再決定，勿直接另下出場單；系統不會自動重送` });
     }
     if (before && bracketPhase(before) === 'waiting' && bracketPhase(p) === 'closed') {
         notify({ kind: 'info', title: '括號單取消', body: `${p.quoteCode} 進場單未成交即結束，保護單不掛` });
@@ -244,11 +245,16 @@ function onReport(report: OrderEventReport, info: TrackedReportInfo, base: strin
 function onExit(rec: ExitRecord) {
     if (!rec.bracketId) return;
     exitIds.set(rec.bracketId, rec.id);
-    update(rec.bracketId, p => ({ ...p, exit: {
-        status: rec.status, kind: rec.kind, quantity: rec.quantity, filled: rec.filled, fills: rec.fills,
-        orderId: rec.orderId, acknowledged: rec.acknowledged,
-        detail: rec.acknowledged ? `${rec.detail ?? ''}（使用者已確認處理）` : rec.detail, at: rec.at,
-    }, updatedAt: Date.now() }));
+    update(rec.bracketId, p => {
+        const next: BracketPlan = { ...p, exit: {
+            status: rec.status, kind: rec.kind, quantity: rec.quantity, filled: rec.filled, fills: rec.fills,
+            fillTs: rec.fillTs, fillConflict: rec.fillConflict, orderId: rec.orderId, acknowledged: rec.acknowledged,
+            detail: rec.acknowledged ? `${rec.detail ?? ''}（使用者已確認處理）` : rec.detail, at: rec.at,
+        }, updatedAt: Date.now() };
+        return rec.fillConflict
+            ? addIssue(next, 'report-mismatch', '出場成交回報與委託快取無法對應為同一筆（可能重複計算）；請對帳', Date.now())
+            : next;
+    });
 }
 
 // ---- cache-only lookups / health (no polling) ----
@@ -347,7 +353,10 @@ async function reconcile(id: string): Promise<{ health: TradeCacheHealth['state'
         const now = Date.now();
         for (const p of plansFor(plan.account, env)) {
             const trade = trades.find(t => tradeMatchesPlan(t, p));
-            if (trade) update(p.id, x => applyEntryTrade(x, trade, now));
+            if (trade) update(p.id, x => {
+                const next = applyEntryTrade(x, trade, now);
+                return next.entryClosed && next.entryCancel ? { ...next, entryCancel: undefined } : next;
+            });
             const exitTrade = p.exit?.orderId ? trades.find(t => t.order.id === p.exit?.orderId) : undefined;
             if (exitTrade) applyExitTrade(exitTrade);
         }
@@ -410,6 +419,7 @@ function handle(cmd: Command): unknown {
             update(p.id, x => ({ ...x, dismissed: true, updatedAt: Date.now() }));
             return true;
         }
+        case 'cancel-entry': return cancelEntry(cmd.id);
         case 'ack-exit': {
             const exitId = exitIds.get(cmd.id) ?? getExits().find(e => e.bracketId === cmd.id)?.id;
             if (!exitId) throw new Error('找不到此括號單的出場紀錄');
@@ -468,10 +478,38 @@ export function bracketSnapshotStale(now = Date.now()): boolean {
 
 /** User-initiated cancel of an entry that is still working after its exit
  * fired. One request, no retry; the Cancel report closes the entry. */
-export async function cancelRemainingEntry(plan: BracketPlan): Promise<void> {
+export function cancelRemainingEntry(plan: BracketPlan) {
+    return bus.send({ op: 'cancel-entry', id: plan.id }, REGISTER_TIMEOUT_MS);
+}
+
+/** Main window: one cancel request, never retried or resent. The entry is
+ * closed only by a read-back-confirmed Cancelled trade (#129's cancelOrder)
+ * or the Cancel report; anything else leaves 刪單待確認 for an explicit 對帳. */
+async function cancelEntry(id: string): Promise<'cancelled' | 'unconfirmed'> {
+    const plan = plans.find(p => p.id === id);
+    if (!plan) throw new Error('找不到此括號單');
+    if (plan.entryCancel) throw new Error(plan.entryCancel === 'sending' ? '刪單處理中' : '刪單待確認，請先對帳，勿重送');
     if (workingEntryAfterExit(plan) <= 0) throw new Error('進場單已無剩餘委託');
     if (plan.env !== currentProtectionEnv()) throw new Error('此括號單屬於其他伺服器或模式，未送出刪單');
-    await cancelOrder(plan.orderId);
+    update(id, p => ({ ...p, entryCancel: 'sending', updatedAt: Date.now() }));
+    try {
+        const trade = await cancelOrder(plan.orderId);
+        const confirmed = trade?.order?.id === plan.orderId && trade.status?.status === 'Cancelled';
+        update(id, p => {
+            if (!confirmed) return { ...p, entryCancel: 'unconfirmed', updatedAt: Date.now() };
+            const next = applyEntryTrade({ ...p, entryCancel: undefined }, trade, Date.now());
+            return { ...next, entryClosed: true };
+        });
+        return confirmed ? 'cancelled' : 'unconfirmed';
+    } catch (error) {
+        if ((error as { mutationNotStarted?: boolean })?.mutationNotStarted) {
+            update(id, p => ({ ...p, entryCancel: undefined, updatedAt: Date.now() }));
+            throw error;
+        }
+        // CANCEL_UNCONFIRMED (#129) or any ambiguous failure: outcome unknown.
+        update(id, p => ({ ...p, entryCancel: 'unconfirmed', updatedAt: Date.now() }));
+        return 'unconfirmed';
+    }
 }
 
 export function getBrackets(): BracketPlan[] {

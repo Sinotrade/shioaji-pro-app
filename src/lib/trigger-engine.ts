@@ -163,6 +163,8 @@ const bus = createCommandBus<Command, Snapshot>({
 
 const isResolved = (e: ExitRecord) => e.status === 'filled' || e.status === 'incomplete'
     || e.status === 'not-sent' || (e.status === 'unknown' && !!e.acknowledged);
+/** Late fills keep applying to an ended ('incomplete') exit. */
+const acceptsFills = (e: ExitRecord) => !!e.orderId && e.status !== 'filled' && e.status !== 'not-sent';
 
 function commit() {
     if (!executing) return; // mirrors never write shared state
@@ -525,26 +527,43 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
 }
 
 /** Exits are market IOC. Their unfilled remainder may never produce a Cancel
- * report, so ONE cache-only (refresh:false) read of the exit order settles
- * it a few seconds after dispatch. A row missing from the cache changes
- * nothing (never treated as filled or cancelled). */
+ * report, so the exit order is read from the cache only (refresh:false) at
+ * most TWICE: a final status (Cancelled/Failed/Inactive/Filled) settles it at
+ * once; PartFilled settles only when a second, later read shows the same
+ * fills/cancels. Otherwise the remainder stays 待確認 for an explicit 對帳.
+ * A row missing from the cache changes nothing (never filled/cancelled).
+ * Late fills still apply after settling and shrink the unprotected rest. */
 export const IOC_CHECK_MS = 3000;
-function scheduleIocCheck(id: string) {
+export const IOC_RECHECK_MS = 5000;
+const FINAL = ['Cancelled', 'Failed', 'Inactive', 'Filled'];
+const rowSignature = (t: Trade) => `${t.status.status}|${t.status.deal_quantity}|${t.status.cancel_quantity}|${t.status.deals?.length ?? 0}`;
+function scheduleIocCheck(id: string, previous?: string) {
     setTimeout(() => {
         const rec = exits.find(e => e.id === id);
         if (!rec || rec.status !== 'working' || !rec.orderId || !executing) return;
         if (currentProtectionEnv() !== rec.env) return;
         void fetchTrades(rec.account.account_type, rec.account, { refresh: false }).then(rows => {
             const trade = rows.find(t => t.order.id === rec.orderId);
-            if (trade) applyExitTrade(trade, { iocSettled: true });
+            if (!trade) {
+                if (previous === undefined) scheduleIocCheck(id, ''); // second (last) read
+                return;
+            }
+            const final = FINAL.includes(trade.status.status);
+            const stable = trade.status.status === 'PartFilled' && previous === rowSignature(trade);
+            applyExitTrade(trade, { settle: final || stable });
+            if (!final && !stable) {
+                if (previous === undefined) scheduleIocCheck(id, rowSignature(trade));
+                else updateExit(id, e => e.status === 'working'
+                    ? { ...e, detail: '出場剩餘量待確認；請按「對帳」確認實際成交', at: Date.now() } : e);
+            }
         }).catch(() => undefined);
-    }, IOC_CHECK_MS);
+    }, previous === undefined ? IOC_CHECK_MS : IOC_RECHECK_MS);
 }
 
 function applyExitReport(report: OrderEventReport, base: string) {
     const orderId = report.kind === 'deal' ? report.tradeId : report.id;
     for (const rec of exits.slice()) {
-        if (rec.orderId !== orderId || isResolved(rec) || !reportEnvMatches(rec.env, base)) continue;
+        if (rec.orderId !== orderId || !acceptsFills(rec) || !reportEnvMatches(rec.env, base)) continue;
         updateExit(rec.id, e => {
             if (report.kind === 'order') return applyExitOrderReport(e, report, e.account, Date.now());
             const m = matchDeal(report, orderId, e.account, e.market, e.orderCode, e.action);
@@ -553,24 +572,23 @@ function applyExitReport(report: OrderEventReport, base: string) {
     }
 }
 
-/** Apply a Trade row (explicit refresh:true, or the one-shot cache check
- * after an IOC exit) to an exit order. With `iocSettled`, a PartFilled IOC
- * row also ends the exit: an IOC never keeps working, and its unfilled rest
- * becomes explicit unprotected quantity (never resent). */
-export function applyExitTrade(trade: Trade, opts: { iocSettled?: boolean } = {}) {
+/** Apply a Trade row (explicit refresh:true, or the bounded IOC cache check)
+ * to an exit order. Fills always apply, also after the exit ended. With
+ * `settle`, a PartFilled IOC row ends the exit too (caller proved it stable). */
+export function applyExitTrade(trade: Trade, opts: { settle?: boolean } = {}) {
     if (!main) return;
     for (const rec of exits.slice()) {
-        if (rec.orderId !== trade.order.id || isResolved(rec)) continue;
+        if (rec.orderId !== trade.order.id || !acceptsFills(rec)) continue;
         const a = trade.order.account;
         if (a && (a.broker_id !== rec.account.broker_id || a.account_id !== rec.account.account_id)) continue;
         updateExit(rec.id, e => {
             let next = e;
             for (const fill of fillsFromTrade(trade)) next = applyExitFill(next, fill, Date.now());
             const ended = ['Cancelled', 'Failed', 'Inactive'].includes(trade.status.status)
-                || (opts.iocSettled && trade.status.status === 'PartFilled');
-            if (next.status !== 'filled' && ended) {
+                || (opts.settle && trade.status.status === 'PartFilled');
+            if (next.status === 'working' && ended) {
                 next = { ...next, status: 'incomplete', at: Date.now(),
-                    detail: `出場委託 ${trade.status.status}，未成交 ${next.quantity - next.filled}` };
+                    detail: `出場委託 ${trade.status.status}，剩餘 ${next.quantity - next.filled} 待確認；請按「對帳」確認` };
             }
             return next;
         });

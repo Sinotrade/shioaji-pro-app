@@ -170,25 +170,44 @@ describe('exit outcome and unprotected quantity', () => {
 });
 
 describe('one identity per fill', () => {
-    it('re-keys an event_id-only fill when the cache row with exchange_seq arrives (entry)', () => {
+    const cacheRow = (deals: { seq: string; quantity: number; ts: number }[]) => ({
+        contract: { code: 'TXFJ6', security_type: 'FUT', exchange: 'TAIFEX', target_code: null },
+        order: { id: 'fixture-f1', seqno: 'fixture-f1', ordno: 'o', action: 'Buy', price: 0, quantity: 2 },
+        status: { id: 'fixture-f1', status: 'PartFilled', status_code: '00', order_quantity: 2,
+            deal_quantity: deals.reduce((a, d) => a + d.quantity, 0), cancel_quantity: 0, modified_price: 0, msg: '',
+            deals: deals.map(d => ({ ...d, price: 1 })) } }) as unknown as Trade;
+
+    it('re-keys an event_id-only fill onto the cache row with the same quantity AND fill time', () => {
         const noSeq = withBody(reports[0]!, { exchange_seq: '' });
         let p = feed(plan(), [noSeq]);
         expect(p.filled).toBe(1);
-        const trade = { contract: { code: 'TXFJ6', security_type: 'FUT', exchange: 'TAIFEX', target_code: null },
-            order: { id: 'fixture-f1', seqno: 'fixture-f1', ordno: 'o', action: 'Buy', price: 0, quantity: 2 },
-            status: { id: 'fixture-f1', status: 'PartFilled', status_code: '00', order_quantity: 2, deal_quantity: 1, cancel_quantity: 0,
-                modified_price: 0, msg: '', deals: [{ seq: '000001', price: 1, quantity: 1, ts: 1 }] } } as unknown as Trade;
-        p = applyEntryTrade(p, trade, 2);
+        p = applyEntryTrade(p, cacheRow([{ seq: '000001', quantity: 1, ts: noSeq.ts! }]), 2);
         expect(p.filled).toBe(1);
         expect(Object.keys(p.fills)).toEqual(['fixture-f1:000001']);
     });
 
+    it('keeps two distinct same-size fills apart when times differ, and marks the plan unconfirmed', () => {
+        const noSeq = withBody(reports[0]!, { exchange_seq: '' });
+        let p = feed(plan(), [noSeq]);
+        p = applyEntryTrade(p, cacheRow([{ seq: '000002', quantity: 1, ts: noSeq.ts! + 2 }]), 2);
+        expect(p.filled).toBe(2);
+        expect(p.issues.map(i => i.code)).toContain('report-mismatch');
+    });
+
+    it('does not double count when the seq-keyed fill is known first (reverse order)', () => {
+        let p = feed(plan(), [reports[0]!]); // SSE deal with exchange_seq
+        p = feed(p, [withBody(reports[0]!, { exchange_seq: '', event_id: 'v1:FD:x:r:50' })]);
+        expect(p.filled).toBe(1);
+    });
+
     it('mergeFill: exit fills keep one identity too', () => {
-        const a = mergeFill({}, { orderId: 'x', key: 'event:v1:FD:s:r:9', quantity: 2 })!;
+        const a = mergeFill({}, undefined, { orderId: 'x', key: 'event:v1:FD:s:r:9', quantity: 2, ts: 10 })!;
         expect(a.added).toBe(2);
-        const b = mergeFill(a.fills, { orderId: 'x', key: 'x:000001', quantity: 2 })!;
-        expect(b).toEqual({ fills: { 'x:000001': 2 }, added: 0 });
-        expect(mergeFill(b.fills, { orderId: 'x', key: 'x:000001', quantity: 2 })).toBeNull();
-        expect(mergeFill(b.fills, { orderId: 'x', key: 'x:000002', quantity: 1 })!.added).toBe(1);
+        const b = mergeFill(a.fills, a.fillTs, { orderId: 'x', key: 'x:000001', quantity: 2, ts: 10 })!;
+        expect(b).toMatchObject({ fills: { 'x:000001': 2 }, added: 0, conflict: false });
+        expect(mergeFill(b.fills, b.fillTs, { orderId: 'x', key: 'x:000001', quantity: 2 })).toBeNull();
+        expect(mergeFill(b.fills, b.fillTs, { orderId: 'x', key: 'x:000002', quantity: 1 })!.added).toBe(1);
+        const c = mergeFill(a.fills, a.fillTs, { orderId: 'x', key: 'x:000003', quantity: 2, ts: 11 })!;
+        expect(c).toMatchObject({ added: 2, conflict: true });
     });
 });

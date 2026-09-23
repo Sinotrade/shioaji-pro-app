@@ -104,7 +104,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                 <div className={styles.note.err}>進場單仍有 {workingEntry} 未成交委託在場上；出場已觸發，之後的成交不受保護</div>
             )}
             {unprotected > 0 && (
-                <div className={styles.note.err}>未保護 {unprotected}：請手動處理出場，系統不會自動重送</div>
+                <div className={styles.note.err}>可能未保護 {unprotected}（待確認）：請先按「對帳」確認實際成交，勿直接另下出場單；系統不會自動重送</div>
             )}
             {isLive(plan) && elsewhere && (
                 <div className={styles.note.warn}>
@@ -137,18 +137,30 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                         對帳
                     </button>
                 )}
-                {workingEntry > 0 && (
+                {workingEntry > 0 && plan.entryCancel === 'unconfirmed' && (
                     <button
                         className={styles.button}
                         disabled={busy}
+                        title='刪單已送出但未確認取消；向券商更新委託核對，不會重送刪單'
+                        onClick={() => void run(() => reconcileBracket(plan.id),
+                            v => `對帳完成，回報快取狀態 ${(v as { health: string }).health}`)}
+                    >
+                        刪單待確認 · 對帳
+                    </button>
+                )}
+                {workingEntry > 0 && plan.entryCancel !== 'unconfirmed' && (
+                    <button
+                        className={styles.button}
+                        disabled={busy || plan.entryCancel === 'sending'}
                         title='只送出一次刪單，不會自動重試或重送任何委託'
                         onClick={() => {
                             if (!confirmCancel) { setConfirmCancel(true); return; }
                             setConfirmCancel(false);
-                            void run(() => cancelRemainingEntry(plan), () => '已送出刪單，等待回報確認');
+                            void run(() => cancelRemainingEntry(plan),
+                                v => v === 'cancelled' ? '已確認取消剩餘進場單' : '刪單已送出但未確認取消，請按「刪單待確認 · 對帳」');
                         }}
                     >
-                        {confirmCancel ? '再按一次：刪除剩餘進場單' : '刪除剩餘進場單'}
+                        {plan.entryCancel === 'sending' ? '刪單處理中…' : confirmCancel ? '再按一次：刪除剩餘進場單' : '刪除剩餘進場單'}
                     </button>
                 )}
                 {unknownExit && (
@@ -192,8 +204,14 @@ export function BracketStatusList({ code }: { code: string }) {
     if (plans.length === 0) return null;
     const stale = bracketSnapshotStale();
     const envNow = currentProtectionEnv();
+    const paused = !envNow && plans.some(p => isLive(p));
     return (
         <div className={styles.list}>
+            {paused && (
+                <div className={styles.banner} role='alert'>
+                    保護暫停：伺服器模式未確認 — 停損停利目前不會送出，確認後自動恢復
+                </div>
+            )}
             {plans.map(p => (
                 <Row key={p.id} plan={p} envNow={envNow}
                     feedMissing={feed.feedMissing.includes(p.quoteCode)} executing={feed.executing} stale={stale} />

@@ -408,46 +408,117 @@ describe('trigger execution (main window only)', () => {
         expect(bracket.getBrackets()).toHaveLength(0);
     });
 
-    it('IOC exit partly filled with no Cancel report: one cache-only check ends it, remainder unprotected, never resent', async () => {
-        const plan = await armed();
-        await tick(47000);
-        expect(planOf(plan.id).exit?.status).toBe('working');
-        await emit(edit(fCoverDeal1!, { trade_id: 'exit-1' })); // 1 of 2 filled, then silence
-        const partial = { ...cacheTrade('exit-1', F1, [{ seq: '000001', quantity: 1 }]),
+    function exitRow(status: string, deals: { seq: string; quantity: number; ts?: number }[], cancel = 0) {
+        const row = { ...cacheTrade('exit-1', F1, deals.map(d => ({ seq: d.seq, quantity: d.quantity }))),
             order: { id: 'exit-1', seqno: 'exit-1', ordno: 'o', action: 'Sell', price: 0, quantity: 2, order_type: 'IOC',
                 account: { account_type: 'F', broker_id: F1.broker_id, account_id: F1.account_id } } } as unknown as Trade;
-        partial.status = { ...partial.status, status: 'PartFilled', cancel_quantity: 1 };
+        row.status = { ...row.status, status: status as Trade['status']['status'], cancel_quantity: cancel,
+            deals: deals.map(d => ({ seq: d.seq, quantity: d.quantity, price: 1, ts: d.ts ?? 1 })) };
+        return row;
+    }
+    const RESERVE = () => `${m.env}|F:fixture-broker-F:fixture-account-F|TXFJ6|Sell`;
+
+    it('IOC exit PartFilled: settles only when a second read is unchanged (2 cache-only reads, never resent)', async () => {
+        const plan = await armed();
+        await tick(47000);
+        await emit(edit(fCoverDeal1!, { trade_id: 'exit-1' })); // 1 of 2 filled, then silence
         m.cached.mockClear();
-        m.cached.mockResolvedValue([partial]);
+        m.cached.mockResolvedValue([exitRow('PartFilled', [{ seq: '000001', quantity: 1, ts: fCoverDeal1!.ts }], 1)]);
         await vi.advanceTimersByTimeAsync(engine.IOC_CHECK_MS); await flush();
-        expect(m.cached).toHaveBeenCalledTimes(1); // exactly one cache-only read
+        expect(planOf(plan.id).exit?.status).toBe('working'); // one PartFilled read is not proof
+        await vi.advanceTimersByTimeAsync(engine.IOC_RECHECK_MS); await flush();
+        expect(m.cached).toHaveBeenCalledTimes(2);
         expect(m.refreshed).not.toHaveBeenCalled();
         expect(planOf(plan.id).exit).toMatchObject({ status: 'incomplete', filled: 1 });
+        expect(planOf(plan.id).exit?.detail).toMatch('待確認');
         const { unprotectedQuantity } = await import('./bracket-core');
         expect(unprotectedQuantity(planOf(plan.id))).toBe(1);
-        expect(engine.reservedQuantity(`${m.env}|F:fixture-broker-F:fixture-account-F|TXFJ6|Sell`)).toBe(0);
+        expect(engine.reservedQuantity(RESERVE())).toBe(0);
         await vi.advanceTimersByTimeAsync(60_000);
         expect(m.place).toHaveBeenCalledTimes(1);
-        expect(m.cached).toHaveBeenCalledTimes(1);
+        expect(m.cached).toHaveBeenCalledTimes(2);
+    });
+
+    it('a late exit fill after the IOC settle still applies and removes the unprotected remainder', async () => {
+        const plan = await armed();
+        await tick(47000);
+        m.cached.mockResolvedValue([exitRow('Cancelled', [{ seq: '000001', quantity: 1 }], 1)]); // final status
+        await vi.advanceTimersByTimeAsync(engine.IOC_CHECK_MS); await flush();
+        expect(planOf(plan.id).exit?.status).toBe('incomplete');
+        await emit(edit(fCoverDeal2!, { trade_id: 'exit-1' })); // multi-level exit: a late second deal
+        const { unprotectedQuantity } = await import('./bracket-core');
+        expect(planOf(plan.id).exit).toMatchObject({ filled: 2, status: 'filled' });
+        expect(unprotectedQuantity(planOf(plan.id))).toBe(0);
+    });
+
+    it('PartFilled that changes between the two reads stays 待確認 (no third read)', async () => {
+        const plan = await armed();
+        await tick(47000);
+        m.cached.mockResolvedValueOnce([exitRow('PartFilled', [{ seq: '000001', quantity: 1 }])]);
+        m.cached.mockResolvedValueOnce([exitRow('PartFilled', [{ seq: '000001', quantity: 1 }], 1)]);
+        m.cached.mockClear();
+        await vi.advanceTimersByTimeAsync(engine.IOC_CHECK_MS + engine.IOC_RECHECK_MS + 30_000); await flush();
+        expect(m.cached).toHaveBeenCalledTimes(2);
+        expect(planOf(plan.id).exit?.status).toBe('working');
+        expect(planOf(plan.id).exit?.detail).toMatch('待確認');
     });
 
     it('IOC check that does not find the exit order changes nothing (missing ≠ filled/cancelled)', async () => {
         const plan = await armed();
         await tick(47000);
+        m.cached.mockClear();
         m.cached.mockResolvedValue([]);
-        await vi.advanceTimersByTimeAsync(engine.IOC_CHECK_MS); await flush();
+        await vi.advanceTimersByTimeAsync(engine.IOC_CHECK_MS + engine.IOC_RECHECK_MS + 30_000); await flush();
+        expect(m.cached).toHaveBeenCalledTimes(2);
         expect(planOf(plan.id).exit?.status).toBe('working');
     });
 
-    it('entry still working after the exit fired: shown, and cancelled only on request (once)', async () => {
+    it('entry still working after the exit fired: one cancel on request; unconfirmed → 待確認, never resent', async () => {
         const plan = await armed(1); // 1 of 2 filled, entry still working
         await tick(47000);
         const { workingEntryAfterExit } = await import('./bracket-core');
         expect(workingEntryAfterExit(planOf(plan.id))).toBe(1);
         expect(m.cancel).not.toHaveBeenCalled();
-        await bracket.cancelRemainingEntry(planOf(plan.id));
+        m.cancel.mockRejectedValueOnce(Object.assign(new Error('刪單已送出但未確認取消'), { code: 'CANCEL_UNCONFIRMED', mutationOutcomeUnknown: true }));
+        await expect(bracket.cancelRemainingEntry(planOf(plan.id))).resolves.toBe('unconfirmed');
         expect(m.cancel).toHaveBeenCalledTimes(1);
         expect(m.cancel).toHaveBeenCalledWith('fixture-f1');
+        expect(planOf(plan.id).entryCancel).toBe('unconfirmed');
+        await expect(bracket.cancelRemainingEntry(planOf(plan.id))).rejects.toThrow('勿重送');
+        expect(m.cancel).toHaveBeenCalledTimes(1);
+        // reconcile shows the entry cancelled → closed, state cleared
+        const cancelled = cacheTrade('fixture-f1', F1, [{ seq: '000001', quantity: 1 }]);
+        cancelled.status = { ...cancelled.status, status: 'Cancelled', cancel_quantity: 1 };
+        m.refreshed.mockResolvedValue([cancelled]);
+        await bracket.reconcileBracket(plan.id);
+        expect(planOf(plan.id).entryClosed).toBe(true);
+        expect(planOf(plan.id).entryCancel).toBeUndefined();
+        expect(workingEntryAfterExit(planOf(plan.id))).toBe(0);
+    });
+
+    it('a read-back-confirmed Cancelled trade from cancelOrder closes the entry; a Submitted response does not', async () => {
+        const plan = await armed(1);
+        await tick(47000);
+        const submitted = cacheTrade('fixture-f1', F1, [{ seq: '000001', quantity: 1 }]);
+        m.cancel.mockResolvedValueOnce(submitted);
+        await expect(bracket.cancelRemainingEntry(planOf(plan.id))).resolves.toBe('unconfirmed');
+        expect(planOf(plan.id).entryClosed).toBe(false);
+        const other = await (async () => { await boot(); const p = await bracket.registerBracket(spec(F2, 'fixture-f9')); await flush(); return p; })();
+        await emit(edit(fDeal1!, { trade_id: 'fixture-f9', account_id: 'fixture-account-F2', event_id: 'v1:FD:Z:R:1' }));
+        await tick(47000);
+        const confirmed = cacheTrade('fixture-f9', F2, [{ seq: '000001', quantity: 1 }]);
+        confirmed.status = { ...confirmed.status, status: 'Cancelled', cancel_quantity: 1 };
+        m.cancel.mockResolvedValueOnce(confirmed);
+        await expect(bracket.cancelRemainingEntry(planOf(other.id))).resolves.toBe('cancelled');
+        expect(planOf(other.id).entryClosed).toBe(true);
+    });
+
+    it('a cancel refused before sending leaves no pending state', async () => {
+        const plan = await armed(1);
+        await tick(47000);
+        m.cancel.mockRejectedValueOnce(Object.assign(new Error('伺服器已切換'), { mutationNotStarted: true }));
+        await expect(bracket.cancelRemainingEntry(planOf(plan.id))).rejects.toThrow('伺服器已切換');
+        expect(planOf(plan.id).entryCancel).toBeUndefined();
     });
 
     it('a failed or unacknowledged registration never tells the user to add a manual stop', async () => {

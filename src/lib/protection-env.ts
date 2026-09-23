@@ -25,6 +25,22 @@ export function refreshProtectionEnv(): Promise<void> {
     return fetchInfo().then(() => undefined, () => undefined);
 }
 
+/** Backoff for re-asking /info while the stream is LIVE but the mode is
+ * still unknown (protection is paused meanwhile). Local call only. */
+export const MODE_RETRY_MS = [1000, 2000, 5000, 10000, 20000, 30000];
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryIndex = 0;
+function ensureMode() {
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    if (getStreamStatus() !== 'live' || currentProtectionEnv()) { retryIndex = 0; return; }
+    void refreshProtectionEnv().then(() => {
+        if (getStreamStatus() !== 'live' || currentProtectionEnv()) { retryIndex = 0; return; }
+        const delay = MODE_RETRY_MS[Math.min(retryIndex, MODE_RETRY_MS.length - 1)]!;
+        retryIndex += 1;
+        retryTimer = setTimeout(() => { retryTimer = null; ensureMode(); }, delay);
+    });
+}
+
 export function onProtectionEnvChange(listener: () => void): () => void {
     return subscribeServerInfo(listener);
 }
@@ -54,7 +70,11 @@ export function watchProtectionEnv() {
         const now = getStreamStatus() === 'live';
         if (now === live) return;
         live = now;
-        if (!now) forgetServerInfo(getApiBase());
-        else void refreshProtectionEnv();
+        if (!now) {
+            if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+            retryIndex = 0;
+            forgetServerInfo(getApiBase());
+        } else ensureMode();
     });
+    ensureMode();
 }
