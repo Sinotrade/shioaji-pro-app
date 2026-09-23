@@ -43,8 +43,13 @@ A provider and its descendants share their own short-lived MCP bearer scope.
 7. MCP binds to IPv4 loopback, rejects non-loopback Origins, limits request and
    pending-call sizes, validates registered schemas, and revokes bearer digests
    with runtimes. Native event redaction removes exact credentials before logs
-   or WebView emission. Bearers may reside in owner-only provider configuration
-   or argv and are not secret from that provider's own descendants.
+   or WebView emission. Bearers are never placed in argv or the environment:
+   argv is readable by other local user accounts and is captured by EDR
+   command-line logs. They reside only in owner-only per-instance files
+   (Codex `http_headers_helper`, Claude `--mcp-config`) deleted on runtime
+   stop/exit and swept after a crash, and are not secret from the same OS
+   user or that provider's own descendants. The endpoint honours a bearer only
+   from a connection owned by the bound runtime's process tree.
 8. Audit records include proposal/denial, scope digests, capability consumption,
    response class and unknown outcome. They contain no body or credentials.
    Keyed entries and a MACed head checkpoint detect edits, missing segments,
@@ -70,6 +75,11 @@ A provider and its descendants share their own short-lived MCP bearer scope.
   no App capability or signing material.
 - Local audit keys/checkpoints are not hardware-backed or externally anchored;
   restoring an old valid complete snapshot can roll back local evidence.
+- Peer verification binds a bearer to the runtime's process tree, not to an
+  executable identity: a same-user process that injects into or is spawned by
+  the provider tree shares its authority. The tree is read when a connection
+  first presents the bearer; a descendant that re-parents away (daemonizes)
+  before connecting is refused.
 - Unix detached descendants can survive orderly process-group termination or
   an App crash. Revoked MCP bearers and generation keys cannot authorize later
   App calls, but this is not complete OS containment.

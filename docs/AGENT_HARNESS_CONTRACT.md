@@ -50,12 +50,31 @@ identical to the TypeScript constants consumed by the application.
 
 The desktop host provides one authenticated loopback MCP endpoint. Every native
 runtime receives a distinct short-lived bearer through its native MCP header
-configuration, not an inherited child-process environment variable. Depending
-on the provider's native protocol, that configuration can reside in an
-owner-only temporary file or process argv and may therefore be observable to a
-same-user process. Tokens are never returned to the WebView and are revoked when
-the runtime stops. Tool
-calls use typed JSON arguments and semantic names; coordinate
+configuration. The bearer never appears in process argv or an inherited
+environment variable: argv is readable by every local user account (`ps`,
+`/proc/<pid>/cmdline`) and is routinely captured by endpoint-security (EDR)
+command-line telemetry, so an argv bearer would also end up in such logs.
+
+- Codex reads its `Authorization` header through `http_headers_helper`
+  (Codex 0.148.0 or later), a command that prints an owner-only file; only
+  the file path is visible in argv. Older Codex is refused before a bearer
+  is issued.
+- Claude Code reads an owner-only `--mcp-config` file.
+- Pi uses its native RPC and receives no bearer.
+
+These files live in a per-App-instance directory under the App data folder
+(0700 directory, 0600 files on Unix; the per-user AppData ACL on Windows).
+They are deleted when the runtime stops or exits, and directories left by an
+App instance that is no longer running are removed at the next start.
+
+A bearer is accepted only on a loopback connection owned by that runtime's
+process tree (verified with `proc_pidfdinfo` on macOS, `/proc` on Linux and
+`GetExtendedTcpTable` on Windows) and is refused until the provider process
+has been bound. A copied bearer is therefore useless from another process.
+The file remains readable by the same OS user and by the provider's own
+descendants, which share its trust scope. Tokens are never returned to the
+WebView, are redacted from events and logs, and are revoked when the runtime
+stops. Tool calls use typed JSON arguments and semantic names; coordinate
 automation, raw key capture, and virtual Bash commands are outside this
 contract.
 
