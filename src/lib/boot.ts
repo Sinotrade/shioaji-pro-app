@@ -286,12 +286,12 @@ async function serverVersionOk(): Promise<boolean> {
     }
 }
 
-// In production the order_event SSE stream only emits heartbeats until
-// each account is explicitly subscribed (no-op in simulation).
-export async function subscribeProductionTradeEvents() {
+// The order_event SSE stream only emits heartbeats until each account is
+// explicitly subscribed. Shioaji 1.7.6 requires this in simulation as well
+// (verified on a 1.7.6 simulation sidecar: no report before subscribe_trade);
+// 1.7.5 simulation accepted it as a harmless no-op, so no version gate.
+export async function subscribeTradeReports() {
     try {
-        const info = await fetchInfo();
-        if (info.simulation) return;
         const accounts = await fetchAccounts();
         await Promise.all(
             accounts

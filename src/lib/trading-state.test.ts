@@ -12,16 +12,16 @@ const mocks = vi.hoisted(() => ({
     statusChanged: null as (() => void) | null,
     response: null as ((value: TradeObservation) => void) | null,
     ensure: vi.fn(), cached: vi.fn(),
-    positions: vi.fn(), trades: vi.fn(), balance: vi.fn(), margin: vi.fn(), subscribe: vi.fn(),
+    positions: vi.fn(), trades: vi.fn(), balance: vi.fn(), margin: vi.fn(), subscribe: vi.fn(), health: vi.fn(),
     account: { account_type: 'S', broker_id: 'fixture', account_id: 'a', person_id: 'fixture', signed: true, username: 'fixture' },
 }));
 vi.mock('./account-store', () => ({ useAccounts: () => ({ accounts: [mocks.account, ...mocks.extraAccounts], selectedStock: mocks.account, selectedFutures: null }), getAccountState: () => ({ accounts: [mocks.account, ...mocks.extraAccounts] }), refreshAccounts: vi.fn() }));
 vi.mock('./runtime', () => ({ getApiBase: () => 'http://fixture.invalid' }));
-vi.mock('./boot', () => ({ subscribeProductionTradeEvents: mocks.subscribe }));
+vi.mock('./boot', () => ({ subscribeTradeReports: mocks.subscribe }));
 vi.mock('./trade-observations', () => ({ onTradeResponse: (cb: typeof mocks.response) => { mocks.response = cb; return vi.fn(); } }));
 vi.mock('./contracts-cache', () => ({ ensureContract: mocks.ensure, getCachedContract: mocks.cached }));
 vi.mock('./quote-ownership', () => ({ retainQuote: () => vi.fn() }));
-vi.mock('./shioaji', () => ({ fetchPositions: mocks.positions, fetchTrades: mocks.trades, fetchAccountBalance: mocks.balance, fetchMargin: mocks.margin }));
+vi.mock('./shioaji', () => ({ fetchPositions: mocks.positions, fetchTrades: mocks.trades, fetchAccountBalance: mocks.balance, fetchMargin: mocks.margin, fetchTradeCacheHealth: mocks.health }));
 vi.mock('./stream', () => ({ ensureStream: vi.fn(), getStreamStatus: () => mocks.status,
     onOrderEvent: (cb: typeof mocks.order) => { mocks.order = cb; return vi.fn(); },
     onAnyTick: () => vi.fn(), subscribeStatusStore: (cb: typeof mocks.statusChanged) => { mocks.statusChanged = cb; return vi.fn(); },
@@ -56,6 +56,7 @@ beforeEach(async () => {
     mocks.positions.mockReset().mockImplementation(async () => [baseline()]);
     mocks.trades.mockReset().mockResolvedValue([]); mocks.balance.mockReset().mockResolvedValue({ acc_balance: 100, date: '2026-09-12', errmsg: '' });
     mocks.subscribe.mockReset().mockResolvedValue(undefined);
+    mocks.health.mockReset().mockResolvedValue({ state: 'Healthy', reasons: [] });
     mocks.ensure.mockReset().mockResolvedValue({ code: '2330', security_type: 'STK' });
     mocks.cached.mockReset().mockReturnValue({ code: '2330', security_type: 'STK' });
     store = await import('./trading-state');

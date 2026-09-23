@@ -1,18 +1,19 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { Account } from './types/portfolio';
 import type { ContractBase } from './types/contract';
-const m = vi.hoisted(() => ({ base: 'fixture', live: 'live', confirm: vi.fn(), stock: vi.fn(), future: vi.fn(), fetch: vi.fn(), cancel: vi.fn(), risk: vi.fn(), accounts: [] as Account[], selected: undefined as Account | undefined }));
+const m = vi.hoisted(() => ({ base: 'fixture', live: 'live', confirm: vi.fn(), stock: vi.fn(), future: vi.fn(), fetch: vi.fn(), cancel: vi.fn(), health: vi.fn(), continuous: false, risk: vi.fn(), accounts: [] as Account[], selected: undefined as Account | undefined }));
 vi.mock('./runtime', () => ({ getApiBase: () => m.base }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts, selectedStock: m.selected, selectedFutures: m.selected?.account_type === 'F' ? m.selected : undefined }) }));
 vi.mock('./activity', () => ({ trackActivity: vi.fn() }));
 vi.mock('./order-confirm', () => ({ requestOrderConfirm: m.confirm }));
 vi.mock('./risk', () => ({ checkOrderAllowed: m.risk, getRiskSettings: () => ({ confirmManualOrders: true }) }));
 vi.mock('./stream', () => ({ getStreamStatus: () => m.live }));
-vi.mock('./shioaji', () => ({ placeStockOrder: m.stock, placeFuturesOrder: m.future, fetchTrades: m.fetch, cancelOrder: m.cancel }));
+vi.mock('./shioaji', () => ({ placeStockOrder: m.stock, placeFuturesOrder: m.future, fetchTrades: m.fetch, cancelOrder: m.cancel, fetchTradeCacheHealth: m.health }));
+vi.mock('./trading-state', () => ({ tradeCacheContinuous: () => m.continuous }));
 import { placeStockExitByShares, placeQuickOrder, cancelAllOrders, onNotice } from './trade';
 const account = { account_type:'S', account_id:'a', broker_id:'b', signed:true, person_id:'fixture', username:'fixture' };
 const contract = { code:'2330',security_type:'STK',exchange:'TSE',limit_down:90,limit_up:110 } as ContractBase & {limit_down:number;limit_up:number};
-beforeEach(() => { vi.clearAllMocks(); m.base='fixture'; m.live='live'; m.accounts=[account]; m.selected=account; m.risk.mockReturnValue(null); m.confirm.mockResolvedValue(true); m.stock.mockResolvedValue({}); m.future.mockResolvedValue({}); });
+beforeEach(() => { vi.clearAllMocks(); m.continuous=false; m.health.mockReset().mockResolvedValue({ state: 'Healthy', reasons: [] }); m.base='fixture'; m.live='live'; m.accounts=[account]; m.selected=account; m.risk.mockReturnValue(null); m.confirm.mockResolvedValue(true); m.stock.mockResolvedValue({}); m.future.mockResolvedValue({}); });
 it('keeps the captured stock account on both legs after selection changes during confirmation', async () => {
     m.confirm.mockImplementation(async () => { m.selected={...account,account_id:'other'}; return true; });
     await placeStockExitByShares(contract,'Sell',1200,account);
@@ -35,6 +36,26 @@ it('passes explicit Cover and retains Auto default', async () => {
 it('reports failed account queries even when no cancel requests could be made', async () => {
     m.fetch.mockRejectedValue(new Error('offline')); const notices: {kind:string;body:string}[]=[]; const off=onNotice(n=>notices.push(n));
     try { await cancelAllOrders(); expect(m.cancel).not.toHaveBeenCalled(); expect(notices.at(-1)).toMatchObject({kind:'err'}); expect(notices.at(-1)!.body).toContain('帳戶委託查詢失敗'); } finally { off(); }
+});
+
+it.each([
+    ['continuous and every cache Healthy', true, ['Healthy', 'Healthy'], false],
+    ['one cache Unknown', true, ['Healthy', 'Unknown'], true],
+    ['one cache Degraded', true, ['Degraded', 'Healthy'], true],
+    ['no continuous baseline (reconnect/restart/popout)', false, ['Healthy', 'Healthy'], true],
+] as const)('full cancel reads trades cache-only only when %s', async (_name, continuous, states, refresh) => {
+    const future = { ...account, account_type: 'F', account_id: 'f' };
+    m.accounts = [account, future]; m.continuous = continuous;
+    states.forEach(state => m.health.mockResolvedValueOnce({ state, reasons: [] }));
+    m.fetch.mockResolvedValue([]);
+    await cancelAllOrders();
+    expect(m.fetch.mock.calls.map(c => c[2])).toEqual([{ refresh }, { refresh }]);
+    expect(m.health).toHaveBeenCalledTimes(continuous ? 2 : 0);
+});
+it('keeps the authoritative full-cancel read when health cannot be read', async () => {
+    m.continuous = true; m.health.mockRejectedValue(new Error('404')); m.fetch.mockResolvedValue([]);
+    await cancelAllOrders();
+    expect(m.fetch.mock.calls.map(c => c[2])).toEqual([{ refresh: true }]);
 });
 
 it('refuses before confirmation when no account was captured, even if confirmation would select one', async () => {

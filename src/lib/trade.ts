@@ -9,6 +9,7 @@ import { requestOrderConfirm } from './order-confirm';
 import { checkOrderAllowed, getRiskSettings } from './risk';
 import {
     cancelOrder,
+    fetchTradeCacheHealth,
     fetchTrades,
     placeFuturesOrder,
     placeStockOrder,
@@ -299,6 +300,27 @@ export async function placeStockExitByShares(
     return out;
 }
 
+// Shioaji 1.7.6: the full-cancel scan may read the sidecar Trade cache
+// (refresh:false, no update_status/accounting quota) only when this App kept
+// a continuous authoritative baseline on the same sidecar and every account's
+// trade_cache_health is Healthy. Anything else — Unknown, Degraded, a health
+// error, a reconnect, a popout — keeps the authoritative refresh:true read.
+async function fullCancelNeedsRefresh(accounts: Account[]): Promise<boolean> {
+    if (accounts.length === 0) return true;
+    try {
+        const { tradeCacheContinuous } = await import('./trading-state');
+        if (!tradeCacheContinuous()) return true;
+        const healths = await Promise.all(
+            accounts.map((a) =>
+                fetchTradeCacheHealth(a.account_type as 'S' | 'F', a),
+            ),
+        );
+        return !healths.every((h) => h?.state === 'Healthy');
+    } catch {
+        return true;
+    }
+}
+
 // cancel every working order across stock + futures accounts
 export async function cancelAllOrders(): Promise<number> {
     trackActivity('全刪委託');
@@ -308,10 +330,11 @@ export async function cancelAllOrders(): Promise<number> {
     const tradable = getAccountState().accounts.filter(
         (a) => a.signed && (a.account_type === 'S' || a.account_type === 'F'),
     );
+    const refresh = await fullCancelNeedsRefresh(tradable);
     const fetches =
         tradable.length > 0
             ? tradable.map((a) =>
-                  fetchTrades(a.account_type as 'S' | 'F', a),
+                  fetchTrades(a.account_type as 'S' | 'F', a, { refresh }),
               )
             : [fetchTrades('S'), fetchTrades('F')];
     const rs = await Promise.allSettled(fetches);

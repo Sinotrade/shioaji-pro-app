@@ -9,6 +9,8 @@ import {
     normalizeOrderEvent,
     type OrderEventReport,
 } from './order-report';
+import { reportLedger } from './report-ledger';
+import { knownServerInfo } from './server-info-store';
 
 export type StreamStatus = 'connecting' | 'live' | 'down';
 
@@ -418,7 +420,17 @@ function connect() {
         const report = normalizeOrderEvent(
             JSON.parse((e as MessageEvent).data),
         );
-        if (report) orderEventListeners.forEach((l) => l(report));
+        if (!report) return;
+        // Shioaji 1.7.6 delivers every decoded receipt, repeats included.
+        // The same complete event_id in the same environment is one report:
+        // drop it before any toast, projection or strategy sees it twice.
+        const admitted = reportLedger.admit(
+            { base: getApiBase(), simulation: knownServerInfo()?.simulation },
+            report.eventId,
+            report.kind,
+        );
+        if (admitted.duplicate) return;
+        orderEventListeners.forEach((l) => l(report));
     });
     es.addEventListener('contract_event', (event) => {
         const change = JSON.parse(

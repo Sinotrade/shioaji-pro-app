@@ -39,6 +39,9 @@ export interface OrderReport {
     cancelQuantity: number; // status.cancel_quantity
     modifiedPrice: number; // status.modified_price（改價後的新價）
     ts?: number; // exchange timestamp, epoch seconds
+    /** Shioaji 1.7.6+ opaque receipt identity (`""` when absent, e.g. history
+     *  records or pre-1.7.6 servers). Not Trade.order.id nor exchange_seq. */
+    eventId: string;
     raw: unknown;
 }
 
@@ -54,6 +57,8 @@ export interface DealReport {
     tradeId: string;
     orderLot: string;
     ts?: number;
+    /** See OrderReport.eventId. */
+    eventId: string;
     raw: unknown;
 }
 
@@ -113,6 +118,7 @@ function buildOrderReport(market: OrderMarket, body: Rec, raw: unknown): OrderRe
         cancelQuantity: num(status.cancel_quantity),
         modifiedPrice: num(status.modified_price),
         ts: epochSeconds(status.exchange_ts),
+        eventId: str(body.event_id),
         raw,
     };
 }
@@ -130,6 +136,7 @@ function buildDealReport(market: OrderMarket, body: Rec, raw: unknown): DealRepo
         tradeId: str(body.trade_id),
         orderLot: str(body.order_lot),
         ts: epochSeconds(body.ts),
+        eventId: str(body.event_id),
         raw,
     };
 }

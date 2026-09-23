@@ -94,6 +94,23 @@ export interface Trade {
     status: OrderStatusInfo;
 }
 
+// POST /api/v1/order/trade_cache_health（Shioaji 1.7.6+）— 只讀 sidecar
+// process-local Trade cache，不呼叫券商；只有 refresh:true 的 update_status
+// 能對帳 Degraded。欄位與 enum 取自 1.7.6 /openapi.json。
+export type TradeCacheHealthState = 'Unknown' | 'Healthy' | 'Degraded';
+export type TradeCacheHealthReasonCode =
+    | 'NotSubscribed'
+    | 'NoBaseline'
+    | 'UntrackableEventId'
+    | 'SequenceGap'
+    | 'PendingReport'
+    | 'ProjectionFailed';
+export type TradeReportEventType = 'StockOrder' | 'StockDeal' | 'FuturesOrder' | 'FuturesDeal';
+export interface TradeCacheHealth {
+    state: TradeCacheHealthState;
+    reasons: { event_type: TradeReportEventType; reason: TradeCacheHealthReasonCode }[];
+}
+
 // 委託列附上查詢來源帳戶（tradesPoll 按簽署帳戶 fan-out 後標記）—
 // 與 AccountedPosition 同款；帳戶格式與 /auth/accounts 清單一致，
 // dock 的帳戶範圍篩選比對不會因 order.account 格式差異落空
