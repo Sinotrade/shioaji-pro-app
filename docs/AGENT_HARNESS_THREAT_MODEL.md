@@ -42,9 +42,14 @@ A provider and its descendants share their own short-lived MCP bearer scope.
    remain blocked. Direct HTTP callers cannot mint a sidecar capability.
 7. MCP binds to IPv4 loopback, rejects non-loopback Origins, limits request and
    pending-call sizes, validates registered schemas, and revokes bearer digests
-   with runtimes. Native event redaction removes exact credentials before logs
-   or WebView emission. Bearers may reside in owner-only provider configuration
-   or argv and are not secret from that provider's own descendants.
+   with runtimes. Native redaction removes exact credentials from events,
+   pending requests and RPC results before logs or WebView delivery; runtime
+   events go only to the main window, never to popout, tray or approval
+   windows. Bearers never appear in argv or an inherited environment; they
+   reside in owner-only provider configuration files that are deleted on
+   runtime stop/exit and swept after a crash, are accepted only from the
+   runtime's own process tree, and are not secret from the same OS user or
+   that provider's own descendants.
 8. Audit records include proposal/denial, scope digests, capability consumption,
    response class and unknown outcome. They contain no body or credentials.
    Keyed entries and a MACed head checkpoint detect edits, missing segments,
