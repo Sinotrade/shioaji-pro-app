@@ -1,16 +1,16 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Account } from './types/portfolio';
 import type { AccountedTrade } from './types/order';
-const m = vi.hoisted(() => ({ base: 'fixture', rows: [] as AccountedTrade[], accounts: [] as Account[], post: vi.fn() }));
+const m = vi.hoisted(() => ({ base: 'fixture', rows: [] as AccountedTrade[], accounts: [] as Account[], post: vi.fn(), baseline: true }));
 vi.mock('./runtime', async original => ({ ...await original<object>(), getApiBase: () => m.base }));
 vi.mock('./api', () => ({ apiPost: m.post, apiGet: vi.fn(), apiPut: vi.fn(), apiDelete: vi.fn() }));
 vi.mock('./account-store', () => ({ accountFor: vi.fn(() => { throw new Error('no selected fallback'); }), getAccountState: () => ({ accounts: m.accounts }) }));
-vi.mock('./trading-state', () => ({ getTradingState: () => ({ trades: m.rows }) }));
+vi.mock('./trading-state', () => ({ getTradingState: () => ({ trades: m.rows }), hasOrdersBaseline: () => m.baseline }));
 import { cancelOrder, fetchTradeCacheHealth, fetchTrades, updateOrderPrice, updateOrderQty } from './shioaji';
 const account: Account = { account_type: 'F', broker_id: 'fixture', account_id: 'owner', signed: true, username: '', person_id: '' };
 const row = (): AccountedTrade => ({ account, contract: { code: 'QEFI6', security_type: 'FUT', exchange: 'TAIFEX', target_code: null }, order: { id: 'fixture', action: 'Buy', price: 489, seqno: 'seq', ordno: 'ord', quantity: 3, account }, status: { status: 'Submitted', id: 'fixture', status_code: '00', msg: '', order_ts: 1700000000, order_quantity: 3, modified_price: 0, deals: [], deal_quantity: 0, cancel_quantity: 0 } } as AccountedTrade);
 beforeEach(() => {
-    vi.clearAllMocks(); m.base = 'fixture'; m.accounts = [account]; m.rows = [row()];
+    vi.clearAllMocks(); m.baseline = true; m.base = 'fixture'; m.accounts = [account]; m.rows = [row()];
     m.post.mockImplementation(async () => row());
     vi.stubGlobal('navigator', { locks: { request: (_n: string, _o: unknown, cb: (v: object) => unknown) => cb({}) } });
 });
@@ -75,4 +75,42 @@ it('reads trade cache health for an explicit account', async () => {
     m.post.mockResolvedValue({ state: 'Healthy', reasons: [] });
     await expect(fetchTradeCacheHealth('F', account)).resolves.toEqual({ state: 'Healthy', reasons: [] });
     expect(m.post).toHaveBeenCalledWith('/api/v1/order/trade_cache_health', { account_type: 'F', broker_id: 'fixture', account_id: 'owner' });
+});
+
+// Review finding: after a sidecar restart outside the App the new process does
+// not know the old trade_id. Without a baseline on this instance, reconcile
+// that one account authoritatively once and re-resolve the id by identifiers.
+describe('mutation without an authoritative baseline on this sidecar', () => {
+    const restarted = (id = 'new-id', patch: Partial<AccountedTrade['order']> = {}, status: Partial<AccountedTrade['status']> = {}) =>
+        ({ ...row(), order: { ...row().order, id, ...patch }, status: { ...row().status, id, ...status } });
+    it.each([
+        ['cancel', () => cancelOrder('fixture'), '/api/v1/order/cancel_order'],
+        ['price', () => updateOrderPrice('fixture', 490), '/api/v1/order/update_price'],
+        ['quantity', () => updateOrderQty('fixture', 1), '/api/v1/order/update_qty'],
+    ] as const)('runs one refresh:true for the owner account and sends the re-resolved id: %s', async (_n, call, path) => {
+        m.baseline = false;
+        m.post.mockImplementation(async (p: string) => p === '/api/v1/order/trades' ? [restarted()] : row());
+        await call();
+        expect(m.post.mock.calls.map(c => c[0])).toEqual(['/api/v1/order/trades', path]);
+        expect(m.post.mock.calls[0]![1]).toEqual({ account_type: 'F', broker_id: 'fixture', account_id: 'owner', refresh: true });
+        expect(m.post.mock.calls[1]![1].trade_id).toBe('new-id');
+    });
+    it.each([
+        ['missing', () => []],
+        ['ambiguous', () => [restarted('a'), restarted('b')]],
+        ['other action', () => [restarted('x', { action: 'Sell' })]],
+        ['no longer working', () => [restarted('x', {}, { status: 'Cancelled', cancel_quantity: 3 })]],
+        ['other account', () => [restarted('x', { account: { ...account, account_id: 'other' } })]],
+        ['query failure', () => { throw new Error('offline'); }],
+    ] as const)('refuses before dispatch when the reconcile is %s', async (_n, rows) => {
+        m.baseline = false;
+        m.post.mockImplementation(async (p: string) => p === '/api/v1/order/trades' ? rows() : row());
+        await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
+        expect(m.post.mock.calls.map(c => c[0])).toEqual(['/api/v1/order/trades']);
+    });
+    it('keeps the local identity checks before any query', async () => {
+        m.baseline = false; m.accounts = [{ ...account, signed: false }];
+        await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
+        expect(m.post).not.toHaveBeenCalled();
+    });
 });

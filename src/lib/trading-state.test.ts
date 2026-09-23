@@ -552,6 +552,82 @@ describe('Shioaji 1.7.6 report identity and cache health', () => {
         expect(reasons('orders')).toContain('disconnect');
     });
 
+    // Review findings on PR #128 (head 2b8bd09), turned into regressions.
+    it('an orders-only refresh inside the grace window still flags a deal-stream gap on positions', async () => {
+        vi.advanceTimersByTime(1500);
+        await deliver(byId('v1:SD:SSTREAM:RESET1:1'));
+        await deliver(byId('v1:SD:SSTREAM:RESET1:3')); // SD:2 missing -> deal gap
+        await act(async () => { await store.refreshTradingState('orders'); });
+        await act(async () => { vi.advanceTimersByTime(5000); });
+        expect(reasons('positions')).toContain('sequence-gap');
+        expect(reasons('orders')).not.toContain('sequence-gap'); // update_status covered it
+    });
+    it('without a refresh the deal gap flags positions after the grace window', async () => {
+        await deliver(byId('v1:SD:SSTREAM:RESET1:1'));
+        await deliver(byId('v1:SD:SSTREAM:RESET1:3'));
+        await act(async () => { vi.advanceTimersByTime(5000); });
+        expect(reasons('positions')).toContain('sequence-gap');
+    });
+    it('treats NoBaseline after reconnect as a restart and never drops a working order on a later cache resync', async () => {
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:9'), futures)); });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:9'));
+        expect(store.getTradingState().trades.some(t => t.order.id === 'fx04')).toBe(true);
+        // Sidecar restarted outside the App; another client re-subscribed first.
+        mocks.health.mockResolvedValue({ state: 'Unknown', reasons: [{ event_type: 'FuturesOrder', reason: 'NoBaseline' }] });
+        await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledOnce());
+        expect(store.hasOrdersBaseline()).toBe(false);
+        // Later Healthy reconnect with an empty fresh cache: no cache resync.
+        mocks.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
+        mocks.trades.mockResolvedValue([]);
+        await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); vi.advanceTimersByTime(50); });
+        expect(mocks.trades).not.toHaveBeenCalled();
+        expect(store.getTradingState().trades.some(t => t.order.id === 'fx04')).toBe(true);
+        expect(store.tradeCacheContinuous()).toBe(false);
+        expect(reasons('orders')).toContain('disconnect');
+    });
+    it('a cache resync only adds/updates rows: a working order missing from the cache is kept and flagged', async () => {
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:9'), futures)); });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:9'));
+        mocks.trades.mockResolvedValue([]); // cache lacks fx04 although baseline looked continuous
+        await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await vi.waitFor(() => expect(mocks.trades).toHaveBeenCalled());
+        await act(async () => { await Promise.resolve(); vi.advanceTimersByTime(50); });
+        expect(mocks.trades.mock.calls.every(c => c[2]?.refresh === false)).toBe(true);
+        const kept = store.getTradingState().trades.find(t => t.order.id === 'fx04')!;
+        expect(kept.status.status).toBe('Submitted');
+        expect(reasons('orders')).toEqual(expect.arrayContaining(['disconnect', 'projection-failed']));
+        expect(store.hasOrdersBaseline()).toBe(false);
+        expect(store.tradeCacheContinuous()).toBe(false);
+    });
+    it('backs off gap-triggered health reads while every cache stays Healthy', async () => {
+        mocks.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
+        const waits: number[] = [];
+        for (let i = 0; i < 4; i++) {
+            const calls = mocks.health.mock.calls.length;
+            let waited = 0;
+            await act(async () => {
+                const run = store.checkTradeCacheHealth('gap');
+                while (mocks.health.mock.calls.length === calls) { vi.advanceTimersByTime(500); waited += 500; await Promise.resolve(); }
+                await run;
+            });
+            waits.push(waited);
+        }
+        // First read waits out the base interval; each further Healthy result doubles it.
+        expect(waits[1]).toBeGreaterThanOrEqual(6000);
+        expect(waits[2]).toBeGreaterThan(waits[1]!);
+        expect(waits[3]).toBeGreaterThan(waits[2]!);
+        mocks.health.mockResolvedValue({ state: 'Degraded', reasons: [{ event_type: 'FuturesOrder', reason: 'SequenceGap' }] });
+        await act(async () => { const run = store.checkTradeCacheHealth('reconnect'); await run; });
+        const calls = mocks.health.mock.calls.length; let waited = 0;
+        await act(async () => { const run = store.checkTradeCacheHealth('gap'); while (mocks.health.mock.calls.length === calls) { vi.advanceTimersByTime(500); waited += 500; await Promise.resolve(); } await run; });
+        expect(waited).toBeLessThanOrEqual(3000); // streak reset by a non-gap read
+    });
+
     it('never polls health or trades on a timer', async () => {
         await act(async () => { vi.advanceTimersByTime(120000); });
         expect(mocks.health).not.toHaveBeenCalled(); expect(mocks.trades).not.toHaveBeenCalled();

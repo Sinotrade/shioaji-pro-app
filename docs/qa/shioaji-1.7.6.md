@@ -53,7 +53,10 @@
   寬限內晚到不告警；持續跳號讀一次 health 並以 `refresh:false` 重建委託；Degraded 依分頁標示，手動委託對帳不解除持倉；
   重連在同一 sidecar 以 cache 解除委託的串流中斷，訂閱遺失則重訂閱且不信任 cache；120 秒無定時查詢。
 - `shioaji-mutation-preflight.test.ts`：期貨／股票改刪單直接送出且無 trades 查詢；本地歸屬與伺服器切換拒送。
-- `trade-exit.test.ts`：全部刪單只在連續基準＋全部 Healthy 時 `refresh:false`，其他情況維持 `refresh:true`。
+- `trade-exit.test.ts`：全部刪單一律 `refresh:true`，不讀 health／cache。
+- 第二輪 review（head `2b8bd09`）修正回歸：訂單分頁更新不吞掉成交跳號、重連 `NoBaseline` 視為重啟、cache 重建
+  不刪本地有效委託、無基準時改刪單先權威對帳並重新解析 trade_id、health 退避、`stream.ts` 去重直接測試
+  （`stream-order-event.test.ts`）、閃電剩餘量改用共用規則、昨餘提示改為「未確認修正前一律提示」。
 
 ## 仍待驗收（不因本 PR 關閉）
 

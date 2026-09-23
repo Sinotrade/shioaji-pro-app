@@ -11,6 +11,7 @@ import { ensureStream, getStreamStatus, onAnyTick, onOrderEvent, subscribeStatus
 import { applyPositionFill, markPosition, positionFill, reportBody } from './portfolio-projection';
 import { projectOrderReport, projectTradeDeal } from './order-projection';
 import { parseEventId, reportLedger } from './report-ledger';
+import { remainingWorkingOrderQuantity } from './working-order-quantity';
 import type { OrderEventReport } from './order-report';
 import type { Account, AccountBalance, AccountedPosition, AccountFunds, Margin } from './types/portfolio';
 import type { AccountedTrade, Trade, TradeCacheHealth } from './types/order';
@@ -201,12 +202,23 @@ type Problem = [ReconcileReason, string];
 
 /** Merge one account's HTTP rows and replay reports received meanwhile.
  *  Returns whether the merge was applied; false keeps the previous view
- *  (a replay could not connect, or too many reports raced the read). */
-function mergeOrders(account: Account, trades: Trade[], accounts: Account[], problems: Problem[]) {
+ *  (a replay could not connect, or too many reports raced the read).
+ *  `replace` (authoritative update_status) rebuilds the account's rows;
+ *  `upsert` (cache-only) only adds/updates rows and never deletes a local
+ *  order — a restarted sidecar's cache can simply lack it. */
+function mergeOrders(account: Account, trades: Trade[], accounts: Account[], problems: Problem[], mode: 'replace' | 'upsert' = 'replace') {
     const matches = (a: Account | undefined) => a && accountKey(a) === accountKey(account);
-    let merged = [...state.trades.filter(t => !matches(t.account)), ...trades
+    const incoming = trades
         .filter(t => !t.order.account || (t.order.account.account_id === account.account_id && t.order.account.broker_id === account.broker_id))
-        .map(t => ({ ...t, account }))];
+        .map(t => ({ ...t, account }));
+    let merged: AccountedTrade[];
+    if (mode === 'replace') merged = [...state.trades.filter(t => !matches(t.account)), ...incoming];
+    else {
+        const byId = new Map(incoming.map(t => [t.order.id, t]));
+        merged = state.trades.map(t => matches(t.account) && byId.has(t.order.id) ? byId.get(t.order.id)! : t);
+        const known = new Set(state.trades.filter(t => matches(t.account)).map(t => t.order.id));
+        merged.push(...incoming.filter(t => !known.has(t.order.id)));
+    }
     let replayFailed = false;
     for (const report of queryEvents ?? []) {
         const projected = report.kind === 'order'
@@ -330,7 +342,13 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
             syncQuery(key, problems[key].length === 0 ? { updatedAt: Date.now() } : {});
         }
         // The authoritative read covers event_id gaps detected before it began.
-        if (ordersRead) { ordersBaseline = true; reportLedger.takeGaps(getApiBase(), ledgerBefore); }
+        if (ordersRead) {
+            ordersBaseline = true;
+            // update_status covers order and deal gaps for the orders tab; a
+            // deal gap still leaves positions unreconciled unless read too.
+            const kinds = reportLedger.takeGaps(getApiBase(), ledgerBefore);
+            if (kinds.has('deal') && (!readPositions || failed.has('positions'))) raise('positions', 'sequence-gap', '成交回報序號跳號，可能漏收；持倉待對帳');
+        }
         state = { ...state, loading: false };
         publish();
     })().finally(() => { queryEvents = null; for (const key of targets) nextRefreshAt[key] = Date.now() + 1500; inFlight = null; });
@@ -346,6 +364,10 @@ let healthInFlight: Promise<void> | null = null;
 let healthQueued: HealthTrigger | null = null;
 let lastHealthAt = 0;
 const HEALTH_MIN_INTERVAL_MS = 3000;
+const HEALTH_MAX_INTERVAL_MS = 60000;
+// Consecutive gap-triggered reads that found every cache Healthy: the gap is
+// App-side only, so back off instead of re-reading on every new gap.
+let healthyGapStreak = 0;
 const HEALTH_REASONS: Partial<Record<string, Problem>> = {
     SequenceGap: ['sequence-gap', '伺服器委託快取偵測到回報跳號；請手動對帳'],
     PendingReport: ['pending-report', '伺服器有尚未關聯的回報；請手動對帳'],
@@ -364,7 +386,8 @@ export function checkTradeCacheHealth(trigger: HealthTrigger): Promise<void> {
         if (!healthQueued || trigger === 'reconnect') healthQueued = trigger;
         return healthInFlight;
     }
-    const wait = trigger === 'gap' ? Math.max(0, lastHealthAt + HEALTH_MIN_INTERVAL_MS - Date.now()) : 0;
+    const interval = Math.min(HEALTH_MAX_INTERVAL_MS, HEALTH_MIN_INTERVAL_MS * 2 ** Math.min(healthyGapStreak, 5));
+    const wait = trigger === 'gap' ? Math.max(0, lastHealthAt + interval - Date.now()) : 0;
     const run: Promise<void> = healthInFlight = (async () => {
         if (wait) await new Promise(r => setTimeout(r, wait));
         lastHealthAt = Date.now();
@@ -395,6 +418,10 @@ export function checkTradeCacheHealth(trigger: HealthTrigger): Promise<void> {
         for (const health of healths) {
             for (const { event_type, reason } of health?.reasons ?? []) {
                 if (reason === 'NotSubscribed') { notSubscribed = true; continue; }
+                // After an authoritative read every stream has a baseline
+                // (update_status sets it), so NoBaseline on reconnect means the
+                // sidecar restarted and someone else subscribed first.
+                if (reason === 'NoBaseline' && trigger === 'reconnect' && ordersBaseline) { notSubscribed = true; continue; }
                 const mapped = HEALTH_REASONS[reason];
                 if (!mapped) continue; // NoBaseline alone is normal after subscribing
                 raise('orders', ...mapped);
@@ -409,6 +436,7 @@ export function checkTradeCacheHealth(trigger: HealthTrigger): Promise<void> {
             catch { for (const key of ['orders', 'positions'] as const) raise(key, 'not-subscribed', '委託回報訂閱失敗；請使用更新圖示重試'); }
         }
         const allHealthy = !notSubscribed && healths.every(h => h?.state === 'Healthy');
+        healthyGapStreak = trigger === 'gap' && allHealthy ? healthyGapStreak + 1 : 0;
         if (allHealthy && trigger !== 'manual' && ordersBaseline && !inFlight
             && reasonState.orders.size > 0 && getStreamStatus() === 'live') {
             resyncInFlight = resyncOrdersFromCache(accounts, { clockBefore, eventsBefore, epochBefore });
@@ -433,7 +461,17 @@ async function resyncOrdersFromCache(accounts: Account[], before: { clockBefore:
         if (base !== getApiBase()) return;
         const saved = state.trades;
         const problems: Problem[] = [];
-        const merged = accounts.every((account, i) => mergeOrders(account, rows[i]!, accounts, problems));
+        const merged = accounts.every((account, i) => mergeOrders(account, rows[i]!, accounts, problems, 'upsert'));
+        // A local working order the cache does not know means the cache does
+        // not continue our baseline (e.g. an external sidecar restart): keep
+        // the order, stop trusting the cache and ask for reconciliation.
+        const missing = accounts.some((account, i) => saved.some(t => t.account && accountKey(t.account) === accountKey(account)
+            && remainingWorkingOrderQuantity(t) > 0 && !rows[i]!.some(r => r.order.id === t.order.id)));
+        if (missing) {
+            ordersBaseline = false;
+            raise('orders', 'projection-failed', '伺服器委託快取缺少本地有效委託，已保留；請手動對帳');
+            return;
+        }
         // Reports raced the cache read, the stream dropped, or a replay failed:
         // keep the previous view and every reason rather than guess.
         if (!merged || queryOverflow || eventSequence !== before.eventsBefore
@@ -650,8 +688,10 @@ function start() {
     });
     // A skipped event_id may still arrive late: surface it (and read the
     // cache-only health) only if it is still missing after a short grace.
+    const gapTimers = new Set<ReturnType<typeof setTimeout>>();
     const stopGaps = reportLedger.onGap((base, opened) => {
-        setTimeout(() => {
+        const timer = setTimeout(() => {
+            gapTimers.delete(timer);
             if (base !== getApiBase()) return;
             const kinds = reportLedger.takeGaps(base, opened);
             if (!kinds.size) return;
@@ -660,6 +700,7 @@ function start() {
             schedulePublish();
             void checkTradeCacheHealth('gap');
         }, 1500);
+        gapTimers.add(timer);
     });
     const stopTicks = onAnyTick(tick => {
         const price = Number(tick.close);
@@ -690,7 +731,7 @@ function start() {
     };
     const stopStatus = subscribeStatusStore(statusChanged);
     import.meta.hot?.dispose(() => {
-        stopMutations(); stopResponses(); stopOrders(); stopGaps(); stopTicks(); stopStatus(); channel?.close();
+        stopMutations(); stopResponses(); stopOrders(); stopGaps(); gapTimers.forEach(clearTimeout); stopTicks(); stopStatus(); channel?.close();
         positionQuotes.forEach(entry => entry.release?.());
         if (publishTimer) clearTimeout(publishTimer);
     });
@@ -702,6 +743,9 @@ export const getTradingState = () => state;
 /** Cache-only order reads (refresh:false) are trustworthy only while this App
  *  holds an authoritative baseline on the same sidecar instance and has not
  *  missed reports since; callers must still require every health Healthy. */
+/** An authoritative orders read happened on this sidecar instance and no
+ *  restart has been detected since (order mutation preflight uses this). */
+export function hasOrdersBaseline() { return !isMirror && ordersBaseline; }
 export function tradeCacheContinuous() {
     return !isMirror && ordersBaseline && getStreamStatus() === 'live' && !reasonState.orders.has('disconnect');
 }

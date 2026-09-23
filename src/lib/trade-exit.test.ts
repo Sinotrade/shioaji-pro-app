@@ -38,24 +38,12 @@ it('reports failed account queries even when no cancel requests could be made', 
     try { await cancelAllOrders(); expect(m.cancel).not.toHaveBeenCalled(); expect(notices.at(-1)).toMatchObject({kind:'err'}); expect(notices.at(-1)!.body).toContain('帳戶委託查詢失敗'); } finally { off(); }
 });
 
-it.each([
-    ['continuous and every cache Healthy', true, ['Healthy', 'Healthy'], false],
-    ['one cache Unknown', true, ['Healthy', 'Unknown'], true],
-    ['one cache Degraded', true, ['Degraded', 'Healthy'], true],
-    ['no continuous baseline (reconnect/restart/popout)', false, ['Healthy', 'Healthy'], true],
-] as const)('full cancel reads trades cache-only only when %s', async (_name, continuous, states, refresh) => {
+it('full cancel always reads trades authoritatively and never consults the cache health', async () => {
     const future = { ...account, account_type: 'F', account_id: 'f' };
-    m.accounts = [account, future]; m.continuous = continuous;
-    states.forEach(state => m.health.mockResolvedValueOnce({ state, reasons: [] }));
-    m.fetch.mockResolvedValue([]);
+    m.accounts = [account, future]; m.continuous = true; m.fetch.mockResolvedValue([]);
     await cancelAllOrders();
-    expect(m.fetch.mock.calls.map(c => c[2])).toEqual([{ refresh }, { refresh }]);
-    expect(m.health).toHaveBeenCalledTimes(continuous ? 2 : 0);
-});
-it('keeps the authoritative full-cancel read when health cannot be read', async () => {
-    m.continuous = true; m.health.mockRejectedValue(new Error('404')); m.fetch.mockResolvedValue([]);
-    await cancelAllOrders();
-    expect(m.fetch.mock.calls.map(c => c[2])).toEqual([{ refresh: true }]);
+    expect(m.fetch.mock.calls.map(c => c[2])).toEqual([{ refresh: true }, { refresh: true }]);
+    expect(m.health).not.toHaveBeenCalled();
 });
 
 it('refuses before confirmation when no account was captured, even if confirmation would select one', async () => {
