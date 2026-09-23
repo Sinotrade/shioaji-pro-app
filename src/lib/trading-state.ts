@@ -637,6 +637,7 @@ function applyConfirmedCancellation(trade: AccountedTrade): boolean {
     // The order is terminal and read back: an earlier unconfirmed change or
     // cancel of this same order no longer needs reconciling.
     awaitingConfirmation.delete(trade.order.id);
+    takeMutationIntent(trade.order.id); // a leftover (e.g. broadcast from a popout) intent is moot now
     resolve('orders', ['mutation-outcome'], undefined, `mutation:${trade.order.id}`);
     return true;
 }

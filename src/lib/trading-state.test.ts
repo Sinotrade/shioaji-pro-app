@@ -548,7 +548,11 @@ describe('Shioaji 1.7.6 report identity and cache health', () => {
             vi.advanceTimersByTime(50); });
         await unconfirmed('fx04');
         expect(reasons('orders')).toContain('mutation-outcome');
+        // A price-change intent for fx04 (as broadcast from a popout) is also dropped.
+        const intents = await import('./mutation-intent');
+        intents.noteMutationIntent('fx04', { kind: 'price', price: 1 });
         await confirmFx04();
+        expect(intents.takeMutationIntent('fx04')).toBeUndefined();
         expect(known().status.status).toBe('Cancelled');
         expect(reasons('orders')).not.toContain('mutation-outcome');
         // Another order's open cause is untouched by fx04's confirmation.
@@ -569,6 +573,23 @@ describe('Shioaji 1.7.6 report identity and cache health', () => {
         expect(mocks.trades.mock.calls.map(c => c[2])).toEqual([{ refresh: false }, { refresh: false }]);
         expect(mocks.positions).not.toHaveBeenCalled();
         expect(store.tradeCacheContinuous()).toBe(true);
+    });
+
+    it('reconnect after a restart subscribes exactly once, also with a confirmed cancel and a stale phase in between', async () => {
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:9'), futures)); });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:9'));
+        mocks.subscribe.mockClear();
+        mocks.health.mockResolvedValue({ state: 'Unknown', reasons: [{ event_type: 'FuturesOrder', reason: 'NotSubscribed' }] });
+        await act(async () => { mocks.status = 'stale'; mocks.statusChanged!(); });
+        await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        const k = store.getTradingState().trades.find(t => t.order.id === 'fx04')!;
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await act(async () => {
+            await observeTradeMutation('fx04', async () => markConfirmedCancellation({ ...k, status: { ...k.status, status: 'Cancelled' as const, cancel_quantity: k.order.quantity } }));
+            await vi.advanceTimersByTimeAsync(30_000);
+        });
+        expect(mocks.subscribe).toHaveBeenCalledTimes(1);
     });
 
     it('treats a lost subscription after reconnect as a restarted sidecar: resubscribe, no cache resync', async () => {
