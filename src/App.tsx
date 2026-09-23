@@ -428,8 +428,7 @@ function BlockView(props: BlockViewProps) {
     const { block, selected, onPinChange, onRemove, ...bodyProps } = props;
     const contract = useBlockContract(block, selected);
     const meta = BLOCK_META[block.type];
-    const showSymbol =
-        meta.pinnable && contract ? ` · ${contract.code}` : '';
+    const symbol = meta.pinnable && contract ? contract : null;
     const pulseMarket =
         block.type === 'pulse' && block.pulseIndex
             ? ` · ${block.pulseIndex === 'IX0001' ? '上市' : '上櫃'}`
@@ -438,7 +437,9 @@ function BlockView(props: BlockViewProps) {
     return (
         <section className={panel.panel}>
             <PanelChrome
-                title={`${meta.label}${pulseMarket}${showSymbol}`}
+                title={`${meta.label}${pulseMarket}`}
+                symbolCode={symbol?.code}
+                symbolName={symbol?.name}
                 pinnable={meta.pinnable}
                 pin={block.pin}
                 currentCode={selected?.code ?? null}
@@ -569,7 +570,9 @@ function PopoutView({
             <OrderConfirmHost />
             <section className={panel.panel} style={{ flex: 1, margin: 6 }}>
                 <PanelChrome
-                    title={`${meta.label}${contract ? ` · ${contract.code}` : ''}`}
+                    title={meta.label}
+                    symbolCode={contract?.code}
+                    symbolName={contract?.name}
                 />
                 <PanelErrorBoundary label={meta.label}>
                     {body}
