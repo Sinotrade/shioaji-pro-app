@@ -49,15 +49,16 @@ export function useServerInfo() {
     return useSyncExternalStore(subscribeServerInfo, currentServerInfo);
 }
 
-const YD_QUANTITY_UNIT_UNVERIFIED = new Set(['1.7.5', '1.7.6']);
+// Versions whose simulation yd_quantity was verified to follow the position
+// unit. Empty until Sinotrade/Shioaji#233 is fixed and re-verified read-only.
+const YD_QUANTITY_UNIT_FIXED = new Set<string>();
 
 export function yesterdayQuantityNotice(info: Pick<ServerInfo, 'version' | 'simulation'> | undefined): string | undefined {
     if (!info) return '尚未取得伺服器資訊；昨餘單位待確認。';
     // Sinotrade/Shioaji#233 (app #107): simulation yd_quantity does not follow
-    // the Common/Share unit. Read-only verified on simulation 1.7.5 and again on
-    // 1.7.6 (2026-09-23: Share quantity 1000, yd_quantity 1). Keep the gate to
-    // verified versions; recheck on every bump instead of assuming a fix.
-    return info.simulation === true && YD_QUANTITY_UNIT_UNVERIFIED.has(info.version)
+    // the Common/Share unit (read-only reproduced on 1.7.5 and 1.7.6). Warn in
+    // simulation unless the version is known fixed; never assume a bump fixed it.
+    return info.simulation === true && !YD_QUANTITY_UNIT_FIXED.has(info.version)
         ? `Shioaji ${info.version} 模擬帳務的昨餘單位待確認；保留 API 原值，不推算張／股。`
         : undefined;
 }

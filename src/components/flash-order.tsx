@@ -408,10 +408,9 @@ export function FlashOrder({
             if (tc !== contract.code && getAliasFor(tc) !== contract.code) {
                 continue;
             }
-            const remaining =
-                (t.status.order_quantity || t.order.quantity) -
-                t.status.deal_quantity -
-                t.status.cancel_quantity;
+            // HTTP status.order_quantity can be 0 (1.7.6) — use the shared
+            // original-quantity rule.
+            const remaining = remainingWorkingOrderQuantity(t);
             if (remaining <= 0) continue;
             const price = t.status.modified_price || t.order.price;
             const key = keyOf(price);

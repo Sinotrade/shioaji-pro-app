@@ -30,13 +30,18 @@ update_status。ADR 0002 當時「cache-only Trade HTTP API 不是本次前提�
   - cache-only 重建只解除委託分頁的串流中斷、跳號、待關聯、投影失敗、無法追蹤與資料暫缺；不解除
     改刪待確認（#120 另案），也不解除持倉或帳務原因。
 - **health 觸發**：只在 SSE 重連、持續跳號與手動委託對帳後讀取，單一 in-flight、跳號觸發最少間隔 3 秒，
-  無定時輪詢。health 是 sidecar 本機 cache，不耗券商帳務額度，但仍是 HTTP 呼叫。讀取失敗（舊版無此路由）
+  連續 Healthy 時指數退避（最長 60 秒），無定時輪詢。health 是 sidecar 本機 cache，不耗券商帳務額度，但仍是 HTTP 呼叫。讀取失敗（舊版無此路由）
   不增減原因。
-- **cache-only 使用條件**：必須曾在同一 sidecar 做過權威委託查詢、SSE 為 LIVE、且所有帳戶 health 皆
-  `Healthy`。重連時先讀 health 再訂閱：看到 `NotSubscribed` 視為 sidecar 重啟或訂閱遺失，清除基準、
-  重新訂閱、不信任 cache，直到下一次權威查詢。全部刪單在同樣條件下以 `refresh:false` 掃描，否則維持
-  `refresh:true`。
-- **#235 暫時處理移除**：改價、減量、刪單不再先查委託；保留本地唯一委託、已簽署同帳戶、商品市場相符、
+- **cache-only 使用條件**：只用於重連／跳號後重建委託畫面。必須曾在同一 sidecar 做過權威委託查詢、SSE
+  為 LIVE、且所有帳戶 health 皆 `Healthy`。重連時先讀 health 再訂閱：`NotSubscribed`、health 讀取失敗，或
+  App 已權威對帳過卻出現 `NoBaseline`（update_status 會建立基準，故代表 sidecar 重啟且他端先訂閱），都視為
+  不連續：清除基準、重新訂閱、不信任 cache，直到下一次權威查詢。cache 重建只新增或更新列，**不刪除**本地
+  委託；本地仍有效但 cache 沒有的委託會保留並標示待對帳，同時清除基準。
+- **全部刪單**：罕見且攸關安全，一律 `refresh:true`（update_status），不讀 cache。
+- **改刪單的 trade_id**：trade_id 只存在於觀察到該委託的 sidecar 程序。App 在目前 sidecar 沒有權威基準時
+  （例如外部重啟後），改刪單前對該帳戶執行一次 `refresh:true`，依已知 seqno／ordno、方向、商品重新解析
+  trade_id；找不到唯一且仍有效的同筆委託即拒送，不重試。
+- **#235 暫時處理移除**：有基準時改價、減量、刪單不再先查委託；保留本地唯一委託、已簽署同帳戶、商品市場相符、
   伺服器未切換的檢查，失敗不送出、不重試。
 - **Trade 數量**：`order.quantity` 是原量、取消量累計於 `cancel_quantity`；1.7.6 HTTP 的
   `status.order_quantity` 對已成交／減量列可回 0，不作為剩餘量或成交上限依據。
@@ -46,9 +51,10 @@ update_status。ADR 0002 當時「cache-only Trade HTTP API 不是本次前提�
 - 下單前後的權威檢查、native production 與 Agent 的 read-only 查核、Grid／到價策略與 #102 保護單查詢不改。
 - 仍在上游開啟：Shioaji #232（持倉快照無 watermark）、#233（模擬 Share 單位的 yd_quantity，1.7.6 仍重現）、
   #234（模擬減量後刪單 HTTP／SSE 不一致；1.7.6 模擬單一案例已一致，但不宣稱修復，前端零剩餘防禦保留）。
-- sidecar 沒有實例識別：重啟偵測只靠重連時的 `NotSubscribed` 或 health 讀取失敗（兩者都停止信任 cache
-  並重新訂閱）。若重啟後在 App 讀 health 之前已有其他 client（Agent、CLI、plugin）先訂閱同帳戶，仍可能
-  誤判為連續；此殘餘風險待上游提供實例或 cache 基準識別。同一原因可有多個來源（App 端與伺服器 health），
+- sidecar 沒有實例識別：重啟偵測靠重連時的 `NotSubscribed`、`NoBaseline` 或 health 讀取失敗。若重啟後
+  在 App 讀 health 之前他端已訂閱且兩條串流都已收到新回報（已 Healthy），仍可能誤判為連續；此時 cache
+  重建不刪本地委託、缺少本地有效委託即降級，改刪單可能因 trade_id 不存在而失敗並標示改刪待確認，全部刪單
+  不受影響（一律權威查詢）。完整解法待上游提供實例或 cache 基準識別。同一原因可有多個來源（App 端與伺服器 health），
   各來源分別解除。
 - health 只描述 sidecar cache；App 與 sidecar 之間 SSE 斷線時 sidecar 仍投影，App 端的持倉增量仍可能漏，
   因此持倉只能由持倉快照解除。mock／CI／模擬證據不等於正式原生驗收。

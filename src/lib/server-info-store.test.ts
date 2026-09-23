@@ -30,13 +30,15 @@ async function mountProbe() {
     };
 }
 
-it('limits the known unit warning to verified simulation versions without guessing values', () => {
+it('warns in simulation unless the version is known fixed, without guessing values', () => {
     expect(yesterdayQuantityNotice({ version: '1.7.5', simulation: true })).toContain('模擬帳務');
     expect(yesterdayQuantityNotice({ version: '1.7.5', simulation: false })).toBeUndefined();
     // Sinotrade/Shioaji#233 still reproduces on a 1.7.6 simulation sidecar.
     expect(yesterdayQuantityNotice({ version: '1.7.6', simulation: true })).toContain('1.7.6 模擬帳務');
     expect(yesterdayQuantityNotice({ version: '1.7.6', simulation: false })).toBeUndefined();
-    expect(yesterdayQuantityNotice({ version: '1.7.7', simulation: true })).toBeUndefined();
+    // Unknown/newer versions keep the warning until verified fixed.
+    expect(yesterdayQuantityNotice({ version: '1.7.7', simulation: true })).toContain('1.7.7 模擬帳務');
+    expect(yesterdayQuantityNotice({ version: '1.7.7', simulation: false })).toBeUndefined();
     expect(yesterdayQuantityNotice(undefined)).toContain('尚未取得');
 });
 
