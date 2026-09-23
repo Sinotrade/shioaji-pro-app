@@ -3,7 +3,9 @@ import {
     CancelUnconfirmedError,
     findOrderRow,
     isConfirmedCancellation,
+    readMark,
     requiredCancelQuantity,
+    sharedAuthoritativeTrades,
     verifyCancellation,
     type CancelVerificationDeps,
 } from './cancel-verification';
@@ -228,6 +230,27 @@ describe('verifyCancellation', () => {
         await expect(second).resolves.toMatchObject({ source: 'cache' });
         expect(rounds[0]).toBe(0); expect(rounds[1]).toBe(0); // first round: two separate reads
         expect(readTrades.mock.calls.length).toBeLessThan(6); // later rounds shared
+    });
+});
+
+describe('shared authoritative read failures', () => {
+    it('shares a failing read with concurrent callers but lets the next call retry', async () => {
+        const scope = `reject-${Math.random()}`;
+        let release!: (error: Error) => void;
+        const failing = vi.fn(() => new Promise<Trade[]>((_, reject) => { release = reject; }));
+        const mark = readMark();
+        const a = sharedAuthoritativeTrades(scope, account, mark, failing);
+        const b = sharedAuthoritativeTrades(scope, account, mark, failing);
+        expect(failing).toHaveBeenCalledTimes(1);
+        release(Object.assign(new Error('429 Too Many Requests'), { status: 429 }));
+        await expect(a).rejects.toThrow('429');
+        await expect(b).rejects.toThrow('429');
+        const ok = vi.fn(async () => [row()]);
+        await expect(sharedAuthoritativeTrades(scope, account, mark, ok)).resolves.toHaveLength(1);
+        expect(ok).toHaveBeenCalledTimes(1);
+        // A successful read stays shared for later callers with an older mark.
+        await expect(sharedAuthoritativeTrades(scope, account, mark, ok)).resolves.toHaveLength(1);
+        expect(ok).toHaveBeenCalledTimes(1);
     });
 });
 

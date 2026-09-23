@@ -162,7 +162,11 @@ const cacheInFlight = new Map<string, SharedRead>();
 const lastAuthoritative = new Map<string, SharedRead>();
 function startRead(key: string, read: () => Promise<Trade[]>, keep: Map<string, SharedRead>, dropOnSettle: boolean) {
     const entry: SharedRead = { seq: ++readSeq, promise: read() };
-    if (dropOnSettle) entry.promise.then(() => undefined, () => undefined).finally(() => { if (keep.get(key) === entry) keep.delete(key); });
+    const drop = () => { if (keep.get(key) === entry) keep.delete(key); };
+    // Only successful reads are shared after they settle: a rejected read
+    // (429, sidecar still logging in) is dropped so the next caller retries.
+    // Callers that joined it while in flight still get its error.
+    entry.promise.then(dropOnSettle ? drop : () => undefined, drop);
     keep.set(key, entry);
     return entry.promise;
 }

@@ -253,6 +253,29 @@ describe('mutation without an authoritative baseline on this sidecar', () => {
         await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
         expect(m.post.mock.calls.map(c => c[0])).toEqual(['/api/v1/order/trades']);
     });
+    it('after a restart, a rejected pre-send read (429) is not reused: the next cancel reads again and proceeds', async () => {
+        m.baseline = false;
+        let reads = 0;
+        m.post.mockImplementation(async (p: string, body: Record<string, unknown>) => {
+            if (p === '/api/v1/order/trades' && body.refresh === true) {
+                reads += 1;
+                if (reads === 1) throw Object.assign(new Error('429 Too Many Requests'), { status: 429 });
+                return reads === 2 ? [restarted()] : [restarted('new-id', {}, { status: 'Cancelled', cancel_quantity: 3 })];
+            }
+            if (p === '/api/v1/order/trades') return [restarted('new-id', {}, { status: 'Cancelled', cancel_quantity: 3 })];
+            return row();
+        });
+        m.trusted = false;
+        await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true, message: expect.stringContaining('429') });
+        vi.useFakeTimers();
+        try {
+            const second = cancelOrder('fixture');
+            await vi.advanceTimersByTimeAsync(5_000);
+            await expect(second).resolves.toMatchObject({ status: { status: 'Cancelled' } });
+        } finally { vi.useRealTimers(); }
+        expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/cancel_order')).toHaveLength(1);
+        expect(m.post.mock.calls[m.post.mock.calls.findIndex(c => c[0] === '/api/v1/order/cancel_order')]![1].trade_id).toBe('new-id');
+    });
     it('keeps the local identity checks before any query', async () => {
         m.baseline = false; m.accounts = [{ ...account, signed: false }];
         await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
