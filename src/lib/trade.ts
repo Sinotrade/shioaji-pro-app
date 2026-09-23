@@ -308,12 +308,14 @@ export async function cancelAllOrders(): Promise<number> {
     const tradable = getAccountState().accounts.filter(
         (a) => a.signed && (a.account_type === 'S' || a.account_type === 'F'),
     );
+    // Rare, safety-critical: always the authoritative update_status read
+    // (refresh:true), never the sidecar cache (ADR 0003).
     const fetches =
         tradable.length > 0
             ? tradable.map((a) =>
-                  fetchTrades(a.account_type as 'S' | 'F', a),
+                  fetchTrades(a.account_type as 'S' | 'F', a, { refresh: true }),
               )
-            : [fetchTrades('S'), fetchTrades('F')];
+            : [fetchTrades('S', undefined, { refresh: true }), fetchTrades('F', undefined, { refresh: true })];
     const rs = await Promise.allSettled(fetches);
     const failedAccounts = rs.filter(r => r.status === 'rejected').length;
     const merged = rs.flatMap((r) =>

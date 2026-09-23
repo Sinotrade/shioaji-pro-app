@@ -7,10 +7,10 @@
 
 import { getApiBase } from './runtime';
 import { fetchInfo } from './shioaji';
-import { getServerInfo, subscribeServerInfo } from './server-info-store';
+import { knownServerInfo, subscribeServerInfo } from './server-info-store';
 
 export function currentProtectionEnv(): string | null {
-    const info = getServerInfo();
+    const info = knownServerInfo();
     if (!info || typeof info.simulation !== 'boolean') return null;
     return `${getApiBase()}|${info.simulation ? 'simulation' : 'production'}`;
 }

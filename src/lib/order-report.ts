@@ -39,8 +39,8 @@ export interface OrderReport {
     cancelQuantity: number; // status.cancel_quantity
     modifiedPrice: number; // status.modified_price（改價後的新價）
     ts?: number; // exchange timestamp, epoch seconds
-    // Shioaji 1.7.6+ opaque report identity; '' when absent (older servers,
-    // historical records). Dedup by the full string, never by prefix.
+    /** Shioaji 1.7.6+ opaque receipt identity (`""` when absent, e.g. history
+     *  records or pre-1.7.6 servers). Not Trade.order.id nor exchange_seq. */
     eventId: string;
     raw: unknown;
 }
@@ -57,7 +57,8 @@ export interface DealReport {
     tradeId: string;
     orderLot: string;
     ts?: number;
-    eventId: string; // see OrderReport.eventId
+    /** See OrderReport.eventId. */
+    eventId: string;
     raw: unknown;
 }
 

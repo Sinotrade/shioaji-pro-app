@@ -1,6 +1,8 @@
 # Agent Harness threat model
 
-This candidate enables production semantic Agent trading with Shioaji 1.7.5.
+This candidate enables production semantic Agent trading with Shioaji 1.7.5 and
+later; the one-shot IPC bootstrap and capability v1 were re-checked against a
+1.7.6 simulation sidecar on 2026-09-23 (`bootstrap=one_shot_ipc`).
 The maintainer explicitly requested user-selected production Auto, superseding
 #51's original mandatory-confirm-only product constraint. The wire capability
 contract remains v1. See [AGENT_HARNESS_CONTRACT.md](AGENT_HARNESS_CONTRACT.md).

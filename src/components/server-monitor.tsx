@@ -104,7 +104,7 @@ export function ServerMonitor() {
             <p className={styles.caption}>請求摘要：{report ? report.settings.capture.requests ? '已啟用' : '未開啟，無明細不代表沒有請求' : '未知'}<br />串流統計：{report ? report.settings.capture.streams === 'auto' ? '按需；展開官方 Dashboard 的連線詳情才收集' : '已停用' : '未知'}<br />歷史最後儲存：{report?.last_saved_ms ? new Date(report.last_saved_ms).toLocaleTimeString('zh-TW', { hour12: false }) : '尚無紀錄'}</p>
         </details>
         {ownedOrigin && <button className={styles.button} aria-expanded={dashboard} onClick={() => setDashboard(v => !v)}>{dashboard ? '收合' : '開啟'}官方 Server Dashboard</button>}
-        {dashboard && enabled && ownedOrigin && <iframe className={styles.frame} title="Shioaji 1.7.5 Server Dashboard" src={`${ownedOrigin}/?monitor.source=backend&monitor.origin=all&monitor.window=5m`} sandbox="allow-scripts allow-same-origin" referrerPolicy="no-referrer" />}
+        {dashboard && enabled && ownedOrigin && <iframe className={styles.frame} title="Shioaji Server Dashboard" src={`${ownedOrigin}/?monitor.source=backend&monitor.origin=all&monitor.window=5m`} sandbox="allow-scripts allow-same-origin" referrerPolicy="no-referrer" />}
         {dashboard && <p className={styles.caption}>收合、暫停或隱藏本頁會卸載 Dashboard，釋放自己的收集 session；不影響行情訂閱。完整 Dashboard 建議放大面板查看。</p>}
     </section>;
 }
