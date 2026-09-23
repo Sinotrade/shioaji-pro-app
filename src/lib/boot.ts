@@ -28,6 +28,7 @@ import {
     serverStatus,
 } from './tauri';
 import { logNotice, notify } from './trade';
+import { isChildWindow } from './window-role';
 
 let booted = false;
 
@@ -87,9 +88,8 @@ async function run() {
     // popouts and flash tiles each run their own bootstrap(), and concurrent
     // serverStarts race for the same port and clobber the pid record. They
     // still get the health watchdog below.
-    const isPopout = new URLSearchParams(window.location.search).has(
-        'popout',
-    );
+    // (they also have no settings-store permission: see window-role.ts)
+    const isPopout = isChildWindow();
     if (isTauri && !isPopout) {
         try {
             const settings = await loadDesktopSettings();
