@@ -16,50 +16,77 @@ function render(props: Parameters<typeof PanelChrome>[0]) {
 }
 
 const text = (n: { children: unknown[] }) => n.children.join('');
+const byClass = (r: ReactTestRenderer, cls: string) =>
+    r.root.findAll((n) => n.type === 'span' && n.props.className === cls);
+const names = (r: ReactTestRenderer) => [
+    ...byClass(r, styles.symbolName.afterCode),
+    ...byClass(r, styles.symbolName.afterLabel),
+];
+const bar = (r: ReactTestRenderer) =>
+    r.root.find((n) => n.type === 'div' && n.props['data-controls'] !== undefined);
 
-it('renders label, code and name in truncation-priority order with a full tooltip', () => {
+const pinnedProps = {
+    title: '閃電下單',
+    symbolCode: 'NSFJ6',
+    symbolName: '頎邦期貨 202610',
+    pinnable: true,
+    pin: 'NSFJ6',
+    onPinChange: () => undefined,
+};
+
+it('renders label, code and name in order with a full tooltip', () => {
     const r = render({ title: '閃電下單', symbolCode: 'NSFJ6', symbolName: '頎邦期貨 202610' });
     const spans = r.root.findAllByType('span');
-    const label = spans.find((s) => s.props.className === styles.symbolLabel)!;
-    const code = spans.find((s) => s.props.className === styles.symbolCode)!;
-    const name = spans.find((s) => s.props.className === styles.symbolName)!;
-    expect(text(label)).toBe('閃電下單');
-    expect(text(code)).toBe('NSFJ6');
-    expect(text(name)).toBe('頎邦期貨 202610');
-    expect(spans.indexOf(label)).toBeLessThan(spans.indexOf(code));
-    expect(spans.indexOf(code)).toBeLessThan(spans.indexOf(name));
-    // truncated parts stay readable on hover
-    expect(name.props.title).toBe('閃電下單 · NSFJ6 · 頎邦期貨 202610');
-    expect(label.props.title).toBe('閃電下單 · NSFJ6 · 頎邦期貨 202610');
+    const [label] = byClass(r, styles.symbolLabel);
+    const [code] = byClass(r, styles.symbolCode);
+    const [name] = byClass(r, styles.symbolName.afterCode);
+    expect(text(label!)).toBe('閃電下單');
+    expect(text(code!)).toBe('NSFJ6');
+    expect(text(name!)).toBe('頎邦期貨 202610');
+    expect(spans.indexOf(label!)).toBeLessThan(spans.indexOf(code!));
+    expect(spans.indexOf(code!)).toBeLessThan(spans.indexOf(name!));
+    // name lives in its own wrap box so it drops out instead of a lone ellipsis
+    expect(byClass(r, styles.nameBox)).toHaveLength(1);
+    expect(name!.props.title).toBe('閃電下單 · NSFJ6 · 頎邦期貨 202610');
+    expect(label!.props.title).toBe('閃電下單 · NSFJ6 · 頎邦期貨 202610');
+    expect(bar(r).props['data-controls']).toBe('none');
 });
 
 it('omits code/name elements when there is no contract or no name', () => {
     const none = render({ title: '持倉/委託/帳務' });
     // symbol-less panels keep the plain ellipsis title (never hidden when narrow)
-    expect(none.root.findAll((n) => n.props.className === styles.titleText)).toHaveLength(1);
-    expect(none.root.findAll((n) => n.props.className === styles.symbolCode)).toHaveLength(0);
-    expect(none.root.findAll((n) => n.props.className === styles.symbolName)).toHaveLength(0);
+    expect(byClass(none, styles.titleText)).toHaveLength(1);
+    expect(byClass(none, styles.symbolCode)).toHaveLength(0);
+    expect(names(none)).toHaveLength(0);
 
     for (const symbolName of [undefined, null, '']) {
         const r = render({ title: '閃電下單', symbolCode: 'TXFR1', symbolName });
-        expect(r.root.findAll((n) => n.props.className === styles.symbolCode)).toHaveLength(1);
-        expect(r.root.findAll((n) => n.props.className === styles.symbolName)).toHaveLength(0);
+        expect(byClass(r, styles.symbolCode)).toHaveLength(1);
+        expect(names(r)).toHaveLength(0);
     }
 });
 
-it('pinned panels show the name instead of repeating the code already in the pin input', () => {
-    const r = render({
-        title: '閃電下單',
-        symbolCode: 'NSFJ6',
-        symbolName: '頎邦期貨 202610',
-        pinnable: true,
-        pin: 'NSFJ6',
-        onPinChange: () => undefined,
-    });
-    expect(r.root.findAll((n) => n.props.className === styles.symbolCode)).toHaveLength(0);
-    const name = r.root.find((n) => n.props.className === styles.symbolName);
-    expect(text(name)).toBe('頎邦期貨 202610');
-    expect(name.props.title).toBe('閃電下單 · NSFJ6 · 頎邦期貨 202610');
+it('linked panels mark their control set for the width thresholds', () => {
+    const r = render({ ...pinnedProps, pin: null });
+    expect(bar(r).props['data-controls']).toBe('linked');
+    expect(byClass(r, styles.symbolCode)).toHaveLength(1);
+});
+
+it('pinned panels show "label · name" instead of repeating the code in the pin input', () => {
+    const r = render(pinnedProps);
+    expect(bar(r).props['data-controls']).toBe('pinned');
+    expect(byClass(r, styles.symbolCode)).toHaveLength(0);
+    const [name] = byClass(r, styles.symbolName.afterLabel);
+    expect(text(name!)).toBe('頎邦期貨 202610');
+    expect(r.root.findByType('input').props.value).toBe('NSFJ6');
+});
+
+it('hides the old name while a new code is being typed into the pin input', () => {
+    const r = render(pinnedProps);
     const input = r.root.findByType('input');
-    expect(input.props.value).toBe('NSFJ6');
+    act(() => input.props.onChange({ target: { value: 'txfr' } }));
+    expect(names(r)).toHaveLength(0);
+    // typing back the same code (any case / padding) shows it again
+    act(() => input.props.onChange({ target: { value: ' nsfj6 ' } }));
+    expect(names(r)).toHaveLength(1);
 });

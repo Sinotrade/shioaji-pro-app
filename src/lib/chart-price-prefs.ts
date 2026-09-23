@@ -52,13 +52,16 @@ export function setChartHoverPricePick(v: boolean) {
     emit();
 }
 
+// module-level so useSyncExternalStore doesn't resubscribe every render
+function subscribe(l: () => void): () => void {
+    listeners.add(l);
+    return () => {
+        listeners.delete(l);
+    };
+}
+
 export function useChartHoverPricePick(): boolean {
-    return useSyncExternalStore((l) => {
-        listeners.add(l);
-        return () => {
-            listeners.delete(l);
-        };
-    }, getChartHoverPricePick);
+    return useSyncExternalStore(subscribe, getChartHoverPricePick);
 }
 
 /** test-only: re-read storage as a fresh window would at module load */
