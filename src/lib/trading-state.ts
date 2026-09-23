@@ -503,6 +503,18 @@ async function resyncOrdersFromCache(accounts: Account[], before: { clockBefore:
 // A successful report for the same order id arriving afterwards that carries
 // exactly the requested price / reduction confirms that one mutation.
 const awaitingConfirmation = new Map<string, MutationIntent>();
+// Recently applied order reports per order id (with their event sequence), so
+// a report that beat the HTTP reply can still confirm the settled mutation.
+const recentOrderReports = new Map<string, { report: OrderEventReport; sequence: number }[]>();
+function rememberOrderReport(report: OrderEventReport) {
+    if (report.kind !== 'order') return;
+    const list = recentOrderReports.get(report.id) ?? [];
+    list.push({ report, sequence: eventSequence });
+    if (list.length > 5) list.shift();
+    recentOrderReports.delete(report.id);
+    recentOrderReports.set(report.id, list);
+    if (recentOrderReports.size > 500) recentOrderReports.delete(recentOrderReports.keys().next().value!);
+}
 function confirmMutation(report: OrderEventReport) {
     if (report.kind !== 'order' || report.failed) return;
     const intent = awaitingConfirmation.get(report.id);
@@ -666,6 +678,10 @@ function start() {
             if (intent && event.trade) {
                 if (awaitingConfirmation.size >= 500) awaitingConfirmation.delete(awaitingConfirmation.keys().next().value!);
                 awaitingConfirmation.set(event.tradeId, intent);
+                // The confirming report may have arrived before the reply.
+                if (baseline) for (const { report, sequence } of recentOrderReports.get(event.tradeId) ?? []) {
+                    if (sequence > baseline.sequence) confirmMutation(report);
+                }
             } else awaitingConfirmation.delete(event.tradeId);
         }
         if (queryEvents) queryOverflow = true;
@@ -736,6 +752,7 @@ function start() {
                 state = { ...state, trades };
                 if (report.ts) orderTimes.set(key, report.ts);
                 releasePendingDeals(report.id);
+                rememberOrderReport(report);
                 confirmMutation(report);
             } else {
                 const known = state.trades.some(t => t.order.id === report.id);

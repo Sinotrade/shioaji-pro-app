@@ -74,3 +74,56 @@ it('never queries trades, positions or any accounting route itself', async () =>
     expect(m.post.mock.calls.filter(c => /order|portfolio/.test(String(c[0])))).toEqual([]);
     expect(fetchMock.mock.calls.every(c => String(c[0]).endsWith('/api/v1/health'))).toBe(true);
 });
+
+it('grants one heartbeat period after a resume (late watchdog tick) before calling STALE', async () => {
+    const { stream, first } = await open();
+    vi.advanceTimersByTime(20_000);
+    // Suspend: timers do not run for 3 minutes, then everything resumes.
+    vi.setSystemTime(Date.now() + 180_000);
+    vi.advanceTimersByTime(stream.WATCHDOG_TICK_MS);
+    expect(stream.getStreamStatus()).toBe('live'); // grace, queued events may still arrive
+    first.emit('heartbeat'); // the queued heartbeat is delivered
+    vi.advanceTimersByTime(stream.HEARTBEAT_PERIOD_MS);
+    expect(stream.getStreamStatus()).toBe('live');
+    expect(FakeEventSource.all).toHaveLength(1);
+    // Without any event, STALE follows once the grace has elapsed.
+    vi.advanceTimersByTime(stream.STALE_AFTER_MS + stream.WATCHDOG_TICK_MS);
+    expect(stream.getStreamStatus()).toBe('stale');
+});
+
+it('keeps escalating the retry delay while connections open but never heartbeat, and resets on a heartbeat', async () => {
+    const { stream } = await open();
+    const delays: number[] = [];
+    for (let i = 0; i < 4; i++) {
+        while (stream.getStreamStatus() === 'live') vi.advanceTimersByTime(1000);
+        expect(stream.getStreamStatus()).toBe('stale');
+        const { retryDelayMs, silentConnections } = stream.getStreamWatchdog();
+        expect(silentConnections).toBe(i + 1);
+        const before = FakeEventSource.all.length;
+        vi.advanceTimersByTime(retryDelayMs); // covers the scheduled (previous) delay
+        expect(FakeEventSource.all.length).toBe(before + 1);
+        delays.push(retryDelayMs);
+        FakeEventSource.all.at(-1)!.onopen!(); // opens, but the proxy buffers heartbeats
+    }
+    expect(delays[1]).toBeGreaterThan(delays[0]!);
+    expect(delays[3]).toBeGreaterThan(delays[2]!);
+    expect(delays[3]).toBeGreaterThan(15_000); // beyond the normal 15 s cap
+    FakeEventSource.all.at(-1)!.emit('heartbeat');
+    expect(stream.getStreamWatchdog()).toMatchObject({ silentConnections: 0, retryDelayMs: 1000 });
+});
+
+it('paces the subscription replay after a reconnect (Shioaji 50 per 5 s)', async () => {
+    m.post.mockResolvedValue({ success: true });
+    const { stream, first } = await open();
+    for (let i = 0; i < 100; i++) stream.registerSubscription({ security_type: 'STK', exchange: 'TSE', code: `C${i}`, target_code: null, quote_type: 'Tick', intraday_odd: false });
+    first.onerror!();
+    vi.advanceTimersByTime(1000);
+    FakeEventSource.all.at(-1)!.onopen!();
+    const replayed = () => m.post.mock.calls.filter(c => c[0] === '/api/v1/stream/subscribe').length;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(replayed()).toBe(stream.REPLAY_BATCH);
+    await vi.advanceTimersByTimeAsync(stream.REPLAY_WINDOW_MS);
+    expect(replayed()).toBe(2 * stream.REPLAY_BATCH);
+    await vi.advanceTimersByTimeAsync(stream.REPLAY_WINDOW_MS);
+    expect(replayed()).toBe(100);
+});
