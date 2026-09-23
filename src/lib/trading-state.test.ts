@@ -52,6 +52,7 @@ beforeEach(async () => {
     vi.stubGlobal('navigator', { locks: { request: (_name: string, _options: unknown, callback: (lock: object) => unknown) => callback({}) } });
     vi.stubGlobal('BroadcastChannel', undefined); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     mocks.status = 'live'; mocks.order = null; mocks.statusChanged = null; mocks.response = null; mocks.account.account_type = 'S';
+    mocks.account.account_id = 'a'; mocks.account.broker_id = 'fixture';
     mocks.extraAccounts = [];
     mocks.positions.mockReset().mockImplementation(async () => [baseline()]);
     mocks.trades.mockReset().mockResolvedValue([]); mocks.balance.mockReset().mockResolvedValue({ acc_balance: 100, date: '2026-09-12', errmsg: '' });
@@ -354,4 +355,164 @@ it('replays sanitized native New with empty full_code after matching PendingSubm
     expect(store.getTradingState().trades[0]!.contract.code).toBe(body.contract.code);
     // Restore mutable fixture identity for the existing suite's next test.
     mocks.account.account_id='a'; mocks.account.broker_id='fixture';
+});
+
+// ---- Shioaji 1.7.6 event_id / trade cache health (#85 #86) ----
+// Real-shape payloads captured from a 1.7.6 simulation sidecar and
+// de-identified (fixtures/native-simulation-event-id-1.7.6.json).
+describe('Shioaji 1.7.6 report identity and cache health', () => {
+    type Wire = (typeof import('./fixtures/native-simulation-event-id-1.7.6.json'))['events'][number];
+    let wire: Wire[];
+    const stock = { account_type: 'S', broker_id: 'fixture', account_id: 'fixture-stock', person_id: 'fixture', signed: true, username: '' };
+    const futures = { ...stock, account_type: 'F', account_id: 'fixture-futures' };
+    const byId = (id: string) => wire.find(e => (e.data as unknown as Record<string, { event_id: string }>)[e.state]!.event_id === id)!;
+    const body = (e: Wire) => (e.data as unknown as Record<string, Record<string, unknown>>)[e.state]!;
+    // Mirrors stream.ts: admit through the ledger, drop duplicates, fan out.
+    async function deliver(e: Wire | object, eventId?: string) {
+        const { reportLedger } = await import('./report-ledger');
+        const report = normalizeOrderEvent(e)!;
+        if (eventId !== undefined) report.eventId = eventId;
+        if (reportLedger.admit({ base: 'http://fixture.invalid' }, report.eventId, report.kind).duplicate) return false;
+        await emit(report);
+        return true;
+    }
+    function response(e: Wire, account: typeof stock) {
+        const b = body(e) as { order: Record<string, unknown>; contract: { code: string; security_type: string; exchange: string } };
+        return { account, trade: { contract: { code: b.contract.code, security_type: b.contract.security_type, exchange: b.contract.exchange, target_code: null },
+            order: { ...b.order, account, octype: b.order.oc_type }, status: { id: b.order.id, status: 'PendingSubmit', status_code: '', msg: '',
+                order_quantity: b.order.quantity, deal_quantity: 0, cancel_quantity: 0, modified_price: 0, deals: [] } } as unknown as import('./types/order').Trade };
+    }
+    const reasons = (scope: 'orders' | 'positions' | 'account') => store.getTradingState().queries[scope].reasons;
+    beforeEach(async () => {
+        wire = (await import('./fixtures/native-simulation-event-id-1.7.6.json')).default.events;
+        Object.assign(mocks.account, stock);
+        mocks.extraAccounts = [futures];
+        mocks.cached.mockImplementation((code: string) => code.startsWith('TXF') ? { code, multiplier: 200 } : { code, security_type: 'STK' });
+        mocks.positions.mockReset().mockResolvedValue([]);
+        vi.advanceTimersByTime(1500);
+        // Establish snapshots for both fixture accounts (authoritative read).
+        await act(async () => { await store.refreshTradingState(); });
+        mocks.trades.mockClear(); mocks.health.mockClear(); mocks.subscribe.mockClear(); mocks.positions.mockClear();
+    });
+
+    it('projects the captured reduce-then-cancel once and drops redelivered event_ids', async () => {
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:9'), futures)); });
+        for (const id of [9, 10, 11]) expect(await deliver(byId(`v1:FO:FSTREAM:RESET1:${id}`))).toBe(true);
+        const settled = store.getTradingState().trades.find(t => t.order.id === 'fx04')!;
+        expect(settled.status).toMatchObject({ status: 'Cancelled', cancel_quantity: 2, deal_quantity: 0 });
+        expect(settled.order.quantity).toBe(2);
+        for (const id of [9, 10, 11]) expect(await deliver(byId(`v1:FO:FSTREAM:RESET1:${id}`))).toBe(false);
+        expect(store.getTradingState().trades.find(t => t.order.id === 'fx04')).toBe(settled);
+        expect(reasons('orders')).toEqual([]);
+        expect(mocks.trades).not.toHaveBeenCalled(); expect(mocks.health).not.toHaveBeenCalled();
+    });
+
+    it('applies futures New/Cover fills once by event_id, with exchange_seq as the fallback identity', async () => {
+        for (const id of [12, 13]) await act(async () => { mocks.response!(response(byId(`v1:FO:FSTREAM:RESET1:${id}`), futures)); });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:12'));
+        await deliver(byId('v1:FD:FSTREAM:RESET1:8'));
+        const open = () => store.getTradingState().positions.filter(p => p.code === 'TXFJ6');
+        expect(open()).toHaveLength(1); expect(open()[0]).toMatchObject({ quantity: 1, direction: 'Buy', price: 48284 });
+        // Same event_id again: dropped at admission.
+        expect(await deliver(byId('v1:FD:FSTREAM:RESET1:8'))).toBe(false);
+        // Different event_id, same fill (exchange_seq + trade): not applied twice.
+        expect(await deliver(byId('v1:FD:FSTREAM:RESET1:8'), 'v1:FD:FSTREAM:RESET1:99')).toBe(true);
+        // Empty historical ID: no ID dedup, the exchange_seq path still holds.
+        expect(await deliver(byId('v1:FD:FSTREAM:RESET1:8'), '')).toBe(true);
+        expect(open()[0]!.quantity).toBe(1);
+        expect(store.getTradingState().trades.find(t => t.order.id === 'fx05')!.status).toMatchObject({ status: 'Filled', deal_quantity: 1 });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:13'));
+        await deliver(byId('v1:FD:FSTREAM:RESET1:9'));
+        expect(open()).toHaveLength(0);
+        expect(reasons('positions')).not.toContain('unknown-fill');
+    });
+
+    it('keeps deal-before-order as metadata-missing and clears only that reason on replay', async () => {
+        await deliver({ state: 'StockOrder', data: { StockOrder: { ...body(byId('v1:SO:SSTREAM:RESET1:1')), event_id: 'opaque-report' } } });
+        expect(reasons('orders')).toEqual(expect.arrayContaining(['untrackable-event']));
+        await deliver(byId('v1:SD:SSTREAM:RESET1:3'));
+        expect(reasons('orders')).toContain('metadata-missing');
+        await deliver(byId('v1:SO:SSTREAM:RESET1:3'));
+        expect(reasons('orders')).not.toContain('metadata-missing');
+        expect(reasons('orders')).toContain('untrackable-event');
+        expect(store.getTradingState().positions.find(p => p.code === '2890')).toMatchObject({ quantity: 1000 });
+    });
+
+    it('waits for a late report before calling a gap, without any query', async () => {
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:9'), futures)); });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:9'));
+        await deliver(byId('v1:FO:FSTREAM:RESET1:11'));
+        await deliver(byId('v1:FO:FSTREAM:RESET1:10'));
+        await act(async () => { vi.advanceTimersByTime(2000); });
+        expect(reasons('orders')).not.toContain('sequence-gap');
+        expect(mocks.health).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a persistent gap, reads cache health once, and resyncs orders cache-only when Healthy', async () => {
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:9'), futures)); });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:9'));
+        await deliver(byId('v1:FO:FSTREAM:RESET1:11')); // UpdateQty 10 missing
+        expect(reasons('orders')).toContain('projection-failed');
+        // Server cache already projected all three (observed 1.7.6 cache row).
+        const cached = { ...store.getTradingState().trades.find(t => t.order.id === 'fx04')!, account: undefined };
+        mocks.trades.mockImplementation(async (type: string) => type === 'F' ? [{ ...cached, order: { ...cached.order, account: futures },
+            status: { ...cached.status, status: 'Cancelled', order_quantity: 0, cancel_quantity: 2 } }] : []);
+        await act(async () => { vi.advanceTimersByTime(1500); });
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); vi.advanceTimersByTime(50); });
+        await vi.waitFor(() => expect(reasons('orders')).toEqual([]));
+        expect(mocks.health).toHaveBeenCalledTimes(2);
+        expect(mocks.trades.mock.calls.map(c => c[2])).toEqual([{ refresh: false }, { refresh: false }]);
+        expect(store.getTradingState().trades.find(t => t.order.id === 'fx04')!.status).toMatchObject({ status: 'Cancelled', cancel_quantity: 2 });
+        expect(mocks.positions).not.toHaveBeenCalled();
+    });
+
+    it('maps Degraded reasons per tab; a manual orders reconcile clears orders only', async () => {
+        mocks.health.mockResolvedValue({ state: 'Degraded', reasons: [{ event_type: 'FuturesDeal', reason: 'SequenceGap' }, { event_type: 'StockOrder', reason: 'PendingReport' }] });
+        await act(async () => { await store.checkTradeCacheHealth('gap'); });
+        expect(reasons('orders')).toEqual(['sequence-gap', 'pending-report']);
+        expect(reasons('positions')).toEqual(['sequence-gap']);
+        expect(mocks.trades).not.toHaveBeenCalled(); // Degraded: no cache resync
+        mocks.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('orders'); });
+        expect(mocks.trades.mock.calls.map(c => c[2])).toEqual([{ refresh: true }, { refresh: true }]);
+        expect(reasons('orders')).toEqual([]);
+        expect(reasons('positions')).toEqual(['sequence-gap']);
+        expect(mocks.health).toHaveBeenCalledTimes(4); // (gap + post-manual check) × 2 accounts
+    });
+
+    it('after a reconnect on the same sidecar, clears the orders disconnect cache-only and keeps positions/account', async () => {
+        await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
+        for (const scope of ['orders', 'positions', 'account'] as const) expect(reasons(scope)).toContain('disconnect');
+        expect(store.tradeCacheContinuous()).toBe(false);
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await vi.waitFor(() => expect(reasons('orders')).not.toContain('disconnect'));
+        expect(reasons('positions')).toContain('disconnect');
+        expect(reasons('account')).toContain('disconnect');
+        expect(mocks.subscribe).not.toHaveBeenCalled();
+        expect(mocks.trades.mock.calls.map(c => c[2])).toEqual([{ refresh: false }, { refresh: false }]);
+        expect(mocks.positions).not.toHaveBeenCalled();
+        expect(store.tradeCacheContinuous()).toBe(true);
+    });
+
+    it('treats a lost subscription after reconnect as a restarted sidecar: resubscribe, no cache resync', async () => {
+        mocks.health.mockResolvedValue({ state: 'Unknown', reasons: [{ event_type: 'FuturesOrder', reason: 'NotSubscribed' }] });
+        await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledOnce());
+        expect(mocks.trades).not.toHaveBeenCalled();
+        expect(reasons('orders')).toContain('disconnect');
+        // Later Healthy (baselines rebuilt by new reports) must not trust a
+        // cache that never saw update_status on this instance.
+        mocks.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
+        await act(async () => { vi.advanceTimersByTime(3000); await store.checkTradeCacheHealth('gap'); });
+        expect(mocks.trades).not.toHaveBeenCalled();
+        expect(store.tradeCacheContinuous()).toBe(false);
+        expect(reasons('orders')).toContain('disconnect');
+    });
+
+    it('never polls health or trades on a timer', async () => {
+        await act(async () => { vi.advanceTimersByTime(120000); });
+        expect(mocks.health).not.toHaveBeenCalled(); expect(mocks.trades).not.toHaveBeenCalled();
+    });
 });
