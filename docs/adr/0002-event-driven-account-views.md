@@ -32,9 +32,9 @@ Grid follow、使用者啟用的組合到價策略、native production 執行前
 
 ## #102 保護單（Shioaji 1.7.6 起）
 
-- 括號單待成交不再每 4 秒查 S/F trades。進場成交來自 order/deal 回報：先以完整非空 `event_id` 在同一 API base 去重，再以 `<委託 id>:<exchange_seq>` 累積部分成交；帳戶、商品與買賣別須與登記時固定的帳戶一致，缺欄位不計入並標示。
-- 只在登記、App 重新載入、串流恢復時各做一次 `/order/trades` `refresh:false`（server Trade cache，無上游呼叫）與 `trade_cache_health`；`NotSubscribed` 時對該帳戶補一次 `subscribe_trade`。`refresh:true`（update_status）只在使用者按「對帳」時執行。
-- 串流中斷、序號跳號、無可追蹤 event_id、快取 Degraded/NotSubscribed、重新載入或查無委託，均標示「保護未確認完整」；只有串流連線中、使用者對帳後快取為 Healthy 才清除。跳號只代表可能漏回報。
+- 括號單待成交不再每 4 秒查 S/F trades。進場成交來自 order/deal 回報：重複送達已由共用 report ledger（ADR 0003，stream.ts）以完整 `event_id` 剔除，保護單再以每筆計畫自己的 `<委託 id>:<exchange_seq>` 成交集合累積部分成交；帳戶、商品與買賣別須與登記時固定的帳戶一致，缺欄位不計入並標示。
+- 只在登記、App 重新載入、串流恢復時各做一次 `/order/trades` `refresh:false`（server Trade cache，無上游呼叫）與 `trade_cache_health`；訂閱由 boot.ts 在所有模式對每個帳戶處理，`NotSubscribed` 時只重呼同一個冪等訂閱。cache-only 結果只有在 trading-state 具權威且連續的基準時才可信，否則標示未確認；快取查無委託絕不視為成交或取消。`refresh:true`（update_status）只在使用者按「對帳」時執行。
+- 串流中斷、共用 ledger 偵測的序號跳號、無可追蹤 event_id、無連續基準、快取 Degraded/NotSubscribed、重新載入或查無委託，均標示「保護未確認完整」；只有串流連線中、使用者對帳後快取為 Healthy 才清除。跳號只代表可能漏回報。
 - 觸價單只由持有 Web Lock 的主視窗執行；小視窗、閃電與 Tray 以具 ACK 與指令 id 去重的 BroadcastChannel 指令新增／移除，並顯示主視窗鏡像。OCO 同 tick 原子處理，已觸發群組持久化且不再重掛或重送。停損／停利固定建立時的環境（API base＋模擬／正式模式）、帳戶與可交易代碼；模式未確認時不建立也不執行，舊資料缺帳戶者暫停。期貨出場用 Cover；股票括號單僅限現股整張。試撮 tick 不觸發；觸價商品行情訂閱失敗會重試並明示。
 - 出場依「環境／帳戶／商品／方向」保留數量。股票括號單出場以已確認現股持倉扣除保留量為上限，持倉未確認且另有未完成出場時拒送；期貨出場為 Cover，由券商檢核平倉量，不因可能落後的持倉快照縮量。送單結果未知保留數量、明示需使用者確認，永不自動重送；進場於出場觸發後的成交與未完成出場列為未保護量。
 - 證據界線：synthetic／mock 與 1.7.6 模擬環境 browser 單次端到端；原生 App、正式環境、多視窗異常退出與實際保護單 QA 未完成。

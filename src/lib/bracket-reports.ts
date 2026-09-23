@@ -1,20 +1,27 @@
-// src/lib/bracket-reports.ts — one de-duplicated order/deal report feed for
-// protection tracking (trigger exits + bracket entries, #102).
+// src/lib/bracket-reports.ts — order/deal report feed for protection tracking
+// (trigger exits + bracket entries, #102).
 //
-// Every SSE report goes through ONE EventLedger so both consumers agree on
-// what is a repeated delivery (same full event_id in this environment).
-// Recent reports are kept per order id (bounded) because a deal can arrive
-// before the HTTP response that tells us the order id, and before an entry
-// registered from another window reaches the main window.
+// Delivery dedup and sequence-gap tracking are NOT done here: stream.ts
+// admits every report through the shared report ledger (report-ledger.ts,
+// #128) and drops repeated deliveries before fan-out; gaps are observed with
+// `reportLedger.onGap`. This module only keeps recent reports per order id
+// (bounded), because a deal can arrive before the HTTP response that tells
+// us the order id, or before an entry registered from another window
+// reaches the main window, and flags reports whose event_id cannot be
+// tracked (empty / unsupported, e.g. pre-1.7.6 servers).
 
-import { EventLedger, type EventVerdict } from './bracket-event-ledger';
 import type { OrderEventReport } from './order-report';
+import { parseEventId } from './report-ledger';
 import { getApiBase } from './runtime';
 import { onOrderEvent } from './stream';
 
-export type TrackedListener = (report: OrderEventReport, verdict: EventVerdict, env: string) => void;
+export interface TrackedReportInfo {
+    /** No supported v1 event_id: sequence continuity cannot be judged. */
+    untrackable: boolean;
+}
 
-const ledger = new EventLedger();
+export type TrackedListener = (report: OrderEventReport, info: TrackedReportInfo, base: string) => void;
+
 const listeners = new Set<TrackedListener>();
 const recent = new Map<string, { at: number; reports: OrderEventReport[] }>();
 const RECENT_ORDERS = 2000;
@@ -25,10 +32,10 @@ function orderIdOf(report: OrderEventReport): string {
     return report.kind === 'deal' ? report.tradeId : report.id;
 }
 
-function remember(env: string, report: OrderEventReport, now: number) {
+function remember(base: string, report: OrderEventReport, now: number) {
     const id = orderIdOf(report);
     if (!id) return;
-    const key = `${env}\u0000${id}`;
+    const key = `${base}\u0000${id}`;
     const entry = recent.get(key) ?? { at: now, reports: [] };
     entry.at = now;
     if (entry.reports.length < 200) entry.reports.push(report);
@@ -41,20 +48,20 @@ function remember(env: string, report: OrderEventReport, now: number) {
     }
 }
 
-/** Reports already received for an order in this environment (oldest first). */
-export function recentReportsFor(env: string, orderId: string, now = Date.now()): OrderEventReport[] {
-    const entry = recent.get(`${env}\u0000${orderId}`);
+/** Reports already received for an order on this API base (oldest first). */
+export function recentReportsFor(base: string, orderId: string, now = Date.now()): OrderEventReport[] {
+    const entry = recent.get(`${base}\u0000${orderId}`);
     if (!entry || now - entry.at > RECENT_MS) return [];
     return entry.reports.slice();
 }
 
+/** Reports reaching here were already de-duplicated by stream.ts. */
 export function ingestReport(report: OrderEventReport, now = Date.now()) {
-    const env = getApiBase();
-    const verdict = ledger.observe(env, report.eventId);
-    if (verdict.kind === 'duplicate') return;
-    remember(env, report, now);
+    const base = getApiBase();
+    remember(base, report, now);
+    const info = { untrackable: !parseEventId(report.eventId) };
     for (const listener of listeners) {
-        try { listener(report, verdict, env); } catch { /* one consumer cannot break another */ }
+        try { listener(report, info, base); } catch { /* one consumer cannot break another */ }
     }
 }
 

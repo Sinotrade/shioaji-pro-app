@@ -32,6 +32,7 @@ const m = vi.hoisted(() => ({
     envChanged: [] as (() => void)[],
     search: '',
     lockGranted: true,
+    continuous: true,
     queued: null as ((lock: object | null) => unknown) | null,
 }));
 
@@ -47,10 +48,13 @@ vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accoun
 vi.mock('./trade', () => ({ notify: m.notify, placeQuickOrder: m.place }));
 vi.mock('./contracts-cache', () => ({ ensureContract: m.ensure }));
 vi.mock('./quote-ownership', () => ({ retainQuote: () => () => undefined }));
-vi.mock('./trading-state', () => ({ getTradingState: () => ({ positions: m.positions.rows,
+vi.mock('./trading-state', () => ({ tradeCacheContinuous: () => m.continuous, getTradingState: () => ({ positions: m.positions.rows,
     queries: { positions: { updatedAt: m.positions.updatedAt, needsReconcile: m.positions.needsReconcile, error: null } } }) }));
-vi.mock('./bracket-api', () => ({ fetchCachedTrades: m.cached, fetchReconciledTrades: m.refreshed, fetchTradeCacheHealth: m.health }));
-vi.mock('./shioaji', () => ({ subscribeTradeEvents: m.subscribe }));
+vi.mock('./shioaji', () => ({
+    fetchTrades: (_type: string, account: unknown, opts: { refresh: boolean }) => opts.refresh ? m.refreshed(account) : m.cached(account),
+    fetchTradeCacheHealth: (_type: string, account: unknown) => m.health(account),
+}));
+vi.mock('./boot', () => ({ subscribeTradeReports: m.subscribe }));
 vi.mock('./protection-env', () => {
     const envBase = (env: string) => env.slice(0, env.lastIndexOf('|'));
     return {
@@ -122,7 +126,7 @@ beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('BroadcastChannel', undefined);
     m.status = 'live'; m.accounts = [F1, F2, S1]; m.base = 'http://sim.invalid'; m.search = '';
-    m.env = 'http://sim.invalid|simulation'; m.lockGranted = true;
+    m.env = 'http://sim.invalid|simulation'; m.lockGranted = true; m.continuous = true;
     m.positions = { rows: [], updatedAt: null, needsReconcile: false };
     for (const f of [m.place, m.notify, m.cached, m.refreshed, m.health, m.subscribe, m.ensure]) f.mockReset();
     m.cached.mockResolvedValue([cacheTrade('fixture-f1', F1, []), cacheTrade('fixture-f9', F2, [])]); m.refreshed.mockResolvedValue([]); m.health.mockResolvedValue(healthy);
@@ -154,7 +158,7 @@ describe('bracket registration and partial-fill accumulation', () => {
         await emit(fDeal1!);
         expect(triggersOf(plan.id).map(t => [t.kind, t.quantity, t.action, t.octype])).toEqual([
             ['stop', 1, 'Sell', 'Cover'], ['take', 1, 'Sell', 'Cover']]);
-        await emit(fDeal1!); // same event_id redelivered
+        await emit(fDeal1!); // repeat that reached us anyway (stream.ts normally drops it)
         await emit(edit(fDeal1!, { event_id: 'v1:FD:FIXTURESTREAMFD:OTHERRESET:1' })); // new id (new reset), same fill identity
         expect(planOf(plan.id).filled).toBe(1);
         await emit(fNew1!);
@@ -216,9 +220,23 @@ describe('protection confirmation state', () => {
         await boot();
         const plan = await bracket.registerBracket(spec(F1));
         await flush();
-        await emit(fDeal1!); // FD:4 baseline
-        await emit(edit(fCoverDeal2!, { trade_id: 'unrelated' })); // FD:7 → 5,6 not observed
+        // stream.ts admits every report into the shared ledger (#128)
+        const { reportLedger } = await import('./report-ledger');
+        reportLedger.admit({ base: m.base }, fDeal1!.eventId, 'deal'); // FD:4 baseline
+        reportLedger.admit({ base: m.base }, fCoverDeal2!.eventId, 'deal'); // FD:7 → 5,6 not observed
         expect(planOf(plan.id).issues.map(i => i.code)).toContain('gap');
+    });
+
+    it('without an authoritative continuous baseline, cache-only results stay unconfirmed; a missing order is not filled/cancelled', async () => {
+        await boot();
+        m.continuous = false;
+        m.cached.mockResolvedValue([]);
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        const p = planOf(plan.id);
+        expect(p.issues.map(i => i.code)).toEqual(['no-baseline', 'lookup-failed']);
+        expect(p.filled).toBe(0);
+        expect(p.entryClosed).toBe(false);
     });
 
     it('Degraded cache health and NotSubscribed are surfaced (subscribe attempted once)', async () => {

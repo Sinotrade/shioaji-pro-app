@@ -644,7 +644,7 @@ function becomeExecutor() {
             body: `${suspended} 筆停損／停利未綁定帳戶，不會自動送單；請在圖表刪除後重新設定` });
     }
     onAnyTick(tick => { if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close)); });
-    onTrackedReport((report, _verdict, base) => applyExitReport(report, base));
+    onTrackedReport((report, _info, base) => applyExitReport(report, base));
     onProtectionEnvChange(() => syncQuotes());
     subscribeStatusStore(() => { if (getStreamStatus() === 'live') { void refreshProtectionEnv(); syncQuotes(); } });
     void refreshProtectionEnv();

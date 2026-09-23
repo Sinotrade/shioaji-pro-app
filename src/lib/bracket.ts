@@ -17,7 +17,10 @@
 //   resent automatically.
 
 import { useSyncExternalStore } from 'react';
-import { subscribeTradeEvents } from './shioaji';
+import { subscribeTradeReports } from './boot';
+import { reportLedger } from './report-ledger';
+import { fetchTradeCacheHealth, fetchTrades } from './shioaji';
+import { tradeCacheContinuous } from './trading-state';
 import {
     accountRefKey,
     addIssue,
@@ -33,9 +36,7 @@ import {
     type AccountRef,
     type BracketPlan,
 } from './bracket-core';
-import { fetchCachedTrades, fetchReconciledTrades, fetchTradeCacheHealth, type TradeCacheHealth } from './bracket-api';
-import { streamMarket, type EventVerdict } from './bracket-event-ledger';
-import { onTrackedReport, recentReportsFor } from './bracket-reports';
+import { onTrackedReport, recentReportsFor, type TrackedReportInfo } from './bracket-reports';
 import { claimExecutor, createCommandBus, isExecutor, isMainWindow } from './main-window-commands';
 import type { OrderEventReport } from './order-report';
 import {
@@ -59,7 +60,7 @@ import {
     onExitUpdate,
     type ExitRecord,
 } from './trigger-engine';
-import type { Action, FuturesOCType, StockOrderCond, StockOrderLot } from './types/order';
+import type { Action, FuturesOCType, StockOrderCond, StockOrderLot, TradeCacheHealth } from './types/order';
 
 export type { BracketPlan } from './bracket-core';
 
@@ -223,15 +224,12 @@ function applyReport(p: BracketPlan, report: OrderEventReport, now: number): Bra
     return p;
 }
 
-function onReport(report: OrderEventReport, verdict: EventVerdict, base: string) {
+function onReport(report: OrderEventReport, info: TrackedReportInfo, base: string) {
     const now = Date.now();
     for (const p of plans.slice()) {
         if (!isLive(p) || !reportEnvMatches(p.env, base)) continue;
         let next = p;
-        if (verdict.kind === 'new' && verdict.gap && streamMarket(verdict.gap.stream) === p.market) {
-            next = addIssue(next, 'gap', `回報序號跳號（預期 ${verdict.gap.expected}，收到 ${verdict.gap.received}），可能漏回報`, now);
-        }
-        if (verdict.kind === 'untrackable' && report.market === p.market) {
+        if (info.untrackable && report.market === p.market) {
             next = addIssue(next, 'untrackable', '收到沒有可追蹤事件 ID 的回報，無法確認是否漏回報', now);
         }
         next = applyReport(next, report, now);
@@ -269,13 +267,24 @@ function applyHealth(account: AccountRef, env: string, health: TradeCacheHealth,
 }
 
 async function checkHealth(account: AccountRef, env: string) {
-    let health = await fetchTradeCacheHealth(account);
+    let health = await fetchTradeCacheHealth(account.account_type, account);
     if (health.reasons.some(r => r.reason === 'NotSubscribed')) {
-        // Reports are required for protection in both simulation and production.
-        try { await subscribeTradeEvents(account); health = await fetchTradeCacheHealth(account); } catch { /* keep first result */ }
+        // boot.ts subscribes every signed account in every mode (#128); this
+        // only repeats that idempotent call if the subscription was lost.
+        try { await subscribeTradeReports(); health = await fetchTradeCacheHealth(account.account_type, account); } catch { /* keep first result */ }
     }
     if (currentProtectionEnv() === env) applyHealth(account, env, health, Date.now());
     return health;
+}
+
+/** A possible sequence gap (shared report ledger, #128) on this API base:
+ * any plan there may have missed a fill — conservative, not per market. */
+function onGap(base: string) {
+    const now = Date.now();
+    for (const p of plans.slice()) {
+        if (!isLive(p) || !reportEnvMatches(p.env, base)) continue;
+        update(p.id, x => addIssue(x, 'gap', '回報序號跳號，可能漏收成交；請對帳', now));
+    }
 }
 
 /** One-shot cache-only lookup + health for an account's live plans. */
@@ -286,9 +295,13 @@ function lookup(account: AccountRef, env: string): Promise<void> {
     const task = (async () => {
         const now = Date.now();
         try {
-            const trades = await fetchCachedTrades(account);
+            // Cache-only continuity is proven only by trading-state's
+            // authoritative baseline on this sidecar instance (#128).
+            const continuous = tradeCacheContinuous();
+            const trades = await fetchTrades(account.account_type, account, { refresh: false });
             if (currentProtectionEnv() !== env) return;
             for (const p of plansFor(account, env)) {
+                if (!continuous) update(p.id, x => addIssue(x, 'no-baseline', '委託快取尚無連續基準（未完成權威查詢或串流曾中斷）；請對帳', now));
                 const trade = trades.find(t => tradeMatchesPlan(t, p));
                 if (trade) update(p.id, x => applyEntryTrade(x, trade, now));
                 else update(p.id, x => addIssue(x, 'lookup-failed', '伺服器委託快取找不到此進場單（可能伺服器重啟）；請對帳', now));
@@ -326,7 +339,7 @@ async function reconcile(id: string): Promise<{ health: TradeCacheHealth['state'
     let result: TradeCacheHealth['state'] = 'Unknown';
     const task = (async () => {
         const env = plan.env;
-        const trades = await fetchReconciledTrades(plan.account);
+        const trades = await fetchTrades(plan.account.account_type, plan.account, { refresh: true });
         const now = Date.now();
         for (const p of plansFor(plan.account, env)) {
             const trade = trades.find(t => tradeMatchesPlan(t, p));
@@ -463,6 +476,7 @@ function run() {
         : addIssue(p, 'reload', 'App 重新載入，期間的回報可能未收到', now));
     commit();
     onTrackedReport(onReport);
+    reportLedger.onGap(base => onGap(base));
     onExitUpdate(onExit);
     for (const rec of getExits()) if (rec.bracketId) onExit(rec);
     // Once the server mode is known: replay buffered reports and look up.

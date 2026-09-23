@@ -10,8 +10,10 @@
 //   the same fill seen through SSE and through the Trade cache counts once;
 //   an event without exchange_seq is only keyed by its full event_id and
 //   flagged, because it cannot be matched against the cache;
+// - an order missing from the cache is never treated as filled/cancelled;
 // - anything that could hide a report (disconnect, sequence gap, cache
-//   health not Healthy, reload, unmatched metadata) adds an issue — protection
+//   health not Healthy, no baseline continuity, reload, unmatched metadata)
+//   adds an issue — protection
 //   is shown as NOT confirmed until an explicit reconciliation clears it;
 // - fills after an exit was dispatched, or an exit that did not fully fill,
 //   become explicit unprotected quantity. Nothing here resends orders.
@@ -36,6 +38,7 @@ export type BracketIssueCode =
     | 'not-subscribed' // trade_cache_health NotSubscribed
     | 'reload' // app restarted while the plan was live
     | 'lookup-failed' // cache/refresh lookup failed or trade not found
+    | 'no-baseline' // cache-only read without an authoritative, continuous baseline
     | 'report-mismatch' // report for this order with wrong account/code/action or no fill identity
     | 'overfill'; // fills exceed the entry quantity
 
