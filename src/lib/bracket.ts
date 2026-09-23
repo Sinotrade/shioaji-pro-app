@@ -126,7 +126,11 @@ function loadPlans(): BracketPlan[] {
     try {
         const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
         const arr: unknown = raw ? JSON.parse(raw) : [];
-        return Array.isArray(arr) ? (arr as BracketPlan[]).filter(p => p && typeof p.id === 'string' && p.account) : [];
+        if (!Array.isArray(arr)) return [];
+        // A cancel still 'sending' when the app went away has an unknown
+        // outcome: show 刪單待確認 · 對帳, never a stuck 處理中 (and never resend).
+        return (arr as BracketPlan[]).filter(p => p && typeof p.id === 'string' && p.account)
+            .map(p => p.entryCancel === 'sending' ? { ...p, entryCancel: 'unconfirmed' as const } : p);
     } catch {
         return [];
     }

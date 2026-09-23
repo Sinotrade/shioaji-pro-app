@@ -113,7 +113,10 @@ export function bracketPhase(p: BracketPlan): BracketPhase {
 export function isLive(p: BracketPlan): boolean {
     const phase = bracketPhase(p);
     return phase === 'waiting' || phase === 'protected' || phase === 'exiting'
-        || (phase === 'done' && p.exit?.status === 'unknown' && !p.exit.acknowledged);
+        || (phase === 'done' && p.exit?.status === 'unknown' && !p.exit.acknowledged)
+        // exit done but the entry still works (or its cancel is unconfirmed):
+        // its reports still matter and 對帳 must stay available
+        || workingEntryAfterExit(p) > 0;
 }
 
 /** Quantity the OCO triggers should hold right now. */

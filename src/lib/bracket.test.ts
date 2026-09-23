@@ -529,6 +529,38 @@ describe('trigger execution (main window only)', () => {
         expect(planOf(other.id).entryClosed).toBe(true);
     });
 
+    it('a reload during an entry cancel becomes 刪單待確認 and the done plan still reconciles', async () => {
+        const plan = await armed(1);
+        await tick(47000);
+        m.cancel.mockImplementationOnce(() => new Promise(() => undefined)); // app dies mid-cancel
+        void bracket.cancelRemainingEntry(planOf(plan.id));
+        await flush();
+        expect(planOf(plan.id).entryCancel).toBe('sending');
+        await boot({ keepStore: true });
+        const reloaded = planOf(plan.id);
+        expect(reloaded.entryCancel).toBe('unconfirmed');
+        const { isLive, bracketPhase } = await import('./bracket-core');
+        expect(bracketPhase(reloaded)).toBe('exiting'); // exit still working here
+        expect(isLive(reloaded)).toBe(true);
+        // exit completes → plan is done, entry cancel unconfirmed → still live for 對帳
+        const exitRow = { ...cacheTrade('exit-1', F1, [{ seq: '000001', quantity: 1 }]),
+            order: { id: 'exit-1', seqno: 'exit-1', ordno: 'o', action: 'Sell', price: 0, quantity: 1,
+                account: { account_type: 'F', broker_id: F1.broker_id, account_id: F1.account_id } } } as unknown as Trade;
+        exitRow.status = { ...exitRow.status, status: 'Filled' };
+        const cancelled = cacheTrade('fixture-f1', F1, [{ seq: '000001', quantity: 1 }]);
+        cancelled.status = { ...cancelled.status, status: 'Cancelled', cancel_quantity: 1 };
+        m.refreshed.mockResolvedValue([exitRow]);
+        await bracket.reconcileBracket(plan.id);
+        expect(bracketPhase(planOf(plan.id))).toBe('done');
+        expect(isLive(planOf(plan.id))).toBe(true);
+        m.refreshed.mockResolvedValue([exitRow, cancelled]);
+        await bracket.reconcileBracket(plan.id);
+        expect(planOf(plan.id).entryClosed).toBe(true);
+        expect(planOf(plan.id).entryCancel).toBeUndefined();
+        expect(isLive(planOf(plan.id))).toBe(false);
+        expect(m.cancel).toHaveBeenCalledTimes(1); // never resent
+    });
+
     it('a cancel refused before sending leaves no pending state', async () => {
         const plan = await armed(1);
         await tick(47000);
