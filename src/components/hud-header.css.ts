@@ -100,6 +100,14 @@ export const led = styleVariants({
             animation: `${blink} 0.6s infinite`,
         },
     ],
+    // open connection but no heartbeat: reconnecting, reports may be missed
+    stale: [
+        ledBase,
+        {
+            background: vars.color.amber,
+            animation: `${blink} 0.6s infinite`,
+        },
+    ],
 });
 
 
