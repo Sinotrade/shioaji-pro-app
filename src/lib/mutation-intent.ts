@@ -10,12 +10,23 @@ export type MutationIntent =
     | { kind: 'price'; price: number }
     | { kind: 'qty'; quantity: number }; // reduction sent to update_qty
 
-const intents = new Map<string, MutationIntent>();
+// Taken by the window that owns trading state when the mutation settles.
+// Other windows (the sender itself, other popouts) never take theirs, so
+// entries expire and the map is bounded.
+export const INTENT_TTL_MS = 120_000;
+const MAX_INTENTS = 200;
+const intents = new Map<string, { intent: MutationIntent; at: number }>();
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-mutation-intent:${getApiBase()}`) : null;
 
+function prune(now: number) {
+    for (const [id, entry] of intents) if (now - entry.at > INTENT_TTL_MS) intents.delete(id);
+    while (intents.size > MAX_INTENTS) intents.delete(intents.keys().next().value!);
+}
 function store(tradeId: string, intent: MutationIntent) {
-    if (intents.size >= 500 && !intents.has(tradeId)) intents.delete(intents.keys().next().value!);
-    intents.set(tradeId, intent);
+    const now = Date.now();
+    intents.delete(tradeId);
+    intents.set(tradeId, { intent, at: now });
+    prune(now);
 }
 function valid(intent: unknown): intent is MutationIntent {
     const value = intent as Partial<Record<string, unknown>> | null;
@@ -23,17 +34,22 @@ function valid(intent: unknown): intent is MutationIntent {
         || (value.kind === 'qty' && typeof value.quantity === 'number' && Number.isFinite(value.quantity)));
 }
 channel?.addEventListener('message', event => {
-    const data = event.data as { tradeId?: unknown; intent?: unknown } | null;
-    if (typeof data?.tradeId === 'string' && data.tradeId && valid(data.intent)) store(data.tradeId, data.intent);
+    const data = event.data as { base?: unknown; tradeId?: unknown; intent?: unknown } | null;
+    // Same channel name implies the same base; check it anyway so a message
+    // for another server can never confirm this one's order.
+    if (data?.base !== getApiBase()) return;
+    if (typeof data.tradeId === 'string' && data.tradeId && valid(data.intent)) store(data.tradeId, data.intent);
 });
 
 export function noteMutationIntent(tradeId: string, intent: MutationIntent) {
     store(tradeId, intent);
-    try { channel?.postMessage({ tradeId, intent }); } catch { /* closed window */ }
+    try { channel?.postMessage({ base: getApiBase(), tradeId, intent }); } catch { /* closed window */ }
 }
 export function takeMutationIntent(tradeId: string): MutationIntent | undefined {
-    const intent = intents.get(tradeId);
+    const entry = intents.get(tradeId);
     intents.delete(tradeId);
-    return intent;
+    if (!entry || Date.now() - entry.at > INTENT_TTL_MS) return undefined;
+    return entry.intent;
 }
+export function pendingIntentCount() { prune(Date.now()); return intents.size; }
 import.meta.hot?.dispose(() => channel?.close());

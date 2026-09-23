@@ -440,24 +440,39 @@ let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 function markActivity() {
     lastActivity = Date.now();
 }
-function scheduleReconnect(maxDelay = 15000) {
+const NORMAL_RETRY_MAX_MS = 15_000;
+/** `cap` bounds this and the following delay: connection errors use the
+ *  normal backoff; only a connection that opened but never delivered a
+ *  heartbeat may escalate beyond it. */
+function scheduleReconnect(cap = NORMAL_RETRY_MAX_MS) {
     everDown = true;
     es?.close();
     es = null;
     if (retryTimer) clearTimeout(retryTimer);
-    retryTimer = setTimeout(connect, retryDelay);
-    retryDelay = Math.min(retryDelay * 2, Math.max(maxDelay, 15000));
+    const delay = Math.min(retryDelay, cap);
+    retryTimer = setTimeout(connect, delay);
+    retryDelay = Math.min(delay * 2, cap);
 }
+let lastCheckGap = 0;
 function checkWatchdog() {
     const now = Date.now();
-    const resumed = lastCheckAt > 0 && now - lastCheckAt > RESUME_GAP_MS;
+    const gap = lastCheckAt > 0 ? now - lastCheckAt : 0;
+    // One grace per resume: only when this check is late but the previous one
+    // was on time and the stream was not already silent then. A throttled
+    // background timer (every 20–60 s) is late on every check and must not
+    // renew the grace forever.
+    const staleAtPreviousCheck = lastActivity > 0 && lastCheckAt - lastActivity > STALE_AFTER_MS;
+    if (gap > RESUME_GAP_MS && lastCheckGap <= RESUME_GAP_MS && !staleAtPreviousCheck && now >= graceUntil) {
+        graceUntil = now + HEARTBEAT_PERIOD_MS;
+    }
+    lastCheckGap = gap;
     lastCheckAt = now;
-    if (resumed) graceUntil = now + HEARTBEAT_PERIOD_MS;
     if (!es || status !== 'live' || !lastActivity) return;
     if (now < graceUntil || now - lastActivity <= STALE_AFTER_MS) return;
-    if (!heartbeatSinceOpen) silentConnections++;
+    const silent = !heartbeatSinceOpen;
+    if (silent) silentConnections++;
     setStatus('stale');
-    scheduleReconnect(silentConnections > 0 ? SILENT_RETRY_MAX_MS : 15000);
+    scheduleReconnect(silent ? SILENT_RETRY_MAX_MS : NORMAL_RETRY_MAX_MS);
 }
 /** Watchdog diagnostics for Debug: consecutive connections that opened but
  *  went stale without any heartbeat, and the current retry delay. */
@@ -543,7 +558,9 @@ function connect() {
 
     es.onerror = () => {
         setStatus('down');
-        scheduleReconnect(silentConnections > 0 ? SILENT_RETRY_MAX_MS : 15000);
+        // A refused/failed connection is a normal outage (e.g. sidecar
+        // restarting): normal backoff, even after silent connections.
+        scheduleReconnect(NORMAL_RETRY_MAX_MS);
     };
 }
 
