@@ -493,3 +493,17 @@ export const feedback = style({
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
 });
+
+// 括號單 損/利：兩個價格欄在窄面板（~200px）時換行成兩列，不裁切數字
+export const bracketInputs = style({
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: vars.space.xs,
+    flex: 1,
+    minWidth: 0,
+});
+
+export const bracketInput = style([numInput, {
+    flex: '1 1 5.5rem',
+    minWidth: '5.5rem',
+}]);

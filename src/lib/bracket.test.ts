@@ -220,6 +220,24 @@ describe('protection confirmation state', () => {
         expect(planOf(plan.id).issues.map(i => i.code)).toEqual(['disconnect']);
     });
 
+    it('a stale stream (heartbeat watchdog) marks protection unconfirmed; reconnecting alone does not clear it', async () => {
+        await boot();
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        expect(planOf(plan.id).issues).toEqual([]);
+        m.status = 'stale'; m.statusChanged.forEach(cb => cb()); await flush();
+        expect(planOf(plan.id).issues.map(i => i.code)).toEqual(['disconnect']);
+        m.status = 'connecting'; m.statusChanged.forEach(cb => cb()); await flush();
+        m.status = 'live'; m.statusChanged.forEach(cb => cb()); await flush();
+        expect(planOf(plan.id).issues.map(i => i.code)).toEqual(['disconnect']); // reconnect ≠ confirmed
+        m.health.mockResolvedValueOnce({ state: 'Degraded', reasons: [{ event_type: 'FuturesDeal', reason: 'SequenceGap' }] });
+        m.refreshed.mockResolvedValue([cacheTrade('fixture-f1', F1, [])]);
+        await bracket.reconcileBracket(plan.id);
+        expect(planOf(plan.id).issues.map(i => i.code)).toContain('disconnect'); // not Healthy → still unconfirmed
+        await bracket.reconcileBracket(plan.id);
+        expect(planOf(plan.id).issues).toEqual([]); // Healthy reconcile clears
+    });
+
     it('a sequence gap on the futures stream marks futures plans NOT confirmed', async () => {
         await boot();
         const plan = await bracket.registerBracket(spec(F1));

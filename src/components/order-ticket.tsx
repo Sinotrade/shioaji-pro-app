@@ -935,20 +935,22 @@ export function OrderTicket({
                 {!splitOpen && bracketOn && (
                     <div className={styles.fieldRow}>
                         <span className={styles.fieldLabel}>損/利</span>
-                        <input
-                            className={styles.numInput}
-                            placeholder='停損價'
-                            value={stopPrice}
-                            inputMode='decimal'
-                            onChange={(e) => setStopPrice(e.target.value)}
-                        />
-                        <input
-                            className={styles.numInput}
-                            placeholder='停利價'
-                            value={takePrice}
-                            inputMode='decimal'
-                            onChange={(e) => setTakePrice(e.target.value)}
-                        />
+                        <div className={styles.bracketInputs}>
+                            <input
+                                className={styles.bracketInput}
+                                placeholder='停損價'
+                                value={stopPrice}
+                                inputMode='decimal'
+                                onChange={(e) => setStopPrice(e.target.value)}
+                            />
+                            <input
+                                className={styles.bracketInput}
+                                placeholder='停利價'
+                                value={takePrice}
+                                inputMode='decimal'
+                                onChange={(e) => setTakePrice(e.target.value)}
+                            />
+                        </div>
                     </div>
                 )}
                 <BracketStatusList code={contract.code} />

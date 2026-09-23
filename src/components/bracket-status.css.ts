@@ -19,6 +19,8 @@ const rowBase = style({
     fontSize: '0.7rem',
     fontVariantNumeric: 'tabular-nums',
     color: vars.color.foreground,
+    minWidth: 0,
+    overflowWrap: 'break-word',
 });
 
 export const row = styleVariants({
@@ -27,14 +29,19 @@ export const row = styleVariants({
     err: [rowBase, { border: `1px solid ${vars.color.danger}` }],
 });
 
+// Narrow tickets (~200px): items wrap as whole words instead of shrinking
+// to one character per line.
 export const head = style({
     display: 'flex',
+    flexWrap: 'wrap',
     alignItems: 'center',
-    gap: vars.space.xs,
+    columnGap: vars.space.xs,
+    rowGap: '1px',
     fontFamily: vars.font.mono,
+    whiteSpace: 'nowrap',
 });
 
-export const grow = style({ flex: 1, minWidth: 0 });
+export const grow = style({ flex: '1 1 auto' });
 
 export const note = styleVariants({
     ok: { color: vars.color.success },
