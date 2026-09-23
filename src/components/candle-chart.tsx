@@ -67,6 +67,7 @@ import {
     removeTrigger,
     useTriggers,
 } from '../lib/trigger-engine';
+import { currentProtectionEnv } from '../lib/protection-env';
 import type { ContractBase } from '../lib/types/contract';
 import type { Candle } from '../lib/types/market';
 import type { Trade } from '../lib/types/order';
@@ -389,7 +390,7 @@ export function CandleChart({
                     action: below ? 'Sell' : 'Buy',
                     quantity: qty,
                     kind: 'stop',
-                });
+                }, c);
             } else {
                 addTrigger({
                     code: c.code,
@@ -398,7 +399,7 @@ export function CandleChart({
                     action: below ? 'Buy' : 'Sell',
                     quantity: qty,
                     kind: 'take',
-                });
+                }, c);
             }
         });
 
@@ -1667,6 +1668,16 @@ export function CandleChart({
                                     {fmtPrice(t.price)}
                                     {t.kind !== 'alert' &&
                                         ` ${t.action === 'Buy' ? '買' : '賣'}${t.quantity}`}
+                                    {t.suspended && (
+                                        <span title={t.suspended}> 未啟用</span>
+                                    )}
+                                    {!t.suspended &&
+                                        t.kind !== 'alert' &&
+                                        t.env !== currentProtectionEnv() && (
+                                            <span title='建立於其他伺服器或模擬／正式模式，目前不執行'>
+                                                {' '}未在此環境
+                                            </span>
+                                        )}
                                 </span>
                                 <button
                                     className={styles.triggerRemove}

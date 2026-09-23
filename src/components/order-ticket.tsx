@@ -12,12 +12,23 @@ import {
     loadAllocPresets,
     saveAllocPreset,
 } from '../lib/allocation';
-import { registerBracket } from '../lib/bracket';
+import {
+    ensureBracketHost,
+    registerBracket,
+    registrationFailureText,
+    validateBracketRequest,
+} from '../lib/bracket';
+import { BracketStatusList } from './bracket-status';
 import { usePickedPrice } from '../lib/price-sync';
 import { maskAccountId, maskName, usePrivacyMode } from '../lib/privacy';
-import { selectAccount, useAccounts } from '../lib/account-store';
+import {
+    getAccountState,
+    selectAccount,
+    useAccounts,
+} from '../lib/account-store';
 import { requestOrderConfirm } from '../lib/order-confirm';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
+import { currentProtectionEnv } from '../lib/protection-env';
 import { fetchInfo, placeFuturesOrder, placeStockOrder } from '../lib/shioaji';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
@@ -213,6 +224,46 @@ export function OrderTicket({
             if (priceType === 'LMT' && (!Number.isFinite(p) || p <= 0)) {
                 throw new Error('限價單需要有效價格');
             }
+            // 括號單 (#102)：送進場單前先驗證方向／條件、固定帳戶，並確認主視窗
+            // 能追蹤保護 — 任一不成立就不送進場單
+            const sp = Number(stopPrice);
+            const tp = Number(takePrice);
+            const bracketStop = bracketOn && stopPrice.trim() !== '' ? sp : null;
+            const bracketTake = bracketOn && takePrice.trim() !== '' ? tp : null;
+            let entryAccount: Account | undefined;
+            let bracketEnv: string | null = null;
+            if (bracketOn) {
+                const invalid = validateBracketRequest({
+                    isFutures,
+                    action,
+                    referencePrice:
+                        priceType === 'LMT'
+                            ? p
+                            : Number(quote?.tick?.close) || null,
+                    stopPrice: bracketStop,
+                    takePrice: bracketTake,
+                    orderLot,
+                    orderCond,
+                    octype,
+                });
+                if (invalid) throw new Error(invalid);
+                const accounts = getAccountState();
+                entryAccount =
+                    (isFutures
+                        ? accounts.selectedFutures
+                        : accounts.selectedStock) ?? undefined;
+                if (
+                    !entryAccount?.signed ||
+                    entryAccount.account_type !== (isFutures ? 'F' : 'S')
+                ) {
+                    throw new Error('括號單需要有效的已簽署下單帳戶');
+                }
+                bracketEnv = currentProtectionEnv();
+                if (!bracketEnv) {
+                    throw new Error('伺服器模式（模擬／正式）尚未確認，括號單未送出');
+                }
+                await ensureBracketHost();
+            }
             if (getRiskSettings().confirmManualOrders) {
                 const approved = await requestOrderConfirm({
                     code: contract.code,
@@ -241,7 +292,7 @@ export function OrderTicket({
                       price_type: priceType as 'LMT' | 'MKT' | 'MKP',
                       order_type: orderType,
                       octype,
-                  })
+                  }, entryAccount)
                 : await placeStockOrder(contract, {
                       action,
                       price: p,
@@ -257,24 +308,52 @@ export function OrderTicket({
                           orderCond === 'Cash'
                               ? true
                               : undefined,
-                  });
+                  }, entryAccount);
             setFeedback({
                 kind: 'ok',
                 text: `▸ ${trade.status.status} #${trade.order.seqno || trade.order.id.slice(0, 8)}`,
             });
-            if (bracketOn) {
-                const sp = Number(stopPrice);
-                const tp = Number(takePrice);
-                registerBracket({
-                    orderId: trade.order.id,
-                    seqno: trade.order.seqno,
-                    code: contract.code,
-                    action,
-                    quantity: qty,
-                    stopPrice: Number.isFinite(sp) && sp > 0 ? sp : null,
-                    takePrice: Number.isFinite(tp) && tp > 0 ? tp : null,
-                    accountType: isFutures ? 'F' : 'S',
-                });
+            if (bracketOn && entryAccount && bracketEnv) {
+                try {
+                    await registerBracket({
+                        env: bracketEnv,
+                        account: {
+                            account_type: isFutures ? 'F' : 'S',
+                            broker_id: entryAccount.broker_id,
+                            account_id: entryAccount.account_id,
+                        },
+                        orderId: trade.order.id,
+                        seqno: trade.order.seqno,
+                        quoteCode: contract.code,
+                        orderCode:
+                            trade.contract?.target_code ||
+                            trade.contract?.code ||
+                            contract.target_code ||
+                            contract.code,
+                        securityType: contract.security_type as
+                            | 'STK'
+                            | 'FUT'
+                            | 'OPT',
+                        exchange: contract.exchange ?? '',
+                        action,
+                        quantity: qty,
+                        stopPrice: bracketStop,
+                        takePrice: bracketTake,
+                    });
+                } catch (err) {
+                    // 進場單已送出：保護登記結果必須明示，不自動重送任何單，
+                    // 也不建議另掛停損（登記可能晚到生效 → 重複出場）
+                    const text = registrationFailureText(err);
+                    setFeedback({
+                        kind: 'err',
+                        text: `✕ 進場單已送出 #${trade.order.seqno || trade.order.id.slice(0, 8)}；${text}`,
+                    });
+                    notify({
+                        kind: 'err',
+                        title: '括號單保護未確認',
+                        body: `${contract.code} 進場單已送出；${text}`,
+                    });
+                }
             }
             onPlaced();
         } catch (e) {
@@ -856,22 +935,25 @@ export function OrderTicket({
                 {!splitOpen && bracketOn && (
                     <div className={styles.fieldRow}>
                         <span className={styles.fieldLabel}>損/利</span>
-                        <input
-                            className={styles.numInput}
-                            placeholder='停損價'
-                            value={stopPrice}
-                            inputMode='decimal'
-                            onChange={(e) => setStopPrice(e.target.value)}
-                        />
-                        <input
-                            className={styles.numInput}
-                            placeholder='停利價'
-                            value={takePrice}
-                            inputMode='decimal'
-                            onChange={(e) => setTakePrice(e.target.value)}
-                        />
+                        <div className={styles.bracketInputs}>
+                            <input
+                                className={styles.bracketInput}
+                                placeholder='停損價'
+                                value={stopPrice}
+                                inputMode='decimal'
+                                onChange={(e) => setStopPrice(e.target.value)}
+                            />
+                            <input
+                                className={styles.bracketInput}
+                                placeholder='停利價'
+                                value={takePrice}
+                                inputMode='decimal'
+                                onChange={(e) => setTakePrice(e.target.value)}
+                            />
+                        </div>
                     </div>
                 )}
+                <BracketStatusList code={contract.code} />
 
                 {multi && (
                     <div className={styles.fieldRow}>

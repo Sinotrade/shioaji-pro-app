@@ -21,7 +21,7 @@
 | 權證列表 | 每 8 秒最多 60 商品一批快照 | #100 首次＋SSE、手動更新、切標的舊回應隔離 |
 | 組合委託 | 每 10 秒 /order/combotrades | #101 首次／手動、明示查詢快照；未宣稱此端點必定執行 update_status |
 | 五檔／閃電／報價板／組合腳／深度熱圖 | 首筆 BidAsk 前空白或只有價沒有量 | #105 共用現有 HTTP snapshot，以一檔價量墊底；熱圖只記一個快照觀測點，SSE 接手後空側保持空白 |
-| Bracket | 有 pending 時每 4 秒查 S/F trades | #102 使用者決定另案，本次保留；不是已解決項目 |
+| Bracket | 有 pending 時每 4 秒查 S/F trades | #102（1.7.6）改為回報驅動；登記／重載／重連各一次 cache-only `refresh:false`，`refresh:true` 僅手動對帳；原生驗收待補 |
 | Grid／combo 到價 | armed 使用者策略、按差異下單 | 保留執行時機及安全檢查；不以省 quota 改變策略 |
 | Watchlist sorting／replay | 本機排序/回放 timer | 保留，不產生券商查詢 |
 | Debug／Monitor／ServerManager | health/info/metrics/subscriptions/usage | 本機診斷與既有 visibility gate 保留；不同 metrics sources 不相加 |
