@@ -15,17 +15,32 @@ const clients = new Map<string, Map<string, Desired>>();
 const active = new Map<string, Desired>();
 let queue = Promise.resolve();
 const keyOf = (d: Desired) => JSON.stringify([d.contract.security_type, d.contract.exchange, d.contract.target_code || d.contract.code, d.type]);
-function sync() {
+// A consumer that remounts (e.g. contract metadata refreshed after a
+// reconnect) releases and re-retains asynchronously. Unsubscribing in that
+// gap caused an unsubscribe+subscribe pair per quote on every reconnect, on
+// top of the registry replay. Releases therefore wait briefly and only
+// unsubscribe what is still unwanted.
+export const RELEASE_GRACE_MS = 1500;
+function desiredNow() {
+    const desired = new Map<string, Desired>();
+    for (const set of clients.values()) for (const [key, value] of set) desired.set(key, value);
+    // #102: protection triggers hold their Tick feed explicitly through
+    // retainQuote() in the main-window trigger engine (no localStorage peek).
+    return desired;
+}
+function sync(immediate = false) {
     if (mirror) { channel?.postMessage({ kind: 'desired', client, desired: [...local.values()].map(v => v.desired) }); return; }
     clients.set(client, new Map([...local].map(([k, v]) => [k, v.desired])));
     queue = queue.catch(() => undefined).then(async () => {
-        const desired = new Map<string, Desired>();
-        for (const set of clients.values()) for (const [key, value] of set) desired.set(key, value);
-        for (const [key, value] of active) if (!desired.has(key)) {
-            try { await unsubscribeQuote(value.contract, value.type); active.delete(key); } catch { /* preserve ownership for a later retry */ }
-        }
+        const desired = desiredNow();
         for (const [key, value] of desired) if (!active.has(key)) {
             try { await subscribeQuote(value.contract, value.type); active.set(key, value); } catch { /* reconnect registry/manual re-acquire retries */ }
+        }
+        if (![...active.keys()].some(key => !desired.has(key))) return;
+        if (!immediate) await new Promise(resolve => setTimeout(resolve, RELEASE_GRACE_MS));
+        const still = immediate ? desired : desiredNow();
+        for (const [key, value] of active) if (!still.has(key)) {
+            try { await unsubscribeQuote(value.contract, value.type); active.delete(key); } catch { /* preserve ownership for a later retry */ }
         }
     });
 }
@@ -63,7 +78,7 @@ export function retainContractQuotes(contract: ContractBase): () => void {
 function dispose() {
     stopStatus();
     local.clear();
-    sync();
+    sync(true);
     channel?.close();
 }
 if (typeof window !== 'undefined') window.addEventListener('pagehide', dispose, { once: true });

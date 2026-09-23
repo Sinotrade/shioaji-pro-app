@@ -677,6 +677,26 @@ describe('Shioaji 1.7.6 report identity and cache health', () => {
             await deliver(byId('v1:FO:FSTREAM:RESET1:10'));
             expect(reasons('orders')).not.toContain('mutation-outcome');
         });
+        it('confirms when the matching report arrived before the HTTP reply', async () => {
+            const known = await working();
+            const { observeTradeMutation } = await import('./trade-mutations');
+            const { noteMutationIntent } = await import('./mutation-intent');
+            await mutate(() => observeTradeMutation('fx04', async () => {
+                noteMutationIntent('fx04', { kind: 'qty', quantity: 1 });
+                await deliver(byId('v1:FO:FSTREAM:RESET1:10')); // report beats the reply
+                return reply(known);
+            }));
+            expect(reasons('orders')).not.toContain('mutation-outcome');
+        });
+        it('does not confirm from a report that predates the mutation', async () => {
+            const known = await working();
+            await deliver(byId('v1:FO:FSTREAM:RESET1:10')); // an earlier reduction by 1
+            const { observeTradeMutation } = await import('./trade-mutations');
+            const { noteMutationIntent } = await import('./mutation-intent');
+            const current = store.getTradingState().trades.find(t => t.order.id === 'fx04') ?? known;
+            await mutate(() => observeTradeMutation('fx04', async () => { noteMutationIntent('fx04', { kind: 'qty', quantity: 1 }); return reply(current); }));
+            expect(reasons('orders')).toContain('mutation-outcome');
+        });
         it('keeps the reason when the report does not match the request', async () => {
             const known = await working();
             const { observeTradeMutation } = await import('./trade-mutations');

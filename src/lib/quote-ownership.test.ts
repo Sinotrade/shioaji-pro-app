@@ -21,7 +21,7 @@ describe('quote ownership shared consumers', () => {
         await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(1));
         a(); await Promise.resolve(); await Promise.resolve();
         expect(mocks.unsubscribe).not.toHaveBeenCalled();
-        b(); await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
+        b(); await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1), { timeout: 4000 });
     });
     it('keeps a protection trigger Tick held by the main-window engine when the last panel closes (#102)', async () => {
         const { retainQuote } = await import('./quote-ownership');
@@ -29,10 +29,10 @@ describe('quote ownership shared consumers', () => {
         const tick = retainQuote(contract, 'Tick'); const book = retainQuote(contract, 'BidAsk');
         await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(2));
         tick(); book();
-        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1), { timeout: 4000 });
         expect(mocks.unsubscribe).toHaveBeenCalledWith(contract, 'BidAsk');
         engineHold();
-        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(2), { timeout: 4000 });
         expect(mocks.unsubscribe).toHaveBeenLastCalledWith(contract, 'Tick');
     });
     it('subscribes once and releases only when the last local consumer leaves', async () => {
@@ -44,7 +44,7 @@ describe('quote ownership shared consumers', () => {
         await Promise.resolve(); await Promise.resolve();
         expect(mocks.unsubscribe).not.toHaveBeenCalled();
         second();
-        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1), { timeout: 4000 });
         second();
         expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
     });
@@ -56,6 +56,24 @@ describe('quote ownership shared consumers', () => {
         mocks.changed?.();
         await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(2));
         release();
-        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    });
+    it('does not churn unsubscribe+subscribe when a consumer re-retains within the grace (reconnect remount)', async () => {
+        vi.useFakeTimers();
+        try {
+            const { retainQuote, RELEASE_GRACE_MS } = await import('./quote-ownership');
+            const first = retainQuote(contract, 'Tick');
+            await vi.advanceTimersByTimeAsync(0);
+            expect(mocks.subscribe).toHaveBeenCalledTimes(1);
+            first(); // remount: release now, re-retain after an async lookup
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS / 3);
+            const again = retainQuote(contract, 'Tick');
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS * 2);
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+            expect(mocks.subscribe).toHaveBeenCalledTimes(1);
+            again();
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS + 10);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
+        } finally { vi.useRealTimers(); }
     });
 });

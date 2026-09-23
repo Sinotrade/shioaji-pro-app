@@ -78,3 +78,19 @@
   `order/trades` 或 `position_unit`；新實例回報 NotSubscribed，App 重新訂閱且保留「串流中斷」待手動對帳。
 - 重連後由另一模擬 client 送出期貨 New／Cover 成交，App 收到回報（持倉新增「資料暫缺」原因，因委託來自他端），
   證明重新訂閱後回報送達。
+
+## 第四輪：重連成本與 watchdog 邊界（2026-09-23，瀏覽器＋Vite proxy，隔離 1.7.6 模擬 sidecar）
+
+- 以 fetch 攔截記錄呼叫來源，只以 PID 精確重啟隔離 sidecar（21394），其他服務未觸碰。
+- 修前（`3218421`）一次 STALE 重連：stream/subscribe 114、unsubscribe 51、contracts 130、subscribe_trade 2、
+  trade_cache_health 2。
+  - 63 筆 subscribe 來自既有的 `resubscribeAll` 重播（本 PR 之前即存在，逐筆但未節流，約 150 ms 送完）。
+  - 另 51 組 unsubscribe＋subscribe 全是同一批 key：RECONNECT 的合約刷新造成面板重掛，quote-ownership 在
+    release 與非同步 re-retain 之間立即退訂再訂閱。這是 #94 引入的既有行為，本 PR 之前就有；watchdog 會增加重連次數，
+    所以會放大影響。
+  - contracts 130 筆＝65 檔快取合約 × 2 個 metadata 端點，是 Contract V2 設計的 RECONNECT 全量刷新（SSE 不重播
+    contract_event），既有行為，本輪未改。
+  - subscribe_trade 在此環境為每帳戶 1 次（2 個已簽署帳戶）。未重現「每帳戶 2 次」；本分支只有重連 health 看到
+    NotSubscribed／NoBaseline 時才重新訂閱。
+- 修後（本輪）同一情境：stream/subscribe 63、unsubscribe 0、contracts 130、subscribe_trade 2、trade_cache_health 2；
+  重播前 5 秒只送 40 筆，其餘 23 筆在下一個 5 秒窗口送出（Shioaji 文件：訂閱 50 次／5 秒）。

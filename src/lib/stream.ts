@@ -319,9 +319,35 @@ export function unregisterCapabilitySubscription(key: string) {
 
 let resubscribeRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
-async function resubscribeAll() {
+// Replay after a reconnect is paced: Shioaji documents 50 subscriptions per
+// 5 s. A restart/stale reconnect (now also driven by the heartbeat watchdog)
+// must not burst the whole registry at once. One replay at a time.
+export const REPLAY_BATCH = 40;
+export const REPLAY_WINDOW_MS = 5000;
+let replaying: Promise<void> | null = null;
+let replayAgain = false;
+function resubscribeAll(): Promise<void> {
+    if (replaying) { replayAgain = true; return replaying; }
+    replaying = replayOnce().finally(() => {
+        replaying = null;
+        if (replayAgain) { replayAgain = false; void resubscribeAll(); }
+    });
+    return replaying;
+}
+async function replayOnce() {
     let failed = false;
-    for (const body of subscriptionRegistry.values()) {
+    let sent = 0;
+    let windowStart = Date.now();
+    const pace = async () => {
+        if (sent > 0 && sent % REPLAY_BATCH === 0) {
+            const wait = windowStart + REPLAY_WINDOW_MS - Date.now();
+            if (wait > 0) await new Promise(r => setTimeout(r, wait));
+            windowStart = Date.now();
+        }
+        sent++;
+    };
+    for (const body of [...subscriptionRegistry.values()]) {
+        await pace();
         try {
             const response = await apiPost<{ success?: boolean; message?: string }>(
                 '/api/v1/stream/subscribe',
@@ -334,7 +360,8 @@ async function resubscribeAll() {
             failed = true;
         }
     }
-    for (const { path, body } of capabilityRegistry.values()) {
+    for (const { path, body } of [...capabilityRegistry.values()]) {
+        await pace();
         try {
             const response = await apiPost<{ success: boolean; message: string }>(
                 `/api/v1/stream/subscribe/${path}`,
@@ -397,24 +424,45 @@ export function onStreamEvent(
 // issues any HTTP request itself.
 export const HEARTBEAT_PERIOD_MS = 30_000;
 export const STALE_AFTER_MS = 2 * HEARTBEAT_PERIOD_MS + 15_000;
+export const WATCHDOG_TICK_MS = 5000;
+// A check this late means the WebView/tab was suspended: queued events may
+// not have been delivered yet, so allow one heartbeat period before STALE.
+const RESUME_GAP_MS = 15_000;
+// Connections that open but never deliver a heartbeat (e.g. a buffering
+// proxy) keep escalating the retry delay instead of resetting to 1 s.
+const SILENT_RETRY_MAX_MS = 5 * 60_000;
 let lastActivity = 0;
+let lastCheckAt = 0;
+let graceUntil = 0;
+let heartbeatSinceOpen = false;
+let silentConnections = 0;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 function markActivity() {
     lastActivity = Date.now();
 }
-function scheduleReconnect() {
+function scheduleReconnect(maxDelay = 15000) {
     everDown = true;
     es?.close();
     es = null;
     if (retryTimer) clearTimeout(retryTimer);
     retryTimer = setTimeout(connect, retryDelay);
-    retryDelay = Math.min(retryDelay * 2, 15000);
+    retryDelay = Math.min(retryDelay * 2, Math.max(maxDelay, 15000));
 }
 function checkWatchdog() {
+    const now = Date.now();
+    const resumed = lastCheckAt > 0 && now - lastCheckAt > RESUME_GAP_MS;
+    lastCheckAt = now;
+    if (resumed) graceUntil = now + HEARTBEAT_PERIOD_MS;
     if (!es || status !== 'live' || !lastActivity) return;
-    if (Date.now() - lastActivity <= STALE_AFTER_MS) return;
+    if (now < graceUntil || now - lastActivity <= STALE_AFTER_MS) return;
+    if (!heartbeatSinceOpen) silentConnections++;
     setStatus('stale');
-    scheduleReconnect();
+    scheduleReconnect(silentConnections > 0 ? SILENT_RETRY_MAX_MS : 15000);
+}
+/** Watchdog diagnostics for Debug: consecutive connections that opened but
+ *  went stale without any heartbeat, and the current retry delay. */
+export function getStreamWatchdog() {
+    return { silentConnections, retryDelayMs: retryDelay, staleAfterMs: STALE_AFTER_MS };
 }
 
 function listen(source: EventSource, name: string, handler: (event: MessageEvent) => void) {
@@ -432,7 +480,10 @@ function connect() {
     es = new EventSource(`${getStreamBase()}/api/v1/stream/data?region=TW`);
 
     es.onopen = () => {
-        retryDelay = 1000;
+        // A connection only proves healthy once a heartbeat arrives; until
+        // then keep the backoff so silent connections do not loop every ~80 s.
+        if (silentConnections === 0) retryDelay = 1000;
+        heartbeatSinceOpen = false;
         markActivity();
         setStatus('live');
         // SSE does not replay contract changes missed while disconnected —
@@ -481,6 +532,9 @@ function connect() {
     });
     listen(es, 'heartbeat', () => {
         lastHeartbeat = Date.now();
+        heartbeatSinceOpen = true;
+        silentConnections = 0;
+        retryDelay = 1000;
         setStatus('live');
     });
     for (const name of namedListeners.keys()) {
@@ -489,7 +543,7 @@ function connect() {
 
     es.onerror = () => {
         setStatus('down');
-        scheduleReconnect();
+        scheduleReconnect(silentConnections > 0 ? SILENT_RETRY_MAX_MS : 15000);
     };
 }
 
@@ -526,7 +580,8 @@ export function ensureStream() {
     if (!started) {
         started = true;
         connect();
-        watchdogTimer = setInterval(checkWatchdog, 5000);
+        lastCheckAt = Date.now();
+        watchdogTimer = setInterval(checkWatchdog, WATCHDOG_TICK_MS);
         void watchMaintenance();
         setInterval(watchMaintenance, 60000);
     }
