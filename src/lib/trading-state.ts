@@ -585,7 +585,7 @@ function releasePendingDeals(tradeId: string) {
  *  conservative "待確認" path. */
 function applyConfirmedCancellation(trade: AccountedTrade): boolean {
     const ref = trade.account ?? trade.order.account;
-    if (!ref || trade.status.status !== 'Cancelled') return false;
+    if (!ref || (trade.status.status !== 'Cancelled' && trade.status.status !== 'Filled')) return false;
     const rows = state.trades.filter(t => t.order.id === trade.order.id && t.account && accountKey(t.account) === accountKey(ref));
     if (rows.length > 1) return false;
     const current = rows[0];

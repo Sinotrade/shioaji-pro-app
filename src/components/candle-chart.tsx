@@ -1632,7 +1632,7 @@ export function CandleChart({
                                                 .then(() => {
                                                     notify({
                                                         kind: 'ok',
-                                                        title: '🗑 已確認刪單',
+                                                        title: '已確認刪單',
                                                         body: `${t.contract.code} @${fmtPrice(price)}`,
                                                     });
                                                     onOrdersChangedRef.current?.();

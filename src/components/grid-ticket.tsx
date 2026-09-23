@@ -78,6 +78,10 @@ export function GridTicket({
     // and re-placing a level that's merely in flight would double the order
     const recentPlace = useRef(new Map<string, number>());
     const RECENT_MS = 15000;
+    // Follow-mode cancels whose outcome is unknown (CANCEL_UNCONFIRMED or an
+    // ambiguous failure). Never cancelled again automatically — that would be
+    // a resend (ADR 0004); they stay until the user reconciles manually.
+    const unresolvedCancels = useRef(new Set<string>());
 
     // reset on symbol change
     useEffect(() => {
@@ -235,9 +239,19 @@ export function GridTicket({
                 for (const t of mine) {
                     if (ops >= MAX_OPS_PER_CYCLE) break;
                     const k = keyOf(t.status.modified_price || t.order.price);
-                    if (!desired.has(k)) {
+                    if (!desired.has(k) && !unresolvedCancels.current.has(t.order.id)) {
                         ops += 1;
-                        await cancelOrder(t.order.id).catch(() => undefined);
+                        await cancelOrder(t.order.id).catch((error: unknown) => {
+                            // A refusal before sending may be retried next
+                            // cycle; anything else may have reached the broker.
+                            if ((error as { mutationNotStarted?: unknown } | null)?.mutationNotStarted === true) return;
+                            unresolvedCancels.current.add(t.order.id);
+                            notify({
+                                kind: 'err',
+                                title: '鋪單跟隨：刪單未確認',
+                                body: `${t.contract.code} @${fmtPrice(t.status.modified_price || t.order.price)}：${error instanceof Error ? error.message : String(error)}。此筆不再自動處理，請手動更新委託核對`,
+                            });
+                        });
                     }
                 }
                 const now = Date.now();

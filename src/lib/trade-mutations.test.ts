@@ -10,7 +10,8 @@ describe('manual mutation acknowledgement', () => {
     it('does not call HTTP 200 or a filled order a confirmed cancellation', () => {
         expect(cancellationOutcome(trade('Cancelled'))).toBe('confirmed');
         for (const status of ['Submitted', 'PartFilled', 'PendingSubmit']) expect(cancellationOutcome(trade(status))).toBe('pending');
-        for (const status of ['Filled', 'Failed', 'Inactive']) expect(cancellationOutcome(trade(status))).toBe('unknown');
+        expect(cancellationOutcome(trade('Filled'))).toBe('filled');
+        for (const status of ['Failed', 'Inactive']) expect(cancellationOutcome(trade(status))).toBe('unknown');
         expect(cancellationSummary([{status:'fulfilled', value:trade('Submitted')}, {status:'rejected', reason: new Error('timeout')}])).toMatchObject({kind:'err'});
     });
     it('observes begin before request, preserves success despite a throwing display listener', async () => {
@@ -79,7 +80,8 @@ it('summarises confirmed, sent-but-unconfirmed, not-sent and unknown cancellatio
         { status: 'rejected', reason: notSent }, { status: 'rejected', reason: new Error('timeout') }]);
     expect(mixed.kind).toBe('err');
     expect(mixed.body).toBe('已確認取消 1 筆；已送出未確認 1 筆；未送出 1 筆；失敗或結果未知 1 筆。未確認項目請手動更新委託核對，勿自動重送。');
-    expect(summary([{ status: 'rejected', reason: notSent }]).kind).toBe('info');
+    expect(summary([{ status: 'rejected', reason: notSent }]).kind).toBe('err');
+    expect(summary([{ status: 'fulfilled', value: trade('Filled') }])).toEqual({ kind: 'info', body: '已確認取消 0 筆；已全部成交、無可取消 1 筆。' });
 });
 it('flags only read-back confirmed results as confirmed', async () => {
     vi.resetModules();

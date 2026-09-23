@@ -1,34 +1,40 @@
 import { getApiBase } from './runtime';
 import type { Trade } from './types/order';
 
-export type MutationOutcome = 'confirmed' | 'pending' | 'unknown';
+export type MutationOutcome = 'confirmed' | 'filled' | 'pending' | 'unknown';
 /** A resolved HTTP request alone is not a broker cancellation acknowledgement.
- *  cancelOrder resolves only with a read-back-confirmed Cancelled row (#120). */
+ *  cancelOrder resolves only with a read-back row with nothing left working:
+ *  Cancelled, or Filled before the cancel took effect (#120). */
 export function cancellationOutcome(trade: Trade): MutationOutcome {
     if (trade?.status?.status === 'Cancelled') return 'confirmed';
+    if (trade?.status?.status === 'Filled') return 'filled';
     if (['Submitted', 'PreSubmitted', 'PendingSubmit', 'PartFilled'].includes(trade?.status?.status)) return 'pending';
     return 'unknown';
 }
 const flag = (reason: unknown, key: 'mutationNotStarted' | 'mutationOutcomeUnknown') =>
     typeof reason === 'object' && reason !== null && (reason as Record<string, unknown>)[key] === true;
 export function cancellationSummary(results: PromiseSettledResult<Trade>[]) {
-    let confirmed = 0, unconfirmed = 0, notSent = 0, unknown = 0;
+    let confirmed = 0, filled = 0, unconfirmed = 0, notSent = 0, unknown = 0;
     for (const result of results) {
         if (result.status === 'fulfilled') {
             const outcome = cancellationOutcome(result.value);
-            if (outcome === 'confirmed') confirmed++; else if (outcome === 'pending') unconfirmed++; else unknown++;
+            if (outcome === 'confirmed') confirmed++; else if (outcome === 'filled') filled++;
+            else if (outcome === 'pending') unconfirmed++; else unknown++;
         } else if (flag(result.reason, 'mutationNotStarted')) notSent++;
         else if (flag(result.reason, 'mutationOutcomeUnknown')) unconfirmed++;
         else unknown++;
     }
     const parts = [`已確認取消 ${confirmed} 筆`];
+    if (filled) parts.push(`已全部成交、無可取消 ${filled} 筆`);
     if (unconfirmed) parts.push(`已送出未確認 ${unconfirmed} 筆`);
     if (notSent) parts.push(`未送出 ${notSent} 筆`);
     if (unknown) parts.push(`失敗或結果未知 ${unknown} 筆`);
     const unresolved = unconfirmed + unknown;
+    // Anything not cancelled as asked (not sent, unconfirmed, unknown) is an
+    // error tone: a cancel-all that left orders working must not look fine.
     return {
-        kind: unresolved ? 'err' as const : notSent ? 'info' as const : 'ok' as const,
-        body: `${parts.join('；')}。${unresolved ? '未確認項目請手動更新委託核對，勿自動重送。' : ''}`,
+        kind: unresolved || notSent ? 'err' as const : filled ? 'info' as const : 'ok' as const,
+        body: `${parts.join('；')}。${unresolved ? '未確認項目請手動更新委託核對，勿自動重送。' : notSent ? '未送出的委託仍在，請確認後再處理。' : ''}`,
     };
 }
 // Results that cancelOrder read back and confirmed (same id/account, Cancelled,

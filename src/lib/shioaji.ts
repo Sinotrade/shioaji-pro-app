@@ -1,7 +1,7 @@
 import { getApiBase } from './runtime';
 import { remainingWorkingOrderQuantity } from './working-order-quantity';
 import { markConfirmedCancellation, observeTradeMutation } from './trade-mutations';
-import { verifyCancellation } from './cancel-verification';
+import { readMark, sharedAuthoritativeTrades, verifyCancellation } from './cancel-verification';
 import { observeMarketSnapshots } from './market-snapshot-store';
 import { observeTradeResponse } from './trade-observations';
 import { beginServerInfoRequest, observeServerInfo } from './server-info-store';
@@ -800,10 +800,17 @@ export function placeFuturesOrder(
  * account and re-resolve the trade_id by the order's known identifiers. No
  * polling, no retry; any doubt refuses before dispatch.
  */
-async function prepareOrderMutation(tradeId: string): Promise<{ base: string; tradeId: string; trade: Trade; account: Account }> {
+// trading-state imports this module; load it lazily, once, and share the
+// promise so concurrent mutations (a cancel-all batch) resolve the same module.
+let tradingStateModule: Promise<typeof import('./trading-state')> | null = null;
+const loadTradingState = () => (tradingStateModule ??= import('./trading-state'));
+
+async function prepareOrderMutation(tradeId: string): Promise<{ base: string; tradeId: string; trade: Trade; account: Account; tradingState: typeof import('./trading-state') }> {
     const base = getApiBase();
+    const requestedMark = readMark();
     const refuse = (message: string): never => { throw Object.assign(new Error(message), { mutationNotStarted: true }); };
-    const { getTradingState, hasOrdersBaseline } = await import('./trading-state');
+    const tradingState = await loadTradingState();
+    const { getTradingState, hasOrdersBaseline } = tradingState;
     if (base !== getApiBase()) refuse('伺服器已切換，未送出改刪單');
     const matches = getTradingState().trades.filter(t => t.order.id === tradeId);
     if (matches.length !== 1) refuse('委託或帳戶歸屬不明，請先手動更新委託；未送出改刪單');
@@ -816,12 +823,14 @@ async function prepareOrderMutation(tradeId: string): Promise<{ base: string; tr
     if (!account) refuse('缺少已驗證的委託帳戶，未送出改刪單');
     const futures = ['FUT', 'OPT'].includes(trade.contract.security_type ?? '');
     if (account!.account_type !== (futures ? 'F' : 'S')) refuse('商品與委託帳戶不符，未送出改刪單');
-    if (hasOrdersBaseline()) return { base, tradeId, trade, account: account! };
+    if (hasOrdersBaseline()) return { base, tradeId, trade, account: account!, tradingState };
     const seqno = trade.order.seqno?.trim();
     const ordno = trade.order.ordno?.trim();
     if (!seqno && !ordno) refuse('伺服器委託基準未建立且委託缺少序號，請先手動更新委託；未送出改刪單');
     let rows: Trade[] = [];
-    try { rows = await fetchTrades(account!.account_type as 'S' | 'F', account!, { refresh: true }); }
+    // Shared per account: a batch (e.g. cancel-all from a popout) runs one
+    // authoritative read for the account, not one per order.
+    try { rows = await sharedAuthoritativeTrades(base, account!, requestedMark, () => fetchTrades(account!.account_type as 'S' | 'F', account!, { refresh: true })); }
     catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { mutationNotStarted: true }); }
     if (base !== getApiBase()) refuse('對帳期間伺服器已切換，未送出改刪單');
     const code = (t: Trade) => t.contract.target_code || t.contract.code;
@@ -834,7 +843,7 @@ async function prepareOrderMutation(tradeId: string): Promise<{ base: string; tr
         || remainingWorkingOrderQuantity(found) <= 0 || !found.order.id) {
         refuse('伺服器重新對帳後找不到可操作的同筆委託，未送出改刪單');
     }
-    return { base, tradeId: found!.order.id, trade, account: account! };
+    return { base, tradeId: found!.order.id, trade, account: account!, tradingState };
 }
 
 /** Resolves only with a read-back-confirmed cancellation (#120/#116): the
@@ -848,7 +857,7 @@ export function cancelOrder(
     return observeTradeMutation(tradeId, async () => {
         const target = await prepareOrderMutation(tradeId);
         const { account } = target;
-        const { cancelCacheTrusted, locallyCancelled } = await import('./trading-state');
+        const { cancelCacheTrusted, locallyCancelled } = target.tradingState;
         if (target.base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
         await apiPost<Trade>(
             '/api/v1/order/cancel_order',

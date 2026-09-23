@@ -177,34 +177,57 @@ describe('verifyCancellation', () => {
         await expect(second).resolves.toMatchObject({ source: 'refresh' });
         expect(calls(readTrades, true)).toBe(1);
     });
-    it('still spends its own single refresh when the shared authoritative read does not confirm it', async () => {
-        const scope = `authoritative-miss-${Math.random()}`;
-        let clock = 0, refreshes = 0;
-        const readTrades = vi.fn(async (refresh: boolean) => {
-            if (!refresh) return [row({}, { id: 'a' }), row({}, { id: 'b' })];
-            refreshes += 1;
-            return refreshes === 1
-                ? [row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'a' }), row({}, { id: 'b' })]
-                : [row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'a' }), row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'b' })];
-        });
+    it('30 unconfirmed parallel cancels cost at most one refresh:true per account', async () => {
+        const scope = `batch-${Math.random()}`;
+        let clock = 0;
+        const readTrades = vi.fn(async (_refresh: boolean) => Array.from({ length: 30 }, (_, i) => row({}, { id: `o${i}` })));
         const shared = { readTrades, readHealth: async () => healthy, scope, now: () => clock, sleep: async (ms: number) => { clock += ms; } };
-        const [a, b] = await Promise.all([verifyCancellation(row({}, { id: 'a' }), account, shared), verifyCancellation(row({}, { id: 'b' }), account, shared)]);
-        expect([a.source, b.source]).toEqual(['refresh', 'refresh']);
+        const results = await Promise.allSettled(Array.from({ length: 30 }, (_, i) => verifyCancellation(row({}, { id: `o${i}` }), account, shared)));
+        expect(results.every(r => r.status === 'rejected' && (r.reason as { code?: string }).code === 'CANCEL_UNCONFIRMED')).toBe(true);
+        expect(calls(readTrades, true)).toBe(1);
+        // A second account in the same round gets its own single read.
+        const readOther = vi.fn(async (_refresh: boolean) => [row({}, { id: 'x', account: other })]);
+        await verifyCancellation(row({}, { id: 'x', account: other }), other, { ...shared, readTrades: readOther }).catch(() => undefined);
+        expect(calls(readOther, true)).toBe(1);
+    });
+    it('does not reuse an authoritative read that started before its own cancel returned', async () => {
+        const scope = `stale-${Math.random()}`;
+        let clock = 0;
+        const readTrades = vi.fn(async (_refresh: boolean) => [row({}, { id: 'a' }), row({}, { id: 'b' })]);
+        const shared = { readTrades, readHealth: async () => healthy, scope, now: () => clock, sleep: async (ms: number) => { clock += ms; } };
+        await verifyCancellation(row({}, { id: 'a' }), account, shared).catch(() => undefined);
+        clock += 10; // a later cancel, sent after the first round's refresh
+        await verifyCancellation(row({}, { id: 'b' }), account, shared).catch(() => undefined);
         expect(calls(readTrades, true)).toBe(2);
     });
-    it('shares one in-flight cache read between concurrent cancels on the same account', async () => {
-        let release!: (rows: Trade[]) => void;
-        const readTrades = vi.fn(() => new Promise<Trade[]>(r => { release = r; }));
-        const shared = { readTrades, readHealth: async () => healthy, scope: 'shared-scope', now: () => 0, sleep: async () => undefined };
-        const a = row({}, { id: 'a' }), b = row({}, { id: 'b' });
-        const first = verifyCancellation(a, account, shared);
-        const second = verifyCancellation(b, account, shared);
-        await Promise.resolve();
-        expect(readTrades).toHaveBeenCalledTimes(1);
-        release([row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'a' }), row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'b' })]);
+    it('treats an order Filled before the cancel as nothing left (known result)', async () => {
+        const filled = row({ status: 'Filled', deal_quantity: 1, cancel_quantity: 0 });
+        const d = deps({ cache: async () => [filled], refresh: async () => [] });
+        await expect(verifyCancellation(row(), account, d.value)).resolves.toMatchObject({ trade: { status: { status: 'Filled' } }, source: 'cache' });
+        expect(isConfirmedCancellation(row(), row({ status: 'Filled', deal_quantity: 0, cancel_quantity: 0 }))).toBe(false);
+    });
+    it('uses the larger of local and read-back order quantity', () => {
+        const before = row({}, { quantity: 2 });
+        expect(isConfirmedCancellation(before, row({ status: 'Cancelled', cancel_quantity: 2 }, { quantity: 3 }))).toBe(false);
+        expect(isConfirmedCancellation(before, row({ status: 'Cancelled', cancel_quantity: 1 }, { quantity: 1 }))).toBe(false);
+        expect(isConfirmedCancellation(before, row({ status: 'Cancelled', cancel_quantity: 2 }, { quantity: 1 }))).toBe(true);
+    });
+    it('never joins a read started before its own cancel returned, but shares later polling rounds', async () => {
+        let clock = 0;
+        const rounds: number[] = [];
+        const readTrades = vi.fn(async () => {
+            rounds.push(clock);
+            return clock < 600 ? [row({}, { id: 'a' }), row({}, { id: 'b' })]
+                : [row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'a' }), row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'b' })];
+        });
+        const shared = { readTrades, readHealth: async () => healthy, scope: `poll-${Math.random()}`, now: () => clock,
+            sleep: async (ms: number) => { await Promise.resolve(); clock = Math.max(clock, ms * Math.ceil((clock + 1) / ms)); } };
+        const first = verifyCancellation(row({}, { id: 'a' }), account, shared);
+        const second = verifyCancellation(row({}, { id: 'b' }), account, shared); // returned after a's first read began
         await expect(first).resolves.toMatchObject({ source: 'cache' });
         await expect(second).resolves.toMatchObject({ source: 'cache' });
-        expect(readTrades).toHaveBeenCalledTimes(1);
+        expect(rounds[0]).toBe(0); expect(rounds[1]).toBe(0); // first round: two separate reads
+        expect(readTrades.mock.calls.length).toBeLessThan(6); // later rounds shared
     });
 });
 
