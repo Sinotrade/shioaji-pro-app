@@ -66,3 +66,15 @@
 - #88：主要是原生多視窗矩陣（mirror ACK 遺失、crash／重啟、關閉後清理）；1.7.6 未改變這些條件，本 PR 只讓小視窗
   的 toast 也受惠於 event_id 去重。
 - #75／#113：密集回報用量、App＋SDK 長測、四平台乾淨機器 1.7.6 bootstrap 與 updater 仍待。
+
+## 第三輪：心跳 watchdog 實測（2026-09-23，瀏覽器＋Vite proxy，非原生）
+
+- 環境：本分支 Vite `5194`（`VITE_API_TARGET` 指向隔離 1.7.6 模擬 sidecar `21394`），只以 PID 精確終止／重啟該 sidecar；
+  正式 `21322`、dev App `21323`／`5183` 未觸碰。
+- 修前行為（coordinator 回報）：只殺 sidecar 時 proxy 下的 EventSource 不會關閉，頁首維持 LIVE、心跳逾時 280 秒以上。
+- 修後觀測：07:15:05 終止 sidecar → 頁首維持 LIVE 至 07:16:24 轉 **STALE**，07:16:25 重連失敗為 LOST；委託與持倉顯示
+  「待對帳：串流中斷」並說明「逾時沒有心跳，期間可能漏收回報」。07:17:11 重啟 sidecar → 07:17:24 回到 LIVE。
+  重連後 App 只呼叫 `trade_cache_health`（2 帳戶，monitor 記為 unknown）與 `subscribe_trade`（2），沒有
+  `order/trades` 或 `position_unit`；新實例回報 NotSubscribed，App 重新訂閱且保留「串流中斷」待手動對帳。
+- 重連後由另一模擬 client 送出期貨 New／Cover 成交，App 收到回報（持倉新增「資料暫缺」原因，因委託來自他端），
+  證明重新訂閱後回報送達。

@@ -20,7 +20,7 @@ import * as dockStyles from './bottom-dock.css';
 import * as styles from './debug-panel.css';
 import { ServerMonitor } from './server-monitor';
 
-const STATUS_LABEL = { live: 'LIVE', connecting: 'SYNC', down: 'LOST' };
+const STATUS_LABEL = { live: 'LIVE', connecting: 'SYNC', down: 'LOST', stale: 'STALE' };
 
 export function DebugPanel() {
     const stream = useStreamStatus();

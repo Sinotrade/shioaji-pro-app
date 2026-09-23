@@ -1,5 +1,6 @@
 import { getApiBase } from './runtime';
 import { remainingWorkingOrderQuantity } from './working-order-quantity';
+import { noteMutationIntent } from './mutation-intent';
 import { observeTradeMutation } from './trade-mutations';
 import { observeMarketSnapshots } from './market-snapshot-store';
 import { observeTradeResponse } from './trade-observations';
@@ -854,6 +855,7 @@ export function updateOrderPrice(tradeId: string, price: number) {
     return observeTradeMutation(tradeId, async () => {
         const target = await prepareOrderMutation(tradeId);
         if (target.base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
+        noteMutationIntent(tradeId, { kind: 'price', price });
         return apiPost<Trade>('/api/v1/order/update_price', {
         trade_id: target.tradeId,
         price,
@@ -864,6 +866,7 @@ export function updateOrderQty(tradeId: string, quantity: number) {
     return observeTradeMutation(tradeId, async () => {
         const target = await prepareOrderMutation(tradeId);
         if (target.base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
+        noteMutationIntent(tradeId, { kind: 'qty', quantity });
         return apiPost<Trade>('/api/v1/order/update_qty', {
         trade_id: target.tradeId,
         quantity,

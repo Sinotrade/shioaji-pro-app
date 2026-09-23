@@ -628,6 +628,78 @@ describe('Shioaji 1.7.6 report identity and cache health', () => {
         expect(waited).toBeLessThanOrEqual(3000); // streak reset by a non-gap read
     });
 
+    it('a STALE stream (watchdog) raises possible-missed-report reasons and reconnects through the health path', async () => {
+        await act(async () => { mocks.status = 'stale'; mocks.statusChanged!(); });
+        for (const scope of ['orders', 'positions'] as const) {
+            expect(reasons(scope)).toContain('disconnect');
+            expect(store.getTradingState().queries[scope].error).toContain('可能漏收回報');
+        }
+        expect(store.tradeCacheContinuous()).toBe(false);
+        expect(mocks.health).not.toHaveBeenCalled(); expect(mocks.trades).not.toHaveBeenCalled(); expect(mocks.positions).not.toHaveBeenCalled();
+        // Restarted sidecar: reconnect sees NoBaseline -> restart handling, no cache resync.
+        mocks.health.mockResolvedValue({ state: 'Unknown', reasons: [{ event_type: 'FuturesOrder', reason: 'NoBaseline' }] });
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledOnce());
+        expect(mocks.health).toHaveBeenCalled();
+        expect(store.hasOrdersBaseline()).toBe(false);
+        expect(mocks.trades).not.toHaveBeenCalled();
+        expect(reasons('orders')).toContain('disconnect'); // not silently continuous
+        expect(reasons('positions')).toContain('disconnect');
+    });
+
+    describe('change confirmed by a later report for the same order', () => {
+        async function mutate(call: () => Promise<unknown>) {
+            await act(async () => { await call(); vi.advanceTimersByTime(50); });
+        }
+        async function working() {
+            await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:9'), futures)); });
+            await deliver(byId('v1:FO:FSTREAM:RESET1:9'));
+            return store.getTradingState().trades.find(t => t.order.id === 'fx04')!;
+        }
+        const reply = (t: import('./types/order').AccountedTrade) => ({ ...t, status: { ...t.status, status: 'PendingSubmit' as const } });
+        it('clears 改刪待確認 for that order only when the UpdateQty report carries the requested reduction', async () => {
+            const known = await working();
+            const { observeTradeMutation } = await import('./trade-mutations');
+            const { noteMutationIntent } = await import('./mutation-intent');
+            await mutate(() => observeTradeMutation('fx04', async () => { noteMutationIntent('fx04', { kind: 'qty', quantity: 1 }); return reply(known); }));
+            // A second, unrelated order also waits.
+            await mutate(() => observeTradeMutation('other', async () => { noteMutationIntent('other', { kind: 'price', price: 1 }); return reply({ ...known, order: { ...known.order, id: 'other' } }); }));
+            expect(reasons('orders')).toContain('mutation-outcome');
+            await deliver(byId('v1:FO:FSTREAM:RESET1:10')); // UpdateQty cancel_quantity 1
+            expect(reasons('orders')).toContain('mutation-outcome'); // 'other' still unconfirmed
+        });
+        it('clears the reason when the only unconfirmed change is confirmed', async () => {
+            const known = await working();
+            const { observeTradeMutation } = await import('./trade-mutations');
+            const { noteMutationIntent } = await import('./mutation-intent');
+            await mutate(() => observeTradeMutation('fx04', async () => { noteMutationIntent('fx04', { kind: 'qty', quantity: 1 }); return reply(known); }));
+            expect(reasons('orders')).toContain('mutation-outcome');
+            await deliver(byId('v1:FO:FSTREAM:RESET1:10'));
+            expect(reasons('orders')).not.toContain('mutation-outcome');
+        });
+        it('keeps the reason when the report does not match the request', async () => {
+            const known = await working();
+            const { observeTradeMutation } = await import('./trade-mutations');
+            const { noteMutationIntent } = await import('./mutation-intent');
+            await mutate(() => observeTradeMutation('fx04', async () => { noteMutationIntent('fx04', { kind: 'qty', quantity: 2 }); return reply(known); }));
+            await deliver(byId('v1:FO:FSTREAM:RESET1:10')); // reduced by 1, not 2
+            expect(reasons('orders')).toContain('mutation-outcome');
+        });
+        it('confirms a price change from UpdatePrice modified_price', async () => {
+            const known = await working();
+            const { observeTradeMutation } = await import('./trade-mutations');
+            const { noteMutationIntent } = await import('./mutation-intent');
+            await mutate(() => observeTradeMutation('fx04', async () => { noteMutationIntent('fx04', { kind: 'price', price: 46990 }); return reply(known); }));
+            const body = byId('v1:FO:FSTREAM:RESET1:7').data as unknown as { FuturesOrder: Record<string, Record<string, unknown>> };
+            const b = body.FuturesOrder;
+            await deliver({ state: 'FuturesOrder', data: { FuturesOrder: { ...b, event_id: 'v1:FO:FSTREAM:RESET1:30',
+                order: { ...b.order, id: 'fx04', seqno: 'fx04', ordno: (known.order.ordno), quantity: 2 },
+                status: { ...b.status, id: 'fx04', order_quantity: 2, exchange_ts: (b.status!.exchange_ts as number) + 100 } } } });
+            expect(store.getTradingState().trades.find(t => t.order.id === 'fx04')!.status.modified_price).toBe(46990);
+            expect(reasons('orders')).not.toContain('mutation-outcome');
+        });
+    });
+
     it('never polls health or trades on a timer', async () => {
         await act(async () => { vi.advanceTimersByTime(120000); });
         expect(mocks.health).not.toHaveBeenCalled(); expect(mocks.trades).not.toHaveBeenCalled();
