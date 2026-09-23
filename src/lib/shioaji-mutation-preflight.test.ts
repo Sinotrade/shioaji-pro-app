@@ -71,6 +71,8 @@ it('holds the local gate while a mutation is in flight and never queues a second
 });
 
 describe('cancel confirmation (#120 / #116)', () => {
+    // Shared read-backs are scoped by API base; isolate each case.
+    beforeEach(() => { m.base = `fixture-${Math.random()}`; });
     afterEach(() => vi.useRealTimers());
     it('resolves with the read-back Cancelled row of the same account, read from the cache only', async () => {
         const { onTradeMutation } = await import('./trade-mutations');
@@ -149,7 +151,8 @@ describe('mutation without an authoritative baseline on this sidecar', () => {
                 : reads++ === 0 ? [restarted()] : [restarted('new-id', {}, { status: 'Cancelled', cancel_quantity: 3, order_quantity: 0 })]);
             const settled = cancelOrder('fixture');
             await vi.advanceTimersByTimeAsync(5_000);
-            await expect(settled).resolves.toMatchObject({ order: { id: 'new-id' }, status: { status: 'Cancelled' } });
+            // Reported under the caller's id; the request used the re-resolved one.
+            await expect(settled).resolves.toMatchObject({ order: { id: 'fixture' }, status: { status: 'Cancelled' } });
             expect(m.post.mock.calls.map(c => [c[0], c[1].refresh])).toEqual([
                 ['/api/v1/order/trades', true], ['/api/v1/order/cancel_order', undefined], ['/api/v1/order/trades', true]]);
             expect(m.post.mock.calls[1]![1].trade_id).toBe('new-id');

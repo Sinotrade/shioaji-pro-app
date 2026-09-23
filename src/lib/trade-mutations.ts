@@ -40,6 +40,8 @@ export function markConfirmedCancellation<T extends Trade>(trade: T): T {
     return trade;
 }
 export interface MutationObservation { token: string; base: string; tradeId: string; phase: 'begin' | 'settled'; trade?: Trade; confirmed?: boolean }
+// Refusals before any request: this call sent nothing (another one may be in flight).
+const notStarted = (message: string) => Object.assign(new Error(message), { mutationNotStarted: true as const });
 const pendingIds = new Map<string, string>();
 const listeners = new Set<(event: MutationObservation) => void>();
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-trade-mutations:${getApiBase()}`) : null;
@@ -50,7 +52,7 @@ function emit(event: MutationObservation) {
 channel?.addEventListener('message', event => { if (event.data?.token && event.data?.tradeId && ['begin', 'settled'].includes(event.data.phase)) emit(event.data); });
 function publish(event: MutationObservation) { emit(event); try { channel?.postMessage(event); } catch { /* closed window */ } }
 function dispatchTradeMutation(tradeId: string, request: () => Promise<Trade>): Promise<Trade> {
-    if (pendingIds.has(tradeId)) return Promise.reject(new Error('此委託已有刪單／改單送出，請等待結果再確認'));
+    if (pendingIds.has(tradeId)) return Promise.reject(notStarted('此委託已有刪單／改單送出，請等待結果再確認'));
     const context = { token: crypto.randomUUID(), base: getApiBase(), tradeId };
     // Remote observations must never own the local dispatch gate: a window may close
     // before publishing settled. Cross-window exclusion belongs to the Web Lock.
@@ -72,13 +74,13 @@ import.meta.hot?.dispose(() => channel?.close());
 /** Exclusive per-order dispatch, never queue a second mutation. */
 export async function observeTradeMutation(tradeId: string, request: () => Promise<Trade>): Promise<Trade> {
     if (typeof navigator === 'undefined' || !navigator.locks) {
-        throw new Error('此環境不支援跨視窗委託互斥（Web Locks），未送出刪單／改單；請使用支援的桌面環境');
+        throw notStarted('此環境不支援跨視窗委託互斥（Web Locks），未送出刪單／改單；請使用支援的桌面環境');
     }
     const base = getApiBase();
     return await navigator.locks.request(
         `sj-trade-mutation:${base}:${tradeId}`, { ifAvailable: true }, lock => {
-            if (!lock) throw new Error('此委託已有刪單／改單送出，請等待結果再確認');
-            if (base !== getApiBase()) throw new Error('伺服器已切換，未送出刪單／改單');
+            if (!lock) throw notStarted('此委託已有刪單／改單送出，請等待結果再確認');
+            if (base !== getApiBase()) throw notStarted('伺服器已切換，未送出刪單／改單');
             return dispatchTradeMutation(tradeId, request);
         });
 }

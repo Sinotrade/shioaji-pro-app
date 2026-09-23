@@ -348,19 +348,13 @@ export function OrdersPane({
         }
     };
 
-    // 批次刪單：逐筆呼叫 cancelOrder，完成回報筆數
+    // 批次刪單：同時送出各筆 cancelOrder（每筆各自回讀確認，同帳戶讀取共用），
+    // 逐筆完成時更新進度，最後回報確認筆數
     const runBatchCancel = async (ids: string[]) => {
         if (ids.length === 0 || busy || cancelling) return;
         setBusy({ done: 0, total: ids.length });
-        const results: PromiseSettledResult<Trade>[] = [];
-        for (const id of ids) {
-            try {
-                results.push({ status: 'fulfilled', value: await cancelOrder(id) });
-            } catch (reason) {
-                results.push({ status: 'rejected', reason });
-            }
-            setBusy((b) => (b ? { done: b.done + 1, total: b.total } : b));
-        }
+        const results: PromiseSettledResult<Trade>[] = await Promise.allSettled(ids.map(id =>
+            cancelOrder(id).finally(() => setBusy((b) => (b ? { done: b.done + 1, total: b.total } : b)))));
         setBusy(null);
         setSelected(new Set());
         notify({

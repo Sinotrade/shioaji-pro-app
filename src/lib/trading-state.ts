@@ -589,13 +589,14 @@ function applyConfirmedCancellation(trade: AccountedTrade): boolean {
     const rows = state.trades.filter(t => t.order.id === trade.order.id && t.account && accountKey(t.account) === accountKey(ref));
     if (rows.length > 1) return false;
     const current = rows[0];
-    if (!current) return true; // already gone from the view (e.g. a newer snapshot); nothing to correct
+    if (!current) return false; // no matching local row: keep the conservative path
     if (trade.status.deal_quantity < current.status.deal_quantity || trade.status.cancel_quantity < current.status.cancel_quantity) return false;
     if (trade.status.deal_quantity > current.status.deal_quantity) raise('positions', 'mutation-outcome', '刪單回讀包含新增成交；持倉尚待回報或手動對帳');
-    // Keep the local order (original quantity, metadata); 1.7.6 HTTP rows can
-    // carry status.order_quantity 0, which must not overwrite a known value.
-    const status = { ...current.status, ...trade.status,
-        order_quantity: trade.status.order_quantity > 0 ? trade.status.order_quantity : current.status.order_quantity,
+    // Keep the local order (original quantity, metadata).
+    // Take only the outcome fields; HTTP rows can carry 0 for order_quantity
+    // and modified_price, which must not overwrite known local values.
+    const status = { ...current.status, status: trade.status.status, status_code: trade.status.status_code || current.status.status_code,
+        deal_quantity: trade.status.deal_quantity, cancel_quantity: trade.status.cancel_quantity,
         deals: (trade.status.deals?.length ?? 0) >= current.status.deals.length ? trade.status.deals : current.status.deals };
     state = { ...state, trades: state.trades.map(t => t === current ? { ...current, status } : t) };
     return true;
@@ -772,10 +773,9 @@ function start() {
 }
 
 export const getTradingState = () => state;
-/** Cache-only order reads (refresh:false) are trustworthy only while this App
- *  holds an authoritative baseline on the same sidecar instance and has not
- *  missed reports since; callers must still require every health Healthy. */
-/** Whether cancel confirmation may read the sidecar cache (refresh:false).
+/** Whether cancel confirmation may read the sidecar cache (refresh:false):
+ *  the same continuity as tradeCacheContinuous (health is not required — a
+ *  cache row only ever confirms, a stale cache can only fail to confirm).
  *  Otherwise it goes straight to one refresh:true read. */
 export function cancelCacheTrusted() {
     return isMirror ? mirroredCacheContinuous : tradeCacheContinuous();
@@ -789,6 +789,9 @@ export function locallyCancelled(tradeId: string, account: { account_type: strin
 /** An authoritative orders read happened on this sidecar instance and no
  *  restart has been detected since (order mutation preflight uses this). */
 export function hasOrdersBaseline() { return !isMirror && ordersBaseline; }
+/** Cache-only order reads (refresh:false) are trustworthy only while this App
+ *  holds an authoritative baseline on the same sidecar instance and has not
+ *  missed reports since; callers must still require every health Healthy. */
 export function tradeCacheContinuous() {
     return !isMirror && ordersBaseline && getStreamStatus() === 'live' && !reasonState.orders.has('disconnect');
 }

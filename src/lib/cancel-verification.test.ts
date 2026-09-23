@@ -57,6 +57,11 @@ describe('cancel confirmation rule', () => {
         expect(isConfirmedCancellation(before, row({ status: 'Cancelled', deal_quantity: 0, cancel_quantity: 3 }, { quantity: 3 }))).toBe(false);
         expect(isConfirmedCancellation(before, null)).toBe(false);
     });
+    it('counts fills that raced the cancel: Cancelled with nothing left is confirmed', () => {
+        const before = row({}, { quantity: 5 });
+        expect(isConfirmedCancellation(before, row({ status: 'Cancelled', deal_quantity: 2, cancel_quantity: 3 }, { quantity: 5 }))).toBe(true);
+        expect(isConfirmedCancellation(before, row({ status: 'Cancelled', deal_quantity: 2, cancel_quantity: 2 }, { quantity: 5 }))).toBe(false);
+    });
     it('matches id and account; a row of another account or a duplicate id is not this order', () => {
         expect(findOrderRow([row()], 'order-1', account)).not.toBeNull();
         expect(findOrderRow([row({}, { account: other })], 'order-1', account)).toBeNull();
@@ -160,6 +165,33 @@ describe('verifyCancellation', () => {
         expect(sleeps).toBe(2); // waited for the local Cancel report, not the whole window
     });
 
+    it('uses a later cancel\'s authoritative read as a free check before its own single refresh', async () => {
+        const scope = `authoritative-${Math.random()}`;
+        let clock = 0;
+        const both = [row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'a' }), row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'b' })];
+        const readTrades = vi.fn(async (refresh: boolean) => refresh ? both : [row({}, { id: 'a' }), row({}, { id: 'b' })]);
+        const shared = { readTrades, readHealth: async () => healthy, scope, now: () => clock, sleep: async (ms: number) => { clock += ms; } };
+        const first = verifyCancellation(row({}, { id: 'a' }), account, shared);
+        const second = verifyCancellation(row({}, { id: 'b' }), account, shared);
+        await expect(first).resolves.toMatchObject({ source: 'refresh' });
+        await expect(second).resolves.toMatchObject({ source: 'refresh' });
+        expect(calls(readTrades, true)).toBe(1);
+    });
+    it('still spends its own single refresh when the shared authoritative read does not confirm it', async () => {
+        const scope = `authoritative-miss-${Math.random()}`;
+        let clock = 0, refreshes = 0;
+        const readTrades = vi.fn(async (refresh: boolean) => {
+            if (!refresh) return [row({}, { id: 'a' }), row({}, { id: 'b' })];
+            refreshes += 1;
+            return refreshes === 1
+                ? [row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'a' }), row({}, { id: 'b' })]
+                : [row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'a' }), row({ status: 'Cancelled', cancel_quantity: 1 }, { id: 'b' })];
+        });
+        const shared = { readTrades, readHealth: async () => healthy, scope, now: () => clock, sleep: async (ms: number) => { clock += ms; } };
+        const [a, b] = await Promise.all([verifyCancellation(row({}, { id: 'a' }), account, shared), verifyCancellation(row({}, { id: 'b' }), account, shared)]);
+        expect([a.source, b.source]).toEqual(['refresh', 'refresh']);
+        expect(calls(readTrades, true)).toBe(2);
+    });
     it('shares one in-flight cache read between concurrent cancels on the same account', async () => {
         let release!: (rows: Trade[]) => void;
         const readTrades = vi.fn(() => new Promise<Trade[]>(r => { release = r; }));

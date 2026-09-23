@@ -130,23 +130,26 @@ export function isConfirmedCancellation(before: Trade, row: Trade | null): row i
     if (!Number.isFinite(cancelled) || !Number.isFinite(dealt)) return false;
     // A cache row behind the local projection is not evidence.
     if (dealt < before.status.deal_quantity) return false;
-    return cancelled >= requiredCancelQuantity(before);
+    // Cumulative cancel_quantity covers what remained when the cancel started
+    // (order.quantity − fills at the start). A fill racing the cancel lowers
+    // what is left to cancel, so count those fills too: nothing may remain.
+    return cancelled + dealt >= before.order.quantity;
 }
 
-// Concurrent cancels on one account (flash cancel-all) share an in-flight
-// read instead of multiplying HTTP calls — refresh:true costs accounting
-// quota (25/5s). A read is only joined when it started after this cancel's
-// request settled, so no cancel is judged by an older observation.
-const inFlight = new Map<string, { startedAt: number; promise: Promise<Trade[]> }>();
-function sharedRead(key: string, notBefore: number, now: () => number, read: () => Promise<Trade[]>) {
-    const current = inFlight.get(key);
-    if (current && current.startedAt >= notBefore) return current.promise;
-    const startedAt = now();
-    const promise = read().finally(() => {
-        if (inFlight.get(key)?.promise === promise) inFlight.delete(key);
-    });
-    inFlight.set(key, { startedAt, promise });
-    return promise;
+// Concurrent cancels on one account (flash cancel-all) share reads instead of
+// multiplying HTTP calls — refresh:true costs accounting quota (25/5s). A read
+// is only used when it started after this cancel's request settled, so no
+// cancel is judged by an older observation.
+type SharedRead = { startedAt: number; promise: Promise<Trade[]> };
+const cacheInFlight = new Map<string, SharedRead>();
+// Latest authoritative read per account, kept after it settles: a later
+// cancel may use it as a free check before spending its own single refresh.
+const lastAuthoritative = new Map<string, SharedRead>();
+function startRead(key: string, now: () => number, read: () => Promise<Trade[]>, keep: Map<string, SharedRead>, dropOnSettle: boolean) {
+    const entry: SharedRead = { startedAt: now(), promise: read() };
+    if (dropOnSettle) entry.promise.then(() => undefined, () => undefined).finally(() => { if (keep.get(key) === entry) keep.delete(key); });
+    keep.set(key, entry);
+    return entry.promise;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>(resolve => { globalThis.setTimeout(resolve, ms); });
@@ -188,20 +191,38 @@ export async function verifyCancellation(
     const guard = () => {
         try { deps.guard?.(); } catch (error) { readError = message(error); throw unconfirmed(); }
     };
-    const observe = async (refresh: boolean) => {
-        guard();
-        let rows: Trade[];
-        try {
-            rows = await sharedRead(`${accountKey}|${refresh}`, sentAt, now, () => deps.readTrades(refresh));
-        } catch (error) {
-            readError = message(error);
-            return null;
-        }
+    const record = (rows: Trade[]) => {
         readError = null;
         const row = findOrderRow(rows, tradeId, account);
         missing = !row;
         if (row) last = row;
         return row;
+    };
+    const observe = async (refresh: boolean) => {
+        guard();
+        const key = `${accountKey}|${refresh}`;
+        if (refresh) {
+            // A shared authoritative read that began after this cancel is a
+            // free check; this cancel's own single refresh follows only if it
+            // does not confirm.
+            const prior = lastAuthoritative.get(key);
+            if (prior && prior.startedAt >= sentAt) {
+                try {
+                    const row = record(await prior.promise);
+                    if (isConfirmedCancellation(before, row)) return row;
+                } catch { /* fall through to this cancel's own read */ }
+                guard();
+            }
+        }
+        try {
+            const joined = refresh ? undefined : cacheInFlight.get(key);
+            return record(await (joined && joined.startedAt >= sentAt
+                ? joined.promise
+                : startRead(key, now, () => deps.readTrades(refresh), refresh ? lastAuthoritative : cacheInFlight, !refresh)));
+        } catch (error) {
+            readError = message(error);
+            return null;
+        }
     };
 
     let cacheReads = 0;

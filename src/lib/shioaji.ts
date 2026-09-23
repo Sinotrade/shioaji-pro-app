@@ -874,7 +874,11 @@ export function cancelOrder(
             readTrades: refresh => fetchTrades(type, account, { refresh }),
             readHealth: () => fetchTradeCacheHealth(type, account),
         });
-        return markConfirmedCancellation({ ...trade, account });
+        // A trade_id re-resolved after a sidecar restart is the same order the
+        // caller named; report it under the caller's id so the App's row and
+        // the Agent's order_id match. Status and quantities are the broker's.
+        const confirmed = target.tradeId === tradeId ? trade : { ...trade, order: { ...trade.order, id: tradeId } };
+        return markConfirmedCancellation({ ...confirmed, account });
     });
 }
 

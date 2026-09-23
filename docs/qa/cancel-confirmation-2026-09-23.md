@@ -29,10 +29,12 @@
 ## 自動測試（mock）
 
 - `cancel-verification.test.ts`：Submitted 且取消量 0 → 未確認（11 次 cache、1 次 health、恰好 1 次 `refresh:true`）；
-  部分成交後刪單確認；Degraded 仍只做 1 次 `refresh:true`；讀取失敗、委託不在、別的帳戶都判未確認、不合成
-  Cancelled；伺服器切換會中止讀取；cache 不可信時跳過 cache 與 health；同帳戶讀取共用；fixture 回歸。
+  部分成交後刪單確認；刪單途中成交且沒有剩餘時確認，還有剩餘時不確認；Degraded 仍只做 1 次 `refresh:true`；讀取失敗、委託不在、別的帳戶都判未確認、不合成
+  Cancelled；伺服器切換會中止讀取；cache 不可信時跳過 cache 與 health；同帳戶讀取共用（另一筆刪單較晚開始的
+  `refresh:true` 可免費核對，核對不到才花自己那一次）；fixture 回歸。
 - `shioaji-mutation-preflight.test.ts`：回讀列限同帳戶且為 `refresh:false`；未確認拋 `CANCEL_UNCONFIRMED`，只送出
-  一次 cancel；無基準時是一次 `refresh:true` 前置、重新解析 id、再一次 `refresh:true` 確認。
+  一次 cancel；無基準時是一次 `refresh:true` 前置、以重新解析的 id 送出、再一次 `refresh:true` 確認，結果以
+  呼叫端的 id 回報。
 - `trading-state.test.ts`：已確認的取消，即使期間收到 Cancel 或其他回報，也不標「改刪待確認」；本地成交量較多時
   仍標示；未確認時照舊標示。
 - `trade-mutations.test.ts`：摘要分開已確認、已送出未確認、未送出、失敗或未知；只有回讀確認的結果帶
@@ -46,5 +48,11 @@
 - 正式環境：期貨與股票刪單（含閃電逐價刪單、全刪）在正式回報下的確認時間、`order.account` 欄位，以及正式
   cache 的累計取消量語意。需要使用者自行操作；agent 不代送正式委託。
 - 原生 App：閃電面板逐價刪單、全刪、小視窗（沿用主視窗的 cache 判定）、Agent `cancel_order` 的核可視窗流程。
-- 成交與刪單同時發生會判為未確認（刻意偏保守），正式環境的發生頻率待觀察。
+- 小視窗大量全刪時的 `refresh:true` 次數（#128 前置流程加上刪單確認）與帳務額度。
 - #116 回報的成本顯示問題不在本 PR 範圍。
+
+## Review
+
+獨立 AI review 一輪，沒有發現「未確認卻回報為已確認或未送出」的情況。已修正：重新解析 id 後被誤判為未確認；
+刪單途中成交被誤判為未確認；委託批次刪單改為並行；完成的 `refresh:true` 可供同帳戶較晚的刪單核對；確認後只覆寫
+結果欄位（不蓋掉改價與原量）；找不到本地列時走保守路徑；鎖定或互斥拒絕標為未送出。
