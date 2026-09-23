@@ -32,6 +32,7 @@ const m = vi.hoisted(() => ({
     envChanged: [] as (() => void)[],
     search: '',
     lockGranted: true,
+    queued: null as ((lock: object | null) => unknown) | null,
 }));
 
 vi.mock('./runtime', () => ({ getApiBase: () => m.base }));
@@ -100,7 +101,10 @@ async function boot(opts: { keepStore?: boolean } = {}) {
     vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
     vi.stubGlobal('location', { search: m.search });
     m.order = null; m.tick = null; m.statusChanged = []; m.envChanged = [];
-    vi.stubGlobal('navigator', { locks: { request: (_n: string, _o: unknown, cb: (lock: object | null) => unknown) => {
+    m.queued = null;
+    vi.stubGlobal('navigator', { locks: { request: (_n: string, a: unknown, b?: (lock: object | null) => unknown) => {
+        const cb = (typeof a === 'function' ? a : b) as (lock: object | null) => unknown;
+        if (typeof a === 'function' || !(a as { ifAvailable?: boolean }).ifAvailable) { m.queued = cb; return new Promise(() => undefined); }
         const r = cb(m.lockGranted ? {} : null); return Promise.resolve(r instanceof Promise ? undefined : r); } } });
     engine = await import('./trigger-engine');
     bracket = await import('./bracket');
@@ -493,11 +497,23 @@ describe('trigger execution (main window only)', () => {
         await expect(bracket.registerBracket({ ...spec(F2, 'fixture-f9'), env: 'x|simulation' })).rejects.toThrow('未確認');
     });
 
-    it('a second main tab without the executor lock does not execute', async () => {
+    it('a second main tab without the executor lock is a read-only mirror and takes over later', async () => {
+        await armed();
+        const saved = store.get('sj-pro-triggers');
         m.lockGranted = false;
-        await boot();
+        await boot({ keepStore: true });
         expect(m.tick).toBeNull();
         expect(m.order).toBeNull();
+        expect(engine.getTriggers()).toEqual([]); // no stale private copy
+        await engine.addTrigger({ code: 'TXFR1', condition: 'above', price: 1, action: 'Buy', quantity: 0, kind: 'alert' });
+        expect(store.get('sj-pro-triggers')).toBe(saved); // never writes shared state
+        await expect(bracket.ensureBracketHost()).rejects.toThrow();
+        // the executor tab closes → the queued lock is granted → take over
+        m.queued!({}); await flush();
+        expect(m.tick).not.toBeNull();
+        expect(engine.getTriggers()).toHaveLength(2);
+        await tick(47000);
+        expect(m.place).toHaveBeenCalledTimes(1);
     });
 });
 

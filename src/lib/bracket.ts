@@ -36,7 +36,7 @@ import {
 import { fetchCachedTrades, fetchReconciledTrades, fetchTradeCacheHealth, type TradeCacheHealth } from './bracket-api';
 import { streamMarket, type EventVerdict } from './bracket-event-ledger';
 import { onTrackedReport, recentReportsFor } from './bracket-reports';
-import { claimExecutor, createCommandBus, isMainWindow } from './main-window-commands';
+import { claimExecutor, createCommandBus, isExecutor, isMainWindow } from './main-window-commands';
 import type { OrderEventReport } from './order-report';
 import {
     currentProtectionEnv,
@@ -53,7 +53,9 @@ import {
     applyExitTrade,
     armBracketGroup,
     disarmBracketGroup,
+    EXECUTOR_LOCK,
     getExits,
+    onBecomeExecutor,
     onExitUpdate,
     type ExitRecord,
 } from './trigger-engine';
@@ -127,7 +129,12 @@ function loadPlans(): BracketPlan[] {
     }
 }
 
-let plans: BracketPlan[] = main ? loadPlans() : [];
+// Loaded and written only by the executing main window (see run()).
+let plans: BracketPlan[] = [];
+let executing = false;
+let decideRole!: () => void;
+const roleDecided = new Promise<void>(resolve => { decideRole = resolve; });
+if (!main) decideRole();
 let snapshot: BracketPlan[] = plans;
 const listeners = new Set<() => void>();
 const exitIds = new Map<string, string>(); // plan id → exit record id
@@ -141,7 +148,8 @@ type Command =
 
 const bus = createCommandBus<Command, BracketPlan[]>({
     channel: typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-brackets:${getApiBase()}`) : null,
-    main,
+    main: () => executing,
+    ready: roleDecided,
     handle: cmd => handle(cmd),
     snapshot: () => snapshot,
     onState: state => {
@@ -152,6 +160,7 @@ const bus = createCommandBus<Command, BracketPlan[]>({
 });
 
 function commit() {
+    if (!executing) return; // mirrors never write shared state
     const now = Date.now();
     plans = plans.filter(p => !p.dismissed && (isLive(p) || now - p.updatedAt < KEEP_DONE_MS));
     try { globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(plans)); } catch { /* quota */ }
@@ -436,19 +445,23 @@ let started = false;
 export function startBracketRuntime() {
     if (started || !main) return;
     started = true;
-    void claimExecutor('sj-protection-executor').then(ok => { if (ok) run(); });
+    void claimExecutor(EXECUTOR_LOCK).settled.then(() => {
+        if (isExecutor()) return;
+        decideRole(); // standby mirror until the executor leaves
+        bus.hello();
+    });
+    onBecomeExecutor(run);
 }
 
 function run() {
+    plans = loadPlans();
+    executing = true;
+    decideRole();
     const base = getApiBase();
     const now = Date.now();
-    let reloaded = false;
-    plans = plans.map(p => {
-        if (envBase(p.env) !== base || !isLive(p)) return p;
-        reloaded = true;
-        return addIssue(p, 'reload', 'App 重新載入，期間的回報可能未收到', now);
-    });
-    if (reloaded) commit();
+    plans = plans.map(p => envBase(p.env) !== base || !isLive(p) ? p
+        : addIssue(p, 'reload', 'App 重新載入，期間的回報可能未收到', now));
+    commit();
     onTrackedReport(onReport);
     onExitUpdate(onExit);
     for (const rec of getExits()) if (rec.bracketId) onExit(rec);

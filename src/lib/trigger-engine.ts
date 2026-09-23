@@ -32,7 +32,7 @@ import {
 } from './bracket-core';
 import { onTrackedReport, recentReportsFor } from './bracket-reports';
 import { ensureContract } from './contracts-cache';
-import { claimExecutor, createCommandBus, isMainWindow } from './main-window-commands';
+import { claimExecutor, createCommandBus, isExecutor, isMainWindow } from './main-window-commands';
 import type { OrderEventReport } from './order-report';
 import {
     currentProtectionEnv,
@@ -117,11 +117,18 @@ function loadTriggers(): TriggerOrder[] {
 }
 
 const main = isMainWindow();
-let triggers: TriggerOrder[] = main ? loadTriggers() : [];
-const processedGroups: Record<string, number> = main ? readJson<Record<string, number>>(GROUPS_KEY, {}) : {};
-// An exit still `sending` when the app went away has an unknown outcome.
-let exits: ExitRecord[] = main ? readJson<ExitRecord[]>(EXITS_KEY, []).filter(e => e && typeof e.id === 'string')
-    .map(e => e.status === 'sending' ? { ...e, status: 'unknown' as const, detail: '送單期間 App 重新載入，結果未知' } : e) : [];
+// Shared persisted state is loaded (and written) ONLY by the executing
+// window; every other window/tab is a mirror of its snapshot.
+let triggers: TriggerOrder[] = [];
+let processedGroups: Record<string, number> = {};
+let exits: ExitRecord[] = [];
+function loadExecutorState() {
+    triggers = loadTriggers();
+    processedGroups = readJson<Record<string, number>>(GROUPS_KEY, {});
+    // An exit still `sending` when the app went away has an unknown outcome.
+    exits = readJson<ExitRecord[]>(EXITS_KEY, []).filter(e => e && typeof e.id === 'string')
+        .map(e => e.status === 'sending' ? { ...e, status: 'unknown' as const, detail: '送單期間 App 重新載入，結果未知' } : e);
+}
 const listeners = new Set<() => void>();
 const exitListeners = new Set<(exit: ExitRecord) => void>();
 
@@ -135,9 +142,14 @@ type Command =
     | { op: 'remove'; id: string }
     | { op: 'ack-exit'; id: string };
 
+let decideRole!: () => void;
+const roleDecided = new Promise<void>(resolve => { decideRole = resolve; });
+if (!main) decideRole();
+
 const bus = createCommandBus<Command, Snapshot>({
     channel: typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-triggers:${getApiBase()}`) : null,
-    main,
+    main: () => executing,
+    ready: roleDecided,
     handle: cmd => handleCommand(cmd),
     snapshot: () => snapshot,
     onState: state => {
@@ -151,6 +163,7 @@ const isResolved = (e: ExitRecord) => e.status === 'filled' || e.status === 'inc
     || e.status === 'not-sent' || (e.status === 'unknown' && !!e.acknowledged);
 
 function commit() {
+    if (!executing) return; // mirrors never write shared state
     const now = Date.now();
     for (const [key, at] of Object.entries(processedGroups)) {
         if (now - at > GROUP_TTL_MS) delete processedGroups[key];
@@ -606,27 +619,42 @@ export function useTriggerFeed(): { feedMissing: string[]; executing: boolean } 
     return useSyncExternalStore(subscribe, () => snapshot);
 }
 
+export const EXECUTOR_LOCK = 'sj-protection-executor';
 let engineStarted = false;
 export function startTriggerEngine() {
     if (engineStarted || !main) return;
     engineStarted = true;
-    void claimExecutor('sj-protection-executor').then(ok => {
-        if (!ok) {
-            notify({ kind: 'err', title: '觸價單未在此分頁執行', body: '另一個主視窗／分頁已在執行停損停利；此頁僅顯示' });
-            return;
-        }
-        executing = true;
-        const suspended = triggers.filter(t => t.suspended === LEGACY_SUSPENDED).length;
-        if (suspended) {
-            notify({ kind: 'err', title: '舊版觸價單已暫停',
-                body: `${suspended} 筆停損／停利未綁定帳戶，不會自動送單；請在圖表刪除後重新設定` });
-        }
-        onAnyTick(tick => { if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close)); });
-        onTrackedReport((report, _verdict, base) => applyExitReport(report, base));
-        onProtectionEnvChange(() => syncQuotes());
-        subscribeStatusStore(() => { if (getStreamStatus() === 'live') { void refreshProtectionEnv(); syncQuotes(); } });
-        void refreshProtectionEnv();
-        publishFeed();
-        syncQuotes();
+    const claim = claimExecutor(EXECUTOR_LOCK);
+    void claim.settled.then(() => {
+        if (isExecutor()) return;
+        decideRole(); // standby: act as a mirror until the executor leaves
+        bus.hello();
+        notify({ kind: 'info', title: '觸價單由其他主視窗執行', body: '另一個主視窗／分頁正在執行停損停利；此頁僅顯示，對方關閉後自動接手' });
     });
+    void claim.acquired.then(becomeExecutor);
+}
+
+function becomeExecutor() {
+    loadExecutorState();
+    executing = true;
+    decideRole();
+    const suspended = triggers.filter(t => t.suspended === LEGACY_SUSPENDED).length;
+    if (suspended) {
+        notify({ kind: 'err', title: '舊版觸價單已暫停',
+            body: `${suspended} 筆停損／停利未綁定帳戶，不會自動送單；請在圖表刪除後重新設定` });
+    }
+    onAnyTick(tick => { if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close)); });
+    onTrackedReport((report, _verdict, base) => applyExitReport(report, base));
+    onProtectionEnvChange(() => syncQuotes());
+    subscribeStatusStore(() => { if (getStreamStatus() === 'live') { void refreshProtectionEnv(); syncQuotes(); } });
+    void refreshProtectionEnv();
+    commit();
+    for (const l of executorListeners) l();
+}
+
+const executorListeners = new Set<() => void>();
+/** Runs once this window becomes the protection executor (main window only). */
+export function onBecomeExecutor(listener: () => void): void {
+    if (executing) listener();
+    else executorListeners.add(listener);
 }

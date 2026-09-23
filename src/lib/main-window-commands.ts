@@ -16,20 +16,46 @@ export function isMainWindow(): boolean {
 }
 
 /** Only one main-window instance per origin may execute protection (a web
- * build can have several tabs without `?popout`). Holds a Web Lock for the
- * page's lifetime; without Web Locks (tests / old engines) it succeeds. */
-let executorClaim: Promise<boolean> | null = null;
-export function claimExecutor(name: string): Promise<boolean> {
-    if (executorClaim) return executorClaim;
+ * build can have several tabs without `?popout`). The first tab to get the
+ * Web Lock executes for its lifetime; the others stay read-only mirrors and
+ * queue for the lock, taking over when the executor closes. Without Web
+ * Locks (tests / old engines) the main window executes. */
+export interface ExecutorClaim {
+    settled: Promise<void>; // first attempt finished (executor or standby)
+    acquired: Promise<void>; // this window now executes
+}
+let claim: ExecutorClaim | null = null;
+let executor = false;
+export function isExecutor(): boolean {
+    return executor;
+}
+export function claimExecutor(name: string): ExecutorClaim {
+    if (claim) return claim;
     const locks = typeof navigator !== 'undefined' ? (navigator as Navigator & { locks?: LockManager }).locks : undefined;
-    if (!locks?.request) return (executorClaim = Promise.resolve(true));
-    executorClaim = new Promise<boolean>(resolve => {
-        void locks.request(name, { ifAvailable: true }, lock => {
-            resolve(!!lock);
-            return lock ? new Promise<void>(() => undefined) : undefined; // keep it until unload
-        }).catch(() => resolve(false));
-    });
-    return executorClaim;
+    if (!locks?.request) {
+        executor = true;
+        claim = { settled: Promise.resolve(), acquired: Promise.resolve() };
+        return claim;
+    }
+    let settle!: () => void;
+    let acquire!: () => void;
+    const settled = new Promise<void>(r => { settle = r; });
+    const acquired = new Promise<void>(r => { acquire = r; });
+    const hold = (lock: Lock | null) => {
+        if (!lock) return undefined;
+        executor = true;
+        settle();
+        acquire();
+        return new Promise<void>(() => undefined); // keep the lock until unload
+    };
+    void locks.request(name, { ifAvailable: true }, lock => {
+        if (lock) return hold(lock);
+        settle(); // standby: mirror now, take over when the executor leaves
+        void locks.request(name, hold).catch(() => undefined);
+        return undefined;
+    }).catch(() => settle());
+    claim = { settled, acquired };
+    return claim;
 }
 
 export class CommandNotAcknowledged extends Error {
@@ -47,7 +73,8 @@ type Envelope =
 
 export interface CommandBusOptions<C, S> {
     channel: Pick<BroadcastChannel, 'postMessage' | 'addEventListener' | 'close'> | null;
-    main: boolean;
+    main: boolean | (() => boolean); // may change (standby tab taking over)
+    ready?: Promise<unknown>; // role decided (executor claim settled)
     handle: (cmd: C) => unknown | Promise<unknown>;
     snapshot: () => S;
     onState?: (state: S) => void;
@@ -59,6 +86,7 @@ export interface CommandBusOptions<C, S> {
 export interface CommandBus<C> {
     send(cmd: C, timeoutMs?: number): Promise<unknown>;
     publish(): void;
+    hello(): void;
     close(): void;
 }
 
@@ -66,7 +94,8 @@ const newUuid = () => typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export function createCommandBus<C, S>(opts: CommandBusOptions<C, S>): CommandBus<C> {
-    const { channel, main } = opts;
+    const { channel } = opts;
+    const isMain = () => typeof opts.main === 'function' ? opts.main() : opts.main;
     const retryMs = opts.retryMs ?? 1500;
     const timeoutMs = opts.timeoutMs ?? 5000;
     const newId = opts.newId ?? newUuid;
@@ -94,7 +123,7 @@ export function createCommandBus<C, S>(opts: CommandBusOptions<C, S>): CommandBu
     const listener = (event: Event) => {
         const data = (event as MessageEvent).data as Envelope | undefined;
         if (!data || typeof data !== 'object') return;
-        if (main) {
+        if (isMain()) {
             if (data.kind === 'cmd' && typeof data.id === 'string') {
                 void run(data.id, data.cmd).then(ack => {
                     try { channel?.postMessage(ack); } catch { /* window closing */ }
@@ -113,12 +142,18 @@ export function createCommandBus<C, S>(opts: CommandBusOptions<C, S>): CommandBu
     channel?.addEventListener('message', listener);
 
     function publish() {
-        if (!main) return;
+        if (!isMain()) return;
         try { channel?.postMessage({ kind: 'state', state: opts.snapshot() } satisfies Envelope); } catch { /* closed */ }
     }
 
+    function hello() {
+        if (isMain()) return;
+        try { channel?.postMessage({ kind: 'hello' } satisfies Envelope); } catch { /* closed */ }
+    }
+
     async function send(cmd: C, sendTimeoutMs = timeoutMs): Promise<unknown> {
-        if (main) {
+        await opts.ready;
+        if (isMain()) {
             const ack = await run(newId(), cmd) as Extract<Envelope, { kind: 'ack' }>;
             if (!ack.ok) throw new Error(ack.error);
             return ack.result;
@@ -144,13 +179,12 @@ export function createCommandBus<C, S>(opts: CommandBusOptions<C, S>): CommandBu
         return ack.result;
     }
 
-    if (!main) {
-        try { channel?.postMessage({ kind: 'hello' } satisfies Envelope); } catch { /* closed */ }
-    }
+    void Promise.resolve(opts.ready).then(hello);
 
     return {
         send,
         publish,
+        hello,
         close() {
             (channel as BroadcastChannel | null)?.removeEventListener?.('message', listener);
             waiting.clear();
