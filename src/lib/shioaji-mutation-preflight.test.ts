@@ -1,16 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Account } from './types/portfolio';
 import type { AccountedTrade } from './types/order';
-const m = vi.hoisted(() => ({ base: 'fixture', rows: [] as AccountedTrade[], accounts: [] as Account[], post: vi.fn(), trusted: true, baseline: true,
+const m = vi.hoisted(() => ({ base: 'fixture', rows: [] as AccountedTrade[], accounts: [] as Account[], post: vi.fn(), trusted: true, baseline: true, lostMark: 0,
     readback: null as null | ((body: Record<string, unknown>) => unknown) }));
 vi.mock('./runtime', async original => ({ ...await original<object>(), getApiBase: () => m.base }));
 vi.mock('./api', () => ({ apiPost: m.post, apiGet: vi.fn(), apiPut: vi.fn(), apiDelete: vi.fn() }));
 vi.mock('./account-store', () => ({ accountFor: vi.fn(() => { throw new Error('no selected fallback'); }), getAccountState: () => ({ accounts: m.accounts }) }));
-vi.mock('./trading-state', () => ({ getTradingState: () => ({ trades: m.rows }), cancelCacheTrusted: () => m.trusted, locallyCancelled: () => false, hasOrdersBaseline: () => m.baseline }));
-import { cancelOrder, fetchTradeCacheHealth, fetchTrades, updateOrderPrice, updateOrderQty } from './shioaji';
+vi.mock('./trading-state', () => ({ getTradingState: () => ({ trades: m.rows }), cancelCacheTrusted: () => m.trusted, locallyCancelled: () => false, hasOrdersBaseline: () => m.baseline, ordersBaselineLostMark: () => m.lostMark }));
+import { cancelOrder, cancelOrders, fetchTradeCacheHealth, fetchTrades, updateOrderPrice, updateOrderQty } from './shioaji';
 const account: Account = { account_type: 'F', broker_id: 'fixture', account_id: 'owner', signed: true, username: '', person_id: '' };
 const row = (): AccountedTrade => ({ account, contract: { code: 'QEFI6', security_type: 'FUT', exchange: 'TAIFEX', target_code: null }, order: { id: 'fixture', action: 'Buy', price: 489, seqno: 'seq', ordno: 'ord', quantity: 3, account }, status: { status: 'Submitted', id: 'fixture', status_code: '00', msg: '', order_ts: 1700000000, order_quantity: 3, modified_price: 0, deals: [], deal_quantity: 0, cancel_quantity: 0 } } as AccountedTrade);
-beforeEach(() => {
+beforeEach(async () => {
+    // Baseline lost "now": no earlier authoritative read may be shared.
+    m.lostMark = (await import('./cancel-verification')).readMark();
     vi.clearAllMocks(); m.base = `fixture-${Math.random()}`; m.accounts = [account]; m.rows = [row()]; m.trusted = true; m.baseline = true;
     // cancel_order answers like 1.7.6 (still Submitted); the cache read-back
     // shows the projected Cancel for the same order and account.
@@ -123,27 +125,61 @@ describe('cancel confirmation (#120 / #116)', () => {
         expect(posts.filter(([p]) => p === '/api/v1/order/cancel_order')).toHaveLength(30);
         expect(posts.filter(([p, r]) => p === '/api/v1/order/trades' && r === true)).toHaveLength(1);
     });
-    it('a popout batch without a baseline shares one preflight refresh:true per account', async () => {
-        vi.useFakeTimers();
-        m.baseline = false; m.trusted = false;
-        const ids = ['p1', 'p2', 'p3'];
-        m.rows = ids.map(id => ({ ...row(), order: { ...row().order, id, seqno: `s-${id}`, ordno: `o-${id}` }, status: { ...row().status, id } }));
-        m.readback = () => m.rows.map(r => ({ ...r, status: { ...r.status, status: 'Cancelled', cancel_quantity: 3 } }));
-        let preflight = true;
-        m.post.mockImplementation(async (path: string) => {
-            if (path === '/api/v1/order/trades') {
-                if (preflight) return m.rows; // still working at preflight
-                return m.readback!({});
-            }
-            if (path === '/api/v1/order/cancel_order') preflight = false;
-            return row();
+    // Final-gate finding: after a sidecar restart a 4-order batch made 7
+    // refresh:true (4 pre-send + 3 confirmation) because the Web Lock and the
+    // sidecar serialise the sends, staggering each cancel's read mark.
+    describe.each([4, 12, 30])('batch of %i cancels on one account with serialised sends', (n) => {
+        const ids = Array.from({ length: n }, (_, i) => `q${i}`);
+        const working = () => ids.map(id => ({ ...row(), order: { ...row().order, id, seqno: `s-${id}`, ordno: `o-${id}` }, status: { ...row().status, id } }));
+        function serialisedSidecar(confirmRows: () => AccountedTrade[]) {
+            let queue = Promise.resolve();
+            let sent = 0;
+            m.post.mockImplementation(async (path: string, body: Record<string, unknown>) => {
+                if (path === '/api/v1/order/cancel_order') {
+                    // The sidecar answers cancels one at a time, 150ms each.
+                    const turn = queue.then(() => new Promise<void>(r => setTimeout(r, 150)));
+                    queue = turn;
+                    await turn;
+                    sent += 1;
+                    return row();
+                }
+                if (path === '/api/v1/order/trades') return body.refresh === false || sent === n ? confirmRows() : working();
+                if (path === '/api/v1/order/trade_cache_health') return { state: 'Healthy', reasons: [] };
+                return row();
+            });
+        }
+        const refreshes = () => m.post.mock.calls.filter(c => c[0] === '/api/v1/order/trades' && c[1].refresh === true).length;
+        it('no baseline: at most one pre-send and one confirmation refresh:true for the account', async () => {
+            vi.useFakeTimers();
+            m.baseline = false; m.trusted = false; m.rows = working();
+            serialisedSidecar(() => working().map(r => ({ ...r, status: { ...r.status, status: 'Cancelled', cancel_quantity: 3 } })));
+            const settled = cancelOrders(ids);
+            await vi.advanceTimersByTimeAsync(n * 150 + 20_000);
+            const results = await settled;
+            expect(results.map(r => r.status)).toEqual(ids.map(() => 'fulfilled'));
+            expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/cancel_order')).toHaveLength(n);
+            expect(refreshes()).toBeLessThanOrEqual(2);
         });
-        const settled = Promise.allSettled(ids.map(id => cancelOrder(id)));
-        await vi.advanceTimersByTimeAsync(10_000);
-        const results = await settled;
-        expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled']);
-        const refreshes = m.post.mock.calls.filter(c => c[0] === '/api/v1/order/trades' && c[1].refresh === true);
-        expect(refreshes).toHaveLength(2); // one shared preflight + one shared confirmation
+        it('no baseline, never confirmed: still at most two refresh:true, all CANCEL_UNCONFIRMED', async () => {
+            vi.useFakeTimers();
+            m.baseline = false; m.trusted = false; m.rows = working();
+            serialisedSidecar(() => working());
+            const settled = cancelOrders(ids);
+            await vi.advanceTimersByTimeAsync(n * 150 + 20_000);
+            const results = await settled;
+            expect(results.every(r => r.status === 'rejected' && (r.reason as { code?: string }).code === 'CANCEL_UNCONFIRMED')).toBe(true);
+            expect(refreshes()).toBeLessThanOrEqual(2);
+        });
+        it('trusted cache: no refresh:true at all', async () => {
+            vi.useFakeTimers();
+            m.baseline = true; m.trusted = true; m.rows = working();
+            serialisedSidecar(() => working().map(r => ({ ...r, status: { ...r.status, status: 'Cancelled', cancel_quantity: 3 } })));
+            const settled = cancelOrders(ids);
+            await vi.advanceTimersByTimeAsync(n * 150 + 20_000);
+            const results = await settled;
+            expect(results.map(r => r.status)).toEqual(ids.map(() => 'fulfilled'));
+            expect(refreshes()).toBe(0);
+        });
     });
     it('keeps a missing order unconfirmed instead of fabricating a cancellation', async () => {
         vi.useFakeTimers();

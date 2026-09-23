@@ -8,6 +8,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
     cancelOrder,
+    cancelOrders,
     updateOrderPrice,
     updateOrderQty,
 } from '../lib/shioaji';
@@ -353,8 +354,8 @@ export function OrdersPane({
     const runBatchCancel = async (ids: string[]) => {
         if (ids.length === 0 || busy || cancelling) return;
         setBusy({ done: 0, total: ids.length });
-        const results: PromiseSettledResult<Trade>[] = await Promise.allSettled(ids.map(id =>
-            cancelOrder(id).finally(() => setBusy((b) => (b ? { done: b.done + 1, total: b.total } : b)))));
+        const results: PromiseSettledResult<Trade>[] = await cancelOrders(ids,
+            () => setBusy((b) => (b ? { done: b.done + 1, total: b.total } : b)));
         setBusy(null);
         setSelected(new Set());
         notify({

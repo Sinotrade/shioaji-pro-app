@@ -12,6 +12,7 @@ import { cancellationSummary } from '../lib/trade-mutations';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
 import {
     cancelOrder,
+    cancelOrders,
     placeFuturesOrder,
     placeStockOrder,
 } from '../lib/shioaji';
@@ -195,9 +196,7 @@ export function GridTicket({
     const cancelGrid = async () => {
         if (gridOrders.length === 0) return;
         setBusy(true);
-        const results = await Promise.allSettled(
-            gridOrders.map((t) => cancelOrder(t.order.id)),
-        );
+        const results = await cancelOrders(gridOrders.map((t) => t.order.id));
         const summary = cancellationSummary(results);
         notify({
             kind: summary.kind,

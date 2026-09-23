@@ -9,7 +9,8 @@ const accounts: Account[] = ['A', 'B'].map(account_id => ({ account_type: 'F', b
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts, selectedStock: accounts.find(a => a.account_id === mocks.selected), selectedFutures: accounts.find(a => a.account_id === mocks.selected) }), selectAccount: (a: Account) => { mocks.selected = a.account_id; }, accountFor: () => accounts.find(a => a.account_id === mocks.selected) }));
 vi.mock('../hooks/use-stream', () => ({ useTradingLive: () => true }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: undefined, snapshot: { close: 100 }, book: undefined }) }));
-vi.mock('../lib/shioaji', () => ({ cancelOrder: mocks.cancel }));
+vi.mock('../lib/shioaji', () => ({ cancelOrder: mocks.cancel,
+    cancelOrders: (ids: string[]) => Promise.allSettled(ids.map(id => mocks.cancel(id))) }));
 vi.mock('../lib/trade', () => ({ notify: mocks.notify, placeQuickOrder: mocks.place, placeStockExitByShares: mocks.stockExit }));
 vi.mock('../lib/stream', () => ({ getAliasFor: () => undefined }));
 vi.mock('../lib/tick-bands', () => ({ useTickBandsVersion: () => 0 }));

@@ -21,6 +21,8 @@
 | 減量後刪單（#234 路徑） | 原量 2 → 減量 1（cache 取消量 1）→ 刪單：cache 讀 2 次後確認 Cancelled、累計取消 2 |
 | 兩筆接連刪單（間隔 30ms） | 兩筆都確認；5 次 HTTP（2 cancel＋3 cache），重疊的讀取有共用 |
 | 刪單後 health | `Unknown`（FuturesDeal NoBaseline，沒有成交時屬正常）；因此不能拿 Healthy 當作可用 cache 的前提 |
+| 重啟後（無基準、cache 不可信）批次刪單，修正前 | 協調者 final gate 在 UI 實測：同帳戶 4 筆批次刪單共 7 次 `refresh:true`（4 前置＋3 確認），monitor 的 update_status 為 7 |
+| 同上，修正後（node 呼叫實際 `cancelOrders`，trading-state 以 fixture 模擬無基準） | 4 筆與 12 筆各一批：client 端 `refresh:true` 各 **2** 次（1 前置＋1 確認），全部 Cancelled；sidecar monitor（source=backend）的 `update_status` 每批 +2（0→2、2→4），`cancel_order` 共 16＝4＋12；測試委託全數取消、無殘留 |
 | 瀏覽器 UI（隔離 Vite 5197 → 21326，非原生） | 手動更新委託後按委託列 CANCEL：網路為 cancel＋2 次 cache 讀；提示「刪單結果：已確認取消 1 筆。」；委託數 0；沒有「待對帳」「改刪待確認」 |
 
 去識別 fixture：`src/lib/fixtures/native-simulation-cancel-readback-1.7.6.json`（HTTP 刪單回應、刪單前後的 cache 列、
@@ -32,7 +34,9 @@
   部分成交後刪單確認；刪單途中成交且沒有剩餘時確認，還有剩餘時不確認；Degraded 仍只做 1 次 `refresh:true`；讀取失敗、委託不在、別的帳戶都判未確認、不合成
   Cancelled；伺服器切換會中止讀取；cache 不可信時跳過 cache 與 health；同帳戶讀取共用（另一筆刪單較晚開始的
   `refresh:true` 可免費核對，核對不到才花自己那一次）；fixture 回歸。
-- `shioaji-mutation-preflight.test.ts`：回讀列限同帳戶且為 `refresh:false`；未確認拋 `CANCEL_UNCONFIRMED`，只送出
+- `shioaji-mutation-preflight.test.ts`：同帳戶 4／12／30 筆批次、sidecar 逐筆 150ms 序列化回覆：無基準時
+  `refresh:true` 最多 2 次（1 前置＋1 確認）、永不確認時亦同且全數 CANCEL_UNCONFIRMED；cache 可信時 0 次
+  （移除屏障後這些測試失敗）。回讀列限同帳戶且為 `refresh:false`；未確認拋 `CANCEL_UNCONFIRMED`，只送出
   一次 cancel；無基準時是一次 `refresh:true` 前置、以重新解析的 id 送出、再一次 `refresh:true` 確認，結果以
   呼叫端的 id 回報。
 - `trading-state.test.ts`：已確認的取消，即使期間收到 Cancel 或其他回報，也不標「改刪待確認」；本地成交量較多時
@@ -63,3 +67,6 @@
 改為每帳戶每輪最多一次，小視窗前置也共用；新增 30 筆並行未確認只做 1 次的測試。讀取先後改用單調序號（避免同一
 毫秒的前置讀取被誤當成刪單後的確認）。刪單前已成交改為已知結果；確認規則採 max(本地原量, 回讀原量)；鋪單跟隨遇
 未確認刪單不再自動重刪；批次摘要的「未送出」改錯誤色調；移除提示標題的 emoji。
+
+Final gate（協調者）：重啟後批次刪單 4 筆產生 7 次 `refresh:true`。修正為 `cancelOrders` 批次屏障（全批送出後每帳戶
+一次確認讀取）與依基準遺失時點共用的前置讀取；1.7.6 模擬以 monitor 量測 4 筆與 12 筆各 2 次（見上表）。

@@ -13,6 +13,7 @@ import { projectOrderReport, projectTradeDeal } from './order-projection';
 import { parseEventId, reportLedger } from './report-ledger';
 import { remainingWorkingOrderQuantity } from './working-order-quantity';
 import { takeMutationIntent, type MutationIntent } from './mutation-intent';
+import { readMark } from './cancel-verification';
 import type { OrderEventReport } from './order-report';
 import type { Account, AccountBalance, AccountedPosition, AccountFunds, Margin } from './types/portfolio';
 import type { AccountedTrade, Trade, TradeCacheHealth } from './types/order';
@@ -185,6 +186,9 @@ let connectionEpoch = 0;
 /** An authoritative orders read happened on this sidecar instance; cleared
  *  when a reconnect finds the server's trade subscription gone (restart). */
 let ordersBaseline = false;
+// Read sequence (cancel-verification readMark) when the baseline was last
+// lost: any authoritative read started after it can re-resolve trade_ids.
+let baselineLostMark = 0;
 const nextRefreshAt: Record<TradingQueryScope, number> = { positions: 0, orders: 0, account: 0 };
 let eventSequence = 0;
 const accountKey = (a: { broker_id: string; account_id: string; account_type: string }) => `${a.account_type}:${a.broker_id}:${a.account_id}`;
@@ -413,7 +417,7 @@ export function checkTradeCacheHealth(trigger: HealthTrigger): Promise<void> {
                 // Continuity after a reconnect is unproven (the sidecar may
                 // still be booting after a restart): stop trusting its cache
                 // and make sure reports flow again.
-                ordersBaseline = false;
+                ordersBaseline = false; baselineLostMark = readMark();
                 try { await subscribeTradeReports(); }
                 catch { for (const key of ['orders', 'positions'] as const) raise(key, 'not-subscribed', '委託回報訂閱失敗；請使用更新圖示重試'); }
                 schedulePublish();
@@ -438,7 +442,7 @@ export function checkTradeCacheHealth(trigger: HealthTrigger): Promise<void> {
         if (notSubscribed) {
             // A lost subscription means the sidecar restarted or dropped it:
             // its cache no longer continues this App's authoritative baseline.
-            ordersBaseline = false;
+            ordersBaseline = false; baselineLostMark = readMark();
             try { await subscribeTradeReports(); }
             catch { for (const key of ['orders', 'positions'] as const) raise(key, 'not-subscribed', '委託回報訂閱失敗；請使用更新圖示重試'); }
         }
@@ -475,7 +479,7 @@ async function resyncOrdersFromCache(accounts: Account[], before: { clockBefore:
         const missing = accounts.some((account, i) => saved.some(t => t.account && accountKey(t.account) === accountKey(account)
             && remainingWorkingOrderQuantity(t) > 0 && !rows[i]!.some(r => r.order.id === t.order.id)));
         if (missing) {
-            ordersBaseline = false;
+            ordersBaseline = false; baselineLostMark = readMark();
             raise('orders', 'projection-failed', '伺服器委託快取缺少本地有效委託，已保留；請手動對帳');
             return;
         }
@@ -822,6 +826,9 @@ export function locallyCancelled(tradeId: string, account: { account_type: strin
 /** An authoritative orders read happened on this sidecar instance and no
  *  restart has been detected since (order mutation preflight uses this). */
 export function hasOrdersBaseline() { return !isMirror && ordersBaseline; }
+/** Read mark at the last baseline loss (0 in mirrors / before any loss): the
+ *  no-baseline preflight may share any authoritative read started after it. */
+export function ordersBaselineLostMark() { return isMirror ? 0 : baselineLostMark; }
 /** Cache-only order reads (refresh:false) are trustworthy only while this App
  *  holds an authoritative baseline on the same sidecar instance and has not
  *  missed reports since; callers must still require every health Healthy. */

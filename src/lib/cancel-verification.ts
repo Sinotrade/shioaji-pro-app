@@ -41,6 +41,9 @@ export interface CancelVerificationDeps {
      *  Only used to time the authoritative read when the cache is not
      *  trusted; it never confirms by itself. */
     locallyCancelled?(): boolean;
+    /** Member of a batch (flash 全刪, 鋪單全撤, 全部刪單, batch cancel): the
+     *  authoritative read waits until every cancel of the batch has sent. */
+    batch?: CancelBatchMember;
     /** Isolates shared in-flight reads (normally the API base). */
     scope?: string;
     sleep?(ms: number): Promise<void>;
@@ -178,6 +181,29 @@ export function sharedAuthoritativeTrades(
     return startRead(key, read, lastAuthoritative, false);
 }
 
+/** Barrier for a batch of cancels. Each member arrives exactly once: after its
+ *  cancel request returned and its read mark was taken, or when it failed
+ *  before sending. The confirmation refresh:true of any member starts only
+ *  after all arrived, so one read per account (shared) serves the whole batch
+ *  even when the Web Lock or the sidecar serialises the sends. */
+export interface CancelBatchMember { arrive(): void; allSent: Promise<void> }
+export const CANCEL_BATCH_MAX_WAIT_MS = 15_000;
+export function createCancelBatch(size: number): { member(): CancelBatchMember } {
+    let remaining = Math.max(0, size);
+    let release!: () => void;
+    const allSent = new Promise<void>(resolve => { release = resolve; });
+    if (remaining === 0) release();
+    return {
+        member() {
+            let arrived = false;
+            return {
+                allSent,
+                arrive() { if (arrived) return; arrived = true; remaining -= 1; if (remaining <= 0) release(); },
+            };
+        },
+    };
+}
+
 const defaultSleep = (ms: number) => new Promise<void>(resolve => { globalThis.setTimeout(resolve, ms); });
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -196,6 +222,15 @@ export async function verifyCancellation(
     const sentAt = now();
     // Reads started after this point observe the state after the cancel.
     const mark = readMark();
+    deps.batch?.arrive();
+    // Batch members start the authoritative read only after every send of the
+    // batch returned (bounded, so a stuck member cannot hold the others).
+    const batchSent = async () => {
+        if (!deps.batch) return;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([deps.batch.allSent, new Promise<void>(r => { timer = setTimeout(r, CANCEL_BATCH_MAX_WAIT_MS); })]);
+        if (timer) clearTimeout(timer);
+    };
     const maxCacheReads = Math.max(1, Math.floor(windowMs / Math.max(1, interval)) + 1);
     let last: Trade | null = null;
     let missing = false;
@@ -249,6 +284,7 @@ export async function verifyCancellation(
             guard();
             await sleep(interval);
         }
+        await batchSent();
         refreshed = true;
         const row = await observe(true);
         if (isConfirmedCancellation(before, row)) return { trade: row, source: 'refresh', cacheReads };
@@ -273,6 +309,7 @@ export async function verifyCancellation(
     } catch {
         health = null; // pre-1.7.6 route or read failure: no information
     }
+    await batchSent();
     refreshed = true;
     const row = await observe(true);
     if (isConfirmedCancellation(before, row)) return { trade: row, source: 'refresh', cacheReads };
