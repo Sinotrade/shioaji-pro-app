@@ -15,6 +15,7 @@ import {
 import {
     ensureBracketHost,
     registerBracket,
+    registrationFailureText,
     validateBracketRequest,
 } from '../lib/bracket';
 import { BracketStatusList } from './bracket-status';
@@ -340,16 +341,17 @@ export function OrderTicket({
                         takePrice: bracketTake,
                     });
                 } catch (err) {
-                    // 進場單已送出：保護未登記必須明示，不自動重送任何單
-                    const why = err instanceof Error ? err.message : String(err);
+                    // 進場單已送出：保護登記結果必須明示，不自動重送任何單，
+                    // 也不建議另掛停損（登記可能晚到生效 → 重複出場）
+                    const text = registrationFailureText(err);
                     setFeedback({
                         kind: 'err',
-                        text: `✕ 進場單已送出 #${trade.order.seqno || trade.order.id.slice(0, 8)}，但保護單未確認登記：${why} — 請手動設定停損`,
+                        text: `✕ 進場單已送出 #${trade.order.seqno || trade.order.id.slice(0, 8)}；${text}`,
                     });
                     notify({
                         kind: 'err',
                         title: '括號單保護未確認',
-                        body: `${contract.code} 進場單已送出，保護單未確認登記（${why}）；請手動設定停損`,
+                        body: `${contract.code} 進場單已送出；${text}`,
                     });
                 }
             }

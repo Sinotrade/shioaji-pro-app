@@ -26,6 +26,7 @@ const m = vi.hoisted(() => ({
     health: vi.fn(),
     subscribe: vi.fn(),
     ensure: vi.fn(),
+    cancel: vi.fn(),
     positions: { rows: [] as unknown[], updatedAt: null as number | null, needsReconcile: false },
     base: 'http://sim.invalid',
     env: 'http://sim.invalid|simulation' as string | null,
@@ -53,6 +54,7 @@ vi.mock('./trading-state', () => ({ tradeCacheContinuous: () => m.continuous, ge
 vi.mock('./shioaji', () => ({
     fetchTrades: (_type: string, account: unknown, opts: { refresh: boolean }) => opts.refresh ? m.refreshed(account) : m.cached(account),
     fetchTradeCacheHealth: (_type: string, account: unknown) => m.health(account),
+    cancelOrder: m.cancel,
 }));
 vi.mock('./boot', () => ({ subscribeTradeReports: m.subscribe }));
 vi.mock('./protection-env', () => {
@@ -64,6 +66,7 @@ vi.mock('./protection-env', () => {
         onProtectionEnvChange: (cb: () => void) => { m.envChanged.push(cb); return () => undefined; },
         envBase,
         reportEnvMatches: (env: string, base: string) => m.env ? env === m.env : envBase(env) === base,
+        watchProtectionEnv: () => undefined,
     };
 });
 
@@ -128,7 +131,8 @@ beforeEach(() => {
     m.status = 'live'; m.accounts = [F1, F2, S1]; m.base = 'http://sim.invalid'; m.search = '';
     m.env = 'http://sim.invalid|simulation'; m.lockGranted = true; m.continuous = true;
     m.positions = { rows: [], updatedAt: null, needsReconcile: false };
-    for (const f of [m.place, m.notify, m.cached, m.refreshed, m.health, m.subscribe, m.ensure]) f.mockReset();
+    for (const f of [m.place, m.notify, m.cached, m.refreshed, m.health, m.subscribe, m.ensure, m.cancel]) f.mockReset();
+    m.cancel.mockResolvedValue({});
     m.cached.mockResolvedValue([cacheTrade('fixture-f1', F1, []), cacheTrade('fixture-f9', F2, [])]); m.refreshed.mockResolvedValue([]); m.health.mockResolvedValue(healthy);
     m.subscribe.mockResolvedValue({}); m.ensure.mockResolvedValue(TXF);
     let n = 0;
@@ -384,6 +388,66 @@ describe('trigger execution (main window only)', () => {
         await bracket.dismissBracket(plan.id);
         expect(triggersOf(plan.id)).toHaveLength(0);
         expect(bracket.getBrackets()).toHaveLength(0);
+    });
+
+    it('IOC exit partly filled with no Cancel report: one cache-only check ends it, remainder unprotected, never resent', async () => {
+        const plan = await armed();
+        await tick(47000);
+        expect(planOf(plan.id).exit?.status).toBe('working');
+        await emit(edit(fCoverDeal1!, { trade_id: 'exit-1' })); // 1 of 2 filled, then silence
+        const partial = { ...cacheTrade('exit-1', F1, [{ seq: '000001', quantity: 1 }]),
+            order: { id: 'exit-1', seqno: 'exit-1', ordno: 'o', action: 'Sell', price: 0, quantity: 2, order_type: 'IOC',
+                account: { account_type: 'F', broker_id: F1.broker_id, account_id: F1.account_id } } } as unknown as Trade;
+        partial.status = { ...partial.status, status: 'PartFilled', cancel_quantity: 1 };
+        m.cached.mockClear();
+        m.cached.mockResolvedValue([partial]);
+        await vi.advanceTimersByTimeAsync(engine.IOC_CHECK_MS); await flush();
+        expect(m.cached).toHaveBeenCalledTimes(1); // exactly one cache-only read
+        expect(m.refreshed).not.toHaveBeenCalled();
+        expect(planOf(plan.id).exit).toMatchObject({ status: 'incomplete', filled: 1 });
+        const { unprotectedQuantity } = await import('./bracket-core');
+        expect(unprotectedQuantity(planOf(plan.id))).toBe(1);
+        expect(engine.reservedQuantity(`${m.env}|F:fixture-broker-F:fixture-account-F|TXFJ6|Sell`)).toBe(0);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(m.cached).toHaveBeenCalledTimes(1);
+    });
+
+    it('IOC check that does not find the exit order changes nothing (missing ≠ filled/cancelled)', async () => {
+        const plan = await armed();
+        await tick(47000);
+        m.cached.mockResolvedValue([]);
+        await vi.advanceTimersByTimeAsync(engine.IOC_CHECK_MS); await flush();
+        expect(planOf(plan.id).exit?.status).toBe('working');
+    });
+
+    it('entry still working after the exit fired: shown, and cancelled only on request (once)', async () => {
+        const plan = await armed(1); // 1 of 2 filled, entry still working
+        await tick(47000);
+        const { workingEntryAfterExit } = await import('./bracket-core');
+        expect(workingEntryAfterExit(planOf(plan.id))).toBe(1);
+        expect(m.cancel).not.toHaveBeenCalled();
+        await bracket.cancelRemainingEntry(planOf(plan.id));
+        expect(m.cancel).toHaveBeenCalledTimes(1);
+        expect(m.cancel).toHaveBeenCalledWith('fixture-f1');
+    });
+
+    it('a failed or unacknowledged registration never tells the user to add a manual stop', async () => {
+        const { CommandNotAcknowledged } = await import('./main-window-commands');
+        await boot();
+        expect(bracket.REGISTER_TIMEOUT_MS).toBe(60_000);
+        const late = bracket.registrationFailureText(new CommandNotAcknowledged());
+        expect(late).toMatch('括號單狀態');
+        expect(late).not.toMatch('請手動設定停損');
+        expect(bracket.registrationFailureText(new Error('x'))).not.toMatch('請手動設定停損');
+    });
+
+    it('a mirror without a recent main snapshot reports itself stale; the executor never does', async () => {
+        await boot();
+        expect(bracket.bracketSnapshotStale()).toBe(false);
+        m.search = '?popout=flash&code=TXFR1';
+        await boot();
+        expect(bracket.bracketSnapshotStale()).toBe(true);
     });
 
     it('simtrade (試撮) ticks never fire', async () => {

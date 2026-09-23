@@ -7,7 +7,8 @@
 
 import { getApiBase } from './runtime';
 import { fetchInfo } from './shioaji';
-import { knownServerInfo, subscribeServerInfo } from './server-info-store';
+import { forgetServerInfo, knownServerInfo, subscribeServerInfo } from './server-info-store';
+import { getStreamStatus, subscribeStatusStore } from './stream';
 
 export function currentProtectionEnv(): string | null {
     const info = knownServerInfo();
@@ -39,4 +40,21 @@ export function envBase(env: string): string {
 export function reportEnvMatches(env: string, base: string): boolean {
     const current = currentProtectionEnv();
     return current ? env === current : envBase(env) === base;
+}
+
+/** While the stream is down the sidecar may restart in the other mode on the
+ * same port: forget its mode at once (protection stops dispatching — no
+ * environment) and learn it again from a fresh /info after reconnecting. */
+let watching = false;
+export function watchProtectionEnv() {
+    if (watching) return;
+    watching = true;
+    let live = getStreamStatus() === 'live';
+    subscribeStatusStore(() => {
+        const now = getStreamStatus() === 'live';
+        if (now === live) return;
+        live = now;
+        if (!now) forgetServerInfo(getApiBase());
+        else void refreshProtectionEnv();
+    });
 }

@@ -128,8 +128,15 @@ export function unprotectedQuantity(p: BracketPlan): number {
     return Math.max(0, Math.min(p.filled, p.quantity) - counted);
 }
 
+/** Entry quantity still working after the exit fired: any later fill of it
+ * is unprotected. Shown with a manual cancel; never cancelled automatically. */
+export function workingEntryAfterExit(p: BracketPlan): number {
+    if (!p.exit || p.entryClosed) return 0;
+    return Math.max(0, p.quantity - p.filled);
+}
+
 export function needsAttention(p: BracketPlan): boolean {
-    return p.issues.length > 0 || unprotectedQuantity(p) > 0
+    return p.issues.length > 0 || unprotectedQuantity(p) > 0 || workingEntryAfterExit(p) > 0
         || (p.exit !== null && (['incomplete', 'not-sent'].includes(p.exit.status)
             || (p.exit.status === 'unknown' && !p.exit.acknowledged)));
 }
@@ -209,11 +216,30 @@ export function tradeMatchesPlan(trade: Trade, p: Pick<BracketPlan, 'account' | 
     return trade.order.action === p.action;
 }
 
+/** Add a fill to a fill set, keeping ONE identity per real fill: the
+ * preferred identity is `<orderId>:<exchange_seq>`. A fill that was only
+ * known by its event_id (report without exchange_seq) is re-keyed when a
+ * seq-keyed row of the same quantity arrives (e.g. from the Trade cache)
+ * instead of being counted twice. Returns null when nothing is added. */
+export function mergeFill(fills: Record<string, number>, fill: FillEvidence): { fills: Record<string, number>; added: number } | null {
+    if (fills[fill.key] !== undefined) return null;
+    if (!fill.key.startsWith('event:')) {
+        const provisional = Object.keys(fills).find(k => k.startsWith('event:') && fills[k] === fill.quantity);
+        if (provisional) {
+            const next = { ...fills, [fill.key]: fill.quantity };
+            delete next[provisional];
+            return { fills: next, added: 0 };
+        }
+    }
+    return { fills: { ...fills, [fill.key]: fill.quantity }, added: fill.quantity };
+}
+
 /** Accumulate one entry fill. Idempotent by fill identity. */
 export function applyEntryFill(p: BracketPlan, fill: FillEvidence, now: number): BracketPlan {
-    if (fill.orderId !== p.orderId || p.fills[fill.key] !== undefined) return p;
-    let next: BracketPlan = { ...p, fills: { ...p.fills, [fill.key]: fill.quantity },
-        filled: p.filled + fill.quantity, updatedAt: now };
+    if (fill.orderId !== p.orderId) return p;
+    const merged = mergeFill(p.fills, fill);
+    if (!merged) return p;
+    let next: BracketPlan = { ...p, fills: merged.fills, filled: p.filled + merged.added, updatedAt: now };
     if (fill.flagged) next = addIssue(next, fill.flagged, '成交回報缺少成交序號，僅以事件 ID 去重；請對帳確認', now);
     if (next.filled > next.quantity) next = addIssue(next, 'overfill', `成交累計 ${next.filled} 超過委託量 ${next.quantity}，保護量以委託量為上限`, now);
     // Protection is only extended while no exit has started; after that a
@@ -246,10 +272,12 @@ export function applyEntryTrade(p: BracketPlan, trade: Trade, now: number): Brac
 
 /** Exit fills (from the exit order id). Idempotent by fill identity. */
 export function applyExitFill<E extends BracketExit>(exit: E, fill: FillEvidence, now: number): E {
-    if (exit.orderId !== fill.orderId || exit.fills[fill.key] !== undefined) return exit;
-    const filled = exit.filled + fill.quantity;
+    if (exit.orderId !== fill.orderId) return exit;
+    const merged = mergeFill(exit.fills, fill);
+    if (!merged) return exit;
+    const filled = exit.filled + merged.added;
     const status: ExitStatus = filled >= exit.quantity ? 'filled' : exit.status;
-    return { ...exit, fills: { ...exit.fills, [fill.key]: fill.quantity }, filled, status, at: now };
+    return { ...exit, fills: merged.fills, filled, status, at: now };
 }
 
 /** Exit order report: a failed New or a successful Cancel ends the exit. */

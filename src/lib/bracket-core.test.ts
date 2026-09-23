@@ -6,6 +6,7 @@ import {
     applyExitFill,
     applyExitOrderReport,
     bracketPhase,
+    mergeFill,
     matchDeal,
     protectionQuantity,
     unprotectedQuantity,
@@ -165,5 +166,29 @@ describe('exit outcome and unprotected quantity', () => {
         expect(unprotectedQuantity(plan({ filled: 2, exit: exit({ quantity: 1 }) }))).toBe(1);
         // unknown outcome is not counted as unprotected, but is a separate attention state
         expect(unprotectedQuantity(plan({ filled: 2, exit: exit({ status: 'unknown' }) }))).toBe(0);
+    });
+});
+
+describe('one identity per fill', () => {
+    it('re-keys an event_id-only fill when the cache row with exchange_seq arrives (entry)', () => {
+        const noSeq = withBody(reports[0]!, { exchange_seq: '' });
+        let p = feed(plan(), [noSeq]);
+        expect(p.filled).toBe(1);
+        const trade = { contract: { code: 'TXFJ6', security_type: 'FUT', exchange: 'TAIFEX', target_code: null },
+            order: { id: 'fixture-f1', seqno: 'fixture-f1', ordno: 'o', action: 'Buy', price: 0, quantity: 2 },
+            status: { id: 'fixture-f1', status: 'PartFilled', status_code: '00', order_quantity: 2, deal_quantity: 1, cancel_quantity: 0,
+                modified_price: 0, msg: '', deals: [{ seq: '000001', price: 1, quantity: 1, ts: 1 }] } } as unknown as Trade;
+        p = applyEntryTrade(p, trade, 2);
+        expect(p.filled).toBe(1);
+        expect(Object.keys(p.fills)).toEqual(['fixture-f1:000001']);
+    });
+
+    it('mergeFill: exit fills keep one identity too', () => {
+        const a = mergeFill({}, { orderId: 'x', key: 'event:v1:FD:s:r:9', quantity: 2 })!;
+        expect(a.added).toBe(2);
+        const b = mergeFill(a.fills, { orderId: 'x', key: 'x:000001', quantity: 2 })!;
+        expect(b).toEqual({ fills: { 'x:000001': 2 }, added: 0 });
+        expect(mergeFill(b.fills, { orderId: 'x', key: 'x:000001', quantity: 2 })).toBeNull();
+        expect(mergeFill(b.fills, { orderId: 'x', key: 'x:000002', quantity: 1 })!.added).toBe(1);
     });
 });

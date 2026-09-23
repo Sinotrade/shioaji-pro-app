@@ -4,9 +4,11 @@
 // authoritative reconcile (update_status), acknowledging an unknown exit and
 // removing a plan. Nothing here sends or resends an order.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     acknowledgeBracketExit,
+    bracketSnapshotStale,
+    cancelRemainingEntry,
     dismissBracket,
     reconcileBracket,
     useBrackets,
@@ -17,6 +19,7 @@ import {
     isLive,
     protectionQuantity,
     unprotectedQuantity,
+    workingEntryAfterExit,
 } from '../lib/bracket-core';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
@@ -41,22 +44,25 @@ const EXIT: Record<string, string> = {
     unknown: '出場結果未知（不會自動重送）',
 };
 
-function Row({ plan, envNow, feedMissing, executing }: {
+function Row({ plan, envNow, feedMissing, executing, stale }: {
     plan: BracketPlan;
     envNow: string | null;
     feedMissing: boolean;
     executing: boolean;
+    stale: boolean;
 }) {
     const priv = usePrivacyMode();
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
     const [confirmRemove, setConfirmRemove] = useState(false);
+    const [confirmCancel, setConfirmCancel] = useState(false);
+    const workingEntry = workingEntryAfterExit(plan);
     const phase = bracketPhase(plan);
     const protectedQty = protectionQuantity(plan);
     const unprotected = unprotectedQuantity(plan);
     const unknownExit = plan.exit?.status === 'unknown' && !plan.exit.acknowledged;
     const elsewhere = plan.env !== envNow;
-    const notRunning = isLive(plan) && (elsewhere || feedMissing || !executing);
+    const notRunning = stale || (isLive(plan) && (elsewhere || feedMissing || !executing));
     const tone = unprotected > 0 || unknownExit || plan.exit?.status === 'not-sent' || plan.exit?.status === 'incomplete'
         ? 'err' : plan.issues.length > 0 || notRunning ? 'warn' : 'ok';
     const run = async (fn: () => Promise<unknown>, done?: (v: unknown) => string) => {
@@ -91,6 +97,12 @@ function Row({ plan, envNow, feedMissing, executing }: {
                     {plan.exit.detail ? ` — ${plan.exit.detail}` : ''}
                 </div>
             )}
+            {stale && (
+                <div className={styles.note.warn}>主視窗狀態未更新（可能已關閉或重新載入），以下為最後已知狀態，不代表保護正在執行</div>
+            )}
+            {workingEntry > 0 && (
+                <div className={styles.note.err}>進場單仍有 {workingEntry} 未成交委託在場上；出場已觸發，之後的成交不受保護</div>
+            )}
             {unprotected > 0 && (
                 <div className={styles.note.err}>未保護 {unprotected}：請手動處理出場，系統不會自動重送</div>
             )}
@@ -99,7 +111,7 @@ function Row({ plan, envNow, feedMissing, executing }: {
                     此括號單屬於{protectionEnvLabel(plan.env)}環境／其他伺服器，目前不執行{envNow ? '' : '（伺服器模式未確認）'}
                 </div>
             )}
-            {isLive(plan) && !elsewhere && !executing && (
+            {isLive(plan) && !elsewhere && !executing && !stale && (
                 <div className={styles.note.warn}>此視窗／分頁不是執行中的主視窗，保護由主視窗執行</div>
             )}
             {isLive(plan) && feedMissing && (
@@ -123,6 +135,20 @@ function Row({ plan, envNow, feedMissing, executing }: {
                             v => `對帳完成，回報快取狀態 ${(v as { health: string }).health}`)}
                     >
                         對帳
+                    </button>
+                )}
+                {workingEntry > 0 && (
+                    <button
+                        className={styles.button}
+                        disabled={busy}
+                        title='只送出一次刪單，不會自動重試或重送任何委託'
+                        onClick={() => {
+                            if (!confirmCancel) { setConfirmCancel(true); return; }
+                            setConfirmCancel(false);
+                            void run(() => cancelRemainingEntry(plan), () => '已送出刪單，等待回報確認');
+                        }}
+                    >
+                        {confirmCancel ? '再按一次：刪除剩餘進場單' : '刪除剩餘進場單'}
                     </button>
                 )}
                 {unknownExit && (
@@ -157,13 +183,20 @@ export function BracketStatusList({ code }: { code: string }) {
     const plans = useBrackets().filter(p => !p.dismissed && (p.quoteCode === code || p.orderCode === code));
     useServerInfo(); // re-render when the server mode becomes known / changes
     const feed = useTriggerFeed();
+    // re-evaluate mirror staleness without any broker request
+    const [, setClock] = useState(0);
+    useEffect(() => {
+        const timer = setInterval(() => setClock(c => c + 1), 5000);
+        return () => clearInterval(timer);
+    }, []);
     if (plans.length === 0) return null;
+    const stale = bracketSnapshotStale();
     const envNow = currentProtectionEnv();
     return (
         <div className={styles.list}>
             {plans.map(p => (
                 <Row key={p.id} plan={p} envNow={envNow}
-                    feedMissing={feed.feedMissing.includes(p.quoteCode)} executing={feed.executing} />
+                    feedMissing={feed.feedMissing.includes(p.quoteCode)} executing={feed.executing} stale={stale} />
             ))}
         </div>
     );

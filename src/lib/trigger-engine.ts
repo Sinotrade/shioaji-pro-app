@@ -40,9 +40,11 @@ import {
     onProtectionEnvChange,
     refreshProtectionEnv,
     reportEnvMatches,
+    watchProtectionEnv,
 } from './protection-env';
 import { retainQuote } from './quote-ownership';
 import { getApiBase } from './runtime';
+import { fetchTrades } from './shioaji';
 import { getStreamStatus, onAnyTick, subscribeStatusStore } from './stream';
 import { notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
@@ -507,6 +509,7 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
         const orderId = trade.order.id;
         updateExit(rec.id, e => ({ ...e, status: e.filled >= e.quantity ? 'filled' : 'working', orderId, at: Date.now() }));
         for (const report of recentReportsFor(envBase(rec.env), orderId)) applyExitReport(report, envBase(rec.env));
+        scheduleIocCheck(rec.id);
         notify({ kind: 'ok', title: t.kind === 'stop' ? '停損觸發' : '停利觸發',
             body: `${t.code} @${lastPrice} → 市價${t.action === 'Buy' ? '買' : '賣'} ${rec.quantity} (${trade.status.status})` });
     } catch (e) {
@@ -521,6 +524,23 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
     }
 }
 
+/** Exits are market IOC. Their unfilled remainder may never produce a Cancel
+ * report, so ONE cache-only (refresh:false) read of the exit order settles
+ * it a few seconds after dispatch. A row missing from the cache changes
+ * nothing (never treated as filled or cancelled). */
+export const IOC_CHECK_MS = 3000;
+function scheduleIocCheck(id: string) {
+    setTimeout(() => {
+        const rec = exits.find(e => e.id === id);
+        if (!rec || rec.status !== 'working' || !rec.orderId || !executing) return;
+        if (currentProtectionEnv() !== rec.env) return;
+        void fetchTrades(rec.account.account_type, rec.account, { refresh: false }).then(rows => {
+            const trade = rows.find(t => t.order.id === rec.orderId);
+            if (trade) applyExitTrade(trade, { iocSettled: true });
+        }).catch(() => undefined);
+    }, IOC_CHECK_MS);
+}
+
 function applyExitReport(report: OrderEventReport, base: string) {
     const orderId = report.kind === 'deal' ? report.tradeId : report.id;
     for (const rec of exits.slice()) {
@@ -533,8 +553,11 @@ function applyExitReport(report: OrderEventReport, base: string) {
     }
 }
 
-/** Apply an explicitly reconciled Trade (refresh:true) to an exit order. */
-export function applyExitTrade(trade: Trade) {
+/** Apply a Trade row (explicit refresh:true, or the one-shot cache check
+ * after an IOC exit) to an exit order. With `iocSettled`, a PartFilled IOC
+ * row also ends the exit: an IOC never keeps working, and its unfilled rest
+ * becomes explicit unprotected quantity (never resent). */
+export function applyExitTrade(trade: Trade, opts: { iocSettled?: boolean } = {}) {
     if (!main) return;
     for (const rec of exits.slice()) {
         if (rec.orderId !== trade.order.id || isResolved(rec)) continue;
@@ -543,7 +566,9 @@ export function applyExitTrade(trade: Trade) {
         updateExit(rec.id, e => {
             let next = e;
             for (const fill of fillsFromTrade(trade)) next = applyExitFill(next, fill, Date.now());
-            if (next.status !== 'filled' && ['Cancelled', 'Failed', 'Inactive'].includes(trade.status.status)) {
+            const ended = ['Cancelled', 'Failed', 'Inactive'].includes(trade.status.status)
+                || (opts.iocSettled && trade.status.status === 'PartFilled');
+            if (next.status !== 'filled' && ended) {
                 next = { ...next, status: 'incomplete', at: Date.now(),
                     detail: `出場委託 ${trade.status.status}，未成交 ${next.quantity - next.filled}` };
             }
@@ -646,7 +671,8 @@ function becomeExecutor() {
     onAnyTick(tick => { if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close)); });
     onTrackedReport((report, _info, base) => applyExitReport(report, base));
     onProtectionEnvChange(() => syncQuotes());
-    subscribeStatusStore(() => { if (getStreamStatus() === 'live') { void refreshProtectionEnv(); syncQuotes(); } });
+    watchProtectionEnv(); // stream down → mode forgotten → no dispatch until fresh /info
+    subscribeStatusStore(() => { if (getStreamStatus() === 'live') syncQuotes(); });
     void refreshProtectionEnv();
     commit();
     for (const l of executorListeners) l();

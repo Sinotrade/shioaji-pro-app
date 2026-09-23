@@ -85,6 +85,9 @@ export interface CommandBusOptions<C, S> {
     onState?: (state: S) => void;
     retryMs?: number;
     timeoutMs?: number;
+    /** Main re-publishes its snapshot this often so mirrors can tell a live
+     *  executor from a stale copy (local BroadcastChannel only, no broker I/O). */
+    heartbeatMs?: number;
     newId?: () => string;
 }
 
@@ -92,6 +95,8 @@ export interface CommandBus<C> {
     send(cmd: C, timeoutMs?: number): Promise<unknown>;
     publish(): void;
     hello(): void;
+    /** Mirrors: when the last main snapshot arrived (0 = never). */
+    lastStateAt(): number;
     close(): void;
 }
 
@@ -141,10 +146,13 @@ export function createCommandBus<C, S>(opts: CommandBusOptions<C, S>): CommandBu
         if (data.kind === 'ack' && typeof data.id === 'string') {
             waiting.get(data.id)?.(data);
         } else if (data.kind === 'state') {
+            stateAt = Date.now();
             opts.onState?.(data.state as S);
         }
     };
+    let stateAt = 0;
     channel?.addEventListener('message', listener);
+    const heartbeat = opts.heartbeatMs && channel ? setInterval(() => publish(), opts.heartbeatMs) : null;
 
     function publish() {
         if (!isMain()) return;
@@ -190,7 +198,9 @@ export function createCommandBus<C, S>(opts: CommandBusOptions<C, S>): CommandBu
         send,
         publish,
         hello,
+        lastStateAt: () => stateAt,
         close() {
+            if (heartbeat) clearInterval(heartbeat);
             (channel as BroadcastChannel | null)?.removeEventListener?.('message', listener);
             waiting.clear();
         },

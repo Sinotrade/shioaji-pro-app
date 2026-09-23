@@ -84,4 +84,20 @@ describe('main-window command bus', () => {
         await vi.advanceTimersByTimeAsync(0);
         expect(seen).toEqual([{ v: 1 }, { v: 2 }]);
     });
+
+    it('main heartbeats its snapshot so a mirror can detect a stale copy', async () => {
+        const h = hub();
+        const mainBus = createCommandBus({ channel: h.make(), main: true, handle: vi.fn(), snapshot: () => 1, heartbeatMs: 5000 });
+        const mirror = createCommandBus({ channel: h.make(), main: false, handle: vi.fn(), snapshot: () => null });
+        await vi.advanceTimersByTimeAsync(0);
+        const first = mirror.lastStateAt();
+        expect(first).toBeGreaterThan(0);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(mirror.lastStateAt()).toBeGreaterThan(first);
+        mainBus.close(); // executor gone: no more snapshots
+        const last = mirror.lastStateAt();
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(mirror.lastStateAt()).toBe(last);
+    });
 });
+

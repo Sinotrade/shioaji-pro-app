@@ -19,7 +19,7 @@
 import { useSyncExternalStore } from 'react';
 import { subscribeTradeReports } from './boot';
 import { reportLedger } from './report-ledger';
-import { fetchTradeCacheHealth, fetchTrades } from './shioaji';
+import { cancelOrder, fetchTradeCacheHealth, fetchTrades } from './shioaji';
 import { tradeCacheContinuous } from './trading-state';
 import {
     accountRefKey,
@@ -33,11 +33,12 @@ import {
     protectionQuantity,
     tradeMatchesPlan,
     unprotectedQuantity,
+    workingEntryAfterExit,
     type AccountRef,
     type BracketPlan,
 } from './bracket-core';
 import { onTrackedReport, recentReportsFor, type TrackedReportInfo } from './bracket-reports';
-import { claimExecutor, createCommandBus, isExecutor, isMainWindow } from './main-window-commands';
+import { claimExecutor, CommandNotAcknowledged, createCommandBus, isExecutor, isMainWindow } from './main-window-commands';
 import type { OrderEventReport } from './order-report';
 import {
     currentProtectionEnv,
@@ -117,6 +118,8 @@ export function validateBracketRequest(r: BracketRequest): string | null {
 // ---- state ----
 
 const STORAGE_KEY = 'sj-pro-brackets';
+export const SNAPSHOT_HEARTBEAT_MS = 5000;
+export const SNAPSHOT_STALE_MS = 15000;
 const KEEP_DONE_MS = 24 * 3600 * 1000;
 const main = isMainWindow();
 
@@ -151,6 +154,7 @@ const bus = createCommandBus<Command, BracketPlan[]>({
     channel: typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-brackets:${getApiBase()}`) : null,
     main: () => executing,
     ready: roleDecided,
+    heartbeatMs: SNAPSHOT_HEARTBEAT_MS,
     handle: cmd => handle(cmd),
     snapshot: () => snapshot,
     onState: state => {
@@ -422,8 +426,23 @@ export async function ensureBracketHost(): Promise<void> {
     await bus.send({ op: 'ping' });
 }
 
+/** Registration may apply late (the main window can be busy); a short ACK
+ * timeout would invite a second, manual exit. Same budget as reconcile. */
+export const REGISTER_TIMEOUT_MS = 60_000;
 export async function registerBracket(spec: BracketSpec): Promise<BracketPlan> {
-    return await bus.send({ op: 'register', spec }) as BracketPlan;
+    return await bus.send({ op: 'register', spec }, REGISTER_TIMEOUT_MS) as BracketPlan;
+}
+
+/** What to tell the user when registering after the entry was sent failed.
+ * Never suggests adding a manual stop: an unacknowledged registration may
+ * still apply, and a second exit (futures manual triggers are Auto) could
+ * open a reverse position. */
+export function registrationFailureText(error: unknown): string {
+    if (error instanceof CommandNotAcknowledged) {
+        return '保護單登記結果未確認（主視窗未回應）。請先查看下單面板的括號單狀態清單確認是否已登記；確認前不要另外設定停損或出場單';
+    }
+    const why = error instanceof Error ? error.message : String(error);
+    return `保護單未登記（${why}）。請先查看括號單狀態清單並至委託／持倉確認，再決定是否自行處理出場；系統不會自動補送`;
 }
 
 export function reconcileBracket(id: string) {
@@ -437,6 +456,22 @@ export function dismissBracket(id: string) {
 
 export function acknowledgeBracketExit(id: string) {
     return bus.send({ op: 'ack-exit', id });
+}
+
+/** A mirror's copy is stale when the executing main window stopped
+ * publishing (closed / crashed / not yet started). The executor is never stale. */
+export function bracketSnapshotStale(now = Date.now()): boolean {
+    if (executing) return false;
+    const at = bus.lastStateAt();
+    return at === 0 || now - at > SNAPSHOT_STALE_MS;
+}
+
+/** User-initiated cancel of an entry that is still working after its exit
+ * fired. One request, no retry; the Cancel report closes the entry. */
+export async function cancelRemainingEntry(plan: BracketPlan): Promise<void> {
+    if (workingEntryAfterExit(plan) <= 0) throw new Error('進場單已無剩餘委託');
+    if (plan.env !== currentProtectionEnv()) throw new Error('此括號單屬於其他伺服器或模式，未送出刪單');
+    await cancelOrder(plan.orderId);
 }
 
 export function getBrackets(): BracketPlan[] {
