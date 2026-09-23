@@ -12,7 +12,10 @@ import {
 import { reportLedger } from './report-ledger';
 import { knownServerInfo } from './server-info-store';
 
-export type StreamStatus = 'connecting' | 'live' | 'down';
+/** `stale`: the EventSource still looks open but no heartbeat or event
+ *  arrived within the watchdog window (e.g. the sidecar behind a proxy was
+ *  restarted). Treated like `down` everywhere: not LIVE, reconnecting. */
+export type StreamStatus = 'connecting' | 'live' | 'down' | 'stale';
 
 export interface ContractChangeEvent {
     event_id: string;
@@ -364,6 +367,7 @@ const namedListeners = new Map<string, Set<(raw: string) => void>>();
 
 function attachNamed(source: EventSource, name: string) {
     source.addEventListener(name, (event) => {
+        markActivity();
         const set = namedListeners.get(name);
         set?.forEach((listener) => listener((event as MessageEvent).data));
     });
@@ -385,14 +389,51 @@ export function onStreamEvent(
     };
 }
 
+// ---- heartbeat watchdog ----
+// The sidecar heartbeats every 30 s (1.7.5/1.7.6; docs/design/debug-monitor.md).
+// A proxied EventSource can stay "open" after the sidecar behind it died, so
+// silence longer than two periods plus slack marks the stream STALE, closes
+// it and reconnects through the normal backoff. Local only: the watchdog never
+// issues any HTTP request itself.
+export const HEARTBEAT_PERIOD_MS = 30_000;
+export const STALE_AFTER_MS = 2 * HEARTBEAT_PERIOD_MS + 15_000;
+let lastActivity = 0;
+let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+function markActivity() {
+    lastActivity = Date.now();
+}
+function scheduleReconnect() {
+    everDown = true;
+    es?.close();
+    es = null;
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = setTimeout(connect, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 15000);
+}
+function checkWatchdog() {
+    if (!es || status !== 'live' || !lastActivity) return;
+    if (Date.now() - lastActivity <= STALE_AFTER_MS) return;
+    setStatus('stale');
+    scheduleReconnect();
+}
+
+function listen(source: EventSource, name: string, handler: (event: MessageEvent) => void) {
+    source.addEventListener(name, (event) => {
+        markActivity();
+        handler(event as MessageEvent);
+    });
+}
+
 function connect() {
     if (es) es.close();
-    setStatus('connecting');
+    // Keep STALE visible until the reconnect actually opens.
+    setStatus(status === 'stale' ? 'stale' : 'connecting');
     // region filters contract_event only; other families are unfiltered
     es = new EventSource(`${getStreamBase()}/api/v1/stream/data?region=TW`);
 
     es.onopen = () => {
         retryDelay = 1000;
+        markActivity();
         setStatus('live');
         // SSE does not replay contract changes missed while disconnected —
         // re-query on every successful connection so a daily update cannot
@@ -406,15 +447,15 @@ function connect() {
     };
 
     for (const ev of ['tick_stk', 'tick_fop']) {
-        es.addEventListener(ev, (e) => handleTick((e as MessageEvent).data));
+        listen(es, ev, (e) => handleTick((e as MessageEvent).data));
     }
     for (const ev of ['bidask_stk', 'bidask_fop']) {
-        es.addEventListener(ev, (e) => handleBidAsk((e as MessageEvent).data));
+        listen(es, ev, (e) => handleBidAsk((e as MessageEvent).data));
     }
-    es.addEventListener('quote_idx', (e) =>
+    listen(es, 'quote_idx', (e) =>
         handleIndexQuote((e as MessageEvent).data),
     );
-    es.addEventListener('order_event', (e) => {
+    listen(es, 'order_event', (e) => {
         // the server wraps the body one level under its variant name
         // ({state, data:{FuturesOrder:{...}}}) — normalize before fan-out
         const report = normalizeOrderEvent(
@@ -432,13 +473,13 @@ function connect() {
         if (admitted.duplicate) return;
         orderEventListeners.forEach((l) => l(report));
     });
-    es.addEventListener('contract_event', (event) => {
+    listen(es, 'contract_event', (event) => {
         const change = JSON.parse(
             (event as MessageEvent).data,
         ) as ContractChangeEvent;
         emitContractChange(change);
     });
-    es.addEventListener('heartbeat', () => {
+    listen(es, 'heartbeat', () => {
         lastHeartbeat = Date.now();
         setStatus('live');
     });
@@ -447,13 +488,8 @@ function connect() {
     }
 
     es.onerror = () => {
-        everDown = true;
         setStatus('down');
-        es?.close();
-        es = null;
-        if (retryTimer) clearTimeout(retryTimer);
-        retryTimer = setTimeout(connect, retryDelay);
-        retryDelay = Math.min(retryDelay * 2, 15000);
+        scheduleReconnect();
     };
 }
 
@@ -490,6 +526,7 @@ export function ensureStream() {
     if (!started) {
         started = true;
         connect();
+        watchdogTimer = setInterval(checkWatchdog, 5000);
         void watchMaintenance();
         setInterval(watchMaintenance, 60000);
     }
@@ -559,6 +596,7 @@ export function onContractEvent(
 // SSE 連線與殭屍 listener（每 tick 重複灌、CPU 飆高）。一變更就整頁
 // 重載，開發期不會再累積疊層。
 if (import.meta.hot) {
+    import.meta.hot.dispose(() => { if (watchdogTimer) clearInterval(watchdogTimer); });
     import.meta.hot.accept(() => {
         import.meta.hot?.invalidate();
     });

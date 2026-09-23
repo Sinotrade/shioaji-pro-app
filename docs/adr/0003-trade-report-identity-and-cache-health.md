@@ -37,6 +37,12 @@ update_status。ADR 0002 當時「cache-only Trade HTTP API 不是本次前提�
   App 已權威對帳過卻出現 `NoBaseline`（update_status 會建立基準，故代表 sidecar 重啟且他端先訂閱），都視為
   不連續：清除基準、重新訂閱、不信任 cache，直到下一次權威查詢。cache 重建只新增或更新列，**不刪除**本地
   委託；本地仍有效但 cache 沒有的委託會保留並標示待對帳，同時清除基準。
+- **心跳 watchdog**：sidecar 每 30 秒送 heartbeat。經 proxy 的 EventSource 在 sidecar 死亡後可能不會關閉，
+  因此超過 2 個週期加 15 秒沒有 heartbeat 或任何事件時，狀態改為 `stale`（頁首與 Debug 顯示 STALE，非 LIVE），
+  關閉連線並沿用既有退避重連。`stale` 與 `down` 一樣觸發委託／持倉／帳務的「串流中斷（可能漏收回報）」原因；
+  重連走同一條 health／重啟偵測路徑。watchdog 本身不發任何 HTTP 查詢。
+- **改單確認**：改價／減量的 HTTP 回應未確認時標示改刪待確認（每筆委託一個來源）；其後同一委託 id 的成功
+  UpdatePrice（modified_price 等於要求價）或 UpdateQty（cancel_quantity 等於要求減量）回報只解除該筆。
 - **全部刪單**：罕見且攸關安全，一律 `refresh:true`（update_status），不讀 cache。
 - **改刪單的 trade_id**：trade_id 只存在於觀察到該委託的 sidecar 程序。App 在目前 sidecar 沒有權威基準時
   （例如外部重啟後），改刪單前對該帳戶執行一次 `refresh:true`，依已知 seqno／ordno、方向、商品重新解析

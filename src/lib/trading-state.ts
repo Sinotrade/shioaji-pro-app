@@ -12,6 +12,7 @@ import { applyPositionFill, markPosition, positionFill, reportBody } from './por
 import { projectOrderReport, projectTradeDeal } from './order-projection';
 import { parseEventId, reportLedger } from './report-ledger';
 import { remainingWorkingOrderQuantity } from './working-order-quantity';
+import { takeMutationIntent, type MutationIntent } from './mutation-intent';
 import type { OrderEventReport } from './order-report';
 import type { Account, AccountBalance, AccountedPosition, AccountFunds, Margin } from './types/portfolio';
 import type { AccountedTrade, Trade, TradeCacheHealth } from './types/order';
@@ -79,39 +80,41 @@ const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`
 
 // ---- reconciliation reasons ----
 // One reason can have several independent causes (e.g. an App-side unknown
-// report and a server-reported PendingReport). Each cause is keyed by its
-// message, so resolving one App-side cause never clears another.
-type OpenReason = Map<string, number>; // message -> clock when (re)raised
+// report and a server-reported PendingReport, or one unconfirmed mutation per
+// order). Each cause has a key (default: its message), so resolving one cause
+// never clears another.
+type OpenReason = Map<string, { at: number; message: string }>; // cause -> raised
+
 const reasonState: Record<TradingQueryScope, Map<ReconcileReason, OpenReason>> = { positions: new Map(), orders: new Map(), account: new Map() };
 let reasonClock = 0;
-const latest = (entry: OpenReason) => Math.max(...entry.values());
+const latest = (entry: OpenReason) => Math.max(...[...entry.values()].map(c => c.at));
 function syncQuery(scope: TradingQueryScope, patch: Partial<TradingQueryStatus> = {}) {
     const open = [...reasonState[scope].entries()].sort((a, b) => latest(a[1]) - latest(b[1]));
     const queries = { ...state.queries, [scope]: { ...state.queries[scope], ...patch,
         reasons: open.map(([reason]) => reason),
         needsReconcile: open.length > 0,
-        error: [...new Set(open.flatMap(([, entry]) => [...entry.keys()]))].join('；') || null } };
+        error: [...new Set(open.flatMap(([, entry]) => [...entry.values()].map(c => c.message)))].join('；') || null } };
     state = { ...state, queries,
         needsReconcile: queryScopes.some(key => queries[key].needsReconcile),
         error: [...new Set(queryScopes.map(key => queries[key].error).filter(Boolean))].join('；') || null,
         updatedAt: Math.max(...queryScopes.map(key => queries[key].updatedAt ?? 0)) || null,
     };
 }
-function raise(scope: TradingQueryScope, reason: ReconcileReason, message: string) {
-    const entry = reasonState[scope].get(reason) ?? new Map<string, number>();
-    entry.delete(message); // re-insert so newer causes list last
-    entry.set(message, ++reasonClock);
+function raise(scope: TradingQueryScope, reason: ReconcileReason, message: string, cause = message) {
+    const entry: OpenReason = reasonState[scope].get(reason) ?? new Map();
+    entry.delete(cause); // re-insert so newer causes list last
+    entry.set(cause, { at: ++reasonClock, message });
     reasonState[scope].set(reason, entry);
     syncQuery(scope);
 }
 /** Clear causes of `reasons` raised at or before `through`. With `message`,
- *  clear only that App-side cause (the one the caller just resolved). */
+ *  clear only that cause key (the one the caller just resolved). */
 function resolve(scope: TradingQueryScope, reasons: readonly ReconcileReason[], through = Number.POSITIVE_INFINITY, message?: string) {
     let changed = false;
     for (const reason of reasons) {
         const entry = reasonState[scope].get(reason);
         if (!entry) continue;
-        for (const [cause, raisedAt] of [...entry]) {
+        for (const [cause, { at: raisedAt }] of [...entry]) {
             if (raisedAt <= through && (message === undefined || cause === message)) { entry.delete(cause); changed = true; }
         }
         if (entry.size === 0) {
@@ -492,6 +495,22 @@ async function resyncOrdersFromCache(accounts: Account[], before: { clockBefore:
     } finally { queryEvents = null; }
 }
 
+// Price/quantity changes whose HTTP reply settled without confirming them.
+// A successful report for the same order id arriving afterwards that carries
+// exactly the requested price / reduction confirms that one mutation.
+const awaitingConfirmation = new Map<string, MutationIntent>();
+function confirmMutation(report: OrderEventReport) {
+    if (report.kind !== 'order' || report.failed) return;
+    const intent = awaitingConfirmation.get(report.id);
+    if (!intent) return;
+    const matches = intent.kind === 'price'
+        ? report.opType === 'UpdatePrice' && (report.modifiedPrice || report.price) === intent.price
+        : report.opType === 'UpdateQty' && report.cancelQuantity === intent.quantity;
+    if (!matches) return;
+    awaitingConfirmation.delete(report.id);
+    resolve('orders', ['mutation-outcome'], undefined, `mutation:${report.id}`);
+}
+
 let started = false;
 let hasConnected = false;
 let downSinceLive = false;
@@ -599,6 +618,10 @@ function applyConfirmedCancellation(trade: AccountedTrade): boolean {
         deal_quantity: trade.status.deal_quantity, cancel_quantity: trade.status.cancel_quantity,
         deals: (trade.status.deals?.length ?? 0) >= current.status.deals.length ? trade.status.deals : current.status.deals };
     state = { ...state, trades: state.trades.map(t => t === current ? { ...current, status } : t) };
+    // The order is terminal and read back: an earlier unconfirmed change or
+    // cancel of this same order no longer needs reconciling.
+    awaitingConfirmation.delete(trade.order.id);
+    resolve('orders', ['mutation-outcome'], undefined, `mutation:${trade.order.id}`);
     return true;
 }
 function start() {
@@ -633,7 +656,13 @@ function start() {
             if (trade.status.deal_quantity > old.status.deal_quantity) raise('positions', 'mutation-outcome', '刪單／改單回應包含新增成交；持倉尚待回報或手動對帳');
             state = { ...state, trades: state.trades.map(t => t === old ? { ...trade, account: old.account } : t) };
         } else {
-            raise('orders', 'mutation-outcome', '刪單／改單結果待確認；請手動更新委託，不要自動重送');
+            // One cause per order: a later matching report clears only this one.
+            raise('orders', 'mutation-outcome', '刪單／改單結果待確認；請手動更新委託，不要自動重送', `mutation:${event.tradeId}`);
+            const intent = takeMutationIntent(event.tradeId);
+            if (intent && event.trade) {
+                if (awaitingConfirmation.size >= 500) awaitingConfirmation.delete(awaitingConfirmation.keys().next().value!);
+                awaitingConfirmation.set(event.tradeId, intent);
+            } else awaitingConfirmation.delete(event.tradeId);
         }
         if (queryEvents) queryOverflow = true;
         schedulePublish();
@@ -703,6 +732,7 @@ function start() {
                 state = { ...state, trades };
                 if (report.ts) orderTimes.set(key, report.ts);
                 releasePendingDeals(report.id);
+                confirmMutation(report);
             } else {
                 const known = state.trades.some(t => t.order.id === report.id);
                 const previous = pendingOrders.get(key);
@@ -758,7 +788,10 @@ function start() {
         } else if (!live && hasConnected) {
             connectionEpoch++;
             downSinceLive = true;
-            for (const key of queryScopes) raise(key, 'disconnect', '串流曾中斷；重新連線後請手動對帳');
+            const message = getStreamStatus() === 'stale'
+                ? '串流逾時沒有心跳，期間可能漏收回報；重新連線後請手動對帳'
+                : '串流曾中斷；重新連線後請手動對帳';
+            for (const key of queryScopes) raise(key, 'disconnect', message);
             publish();
         }
     };
