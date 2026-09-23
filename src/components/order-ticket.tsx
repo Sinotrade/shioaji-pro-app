@@ -27,7 +27,7 @@ import {
 } from '../lib/account-store';
 import { requestOrderConfirm } from '../lib/order-confirm';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
-import { getApiBase } from '../lib/runtime';
+import { currentProtectionEnv } from '../lib/protection-env';
 import { fetchInfo, placeFuturesOrder, placeStockOrder } from '../lib/shioaji';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
@@ -230,6 +230,7 @@ export function OrderTicket({
             const bracketStop = bracketOn && stopPrice.trim() !== '' ? sp : null;
             const bracketTake = bracketOn && takePrice.trim() !== '' ? tp : null;
             let entryAccount: Account | undefined;
+            let bracketEnv: string | null = null;
             if (bracketOn) {
                 const invalid = validateBracketRequest({
                     isFutures,
@@ -255,6 +256,10 @@ export function OrderTicket({
                     entryAccount.account_type !== (isFutures ? 'F' : 'S')
                 ) {
                     throw new Error('括號單需要有效的已簽署下單帳戶');
+                }
+                bracketEnv = currentProtectionEnv();
+                if (!bracketEnv) {
+                    throw new Error('伺服器模式（模擬／正式）尚未確認，括號單未送出');
                 }
                 await ensureBracketHost();
             }
@@ -307,10 +312,10 @@ export function OrderTicket({
                 kind: 'ok',
                 text: `▸ ${trade.status.status} #${trade.order.seqno || trade.order.id.slice(0, 8)}`,
             });
-            if (bracketOn && entryAccount) {
+            if (bracketOn && entryAccount && bracketEnv) {
                 try {
                     await registerBracket({
-                        env: getApiBase(),
+                        env: bracketEnv,
                         account: {
                             account_type: isFutures ? 'F' : 'S',
                             broker_id: entryAccount.broker_id,

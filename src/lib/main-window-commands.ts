@@ -15,6 +15,23 @@ export function isMainWindow(): boolean {
     return typeof location === 'undefined' || !new URLSearchParams(location.search).has('popout');
 }
 
+/** Only one main-window instance per origin may execute protection (a web
+ * build can have several tabs without `?popout`). Holds a Web Lock for the
+ * page's lifetime; without Web Locks (tests / old engines) it succeeds. */
+let executorClaim: Promise<boolean> | null = null;
+export function claimExecutor(name: string): Promise<boolean> {
+    if (executorClaim) return executorClaim;
+    const locks = typeof navigator !== 'undefined' ? (navigator as Navigator & { locks?: LockManager }).locks : undefined;
+    if (!locks?.request) return (executorClaim = Promise.resolve(true));
+    executorClaim = new Promise<boolean>(resolve => {
+        void locks.request(name, { ifAvailable: true }, lock => {
+            resolve(!!lock);
+            return lock ? new Promise<void>(() => undefined) : undefined; // keep it until unload
+        }).catch(() => resolve(false));
+    });
+    return executorClaim;
+}
+
 export class CommandNotAcknowledged extends Error {
     constructor(message = '主視窗未回應，指令結果未確認') {
         super(message);
@@ -40,7 +57,7 @@ export interface CommandBusOptions<C, S> {
 }
 
 export interface CommandBus<C> {
-    send(cmd: C): Promise<unknown>;
+    send(cmd: C, timeoutMs?: number): Promise<unknown>;
     publish(): void;
     close(): void;
 }
@@ -100,7 +117,7 @@ export function createCommandBus<C, S>(opts: CommandBusOptions<C, S>): CommandBu
         try { channel?.postMessage({ kind: 'state', state: opts.snapshot() } satisfies Envelope); } catch { /* closed */ }
     }
 
-    async function send(cmd: C): Promise<unknown> {
+    async function send(cmd: C, sendTimeoutMs = timeoutMs): Promise<unknown> {
         if (main) {
             const ack = await run(newId(), cmd) as Extract<Envelope, { kind: 'ack' }>;
             if (!ack.ok) throw new Error(ack.error);
@@ -120,7 +137,7 @@ export function createCommandBus<C, S>(opts: CommandBusOptions<C, S>): CommandBu
             post();
             // Same id → main dedups; the resend only recovers a lost message.
             timers.push(setTimeout(post, retryMs));
-            timers.push(setTimeout(() => finish(null), timeoutMs));
+            timers.push(setTimeout(() => finish(null), sendTimeoutMs));
         });
         if (!ack) throw new CommandNotAcknowledged();
         if (!ack.ok) throw new Error(ack.error);

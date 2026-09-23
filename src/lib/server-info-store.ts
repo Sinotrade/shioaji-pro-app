@@ -42,6 +42,7 @@ export function subscribeServerInfo(listener: () => void) {
     return () => { listeners.delete(listener); };
 }
 function currentServerInfo() { return infos.get(getApiBase()); }
+export const getServerInfo = currentServerInfo;
 
 export function useServerInfo() {
     return useSyncExternalStore(subscribeServerInfo, currentServerInfo);

@@ -4,7 +4,8 @@
 // - ONLY the main window evaluates ticks and sends orders. Popouts, flash
 //   tiles and the tray mirror a read-only snapshot and send add/remove
 //   commands to the main window through an ACKed, id-deduplicated bus.
-// - Stop/take triggers carry a FIXED environment (API base), account and
+// - Stop/take triggers carry a FIXED environment (API base + server mode),
+//   account and
 //   tradable code captured at creation. A trigger without them (older
 //   persisted data) is suspended rather than routed to whatever account is
 //   selected when it fires.
@@ -31,11 +32,18 @@ import {
 } from './bracket-core';
 import { onTrackedReport, recentReportsFor } from './bracket-reports';
 import { ensureContract } from './contracts-cache';
-import { createCommandBus, isMainWindow } from './main-window-commands';
+import { claimExecutor, createCommandBus, isMainWindow } from './main-window-commands';
 import type { OrderEventReport } from './order-report';
+import {
+    currentProtectionEnv,
+    envBase,
+    onProtectionEnvChange,
+    refreshProtectionEnv,
+    reportEnvMatches,
+} from './protection-env';
 import { retainQuote } from './quote-ownership';
 import { getApiBase } from './runtime';
-import { onAnyTick } from './stream';
+import { getStreamStatus, onAnyTick, subscribeStatusStore } from './stream';
 import { notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
 import type { ContractBase } from './types/contract';
@@ -58,6 +66,7 @@ export interface TriggerOrder {
     bracketId?: string;
     suspended?: string; // reason this trigger will not execute
     createdAt?: number;
+    requestId?: string; // sender-generated; a re-applied add returns the same trigger
 }
 
 export interface ExitRecord extends BracketExit {
@@ -116,8 +125,10 @@ let exits: ExitRecord[] = main ? readJson<ExitRecord[]>(EXITS_KEY, []).filter(e 
 const listeners = new Set<() => void>();
 const exitListeners = new Set<(exit: ExitRecord) => void>();
 
-interface Snapshot { triggers: TriggerOrder[]; exits: ExitRecord[] }
-let snapshot: Snapshot = { triggers, exits };
+interface Snapshot { triggers: TriggerOrder[]; exits: ExitRecord[]; feedMissing: string[]; executing: boolean }
+let executing = false; // this window holds the executor lock
+const feedMissing = new Set<string>(); // trigger codes without a tick subscription
+let snapshot: Snapshot = { triggers, exits, feedMissing: [], executing: false };
 
 type Command =
     | { op: 'add'; trigger: NewTrigger }
@@ -145,11 +156,12 @@ function commit() {
         if (now - at > GROUP_TTL_MS) delete processedGroups[key];
     }
     // resolved exits only stay for display; unresolved ones hold reservations
-    exits = exits.filter(e => !isResolved(e) || now - e.at < GROUP_TTL_MS).slice(-200);
+    const resolved = exits.filter(e => isResolved(e) && now - e.at < GROUP_TTL_MS).slice(-200);
+    exits = exits.filter(e => !isResolved(e) || resolved.includes(e));
     writeJson(STORAGE_KEY, triggers);
     writeJson(GROUPS_KEY, processedGroups);
     writeJson(EXITS_KEY, exits);
-    snapshot = { triggers, exits };
+    snapshot = { triggers, exits, feedMissing: [...feedMissing], executing };
     syncQuotes();
     listeners.forEach(l => l());
     bus.publish();
@@ -173,6 +185,8 @@ function describe(t: TriggerOrder) {
 
 function handleCommand(cmd: Command): unknown {
     if (cmd.op === 'add') {
+        const again = cmd.trigger.requestId && triggers.find(x => x.requestId === cmd.trigger.requestId);
+        if (again) return again; // resent after a main-window reload
         const t: TriggerOrder = { ...cmd.trigger, id: newId(), createdAt: Date.now() };
         delete t.suspended;
         if (!hasContext(t)) throw new Error('觸價單缺少帳戶或伺服器資訊，未建立');
@@ -210,7 +224,9 @@ function withContext(t: NewTrigger, contract?: ContractBase): NewTrigger | strin
     const s = getAccountState();
     const selected = futures ? s.selectedFutures : s.selectedStock;
     if (!selected?.signed || selected.account_type !== (futures ? 'F' : 'S')) return '沒有可用的已簽署帳戶，觸價單未建立';
-    return { ...t, env: getApiBase(),
+    const env = currentProtectionEnv();
+    if (!env) return '伺服器模式（模擬／正式）尚未確認，觸價單未建立';
+    return { ...t, env,
         account: { account_type: futures ? 'F' : 'S', broker_id: selected.broker_id, account_id: selected.account_id },
         orderCode: contract.target_code || contract.code };
 }
@@ -223,8 +239,9 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase): Promis
         notify({ kind: 'err', title: '觸價單未建立', body: prepared });
         return null;
     }
+    const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : newId();
     try {
-        return await bus.send({ op: 'add', trigger: prepared }) as TriggerOrder;
+        return await bus.send({ op: 'add', trigger: { ...prepared, requestId } }) as TriggerOrder;
     } catch (e) {
         notify({ kind: 'err', title: '觸價單未確認', body: e instanceof Error ? e.message : String(e) });
         return null;
@@ -354,25 +371,37 @@ function closablePosition(account: AccountRef, orderCode: string, action: Action
     const direction = action === 'Sell' ? 'Buy' : 'Sell';
     const rows = state.positions.filter(p => p.account && p.account.account_type === account.account_type
         && p.account.broker_id === account.broker_id && p.account.account_id === account.account_id
-        && p.code === orderCode && p.direction === direction);
+        && p.code === orderCode && p.direction === direction
+        // bracket stock exits are Cash sells: margin/short rows are not closable by them
+        && (account.account_type !== 'S' || !('cond' in p) || !p.cond || p.cond === 'Cash'));
     const total = rows.reduce((s, p) => s + p.quantity, 0);
     // stock positions are held in shares; bracket exits are Common lots
     return account.account_type === 'S' ? Math.floor(total / 1000) : total;
 }
 
-/** Decide the exit quantity for a firing trigger. */
+/** Decide the exit quantity for a firing trigger.
+ * - manual triggers keep their own sizing (they may be entries);
+ * - futures bracket exits are Cover orders: the broker rejects closing more
+ *   than the open position, and a lagging position snapshot must not block
+ *   a stop — so they are never reduced here, only annotated;
+ * - stock bracket exits are Cash sells that could otherwise open a day-trade
+ *   short: capped by the confirmed Cash position minus reserved exits, and
+ *   refused while the position is unknown and another exit is unresolved. */
 export function planExitQuantity(t: Pick<TriggerOrder, 'quantity' | 'bracketId' | 'account'>, reserved: number,
     closable: number | null): { quantity: number; detail?: string } {
-    if (!t.bracketId) return { quantity: t.quantity }; // manual triggers keep their own sizing
+    if (!t.bracketId) return { quantity: t.quantity };
+    if (t.account?.account_type === 'F') {
+        return closable !== null && closable - reserved < t.quantity
+            ? { quantity: t.quantity, detail: `持倉顯示可平倉 ${Math.max(0, closable - reserved)}，仍以平倉（Cover）送出由券商檢核` }
+            : { quantity: t.quantity };
+    }
     if (closable !== null) {
         const free = Math.max(0, closable - reserved);
-        if (free <= 0) return { quantity: 0, detail: '持倉已被其他出場委託保留或已無部位，未送出' };
-        if (free < t.quantity) return { quantity: free, detail: `可平倉量僅 ${free}，其餘 ${t.quantity - free} 未保護` };
+        if (free <= 0) return { quantity: 0, detail: '現股持倉已被其他出場委託保留或已無部位，未送出' };
+        if (free < t.quantity) return { quantity: free, detail: `可賣出現股僅 ${free} 張，其餘 ${t.quantity - free} 張未保護` };
         return { quantity: t.quantity };
     }
-    if (reserved > 0 && t.account?.account_type === 'S') {
-        return { quantity: 0, detail: '持倉未確認且另有出場委託未完成；為避免超賣未送出' };
-    }
+    if (reserved > 0) return { quantity: 0, detail: '持倉未確認且另有出場委託未完成；為避免超賣未送出' };
     return { quantity: t.quantity, detail: '持倉未確認，依保護量送出' };
 }
 
@@ -447,7 +476,7 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
         notSent('商品資料取得失敗');
         return;
     }
-    if (getApiBase() !== rec.env) { notSent('伺服器已切換'); return; }
+    if (currentProtectionEnv() !== rec.env) { notSent('伺服器或模擬／正式模式已切換'); return; }
     if ((contract.target_code || contract.code) !== rec.orderCode) {
         notSent(`商品已換為 ${contract.target_code || contract.code}，與建立時 ${rec.orderCode} 不同`);
         return;
@@ -464,7 +493,7 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
         });
         const orderId = trade.order.id;
         updateExit(rec.id, e => ({ ...e, status: e.filled >= e.quantity ? 'filled' : 'working', orderId, at: Date.now() }));
-        for (const report of recentReportsFor(rec.env, orderId)) applyExitReport(report, rec.env);
+        for (const report of recentReportsFor(envBase(rec.env), orderId)) applyExitReport(report, envBase(rec.env));
         notify({ kind: 'ok', title: t.kind === 'stop' ? '停損觸發' : '停利觸發',
             body: `${t.code} @${lastPrice} → 市價${t.action === 'Buy' ? '買' : '賣'} ${rec.quantity} (${trade.status.status})` });
     } catch (e) {
@@ -479,10 +508,10 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
     }
 }
 
-function applyExitReport(report: OrderEventReport, env: string) {
+function applyExitReport(report: OrderEventReport, base: string) {
     const orderId = report.kind === 'deal' ? report.tradeId : report.id;
     for (const rec of exits.slice()) {
-        if (rec.env !== env || rec.orderId !== orderId || isResolved(rec)) continue;
+        if (rec.orderId !== orderId || isResolved(rec) || !reportEnvMatches(rec.env, base)) continue;
         updateExit(rec.id, e => {
             if (report.kind === 'order') return applyExitOrderReport(e, report, e.account, Date.now());
             const m = matchDeal(report, orderId, e.account, e.market, e.orderCode, e.action);
@@ -511,8 +540,8 @@ export function applyExitTrade(trade: Trade) {
 }
 
 export function evaluateTick(code: string, price: number) {
-    if (!main || !Number.isFinite(price) || price <= 0 || triggers.length === 0) return;
-    const env = getApiBase();
+    if (!main || !executing || !Number.isFinite(price) || price <= 0 || triggers.length === 0) return;
+    const env = currentProtectionEnv(); // null → only alerts may fire
     for (const t of triggers.slice()) {
         if (t.code !== code || t.suspended) continue;
         if (t.kind !== 'alert' && t.env !== env) continue;
@@ -524,35 +553,80 @@ export function evaluateTick(code: string, price: number) {
 }
 
 // Main window keeps the tick feed of every active trigger subscribed; closing
-// the viewing panel must not silently stop protection.
+// the viewing panel must not silently stop protection. A failed contract
+// lookup is retried (stream live / server info change / backoff) and the
+// code is reported as missing its feed meanwhile.
 const quoteHolds = new Map<string, { release?: () => void }>();
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryDelay = 5000;
 function syncQuotes() {
-    if (!main || !engineStarted) return;
-    const env = getApiBase();
-    const codes = new Set(triggers.filter(t => !t.suspended && (t.kind === 'alert' || t.env === env)).map(t => t.code));
+    if (!main || !executing) return;
+    const env = currentProtectionEnv();
+    const base = getApiBase();
+    const codes = new Set(triggers.filter(t => !t.suspended && (t.kind === 'alert' || t.env === env
+        || (!env && t.env?.startsWith(`${base}|`)))).map(t => t.code));
     for (const [code, hold] of quoteHolds) {
         if (!codes.has(code)) { hold.release?.(); quoteHolds.delete(code); }
     }
+    let changed = false;
+    for (const code of [...feedMissing]) if (!codes.has(code)) { feedMissing.delete(code); changed = true; }
     for (const code of codes) {
         if (quoteHolds.has(code)) continue;
         const hold: { release?: () => void } = {};
         quoteHolds.set(code, hold);
         void ensureContract(code).then(contract => {
-            if (quoteHolds.get(code) === hold) hold.release = retainQuote(contract, 'Tick');
-        }).catch(() => { if (quoteHolds.get(code) === hold) quoteHolds.delete(code); });
+            if (quoteHolds.get(code) !== hold) return;
+            hold.release = retainQuote(contract, 'Tick');
+            retryDelay = 5000;
+            if (feedMissing.delete(code)) publishFeed();
+        }).catch(() => {
+            if (quoteHolds.get(code) !== hold) return;
+            quoteHolds.delete(code);
+            if (!feedMissing.has(code)) {
+                feedMissing.add(code);
+                publishFeed();
+                notify({ kind: 'err', title: '觸價單行情未訂閱', body: `${code} 商品資料取得失敗，保護單暫時收不到成交價；將自動重試` });
+            }
+            if (!retryTimer) {
+                retryTimer = setTimeout(() => { retryTimer = null; syncQuotes(); }, retryDelay);
+                retryDelay = Math.min(retryDelay * 2, 60000);
+            }
+        });
     }
+    if (changed) publishFeed();
+}
+
+function publishFeed() {
+    snapshot = { ...snapshot, feedMissing: [...feedMissing], executing };
+    listeners.forEach(l => l());
+    bus.publish();
+}
+
+export function useTriggerFeed(): { feedMissing: string[]; executing: boolean } {
+    return useSyncExternalStore(subscribe, () => snapshot);
 }
 
 let engineStarted = false;
 export function startTriggerEngine() {
     if (engineStarted || !main) return;
     engineStarted = true;
-    const suspended = triggers.filter(t => t.suspended === LEGACY_SUSPENDED).length;
-    if (suspended) {
-        notify({ kind: 'err', title: '舊版觸價單已暫停',
-            body: `${suspended} 筆停損／停利未綁定帳戶，不會自動送單；請在圖表刪除後重新設定` });
-    }
-    onAnyTick(tick => { if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close)); });
-    onTrackedReport((report, _verdict, env) => applyExitReport(report, env));
-    syncQuotes();
+    void claimExecutor('sj-protection-executor').then(ok => {
+        if (!ok) {
+            notify({ kind: 'err', title: '觸價單未在此分頁執行', body: '另一個主視窗／分頁已在執行停損停利；此頁僅顯示' });
+            return;
+        }
+        executing = true;
+        const suspended = triggers.filter(t => t.suspended === LEGACY_SUSPENDED).length;
+        if (suspended) {
+            notify({ kind: 'err', title: '舊版觸價單已暫停',
+                body: `${suspended} 筆停損／停利未綁定帳戶，不會自動送單；請在圖表刪除後重新設定` });
+        }
+        onAnyTick(tick => { if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close)); });
+        onTrackedReport((report, _verdict, base) => applyExitReport(report, base));
+        onProtectionEnvChange(() => syncQuotes());
+        subscribeStatusStore(() => { if (getStreamStatus() === 'live') { void refreshProtectionEnv(); syncQuotes(); } });
+        void refreshProtectionEnv();
+        publishFeed();
+        syncQuotes();
+    });
 }

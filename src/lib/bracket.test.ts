@@ -28,7 +28,10 @@ const m = vi.hoisted(() => ({
     ensure: vi.fn(),
     positions: { rows: [] as unknown[], updatedAt: null as number | null, needsReconcile: false },
     base: 'http://sim.invalid',
+    env: 'http://sim.invalid|simulation' as string | null,
+    envChanged: [] as (() => void)[],
     search: '',
+    lockGranted: true,
 }));
 
 vi.mock('./runtime', () => ({ getApiBase: () => m.base }));
@@ -47,6 +50,17 @@ vi.mock('./trading-state', () => ({ getTradingState: () => ({ positions: m.posit
     queries: { positions: { updatedAt: m.positions.updatedAt, needsReconcile: m.positions.needsReconcile, error: null } } }) }));
 vi.mock('./bracket-api', () => ({ fetchCachedTrades: m.cached, fetchReconciledTrades: m.refreshed, fetchTradeCacheHealth: m.health }));
 vi.mock('./shioaji', () => ({ subscribeTradeEvents: m.subscribe }));
+vi.mock('./protection-env', () => {
+    const envBase = (env: string) => env.slice(0, env.lastIndexOf('|'));
+    return {
+        currentProtectionEnv: () => m.env,
+        protectionEnvLabel: () => '',
+        refreshProtectionEnv: async () => undefined,
+        onProtectionEnvChange: (cb: () => void) => { m.envChanged.push(cb); return () => undefined; },
+        envBase,
+        reportEnvMatches: (env: string, base: string) => m.env ? env === m.env : envBase(env) === base,
+    };
+});
 
 const wire = (fixture as unknown[]).map(f => normalizeOrderEvent(f)!);
 const [fDeal1, fNew1, fDeal2, fCoverNew, fCoverDeal1, fCoverDeal2] = wire;
@@ -60,7 +74,7 @@ const TXF = { code: 'TXFR1', target_code: 'TXFJ6', security_type: 'FUT', exchang
 const healthy = { state: 'Healthy', reasons: [] };
 
 function spec(account: Account, orderId = 'fixture-f1', over: Record<string, unknown> = {}) {
-    return { env: m.base, account: { account_type: account.account_type as 'F', broker_id: account.broker_id, account_id: account.account_id },
+    return { env: m.env!, account: { account_type: account.account_type as 'F', broker_id: account.broker_id, account_id: account.account_id },
         orderId, seqno: orderId, quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT' as const, exchange: 'TAIFEX',
         action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600, ...over };
 }
@@ -85,7 +99,9 @@ async function boot(opts: { keepStore?: boolean } = {}) {
     if (!opts.keepStore) store = new Map();
     vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
     vi.stubGlobal('location', { search: m.search });
-    m.order = null; m.tick = null; m.statusChanged = [];
+    m.order = null; m.tick = null; m.statusChanged = []; m.envChanged = [];
+    vi.stubGlobal('navigator', { locks: { request: (_n: string, _o: unknown, cb: (lock: object | null) => unknown) => {
+        const r = cb(m.lockGranted ? {} : null); return Promise.resolve(r instanceof Promise ? undefined : r); } } });
     engine = await import('./trigger-engine');
     bracket = await import('./bracket');
     engine.startTriggerEngine();
@@ -102,6 +118,7 @@ beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('BroadcastChannel', undefined);
     m.status = 'live'; m.accounts = [F1, F2, S1]; m.base = 'http://sim.invalid'; m.search = '';
+    m.env = 'http://sim.invalid|simulation'; m.lockGranted = true;
     m.positions = { rows: [], updatedAt: null, needsReconcile: false };
     for (const f of [m.place, m.notify, m.cached, m.refreshed, m.health, m.subscribe, m.ensure]) f.mockReset();
     m.cached.mockResolvedValue([cacheTrade('fixture-f1', F1, []), cacheTrade('fixture-f9', F2, [])]); m.refreshed.mockResolvedValue([]); m.health.mockResolvedValue(healthy);
@@ -236,6 +253,20 @@ describe('protection confirmation state', () => {
         expect(triggersOf(plan.id).map(t => t.quantity)).toEqual([2, 2]);
     });
 
+    it('reconcile while the stream is down, or with a non-Healthy cache, keeps protection unconfirmed', async () => {
+        await boot();
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        m.status = 'down'; m.statusChanged.forEach(cb => cb()); await flush();
+        m.refreshed.mockResolvedValue([cacheTrade('fixture-f1', F1, [])]);
+        await bracket.reconcileBracket(plan.id);
+        expect(planOf(plan.id).issues.map(i => i.code)).toContain('disconnect');
+        m.status = 'live'; m.statusChanged.forEach(cb => cb()); await flush();
+        m.health.mockResolvedValue({ state: 'Unknown', reasons: [{ event_type: 'FuturesDeal', reason: 'NoBaseline' }] });
+        await expect(bracket.reconcileBracket(plan.id)).resolves.toEqual({ health: 'Unknown' });
+        expect(planOf(plan.id).issues.map(i => i.code)).toContain('disconnect');
+    });
+
     it('a reload marks live plans NOT confirmed and looks them up cache-only', async () => {
         await boot();
         await bracket.registerBracket(spec(F1));
@@ -292,7 +323,7 @@ describe('trigger execution (main window only)', () => {
         const { unprotectedQuantity } = await import('./bracket-core');
         expect(unprotectedQuantity(planOf(plan.id))).toBe(1);
         await boot({ keepStore: true });
-        expect(engine.isGroupProcessed(m.base, planOf(plan.id).group)).toBe(true);
+        expect(engine.isGroupProcessed(m.env!, planOf(plan.id).group)).toBe(true);
         await emit(fDeal2!);
         await tick(47000);
         expect(triggersOf(plan.id)).toHaveLength(0);
@@ -351,6 +382,9 @@ describe('trigger execution (main window only)', () => {
         expect(m.place).toHaveBeenCalledTimes(1);
         await bracket.acknowledgeBracketExit(plan.id);
         expect(engine.getExits()[0]!.acknowledged).toBe(true);
+        const { isLive, needsAttention } = await import('./bracket-core');
+        expect(isLive(planOf(plan.id))).toBe(false);
+        expect(needsAttention(planOf(plan.id))).toBe(false);
         expect(m.place).toHaveBeenCalledTimes(1);
     });
 
@@ -373,15 +407,38 @@ describe('trigger execution (main window only)', () => {
         resolve({ order: { id: 'x-exit' }, status: { status: 'PendingSubmit' } });
         await flush();
         expect(planOf(plan.id).exit).toMatchObject({ status: 'filled', filled: 2, orderId: 'x-exit' });
-        expect(engine.reservedQuantity(`${m.base}|F:fixture-broker-F:fixture-account-F|TXFJ6|Sell`)).toBe(0);
+        expect(engine.reservedQuantity(`${m.env}|F:fixture-broker-F:fixture-account-F|TXFJ6|Sell`)).toBe(0);
         void fCoverNew;
     });
 
-    it('caps a bracket exit by the confirmed position minus reserved exits', async () => {
+    it('never shrinks a futures Cover stop because of a lagging position snapshot (broker checks Cover)', async () => {
         const plan = await armed();
-        m.positions = { rows: [{ code: 'TXFJ6', direction: 'Buy', quantity: 1, account: F1 }], updatedAt: 1, needsReconcile: false };
+        m.positions = { rows: [{ code: 'TXFJ6', direction: 'Buy', quantity: 0, account: F1 }], updatedAt: 1, needsReconcile: false };
         await tick(47000);
-        expect(m.place.mock.calls[0]![3]).toBe(1);
+        expect(m.place.mock.calls[0]![3]).toBe(2);
+        expect(m.place.mock.calls[0]![4].ocType).toBe('Cover');
+        expect(planOf(plan.id).exit?.detail).toMatch('Cover');
+    });
+
+    it('caps a stock bracket exit by the confirmed Cash position minus reserved exits', async () => {
+        await boot();
+        const stockSpec = { ...spec(S1, 'fixture-s1'), account: { account_type: 'S' as const, broker_id: S1.broker_id, account_id: S1.account_id },
+            quoteCode: '2890', orderCode: '2890', securityType: 'STK' as const, exchange: 'TSE', stopPrice: 44, takePrice: 46 };
+        m.cached.mockResolvedValue([]);
+        const plan = await bracket.registerBracket(stockSpec);
+        await flush();
+        const sDeal = wire[7]!;
+        await emit(sDeal);
+        await emit(edit(sDeal, { exchange_seq: '000002', event_id: 'v1:SD:FIXTURESTREAMSD:FIXTURERESET:3' }));
+        expect(triggersOf(plan.id).map(t => [t.quantity, t.octype])).toEqual([[2, undefined], [2, undefined]]);
+        m.positions = { rows: [
+            { code: '2890', direction: 'Buy', quantity: 1000, cond: 'Cash', account: S1 },
+            { code: '2890', direction: 'Buy', quantity: 5000, cond: 'MarginTrading', account: S1 },
+        ], updatedAt: 1, needsReconcile: false };
+        m.ensure.mockResolvedValue({ code: '2890', target_code: null, security_type: 'STK', exchange: 'TSE' });
+        m.tick!({ code: '2890', close: 43.5 }); await flush();
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(m.place.mock.calls[0]![3]).toBe(1); // margin shares are not sellable by a Cash exit
         const { unprotectedQuantity } = await import('./bracket-core');
         expect(unprotectedQuantity(planOf(plan.id))).toBe(1);
     });
@@ -392,6 +449,7 @@ describe('trigger execution (main window only)', () => {
         expect(planExitQuantity({ quantity: 2, bracketId: 'x', account }, 1, null).quantity).toBe(0);
         expect(planExitQuantity({ quantity: 2, bracketId: 'x', account: { ...account, account_type: 'F' } }, 1, null).quantity).toBe(2);
         expect(planExitQuantity({ quantity: 2, bracketId: 'x', account }, 1, 2)).toMatchObject({ quantity: 1 });
+        expect(planExitQuantity({ quantity: 2, bracketId: 'x', account: { ...account, account_type: 'F' } }, 1, 0).quantity).toBe(2);
         expect(planExitQuantity({ quantity: 2, account }, 5, 0).quantity).toBe(2); // manual trigger sizing unchanged
     });
 
@@ -413,9 +471,33 @@ describe('trigger execution (main window only)', () => {
 
     it('a trigger from another server (env) does not fire here', async () => {
         await armed();
-        m.base = 'http://prod.invalid';
+        m.env = 'http://prod.invalid|production';
         await tick(47000);
         expect(m.place).not.toHaveBeenCalled();
+    });
+
+    it('a simulation stop never fires after the same port restarts in production', async () => {
+        const plan = await armed();
+        m.env = `${m.base}|production`;
+        await boot({ keepStore: true });
+        await tick(47000);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(triggersOf(plan.id)).toHaveLength(2); // kept, shown as another environment
+    });
+
+    it('with the server mode unknown, nothing is registered or executed', async () => {
+        await armed();
+        m.env = null;
+        await tick(47000);
+        expect(m.place).not.toHaveBeenCalled();
+        await expect(bracket.registerBracket({ ...spec(F2, 'fixture-f9'), env: 'x|simulation' })).rejects.toThrow('未確認');
+    });
+
+    it('a second main tab without the executor lock does not execute', async () => {
+        m.lockGranted = false;
+        await boot();
+        expect(m.tick).toBeNull();
+        expect(m.order).toBeNull();
     });
 });
 

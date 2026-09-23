@@ -19,6 +19,9 @@ import {
     unprotectedQuantity,
 } from '../lib/bracket-core';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
+import { useServerInfo } from '../lib/server-info-store';
+import { useTriggerFeed } from '../lib/trigger-engine';
 import * as styles from './bracket-status.css';
 
 const PHASE: Record<ReturnType<typeof bracketPhase>, string> = {
@@ -38,7 +41,12 @@ const EXIT: Record<string, string> = {
     unknown: '出場結果未知（不會自動重送）',
 };
 
-function Row({ plan }: { plan: BracketPlan }) {
+function Row({ plan, envNow, feedMissing, executing }: {
+    plan: BracketPlan;
+    envNow: string | null;
+    feedMissing: boolean;
+    executing: boolean;
+}) {
     const priv = usePrivacyMode();
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
@@ -46,9 +54,11 @@ function Row({ plan }: { plan: BracketPlan }) {
     const phase = bracketPhase(plan);
     const protectedQty = protectionQuantity(plan);
     const unprotected = unprotectedQuantity(plan);
-    const unknownExit = plan.exit?.status === 'unknown';
+    const unknownExit = plan.exit?.status === 'unknown' && !plan.exit.acknowledged;
+    const elsewhere = plan.env !== envNow;
+    const notRunning = isLive(plan) && (elsewhere || feedMissing || !executing);
     const tone = unprotected > 0 || unknownExit || plan.exit?.status === 'not-sent' || plan.exit?.status === 'incomplete'
-        ? 'err' : plan.issues.length > 0 ? 'warn' : 'ok';
+        ? 'err' : plan.issues.length > 0 || notRunning ? 'warn' : 'ok';
     const run = async (fn: () => Promise<unknown>, done?: (v: unknown) => string) => {
         setBusy(true);
         setMessage(null);
@@ -84,11 +94,22 @@ function Row({ plan }: { plan: BracketPlan }) {
             {unprotected > 0 && (
                 <div className={styles.note.err}>未保護 {unprotected}：請手動處理出場，系統不會自動重送</div>
             )}
+            {isLive(plan) && elsewhere && (
+                <div className={styles.note.warn}>
+                    此括號單屬於{protectionEnvLabel(plan.env)}環境／其他伺服器，目前不執行{envNow ? '' : '（伺服器模式未確認）'}
+                </div>
+            )}
+            {isLive(plan) && !elsewhere && !executing && (
+                <div className={styles.note.warn}>此視窗／分頁不是執行中的主視窗，保護由主視窗執行</div>
+            )}
+            {isLive(plan) && feedMissing && (
+                <div className={styles.note.warn}>此商品行情尚未訂閱成功，觸價可能不會觸發（自動重試中）</div>
+            )}
             {plan.issues.length > 0 ? (
                 <div className={styles.note.warn}>
                     保護未確認完整：{plan.issues.map(i => i.detail).join('；')}
                 </div>
-            ) : isLive(plan) ? (
+            ) : isLive(plan) && !notRunning ? (
                 <div className={styles.note.ok}>回報追蹤正常</div>
             ) : null}
             {message && <div className={styles.note.muted}>{message}</div>}
@@ -134,10 +155,16 @@ function Row({ plan }: { plan: BracketPlan }) {
 
 export function BracketStatusList({ code }: { code: string }) {
     const plans = useBrackets().filter(p => !p.dismissed && (p.quoteCode === code || p.orderCode === code));
+    useServerInfo(); // re-render when the server mode becomes known / changes
+    const feed = useTriggerFeed();
     if (plans.length === 0) return null;
+    const envNow = currentProtectionEnv();
     return (
         <div className={styles.list}>
-            {plans.map(p => <Row key={p.id} plan={p} />)}
+            {plans.map(p => (
+                <Row key={p.id} plan={p} envNow={envNow}
+                    feedMissing={feed.feedMissing.includes(p.quoteCode)} executing={feed.executing} />
+            ))}
         </div>
     );
 }

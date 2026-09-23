@@ -36,8 +36,15 @@ import {
 import { fetchCachedTrades, fetchReconciledTrades, fetchTradeCacheHealth, type TradeCacheHealth } from './bracket-api';
 import { streamMarket, type EventVerdict } from './bracket-event-ledger';
 import { onTrackedReport, recentReportsFor } from './bracket-reports';
-import { createCommandBus, isMainWindow } from './main-window-commands';
+import { claimExecutor, createCommandBus, isMainWindow } from './main-window-commands';
 import type { OrderEventReport } from './order-report';
+import {
+    currentProtectionEnv,
+    envBase,
+    onProtectionEnvChange,
+    refreshProtectionEnv,
+    reportEnvMatches,
+} from './protection-env';
 import { getApiBase } from './runtime';
 import { getStreamStatus, subscribeStatusStore } from './stream';
 import { notify } from './trade';
@@ -159,17 +166,21 @@ function describeProtection(p: BracketPlan) {
     return `${p.stopPrice !== null ? ` 停損@${p.stopPrice}` : ''}${p.takePrice !== null ? ` 停利@${p.takePrice}` : ''}`;
 }
 
+function arm(p: BracketPlan) {
+    const qty = protectionQuantity(p);
+    if (p.dismissed || qty <= 0 || p.env !== currentProtectionEnv()) return;
+    armBracketGroup({
+        group: p.group, bracketId: p.id, env: p.env, account: p.account, code: p.quoteCode,
+        orderCode: p.orderCode, entryAction: p.action, octype: p.market === 'futures' ? 'Cover' : undefined,
+        stopPrice: p.stopPrice, takePrice: p.takePrice, quantity: qty,
+    });
+}
+
 /** Arm/resize protection for the filled quantity; notify once per change. */
 function syncProtection(before: BracketPlan | undefined, p: BracketPlan) {
     if (p.dismissed) return; // the user removed this plan and its protection
     const qty = protectionQuantity(p);
-    if (qty > 0 && p.env === getApiBase()) {
-        armBracketGroup({
-            group: p.group, bracketId: p.id, env: p.env, account: p.account, code: p.quoteCode,
-            orderCode: p.orderCode, entryAction: p.action, octype: p.market === 'futures' ? 'Cover' : undefined,
-            stopPrice: p.stopPrice, takePrice: p.takePrice, quantity: qty,
-        });
-    }
+    arm(p);
     const prevQty = before ? protectionQuantity(before) : 0;
     if (qty > prevQty) {
         notify({ kind: 'ok', title: qty < p.quantity ? '括號單部分成交已保護' : '括號單已啟動',
@@ -203,10 +214,10 @@ function applyReport(p: BracketPlan, report: OrderEventReport, now: number): Bra
     return p;
 }
 
-function onReport(report: OrderEventReport, verdict: EventVerdict, env: string) {
+function onReport(report: OrderEventReport, verdict: EventVerdict, base: string) {
     const now = Date.now();
     for (const p of plans.slice()) {
-        if (p.env !== env || !isLive(p)) continue;
+        if (!isLive(p) || !reportEnvMatches(p.env, base)) continue;
         let next = p;
         if (verdict.kind === 'new' && verdict.gap && streamMarket(verdict.gap.stream) === p.market) {
             next = addIssue(next, 'gap', `回報序號跳號（預期 ${verdict.gap.expected}，收到 ${verdict.gap.received}），可能漏回報`, now);
@@ -224,7 +235,8 @@ function onExit(rec: ExitRecord) {
     exitIds.set(rec.bracketId, rec.id);
     update(rec.bracketId, p => ({ ...p, exit: {
         status: rec.status, kind: rec.kind, quantity: rec.quantity, filled: rec.filled, fills: rec.fills,
-        orderId: rec.orderId, detail: rec.acknowledged ? `${rec.detail ?? ''}（使用者已確認處理）` : rec.detail, at: rec.at,
+        orderId: rec.orderId, acknowledged: rec.acknowledged,
+        detail: rec.acknowledged ? `${rec.detail ?? ''}（使用者已確認處理）` : rec.detail, at: rec.at,
     }, updatedAt: Date.now() }));
 }
 
@@ -253,7 +265,7 @@ async function checkHealth(account: AccountRef, env: string) {
         // Reports are required for protection in both simulation and production.
         try { await subscribeTradeEvents(account); health = await fetchTradeCacheHealth(account); } catch { /* keep first result */ }
     }
-    if (getApiBase() === env) applyHealth(account, env, health, Date.now());
+    if (currentProtectionEnv() === env) applyHealth(account, env, health, Date.now());
     return health;
 }
 
@@ -266,7 +278,7 @@ function lookup(account: AccountRef, env: string): Promise<void> {
         const now = Date.now();
         try {
             const trades = await fetchCachedTrades(account);
-            if (getApiBase() !== env) return;
+            if (currentProtectionEnv() !== env) return;
             for (const p of plansFor(account, env)) {
                 const trade = trades.find(t => tradeMatchesPlan(t, p));
                 if (trade) update(p.id, x => applyEntryTrade(x, trade, now));
@@ -288,7 +300,8 @@ function lookup(account: AccountRef, env: string): Promise<void> {
 }
 
 function lookupLiveAccounts() {
-    const env = getApiBase();
+    const env = currentProtectionEnv();
+    if (!env) return;
     const seen = new Map<string, AccountRef>();
     for (const p of plans) if (p.env === env && isLive(p)) seen.set(accountRefKey(p.account), p.account);
     for (const account of seen.values()) void lookup(account, env);
@@ -298,7 +311,7 @@ function lookupLiveAccounts() {
 async function reconcile(id: string): Promise<{ health: TradeCacheHealth['state'] }> {
     const plan = plans.find(p => p.id === id);
     if (!plan) throw new Error('找不到此括號單');
-    if (plan.env !== getApiBase()) throw new Error('此括號單屬於其他伺服器，請切回原伺服器後對帳');
+    if (plan.env !== currentProtectionEnv()) throw new Error('此括號單屬於其他伺服器或模擬／正式模式，請切回原環境後對帳');
     const key = `reconcile|${plan.env}|${accountRefKey(plan.account)}`;
     if (inflight.has(key)) throw new Error('對帳進行中');
     let result: TradeCacheHealth['state'] = 'Unknown';
@@ -314,8 +327,12 @@ async function reconcile(id: string): Promise<{ health: TradeCacheHealth['state'
         }
         const health = await checkHealth(plan.account, env);
         result = health.state;
-        const baselineOnly = health.reasons.every(r => r.reason === 'NoBaseline');
-        if (health.state === 'Healthy' || (health.state === 'Unknown' && baselineOnly)) {
+        if (getStreamStatus() !== 'live') {
+            // Reconciled a snapshot, but reports/ticks are not arriving now.
+            for (const p of plansFor(plan.account, env)) update(p.id, x => addIssue(x, 'disconnect', '回報串流仍未連線；對帳結果之後的成交不會即時收到', now));
+            return;
+        }
+        if (health.state === 'Healthy') {
             for (const p of plansFor(plan.account, env)) {
                 if (trades.some(t => tradeMatchesPlan(t, p))) {
                     update(p.id, x => ({ ...x, updatedAt: now, issues: x.issues.filter(i => i.code === 'overfill') }));
@@ -331,7 +348,7 @@ async function reconcile(id: string): Promise<{ health: TradeCacheHealth['state'
 }
 
 function register(spec: BracketSpec): BracketPlan {
-    if (spec.env !== getApiBase()) throw new Error('伺服器已切換，括號單未登記');
+    if (!spec.env || spec.env !== currentProtectionEnv()) throw new Error('伺服器或模擬／正式模式已切換或未確認，括號單未登記');
     if (!spec.orderId || !spec.account?.broker_id || !spec.account?.account_id) throw new Error('進場單缺少委託或帳戶識別，括號單未登記');
     if (!Number.isSafeInteger(spec.quantity) || spec.quantity <= 0) throw new Error('進場數量無效');
     const id = planId(spec.env, spec.account, spec.orderId);
@@ -345,7 +362,7 @@ function register(spec: BracketSpec): BracketPlan {
     };
     if (getStreamStatus() !== 'live') plan = addIssue(plan, 'disconnect', '登記時行情／回報串流未連線', now);
     // Reports that reached this window before the registration command.
-    for (const report of recentReportsFor(spec.env, spec.orderId)) plan = applyReport(plan, report, now);
+    for (const report of recentReportsFor(envBase(spec.env), spec.orderId)) plan = applyReport(plan, report, now);
     plans = [...plans, plan];
     notify({ kind: 'info', title: '括號單待命',
         body: `${plan.quoteCode} 成交後依成交量自動掛${describeProtection(plan)}` });
@@ -388,7 +405,8 @@ export async function registerBracket(spec: BracketSpec): Promise<BracketPlan> {
 }
 
 export function reconcileBracket(id: string) {
-    return bus.send({ op: 'reconcile', id }) as Promise<{ health: TradeCacheHealth['state'] }>;
+    // update_status can take a while; a short ACK timeout would misreport it.
+    return bus.send({ op: 'reconcile', id }, 60_000) as Promise<{ health: TradeCacheHealth['state'] }>;
 }
 
 export function dismissBracket(id: string) {
@@ -418,11 +436,15 @@ let started = false;
 export function startBracketRuntime() {
     if (started || !main) return;
     started = true;
-    const env = getApiBase();
+    void claimExecutor('sj-protection-executor').then(ok => { if (ok) run(); });
+}
+
+function run() {
+    const base = getApiBase();
     const now = Date.now();
     let reloaded = false;
     plans = plans.map(p => {
-        if (p.env !== env || !isLive(p)) return p;
+        if (envBase(p.env) !== base || !isLive(p)) return p;
         reloaded = true;
         return addIssue(p, 'reload', 'App 重新載入，期間的回報可能未收到', now);
     });
@@ -430,6 +452,23 @@ export function startBracketRuntime() {
     onTrackedReport(onReport);
     onExitUpdate(onExit);
     for (const rec of getExits()) if (rec.bracketId) onExit(rec);
+    // Once the server mode is known: replay buffered reports and look up.
+    let knownEnv = currentProtectionEnv();
+    onProtectionEnvChange(() => {
+        const env = currentProtectionEnv();
+        if (env === knownEnv) return;
+        knownEnv = env;
+        if (!env) return;
+        for (const p of plans.slice()) {
+            if (p.env !== env || !isLive(p)) continue;
+            const at = Date.now();
+            let next = p;
+            for (const report of recentReportsFor(envBase(env), p.orderId)) next = applyReport(next, report, at);
+            if (next !== p) update(p.id, () => next);
+            else arm(p); // re-arm (idempotent) once the mode is known
+        }
+        lookupLiveAccounts();
+    });
     let wasLive = getStreamStatus() === 'live';
     subscribeStatusStore(() => {
         const live = getStreamStatus() === 'live';
@@ -438,11 +477,13 @@ export function startBracketRuntime() {
         const at = Date.now();
         if (!live) {
             for (const p of plans.slice()) {
-                if (p.env === getApiBase() && isLive(p)) update(p.id, x => addIssue(x, 'disconnect', '回報串流中斷，期間的成交可能未收到', at));
+                if (envBase(p.env) === getApiBase() && isLive(p)) update(p.id, x => addIssue(x, 'disconnect', '回報串流中斷，期間的成交可能未收到', at));
             }
         } else {
+            void refreshProtectionEnv();
             lookupLiveAccounts(); // cache-only; issues stay until explicit reconcile
         }
     });
+    void refreshProtectionEnv();
     if (wasLive) lookupLiveAccounts();
 }

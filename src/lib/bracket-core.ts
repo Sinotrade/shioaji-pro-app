@@ -61,6 +61,7 @@ export interface BracketExit {
     fills: Record<string, number>;
     orderId?: string;
     detail?: string;
+    acknowledged?: boolean; // user confirmed an unknown outcome by hand
     at: number;
 }
 
@@ -105,7 +106,7 @@ export function bracketPhase(p: BracketPlan): BracketPhase {
 export function isLive(p: BracketPlan): boolean {
     const phase = bracketPhase(p);
     return phase === 'waiting' || phase === 'protected' || phase === 'exiting'
-        || (phase === 'done' && p.exit?.status === 'unknown');
+        || (phase === 'done' && p.exit?.status === 'unknown' && !p.exit.acknowledged);
 }
 
 /** Quantity the OCO triggers should hold right now. */
@@ -126,7 +127,8 @@ export function unprotectedQuantity(p: BracketPlan): number {
 
 export function needsAttention(p: BracketPlan): boolean {
     return p.issues.length > 0 || unprotectedQuantity(p) > 0
-        || (p.exit !== null && ['incomplete', 'not-sent', 'unknown'].includes(p.exit.status));
+        || (p.exit !== null && (['incomplete', 'not-sent'].includes(p.exit.status)
+            || (p.exit.status === 'unknown' && !p.exit.acknowledged)));
 }
 
 export function addIssue(p: BracketPlan, code: BracketIssueCode, detail: string, now: number): BracketPlan {
