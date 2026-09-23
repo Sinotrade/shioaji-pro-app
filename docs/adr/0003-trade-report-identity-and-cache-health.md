@@ -46,5 +46,9 @@ update_status。ADR 0002 當時「cache-only Trade HTTP API 不是本次前提�
 - 下單前後的權威檢查、native production 與 Agent 的 read-only 查核、Grid／到價策略與 #102 保護單查詢不改。
 - 仍在上游開啟：Shioaji #232（持倉快照無 watermark）、#233（模擬 Share 單位的 yd_quantity，1.7.6 仍重現）、
   #234（模擬減量後刪單 HTTP／SSE 不一致；1.7.6 模擬單一案例已一致，但不宣稱修復，前端零剩餘防禦保留）。
+- sidecar 沒有實例識別：重啟偵測只靠重連時的 `NotSubscribed` 或 health 讀取失敗（兩者都停止信任 cache
+  並重新訂閱）。若重啟後在 App 讀 health 之前已有其他 client（Agent、CLI、plugin）先訂閱同帳戶，仍可能
+  誤判為連續；此殘餘風險待上游提供實例或 cache 基準識別。同一原因可有多個來源（App 端與伺服器 health），
+  各來源分別解除。
 - health 只描述 sidecar cache；App 與 sidecar 之間 SSE 斷線時 sidecar 仍投影，App 端的持倉增量仍可能漏，
   因此持倉只能由持倉快照解除。mock／CI／模擬證據不等於正式原生驗收。

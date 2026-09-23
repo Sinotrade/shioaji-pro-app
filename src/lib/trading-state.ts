@@ -77,15 +77,19 @@ const isMirror = typeof location !== 'undefined' && new URLSearchParams(location
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-trading-state:${getApiBase()}`) : null;
 
 // ---- reconciliation reasons ----
-interface OpenReason { raisedAt: number; message: string }
+// One reason can have several independent causes (e.g. an App-side unknown
+// report and a server-reported PendingReport). Each cause is keyed by its
+// message, so resolving one App-side cause never clears another.
+type OpenReason = Map<string, number>; // message -> clock when (re)raised
 const reasonState: Record<TradingQueryScope, Map<ReconcileReason, OpenReason>> = { positions: new Map(), orders: new Map(), account: new Map() };
 let reasonClock = 0;
+const latest = (entry: OpenReason) => Math.max(...entry.values());
 function syncQuery(scope: TradingQueryScope, patch: Partial<TradingQueryStatus> = {}) {
-    const open = [...reasonState[scope].entries()].sort((a, b) => a[1].raisedAt - b[1].raisedAt);
+    const open = [...reasonState[scope].entries()].sort((a, b) => latest(a[1]) - latest(b[1]));
     const queries = { ...state.queries, [scope]: { ...state.queries[scope], ...patch,
         reasons: open.map(([reason]) => reason),
         needsReconcile: open.length > 0,
-        error: [...new Set(open.map(([, entry]) => entry.message))].join('；') || null } };
+        error: [...new Set(open.flatMap(([, entry]) => [...entry.keys()]))].join('；') || null } };
     state = { ...state, queries,
         needsReconcile: queryScopes.some(key => queries[key].needsReconcile),
         error: [...new Set(queryScopes.map(key => queries[key].error).filter(Boolean))].join('；') || null,
@@ -93,18 +97,28 @@ function syncQuery(scope: TradingQueryScope, patch: Partial<TradingQueryStatus> 
     };
 }
 function raise(scope: TradingQueryScope, reason: ReconcileReason, message: string) {
-    reasonState[scope].set(reason, { raisedAt: ++reasonClock, message });
+    const entry = reasonState[scope].get(reason) ?? new Map<string, number>();
+    entry.delete(message); // re-insert so newer causes list last
+    entry.set(message, ++reasonClock);
+    reasonState[scope].set(reason, entry);
     syncQuery(scope);
 }
-/** Clear `reasons` raised at or before `through`, optionally only when the
- *  entry carries `message` (the App-side cause the caller just resolved). */
+/** Clear causes of `reasons` raised at or before `through`. With `message`,
+ *  clear only that App-side cause (the one the caller just resolved). */
 function resolve(scope: TradingQueryScope, reasons: readonly ReconcileReason[], through = Number.POSITIVE_INFINITY, message?: string) {
     let changed = false;
     for (const reason of reasons) {
         const entry = reasonState[scope].get(reason);
-        if (entry && entry.raisedAt <= through && (message === undefined || entry.message === message)) {
+        if (!entry) continue;
+        for (const [cause, raisedAt] of [...entry]) {
+            if (raisedAt <= through && (message === undefined || cause === message)) { entry.delete(cause); changed = true; }
+        }
+        if (entry.size === 0) {
             reasonState[scope].delete(reason);
-            changed = true;
+            // A full resolution also retires the App-side bookkeeping that
+            // would otherwise wait forever for a replay that never comes.
+            if (message === undefined && reason === 'metadata-missing') (scope === 'orders' ? orderMetaPending : positionMetaPending).clear();
+            if (message === undefined && reason === 'pending-report' && scope === 'orders') pendingReportKeys.clear();
         }
     }
     if (changed) syncQuery(scope);
@@ -186,7 +200,8 @@ const tradableAccounts = () => getAccountState().accounts.filter(a => a.signed &
 type Problem = [ReconcileReason, string];
 
 /** Merge one account's HTTP rows and replay reports received meanwhile.
- *  Returns false (and keeps the local view) when a replay cannot connect. */
+ *  Returns whether the merge was applied; false keeps the previous view
+ *  (a replay could not connect, or too many reports raced the read). */
 function mergeOrders(account: Account, trades: Trade[], accounts: Account[], problems: Problem[]) {
     const matches = (a: Account | undefined) => a && accountKey(a) === accountKey(account);
     let merged = [...state.trades.filter(t => !matches(t.account)), ...trades
@@ -200,8 +215,9 @@ function mergeOrders(account: Account, trades: Trade[], accounts: Account[], pro
         else replayFailed = true;
     }
     if (replayFailed) problems.push(['projection-failed', '委託更新期間有無法銜接的回報，保留本地資料待確認']);
-    if (!queryOverflow && !replayFailed) state = { ...state, trades: merged };
-    return !replayFailed;
+    const applied = !queryOverflow && !replayFailed;
+    if (applied) state = { ...state, trades: merged };
+    return applied;
 }
 
 /** Initial connection reads all groups; manual actions reconcile only their tab. */
@@ -265,7 +281,8 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                         // Initial/manual reconciliation stays authoritative:
                         // refresh:true runs update_status(account) (accounting quota).
                         const trades = await fetchTrades(account.account_type as 'S' | 'F', account, { refresh: true });
-                        mergeOrders(account, trades, accounts, problems.orders);
+                        // A kept (not rebuilt) view resolves nothing.
+                        if (!mergeOrders(account, trades, accounts, problems.orders)) { ordersOk = false; failed.add('orders'); }
                     } catch {
                         ordersOk = false;
                         failed.add('orders');
@@ -361,7 +378,18 @@ export function checkTradeCacheHealth(trigger: HealthTrigger): Promise<void> {
         if (base !== getApiBase()) return;
         // An older server lacks the route; health only ever adds information,
         // so a failed read leaves every existing reason untouched.
-        if (results.some(r => r.status === 'rejected')) return;
+        if (results.some(r => r.status === 'rejected')) {
+            if (trigger === 'reconnect') {
+                // Continuity after a reconnect is unproven (the sidecar may
+                // still be booting after a restart): stop trusting its cache
+                // and make sure reports flow again.
+                ordersBaseline = false;
+                try { await subscribeTradeReports(); }
+                catch { for (const key of ['orders', 'positions'] as const) raise(key, 'not-subscribed', '委託回報訂閱失敗；請使用更新圖示重試'); }
+                schedulePublish();
+            }
+            return;
+        }
         const healths = results.map(r => (r as PromiseFulfilledResult<TradeCacheHealth>).value);
         let notSubscribed = false;
         for (const health of healths) {
@@ -430,6 +458,14 @@ function park(report: OrderEventReport, set: Set<string>) {
     set.add(key);
     if (pendingDeals.size < 500 || pendingDeals.has(key)) pendingDeals.set(key, report);
 }
+// The deal no longer waits for order/contract metadata (it applied, was a
+// duplicate, or now fails for another, separately raised reason).
+function releasePositionMeta(key: string) {
+    if (positionMetaPending.delete(key) && positionMetaPending.size === 0) {
+        resolve('positions', ['metadata-missing'], undefined, MSG.positionOrderMeta);
+        resolve('positions', ['metadata-missing'], undefined, MSG.positionContractMeta);
+    }
+}
 function applyDeal(report: OrderEventReport) {
     if (report.kind !== 'deal') return;
     const key = reportKey(report);
@@ -443,11 +479,17 @@ function applyDeal(report: OrderEventReport) {
         // Deal-before-order is documented; the order report/response replays it.
         raise('orders', 'metadata-missing', MSG.orderMeta);
         park(report, orderMetaPending);
-    } else raise('orders', 'projection-failed', '成交回報無法套用到委託，委託狀態待對帳');
+    } else {
+        raise('orders', 'projection-failed', '成交回報無法套用到委託，委託狀態待對帳');
+        if (orderMetaPending.delete(key) && orderMetaPending.size === 0) resolve('orders', ['metadata-missing'], undefined, MSG.orderMeta);
+    }
     // Fill identity: the complete event_id (Shioaji 1.7.6+) plus the legacy
     // exchange-sequence key. Either one already applied means a duplicate.
     const eventKey = report.eventId ? `event:${getApiBase()}:${report.eventId}` : null;
-    if (fill && (seenFills.has(fill.key) || (eventKey && seenFills.has(eventKey)))) return;
+    if (fill && (seenFills.has(fill.key) || (eventKey && seenFills.has(eventKey)))) {
+        releasePositionMeta(key);
+        return;
+    }
     const cutoff = fill && snapshotEnds.get(accountKey(fill.account));
     const c = fill && getCachedContract(fill.code);
     if (fill?.account.account_type === 'F' && !c) {
@@ -475,18 +517,17 @@ function applyDeal(report: OrderEventReport) {
         if (eventKey) seenFills.add(eventKey);
         state = { ...state, positions: next };
         prepareQuotes();
-        if (positionMetaPending.delete(key) && positionMetaPending.size === 0) {
-            resolve('positions', ['metadata-missing'], undefined, MSG.positionOrderMeta);
-            resolve('positions', ['metadata-missing'], undefined, MSG.positionContractMeta);
-        }
+        releasePositionMeta(key);
     } else if (!fill && !knownOrder) {
         // Futures open/close needs the order; replay once it arrives.
         raise('positions', 'metadata-missing', MSG.positionOrderMeta);
         park(report, positionMetaPending);
     } else if (fill && (!cutoff || fill.ts <= cutoff)) {
         raise('positions', 'snapshot-boundary', '成交可能已含在持倉快照內，持倉待手動對帳');
+        releasePositionMeta(key);
     } else {
         raise('positions', 'unknown-fill', '成交無法辨識帳戶／條件或無法確定持倉變化，持倉待手動對帳');
+        releasePositionMeta(key);
     }
 }
 function releasePendingDeals(tradeId: string) {

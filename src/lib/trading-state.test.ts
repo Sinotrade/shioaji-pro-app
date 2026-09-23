@@ -511,6 +511,47 @@ describe('Shioaji 1.7.6 report identity and cache health', () => {
         expect(reasons('orders')).toContain('disconnect');
     });
 
+    it('keeps unresolved reasons when a refresh kept the old view because reports raced it', async () => {
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:9'), futures)); });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:9'));
+        const { observeTradeMutation } = await import('./trade-mutations');
+        const known = store.getTradingState().trades.find(t => t.order.id === 'fx04')!;
+        await act(async () => { await observeTradeMutation('fx04', async () => ({ ...known, status: { ...known.status, status: 'Submitted' } })); vi.advanceTimersByTime(50); });
+        expect(reasons('orders')).toContain('mutation-outcome');
+        const pending = deferred<never[]>();
+        mocks.trades.mockImplementation(() => pending.promise);
+        vi.advanceTimersByTime(1500);
+        let refresh!: Promise<void>;
+        await act(async () => { refresh = store.refreshTradingState('orders'); });
+        // An order response lands mid-read: the merge is not applied.
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:12'), futures)); });
+        await act(async () => { pending.resolve([]); await refresh; });
+        expect(reasons('orders')).toEqual(expect.arrayContaining(['mutation-outcome', 'overflow']));
+        expect(store.tradeCacheContinuous()).toBe(true); // baseline from beforeEach, not from this kept read
+    });
+
+    it('does not let an App replay clear a server-reported cause of the same reason', async () => {
+        mocks.health.mockResolvedValue({ state: 'Degraded', reasons: [{ event_type: 'FuturesOrder', reason: 'PendingReport' }] });
+        await act(async () => { await store.checkTradeCacheHealth('gap'); });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:12')); // New with empty full_code, unknown order
+        expect(store.getTradingState().queries.orders.error).toContain('尚無對應委託');
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:12'), futures)); vi.advanceTimersByTime(50); });
+        expect(store.getTradingState().queries.orders.error).not.toContain('尚無對應委託');
+        expect(reasons('orders')).toContain('pending-report'); // the server cause remains
+    });
+
+    it('stops trusting the cache and resubscribes when the reconnect health read fails', async () => {
+        mocks.health.mockRejectedValue(new Error('sidecar booting'));
+        await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledOnce());
+        expect(store.tradeCacheContinuous()).toBe(false);
+        mocks.health.mockResolvedValue({ state: 'Healthy', reasons: [] });
+        await act(async () => { vi.advanceTimersByTime(3000); await store.checkTradeCacheHealth('gap'); });
+        expect(mocks.trades).not.toHaveBeenCalled();
+        expect(reasons('orders')).toContain('disconnect');
+    });
+
     it('never polls health or trades on a timer', async () => {
         await act(async () => { vi.advanceTimersByTime(120000); });
         expect(mocks.health).not.toHaveBeenCalled(); expect(mocks.trades).not.toHaveBeenCalled();
