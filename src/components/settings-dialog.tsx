@@ -531,8 +531,8 @@ function AgentSection() {
             </div>
             <span className={hud.emptyHint}>
                 關閉時，一般 UI 下單走原本的直接 HTTP 路徑；開啟後，Agent
-                與 UI 的交易 mutation 都需要一次性 capability。切換立即
-                生效，不需重啟伺服器。
+                與 UI 的每筆交易異動都需要一次性授權。切換立即生效，
+                不需重啟伺服器。
             </span>
             <div className={hud.switchRow}>
                 <span
@@ -548,8 +548,9 @@ function AgentSection() {
                 />
             </div>
             <span className={hud.emptyHint}>
-                正式環境固定逐筆顯示可視化核可視窗，無法關閉。自動交易僅限
-                模擬環境，且每次 App 重啟都會恢復為「交易確認」。此安全邊界與
+                正式環境的逐筆確認固定由獨立的原生核可視窗確認，無法關閉；
+                正式 Auto 首筆需在原生視窗授權本次 runtime 與帳戶，停止或
+                切換後失效。每次 App 重啟都會恢復為「逐筆確認」。此安全邊界與
                 「手動下單確認」（設定 → 風控）互相獨立。
             </span>
             {busy && (
