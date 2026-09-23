@@ -41,14 +41,15 @@ update_status。ADR 0002 當時「cache-only Trade HTTP API 不是本次前提�
   因此超過 2 個週期加 15 秒沒有 heartbeat 或任何事件時，狀態改為 `stale`（頁首與 Debug 顯示 STALE，非 LIVE），
   關閉連線並沿用既有退避重連。`stale` 與 `down` 一樣觸發委託／持倉／帳務的「串流中斷（可能漏收回報）」原因；
   重連走同一條 health／重啟偵測路徑。watchdog 本身不發任何 HTTP 查詢。
-- **watchdog 邊界**：若檢查間隔大於 15 秒（WebView 或分頁從暫停恢復），先給一個心跳週期寬限再判斷 STALE。
-  連線開啟後一直沒收到 heartbeat（例如 proxy 緩衝）時，退避不重設、持續加倍（上限 5 分鐘），Debug 顯示
-  連續次數與重試間隔；收到 heartbeat 後重設。重連後的行情訂閱重播每 5 秒最多 40 筆，同時只跑一次；
+- **watchdog 邊界**：每次暫停恢復只給一次寬限：檢查晚到（間隔 > 15 秒）、而前一次檢查準時、且當時尚未
+  逾時，才寬限一個心跳週期再判斷 STALE。被節流的背景計時器（每 20–60 秒一次）每次都晚到，不會續期，仍在約
+  STALE 門檻＋一個節流間隔內轉 STALE。連線開啟後一直沒收到 heartbeat（例如 proxy 緩衝）才讓退避持續加倍（上限
+  5 分鐘）；連線錯誤一律用一般退避（上限 15 秒）；收到 heartbeat 後重設。Debug 顯示連續次數與重試間隔。重連後的行情訂閱重播每 5 秒最多 40 筆，同時只跑一次；
   quote-ownership 的退訂延後 1.5 秒，重新 retain 的 key 不退訂。
 - **改單確認**：改價／減量的 HTTP 回應未確認時標示改刪待確認（每筆委託一個來源）；其後同一委託 id 的成功
   UpdatePrice（modified_price 等於要求價）或 UpdateQty（cancel_quantity 等於要求減量）回報只解除該筆；
   回報早於 HTTP 回覆時，以改單開始後已套用的同 id 回報判斷。小視窗送出的要求經同源 BroadcastChannel
-  同步到主視窗。
+  同步到主視窗（訊息帶 API base 並檢查；未被取用的意圖 2 分鐘後過期、最多保留 200 筆）。
 - **全部刪單**：罕見且攸關安全，一律 `refresh:true`（update_status），不讀 cache。
 - **改刪單的 trade_id**：trade_id 只存在於觀察到該委託的 sidecar 程序。App 在目前 sidecar 沒有權威基準時
   （例如外部重啟後），改刪單前對該帳戶執行一次 `refresh:true`，依已知 seqno／ordno、方向、商品重新解析

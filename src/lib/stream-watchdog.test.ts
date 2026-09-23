@@ -127,3 +127,56 @@ it('paces the subscription replay after a reconnect (Shioaji 50 per 5 s)', async
     await vi.advanceTimersByTimeAsync(stream.REPLAY_WINDOW_MS);
     expect(replayed()).toBe(100);
 });
+
+// Background tabs / occluded WebViews throttle intervals. Emulate by freezing
+// timers and firing one watchdog tick every `interval` of wall time.
+async function throttled(intervalMs: number, silenceMs: number) {
+    const { stream, first } = await open();
+    first.emit('heartbeat');
+    let staleAt: number | null = null;
+    const start = Date.now();
+    for (let elapsed = 0; elapsed < silenceMs && staleAt === null; elapsed += intervalMs) {
+        vi.setSystemTime(Date.now() + intervalMs - stream.WATCHDOG_TICK_MS);
+        vi.advanceTimersByTime(stream.WATCHDOG_TICK_MS); // exactly one (late) tick
+        if (stream.getStreamStatus() === 'stale') staleAt = Date.now() - start;
+    }
+    return { stream, staleAt };
+}
+it.each([20_000, 60_000])('a timer throttled to %i ms still reaches STALE within STALE_AFTER_MS plus one interval and grace', async interval => {
+    const { stream, staleAt } = await throttled(interval, 30 * 60_000);
+    expect(staleAt).not.toBeNull();
+    // At most one resume grace (one heartbeat period) plus one throttled interval.
+    expect(staleAt!).toBeLessThanOrEqual(stream.STALE_AFTER_MS + stream.HEARTBEAT_PERIOD_MS + interval);
+});
+
+it('grants only one grace for a single resume gap, then behaves normally', async () => {
+    const { stream, first } = await open();
+    first.emit('heartbeat');
+    vi.setSystemTime(Date.now() + 120_000); // one suspend
+    vi.advanceTimersByTime(stream.WATCHDOG_TICK_MS);
+    expect(stream.getStreamStatus()).toBe('live'); // grace
+    // Normal 5 s ticks resume; no events -> STALE right after the grace ends.
+    let waited = 0;
+    while (stream.getStreamStatus() === 'live' && waited < 10 * 60_000) { vi.advanceTimersByTime(1000); waited += 1000; }
+    expect(stream.getStreamStatus()).toBe('stale');
+    expect(waited).toBeLessThanOrEqual(stream.HEARTBEAT_PERIOD_MS + stream.WATCHDOG_TICK_MS);
+});
+
+it('connection errors after silent connections use the normal backoff (≤ 15 s)', async () => {
+    const { stream } = await open();
+    for (let i = 0; i < 4; i++) { // escalate with silent connections
+        while (stream.getStreamStatus() === 'live') vi.advanceTimersByTime(1000);
+        vi.advanceTimersByTime(stream.getStreamWatchdog().retryDelayMs);
+        FakeEventSource.all.at(-1)!.onopen!();
+    }
+    expect(stream.getStreamWatchdog().retryDelayMs).toBeGreaterThan(15_000);
+    // The sidecar now really restarts: the connection errors.
+    const before = FakeEventSource.all.length;
+    FakeEventSource.all.at(-1)!.onerror!();
+    vi.advanceTimersByTime(15_000);
+    expect(FakeEventSource.all.length).toBe(before + 1);
+    expect(stream.getStreamWatchdog().retryDelayMs).toBeLessThanOrEqual(15_000);
+    FakeEventSource.all.at(-1)!.onopen!();
+    FakeEventSource.all.at(-1)!.emit('heartbeat');
+    expect(stream.getStreamWatchdog()).toMatchObject({ silentConnections: 0, retryDelayMs: 1000 });
+});
