@@ -42,6 +42,7 @@ describe('pollUntil', () => {
             attempts: 1,
             elapsedMs: 0,
             timedOut: false,
+            cancelled: false,
         });
     });
 
@@ -109,21 +110,78 @@ describe('pollUntil', () => {
         expect(seen.slice(0, 5)).toEqual([0, 100, 300, 700, 1200]);
     });
 
-    it('a hung check counts as a miss after attemptTimeoutMs', async () => {
+    // a check that hangs until its signal aborts — like fetch({ signal })
+    const hangUntilAborted = (signal: AbortSignal) =>
+        new Promise<undefined>((_, reject) =>
+            signal.addEventListener('abort', () => reject(new Error('aborted'))),
+        );
+
+    it('aborts a hung check at attemptTimeoutMs and only then retries', async () => {
         let n = 0;
+        let inFlight = 0;
+        let maxInFlight = 0;
+        const signals: AbortSignal[] = [];
         const p = pollUntil(
-            () =>
-                ++n === 1
-                    ? new Promise<boolean | undefined>(() => undefined)
-                    : Promise.resolve(true),
+            async (_attempt, signal) => {
+                n++;
+                signals.push(signal);
+                inFlight++;
+                maxInFlight = Math.max(maxInFlight, inFlight);
+                try {
+                    if (n === 1) return await hangUntilAborted(signal);
+                    return true;
+                } finally {
+                    inFlight--;
+                }
+            },
             { timeoutMs: 20_000, attemptTimeoutMs: 5000 },
         );
         await vi.advanceTimersByTimeAsync(4999);
         expect(n).toBe(1);
+        expect(signals[0]!.aborted).toBe(false);
         await vi.advanceTimersByTimeAsync(300);
         const res = await p;
+        expect(signals[0]!.aborted).toBe(true);
         expect(res).toMatchObject({ value: true, attempts: 2 });
         expect(res.elapsedMs).toBe(5250);
+        expect(maxInFlight).toBe(1);
+    });
+
+    it('never starts a new attempt while one that ignores abort still hangs', async () => {
+        const check = vi.fn(() => new Promise<undefined>(() => undefined));
+        const p = pollUntil(check, { timeoutMs: 20_000, attemptTimeoutMs: 5000 });
+        await vi.advanceTimersByTimeAsync(25_000);
+        const res = await p;
+        expect(check).toHaveBeenCalledTimes(1);
+        expect(res).toMatchObject({ timedOut: true, attempts: 1 });
+        expect(res.elapsedMs).toBe(20_000);
+    });
+
+    it('a cancelled wait aborts the in-flight check and stops', async () => {
+        const wait = new AbortController();
+        let seen: AbortSignal | undefined;
+        const check = vi.fn(async (_a: number, signal: AbortSignal) => {
+            seen = signal;
+            return hangUntilAborted(signal);
+        });
+        const p = pollUntil(check, { timeoutMs: 20_000, signal: wait.signal });
+        await vi.advanceTimersByTimeAsync(1000);
+        wait.abort();
+        const res = await p;
+        expect(seen!.aborted).toBe(true);
+        expect(res).toMatchObject({ cancelled: true, timedOut: false });
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(check).toHaveBeenCalledTimes(1);
+    });
+
+    it('a wait cancelled between attempts does not check again', async () => {
+        const wait = new AbortController();
+        const check = vi.fn(async () => undefined);
+        const p = pollUntil(check, { timeoutMs: 20_000, signal: wait.signal });
+        await vi.advanceTimersByTimeAsync(100); // inside the 250 ms gap
+        wait.abort();
+        await expect(p).resolves.toMatchObject({ cancelled: true, attempts: 1 });
+        expect(check).toHaveBeenCalledTimes(1);
     });
 
     it('never overlaps attempts', async () => {

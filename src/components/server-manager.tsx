@@ -29,16 +29,21 @@ import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
 import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
 import {
+    STALE_RUN_MS,
     applyScenario,
-    beginTiming,
     describeActiveStage,
-    endTiming,
-    markStage,
+    getActiveTiming,
     peekActiveTiming,
     subscribeTiming,
     timingDiagnostics,
     type TimingScenario,
 } from '../lib/startup-timing';
+import {
+    timedRestart,
+    timedStart,
+    timedStop,
+    type ServerActionDeps,
+} from '../lib/server-actions';
 import {
     fetchAccounts,
     fetchCaExpire,
@@ -71,6 +76,16 @@ import { ServerSettingsDialog, type ServerConnectionSettings } from './server-se
 import * as dialogStyles from './server-settings-dialog.css';
 import type { Health } from '../lib/types/health';
 import * as styles from './hud-header.css';
+
+const serverActionDeps: ServerActionDeps = {
+    serverStart,
+    serverStop,
+    reloadWhenHealthy: () => reloadWhenHealthy(),
+    scheduleReload: (ms) => {
+        setTimeout(() => window.location.reload(), ms);
+    },
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
 
 // "9h" reads fine but "0h" while the token auto-renews in minutes is
 // misleading — show minutes below two hours
@@ -120,7 +135,15 @@ export function ServerManager({
     const [, setTimingTick] = useState(0);
     useEffect(() => {
         if (!timingRun) return;
-        const t = setInterval(() => setTimingTick((v) => v + 1), 1000);
+        const t = setInterval(() => {
+            if (Date.now() - timingRun.startedAt > STALE_RUN_MS) {
+                // nobody closed it: retire it (re-renders with no run)
+                clearInterval(t);
+                getActiveTiming();
+                return;
+            }
+            setTimingTick((v) => v + 1);
+        }, 1000);
         return () => clearInterval(t);
     }, [timingRun]);
     const updateState = useSyncExternalStore(
@@ -347,10 +370,11 @@ export function ServerManager({
             notify({ kind: 'err', ...err });
             return false;
         }
-        if (!nested) beginTiming(scenario, { replace: true });
         setBusy(true);
         try {
-            const res = await serverStart(cfg);
+            // also hands the run to the health wait / reload
+            // (reload once healthy, or right away when the port moved)
+            const res = await timedStart(cfg, scenario, serverActionDeps, nested);
             // keep the tail — start failures put the ERROR line last
             setLastOutput(res.output.slice(-600));
             notify({
@@ -366,23 +390,9 @@ export function ServerManager({
                       errorLines(res.output) ||
                       res.output.slice(-120),
             });
-            if (res.ok) {
-                setSavedForRestart(false);
-                // reload once healthy (or immediately when the port moved)
-                if (res.portChanged) {
-                    markStage('reload', 'port/scheme moved');
-                    setTimeout(() => window.location.reload(), 1800);
-                } else if (!res.attached) {
-                    void reloadWhenHealthy();
-                } else {
-                    endTiming('attached');
-                }
-            } else {
-                endTiming('failed');
-            }
+            if (res.ok) setSavedForRestart(false);
             return res.ok;
         } catch (e) {
-            endTiming('failed');
             notify({ kind: 'err', title: '伺服器啟動失敗', body: e instanceof Error ? e.message : String(e) });
             return false;
         } finally {
@@ -392,20 +402,15 @@ export function ServerManager({
     };
 
     const doStop = async () => {
-        beginTiming('stop', { replace: true });
         setBusy(true);
         try {
-            const res = await serverStop({ stopAgents: true });
-            endTiming(res.ok ? 'ok' : 'failed');
+            const res = await timedStop(serverActionDeps);
             setLastOutput(res.output.slice(-600));
             notify({
                 kind: res.ok ? 'ok' : 'err',
                 title: res.ok ? '🔴 伺服器已停止' : '停止失敗',
                 body: res.ok ? '' : res.output.slice(0, 120),
             });
-        } catch (e) {
-            endTiming('failed');
-            throw e;
         } finally {
             setBusy(false);
             setTimeout(refresh, 1000);
@@ -419,23 +424,16 @@ export function ServerManager({
         restartError.current = '';
         const error = validateDesktopSettings(cfg);
         if (error) { notify({ kind: 'err', ...error }); return false; }
-        beginTiming(scenario, { replace: true });
         setBusy(true);
         try {
-            const stopped = await serverStop({ stopAgents: true });
+            const { stopped, started } = await timedRestart(scenario, serverActionDeps, () => doStart(cfg, scenario, true));
             if (!stopped.ok) {
-                endTiming('failed', 'stop refused');
                 restartError.current = stopped.output;
                 notify({ kind: 'err', title: '未能停止伺服器，已取消重啟', body: stopped.output.slice(-200) });
                 return false;
             }
-            // kept as-is (measured, not removed): lets the OS release the
-            // old listener's port before serverStart picks one
-            markStage('settle');
-            await new Promise(resolve => setTimeout(resolve, 1200));
-            return await doStart(cfg, scenario, true);
+            return started;
         } catch (e) {
-            endTiming('failed');
             restartError.current = e instanceof Error ? e.message : String(e);
             notify({ kind: 'err', title: '重啟失敗', body: e instanceof Error ? e.message : String(e) });
             return false;

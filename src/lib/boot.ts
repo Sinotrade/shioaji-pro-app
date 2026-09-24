@@ -29,11 +29,13 @@ import {
     serverStatus,
 } from './tauri';
 import {
-    beginTiming,
+    beginBootTiming,
     endTiming,
     getActiveTiming,
     markStage,
+    type TimingOutcome,
 } from './startup-timing';
+import { appReadySignals, watchFrontendReady } from './frontend-ready';
 import { logNotice, notify } from './trade';
 import { isChildWindow } from './window-role';
 
@@ -99,23 +101,28 @@ async function run() {
     const isPopout = isChildWindow();
     // startup timing (issue #142) is owned by the main window: a run begun
     // before a reload (start/restart/switch) continues here; an app launch
-    // with autostart opens a cold-start run from the webview's navigation
-    // start. Plain user reloads open nothing.
+    // retires the previous session's leftover and, with autostart, opens a
+    // cold-start run from the webview's navigation start.
     const timed = isTauri && !isPopout;
     let coldStart = false;
-    if (timed) {
-        if (getActiveTiming()) markStage('page-loaded');
-    }
+    let bootTimed = false;
+    const openBootTiming = (autoStart: boolean) => {
+        if (!timed || bootTimed) return;
+        bootTimed = true;
+        coldStart =
+            beginBootTiming({
+                reloaded: pageWasReloaded(),
+                autoStart,
+                navigationStart: Math.round(performance.timeOrigin),
+            }) === 'cold-start';
+    };
     if (isTauri && !isPopout) {
         try {
             const settings = await loadDesktopSettings();
-            if (settings.autoStart && settings.apiKey && settings.secretKey) {
-                if (!getActiveTiming() && !pageWasReloaded()) {
-                    coldStart = beginTiming('cold-start', {
-                        startedAt: Math.round(performance.timeOrigin),
-                    });
-                    markStage('app-js-start');
-                }
+            const autoStart =
+                settings.autoStart && !!settings.apiKey && !!settings.secretKey;
+            openBootTiming(autoStart);
+            if (autoStart) {
                 markStage('probe');
                 const status = await serverStatus();
                 // 本機 HTTPS：the desired listener scheme also has to match
@@ -166,7 +173,7 @@ async function run() {
                         window.location.reload();
                         return;
                     }
-                    endTiming(coldStart ? 'attached' : 'ok');
+                    settleBootRun(coldStart ? 'attached' : 'ok');
                 } else if (matches) {
                     // the right server is starting up — adopt its address
                     // and fall through to the bootstrap watchdog below,
@@ -212,13 +219,14 @@ async function run() {
                         void reloadWhenHealthy();
                         return;
                     } else {
-                        endTiming('attached');
+                        settleBootRun('attached');
                     }
                 }
             }
         } catch {
             // sidecar unavailable — fall through to the health watchdog
         }
+        openBootTiming(false); // settings unreadable: still continue/retire
     }
 
     // bootstrap watchdog: reload once the server becomes reachable. Uses
@@ -228,7 +236,7 @@ async function run() {
     try {
         await fetchHealth();
         if (await serverVersionOk()) {
-            if (timed) endTiming('ok');
+            if (timed) settleBootRun('ok');
             // The shared trading store subscribes before its initial snapshot.
             return; // server was up at boot — components loaded normally
         }
@@ -275,6 +283,16 @@ async function run() {
             ticking = false;
         }
     }, 4000);
+}
+
+// the server is healthy: the run ends once the front end is usable
+// (accounts, first positions snapshot, live stream) — see frontend-ready
+let settling = false;
+function settleBootRun(outcome: TimingOutcome) {
+    const run = getActiveTiming();
+    if (!run || settling) return;
+    settling = true;
+    watchFrontendReady(run.id, appReadySignals(), { outcome });
 }
 
 // an app launch navigates; our own post-start reloads (and a user's F5)

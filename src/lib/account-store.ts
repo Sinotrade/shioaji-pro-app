@@ -132,6 +132,13 @@ export function accountFor(type: 'S' | 'F'): Account | undefined {
     return acc?.signed ? acc : undefined;
 }
 
+export function subscribeAccounts(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => {
+        listeners.delete(listener);
+    };
+}
+
 export function useAccounts(): AccountState {
     return useSyncExternalStore(
         (l) => {

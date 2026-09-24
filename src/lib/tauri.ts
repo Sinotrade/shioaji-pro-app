@@ -38,7 +38,12 @@ import {
 } from './sidecar-ownership';
 import { notify } from './trade';
 import { STOP_SCHEDULE, pollUntil } from './poll-until';
-import { endTiming, markStage } from './startup-timing';
+import {
+    endTiming,
+    markStage,
+    peekActiveTiming,
+    subscribeTiming,
+} from './startup-timing';
 import { cacheDesktopConfigured } from './desktop-setup-state';
 import { isChildWindow } from './window-role';
 
@@ -54,24 +59,45 @@ export { harnessOwnershipCompatible } from './sidecar-ownership';
 // warming up (login + CA activation + contract load). The first check runs
 // immediately: by the time serverStart returns, /info already answered, so
 // the old 2 s head start was pure dead time (issue #142).
+//
+// Only one wait at a time: a newer call, or a new timing run (the user
+// clicked restart/stop/switch meanwhile), cancels this one — its timeout
+// must neither close the newer run nor reload the page under it.
+let healthWait: AbortController | null = null;
 export function reloadWhenHealthy(timeoutMs = 90_000): Promise<void> {
-    markStage('wait-health');
+    healthWait?.abort();
+    const wait = new AbortController();
+    healthWait = wait;
+    const runId = peekActiveTiming()?.id;
+    const off = subscribeTiming(() => {
+        const active = peekActiveTiming();
+        if (active && active.id !== runId) wait.abort();
+    });
+    markStage('wait-health', undefined, { runId });
     return (async () => {
-        const res = await pollUntil(
-            async () => {
-                const { fetchHealth } = await import('./shioaji');
-                await fetchHealth();
-                return true;
-            },
-            { timeoutMs, attemptTimeoutMs: 5000 },
-        );
-        if (res.timedOut) {
-            endTiming('failed', `health not ok after ${res.attempts} polls`);
-            return;
+        try {
+            const res = await pollUntil(
+                async (_attempt, signal) => {
+                    const { fetchHealth } = await import('./shioaji');
+                    await fetchHealth({ signal });
+                    return true;
+                },
+                { timeoutMs, attemptTimeoutMs: 5000, signal: wait.signal },
+            );
+            if (res.cancelled) return;
+            if (res.timedOut) {
+                endTiming('failed', `health not ok after ${res.attempts} polls`, {
+                    runId,
+                });
+                return;
+            }
+            markStage('healthy', `polls=${res.attempts}`, { runId });
+            markStage('reload', undefined, { runId });
+            window.location.reload();
+        } finally {
+            off();
+            if (healthWait === wait) healthWait = null;
         }
-        markStage('healthy', `polls=${res.attempts}`);
-        markStage('reload');
-        window.location.reload();
     })();
 }
 

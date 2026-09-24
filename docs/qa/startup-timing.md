@@ -7,8 +7,9 @@
 ## App 記錄了什麼
 
 App 端每次啟動／重啟／停止／切換都會記錄一筆 timing run，從按下按鈕（冷啟動
-則從 webview 開始載入頁面）一路到畫面重新載入、伺服器健康為止，跨頁面重新
-載入仍會接續同一筆。只記錄階段名稱、相對時間、port、模式與輪詢次數，不記錄
+則從 webview 開始載入頁面）一路到伺服器健康、畫面重新載入，再到前端可用
+（帳戶已載入、第一次持倉快照完成、行情串流 LIVE）為止，跨頁面重新載入仍會
+接續同一筆。只記錄階段名稱、相對時間、port、模式與輪詢次數，不記錄
 API Key、Secret、憑證路徑、密碼或伺服器 log。
 
 | 階段 key | 畫面顯示 | 意義 |
@@ -31,9 +32,16 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | `healthy` | 健康檢查通過 | 第一次健康回應（附輪詢次數） |
 | `reload` | 重新載入畫面 | App 重新載入頁面 |
 | `page-loaded` | 畫面載入中 | 重新載入後的前端 bootstrap 開始 |
+| `accounts-loaded` | 帳戶已載入 | 帳戶清單第一次載入完成（附帳戶數） |
+| `positions-loaded` | 持倉已載入 | 第一次持倉查詢完成；失敗或需對帳也算完成並註明 |
+| `stream-live` | 行情串流已連線 | SSE 串流狀態轉為 LIVE |
 
-結束狀態：`ok`、`attached`（沿用既有伺服器）、`failed`、`abandoned`（被下一個
-操作取代，或超過 180 秒沒有結束）。
+三個前端階段到齊時 run 才結束（順序不固定）；60 秒內未到齊則以 `partial`
+結束並列出缺少的階段。
+
+結束狀態：`ok`、`attached`（沿用既有伺服器）、`partial`（伺服器已健康但前端
+60 秒內未就緒）、`failed`、`abandoned`（被下一個操作取代、上次 App 結束時仍未
+完成，或超過 180 秒沒有結束）。
 
 每行格式為 `+相對時間  該階段耗時  階段 (附註)`。`wait-listener` 的耗時即
 Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 端。
@@ -43,8 +51,10 @@ Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 
 - **複製診斷**：伺服器面板的「複製診斷」或完整設定內「複製診斷資訊」，最後會
   附上 `--- startup timing ---` 區塊（進行中的一筆＋最近 6 筆，最新在前；
   App 保留最近 12 筆，重開 App 後仍在）。
-- **Debug log**：開啟 webview devtools console，篩選 `[startup-timing]`，每個
-  階段一行即時輸出。
+- **Debug log**：每個階段以 `console.info` 輸出一行 `[startup-timing] …`，
+  在 webview devtools console 篩選即可，不需開啟 Verbose。dev build 可直接開
+  devtools；release build 通常沒有 devtools，請改用「複製診斷」，內容相同
+  （每筆 run 的所有階段都保存在 App 內，不依賴 console）。
 - 伺服器端的登入／合約細節另看 `~/.shioaji/sjpro-server-<port>.log`（Windows
   為 `%USERPROFILE%\.shioaji\`）。App 以 `RUST_LOG=warn` 啟動，log 只有警告
   以上，無法取得伺服器內部階段時間。
@@ -70,11 +80,12 @@ Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 
 
 單位：秒。「伺服器登入＋合約」＝`wait-listener` 耗時；「停止舊伺服器」＝
 `kill` 到 `stopped`（含 `wait-exit`）；「健康檢查」＝`wait-health` 耗時；
-「前端 bootstrap」＝`reload` 到結束。
+「前端就緒」＝`page-loaded`（冷啟動沒有 reload 時為 `app-js-start`）到 run
+結束，即帳戶、持倉、行情串流都到齊；結果為 `partial` 時在備註寫缺少的階段。
 
 ### macOS
 
-| 情境 | 次 | 總耗時 | 停止舊伺服器 | 伺服器登入＋合約 | 健康檢查 | 前端 bootstrap | 備註 |
+| 情境 | 次 | 總耗時 | 停止舊伺服器 | 伺服器登入＋合約 | 健康檢查 | 前端就緒 | 備註 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 冷啟動 | 1 | | | | | | |
 | 冷啟動 | 2 | | | | | | |
@@ -91,7 +102,7 @@ Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 
 
 ### Windows
 
-| 情境 | 次 | 總耗時 | 停止舊伺服器 | 伺服器登入＋合約 | 健康檢查 | 前端 bootstrap | 備註 |
+| 情境 | 次 | 總耗時 | 停止舊伺服器 | 伺服器登入＋合約 | 健康檢查 | 前端就緒 | 備註 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 冷啟動 | 1 | | | | | | |
 | 冷啟動 | 2 | | | | | | |
@@ -119,3 +130,8 @@ Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 
 - `wait-exit` 接近 5 秒：舊伺服器未及時結束。
 - `settle` 固定 1.2 秒，可作為之後是否移除的依據。
 - 冷啟動 `app-js-start` 偏大：webview／前端載入慢，與伺服器無關。
+- 前端就緒偏長：看三個前端階段哪個最晚；`positions-loaded` 最晚通常是帳務
+  查詢，`stream-live` 最晚是 SSE 連線。
+- 量不到的部分：App 無法看到 sidecar 內部的登入、CA 啟用、合約下載等細項
+  （全部落在 `wait-listener`），也看不到「畫面各面板第一次畫完」的時間；
+  需要時另開 issue 在伺服器端或個別面板量測。

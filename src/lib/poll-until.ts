@@ -47,37 +47,43 @@ export interface PollResult<T> {
     attempts: number;
     elapsedMs: number; // from the call until the deciding check settled
     timedOut: boolean;
+    cancelled: boolean; // opts.signal aborted the whole wait
 }
 
-const sleep = (ms: number) =>
-    new Promise<void>((r) => setTimeout(r, Math.max(0, ms)));
-
-// a check that hangs must not hang the whole wait — treat it as a miss
-function withAttemptTimeout<T>(
-    p: Promise<T | undefined>,
-    ms: number | undefined,
-): Promise<T | undefined> {
-    if (!ms) return p;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    return Promise.race([
-        p,
-        new Promise<undefined>((r) => {
-            timer = setTimeout(() => r(undefined), ms);
-        }),
-    ]).finally(() => clearTimeout(timer));
+// resolves after `ms`, or early (false) when `signal` aborts
+function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+    return new Promise((resolve) => {
+        if (signal?.aborted) return resolve(false);
+        const onAbort = () => {
+            clearTimeout(timer);
+            resolve(false);
+        };
+        const timer = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve(true);
+        }, Math.max(0, ms));
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
 }
 
 /**
  * Run `check` until it returns something other than `undefined` or the
  * deadline passes. A throwing check counts as a miss. At least one check
  * always runs; the last one lands no later than the deadline.
+ *
+ * Each attempt gets its own AbortSignal. When `attemptTimeoutMs` elapses
+ * (or the whole wait is cancelled) that signal aborts, and the next attempt
+ * starts only after the aborted one has SETTLED — a check that forwards the
+ * signal to fetch therefore never overlaps the next one. A check that
+ * ignores its signal still cannot hold the wait past the deadline.
  */
 export async function pollUntil<T>(
-    check: (attempt: number) => Promise<T | undefined>,
+    check: (attempt: number, signal: AbortSignal) => Promise<T | undefined>,
     opts: {
         timeoutMs: number;
         schedule?: PollSchedule;
         attemptTimeoutMs?: number;
+        signal?: AbortSignal; // cancels the whole wait
         onAttempt?: (attempt: number, elapsedMs: number) => void;
     },
 ): Promise<PollResult<T>> {
@@ -85,38 +91,70 @@ export async function pollUntil<T>(
     const start = Date.now();
     const deadline = start + opts.timeoutMs;
     let attempt = 0;
+    const result = (
+        value: T | undefined,
+        timedOut: boolean,
+        cancelled = false,
+    ): PollResult<T> => ({
+        value,
+        attempts: attempt,
+        elapsedMs: Date.now() - start,
+        timedOut,
+        cancelled,
+    });
     for (;;) {
+        if (opts.signal?.aborted) return result(undefined, false, true);
         const delay = pollDelay(attempt, schedule);
         const room = deadline - Date.now();
         // always run the first check; later ones only if they fit
-        if (attempt > 0 && room <= 0) {
-            return {
-                value: undefined,
-                attempts: attempt,
-                elapsedMs: Date.now() - start,
-                timedOut: true,
-            };
-        }
+        if (attempt > 0 && room <= 0) return result(undefined, true);
         const wait = attempt > 0 ? Math.min(delay, room) : delay;
-        if (wait > 0) await sleep(wait); // 0 = check in this very tick
+        // 0 = check in this very tick
+        if (wait > 0 && !(await sleep(wait, opts.signal))) {
+            return result(undefined, false, true);
+        }
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        opts.signal?.addEventListener('abort', abort, { once: true });
+        const timer = opts.attemptTimeoutMs
+            ? setTimeout(abort, opts.attemptTimeoutMs)
+            : undefined;
         let value: T | undefined;
-        try {
-            value = await withAttemptTimeout(
-                check(attempt),
-                opts.attemptTimeoutMs,
+        let settled = false;
+        const attemptPromise = (async () => {
+            try {
+                return await check(attempt, controller.signal);
+            } catch {
+                return undefined;
+            } finally {
+                settled = true;
+            }
+        })();
+        // a check that ignores its signal: give up on it at the deadline
+        let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+        const outOfTime = new Promise<undefined>((r) => {
+            deadlineTimer = setTimeout(
+                () => r(undefined),
+                Math.max(0, deadline - Date.now()),
             );
-        } catch {
-            value = undefined;
+        });
+        try {
+            value = await Promise.race([attemptPromise, outOfTime]);
+        } finally {
+            clearTimeout(timer);
+            clearTimeout(deadlineTimer);
+            opts.signal?.removeEventListener('abort', abort);
         }
         attempt += 1;
         opts.onAttempt?.(attempt, Date.now() - start);
-        if (value !== undefined) {
-            return {
-                value,
-                attempts: attempt,
-                elapsedMs: Date.now() - start,
-                timedOut: false,
-            };
+        if (controller.signal.aborted && opts.signal?.aborted) {
+            return result(undefined, false, true);
+        }
+        if (value !== undefined) return result(value, false);
+        if (!settled) {
+            // still hanging past the deadline: never start another attempt
+            controller.abort();
+            return result(undefined, true);
         }
     }
 }

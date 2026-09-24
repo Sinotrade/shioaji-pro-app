@@ -18,7 +18,14 @@ export type TimingScenario =
     | 'sim-to-prod'
     | 'prod-to-sim';
 
-export type TimingOutcome = 'ok' | 'attached' | 'failed' | 'abandoned';
+// partial: the server is healthy but the front end did not reach
+// accounts + positions + live stream within the watch window
+export type TimingOutcome =
+    | 'ok'
+    | 'attached'
+    | 'partial'
+    | 'failed'
+    | 'abandoned';
 
 // user-facing stage labels; the key is what diagnostics print
 export const STAGE_LABELS = {
@@ -42,6 +49,10 @@ export const STAGE_LABELS = {
     healthy: '健康檢查通過',
     reload: '重新載入畫面',
     'page-loaded': '畫面載入中',
+    // front-end bootstrap after the reload, until trading data is usable
+    'accounts-loaded': '帳戶已載入',
+    'positions-loaded': '持倉已載入',
+    'stream-live': '行情串流已連線',
 } as const;
 
 export type TimingStage = keyof typeof STAGE_LABELS;
@@ -116,8 +127,9 @@ function commit(next: TimingState) {
 }
 
 function debugLog(run: TimingRun, text: string) {
-    // the "debug log": visible in the webview devtools console
-    console.debug(`[startup-timing] ${run.scenario} ${text}`);
+    // the "debug log": info level so the devtools console shows it without
+    // enabling Verbose; release builds without devtools use 複製診斷
+    console.info(`[startup-timing] ${run.scenario} ${text}`);
 }
 
 function clip(detail: string | undefined): string | undefined {
@@ -182,12 +194,27 @@ export function beginTiming(
     return true;
 }
 
+/** `runId` pins a mark to the run its caller started with: a late mark
+ * from a superseded wait must never land in (or close) a newer run. */
+export interface TimingTarget {
+    runId?: string;
+    now?: number;
+}
+
+function target(opts: TimingTarget): TimingRun | null {
+    const run = getActiveTiming(opts.now ?? Date.now());
+    if (!run) return null;
+    if (opts.runId !== undefined && run.id !== opts.runId) return null;
+    return run;
+}
+
 export function markStage(
     stage: TimingStage,
     detail?: string,
-    now = Date.now(),
+    opts: TimingTarget = {},
 ): void {
-    const run = getActiveTiming(now);
+    const now = opts.now ?? Date.now();
+    const run = target({ ...opts, now });
     if (!run) return;
     const mark: TimingMark = { stage, at: now - run.startedAt };
     const d = clip(detail);
@@ -199,11 +226,38 @@ export function markStage(
 export function endTiming(
     outcome: TimingOutcome,
     detail?: string,
-    now = Date.now(),
+    opts: TimingTarget = {},
 ): void {
-    const run = getActiveTiming(now);
+    const now = opts.now ?? Date.now();
+    const run = target({ ...opts, now });
     if (!run) return;
     commit(finish(run, outcome, detail, now));
+}
+
+/**
+ * Boot-time decision (main window). A real app launch retires whatever run
+ * the previous session left open, then opens a cold-start run when the
+ * server will be auto-started. A reload (our post-start reload or a user
+ * F5) continues the in-flight run instead.
+ */
+export function beginBootTiming(opts: {
+    reloaded: boolean;
+    autoStart: boolean;
+    navigationStart: number;
+    now?: number;
+}): 'continued' | 'cold-start' | 'none' {
+    const now = opts.now ?? Date.now();
+    if (!opts.reloaded) endTiming('abandoned', 'previous app session', { now });
+    if (getActiveTiming(now)) {
+        markStage('page-loaded', undefined, { now });
+        return 'continued';
+    }
+    if (!opts.reloaded && opts.autoStart) {
+        beginTiming('cold-start', { startedAt: opts.navigationStart, now });
+        markStage('app-js-start', undefined, { now });
+        return 'cold-start';
+    }
+    return 'none';
 }
 
 /** Side-effect-free read for React snapshots (no stale retirement). */

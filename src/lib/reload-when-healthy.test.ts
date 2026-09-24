@@ -30,7 +30,7 @@ beforeEach(() => {
     reload.mockReset();
     vi.useFakeTimers();
     vi.setSystemTime(0);
-    vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
 });
 afterEach(() => {
     vi.useRealTimers();
@@ -75,5 +75,70 @@ describe('reloadWhenHealthy', () => {
             scenario: 'start',
             outcome: 'failed',
         });
+    });
+
+    it('a restart during a never-healthy wait is not closed by the old timeout', async () => {
+        fetchHealth.mockRejectedValue(new Error('down'));
+        timing.beginTiming('start');
+        const first = reloadWhenHealthy(); // 90 s budget
+        await vi.advanceTimersByTimeAsync(80_000);
+        // the user clicks 重啟 at 80 s: a new run begins …
+        timing.beginTiming('restart', { replace: true });
+        const restartId = timing.getActiveTiming()!.id;
+        await first; // … which cancels the old wait at once
+        await vi.advanceTimersByTimeAsync(20_000); // past the old deadline
+        const run = timing.getActiveTiming();
+        expect(run?.id).toBe(restartId);
+        expect(run?.outcome).toBeUndefined();
+        expect(timing.getTimingHistory()[0]).toMatchObject({
+            scenario: 'start',
+            outcome: 'abandoned',
+        });
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('a newer wait cancels the older one; only the newer reloads', async () => {
+        fetchHealth.mockRejectedValue(new Error('down'));
+        const first = reloadWhenHealthy();
+        await vi.advanceTimersByTimeAsync(2000);
+        const calls = fetchHealth.mock.calls.length;
+        fetchHealth.mockResolvedValue({ status: 'healthy' });
+        const second = reloadWhenHealthy();
+        await first;
+        await second;
+        expect(reload).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(fetchHealth.mock.calls.length).toBe(calls + 1);
+    });
+
+    it('aborts a hung /health probe before the next one — never overlapping', async () => {
+        let inFlight = 0;
+        let maxInFlight = 0;
+        let n = 0;
+        fetchHealth.mockImplementation(({ signal }: { signal: AbortSignal }) => {
+            n++;
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            const done = () => inFlight--;
+            if (n === 1) {
+                return new Promise((_, reject) =>
+                    signal.addEventListener('abort', () => {
+                        done();
+                        reject(new Error('aborted'));
+                    }),
+                );
+            }
+            done();
+            return Promise.resolve({ status: 'healthy' });
+        });
+        const p = reloadWhenHealthy();
+        await vi.advanceTimersByTimeAsync(4999);
+        expect(n).toBe(1);
+        await vi.advanceTimersByTimeAsync(300);
+        await p;
+        expect(fetchHealth.mock.calls[0]![0].signal.aborted).toBe(true);
+        expect(n).toBe(2);
+        expect(maxInFlight).toBe(1);
+        expect(reload).toHaveBeenCalledTimes(1);
     });
 });

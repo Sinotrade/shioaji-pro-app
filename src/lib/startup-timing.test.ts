@@ -21,6 +21,7 @@ const {
     beginTiming,
     describeActiveStage,
     endTiming,
+    beginBootTiming,
     getActiveTiming,
     getTimingHistory,
     markStage,
@@ -33,7 +34,7 @@ beforeEach(() => {
     __resetTimingForTest();
     vi.useFakeTimers();
     vi.setSystemTime(Date.UTC(2026, 8, 25, 1, 0, 0));
-    vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
 });
 afterEach(() => {
     vi.useRealTimers();
@@ -142,9 +143,79 @@ describe('startup timing runs', () => {
         beginTiming('restart');
         vi.advanceTimersByTime(1234);
         markStage('wait-listener');
-        expect(console.debug).toHaveBeenLastCalledWith(
+        expect(console.info).toHaveBeenLastCalledWith(
             '[startup-timing] restart +1.23s wait-listener',
         );
+    });
+});
+
+describe('run pinning', () => {
+    it('a mark or end for another run id is ignored', () => {
+        beginTiming('start');
+        const oldId = getActiveTiming()!.id;
+        beginTiming('restart', { replace: true });
+        markStage('healthy', undefined, { runId: oldId });
+        endTiming('failed', 'late timeout', { runId: oldId });
+        const run = getActiveTiming()!;
+        expect(run.scenario).toBe('restart');
+        expect(run.marks).toEqual([]);
+        markStage('kill', undefined, { runId: run.id });
+        expect(getActiveTiming()!.marks.map((m) => m.stage)).toEqual(['kill']);
+    });
+});
+
+describe('boot timing decision', () => {
+    const nav = () => Date.now() - 800;
+
+    it('an app launch with autostart opens a cold-start run from navigation start', () => {
+        expect(
+            beginBootTiming({ reloaded: false, autoStart: true, navigationStart: nav() }),
+        ).toBe('cold-start');
+        const run = getActiveTiming()!;
+        expect(run.scenario).toBe('cold-start');
+        expect(run.marks).toEqual([{ stage: 'app-js-start', at: 800 }]);
+    });
+
+    it('an app launch retires the previous session\'s open run first', () => {
+        beginTiming('sim-to-prod');
+        vi.advanceTimersByTime(30_000); // not stale yet
+        __resetTimingForTest(); // app quit + relaunch
+        expect(
+            beginBootTiming({ reloaded: false, autoStart: true, navigationStart: nav() }),
+        ).toBe('cold-start');
+        expect(getTimingHistory()[0]).toMatchObject({
+            scenario: 'sim-to-prod',
+            outcome: 'abandoned',
+            detail: 'previous app session',
+        });
+        expect(getActiveTiming()!.scenario).toBe('cold-start');
+    });
+
+    it('an app launch without autostart retires and opens nothing', () => {
+        beginTiming('restart');
+        expect(
+            beginBootTiming({ reloaded: false, autoStart: false, navigationStart: nav() }),
+        ).toBe('none');
+        expect(getActiveTiming()).toBeNull();
+        expect(getTimingHistory()[0]!.outcome).toBe('abandoned');
+    });
+
+    it('our post-start reload continues the in-flight run', () => {
+        beginTiming('prod-to-sim');
+        const id = getActiveTiming()!.id;
+        expect(
+            beginBootTiming({ reloaded: true, autoStart: true, navigationStart: nav() }),
+        ).toBe('continued');
+        expect(getActiveTiming()!.id).toBe(id);
+        expect(getActiveTiming()!.marks.at(-1)!.stage).toBe('page-loaded');
+    });
+
+    it('a plain user reload opens nothing', () => {
+        expect(
+            beginBootTiming({ reloaded: true, autoStart: true, navigationStart: nav() }),
+        ).toBe('none');
+        expect(getActiveTiming()).toBeNull();
+        expect(getTimingHistory()).toEqual([]);
     });
 });
 
