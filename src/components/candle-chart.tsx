@@ -58,7 +58,7 @@ import {
 // 自訂指標註冊進 DEF_BY_TYPE，loadInstances() 的型別過濾才不會把它們丟掉
 import { subscribeCustoms } from '../lib/custom-indicators';
 import type { IndicatorPoint } from '../lib/indicators';
-import { setPickedPrice } from '../lib/price-sync';
+import { setHoverPickedPrice, setPickedPrice } from '../lib/price-sync';
 import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import { notify, placeQuickOrder } from '../lib/trade';
@@ -69,6 +69,7 @@ import {
     removeTrigger,
     useTriggers,
 } from '../lib/trigger-engine';
+import { currentProtectionEnv } from '../lib/protection-env';
 import type { ContractBase } from '../lib/types/contract';
 import type { Candle } from '../lib/types/market';
 import type { Trade } from '../lib/types/order';
@@ -391,7 +392,7 @@ export function CandleChart({
                     action: below ? 'Sell' : 'Buy',
                     quantity: qty,
                     kind: 'stop',
-                });
+                }, c);
             } else {
                 addTrigger({
                     code: c.code,
@@ -400,7 +401,7 @@ export function CandleChart({
                     action: below ? 'Buy' : 'Sell',
                     quantity: qty,
                     kind: 'take',
-                });
+                }, c);
             }
         });
 
@@ -419,7 +420,8 @@ export function CandleChart({
             const raw = candles.coordinateToPrice(param.point.y);
             if (raw === null) return;
             const c = contractRef.current;
-            setPickedPrice(c.code, roundToTick(c, Number(raw)));
+            // 游標移動帶價受設定控制（#58，預設關閉）；點擊帶價不受影響
+            setHoverPickedPrice(c.code, roundToTick(c, Number(raw)));
         });
 
         // TradingView-style infinite history: panning near the left edge
@@ -1672,6 +1674,16 @@ export function CandleChart({
                                     {fmtPrice(t.price)}
                                     {t.kind !== 'alert' &&
                                         ` ${t.action === 'Buy' ? '買' : '賣'}${t.quantity}`}
+                                    {t.suspended && (
+                                        <span title={t.suspended}> 未啟用</span>
+                                    )}
+                                    {!t.suspended &&
+                                        t.kind !== 'alert' &&
+                                        t.env !== currentProtectionEnv() && (
+                                            <span title='建立於其他伺服器或模擬／正式模式，目前不執行'>
+                                                {' '}未在此環境
+                                            </span>
+                                        )}
                                 </span>
                                 <button
                                     className={styles.triggerRemove}

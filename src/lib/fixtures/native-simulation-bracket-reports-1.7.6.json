@@ -1,0 +1,362 @@
+[
+  {
+    "state": "FuturesDeal",
+    "data": {
+      "FuturesDeal": {
+        "event_id": "v1:FD:FIXTURESTREAMFD:FIXTURERESET:4",
+        "trade_id": "fixture-f1",
+        "seqno": "fixture-f1",
+        "ordno": "fixture-o1",
+        "exchange_seq": "000001",
+        "action": "Buy",
+        "code": "TXFJ6",
+        "price": 48284.0,
+        "quantity": 1,
+        "subaccount": "",
+        "security_type": "FUT",
+        "delivery_month": "",
+        "ts": 1789000000.168171,
+        "broker_id": "fixture-broker-F",
+        "account_id": "fixture-account-F",
+        "full_code": "",
+        "strike_price": 0.0,
+        "option_right": "Future",
+        "market_type": "Day",
+        "combo": false
+      }
+    }
+  },
+  {
+    "state": "FuturesOrder",
+    "data": {
+      "FuturesOrder": {
+        "event_id": "v1:FO:FIXTURESTREAMFO:FIXTURERESET:4",
+        "operation": {
+          "op_type": "New",
+          "op_code": "00",
+          "op_msg": ""
+        },
+        "order": {
+          "id": "fixture-f1",
+          "seqno": "fixture-f1",
+          "ordno": "fixture-o1",
+          "account": {
+            "account_type": "F",
+            "person_id": "",
+            "broker_id": "fixture-broker-F",
+            "account_id": "fixture-account-F",
+            "signed": true,
+            "username": ""
+          },
+          "action": "Buy",
+          "price": 0.0,
+          "quantity": 2,
+          "order_type": "IOC",
+          "price_type": "MKT",
+          "market_type": "Day",
+          "oc_type": "New",
+          "subaccount": "",
+          "combo": false
+        },
+        "status": {
+          "id": "fixture-f1",
+          "exchange_ts": 1789000000.135042,
+          "modified_price": 0.0,
+          "cancel_quantity": 0,
+          "order_quantity": 2,
+          "web_id": "fixture"
+        },
+        "contract": {
+          "security_type": "FUT",
+          "code": "TXFJ6",
+          "exchange": "TAIFEX",
+          "delivery_month": "",
+          "full_code": "",
+          "delivery_date": "",
+          "strike_price": 0.0,
+          "option_right": "Future"
+        }
+      }
+    }
+  },
+  {
+    "state": "FuturesDeal",
+    "data": {
+      "FuturesDeal": {
+        "event_id": "v1:FD:FIXTURESTREAMFD:FIXTURERESET:5",
+        "trade_id": "fixture-f1",
+        "seqno": "fixture-f1",
+        "ordno": "fixture-o1",
+        "exchange_seq": "000002",
+        "action": "Buy",
+        "code": "TXFJ6",
+        "price": 48285.0,
+        "quantity": 1,
+        "subaccount": "",
+        "security_type": "FUT",
+        "delivery_month": "",
+        "ts": 1789000002.247429,
+        "broker_id": "fixture-broker-F",
+        "account_id": "fixture-account-F",
+        "full_code": "",
+        "strike_price": 0.0,
+        "option_right": "Future",
+        "market_type": "Day",
+        "combo": false
+      }
+    }
+  },
+  {
+    "state": "FuturesOrder",
+    "data": {
+      "FuturesOrder": {
+        "event_id": "v1:FO:FIXTURESTREAMFO:FIXTURERESET:5",
+        "operation": {
+          "op_type": "New",
+          "op_code": "00",
+          "op_msg": ""
+        },
+        "order": {
+          "id": "fixture-f2",
+          "seqno": "fixture-f2",
+          "ordno": "fixture-o2",
+          "account": {
+            "account_type": "F",
+            "person_id": "",
+            "broker_id": "fixture-broker-F",
+            "account_id": "fixture-account-F",
+            "signed": true,
+            "username": ""
+          },
+          "action": "Sell",
+          "price": 0.0,
+          "quantity": 2,
+          "order_type": "IOC",
+          "price_type": "MKT",
+          "market_type": "Day",
+          "oc_type": "Cover",
+          "subaccount": "",
+          "combo": false
+        },
+        "status": {
+          "id": "fixture-f2",
+          "exchange_ts": 1789000006.406311,
+          "modified_price": 0.0,
+          "cancel_quantity": 0,
+          "order_quantity": 2,
+          "web_id": "fixture"
+        },
+        "contract": {
+          "security_type": "FUT",
+          "code": "TXFJ6",
+          "exchange": "TAIFEX",
+          "delivery_month": "",
+          "full_code": "",
+          "delivery_date": "",
+          "strike_price": 0.0,
+          "option_right": "Future"
+        }
+      }
+    }
+  },
+  {
+    "state": "FuturesDeal",
+    "data": {
+      "FuturesDeal": {
+        "event_id": "v1:FD:FIXTURESTREAMFD:FIXTURERESET:6",
+        "trade_id": "fixture-f2",
+        "seqno": "fixture-f2",
+        "ordno": "fixture-o2",
+        "exchange_seq": "000001",
+        "action": "Sell",
+        "code": "TXFJ6",
+        "price": 48290.0,
+        "quantity": 1,
+        "subaccount": "",
+        "security_type": "FUT",
+        "delivery_month": "",
+        "ts": 1789000006.657603,
+        "broker_id": "fixture-broker-F",
+        "account_id": "fixture-account-F",
+        "full_code": "",
+        "strike_price": 0.0,
+        "option_right": "Future",
+        "market_type": "Day",
+        "combo": false
+      }
+    }
+  },
+  {
+    "state": "FuturesDeal",
+    "data": {
+      "FuturesDeal": {
+        "event_id": "v1:FD:FIXTURESTREAMFD:FIXTURERESET:7",
+        "trade_id": "fixture-f2",
+        "seqno": "fixture-f2",
+        "ordno": "fixture-o2",
+        "exchange_seq": "000002",
+        "action": "Sell",
+        "code": "TXFJ6",
+        "price": 48285.0,
+        "quantity": 1,
+        "subaccount": "",
+        "security_type": "FUT",
+        "delivery_month": "",
+        "ts": 1789000010.2198,
+        "broker_id": "fixture-broker-F",
+        "account_id": "fixture-account-F",
+        "full_code": "",
+        "strike_price": 0.0,
+        "option_right": "Future",
+        "market_type": "Day",
+        "combo": false
+      }
+    }
+  },
+  {
+    "state": "StockOrder",
+    "data": {
+      "StockOrder": {
+        "event_id": "v1:SO:FIXTURESTREAMSO:FIXTURERESET:1",
+        "operation": {
+          "op_type": "New",
+          "op_code": "00",
+          "op_msg": ""
+        },
+        "order": {
+          "id": "fixture-s1",
+          "seqno": "fixture-s1",
+          "ordno": "fixture-o3",
+          "account": {
+            "account_type": "S",
+            "person_id": "",
+            "broker_id": "fixture-broker-S",
+            "account_id": "fixture-account-S",
+            "signed": true,
+            "username": ""
+          },
+          "action": "Buy",
+          "price": 0.0,
+          "quantity": 1,
+          "order_type": "IOC",
+          "price_type": "MKT",
+          "order_cond": "Cash",
+          "order_lot": "Common",
+          "custom_field": ""
+        },
+        "status": {
+          "id": "fixture-s1",
+          "exchange_ts": 1789000034.833027,
+          "modified_price": 0.0,
+          "cancel_quantity": 0,
+          "order_quantity": 1,
+          "web_id": "fixture"
+        },
+        "contract": {
+          "exchange": "TSE",
+          "code": "2890",
+          "security_type": "STK",
+          "symbol": "",
+          "name": "",
+          "currency": "TWD"
+        }
+      }
+    }
+  },
+  {
+    "state": "StockDeal",
+    "data": {
+      "StockDeal": {
+        "event_id": "v1:SD:FIXTURESTREAMSD:FIXTURERESET:1",
+        "trade_id": "fixture-s1",
+        "seqno": "fixture-s1",
+        "ordno": "fixture-o3",
+        "exchange_seq": "000001",
+        "action": "Buy",
+        "code": "2890",
+        "order_cond": "Cash",
+        "order_lot": "Common",
+        "price": 44.9,
+        "quantity": 1,
+        "ts": 1789000038.343831,
+        "broker_id": "fixture-broker-S",
+        "account_id": "fixture-account-S",
+        "web_id": "fixture",
+        "custom_field": ""
+      }
+    }
+  },
+  {
+    "state": "StockOrder",
+    "data": {
+      "StockOrder": {
+        "event_id": "v1:SO:FIXTURESTREAMSO:FIXTURERESET:2",
+        "operation": {
+          "op_type": "New",
+          "op_code": "00",
+          "op_msg": ""
+        },
+        "order": {
+          "id": "fixture-s2",
+          "seqno": "fixture-s2",
+          "ordno": "fixture-o4",
+          "account": {
+            "account_type": "S",
+            "person_id": "",
+            "broker_id": "fixture-broker-S",
+            "account_id": "fixture-account-S",
+            "signed": true,
+            "username": ""
+          },
+          "action": "Sell",
+          "price": 0.0,
+          "quantity": 1,
+          "order_type": "IOC",
+          "price_type": "MKT",
+          "order_cond": "Cash",
+          "order_lot": "Common",
+          "custom_field": ""
+        },
+        "status": {
+          "id": "fixture-s2",
+          "exchange_ts": 1789000040.940538,
+          "modified_price": 0.0,
+          "cancel_quantity": 0,
+          "order_quantity": 1,
+          "web_id": "fixture"
+        },
+        "contract": {
+          "exchange": "TSE",
+          "code": "2890",
+          "security_type": "STK",
+          "symbol": "",
+          "name": "",
+          "currency": "TWD"
+        }
+      }
+    }
+  },
+  {
+    "state": "StockDeal",
+    "data": {
+      "StockDeal": {
+        "event_id": "v1:SD:FIXTURESTREAMSD:FIXTURERESET:2",
+        "trade_id": "fixture-s2",
+        "seqno": "fixture-s2",
+        "ordno": "fixture-o4",
+        "exchange_seq": "000001",
+        "action": "Sell",
+        "code": "2890",
+        "order_cond": "Cash",
+        "order_lot": "Common",
+        "price": 44.9,
+        "quantity": 1,
+        "ts": 1789000042.810581,
+        "broker_id": "fixture-broker-S",
+        "account_id": "fixture-account-S",
+        "web_id": "fixture",
+        "custom_field": ""
+      }
+    }
+  }
+]

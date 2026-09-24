@@ -11,6 +11,7 @@ import {
     selectAccount,
     useAccounts,
 } from '../lib/account-store';
+import { UNSIGNED_LABEL, UNSIGNED_TITLE } from '../lib/account-signing';
 import {
     maskAccountId,
     maskMoney,
@@ -238,11 +239,11 @@ export function BottomDock({
                                 key={key}
                                 value={key}
                                 disabled
-                                title='未簽署 API 約定書（無法下單）'
+                                title={UNSIGNED_TITLE}
                             >
                                 {a.account_type === 'S' ? '[證]' : '[期]'}{' '}
                                 {a.broker_id}-
-                                {maskAccountId(a.account_id, priv)} · 未簽署
+                                {maskAccountId(a.account_id, priv)} · {UNSIGNED_LABEL}
                             </option>
                         );
                     })}

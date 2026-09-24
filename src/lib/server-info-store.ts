@@ -35,6 +35,16 @@ export function observeServerInfo(request: ServerInfoRequest, info: ServerInfo |
     for (const listener of listeners) listener();
 }
 
+/** Drop what is known for `base` (e.g. the stream went down: the sidecar may
+ * be restarting in another mode on the same port). Responses to requests
+ * started before this are ignored; only a fresh /info repopulates it. */
+export function forgetServerInfo(base: string) {
+    sequence += 1;
+    applied.set(base, sequence);
+    if (!infos.delete(base)) return;
+    for (const listener of listeners) listener();
+}
+
 // Hoisted so useSyncExternalStore keeps one subscription per component instead
 // of re-subscribing on every render.
 export function subscribeServerInfo(listener: () => void) {

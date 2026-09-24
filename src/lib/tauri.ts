@@ -37,6 +37,8 @@ import {
     recoverHarnessOwnership,
 } from './sidecar-ownership';
 import { notify } from './trade';
+import { cacheDesktopConfigured } from './desktop-setup-state';
+import { isChildWindow } from './window-role';
 
 export { isTauri } from './runtime';
 export {
@@ -1010,8 +1012,18 @@ const EMPTY_SETTINGS: DesktopSettings = {
     agentHarnessEnabled: true,
 };
 
+// settings.json holds the API key, secret key and CA password: only the main
+// window may touch it. Child windows (popouts, tray) have no store permission
+// at all and learn only the non-secret "setup done" flag (desktop-setup-state).
+function assertMainWindowSettingsAccess(): void {
+    if (isChildWindow()) {
+        throw new Error('本機設定只能在主視窗讀取或修改');
+    }
+}
+
 export async function loadDesktopSettings(): Promise<DesktopSettings> {
     if (!isTauri) return { ...EMPTY_SETTINGS };
+    assertMainWindowSettingsAccess();
     const { LazyStore } = await import('@tauri-apps/plugin-store');
     const store = new LazyStore('settings.json');
     const safeDefaultMigrated =
@@ -1039,11 +1051,13 @@ export async function loadDesktopSettings(): Promise<DesktopSettings> {
         agentHarnessEnabled,
     };
     cacheAgentHarnessEnabled(settings.agentHarnessEnabled);
+    cacheDesktopConfigured(Boolean(settings.apiKey && settings.secretKey));
     return settings;
 }
 
 export async function saveDesktopSettings(s: DesktopSettings) {
     if (!isTauri) return;
+    assertMainWindowSettingsAccess();
     const { LazyStore } = await import('@tauri-apps/plugin-store');
     const store = new LazyStore('settings.json');
     await store.set('apiKey', s.apiKey);
@@ -1056,6 +1070,7 @@ export async function saveDesktopSettings(s: DesktopSettings) {
     await store.set('agentHarnessEnabled', s.agentHarnessEnabled);
     cacheAgentHarnessEnabled(s.agentHarnessEnabled);
     await store.save();
+    cacheDesktopConfigured(Boolean(s.apiKey && s.secretKey));
 }
 
 export interface SetAgentHarnessResult {
@@ -1477,17 +1492,22 @@ export async function restartAndInstallUpdate() {
     }
 }
 
-export async function openLatestRelease() {
+// 以系統預設瀏覽器開啟外部網址（WebView 內不導航）。
+export async function openExternalUrl(url: string, failTitle = '無法開啟連結') {
     try {
         const { open } = await import('@tauri-apps/plugin-shell');
-        await open(APP_RELEASE_URL);
+        await open(url);
     } catch (e) {
         notify({
             kind: 'err',
-            title: '無法開啟下載頁',
+            title: failTitle,
             body: e instanceof Error ? e.message : String(e),
         });
     }
+}
+
+export async function openLatestRelease() {
+    await openExternalUrl(APP_RELEASE_URL, '無法開啟下載頁');
 }
 
 // ---- tray events ----

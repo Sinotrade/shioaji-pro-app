@@ -20,6 +20,12 @@ import {
     useAccounts,
 } from '../lib/account-store';
 import {
+    API_MANAGEMENT_URL,
+    SIGNING_URLS,
+    UNSIGNED_BLOCKED_LABEL,
+    UNSIGNED_TITLE,
+} from '../lib/account-signing';
+import {
     HEADER_ITEMS,
     setHeaderItem,
     useHeaderItems,
@@ -53,9 +59,14 @@ import {
     type ToastScale,
 } from '../lib/toast-prefs';
 import {
+    setChartHoverPricePick,
+    useChartHoverPricePick,
+} from '../lib/chart-price-prefs';
+import {
     isAgentHarnessEnabled,
     setAgentHarnessEnabled,
 } from '../lib/tauri';
+import { ExternalLink } from './external-link';
 import { Orb } from './orb';
 import * as hud from './hud-header.css';
 import * as panel from './panel.css';
@@ -245,11 +256,14 @@ function SoundPrivacySection() {
     );
 }
 
-function AccountsSection() {
+export function AccountsSection() {
     const { accounts, selectedStock, selectedFutures, loaded } = useAccounts();
     const priv = usePrivacyMode();
     const [refreshing, setRefreshing] = useState(false);
     useEffect(ensureAccounts, []);
+    const unsignedTypes = (['S', 'F'] as const).filter((t) =>
+        accounts.some((a) => a.account_type === t && !a.signed),
+    );
     const groups: { label: string; type: 'S' | 'F'; selected: string }[] = [
         {
             label: '證券帳戶',
@@ -291,7 +305,7 @@ function AccountsSection() {
                                     title={
                                         a.signed
                                             ? undefined
-                                            : '未簽署 API 約定書（無法下單）'
+                                            : UNSIGNED_TITLE
                                     }
                                     onClick={() => selectAccount(a)}
                                 >
@@ -300,7 +314,7 @@ function AccountsSection() {
                                     {maskName(a.username, priv)}）
                                     {!a.signed && (
                                         <span className={styles.unsignedTag}>
-                                            未簽署（無法下單）
+                                            {UNSIGNED_BLOCKED_LABEL}
                                         </span>
                                     )}
                                 </button>
@@ -318,8 +332,30 @@ function AccountsSection() {
                 <span className={hud.emptyHint}>載入帳號中…</span>
             )}
             <span className={hud.emptyHint}>
-                下單與帳務查詢都使用選定的帳號；未簽署 API
-                約定書的帳戶會列出但無法選為下單帳戶。
+                下單與帳務查詢都使用選定的帳號；尚未完成 API
+                約定書簽署或模擬測試的帳戶會列出但無法選為下單帳戶。
+                {unsignedTypes.length > 0 && (
+                    <>
+                        請到永豐 API 管理頁查看原因並完成：
+                        <span className={styles.signLinks}>
+                            <ExternalLink
+                                href={API_MANAGEMENT_URL}
+                                className={styles.signLink}
+                            >
+                                API 管理頁
+                            </ExternalLink>
+                            {unsignedTypes.map((t) => (
+                                <ExternalLink
+                                    key={t}
+                                    href={SIGNING_URLS[t].url}
+                                    className={styles.signLink}
+                                >
+                                    {SIGNING_URLS[t].label}
+                                </ExternalLink>
+                            ))}
+                        </span>
+                    </>
+                )}
             </span>
             <button
                 className={hud.updateBtn}
@@ -344,6 +380,7 @@ function AccountsSection() {
 
 function RiskSection() {
     const risk = useRiskSettings();
+    const hoverPricePick = useChartHoverPricePick();
     const dailyPnl = getDailyPnl();
     // 金額遮蔽也要蓋住這裡的損益估算 — 隱私開關不該在設定 dialog 裡漏底
     const privMoney = usePrivacyMoney();
@@ -429,6 +466,29 @@ function RiskSection() {
                 圖表點價、平倉與鋪單都會先跳委託確認；停損/停利等
                 自動觸發單與 Agent 下單不經過此確認。
             </span>
+            <span className={hud.settingLabel}>圖表帶價 Chart Price</span>
+            <div className={hud.switchRow}>
+                <span
+                    className={hud.switchLabel}
+                    title='在 K 線圖上移動游標時，把十字線價位即時帶入同商品的下單面板'
+                >
+                    游標移動帶價
+                </span>
+                <button
+                    className={hud.switchTrack[hoverPricePick ? 'on' : 'off']}
+                    aria-label='游標移動帶價'
+                    aria-pressed={hoverPricePick}
+                    title={
+                        hoverPricePick
+                            ? '關閉游標移動帶價（只在點擊圖表時帶價）'
+                            : '啟用游標移動帶價'
+                    }
+                    onClick={() => setChartHoverPricePick(!hoverPricePick)}
+                />
+            </div>
+            <span className={hud.emptyHint}>
+                {'預設關閉，避免游標掃過圖表時改寫已填好的委託價；關閉時仍可點擊 K 線圖或五檔帶價。'}
+            </span>
             <span className={hud.settingLabel}>快捷鍵 Hotkeys</span>
             <div className={hud.switchRow}>
                 <span
@@ -503,8 +563,8 @@ function AgentSection() {
             </div>
             <span className={hud.emptyHint}>
                 關閉時，一般 UI 下單走原本的直接 HTTP 路徑；開啟後，Agent
-                與 UI 的交易 mutation 都需要一次性 capability。切換立即
-                生效，不需重啟伺服器。
+                與 UI 的每筆交易異動都需要一次性授權。切換立即生效，
+                不需重啟伺服器。
             </span>
             <div className={hud.switchRow}>
                 <span
@@ -520,8 +580,9 @@ function AgentSection() {
                 />
             </div>
             <span className={hud.emptyHint}>
-                正式環境固定逐筆顯示可視化核可視窗，無法關閉。自動交易僅限
-                模擬環境，且每次 App 重啟都會恢復為「交易確認」。此安全邊界與
+                正式環境的逐筆確認固定由獨立的原生核可視窗確認，無法關閉；
+                正式 Auto 首筆需在原生視窗授權本次 runtime 與帳戶，停止或
+                切換後失效。每次 App 重啟都會恢復為「逐筆確認」。此安全邊界與
                 「手動下單確認」（設定 → 風控）互相獨立。
             </span>
             {busy && (

@@ -1,119 +1,594 @@
-// src/lib/bracket.ts — bracket orders: after an entry order FILLS, an OCO
-// stop-loss + take-profit trigger pair is armed automatically. Activation
-// is detected via order_event deals plus a trades-polling fallback.
+// src/lib/bracket.ts — bracket orders (括號單): after an entry order fills,
+// an OCO stop-loss + take-profit trigger pair protects the FILLED quantity.
+//
+// #102 — event driven, no polling:
+// - the main window alone tracks plans; other windows register / reconcile
+//   through the ACKed command bus and display a mirrored snapshot;
+// - entry fills come from de-duplicated order/deal reports (full event_id,
+//   then `<orderId>:<exchange_seq>`), matched to the plan's FIXED account,
+//   product and side, and accumulate across partial fills — protection grows
+//   with every new fill instead of stopping at the first one;
+// - one-shot cache-only lookups (`/order/trades refresh:false`) cover fills
+//   that arrived before registration, after a reload or across a reconnect;
+// - disconnects, sequence gaps, untrackable IDs and non-Healthy trade cache
+//   mark protection NOT confirmed; only an explicit user reconciliation
+//   (`refresh:true`, update_status) followed by a Healthy cache clears them;
+// - unknown exit outcomes and unprotected quantity stay visible; nothing is
+//   resent automatically.
 
-import { onOrderEvent } from './stream';
-import { fetchTrades } from './shioaji';
+import { useSyncExternalStore } from 'react';
+import { reportLedger } from './report-ledger';
+import { cancelOrder, fetchTradeCacheHealth, fetchTrades } from './shioaji';
+import { checkTradeCacheHealth, tradeCacheContinuous } from './trading-state';
+import {
+    accountRefKey,
+    addIssue,
+    applyEntryFill,
+    applyEntryOrderReport,
+    applyEntryTrade,
+    bracketPhase,
+    isLive,
+    matchDeal,
+    protectionQuantity,
+    tradeMatchesPlan,
+    unprotectedQuantity,
+    workingEntryAfterExit,
+    type AccountRef,
+    type BracketPlan,
+} from './bracket-core';
+import { onTrackedReport, recentReportsFor, type TrackedReportInfo } from './bracket-reports';
+import { claimExecutor, CommandNotAcknowledged, createCommandBus, isExecutor, isMainWindow } from './main-window-commands';
+import type { OrderEventReport } from './order-report';
+import {
+    currentProtectionEnv,
+    envBase,
+    onProtectionEnvChange,
+    refreshProtectionEnv,
+    reportEnvMatches,
+} from './protection-env';
+import { getApiBase } from './runtime';
+import { getStreamStatus, subscribeStatusStore } from './stream';
 import { notify } from './trade';
-import { addTrigger } from './trigger-engine';
-import type { Action } from './types/order';
+import {
+    acknowledgeExit,
+    applyExitTrade,
+    armBracketGroup,
+    disarmBracketGroup,
+    EXECUTOR_LOCK,
+    getExits,
+    onBecomeExecutor,
+    onExitUpdate,
+    type ExitRecord,
+} from './trigger-engine';
+import type { Action, FuturesOCType, StockOrderCond, StockOrderLot, TradeCacheHealth } from './types/order';
 
-interface PendingBracket {
-    orderId: string; // Trade.order.id
+export type { BracketPlan } from './bracket-core';
+
+export interface BracketSpec {
+    env: string;
+    account: AccountRef;
+    orderId: string;
     seqno: string;
-    code: string; // display code for triggers/quotes
-    action: Action; // entry direction
+    quoteCode: string;
+    orderCode: string;
+    securityType: 'STK' | 'FUT' | 'OPT';
+    exchange: string;
+    action: Action;
     quantity: number;
     stopPrice: number | null;
     takePrice: number | null;
-    accountType: 'S' | 'F';
 }
 
-const pending = new Map<string, PendingBracket>();
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+// ---- pre-order validation (runs BEFORE the entry order is sent) ----
 
-export function registerBracket(b: PendingBracket) {
-    if (b.stopPrice === null && b.takePrice === null) return;
-    pending.set(b.orderId, b);
-    notify({
-        kind: 'info',
-        title: '🧷 括號單待命',
-        body: `${b.code} 成交後自動掛${b.stopPrice !== null ? ` 停損@${b.stopPrice}` : ''}${b.takePrice !== null ? ` 停利@${b.takePrice}` : ''}`,
-    });
-    ensureWatcher();
+export interface BracketRequest {
+    isFutures: boolean;
+    action: Action;
+    referencePrice: number | null; // limit price, or last trade for market entries
+    stopPrice: number | null;
+    takePrice: number | null;
+    orderLot?: StockOrderLot;
+    orderCond?: StockOrderCond;
+    octype?: FuturesOCType;
 }
 
-function activate(b: PendingBracket, filledQty: number) {
-    pending.delete(b.orderId);
-    const exit: Action = b.action === 'Buy' ? 'Sell' : 'Buy';
-    const group = `oco-${b.orderId.slice(0, 10)}`;
-    const qty = Math.min(filledQty || b.quantity, b.quantity);
-    if (b.stopPrice !== null) {
-        addTrigger({
-            code: b.code,
-            // long: stop fires below; short: stop fires above
-            condition: b.action === 'Buy' ? 'below' : 'above',
-            price: b.stopPrice,
-            action: exit,
-            quantity: qty,
-            kind: 'stop',
-            group,
-        });
+export function validateBracketRequest(r: BracketRequest): string | null {
+    if (r.stopPrice === null && r.takePrice === null) return '括號單需要停損價或停利價';
+    for (const p of [r.stopPrice, r.takePrice]) {
+        if (p !== null && (!Number.isFinite(p) || p <= 0)) return '停損／停利價必須是正數';
     }
-    if (b.takePrice !== null) {
-        addTrigger({
-            code: b.code,
-            condition: b.action === 'Buy' ? 'above' : 'below',
-            price: b.takePrice,
-            action: exit,
-            quantity: qty,
-            kind: 'take',
-            group,
-        });
+    if (r.isFutures) {
+        if (r.octype && r.octype !== 'Auto' && r.octype !== 'New') return '括號單僅支援期貨新倉（Auto／New）進場，出場固定以平倉（Cover）送出';
+    } else if ((r.orderLot ?? 'Common') !== 'Common' || (r.orderCond ?? 'Cash') !== 'Cash') {
+        return '股票括號單僅支援現股整張；零股、融資券與借券條件請手動設定出場';
     }
-    notify({
-        kind: 'ok',
-        title: '🧷 括號單已啟動',
-        body: `${b.code} 進場成交 → OCO 停損/停利已掛`,
+    const ref = r.referencePrice;
+    if (ref === null || !Number.isFinite(ref) || ref <= 0) return '沒有有效的參考價（限價或即時成交價），無法確認停損停利方向';
+    const long = r.action === 'Buy';
+    if (r.stopPrice !== null && (long ? r.stopPrice >= ref : r.stopPrice <= ref)) {
+        return `${long ? '買進' : '賣出'}的停損價必須${long ? '低於' : '高於'}參考價 ${ref}`;
+    }
+    if (r.takePrice !== null && (long ? r.takePrice <= ref : r.takePrice >= ref)) {
+        return `${long ? '買進' : '賣出'}的停利價必須${long ? '高於' : '低於'}參考價 ${ref}`;
+    }
+    return null;
+}
+
+// ---- state ----
+
+const STORAGE_KEY = 'sj-pro-brackets';
+export const SNAPSHOT_HEARTBEAT_MS = 5000;
+export const SNAPSHOT_STALE_MS = 15000;
+const KEEP_DONE_MS = 24 * 3600 * 1000;
+const main = isMainWindow();
+
+function loadPlans(): BracketPlan[] {
+    try {
+        const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
+        const arr: unknown = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(arr)) return [];
+        // A cancel still 'sending' when the app went away has an unknown
+        // outcome: show 刪單待確認 · 對帳, never a stuck 處理中 (and never resend).
+        return (arr as BracketPlan[]).filter(p => p && typeof p.id === 'string' && p.account)
+            .map(p => p.entryCancel === 'sending' ? { ...p, entryCancel: 'unconfirmed' as const } : p);
+    } catch {
+        return [];
+    }
+}
+
+// Loaded and written only by the executing main window (see run()).
+let plans: BracketPlan[] = [];
+let executing = false;
+let decideRole!: () => void;
+const roleDecided = new Promise<void>(resolve => { decideRole = resolve; });
+if (!main) decideRole();
+let snapshot: BracketPlan[] = plans;
+const listeners = new Set<() => void>();
+const exitIds = new Map<string, string>(); // plan id → exit record id
+
+type Command =
+    | { op: 'ping' }
+    | { op: 'register'; spec: BracketSpec }
+    | { op: 'reconcile'; id: string }
+    | { op: 'dismiss'; id: string }
+    | { op: 'ack-exit'; id: string }
+    | { op: 'cancel-entry'; id: string };
+
+const bus = createCommandBus<Command, BracketPlan[]>({
+    channel: typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-brackets:${getApiBase()}`) : null,
+    main: () => executing,
+    ready: roleDecided,
+    heartbeatMs: SNAPSHOT_HEARTBEAT_MS,
+    handle: cmd => handle(cmd),
+    snapshot: () => snapshot,
+    onState: state => {
+        if (!Array.isArray(state)) return;
+        snapshot = state;
+        listeners.forEach(l => l());
+    },
+});
+
+function commit() {
+    if (!executing) return; // mirrors never write shared state
+    const now = Date.now();
+    plans = plans.filter(p => !p.dismissed && (isLive(p) || now - p.updatedAt < KEEP_DONE_MS));
+    try { globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(plans)); } catch { /* quota */ }
+    snapshot = plans;
+    listeners.forEach(l => l());
+    bus.publish();
+}
+
+const planId = (env: string, account: AccountRef, orderId: string) => `${env}|${accountRefKey(account)}|${orderId}`;
+
+function describeProtection(p: BracketPlan) {
+    return `${p.stopPrice !== null ? ` 停損@${p.stopPrice}` : ''}${p.takePrice !== null ? ` 停利@${p.takePrice}` : ''}`;
+}
+
+function arm(p: BracketPlan) {
+    const qty = protectionQuantity(p);
+    if (p.dismissed || qty <= 0 || p.env !== currentProtectionEnv()) return;
+    armBracketGroup({
+        group: p.group, bracketId: p.id, env: p.env, account: p.account, code: p.quoteCode,
+        orderCode: p.orderCode, entryAction: p.action, octype: p.market === 'futures' ? 'Cover' : undefined,
+        stopPrice: p.stopPrice, takePrice: p.takePrice, quantity: qty,
     });
 }
 
-async function pollPending() {
-    if (pending.size === 0) return;
-    const types = new Set([...pending.values()].map((b) => b.accountType));
-    for (const t of types) {
+/** Arm/resize protection for the filled quantity; notify once per change. */
+function syncProtection(before: BracketPlan | undefined, p: BracketPlan) {
+    if (p.dismissed) return; // the user removed this plan and its protection
+    const qty = protectionQuantity(p);
+    arm(p);
+    const prevQty = before ? protectionQuantity(before) : 0;
+    if (qty > prevQty) {
+        notify({ kind: 'ok', title: qty < p.quantity ? '括號單部分成交已保護' : '括號單已啟動',
+            body: `${p.quoteCode} 已成交 ${Math.min(p.filled, p.quantity)}/${p.quantity} → OCO${describeProtection(p)} 保護 ${qty}` });
+    }
+    const late = unprotectedQuantity(p) - (before ? unprotectedQuantity(before) : 0);
+    if (late > 0) {
+        notify({ kind: 'err', title: '括號單有未保護部位',
+            body: `${p.quoteCode} ${unprotectedQuantity(p)} 可能未受保護（待確認）；請先按「對帳」確認實際成交再決定，勿直接另下出場單；系統不會自動重送` });
+    }
+    if (before && bracketPhase(before) === 'waiting' && bracketPhase(p) === 'closed') {
+        notify({ kind: 'info', title: '括號單取消', body: `${p.quoteCode} 進場單未成交即結束，保護單不掛` });
+    }
+}
+
+function update(id: string, fn: (p: BracketPlan) => BracketPlan) {
+    const before = plans.find(p => p.id === id);
+    if (!before) return;
+    const after = fn(before);
+    if (after === before) return;
+    plans = plans.map(p => p === before ? after : p);
+    syncProtection(before, after);
+    commit();
+}
+
+function applyReport(p: BracketPlan, report: OrderEventReport, now: number): BracketPlan {
+    if (report.kind === 'order') return applyEntryOrderReport(p, report, now);
+    const m = matchDeal(report, p.orderId, p.account, p.market, p.orderCode, p.action);
+    if (m.kind === 'fill') return applyEntryFill(p, m.fill, now);
+    if (m.kind === 'mismatch') return addIssue(p, 'report-mismatch', m.detail, now);
+    return p;
+}
+
+function onReport(report: OrderEventReport, info: TrackedReportInfo, base: string) {
+    const now = Date.now();
+    for (const p of plans.slice()) {
+        if (!isLive(p) || !reportEnvMatches(p.env, base)) continue;
+        let next = p;
+        if (info.untrackable && report.market === p.market) {
+            next = addIssue(next, 'untrackable', '收到沒有可追蹤事件 ID 的回報，無法確認是否漏回報', now);
+        }
+        next = applyReport(next, report, now);
+        if (next !== p) update(p.id, () => next);
+    }
+}
+
+function onExit(rec: ExitRecord) {
+    if (!rec.bracketId) return;
+    exitIds.set(rec.bracketId, rec.id);
+    update(rec.bracketId, p => {
+        const next: BracketPlan = { ...p, exit: {
+            status: rec.status, kind: rec.kind, quantity: rec.quantity, filled: rec.filled, fills: rec.fills,
+            fillTs: rec.fillTs, fillConflict: rec.fillConflict, orderId: rec.orderId, acknowledged: rec.acknowledged,
+            detail: rec.acknowledged ? `${rec.detail ?? ''}（使用者已確認處理）` : rec.detail, at: rec.at,
+        }, updatedAt: Date.now() };
+        return rec.fillConflict
+            ? addIssue(next, 'report-mismatch', '出場成交回報與委託快取無法對應為同一筆（可能重複計算）；請對帳', Date.now())
+            : next;
+    });
+}
+
+// ---- cache-only lookups / health (no polling) ----
+
+const inflight = new Map<string, Promise<void>>();
+
+function plansFor(account: AccountRef, env: string) {
+    return plans.filter(p => p.env === env && accountRefKey(p.account) === accountRefKey(account) && isLive(p));
+}
+
+function applyHealth(account: AccountRef, env: string, health: TradeCacheHealth, now: number) {
+    const codes = health.reasons.map(r => `${r.event_type}:${r.reason}`).join('、');
+    for (const p of plansFor(account, env)) {
+        if (health.state === 'Degraded') {
+            update(p.id, x => addIssue(x, 'cache-degraded', `伺服器委託快取狀態 Degraded（${codes}）`, now));
+        } else if (health.reasons.some(r => r.reason === 'NotSubscribed')) {
+            update(p.id, x => addIssue(x, 'not-subscribed', '此帳戶未訂閱主動回報，成交不會即時推送', now));
+        }
+    }
+}
+
+async function checkHealth(account: AccountRef, env: string) {
+    const health = await fetchTradeCacheHealth(account.account_type, account);
+    if (health.reasons.some(r => r.reason === 'NotSubscribed')) {
+        // Never subscribe here: trading-state owns (re)subscription and its
+        // single-flight health check coalesces with a reconnect already in
+        // progress, so each account is subscribed once. The plan stays
+        // unconfirmed (not-subscribed) until an explicit reconcile.
+        void checkTradeCacheHealth('manual');
+    }
+    if (currentProtectionEnv() === env) applyHealth(account, env, health, Date.now());
+    return health;
+}
+
+/** A possible sequence gap (shared report ledger, #128) on this API base:
+ * any plan there may have missed a fill — conservative, not per market. */
+function onGap(base: string) {
+    const now = Date.now();
+    for (const p of plans.slice()) {
+        if (!isLive(p) || !reportEnvMatches(p.env, base)) continue;
+        update(p.id, x => addIssue(x, 'gap', '回報序號跳號，可能漏收成交；請對帳', now));
+    }
+}
+
+/** One-shot cache-only lookup + health for an account's live plans. */
+function lookup(account: AccountRef, env: string): Promise<void> {
+    const key = `lookup|${env}|${accountRefKey(account)}`;
+    const running = inflight.get(key);
+    if (running) return running;
+    const task = (async () => {
+        const now = Date.now();
         try {
-            const trades = await fetchTrades(t);
-            for (const b of [...pending.values()]) {
-                if (b.accountType !== t) continue;
-                const trade = trades.find(
-                    (x) =>
-                        x.order.id === b.orderId ||
-                        (b.seqno && x.order.seqno === b.seqno),
-                );
-                if (!trade) continue;
-                const st = trade.status.status;
-                if (trade.status.deal_quantity > 0) {
-                    activate(b, trade.status.deal_quantity);
-                } else if (
-                    st === 'Cancelled' ||
-                    st === 'Failed' ||
-                    st === 'Inactive'
-                ) {
-                    pending.delete(b.orderId);
-                    notify({
-                        kind: 'info',
-                        title: '🧷 括號單取消',
-                        body: `${b.code} 進場單未成交（${st}），保護單不掛`,
-                    });
+            // Cache-only continuity is proven only by trading-state's
+            // authoritative baseline on this sidecar instance (#128).
+            const continuous = tradeCacheContinuous();
+            const trades = await fetchTrades(account.account_type, account, { refresh: false });
+            if (currentProtectionEnv() !== env) return;
+            for (const p of plansFor(account, env)) {
+                if (!continuous) update(p.id, x => addIssue(x, 'no-baseline', '委託快取尚無連續基準（未完成權威查詢或串流曾中斷）；請對帳', now));
+                const trade = trades.find(t => tradeMatchesPlan(t, p));
+                if (trade) update(p.id, x => applyEntryTrade(x, trade, now));
+                else update(p.id, x => addIssue(x, 'lookup-failed', '伺服器委託快取找不到此進場單（可能伺服器重啟）；請對帳', now));
+            }
+        } catch (e) {
+            for (const p of plansFor(account, env)) {
+                update(p.id, x => addIssue(x, 'lookup-failed', `委託快取查詢失敗：${e instanceof Error ? e.message : String(e)}`, now));
+            }
+        }
+        try { await checkHealth(account, env); } catch (e) {
+            for (const p of plansFor(account, env)) {
+                update(p.id, x => addIssue(x, 'lookup-failed', `回報健康狀態查詢失敗：${e instanceof Error ? e.message : String(e)}`, now));
+            }
+        }
+    })().finally(() => inflight.delete(key));
+    inflight.set(key, task);
+    return task;
+}
+
+function lookupLiveAccounts() {
+    const env = currentProtectionEnv();
+    if (!env) return;
+    const seen = new Map<string, AccountRef>();
+    for (const p of plans) if (p.env === env && isLive(p)) seen.set(accountRefKey(p.account), p.account);
+    for (const account of seen.values()) void lookup(account, env);
+}
+
+/** Explicit, authoritative reconciliation (update_status). User action only. */
+async function reconcile(id: string): Promise<{ health: TradeCacheHealth['state'] }> {
+    const plan = plans.find(p => p.id === id);
+    if (!plan) throw new Error('找不到此括號單');
+    if (plan.env !== currentProtectionEnv()) throw new Error('此括號單屬於其他伺服器或模擬／正式模式，請切回原環境後對帳');
+    const key = `reconcile|${plan.env}|${accountRefKey(plan.account)}`;
+    if (inflight.has(key)) throw new Error('對帳進行中');
+    let result: TradeCacheHealth['state'] = 'Unknown';
+    const task = (async () => {
+        const env = plan.env;
+        const trades = await fetchTrades(plan.account.account_type, plan.account, { refresh: true });
+        const now = Date.now();
+        for (const p of plansFor(plan.account, env)) {
+            const trade = trades.find(t => tradeMatchesPlan(t, p));
+            if (trade) update(p.id, x => {
+                const next = applyEntryTrade(x, trade, now);
+                return next.entryClosed && next.entryCancel ? { ...next, entryCancel: undefined } : next;
+            });
+            const exitTrade = p.exit?.orderId ? trades.find(t => t.order.id === p.exit?.orderId) : undefined;
+            if (exitTrade) applyExitTrade(exitTrade);
+        }
+        const health = await checkHealth(plan.account, env);
+        result = health.state;
+        if (getStreamStatus() !== 'live') {
+            // Reconciled a snapshot, but reports/ticks are not arriving now.
+            for (const p of plansFor(plan.account, env)) update(p.id, x => addIssue(x, 'disconnect', '回報串流仍未連線；對帳結果之後的成交不會即時收到', now));
+            return;
+        }
+        if (health.state === 'Healthy') {
+            for (const p of plansFor(plan.account, env)) {
+                if (trades.some(t => tradeMatchesPlan(t, p))) {
+                    update(p.id, x => ({ ...x, updatedAt: now, issues: x.issues.filter(i => i.code === 'overfill') }));
+                } else {
+                    update(p.id, x => addIssue(x, 'lookup-failed', '對帳結果仍找不到此進場單；請至委託分頁確認', now));
                 }
             }
-        } catch {
-            // retry next round
         }
+    })().finally(() => inflight.delete(key));
+    inflight.set(key, task);
+    await task;
+    return { health: result };
+}
+
+function register(spec: BracketSpec): BracketPlan {
+    if (!spec.env || spec.env !== currentProtectionEnv()) throw new Error('伺服器或模擬／正式模式已切換或未確認，括號單未登記');
+    if (!spec.orderId || !spec.account?.broker_id || !spec.account?.account_id) throw new Error('進場單缺少委託或帳戶識別，括號單未登記');
+    if (!Number.isSafeInteger(spec.quantity) || spec.quantity <= 0) throw new Error('進場數量無效');
+    const id = planId(spec.env, spec.account, spec.orderId);
+    const existing = plans.find(p => p.id === id);
+    if (existing) return existing; // idempotent
+    const now = Date.now();
+    let plan: BracketPlan = {
+        ...spec, id, market: spec.account.account_type === 'S' ? 'stock' : 'futures',
+        group: `bracket:${spec.orderId}:${now.toString(36)}`, fills: {}, filled: 0,
+        entryClosed: false, exit: null, issues: [], createdAt: now, updatedAt: now,
+    };
+    if (getStreamStatus() !== 'live') plan = addIssue(plan, 'disconnect', '登記時行情／回報串流未連線', now);
+    // Reports that reached this window before the registration command.
+    for (const report of recentReportsFor(envBase(spec.env), spec.orderId)) plan = applyReport(plan, report, now);
+    plans = [...plans, plan];
+    notify({ kind: 'info', title: '括號單待命',
+        body: `${plan.quoteCode} 成交後依成交量自動掛${describeProtection(plan)}` });
+    syncProtection(undefined, plan);
+    commit();
+    void lookup(plan.account, plan.env);
+    return plan;
+}
+
+function handle(cmd: Command): unknown {
+    switch (cmd.op) {
+        case 'ping': return true;
+        case 'register': return register(cmd.spec);
+        case 'reconcile': return reconcile(cmd.id);
+        case 'dismiss': {
+            const p = plans.find(x => x.id === cmd.id);
+            if (!p) return true;
+            disarmBracketGroup(p.env, p.group);
+            update(p.id, x => ({ ...x, dismissed: true, updatedAt: Date.now() }));
+            return true;
+        }
+        case 'cancel-entry': return cancelEntry(cmd.id);
+        case 'ack-exit': {
+            const exitId = exitIds.get(cmd.id) ?? getExits().find(e => e.bracketId === cmd.id)?.id;
+            if (!exitId) throw new Error('找不到此括號單的出場紀錄');
+            return acknowledgeExit(exitId);
+        }
+    }
+    throw new Error('未知指令');
+}
+
+// ---- public API (any window) ----
+
+/** Confirms the main window can track brackets BEFORE an entry is sent. */
+export async function ensureBracketHost(): Promise<void> {
+    await bus.send({ op: 'ping' });
+}
+
+/** Registration may apply late (the main window can be busy); a short ACK
+ * timeout would invite a second, manual exit. Same budget as reconcile. */
+export const REGISTER_TIMEOUT_MS = 60_000;
+export async function registerBracket(spec: BracketSpec): Promise<BracketPlan> {
+    return await bus.send({ op: 'register', spec }, REGISTER_TIMEOUT_MS) as BracketPlan;
+}
+
+/** What to tell the user when registering after the entry was sent failed.
+ * Never suggests adding a manual stop: an unacknowledged registration may
+ * still apply, and a second exit (futures manual triggers are Auto) could
+ * open a reverse position. */
+export function registrationFailureText(error: unknown): string {
+    if (error instanceof CommandNotAcknowledged) {
+        return '保護單登記結果未確認（主視窗未回應）。請先查看下單面板的括號單狀態清單確認是否已登記；確認前不要另外設定停損或出場單';
+    }
+    const why = error instanceof Error ? error.message : String(error);
+    return `保護單未登記（${why}）。請先查看括號單狀態清單並至委託／持倉確認，再決定是否自行處理出場；系統不會自動補送`;
+}
+
+export function reconcileBracket(id: string) {
+    // update_status can take a while; a short ACK timeout would misreport it.
+    return bus.send({ op: 'reconcile', id }, 60_000) as Promise<{ health: TradeCacheHealth['state'] }>;
+}
+
+export function dismissBracket(id: string) {
+    return bus.send({ op: 'dismiss', id });
+}
+
+export function acknowledgeBracketExit(id: string) {
+    return bus.send({ op: 'ack-exit', id });
+}
+
+/** A mirror's copy is stale when the executing main window stopped
+ * publishing (closed / crashed / not yet started). The executor is never stale. */
+export function bracketSnapshotStale(now = Date.now()): boolean {
+    if (executing) return false;
+    const at = bus.lastStateAt();
+    return at === 0 || now - at > SNAPSHOT_STALE_MS;
+}
+
+/** User-initiated cancel of an entry that is still working after its exit
+ * fired. One request, no retry; the Cancel report closes the entry. */
+export function cancelRemainingEntry(plan: BracketPlan) {
+    return bus.send({ op: 'cancel-entry', id: plan.id }, REGISTER_TIMEOUT_MS);
+}
+
+/** Main window: one cancel request, never retried or resent. The entry is
+ * closed only by a read-back-confirmed Cancelled trade (#129's cancelOrder)
+ * or the Cancel report; anything else leaves 刪單待確認 for an explicit 對帳. */
+async function cancelEntry(id: string): Promise<'cancelled' | 'unconfirmed'> {
+    const plan = plans.find(p => p.id === id);
+    if (!plan) throw new Error('找不到此括號單');
+    if (plan.entryCancel) throw new Error(plan.entryCancel === 'sending' ? '刪單處理中' : '刪單待確認，請先對帳，勿重送');
+    if (workingEntryAfterExit(plan) <= 0) throw new Error('進場單已無剩餘委託');
+    if (plan.env !== currentProtectionEnv()) throw new Error('此括號單屬於其他伺服器或模式，未送出刪單');
+    update(id, p => ({ ...p, entryCancel: 'sending', updatedAt: Date.now() }));
+    try {
+        const trade = await cancelOrder(plan.orderId);
+        const confirmed = trade?.order?.id === plan.orderId && trade.status?.status === 'Cancelled';
+        update(id, p => {
+            if (!confirmed) return { ...p, entryCancel: 'unconfirmed', updatedAt: Date.now() };
+            const next = applyEntryTrade({ ...p, entryCancel: undefined }, trade, Date.now());
+            return { ...next, entryClosed: true };
+        });
+        return confirmed ? 'cancelled' : 'unconfirmed';
+    } catch (error) {
+        if ((error as { mutationNotStarted?: boolean })?.mutationNotStarted) {
+            update(id, p => ({ ...p, entryCancel: undefined, updatedAt: Date.now() }));
+            throw error;
+        }
+        // CANCEL_UNCONFIRMED (#129) or any ambiguous failure: outcome unknown.
+        update(id, p => ({ ...p, entryCancel: 'unconfirmed', updatedAt: Date.now() }));
+        return 'unconfirmed';
     }
 }
 
-function ensureWatcher() {
-    if (pollTimer) return;
-    pollTimer = setInterval(pollPending, 4000);
-    // fast path: deal events over SSE
-    onOrderEvent((ev) => {
-        if (pending.size === 0 || ev.kind !== 'deal' || !ev.seqno) return;
-        for (const b of [...pending.values()]) {
-            if (b.seqno && b.seqno === ev.seqno) {
-                activate(b, ev.quantity);
+export function getBrackets(): BracketPlan[] {
+    return snapshot;
+}
+
+function subscribe(l: () => void) {
+    listeners.add(l);
+    return () => { listeners.delete(l); };
+}
+
+export function useBrackets(): BracketPlan[] {
+    return useSyncExternalStore(subscribe, () => snapshot);
+}
+
+// ---- main-window runtime ----
+
+let started = false;
+export function startBracketRuntime() {
+    if (started || !main) return;
+    started = true;
+    void claimExecutor(EXECUTOR_LOCK).settled.then(() => {
+        if (isExecutor()) return;
+        decideRole(); // standby mirror until the executor leaves
+        bus.hello();
+    });
+    onBecomeExecutor(run);
+}
+
+function run() {
+    plans = loadPlans();
+    executing = true;
+    decideRole();
+    const base = getApiBase();
+    const now = Date.now();
+    plans = plans.map(p => envBase(p.env) !== base || !isLive(p) ? p
+        : addIssue(p, 'reload', 'App 重新載入，期間的回報可能未收到', now));
+    commit();
+    onTrackedReport(onReport);
+    reportLedger.onGap(base => onGap(base));
+    onExitUpdate(onExit);
+    for (const rec of getExits()) if (rec.bracketId) onExit(rec);
+    // Once the server mode is known: replay buffered reports and look up.
+    let knownEnv = currentProtectionEnv();
+    onProtectionEnvChange(() => {
+        const env = currentProtectionEnv();
+        if (env === knownEnv) return;
+        knownEnv = env;
+        if (!env) return;
+        for (const p of plans.slice()) {
+            if (p.env !== env || !isLive(p)) continue;
+            const at = Date.now();
+            let next = p;
+            for (const report of recentReportsFor(envBase(env), p.orderId)) next = applyReport(next, report, at);
+            if (next !== p) update(p.id, () => next);
+            else arm(p); // re-arm (idempotent) once the mode is known
+        }
+        lookupLiveAccounts();
+    });
+    let wasLive = getStreamStatus() === 'live';
+    subscribeStatusStore(() => {
+        const live = getStreamStatus() === 'live';
+        if (live === wasLive) return;
+        wasLive = live;
+        const at = Date.now();
+        if (!live) {
+            for (const p of plans.slice()) {
+                if (envBase(p.env) === getApiBase() && isLive(p)) update(p.id, x => addIssue(x, 'disconnect', '回報串流中斷，期間的成交可能未收到', at));
             }
+        } else {
+            void refreshProtectionEnv();
+            lookupLiveAccounts(); // cache-only; issues stay until explicit reconcile
         }
     });
+    void refreshProtectionEnv();
+    if (wasLive) lookupLiveAccounts();
 }
