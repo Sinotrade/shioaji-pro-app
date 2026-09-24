@@ -451,25 +451,33 @@ export function FlashOrder({
         );
         if (matches.length === 0) return null;
         // Intra-session the broker returns separate Buy and Sell rows for the
-        // same contract (netting happens after close). Blending both sides'
-        // cost over the gross quantity gives a price nobody traded at (#116),
-        // so total each side on its own and show the side that stays open.
+        // same futures contract (netting happens after close). Blending both
+        // sides' cost over the gross quantity gives a price nobody traded at
+        // (#116), so futures total each side on its own and show the side that
+        // stays open. Stock margin longs and short sales are genuinely separate
+        // positions, so stocks keep the gross blend.
         const side = { Buy: { qty: 0, cost: 0, pnl: 0 }, Sell: { qty: 0, cost: 0, pnl: 0 } };
+        let cost = 0;
+        let qtySum = 0;
+        let grossPnl = 0;
         for (const p of matches) {
             const s = side[p.direction === 'Sell' ? 'Sell' : 'Buy'];
             s.qty += p.quantity;
             s.cost += p.price * p.quantity;
             s.pnl += p.pnl || 0;
+            cost += p.price * p.quantity;
+            qtySum += p.quantity;
+            grossPnl += p.pnl || 0;
         }
         const net = side.Buy.qty - side.Sell.qty;
         if (net === 0) return null;
+        const mixed = market === 'F' && side.Buy.qty > 0 && side.Sell.qty > 0;
         const open = net > 0 ? side.Buy : side.Sell;
-        const avg = open.qty > 0 ? open.cost / open.qty : 0;
-        // Both directions present: the open side's lots partly offset the
-        // other side, so only the |net| still-open share of its P&L is shown
-        // (at the side's average cost; per-lot FIFO needs position detail).
-        const mixed = side.Buy.qty > 0 && side.Sell.qty > 0;
-        const pnl = mixed ? open.pnl * Math.abs(net) / open.qty : open.pnl;
+        // Mixed futures: only the |net| still-open share of the open side's
+        // P&L is shown (at that side's average cost; per-lot FIFO needs
+        // position detail), rounded so the split never shows fractional cents.
+        const avg = mixed ? open.cost / open.qty : qtySum > 0 ? cost / qtySum : 0;
+        const pnl = mixed ? Math.round(open.pnl * Math.abs(net) / open.qty) : grossPnl;
         const safeExit = matches.every(p => Number.isInteger(p.quantity) && p.quantity > 0)
             && new Set(matches.map(p => p.direction)).size === 1
             && (market !== 'S' || matches.every(p => 'cond' in p && p.cond === 'Cash'));

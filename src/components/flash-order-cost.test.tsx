@@ -4,7 +4,8 @@ import { expect, it, vi } from 'vitest';
 import type { Account, AccountedPosition } from '../lib/types/portfolio';
 import type { ContractInfo } from '../lib/types/contract';
 const account: Account = { account_type: 'F', broker_id: 'BR', account_id: 'A', signed: true, person_id: '', username: '' };
-vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [account], selectedStock: account, selectedFutures: account }), selectAccount: () => {}, accountFor: () => account }));
+const stockAccount: Account = { ...account, account_type: 'S', account_id: 'S1' };
+vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [account, stockAccount], selectedStock: stockAccount, selectedFutures: account }), selectAccount: () => {}, accountFor: (t: string) => (t === 'S' ? stockAccount : account) }));
 vi.mock('../hooks/use-stream', () => ({ useTradingLive: () => true }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: undefined, snapshot: { close: 45532 }, book: undefined }) }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: vi.fn(), cancelOrders: vi.fn() }));
@@ -19,13 +20,13 @@ const contract = { code: 'MXFR1', target_code: 'MXFI6', security_type: 'FUT', re
 const row = (id: number, direction: 'Buy' | 'Sell', quantity: number, price: number, pnl: number): AccountedPosition =>
     ({ account, id, code: 'MXFI6', direction, quantity, price, last_price: 45532, pnl });
 
-async function render(positions: AccountedPosition[]) {
+async function render(positions: AccountedPosition[], c: ContractInfo = contract) {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     let view!: ReactTestRenderer;
     try {
-        await act(async () => { view = create(createElement(FlashOrder, { contract, trades: [], positions })); });
+        await act(async () => { view = create(createElement(FlashOrder, { contract: c, trades: [], positions })); });
         const avgMarks = view.root.findAll(n => typeof n.type === 'string' && String(n.props.className ?? '').split(' ').includes(styles.avgMark))
             .map(n => n.children.filter(c => typeof c === 'string').join(''));
         return { bar: JSON.stringify(view.toJSON()), avgMarks };
@@ -40,8 +41,30 @@ it('mixed directions show the open side average and its still-open P&L share, no
     expect(bar).not.toContain('+3,000'); // old P&L summed both directions
     expect(bar).toContain('"空"," ","1"');
     expect(bar).toContain('45,552.5');
-    expect(bar).toContain('+1,025');
+    expect(bar).toContain('+1,025.00');
     expect(bar).toContain('多空並存');
+});
+
+it('several open-side rows at different prices average only that side and round the P&L share', async () => {
+    const { bar } = await render([
+        row(0, 'Sell', 1, 45546, 700), row(1, 'Sell', 1, 45559, 1350), row(2, 'Sell', 1, 45600, 3400), row(3, 'Buy', 1, 45513, 950),
+    ]);
+    expect(bar).toContain('"空"," ","2"');
+    expect(bar).toContain('45,568.33');
+    expect(bar).toContain('+3,633.00'); // 5450 × 2/3 = 3633.33… rounded to a whole number
+    expect(bar).toContain('多空並存');
+});
+
+it('stock margin long and short sale on the same stock keep the gross blend and no mixed label', async () => {
+    const stock = { code: '2330', security_type: 'STK', reference: 1000 } as unknown as ContractInfo;
+    const srow = (id: number, direction: 'Buy' | 'Sell', quantity: number, price: number, pnl: number, cond: string): AccountedPosition =>
+        ({ account: stockAccount, id, code: '2330', direction, quantity, price, last_price: 1010, pnl, yd_quantity: quantity, cond });
+    const { bar } = await render([srow(0, 'Buy', 3, 1000, 3000, 'MarginTrading'), srow(1, 'Sell', 1, 1030, 1000, 'ShortSelling')], stock);
+    // Same as before the fix: net 2, (3×1000 + 1×1030) / 4, P&L 3000 + 1000.
+    expect(bar).toContain('"多"," ","2"');
+    expect(bar).toContain('1,007.5');
+    expect(bar).toContain('+4,000.00');
+    expect(bar).not.toContain('多空並存');
 });
 
 it('single-direction rows keep the weighted average over all rows and the summed P&L', async () => {
