@@ -23,6 +23,8 @@ import {
 } from 'react';
 import { usePoll } from '../hooks/use-poll';
 import { useStreamStatus } from '../hooks/use-stream';
+import { UNSIGNED_BLOCKED_LABEL } from '../lib/account-signing';
+import { getPrivacyMode, maskAccountId } from '../lib/privacy';
 import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
 import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
@@ -141,8 +143,8 @@ export function ServerManager({
                           ? '期貨'
                           : a.account_type;
                 out.push(
-                    `${a.signed ? '✓' : '✗'} ${kind} ${a.broker_id}-${a.account_id}` +
-                        `${a.signed ? ' 已簽署' : ' 未簽署 API 約定書（無法下單）'}`,
+                    `${a.signed ? '✓' : '✗'} ${kind} ${a.broker_id}-${maskAccountId(a.account_id, getPrivacyMode())}` +
+                        `${a.signed ? ' 已簽署' : ` ${UNSIGNED_BLOCKED_LABEL}`}`,
                 );
             }
             const pid = accounts[0]?.person_id;

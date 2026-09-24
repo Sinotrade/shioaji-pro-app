@@ -20,6 +20,12 @@ import {
     useAccounts,
 } from '../lib/account-store';
 import {
+    API_MANAGEMENT_URL,
+    SIGNING_URLS,
+    UNSIGNED_BLOCKED_LABEL,
+    UNSIGNED_TITLE,
+} from '../lib/account-signing';
+import {
     HEADER_ITEMS,
     setHeaderItem,
     useHeaderItems,
@@ -60,6 +66,7 @@ import {
     isAgentHarnessEnabled,
     setAgentHarnessEnabled,
 } from '../lib/tauri';
+import { ExternalLink } from './external-link';
 import { Orb } from './orb';
 import * as hud from './hud-header.css';
 import * as panel from './panel.css';
@@ -249,11 +256,14 @@ function SoundPrivacySection() {
     );
 }
 
-function AccountsSection() {
+export function AccountsSection() {
     const { accounts, selectedStock, selectedFutures, loaded } = useAccounts();
     const priv = usePrivacyMode();
     const [refreshing, setRefreshing] = useState(false);
     useEffect(ensureAccounts, []);
+    const unsignedTypes = (['S', 'F'] as const).filter((t) =>
+        accounts.some((a) => a.account_type === t && !a.signed),
+    );
     const groups: { label: string; type: 'S' | 'F'; selected: string }[] = [
         {
             label: '證券帳戶',
@@ -295,7 +305,7 @@ function AccountsSection() {
                                     title={
                                         a.signed
                                             ? undefined
-                                            : '未簽署 API 約定書（無法下單）'
+                                            : UNSIGNED_TITLE
                                     }
                                     onClick={() => selectAccount(a)}
                                 >
@@ -304,7 +314,7 @@ function AccountsSection() {
                                     {maskName(a.username, priv)}）
                                     {!a.signed && (
                                         <span className={styles.unsignedTag}>
-                                            未簽署（無法下單）
+                                            {UNSIGNED_BLOCKED_LABEL}
                                         </span>
                                     )}
                                 </button>
@@ -322,8 +332,30 @@ function AccountsSection() {
                 <span className={hud.emptyHint}>載入帳號中…</span>
             )}
             <span className={hud.emptyHint}>
-                下單與帳務查詢都使用選定的帳號；未簽署 API
-                約定書的帳戶會列出但無法選為下單帳戶。
+                下單與帳務查詢都使用選定的帳號；尚未完成 API
+                約定書簽署或模擬測試的帳戶會列出但無法選為下單帳戶。
+                {unsignedTypes.length > 0 && (
+                    <>
+                        請到永豐 API 管理頁查看原因並完成：
+                        <span className={styles.signLinks}>
+                            <ExternalLink
+                                href={API_MANAGEMENT_URL}
+                                className={styles.signLink}
+                            >
+                                API 管理頁
+                            </ExternalLink>
+                            {unsignedTypes.map((t) => (
+                                <ExternalLink
+                                    key={t}
+                                    href={SIGNING_URLS[t].url}
+                                    className={styles.signLink}
+                                >
+                                    {SIGNING_URLS[t].label}
+                                </ExternalLink>
+                            ))}
+                        </span>
+                    </>
+                )}
             </span>
             <button
                 className={hud.updateBtn}

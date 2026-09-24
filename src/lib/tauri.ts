@@ -1492,17 +1492,22 @@ export async function restartAndInstallUpdate() {
     }
 }
 
-export async function openLatestRelease() {
+// 以系統預設瀏覽器開啟外部網址（WebView 內不導航）。
+export async function openExternalUrl(url: string, failTitle = '無法開啟連結') {
     try {
         const { open } = await import('@tauri-apps/plugin-shell');
-        await open(APP_RELEASE_URL);
+        await open(url);
     } catch (e) {
         notify({
             kind: 'err',
-            title: '無法開啟下載頁',
+            title: failTitle,
             body: e instanceof Error ? e.message : String(e),
         });
     }
+}
+
+export async function openLatestRelease() {
+    await openExternalUrl(APP_RELEASE_URL, '無法開啟下載頁');
 }
 
 // ---- tray events ----
