@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 import type { Account, AccountedPosition } from '../lib/types/portfolio';
 import type { ContractInfo } from '../lib/types/contract';
+import type { Action, Trade } from '../lib/types/order';
 const account: Account = { account_type: 'F', broker_id: 'BR', account_id: 'A', signed: true, person_id: '', username: '' };
 const stockAccount: Account = { ...account, account_type: 'S', account_id: 'S1' };
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [account, stockAccount], selectedStock: stockAccount, selectedFutures: account }), selectAccount: () => {}, accountFor: (t: string) => (t === 'S' ? stockAccount : account) }));
@@ -20,29 +21,62 @@ const contract = { code: 'MXFR1', target_code: 'MXFI6', security_type: 'FUT', re
 const row = (id: number, direction: 'Buy' | 'Sell', quantity: number, price: number, pnl: number): AccountedPosition =>
     ({ account, id, code: 'MXFI6', direction, quantity, price, last_price: 45532, pnl });
 
-async function render(positions: AccountedPosition[], c: ContractInfo = contract) {
+async function render(positions: AccountedPosition[], c: ContractInfo = contract, trades: Trade[] = []) {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     let view!: ReactTestRenderer;
     try {
-        await act(async () => { view = create(createElement(FlashOrder, { contract: c, trades: [], positions })); });
+        await act(async () => { view = create(createElement(FlashOrder, { contract: c, trades, positions })); });
         const avgMarks = view.root.findAll(n => typeof n.type === 'string' && String(n.props.className ?? '').split(' ').includes(styles.avgMark))
             .map(n => n.children.filter(c => typeof c === 'string').join(''));
         return { bar: JSON.stringify(view.toJSON()), avgMarks };
     } finally { await act(async () => view?.unmount()); vi.unstubAllGlobals(); }
 }
 
+const filled = (id: string, action: Action, price: number, ts: number): Trade => ({
+    account, contract: { code: 'MXFR1', target_code: 'MXFI6' },
+    order: { id, seqno: id, ordno: id, action, price, quantity: 1, account },
+    status: { id, status: 'Filled', status_code: '', order_quantity: 1, deal_quantity: 1, cancel_quantity: 0, modified_price: 0, msg: '',
+        deals: [{ seq: '1', price, quantity: 1, ts }] },
+}) as unknown as Trade;
+
 // #116: broker returns un-netted Buy and Sell rows for the same contract
 // (fills 賣 45546, 賣 45559, 買 45513; last 45532). eLeader (FIFO): 庫 -1 均 45559 損益 1350.
-it('mixed directions show the open side average and its still-open P&L share, not a gross blend', async () => {
+const customerRows = () => [row(0, 'Sell', 2, 45552.5, 2050), row(1, 'Buy', 1, 45513, 950)];
+const customerFills = () => [filled('a', 'Sell', 45546, 1), filled('b', 'Sell', 45559, 2), filled('c', 'Buy', 45513, 3)];
+
+it('mixed futures with today\'s fills show the FIFO-matched lot, as eLeader does', async () => {
+    const { bar } = await render(customerRows(), contract, customerFills());
+    expect(bar).toContain('"空"," ","1"');
+    expect(bar).toContain('45,559');
+    expect(bar).toContain('+1,350.00');
+    expect(bar).toContain('"多空並存"');
+    expect(bar).toContain('先進先出');
+    expect(bar).not.toContain('估算');
+});
+
+it('the same fill arriving twice (snapshot + live report) is counted once', async () => {
+    const { bar } = await render(customerRows(), contract, [...customerFills(), filled('b', 'Sell', 45559, 2)]);
+    expect(bar).toContain('+1,350.00');
+    expect(bar).not.toContain('估算');
+});
+
+it('fills that do not match the rows fall back to the open-side estimate', async () => {
+    // Missing fills: without them the rows cannot be explained by FIFO.
+    const { bar } = await render(customerRows(), contract, [filled('c', 'Buy', 45513, 3), filled('d', 'Buy', 45520, 4)]);
+    expect(bar).toContain('45,552.5');
+    expect(bar).toContain('多空並存 估算');
+});
+
+it('mixed directions without fills show the open side average and its still-open P&L share, not a gross blend', async () => {
     const { bar } = await render([row(0, 'Sell', 2, 45552.5, 2050), row(1, 'Buy', 1, 45513, 950)]);
     expect(bar).not.toContain('45,539.33'); // old gross blend over 3 lots
     expect(bar).not.toContain('+3,000'); // old P&L summed both directions
     expect(bar).toContain('"空"," ","1"');
     expect(bar).toContain('45,552.5');
     expect(bar).toContain('+1,025.00');
-    expect(bar).toContain('多空並存');
+    expect(bar).toContain('多空並存 估算');
 });
 
 it('several open-side rows at different prices average only that side and round the P&L share', async () => {

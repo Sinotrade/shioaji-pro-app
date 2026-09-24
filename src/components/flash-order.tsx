@@ -10,6 +10,7 @@ import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
 import { accountFor, selectAccount, useAccounts } from '../lib/account-store';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { accountMatches, scopedFlashRows } from '../lib/flash-account';
+import { collectFills, fifoPosition } from '../lib/futures-fifo';
 import { Zap } from 'lucide-react';
 import {
     memo,
@@ -472,17 +473,22 @@ export function FlashOrder({
         const net = side.Buy.qty - side.Sell.qty;
         if (net === 0) return null;
         const mixed = market === 'F' && side.Buy.qty > 0 && side.Sell.qty > 0;
+        // Mixed futures: replay today's fills FIFO on top of the carried
+        // lots, as the broker's netting will. When rows and fills disagree,
+        // fall back to the open side's average and its |net| share of P&L
+        // (rounded so the split never shows fractional cents).
+        const codes = new Set(matches.map(p => p.code));
+        const fills = mixed && codes.size === 1 ? collectFills(trades, matches[0]!.code) : null;
+        const fifo = fills ? fifoPosition(matches, fills, contract.multiplier ?? 0) : null;
+        const fifoOk = fifo !== null && fifo.net === net;
         const open = net > 0 ? side.Buy : side.Sell;
-        // Mixed futures: only the |net| still-open share of the open side's
-        // P&L is shown (at that side's average cost; per-lot FIFO needs
-        // position detail), rounded so the split never shows fractional cents.
-        const avg = mixed ? open.cost / open.qty : qtySum > 0 ? cost / qtySum : 0;
-        const pnl = mixed ? Math.round(open.pnl * Math.abs(net) / open.qty) : grossPnl;
+        const avg = fifoOk ? fifo.avg : mixed ? open.cost / open.qty : qtySum > 0 ? cost / qtySum : 0;
+        const pnl = fifoOk ? fifo.pnl : mixed ? Math.round(open.pnl * Math.abs(net) / open.qty) : grossPnl;
         const safeExit = matches.every(p => Number.isInteger(p.quantity) && p.quantity > 0)
             && new Set(matches.map(p => p.direction)).size === 1
             && (market !== 'S' || matches.every(p => 'cond' in p && p.cond === 'Cash'));
-        return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit, mixed };
-    }, [positions, contract]);
+        return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit, mixed, fifo: fifoOk };
+    }, [positions, trades, contract]);
 
 
     // ---- order actions (all gated by the arm toggle) ----
@@ -732,9 +738,11 @@ export function FlashOrder({
                     {pos.mixed && (
                         <span
                             className={styles.posMixed}
-                            title="券商尚未沖銷同商品的買賣持倉；成本與損益以未平方向的加權平均估算，可能與逐筆沖銷（FIFO）結果不同，請以持倉面板確認"
+                            title={pos.fifo
+                                ? '券商尚未沖銷同商品的買賣持倉；成本與損益依今日成交逐筆先進先出（FIFO）沖銷計算'
+                                : '券商尚未沖銷同商品的買賣持倉，且今日成交無法完整對上持倉；成本與損益以未平方向的加權平均估算，請以持倉面板確認'}
                         >
-                            多空並存
+                            {pos.fifo ? '多空並存' : '多空並存 估算'}
                         </span>
                     )}
                     <span
