@@ -12,6 +12,9 @@ const m = vi.hoisted(() => ({
     status: 'live' as string,
     tick: null as ((t: { code: string; close: number; simtrade?: boolean }) => void) | null,
     envChanged: [] as (() => void)[],
+    statusChanged: [] as (() => void)[],
+    lockGranted: true,
+    queued: null as ((lock: object | null) => unknown) | null,
     accounts: [] as Account[],
     env: 'http://sim.invalid|simulation' as string | null,
     place: vi.fn(),
@@ -22,7 +25,7 @@ const m = vi.hoisted(() => ({
 vi.mock('./runtime', () => ({ getApiBase: () => 'http://sim.invalid' }));
 vi.mock('./stream', () => ({
     getStreamStatus: () => m.status,
-    subscribeStatusStore: () => () => undefined,
+    subscribeStatusStore: (cb: () => void) => { m.statusChanged.push(cb); return () => undefined; },
     onOrderEvent: () => () => undefined,
     onAnyTick: (cb: typeof m.tick) => { m.tick = cb; return () => undefined; },
 }));
@@ -57,15 +60,16 @@ async function boot(opts: { keepStore?: boolean } = {}) {
     vi.stubGlobal('location', { search: '' });
     vi.stubGlobal('navigator', { locks: { request: (_n: string, a: unknown, b?: (lock: object | null) => unknown) => {
         const cb = (typeof a === 'function' ? a : b) as (lock: object | null) => unknown;
-        if (typeof a === 'function' || !(a as { ifAvailable?: boolean }).ifAvailable) return new Promise(() => undefined);
-        const r = cb({}); return Promise.resolve(r instanceof Promise ? undefined : r); } } });
-    m.tick = null; m.envChanged = [];
+        if (typeof a === 'function' || !(a as { ifAvailable?: boolean }).ifAvailable) { m.queued = cb; return new Promise(() => undefined); }
+        const r = cb(m.lockGranted ? {} : null); return Promise.resolve(r instanceof Promise ? undefined : r); } } });
+    m.tick = null; m.envChanged = []; m.statusChanged = []; m.queued = null;
     engine = await import('./trigger-engine');
     engine.startTriggerEngine();
     await flush();
 }
 async function flush() { for (let i = 0; i < 6; i++) await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); }
 const tick = async (close: number) => { m.tick!({ code: 'TXFR1', close }); await flush(); };
+const setStatus = async (status: string) => { m.status = status; m.statusChanged.forEach(cb => cb()); await flush(); };
 const setEnv = async (env: string | null) => { m.env = env; m.envChanged.forEach(cb => cb()); await flush(); };
 const only = () => engine.getTriggers()[0]!;
 const titles = () => m.notify.mock.calls.map(([n]) => (n as { title: string }).title);
@@ -86,7 +90,7 @@ async function restoredStop(over: Record<string, unknown> = {}) {
 beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('BroadcastChannel', undefined);
-    m.status = 'live'; m.accounts = [F1]; m.env = SIM;
+    m.status = 'live'; m.accounts = [F1]; m.env = SIM; m.lockGranted = true;
     for (const f of [m.place, m.notify, m.ensure]) f.mockReset();
     m.ensure.mockResolvedValue(TXF);
     let n = 0;
@@ -130,6 +134,46 @@ describe('restore confirmation (#144)', () => {
         expect(m.place).toHaveBeenCalledTimes(1);
     });
 
+    async function outage(ms: number) {
+        await setStatus('down');
+        await setEnv(null); // mode forgotten while down
+        await vi.advanceTimersByTimeAsync(ms);
+        await setStatus('live');
+        await setEnv(SIM);
+    }
+
+    it('a 59 s same-environment outage keeps immediate firing', async () => {
+        await boot();
+        await addStop();
+        await tick(48300);
+        await outage(59_000);
+        await tick(47900);
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
+    it('a 61 s same-environment outage is a restart: already past → 待確認; alerts still notify', async () => {
+        await boot();
+        await addStop();
+        await engine.addTrigger({ code: 'TXFR1', condition: 'below', price: 48000, action: 'Buy', quantity: 0, kind: 'alert' });
+        await tick(48300);
+        await outage(61_000);
+        await tick(47900);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(titles()).toContain('到價警示');
+        expect(only().kind).toBe('stop');
+        expect(only().pending?.price).toBe(47900);
+    });
+
+    it('a 61 s outage with the first tick not past resumes normally', async () => {
+        await boot();
+        await addStop();
+        await tick(48300);
+        await outage(61_000);
+        await tick(48100);
+        await tick(47900);
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
     it('switching back to the trigger\'s environment is a restore', async () => {
         await boot();
         await addStop();
@@ -159,28 +203,84 @@ describe('restore confirmation (#144)', () => {
         expect(m.place).toHaveBeenCalledTimes(1);
     });
 
-    it('send: re-checks price and account, then places exactly once', async () => {
+    it('send: re-checks stream, account and a fresh tick, then places exactly once as a user order', async () => {
         await restoredStop();
         await tick(47900);
         const id = only().id;
-        await tick(47850);
-        await expect(engine.resolvePendingTrigger(id, 'send', 47900)).rejects.toThrow('目前價 47850');
+        await tick(47850); // price moved: no exact match is required
         m.accounts = [];
-        await expect(engine.resolvePendingTrigger(id, 'send', 47850)).rejects.toThrow('帳戶');
+        await expect(engine.resolvePendingTrigger(id, 'send')).rejects.toThrow('帳戶');
         m.accounts = [F1];
-        m.status = 'down';
-        await expect(engine.resolvePendingTrigger(id, 'send', 47850)).rejects.toThrow('行情');
-        m.status = 'live';
+        await setStatus('down');
+        await expect(engine.resolvePendingTrigger(id, 'send')).rejects.toThrow('行情');
+        expect(engine.getTriggers()[0]!.pending).toBeTruthy();
+        await setStatus('live');
+        await expect(engine.resolvePendingTrigger(id, 'send')).rejects.toThrow('尚未收到新成交價'); // needs a fresh tick
         expect(m.place).not.toHaveBeenCalled();
-        await engine.resolvePendingTrigger(id, 'send', 47850);
+        await tick(47800);
+        await engine.resolvePendingTrigger(id, 'send');
         await flush();
         expect(m.place).toHaveBeenCalledTimes(1);
         const [, action, price, qty, opts] = m.place.mock.calls[0]!;
         expect([action, price, qty, opts.account.account_id]).toEqual(['Sell', null, 1, 'fixture-account-F']);
-        await expect(engine.resolvePendingTrigger(id, 'send', 47850)).rejects.toThrow('不在待確認');
+        // a manual trigger may be an entry: risk checks apply, recorded as a user order
+        expect([opts.bypassRisk, opts.source]).toEqual([false, 'manual']);
+        await expect(engine.resolvePendingTrigger(id, 'send')).rejects.toThrow('不在待確認');
         await tick(47000);
         expect(m.place).toHaveBeenCalledTimes(1);
         expect(engine.getExits()[0]!.status).toBe('working');
+    });
+
+    it('an environment change drops known prices: send waits for a fresh tick', async () => {
+        await restoredStop();
+        await tick(47900);
+        await vi.advanceTimersByTimeAsync(600);
+        expect(engine.getTriggers()[0]!.pending).toBeTruthy();
+        await setEnv('http://sim.invalid|production');
+        await setEnv(SIM);
+        await expect(engine.resolvePendingTrigger(only().id, 'send')).rejects.toThrow('尚未收到新成交價');
+        await tick(47950);
+        await engine.resolvePendingTrigger(only().id, 'send');
+        await flush();
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
+    it('bracket exits sent from 待確認 stay protective (bypass risk, auto)', async () => {
+        await boot();
+        engine.armBracketGroup({ group: 'bracket:g', bracketId: 'plan-1', env: SIM,
+            account: { account_type: 'F', broker_id: F1.broker_id, account_id: F1.account_id }, code: 'TXFR1',
+            orderCode: 'TXFJ6', entryAction: 'Buy', octype: 'Cover', stopPrice: 48000, takePrice: 48600, quantity: 2 });
+        await boot({ keepStore: true });
+        await tick(47900);
+        const stop = engine.getTriggers().find(t => t.kind === 'stop')!;
+        await engine.resolvePendingTrigger(stop.id, 'send');
+        await flush();
+        const opts = m.place.mock.calls[0]![4];
+        expect([opts.bypassRisk, opts.source, opts.ocType]).toEqual([true, 'auto', 'Cover']);
+        expect(engine.getTriggers()).toHaveLength(0); // OCO sibling removed
+    });
+
+    it('executor handover with the first tick already past → 待確認', async () => {
+        await boot();
+        await addStop();
+        await tick(48300);
+        m.lockGranted = false;
+        await boot({ keepStore: true }); // second main window: standby mirror
+        expect(m.tick).toBeNull();
+        m.queued!({}); await flush(); // the executor window closed → take over
+        await tick(47900);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(only().pending?.price).toBe(47900);
+    });
+
+    it('no 待確認 notice for a held trigger removed by an OCO sibling on the same tick', async () => {
+        await restoredStop({ group: 'g2', price: 48200 });
+        // added after the restart: not restore-checked, fires normally
+        await addStop({ group: 'g2', kind: 'take', condition: 'above', price: 48100 });
+        await tick(48150); // both conditions match; the held stop is removed by the take
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(engine.getTriggers()).toHaveLength(0);
+        expect(titles()).not.toContain('觸價單待確認（未自動送出）');
     });
 
     it('cancel removes only that trigger; a bracket\'s pair is refused', async () => {
@@ -212,7 +312,7 @@ describe('restore confirmation (#144)', () => {
         const [stop, take] = [engine.getTriggers().find(t => t.kind === 'stop')!, engine.getTriggers().find(t => t.kind === 'take')!];
         expect(stop.pending).toBeTruthy();
         expect(take.pending).toBeUndefined();
-        await engine.resolvePendingTrigger(stop.id, 'send', 47900);
+        await engine.resolvePendingTrigger(stop.id, 'send');
         await flush();
         expect(m.place).toHaveBeenCalledTimes(1);
         expect(engine.getTriggers()).toHaveLength(0);

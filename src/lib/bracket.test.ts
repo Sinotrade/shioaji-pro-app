@@ -103,7 +103,7 @@ type Bracket = typeof import('./bracket');
 let engine: Engine;
 let bracket: Bracket;
 
-async function boot(opts: { keepStore?: boolean } = {}) {
+async function boot(opts: { keepStore?: boolean; noWarmTick?: boolean } = {}) {
     vi.resetModules();
     if (!opts.keepStore) store = new Map();
     vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
@@ -119,6 +119,10 @@ async function boot(opts: { keepStore?: boolean } = {}) {
     engine.startTriggerEngine();
     bracket.startBracketRuntime();
     await flush();
+    // quotes are flowing (the ticket / chart): exits armed from live fills
+    // after this are not restore-checked (#144)
+    const warm = m.tick as ((t: { code: string; close: number }) => void) | null; // set by startTriggerEngine
+    if (warm && !opts.noWarmTick) { warm({ code: 'TXFR1', close: 48300 }); warm({ code: '2890', close: 45 }); await flush(); }
 }
 async function flush() { for (let i = 0; i < 6; i++) await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); }
 const emit = async (r: OrderEventReport) => { m.order!(r); await flush(); };
@@ -734,6 +738,49 @@ describe('trigger execution (main window only)', () => {
         await tick(48300); // handover is a restore (#144): the first tick decides
         await tick(47000);
         expect(m.place).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('restore confirmation for bracket exits armed after a restart (#144)', () => {
+    it('entry fill found in the startup cache lookup arms exits that wait for their first tick', async () => {
+        await boot();
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        let answer!: (rows: Trade[]) => void;
+        m.cached.mockImplementation(() => new Promise<Trade[]>(r => { answer = r; }));
+        await boot({ keepStore: true }); // quotes already ticking (warm tick) before the lookup answers
+        answer([cacheTrade('fixture-f1', F1, [{ seq: '000001', quantity: 1 }])]);
+        await flush();
+        expect(triggersOf(plan.id)).toHaveLength(2);
+        await tick(47000);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(triggersOf(plan.id).find(t => t.kind === 'stop')!.pending?.price).toBe(47000);
+    });
+
+    it('entry fill arriving before the server mode is known arms exits that wait for their first tick', async () => {
+        await boot();
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        m.env = null;
+        await boot({ keepStore: true });
+        await emit(fDeal1!);
+        expect(triggersOf(plan.id)).toHaveLength(0); // mode unknown: nothing armed
+        m.env = 'http://sim.invalid|simulation';
+        m.envChanged.forEach(cb => cb()); await flush();
+        expect(triggersOf(plan.id)).toHaveLength(2);
+        await tick(47000);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(triggersOf(plan.id).find(t => t.kind === 'stop')!.pending).toBeTruthy();
+    });
+
+    it('exits armed before their code ticked since start are restore-checked; a live fill after ticks is not', async () => {
+        await boot({ noWarmTick: true });
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        await emit(fDeal1!);
+        await tick(47000);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(triggersOf(plan.id).find(t => t.kind === 'stop')!.pending).toBeTruthy();
     });
 });
 

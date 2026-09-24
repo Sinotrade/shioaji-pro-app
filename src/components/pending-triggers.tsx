@@ -6,8 +6,11 @@
 import { useState } from 'react';
 import { dismissBracket } from '../lib/bracket';
 import { usePrivacyMode } from '../lib/privacy';
+import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
+import { useServerInfo } from '../lib/server-info-store';
 import {
     describePending,
+    requestPendingPrices,
     resolvePendingTrigger,
     usePendingPrices,
     useTriggers,
@@ -16,12 +19,22 @@ import {
 } from '../lib/trigger-engine';
 import * as styles from './pending-triggers.css';
 
-function Row({ trigger, price }: { trigger: TriggerOrder; price: number | undefined }) {
+function detectedAt(at: number): string {
+    const d = new Date(at);
+    const time = d.toLocaleTimeString('en-GB');
+    return d.toDateString() === new Date().toDateString() ? time
+        : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${time}`;
+}
+
+function Row({ trigger, price, envNow }: { trigger: TriggerOrder; price: number | undefined; envNow: string | null }) {
     const priv = usePrivacyMode();
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
-    // two-step: the second click confirms the price shown at that moment
-    const [confirm, setConfirm] = useState<{ choice: 'send' | 'cancel'; price: number | undefined } | null>(null);
+    // two-step; the armed label follows the latest price until the 2nd click
+    const [confirm, setConfirm] = useState<'send' | 'cancel' | null>(null);
+    const here = !!trigger.env && trigger.env === envNow;
+    // the tick feed belongs to the current environment only
+    const shown = here ? price : undefined;
     const run = async (fn: () => Promise<unknown>) => {
         setBusy(true);
         setMessage(null);
@@ -34,29 +47,32 @@ function Row({ trigger, price }: { trigger: TriggerOrder; price: number | undefi
             setConfirm(null);
         }
     };
-    const resolve = (choice: PendingChoice, seenPrice?: number) =>
-        void run(() => resolvePendingTrigger(trigger.id, choice, seenPrice));
+    const resolve = (choice: PendingChoice) => void run(() => resolvePendingTrigger(trigger.id, choice));
     const side = `市價${trigger.action === 'Buy' ? '買' : '賣'} ${trigger.quantity}`;
     return (
         <div className={styles.row}>
-            <span className={styles.line}>{describePending(trigger, price, priv)}</span>
-            {trigger.pending && (
-                <span className={styles.hint}>
-                    偵測時價格 {trigger.pending.price} · {new Date(trigger.pending.at).toLocaleTimeString('en-GB')}
-                </span>
-            )}
+            <span className={styles.line}>{describePending(trigger, shown, priv)}</span>
+            <span className={styles.hint}>
+                {trigger.env ? `${protectionEnvLabel(trigger.env)}環境` : '環境未知'}
+                {here ? '' : envNow ? '（非目前環境，目前價不顯示；切回該環境才能送出）' : '（伺服器模式未確認）'}
+                {trigger.pending && ` · 偵測時價格 ${trigger.pending.price} · 偵測時間 ${detectedAt(trigger.pending.at)}`}
+            </span>
             {message && <span className={styles.message}>{message}</span>}
             <div className={styles.actions}>
                 <button
                     className={styles.primary}
-                    disabled={busy || price === undefined}
-                    title='重新檢查目前價與帳戶後，以原設定送出市價單'
+                    disabled={busy || shown === undefined}
+                    title='重新檢查行情連線、環境與帳戶後，以原設定送出市價單'
                     onClick={() => {
-                        if (confirm?.choice !== 'send') { setConfirm({ choice: 'send', price }); return; }
-                        resolve('send', confirm.price);
+                        if (confirm !== 'send') {
+                            setConfirm('send');
+                            void requestPendingPrices().catch(() => undefined);
+                            return;
+                        }
+                        resolve('send');
                     }}
                 >
-                    {confirm?.choice === 'send' ? `再按一次：${side}（目前 ${confirm.price}）` : '送出'}
+                    {confirm === 'send' ? `再按一次：${side}（目前 ${shown}）` : '送出'}
                 </button>
                 <button
                     className={styles.button}
@@ -71,13 +87,13 @@ function Row({ trigger, price }: { trigger: TriggerOrder; price: number | undefi
                     disabled={busy}
                     title={trigger.bracketId ? '移除此括號單的追蹤與保護（同組停損停利一併移除）' : '刪除這筆觸價單，不送單'}
                     onClick={() => {
-                        if (confirm?.choice !== 'cancel') { setConfirm({ choice: 'cancel', price }); return; }
+                        if (confirm !== 'cancel') { setConfirm('cancel'); return; }
                         void run(() => trigger.bracketId
                             ? dismissBracket(trigger.bracketId)
                             : resolvePendingTrigger(trigger.id, 'cancel'));
                     }}
                 >
-                    {confirm?.choice === 'cancel'
+                    {confirm === 'cancel'
                         ? trigger.bracketId ? '再按一次：移除括號單保護' : '再按一次：取消'
                         : trigger.bracketId ? '移除括號單' : '取消'}
                 </button>
@@ -89,6 +105,8 @@ function Row({ trigger, price }: { trigger: TriggerOrder; price: number | undefi
 export function PendingTriggers() {
     const pending = useTriggers().filter(t => t.pending);
     const prices = usePendingPrices();
+    useServerInfo(); // re-render when the server mode becomes known / changes
+    const envNow = currentProtectionEnv();
     if (pending.length === 0) return null;
     return (
         <div className={styles.panel} role='alert'>
@@ -96,7 +114,7 @@ export function PendingTriggers() {
             <div className={styles.hint}>
                 App 關閉或未執行期間價格已穿過觸價，系統未自動送單。請逐筆選擇送出、保留或取消；OCO 同組一筆送出後其餘自動取消。
             </div>
-            {pending.map(t => <Row key={t.id} trigger={t} price={prices[t.code]} />)}
+            {pending.map(t => <Row key={t.id} trigger={t} price={prices[t.code]} envNow={envNow} />)}
         </div>
     );
 }
