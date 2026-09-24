@@ -94,6 +94,10 @@ export interface Block {
     wallList?: string;
     wallCols?: number;
     wallRows?: number;
+    // 時段選擇（issue #73）— K 線全盤/僅日盤、當日走勢自動/日盤/夜盤，
+    // 跟版面一起持久化；缺省 = 全盤 / 自動
+    chartSession?: 'all' | 'day';
+    intradaySession?: 'auto' | 'day' | 'night';
 }
 
 export interface Workspace {

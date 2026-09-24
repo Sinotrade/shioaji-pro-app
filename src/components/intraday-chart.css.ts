@@ -47,6 +47,42 @@ export const sessionChip = style({
     alignSelf: 'center',
 });
 
+// 期/選的時段標籤可點 — 手動鎖定時用強調色，一眼看出不是自動
+export const sessionChipBtn = styleVariants({
+    auto: [
+        sessionChip,
+        {
+            border: 'none',
+            cursor: 'pointer',
+            ':hover': { color: vars.color.foreground },
+        },
+    ],
+    manual: [
+        sessionChip,
+        {
+            border: 'none',
+            cursor: 'pointer',
+            color: vars.color.accent,
+            background: vars.color.accentDim,
+        },
+    ],
+});
+
+// 時段選單 — 標籤在 legend 左側，選單往右展開
+export const sessionPop = style({
+    position: 'absolute',
+    top: 'calc(100% + 4px)',
+    left: 0,
+    zIndex: 30,
+    display: 'flex',
+    padding: '6px 8px',
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.md,
+    boxShadow: '0 6px 20px rgba(0, 0, 0, 0.35)',
+    whiteSpace: 'nowrap',
+});
+
 // 試搓揭示讀值 — 琥珀色與正式成交明確區隔（開盤即消失）
 export const simChip = style({
     fontFamily: vars.font.mono,

@@ -121,6 +121,10 @@ const popoutQuery = new URLSearchParams(window.location.search);
 const POPOUT_TYPE = popoutQuery.get('popout');
 const POPOUT_CODE = popoutQuery.get('code') || null;
 
+type SessionConfigPatch = Partial<
+    Pick<Block, 'chartSession' | 'intradaySession'>
+>;
+
 // resolves a block's contract: pinned code (contract cache) or global selection
 function useBlockContract(
     block: Block,
@@ -150,6 +154,7 @@ function BlockBody({
     onSelectCode,
     onPulseConfigChange,
     onWallConfigChange,
+    onSessionConfigChange,
     refreshTrading,
 }: {
     block: Block;
@@ -169,6 +174,7 @@ function BlockBody({
         cols: number,
         rows: number,
     ) => void;
+    onSessionConfigChange: (id: string, patch: SessionConfigPatch) => void;
     refreshTrading: () => void;
 }) {
     if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
@@ -197,6 +203,10 @@ function BlockBody({
                         contract={contract}
                         trades={dockProps.trades}
                         onOrdersChanged={dockProps.onTradesChanged}
+                        sessionMode={block.chartSession}
+                        onSessionModeChange={(chartSession) =>
+                            onSessionConfigChange(block.id, { chartSession })
+                        }
                     />
                 </>
             ) : (
@@ -204,7 +214,13 @@ function BlockBody({
             );
         case 'intraday':
             return contract ? (
-                <IntradayChart contract={contract} />
+                <IntradayChart
+                    contract={contract}
+                    sessionMode={block.intradaySession}
+                    onSessionModeChange={(intradaySession) =>
+                        onSessionConfigChange(block.id, { intradaySession })
+                    }
+                />
             ) : (
                 <BlockPlaceholder />
             );
@@ -421,6 +437,7 @@ interface BlockViewProps {
         cols: number,
         rows: number,
     ) => void;
+    onSessionConfigChange: (id: string, patch: SessionConfigPatch) => void;
     refreshTrading: () => void;
 }
 
@@ -949,6 +966,18 @@ function MainApp() {
         [workspace, updateWorkspace],
     );
 
+    const setBlockSessionConfig = useCallback(
+        (id: string, patch: SessionConfigPatch) => {
+            updateWorkspace({
+                ...workspace,
+                blocks: workspace.blocks.map((block) =>
+                    block.id === id ? { ...block, ...patch } : block,
+                ),
+            });
+        },
+        [workspace, updateWorkspace],
+    );
+
     const setBlockPulseConfig = useCallback(
         (
             id: string,
@@ -1218,6 +1247,7 @@ function MainApp() {
                                     onSelectCode={selectByCode}
                                     onPulseConfigChange={setBlockPulseConfig}
                                     onWallConfigChange={setBlockWallConfig}
+                                    onSessionConfigChange={setBlockSessionConfig}
                                     refreshTrading={refreshTrading}
                                 />
                             </div>

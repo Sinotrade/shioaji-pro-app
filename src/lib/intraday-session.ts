@@ -37,6 +37,112 @@ export function sessionWindowFor(
     return { start: d0 + 9 * H, end: d0 + 13.5 * H, night: false };
 }
 
+// 收盤定盤可能印在收盤後幾分鐘（指數定盤 13:31–33）— 這段內的
+// kbar/tick 都併進該時段最後一根 label
+export const CLOSE_GRACE = 240;
+
+// 有夜盤的商品（期貨/選擇權）才有「日盤/夜盤」與「全盤/僅日盤」之分
+export function hasNightSession(secType: SecurityType): boolean {
+    return secType === 'FUT' || secType === 'OPT';
+}
+
+// 1 分 K label（minute-end）是否屬於日盤：期/選 08:45–13:45、其他
+// 09:00–13:30，label 區間 (start, end + CLOSE_GRACE]（收盤定盤併入）
+export function isDaySessionLabel(secType: SecurityType, label: number): boolean {
+    const w = sessionWindowFor(secType, label);
+    if (!w.night && label > w.start && label <= w.end) return true;
+    // 期貨 13:45 後的 label 在 sessionWindowFor 已歸夜盤框架 — 退回
+    // grace 前的時點判斷是否仍屬剛收的日盤
+    const p = sessionWindowFor(secType, label - CLOSE_GRACE);
+    return !p.night && label > p.end && label <= p.end + CLOSE_GRACE;
+}
+
+// 即時成交時間 τ 是否屬於日盤 — 先換成 close-label-right 的 1 分 K
+// label（08:45:00 的開盤撮合 → 08:46），再用 K 棒同一套判斷，
+// 歷史與 live 才不會一邊收、一邊丟
+export function isDaySessionTick(secType: SecurityType, t: number): boolean {
+    return isDaySessionLabel(secType, Math.floor(t / 60) * 60 + 60);
+}
+
+// K 線「僅日盤」：aggregate 前把夜盤與盤外的 1 分 K 濾掉
+export function filterDaySession<T extends { time: number }>(
+    secType: SecurityType,
+    bars: T[],
+): T[] {
+    return bars.filter((b) => isDaySessionLabel(secType, b.time));
+}
+
+// 當日走勢的時段選擇：auto = 依資料所在（原行為）；day/night =
+// 使用者手動鎖定，取「有資料的最近一段」該種時段（晚上複盤今天日盤）
+export type IntradaySessionMode = 'auto' | 'day' | 'night';
+
+// 最近一段（含進行中/即將開始）指定種類的時段框架 — 手動模式下
+// 完全沒有該種時段資料時，用它開空框架
+function latestWindowOfKind(
+    secType: SecurityType,
+    night: boolean,
+    now: number,
+): SessionWindow {
+    const cur = sessionWindowFor(secType, now);
+    if (cur.night === night) return cur;
+    const d0 = Math.floor(now / DAY) * DAY;
+    const tod = now - d0;
+    if (night) {
+        // 日盤時段 → 前一晚開始的夜盤（凌晨已收的那段）
+        return sessionWindowFor(secType, d0 + H);
+    }
+    // 夜盤時段：15:00 後 → 今天日盤；凌晨 → 昨天日盤
+    return sessionWindowFor(secType, (tod <= 5 * H ? d0 - DAY : d0) + 9 * H);
+}
+
+// 依模式挑出要畫的時段。times = 已排序的 1 分 K label；pendStart =
+// 換時段重載帶來的目標時段起點（試搓/開盤，新時段 kbar 還沒出，0 = 無）
+export function pickIntradayWindow(
+    secType: SecurityType,
+    times: number[],
+    mode: IntradaySessionMode,
+    now: number,
+    pendStart = 0,
+): SessionWindow {
+    const last = times[times.length - 1];
+    if (mode === 'auto' || !hasNightSession(secType)) {
+        let win = sessionWindowFor(
+            secType,
+            last !== undefined ? last : pendStart > 0 ? pendStart + 60 : now,
+        );
+        if (pendStart > win.start) {
+            win = sessionWindowFor(secType, pendStart + 60);
+        }
+        return win;
+    }
+    const night = mode === 'night';
+    let win: SessionWindow | null = null;
+    for (let i = times.length - 1; i >= 0; i--) {
+        const t = times[i]!;
+        const w = sessionWindowFor(secType, t);
+        if (w.night === night && t > w.start && t <= w.end + CLOSE_GRACE) {
+            win = w;
+            break;
+        }
+    }
+    // 換到同種新時段（例如鎖日盤、隔天 08:30 試搓）才跟上；目標是
+    // 另一種時段就不理
+    if (pendStart > 0) {
+        const p = sessionWindowFor(secType, pendStart + 60);
+        if (p.night === night && (!win || p.start > win.start)) win = p;
+    }
+    return win ?? latestWindowOfKind(secType, night, now);
+}
+
+// live 進到另一段時段時要不要跟過去重載：自動一律跟；手動鎖定只跟
+// 同種時段（鎖日盤看複盤時，夜盤 tick 不能把圖切走）
+export function followsSession(
+    mode: IntradaySessionMode,
+    next: SessionWindow,
+): boolean {
+    return mode === 'auto' || next.night === (mode === 'night');
+}
+
 // every 1-minute bar-label time of a session, for whitespace axis fill
 export function sessionMinutes(win: SessionWindow): number[] {
     const out: number[] = [];

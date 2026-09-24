@@ -27,9 +27,14 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { colorWithOpacity } from '../lib/indicator-defs';
 import {
+    CLOSE_GRACE,
+    followsSession,
+    hasNightSession,
+    pickIntradayWindow,
     sessionMinutes,
     sessionWindowFor,
     tickBucket,
+    type IntradaySessionMode,
     type SessionWindow,
 } from '../lib/intraday-session';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
@@ -215,10 +220,6 @@ function loadLineWidth(): number {
     }
 }
 
-// 收盤定盤可能印在收盤後幾分鐘（指數定盤 13:31–33）— 這段內的
-// kbar/tick 都併進最後一根 label，軸仍固定收在 win.end
-const CLOSE_GRACE = 240;
-
 const fmtClock = (t: number) => {
     const d = new Date(t * 1000);
     const hh = String(d.getUTCHours()).padStart(2, '0');
@@ -226,7 +227,23 @@ const fmtClock = (t: number) => {
     return `${hh}:${mm}`;
 };
 
-export function IntradayChart({ contract }: { contract: ContractInfo }) {
+const SESSION_MODES: { key: IntradaySessionMode; label: string; title: string }[] = [
+    { key: 'auto', label: '自動', title: '依資料所在自動切換日盤/夜盤' },
+    { key: 'day', label: '日盤', title: '固定顯示最近一段日盤（盤後複盤）' },
+    { key: 'night', label: '夜盤', title: '固定顯示最近一段夜盤' },
+];
+
+export function IntradayChart({
+    contract,
+    sessionMode: sessionModeProp,
+    onSessionModeChange,
+}: {
+    contract: ContractInfo;
+    // 面板持久化的時段選擇（主視窗由 workspace block 帶入；彈出視窗
+    // 等沒帶的地方用元件內 state）
+    sessionMode?: IntradaySessionMode;
+    onSessionModeChange?: (mode: IntradaySessionMode) => void;
+}) {
     const hostRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const priceSeriesRef = useRef<ISeriesApi<'Baseline'> | null>(null);
@@ -270,6 +287,22 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     const [loading, setLoading] = useState(false);
     const [empty, setEmpty] = useState(false);
     const [reloadSeq, setReloadSeq] = useState(0);
+    // 時段：自動（依資料）/ 手動鎖日盤或夜盤 — 只對有夜盤的期/選有意義
+    const [localSessionMode, setLocalSessionMode] =
+        useState<IntradaySessionMode>(sessionModeProp ?? 'auto');
+    const sessionMode: IntradaySessionMode = hasNightSession(
+        contract.security_type,
+    )
+        ? (sessionModeProp ?? localSessionMode)
+        : 'auto';
+    const sessionModeRef = useRef(sessionMode);
+    sessionModeRef.current = sessionMode;
+    const [sessionPopOpen, setSessionPopOpen] = useState(false);
+    const pickSessionMode = (m: IntradaySessionMode) => {
+        setLocalSessionMode(m);
+        onSessionModeChange?.(m);
+        setSessionPopOpen(false);
+    };
     // 依商品解析 Y 軸模式 — 換商品時在 render 階段同步重解（避免
     // effect 慢半拍造成的雙重載入）
     const [scaleState, setScaleState] = useState(() => ({
@@ -644,7 +677,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
 
     // ---- history load: pick the last session present in the data ----
     useEffect(() => {
-        const loadKey = `${contract.code}|${reloadSeq}|${optsKey}`;
+        const loadKey = `${contract.code}|${reloadSeq}|${optsKey}|${sessionMode}`;
         loadedKeyRef.current = '';
         sessionRef.current = null;
         liveRef.current = null;
@@ -744,9 +777,12 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 pendingWinRef.current?.code === contract.code
                     ? pendingWinRef.current.start
                     : 0;
-            const win = sessionWindowFor(
+            const win = pickIntradayWindow(
                 contract.security_type,
-                pend > 0 ? pend + 60 : nowWallClockUtc(),
+                [],
+                sessionMode,
+                nowWallClockUtc(),
+                pend,
             );
             applyRefPrice(ref);
             const minutes = sessionMinutes(win);
@@ -802,14 +838,15 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 }
                 // 資料驅動選時段；但換時段重載帶著目標時段時（試搓/
                 // 開盤，新時段 kbar 還沒出）目標較新就用目標 — 畫出
-                // 空的新時段框架等第一筆成交
-                let win = sessionWindowFor(
+                // 空的新時段框架等第一筆成交。手動鎖日/夜盤時取有資料
+                // 的最近一段該種時段
+                const win = pickIntradayWindow(
                     contract.security_type,
-                    last ? last.time : pend + 60,
+                    all.map((b) => b.time),
+                    sessionMode,
+                    nowWallClockUtc(),
+                    pend,
                 );
-                if (pend > win.start) {
-                    win = sessionWindowFor(contract.security_type, pend + 60);
-                }
                 const bars = all.filter(
                     (b) =>
                         b.time > win.start &&
@@ -971,7 +1008,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contract, reloadSeq, optsKey]);
+    }, [contract, reloadSeq, optsKey, sessionMode]);
 
     // 線寬即時套用 — 獨立於資料載入，滑桿拖動不觸發 refetch。
     // optsKey 在 deps 裡是為了主題重建 chart 後把寬度補回去
@@ -987,7 +1024,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         if (!liveQuote || liveQuote.code !== contract.code) return;
         if (
             loadedKeyRef.current !==
-            `${contract.code}|${reloadSeq}|${optsKey}`
+            `${contract.code}|${reloadSeq}|${optsKey}|${sessionModeRef.current}`
         ) {
             return;
         }
@@ -1006,9 +1043,13 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
         // 才整段重載 — 試搓 tick 也算數：08:30 第一筆試搓就切到新時段
         // 框架，不必等正式開盤首筆成交。同時段的盤後零星成交（股票
         // 定盤 14:30）只丟棄，否則每筆都會白打一次 kbars
+        // 手動鎖定時段時，另一種時段的 tick 整個略過（不重載、不入圖）
         if (t > win.end + CLOSE_GRACE) {
             const next = sessionWindowFor(contract.security_type, t);
-            if (next.start !== win.start) {
+            if (
+                next.start !== win.start &&
+                followsSession(sessionModeRef.current, next)
+            ) {
                 pendingWinRef.current = {
                     code: contract.code,
                     start: next.start,
@@ -1205,13 +1246,79 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
     return (
         <div className={styles.wrap}>
             <div className={styles.legend}>
-                <span className={styles.stats}>
-                {(sessionLabel || staleDate) && (
-                    <span className={styles.sessionChip}>
-                        {staleDate ? `${staleDate} ` : ''}
-                        {sessionLabel ?? '日盤'}
+                {/* 時段控制放在 stats 外 — stats 會裁切溢出，選單冒不出來 */}
+                {sessionLabel ? (
+                    // 期/選：時段標籤即切換鈕 — 自動 / 鎖日盤 / 鎖夜盤
+                    <span className={styles.settingsWrap}>
+                        <button
+                            className={
+                                styles.sessionChipBtn[
+                                    sessionMode === 'auto' ? 'auto' : 'manual'
+                                ]
+                            }
+                            title={
+                                sessionMode === 'auto'
+                                    ? '時段：自動（點選可固定日盤/夜盤）'
+                                    : `時段：固定${sessionMode === 'day' ? '日盤' : '夜盤'}（點選切換）`
+                            }
+                            aria-haspopup='menu'
+                            aria-expanded={sessionPopOpen}
+                            onClick={() => setSessionPopOpen((v) => !v)}
+                        >
+                            {staleDate ? `${staleDate} ` : ''}
+                            {sessionLabel}
+                        </button>
+                        {sessionPopOpen && (
+                            <>
+                                <span
+                                    className={styles.settingsBackdrop}
+                                    onClick={() => setSessionPopOpen(false)}
+                                />
+                                <span
+                                    className={styles.sessionPop}
+                                    role='menu'
+                                >
+                                    <span className={styles.settingsRow}>
+                                        <span
+                                            className={styles.settingsLabel}
+                                        >
+                                            時段
+                                        </span>
+                                        {SESSION_MODES.map((m) => (
+                                            <button
+                                                key={m.key}
+                                                role='menuitemradio'
+                                                aria-checked={
+                                                    sessionMode === m.key
+                                                }
+                                                className={
+                                                    styles.scaleBtn[
+                                                        sessionMode === m.key
+                                                            ? 'active'
+                                                            : 'normal'
+                                                    ]
+                                                }
+                                                title={m.title}
+                                                onClick={() =>
+                                                    pickSessionMode(m.key)
+                                                }
+                                            >
+                                                {m.label}
+                                            </button>
+                                        ))}
+                                    </span>
+                                </span>
+                            </>
+                        )}
                     </span>
+                ) : (
+                    staleDate && (
+                        <span className={styles.sessionChip}>
+                            {`${staleDate} 日盤`}
+                        </span>
+                    )
                 )}
+                <span className={styles.stats}>
                 {sim && (
                     <span className={styles.simChip}>
                         試搓 {fmtPrice(sim.price)}

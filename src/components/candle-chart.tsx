@@ -51,6 +51,11 @@ import {
 } from '../lib/indicator-defs';
 import { IndicatorInstanceContext } from '../lib/indicator-instance-context';
 import {
+    filterDaySession,
+    hasNightSession,
+    isDaySessionTick,
+} from '../lib/intraday-session';
+import {
     IndicatorDialog,
     IndicatorSettingsModal,
 } from './indicator-dialog';
@@ -111,16 +116,23 @@ const TRADE_MODES: { key: TradeMode; label: string }[] = [
 // keep paging until this floor — one page per fetch, spans widen with tf
 const MAX_HISTORY_DAYS = 1095; // ~3 years
 
+export type ChartSessionMode = 'all' | 'day';
+
 export function CandleChart({
     panelId,
     contract,
     trades = [],
     onOrdersChanged,
+    sessionMode: sessionModeProp,
+    onSessionModeChange,
 }: {
     panelId?: string;
     contract: ContractBase;
     trades?: Trade[];
     onOrdersChanged?: () => void;
+    // 全盤 / 僅日盤（面板持久化；沒帶的地方用元件內 state）
+    sessionMode?: ChartSessionMode;
+    onSessionModeChange?: (mode: ChartSessionMode) => void;
 }) {
     const hostRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -128,6 +140,17 @@ export function CandleChart({
     const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     const lastBarRef = useRef<Candle | null>(null);
     const [tfIdx, setTfIdx] = useState(1); // default 5m
+    // 僅日盤：aggregate 前濾掉夜盤 1 分 K、live 夜盤 tick 不入圖，指標
+    // 也就只吃日盤 K 棒。只對有夜盤的期/選有意義，其他商品一律全盤
+    const [localSessionMode, setLocalSessionMode] =
+        useState<ChartSessionMode>(sessionModeProp ?? 'all');
+    const canDayOnly = hasNightSession(contract.security_type);
+    const dayOnly =
+        canDayOnly && (sessionModeProp ?? localSessionMode) === 'day';
+    const pickSessionMode = (m: ChartSessionMode) => {
+        setLocalSessionMode(m);
+        onSessionModeChange?.(m);
+    };
     const [empty, setEmpty] = useState(false);
     const [loading, setLoading] = useState(false);
     // 歷史斷層自癒（issue #18）：開盤前抓的歷史可能缺少上游尚未發布的
@@ -494,8 +517,14 @@ export function CandleChart({
     // pulled on demand by the visible-range subscription (loadMoreRef)
     useEffect(() => {
         let cancelled = false;
-        const loadKey = `${contract.code}|${tf.minutes}`;
+        const loadKey = `${contract.code}|${tf.minutes}|${dayOnly}`;
         loadedKeyRef.current = ''; // freeze tick updates while loading
+        const toRaw = (k: Parameters<typeof kbarsToCandles>[0]) => {
+            const raw = kbarsToCandles(k);
+            return dayOnly
+                ? filterDaySession(contract.security_type, raw)
+                : raw;
+        };
         lastBarRef.current = null;
         loadMoreRef.current = null;
         setEmpty(false);
@@ -554,7 +583,7 @@ export function CandleChart({
                     if (cancelled || loadedKeyRef.current !== loadKey) return;
                     oldestDay = from;
                     const boundary = rawRef.current[0]?.time ?? Infinity;
-                    const older = kbarsToCandles(k).filter(
+                    const older = toRaw(k).filter(
                         (b) => b.time < boundary,
                     );
                     if (older.length === 0) {
@@ -591,7 +620,7 @@ export function CandleChart({
         })
             .then((k) => {
                 if (cancelled || !candleSeriesRef.current) return;
-                const raw = kbarsToCandles(k);
+                const raw = toRaw(k);
                 const bars = aggregate(raw, tf.minutes);
                 if (bars.length === 0) {
                     clearSeries();
@@ -626,7 +655,7 @@ export function CandleChart({
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contract, tf, historySeq]);
+    }, [contract, tf, historySeq, dayOnly]);
 
     // Live trade/index quote -> update the current bar. Index products use
     // quote_idx rather than the regular tick stream in Shioaji 1.7.
@@ -641,7 +670,11 @@ export function CandleChart({
         // Y 軸尺度撐爆（issue #5），一律排除
         if ('simtrade' in liveQuote && liveQuote.simtrade) return;
         // history for this (symbol, timeframe) not in place yet
-        if (loadedKeyRef.current !== `${contract.code}|${tf.minutes}`) return;
+        if (
+            loadedKeyRef.current !== `${contract.code}|${tf.minutes}|${dayOnly}`
+        ) {
+            return;
+        }
         const series = candleSeriesRef.current;
         if (!series) return;
         const price = Number(liveQuote.close);
@@ -649,6 +682,10 @@ export function CandleChart({
         const tickTime = wallClockToUtc(
             `${liveQuote.date}T${liveQuote.time}`,
         );
+        // 僅日盤：夜盤/盤外成交不入圖（與歷史濾法同一套 label 判斷）
+        if (dayOnly && !isDaySessionTick(contract.security_type, tickTime)) {
+            return;
+        }
         const bucketSec = tf.minutes * 60;
         // close-label-right（與 aggregate/1 分 K 歷史同慣例）：成交 τ 屬
         // 於哪個「收盤 label」桶 — floor 會把 live 桶標早一格，1 分 K
@@ -710,7 +747,7 @@ export function CandleChart({
         // 歷史載入失敗後 live bar 已開始堆 — 圖上有東西就不該再掛
         // 「無 K 線資料」（同值 setState React 會 bail out）
         setEmpty(false);
-    }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes]);
+    }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes, dayOnly]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
     const [customVer, setCustomVer] = useState(0);
@@ -1491,6 +1528,27 @@ export function CandleChart({
                         {t.label}
                     </button>
                 ))}
+                {canDayOnly && (
+                    <>
+                        <span className={styles.toolbarDivider} />
+                        <button
+                            className={styles.tfBtn[dayOnly ? 'normal' : 'active']}
+                            title='全盤：日盤＋夜盤 K 棒'
+                            aria-pressed={!dayOnly}
+                            onClick={() => pickSessionMode('all')}
+                        >
+                            全盤
+                        </button>
+                        <button
+                            className={styles.tfBtn[dayOnly ? 'active' : 'normal']}
+                            title='僅日盤：只畫 08:45–13:45 日盤 K 棒，指標也只用日盤計算'
+                            aria-pressed={dayOnly}
+                            onClick={() => pickSessionMode('day')}
+                        >
+                            日盤
+                        </button>
+                    </>
+                )}
                 <button
                     className={styles.iconBtn}
                     onClick={resetView}

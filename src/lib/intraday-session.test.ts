@@ -2,7 +2,13 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+    filterDaySession,
     findKbarGap,
+    followsSession,
+    hasNightSession,
+    isDaySessionLabel,
+    isDaySessionTick,
+    pickIntradayWindow,
     sessionMinutes,
     sessionWindowFor,
     tickBucket,
@@ -250,5 +256,149 @@ describe('findKbarGap density gate', () => {
         expect(
             findKbarGap(bars, 'IND', t('2026-08-12T09:06:00')),
         ).toBeNull();
+    });
+});
+
+describe('day-session filter (K 線「僅日盤」)', () => {
+    it('only futures/options have a night session to filter', () => {
+        expect(hasNightSession('FUT')).toBe(true);
+        expect(hasNightSession('OPT')).toBe(true);
+        expect(hasNightSession('STK')).toBe(false);
+        expect(hasNightSession('IND')).toBe(false);
+    });
+
+    it('futures day labels run (08:45, 13:45] plus the close grace', () => {
+        const day = (s: string) => isDaySessionLabel('FUT', t(s));
+        expect(day('2026-08-07T08:45:00')).toBe(false); // pre-open
+        expect(day('2026-08-07T08:46:00')).toBe(true); // first bar
+        expect(day('2026-08-07T13:45:00')).toBe(true); // last bar
+        expect(day('2026-08-07T13:49:00')).toBe(true); // 定盤 grace
+        expect(day('2026-08-07T13:50:00')).toBe(false);
+        expect(day('2026-08-07T15:01:00')).toBe(false); // night open
+        expect(day('2026-08-08T00:00:00')).toBe(false); // across midnight
+        expect(day('2026-08-08T05:00:00')).toBe(false); // night close
+    });
+
+    it('stock day labels run (09:00, 13:30]', () => {
+        const day = (s: string) => isDaySessionLabel('STK', t(s));
+        expect(day('2026-08-07T08:46:00')).toBe(false); // futures-only minute
+        expect(day('2026-08-07T09:00:00')).toBe(false);
+        expect(day('2026-08-07T09:01:00')).toBe(true);
+        expect(day('2026-08-07T13:30:00')).toBe(true);
+        expect(day('2026-08-07T14:30:00')).toBe(false); // 盤後定價
+    });
+
+    it('filters a mixed futures series down to the day session', () => {
+        const bars = [
+            '2026-08-06T15:01:00',
+            '2026-08-07T04:59:00',
+            '2026-08-07T08:46:00',
+            '2026-08-07T13:45:00',
+            '2026-08-07T15:01:00',
+        ].map((s) => ({ time: t(s), close: 1 }));
+        expect(filterDaySession('FUT', bars).map((b) => b.time)).toEqual([
+            t('2026-08-07T08:46:00'),
+            t('2026-08-07T13:45:00'),
+        ]);
+    });
+
+    it('live ticks use the same minute-end label as the bars', () => {
+        const tick = (s: string) => isDaySessionTick('FUT', t(s));
+        expect(tick('2026-08-07T08:44:59')).toBe(false); // 試撮
+        expect(tick('2026-08-07T08:45:00')).toBe(true); // opening match
+        expect(tick('2026-08-07T13:44:59')).toBe(true);
+        expect(tick('2026-08-07T13:45:00')).toBe(true); // closing print
+        expect(tick('2026-08-07T15:00:00')).toBe(false); // night tick ignored
+        expect(tick('2026-08-07T21:30:12')).toBe(false);
+        expect(isDaySessionTick('STK', t('2026-08-07T08:59:59'))).toBe(false);
+        expect(isDaySessionTick('STK', t('2026-08-07T09:00:00'))).toBe(true);
+    });
+});
+
+describe('pickIntradayWindow (日盤/夜盤手動切換)', () => {
+    // Fri 08-07 day session + that evening's night session (still trading)
+    const times = [
+        '2026-08-07T08:46:00',
+        '2026-08-07T13:45:00',
+        '2026-08-07T15:01:00',
+        '2026-08-07T20:00:00',
+    ].map(t);
+    const now = t('2026-08-07T20:00:30');
+
+    it('auto follows the data (evening → night session)', () => {
+        const win = pickIntradayWindow('FUT', times, 'auto', now);
+        expect(win.night).toBe(true);
+        expect(win.start).toBe(t('2026-08-07T15:00:00'));
+    });
+
+    it('manual 日盤 in the evening shows today’s day session', () => {
+        const win = pickIntradayWindow('FUT', times, 'day', now);
+        expect(win.night).toBe(false);
+        expect(win.start).toBe(t('2026-08-07T08:45:00'));
+        expect(win.end).toBe(t('2026-08-07T13:45:00'));
+    });
+
+    it('manual 夜盤 during the day shows last night’s session', () => {
+        const dayTimes = [
+            '2026-08-06T15:01:00',
+            '2026-08-07T04:59:00',
+            '2026-08-07T08:46:00',
+            '2026-08-07T10:00:00',
+        ].map(t);
+        const win = pickIntradayWindow(
+            'FUT',
+            dayTimes,
+            'night',
+            t('2026-08-07T10:00:30'),
+        );
+        expect(win.night).toBe(true);
+        expect(win.start).toBe(t('2026-08-06T15:00:00'));
+    });
+
+    it('manual mode without data of that kind falls back to the latest frame', () => {
+        const dayOnly = [t('2026-08-07T08:46:00'), t('2026-08-07T13:45:00')];
+        const night = pickIntradayWindow(
+            'FUT',
+            dayOnly,
+            'night',
+            t('2026-08-07T11:00:00'),
+        );
+        expect(night.start).toBe(t('2026-08-06T15:00:00'));
+        const day = pickIntradayWindow(
+            'FUT',
+            [],
+            'day',
+            t('2026-08-08T02:00:00'),
+        );
+        expect(day.start).toBe(t('2026-08-07T08:45:00'));
+    });
+
+    it('a pending switch only applies when it matches the locked kind', () => {
+        // locked 日盤, next-morning 試撮 announces the new day session
+        const nextDay = t('2026-08-10T08:45:00');
+        expect(
+            pickIntradayWindow('FUT', times, 'day', now, nextDay).start,
+        ).toBe(nextDay);
+        // locked 日盤, a pending night switch is ignored
+        const nightPend = t('2026-08-07T15:00:00');
+        expect(
+            pickIntradayWindow('FUT', times, 'day', now, nightPend).start,
+        ).toBe(t('2026-08-07T08:45:00'));
+    });
+
+    it('stocks ignore the manual mode', () => {
+        const stk = [t('2026-08-07T09:01:00'), t('2026-08-07T13:30:00')];
+        const win = pickIntradayWindow('STK', stk, 'night', now);
+        expect(win.night).toBe(false);
+        expect(win.start).toBe(t('2026-08-07T09:00:00'));
+    });
+
+    it('live session switches are followed only for the locked kind', () => {
+        const nightWin = pickIntradayWindow('FUT', times, 'auto', now);
+        const dayWin = pickIntradayWindow('FUT', times, 'day', now);
+        expect(followsSession('auto', nightWin)).toBe(true);
+        expect(followsSession('day', nightWin)).toBe(false);
+        expect(followsSession('day', dayWin)).toBe(true);
+        expect(followsSession('night', dayWin)).toBe(false);
     });
 });
