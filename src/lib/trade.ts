@@ -5,7 +5,7 @@ import { cancellationSummary } from './trade-mutations';
 
 import { getAccountState } from './account-store';
 import { trackActivity } from './activity';
-import { requestOrderConfirm } from './order-confirm';
+import { accountConfirmLabel, requestOrderConfirm } from './order-confirm';
 import { checkOrderAllowed, getRiskSettings } from './risk';
 import {
     cancelOrders,
@@ -125,6 +125,7 @@ async function confirmManualOrder(
     quantity: number,
     orderLot?: StockOrderLot,
     note?: string,
+    account?: Account,
 ): Promise<void> {
     if (!getRiskSettings().confirmManualOrders) return;
     const approved = await requestOrderConfirm({
@@ -134,6 +135,8 @@ async function confirmManualOrder(
         price,
         quantity,
         unit: orderUnit(contract, orderLot),
+        // 顯示實際送單的帳戶（閃電下單各視窗可與主畫面選擇不同）
+        accountLabel: account ? accountConfirmLabel(account) : undefined,
         note,
     });
     if (!approved) throw new OrderConfirmCancelled();
@@ -153,6 +156,8 @@ export async function placeQuickOrder(
         source?: 'manual' | 'auto' | 'agent';
         agentCallId?: string;
         agentAuto?: boolean;
+        // 呼叫端的帳戶仍是送單帳戶？確認期間改選帳戶就中止（閃電下單各視窗）
+        isAccountCurrent?: () => boolean;
     },
 ): Promise<Trade> {
     const startedBase = getApiBase();
@@ -178,10 +183,13 @@ export async function placeQuickOrder(
             price,
             quantity,
             opts?.orderLot,
+            undefined,
+            capturedAccount,
         );
     }
     assertTradingLive();
     if (getApiBase() !== startedBase) throw mutationNotStartedError('確認期間伺服器已切換，請重新確認');
+    if (opts?.isAccountCurrent && !opts.isAccountCurrent()) throw mutationNotStartedError('確認期間帳戶已變更，請重新確認');
     if (capturedAccount && !getAccountState().accounts.some(a => a.signed && a.account_type === capturedAccount.account_type && a.broker_id === capturedAccount.broker_id && a.account_id === capturedAccount.account_id)) throw mutationNotStartedError('帳戶已不可用，請重新確認');
     if (!opts?.bypassRisk) { const blocked = checkOrderAllowed(quantity); if (blocked) throw mutationNotStartedError(blocked); }
     trackActivity(
@@ -249,6 +257,7 @@ export async function placeStockExitByShares(
     action: Action,
     shares: number,
     account?: Account,
+    opts?: { isAccountCurrent?: () => boolean },
 ): Promise<Trade[]> {
     const capturedAccount = account ?? getAccountState().selectedStock ?? undefined;
     const base = getApiBase();
@@ -271,9 +280,11 @@ export async function placeStockExitByShares(
         lots > 0 && odd > 0
             ? `拆為 ${lots} 張市價＋${odd} 股盤中零股限價`
             : undefined,
+        capturedAccount,
     );
     assertTradingLive();
     if (getApiBase() !== base) throw mutationNotStartedError('確認期間伺服器已切換');
+    if (opts?.isAccountCurrent && !opts.isAccountCurrent()) throw mutationNotStartedError('確認期間帳戶已變更，請重新確認');
     const out: Trade[] = [];
     if (lots > 0) {
         out.push(

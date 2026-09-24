@@ -94,6 +94,8 @@ export interface Block {
     wallList?: string;
     wallCols?: number;
     wallRows?: number;
+    // 閃電下單面板自己的帳戶（每市場一組 key）— 沒有 key 的市場跟隨主畫面
+    flashAccounts?: import('./flash-account').FlashAccountKeys;
 }
 
 export interface Workspace {

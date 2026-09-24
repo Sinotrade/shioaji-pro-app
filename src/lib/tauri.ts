@@ -1192,8 +1192,8 @@ export async function pickEnvFile(): Promise<{
 
 let popoutCounter = 0;
 
-export async function openPopout(type: string, code: string | null) {
-    const qs = new URLSearchParams({ popout: type, code: code ?? '' });
+export async function openPopout(type: string, code: string | null, extra?: Record<string, string>) {
+    const qs = new URLSearchParams({ popout: type, code: code ?? '', ...extra });
     if (!isTauri) {
         window.open(
             `${window.location.pathname}?${qs}`,

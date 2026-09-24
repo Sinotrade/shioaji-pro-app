@@ -5,7 +5,7 @@ const m = vi.hoisted(() => ({ base: 'fixture', live: 'live', confirm: vi.fn(), s
 vi.mock('./runtime', () => ({ getApiBase: () => m.base }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts, selectedStock: m.selected, selectedFutures: m.selected?.account_type === 'F' ? m.selected : undefined }) }));
 vi.mock('./activity', () => ({ trackActivity: vi.fn() }));
-vi.mock('./order-confirm', () => ({ requestOrderConfirm: m.confirm }));
+vi.mock('./order-confirm', () => ({ requestOrderConfirm: m.confirm, accountConfirmLabel: (a: Account) => `${a.broker_id}-${a.account_id}` }));
 vi.mock('./risk', () => ({ checkOrderAllowed: m.risk, getRiskSettings: () => ({ confirmManualOrders: true }) }));
 vi.mock('./stream', () => ({ getStreamStatus: () => m.live }));
 vi.mock('./shioaji', () => ({ placeStockOrder: m.stock, placeFuturesOrder: m.future, fetchTrades: m.fetch, cancelOrder: m.cancel, cancelOrders: (ids: string[]) => Promise.allSettled(ids.map(id => m.cancel(id))), fetchTradeCacheHealth: m.health }));
@@ -55,4 +55,24 @@ it('refuses before confirmation when no account was captured, even if confirmati
 it.each([{...account, signed:false}, {...account, account_type:'F'}, {...account,account_id:'absent'}])('rejects an unusable explicit captured account', async candidate => {
     await expect(placeQuickOrder(contract,'Buy',100,1,{account:candidate})).rejects.toMatchObject({mutationNotStarted:true});
     expect(m.confirm).not.toHaveBeenCalled(); expect(m.stock).not.toHaveBeenCalled();
+});
+
+it('confirms with the explicit order account, not the app-wide selection (#139)', async () => {
+    const other = { ...account, account_id: 'panel' };
+    m.accounts = [account, other];
+    await placeQuickOrder(contract, 'Buy', 100, 1, { account: other });
+    expect(m.confirm.mock.calls[0]![0]).toMatchObject({ accountLabel: 'b-panel' });
+    expect(m.stock.mock.calls[0]![2]).toEqual(other);
+});
+it('aborts when the caller account changes during confirmation (#139)', async () => {
+    let current = true;
+    m.confirm.mockImplementation(async () => { current = false; return true; });
+    await expect(placeQuickOrder(contract, 'Buy', 100, 1, { account, isAccountCurrent: () => current })).rejects.toMatchObject({ mutationNotStarted: true, message: expect.stringContaining('帳戶已變更') });
+    await expect(placeStockExitByShares(contract, 'Sell', 1000, account, { isAccountCurrent: () => current })).rejects.toMatchObject({ mutationNotStarted: true });
+    expect(m.stock).not.toHaveBeenCalled();
+});
+it('aborts when the explicit account becomes unavailable during confirmation (#139)', async () => {
+    m.confirm.mockImplementation(async () => { m.accounts = []; return true; });
+    await expect(placeQuickOrder(contract, 'Buy', 100, 1, { account })).rejects.toMatchObject({ mutationNotStarted: true });
+    expect(m.stock).not.toHaveBeenCalled();
 });

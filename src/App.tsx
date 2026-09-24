@@ -101,6 +101,12 @@ import {
     type PulseSectionWeights,
     type Workspace,
 } from './lib/workspace';
+import {
+    loadPopoutFlashAccounts,
+    parseFlashAccountKeys,
+    savePopoutFlashAccounts,
+    type FlashAccountKeys,
+} from './lib/flash-account';
 
 const POPOUT_TYPES: ReadonlySet<string> = new Set([
     'chart',
@@ -120,6 +126,8 @@ const POPOUT_TYPES: ReadonlySet<string> = new Set([
 const popoutQuery = new URLSearchParams(window.location.search);
 const POPOUT_TYPE = popoutQuery.get('popout');
 const POPOUT_CODE = popoutQuery.get('code') || null;
+// 閃電下單 popout 從面板帶來的帳戶選擇（issue #139）
+const POPOUT_FLASH_ACCOUNTS = parseFlashAccountKeys(popoutQuery.get('accounts'));
 
 // resolves a block's contract: pinned code (contract cache) or global selection
 function useBlockContract(
@@ -150,6 +158,7 @@ function BlockBody({
     onSelectCode,
     onPulseConfigChange,
     onWallConfigChange,
+    onFlashAccountsChange,
     refreshTrading,
 }: {
     block: Block;
@@ -169,6 +178,7 @@ function BlockBody({
         cols: number,
         rows: number,
     ) => void;
+    onFlashAccountsChange: (id: string, keys: FlashAccountKeys) => void;
     refreshTrading: () => void;
 }) {
     if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
@@ -246,6 +256,8 @@ function BlockBody({
                     trades={dockProps.trades}
                     positions={dockProps.positions}
                     onOrdersChanged={dockProps.onTradesChanged}
+                    accountKeys={block.flashAccounts}
+                    onAccountKeysChange={(keys) => onFlashAccountsChange(block.id, keys)}
                 />
             ) : (
                 <BlockPlaceholder />
@@ -421,6 +433,7 @@ interface BlockViewProps {
         cols: number,
         rows: number,
     ) => void;
+    onFlashAccountsChange: (id: string, keys: FlashAccountKeys) => void;
     refreshTrading: () => void;
 }
 
@@ -451,6 +464,10 @@ function BlockView(props: BlockViewProps) {
                               void openPopout(
                                   block.type,
                                   contract?.code ?? null,
+                                  // popout 沿用此面板的帳戶選擇
+                                  block.type === 'flash' && block.flashAccounts
+                                      ? { accounts: JSON.stringify(block.flashAccounts) }
+                                      : undefined,
                               )
                         : undefined
                 }
@@ -476,6 +493,8 @@ function PopoutView({
     const trading = useTradingState();
     const tradesState = { data: trading.trades, refresh: tradingActionObserved };
     const popoutPositionsState = { data: trading.positions, refresh: tradingActionObserved };
+    // popout 不在 workspace 裡 — 帳戶選擇依商品代碼存在本機，面板帶來的優先
+    const [flashAccounts, setFlashAccounts] = useState(() => loadPopoutFlashAccounts(code, POPOUT_FLASH_ACCOUNTS));
     const meta = BLOCK_META[type];
 
     let body: React.ReactNode = <BlockPlaceholder />;
@@ -543,6 +562,11 @@ function PopoutView({
                         onOrdersChanged={() => {
                             tradesState.refresh();
                             popoutPositionsState.refresh();
+                        }}
+                        accountKeys={flashAccounts}
+                        onAccountKeysChange={(keys) => {
+                            setFlashAccounts(keys);
+                            savePopoutFlashAccounts(code, keys);
                         }}
                     />
                 );
@@ -949,6 +973,18 @@ function MainApp() {
         [workspace, updateWorkspace],
     );
 
+    const setBlockFlashAccounts = useCallback(
+        (id: string, flashAccounts: FlashAccountKeys) => {
+            updateWorkspace({
+                ...workspace,
+                blocks: workspace.blocks.map((block) =>
+                    block.id === id ? { ...block, flashAccounts } : block,
+                ),
+            });
+        },
+        [workspace, updateWorkspace],
+    );
+
     const setBlockPulseConfig = useCallback(
         (
             id: string,
@@ -1218,6 +1254,7 @@ function MainApp() {
                                     onSelectCode={selectByCode}
                                     onPulseConfigChange={setBlockPulseConfig}
                                     onWallConfigChange={setBlockWallConfig}
+                                    onFlashAccountsChange={setBlockFlashAccounts}
                                     refreshTrading={refreshTrading}
                                 />
                             </div>
