@@ -419,6 +419,9 @@ describe('supportsSessionSplit (只開給日盤 08:45–13:45 的期/選)', () =
         expect(supportsSessionSplit({ security_type: 'FUT', underlying_kind: 'C' })).toBe(false);
         expect(supportsSessionSplit({ security_type: 'FUT', root: 'TGF' })).toBe(false);
         expect(supportsSessionSplit({ security_type: 'FUT', category: 'RTF' })).toBe(false);
+        for (const root of ['TGO', 'RHO', 'RTO']) {
+            expect(supportsSessionSplit({ security_type: 'OPT', root })).toBe(false);
+        }
         expect(supportsSessionSplit({ security_type: 'STK' })).toBe(false);
         expect(supportsSessionSplit({ security_type: 'IND' })).toBe(false);
     });
@@ -454,5 +457,12 @@ describe('past-session reference (晚上回顧日盤)', () => {
         expect(isPastSession('FUT', day, t('2026-08-07T20:00:00'))).toBe(true);
         expect(isPastSession('FUT', day, t('2026-08-07T10:00:00'))).toBe(false);
         expect(isPastSession('FUT', day, t('2026-08-07T08:30:00'))).toBe(false);
+        // 收盤後、夜盤開盤前：剛收的日盤不算舊時段
+        expect(isPastSession('FUT', day, t('2026-08-07T13:50:00'))).toBe(false);
+        expect(isPastSession('FUT', day, t('2026-08-07T14:59:00'))).toBe(false);
+        expect(isPastSession('FUT', day, t('2026-08-07T15:00:30'))).toBe(true);
+        // 前一天的日盤在隔天 13:50 仍是舊時段
+        const prevDay = sessionWindowFor('FUT', t('2026-08-06T09:00:00'));
+        expect(isPastSession('FUT', prevDay, t('2026-08-07T13:50:00'))).toBe(true);
     });
 });

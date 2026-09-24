@@ -50,7 +50,8 @@ export function hasNightSession(secType: SecurityType): boolean {
 // （E=匯率、C=商品）判斷，舊合約快取沒帶時退回商品代碼
 const LONG_DAY_ROOTS = new Set([
     'RHF', 'RTF', 'XJF', 'XEF', 'XAF', 'XBF', // 匯率期貨
-    'GDF', 'TGF', // 黃金期貨
+    'RHO', 'RTO', // 匯率選擇權
+    'GDF', 'TGF', 'TGO', // 黃金期貨/選擇權
     'BRF', // 布蘭特原油期貨
 ]);
 
@@ -192,7 +193,20 @@ export function isPastSession(
     win: SessionWindow,
     now: number,
 ): boolean {
-    return win.start !== sessionWindowFor(secType, now).start;
+    const cur = sessionWindowFor(secType, now);
+    if (win.start === cur.start) return false;
+    // 13:45 收盤到 15:00 夜盤開盤之間，剛收的日盤仍是「今天的時段」
+    // （合約參考價/漲跌停仍屬於它）
+    if (
+        !win.night &&
+        cur.night &&
+        now > win.end &&
+        now <= cur.start &&
+        cur.start - win.end < 2 * H
+    ) {
+        return false;
+    }
+    return true;
 }
 
 // every 1-minute bar-label time of a session, for whitespace axis fill
