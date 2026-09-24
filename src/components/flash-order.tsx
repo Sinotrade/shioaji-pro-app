@@ -450,22 +450,30 @@ export function FlashOrder({
                 getAliasFor(p.code) === contract.code,
         );
         if (matches.length === 0) return null;
-        let net = 0;
-        let cost = 0;
-        let qtySum = 0;
-        let pnl = 0;
+        // Intra-session the broker returns separate Buy and Sell rows for the
+        // same contract (netting happens after close). Blending both sides'
+        // cost over the gross quantity gives a price nobody traded at (#116),
+        // so total each side on its own and show the side that stays open.
+        const side = { Buy: { qty: 0, cost: 0, pnl: 0 }, Sell: { qty: 0, cost: 0, pnl: 0 } };
         for (const p of matches) {
-            net += p.direction === 'Sell' ? -p.quantity : p.quantity;
-            cost += p.price * p.quantity;
-            qtySum += p.quantity;
-            pnl += p.pnl || 0;
+            const s = side[p.direction === 'Sell' ? 'Sell' : 'Buy'];
+            s.qty += p.quantity;
+            s.cost += p.price * p.quantity;
+            s.pnl += p.pnl || 0;
         }
+        const net = side.Buy.qty - side.Sell.qty;
         if (net === 0) return null;
-        const avg = qtySum > 0 ? cost / qtySum : 0;
+        const open = net > 0 ? side.Buy : side.Sell;
+        const avg = open.qty > 0 ? open.cost / open.qty : 0;
+        // Both directions present: the open side's lots partly offset the
+        // other side, so only the |net| still-open share of its P&L is shown
+        // (at the side's average cost; per-lot FIFO needs position detail).
+        const mixed = side.Buy.qty > 0 && side.Sell.qty > 0;
+        const pnl = mixed ? open.pnl * Math.abs(net) / open.qty : open.pnl;
         const safeExit = matches.every(p => Number.isInteger(p.quantity) && p.quantity > 0)
             && new Set(matches.map(p => p.direction)).size === 1
             && (market !== 'S' || matches.every(p => 'cond' in p && p.cond === 'Cash'));
-        return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit };
+        return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit, mixed };
     }, [positions, contract]);
 
 
@@ -713,6 +721,14 @@ export function FlashOrder({
                         {pos.net > 0 ? '多' : '空'} {Math.abs(pos.net)}
                     </span>
                     <span>@ {fmtPrice(pos.avg)}</span>
+                    {pos.mixed && (
+                        <span
+                            className={styles.posMixed}
+                            title="券商尚未沖銷同商品的買賣持倉；成本與損益以未平方向的加權平均估算，可能與逐筆沖銷（FIFO）結果不同，請以持倉面板確認"
+                        >
+                            多空並存
+                        </span>
+                    )}
                     <span
                         className={
                             pos.pnl >= 0 ? styles.posLong : styles.posShort

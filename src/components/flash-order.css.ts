@@ -223,6 +223,12 @@ export const posBar = style({
 
 export const posLong = style({ color: vars.color.up, fontWeight: 600 });
 export const posShort = style({ color: vars.color.down, fontWeight: 600 });
+export const posMixed = style({
+    padding: '0 4px',
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: 3,
+    cursor: 'help',
+});
 
 // ---- ladder ----
 
