@@ -102,8 +102,8 @@ import {
     type Workspace,
 } from './lib/workspace';
 import {
+    flashPopoutParams,
     loadPopoutFlashAccounts,
-    parseFlashAccountKeys,
     savePopoutFlashAccounts,
     type FlashAccountKeys,
 } from './lib/flash-account';
@@ -126,8 +126,8 @@ const POPOUT_TYPES: ReadonlySet<string> = new Set([
 const popoutQuery = new URLSearchParams(window.location.search);
 const POPOUT_TYPE = popoutQuery.get('popout');
 const POPOUT_CODE = popoutQuery.get('code') || null;
-// 閃電下單 popout 從面板帶來的帳戶選擇（issue #139）
-const POPOUT_FLASH_ACCOUNTS = parseFlashAccountKeys(popoutQuery.get('accounts'));
+// 閃電下單 popout 的視窗 id（issue #139）— 帳戶選擇依此存在本機，URL 不帶帳號
+const POPOUT_WINDOW_ID = popoutQuery.get('win') || null;
 
 // resolves a block's contract: pinned code (contract cache) or global selection
 function useBlockContract(
@@ -464,9 +464,9 @@ function BlockView(props: BlockViewProps) {
                               void openPopout(
                                   block.type,
                                   contract?.code ?? null,
-                                  // popout 沿用此面板的帳戶選擇
-                                  block.type === 'flash' && block.flashAccounts
-                                      ? { accounts: JSON.stringify(block.flashAccounts) }
+                                  // popout 首次開啟沿用此面板的帳戶選擇（含跟隨主畫面）
+                                  block.type === 'flash'
+                                      ? flashPopoutParams(block.flashAccounts)
                                       : undefined,
                               )
                         : undefined
@@ -493,8 +493,8 @@ function PopoutView({
     const trading = useTradingState();
     const tradesState = { data: trading.trades, refresh: tradingActionObserved };
     const popoutPositionsState = { data: trading.positions, refresh: tradingActionObserved };
-    // popout 不在 workspace 裡 — 帳戶選擇依商品代碼存在本機，面板帶來的優先
-    const [flashAccounts, setFlashAccounts] = useState(() => loadPopoutFlashAccounts(code, POPOUT_FLASH_ACCOUNTS));
+    // popout 不在 workspace 裡 — 帳戶選擇依視窗 id 存在本機（開啟時由面板預先寫入）
+    const [flashAccounts, setFlashAccounts] = useState(() => loadPopoutFlashAccounts(POPOUT_WINDOW_ID));
     const meta = BLOCK_META[type];
 
     let body: React.ReactNode = <BlockPlaceholder />;
@@ -566,7 +566,7 @@ function PopoutView({
                         accountKeys={flashAccounts}
                         onAccountKeysChange={(keys) => {
                             setFlashAccounts(keys);
-                            savePopoutFlashAccounts(code, keys);
+                            savePopoutFlashAccounts(POPOUT_WINDOW_ID, keys);
                         }}
                     />
                 );

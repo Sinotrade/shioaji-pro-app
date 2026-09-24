@@ -39,6 +39,7 @@ import {
 import { notify } from './trade';
 import { cacheDesktopConfigured } from './desktop-setup-state';
 import { isChildWindow } from './window-role';
+import { newPopoutWindowId } from './flash-account';
 
 export { isTauri } from './runtime';
 export {
@@ -1219,6 +1220,8 @@ export async function openPopout(type: string, code: string | null, extra?: Reco
 
 // 閃電全開: pop a flash-order window per code, arranged by the chosen
 // layout — full-screen grids, a right-side column, or a bottom row.
+// Each tile gets a fresh popout window id with no seeded account, so it
+// follows the main account until the user picks one in that tile (#139).
 export interface FlashTileLayout {
     cols: number;
     rows: number;
@@ -1254,7 +1257,7 @@ export async function openFlashTiles(
     if (!isTauri) {
         use.forEach((code, i) => {
             const { x, y } = posOf(i);
-            const qs = new URLSearchParams({ popout: 'flash', code });
+            const qs = new URLSearchParams({ popout: 'flash', code, win: newPopoutWindowId() });
             window.open(
                 `${window.location.pathname}?${qs}`,
                 `sj-flash-tile-${code}`,
@@ -1266,7 +1269,7 @@ export async function openFlashTiles(
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
     use.forEach((code, i) => {
         const { x, y } = posOf(i);
-        const qs = new URLSearchParams({ popout: 'flash', code });
+        const qs = new URLSearchParams({ popout: 'flash', code, win: newPopoutWindowId() });
         popoutCounter += 1;
         new WebviewWindow(`popout-flashtile-${popoutCounter}`, {
             url: `index.html?${qs}`,

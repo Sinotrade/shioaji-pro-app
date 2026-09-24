@@ -41,40 +41,73 @@ export function resolveFlashAccount(accounts: Account[], market: FlashMarket, sa
     return { account: eligible.find(a => accountMatches(a, globalAccount)), following: true, missing: false };
 }
 
-// Popout windows are not part of the workspace, so their choice is kept per
-// contract code; the popping-out panel may seed it through the URL.
-const POPOUT_STORAGE_KEY = 'sj-pro-flash-popout-accounts';
+// Popout windows are not part of the workspace, so each popout gets a window
+// id (URL `win`) and its choice is kept in localStorage under that id. The
+// opening panel seeds the entry before the window loads — the URL carries
+// only the opaque id, never an account number. Afterwards the popout's own
+// choices overwrite the entry, so a reload keeps them.
+const POPOUT_STORAGE_KEY = 'sj-pro-flash-popout-windows';
+// bound the map — ids of closed popouts are never reused
+const POPOUT_MAX_ENTRIES = 50;
+
+interface PopoutEntry { keys: FlashAccountKeys; at: number }
 
 function isKeys(v: unknown): v is FlashAccountKeys {
     return !!v && typeof v === 'object' && Object.entries(v).every(([k, s]) => (k === 'S' || k === 'F') && typeof s === 'string');
 }
 
-export function parseFlashAccountKeys(raw: string | null | undefined): FlashAccountKeys | undefined {
-    if (!raw) return undefined;
+function readPopoutEntries(): Record<string, PopoutEntry> {
     try {
-        const v: unknown = JSON.parse(raw);
-        return isKeys(v) ? v : undefined;
+        const all: unknown = JSON.parse(localStorage.getItem(POPOUT_STORAGE_KEY) ?? '{}');
+        if (!all || typeof all !== 'object') return {};
+        const out: Record<string, PopoutEntry> = {};
+        for (const [id, e] of Object.entries(all as Record<string, unknown>)) {
+            const entry = e as Partial<PopoutEntry> | null;
+            if (entry && isKeys(entry.keys)) out[id] = { keys: entry.keys, at: Number(entry.at) || 0 };
+        }
+        return out;
     } catch {
-        return undefined;
+        return {};
     }
 }
 
-export function loadPopoutFlashAccounts(code: string | null, seed?: FlashAccountKeys): FlashAccountKeys {
-    let stored: FlashAccountKeys = {};
+function writePopoutEntry(id: string, keys: FlashAccountKeys): void {
     try {
-        const all: unknown = JSON.parse(localStorage.getItem(POPOUT_STORAGE_KEY) ?? '{}');
-        const v = code && all && typeof all === 'object' ? (all as Record<string, unknown>)[code] : undefined;
-        if (isKeys(v)) stored = v;
-    } catch { /* storage unavailable — fall through to seed/global */ }
-    return { ...stored, ...seed };
+        const all = readPopoutEntries();
+        all[id] = { keys, at: Date.now() };
+        const kept = Object.entries(all).sort((a, b) => b[1].at - a[1].at).slice(0, POPOUT_MAX_ENTRIES);
+        localStorage.setItem(POPOUT_STORAGE_KEY, JSON.stringify(Object.fromEntries(kept)));
+    } catch { /* best effort */ }
 }
 
-export function savePopoutFlashAccounts(code: string | null, keys: FlashAccountKeys): void {
-    if (!code) return;
-    try {
-        const all: unknown = JSON.parse(localStorage.getItem(POPOUT_STORAGE_KEY) ?? '{}');
-        const next = all && typeof all === 'object' ? { ...(all as Record<string, unknown>) } : {};
-        next[code] = keys;
-        localStorage.setItem(POPOUT_STORAGE_KEY, JSON.stringify(next));
-    } catch { /* best effort */ }
+export function newPopoutWindowId(): string {
+    return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Opener side: hand the panel's choice (`{}` = follow main) to a new popout. */
+export function seedPopoutFlashAccounts(windowId: string, keys: FlashAccountKeys): void {
+    writePopoutEntry(windowId, { ...keys });
+}
+
+/** Popout side: its saved choice, or follow-main when there is none. */
+export function loadPopoutFlashAccounts(windowId: string | null): FlashAccountKeys {
+    if (!windowId) return {};
+    return readPopoutEntries()[windowId]?.keys ?? {};
+}
+
+export function savePopoutFlashAccounts(windowId: string | null, keys: FlashAccountKeys): void {
+    if (windowId) writePopoutEntry(windowId, keys);
+}
+
+/**
+ * URL params for a flash popout opened from a panel: the panel's choice is
+ * used as-is on first open (`{}` = follow main), even if an older popout
+ * stored something else. Only the opaque window id goes into the URL.
+ */
+export function flashPopoutParams(panelKeys: FlashAccountKeys | undefined): { win: string } {
+    const win = newPopoutWindowId();
+    seedPopoutFlashAccounts(win, panelKeys ?? {});
+    return { win };
 }

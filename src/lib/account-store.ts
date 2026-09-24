@@ -44,16 +44,49 @@ function loadSelection(): { stock?: string; futures?: string } {
     }
 }
 
+// last value this window wrote — a storage event carrying it is our own echo
+let lastPersisted: string | null = null;
+
 function persistSelection() {
-    localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-            stock: state.selectedStock ? keyOf(state.selectedStock) : undefined,
-            futures: state.selectedFutures
-                ? keyOf(state.selectedFutures)
-                : undefined,
-        }),
-    );
+    lastPersisted = JSON.stringify({
+        stock: state.selectedStock ? keyOf(state.selectedStock) : undefined,
+        futures: state.selectedFutures
+            ? keyOf(state.selectedFutures)
+            : undefined,
+    });
+    localStorage.setItem(STORAGE_KEY, lastPersisted);
+}
+
+// cross-window sync (issue #139) — popouts share localStorage but not module
+// state; without this a popout flash panel set to 跟隨主畫面 keeps trading
+// the account the main window had when the popout opened. Only signed
+// accounts already in this window's list are adopted; an unknown key leaves
+// the current selection alone.
+function applySelectionFromStorage(raw: string | null) {
+    if (raw === null || raw === lastPersisted) return;
+    let saved: { stock?: string; futures?: string };
+    try {
+        saved = JSON.parse(raw) ?? {};
+    } catch {
+        return;
+    }
+    const pick = (type: 'S' | 'F', key: string | undefined) =>
+        key
+            ? state.accounts.find(
+                  (a) => a.signed && a.account_type === type && keyOf(a) === key,
+              )
+            : undefined;
+    const stock = pick('S', saved.stock) ?? state.selectedStock;
+    const futures = pick('F', saved.futures) ?? state.selectedFutures;
+    if (stock === state.selectedStock && futures === state.selectedFutures) return;
+    state = { ...state, selectedStock: stock, selectedFutures: futures };
+    emit();
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('storage', (e: StorageEvent) => {
+        if (e.key === STORAGE_KEY) applySelectionFromStorage(e.newValue);
+    });
 }
 
 let inflight: Promise<void> | null = null;

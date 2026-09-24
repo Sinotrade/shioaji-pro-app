@@ -126,3 +126,24 @@ it('the order guard fails once the panel switches account while the confirmation
     expect(guard()).toBe(false);
     await act(async () => { finish(); await pending; });
 });
+
+it('a following panel\'s pending order fails its guard when the main account changes (e.g. from another window)', async () => {
+    let guard!: () => boolean;
+    let finish!: () => void;
+    mocks.place.mockImplementationOnce((_c, _a, _p, _q, opts: { account: Account; isAccountCurrent: () => boolean }) => {
+        guard = opts.isAccountCurrent;
+        expect(opts.account).toBe(accA);
+        return new Promise(resolve => { finish = () => resolve(trades[0]); });
+    });
+    keys = [{}, { F: 'F:BR:12345B' }];
+    await act(async () => { view = create(render()); });
+    await act(async () => { button(panels()[0], '啟用閃電下單').props.onClick(); });
+    await act(async () => { button(panels()[0], '市價買').props.onClick(); });
+    expect(guard()).toBe(true);
+    // the app-wide selection moves (account-store storage sync re-renders)
+    mocks.selected = 'B';
+    await act(async () => { view.update(render()); });
+    expect(guard()).toBe(false);
+    expect(text(panels()[0])).toContain('多 5');
+    await act(async () => { finish(); });
+});
