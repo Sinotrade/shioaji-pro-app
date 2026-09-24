@@ -18,6 +18,14 @@
 //   position minus that reservation. Unknown outcomes keep their reservation
 //   until the user acknowledges them and are never resent.
 // - 試撮 (simtrade) ticks never fire a trigger.
+// - Restore confirmation (#144): when the executor (re)starts — app launch,
+//   main-window reload, executor handover — or protection returns to a
+//   trigger's environment, the FIRST tick decides. An order-sending trigger
+//   already past its price then (it crossed while nobody was watching) is
+//   held as 待確認 instead of sent; the user sends, cancels or keeps it. A
+//   kept trigger fires only after price is seen on the non-trigger side and
+//   crosses again. A stream reconnect while the app stays open keeps normal
+//   firing, and price alerts (notify only) are never held.
 
 import { useSyncExternalStore } from 'react';
 import { getAccountState } from './account-store';
@@ -31,6 +39,7 @@ import {
     type BracketExit,
 } from './bracket-core';
 import { onTrackedReport, recentReportsFor } from './bracket-reports';
+import { getPrivacyMode, maskAccountId } from './privacy';
 import { ensureContract } from './contracts-cache';
 import { claimExecutor, createCommandBus, isExecutor, isMainWindow } from './main-window-commands';
 import type { OrderEventReport } from './order-report';
@@ -69,6 +78,8 @@ export interface TriggerOrder {
     suspended?: string; // reason this trigger will not execute
     createdAt?: number;
     requestId?: string; // sender-generated; a re-applied add returns the same trigger
+    pending?: { price: number; at: number }; // 待確認: already past when protection resumed (#144)
+    awaitingRecross?: boolean; // kept after 待確認: arms once price is seen on the non-trigger side
 }
 
 export interface ExitRecord extends BracketExit {
@@ -134,15 +145,28 @@ function loadExecutorState() {
 const listeners = new Set<() => void>();
 const exitListeners = new Set<(exit: ExitRecord) => void>();
 
-interface Snapshot { triggers: TriggerOrder[]; exits: ExitRecord[]; feedMissing: string[]; executing: boolean }
+interface Snapshot {
+    triggers: TriggerOrder[];
+    exits: ExitRecord[];
+    feedMissing: string[];
+    executing: boolean;
+    prices?: Record<string, number>; // latest tick of codes with a 待確認 trigger
+}
 let executing = false; // this window holds the executor lock
 const feedMissing = new Set<string>(); // trigger codes without a tick subscription
-let snapshot: Snapshot = { triggers, exits, feedMissing: [], executing: false };
+let snapshot: Snapshot = { triggers, exits, feedMissing: [], executing: false, prices: {} };
+// Executor only: triggers whose first tick after a (re)start decides between
+// normal operation and 待確認, and the latest tick price per code.
+const restoreCheck = new Set<string>();
+const lastPrices = new Map<string, number>();
+
+export type PendingChoice = 'send' | 'cancel' | 'keep';
 
 type Command =
     | { op: 'add'; trigger: NewTrigger }
     | { op: 'remove'; id: string }
-    | { op: 'ack-exit'; id: string };
+    | { op: 'ack-exit'; id: string }
+    | { op: 'resolve-pending'; id: string; choice: PendingChoice; seenPrice?: number };
 
 let decideRole!: () => void;
 const roleDecided = new Promise<void>(resolve => { decideRole = resolve; });
@@ -178,7 +202,7 @@ function commit() {
     writeJson(STORAGE_KEY, triggers);
     writeJson(GROUPS_KEY, processedGroups);
     writeJson(EXITS_KEY, exits);
-    snapshot = { triggers, exits, feedMissing: [...feedMissing], executing };
+    snapshot = { triggers, exits, feedMissing: [...feedMissing], executing, prices: pendingPrices() };
     syncQuotes();
     listeners.forEach(l => l());
     bus.publish();
@@ -206,6 +230,8 @@ function handleCommand(cmd: Command): unknown {
         if (again) return again; // resent after a main-window reload
         const t: TriggerOrder = { ...cmd.trigger, id: newId(), createdAt: Date.now() };
         delete t.suspended;
+        delete t.pending;
+        delete t.awaitingRecross;
         if (!hasContext(t)) throw new Error('觸價單缺少帳戶或伺服器資訊，未建立');
         if (t.bracketId) throw new Error('括號單保護只由主視窗建立');
         if (t.group && processedGroups[groupKey(t.env, t.group)]) throw new Error('此 OCO 群組已觸發過，不再建立');
@@ -229,6 +255,7 @@ function handleCommand(cmd: Command): unknown {
         if (rec) emitExit(rec);
         return true;
     }
+    if (cmd.op === 'resolve-pending') return resolvePending(cmd.id, cmd.choice, cmd.seenPrice);
     throw new Error('未知指令');
 }
 
@@ -279,6 +306,16 @@ export function acknowledgeExit(id: string): Promise<unknown> {
     return bus.send({ op: 'ack-exit', id });
 }
 
+/** Decide a 待確認 trigger (#144). `send` fires it once as configured after
+ * re-checking environment, account and the latest price: when the price
+ * differs from `seenPrice` (what the user was shown) nothing is sent and the
+ * error names the latest price. `cancel` removes it (bracket protection is
+ * removed from its bracket status instead). `keep` re-arms it for a fresh
+ * crossing only. */
+export function resolvePendingTrigger(id: string, choice: PendingChoice, seenPrice?: number): Promise<unknown> {
+    return bus.send({ op: 'resolve-pending', id, choice, seenPrice });
+}
+
 export function getTriggers(): TriggerOrder[] {
     return snapshot.triggers;
 }
@@ -294,6 +331,12 @@ function subscribe(l: () => void) {
 
 export function useTriggers(): TriggerOrder[] {
     return useSyncExternalStore(subscribe, () => snapshot.triggers);
+}
+
+const NO_PRICES: Record<string, number> = {};
+/** Latest tick price of every code that has a 待確認 trigger. */
+export function usePendingPrices(): Record<string, number> {
+    return useSyncExternalStore(subscribe, () => snapshot.prices ?? NO_PRICES);
 }
 
 export function useTriggerExits(): ExitRecord[] {
@@ -595,17 +638,130 @@ export function applyExitTrade(trade: Trade, opts: { settle?: boolean } = {}) {
     }
 }
 
+const isPast = (t: Pick<TriggerOrder, 'condition' | 'price'>, price: number) =>
+    (t.condition === 'below' && price <= t.price) || (t.condition === 'above' && price >= t.price);
+
 export function evaluateTick(code: string, price: number) {
     if (!main || !executing || !Number.isFinite(price) || price <= 0 || triggers.length === 0) return;
+    const previous = lastPrices.get(code);
+    lastPrices.set(code, price);
     const env = currentProtectionEnv(); // null → only alerts may fire
+    let rearmed = false;
+    const held: TriggerOrder[] = [];
     for (const t of triggers.slice()) {
-        if (t.code !== code || t.suspended) continue;
+        if (t.code !== code || t.suspended || t.pending) continue;
         if (t.kind !== 'alert' && t.env !== env) continue;
-        if (!((t.condition === 'below' && price <= t.price) || (t.condition === 'above' && price >= t.price))) continue;
+        const past = isPast(t, price);
+        if (t.awaitingRecross) {
+            // kept after 待確認: seeing the non-trigger side arms it again
+            if (!past) {
+                triggers = triggers.map(x => x.id === t.id ? { ...x, awaitingRecross: undefined } : x);
+                rearmed = true;
+            }
+            continue;
+        }
+        if (restoreCheck.delete(t.id) && past && t.kind !== 'alert') {
+            held.push(t);
+            continue;
+        }
+        if (!past) continue;
         // an earlier trigger on this tick may have removed it (OCO)
         if (!triggers.some(x => x.id === t.id)) continue;
         fire(t, price);
     }
+    if (held.length) holdPending(held, price);
+    else if (rearmed) commit();
+    else if (previous !== price && triggers.some(t => t.pending && t.code === code)) schedulePricePublish();
+}
+
+// ---- restore confirmation (#144) ----
+
+function pendingPrices(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const t of triggers) {
+        const p = t.pending ? lastPrices.get(t.code) : undefined;
+        if (p !== undefined) out[t.code] = p;
+    }
+    return out;
+}
+
+// Prices of 待確認 codes reach mirrors at most twice a second.
+let priceTimer: ReturnType<typeof setTimeout> | null = null;
+function schedulePricePublish() {
+    if (priceTimer) return;
+    priceTimer = setTimeout(() => {
+        priceTimer = null;
+        if (!executing) return;
+        snapshot = { ...snapshot, prices: pendingPrices() };
+        listeners.forEach(l => l());
+        bus.publish();
+    }, 500);
+}
+
+const fmtDiff = (d: number) => `${d > 0 ? '+' : ''}${Number(d.toFixed(4))}`;
+
+/** One line for notices and the 待確認 list; the account follows privacy mode. */
+export function describePending(t: TriggerOrder, price: number | undefined, priv: boolean): string {
+    const acct = t.account ? `${t.account.account_type === 'F' ? '[期]' : '[證]'}${maskAccountId(t.account.account_id, priv)} ` : '';
+    const now = price === undefined ? '目前價未知' : `目前 ${price}（差 ${fmtDiff(price - t.price)}）`;
+    return `${t.code} ${acct}${t.kind === 'stop' ? '停損' : '停利'} 市價${t.action === 'Buy' ? '買' : '賣'} ${t.quantity}`
+        + ` 觸價 ${t.condition === 'below' ? '≤' : '≥'} ${t.price} · ${now}`;
+}
+
+function holdPending(held: TriggerOrder[], price: number) {
+    const at = Date.now();
+    const ids = new Set(held.map(t => t.id));
+    triggers = triggers.map(t => ids.has(t.id) ? { ...t, pending: { price, at } } : t);
+    commit();
+    for (const t of held) {
+        notify({ kind: 'err', title: '觸價單待確認（未自動送出）',
+            body: `${describePending(t, price, getPrivacyMode())} — 離線期間已穿價；請選擇送出、取消或保留` });
+    }
+}
+
+/** Every order-sending trigger of `env` (all envs when omitted) decides on
+ * its next tick whether it is 待確認. */
+function markRestore(env?: string) {
+    for (const t of triggers) {
+        if (t.kind === 'alert' || t.suspended || t.pending || t.awaitingRecross) continue;
+        if (env === undefined || t.env === env) restoreCheck.add(t.id);
+    }
+}
+
+function resolvePending(id: string, choice: PendingChoice, seenPrice?: number): unknown {
+    const t = triggers.find(x => x.id === id);
+    if (!t?.pending) throw new Error('此觸價單已不在待確認狀態');
+    if (choice === 'keep') {
+        triggers = triggers.map(x => x.id === id ? { ...x, pending: undefined, awaitingRecross: true } : x);
+        commit();
+        notify({ kind: 'info', title: '觸價單保留', body: `${t.code} 價格回到觸價另一側後，再次穿價才會觸發` });
+        return true;
+    }
+    if (choice === 'cancel') {
+        // Same rule as remove: a bracket's pair belongs to its plan.
+        if (t.bracketId) throw new Error('括號單保護請在下單面板的括號單狀態中移除追蹤');
+        triggers = triggers.filter(x => x.id !== id);
+        commit();
+        notify({ kind: 'info', title: '觸價單已取消', body: `${t.code} 待確認觸價單已刪除，未送單` });
+        return true;
+    }
+    if (choice !== 'send') throw new Error('未知選項');
+    if (currentProtectionEnv() !== t.env) throw new Error('伺服器或模擬／正式模式與建立時不同，未送出');
+    const account = t.account && getAccountState().accounts.find(a => a.signed && a.account_type === t.account!.account_type
+        && a.broker_id === t.account!.broker_id && a.account_id === t.account!.account_id);
+    if (!account) throw new Error('建立時的帳戶已不可用，未送出');
+    const latest = lastPrices.get(t.code);
+    if (getStreamStatus() !== 'live' || latest === undefined) throw new Error('行情未連線或尚未收到目前價，未送出');
+    if (seenPrice !== latest) {
+        snapshot = { ...snapshot, prices: pendingPrices() };
+        listeners.forEach(l => l());
+        bus.publish();
+        throw new Error(`價格已變動：目前價 ${latest}，請確認後再送出`);
+    }
+    const next = { ...t, pending: undefined };
+    triggers = triggers.map(x => x.id === id ? next : x);
+    fire(next, latest); // OCO siblings, reservation and unknown-outcome rules apply as usual
+    return true;
 }
 
 // Main window keeps the tick feed of every active trigger subscribed; closing
@@ -688,7 +844,18 @@ function becomeExecutor() {
     }
     onAnyTick(tick => { if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close)); });
     onTrackedReport((report, _info, base) => applyExitReport(report, base));
-    onProtectionEnvChange(() => syncQuotes());
+    // Returning to an environment protection was not running in (#144); a
+    // reconnect to the same one (mode briefly forgotten) is not a restore.
+    let lastEnv = currentProtectionEnv();
+    markRestore();
+    onProtectionEnvChange(() => {
+        const env = currentProtectionEnv();
+        if (env && env !== lastEnv) {
+            if (lastEnv) markRestore(env);
+            lastEnv = env;
+        }
+        syncQuotes();
+    });
     watchProtectionEnv(); // stream down → mode forgotten → no dispatch until fresh /info
     subscribeStatusStore(() => { if (getStreamStatus() === 'live') syncQuotes(); });
     void refreshProtectionEnv();

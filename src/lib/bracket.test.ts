@@ -731,6 +731,7 @@ describe('trigger execution (main window only)', () => {
         m.queued!({}); await flush();
         expect(m.tick).not.toBeNull();
         expect(engine.getTriggers()).toHaveLength(2);
+        await tick(48300); // handover is a restore (#144): the first tick decides
         await tick(47000);
         expect(m.place).toHaveBeenCalledTimes(1);
     });

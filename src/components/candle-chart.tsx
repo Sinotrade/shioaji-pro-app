@@ -1677,6 +1677,16 @@ export function CandleChart({
                                     {t.suspended && (
                                         <span title={t.suspended}> 未啟用</span>
                                     )}
+                                    {t.pending && (
+                                        <span title='離線期間已穿價，未自動送出；請在待確認視窗選擇送出、保留或取消'>
+                                            {' '}待確認
+                                        </span>
+                                    )}
+                                    {t.awaitingRecross && (
+                                        <span title='價格回到觸價另一側後，再次穿價才會觸發'>
+                                            {' '}待重新穿價
+                                        </span>
+                                    )}
                                     {!t.suspended &&
                                         t.kind !== 'alert' &&
                                         t.env !== currentProtectionEnv() && (
