@@ -102,3 +102,18 @@ it('another environment: labelled, no current price, send disabled; old detectio
     expect(all).toContain('2026-01-02');
     expect(button(r, '送出').props.disabled).toBe(true);
 });
+
+it('losing the current price disarms a pending 送出 (never shows "目前 undefined")', async () => {
+    const r = render();
+    await click(button(r, '送出'));
+    expect(button(r, '再按一次')).toBeTruthy();
+    m.prices = {};
+    act(() => { r.update(createElement(PendingTriggers)); });
+    expect(text(r.root)).not.toContain('undefined');
+    expect(buttons(r).some(b => text(b).includes('再按一次'))).toBe(false);
+    expect(button(r, '送出').props.disabled).toBe(true);
+    m.prices = { TXFR1: 47800 };
+    act(() => { r.update(createElement(PendingTriggers)); });
+    await click(button(r, '送出')); // first click again, not a send
+    expect(m.resolve).not.toHaveBeenCalled();
+});

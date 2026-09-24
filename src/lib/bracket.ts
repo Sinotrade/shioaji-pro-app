@@ -54,6 +54,7 @@ import {
     applyExitTrade,
     armBracketGroup,
     disarmBracketGroup,
+    restoreWindowOpen,
     EXECUTOR_LOCK,
     getExits,
     onBecomeExecutor,
@@ -581,7 +582,8 @@ function run() {
         if (env === knownEnv) return;
         knownEnv = env;
         if (!env) return;
-        const restore = env !== lastKnown;
+        // or after a long stretch without evaluation (outage > 60 s etc.)
+        const restore = env !== lastKnown || restoreWindowOpen();
         lastKnown = env;
         restoringDo(restore, () => {
             for (const p of plans.slice()) {
@@ -607,7 +609,9 @@ function run() {
             }
         } else {
             void refreshProtectionEnv();
-            lookupLiveAccounts(); // cache-only; issues stay until explicit reconcile
+            // cache-only; issues stay until explicit reconcile. After a long
+            // outage, fills found now may already be past their exits (#144).
+            lookupLiveAccounts(restoreWindowOpen());
         }
     });
     void refreshProtectionEnv();

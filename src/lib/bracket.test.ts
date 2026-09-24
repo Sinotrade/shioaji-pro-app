@@ -17,6 +17,7 @@ const m = vi.hoisted(() => ({
     status: 'live' as string,
     order: null as ((r: OrderEventReport) => void) | null,
     tick: null as ((t: { code: string; close: number; simtrade?: boolean }) => void) | null,
+    heartbeat: null as (() => void) | null,
     statusChanged: [] as (() => void)[],
     accounts: [] as Account[],
     place: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock('./stream', () => ({
     subscribeStatusStore: (cb: () => void) => { m.statusChanged.push(cb); return () => undefined; },
     onOrderEvent: (cb: (r: OrderEventReport) => void) => { m.order = cb; return () => undefined; },
     onAnyTick: (cb: typeof m.tick) => { m.tick = cb; return () => undefined; },
+    onStreamEvent: (name: string, cb: () => void) => { if (name === 'heartbeat') m.heartbeat = cb; return () => undefined; },
 }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts, selectedFutures: m.accounts.find(a => a.account_type === 'F') ?? null,
     selectedStock: m.accounts.find(a => a.account_type === 'S') ?? null }) }));
@@ -103,12 +105,12 @@ type Bracket = typeof import('./bracket');
 let engine: Engine;
 let bracket: Bracket;
 
-async function boot(opts: { keepStore?: boolean; noWarmTick?: boolean } = {}) {
+async function boot(opts: { keepStore?: boolean; noHeartbeat?: boolean } = {}) {
     vi.resetModules();
     if (!opts.keepStore) store = new Map();
     vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
     vi.stubGlobal('location', { search: m.search });
-    m.order = null; m.tick = null; m.statusChanged = []; m.envChanged = [];
+    m.order = null; m.tick = null; m.heartbeat = null; m.statusChanged = []; m.envChanged = [];
     m.queued = null;
     vi.stubGlobal('navigator', { locks: { request: (_n: string, a: unknown, b?: (lock: object | null) => unknown) => {
         const cb = (typeof a === 'function' ? a : b) as (lock: object | null) => unknown;
@@ -119,10 +121,10 @@ async function boot(opts: { keepStore?: boolean; noWarmTick?: boolean } = {}) {
     engine.startTriggerEngine();
     bracket.startBracketRuntime();
     await flush();
-    // quotes are flowing (the ticket / chart): exits armed from live fills
-    // after this are not restore-checked (#144)
-    const warm = m.tick as ((t: { code: string; close: number }) => void) | null; // set by startTriggerEngine
-    if (warm && !opts.noWarmTick) { warm({ code: 'TXFR1', close: 48300 }); warm({ code: '2890', close: 45 }); await flush(); }
+    // the connected stream heartbeats: protection is evaluating, so the
+    // restore window (#144) closes unless the mode is still unknown
+    const beat = m.heartbeat as (() => void) | null; // set by startTriggerEngine
+    if (beat && !opts.noHeartbeat) { beat(); await flush(); }
 }
 async function flush() { for (let i = 0; i < 6; i++) await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); }
 const emit = async (r: OrderEventReport) => { m.order!(r); await flush(); };
@@ -748,7 +750,7 @@ describe('restore confirmation for bracket exits armed after a restart (#144)', 
         await flush();
         let answer!: (rows: Trade[]) => void;
         m.cached.mockImplementation(() => new Promise<Trade[]>(r => { answer = r; }));
-        await boot({ keepStore: true }); // quotes already ticking (warm tick) before the lookup answers
+        await boot({ keepStore: true }); // heartbeat already arrived before the lookup answers
         answer([cacheTrade('fixture-f1', F1, [{ seq: '000001', quantity: 1 }])]);
         await flush();
         expect(triggersOf(plan.id)).toHaveLength(2);
@@ -773,12 +775,34 @@ describe('restore confirmation for bracket exits armed after a restart (#144)', 
         expect(triggersOf(plan.id).find(t => t.kind === 'stop')!.pending).toBeTruthy();
     });
 
-    it('exits armed before their code ticked since start are restore-checked; a live fill after ticks is not', async () => {
-        await boot({ noWarmTick: true });
+    it('a LIVE fill before the first real tick (only 試撮 so far) arms exits that fire at the opening gap', async () => {
+        await boot();
         const plan = await bracket.registerBracket(spec(F1));
         await flush();
+        await tick(48300, true); // 試撮
         await emit(fDeal1!);
-        await tick(47000);
+        await tick(47000); // opens past the stop
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(triggersOf(plan.id)).toHaveLength(0);
+    });
+
+    it('fill during a 61 s outage, found by the reconnect lookup after a past tick → 待確認', async () => {
+        await boot();
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        await tick(48300);
+        m.status = 'down'; m.statusChanged.forEach(cb => cb());
+        m.env = null; m.envChanged.forEach(cb => cb()); await flush();
+        await vi.advanceTimersByTimeAsync(61_000);
+        let answer!: (rows: Trade[]) => void;
+        m.cached.mockImplementation(() => new Promise<Trade[]>(r => { answer = r; }));
+        m.status = 'live'; m.statusChanged.forEach(cb => cb());
+        m.env = 'http://sim.invalid|simulation'; m.envChanged.forEach(cb => cb()); await flush();
+        await tick(47000); // first tick after the outage, before the lookup answers
+        answer([cacheTrade('fixture-f1', F1, [{ seq: '000001', quantity: 1 }])]);
+        await flush();
+        expect(triggersOf(plan.id)).toHaveLength(2);
+        await tick(46900);
         expect(m.place).not.toHaveBeenCalled();
         expect(triggersOf(plan.id).find(t => t.kind === 'stop')!.pending).toBeTruthy();
     });

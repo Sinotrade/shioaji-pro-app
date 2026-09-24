@@ -20,8 +20,9 @@
 // - 試撮 (simtrade) ticks never fire a trigger.
 // - Restore confirmation (#144): when the executor (re)starts — app launch,
 //   main-window reload, executor handover — or protection returns to a
-//   trigger's environment, or the stream reconnects after an outage longer
-//   than 60 s, the FIRST tick decides. An order-sending trigger
+//   trigger's environment, or protection resumes after more than 60 s
+//   without evaluating (no tick / heartbeat while the stream is live and the
+//   server mode known — outage, silent stall, sleep), the FIRST tick decides. An order-sending trigger
 //   already past its price then (it crossed while nobody was watching) is
 //   held as 待確認 instead of sent; the user sends, cancels or keeps it. A
 //   kept trigger fires only after price is seen on the non-trigger side and
@@ -55,7 +56,7 @@ import {
 import { retainQuote } from './quote-ownership';
 import { getApiBase } from './runtime';
 import { fetchTrades } from './shioaji';
-import { getStreamStatus, onAnyTick, subscribeStatusStore } from './stream';
+import { getStreamStatus, onAnyTick, onStreamEvent, subscribeStatusStore } from './stream';
 import { notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
 import type { ContractBase } from './types/contract';
@@ -157,12 +158,13 @@ let executing = false; // this window holds the executor lock
 const feedMissing = new Set<string>(); // trigger codes without a tick subscription
 let snapshot: Snapshot = { triggers, exits, feedMissing: [], executing: false, prices: {} };
 // Executor only: triggers whose first tick after a (re)start decides between
-// normal operation and 待確認; codes ticked since that (re)start (bracket
-// exits armed before their code's first tick are restore-checked too); and
-// the latest tick per code since the stream / environment last changed.
+// normal operation and 待確認; the latest tick per code since the stream /
+// environment last changed; and the last stream activity (tick or heartbeat)
+// seen while protection could evaluate — null until the first one after a
+// start / environment switch (the restore window is open until then).
 const restoreCheck = new Set<string>();
-const tickedSinceRestore = new Set<string>();
 const lastPrices = new Map<string, number>();
+let lastEvaluatingAt: number | null = null;
 
 export type PendingChoice = 'send' | 'cancel' | 'keep';
 
@@ -409,9 +411,10 @@ export function armBracketGroup(arm: BracketArm): boolean {
             condition: arm.entryAction === 'Buy' ? 'above' : 'below' });
     }
     if (!added.length) return false;
-    // Armed from a fill found after a (re)start (cache lookup, buffered
-    // reports) before this code ticked: the first tick decides (#144).
-    if (arm.restore || !tickedSinceRestore.has(arm.code)) for (const t of added) restoreCheck.add(t.id);
+    // Armed from a fill recovered after a (re)start (cache lookup, buffered
+    // reports) or while the restore window is open: the first tick decides
+    // (#144). Exits armed from live fills fire as usual.
+    if (arm.restore || restoreWindowOpen()) for (const t of added) restoreCheck.add(t.id);
     triggers = [...triggers, ...added];
     commit();
     return true;
@@ -480,7 +483,9 @@ export function planExitQuantity(t: Pick<TriggerOrder, 'quantity' | 'bracketId' 
 
 // ---- firing ----
 
-function fire(t: TriggerOrder, lastPrice: number, byUser = false) {
+/** `userPending`: the 待確認 state of a trigger the user sends by hand; a
+ * refusal before sending puts it (and its OCO siblings) back. */
+function fire(t: TriggerOrder, lastPrice: number, userPending?: TriggerOrder['pending']) {
     // Everything up to dispatch is synchronous: no sibling or repeated tick
     // can interleave between the OCO check and the reservation.
     const gk = t.group ? groupKey(t.env, t.group) : null;
@@ -519,7 +524,21 @@ function fire(t: TriggerOrder, lastPrice: number, byUser = false) {
         notify({ kind: 'err', title: t.kind === 'stop' ? '停損未送出' : '停利未送出', body: `${t.code} ${plan.detail ?? ''}` });
         return;
     }
-    void dispatch(t, rec, lastPrice, byUser);
+    void dispatch(t, rec, lastPrice, userPending ? { pending: userPending, siblings, groupKey: gk } : undefined);
+}
+
+interface UserSend { pending: NonNullable<TriggerOrder['pending']>; siblings: TriggerOrder[]; groupKey: string | null }
+
+/** A user 送出 refused before anything was sent (declined confirmation,
+ * kill switch, risk check): undo the firing — the trigger returns to 待確認
+ * with its OCO siblings, the group is open again and nothing stays reserved. */
+function undoUserSend(t: TriggerOrder, rec: ExitRecord, user: UserSend, reason: string) {
+    exits = exits.filter(e => e.id !== rec.id);
+    if (user.groupKey) delete processedGroups[user.groupKey];
+    const back = [{ ...t, pending: user.pending }, ...user.siblings].filter(x => !triggers.some(y => y.id === x.id));
+    triggers = [...triggers, ...back];
+    commit();
+    notify({ kind: 'err', title: '觸價單未送出（仍待確認）', body: `${t.code} ${reason}` });
 }
 
 function updateExit(id: string, patch: (e: ExitRecord) => ExitRecord) {
@@ -537,7 +556,7 @@ function updateExit(id: string, patch: (e: ExitRecord) => ExitRecord) {
     return changed;
 }
 
-async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number, byUser: boolean) {
+async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number, user?: UserSend) {
     const notSent = (detail: string) => {
         updateExit(rec.id, e => ({ ...e, status: 'not-sent', detail, at: Date.now() }));
         notify({ kind: 'err', title: '觸價單未送出', body: `${t.code} ${detail}（不會自動重送）` });
@@ -560,7 +579,7 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number, byU
     try {
         // A manual trigger the user sends from 待確認 may be an entry: it is a
         // user order (risk checks, manual confirm). Bracket exits stay protective.
-        const userOrder = byUser && !t.bracketId;
+        const userOrder = !!user && !t.bracketId;
         const trade = await placeQuickOrder(contract, t.action, null, rec.quantity, {
             bypassRisk: !userOrder, // protective exit — never blocked by kill switch
             source: userOrder ? 'manual' : 'auto', // 自動觸發時使用者可能不在場，不彈確認
@@ -576,7 +595,8 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number, byU
     } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         if ((e as { mutationNotStarted?: boolean })?.mutationNotStarted) {
-            notSent(message);
+            if (user && !t.bracketId) undoUserSend(t, rec, user, message);
+            else notSent(message);
             return;
         }
         updateExit(rec.id, x => ({ ...x, status: 'unknown', detail: `送單結果未知：${message}`, at: Date.now() }));
@@ -661,7 +681,6 @@ export function evaluateTick(code: string, price: number) {
     if (!main || !executing || !Number.isFinite(price) || price <= 0) return;
     const previous = lastPrices.get(code);
     lastPrices.set(code, price);
-    if (currentProtectionEnv()) tickedSinceRestore.add(code);
     if (triggers.length === 0) return;
     const env = currentProtectionEnv(); // null → only alerts may fire
     let rearmed = false;
@@ -695,6 +714,24 @@ export function evaluateTick(code: string, price: number) {
 }
 
 // ---- restore confirmation (#144) ----
+
+/** True while protection has not evaluated since a (re)start / environment
+ * switch, or for longer than LONG_DISCONNECT_MS. Bracket exits armed then
+ * (and lookups / replays started then) are restore-checked. */
+export function restoreWindowOpen(): boolean {
+    return lastEvaluatingAt === null || Date.now() - lastEvaluatingAt > LONG_DISCONNECT_MS;
+}
+
+/** Stream activity (tick incl. 試撮, heartbeat). Counts only while protection
+ * can evaluate (stream live, server mode known); time without it — outage,
+ * silent stall, sleep, mode unknown — is the gap. Runs before the tick is
+ * evaluated, so a gap over LONG_DISCONNECT_MS makes this tick the first one. */
+function noteActivity() {
+    if (!executing || getStreamStatus() !== 'live' || !currentProtectionEnv()) return;
+    const now = Date.now();
+    if (lastEvaluatingAt !== null && now - lastEvaluatingAt > LONG_DISCONNECT_MS) markRestore();
+    lastEvaluatingAt = now;
+}
 
 function pendingPrices(): Record<string, number> {
     const out: Record<string, number> = {};
@@ -786,7 +823,7 @@ function resolvePending(id: string, choice: PendingChoice): unknown {
     if (getStreamStatus() !== 'live' || latest === undefined) throw new Error('行情未連線或連線後尚未收到新成交價，未送出');
     const next = { ...t, pending: undefined };
     triggers = triggers.map(x => x.id === id ? next : x);
-    fire(next, latest, true); // OCO siblings, reservation and unknown-outcome rules apply as usual
+    fire(next, latest, t.pending); // OCO siblings, reservation and unknown-outcome rules apply as usual
     return true;
 }
 
@@ -845,7 +882,8 @@ export function useTriggerFeed(): { feedMissing: string[]; executing: boolean } 
 }
 
 export const EXECUTOR_LOCK = 'sj-protection-executor';
-/** A same-environment stream outage longer than this is treated as a restart (#144). */
+/** Protection not evaluating (no tick / heartbeat while live with a known
+ * mode) for longer than this is treated as a restart (#144). */
 export const LONG_DISCONNECT_MS = 60_000;
 let engineStarted = false;
 export function startTriggerEngine() {
@@ -870,7 +908,11 @@ function becomeExecutor() {
         notify({ kind: 'err', title: '舊版觸價單已暫停',
             body: `${suspended} 筆停損／停利未綁定帳戶，不會自動送單；請在圖表刪除後重新設定` });
     }
-    onAnyTick(tick => { if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close)); });
+    onAnyTick(tick => {
+        noteActivity();
+        if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close));
+    });
+    onStreamEvent('heartbeat', () => noteActivity());
     onTrackedReport((report, _info, base) => applyExitReport(report, base));
     // Returning to an environment protection was not running in (#144); a
     // reconnect to the same one (mode briefly forgotten) is not a restore.
@@ -885,28 +927,16 @@ function becomeExecutor() {
         if (env && env !== lastEnv) {
             if (lastEnv) {
                 markRestore(env);
-                tickedSinceRestore.clear();
+                lastEvaluatingAt = null; // restore window open until it evaluates here
             }
             lastEnv = env;
         }
         syncQuotes();
     });
     watchProtectionEnv(); // stream down → mode forgotten → no dispatch until fresh /info
-    // A disconnect longer than LONG_DISCONNECT_MS counts as a restart: the
-    // market may have crossed unseen, so the first tick decides again.
-    let downSince: number | null = getStreamStatus() === 'live' ? null : Date.now();
     subscribeStatusStore(() => {
-        if (getStreamStatus() === 'live') {
-            if (downSince !== null && Date.now() - downSince > LONG_DISCONNECT_MS) {
-                markRestore();
-                tickedSinceRestore.clear();
-            }
-            downSince = null;
-            syncQuotes();
-        } else {
-            downSince ??= Date.now();
-            dropPrices();
-        }
+        if (getStreamStatus() === 'live') syncQuotes();
+        else dropPrices();
     });
     void refreshProtectionEnv();
     commit();

@@ -3,7 +3,7 @@
 // held here instead of sent; the user sends, cancels or keeps each one.
 // Every action is a command to the executing main window.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { dismissBracket } from '../lib/bracket';
 import { usePrivacyMode } from '../lib/privacy';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
@@ -35,6 +35,10 @@ function Row({ trigger, price, envNow }: { trigger: TriggerOrder; price: number 
     const here = !!trigger.env && trigger.env === envNow;
     // the tick feed belongs to the current environment only
     const shown = here ? price : undefined;
+    // no current price (stream down, environment changed): disarm 送出
+    useEffect(() => {
+        if (shown === undefined) setConfirm(c => c === 'send' ? null : c);
+    }, [shown]);
     const run = async (fn: () => Promise<unknown>) => {
         setBusy(true);
         setMessage(null);

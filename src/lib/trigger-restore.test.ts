@@ -11,6 +11,7 @@ const SIM = 'http://sim.invalid|simulation';
 const m = vi.hoisted(() => ({
     status: 'live' as string,
     tick: null as ((t: { code: string; close: number; simtrade?: boolean }) => void) | null,
+    heartbeat: null as (() => void) | null,
     envChanged: [] as (() => void)[],
     statusChanged: [] as (() => void)[],
     lockGranted: true,
@@ -28,6 +29,7 @@ vi.mock('./stream', () => ({
     subscribeStatusStore: (cb: () => void) => { m.statusChanged.push(cb); return () => undefined; },
     onOrderEvent: () => () => undefined,
     onAnyTick: (cb: typeof m.tick) => { m.tick = cb; return () => undefined; },
+    onStreamEvent: (name: string, cb: () => void) => { if (name === 'heartbeat') m.heartbeat = cb; return () => undefined; },
 }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts,
     selectedFutures: m.accounts.find(a => a.account_type === 'F') ?? null, selectedStock: null }) }));
@@ -62,13 +64,14 @@ async function boot(opts: { keepStore?: boolean } = {}) {
         const cb = (typeof a === 'function' ? a : b) as (lock: object | null) => unknown;
         if (typeof a === 'function' || !(a as { ifAvailable?: boolean }).ifAvailable) { m.queued = cb; return new Promise(() => undefined); }
         const r = cb(m.lockGranted ? {} : null); return Promise.resolve(r instanceof Promise ? undefined : r); } } });
-    m.tick = null; m.envChanged = []; m.statusChanged = []; m.queued = null;
+    m.tick = null; m.heartbeat = null; m.envChanged = []; m.statusChanged = []; m.queued = null;
     engine = await import('./trigger-engine');
     engine.startTriggerEngine();
     await flush();
 }
 async function flush() { for (let i = 0; i < 6; i++) await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); }
-const tick = async (close: number) => { m.tick!({ code: 'TXFR1', close }); await flush(); };
+const tick = async (close: number, simtrade = false) => { m.tick!({ code: 'TXFR1', close, simtrade }); await flush(); };
+const heartbeat = async () => { m.heartbeat!(); await flush(); };
 const setStatus = async (status: string) => { m.status = status; m.statusChanged.forEach(cb => cb()); await flush(); };
 const setEnv = async (env: string | null) => { m.env = env; m.envChanged.forEach(cb => cb()); await flush(); };
 const only = () => engine.getTriggers()[0]!;
@@ -170,6 +173,79 @@ describe('restore confirmation (#144)', () => {
         await tick(48300);
         await outage(61_000);
         await tick(48100);
+        await tick(47900);
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
+    it('a 105 s silent stall (status still live, no tick / heartbeat) is a restart', async () => {
+        await boot();
+        await addStop();
+        await tick(48300);
+        await vi.advanceTimersByTimeAsync(105_000);
+        await tick(47900);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(only().pending?.price).toBe(47900);
+    });
+
+    it('a 2 h sleep with the status still live is a restart; heartbeats every 30 s are not', async () => {
+        await boot();
+        await addStop();
+        await tick(48300);
+        for (let i = 0; i < 4; i++) { await vi.advanceTimersByTimeAsync(30_000); await heartbeat(); }
+        await tick(47900); // quiet market with heartbeats: normal firing
+        expect(m.place).toHaveBeenCalledTimes(1);
+
+        await boot();
+        await addStop();
+        await tick(48300);
+        await vi.advanceTimersByTimeAsync(2 * 3600_000);
+        await heartbeat(); // first activity after waking up
+        await tick(47900);
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(only().pending).toBeTruthy();
+    });
+
+    it('a long stretch with the server mode unknown counts toward the 60 s, even with heartbeats', async () => {
+        await boot();
+        await addStop();
+        await tick(48300);
+        await setEnv(null);
+        for (let i = 0; i < 3; i++) { await vi.advanceTimersByTimeAsync(25_000); await heartbeat(); }
+        await setEnv(SIM);
+        await tick(47900);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(only().pending).toBeTruthy();
+    });
+
+    it('a manual 送出 refused before sending (declined / kill switch) returns to 待確認 with its OCO pair', async () => {
+        await boot();
+        await addStop({ group: 'g3' });
+        await addStop({ group: 'g3', kind: 'take', condition: 'above', price: 48600 });
+        await tick(48300);
+        await boot({ keepStore: true });
+        await tick(47900);
+        const stop = engine.getTriggers().find(t => t.kind === 'stop')!;
+        m.place.mockRejectedValueOnce(Object.assign(new Error('已取消下單'), { mutationNotStarted: true }));
+        await engine.resolvePendingTrigger(stop.id, 'send');
+        await flush();
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(engine.getTriggers().map(t => [t.kind, !!t.pending]).sort()).toEqual([['stop', true], ['take', false]]);
+        expect(engine.isGroupProcessed(SIM, 'g3')).toBe(false);
+        expect(engine.getExits()).toHaveLength(0); // nothing reserved
+        expect(titles()).toContain('觸價單未送出（仍待確認）');
+        await tick(47850);
+        await engine.resolvePendingTrigger(stop.id, 'send'); // the user can try again
+        await flush();
+        expect(m.place).toHaveBeenCalledTimes(2);
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
+    it('試撮 ticks count as stream activity but never fire', async () => {
+        await boot();
+        await addStop();
+        await tick(48300);
+        for (let i = 0; i < 3; i++) { await vi.advanceTimersByTimeAsync(40_000); await tick(47000, true); }
+        expect(m.place).not.toHaveBeenCalled();
         await tick(47900);
         expect(m.place).toHaveBeenCalledTimes(1);
     });
