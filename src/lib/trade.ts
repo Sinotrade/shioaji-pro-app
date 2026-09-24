@@ -153,6 +153,9 @@ export async function placeQuickOrder(
         source?: 'manual' | 'auto' | 'agent';
         agentCallId?: string;
         agentAuto?: boolean;
+        // runs synchronously after confirmation and risk checks, right
+        // before sending; throwing refuses the order (nothing is sent)
+        beforeSend?: () => void;
     },
 ): Promise<Trade> {
     const startedBase = getApiBase();
@@ -184,6 +187,7 @@ export async function placeQuickOrder(
     if (getApiBase() !== startedBase) throw mutationNotStartedError('確認期間伺服器已切換，請重新確認');
     if (capturedAccount && !getAccountState().accounts.some(a => a.signed && a.account_type === capturedAccount.account_type && a.broker_id === capturedAccount.broker_id && a.account_id === capturedAccount.account_id)) throw mutationNotStartedError('帳戶已不可用，請重新確認');
     if (!opts?.bypassRisk) { const blocked = checkOrderAllowed(quantity); if (blocked) throw mutationNotStartedError(blocked); }
+    opts?.beforeSend?.();
     trackActivity(
         '下單',
         `${contract.code} ${action === 'Buy' ? '買' : '賣'} ${quantity} @${price ?? '市價'}`,

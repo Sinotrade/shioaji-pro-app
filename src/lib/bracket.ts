@@ -54,7 +54,7 @@ import {
     applyExitTrade,
     armBracketGroup,
     disarmBracketGroup,
-    restoreWindowOpen,
+    resumeWasRestore,
     EXECUTOR_LOCK,
     getExits,
     onBecomeExecutor,
@@ -573,18 +573,14 @@ function run() {
     for (const rec of getExits()) if (rec.bracketId) onExit(rec);
     // Once the server mode is known: replay buffered reports and look up.
     let knownEnv = currentProtectionEnv();
-    // Protection resumes in an environment it was not running in: the first
-    // known mode after start, or a different one than last time (#144). A
-    // reconnect to the same mode is not a restore.
-    let lastKnown: string | null = null;
     onProtectionEnvChange(() => {
         const env = currentProtectionEnv();
         if (env === knownEnv) return;
         knownEnv = env;
         if (!env) return;
-        // or after a long stretch without evaluation (outage > 60 s etc.)
-        const restore = env !== lastKnown || restoreWindowOpen();
-        lastKnown = env;
+        // restart / other environment / long outage (#144); the engine
+        // latches this decision, so listener order does not matter
+        const restore = resumeWasRestore();
         restoringDo(restore, () => {
             for (const p of plans.slice()) {
                 if (p.env !== env || !isLive(p)) continue;
@@ -611,12 +607,9 @@ function run() {
             void refreshProtectionEnv();
             // cache-only; issues stay until explicit reconcile. After a long
             // outage, fills found now may already be past their exits (#144).
-            lookupLiveAccounts(restoreWindowOpen());
+            if (currentProtectionEnv()) lookupLiveAccounts(resumeWasRestore());
         }
     });
     void refreshProtectionEnv();
-    if (wasLive) {
-        lastKnown = knownEnv;
-        lookupLiveAccounts(true);
-    }
+    if (wasLive) lookupLiveAccounts(true);
 }

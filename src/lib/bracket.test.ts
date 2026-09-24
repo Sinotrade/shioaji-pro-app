@@ -144,7 +144,11 @@ beforeEach(() => {
     m.cached.mockResolvedValue([cacheTrade('fixture-f1', F1, []), cacheTrade('fixture-f9', F2, [])]); m.refreshed.mockResolvedValue([]); m.health.mockResolvedValue(healthy);
     m.subscribe.mockResolvedValue({}); m.ensure.mockResolvedValue(TXF);
     let n = 0;
-    m.place.mockImplementation(async () => ({ order: { id: `exit-${++n}` }, status: { status: 'PendingSubmit' } }));
+    // like placeQuickOrder: beforeSend runs right before sending and may refuse
+    m.place.mockImplementation(async (...args: unknown[]) => {
+        (args[4] as { beforeSend?: () => void } | undefined)?.beforeSend?.();
+        return { order: { id: `exit-${++n}` }, status: { status: 'PendingSubmit' } };
+    });
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -782,6 +786,20 @@ describe('restore confirmation for bracket exits armed after a restart (#144)', 
         await tick(48300, true); // 試撮
         await emit(fDeal1!);
         await tick(47000); // opens past the stop
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(triggersOf(plan.id)).toHaveLength(0);
+    });
+
+    it('quiet market: a live fill 10 s after the mode became known (no heartbeat yet) fires immediately', async () => {
+        m.env = null;
+        await boot({ noHeartbeat: true });
+        m.env = 'http://sim.invalid|simulation';
+        m.envChanged.forEach(cb => cb()); await flush();
+        await vi.advanceTimersByTimeAsync(10_000);
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        await emit(fDeal1!);
+        await tick(47000);
         expect(m.place).toHaveBeenCalledTimes(1);
         expect(triggersOf(plan.id)).toHaveLength(0);
     });

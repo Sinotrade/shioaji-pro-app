@@ -97,7 +97,11 @@ beforeEach(() => {
     for (const f of [m.place, m.notify, m.ensure]) f.mockReset();
     m.ensure.mockResolvedValue(TXF);
     let n = 0;
-    m.place.mockImplementation(async () => ({ order: { id: `exit-${++n}` }, status: { status: 'PendingSubmit' } }));
+    // like placeQuickOrder: beforeSend runs right before sending and may refuse
+    m.place.mockImplementation(async (...args: unknown[]) => {
+        (args[4] as { beforeSend?: () => void } | undefined)?.beforeSend?.();
+        return { order: { id: `exit-${++n}` }, status: { status: 'PendingSubmit' } };
+    });
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -248,6 +252,109 @@ describe('restore confirmation (#144)', () => {
         expect(m.place).not.toHaveBeenCalled();
         await tick(47900);
         expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
+    it('quiet market: 26 s silence, then a 5 s blip (heartbeat before /info) keeps immediate firing', async () => {
+        await boot();
+        await addStop();
+        await tick(48300);
+        await vi.advanceTimersByTimeAsync(26_000);
+        await setStatus('down');
+        await setEnv(null);
+        await vi.advanceTimersByTimeAsync(5_000);
+        await setStatus('live');
+        await heartbeat(); // reconnect heartbeat arrives before the mode is known
+        await setEnv(SIM); // protection can evaluate again: counts as activity
+        await vi.advanceTimersByTimeAsync(30_000);
+        await heartbeat();
+        await tick(47900);
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
+    it('a 95 s silent stall with the status still live is a restart', async () => {
+        await boot();
+        await addStop();
+        await tick(48300);
+        await vi.advanceTimersByTimeAsync(95_000);
+        await tick(47900);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(only().pending).toBeTruthy();
+    });
+
+    it('送出 refused before firing (contract lookup fails) stays 待確認 and can be retried', async () => {
+        await restoredStop();
+        await tick(47900);
+        m.ensure.mockRejectedValueOnce(new Error('boom'));
+        await engine.resolvePendingTrigger(only().id, 'send');
+        await flush();
+        expect(m.place).not.toHaveBeenCalled();
+        expect(only().pending).toBeTruthy();
+        expect(engine.getExits()).toHaveLength(0);
+        expect(titles()).toContain('觸價單未送出（仍待確認）');
+        await engine.resolvePendingTrigger(only().id, 'send');
+        await flush();
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
+    it('while the order confirmation is open the OCO sibling stays armed; if it fires, the send is refused', async () => {
+        await boot();
+        await addStop({ group: 'g4' });
+        await addStop({ group: 'g4', kind: 'take', condition: 'above', price: 48600 });
+        await tick(48300);
+        await boot({ keepStore: true });
+        await tick(47900);
+        const stop = engine.getTriggers().find(t => t.kind === 'stop')!;
+        let approve!: () => void;
+        m.place.mockImplementationOnce((...args: unknown[]) => new Promise((resolve, reject) => {
+            approve = () => {
+                try {
+                    (args[4] as { beforeSend: () => void }).beforeSend();
+                    resolve({ order: { id: 'late' }, status: { status: 'PendingSubmit' } });
+                } catch (e) { reject(e); }
+            };
+        }));
+        await engine.resolvePendingTrigger(stop.id, 'send');
+        await flush();
+        expect(m.place).toHaveBeenCalledTimes(1); // dialog open
+        expect(engine.getTriggers()).toHaveLength(2); // nothing fired yet
+        await tick(48700); // the take fires meanwhile
+        expect(m.place).toHaveBeenCalledTimes(2);
+        expect(engine.getTriggers()).toHaveLength(0);
+        approve(); // user confirms the dialog too late
+        await flush();
+        expect(m.place).toHaveBeenCalledTimes(2);
+        expect(engine.getExits()).toHaveLength(1); // only the take's exit
+        expect(titles()).toContain('觸價單未送出');
+    });
+
+    it('refused after firing (not sent): back to 待確認; siblings re-evaluated against the latest price', async () => {
+        await boot();
+        await addStop({ group: 'g5' });
+        await addStop({ group: 'g5', kind: 'take', condition: 'above', price: 48600 });
+        await tick(48300);
+        await boot({ keepStore: true });
+        await tick(47900);
+        const stop = engine.getTriggers().find(t => t.kind === 'stop')!;
+        let refuse!: () => void;
+        m.place.mockImplementationOnce((...args: unknown[]) => {
+            (args[4] as { beforeSend: () => void }).beforeSend(); // fired: OCO pair removed
+            return new Promise((_resolve, reject) => {
+                refuse = () => reject(Object.assign(new Error('preflight refused'), { mutationNotStarted: true }));
+            });
+        });
+        await engine.resolvePendingTrigger(stop.id, 'send');
+        await flush();
+        expect(engine.getTriggers()).toHaveLength(0);
+        await tick(48700); // the take is not armed while the send is in flight
+        refuse();
+        await flush();
+        // stop back to 待確認; the take, past at 48700, fires on re-evaluation
+        expect(m.place).toHaveBeenCalledTimes(2);
+        expect(m.place.mock.calls[1]![4].source).toBe('auto');
+        expect(engine.getTriggers()).toHaveLength(0);
+        expect(engine.isGroupProcessed(SIM, 'g5')).toBe(true);
+        expect(engine.getExits().map(e => e.kind)).toEqual(['take']);
     });
 
     it('switching back to the trigger\'s environment is a restore', async () => {
