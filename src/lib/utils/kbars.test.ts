@@ -2,9 +2,14 @@
 // close-label-right 慣例：N 分 K 的 label 是桶的收盤分鐘（5 分 K =
 // 08:50、08:55…13:45），不是開盤分鐘。
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Candle } from '../types/market';
-import { aggregate, wallClockToUtc } from './kbars';
+import {
+    aggregate,
+    dateStrOffset,
+    nowWallClockUtc,
+    wallClockToUtc,
+} from './kbars';
 
 const t = (s: string) => wallClockToUtc(s);
 
@@ -82,5 +87,27 @@ describe('aggregate close-label-right', () => {
     it('1-minute passthrough unchanged', () => {
         const src = minBars('2026-08-12T09:00:00', '2026-08-12T09:03:00');
         expect(aggregate(src, 1)).toBe(src);
+    });
+});
+
+// 時段判斷一律用台灣交易所時間 — 不能隨本機時區漂移（CI 跑 UTC、
+// 海外使用者）
+describe('Taiwan wall clock is independent of the machine timezone', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('nowWallClockUtc encodes Taiwan local time', () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-09-25T12:00:30Z')); // 台北 20:00:30
+        expect(nowWallClockUtc()).toBe(wallClockToUtc('2026-09-25T20:00:30'));
+    });
+
+    it('dateStrOffset uses the Taiwan date across the UTC day boundary', () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-09-24T17:30:00Z')); // 台北 09-25 01:30
+        expect(dateStrOffset(0)).toBe('2026-09-25');
+        expect(dateStrOffset(1)).toBe('2026-09-24');
+        expect(dateStrOffset(-1)).toBe('2026-09-26');
     });
 });
