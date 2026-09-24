@@ -474,6 +474,9 @@ export function OrderTicket({
                     quantity: splitTotal,
                     unit: isFutures ? '口' : '張',
                     note: `分倉送出 ${allocation.length} 個帳戶`,
+                    accountLabel: `分倉 ${allocation.length} 戶：${allocation
+                        .map((e) => `${accountConfirmLabel(e.account)}×${e.qty}`)
+                        .join('、')}`,
                 });
                 if (!approved) throw new Error('已取消下單');
             }

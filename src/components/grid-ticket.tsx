@@ -12,7 +12,9 @@ import {
     ACCOUNT_CHANGED_MESSAGE,
     captureSelectedAccount,
     isSelectedAccountUnchanged,
+    usableCapturedAccount,
 } from '../lib/order-account';
+import { accountMatches } from '../lib/flash-account';
 import type { Account } from '../lib/types/portfolio';
 import { cancellationSummary } from '../lib/trade-mutations';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
@@ -125,8 +127,7 @@ export function GridTicket({
         return out;
     };
 
-    // account omitted = the app-wide selection at send time (動態跟隨補單)
-    const placeAt = async (price: number, account?: Account) => {
+    const placeAt = async (price: number, account: Account) => {
         recentPlace.current.set(keyOf(price), Date.now());
         const c = contractRef.current;
         const p = paramsRef.current;
@@ -233,10 +234,27 @@ export function GridTicket({
     // capped per cycle so a fast market can't burst orders
     useEffect(() => {
         if (!follow || !armed) return;
+        // 跟隨啟動時固定帳戶（#139）：補單、刪單只針對這個帳戶的網格單，
+        // 之後改選帳戶不影響；帳戶不可用就停止跟隨
+        const followAccount = captureSelectedAccount(
+            isFuturesContract(contractRef.current) ? 'F' : 'S',
+        );
+        const stop = (body: string) => {
+            setFollow(false);
+            notify({ kind: 'err', title: '鋪單跟隨已停止', body });
+        };
+        if (!followAccount) {
+            stop('缺少有效且已簽署的下單帳戶');
+            return;
+        }
         const timer = setInterval(async () => {
             if (cycleBusy.current) return;
             const base = lastRef.current;
             if (base === null) return;
+            if (!usableCapturedAccount(followAccount)) {
+                stop('跟隨啟動時的帳戶已不可用');
+                return;
+            }
             cycleBusy.current = true;
             try {
                 const desired = new Set(desiredPrices(base).map(keyOf));
@@ -246,6 +264,7 @@ export function GridTicket({
                         ACTIVE_ORDER_STATUSES.has(t.status.status) &&
                         t.order.custom_field === GRID_TAG &&
                         t.order.action === sideRef.current &&
+                        accountMatches((t as Trade & { account?: Account }).account ?? t.order.account, followAccount) &&
                         (t.contract.code === c.code ||
                             getAliasFor(t.contract.code) === c.code),
                 );
@@ -282,8 +301,14 @@ export function GridTicket({
                     // skip levels visible in trades OR placed moments ago
                     // (the poll hasn't caught up — re-placing would double)
                     if (!have.has(k) && !recentPlace.current.has(k)) {
+                        // 風控鎖／單筆上限／當日虧損上限同樣擋自動補單
+                        const blocked = checkOrderAllowed(paramsRef.current.qtyPer);
+                        if (blocked) {
+                            stop(blocked);
+                            break;
+                        }
                         ops += 1;
-                        await placeAt(Number(k)).catch(() => undefined);
+                        await placeAt(Number(k), followAccount).catch(() => undefined);
                     }
                 }
                 if (ops > 0) onChangedRef.current?.();

@@ -13,8 +13,10 @@ export function scopedFlashRows<T extends { account?: AccountIdentity; order?: {
 }
 
 // ---- per-panel account (issue #139) ----
-// Each flash panel/popout keeps its own account per market. A market with no
-// saved key follows the app-wide selection until the user picks one.
+// Each flash panel/popout keeps its own account per market. In the main
+// window a market with no saved key follows the app-wide selection until the
+// user picks one; popouts never follow (see pinnedFlashAccounts) — a market
+// with no pinned key there has no account until the user picks one.
 
 export type FlashMarket = 'S' | 'F';
 export type FlashAccountKeys = Partial<Record<FlashMarket, string>>;
@@ -30,15 +32,18 @@ export interface ResolvedFlashAccount {
     // a saved choice that is no longer a signed account of this market —
     // never silently replaced by another account
     missing: boolean;
+    // no saved key and following is not allowed (popout) — user must pick
+    unset: boolean;
 }
 
-export function resolveFlashAccount(accounts: Account[], market: FlashMarket, savedKey: string | undefined, globalAccount: Account | null | undefined): ResolvedFlashAccount {
+export function resolveFlashAccount(accounts: Account[], market: FlashMarket, savedKey: string | undefined, globalAccount: Account | null | undefined, followMain = true): ResolvedFlashAccount {
     const eligible = accounts.filter(a => a.signed && a.account_type === market);
     if (savedKey) {
         const account = eligible.find(a => flashAccountKey(a) === savedKey);
-        return { account, following: false, missing: !account };
+        return { account, following: false, missing: !account, unset: false };
     }
-    return { account: eligible.find(a => accountMatches(a, globalAccount)), following: true, missing: false };
+    if (!followMain) return { account: undefined, following: false, missing: false, unset: true };
+    return { account: eligible.find(a => accountMatches(a, globalAccount)), following: true, missing: false, unset: false };
 }
 
 // Popout windows are not part of the workspace, so each popout gets a window
@@ -87,13 +92,14 @@ export function newPopoutWindowId(): string {
         : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-/** Opener side: hand the panel's choice (`{}` = follow main) to a new popout. */
+/** Opener side: hand the pinned accounts to a new popout. */
 export function seedPopoutFlashAccounts(windowId: string, keys: FlashAccountKeys): void {
     writePopoutEntry(windowId, { ...keys });
 }
 
 /**
- * Popout side: its saved choice, or follow-main when there is none. Loading
+ * Popout side: its pinned/saved choice (`{}` when none — the user must pick
+ * one; popouts never follow the main window). Loading
  * also marks the record as recently seen, so eviction drops the popouts
  * that were closed longest ago, not the ones merely unchanged for a while.
  */
@@ -115,13 +121,36 @@ export function savePopoutFlashAccounts(windowId: string | null, keys: FlashAcco
     if (windowId) writePopoutEntry(windowId, keys);
 }
 
+export interface GlobalFlashSelection {
+    S?: Account | null;
+    F?: Account | null;
+}
+
 /**
- * URL params for a flash popout opened from a panel: the panel's choice is
- * used as-is on first open (`{}` = follow main), even if an older popout
- * stored something else. Only the opaque window id goes into the URL.
+ * Popouts cannot follow the main window live (each window has its own
+ * account store), so a popout pins its accounts when it opens: the panel's
+ * own choice, or — for a market where the panel follows main — the main
+ * selection at that moment. Unsigned / wrong-market accounts are never pinned.
  */
-export function flashPopoutParams(panelKeys: FlashAccountKeys | undefined): { win: string } {
+export function pinnedFlashAccounts(panelKeys: FlashAccountKeys | undefined, global: GlobalFlashSelection): FlashAccountKeys {
+    const out: FlashAccountKeys = {};
+    for (const market of ['S', 'F'] as const) {
+        const own = panelKeys?.[market];
+        const main = global[market];
+        if (own) out[market] = own;
+        else if (main?.signed && main.account_type === market) out[market] = flashAccountKey(main);
+    }
+    return out;
+}
+
+/**
+ * URL params for a flash popout (from a panel or a 閃電全開 tile): the pinned
+ * accounts are written under a fresh window id before the window loads and
+ * used as-is on first open, whatever an older popout stored. Only the opaque
+ * window id goes into the URL.
+ */
+export function flashPopoutParams(panelKeys: FlashAccountKeys | undefined, global: GlobalFlashSelection): { win: string } {
     const win = newPopoutWindowId();
-    seedPopoutFlashAccounts(win, panelKeys ?? {});
+    seedPopoutFlashAccounts(win, pinnedFlashAccounts(panelKeys, global));
     return { win };
 }

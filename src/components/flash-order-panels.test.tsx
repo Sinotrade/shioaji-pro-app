@@ -127,7 +127,7 @@ it('the order guard fails once the panel switches account while the confirmation
     await act(async () => { finish(); await pending; });
 });
 
-it('a following panel\'s pending order fails its guard when the main account changes (e.g. from another window)', async () => {
+it('a following (docked) panel\'s pending order fails its guard when the main selection changes', async () => {
     let guard!: () => boolean;
     let finish!: () => void;
     mocks.place.mockImplementationOnce((_c, _a, _p, _q, opts: { account: Account; isAccountCurrent: () => boolean }) => {
@@ -140,10 +140,39 @@ it('a following panel\'s pending order fails its guard when the main account cha
     await act(async () => { button(panels()[0], '啟用閃電下單').props.onClick(); });
     await act(async () => { button(panels()[0], '市價買').props.onClick(); });
     expect(guard()).toBe(true);
-    // the app-wide selection moves (account-store storage sync re-renders)
+    // the app-wide selection moves in the same window
     mocks.selected = 'B';
     await act(async () => { view.update(render()); });
     expect(guard()).toBe(false);
     expect(text(panels()[0])).toContain('多 5');
     await act(async () => { finish(); });
+});
+
+it('a popout (followMain=false) uses only its pinned account and never follows the main selection', async () => {
+    const onPop = vi.fn();
+    const pop = (k: FlashAccountKeys) => createElement(FlashOrder, { contract, trades, positions, accountKeys: k, onAccountKeysChange: onPop, followMain: false });
+    await act(async () => { view = create(pop({ F: 'F:BR:12345B' })); });
+    const sel = () => view.root.findByType('select');
+    expect(sel().props.value).toBe('F:BR:12345B');
+    expect(text(sel())).not.toContain('跟隨主畫面');
+    expect(text(view.root)).toContain('多 5');
+    mocks.selected = 'B';
+    await act(async () => { view.update(pop({ F: 'F:BR:12345B' })); });
+    mocks.selected = 'A';
+    await act(async () => { view.update(pop({ F: 'F:BR:12345B' })); });
+    expect(text(view.root)).toContain('多 5');
+    // the follow value is refused in a popout
+    await act(async () => { sel().props.onChange({ target: { value: '__follow__' } }); });
+    expect(onPop).not.toHaveBeenCalled();
+    await act(async () => { sel().props.onChange({ target: { value: 'F:BR:12345A' } }); });
+    expect(onPop).toHaveBeenCalledWith({ F: 'F:BR:12345A' });
+});
+
+it('a popout with nothing pinned has no account until the user picks one', async () => {
+    await act(async () => { view = create(createElement(FlashOrder, { contract, trades, positions, accountKeys: {}, onAccountKeysChange: vi.fn(), followMain: false })); });
+    const sel = view.root.findByType('select');
+    expect(sel.props.value).toBe('');
+    expect(text(sel)).toContain('請選擇帳戶');
+    expect(text(view.root)).not.toContain('多 3');
+    expect(view.root.findAllByType('button').find(b => text(b).includes('啟用閃電下單'))!.props.disabled).toBe(true);
 });

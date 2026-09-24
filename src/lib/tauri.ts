@@ -1220,8 +1220,8 @@ export async function openPopout(type: string, code: string | null, extra?: Reco
 
 // 閃電全開: pop a flash-order window per code, arranged by the chosen
 // layout — full-screen grids, a right-side column, or a bottom row.
-// Each tile gets a fresh popout window id with no seeded account, so it
-// follows the main account until the user picks one in that tile (#139).
+// Each tile gets a fresh popout window id; the caller pins the main
+// window's current account under it (popouts never follow live, #139).
 export interface FlashTileLayout {
     cols: number;
     rows: number;
@@ -1231,6 +1231,8 @@ export interface FlashTileLayout {
 export async function openFlashTiles(
     codes: string[],
     layout: FlashTileLayout = { cols: 3, rows: 3, region: 'full' },
+    // per-tile extra URL params (the pinned-account window id, #139)
+    tileParams: () => Record<string, string> = () => ({ win: newPopoutWindowId() }),
 ) {
     const count = Math.min(codes.length, layout.cols * layout.rows);
     if (count === 0) return;
@@ -1257,7 +1259,7 @@ export async function openFlashTiles(
     if (!isTauri) {
         use.forEach((code, i) => {
             const { x, y } = posOf(i);
-            const qs = new URLSearchParams({ popout: 'flash', code, win: newPopoutWindowId() });
+            const qs = new URLSearchParams({ popout: 'flash', code, ...tileParams() });
             window.open(
                 `${window.location.pathname}?${qs}`,
                 `sj-flash-tile-${code}`,
@@ -1269,7 +1271,7 @@ export async function openFlashTiles(
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
     use.forEach((code, i) => {
         const { x, y } = posOf(i);
-        const qs = new URLSearchParams({ popout: 'flash', code, win: newPopoutWindowId() });
+        const qs = new URLSearchParams({ popout: 'flash', code, ...tileParams() });
         popoutCounter += 1;
         new WebviewWindow(`popout-flashtile-${popoutCounter}`, {
             url: `index.html?${qs}`,

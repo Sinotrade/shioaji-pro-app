@@ -26,4 +26,18 @@ export function isSelectedAccountUnchanged(captured: Account): boolean {
         && isAccountAvailable(captured);
 }
 
+/**
+ * Armed automatic paths (combo price-watch, grid follow) capture their
+ * account when armed; each fire re-checks it. undefined = stop, don't send.
+ */
+export function usableCapturedAccount(captured: Account | undefined): Account | undefined {
+    return captured && isAccountAvailable(captured) ? captured : undefined;
+}
+
+/** This window's app-wide selection, for pinning a new flash popout. */
+export function mainFlashSelection(): { S: Account | null; F: Account | null } {
+    const state = getAccountState();
+    return { S: state.selectedStock, F: state.selectedFutures };
+}
+
 export const ACCOUNT_CHANGED_MESSAGE = '確認期間帳戶已變更或不可用，未送出，請重新確認';

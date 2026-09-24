@@ -184,6 +184,7 @@ export function FlashOrder({
     onOrdersChanged,
     accountKeys,
     onAccountKeysChange,
+    followMain = true,
 }: {
     contract: ContractInfo;
     snapshot?: Snapshot;
@@ -196,6 +197,9 @@ export function FlashOrder({
     // choice lives only in this component.
     accountKeys?: FlashAccountKeys;
     onAccountKeysChange?: (keys: FlashAccountKeys) => void;
+    // false in popout windows: they cannot see the main window's live
+    // selection, so they only ever use their pinned/chosen account
+    followMain?: boolean;
 }) {
     const { quote, snapshot: initialSnapshot, book: display } = useDisplayBook(contract.code, snapshot, contract);
     const live = useTradingLive();
@@ -206,7 +210,7 @@ export function FlashOrder({
     const panelKeys = onAccountKeysChange ? (accountKeys ?? {}) : localKeys;
     const globalAccount = market === 'S' ? accountState.selectedStock : accountState.selectedFutures;
     const eligible = accountState.accounts.filter(a => a.signed && a.account_type === market);
-    const resolved = resolveFlashAccount(accountState.accounts, market, panelKeys[market], globalAccount);
+    const resolved = resolveFlashAccount(accountState.accounts, market, panelKeys[market], globalAccount, followMain);
     const activeAccount = resolved.account;
     const accountKey = activeAccount ? flashAccountKey(activeAccount) : '';
     const trades = scopedFlashRows(allTrades, activeAccount);
@@ -627,12 +631,12 @@ export function FlashOrder({
                 <select
                     aria-label="閃電下單帳戶"
                     title={resolved.following ? '跟隨主畫面帳戶 — 選擇帳戶後此視窗固定使用該帳戶' : '此視窗固定帳戶，不影響其他視窗與主畫面'}
-                    value={resolved.following ? FOLLOW_GLOBAL : panelKeys[market]}
+                    value={resolved.following ? FOLLOW_GLOBAL : resolved.unset ? '' : panelKeys[market]}
                     onChange={e => {
                         armedRef.current = false;
                         setArmed(false);
                         const value = e.target.value;
-                        if (value !== FOLLOW_GLOBAL && !eligible.some(a => flashAccountKey(a) === value)) return;
+                        if (value === FOLLOW_GLOBAL ? !followMain : !eligible.some(a => flashAccountKey(a) === value)) return;
                         const next = { ...panelKeys };
                         if (value === FOLLOW_GLOBAL) delete next[market];
                         else next[market] = value;
@@ -643,13 +647,15 @@ export function FlashOrder({
                         else setLocalKeys(next);
                     }}
                 >
-                    <option value={FOLLOW_GLOBAL}>
-                        {!resolved.following
-                            ? '跟隨主畫面'
-                            : activeAccount
-                              ? `跟隨主畫面 ${activeAccount.broker_id}-${maskAccountId(activeAccount.account_id, privacy)}`
-                              : '跟隨主畫面（無可用帳戶）'}
-                    </option>
+                    {followMain ? (
+                        <option value={FOLLOW_GLOBAL}>
+                            {!resolved.following
+                                ? '跟隨主畫面'
+                                : activeAccount
+                                  ? `跟隨主畫面 ${activeAccount.broker_id}-${maskAccountId(activeAccount.account_id, privacy)}`
+                                  : '跟隨主畫面（無可用帳戶）'}
+                        </option>
+                    ) : resolved.unset && <option value=''>請選擇帳戶</option>}
                     {resolved.missing && <option value={panelKeys[market]}>帳戶不可用</option>}
                     {eligible.map(a => <option key={flashAccountKey(a)} value={flashAccountKey(a)}>
                         {a.broker_id}-{maskAccountId(a.account_id, privacy)}

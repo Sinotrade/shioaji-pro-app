@@ -101,6 +101,7 @@ import {
     type PulseSectionWeights,
     type Workspace,
 } from './lib/workspace';
+import { mainFlashSelection } from './lib/order-account';
 import {
     flashPopoutParams,
     loadPopoutFlashAccounts,
@@ -465,9 +466,10 @@ function BlockView(props: BlockViewProps) {
                               void openPopout(
                                   block.type,
                                   contract?.code ?? null,
-                                  // popout 首次開啟沿用此面板的帳戶選擇（含跟隨主畫面）
+                                  // popout 開啟時固定帳戶：面板自己的選擇，跟隨主畫面的市場
+                                  // 則取此刻主畫面的選擇（popout 不會即時跟隨）
                                   block.type === 'flash'
-                                      ? flashPopoutParams(block.flashAccounts)
+                                      ? flashPopoutParams(block.flashAccounts, mainFlashSelection())
                                       : undefined,
                               )
                         : undefined
@@ -494,7 +496,7 @@ function PopoutView({
     const trading = useTradingState();
     const tradesState = { data: trading.trades, refresh: tradingActionObserved };
     const popoutPositionsState = { data: trading.positions, refresh: tradingActionObserved };
-    // popout 不在 workspace 裡 — 帳戶選擇依視窗 id 存在本機（開啟時由面板預先寫入）
+    // popout 不在 workspace 裡 — 帳戶依視窗 id 存在本機（開啟時由開啟端固定並預先寫入）
     const [flashAccounts, setFlashAccounts] = useState(() => loadPopoutFlashAccounts(POPOUT_WINDOW_ID));
     // heartbeat: a long-open popout must not be evicted as "stale"
     useEffect(() => {
@@ -571,6 +573,7 @@ function PopoutView({
                             popoutPositionsState.refresh();
                         }}
                         accountKeys={flashAccounts}
+                        followMain={false}
                         onAccountKeysChange={(keys) => {
                             setFlashAccounts(keys);
                             savePopoutFlashAccounts(POPOUT_WINDOW_ID, keys);

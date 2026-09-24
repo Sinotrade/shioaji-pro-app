@@ -56,46 +56,6 @@ function persistSelection() {
     );
 }
 
-// cross-window sync (issue #139) — popouts share localStorage but not module
-// state; without this a popout flash panel set to 跟隨主畫面 keeps trading
-// the account the main window had when the popout opened. Browsers never
-// deliver a storage event to the window that wrote it, so every event is a
-// genuine change from another window. Only signed accounts are adopted; a
-// key this window has never seen triggers one account re-fetch (the other
-// window may have a fresher list), after which it is applied again.
-function applySelectionFromStorage(raw: string | null, refetched = false) {
-    if (raw === null) return;
-    let saved: { stock?: string; futures?: string };
-    try {
-        saved = JSON.parse(raw) ?? {};
-    } catch {
-        return;
-    }
-    const unknown = (key: string | undefined) =>
-        !!key && !state.accounts.some((a) => keyOf(a) === key);
-    if (!refetched && (unknown(saved.stock) || unknown(saved.futures))) {
-        void startLoad().then(() => applySelectionFromStorage(raw, true));
-        return;
-    }
-    const pick = (type: 'S' | 'F', key: string | undefined) =>
-        key
-            ? state.accounts.find(
-                  (a) => a.signed && a.account_type === type && keyOf(a) === key,
-              )
-            : undefined;
-    const stock = pick('S', saved.stock) ?? state.selectedStock;
-    const futures = pick('F', saved.futures) ?? state.selectedFutures;
-    if (stock === state.selectedStock && futures === state.selectedFutures) return;
-    state = { ...state, selectedStock: stock, selectedFutures: futures };
-    emit();
-}
-
-if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-    window.addEventListener('storage', (e: StorageEvent) => {
-        if (e.key === STORAGE_KEY) applySelectionFromStorage(e.newValue);
-    });
-}
-
 let inflight: Promise<void> | null = null;
 
 async function load(): Promise<void> {
