@@ -26,6 +26,7 @@ import { useQuote } from '../hooks/use-stream';
 import { ensureContract } from '../lib/contracts-cache';
 import { colorWithOpacity } from '../lib/indicator-defs';
 import {
+    CLOSE_GRACE,
     sessionMinutes,
     sessionWindowFor,
     tickBucket,
@@ -54,8 +55,6 @@ import * as chartUi from './intraday-chart.css';
 import * as styles from './intraday-wall.css';
 import { Orb } from './orb';
 import * as panel from './panel.css';
-
-const CLOSE_GRACE = 240;
 
 // 自訂排列上限：欄 10 × 列 5 = 50 格（訂閱額度與渲染負載的合理天花板）
 const WALL_DIM_MIN = 1;

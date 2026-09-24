@@ -8,7 +8,10 @@ import {
     hasNightSession,
     isDaySessionLabel,
     isDaySessionTick,
+    isPastSession,
+    pastSessionReference,
     pickIntradayWindow,
+    supportsSessionSplit,
     sessionMinutes,
     sessionWindowFor,
     tickBucket,
@@ -400,5 +403,56 @@ describe('pickIntradayWindow (日盤/夜盤手動切換)', () => {
         expect(followsSession('day', nightWin)).toBe(false);
         expect(followsSession('day', dayWin)).toBe(true);
         expect(followsSession('night', dayWin)).toBe(false);
+    });
+});
+
+describe('supportsSessionSplit (只開給日盤 08:45–13:45 的期/選)', () => {
+    it('index/stock futures & options qualify', () => {
+        expect(supportsSessionSplit({ security_type: 'FUT', underlying_kind: 'I' })).toBe(true);
+        expect(supportsSessionSplit({ security_type: 'OPT', underlying_kind: 'I' })).toBe(true);
+        expect(supportsSessionSplit({ security_type: 'FUT', underlying_kind: 'S' })).toBe(true);
+        expect(supportsSessionSplit({ security_type: 'FUT' })).toBe(true);
+    });
+
+    it('longer day sessions (FX, commodities) and non-derivatives do not', () => {
+        expect(supportsSessionSplit({ security_type: 'FUT', underlying_kind: 'E' })).toBe(false);
+        expect(supportsSessionSplit({ security_type: 'FUT', underlying_kind: 'C' })).toBe(false);
+        expect(supportsSessionSplit({ security_type: 'FUT', root: 'TGF' })).toBe(false);
+        expect(supportsSessionSplit({ security_type: 'FUT', category: 'RTF' })).toBe(false);
+        expect(supportsSessionSplit({ security_type: 'STK' })).toBe(false);
+        expect(supportsSessionSplit({ security_type: 'IND' })).toBe(false);
+    });
+});
+
+describe('past-session reference (晚上回顧日盤)', () => {
+    const bars = [
+        ['2026-08-06T13:45:00', 100],
+        ['2026-08-06T15:01:00', 200],
+        ['2026-08-07T04:59:00', 210],
+        ['2026-08-07T08:46:00', 300],
+        ['2026-08-07T13:45:00', 310],
+        ['2026-08-07T15:01:00', 400],
+    ].map(([s, c]) => ({ time: t(s as string), close: c as number }));
+
+    it('day session → previous day session close (not the night close)', () => {
+        const win = sessionWindowFor('FUT', t('2026-08-07T09:00:00'));
+        expect(pastSessionReference('FUT', bars, win)).toBe(100);
+    });
+
+    it('night session → the day session just before it', () => {
+        const win = sessionWindowFor('FUT', t('2026-08-07T15:01:00'));
+        expect(pastSessionReference('FUT', bars, win)).toBe(310);
+    });
+
+    it('no earlier day bar → null (caller falls back to the contract)', () => {
+        const win = sessionWindowFor('FUT', t('2026-08-06T09:00:00'));
+        expect(pastSessionReference('FUT', bars, win)).toBeNull();
+    });
+
+    it('isPastSession compares against the session at now', () => {
+        const day = sessionWindowFor('FUT', t('2026-08-07T09:00:00'));
+        expect(isPastSession('FUT', day, t('2026-08-07T20:00:00'))).toBe(true);
+        expect(isPastSession('FUT', day, t('2026-08-07T10:00:00'))).toBe(false);
+        expect(isPastSession('FUT', day, t('2026-08-07T08:30:00'))).toBe(false);
     });
 });

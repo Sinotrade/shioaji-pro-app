@@ -29,12 +29,14 @@ import { colorWithOpacity } from '../lib/indicator-defs';
 import {
     CLOSE_GRACE,
     followsSession,
-    hasNightSession,
+    isPastSession,
+    pastSessionReference,
     pickIntradayWindow,
     sessionMinutes,
     sessionWindowFor,
     tickBucket,
     type IntradaySessionMode,
+    supportsSessionSplit,
     type SessionWindow,
 } from '../lib/intraday-session';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
@@ -239,8 +241,9 @@ export function IntradayChart({
     onSessionModeChange,
 }: {
     contract: ContractInfo;
-    // 面板持久化的時段選擇（主視窗由 workspace block 帶入；彈出視窗
-    // 等沒帶的地方用元件內 state）
+    // 時段選擇。有 onSessionModeChange（主視窗 block）時是受控值 —
+    // 缺省 = 自動，換版面沒帶欄位就回自動；沒有時（彈出視窗）只當
+    // 初始值，之後用元件內 state
     sessionMode?: IntradaySessionMode;
     onSessionModeChange?: (mode: IntradaySessionMode) => void;
 }) {
@@ -256,6 +259,13 @@ export function IntradayChart({
     const limitLinesRef = useRef<IPriceLine[]>([]);
 
     const sessionRef = useRef<SessionWindow | null>(null);
+    // 上次畫出的時段（重載/載入失敗期間 sessionRef 為 null，時段鈕仍
+    // 要能顯示與切換）
+    const lastWinRef = useRef<{ code: string; win: SessionWindow } | null>(
+        null,
+    );
+    // 顯示的是已結束的時段（手動回顧）— 參考價取歷史、不畫漲跌停
+    const pastRef = useRef(false);
     const refPriceRef = useRef(0);
     // 漲跌停界線；Y 軸縮放的硬上限（其他家常見的「軸飆出去」就是沒 cap）
     const limitsRef = useRef<{ up: number; down: number } | null>(null);
@@ -290,10 +300,11 @@ export function IntradayChart({
     // 時段：自動（依資料）/ 手動鎖日盤或夜盤 — 只對有夜盤的期/選有意義
     const [localSessionMode, setLocalSessionMode] =
         useState<IntradaySessionMode>(sessionModeProp ?? 'auto');
-    const sessionMode: IntradaySessionMode = hasNightSession(
-        contract.security_type,
-    )
-        ? (sessionModeProp ?? localSessionMode)
+    const canPickSession = supportsSessionSplit(contract);
+    const sessionMode: IntradaySessionMode = canPickSession
+        ? onSessionModeChange
+            ? (sessionModeProp ?? 'auto')
+            : localSessionMode
         : 'auto';
     const sessionModeRef = useRef(sessionMode);
     sessionModeRef.current = sessionMode;
@@ -690,6 +701,7 @@ export function IntradayChart({
         cumPVRef.current = 0;
         refPriceRef.current = 0;
         limitsRef.current = null;
+        pastRef.current = false;
         minOhlcRef.current = null;
         for (const line of limitLinesRef.current) {
             fillerSeriesRef.current?.removePriceLine(line);
@@ -785,6 +797,11 @@ export function IntradayChart({
                 pend,
             );
             applyRefPrice(ref);
+            // 空框架沒有歷史可推參考價 — 已結束時段至少不畫漲跌停
+            const past =
+                sessionMode !== 'auto' &&
+                isPastSession(contract.security_type, win, nowWallClockUtc());
+            pastRef.current = past;
             const minutes = sessionMinutes(win);
             fillerSeriesRef.current.setData(
                 minutes.map((m, i) =>
@@ -795,7 +812,13 @@ export function IntradayChart({
             );
             const lu = Number(contract.limit_up);
             const ld = Number(contract.limit_down);
-            if (Number.isFinite(lu) && Number.isFinite(ld) && lu > ld && ld > 0) {
+            if (
+                !past &&
+                Number.isFinite(lu) &&
+                Number.isFinite(ld) &&
+                lu > ld &&
+                ld > 0
+            ) {
                 limitsRef.current = { up: lu, down: ld };
                 if (scaleMode === 'band') {
                     limitLinesRef.current = [
@@ -817,6 +840,7 @@ export function IntradayChart({
                 }
             }
             sessionRef.current = win;
+            lastWinRef.current = { code: contract.code, win };
             loadedKeyRef.current = loadKey;
             chartRef.current?.timeScale().fitContent();
         };
@@ -870,7 +894,20 @@ export function IntradayChart({
                         i--;
                     }
                 }
+                // 手動回顧已結束的時段：合約參考價/漲跌停屬於現在的
+                // 時段 — 參考價改由歷史推，漲跌停不畫
+                const past =
+                    sessionMode !== 'auto' &&
+                    isPastSession(
+                        contract.security_type,
+                        win,
+                        nowWallClockUtc(),
+                    );
+                pastRef.current = past;
                 const ref =
+                    (past
+                        ? pastSessionReference(contract.security_type, all, win)
+                        : null) ||
                     Number(contract.reference) ||
                     bars[0]?.close ||
                     last?.close ||
@@ -941,7 +978,13 @@ export function IntradayChart({
                 // （指數等無停板商品 limit 為 0 → 略過）
                 const lu = Number(contract.limit_up);
                 const ld = Number(contract.limit_down);
-                if (Number.isFinite(lu) && Number.isFinite(ld) && lu > ld && ld > 0) {
+                if (
+                    !past &&
+                    Number.isFinite(lu) &&
+                    Number.isFinite(ld) &&
+                    lu > ld &&
+                    ld > 0
+                ) {
                     limitsRef.current = { up: lu, down: ld };
                 }
                 const filler = fillerSeriesRef.current;
@@ -964,6 +1007,7 @@ export function IntradayChart({
                     ];
                 }
                 sessionRef.current = win;
+                lastWinRef.current = { code: contract.code, win };
                 const lastBar = bars[bars.length - 1];
                 if (lastBar) {
                     lastLabelRef.current = lastBar.time;
@@ -1182,7 +1226,15 @@ export function IntradayChart({
     }, [liveQuote, contract.code]);
 
     // ---- legend ----
-    const win = sessionRef.current;
+    // 重載/載入失敗期間沿用上次畫出的時段（同商品、且與目前選的時段
+    // 同種），時段鈕才不會消失
+    const lastWin =
+        lastWinRef.current?.code === contract.code
+            ? lastWinRef.current.win
+            : null;
+    const win =
+        sessionRef.current ??
+        (lastWin && followsSession(sessionMode, lastWin) ? lastWin : null);
     const live = liveRef.current;
     const hover = hoverRef.current;
     const refPrice = refPriceRef.current;
@@ -1211,6 +1263,13 @@ export function IntradayChart({
                 ? '夜盤'
                 : '日盤'
             : null;
+    const chipLabel =
+        sessionLabel ??
+        (sessionMode === 'day'
+            ? '日盤'
+            : sessionMode === 'night'
+              ? '夜盤'
+              : '自動');
     // 顯示的不是今天的時段（週末/收盤後看盤）→ 標日期提示。
     // 夜盤跨午夜：起訖任一落在今天都算「今天的時段」，否則週二凌晨
     // 正在交易的夜盤會被誤標成昨天的舊資料
@@ -1233,7 +1292,9 @@ export function IntradayChart({
             : null;
     // 鎖漲停/跌停 → 現價亮燈（停板色底）
     const hasLimits =
-        contract.limit_up > contract.limit_down && contract.limit_down > 0;
+        !pastRef.current &&
+        contract.limit_up > contract.limit_down &&
+        contract.limit_down > 0;
     const locked =
         shownPrice !== undefined && hasLimits
             ? shownPrice >= contract.limit_up
@@ -1247,7 +1308,7 @@ export function IntradayChart({
         <div className={styles.wrap}>
             <div className={styles.legend}>
                 {/* 時段控制放在 stats 外 — stats 會裁切溢出，選單冒不出來 */}
-                {sessionLabel ? (
+                {canPickSession ? (
                     // 期/選：時段標籤即切換鈕 — 自動 / 鎖日盤 / 鎖夜盤
                     <span className={styles.settingsWrap}>
                         <button
@@ -1266,7 +1327,7 @@ export function IntradayChart({
                             onClick={() => setSessionPopOpen((v) => !v)}
                         >
                             {staleDate ? `${staleDate} ` : ''}
-                            {sessionLabel}
+                            {chipLabel}
                         </button>
                         {sessionPopOpen && (
                             <>
@@ -1312,9 +1373,10 @@ export function IntradayChart({
                         )}
                     </span>
                 ) : (
-                    staleDate && (
+                    (sessionLabel || staleDate) && (
                         <span className={styles.sessionChip}>
-                            {`${staleDate} 日盤`}
+                            {staleDate ? `${staleDate} ` : ''}
+                            {sessionLabel ?? '日盤'}
                         </span>
                     )
                 )}

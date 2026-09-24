@@ -94,6 +94,8 @@ import {
     saveProfiles,
     saveWorkspace,
     toRenderGeom,
+    withBlockSessionConfig,
+    type SessionConfigPatch,
     type Block,
     type BlockType,
     type Profile,
@@ -120,10 +122,28 @@ const POPOUT_TYPES: ReadonlySet<string> = new Set([
 const popoutQuery = new URLSearchParams(window.location.search);
 const POPOUT_TYPE = popoutQuery.get('popout');
 const POPOUT_CODE = popoutQuery.get('code') || null;
+// 彈出視窗繼承面板的時段選擇（只當初始值，之後各自獨立）
+const POPOUT_SESSION = popoutQuery.get('session');
+const popoutChartSession: Block['chartSession'] =
+    POPOUT_SESSION === 'day' || POPOUT_SESSION === 'all'
+        ? POPOUT_SESSION
+        : undefined;
+const popoutIntradaySession: Block['intradaySession'] =
+    POPOUT_SESSION === 'auto' ||
+    POPOUT_SESSION === 'day' ||
+    POPOUT_SESSION === 'night'
+        ? POPOUT_SESSION
+        : undefined;
 
-type SessionConfigPatch = Partial<
-    Pick<Block, 'chartSession' | 'intradaySession'>
->;
+function popoutSessionParam(block: Block): Record<string, string> {
+    const session =
+        block.type === 'chart'
+            ? block.chartSession
+            : block.type === 'intraday'
+              ? block.intradaySession
+              : undefined;
+    return session ? { session } : {};
+}
 
 // resolves a block's contract: pinned code (contract cache) or global selection
 function useBlockContract(
@@ -468,6 +488,7 @@ function BlockView(props: BlockViewProps) {
                               void openPopout(
                                   block.type,
                                   contract?.code ?? null,
+                                  popoutSessionParam(block),
                               )
                         : undefined
                 }
@@ -530,12 +551,18 @@ function PopoutView({
                             contract={contract}
                             trades={tradesState.data ?? []}
                             onOrdersChanged={tradesState.refresh}
+                            sessionMode={popoutChartSession}
                         />
                     </>
                 );
                 break;
             case 'intraday':
-                body = <IntradayChart contract={contract} />;
+                body = (
+                    <IntradayChart
+                        contract={contract}
+                        sessionMode={popoutIntradaySession}
+                    />
+                );
                 break;
             case 'depth':
                 body = <DepthLadder contract={contract} code={contract.code} />;
@@ -968,12 +995,7 @@ function MainApp() {
 
     const setBlockSessionConfig = useCallback(
         (id: string, patch: SessionConfigPatch) => {
-            updateWorkspace({
-                ...workspace,
-                blocks: workspace.blocks.map((block) =>
-                    block.id === id ? { ...block, ...patch } : block,
-                ),
-            });
+            updateWorkspace(withBlockSessionConfig(workspace, id, patch));
         },
         [workspace, updateWorkspace],
     );

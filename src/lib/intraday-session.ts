@@ -46,6 +46,32 @@ export function hasNightSession(secType: SecurityType): boolean {
     return secType === 'FUT' || secType === 'OPT';
 }
 
+// 日盤 08:45–16:15 的期/選（匯率、黃金、原油等）— 用 underlying_kind
+// （E=匯率、C=商品）判斷，舊合約快取沒帶時退回商品代碼
+const LONG_DAY_ROOTS = new Set([
+    'RHF', 'RTF', 'XJF', 'XEF', 'XAF', 'XBF', // 匯率期貨
+    'GDF', 'TGF', // 黃金期貨
+    'BRF', // 布蘭特原油期貨
+]);
+
+export interface SessionContractLike {
+    security_type: SecurityType;
+    underlying_kind?: string;
+    root?: string;
+    category?: string;
+}
+
+// 「日盤/夜盤」手動切換與 K 線「僅日盤」只開給日盤 08:45–13:45 的
+// 期/選（指數、個股類）— 日盤較長的商品用 13:45 截斷會丟掉下午的
+// K 棒，寧可不給切換
+export function supportsSessionSplit(c: SessionContractLike): boolean {
+    if (!hasNightSession(c.security_type)) return false;
+    const kind = c.underlying_kind?.toUpperCase();
+    if (kind === 'E' || kind === 'C') return false;
+    const root = (c.root || c.category || '').toUpperCase();
+    return !LONG_DAY_ROOTS.has(root);
+}
+
 // 1 分 K label（minute-end）是否屬於日盤：期/選 08:45–13:45、其他
 // 09:00–13:30，label 區間 (start, end + CLOSE_GRACE]（收盤定盤併入）
 export function isDaySessionLabel(secType: SecurityType, label: number): boolean {
@@ -141,6 +167,32 @@ export function followsSession(
     next: SessionWindow,
 ): boolean {
     return mode === 'auto' || next.night === (mode === 'night');
+}
+
+// 回顧已結束的時段時（晚上鎖日盤），合約快取的參考價/漲跌停屬於
+// 現在的時段，不能拿來畫。期/選日盤與夜盤的參考價都是「前一個日盤
+// 的結算價」— 以已抓歷史中 win.start 之前最後一根日盤 K 的收盤近似；
+// 找不到回 null（呼叫端退回合約參考價）
+export function pastSessionReference(
+    secType: SecurityType,
+    bars: { time: number; close: number }[],
+    win: SessionWindow,
+): number | null {
+    for (let i = bars.length - 1; i >= 0; i--) {
+        const b = bars[i]!;
+        if (b.time > win.start) continue;
+        if (isDaySessionLabel(secType, b.time) && b.close > 0) return b.close;
+    }
+    return null;
+}
+
+// 顯示的時段是否不是「現在（或即將開始）的時段」
+export function isPastSession(
+    secType: SecurityType,
+    win: SessionWindow,
+    now: number,
+): boolean {
+    return win.start !== sessionWindowFor(secType, now).start;
 }
 
 // every 1-minute bar-label time of a session, for whitespace axis fill

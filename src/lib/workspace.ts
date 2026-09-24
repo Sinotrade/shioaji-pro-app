@@ -105,6 +105,24 @@ export interface Workspace {
     layout: LayoutItem[];
 }
 
+export type SessionConfigPatch = Partial<
+    Pick<Block, 'chartSession' | 'intradaySession'>
+>;
+
+// 面板時段選擇寫回 workspace（跟版面/版面庫一起存）
+export function withBlockSessionConfig(
+    w: Workspace,
+    id: string,
+    patch: SessionConfigPatch,
+): Workspace {
+    return {
+        ...w,
+        blocks: w.blocks.map((block) =>
+            block.id === id ? { ...block, ...patch } : block,
+        ),
+    };
+}
+
 export interface Profile {
     name: string;
     workspace: Workspace;

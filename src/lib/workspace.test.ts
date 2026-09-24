@@ -10,6 +10,7 @@ import {
     loadWorkspace,
     toRenderGeom,
     upscaleLegacyWorkspace,
+    withBlockSessionConfig,
     type Workspace,
 } from './workspace';
 
@@ -92,5 +93,32 @@ describe('loadWorkspace fallback', () => {
         expect(w.layout[0]!.i).toBe('a');
         expect(w.layout[0]!.x).toBe(48);
         expect(w.layout[0]!.w).toBe(60);
+    });
+});
+
+describe('panel session config (issue #73)', () => {
+    const ws: Workspace = {
+        blocks: [
+            { id: 'c1', type: 'chart', pin: null },
+            { id: 'i1', type: 'intraday', pin: null },
+        ],
+        layout: [],
+    };
+
+    it('writes the choice onto the matching block only', () => {
+        const a = withBlockSessionConfig(ws, 'c1', { chartSession: 'day' });
+        expect(a.blocks[0]).toEqual({ id: 'c1', type: 'chart', pin: null, chartSession: 'day' });
+        expect(a.blocks[1]).toBe(ws.blocks[1]);
+        const b = withBlockSessionConfig(a, 'i1', { intradaySession: 'night' });
+        expect(b.blocks[1]!.intradaySession).toBe('night');
+        expect(b.blocks[0]!.chartSession).toBe('day');
+        expect(ws.blocks[0]!.chartSession).toBeUndefined(); // immutable
+    });
+
+    it('survives the saved-workspace JSON round trip', () => {
+        const saved = JSON.parse(
+            JSON.stringify(withBlockSessionConfig(ws, 'c1', { chartSession: 'day' })),
+        ) as Workspace;
+        expect(saved.blocks[0]!.chartSession).toBe('day');
     });
 });

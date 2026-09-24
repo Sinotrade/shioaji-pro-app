@@ -52,8 +52,9 @@ import {
 import { IndicatorInstanceContext } from '../lib/indicator-instance-context';
 import {
     filterDaySession,
-    hasNightSession,
     isDaySessionTick,
+    supportsSessionSplit,
+    type SessionContractLike,
 } from '../lib/intraday-session';
 import {
     IndicatorDialog,
@@ -130,7 +131,9 @@ export function CandleChart({
     contract: ContractBase;
     trades?: Trade[];
     onOrdersChanged?: () => void;
-    // 全盤 / 僅日盤（面板持久化；沒帶的地方用元件內 state）
+    // 全盤 / 僅日盤。有 onSessionModeChange（主視窗 block）時是受控值
+    // — 缺省 = 全盤，換版面沒帶欄位就回全盤；沒有時（彈出視窗）只當
+    // 初始值，之後用元件內 state
     sessionMode?: ChartSessionMode;
     onSessionModeChange?: (mode: ChartSessionMode) => void;
 }) {
@@ -141,12 +144,15 @@ export function CandleChart({
     const lastBarRef = useRef<Candle | null>(null);
     const [tfIdx, setTfIdx] = useState(1); // default 5m
     // 僅日盤：aggregate 前濾掉夜盤 1 分 K、live 夜盤 tick 不入圖，指標
-    // 也就只吃日盤 K 棒。只對有夜盤的期/選有意義，其他商品一律全盤
+    // 也就只吃日盤 K 棒。只開給日盤 08:45–13:45 的期/選，其他商品一律全盤
     const [localSessionMode, setLocalSessionMode] =
         useState<ChartSessionMode>(sessionModeProp ?? 'all');
-    const canDayOnly = hasNightSession(contract.security_type);
+    const canDayOnly = supportsSessionSplit(contract as SessionContractLike);
     const dayOnly =
-        canDayOnly && (sessionModeProp ?? localSessionMode) === 'day';
+        canDayOnly &&
+        (onSessionModeChange
+            ? (sessionModeProp ?? 'all')
+            : localSessionMode) === 'day';
     const pickSessionMode = (m: ChartSessionMode) => {
         setLocalSessionMode(m);
         onSessionModeChange?.(m);
