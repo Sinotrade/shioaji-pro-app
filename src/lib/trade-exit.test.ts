@@ -8,7 +8,7 @@ vi.mock('./activity', () => ({ trackActivity: vi.fn() }));
 vi.mock('./order-confirm', () => ({ requestOrderConfirm: m.confirm }));
 vi.mock('./risk', () => ({ checkOrderAllowed: m.risk, getRiskSettings: () => ({ confirmManualOrders: true }) }));
 vi.mock('./stream', () => ({ getStreamStatus: () => m.live }));
-vi.mock('./shioaji', () => ({ placeStockOrder: m.stock, placeFuturesOrder: m.future, fetchTrades: m.fetch, cancelOrder: m.cancel, fetchTradeCacheHealth: m.health }));
+vi.mock('./shioaji', () => ({ placeStockOrder: m.stock, placeFuturesOrder: m.future, fetchTrades: m.fetch, cancelOrder: m.cancel, cancelOrders: (ids: string[]) => Promise.allSettled(ids.map(id => m.cancel(id))), fetchTradeCacheHealth: m.health }));
 vi.mock('./trading-state', () => ({ tradeCacheContinuous: () => m.continuous }));
 import { placeStockExitByShares, placeQuickOrder, cancelAllOrders, onNotice } from './trade';
 const account = { account_type:'S', account_id:'a', broker_id:'b', signed:true, person_id:'fixture', username:'fixture' };

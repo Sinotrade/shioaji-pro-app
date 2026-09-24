@@ -339,6 +339,63 @@ it('marks positions stale when cancellation HTTP reports a fill missing from SSE
     expect(store.getTradingState().queries.positions.needsReconcile).toBe(true);
     expect(store.getTradingState().queries.positions.error).toContain('新增成交');
 });
+describe('read-back confirmed cancellation (#120 / #116)', () => {
+    const reasons = (scope: 'orders' | 'positions') => store.getTradingState().queries[scope].reasons;
+    const cancelled = (old: ReturnType<typeof store.getTradingState>['trades'][number], status: Record<string, unknown> = {}) =>
+        ({ ...old, status: { ...old.status, status: 'Cancelled' as const, cancel_quantity: 3, order_quantity: 0, ...status } });
+    it('does not raise 改刪待確認 when the Cancel report landed while the cancel was being confirmed', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        const delayed = deferred<typeof old>();
+        const request = observeTradeMutation(old.order.id, () => delayed.promise);
+        await emit(order('new', 100, epoch + 3, 'Cancel'));
+        await act(async () => { delayed.resolve(markConfirmedCancellation(cancelled(old))); await request; vi.advanceTimersByTime(50); });
+        expect(reasons('orders')).not.toContain('mutation-outcome');
+        expect(store.getTradingState().trades[0]!.status.status).toBe('Cancelled');
+    });
+    it('applies a confirmed cancellation even after unrelated reports, keeping the local order quantity', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        const delayed = deferred<typeof old>();
+        const request = observeTradeMutation(old.order.id, () => delayed.promise);
+        await emit(order('other'));
+        const queries = mocks.trades.mock.calls.length;
+        await act(async () => { delayed.resolve(markConfirmedCancellation(cancelled(old))); await request; vi.advanceTimersByTime(50); });
+        const row = store.getTradingState().trades.find(t => t.order.id === 'new')!;
+        expect(row.status).toMatchObject({ status: 'Cancelled', cancel_quantity: 3, order_quantity: 3 });
+        expect(row.order.quantity).toBe(3);
+        expect(reasons('orders')).not.toContain('mutation-outcome');
+        expect(mocks.trades.mock.calls.length).toBe(queries);
+    });
+    it('applies a confirmed zero-remaining Submitted read-back (Shioaji#234 pattern) without 改刪待確認', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        await act(async () => { await observeTradeMutation(old.order.id, async () => markConfirmedCancellation(
+            { ...old, status: { ...old.status, status: 'Submitted' as const, cancel_quantity: 3 } })); vi.advanceTimersByTime(50); });
+        const row = store.getTradingState().trades[0]!;
+        expect(row.status).toMatchObject({ status: 'Submitted', cancel_quantity: 3 });
+        expect(reasons('orders')).not.toContain('mutation-outcome');
+        const { remainingWorkingOrderQuantity } = await import('./working-order-quantity');
+        expect(remainingWorkingOrderQuantity(row)).toBe(0);
+    });
+    it('falls back to 改刪待確認 when the local row already knows more fills than the read-back', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        const delayed = deferred<typeof old>();
+        const request = observeTradeMutation(old.order.id, () => delayed.promise);
+        await emit(deal());
+        await act(async () => { delayed.resolve(markConfirmedCancellation(cancelled(old))); await request; vi.advanceTimersByTime(50); });
+        expect(store.getTradingState().trades[0]!.status.deal_quantity).toBe(1);
+        expect(reasons('orders')).toContain('mutation-outcome');
+    });
+    it('an unconfirmed cancel (rejected CANCEL_UNCONFIRMED) keeps 改刪待確認', async () => {
+        await emit(order()); const old = store.getTradingState().trades[0]!;
+        const { observeTradeMutation } = await import('./trade-mutations');
+        await act(async () => { await observeTradeMutation(old.order.id, async () => { throw Object.assign(new Error('unconfirmed'), { code: 'CANCEL_UNCONFIRMED', mutationOutcomeUnknown: true }); }).catch(() => undefined); vi.advanceTimersByTime(50); });
+        expect(reasons('orders')).toContain('mutation-outcome');
+        expect(store.getTradingState().trades[0]).toBe(old);
+    });
+});
 it('replays sanitized native New with empty full_code after matching PendingSubmit HTTP metadata', async () => {
     const fixture = (await import('./fixtures/native-simulation-order-1.7.5.json')).default;
     mocks.account.account_type = 'F'; mocks.account.account_id = 'fixture'; mocks.account.broker_id = 'fixture';
@@ -481,6 +538,40 @@ describe('Shioaji 1.7.6 report identity and cache health', () => {
         expect(mocks.health).toHaveBeenCalledTimes(4); // (gap + post-manual check) × 2 accounts
     });
 
+    it('cancel confirmation stops trusting the cache when the stream goes stale, like down', async () => {
+        expect(store.cancelCacheTrusted()).toBe(true);
+        await act(async () => { mocks.status = 'stale'; mocks.statusChanged!(); });
+        expect(store.cancelCacheTrusted()).toBe(false);
+        await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
+        expect(store.cancelCacheTrusted()).toBe(false);
+    });
+
+    it('a confirmed cancel clears that order\'s earlier 改刪待確認 cause and nothing else', async () => {
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:9'), futures)); });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:9'));
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        const known = () => store.getTradingState().trades.find(t => t.order.id === 'fx04')!;
+        const unconfirmed = async (id: string) => act(async () => {
+            await observeTradeMutation(id, async () => { throw new Error('timeout'); }).catch(() => undefined); vi.advanceTimersByTime(50); });
+        const confirmFx04 = async () => act(async () => {
+            const k = known();
+            await observeTradeMutation('fx04', async () => markConfirmedCancellation({ ...k, status: { ...k.status, status: 'Cancelled' as const, cancel_quantity: k.order.quantity } }));
+            vi.advanceTimersByTime(50); });
+        await unconfirmed('fx04');
+        expect(reasons('orders')).toContain('mutation-outcome');
+        // A price-change intent for fx04 (as broadcast from a popout) is also dropped.
+        const intents = await import('./mutation-intent');
+        intents.noteMutationIntent('fx04', { kind: 'price', price: 1 });
+        await confirmFx04();
+        expect(intents.takeMutationIntent('fx04')).toBeUndefined();
+        expect(known().status.status).toBe('Cancelled');
+        expect(reasons('orders')).not.toContain('mutation-outcome');
+        // Another order's open cause is untouched by fx04's confirmation.
+        await unconfirmed('other-order');
+        await confirmFx04();
+        expect(reasons('orders')).toContain('mutation-outcome');
+    });
+
     it('after a reconnect on the same sidecar, clears the orders disconnect cache-only and keeps positions/account', async () => {
         await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
         for (const scope of ['orders', 'positions', 'account'] as const) expect(reasons(scope)).toContain('disconnect');
@@ -493,6 +584,23 @@ describe('Shioaji 1.7.6 report identity and cache health', () => {
         expect(mocks.trades.mock.calls.map(c => c[2])).toEqual([{ refresh: false }, { refresh: false }]);
         expect(mocks.positions).not.toHaveBeenCalled();
         expect(store.tradeCacheContinuous()).toBe(true);
+    });
+
+    it('reconnect after a restart subscribes exactly once, also with a confirmed cancel and a stale phase in between', async () => {
+        await act(async () => { mocks.response!(response(byId('v1:FO:FSTREAM:RESET1:9'), futures)); });
+        await deliver(byId('v1:FO:FSTREAM:RESET1:9'));
+        mocks.subscribe.mockClear();
+        mocks.health.mockResolvedValue({ state: 'Unknown', reasons: [{ event_type: 'FuturesOrder', reason: 'NotSubscribed' }] });
+        await act(async () => { mocks.status = 'stale'; mocks.statusChanged!(); });
+        await act(async () => { mocks.status = 'down'; mocks.statusChanged!(); });
+        const { observeTradeMutation, markConfirmedCancellation } = await import('./trade-mutations');
+        const k = store.getTradingState().trades.find(t => t.order.id === 'fx04')!;
+        await act(async () => { mocks.status = 'live'; mocks.statusChanged!(); });
+        await act(async () => {
+            await observeTradeMutation('fx04', async () => markConfirmedCancellation({ ...k, status: { ...k.status, status: 'Cancelled' as const, cancel_quantity: k.order.quantity } }));
+            await vi.advanceTimersByTimeAsync(30_000);
+        });
+        expect(mocks.subscribe).toHaveBeenCalledTimes(1);
     });
 
     it('treats a lost subscription after reconnect as a restarted sidecar: resubscribe, no cache resync', async () => {

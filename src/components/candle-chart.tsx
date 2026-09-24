@@ -62,6 +62,8 @@ import { setHoverPickedPrice, setPickedPrice } from '../lib/price-sync';
 import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import { notify, placeQuickOrder } from '../lib/trade';
+import { isCancelUnconfirmed } from '../lib/cancel-verification';
+import { cancellationSummary } from '../lib/trade-mutations';
 import {
     addTrigger,
     removeTrigger,
@@ -1630,18 +1632,21 @@ export function CandleChart({
                                         title='刪單'
                                         onClick={() =>
                                             cancelOrder(t.order.id)
-                                                .then(() => {
+                                                .then((trade) => {
+                                                    // Cancelled, filled first, or a working-looking
+                                                    // broker status whose cancel covers everything.
+                                                    const summary = cancellationSummary([{ status: 'fulfilled', value: trade }]);
                                                     notify({
-                                                        kind: 'ok',
-                                                        title: '🗑 刪單已送出',
-                                                        body: `${t.contract.code} @${fmtPrice(price)}`,
+                                                        kind: summary.kind,
+                                                        title: '刪單結果',
+                                                        body: `${t.contract.code} @${fmtPrice(price)}：${summary.body}`,
                                                     });
                                                     onOrdersChangedRef.current?.();
                                                 })
                                                 .catch((e) =>
                                                     notify({
                                                         kind: 'err',
-                                                        title: '刪單失敗',
+                                                        title: isCancelUnconfirmed(e) ? '刪單未確認' : '刪單失敗',
                                                         body:
                                                             e instanceof Error
                                                                 ? e.message

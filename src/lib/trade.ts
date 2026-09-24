@@ -8,7 +8,7 @@ import { trackActivity } from './activity';
 import { requestOrderConfirm } from './order-confirm';
 import { checkOrderAllowed, getRiskSettings } from './risk';
 import {
-    cancelOrder,
+    cancelOrders,
     fetchTrades,
     placeFuturesOrder,
     placeStockOrder,
@@ -333,9 +333,7 @@ export async function cancelAllOrders(): Promise<number> {
     const working = all.filter((t) =>
         remainingWorkingOrderQuantity(t) > 0,
     );
-    const results = await Promise.allSettled(
-        working.map((t) => cancelOrder(t.order.id)),
-    );
+    const results = await cancelOrders(working.map((t) => t.order.id));
     const summary = cancellationSummary(results);
     const ok = results.filter(r => r.status === 'fulfilled' && r.value.status.status === 'Cancelled').length;
     notify({

@@ -13,6 +13,7 @@ import { projectOrderReport, projectTradeDeal } from './order-projection';
 import { parseEventId, reportLedger } from './report-ledger';
 import { remainingWorkingOrderQuantity } from './working-order-quantity';
 import { takeMutationIntent, type MutationIntent } from './mutation-intent';
+import { cancelledByQuantity, readMark } from './cancel-verification';
 import type { OrderEventReport } from './order-report';
 import type { Account, AccountBalance, AccountedPosition, AccountFunds, Margin } from './types/portfolio';
 import type { AccountedTrade, Trade, TradeCacheHealth } from './types/order';
@@ -145,9 +146,12 @@ const MSG = {
 };
 
 let publishTimer: ReturnType<typeof setTimeout> | null = null;
+// Mirrors (popouts) have no report ledger; they borrow the main window's
+// cache-continuity verdict for cancel confirmation (cancelCacheTrusted).
+let mirroredCacheContinuous = false;
 function publish() {
     listeners.forEach(l => l());
-    if (!isMirror) channel?.postMessage({ kind: 'state', state });
+    if (!isMirror) channel?.postMessage({ kind: 'state', state, cacheContinuous: tradeCacheContinuous() });
 }
 function schedulePublish() {
     if (!publishTimer) publishTimer = setTimeout(() => { publishTimer = null; publish(); }, 50);
@@ -156,6 +160,7 @@ channel?.addEventListener('message', e => {
     if (isMirror && e.data?.kind === 'state' && Array.isArray(e.data.state?.positions)
         && Array.isArray(e.data.state?.trades)) {
         state = e.data.state;
+        mirroredCacheContinuous = e.data.cacheContinuous === true;
         publish();
     } else if (!isMirror && e.data?.kind === 'request') publish();
     else if (!isMirror && e.data?.kind === 'refresh' && queryScopes.includes(e.data.scope)) void refreshTradingState(e.data.scope);
@@ -181,6 +186,9 @@ let connectionEpoch = 0;
 /** An authoritative orders read happened on this sidecar instance; cleared
  *  when a reconnect finds the server's trade subscription gone (restart). */
 let ordersBaseline = false;
+// Read sequence (cancel-verification readMark) when the baseline was last
+// lost: any authoritative read started after it can re-resolve trade_ids.
+let baselineLostMark = 0;
 const nextRefreshAt: Record<TradingQueryScope, number> = { positions: 0, orders: 0, account: 0 };
 let eventSequence = 0;
 const accountKey = (a: { broker_id: string; account_id: string; account_type: string }) => `${a.account_type}:${a.broker_id}:${a.account_id}`;
@@ -409,7 +417,7 @@ export function checkTradeCacheHealth(trigger: HealthTrigger): Promise<void> {
                 // Continuity after a reconnect is unproven (the sidecar may
                 // still be booting after a restart): stop trusting its cache
                 // and make sure reports flow again.
-                ordersBaseline = false;
+                ordersBaseline = false; baselineLostMark = readMark();
                 try { await subscribeTradeReports(); }
                 catch { for (const key of ['orders', 'positions'] as const) raise(key, 'not-subscribed', '委託回報訂閱失敗；請使用更新圖示重試'); }
                 schedulePublish();
@@ -434,7 +442,7 @@ export function checkTradeCacheHealth(trigger: HealthTrigger): Promise<void> {
         if (notSubscribed) {
             // A lost subscription means the sidecar restarted or dropped it:
             // its cache no longer continues this App's authoritative baseline.
-            ordersBaseline = false;
+            ordersBaseline = false; baselineLostMark = readMark();
             try { await subscribeTradeReports(); }
             catch { for (const key of ['orders', 'positions'] as const) raise(key, 'not-subscribed', '委託回報訂閱失敗；請使用更新圖示重試'); }
         }
@@ -471,7 +479,7 @@ async function resyncOrdersFromCache(accounts: Account[], before: { clockBefore:
         const missing = accounts.some((account, i) => saved.some(t => t.account && accountKey(t.account) === accountKey(account)
             && remainingWorkingOrderQuantity(t) > 0 && !rows[i]!.some(r => r.order.id === t.order.id)));
         if (missing) {
-            ordersBaseline = false;
+            ordersBaseline = false; baselineLostMark = readMark();
             raise('orders', 'projection-failed', '伺服器委託快取缺少本地有效委託，已保留；請手動對帳');
             return;
         }
@@ -604,6 +612,35 @@ function releasePendingDeals(tradeId: string) {
         if (deal.kind === 'deal' && deal.tradeId === tradeId) { pendingDeals.delete(key); applyDeal(deal); }
     }
 }
+/** A cancellation that cancelOrder read back from the order's own account
+ *  (Cancelled, cancel_quantity covering the remainder). Reports that arrived
+ *  meanwhile (usually the Cancel itself) do not make it "pending": it is
+ *  terminal, so it may replace the row unless the row already knows more fills
+ *  or cancellations than the read-back row. Returns false to fall back to the
+ *  conservative "待確認" path. */
+function applyConfirmedCancellation(trade: AccountedTrade): boolean {
+    const ref = trade.account ?? trade.order.account;
+    if (!ref || (trade.status.status !== 'Cancelled' && trade.status.status !== 'Filled' && !cancelledByQuantity(trade))) return false;
+    const rows = state.trades.filter(t => t.order.id === trade.order.id && t.account && accountKey(t.account) === accountKey(ref));
+    if (rows.length > 1) return false;
+    const current = rows[0];
+    if (!current) return false; // no matching local row: keep the conservative path
+    if (trade.status.deal_quantity < current.status.deal_quantity || trade.status.cancel_quantity < current.status.cancel_quantity) return false;
+    if (trade.status.deal_quantity > current.status.deal_quantity) raise('positions', 'mutation-outcome', '刪單回讀包含新增成交；持倉尚待回報或手動對帳');
+    // Keep the local order (original quantity, metadata).
+    // Take only the outcome fields; HTTP rows can carry 0 for order_quantity
+    // and modified_price, which must not overwrite known local values.
+    const status = { ...current.status, status: trade.status.status, status_code: trade.status.status_code || current.status.status_code,
+        deal_quantity: trade.status.deal_quantity, cancel_quantity: trade.status.cancel_quantity,
+        deals: (trade.status.deals?.length ?? 0) >= current.status.deals.length ? trade.status.deals : current.status.deals };
+    state = { ...state, trades: state.trades.map(t => t === current ? { ...current, status } : t) };
+    // The order is terminal and read back: an earlier unconfirmed change or
+    // cancel of this same order no longer needs reconciling.
+    awaitingConfirmation.delete(trade.order.id);
+    takeMutationIntent(trade.order.id); // a leftover (e.g. broadcast from a popout) intent is moot now
+    resolve('orders', ['mutation-outcome'], undefined, `mutation:${trade.order.id}`);
+    return true;
+}
 function start() {
     if (started) return;
     started = true;
@@ -620,6 +657,11 @@ function start() {
         const old = baseline?.trade;
         mutationBaselines.delete(event.token);
         const trade = event.trade;
+        if (event.confirmed && trade?.order.id === event.tradeId && applyConfirmedCancellation(trade)) {
+            if (queryEvents) queryOverflow = true;
+            schedulePublish();
+            return;
+        }
         const account = trade?.order?.account;
         // Preserve every newer SSE/snapshot result. Never insert an unknown or
         // ambiguously scoped response, nor turn an old working state into finality.
@@ -786,12 +828,28 @@ function start() {
 }
 
 export const getTradingState = () => state;
-/** Cache-only order reads (refresh:false) are trustworthy only while this App
- *  holds an authoritative baseline on the same sidecar instance and has not
- *  missed reports since; callers must still require every health Healthy. */
+/** Whether cancel confirmation may read the sidecar cache (refresh:false):
+ *  the same continuity as tradeCacheContinuous (health is not required — a
+ *  cache row only ever confirms, a stale cache can only fail to confirm).
+ *  Otherwise it goes straight to one refresh:true read. */
+export function cancelCacheTrusted() {
+    return isMirror ? mirroredCacheContinuous : tradeCacheContinuous();
+}
+/** Local projection shows this account's order Cancelled (report-driven).
+ *  Timing hint only — never a cancellation confirmation. */
+export function locallyCancelled(tradeId: string, account: { account_type: string; broker_id: string; account_id: string }) {
+    return state.trades.some(t => t.order.id === tradeId && t.account && accountKey(t.account) === accountKey(account)
+        && t.status.status === 'Cancelled');
+}
 /** An authoritative orders read happened on this sidecar instance and no
  *  restart has been detected since (order mutation preflight uses this). */
 export function hasOrdersBaseline() { return !isMirror && ordersBaseline; }
+/** Read mark at the last baseline loss (0 in mirrors / before any loss): the
+ *  no-baseline preflight may share any authoritative read started after it. */
+export function ordersBaselineLostMark() { return isMirror ? 0 : baselineLostMark; }
+/** Cache-only order reads (refresh:false) are trustworthy only while this App
+ *  holds an authoritative baseline on the same sidecar instance and has not
+ *  missed reports since; callers must still require every health Healthy. */
 export function tradeCacheContinuous() {
     return !isMirror && ordersBaseline && getStreamStatus() === 'live' && !reasonState.orders.has('disconnect');
 }

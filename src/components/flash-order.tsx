@@ -25,7 +25,7 @@ import { useDisplayBook } from '../hooks/use-display-book';
 import type { Snapshot } from '../lib/types/market';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { cancellationSummary } from '../lib/trade-mutations';
-import { cancelOrder } from '../lib/shioaji';
+import { cancelOrders } from '../lib/shioaji';
 import { getAliasFor } from '../lib/stream';
 import { useTickBandsVersion } from '../lib/tick-bands';
 import { notify, placeQuickOrder, placeStockExitByShares } from '../lib/trade';
@@ -527,9 +527,7 @@ export function FlashOrder({
                     keyOf(price),
         );
         if (targets.length === 0) return;
-        const results = await Promise.allSettled(
-            targets.map((t) => cancelOrder(t.order.id)),
-        );
+        const results = await cancelOrders(targets.map((t) => t.order.id));
         const summary = cancellationSummary(results);
         notify({
             kind: summary.kind,
@@ -559,9 +557,7 @@ export function FlashOrder({
             notify({ kind: 'info', title: '⚡ 全刪', body: '沒有可刪的委託' });
             return;
         }
-        const results = await Promise.allSettled(
-            targets.map((t) => cancelOrder(t.order.id)),
-        );
+        const results = await cancelOrders(targets.map((t) => t.order.id));
         const summary = cancellationSummary(results);
         notify({
             kind: summary.kind,

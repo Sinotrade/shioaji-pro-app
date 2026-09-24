@@ -1,5 +1,6 @@
 import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
 import { cancellationSummary } from '../lib/trade-mutations';
+import { isCancelUnconfirmed } from '../lib/cancel-verification';
 // src/components/bottom-dock-orders.tsx — 委託 tab：成交進度圈、狀態篩選、
 // 分帳戶區段、批次刪單（arm-lock 防誤觸）；inline 改價/減量沿用
 
@@ -7,6 +8,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
     cancelOrder,
+    cancelOrders,
     updateOrderPrice,
     updateOrderQty,
 } from '../lib/shioaji';
@@ -339,25 +341,21 @@ export function OrdersPane({
             notify({ title: '刪單結果', ...cancellationSummary([{ status: 'fulfilled', value: trade }]) });
             onChanged();
         } catch (error) {
-            notify({ title: '刪單失敗或結果未知', kind: 'err', body: `${error instanceof Error ? error.message : String(error)}；請手動更新委託確認，勿自動重送` });
+            notify(isCancelUnconfirmed(error)
+                ? { title: '刪單未確認', kind: 'err', body: error.message }
+                : { title: '刪單失敗或結果未知', kind: 'err', body: `${error instanceof Error ? error.message : String(error)}；請手動更新委託確認，勿自動重送` });
         } finally {
             setCancelling(null);
         }
     };
 
-    // 批次刪單：逐筆呼叫 cancelOrder，完成回報筆數
+    // 批次刪單：同時送出各筆 cancelOrder（每筆各自回讀確認，同帳戶讀取共用），
+    // 逐筆完成時更新進度，最後回報確認筆數
     const runBatchCancel = async (ids: string[]) => {
         if (ids.length === 0 || busy || cancelling) return;
         setBusy({ done: 0, total: ids.length });
-        const results: PromiseSettledResult<Trade>[] = [];
-        for (const id of ids) {
-            try {
-                results.push({ status: 'fulfilled', value: await cancelOrder(id) });
-            } catch (reason) {
-                results.push({ status: 'rejected', reason });
-            }
-            setBusy((b) => (b ? { done: b.done + 1, total: b.total } : b));
-        }
+        const results: PromiseSettledResult<Trade>[] = await cancelOrders(ids,
+            () => setBusy((b) => (b ? { done: b.done + 1, total: b.total } : b)));
         setBusy(null);
         setSelected(new Set());
         notify({

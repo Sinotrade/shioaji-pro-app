@@ -1,7 +1,8 @@
 import { getApiBase } from './runtime';
 import { remainingWorkingOrderQuantity } from './working-order-quantity';
 import { noteMutationIntent } from './mutation-intent';
-import { observeTradeMutation } from './trade-mutations';
+import { markConfirmedCancellation, observeTradeMutation } from './trade-mutations';
+import { createCancelBatch, readMark, sharedAuthoritativeTrades, verifyCancellation, type CancelBatchMember } from './cancel-verification';
 import { observeMarketSnapshots } from './market-snapshot-store';
 import { observeTradeResponse } from './trade-observations';
 import { beginServerInfoRequest, observeServerInfo } from './server-info-store';
@@ -800,10 +801,17 @@ export function placeFuturesOrder(
  * account and re-resolve the trade_id by the order's known identifiers. No
  * polling, no retry; any doubt refuses before dispatch.
  */
-async function prepareOrderMutation(tradeId: string): Promise<{ base: string; tradeId: string }> {
+// trading-state imports this module; load it lazily, once, and share the
+// promise so concurrent mutations (a cancel-all batch) resolve the same module.
+let tradingStateModule: Promise<typeof import('./trading-state')> | null = null;
+const loadTradingState = () => (tradingStateModule ??= import('./trading-state'));
+
+async function prepareOrderMutation(tradeId: string): Promise<{ base: string; tradeId: string; trade: Trade; account: Account; tradingState: typeof import('./trading-state') }> {
     const base = getApiBase();
+    const requestedMark = readMark();
     const refuse = (message: string): never => { throw Object.assign(new Error(message), { mutationNotStarted: true }); };
-    const { getTradingState, hasOrdersBaseline } = await import('./trading-state');
+    const tradingState = await loadTradingState();
+    const { getTradingState, hasOrdersBaseline } = tradingState;
     if (base !== getApiBase()) refuse('伺服器已切換，未送出改刪單');
     const matches = getTradingState().trades.filter(t => t.order.id === tradeId);
     if (matches.length !== 1) refuse('委託或帳戶歸屬不明，請先手動更新委託；未送出改刪單');
@@ -816,39 +824,101 @@ async function prepareOrderMutation(tradeId: string): Promise<{ base: string; tr
     if (!account) refuse('缺少已驗證的委託帳戶，未送出改刪單');
     const futures = ['FUT', 'OPT'].includes(trade.contract.security_type ?? '');
     if (account!.account_type !== (futures ? 'F' : 'S')) refuse('商品與委託帳戶不符，未送出改刪單');
-    if (hasOrdersBaseline()) return { base, tradeId };
+    if (hasOrdersBaseline()) return { base, tradeId, trade, account: account!, tradingState };
     const seqno = trade.order.seqno?.trim();
     const ordno = trade.order.ordno?.trim();
     if (!seqno && !ordno) refuse('伺服器委託基準未建立且委託缺少序號，請先手動更新委託；未送出改刪單');
-    let rows: Trade[] = [];
-    try { rows = await fetchTrades(account!.account_type as 'S' | 'F', account!, { refresh: true }); }
-    catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { mutationNotStarted: true }); }
-    if (base !== getApiBase()) refuse('對帳期間伺服器已切換，未送出改刪單');
+    // The read only has to find trade_ids on the current sidecar instance, so
+    // any authoritative read of this account started after the baseline was
+    // lost is shared (one per account per baseline loss, e.g. a whole popout
+    // cancel-all). Only an order missing from that read gets one fresh read.
+    const read = async (mark: number) => {
+        try { return await sharedAuthoritativeTrades(base, account!, mark, () => fetchTrades(account!.account_type as 'S' | 'F', account!, { refresh: true })); }
+        catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { mutationNotStarted: true }); }
+    };
     const code = (t: Trade) => t.contract.target_code || t.contract.code;
-    const candidates = rows.filter(r => (!r.order.account || (r.order.account.broker_id === account!.broker_id && r.order.account.account_id === account!.account_id))
-        && ((seqno && r.order.seqno === seqno) || (ordno && r.order.ordno === ordno)));
-    const found = candidates[0];
-    if (candidates.length !== 1 || !found
-        || (seqno && found.order.seqno && found.order.seqno !== seqno) || (ordno && found.order.ordno && found.order.ordno !== ordno)
-        || found.order.action !== trade.order.action || code(found) !== code(trade)
-        || remainingWorkingOrderQuantity(found) <= 0 || !found.order.id) {
-        refuse('伺服器重新對帳後找不到可操作的同筆委託，未送出改刪單');
-    }
-    return { base, tradeId: found!.order.id };
+    const resolveId = (rows: Trade[]) => {
+        const candidates = rows.filter(r => (!r.order.account || (r.order.account.broker_id === account!.broker_id && r.order.account.account_id === account!.account_id))
+            && ((seqno && r.order.seqno === seqno) || (ordno && r.order.ordno === ordno)));
+        const found = candidates[0];
+        if (candidates.length !== 1 || !found
+            || (seqno && found.order.seqno && found.order.seqno !== seqno) || (ordno && found.order.ordno && found.order.ordno !== ordno)
+            || found.order.action !== trade.order.action || code(found) !== code(trade)
+            || remainingWorkingOrderQuantity(found) <= 0 || !found.order.id) return null;
+        return found;
+    };
+    const lostMark = tradingState.ordersBaselineLostMark();
+    let found = resolveId(await read(lostMark));
+    if (!found && lostMark < requestedMark) found = resolveId(await read(requestedMark));
+    if (base !== getApiBase()) refuse('對帳期間伺服器已切換，未送出改刪單');
+    if (!found) refuse('伺服器重新對帳後找不到可操作的同筆委託，未送出改刪單');
+    return { base, tradeId: found!.order.id, trade, account: account!, tradingState };
 }
 
+/** Resolves only with a read-back-confirmed cancellation (#120/#116): the
+ *  order's own account row is Cancelled and cancel_quantity covers what was
+ *  remaining. Otherwise rejects with CANCEL_UNCONFIRMED (mutationOutcomeUnknown)
+ *  — the cancel was sent, its effect is unknown, and it is never resent. */
 export function cancelOrder(
     tradeId: string,
-    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
+    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean; batch?: CancelBatchMember },
+) {
+    const { batch, ...requestOpts } = opts ?? {};
+    // A batch member that fails before verification still arrives, so the
+    // batch's shared confirmation read is not held back.
+    return observeCancel(tradeId, requestOpts, batch).finally(() => batch?.arrive());
+}
+
+/** Cancel several orders: every request is sent first, then each account's
+ *  cancels share one authoritative confirmation read (refresh:true) instead of
+ *  one per order. Used by every batch path (flash 全刪, 鋪單全撤, 全部刪單,
+ *  batch cancel). Single cancels use cancelOrder. */
+export function cancelOrders(tradeIds: string[], onSettled?: () => void): Promise<PromiseSettledResult<Trade>[]> {
+    const batch = createCancelBatch(tradeIds.length);
+    return Promise.allSettled(tradeIds.map(id => cancelOrder(id, { batch: batch.member() }).finally(() => onSettled?.())));
+}
+
+function observeCancel(
+    tradeId: string,
+    opts: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
+    batch: CancelBatchMember | undefined,
 ) {
     return observeTradeMutation(tradeId, async () => {
         const target = await prepareOrderMutation(tradeId);
+        const { account } = target;
+        const { cancelCacheTrusted, locallyCancelled } = target.tradingState;
         if (target.base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
-        return apiPost<Trade>(
-        '/api/v1/order/cancel_order',
-        { trade_id: target.tradeId },
-        opts,
-    ); });
+        await apiPost<Trade>(
+            '/api/v1/order/cancel_order',
+            { trade_id: target.tradeId },
+            opts,
+        );
+        // Quantities come from the local order at the start; the id is the one
+        // the current sidecar knows (re-resolved when there was no baseline).
+        const before: Trade = { ...target.trade, order: { ...target.trade.order, id: target.tradeId } };
+        const type = account.account_type as 'S' | 'F';
+        const { trade } = await verifyCancellation(before, account, {
+            scope: target.base,
+            // A re-resolved trade_id means no continuous baseline: skip the cache.
+            cacheTrusted: () => target.tradeId === tradeId && cancelCacheTrusted(),
+            locallyCancelled: () => locallyCancelled(tradeId, account),
+            guard: () => {
+                if (target.base !== getApiBase()) throw new Error('刪單後伺服器已切換');
+                if (!getAccountState().accounts.some(a => a.signed && a.account_type === type
+                    && a.broker_id === account.broker_id && a.account_id === account.account_id)) {
+                    throw new Error('刪單後委託帳戶已不可用');
+                }
+            },
+            readTrades: refresh => fetchTrades(type, account, { refresh }),
+            readHealth: () => fetchTradeCacheHealth(type, account),
+            batch,
+        });
+        // A trade_id re-resolved after a sidecar restart is the same order the
+        // caller named; report it under the caller's id so the App's row and
+        // the Agent's order_id match. Status and quantities are the broker's.
+        const confirmed = target.tradeId === tradeId ? trade : { ...trade, order: { ...trade.order, id: tradeId } };
+        return markConfirmedCancellation({ ...confirmed, account });
+    });
 }
 
 export function updateOrderPrice(tradeId: string, price: number) {
