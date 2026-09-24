@@ -29,6 +29,34 @@ describe('collectFills', () => {
         expect(collectFills([snapshot, live], 'MXFI6')?.map(f => f.key)).toEqual(['a:1', 'a:2']);
     });
 
+    it('refuses a fill without a finite time instead of sorting it first', () => {
+        expect(collectFills([trade('a', 'Sell', [deal('1', 100, 1, Number.NaN)])], 'MXFI6')).toBeNull();
+        expect(collectFills([trade('a', 'Sell', [{ seq: '1', price: 100, quantity: 1 } as Deal])], 'MXFI6')).toBeNull();
+    });
+
+    it('breaks same-time ties by exchange seq and refuses ties it cannot order', () => {
+        const bySeq = collectFills([
+            trade('b', 'Sell', [deal('000012', 45559, 1, 10)]), trade('a', 'Sell', [deal('000011', 45546, 1, 10)]),
+        ], 'MXFI6');
+        expect(bySeq?.map(f => f.price)).toEqual([45546, 45559]);
+        expect(collectFills([
+            trade('b', 'Sell', [deal('x2', 45559, 1, 10)]), trade('a', 'Sell', [deal('x1', 45546, 1, 10)]),
+        ], 'MXFI6')).toBeNull();
+        // Same side and price: order does not change the result.
+        expect(collectFills([
+            trade('b', 'Sell', [deal('x2', 45546, 1, 10)]), trade('a', 'Sell', [deal('x1', 45546, 1, 10)]),
+        ], 'MXFI6')).toHaveLength(2);
+    });
+
+    it('refuses when a spread/combo fill touches this contract under another code', () => {
+        const own = trade('a', 'Sell', [deal('1', 45546, 1, 1)]);
+        expect(collectFills([own, trade('s', 'Buy', [deal('2', 30, 1, 2)], 'MXFI6/J6')], 'MXFI6')).toBeNull();
+        expect(collectFills([own, trade('s', 'Buy', [deal('2', 30, 1, 2)], 'MX4I6/MXFI6')], 'MXFI6')).toBeNull();
+        // a combo on other months, or one without fills, does not matter
+        expect(collectFills([own, trade('s', 'Buy', [deal('2', 30, 1, 2)], 'MXFJ6/K6')], 'MXFI6')).toHaveLength(1);
+        expect(collectFills([own, trade('s', 'Buy', [], 'MXFI6/J6', null, 'Submitted')], 'MXFI6')).toHaveLength(1);
+    });
+
     it('ignores empty deals but refuses a fill it cannot identify', () => {
         expect(collectFills([trade('a', 'Buy', [deal('1', 100, 0, 1)], 'MXFI6', null, 'Cancelled')], 'MXFI6')).toEqual([]);
         expect(collectFills([trade('a', 'Buy', [deal('', 100, 1, 1)])], 'MXFI6')).toBeNull();
@@ -41,8 +69,21 @@ describe('fifoPosition', () => {
         const rows = [row('Sell', 2, 45552.5, 45532), row('Buy', 1, 45513, 45532)];
         const fills = [fill('a:1', 'Sell', 45546, 1, 10), fill('a:2', 'Sell', 45559, 1, 20), fill('b:3', 'Buy', 45513, 1, 30)];
         expect(fifoPosition(rows, fills, 50)).toEqual({
-            net: -1, avg: 45559, pnl: 1350, lots: [{ action: 'Sell', price: 45559, quantity: 1 }],
+            net: -1, avg: 45559, pnl: 1350, lots: [{ action: 'Sell', price: 45559, quantity: 1 }], seeded: false,
         });
+    });
+
+    it('also works on rows the live projection already netted at the average', () => {
+        // applyPositionFill closes the buy against the Sell 2 @ 45552.5 row.
+        const fills = [fill('a:1', 'Sell', 45546, 1, 10), fill('a:2', 'Sell', 45559, 1, 20), fill('b:3', 'Buy', 45513, 1, 30)];
+        expect(fifoPosition([row('Sell', 1, 45552.5, 45532)], fills, 50)).toMatchObject({ net: -1, avg: 45559, pnl: 1350, seeded: false });
+    });
+
+    it('a missing fill is indistinguishable from a carried lot, so the result is marked seeded', () => {
+        // Sell @45559 not loaded: the rows' extra sell is seeded as a prior-session lot.
+        const rows = [row('Sell', 2, 45552.5, 45532), row('Buy', 1, 45513, 45532)];
+        const r = fifoPosition(rows, [fill('a:1', 'Sell', 45546, 1, 10), fill('b:3', 'Buy', 45513, 1, 30)], 50);
+        expect(r?.seeded).toBe(true);
     });
 
     it('seeds lots carried from earlier sessions as the oldest, at the rows\' remaining cost', () => {
@@ -51,7 +92,7 @@ describe('fifoPosition', () => {
         const fills = [fill('a:1', 'Buy', 110, 1, 1), fill('b:1', 'Sell', 120, 1, 2)];
         expect(fifoPosition(rows, fills, 50)).toEqual({
             net: 2, avg: 105, pnl: 1000,
-            lots: [{ action: 'Buy', price: 100, quantity: 1 }, { action: 'Buy', price: 110, quantity: 1 }],
+            lots: [{ action: 'Buy', price: 100, quantity: 1 }, { action: 'Buy', price: 110, quantity: 1 }], seeded: true,
         });
     });
 
@@ -68,7 +109,7 @@ describe('fifoPosition', () => {
         const rows = [row('Sell', 2, 100, 95), row('Buy', 3, 90, 95)];
         const fills = [fill('a:1', 'Sell', 100, 2, 1), fill('b:1', 'Buy', 90, 3, 2)];
         expect(fifoPosition(rows, fills, 10)).toEqual({
-            net: 1, avg: 90, pnl: 50, lots: [{ action: 'Buy', price: 90, quantity: 1 }],
+            net: 1, avg: 90, pnl: 50, lots: [{ action: 'Buy', price: 90, quantity: 1 }], seeded: false,
         });
     });
 
@@ -86,6 +127,11 @@ describe('fifoPosition', () => {
         expect(fifoPosition(rows, [fill('a', 'Buy', 45513, 2, 1)], 50)).toBeNull();
         // no fills at all: both sides would have to be carried
         expect(fifoPosition(rows, [], 50)).toBeNull();
+        // a buy/sell pair missing: rows hold more of each side than today filled
+        expect(fifoPosition([row('Sell', 2, 45552.5, 45532), row('Buy', 2, 45520, 45532)],
+            [fill('a', 'Sell', 45546, 1, 1), fill('b', 'Buy', 45513, 1, 2)], 50)).toBeNull();
+        // carried lots on netted rows cannot be priced
+        expect(fifoPosition([row('Buy', 2, 103.33, 115)], [fill('a', 'Buy', 110, 1, 1), fill('b', 'Sell', 120, 1, 2)], 50)).toBeNull();
         // unknown multiplier
         expect(fifoPosition(rows, [fill('a', 'Sell', 45546, 1, 1), fill('b', 'Sell', 45559, 1, 2), fill('c', 'Buy', 45513, 1, 3)], 0)).toBeNull();
     });

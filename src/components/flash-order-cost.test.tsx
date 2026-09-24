@@ -15,19 +15,20 @@ vi.mock('../lib/stream', () => ({ getAliasFor: (c: string) => (c === 'MXFI6' ? '
 vi.mock('../lib/tick-bands', () => ({ useTickBandsVersion: () => 0 }));
 vi.mock('../lib/utils/ticksize', () => ({ roundToTick: (_c: unknown, p: number) => p, stepPrice: (_c: unknown, p: number, step: number) => p + step }));
 import { FlashOrder } from './flash-order';
+import { applyPositionFill } from '../lib/portfolio-projection';
 import * as styles from './flash-order.css';
 
 const contract = { code: 'MXFR1', target_code: 'MXFI6', security_type: 'FUT', reference: 45592, multiplier: 50 } as unknown as ContractInfo;
 const row = (id: number, direction: 'Buy' | 'Sell', quantity: number, price: number, pnl: number): AccountedPosition =>
     ({ account, id, code: 'MXFI6', direction, quantity, price, last_price: 45532, pnl });
 
-async function render(positions: AccountedPosition[], c: ContractInfo = contract, trades: Trade[] = []) {
+async function render(positions: AccountedPosition[], c: ContractInfo = contract, trades: Trade[] = [], reconcilePending = false) {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     let view!: ReactTestRenderer;
     try {
-        await act(async () => { view = create(createElement(FlashOrder, { contract: c, trades, positions })); });
+        await act(async () => { view = create(createElement(FlashOrder, { contract: c, trades, positions, reconcilePending })); });
         const avgMarks = view.root.findAll(n => typeof n.type === 'string' && String(n.props.className ?? '').split(' ').includes(styles.avgMark))
             .map(n => n.children.filter(c => typeof c === 'string').join(''));
         return { bar: JSON.stringify(view.toJSON()), avgMarks };
@@ -54,6 +55,37 @@ it('mixed futures with today\'s fills show the FIFO-matched lot, as eLeader does
     expect(bar).toContain('"多空並存"');
     expect(bar).toContain('先進先出');
     expect(bar).not.toContain('估算');
+});
+
+it('a missing fill is never shown as a confirmed FIFO cost', async () => {
+    // Sell @45559 not loaded: seeding it as a carried lot would give a wrong "FIFO" 45,546.
+    const { bar } = await render(customerRows(), contract, [filled('a', 'Sell', 45546, 1), filled('c', 'Buy', 45513, 3)]);
+    expect(bar).not.toContain('45,546');
+    expect(bar).toContain('45,552.5');
+    expect(bar).toContain('多空並存 估算');
+});
+
+it('orders or positions awaiting reconciliation keep the marked estimate', async () => {
+    const { bar } = await render(customerRows(), contract, customerFills(), true);
+    expect(bar).toContain('45,552.5');
+    expect(bar).toContain('多空並存 估算');
+});
+
+it('replaying the customer\'s fills live (rows netted by the projection) shows the FIFO cost at once', async () => {
+    let rows: AccountedPosition[] = [];
+    for (const t of customerFills()) {
+        const d = t.status.deals[0]!;
+        rows = applyPositionFill(rows, { key: `${t.order.id}:${d.seq}`, tradeId: t.order.id, account, code: 'MXFI6',
+            action: t.order.action, quantity: d.quantity, price: d.price, ts: d.ts, condition: '', openClose: 'Auto' }, 50)!;
+    }
+    // The projection nets the buy against the sell row's average: one Sell 1 @ 45552.5 row.
+    expect(rows.map(r => [r.direction, r.quantity, r.price])).toEqual([['Sell', 1, 45552.5]]);
+    const { bar } = await render(rows.map(r => ({ ...r, last_price: 45532 })), contract, customerFills());
+    expect(bar).toContain('"空"," ","1"');
+    expect(bar).toContain('45,559');
+    expect(bar).toContain('+1,350.00');
+    expect(bar).toContain('"FIFO"');
+    expect(bar).not.toContain('多空並存');
 });
 
 it('the same fill arriving twice (snapshot + live report) is counted once', async () => {

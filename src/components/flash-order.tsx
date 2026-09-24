@@ -182,12 +182,16 @@ export function FlashOrder({
     trades: allTrades = [],
     positions: allPositions = [],
     onOrdersChanged,
+    reconcilePending = false,
 }: {
     contract: ContractInfo;
     snapshot?: Snapshot;
     trades?: Trade[];
     positions?: AccountedPosition[];
     onOrdersChanged?: () => void;
+    /** Orders or positions await reconciliation (missed or unapplied
+     * reports): today's fills may be incomplete, so no FIFO cost. */
+    reconcilePending?: boolean;
 }) {
     const { quote, snapshot: initialSnapshot, book: display } = useDisplayBook(contract.code, snapshot, contract);
     const live = useTradingLive();
@@ -473,14 +477,18 @@ export function FlashOrder({
         const net = side.Buy.qty - side.Sell.qty;
         if (net === 0) return null;
         const mixed = market === 'F' && side.Buy.qty > 0 && side.Sell.qty > 0;
-        // Mixed futures: replay today's fills FIFO on top of the carried
-        // lots, as the broker's netting will. When rows and fills disagree,
-        // fall back to the open side's average and its |net| share of P&L
-        // (rounded so the split never shows fractional cents).
+        // Futures with offsetting activity (un-netted rows, or today's fills
+        // in both directions that the live projection netted at the row
+        // average): replay today's fills FIFO, as the broker's netting will.
+        // Only a result fully explained by today's fills is shown as FIFO;
+        // otherwise mixed rows fall back to the open side's average and its
+        // |net| share of P&L (rounded), and single-direction rows stay as-is.
         const codes = new Set(matches.map(p => p.code));
-        const fills = mixed && codes.size === 1 ? collectFills(trades, matches[0]!.code) : null;
-        const fifo = fills ? fifoPosition(matches, fills, contract.multiplier ?? 0) : null;
-        const fifoOk = fifo !== null && fifo.net === net;
+        const fills = market === 'F' && codes.size === 1 && !reconcilePending
+            ? collectFills(trades, matches[0]!.code) : null;
+        const offsetting = mixed || (!!fills && fills.some(f => f.action === 'Buy') && fills.some(f => f.action === 'Sell'));
+        const fifo = fills && offsetting ? fifoPosition(matches, fills, contract.multiplier ?? 0) : null;
+        const fifoOk = fifo !== null && !fifo.seeded && fifo.net === net;
         const open = net > 0 ? side.Buy : side.Sell;
         const avg = fifoOk ? fifo.avg : mixed ? open.cost / open.qty : qtySum > 0 ? cost / qtySum : 0;
         const pnl = fifoOk ? fifo.pnl : mixed ? Math.round(open.pnl * Math.abs(net) / open.qty) : grossPnl;
@@ -488,7 +496,7 @@ export function FlashOrder({
             && new Set(matches.map(p => p.direction)).size === 1
             && (market !== 'S' || matches.every(p => 'cond' in p && p.cond === 'Cash'));
         return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit, mixed, fifo: fifoOk };
-    }, [positions, trades, contract]);
+    }, [positions, trades, contract, reconcilePending]);
 
 
     // ---- order actions (all gated by the arm toggle) ----
@@ -735,14 +743,16 @@ export function FlashOrder({
                         {pos.net > 0 ? '多' : '空'} {Math.abs(pos.net)}
                     </span>
                     <span>@ {fmtPrice(pos.avg)}</span>
-                    {pos.mixed && (
+                    {(pos.mixed || pos.fifo) && (
                         <span
                             className={styles.posMixed}
-                            title={pos.fifo
+                            title={!pos.mixed
+                                ? '成本與損益依今日成交逐筆先進先出（FIFO）沖銷計算；持倉面板的即時估算以平均成本沖銷，收盤對帳後會一致'
+                                : pos.fifo
                                 ? '券商尚未沖銷同商品的買賣持倉；成本與損益依今日成交逐筆先進先出（FIFO）沖銷計算'
-                                : '券商尚未沖銷同商品的買賣持倉，且今日成交無法完整對上持倉；成本與損益以未平方向的加權平均估算，請以持倉面板確認'}
+                                : '券商尚未沖銷同商品的買賣持倉，且今日成交無法完整對上持倉（可能含前期留倉、成交未載入或待對帳）；成本與損益以未平方向的加權平均估算，請以持倉面板確認'}
                         >
-                            {pos.fifo ? '多空並存' : '多空並存 估算'}
+                            {!pos.mixed ? 'FIFO' : pos.fifo ? '多空並存' : '多空並存 估算'}
                         </span>
                     )}
                     <span
