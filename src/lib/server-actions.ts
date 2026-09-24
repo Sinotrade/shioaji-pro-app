@@ -58,15 +58,17 @@ export async function timedStart(
 export async function timedAutostart(
     start: () => Promise<StartResult>,
 ): Promise<StartResult> {
+    // no run at boot (timing unavailable) → nothing of ours to close; an
+    // unpinned end would hit whatever run the user started meanwhile
     const runId = peekActiveTiming()?.id;
     let res: StartResult;
     try {
         res = await start();
     } catch (e) {
-        endTiming('failed', 'autostart threw', { runId });
+        if (runId) endTiming('failed', 'autostart threw', { runId });
         throw e;
     }
-    if (!res.ok) endTiming('failed', 'autostart', { runId });
+    if (!res.ok && runId) endTiming('failed', 'autostart', { runId });
     return res;
 }
 

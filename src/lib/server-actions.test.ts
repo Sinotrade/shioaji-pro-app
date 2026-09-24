@@ -105,6 +105,24 @@ describe('timedAutostart (boot)', () => {
         expect(timing.getActiveTiming()?.scenario).toBe('cold-start');
     });
 
+    it('with no run at boot, a failure never closes a later user run', async () => {
+        expect(timing.getActiveTiming()).toBeNull();
+        await expect(
+            timedAutostart(async () => {
+                timing.beginTiming('restart'); // user clicks 重啟 meanwhile
+                throw new Error('sidecar missing');
+            }),
+        ).rejects.toThrow('sidecar missing');
+        expect(timing.getActiveTiming()?.scenario).toBe('restart');
+        timing.endTiming('ok');
+        await timedAutostart(async () => {
+            timing.beginTiming('stop');
+            return started({ ok: false });
+        });
+        expect(timing.getActiveTiming()?.scenario).toBe('stop');
+        expect(timing.getTimingHistory().map((r) => r.scenario)).toEqual(['restart']);
+    });
+
     it('only closes the run it started with', async () => {
         timing.beginTiming('cold-start');
         const p = timedAutostart(async () => {

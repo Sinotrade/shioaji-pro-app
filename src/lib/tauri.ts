@@ -711,7 +711,9 @@ export async function serverStart(opts: {
         markStage('wait-warming', `port=${spawnPort}`);
         const warm = await pollUntil(
             async () => (await probeInfoEither(spawnPort)) ?? undefined,
-            { timeoutMs: 20_000 },
+            // probeInfoEither = up to two 5 s probes: a last one started
+            // before 20 s is awaited up to 15 s past the deadline
+            { timeoutMs: 20_000, attemptTimeoutMs: 15_000 },
         );
         const hit = warm.value;
         if (hit) {
