@@ -37,6 +37,8 @@ import {
     recoverHarnessOwnership,
 } from './sidecar-ownership';
 import { notify } from './trade';
+import { STOP_SCHEDULE, pollUntil } from './poll-until';
+import { endTiming, markStage } from './startup-timing';
 import { cacheDesktopConfigured } from './desktop-setup-state';
 import { isChildWindow } from './window-role';
 
@@ -49,23 +51,28 @@ export { harnessOwnershipCompatible } from './sidecar-ownership';
 
 // poll /health until it answers, then reload — used after a fresh start so
 // every panel bootstraps cleanly instead of racing a server that's still
-// warming up (login + CA activation + contract load)
-export function reloadWhenHealthy(timeoutMs = 90_000) {
-    const deadline = Date.now() + timeoutMs;
-    const t = setInterval(async () => {
-        if (Date.now() > deadline) {
-            clearInterval(t);
+// warming up (login + CA activation + contract load). The first check runs
+// immediately: by the time serverStart returns, /info already answered, so
+// the old 2 s head start was pure dead time (issue #142).
+export function reloadWhenHealthy(timeoutMs = 90_000): Promise<void> {
+    markStage('wait-health');
+    return (async () => {
+        const res = await pollUntil(
+            async () => {
+                const { fetchHealth } = await import('./shioaji');
+                await fetchHealth();
+                return true;
+            },
+            { timeoutMs, attemptTimeoutMs: 5000 },
+        );
+        if (res.timedOut) {
+            endTiming('failed', `health not ok after ${res.attempts} polls`);
             return;
         }
-        try {
-            const { fetchHealth } = await import('./shioaji');
-            await fetchHealth();
-            clearInterval(t);
-            window.location.reload();
-        } catch {
-            // not up yet
-        }
-    }, 2000);
+        markStage('healthy', `polls=${res.attempts}`);
+        markStage('reload');
+        window.location.reload();
+    })();
 }
 
 // ---- shioaji server sidecar ----
@@ -125,6 +132,7 @@ async function spawnServer(
 ): Promise<SidecarResult> {
     const fullEnv = { NO_COLOR: '1', ...env };
     const { invoke } = await import('@tauri-apps/api/core');
+    markStage('spawn', `port=${port} ${args.includes('--production') ? 'prod' : 'sim'}`);
     let pid: number;
     try {
         pid = await invoke<number>('spawn_server', {
@@ -142,19 +150,29 @@ async function spawnServer(
     }
     setServerPid(pid);
     setSpawnPort(port);
-    const deadline = Date.now() + 45_000;
-    while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 1500));
-        if (await probeInfo(port, scheme)) {
-            return { ok: true, output: await readServerLog(port) };
-        }
-        const alive = await invoke<boolean>('process_alive', { pid }).catch(
-            () => true, // transient IPC failure must not read as "died"
-        );
-        if (!alive) {
-            setServerPid(null);
-            return { ok: false, output: await readServerLog(port) };
-        }
+    // the listener binds only after login + contract load; probe at once,
+    // then quickly, backing off to 1 s (was: first probe after 1.5 s, then
+    // every 1.5 s)
+    markStage('wait-listener');
+    const waited = await pollUntil<'up' | 'died'>(
+        async () => {
+            if (await probeInfo(port, scheme)) return 'up';
+            const alive = await invoke<boolean>('process_alive', {
+                pid,
+            }).catch(
+                () => true, // transient IPC failure must not read as "died"
+            );
+            return alive ? undefined : 'died';
+        },
+        { timeoutMs: 45_000 },
+    );
+    if (waited.value === 'up') {
+        markStage('listener-up', `polls=${waited.attempts}`);
+        return { ok: true, output: await readServerLog(port) };
+    }
+    if (waited.value === 'died') {
+        setServerPid(null);
+        return { ok: false, output: await readServerLog(port) };
     }
     return {
         ok: false,
@@ -251,17 +269,22 @@ async function spawnServerViaChannels(
     }
     // poll until the server answers, or it dies, or we give up (~45s covers a
     // production login + CA activation + contract load)
-    const deadline = Date.now() + 45_000;
-    while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 1500));
-        if (await probeInfo(port, scheme)) {
-            return { ok: true, output: buf.replace(ANSI_RE, '').trim() };
-        }
-        if (exitCode !== null && exitCode !== 0) {
+    markStage('wait-listener', 'legacy spawn');
+    const waited = await pollUntil<'up' | 'died'>(
+        async () => {
+            if (await probeInfo(port, scheme)) return 'up';
             // process exited before serving — a real start failure
-            setServerPid(null);
-            return { ok: false, output: buf.replace(ANSI_RE, '').trim() };
-        }
+            return exitCode !== null && exitCode !== 0 ? 'died' : undefined;
+        },
+        { timeoutMs: 45_000 },
+    );
+    if (waited.value === 'up') {
+        markStage('listener-up', `polls=${waited.attempts}`);
+        return { ok: true, output: buf.replace(ANSI_RE, '').trim() };
+    }
+    if (waited.value === 'died') {
+        setServerPid(null);
+        return { ok: false, output: buf.replace(ANSI_RE, '').trim() };
     }
     return {
         ok: false,
@@ -649,6 +672,7 @@ export async function serverStart(opts: {
     // user's own CLI daemon on :8080)? Attach only if it can actually trade
     // in the requested mode — a CA-less daemon here is exactly why
     // "加了 CA 還是 400" on the installed app.
+    markStage('probe');
     let st = await serverStatus();
     // a child we spawned may still be inside its login window: the 1.7.2
     // server binds its listener only AFTER login (~5-8s blind spot). Any
@@ -657,30 +681,33 @@ export async function serverStart(opts: {
     // restart loop. Wait for the remembered spawn to surface instead.
     if (!st?.running && getServerPid() && getSpawnPort() && (!getDevServerPort() || getSpawnPort() === getDevServerPort())) {
         const spawnPort = getSpawnPort()!;
-        const deadline = Date.now() + 20_000;
-        while (Date.now() < deadline) {
-            const hit = await probeInfoEither(spawnPort);
-            if (hit) {
-                st = {
-                    running: true,
-                    port: spawnPort,
-                    healthy: await probeHealthy(spawnPort, hit.scheme),
-                    simulation: hit.info.simulation,
-                    version: hit.info.version,
-                    scheme: hit.scheme,
-                    agentHarnessEnabled: hit.info.agentHarnessEnabled,
-                    pid: getServerPid() ?? undefined,
-                };
-                break;
-            }
-            await new Promise((r) => setTimeout(r, 1500));
+        // returns as soon as the warming spawn answers; up to 20 s otherwise
+        markStage('wait-warming', `port=${spawnPort}`);
+        const warm = await pollUntil(
+            async () => (await probeInfoEither(spawnPort)) ?? undefined,
+            { timeoutMs: 20_000 },
+        );
+        const hit = warm.value;
+        if (hit) {
+            st = {
+                running: true,
+                port: spawnPort,
+                healthy: await probeHealthy(spawnPort, hit.scheme),
+                simulation: hit.info.simulation,
+                version: hit.info.version,
+                scheme: hit.scheme,
+                agentHarnessEnabled: hit.info.agentHarnessEnabled,
+                pid: getServerPid() ?? undefined,
+            };
         }
+        markStage('probe', `warming ${hit ? 'answered' : 'gone'} after ${warm.attempts} polls`);
     }
     if (!st?.running && !getDevServerPort()) {
         // an orphan of ours can sit on a fallback port with its record lost
         // (cleared web storage) — sweep the find_free_port windows (current
         // default + the pre-21322 legacy one) before piling yet another
         // server on top of it
+        markStage('sweep-orphans');
         const win = [
             ...Array.from({ length: 9 }, (_, i) => DEFAULT_PORT + 1 + i),
             ...Array.from({ length: 5 }, (_, i) => LEGACY_PORT + 1 + i),
@@ -761,6 +788,7 @@ export async function serverStart(opts: {
             !keyMismatch
         ) {
             // healthy, right mode, right version, CA live — just use it
+            markStage('attach', `port=${st.port}`);
             const schemeChanged = setApiScheme(stScheme);
             return {
                 ok: true,
@@ -814,6 +842,7 @@ export async function serverStart(opts: {
     // preferred port occupied by something else → first free port after it
     const preferredPort = getDevServerPort() ?? DEFAULT_PORT;
     let port = preferredPort;
+    markStage('reclaim-port');
     try {
         const { invoke } = await import('@tauri-apps/api/core');
         // nothing usable is answering, so any listener still bound on our
@@ -939,6 +968,7 @@ export async function serverStop(opts?: {
 }): Promise<SidecarResult> {
     if (!isTauri) return { ok: false, output: '' };
     if (opts?.stopAgents) {
+        markStage('stop-agents');
         try { await stopAgentsForServerChange(); }
         catch (e) { return { ok: false, output: `無法停止 Agent：${String(e)}` }; }
     }
@@ -950,6 +980,7 @@ export async function serverStop(opts?: {
     // up but not listening yet. Nothing running and no pid → nothing to kill.
     const port = (st?.running && st.port) || getApiPort();
     if (st?.running || pid) {
+        markStage('kill', `port=${port}`);
         try {
             const { invoke } = await import('@tauri-apps/api/core');
             const killed = await invoke<boolean>('kill_shioaji', {
@@ -965,15 +996,20 @@ export async function serverStop(opts?: {
         }
     }
     if (st?.running && st.port) {
-        const deadline = Date.now() + 5000;
-        while (Date.now() < deadline) {
-            if (!(await probeInfo(st.port))) {
-                return {
-                    ok: true,
-                    output: killNote || `伺服器已停止（:${st.port}）`,
-                };
-            }
-            await new Promise((r) => setTimeout(r, 500));
+        // returns the moment the listener stops answering (checked at once,
+        // then 100 ms → 500 ms); up to 5 s for a server that lingers
+        const stopPort = st.port;
+        markStage('wait-exit');
+        const gone = await pollUntil(
+            async () => ((await probeInfo(stopPort)) ? undefined : true),
+            { timeoutMs: 5000, schedule: STOP_SCHEDULE },
+        );
+        if (gone.value) {
+            markStage('stopped', `polls=${gone.attempts}`);
+            return {
+                ok: true,
+                output: killNote || `伺服器已停止（:${st.port}）`,
+            };
         }
         return {
             ok: false,

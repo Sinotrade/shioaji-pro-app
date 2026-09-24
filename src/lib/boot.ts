@@ -24,9 +24,16 @@ import {
     loadDesktopSettings,
     localTlsCertExists,
     nativeOwnsHarnessSidecar,
+    reloadWhenHealthy,
     serverStart,
     serverStatus,
 } from './tauri';
+import {
+    beginTiming,
+    endTiming,
+    getActiveTiming,
+    markStage,
+} from './startup-timing';
 import { logNotice, notify } from './trade';
 import { isChildWindow } from './window-role';
 
@@ -90,10 +97,26 @@ async function run() {
     // still get the health watchdog below.
     // (they also have no settings-store permission: see window-role.ts)
     const isPopout = isChildWindow();
+    // startup timing (issue #142) is owned by the main window: a run begun
+    // before a reload (start/restart/switch) continues here; an app launch
+    // with autostart opens a cold-start run from the webview's navigation
+    // start. Plain user reloads open nothing.
+    const timed = isTauri && !isPopout;
+    let coldStart = false;
+    if (timed) {
+        if (getActiveTiming()) markStage('page-loaded');
+    }
     if (isTauri && !isPopout) {
         try {
             const settings = await loadDesktopSettings();
             if (settings.autoStart && settings.apiKey && settings.secretKey) {
+                if (!getActiveTiming() && !pageWasReloaded()) {
+                    coldStart = beginTiming('cold-start', {
+                        startedAt: Math.round(performance.timeOrigin),
+                    });
+                    markStage('app-js-start');
+                }
+                markStage('probe');
                 const status = await serverStatus();
                 // 本機 HTTPS：the desired listener scheme also has to match
                 // — an http daemon while HTTPS is enabled (or vice versa)
@@ -139,13 +162,16 @@ async function run() {
                         (status.port && setApiPort(status.port)) ||
                         schemeChanged
                     ) {
+                        markStage('reload', 'port/scheme moved');
                         window.location.reload();
                         return;
                     }
+                    endTiming(coldStart ? 'attached' : 'ok');
                 } else if (matches) {
                     // the right server is starting up — adopt its address
                     // and fall through to the bootstrap watchdog below,
                     // which reloads once /health answers
+                    markStage('wait-health', 'adopting warming server');
                     if (status.port) setApiPort(status.port);
                     if (status.scheme) setApiScheme(status.scheme);
                 } else {
@@ -166,6 +192,7 @@ async function run() {
                     }
                     const res = await serverStart(settings);
                     if (!res.ok) {
+                        endTiming('failed', 'autostart');
                         notify({
                             kind: 'err',
                             title: '伺服器自動啟動失敗',
@@ -180,26 +207,12 @@ async function run() {
                             title: '⏳ 伺服器啟動中…',
                             body: '就緒後畫面將自動重新載入',
                         });
-                        const deadline = Date.now() + 90_000;
-                        let ticking = false; // overlapping ticks pile probes
-                        const timer = setInterval(async () => {
-                            if (ticking) return;
-                            if (Date.now() > deadline) {
-                                clearInterval(timer);
-                                return;
-                            }
-                            ticking = true;
-                            try {
-                                await fetchHealth();
-                                clearInterval(timer);
-                                window.location.reload();
-                            } catch {
-                                // not up yet
-                            } finally {
-                                ticking = false;
-                            }
-                        }, 2000);
+                        // sequential, immediate-first health poll (was a
+                        // 2 s interval whose first check waited 2 s)
+                        void reloadWhenHealthy();
                         return;
+                    } else {
+                        endTiming('attached');
                     }
                 }
             }
@@ -215,6 +228,7 @@ async function run() {
     try {
         await fetchHealth();
         if (await serverVersionOk()) {
+            if (timed) endTiming('ok');
             // The shared trading store subscribes before its initial snapshot.
             return; // server was up at boot — components loaded normally
         }
@@ -250,6 +264,10 @@ async function run() {
                 if (!(await serverVersionOk())) return; // warned; keep waiting
             }
             clearInterval(timer);
+            if (timed) {
+                markStage('healthy', 'boot watchdog');
+                markStage('reload');
+            }
             window.location.reload();
         } catch {
             // keep waiting
@@ -257,6 +275,19 @@ async function run() {
             ticking = false;
         }
     }, 4000);
+}
+
+// an app launch navigates; our own post-start reloads (and a user's F5)
+// report "reload" — only the former may open a cold-start timing run
+function pageWasReloaded(): boolean {
+    try {
+        const nav = performance.getEntriesByType('navigation')[0] as
+            | PerformanceNavigationTiming
+            | undefined;
+        return nav?.type === 'reload';
+    } catch {
+        return false;
+    }
 }
 
 // Health alone must not adopt a server: the persisted port key can be stale,

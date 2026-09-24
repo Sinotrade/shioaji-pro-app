@@ -29,6 +29,17 @@ import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
 import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
 import {
+    applyScenario,
+    beginTiming,
+    describeActiveStage,
+    endTiming,
+    markStage,
+    peekActiveTiming,
+    subscribeTiming,
+    timingDiagnostics,
+    type TimingScenario,
+} from '../lib/startup-timing';
+import {
     fetchAccounts,
     fetchCaExpire,
     fetchHealth,
@@ -99,6 +110,19 @@ export function ServerManager({
     const [settingsLoadError, setSettingsLoadError] = useState('');
     const [savedForRestart, setSavedForRestart] = useState(false);
     const restartError = useRef('');
+    // in-flight start/restart/stop/switch run (issue #142) + a 1 s tick so
+    // the elapsed seconds move while it lasts
+    const timingRun = useSyncExternalStore(
+        subscribeTiming,
+        peekActiveTiming,
+        peekActiveTiming,
+    );
+    const [, setTimingTick] = useState(0);
+    useEffect(() => {
+        if (!timingRun) return;
+        const t = setInterval(() => setTimingTick((v) => v + 1), 1000);
+        return () => clearInterval(t);
+    }, [timingRun]);
     const updateState = useSyncExternalStore(
         subscribeAppUpdateState,
         getAppUpdateState,
@@ -258,6 +282,7 @@ export function ServerManager({
                 settings.httpsEnabled ? 'on' : 'off'
             } · autostart: ${settings.autoStart ? 'on' : 'off'}`,
             lastOutput ? `--- log ---\n${lastOutput}` : '',
+            timingDiagnostics(),
         ].filter(Boolean);
         try {
             await navigator.clipboard.writeText(lines.join('\n'));
@@ -312,12 +337,17 @@ export function ServerManager({
     // (issue #2: charts/watchlist froze after restart until manual reload)
     // cfg override lets 啟用/停用 HTTPS restart with the just-persisted
     // settings instead of the stale closure state
-    const doStart = async (cfg: DesktopSettings = settings) => {
+    const doStart = async (
+        cfg: DesktopSettings = settings,
+        scenario: TimingScenario = 'start',
+        nested = false, // called by doRestart, which owns the timing run
+    ) => {
         const err = validateDesktopSettings(cfg);
         if (err) {
             notify({ kind: 'err', ...err });
             return false;
         }
+        if (!nested) beginTiming(scenario, { replace: true });
         setBusy(true);
         try {
             const res = await serverStart(cfg);
@@ -340,13 +370,19 @@ export function ServerManager({
                 setSavedForRestart(false);
                 // reload once healthy (or immediately when the port moved)
                 if (res.portChanged) {
+                    markStage('reload', 'port/scheme moved');
                     setTimeout(() => window.location.reload(), 1800);
                 } else if (!res.attached) {
-                    reloadWhenHealthy();
+                    void reloadWhenHealthy();
+                } else {
+                    endTiming('attached');
                 }
+            } else {
+                endTiming('failed');
             }
             return res.ok;
         } catch (e) {
+            endTiming('failed');
             notify({ kind: 'err', title: '伺服器啟動失敗', body: e instanceof Error ? e.message : String(e) });
             return false;
         } finally {
@@ -356,36 +392,50 @@ export function ServerManager({
     };
 
     const doStop = async () => {
+        beginTiming('stop', { replace: true });
         setBusy(true);
         try {
             const res = await serverStop({ stopAgents: true });
+            endTiming(res.ok ? 'ok' : 'failed');
             setLastOutput(res.output.slice(-600));
             notify({
                 kind: res.ok ? 'ok' : 'err',
                 title: res.ok ? '🔴 伺服器已停止' : '停止失敗',
                 body: res.ok ? '' : res.output.slice(0, 120),
             });
+        } catch (e) {
+            endTiming('failed');
+            throw e;
         } finally {
             setBusy(false);
             setTimeout(refresh, 1000);
         }
     };
 
-    const doRestart = async (cfg: DesktopSettings = settings) => {
+    const doRestart = async (
+        cfg: DesktopSettings = settings,
+        scenario: TimingScenario = 'restart',
+    ) => {
         restartError.current = '';
         const error = validateDesktopSettings(cfg);
         if (error) { notify({ kind: 'err', ...error }); return false; }
+        beginTiming(scenario, { replace: true });
         setBusy(true);
         try {
             const stopped = await serverStop({ stopAgents: true });
             if (!stopped.ok) {
+                endTiming('failed', 'stop refused');
                 restartError.current = stopped.output;
                 notify({ kind: 'err', title: '未能停止伺服器，已取消重啟', body: stopped.output.slice(-200) });
                 return false;
             }
+            // kept as-is (measured, not removed): lets the OS release the
+            // old listener's port before serverStart picks one
+            markStage('settle');
             await new Promise(resolve => setTimeout(resolve, 1200));
-            return await doStart(cfg);
+            return await doStart(cfg, scenario, true);
         } catch (e) {
+            endTiming('failed');
             restartError.current = e instanceof Error ? e.message : String(e);
             notify({ kind: 'err', title: '重啟失敗', body: e instanceof Error ? e.message : String(e) });
             return false;
@@ -409,7 +459,9 @@ export function ServerManager({
         setSettings(next);
         setSavedForRestart(true);
         if (apply) {
-            const ok = status?.running ? await doRestart(next) : await doStart(next);
+            // a mode flip against the running server is timed as a switch
+            const scenario = applyScenario(!!status?.running, status?.simulation, next.production);
+            const ok = status?.running ? await doRestart(next, scenario) : await doStart(next, scenario);
             if (!ok) throw new Error(`設定已儲存，但伺服器未能套用。${restartError.current || '請查看狀態面板的錯誤後再試。'}`);
         }
     };
@@ -478,6 +530,8 @@ export function ServerManager({
                   : status?.running || stream === 'connecting'
                     ? 'connecting'
                     : 'down';
+    // current start/restart/stop/switch stage, when one is being timed
+    const stageText = describeActiveStage(timingRun);
     const phaseLabel =
         phase === 'starting'
             ? '啟動中…'
@@ -623,7 +677,9 @@ export function ServerManager({
                                     }
                                 />
                             )}
-                            {phase === 'starting'
+                            {stageText && phase !== 'ok' && phase !== 'recovering'
+                                ? stageText
+                                : phase === 'starting'
                                 ? '啟動中 — 登入與載入合約約需 10–30 秒'
                                 : phase === 'recovering'
                                   ? `行情連線中斷 — 自動恢復中${
