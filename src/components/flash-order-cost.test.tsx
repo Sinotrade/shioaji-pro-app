@@ -88,6 +88,25 @@ it('replaying the customer\'s fills live (rows netted by the projection) shows t
     expect(bar).not.toContain('多空並存');
 });
 
+it('a hidden buy/sell pair on a single-direction row falls back to the row figures marked 估算', async () => {
+    // Visible fills Buy 100, Buy 101, Sell 110; hidden Buy 105 / Sell 106 moved the netted row to 102.75.
+    const c = { ...contract, reference: 101 } as ContractInfo;
+    const pr = (id: string, action: Action, price: number, ts: number) => ({ ...filled(id, action, price, ts), contract: { code: 'MXFI6', target_code: null } }) as Trade;
+    const { bar } = await render([{ account, id: 0, code: 'MXFI6', direction: 'Buy', quantity: 1, price: 102.75, last_price: 104, pnl: 62.5 }], c,
+        [pr('a', 'Buy', 100, 1), pr('b', 'Buy', 101, 2), pr('c', 'Sell', 110, 3)]);
+    expect(bar).not.toContain('"FIFO"');
+    expect(bar).toContain('102.75');
+    expect(bar).toContain('"估算"');
+});
+
+it('single-direction rows with two-way fills awaiting reconciliation are marked 估算', async () => {
+    const rows = [row(0, 'Sell', 1, 45552.5, 1025)];
+    const { bar } = await render(rows, contract, customerFills(), true);
+    expect(bar).toContain('45,552.5');
+    expect(bar).toContain('"估算"');
+    expect(bar).not.toContain('"FIFO"');
+});
+
 it('the same fill arriving twice (snapshot + live report) is counted once', async () => {
     const { bar } = await render(customerRows(), contract, [...customerFills(), filled('b', 'Sell', 45559, 2)]);
     expect(bar).toContain('+1,350.00');

@@ -10,7 +10,7 @@ import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
 import { accountFor, selectAccount, useAccounts } from '../lib/account-store';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { accountMatches, scopedFlashRows } from '../lib/flash-account';
-import { collectFills, fifoPosition } from '../lib/futures-fifo';
+import { collectFills, fifoPosition, hasTwoWayFills } from '../lib/futures-fifo';
 import { Zap } from 'lucide-react';
 import {
     memo,
@@ -482,12 +482,13 @@ export function FlashOrder({
         // average): replay today's fills FIFO, as the broker's netting will.
         // Only a result fully explained by today's fills is shown as FIFO;
         // otherwise mixed rows fall back to the open side's average and its
-        // |net| share of P&L (rounded), and single-direction rows stay as-is.
+        // |net| share of P&L (rounded), and single-direction rows keep the
+        // row figures; both are marked 估算.
         const codes = new Set(matches.map(p => p.code));
-        const fills = market === 'F' && codes.size === 1 && !reconcilePending
+        const twoWay = market === 'F' && codes.size === 1 && hasTwoWayFills(trades, matches[0]!.code);
+        const fills = (mixed || twoWay) && codes.size === 1 && !reconcilePending
             ? collectFills(trades, matches[0]!.code) : null;
-        const offsetting = mixed || (!!fills && fills.some(f => f.action === 'Buy') && fills.some(f => f.action === 'Sell'));
-        const fifo = fills && offsetting ? fifoPosition(matches, fills, contract.multiplier ?? 0) : null;
+        const fifo = fills ? fifoPosition(matches, fills, contract.multiplier ?? 0) : null;
         const fifoOk = fifo !== null && !fifo.seeded && fifo.net === net;
         const open = net > 0 ? side.Buy : side.Sell;
         const avg = fifoOk ? fifo.avg : mixed ? open.cost / open.qty : qtySum > 0 ? cost / qtySum : 0;
@@ -495,7 +496,7 @@ export function FlashOrder({
         const safeExit = matches.every(p => Number.isInteger(p.quantity) && p.quantity > 0)
             && new Set(matches.map(p => p.direction)).size === 1
             && (market !== 'S' || matches.every(p => 'cond' in p && p.cond === 'Cash'));
-        return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit, mixed, fifo: fifoOk };
+        return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit, mixed, twoWay, fifo: fifoOk };
     }, [positions, trades, contract, reconcilePending]);
 
 
@@ -743,16 +744,18 @@ export function FlashOrder({
                         {pos.net > 0 ? '多' : '空'} {Math.abs(pos.net)}
                     </span>
                     <span>@ {fmtPrice(pos.avg)}</span>
-                    {(pos.mixed || pos.fifo) && (
+                    {(pos.mixed || pos.twoWay) && (
                         <span
                             className={styles.posMixed}
-                            title={!pos.mixed
-                                ? '成本與損益依今日成交逐筆先進先出（FIFO）沖銷計算；持倉面板的即時估算以平均成本沖銷，收盤對帳後會一致'
+                            title={pos.mixed
+                                ? pos.fifo
+                                    ? '券商尚未沖銷同商品的買賣持倉；成本與損益依今日成交逐筆先進先出（FIFO）沖銷計算'
+                                    : '券商尚未沖銷同商品的買賣持倉，且今日成交無法完整對上持倉（可能含前期留倉、成交未載入或待對帳）；成本與損益以未平方向的加權平均估算，請以持倉面板確認'
                                 : pos.fifo
-                                ? '券商尚未沖銷同商品的買賣持倉；成本與損益依今日成交逐筆先進先出（FIFO）沖銷計算'
-                                : '券商尚未沖銷同商品的買賣持倉，且今日成交無法完整對上持倉（可能含前期留倉、成交未載入或待對帳）；成本與損益以未平方向的加權平均估算，請以持倉面板確認'}
+                                    ? '成本與損益依今日成交逐筆先進先出（FIFO）沖銷計算；持倉面板的即時估算以平均成本沖銷，收盤對帳後會一致'
+                                    : '今日有買賣沖銷，但成交無法完整對上持倉（可能含前期留倉、成交未載入或待對帳）；成本為持倉平均價，可能與先進先出（FIFO）結果不同，請以持倉面板確認'}
                         >
-                            {!pos.mixed ? 'FIFO' : pos.fifo ? '多空並存' : '多空並存 估算'}
+                            {pos.mixed ? (pos.fifo ? '多空並存' : '多空並存 估算') : pos.fifo ? 'FIFO' : '估算'}
                         </span>
                     )}
                     <span

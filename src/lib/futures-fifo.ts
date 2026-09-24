@@ -62,6 +62,16 @@ function comboLegCodes(t: Trade): string[] {
     return out;
 }
 
+/** Today's own-code fills include both a buy and a sell (any offsetting). */
+export function hasTwoWayFills(trades: Trade[], code: string): boolean {
+    const sides = new Set<Action>();
+    for (const t of trades) {
+        if ((t.contract.target_code || t.contract.code) !== code) continue;
+        if ((t.status.deals ?? []).some(d => d.quantity > 0)) sides.add(t.order.action);
+    }
+    return sides.size === 2;
+}
+
 /**
  * Today's fills for one real contract month from the Trade rows the app holds
  * (already scoped to the account). Trades on a continuous alias resolve via
@@ -99,6 +109,41 @@ export function collectFills(trades: Trade[], code: string): FifoFill[] | null {
     return ambiguous ? null : fills;
 }
 
+/** Row prices may be rounded to cents by the broker. */
+const PRICE_EPS = 0.01;
+
+/**
+ * Quantities can balance while a buy/sell pair is missing from `fills`, so
+ * without carried lots the rows' prices must also follow from the fills:
+ * un-netted rows cost exactly what each side filled; rows the live
+ * projection netted carry the average-netting replay's price.
+ */
+function pricesExplained(rowQty: Record<Action, number>, rowCost: Record<Action, number>,
+    fillQty: Record<Action, number>, fillCost: Record<Action, number>, fills: FifoFill[]): boolean {
+    if (rowQty.Buy === fillQty.Buy && rowQty.Sell === fillQty.Sell) {
+        return (['Buy', 'Sell'] as const).every(a => Math.abs(rowCost[a] - fillCost[a]) <= PRICE_EPS * Math.max(1, rowQty[a]));
+    }
+    if (rowQty.Buy > 0 && rowQty.Sell > 0) return false; // partly netted rows: no known replay
+    let pos = 0; // signed lots
+    let avg = 0;
+    for (const f of fills) {
+        const signed = f.action === 'Buy' ? f.quantity : -f.quantity;
+        if (pos === 0 || Math.sign(pos) === Math.sign(signed)) {
+            avg = (avg * Math.abs(pos) + f.price * f.quantity) / (Math.abs(pos) + f.quantity);
+            pos += signed;
+        } else if (Math.abs(signed) <= Math.abs(pos)) {
+            pos += signed; // closing at the average leaves it unchanged
+            if (pos === 0) avg = 0;
+        } else {
+            pos += signed; // reversal: the remainder opens at the fill price
+            avg = f.price;
+        }
+    }
+    const side = pos > 0 ? 'Buy' : 'Sell';
+    return pos === rowQty.Buy - rowQty.Sell && pos !== 0
+        && Math.abs(rowCost[side] / rowQty[side] - avg) <= PRICE_EPS;
+}
+
 /**
  * Replays `fills` FIFO. Any net position today's fills do not explain is a
  * carried lot from an earlier session, seeded as the oldest lot at the
@@ -129,6 +174,7 @@ export function fifoPosition(rows: Row[], fills: FifoFill[], multiplier: number)
         // Rows holding more of a side than today filled means lots on both
         // sides predate today — not explainable.
         if (rowQty.Buy > fillQty.Buy || rowQty.Sell > fillQty.Sell) return null;
+        if (!pricesExplained(rowQty, rowCost, fillQty, fillCost, fills)) return null;
     } else {
         const action = carried > 0 ? 'Buy' : 'Sell';
         const other = carried > 0 ? 'Sell' : 'Buy';

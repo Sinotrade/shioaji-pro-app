@@ -79,6 +79,15 @@ describe('fifoPosition', () => {
         expect(fifoPosition([row('Sell', 1, 45552.5, 45532)], fills, 50)).toMatchObject({ net: -1, avg: 45559, pnl: 1350, seeded: false });
     });
 
+    it('a hidden buy/sell pair that balances quantities is caught by the row price', () => {
+        // Visible: Buy 100, Buy 101, Sell 110 (FIFO would say long 1 @ 101). Hidden: Buy 105, Sell 106.
+        // Live-netted row: Buy 1 @ 102.75, not the average replay's 100.5.
+        const fills = [fill('a:1', 'Buy', 100, 1, 1), fill('b:1', 'Buy', 101, 1, 2), fill('c:1', 'Sell', 110, 1, 3)];
+        expect(fifoPosition([row('Buy', 1, 102.75, 104)], fills, 10)).toBeNull();
+        // Without the hidden pair the netted row is 100.5 and FIFO applies.
+        expect(fifoPosition([row('Buy', 1, 100.5, 104)], fills, 10)).toMatchObject({ net: 1, avg: 101, pnl: 30, seeded: false });
+    });
+
     it('a missing fill is indistinguishable from a carried lot, so the result is marked seeded', () => {
         // Sell @45559 not loaded: the rows' extra sell is seeded as a prior-session lot.
         const rows = [row('Sell', 2, 45552.5, 45532), row('Buy', 1, 45513, 45532)];
@@ -130,6 +139,9 @@ describe('fifoPosition', () => {
         // a buy/sell pair missing: rows hold more of each side than today filled
         expect(fifoPosition([row('Sell', 2, 45552.5, 45532), row('Buy', 2, 45520, 45532)],
             [fill('a', 'Sell', 45546, 1, 1), fill('b', 'Buy', 45513, 1, 2)], 50)).toBeNull();
+        // prices must follow from the fills too: un-netted rows whose cost differs
+        expect(fifoPosition([row('Sell', 2, 45560, 45532), row('Buy', 1, 45513, 45532)],
+            [fill('a', 'Sell', 45546, 1, 1), fill('b', 'Sell', 45559, 1, 2), fill('c', 'Buy', 45513, 1, 3)], 50)).toBeNull();
         // carried lots on netted rows cannot be priced
         expect(fifoPosition([row('Buy', 2, 103.33, 115)], [fill('a', 'Buy', 110, 1, 1), fill('b', 'Sell', 120, 1, 2)], 50)).toBeNull();
         // unknown multiplier
