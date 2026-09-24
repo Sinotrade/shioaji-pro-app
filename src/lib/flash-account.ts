@@ -47,7 +47,8 @@ export function resolveFlashAccount(accounts: Account[], market: FlashMarket, sa
 // only the opaque id, never an account number. Afterwards the popout's own
 // choices overwrite the entry, so a reload keeps them.
 const POPOUT_STORAGE_KEY = 'sj-pro-flash-popout-windows';
-// bound the map — ids of closed popouts are never reused
+// bound the map — ids of closed popouts are never reused; the least recently
+// seen records (by open, reload, change or the open-window heartbeat) go first
 const POPOUT_MAX_ENTRIES = 50;
 
 interface PopoutEntry { keys: FlashAccountKeys; at: number }
@@ -91,10 +92,23 @@ export function seedPopoutFlashAccounts(windowId: string, keys: FlashAccountKeys
     writePopoutEntry(windowId, { ...keys });
 }
 
-/** Popout side: its saved choice, or follow-main when there is none. */
+/**
+ * Popout side: its saved choice, or follow-main when there is none. Loading
+ * also marks the record as recently seen, so eviction drops the popouts
+ * that were closed longest ago, not the ones merely unchanged for a while.
+ */
 export function loadPopoutFlashAccounts(windowId: string | null): FlashAccountKeys {
     if (!windowId) return {};
-    return readPopoutEntries()[windowId]?.keys ?? {};
+    const keys = readPopoutEntries()[windowId]?.keys;
+    if (keys) writePopoutEntry(windowId, keys);
+    return keys ?? {};
+}
+
+/** Keep an open popout's record fresh (called periodically while open). */
+export function touchPopoutFlashAccounts(windowId: string | null): void {
+    if (!windowId) return;
+    const keys = readPopoutEntries()[windowId]?.keys;
+    if (keys) writePopoutEntry(windowId, keys);
 }
 
 export function savePopoutFlashAccounts(windowId: string | null, keys: FlashAccountKeys): void {

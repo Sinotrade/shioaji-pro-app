@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { accountMatches, flashAccountKey, flashPopoutParams, loadPopoutFlashAccounts, newPopoutWindowId, resolveFlashAccount, savePopoutFlashAccounts, scopedFlashRows } from './flash-account';
+import { accountMatches, flashAccountKey, flashPopoutParams, loadPopoutFlashAccounts, newPopoutWindowId, resolveFlashAccount, savePopoutFlashAccounts, scopedFlashRows, touchPopoutFlashAccounts } from './flash-account';
 import type { Account } from './types/portfolio';
 const a: Account = { account_type: 'F', broker_id: 'B', account_id: 'A', signed: true, person_id: '', username: '' };
 const b = { ...a, account_id: 'B' };
@@ -74,5 +74,22 @@ describe('per-panel flash account (#139)', () => {
         expect(loadPopoutFlashAccounts('w')).toEqual({});
         store.set('sj-pro-flash-popout-windows', 'nope');
         expect(loadPopoutFlashAccounts('w')).toEqual({});
+    }));
+    it('evicts the least recently seen popout, not a long-open one that is still loaded/touched', () => withStorage(() => {
+        let now = 1_000;
+        const spy = vi.spyOn(Date, 'now').mockImplementation(() => ++now);
+        try {
+            savePopoutFlashAccounts('pinned', { F: 'F:B:A' });
+            savePopoutFlashAccounts('closed', { F: 'F:B:B' });
+            for (let n = 0; n < 60; n++) {
+                savePopoutFlashAccounts(`w${n}`, {});
+                if (n % 20 === 0) touchPopoutFlashAccounts('pinned');
+                if (n === 45) loadPopoutFlashAccounts('pinned');
+            }
+            expect(loadPopoutFlashAccounts('pinned')).toEqual({ F: 'F:B:A' });
+            expect(loadPopoutFlashAccounts('closed')).toEqual({});
+            expect(loadPopoutFlashAccounts('w0')).toEqual({});
+            expect(loadPopoutFlashAccounts('w59')).toEqual({});
+        } finally { spy.mockRestore(); }
     }));
 });

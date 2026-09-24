@@ -41,6 +41,7 @@ import {
     type ManagedComboContract
 } from '../lib/shioaji';
 import { assertTradingLive, notify } from '../lib/trade';
+import { captureSelectedAccount } from '../lib/order-account';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
@@ -566,6 +567,9 @@ export function ComboTicket() {
         setBusy(true);
         try {
             assertTradingLive();
+            // 帳戶在送出這一刻固定並明確傳入（#139）
+            const comboAccount = captureSelectedAccount('F');
+            if (!comboAccount) throw new Error('缺少有效且已簽署的期貨下單帳戶');
             const trade = await placeComboOrder(buildOrderCombo(), {
                 action,
                 price: p,
@@ -573,7 +577,7 @@ export function ComboTicket() {
                 price_type: 'LMT',
                 order_type: orderType,
                 octype: 'Auto',
-            });
+            }, comboAccount);
             notify({
                 kind: 'ok',
                 title: '🧩 組合單已送出',

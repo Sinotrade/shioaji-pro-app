@@ -7,7 +7,13 @@
 import { RefreshCw, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
-import { requestOrderConfirm } from '../lib/order-confirm';
+import { accountConfirmLabel, requestOrderConfirm } from '../lib/order-confirm';
+import {
+    ACCOUNT_CHANGED_MESSAGE,
+    captureSelectedAccount,
+    isSelectedAccountUnchanged,
+} from '../lib/order-account';
+import type { Account } from '../lib/types/portfolio';
 import { cancellationSummary } from '../lib/trade-mutations';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
 import {
@@ -119,7 +125,8 @@ export function GridTicket({
         return out;
     };
 
-    const placeAt = async (price: number) => {
+    // account omitted = the app-wide selection at send time (動態跟隨補單)
+    const placeAt = async (price: number, account?: Account) => {
         recentPlace.current.set(keyOf(price), Date.now());
         const c = contractRef.current;
         const p = paramsRef.current;
@@ -136,13 +143,13 @@ export function GridTicket({
                 ...req,
                 price_type: 'LMT',
                 octype: 'Auto',
-            });
+            }, account);
         }
         return placeStockOrder(c, {
             ...req,
             price_type: 'LMT',
             order_lot: 'Common',
-        });
+        }, account);
     };
 
     const layGrid = async () => {
@@ -153,6 +160,14 @@ export function GridTicket({
             return;
         }
         const prices = desiredPrices(last);
+        // 鋪單帳戶在確認前固定（#139），確認後比對，變了就整批不送
+        const gridAccount = captureSelectedAccount(
+            isFuturesContract(contract) ? 'F' : 'S',
+        );
+        if (!gridAccount) {
+            notify({ kind: 'err', title: '鋪單未送出', body: '缺少有效且已簽署的下單帳戶' });
+            return;
+        }
         // 手動鋪單整批確認一次（動態跟隨的補單不屬手動，不再問）
         if (getRiskSettings().confirmManualOrders && prices.length > 0) {
             const priceRange = `${fmtPrice(Math.min(...prices))} ～ ${fmtPrice(
@@ -167,14 +182,19 @@ export function GridTicket({
                 quantity: qtyPer * prices.length,
                 unit: isFuturesContract(contract) ? '口' : '張',
                 note: `網格鋪單 ${prices.length} 檔 × ${qtyPer}`,
+                accountLabel: accountConfirmLabel(gridAccount),
             }).catch(() => false);
             if (!approved) return;
+        }
+        if (!isSelectedAccountUnchanged(gridAccount)) {
+            notify({ kind: 'err', title: '鋪單未送出', body: ACCOUNT_CHANGED_MESSAGE });
+            return;
         }
         setBusy(true);
         let ok = 0;
         for (const price of prices) {
             try {
-                await placeAt(price);
+                await placeAt(price, gridAccount);
                 ok += 1;
             } catch (e) {
                 notify({

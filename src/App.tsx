@@ -105,6 +105,7 @@ import {
     flashPopoutParams,
     loadPopoutFlashAccounts,
     savePopoutFlashAccounts,
+    touchPopoutFlashAccounts,
     type FlashAccountKeys,
 } from './lib/flash-account';
 
@@ -495,6 +496,12 @@ function PopoutView({
     const popoutPositionsState = { data: trading.positions, refresh: tradingActionObserved };
     // popout 不在 workspace 裡 — 帳戶選擇依視窗 id 存在本機（開啟時由面板預先寫入）
     const [flashAccounts, setFlashAccounts] = useState(() => loadPopoutFlashAccounts(POPOUT_WINDOW_ID));
+    // heartbeat: a long-open popout must not be evicted as "stale"
+    useEffect(() => {
+        if (type !== 'flash' || !POPOUT_WINDOW_ID) return;
+        const t = setInterval(() => touchPopoutFlashAccounts(POPOUT_WINDOW_ID), 10 * 60_000);
+        return () => clearInterval(t);
+    }, [type]);
     const meta = BLOCK_META[type];
 
     let body: React.ReactNode = <BlockPlaceholder />;

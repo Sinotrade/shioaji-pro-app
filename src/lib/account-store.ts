@@ -44,30 +44,37 @@ function loadSelection(): { stock?: string; futures?: string } {
     }
 }
 
-// last value this window wrote — a storage event carrying it is our own echo
-let lastPersisted: string | null = null;
-
 function persistSelection() {
-    lastPersisted = JSON.stringify({
-        stock: state.selectedStock ? keyOf(state.selectedStock) : undefined,
-        futures: state.selectedFutures
-            ? keyOf(state.selectedFutures)
-            : undefined,
-    });
-    localStorage.setItem(STORAGE_KEY, lastPersisted);
+    localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+            stock: state.selectedStock ? keyOf(state.selectedStock) : undefined,
+            futures: state.selectedFutures
+                ? keyOf(state.selectedFutures)
+                : undefined,
+        }),
+    );
 }
 
 // cross-window sync (issue #139) — popouts share localStorage but not module
 // state; without this a popout flash panel set to 跟隨主畫面 keeps trading
-// the account the main window had when the popout opened. Only signed
-// accounts already in this window's list are adopted; an unknown key leaves
-// the current selection alone.
-function applySelectionFromStorage(raw: string | null) {
-    if (raw === null || raw === lastPersisted) return;
+// the account the main window had when the popout opened. Browsers never
+// deliver a storage event to the window that wrote it, so every event is a
+// genuine change from another window. Only signed accounts are adopted; a
+// key this window has never seen triggers one account re-fetch (the other
+// window may have a fresher list), after which it is applied again.
+function applySelectionFromStorage(raw: string | null, refetched = false) {
+    if (raw === null) return;
     let saved: { stock?: string; futures?: string };
     try {
         saved = JSON.parse(raw) ?? {};
     } catch {
+        return;
+    }
+    const unknown = (key: string | undefined) =>
+        !!key && !state.accounts.some((a) => keyOf(a) === key);
+    if (!refetched && (unknown(saved.stock) || unknown(saved.futures))) {
+        void startLoad().then(() => applySelectionFromStorage(raw, true));
         return;
     }
     const pick = (type: 'S' | 'F', key: string | undefined) =>
