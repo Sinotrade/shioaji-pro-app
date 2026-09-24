@@ -52,6 +52,24 @@ export async function timedStart(
     return res;
 }
 
+/** Boot autostart: the cold-start (or continued) run is closed as failed
+ * when serverStart fails OR throws — a throw used to fall into boot's
+ * generic catch and leave the run open until it went stale. */
+export async function timedAutostart(
+    start: () => Promise<StartResult>,
+): Promise<StartResult> {
+    const runId = peekActiveTiming()?.id;
+    let res: StartResult;
+    try {
+        res = await start();
+    } catch (e) {
+        endTiming('failed', 'autostart threw', { runId });
+        throw e;
+    }
+    if (!res.ok) endTiming('failed', 'autostart', { runId });
+    return res;
+}
+
 export async function timedStop(deps: ServerActionDeps): Promise<SidecarResult> {
     beginTiming('stop', { replace: true });
     const runId = peekActiveTiming()?.id;

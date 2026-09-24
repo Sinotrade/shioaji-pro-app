@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    ATTEMPT_GRACE_MS,
     FAST_START_SCHEDULE,
     STOP_SCHEDULE,
     pollDelay,
@@ -150,11 +151,56 @@ describe('pollUntil', () => {
     it('never starts a new attempt while one that ignores abort still hangs', async () => {
         const check = vi.fn(() => new Promise<undefined>(() => undefined));
         const p = pollUntil(check, { timeoutMs: 20_000, attemptTimeoutMs: 5000 });
-        await vi.advanceTimersByTimeAsync(25_000);
+        await vi.advanceTimersByTimeAsync(30_000);
         const res = await p;
         expect(check).toHaveBeenCalledTimes(1);
         expect(res).toMatchObject({ timedOut: true, attempts: 1 });
-        expect(res.elapsedMs).toBe(20_000);
+        // deadline + one attempt timeout, never longer
+        expect(res.elapsedMs).toBe(25_000);
+    });
+
+    it('stop wait: a 20 ms probe started at the deadline still succeeds', async () => {
+        const goneAt = 4950;
+        const probes: number[] = [];
+        const p = pollUntil(
+            async () => {
+                probes.push(Date.now());
+                await new Promise((r) => setTimeout(r, 20));
+                return Date.now() >= goneAt ? true : undefined;
+            },
+            { timeoutMs: 5000, schedule: STOP_SCHEDULE },
+        );
+        await vi.advanceTimersByTimeAsync(6000);
+        const res = await p;
+        expect(res).toMatchObject({ value: true, timedOut: false });
+        expect(probes.at(-1)).toBeLessThanOrEqual(5000);
+        expect(res.elapsedMs).toBeGreaterThan(5000);
+    });
+
+    it('warm wait: a slow probe started before 20 s is awaited, not cut off', async () => {
+        const p = pollUntil(
+            async () => {
+                const startedAt = Date.now();
+                await new Promise((r) => setTimeout(r, 1500)); // slow /info
+                return startedAt >= 19_000 ? 'hit' : undefined;
+            },
+            { timeoutMs: 20_000 },
+        );
+        await vi.advanceTimersByTimeAsync(30_000);
+        const res = await p;
+        expect(res).toMatchObject({ value: 'hit', timedOut: false });
+        expect(res.elapsedMs).toBeGreaterThan(20_000);
+        expect(res.elapsedMs).toBeLessThanOrEqual(20_000 + 5000);
+    });
+
+    it('without attemptTimeoutMs a hung last attempt is capped by the grace', async () => {
+        const p = pollUntil(() => new Promise<undefined>(() => undefined), {
+            timeoutMs: 5000,
+        });
+        await vi.advanceTimersByTimeAsync(20_000);
+        const res = await p;
+        expect(res).toMatchObject({ timedOut: true, attempts: 1 });
+        expect(res.elapsedMs).toBe(5000 + ATTEMPT_GRACE_MS);
     });
 
     it('a cancelled wait aborts the in-flight check and stops', async () => {

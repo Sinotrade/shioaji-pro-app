@@ -90,10 +90,11 @@ interface TimingState {
 
 const STORAGE_KEY = 'sjpro.startupTiming.v1';
 const HISTORY_LIMIT = 12;
-// longer than any legitimate wait (20 s warming + 45 s spawn + 90 s health):
-// an older active run was cut off by a crash/quit and must not swallow the
-// next scenario
-export const STALE_RUN_MS = 180_000;
+// longer than any legitimate run — 20 s warming + 45 s spawn + 90 s health
+// + 60 s front-end watch = 215 s, plus the last probes' grace: an older
+// active run was cut off by a crash/quit and must not swallow the next
+// scenario
+export const STALE_RUN_MS = 270_000;
 
 type Listener = () => void;
 const listeners = new Set<Listener>();

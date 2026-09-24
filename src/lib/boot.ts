@@ -30,12 +30,12 @@ import {
 } from './tauri';
 import {
     beginBootTiming,
-    endTiming,
     getActiveTiming,
     markStage,
     type TimingOutcome,
 } from './startup-timing';
 import { appReadySignals, watchFrontendReady } from './frontend-ready';
+import { timedAutostart } from './server-actions';
 import { logNotice, notify } from './trade';
 import { isChildWindow } from './window-role';
 
@@ -197,9 +197,10 @@ async function run() {
                             body: `模式：${settings.production ? '⚠ 正式環境' : '模擬環境'}`,
                         });
                     }
-                    const res = await serverStart(settings);
+                    const res = await timedAutostart(() =>
+                        serverStart(settings),
+                    );
                     if (!res.ok) {
-                        endTiming('failed', 'autostart');
                         notify({
                             kind: 'err',
                             title: '伺服器自動啟動失敗',

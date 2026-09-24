@@ -13,7 +13,7 @@ const store = new Map<string, string>();
 };
 
 const timing = await import('./startup-timing');
-const { timedRestart, timedStart, timedStop } = await import('./server-actions');
+const { timedAutostart, timedRestart, timedStart, timedStop } = await import('./server-actions');
 
 const cfg = { production: false } as DesktopSettings;
 const started = (over: Partial<StartResult>): StartResult => ({
@@ -83,6 +83,36 @@ describe('timedStart', () => {
         await timedStart(cfg, 'start', deps());
         await timedStart(cfg, 'start', deps({ serverStart: vi.fn(async () => started({ ok: false })) }));
         expect(timing.getTimingHistory().map((r) => r.outcome)).toEqual(['failed', 'abandoned']);
+    });
+});
+
+describe('timedAutostart (boot)', () => {
+    it('a throwing serverStart ends the cold-start run as failed', async () => {
+        timing.beginTiming('cold-start');
+        await expect(
+            timedAutostart(async () => { throw new Error('sidecar missing'); }),
+        ).rejects.toThrow('sidecar missing');
+        expect(timing.getActiveTiming()).toBeNull();
+        expect(last()).toMatchObject({ scenario: 'cold-start', outcome: 'failed', detail: 'autostart threw' });
+    });
+
+    it('a failed start ends it; a fresh spawn leaves it for the health wait', async () => {
+        timing.beginTiming('cold-start');
+        await timedAutostart(async () => started({ ok: false }));
+        expect(last()).toMatchObject({ outcome: 'failed', detail: 'autostart' });
+        timing.beginTiming('cold-start');
+        await timedAutostart(async () => started({}));
+        expect(timing.getActiveTiming()?.scenario).toBe('cold-start');
+    });
+
+    it('only closes the run it started with', async () => {
+        timing.beginTiming('cold-start');
+        const p = timedAutostart(async () => {
+            timing.beginTiming('restart', { replace: true });
+            throw new Error('late');
+        });
+        await expect(p).rejects.toThrow('late');
+        expect(timing.getActiveTiming()?.scenario).toBe('restart');
     });
 });
 

@@ -41,7 +41,7 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 
 結束狀態：`ok`、`attached`（沿用既有伺服器）、`partial`（伺服器已健康但前端
 60 秒內未就緒）、`failed`、`abandoned`（被下一個操作取代、上次 App 結束時仍未
-完成，或超過 180 秒沒有結束）。
+完成，或超過 270 秒沒有結束）。
 
 每行格式為 `+相對時間  該階段耗時  階段 (附註)`。`wait-listener` 的耗時即
 Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 端。

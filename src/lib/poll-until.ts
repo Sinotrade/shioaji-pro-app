@@ -50,6 +50,10 @@ export interface PollResult<T> {
     cancelled: boolean; // opts.signal aborted the whole wait
 }
 
+// cap for a last attempt without attemptTimeoutMs: the sidecar probes
+// (probeInfo/probeHealthy) carry their own 5 s request timeout
+export const ATTEMPT_GRACE_MS = 5000;
+
 // resolves after `ms`, or early (false) when `signal` aborts
 function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
     return new Promise((resolve) => {
@@ -75,7 +79,10 @@ function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
  * (or the whole wait is cancelled) that signal aborts, and the next attempt
  * starts only after the aborted one has SETTLED — a check that forwards the
  * signal to fetch therefore never overlaps the next one. A check that
- * ignores its signal still cannot hold the wait past the deadline.
+ * ignores its signal still cannot hold the wait forever: an attempt that
+ * STARTED before the deadline may finish until deadline + attemptTimeoutMs
+ * (or ATTEMPT_GRACE_MS), so a probe that succeeds just after the deadline
+ * still counts — the old loops awaited their last probe the same way.
  */
 export async function pollUntil<T>(
     check: (attempt: number, signal: AbortSignal) => Promise<T | undefined>,
@@ -130,12 +137,14 @@ export async function pollUntil<T>(
                 settled = true;
             }
         })();
-        // a check that ignores its signal: give up on it at the deadline
+        // a check that ignores its signal: let it finish until the deadline
+        // plus one attempt's worth, then give up on it
         let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
         const outOfTime = new Promise<undefined>((r) => {
             deadlineTimer = setTimeout(
                 () => r(undefined),
-                Math.max(0, deadline - Date.now()),
+                Math.max(0, deadline - Date.now()) +
+                    (opts.attemptTimeoutMs ?? ATTEMPT_GRACE_MS),
             );
         });
         try {
