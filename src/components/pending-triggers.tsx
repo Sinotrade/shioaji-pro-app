@@ -13,6 +13,7 @@ import {
     requestPendingPrices,
     resolvePendingTrigger,
     usePendingPrices,
+    useSendingTriggers,
     useTriggers,
     type PendingChoice,
     type TriggerOrder,
@@ -26,7 +27,12 @@ function detectedAt(at: number): string {
         : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${time}`;
 }
 
-function Row({ trigger, price, envNow }: { trigger: TriggerOrder; price: number | undefined; envNow: string | null }) {
+function Row({ trigger, price, envNow, sending }: {
+    trigger: TriggerOrder;
+    price: number | undefined;
+    envNow: string | null;
+    sending: boolean; // the main window is still processing a 送出 (e.g. its confirm dialog)
+}) {
     const priv = usePrivacyMode();
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
@@ -61,11 +67,12 @@ function Row({ trigger, price, envNow }: { trigger: TriggerOrder; price: number 
                 {here ? '' : envNow ? '（非目前環境，目前價不顯示；切回該環境才能送出）' : '（伺服器模式未確認）'}
                 {trigger.pending && ` · 偵測時價格 ${trigger.pending.price} · 偵測時間 ${detectedAt(trigger.pending.at)}`}
             </span>
+            {sending && <span className={styles.message}>送出處理中…（若開啟下單確認，請在主視窗確認）</span>}
             {message && <span className={styles.message}>{message}</span>}
             <div className={styles.actions}>
                 <button
                     className={styles.primary}
-                    disabled={busy || shown === undefined}
+                    disabled={busy || sending || shown === undefined}
                     title='重新檢查行情連線、環境與帳戶後，以原設定送出市價單'
                     onClick={() => {
                         if (confirm !== 'send') {
@@ -76,7 +83,7 @@ function Row({ trigger, price, envNow }: { trigger: TriggerOrder; price: number 
                         resolve('send');
                     }}
                 >
-                    {confirm === 'send' ? `再按一次：${side}（目前 ${shown}）` : '送出'}
+                    {sending ? '送出處理中' : confirm === 'send' ? `再按一次：${side}（目前 ${shown}）` : '送出'}
                 </button>
                 <button
                     className={styles.button}
@@ -109,6 +116,7 @@ function Row({ trigger, price, envNow }: { trigger: TriggerOrder; price: number 
 export function PendingTriggers() {
     const pending = useTriggers().filter(t => t.pending);
     const prices = usePendingPrices();
+    const sending = useSendingTriggers();
     useServerInfo(); // re-render when the server mode becomes known / changes
     const envNow = currentProtectionEnv();
     if (pending.length === 0) return null;
@@ -118,7 +126,7 @@ export function PendingTriggers() {
             <div className={styles.hint}>
                 App 關閉或未執行期間價格已穿過觸價，系統未自動送單。請逐筆選擇送出、保留或取消；OCO 同組一筆送出後其餘自動取消。
             </div>
-            {pending.map(t => <Row key={t.id} trigger={t} price={prices[t.code]} envNow={envNow} />)}
+            {pending.map(t => <Row key={t.id} trigger={t} price={prices[t.code]} envNow={envNow} sending={sending.includes(t.id)} />)}
         </div>
     );
 }

@@ -62,13 +62,17 @@ export function resolveOrderConfirm(approved: boolean): void {
 let simulationCache: boolean | null = null;
 let simulationInflight: Promise<void> | null = null;
 
-function selectedAccountLabel(unit: string): string | undefined {
-    const state = getAccountState();
-    const account = unit === '口' ? state.selectedFutures : state.selectedStock;
-    if (!account) return undefined;
+/** Label of the account an order will actually use (last 4 digits shown). */
+export function accountConfirmLabel(account: { broker_id: string; account_id: string }): string {
     const id = account.account_id;
     const masked = id.length > 4 ? `${'*'.repeat(id.length - 4)}${id.slice(-4)}` : id;
     return `${account.broker_id}-${masked}`;
+}
+
+function selectedAccountLabel(unit: string): string | undefined {
+    const state = getAccountState();
+    const account = unit === '口' ? state.selectedFutures : state.selectedStock;
+    return account ? accountConfirmLabel(account) : undefined;
 }
 
 function primeSimulation(): Promise<void> {

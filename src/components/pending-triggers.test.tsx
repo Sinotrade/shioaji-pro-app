@@ -9,6 +9,7 @@ const SIM = 'http://sim.invalid|simulation';
 const m = vi.hoisted(() => ({
     triggers: [] as unknown[],
     prices: {} as Record<string, number>,
+    sending: [] as string[],
     env: 'http://sim.invalid|simulation' as string | null,
     resolve: vi.fn(),
     request: vi.fn(),
@@ -18,6 +19,7 @@ const m = vi.hoisted(() => ({
 vi.mock('../lib/trigger-engine', () => ({
     useTriggers: () => m.triggers,
     usePendingPrices: () => m.prices,
+    useSendingTriggers: () => m.sending,
     resolvePendingTrigger: m.resolve,
     requestPendingPrices: m.request,
     describePending: (t: TriggerOrder, price: number | undefined) => `${t.code} 目前 ${price ?? '未知'}`,
@@ -52,6 +54,7 @@ const click = async (b: ReactTestInstance) => { await act(async () => { b.props.
 beforeEach(() => {
     m.triggers = [stop()];
     m.prices = { TXFR1: 47900 };
+    m.sending = [];
     m.env = SIM;
     for (const f of [m.resolve, m.request, m.dismiss]) { f.mockReset(); f.mockResolvedValue(true); }
 });
@@ -116,4 +119,11 @@ it('losing the current price disarms a pending 送出 (never shows "目前 undef
     act(() => { r.update(createElement(PendingTriggers)); });
     await click(button(r, '送出')); // first click again, not a send
     expect(m.resolve).not.toHaveBeenCalled();
+});
+
+it('shows 送出處理中 while the main window is still processing a send', () => {
+    m.sending = ['tg-1'];
+    const r = render();
+    expect(text(r.root)).toContain('送出處理中');
+    expect(button(r, '送出處理中').props.disabled).toBe(true);
 });

@@ -155,10 +155,11 @@ interface Snapshot {
     feedMissing: string[];
     executing: boolean;
     prices?: Record<string, number>; // latest tick of codes with a 待確認 trigger
+    sending?: string[]; // 待確認 triggers whose 送出 is in progress (e.g. confirm dialog open)
 }
 let executing = false; // this window holds the executor lock
 const feedMissing = new Set<string>(); // trigger codes without a tick subscription
-let snapshot: Snapshot = { triggers, exits, feedMissing: [], executing: false, prices: {} };
+let snapshot: Snapshot = { triggers, exits, feedMissing: [], executing: false, prices: {}, sending: [] };
 // Executor only: triggers whose first tick after a (re)start decides between
 // normal operation and 待確認; the latest tick per code since the stream /
 // environment last changed; and the last stream activity (tick or heartbeat)
@@ -211,7 +212,7 @@ function commit() {
     writeJson(STORAGE_KEY, triggers);
     writeJson(GROUPS_KEY, processedGroups);
     writeJson(EXITS_KEY, exits);
-    snapshot = { triggers, exits, feedMissing: [...feedMissing], executing, prices: pendingPrices() };
+    snapshot = { triggers, exits, feedMissing: [...feedMissing], executing, prices: pendingPrices(), sending: [...userSending] };
     syncQuotes();
     listeners.forEach(l => l());
     bus.publish();
@@ -344,6 +345,12 @@ function subscribe(l: () => void) {
 
 export function useTriggers(): TriggerOrder[] {
     return useSyncExternalStore(subscribe, () => snapshot.triggers);
+}
+
+const NO_SENDING: string[] = [];
+/** Ids of 待確認 triggers whose 送出 is still in progress. */
+export function useSendingTriggers(): string[] {
+    return useSyncExternalStore(subscribe, () => snapshot.sending ?? NO_SENDING);
 }
 
 const NO_PRICES: Record<string, number> = {};
@@ -625,6 +632,7 @@ async function userSend(id: string) {
         await sendPending(id);
     } finally {
         userSending.delete(id);
+        publishPrices();
     }
 }
 
@@ -870,7 +878,7 @@ function pendingPrices(): Record<string, number> {
 
 function publishPrices() {
     if (!executing) return;
-    snapshot = { ...snapshot, prices: pendingPrices() };
+    snapshot = { ...snapshot, prices: pendingPrices(), sending: [...userSending] };
     listeners.forEach(l => l());
     bus.publish();
 }
@@ -949,6 +957,7 @@ function resolvePending(id: string, choice: PendingChoice): unknown {
     if (getStreamStatus() !== 'live' || latest === undefined) throw new Error('行情未連線或連線後尚未收到新成交價，未送出');
     if (userSending.has(id)) throw new Error('送出處理中');
     userSending.add(id);
+    publishPrices(); // mirrors show 送出處理中
     void userSend(id); // OCO siblings, reservation and unknown-outcome rules apply as usual
     return true;
 }
