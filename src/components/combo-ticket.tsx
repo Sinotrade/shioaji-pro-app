@@ -42,6 +42,7 @@ import {
 } from '../lib/shioaji';
 import { assertTradingLive, notify } from '../lib/trade';
 import { captureSelectedAccount, usableCapturedAccount } from '../lib/order-account';
+import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import type { Account } from '../lib/types/portfolio';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
@@ -178,6 +179,13 @@ export function ComboTicket() {
     const optPick = useOptionLegPick();
 
     const { selectedFutures } = useAccounts();
+    // 帳戶選擇改變就解除送單武裝（與下單面板一致），避免第二下送到新帳戶
+    const selectedFuturesKey = selectedFutures
+        ? `${selectedFutures.broker_id}-${selectedFutures.account_id}`
+        : '';
+    useEffect(() => {
+        setArmed(false);
+    }, [selectedFuturesKey]);
     const tradesQuery = useQuery<ComboTrade[]>(
         useCallback(() => fetchComboTrades(), [selectedFutures]),
         `combo-trades:${selectedFutures?.broker_id}:${selectedFutures?.account_id}`, !!selectedFutures,
@@ -192,6 +200,9 @@ export function ComboTicket() {
     const watchRef = useRef({ lastFire: 0, firing: false });
     // 監控啟動時固定的帳戶（#139）— 每次觸發都用它，不隨之後的選擇改變
     const watchAccountRef = useRef<Account | undefined>(undefined);
+    // same account, for display next to the toggle while the watch runs
+    const [watchAccount, setWatchAccount] = useState<Account | undefined>(undefined);
+    const priv = usePrivacyMode();
     const MAX_ATTEMPTS = 3;
     const COOLDOWN_MS = 5000;
 
@@ -924,6 +935,7 @@ export function ComboTicket() {
                             return;
                         }
                         watchAccountRef.current = account;
+                        setWatchAccount(account);
                         setWatchOn(true);
                     }}
                 >
@@ -936,6 +948,11 @@ export function ComboTicket() {
                         '啟動監控'
                     )}
                 </button>
+                {watchOn && watchAccount && (
+                    <span className={styles.costRow} title='監控啟動時固定的下單帳戶'>
+                        帳戶 {watchAccount.broker_id}-{maskAccountId(watchAccount.account_id, priv)}
+                    </span>
+                )}
             </div>
             {watchOn && (
                 <span className={styles.costRow}>

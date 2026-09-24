@@ -86,3 +86,15 @@ it('follow refills respect the risk kill switch', async () => {
     expect(m.future).not.toHaveBeenCalled();
     expect(m.notify.mock.calls.at(-1)![0]).toMatchObject({ title: '鋪單跟隨已停止', body: expect.stringContaining('風控鎖') });
 });
+
+it('shows the pinned follow account, masked in privacy mode', async () => {
+    const { setPrivacyMode } = await import('../lib/privacy');
+    await render();
+    await act(async () => { btn('動態跟隨現價').props.onClick(); });
+    const shown = () => view.root.findAll(n => n.type === 'span').map(text).find(t => t.startsWith('跟隨帳戶'));
+    expect(shown()).toBe('跟隨帳戶 BR-A');
+    await act(async () => { setPrivacyMode(true); });
+    expect(shown()).toBe('跟隨帳戶 BR-•');
+    await act(async () => { setPrivacyMode(false); btn('動態跟隨中').props.onClick(); });
+    expect(shown()).toBeUndefined();
+});

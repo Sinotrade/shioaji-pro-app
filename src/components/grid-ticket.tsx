@@ -15,6 +15,7 @@ import {
     usableCapturedAccount,
 } from '../lib/order-account';
 import { accountMatches } from '../lib/flash-account';
+import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import type { Account } from '../lib/types/portfolio';
 import { cancellationSummary } from '../lib/trade-mutations';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
@@ -64,6 +65,9 @@ export function GridTicket({
     const [armed, setArmed] = useState(false);
     const [follow, setFollow] = useState(false);
     const [busy, setBusy] = useState(false);
+    // account pinned by the running 動態跟隨 loop (display only)
+    const [followAccountShown, setFollowAccountShown] = useState<Account | null>(null);
+    const priv = usePrivacyMode();
 
     const last = quote?.tick
         ? Number(quote.tick.close)
@@ -247,6 +251,7 @@ export function GridTicket({
             stop('缺少有效且已簽署的下單帳戶');
             return;
         }
+        setFollowAccountShown(followAccount);
         const timer = setInterval(async () => {
             if (cycleBusy.current) return;
             const base = lastRef.current;
@@ -316,7 +321,10 @@ export function GridTicket({
                 cycleBusy.current = false;
             }
         }, FOLLOW_INTERVAL_MS);
-        return () => clearInterval(timer);
+        return () => {
+            clearInterval(timer);
+            setFollowAccountShown(null);
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [follow, armed]);
 
@@ -445,6 +453,11 @@ export function GridTicket({
                     '動態跟隨現價'
                 )}
             </button>
+            {follow && followAccountShown && (
+                <span className={styles.costRow} title='動態跟隨啟動時固定的下單帳戶'>
+                    跟隨帳戶 {followAccountShown.broker_id}-{maskAccountId(followAccountShown.account_id, priv)}
+                </span>
+            )}
 
             {gridOrders.length > 0 && (
                 <span className={styles.costRow}>

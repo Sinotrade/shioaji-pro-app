@@ -1,8 +1,8 @@
 // src/lib/order-account.ts — capture the order account BEFORE a manual
-// confirmation and re-check it after (issue #139). The app-wide selection now
-// syncs across windows, so it can change while a confirmation dialog is open;
-// resolving it again at send time would silently reroute the order to an
-// account the user never confirmed.
+// confirmation and re-check it after (issue #139). The selection can change
+// within this window while a confirmation dialog is open (another panel's
+// account menu, a hotkey); resolving it again at send time would silently
+// reroute the order to an account the user never confirmed.
 
 import { getAccountState } from './account-store';
 import { accountMatches } from './flash-account';

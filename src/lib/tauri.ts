@@ -1198,7 +1198,10 @@ export async function openPopout(type: string, code: string | null, extra?: Reco
     if (!isTauri) {
         window.open(
             `${window.location.pathname}?${qs}`,
-            `sj-popout-${type}-${code ?? 'x'}`,
+            // a flash popout carries its own window id (#139) — name the
+            // browser window by it so a second popout of the same code opens
+            // beside the first instead of replacing it
+            `sj-popout-${type}-${code ?? 'x'}${extra?.win ? `-${extra.win}` : ''}`,
             'width=900,height=620,menubar=no,toolbar=no',
         );
         return;

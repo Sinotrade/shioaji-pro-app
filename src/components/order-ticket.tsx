@@ -262,8 +262,8 @@ export function OrderTicket({
                 }
                 await ensureBracketHost();
             }
-            // 送單帳戶在確認前固定（#139）：全域選擇會跨視窗同步，確認期間
-            // 可能被其他視窗改掉 — 送出時不再重新解析，改為比對後中止
+            // 送單帳戶在確認前固定（#139）：確認視窗開著時，本視窗其他面板
+            // 仍可改選帳戶 — 送出時不再重新解析，改為比對後中止
             const orderAccount =
                 entryAccount ?? captureSelectedAccount(isFutures ? 'F' : 'S');
             if (!orderAccount) {
@@ -379,8 +379,9 @@ export function OrderTicket({
     const { accounts, selectedStock, selectedFutures } = useAccounts();
     const priv = usePrivacyMode();
     const activeAccount = isFutures ? selectedFutures : selectedStock;
-    // any selection change — including one synced from another window —
-    // disarms the ticket so a pending second click can't route elsewhere
+    // any selection change in this window (this ticket's menu or another
+    // panel's) disarms the ticket so a pending second click can't route
+    // elsewhere
     const activeAccountKey = activeAccount ? acctKey(activeAccount) : '';
     useEffect(() => {
         setArmed(false);

@@ -1,5 +1,5 @@
 // issue #139 — the order ticket's account is fixed before confirmation; a
-// selection change (e.g. synced from another window) aborts instead of
+// selection change in this window while the dialog is open aborts instead of
 // rerouting the order
 import { createElement } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
@@ -58,7 +58,7 @@ it('sends with the account captured before confirmation and shows it in the dial
     expect(m.future.mock.calls[0]![2]).toBe(accounts[0]);
 });
 
-it('aborts when the selection changes remotely while the confirmation is open', async () => {
+it('aborts when the selection changes while the confirmation is open', async () => {
     m.confirm.mockImplementation(async () => { m.selected = 'B'; return true; });
     await armAndSend();
     expect(m.future).not.toHaveBeenCalled();
