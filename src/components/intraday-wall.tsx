@@ -440,11 +440,22 @@ function MiniIntraday({
         setLoading(true);
         setEmpty(false);
         let cancelled = false;
+        // 價格/美國線/均價/量能資料清空（filler 時段軸另外處理）
+        const clearSeries = () => {
+            priceRef.current?.setData([]);
+            barsRef2.current?.setData([]);
+            avgRef.current?.setData([]);
+            volRef.current?.setData([]);
+        };
         // 歷史拿不到時開好空的時段框架（參考價/停板/時段軸來自
         // contract 與現在時間）並讓 loadedRef 成立 — live tick 立刻
         // 作畫，歷史可手動更新
         const scaffoldEmptyFrame = () => {
             if (!priceRef.current || !fillerRef.current) return;
+            // 空框架＝沒有這段的歷史（零 kbars/載入失敗/403）— 先清掉
+            // 圖上殘留的前一次資料（換時段自動重載時是上一段走勢）；
+            // live 累計狀態已歸零，從現在開始重畫
+            clearSeries();
             const ref = Number(contract.reference);
             if (!Number.isFinite(ref) || ref <= 0) return;
             const pend =
