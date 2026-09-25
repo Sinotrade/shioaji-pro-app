@@ -1,6 +1,6 @@
 // src/components/option-chain.css.ts
 
-import { style, styleVariants } from '@vanilla-extract/css';
+import { style } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const wrap = style({
@@ -13,35 +13,17 @@ export const wrap = style({
 export const toolbar = style({
     display: 'flex',
     alignItems: 'center',
-    gap: '2px',
+    gap: '6px',
+    minWidth: 0,
     padding: `4px ${vars.space.sm}`,
     borderBottom: `1px solid ${vars.color.border}`,
     flexShrink: 0,
 });
 
-const monthBase = style({
-    fontFamily: vars.font.mono,
-    fontSize: '0.66rem',
-    fontWeight: 500,
-    padding: '2px 8px',
-    cursor: 'pointer',
-    background: 'transparent',
-    border: '1px solid transparent',
-    borderRadius: vars.radius.sm,
-    color: vars.color.mutedForeground,
-    ':hover': { color: vars.color.foreground },
-});
-
-export const month = styleVariants({
-    off: [monthBase],
-    on: [
-        monthBase,
-        { color: vars.color.foreground, background: vars.color.muted },
-    ],
-});
-
 export const atm = style({
     marginLeft: 'auto',
+    flexShrink: 0,
+    whiteSpace: 'nowrap',
     fontFamily: vars.font.mono,
     fontSize: '0.68rem',
     color: vars.color.mutedForeground,

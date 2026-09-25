@@ -1,46 +1,68 @@
 import { RefreshButton } from './refresh-button';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
-// src/components/option-chain.tsx — TXO option chain (T 字報價表).
-// Loads the OPT contract list once (cached), shows strikes around ATM for
-// a selectable expiry, refreshes quotes via batched snapshots.
+// src/components/option-chain.tsx — 臺指選擇權 T 字報價表（月選＋週選）.
+// Loads the TAIEX option contracts once per day (cached): the monthly TXO
+// root plus every weekly root discovered from options/roots (issue #152).
+// Expiries are keyed by (root, delivery_date); shows strikes around ATM for
+// the selected expiry and refreshes quotes via batched snapshots.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
+import {
+    buildExpiries,
+    contractsForExpiry,
+    isChainContract,
+    MONTHLY_ROOT,
+    pickChainRoots,
+    resolveExpiry,
+    taipeiToday,
+    type ChainContract,
+} from '../lib/option-expiry';
 import { pickOptionLeg } from '../lib/option-pick';
-import { fetchOptions } from '../lib/shioaji';
-import type { ContractInfo } from '../lib/types/contract';
+import { fetchOptionRoots, fetchOptions } from '../lib/shioaji';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as styles from './option-chain.css';
+import { OptionExpiryPicker } from './option-expiry-picker';
 import { Orb } from './orb';
 import * as panel from './panel.css';
 
-interface OptContract extends ContractInfo {
-    delivery_month: string;
-    delivery_date: string;
-    strike_price: number;
-    option_right: string;
-}
+type OptContract = ChainContract;
 
-let optCache: OptContract[] | null = null;
-let optLoading: Promise<OptContract[]> | null = null;
+// 合約清單一天載一次：週選每週掛牌／到期，跨日要重新發現
+let optCache: { day: string; rows: OptContract[] } | null = null;
+let optLoading: { day: string; p: Promise<OptContract[]> } | null = null;
 
-async function loadTxo(): Promise<OptContract[]> {
-    if (optCache) return optCache;
-    if (optLoading) return optLoading;
-    optLoading = (async () => {
-        const rows = await fetchOptions('TXO');
-        optCache = rows.filter(
-            (c): c is OptContract =>
-                c.security_type === 'OPT' &&
-                typeof c.delivery_month === 'string' &&
-                typeof c.delivery_date === 'string' &&
-                typeof c.strike_price === 'number' &&
-                typeof c.option_right === 'string',
+export async function loadChainContracts(
+    day: string = taipeiToday(),
+): Promise<OptContract[]> {
+    if (optCache?.day === day) return optCache.rows;
+    if (optLoading?.day === day) return optLoading.p;
+    const p = (async () => {
+        // roots 查不到時退回只載月選
+        const roots = await fetchOptionRoots().catch(() => []);
+        const wanted = roots.length ? pickChainRoots(roots) : [MONTHLY_ROOT];
+        const settled = await Promise.allSettled(
+            wanted.map(async (root) =>
+                (await fetchOptions(root)).map((c) =>
+                    c.root ? c : { ...c, root },
+                ),
+            ),
         );
-        return optCache;
+        const loaded = settled.flatMap((r) =>
+            r.status === 'fulfilled' ? [r.value] : [],
+        );
+        // 全部失敗才算失敗；個別週選代碼（如占位 root）讀不到就略過
+        const failed = settled.find((r) => r.status === 'rejected');
+        if (loaded.length === 0 && failed) throw failed.reason;
+        const rows = loaded.flat().filter(isChainContract);
+        optCache = { day, rows };
+        return rows;
     })();
-    return optLoading;
+    optLoading = { day, p };
+    return p.finally(() => {
+        if (optLoading?.p === p) optLoading = null;
+    });
 }
 
 const STRIKE_SPAN = 8; // strikes above/below ATM
@@ -49,7 +71,24 @@ function isCall(c: OptContract): boolean {
     return c.option_right.toUpperCase().startsWith('C');
 }
 
-const MONTH_KEY = 'sj-pro-optchain-month';
+// 記住 `${root}:${delivery_date}`；舊版只記月份（sj-pro-optchain-month）
+export const EXPIRY_KEY = 'sj-pro-optchain-expiry';
+
+function readSavedExpiry(): string | null {
+    try {
+        return localStorage.getItem(EXPIRY_KEY);
+    } catch {
+        return null;
+    }
+}
+
+function saveExpiry(key: string) {
+    try {
+        localStorage.setItem(EXPIRY_KEY, key);
+    } catch {
+        // 無法寫入（隱私模式等）時只是不記住
+    }
+}
 
 export function OptionChain({
     onPick,
@@ -57,41 +96,38 @@ export function OptionChain({
     onPick?: (code: string) => void;
 }) {
     const [contracts, setContracts] = useState<OptContract[]>([]);
-    const [month, setMonth] = useState(
-        () => localStorage.getItem(MONTH_KEY) ?? '',
-    );
+    const [choice, setChoice] = useState<string | null>(readSavedExpiry);
     const [loading, setLoading] = useState(true);
     const txf = useQuote('TXFR1');
 
     useEffect(() => {
-        loadTxo()
+        let stale = false;
+        loadChainContracts()
             .then((cs) => {
-                setContracts(cs);
-                const months = [...new Set(cs.map((c) => c.delivery_month))]
-                    .filter(Boolean)
-                    .sort();
-                // restore saved month if still listed, else front month
-                setMonth((m) =>
-                    m && months.includes(m) ? m : (months[0] ?? ''),
-                );
+                if (!stale) setContracts(cs);
             })
-            .finally(() => setLoading(false));
+            .catch(() => undefined)
+            .finally(() => {
+                if (!stale) setLoading(false);
+            });
+        return () => {
+            stale = true;
+        };
     }, []);
 
-    const months = useMemo(
-        () =>
-            [...new Set(contracts.map((c) => c.delivery_month))]
-                .filter(Boolean)
-                .sort()
-                .slice(0, 6),
-        [contracts],
+    const today = taipeiToday();
+    const expiries = useMemo(
+        () => buildExpiries(contracts, today),
+        [contracts, today],
     );
+    // 記住的到期若已到期或不再列出，改選最近到期的
+    const expiry = resolveExpiry(expiries, choice);
 
     const atm = txf?.tick ? Number(txf.tick.close) : null;
 
-    // strikes around ATM for selected month
+    // strikes around ATM for the selected expiry
     const rows = useMemo(() => {
-        const inMonth = contracts.filter((c) => c.delivery_month === month);
+        const inMonth = contractsForExpiry(contracts, expiry);
         const strikes = [
             ...new Set(inMonth.map((c) => c.strike_price)),
         ].sort((a, b) => a - b);
@@ -118,7 +154,7 @@ export function OptionChain({
             ),
         }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contracts, month, atm === null ? 0 : Math.round(atm / 100)]);
+    }, [contracts, expiry, atm === null ? 0 : Math.round(atm / 100)]);
 
     const { snapshots: snaps, refresh: refreshQuotes, loading: quotesLoading, error: quotesError } = useLiveSnapshots(rows.flatMap(r => [r.call, r.put]).filter((c): c is OptContract => !!c));
 
@@ -141,7 +177,7 @@ export function OptionChain({
     if (loading) {
         return <div className={dock.emptyState}>
                 <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                載入 TXO 合約…
+                載入臺指選擇權合約…
             </div>;
     }
     if (rows.length === 0) {
@@ -180,18 +216,14 @@ export function OptionChain({
         <div className={styles.wrap}>
                 {quotesError && <span role="status">{quotesError}；保留上次報價</span>}
             <div className={styles.toolbar}>
-                {months.map((m) => (
-                    <button
-                        key={m}
-                        className={styles.month[m === month ? 'on' : 'off']}
-                        onClick={() => {
-                            setMonth(m);
-                            localStorage.setItem(MONTH_KEY, m);
-                        }}
-                    >
-                        {m.slice(0, 4)}/{m.slice(4)}
-                    </button>
-                ))}
+                <OptionExpiryPicker
+                    expiries={expiries}
+                    value={expiry}
+                    onChange={(key) => {
+                        setChoice(key);
+                        saveExpiry(key);
+                    }}
+                />
                 {atm !== null && (
                     <span className={styles.atm}>
                         TXF {fmtPrice(atm, 0)}{' '}
