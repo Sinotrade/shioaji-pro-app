@@ -9,6 +9,8 @@ import {
     LAYOUT_PRESETS,
     loadWorkspace,
     toRenderGeom,
+    popoutSessionFromQuery,
+    popoutSessionParam,
     upscaleLegacyWorkspace,
     withBlockSessionConfig,
     type Workspace,
@@ -120,5 +122,25 @@ describe('panel session config (issue #73)', () => {
             JSON.stringify(withBlockSessionConfig(ws, 'c1', { chartSession: 'day' })),
         ) as Workspace;
         expect(saved.blocks[0]!.chartSession).toBe('day');
+    });
+});
+
+describe('popout session param', () => {
+    it('carries the panel choice into the popout URL', () => {
+        expect(popoutSessionParam({ id: 'c', type: 'chart', pin: null, chartSession: 'day' })).toEqual({ session: 'day' });
+        expect(popoutSessionParam({ id: 'i', type: 'intraday', pin: null, intradaySession: 'night' })).toEqual({ session: 'night' });
+        expect(popoutSessionParam({ id: 'c', type: 'chart', pin: null })).toEqual({});
+        expect(popoutSessionParam({ id: 'd', type: 'depth', pin: null })).toEqual({});
+        const qs = new URLSearchParams({ popout: 'chart', code: 'TXFR1', ...popoutSessionParam({ id: 'c', type: 'chart', pin: null, chartSession: 'day' }) });
+        expect(popoutSessionFromQuery(qs).chartSession).toBe('day');
+    });
+
+    it('reads back only known values per panel type', () => {
+        const q = (v: string) => popoutSessionFromQuery(new URLSearchParams({ session: v }));
+        expect(q('day')).toEqual({ chartSession: 'day', intradaySession: 'day' });
+        expect(q('night')).toEqual({ chartSession: undefined, intradaySession: 'night' });
+        expect(q('all')).toEqual({ chartSession: 'all', intradaySession: undefined });
+        expect(q('foo')).toEqual({ chartSession: undefined, intradaySession: undefined });
+        expect(popoutSessionFromQuery(new URLSearchParams())).toEqual({ chartSession: undefined, intradaySession: undefined });
     });
 });

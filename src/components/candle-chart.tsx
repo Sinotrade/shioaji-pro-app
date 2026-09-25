@@ -175,6 +175,8 @@ export function CandleChart({
     // with a bucket older than its last point makes lightweight-charts
     // throw inside the effect, which unmounts the whole app (issue #1)
     const loadedKeyRef = useRef('');
+    // 圖上目前畫的是哪一組（商品|週期|僅日盤）— 換組時同步清圖
+    const drawnKeyRef = useRef('');
     const quote = useQuote(contract.code);
     const tf = TIMEFRAMES[tfIdx] ?? TIMEFRAMES[1];
     const themeSettings = useThemeSettings();
@@ -537,6 +539,18 @@ export function CandleChart({
         };
         lastBarRef.current = null;
         loadMoreRef.current = null;
+        // 換商品/週期/全盤↔日盤：新歷史回來前立刻清掉前一組 K 棒 —
+        // 請求還在路上（或卡住）時，不能在「日盤」亮著的狀態下繼續掛著
+        // 日夜盤混合的舊 K 棒。同組重載（更新歷史/斷層補抓）不清，免閃
+        if (drawnKeyRef.current !== loadKey) {
+            drawnKeyRef.current = loadKey;
+            candleSeriesRef.current?.setData([]);
+            volSeriesRef.current?.setData([]);
+            barsRef.current = [];
+            rawRef.current = [];
+            gapReloadAtRef.current = 0;
+            setDataVersion((v) => v + 1); // 指標跟著清
+        }
         setEmpty(false);
         setLoading(true);
         const clearSeries = () => {

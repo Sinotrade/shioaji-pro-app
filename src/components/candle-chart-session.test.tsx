@@ -238,4 +238,101 @@ describe('CandleChart 全盤/日盤 ', () => {
         expect(btn(r, '全盤')).toHaveLength(0);
         expect(btn(r, '日盤')).toHaveLength(1);
     });
+
+    // 回歸：換組（全盤↔日盤/週期/商品）後新歷史尚未回來，圖上不可留舊 K 棒
+    const deferred = () => {
+        let resolve!: (v: unknown) => void;
+        const promise = new Promise((res) => (resolve = res));
+        return { promise, resolve };
+    };
+    const shown = () => [
+        ...(candles().last as any[]),
+        ...(created.filter((c) => c.kind === 'Histogram').at(-1)?.last as any[] ?? []),
+    ];
+    const rerender = (r: ReactTestRenderer, props: any) =>
+        act(() => r.update(createElement(CandleChart, props)));
+
+    it('toggle 全盤→日盤 with the reload pending shows no stale mixed bars', async () => {
+        setNow('2026-09-25T20:00:30');
+        fetchMock.mockResolvedValueOnce(DATA);
+        fetchMock.mockReturnValueOnce(new Promise(() => {})); // 卡住
+        let mode: any = 'all';
+        const onChange = (m: any) => (mode = m);
+        const r = mount({ contract: fut, sessionMode: mode, onSessionModeChange: onChange });
+        await flush();
+        expect(shown().some((b) => b.close === 200)).toBe(true);
+        act(() => btn(r, '日盤')[0]!.props.onClick());
+        rerender(r, { contract: fut, sessionMode: mode, onSessionModeChange: onChange });
+        await flush();
+        expect(btn(r, '日盤')[0]!.props['aria-pressed']).toBe(true);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(shown()).toHaveLength(0);
+    });
+
+    it('timeframe switch with the reload pending clears the old bars', async () => {
+        setNow('2026-09-25T20:00:30');
+        fetchMock.mockResolvedValueOnce(DATA);
+        fetchMock.mockReturnValueOnce(new Promise(() => {}));
+        const r = mount({ contract: fut, sessionMode: 'all', onSessionModeChange: () => {} });
+        await flush();
+        expect(shown().length).toBeGreaterThan(0);
+        act(() => btn(r, '1m')[0]!.props.onClick());
+        await flush();
+        expect(shown()).toHaveLength(0);
+    });
+
+    it('contract switch with the reload pending clears the old bars', async () => {
+        setNow('2026-09-25T20:00:30');
+        fetchMock.mockResolvedValueOnce(DATA);
+        fetchMock.mockReturnValueOnce(new Promise(() => {}));
+        const r = mount({ contract: fut, sessionMode: 'all', onSessionModeChange: () => {} });
+        await flush();
+        expect(shown().length).toBeGreaterThan(0);
+        rerender(r, { contract: { ...fut, code: 'MXFR1' }, sessionMode: 'all', onSessionModeChange: () => {} });
+        await flush();
+        expect(shown()).toHaveLength(0);
+    });
+
+    it('same-key reload (更新歷史) keeps the bars while pending', async () => {
+        setNow('2026-09-25T20:00:30');
+        fetchMock.mockResolvedValueOnce(DATA);
+        fetchMock.mockReturnValueOnce(new Promise(() => {}));
+        const r = mount({ contract: fut, sessionMode: 'all', onSessionModeChange: () => {} });
+        await flush();
+        const before = shown().length;
+        const refresh = r.root.find((n) => n.type === 'button' && n.props['aria-label'] === '更新歷史');
+        act(() => refresh.props.onClick());
+        await flush();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(shown()).toHaveLength(before);
+    });
+
+    it('an older request resolving after a newer switch never draws', async () => {
+        setNow('2026-09-25T20:00:30');
+        const a = deferred();
+        const b = deferred();
+        fetchMock.mockResolvedValueOnce(DATA);
+        fetchMock.mockReturnValueOnce(a.promise); // 日盤 5m
+        fetchMock.mockReturnValueOnce(b.promise); // 日盤 1m
+        let mode: any = 'all';
+        const onChange = (m: any) => (mode = m);
+        const r = mount({ contract: fut, sessionMode: mode, onSessionModeChange: onChange });
+        await flush();
+        act(() => btn(r, '日盤')[0]!.props.onClick());
+        rerender(r, { contract: fut, sessionMode: mode, onSessionModeChange: onChange });
+        await flush();
+        act(() => btn(r, '1m')[0]!.props.onClick());
+        await flush();
+        b.resolve(DATA);
+        await flush();
+        const oneMin = (candles().last as any[]).map((x) => x.time);
+        expect(oneMin.length).toBeGreaterThan(0);
+        // 1 分 K：label 間距 60 秒
+        expect(oneMin[1] - oneMin[0]).toBe(60);
+        const setCalls = candles().setData.mock.calls.length;
+        a.resolve(DATA); // 舊的 5m 請求晚到
+        await flush();
+        expect(candles().setData.mock.calls.length).toBe(setCalls);
+        expect((candles().last as any[]).map((x) => x.time)).toEqual(oneMin);
+    });
 });

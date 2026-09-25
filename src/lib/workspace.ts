@@ -109,6 +109,27 @@ export type SessionConfigPatch = Partial<
     Pick<Block, 'chartSession' | 'intradaySession'>
 >;
 
+// 開彈出視窗時把面板的時段選擇帶進 URL（session=…）
+export function popoutSessionParam(block: Block): Record<string, string> {
+    const session =
+        block.type === 'chart'
+            ? block.chartSession
+            : block.type === 'intraday'
+              ? block.intradaySession
+              : undefined;
+    return session ? { session } : {};
+}
+
+// 彈出視窗讀回 URL 的 session — 依面板類型只接受已知值
+export function popoutSessionFromQuery(q: URLSearchParams): SessionConfigPatch {
+    const v = q.get('session');
+    return {
+        chartSession: v === 'all' || v === 'day' ? v : undefined,
+        intradaySession:
+            v === 'auto' || v === 'day' || v === 'night' ? v : undefined,
+    };
+}
+
 // 面板時段選擇寫回 workspace（跟版面/版面庫一起存）
 export function withBlockSessionConfig(
     w: Workspace,
