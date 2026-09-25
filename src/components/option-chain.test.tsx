@@ -314,6 +314,41 @@ it('groups chips by month and marks the selection for assistive tech', () => {
     expect(onChange).toHaveBeenCalledWith('TXO:2026-10-21');
 });
 
+it('fades the strip edge that still has chips out of view', () => {
+    const contracts = Object.values(BY_ROOT).flat() as Parameters<typeof buildExpiries>[0];
+    const expiries = buildExpiries(contracts, '2026-09-25');
+    const node = {
+        scrollLeft: 0,
+        clientWidth: 120,
+        scrollWidth: 400,
+        listeners: new Map<string, () => void>(),
+        addEventListener(type: string, fn: () => void) {
+            this.listeners.set(type, fn);
+        },
+        removeEventListener(type: string) {
+            this.listeners.delete(type);
+        },
+    };
+    let r!: ReactTestRenderer;
+    act(() => {
+        r = create(createElement(OptionExpiryPicker, { expiries, value: expiries[0]!.key, onChange: vi.fn() }), {
+            createNodeMock: (el) => ((el.props as { role?: string }).role === 'radiogroup' ? node : null),
+        });
+    });
+    const strip = () => r.root.find((n) => n.props.role === 'radiogroup');
+    expect(strip().props['data-fade']).toBe('end');
+    node.scrollLeft = 140;
+    act(() => node.listeners.get('scroll')!());
+    expect(strip().props['data-fade']).toBe('both');
+    node.scrollLeft = 280;
+    act(() => node.listeners.get('scroll')!());
+    expect(strip().props['data-fade']).toBe('start');
+    node.scrollWidth = 120;
+    node.scrollLeft = 0;
+    act(() => node.listeners.get('scroll')!());
+    expect(strip().props['data-fade']).toBe('none');
+});
+
 it('prefixes the year on month groups that fall in the next year', () => {
     const contracts = [
         ...BY_ROOT.TXO!,
@@ -384,6 +419,27 @@ it('flags a partial failure next to the retry', async () => {
     expect(text(r.root.find((n) => n.props.role === 'status'))).toContain('部分合約載入失敗');
 });
 
+it('puts the load status on its own truncating row, never squeezing the expiry picker', async () => {
+    api.fetchOptions.mockImplementation(async (root: string) => {
+        if (root === 'TXZ') throw placeholderError();
+        if (['TX1', 'TXY'].includes(root)) throw Object.assign(new Error('500 upstream'), { status: 500 });
+        if (root === 'TXU') return BY_ROOT.TXU!.map((c) => ({ ...c, underlying_code: undefined }));
+        return BY_ROOT[root] ?? [];
+    });
+    const r = await renderChain();
+    const status = r.root.find((n) => typeof n.type === 'string' && n.props.role === 'status');
+    const full = text(status);
+    expect(full).toContain('部分合約載入失敗（TX1、TXY）');
+    // 截斷時全文仍可由 tooltip 取得，螢幕閱讀器讀到的是完整文字
+    expect(status.props.title).toBe(full);
+    expect(status.props.className).toBe(chainStyles.status);
+    // 不與到期選擇器、更新報價同列（同列時長訊息會把選擇器擠到 0 寬）
+    const toolbar = r.root.find((n) => n.props.className === chainStyles.toolbar);
+    expect(toolbar.findAll((n) => n.props.role === 'status')).toHaveLength(0);
+    expect(toolbar.findAll((n) => n.props.role === 'radiogroup')).toHaveLength(1);
+    expect(toolbar.findAll((n) => n.type === 'button' && n.props['aria-label'] === '更新報價')).toHaveLength(1);
+});
+
 it('lists only the monthly when no contract carries underlying_code and TXN is unnamed', async () => {
     const strip = (rows: ContractInfo[]) => rows.map((c) => ({ ...c, underlying_code: undefined }));
     api.fetchOptionRoots.mockResolvedValue([
@@ -402,7 +458,7 @@ it('lists only the monthly when no contract carries underlying_code and TXN is u
 });
 
 const statusText = (r: ReactTestRenderer) =>
-    r.root.findAll((n) => n.type === 'span' && n.props.role === 'status').map(text).join('');
+    r.root.findAll((n) => typeof n.type === 'string' && n.props.role === 'status').map(text).join('');
 const never = () => new Promise<never>(() => {});
 const TIMEOUT_MS = 10_000;
 

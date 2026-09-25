@@ -537,7 +537,9 @@ export function OptionChain({
                     className={styles.atm}
                     title={
                         ref
-                            ? `履約價以 ${ref.label} 為中心`
+                            ? `${ref.label} ${fmtPrice(ref.value, 0)}${
+                                  ref.change !== undefined ? ` ${fmtSigned(ref.change, 0)}` : ''
+                              }，履約價以 ${ref.label} 為中心`
                             : '尚無標的報價，履約價以中位數為中心'
                     }
                 >
@@ -561,12 +563,17 @@ export function OptionChain({
                         if (!complete) reloadContracts();
                     }}
                 />
-                {(!complete || unlisted > 0) && (
-                    <span role="status" className={styles.atm}>
-                        {chainStatusText(complete, failures, unlisted)}
-                    </span>
-                )}
             </div>
+            {/* 狀態訊息獨立一列並截斷，不擠壓到期選擇器與更新報價；全文見 tooltip */}
+            {(!complete || unlisted > 0) && (
+                <div
+                    role="status"
+                    className={styles.status}
+                    title={chainStatusText(complete, failures, unlisted)}
+                >
+                    {chainStatusText(complete, failures, unlisted)}
+                </div>
+            )}
             <div className={panel.panelBody}>
                 <table className={styles.table}>
                     <thead>

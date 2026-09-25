@@ -22,12 +22,30 @@ export const toolbar = style({
 
 export const atm = style({
     marginLeft: 'auto',
-    flexShrink: 0,
+    // 極窄面板時讓位給到期選擇器的最小寬度，以省略號截斷（全文在 title）
+    flexShrink: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
     fontFamily: vars.font.mono,
     fontSize: '0.68rem',
     color: vars.color.mutedForeground,
     fontVariantNumeric: 'tabular-nums',
+});
+
+// 合約載入狀態：工具列下方單獨一列，過長時以省略號截斷（全文在 title）
+export const status = style({
+    flexShrink: 0,
+    minWidth: 0,
+    padding: `2px ${vars.space.sm}`,
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    textOverflow: 'ellipsis',
+    fontFamily: vars.font.mono,
+    fontSize: '0.64rem',
+    color: vars.color.mutedForeground,
+    borderBottom: `1px solid ${vars.color.border}`,
 });
 
 export const table = style({

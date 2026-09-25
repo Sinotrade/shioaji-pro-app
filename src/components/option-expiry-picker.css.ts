@@ -3,18 +3,34 @@
 import { style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
+// 可捲動提示：超出可視範圍的一側淡出
+const FADE = '18px';
+
 export const strip = style({
     display: 'flex',
     alignItems: 'stretch',
     gap: '6px',
-    flex: '1 1 auto',
-    minWidth: 0,
+    // 以剩餘空間伸展，但至少容得下月份與一個標籤（選取的會捲入可見），
+    // 工具列其他元素再長也不會把選擇器擠到看不見
+    flex: '1 1 0',
+    minWidth: '7.5rem',
     overflowX: 'auto',
     overflowY: 'hidden',
     scrollbarWidth: 'thin',
     overscrollBehaviorX: 'contain',
     // 預留捲軸空間，overlay 捲軸不壓到標籤文字
     paddingBottom: '4px',
+    selectors: {
+        '&[data-fade="start"]': {
+            maskImage: `linear-gradient(to right, transparent, #000 ${FADE})`,
+        },
+        '&[data-fade="end"]': {
+            maskImage: `linear-gradient(to left, transparent, #000 ${FADE})`,
+        },
+        '&[data-fade="both"]': {
+            maskImage: `linear-gradient(to right, transparent, #000 ${FADE}, #000 calc(100% - ${FADE}), transparent)`,
+        },
+    },
 });
 
 export const group = style({

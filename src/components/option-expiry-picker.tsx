@@ -2,9 +2,10 @@
 //
 // 依到期日排序的橫向標籤列、依月份分組；每個標籤顯示 MM/DD、種類
 // （月／週三／週五）與剩餘天數。太多時橫向捲動，窄面板與獨立視窗
-// 都只佔一列；選取的標籤會自動捲入可見範圍。
+// 都只佔一列；選取的標籤會自動捲入可見範圍。還有標籤在可視範圍外時，
+// 該側邊緣淡出，提示可橫向捲動。
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     daysLeftLabel,
     expiryTitle,
@@ -24,6 +25,26 @@ export function OptionExpiryPicker({
     onChange: (key: string) => void;
 }) {
     const selectedRef = useRef<HTMLButtonElement | null>(null);
+    const stripRef = useRef<HTMLDivElement | null>(null);
+    const [fade, setFade] = useState<'none' | 'start' | 'end' | 'both'>('none');
+
+    useEffect(() => {
+        const el = stripRef.current;
+        if (!el) return;
+        const update = () => {
+            const before = el.scrollLeft > 1;
+            const after = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+            setFade(before && after ? 'both' : before ? 'start' : after ? 'end' : 'none');
+        };
+        update();
+        el.addEventListener('scroll', update, { passive: true });
+        const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+        ro?.observe(el);
+        return () => {
+            el.removeEventListener('scroll', update);
+            ro?.disconnect();
+        };
+    }, [expiries]);
 
     useEffect(() => {
         selectedRef.current?.scrollIntoView?.({
@@ -33,7 +54,13 @@ export function OptionExpiryPicker({
     }, [value]);
 
     return (
-        <div className={styles.strip} role="radiogroup" aria-label="到期契約">
+        <div
+            ref={stripRef}
+            className={styles.strip}
+            data-fade={fade}
+            role="radiogroup"
+            aria-label="到期契約"
+        >
             {groupByMonth(expiries).map((g, i, all) => (
                 <div
                     key={g.month}
