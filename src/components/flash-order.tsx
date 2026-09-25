@@ -10,6 +10,7 @@ import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
 import { accountFor, selectAccount, useAccounts } from '../lib/account-store';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { accountMatches, scopedFlashRows } from '../lib/flash-account';
+import { collectFills, fifoPosition, hasTwoWayFills, tradingDayStart } from '../lib/futures-fifo';
 import { Zap } from 'lucide-react';
 import {
     memo,
@@ -40,6 +41,22 @@ const ROW_H = 22; // must match row height in flash-order.css.ts
 const EDGE = 2; // auto-recenter when last price gets this close to the edge
 
 const keyOf = (p: number) => p.toFixed(2);
+
+type PosMarks = { mixed: boolean; twoWay: boolean; stale: boolean; fifo: boolean };
+
+// 閃電持倉列的成本來源標記（僅期貨）
+function posLabel(p: PosMarks): string {
+    const state = p.stale ? '待更新' : p.fifo ? '' : '估算';
+    if (p.mixed) return state ? `多空並存 ${state}` : '多空並存';
+    return state || 'FIFO';
+}
+
+function posNote(p: PosMarks): string {
+    const rows = p.mixed ? '持倉同時有買、賣兩列（券商或即時估算尚未沖銷）；' : '今日有買賣沖銷；';
+    if (p.stale) return `${rows}有成交回報尚未套用或委託／持倉待對帳，數字可能過時，請更新持倉確認`;
+    if (p.fifo) return `${rows}成本與損益依本交易日成交逐筆先進先出（FIFO）沖銷計算`;
+    return `${rows}本交易日成交無法完整對上持倉（可能含前期留倉或成交未載入），顯示持倉列加權平均，可能與先進先出（FIFO）結果不同，請以持倉面板確認`;
+}
 
 interface RowProps {
     price: number;
@@ -181,12 +198,16 @@ export function FlashOrder({
     trades: allTrades = [],
     positions: allPositions = [],
     onOrdersChanged,
+    reconcilePending = false,
 }: {
     contract: ContractInfo;
     snapshot?: Snapshot;
     trades?: Trade[];
     positions?: AccountedPosition[];
     onOrdersChanged?: () => void;
+    /** Orders or positions await reconciliation (missed or unapplied
+     * reports): today's fills may be incomplete, so no FIFO cost. */
+    reconcilePending?: boolean;
 }) {
     const { quote, snapshot: initialSnapshot, book: display } = useDisplayBook(contract.code, snapshot, contract);
     const live = useTradingLive();
@@ -453,20 +474,43 @@ export function FlashOrder({
         let net = 0;
         let cost = 0;
         let qtySum = 0;
-        let pnl = 0;
+        let rowPnl = 0;
+        const sideQty = { Buy: 0, Sell: 0 };
         for (const p of matches) {
             net += p.direction === 'Sell' ? -p.quantity : p.quantity;
             cost += p.price * p.quantity;
             qtySum += p.quantity;
-            pnl += p.pnl || 0;
+            rowPnl += p.pnl || 0;
+            sideQty[p.direction === 'Sell' ? 'Sell' : 'Buy'] += p.quantity;
         }
         if (net === 0) return null;
-        const avg = qtySum > 0 ? cost / qtySum : 0;
+        // Futures only (stock margin longs and short sales are real separate
+        // positions). Intra-session the broker — and the live projection of
+        // New fills — keeps separate Buy and Sell rows for one contract, and
+        // blending them (#116) is not the cost the broker's FIFO netting will
+        // give. With offsetting activity, replay this trading day's fills
+        // FIFO; show it only when today's fills fully explain the rows.
+        // Otherwise keep exactly the rows' figures and mark them 估算, or
+        // 待更新 while reports await reconciliation.
+        const futures = market === 'F';
+        const mixed = futures && sideQty.Buy > 0 && sideQty.Sell > 0;
+        const codes = new Set(matches.map(p => p.code));
+        const code = codes.size === 1 ? matches[0]!.code : null;
+        const since = tradingDayStart(Date.now() / 1000);
+        const twoWay = futures && code !== null && hasTwoWayFills(trades, code, since);
+        const fills = (mixed || twoWay) && code !== null && !reconcilePending ? collectFills(trades, code, since) : null;
+        const mark = last !== null && last > 0 ? last : matches.find(p => p.last_price > 0)?.last_price ?? 0;
+        const fifo = fills ? fifoPosition(matches, fills, contract.multiplier ?? 0, mark) : null;
+        const fifoOk = fifo !== null && !fifo.seeded;
+        const rowAvg = qtySum > 0 ? cost / qtySum : 0;
+        const avg = fifoOk ? fifo.avg : rowAvg;
+        const pnl = fifoOk ? fifo.pnl : rowPnl;
+        const stale = futures && reconcilePending;
         const safeExit = matches.every(p => Number.isInteger(p.quantity) && p.quantity > 0)
             && new Set(matches.map(p => p.direction)).size === 1
             && (market !== 'S' || matches.every(p => 'cond' in p && p.cond === 'Cash'));
-        return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit };
-    }, [positions, contract]);
+        return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit, mixed, twoWay, stale, fifo: fifoOk };
+    }, [positions, trades, contract, reconcilePending, last]);
 
 
     // ---- order actions (all gated by the arm toggle) ----
@@ -713,6 +757,11 @@ export function FlashOrder({
                         {pos.net > 0 ? '多' : '空'} {Math.abs(pos.net)}
                     </span>
                     <span>@ {fmtPrice(pos.avg)}</span>
+                    {(pos.mixed || pos.twoWay || pos.stale) && (
+                        <span className={styles.posMixed} title={posNote(pos)}>
+                            {posLabel(pos)}
+                        </span>
+                    )}
                     <span
                         className={
                             pos.pnl >= 0 ? styles.posLong : styles.posShort
