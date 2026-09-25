@@ -4,12 +4,17 @@
 // TXU/TXY 週五…），所以一個「到期契約」以 (root, delivery_date) 為鍵，
 // 不能再只用 delivery_month 分組。週選代碼由 options/roots 動態發現，
 // 再以合約的 underlying_code 與月選比對，避免誤收其他指數選擇權。
+// 無法判定 underlying 時一律從嚴：只收月選與可確認身分的週選代碼
+// （名稱為臺指選擇權、或既有的 TX1–TX5 週三週選代碼）。
 
 import type { ContractInfo } from './types/contract';
 
 export const MONTHLY_ROOT = 'TXO';
 // roots 沒有月選名稱時用來辨識臺指選擇權家族的名稱前綴
 export const FAMILY_NAME = '臺指選擇權';
+
+// 沒有名稱時也能確認為臺指週選的代碼（週三 W1–W5）
+export const KNOWN_WEEKLY_ROOT = /^TX[1-5]$/;
 
 // 交易所預留、尚未掛牌的週選只有零星占位合約；少於此數的到期不列出
 export const MIN_EXPIRY_CONTRACTS = 10;
@@ -119,7 +124,8 @@ export function isLiveExpiry(date: string, clock: ExpiryClock): boolean {
 /**
  * 從 options/roots 挑出臺指選擇權家族的商品代碼（月選＋週選）。
  * 有名稱時必須以月選名稱（臺指選擇權）開頭；沒有名稱才用 TX? 三碼
- * 慣例。最終是否納入仍由合約的 underlying_code 決定（見 buildExpiries）。
+ * 慣例。最終是否納入由合約的 underlying_code 決定；無法比對時只收
+ * identifiedChainRoots 的代碼（見 buildExpiries）。
  */
 export function pickChainRoots(
     roots: { root: string; name?: string | null }[],
@@ -138,6 +144,49 @@ export function pickChainRoots(
     return [monthlyRoot, ...new Set(picked)];
 }
 
+/**
+ * pickChainRoots 中可確認身分的代碼：月選、名稱以月選名稱開頭者、或
+ * 符合 KNOWN_WEEKLY_ROOT。只靠 TX? 慣例挑到的無名代碼不在其中——合約
+ * 缺 underlying_code 而無法比對時，這些代碼不列出（見 buildExpiries）。
+ */
+export function identifiedChainRoots(
+    roots: { root: string; name?: string | null }[],
+    monthlyRoot: string = MONTHLY_ROOT,
+): string[] {
+    const familyName =
+        roots.find((r) => r.root === monthlyRoot)?.name?.trim() || FAMILY_NAME;
+    const named = roots
+        .filter((r) => {
+            if (r.root === monthlyRoot) return false;
+            const name = r.name?.trim();
+            return name
+                ? name.startsWith(familyName)
+                : KNOWN_WEEKLY_ROOT.test(r.root);
+        })
+        .map((r) => r.root);
+    return [monthlyRoot, ...new Set(named)];
+}
+
+export interface ChainFilter {
+    monthlyRoot?: string;
+    /**
+     * 可確認為臺指選擇權的代碼（identifiedChainRoots）。省略時只認月選與
+     * KNOWN_WEEKLY_ROOT。
+     */
+    identified?: readonly string[];
+}
+
+function identifiedTest(
+    monthlyRoot: string,
+    identified: readonly string[] | undefined,
+): (root: string) => boolean {
+    if (identified) {
+        const set = new Set([monthlyRoot, ...identified]);
+        return (root) => set.has(root);
+    }
+    return (root) => root === monthlyRoot || KNOWN_WEEKLY_ROOT.test(root);
+}
+
 export function isChainContract(c: ContractInfo): c is ChainContract {
     return (
         c.security_type === 'OPT' &&
@@ -149,18 +198,23 @@ export function isChainContract(c: ContractInfo): c is ChainContract {
     );
 }
 
-/** 月選的 underlying；月選沒載到時取週選中最多的 underlying。 */
+/**
+ * 月選的 underlying；月選沒載到時取「可確認身分的週選」中最多的
+ * underlying。無名代碼（只符合 TX? 慣例）不參與推定，避免誤配的代碼
+ * 反過來決定整條 T 字的標的。
+ */
 export function chainUnderlying(
     contracts: ChainContract[],
-    monthlyRoot: string = MONTHLY_ROOT,
+    { monthlyRoot = MONTHLY_ROOT, identified }: ChainFilter = {},
 ): string | undefined {
     const monthly = contracts.find(
         (c) => c.root === monthlyRoot && c.underlying_code,
     )?.underlying_code;
     if (monthly) return monthly;
+    const isIdentified = identifiedTest(monthlyRoot, identified);
     const counts = new Map<string, number>();
     for (const c of contracts)
-        if (c.underlying_code)
+        if (c.underlying_code && isIdentified(c.root ?? monthlyRoot))
             counts.set(c.underlying_code, (counts.get(c.underlying_code) ?? 0) + 1);
     let best: string | undefined;
     let bestN = 0;
@@ -174,21 +228,26 @@ export function chainUnderlying(
 
 /**
  * 依 (root, delivery_date) 分組成到期契約，排除已到期（含到期日收盤後）
- * 與只有占位合約的，依到期日排序（同日月選在前）。underlying 與月選不同
- * 或缺 underlying 的合約不納入。
+ * 與只有占位合約的，依到期日排序（同日月選在前）。能判定 underlying 時，
+ * underlying 不同或缺 underlying 的合約不納入；無法判定時從嚴，只納入
+ * 可確認身分的代碼（filter.identified），其餘一律不列出、不可下單。
  */
 export function buildExpiries(
     contracts: ChainContract[],
     clock: ExpiryClock | string,
-    monthlyRoot: string = MONTHLY_ROOT,
+    filter: ChainFilter = {},
 ): OptionExpiry[] {
+    const monthlyRoot = filter.monthlyRoot ?? MONTHLY_ROOT;
     const now: ExpiryClock =
         typeof clock === 'string' ? { date: clock, minutes: 0 } : clock;
-    const underlying = chainUnderlying(contracts, monthlyRoot);
+    const underlying = chainUnderlying(contracts, filter);
+    const isIdentified = identifiedTest(monthlyRoot, filter.identified);
     const groups = new Map<string, OptionExpiry>();
     for (const c of contracts) {
         const root = c.root ?? monthlyRoot;
-        if (underlying && c.underlying_code !== underlying) continue;
+        if (underlying) {
+            if (c.underlying_code !== underlying) continue;
+        } else if (!isIdentified(root)) continue;
         if (!isLiveExpiry(c.delivery_date, now)) continue;
         const key = expiryKey(root, c.delivery_date);
         const g = groups.get(key);

@@ -329,3 +329,74 @@ it('prefixes the year on month groups that fall in the next year', () => {
         .map((g) => text(g.findAllByType('span')[0]!));
     expect(labels).toEqual(['10月', '27年3月']);
 });
+
+const reloadButton = (r: ReactTestRenderer) =>
+    r.root.findAll((n) => n.type === 'button' && n.props['aria-label'] === '重新載入合約');
+
+it('keeps a retry when every contract load fails, and recovers on retry', async () => {
+    let down = true;
+    api.fetchOptions.mockImplementation(async (root: string) => {
+        if (down) throw Object.assign(new Error('500 internal server error'), { status: 500 });
+        if (root === 'TXZ') throw placeholderError();
+        return BY_ROOT[root] ?? [];
+    });
+    const r = await renderChain();
+    expect(chips(r)).toHaveLength(0);
+    const alert = r.root.find((n) => n.props.role === 'alert');
+    expect(text(alert)).toBe('臺指選擇權合約載入失敗');
+    expect(reloadButton(r)).toHaveLength(1);
+    const before = api.fetchOptions.mock.calls.length;
+
+    // 仍失敗：重試有發出請求，重試入口還在
+    await act(async () => reloadButton(r)[0]!.props.onClick());
+    expect(api.fetchOptions.mock.calls.length).toBeGreaterThan(before);
+    expect(reloadButton(r)).toHaveLength(1);
+    expect(reloadButton(r)[0]!.props.disabled).toBe(false);
+
+    down = false;
+    await act(async () => reloadButton(r)[0]!.props.onClick());
+    expect(keys(r)).toEqual(['TXY:2026-09-29', 'TXU:2026-10-02', 'TX1:2026-10-07', 'TXO:2026-10-21']);
+    expect(r.root.findAll((n) => n.props.role === 'alert')).toHaveLength(0);
+});
+
+it('tells a genuinely empty chain apart from a failure, still offering a reload', async () => {
+    api.fetchOptions.mockImplementation(async (root: string) => {
+        if (root === 'TXZ') throw placeholderError();
+        return [];
+    });
+    const r = await renderChain();
+    expect(r.root.findAll((n) => n.props.role === 'alert')).toHaveLength(0);
+    expect(text(r.root)).toContain('無可用合約');
+    const before = api.fetchOptions.mock.calls.length;
+    await act(async () => reloadButton(r)[0]!.props.onClick());
+    // 成功但為空的結果不沿用快取，重新查詢
+    expect(api.fetchOptions.mock.calls.length).toBeGreaterThan(before);
+});
+
+it('flags a partial failure next to the retry', async () => {
+    api.fetchOptions.mockImplementation(async (root: string) => {
+        if (root === 'TXZ') throw placeholderError();
+        if (root === 'TXU') throw Object.assign(new Error('500 upstream'), { status: 500 });
+        return BY_ROOT[root] ?? [];
+    });
+    const r = await renderChain();
+    expect(keys(r)).not.toContain('TXU:2026-10-02');
+    expect(text(r.root.find((n) => n.props.role === 'status'))).toContain('部分合約載入失敗');
+});
+
+it('lists only the monthly when no contract carries underlying_code and TXN is unnamed', async () => {
+    const strip = (rows: ContractInfo[]) => rows.map((c) => ({ ...c, underlying_code: undefined }));
+    api.fetchOptionRoots.mockResolvedValue([
+        { root: 'TXO', name: '臺指選擇權' },
+        { root: 'TXN' },
+    ]);
+    api.fetchOptions.mockImplementation(async (root: string) => {
+        if (root === 'TXO') return strip(BY_ROOT.TXO!);
+        if (root === 'TXN') return strip(series('TXN', '2026-10-09', 'Fri'));
+        return [];
+    });
+    const r = await renderChain();
+    expect(fetchedRoots().sort()).toEqual(['TXN', 'TXO']);
+    expect(keys(r)).toEqual(['TXO:2026-10-21']);
+    expect(snapshotCodes.last.every((c) => c.startsWith('TXO'))).toBe(true);
+});

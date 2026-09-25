@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildExpiries,
+    chainUnderlying,
     chooseAtmReference,
     migrateLegacyMonth,
     msUntilNextBoundary,
@@ -11,6 +12,7 @@ import {
     daysLeftLabel,
     expiryTitle,
     groupByMonth,
+    identifiedChainRoots,
     isChainContract,
     pickChainRoots,
     resolveExpiry,
@@ -106,6 +108,85 @@ describe('pickChainRoots', () => {
 
     it('always keeps the monthly root when roots omit it', () => {
         expect(pickChainRoots([])).toEqual(['TXO']);
+    });
+});
+
+describe('identifiedChainRoots', () => {
+    it('keeps named family roots and known weekly codes, not unnamed TX? guesses', () => {
+        const roots = [
+            ...ROOTS,
+            { root: 'TXN', name: '' },
+            { root: 'TX2' },
+            { root: 'TXQ', name: '其他選擇權' },
+        ];
+        expect(pickChainRoots(roots)).toContain('TXN');
+        expect(identifiedChainRoots(roots)).toEqual(['TXO', 'TX1', 'TX5', 'TXU', 'TXY', 'TX2']);
+    });
+});
+
+describe('buildExpiries without underlying_code (fail closed)', () => {
+    const noUnderlying = (root: string, date: string, n: number) =>
+        series(root, date, n, { underlying_code: undefined });
+
+    it('lists only the monthly when an unnamed TX? root cannot be verified', () => {
+        const contracts = [
+            ...noUnderlying('TXO', '2026-10-21', 30),
+            ...noUnderlying('TXN', '2026-10-09', 30),
+        ];
+        const identified = identifiedChainRoots([
+            { root: 'TXO', name: '臺指選擇權' },
+            { root: 'TXN' },
+        ]);
+        expect(buildExpiries(contracts, TODAY, { identified }).map((e) => e.key)).toEqual([
+            'TXO:2026-10-21',
+        ]);
+        // 未提供 identified 時也從嚴
+        expect(buildExpiries(contracts, TODAY).map((e) => e.key)).toEqual(['TXO:2026-10-21']);
+    });
+
+    it('still lists named weeklies and known weekly codes', () => {
+        const contracts = [
+            ...noUnderlying('TXO', '2026-10-21', 30),
+            ...noUnderlying('TXU', '2026-10-02', 30),
+            ...noUnderlying('TX1', '2026-10-07', 30),
+            ...noUnderlying('TXN', '2026-10-09', 30),
+        ];
+        const identified = identifiedChainRoots([
+            { root: 'TXO', name: '臺指選擇權' },
+            { root: 'TXU', name: '臺指選擇權 週五W1' },
+            { root: 'TX1' },
+            { root: 'TXN' },
+        ]);
+        expect(buildExpiries(contracts, TODAY, { identified }).map((e) => e.key)).toEqual([
+            'TXU:2026-10-02',
+            'TX1:2026-10-07',
+            'TXO:2026-10-21',
+        ]);
+    });
+
+    it('admits an unnamed root once its underlying matches the monthly', () => {
+        const contracts = [...series('TXO', '2026-10-21', 30), ...series('TXN', '2026-10-09', 30)];
+        const identified = ['TXO'];
+        expect(buildExpiries(contracts, TODAY, { identified }).map((e) => e.key)).toEqual([
+            'TXN:2026-10-09',
+            'TXO:2026-10-21',
+        ]);
+    });
+
+    it('does not let an unidentified root pick the underlying when the monthly is missing', () => {
+        const contracts = [
+            ...series('TXN', '2026-10-09', 60, { underlying_code: 'IX0027' }),
+            ...series('TXU', '2026-10-02', 30),
+        ];
+        const identified = ['TXO', 'TXU'];
+        expect(chainUnderlying(contracts, { identified })).toBe('IX0001');
+        expect(buildExpiries(contracts, TODAY, { identified }).map((e) => e.key)).toEqual([
+            'TXU:2026-10-02',
+        ]);
+        // 沒有任何可確認的 underlying：無名代碼也不列
+        const onlyUnnamed = series('TXN', '2026-10-09', 30, { underlying_code: 'IX0027' });
+        expect(chainUnderlying(onlyUnnamed, { identified })).toBeUndefined();
+        expect(buildExpiries(onlyUnnamed, TODAY, { identified })).toEqual([]);
     });
 });
 

@@ -16,6 +16,7 @@ import {
     chainUnderlying,
     chooseAtmReference,
     contractsForExpiry,
+    identifiedChainRoots,
     isChainContract,
     migrateLegacyMonth,
     MONTHLY_ROOT,
@@ -42,7 +43,8 @@ type OptContract = ChainContract;
 // 各商品代碼的合約每個台北交易日載一次（週選每週掛牌／到期）。只快取
 // 成功結果與已知的占位代碼；其他失敗（如一次性 500）下次載入會重試。
 const rootCache = new Map<string, { day: string; rows: OptContract[] }>();
-let rootsCache: { day: string; roots: string[] } | null = null;
+let rootsCache: { day: string; roots: string[]; identified: string[] } | null =
+    null;
 const inflight = new Map<string, Promise<ChainLoad>>();
 
 /** 測試用：清掉跨掛載的合約快取。 */
@@ -56,6 +58,8 @@ export interface ChainLoad {
     rows: OptContract[];
     // false：roots 或某些代碼讀取失敗（非占位），可以重試
     complete: boolean;
+    // 可確認為臺指選擇權的代碼；合約缺 underlying_code 時只列這些
+    identified: string[];
 }
 
 /** 交易所預留、尚未有合約資料的週選代碼（sidecar 回 500 no info_hash）。 */
@@ -88,15 +92,19 @@ export function loadChainContracts(day: string): Promise<ChainLoad> {
     const p = (async (): Promise<ChainLoad> => {
         let complete = true;
         let wanted: string[];
-        if (rootsCache?.day === day) wanted = rootsCache.roots;
+        let identified: string[];
+        if (rootsCache?.day === day)
+            ({ roots: wanted, identified } = rootsCache);
         else {
             try {
                 const roots = await fetchOptionRoots();
                 wanted = pickChainRoots(roots);
-                rootsCache = { day, roots: wanted };
+                identified = identifiedChainRoots(roots);
+                rootsCache = { day, roots: wanted, identified };
             } catch {
                 // roots 查不到時先只載月選，下次載入再重試
                 wanted = [MONTHLY_ROOT];
+                identified = [MONTHLY_ROOT];
                 complete = false;
             }
         }
@@ -112,6 +120,7 @@ export function loadChainContracts(day: string): Promise<ChainLoad> {
                 r.status === 'fulfilled' ? r.value : [],
             ),
             complete,
+            identified,
         };
     })();
     inflight.set(day, p);
@@ -172,8 +181,10 @@ export function OptionChain({
     onPick?: (code: string) => void;
 }) {
     const [contracts, setContracts] = useState<OptContract[]>([]);
+    const [identified, setIdentified] = useState<string[]>([MONTHLY_ROOT]);
     const [complete, setComplete] = useState(true);
     const [reloadSeq, setReloadSeq] = useState(0);
+    const [reloading, setReloading] = useState(false);
     const [choice, setChoice] = useState<string | null>(() =>
         readStored(EXPIRY_KEY),
     );
@@ -190,13 +201,16 @@ export function OptionChain({
             .then((r) => {
                 if (stale) return;
                 setContracts(r.rows);
+                setIdentified(r.identified);
                 setComplete(r.complete);
             })
             .catch(() => {
                 if (!stale) setComplete(false);
             })
             .finally(() => {
-                if (!stale) setLoading(false);
+                if (stale) return;
+                setLoading(false);
+                setReloading(false);
             });
         return () => {
             stale = true;
@@ -204,9 +218,9 @@ export function OptionChain({
     }, [clock.date, reloadSeq]);
 
     const expiries = useMemo(
-        () => buildExpiries(contracts, clock),
+        () => buildExpiries(contracts, clock, { identified }),
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [contracts, clock.date, clock.minutes],
+        [contracts, identified, clock.date, clock.minutes],
     );
 
     // 舊版月份記憶：遷移成該月月選（新值優先），之後移除舊 key
@@ -233,7 +247,7 @@ export function OptionChain({
     // 置中基準：合約標的指數（IX0001 加權）→ 台指期近月 → 履約價中位數
     const underlying =
         inExpiry.find((c) => c.underlying_code)?.underlying_code ??
-        chainUnderlying(contracts) ??
+        chainUnderlying(contracts, { identified }) ??
         'IX0001';
     const indexLive = useQuote(underlying);
     const txf = useQuote('TXFR1');
@@ -325,8 +339,31 @@ export function OptionChain({
                 載入臺指選擇權合約…
             </div>;
     }
+    const reloadContracts = () => {
+        setReloading(true);
+        setReloadSeq((n) => n + 1);
+    };
+
     if (rows.length === 0) {
-        return <div className={dock.emptyState}>無可用合約</div>;
+        // 全部讀取失敗時也要留重試入口，不能讓使用者卡在空畫面
+        return (
+            <div className={dock.emptyState}>
+                <span role={complete ? undefined : 'alert'}>
+                    {complete
+                        ? '無可用合約'
+                        : '臺指選擇權合約載入失敗'}
+                </span>{' '}
+                <RefreshButton
+                    label="重新載入合約"
+                    loading={reloading}
+                    onClick={() => {
+                        // 已成功但真的沒有合約時，清掉當日快取重新查
+                        if (complete) resetChainContractsCache();
+                        reloadContracts();
+                    }}
+                />
+            </div>
+        );
     }
 
     const Cell = ({ code }: { code?: string }) => {
@@ -394,9 +431,14 @@ export function OptionChain({
                         void refreshQuotes();
                         void refQuery.refresh();
                         // 合約有讀取失敗時一併重試
-                        if (!complete) setReloadSeq((n) => n + 1);
+                        if (!complete) reloadContracts();
                     }}
                 />
+                {!complete && (
+                    <span role="status" className={styles.atm}>
+                        部分合約載入失敗，按更新報價重試
+                    </span>
+                )}
             </div>
             <div className={panel.panelBody}>
                 <table className={styles.table}>
