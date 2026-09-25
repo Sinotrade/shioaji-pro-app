@@ -19,6 +19,8 @@ export interface OrderConfirmRequest {
     price: number | null;
     // 複數限價委託可用明確區間覆寫單一價格顯示
     priceLabel?: string;
+    // 待確認觸價單的即時行情代碼；確認視窗顯示最新成交價，市價仍非保證成交價。
+    livePriceCode?: string;
     quantity: number;
     // 口/張/股（或組合描述，如「1 張＋234 股」）
     unit: string;
@@ -62,13 +64,17 @@ export function resolveOrderConfirm(approved: boolean): void {
 let simulationCache: boolean | null = null;
 let simulationInflight: Promise<void> | null = null;
 
-function selectedAccountLabel(unit: string): string | undefined {
-    const state = getAccountState();
-    const account = unit === '口' ? state.selectedFutures : state.selectedStock;
-    if (!account) return undefined;
+/** Label of the account an order will actually use (last 4 digits shown). */
+export function accountConfirmLabel(account: { broker_id: string; account_id: string }): string {
     const id = account.account_id;
     const masked = id.length > 4 ? `${'*'.repeat(id.length - 4)}${id.slice(-4)}` : id;
     return `${account.broker_id}-${masked}`;
+}
+
+function selectedAccountLabel(unit: string): string | undefined {
+    const state = getAccountState();
+    const account = unit === '口' ? state.selectedFutures : state.selectedStock;
+    return account ? accountConfirmLabel(account) : undefined;
 }
 
 function primeSimulation(): Promise<void> {

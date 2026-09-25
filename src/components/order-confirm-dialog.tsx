@@ -13,12 +13,15 @@ import {
     subscribeOrderConfirm,
     type OrderConfirmRequest,
 } from '../lib/order-confirm';
+import { usePendingPrices } from '../lib/trigger-engine';
 import { fmtPrice } from '../lib/utils/format';
 import * as styles from './order-confirm-dialog.css';
 
 function ConfirmModal({ request }: { request: OrderConfirmRequest }) {
     // Esc＝取消，走 modal stack（不誤武裝 Esc-Esc 全刪單）
     useEscClose(() => resolveOrderConfirm(false));
+    const pendingPrices = usePendingPrices();
+    const livePrice = request.livePriceCode ? pendingPrices[request.livePriceCode] : undefined;
     const dir = request.action === 'Buy' ? ('up' as const) : ('down' as const);
     return createPortal(
         <div
@@ -66,6 +69,12 @@ function ConfirmModal({ request }: { request: OrderConfirmRequest }) {
                                     : fmtPrice(request.price))}
                         </span>
                     </div>
+                    {request.livePriceCode && (
+                        <div className={styles.detailRow} aria-live="polite">
+                            <span>最新成交價</span>
+                            <span className={styles.detailValue}>{livePrice === undefined ? '行情中斷' : fmtPrice(livePrice)}</span>
+                        </div>
+                    )}
                     {request.accountLabel && (
                         <div className={styles.detailRow}>
                             <span>帳戶</span>
@@ -94,6 +103,7 @@ function ConfirmModal({ request }: { request: OrderConfirmRequest }) {
                     </button>
                     <button
                         className={styles.confirmBtn[dir]}
+                        disabled={!!request.livePriceCode && livePrice === undefined}
                         onClick={() => resolveOrderConfirm(true)}
                     >
                         確認{request.action === 'Buy' ? '買進' : '賣出'}

@@ -54,6 +54,8 @@ import {
     applyExitTrade,
     armBracketGroup,
     disarmBracketGroup,
+    dropBracketTriggers,
+    resumeWasRestore,
     EXECUTOR_LOCK,
     getExits,
     onBecomeExecutor,
@@ -184,10 +186,21 @@ function describeProtection(p: BracketPlan) {
     return `${p.stopPrice !== null ? ` 停損@${p.stopPrice}` : ''}${p.takePrice !== null ? ` 停利@${p.takePrice}` : ''}`;
 }
 
+// True while applying fills recovered after a (re)start (startup cache
+// lookup, buffered reports replayed once the mode is known): exits armed then
+// may already be past their price, so their first tick decides (#144).
+let restoring = false;
+function restoringDo(on: boolean, fn: () => void) {
+    const prev = restoring;
+    restoring = on || prev;
+    try { fn(); } finally { restoring = prev; }
+}
+
 function arm(p: BracketPlan) {
     const qty = protectionQuantity(p);
     if (p.dismissed || qty <= 0 || p.env !== currentProtectionEnv()) return;
     armBracketGroup({
+        restore: restoring,
         group: p.group, bracketId: p.id, env: p.env, account: p.account, code: p.quoteCode,
         orderCode: p.orderCode, entryAction: p.action, octype: p.market === 'futures' ? 'Cover' : undefined,
         stopPrice: p.stopPrice, takePrice: p.takePrice, quantity: qty,
@@ -303,7 +316,7 @@ function onGap(base: string) {
 }
 
 /** One-shot cache-only lookup + health for an account's live plans. */
-function lookup(account: AccountRef, env: string): Promise<void> {
+function lookup(account: AccountRef, env: string, restore = false): Promise<void> {
     const key = `lookup|${env}|${accountRefKey(account)}`;
     const running = inflight.get(key);
     if (running) return running;
@@ -315,12 +328,14 @@ function lookup(account: AccountRef, env: string): Promise<void> {
             const continuous = tradeCacheContinuous();
             const trades = await fetchTrades(account.account_type, account, { refresh: false });
             if (currentProtectionEnv() !== env) return;
-            for (const p of plansFor(account, env)) {
-                if (!continuous) update(p.id, x => addIssue(x, 'no-baseline', '委託快取尚無連續基準（未完成權威查詢或串流曾中斷）；請對帳', now));
-                const trade = trades.find(t => tradeMatchesPlan(t, p));
-                if (trade) update(p.id, x => applyEntryTrade(x, trade, now));
-                else update(p.id, x => addIssue(x, 'lookup-failed', '伺服器委託快取找不到此進場單（可能伺服器重啟）；請對帳', now));
-            }
+            restoringDo(restore, () => {
+                for (const p of plansFor(account, env)) {
+                    if (!continuous) update(p.id, x => addIssue(x, 'no-baseline', '委託快取尚無連續基準（未完成權威查詢或串流曾中斷）；請對帳', now));
+                    const trade = trades.find(t => tradeMatchesPlan(t, p));
+                    if (trade) update(p.id, x => applyEntryTrade(x, trade, now));
+                    else update(p.id, x => addIssue(x, 'lookup-failed', '伺服器委託快取找不到此進場單（可能伺服器重啟）；請對帳', now));
+                }
+            });
         } catch (e) {
             for (const p of plansFor(account, env)) {
                 update(p.id, x => addIssue(x, 'lookup-failed', `委託快取查詢失敗：${e instanceof Error ? e.message : String(e)}`, now));
@@ -336,12 +351,12 @@ function lookup(account: AccountRef, env: string): Promise<void> {
     return task;
 }
 
-function lookupLiveAccounts() {
+function lookupLiveAccounts(restore = false) {
     const env = currentProtectionEnv();
     if (!env) return;
     const seen = new Map<string, AccountRef>();
     for (const p of plans) if (p.env === env && isLive(p)) seen.set(accountRefKey(p.account), p.account);
-    for (const account of seen.values()) void lookup(account, env);
+    for (const account of seen.values()) void lookup(account, env, restore);
 }
 
 /** Explicit, authoritative reconciliation (update_status). User action only. */
@@ -419,7 +434,7 @@ function handle(cmd: Command): unknown {
         case 'reconcile': return reconcile(cmd.id);
         case 'dismiss': {
             const p = plans.find(x => x.id === cmd.id);
-            if (!p) return true;
+            if (!p) { dropBracketTriggers(cmd.id); return true; } // orphaned protection
             disarmBracketGroup(p.env, p.group);
             update(p.id, x => ({ ...x, dismissed: true, updatedAt: Date.now() }));
             return true;
@@ -564,15 +579,20 @@ function run() {
         if (env === knownEnv) return;
         knownEnv = env;
         if (!env) return;
-        for (const p of plans.slice()) {
-            if (p.env !== env || !isLive(p)) continue;
-            const at = Date.now();
-            let next = p;
-            for (const report of recentReportsFor(envBase(env), p.orderId)) next = applyReport(next, report, at);
-            if (next !== p) update(p.id, () => next);
-            else arm(p); // re-arm (idempotent) once the mode is known
-        }
-        lookupLiveAccounts();
+        // restart / other environment / long outage (#144); the engine
+        // latches this decision, so listener order does not matter
+        const restore = resumeWasRestore();
+        restoringDo(restore, () => {
+            for (const p of plans.slice()) {
+                if (p.env !== env || !isLive(p)) continue;
+                const at = Date.now();
+                let next = p;
+                for (const report of recentReportsFor(envBase(env), p.orderId)) next = applyReport(next, report, at);
+                if (next !== p) update(p.id, () => next);
+                else arm(p); // re-arm (idempotent) once the mode is known
+            }
+        });
+        lookupLiveAccounts(restore);
     });
     let wasLive = getStreamStatus() === 'live';
     subscribeStatusStore(() => {
@@ -586,9 +606,11 @@ function run() {
             }
         } else {
             void refreshProtectionEnv();
-            lookupLiveAccounts(); // cache-only; issues stay until explicit reconcile
+            // cache-only; issues stay until explicit reconcile. After a long
+            // outage, fills found now may already be past their exits (#144).
+            if (currentProtectionEnv()) lookupLiveAccounts(resumeWasRestore());
         }
     });
     void refreshProtectionEnv();
-    if (wasLive) lookupLiveAccounts();
+    if (wasLive) lookupLiveAccounts(true);
 }

@@ -17,6 +17,7 @@ const m = vi.hoisted(() => ({
     status: 'live' as string,
     order: null as ((r: OrderEventReport) => void) | null,
     tick: null as ((t: { code: string; close: number; simtrade?: boolean }) => void) | null,
+    heartbeat: null as (() => void) | null,
     statusChanged: [] as (() => void)[],
     accounts: [] as Account[],
     place: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock('./stream', () => ({
     subscribeStatusStore: (cb: () => void) => { m.statusChanged.push(cb); return () => undefined; },
     onOrderEvent: (cb: (r: OrderEventReport) => void) => { m.order = cb; return () => undefined; },
     onAnyTick: (cb: typeof m.tick) => { m.tick = cb; return () => undefined; },
+    onStreamEvent: (name: string, cb: () => void) => { if (name === 'heartbeat') m.heartbeat = cb; return () => undefined; },
 }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts, selectedFutures: m.accounts.find(a => a.account_type === 'F') ?? null,
     selectedStock: m.accounts.find(a => a.account_type === 'S') ?? null }) }));
@@ -103,12 +105,12 @@ type Bracket = typeof import('./bracket');
 let engine: Engine;
 let bracket: Bracket;
 
-async function boot(opts: { keepStore?: boolean } = {}) {
+async function boot(opts: { keepStore?: boolean; noHeartbeat?: boolean } = {}) {
     vi.resetModules();
     if (!opts.keepStore) store = new Map();
     vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
     vi.stubGlobal('location', { search: m.search });
-    m.order = null; m.tick = null; m.statusChanged = []; m.envChanged = [];
+    m.order = null; m.tick = null; m.heartbeat = null; m.statusChanged = []; m.envChanged = [];
     m.queued = null;
     vi.stubGlobal('navigator', { locks: { request: (_n: string, a: unknown, b?: (lock: object | null) => unknown) => {
         const cb = (typeof a === 'function' ? a : b) as (lock: object | null) => unknown;
@@ -119,6 +121,10 @@ async function boot(opts: { keepStore?: boolean } = {}) {
     engine.startTriggerEngine();
     bracket.startBracketRuntime();
     await flush();
+    // the connected stream heartbeats: protection is evaluating, so the
+    // restore window (#144) closes unless the mode is still unknown
+    const beat = m.heartbeat as (() => void) | null; // set by startTriggerEngine
+    if (beat && !opts.noHeartbeat) { beat(); await flush(); }
 }
 async function flush() { for (let i = 0; i < 6; i++) await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); }
 const emit = async (r: OrderEventReport) => { m.order!(r); await flush(); };
@@ -138,7 +144,11 @@ beforeEach(() => {
     m.cached.mockResolvedValue([cacheTrade('fixture-f1', F1, []), cacheTrade('fixture-f9', F2, [])]); m.refreshed.mockResolvedValue([]); m.health.mockResolvedValue(healthy);
     m.subscribe.mockResolvedValue({}); m.ensure.mockResolvedValue(TXF);
     let n = 0;
-    m.place.mockImplementation(async () => ({ order: { id: `exit-${++n}` }, status: { status: 'PendingSubmit' } }));
+    // like placeQuickOrder: beforeSend runs right before sending and may refuse
+    m.place.mockImplementation(async (...args: unknown[]) => {
+        (args[4] as { beforeSend?: () => void } | undefined)?.beforeSend?.();
+        return { order: { id: `exit-${++n}` }, status: { status: 'PendingSubmit' } };
+    });
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -731,8 +741,100 @@ describe('trigger execution (main window only)', () => {
         m.queued!({}); await flush();
         expect(m.tick).not.toBeNull();
         expect(engine.getTriggers()).toHaveLength(2);
+        await tick(48300); // handover is a restore (#144): the first tick decides
         await tick(47000);
         expect(m.place).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('restore confirmation for bracket exits armed after a restart (#144)', () => {
+    it('entry fill found in the startup cache lookup arms exits that wait for their first tick', async () => {
+        await boot();
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        let answer!: (rows: Trade[]) => void;
+        m.cached.mockImplementation(() => new Promise<Trade[]>(r => { answer = r; }));
+        await boot({ keepStore: true }); // heartbeat already arrived before the lookup answers
+        answer([cacheTrade('fixture-f1', F1, [{ seq: '000001', quantity: 1 }])]);
+        await flush();
+        expect(triggersOf(plan.id)).toHaveLength(2);
+        await tick(47000);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(triggersOf(plan.id).find(t => t.kind === 'stop')!.pending?.price).toBe(47000);
+    });
+
+    it('entry fill arriving before the server mode is known arms exits that wait for their first tick', async () => {
+        await boot();
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        m.env = null;
+        await boot({ keepStore: true });
+        await emit(fDeal1!);
+        expect(triggersOf(plan.id)).toHaveLength(0); // mode unknown: nothing armed
+        m.env = 'http://sim.invalid|simulation';
+        m.envChanged.forEach(cb => cb()); await flush();
+        expect(triggersOf(plan.id)).toHaveLength(2);
+        await tick(47000);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(triggersOf(plan.id).find(t => t.kind === 'stop')!.pending).toBeTruthy();
+    });
+
+    it('a LIVE fill before the first real tick (only 試撮 so far) arms exits that fire at the opening gap', async () => {
+        await boot();
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        await tick(48300, true); // 試撮
+        await emit(fDeal1!);
+        await tick(47000); // opens past the stop
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(triggersOf(plan.id)).toHaveLength(0);
+    });
+
+    it('quiet market: a live fill 10 s after the mode became known (no heartbeat yet) fires immediately', async () => {
+        m.env = null;
+        await boot({ noHeartbeat: true });
+        m.env = 'http://sim.invalid|simulation';
+        m.envChanged.forEach(cb => cb()); await flush();
+        await vi.advanceTimersByTimeAsync(10_000);
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        await emit(fDeal1!);
+        await tick(47000);
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(triggersOf(plan.id)).toHaveLength(0);
+    });
+
+    it('fill during a 61 s outage, found by the reconnect lookup after a past tick → 待確認', async () => {
+        await boot();
+        const plan = await bracket.registerBracket(spec(F1));
+        await flush();
+        await tick(48300);
+        m.status = 'down'; m.statusChanged.forEach(cb => cb());
+        m.env = null; m.envChanged.forEach(cb => cb()); await flush();
+        await vi.advanceTimersByTimeAsync(61_000);
+        let answer!: (rows: Trade[]) => void;
+        m.cached.mockImplementation(() => new Promise<Trade[]>(r => { answer = r; }));
+        m.status = 'live'; m.statusChanged.forEach(cb => cb());
+        m.env = 'http://sim.invalid|simulation'; m.envChanged.forEach(cb => cb()); await flush();
+        await tick(47000); // first tick after the outage, before the lookup answers
+        answer([cacheTrade('fixture-f1', F1, [{ seq: '000001', quantity: 1 }])]);
+        await flush();
+        expect(triggersOf(plan.id)).toHaveLength(2);
+        await tick(46900);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(triggersOf(plan.id).find(t => t.kind === 'stop')!.pending).toBeTruthy();
+    });
+});
+
+describe('orphaned bracket protection (#144)', () => {
+    it('dismissing a bracket whose plan is gone removes its triggers', async () => {
+        await boot();
+        engine.armBracketGroup({ group: 'bracket:gone', bracketId: 'plan-gone', env: m.env!,
+            account: { account_type: 'F', broker_id: F1.broker_id, account_id: F1.account_id }, code: 'TXFR1',
+            orderCode: 'TXFJ6', entryAction: 'Buy', octype: 'Cover', stopPrice: 48000, takePrice: 48600, quantity: 1 });
+        expect(triggersOf('plan-gone')).toHaveLength(2);
+        await bracket.dismissBracket('plan-gone');
+        expect(triggersOf('plan-gone')).toHaveLength(0);
     });
 });
 
