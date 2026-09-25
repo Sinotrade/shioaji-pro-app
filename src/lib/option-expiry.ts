@@ -226,11 +226,56 @@ export function chainUnderlying(
     return best;
 }
 
+export type ChainVerdict =
+    // 列出
+    | 'keep'
+    // 可確認身分的代碼，但合約缺 underlying_code 或與標的不符：不列出，
+    // 但要讓使用者知道有合約被略過（部分載入失敗狀態列）
+    | 'unverified'
+    // 無法確認身分又比對不到標的：從嚴不列、不提示
+    | 'reject';
+
+/**
+ * 合約是否列入 T 字。能判定 underlying 時，與標的相符者列出；月選是
+ * 必定可確認身分的代碼，缺 underlying_code 時仍列出（不因少一個欄位就
+ * 把整個月選拿掉）。無法判定 underlying 時從嚴，只列可確認身分的代碼。
+ */
+export function chainAdmission(
+    contracts: ChainContract[],
+    filter: ChainFilter = {},
+): (c: ChainContract) => ChainVerdict {
+    const monthlyRoot = filter.monthlyRoot ?? MONTHLY_ROOT;
+    const underlying = chainUnderlying(contracts, filter);
+    const isIdentified = identifiedTest(monthlyRoot, filter.identified);
+    return (c) => {
+        const root = c.root ?? monthlyRoot;
+        const identified = isIdentified(root);
+        if (!underlying) return identified ? 'keep' : 'reject';
+        if (c.underlying_code === underlying) return 'keep';
+        if (root === monthlyRoot && !c.underlying_code) return 'keep';
+        return identified ? 'unverified' : 'reject';
+    };
+}
+
+/** 未到期、屬可確認身分代碼，卻因缺／不符 underlying 而未列出的合約數。 */
+export function unverifiedContracts(
+    contracts: ChainContract[],
+    clock: ExpiryClock | string,
+    filter: ChainFilter = {},
+): number {
+    const now: ExpiryClock =
+        typeof clock === 'string' ? { date: clock, minutes: 0 } : clock;
+    const admit = chainAdmission(contracts, filter);
+    return contracts.filter(
+        (c) => isLiveExpiry(c.delivery_date, now) && admit(c) === 'unverified',
+    ).length;
+}
+
 /**
  * 依 (root, delivery_date) 分組成到期契約，排除已到期（含到期日收盤後）
- * 與只有占位合約的，依到期日排序（同日月選在前）。能判定 underlying 時，
- * underlying 不同或缺 underlying 的合約不納入；無法判定時從嚴，只納入
- * 可確認身分的代碼（filter.identified），其餘一律不列出、不可下單。
+ * 與只有占位合約的，依到期日排序（同日月選在前）。列入與否見
+ * chainAdmission：能判定 underlying 時不同或缺 underlying 的週選合約不
+ * 納入（月選缺欄位仍納入）；無法判定時從嚴，只納入可確認身分的代碼。
  */
 export function buildExpiries(
     contracts: ChainContract[],
@@ -240,14 +285,11 @@ export function buildExpiries(
     const monthlyRoot = filter.monthlyRoot ?? MONTHLY_ROOT;
     const now: ExpiryClock =
         typeof clock === 'string' ? { date: clock, minutes: 0 } : clock;
-    const underlying = chainUnderlying(contracts, filter);
-    const isIdentified = identifiedTest(monthlyRoot, filter.identified);
+    const admit = chainAdmission(contracts, filter);
     const groups = new Map<string, OptionExpiry>();
     for (const c of contracts) {
         const root = c.root ?? monthlyRoot;
-        if (underlying) {
-            if (c.underlying_code !== underlying) continue;
-        } else if (!isIdentified(root)) continue;
+        if (admit(c) !== 'keep') continue;
         if (!isLiveExpiry(c.delivery_date, now)) continue;
         const key = expiryKey(root, c.delivery_date);
         const g = groups.get(key);

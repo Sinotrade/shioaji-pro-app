@@ -400,3 +400,133 @@ it('lists only the monthly when no contract carries underlying_code and TXN is u
     expect(keys(r)).toEqual(['TXO:2026-10-21']);
     expect(snapshotCodes.last.every((c) => c.startsWith('TXO'))).toBe(true);
 });
+
+const statusText = (r: ReactTestRenderer) =>
+    r.root.findAll((n) => n.type === 'span' && n.props.role === 'status').map(text).join('');
+const never = () => new Promise<never>(() => {});
+const TIMEOUT_MS = 10_000;
+
+it('times out a hanging weekly root, shows the rest, and recovers on retry', async () => {
+    let hang = true;
+    const signals: AbortSignal[] = [];
+    api.fetchOptions.mockImplementation((root: string, _f: unknown, opts?: { signal?: AbortSignal }) => {
+        if (root === 'TXZ') return Promise.reject(placeholderError());
+        if (root === 'TXU' && hang) {
+            signals.push(opts!.signal!);
+            return never();
+        }
+        return Promise.resolve(BY_ROOT[root] ?? []);
+    });
+    const r = await renderChain();
+    // 還沒逾時：仍在載入中
+    expect(text(r.root)).toContain('載入臺指選擇權合約');
+
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(TIMEOUT_MS);
+    });
+    expect(keys(r)).toEqual(['TXY:2026-09-29', 'TX1:2026-10-07', 'TXO:2026-10-21']);
+    expect(statusText(r)).toBe('部分合約載入失敗（TXU 逾時），按更新報價重試');
+    expect(signals[0]!.aborted).toBe(true);
+
+    hang = false;
+    await act(async () => refreshButton(r).props.onClick());
+    expect(keys(r)).toEqual(['TXY:2026-09-29', 'TXU:2026-10-02', 'TX1:2026-10-07', 'TXO:2026-10-21']);
+    expect(statusText(r)).toBe('');
+    // 其他已成功的代碼沿用快取，只重查逾時的
+    expect(fetchedRoots().filter((x) => x === 'TXU')).toHaveLength(2);
+    expect(fetchedRoots().filter((x) => x === 'TXO')).toHaveLength(1);
+});
+
+it('falls back to the monthly chain when the roots list hangs', async () => {
+    api.fetchOptionRoots.mockImplementationOnce(never);
+    const r = await renderChain();
+    expect(text(r.root)).toContain('載入臺指選擇權合約');
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(TIMEOUT_MS);
+    });
+    expect(keys(r)).toEqual(['TXO:2026-10-21']);
+    expect(statusText(r)).toBe('部分合約載入失敗（週選清單 逾時），按更新報價重試');
+
+    await act(async () => refreshButton(r).props.onClick());
+    expect(keys(r)).toHaveLength(4);
+    expect(statusText(r)).toBe('');
+});
+
+it('ignores a response that arrives after its timeout and a successful retry', async () => {
+    let late!: (rows: ContractInfo[]) => void;
+    let calls = 0;
+    api.fetchOptions.mockImplementation((root: string) => {
+        if (root === 'TXZ') return Promise.reject(placeholderError());
+        if (root === 'TXU' && calls++ === 0) return new Promise<ContractInfo[]>((res) => (late = res));
+        return Promise.resolve(BY_ROOT[root] ?? []);
+    });
+    const r = await renderChain();
+    await act(async () => {
+        await vi.advanceTimersByTimeAsync(TIMEOUT_MS);
+    });
+    await act(async () => refreshButton(r).props.onClick());
+    expect(keys(r)).toContain('TXU:2026-10-02');
+
+    // 第一次請求晚到，帶著不同（舊）的資料
+    await act(async () => late(series('TXU', '2026-10-09', 'Fri')));
+    expect(keys(r)).toContain('TXU:2026-10-02');
+    expect(keys(r)).not.toContain('TXU:2026-10-09');
+
+    // 也沒有寫進當日快取
+    act(() => r.unmount());
+    const again = await renderChain();
+    expect(keys(again)).toContain('TXU:2026-10-02');
+    expect(keys(again)).not.toContain('TXU:2026-10-09');
+    expect(fetchedRoots().filter((x) => x === 'TXU')).toHaveLength(2);
+});
+
+it('does not cache an empty roots list or an empty root for the day', async () => {
+    api.fetchOptionRoots.mockResolvedValueOnce([]);
+    let r = await renderChain();
+    expect(keys(r)).toEqual(['TXO:2026-10-21']);
+    expect(statusText(r)).toContain('週選清單');
+    await act(async () => refreshButton(r).props.onClick());
+    expect(keys(r)).toHaveLength(4);
+    act(() => r.unmount());
+
+    resetChainContractsCache();
+    api.fetchOptions.mockClear();
+    let txuEmpty = true;
+    api.fetchOptions.mockImplementation(async (root: string) => {
+        if (root === 'TXZ') throw placeholderError();
+        if (root === 'TXU' && txuEmpty) return [];
+        return BY_ROOT[root] ?? [];
+    });
+    r = await renderChain();
+    expect(keys(r)).not.toContain('TXU:2026-10-02');
+    act(() => r.unmount());
+    txuEmpty = false;
+    r = await renderChain();
+    expect(keys(r)).toContain('TXU:2026-10-02');
+    expect(fetchedRoots().filter((x) => x === 'TXU')).toHaveLength(2);
+    expect(fetchedRoots().filter((x) => x === 'TXZ')).toHaveLength(1);
+});
+
+it('keeps the monthly when only TXO lacks underlying_code', async () => {
+    api.fetchOptions.mockImplementation(async (root: string) => {
+        if (root === 'TXZ') throw placeholderError();
+        if (root === 'TXO') return BY_ROOT.TXO!.map((c) => ({ ...c, underlying_code: undefined }));
+        return BY_ROOT[root] ?? [];
+    });
+    const r = await renderChain();
+    expect(keys(r)).toEqual(['TXY:2026-09-29', 'TXU:2026-10-02', 'TX1:2026-10-07', 'TXO:2026-10-21']);
+    expect(statusText(r)).toBe('');
+});
+
+it('reports identified-root contracts left out for missing or mismatched fields', async () => {
+    api.fetchOptions.mockImplementation(async (root: string) => {
+        if (root === 'TXZ') throw placeholderError();
+        if (root === 'TX1') return BY_ROOT.TX1!.map((c) => ({ ...c, underlying_code: undefined }));
+        if (root === 'TXU')
+            return BY_ROOT.TXU!.map((c, i) => (i < 2 ? { ...c, delivery_date: undefined } : c));
+        return BY_ROOT[root] ?? [];
+    });
+    const r = await renderChain();
+    expect(keys(r)).toEqual(['TXY:2026-09-29', 'TXU:2026-10-02', 'TXO:2026-10-21']);
+    expect(statusText(r)).toBe('22 筆合約資料不完整或標的不符，未列出');
+});

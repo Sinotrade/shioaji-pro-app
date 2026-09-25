@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildExpiries,
+    chainAdmission,
     chainUnderlying,
     chooseAtmReference,
     migrateLegacyMonth,
@@ -17,6 +18,7 @@ import {
     pickChainRoots,
     resolveExpiry,
     taipeiToday,
+    unverifiedContracts,
     type ChainContract,
 } from './option-expiry';
 
@@ -355,5 +357,41 @@ describe('helpers', () => {
         expect(isChainContract(ok!)).toBe(true);
         expect(isChainContract({ ...ok!, delivery_date: '' })).toBe(false);
         expect(isChainContract({ ...ok!, security_type: 'FUT' })).toBe(false);
+    });
+});
+
+describe('chainAdmission', () => {
+    const identified = ['TXO', 'TX1', 'TXU'];
+
+    it('never drops the monthly for a missing underlying_code', () => {
+        const contracts = [
+            ...series('TXO', '2026-10-21', 30, { underlying_code: undefined }),
+            ...series('TXU', '2026-10-02', 30),
+        ];
+        expect(chainUnderlying(contracts, { identified })).toBe('IX0001');
+        expect(buildExpiries(contracts, TODAY, { identified }).map((e) => e.key)).toEqual([
+            'TXU:2026-10-02',
+            'TXO:2026-10-21',
+        ]);
+        expect(unverifiedContracts(contracts, TODAY, { identified })).toBe(0);
+    });
+
+    it('flags identified weeklies left out, but keeps unidentified ones silent', () => {
+        const contracts = [
+            ...series('TXO', '2026-10-21', 30),
+            ...series('TX1', '2026-10-07', 30, { underlying_code: undefined }),
+            ...series('TXU', '2026-10-02', 30, { underlying_code: 'IX0027' }),
+            ...series('TXN', '2026-10-09', 30, { underlying_code: 'IX0027' }),
+            // 已到期的不計
+            ...series('TX1', '2026-09-16', 10, { underlying_code: undefined }),
+        ];
+        const admit = chainAdmission(contracts, { identified });
+        expect(admit(contracts.find((c) => c.root === 'TX1')!)).toBe('unverified');
+        expect(admit(contracts.find((c) => c.root === 'TXU')!)).toBe('unverified');
+        expect(admit(contracts.find((c) => c.root === 'TXN')!)).toBe('reject');
+        expect(buildExpiries(contracts, TODAY, { identified }).map((e) => e.key)).toEqual([
+            'TXO:2026-10-21',
+        ]);
+        expect(unverifiedContracts(contracts, TODAY, { identified })).toBe(60);
     });
 });
