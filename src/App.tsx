@@ -569,7 +569,7 @@ function PopoutView({
         <div className={styles.shell}>
             <EventToasts />
             <OrderConfirmHost />
-            <PendingTriggers />
+            <PendingTriggers compact />
             <section className={panel.panel} style={{ flex: 1, margin: 6 }}>
                 <PanelChrome
                     title={meta.label}

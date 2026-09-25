@@ -826,6 +826,18 @@ describe('restore confirmation for bracket exits armed after a restart (#144)', 
     });
 });
 
+describe('orphaned bracket protection (#144)', () => {
+    it('dismissing a bracket whose plan is gone removes its triggers', async () => {
+        await boot();
+        engine.armBracketGroup({ group: 'bracket:gone', bracketId: 'plan-gone', env: m.env!,
+            account: { account_type: 'F', broker_id: F1.broker_id, account_id: F1.account_id }, code: 'TXFR1',
+            orderCode: 'TXFJ6', entryAction: 'Buy', octype: 'Cover', stopPrice: 48000, takePrice: 48600, quantity: 1 });
+        expect(triggersOf('plan-gone')).toHaveLength(2);
+        await bracket.dismissBracket('plan-gone');
+        expect(triggersOf('plan-gone')).toHaveLength(0);
+    });
+});
+
 describe('pre-order bracket validation (entry is not sent when invalid)', () => {
     const base = { isFutures: true, action: 'Buy' as const, referencePrice: 48300, stopPrice: 48000, takePrice: 48600, octype: 'Auto' as const };
     it('accepts a sane long/short futures bracket', async () => {

@@ -357,6 +357,41 @@ describe('restore confirmation (#144)', () => {
         expect(engine.getExits().map(e => e.kind)).toEqual(['take']);
     });
 
+    it('records why a trigger is pending: restart / long disconnect / environment switch', async () => {
+        await restoredStop();
+        await tick(47900);
+        expect(only().pending?.reason).toBe('restart');
+        expect(m.notify.mock.calls.at(-1)![0].body).toContain(engine.RESTORE_REASON_TEXT.restart);
+
+        await boot();
+        await addStop();
+        await tick(48300);
+        await outage(61_000);
+        await tick(47900);
+        expect(only().pending?.reason).toBe('disconnect');
+        expect(m.notify.mock.calls.at(-1)![0].body).toContain(engine.RESTORE_REASON_TEXT.disconnect);
+
+        await boot();
+        await addStop();
+        await tick(48300);
+        await setEnv('http://sim.invalid|production');
+        await tick(48300);
+        await setEnv(SIM);
+        await tick(47900);
+        expect(only().pending?.reason).toBe('env');
+    });
+
+    it('送出 when the price is back on the non-trigger side needs an explicit allowUnpast', async () => {
+        await restoredStop();
+        await tick(47900);
+        await tick(48100); // back above the stop
+        await expect(engine.resolvePendingTrigger(only().id, 'send')).rejects.toThrow('目前已未穿價');
+        expect(m.place).not.toHaveBeenCalled();
+        await engine.resolvePendingTrigger(only().id, 'send', { allowUnpast: true });
+        await flush();
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
     it('switching back to the trigger\'s environment is a restore', async () => {
         await boot();
         await addStop();

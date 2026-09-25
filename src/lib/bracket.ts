@@ -54,6 +54,7 @@ import {
     applyExitTrade,
     armBracketGroup,
     disarmBracketGroup,
+    dropBracketTriggers,
     resumeWasRestore,
     EXECUTOR_LOCK,
     getExits,
@@ -433,7 +434,7 @@ function handle(cmd: Command): unknown {
         case 'reconcile': return reconcile(cmd.id);
         case 'dismiss': {
             const p = plans.find(x => x.id === cmd.id);
-            if (!p) return true;
+            if (!p) { dropBracketTriggers(cmd.id); return true; } // orphaned protection
             disarmBracketGroup(p.env, p.group);
             update(p.id, x => ({ ...x, dismissed: true, updatedAt: Date.now() }));
             return true;

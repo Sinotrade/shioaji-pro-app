@@ -23,6 +23,31 @@ export const panel = style({
     fontFamily: vars.font.body,
 });
 
+export const panelCollapsed = style([panel, { width: 'auto', maxWidth: 'calc(100vw - 32px)' }]);
+
+export const header = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: vars.space.sm,
+    justifyContent: 'space-between',
+});
+
+export const badge = style({
+    position: 'fixed',
+    right: vars.space.sm,
+    bottom: vars.space.sm,
+    zIndex: 1001,
+    fontFamily: vars.font.display,
+    fontSize: '0.7rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    padding: '3px 8px',
+    background: vars.color.panelRaised,
+    color: vars.color.danger,
+    border: `1px solid ${vars.color.danger}`,
+    borderRadius: vars.radius.sm,
+});
+
 export const title = style({
     fontSize: '0.78rem',
     fontWeight: 700,
