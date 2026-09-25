@@ -494,9 +494,13 @@ export async function ensureLocalTlsCert(): Promise<SidecarResult> {
 export async function serverStatus(): Promise<ServerStatus | null> {
     if (!isTauri) return null;
     const ports = candidatePorts();
-    const infos = await Promise.all(ports.map((p) => probeInfoEither(p)));
+    // probe all candidates at once but decide in order, returning as soon as
+    // the first-in-order hit is known: when the App's own port answers
+    // (every post-start reload), don't also wait for the refused http+https
+    // probes of 8080 (issue #142: boot probe 2.2–2.5 s natively)
+    const pending = ports.map((p) => probeInfoEither(p));
     for (const [i, port] of ports.entries()) {
-        const hit = infos[i];
+        const hit = await pending[i];
         if (!hit) continue;
         return {
             running: true,
@@ -693,8 +697,10 @@ async function caActive(
 // Tauri HTTP plugin, its later abort event attempts to close an already-freed
 // Rust resource and surfaces as an unhandled "resource id ... is invalid"
 // rejection. Own the timer so successful probes clear it immediately.
+// one shared import for the probe fan-outs (serverStatus, orphan sweep)
+let httpModule: Promise<typeof import('@tauri-apps/plugin-http')> | null = null;
 async function tauriFetchWithTimeout(url: string, timeoutMs: number) {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+    const { fetch: tauriFetch } = await (httpModule ??= import('@tauri-apps/plugin-http'));
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -1150,7 +1156,20 @@ function assertMainWindowSettingsAccess(): void {
     }
 }
 
-export async function loadDesktopSettings(): Promise<DesktopSettings> {
+// boot and the main-window gate both read settings at page start: share one
+// in-flight read (≈10 store IPC calls) instead of doing it twice. Only the
+// pending promise is shared — a later call always reads fresh values.
+let settingsRead: Promise<DesktopSettings> | null = null;
+export function loadDesktopSettings(): Promise<DesktopSettings> {
+    if (!settingsRead) {
+        settingsRead = readDesktopSettings().finally(() => {
+            settingsRead = null;
+        });
+    }
+    return settingsRead;
+}
+
+async function readDesktopSettings(): Promise<DesktopSettings> {
     if (!isTauri) return { ...EMPTY_SETTINGS };
     assertMainWindowSettingsAccess();
     const { LazyStore } = await import('@tauri-apps/plugin-store');
@@ -1187,6 +1206,7 @@ export async function loadDesktopSettings(): Promise<DesktopSettings> {
 export async function saveDesktopSettings(s: DesktopSettings) {
     if (!isTauri) return;
     assertMainWindowSettingsAccess();
+    settingsRead = null; // a read already in flight must not be shared after a save
     const { LazyStore } = await import('@tauri-apps/plugin-store');
     const store = new LazyStore('settings.json');
     await store.set('apiKey', s.apiKey);

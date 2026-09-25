@@ -33,6 +33,7 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | `reload` | 重新載入畫面 | App 重新載入頁面 |
 | `page-loaded` | 畫面載入中 | 重新載入後的前端 bootstrap 開始 |
 | `boot-checked` | 伺服器確認完成 | 重新載入後 boot 的伺服器檢查結束，之後的時間都屬前端就緒 |
+| `stream-connect` | 行情串流連線中 | 建立 SSE 連線的時間點；重新載入進已健康的伺服器時會在 `page-loaded` 之前（提前連線） |
 | `accounts-loaded` | 帳戶已載入 | 帳戶清單第一次載入完成（附帳戶數） |
 | `positions-loaded` | 持倉已載入 | 第一次持倉查詢完成；失敗或需對帳也算完成並註明 |
 | `stream-live` | 行情串流已連線 | SSE 串流狀態轉為 LIVE |

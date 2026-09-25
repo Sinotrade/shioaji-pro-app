@@ -3,7 +3,7 @@
 // skipped and its PID never reaches kill_shioaji; boot's probe is reused;
 // the post-stop port wait only applies right after our own stop.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const native = vi.hoisted(() => ({ invoke: vi.fn(), execute: vi.fn(), fetch: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke }));
@@ -20,6 +20,14 @@ let listening: Set<number>; // ports a sidecar answers on
 let bound: Set<number>; // ports find_free_port sees as taken
 
 import * as tauri from './tauri';
+
+// resolve the mocked native modules once up front: concurrent FIRST dynamic
+// imports of a mocked module (tauri.ts fans probes out) can race past the
+// mock in vitest and hit the real Tauri bindings
+beforeAll(async () => {
+    await import('@tauri-apps/api/core');
+    await import('@tauri-apps/plugin-http');
+});
 
 // each test starts a minute later, so an earlier test's own stop is never
 // "recent" (tauri.ts keeps lastOwnStopAt at module level)
@@ -125,5 +133,28 @@ describe('serverStart start path', () => {
         const res = await tauri.serverStart(settings);
         expect(res.port).toBe(21322);
         expect(calls('find_free_port').filter(a => a.preferred === 21322).length).toBeGreaterThan(1);
+    });
+});
+
+describe('page-start reads', () => {
+    it('serverStatus returns as soon as the App port answers, without waiting on 8080', async () => {
+        listening.add(21322);
+        // 8080 hangs until its 5 s probe timeout (a congested plugin-http queue)
+        native.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.includes(':8080/')) {
+                return new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))));
+            }
+            return new Response(JSON.stringify(url.endsWith('/info') ? { version: '1.7.6', simulation: true } : { status: 'healthy' }));
+        });
+        const t0 = performance.now();
+        const st = await tauri.serverStatus();
+        expect(st).toMatchObject({ running: true, port: 21322, healthy: true });
+        expect(performance.now() - t0).toBeLessThan(1000); // was: ≥ 5 s here
+    });
+
+    it('a later candidate still wins only when earlier ones are down', async () => {
+        listening.add(8080);
+        const st = await tauri.serverStatus();
+        expect(st).toMatchObject({ running: true, port: 8080 });
     });
 });

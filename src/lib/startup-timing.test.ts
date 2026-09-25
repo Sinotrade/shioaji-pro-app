@@ -23,6 +23,7 @@ const {
     endTiming,
     MAX_MARKS,
     beginBootTiming,
+    reloadedIntoHealthyServer,
     getActiveTiming,
     getTimingHistory,
     markStage,
@@ -239,6 +240,28 @@ describe('retired runs keep their real durations', () => {
         beginTiming('stop', { replace: true });
         expect(getTimingHistory()[0]).toMatchObject({ outcome: 'abandoned', endedAt: 4000 });
         expect(getTimingHistory()[0]!.retired).toBeUndefined();
+    });
+});
+
+describe('early stream decision', () => {
+    it('only on the reload a run triggered after the server was healthy', () => {
+        beginTiming('restart');
+        markStage('healthy');
+        markStage('reload');
+        expect(reloadedIntoHealthyServer(true, getActiveTiming())).toBe(true);
+        expect(reloadedIntoHealthyServer(false, getActiveTiming())).toBe(false); // app launch
+        markStage('page-loaded');
+        expect(reloadedIntoHealthyServer(true, getActiveTiming())).toBe(false);
+    });
+
+    it('never for a cold start, a run without reload, or a stale run', () => {
+        expect(reloadedIntoHealthyServer(true, null)).toBe(false);
+        beginTiming('start');
+        markStage('wait-listener');
+        expect(reloadedIntoHealthyServer(true, getActiveTiming())).toBe(false);
+        markStage('reload');
+        vi.advanceTimersByTime(STALE_RUN_MS + 1);
+        expect(reloadedIntoHealthyServer(true, timing.peekActiveTiming())).toBe(false);
     });
 });
 

@@ -50,6 +50,7 @@ export const STAGE_LABELS = {
     reload: '重新載入畫面',
     'page-loaded': '畫面載入中',
     'boot-checked': '伺服器確認完成',
+    'stream-connect': '行情串流連線中',
     // front-end bootstrap after the reload, until trading data is usable
     'accounts-loaded': '帳戶已載入',
     'positions-loaded': '持倉已載入',
@@ -296,6 +297,17 @@ export function beginBootTiming(opts: {
         return 'cold-start';
     }
     return 'none';
+}
+
+/** This page load is the reload a run triggered after the server answered
+ * healthy (every "reload" mark follows a health/listener confirmation). */
+export function reloadedIntoHealthyServer(
+    reloaded: boolean,
+    run: TimingRun | null,
+    now = Date.now(),
+): boolean {
+    if (!reloaded || !run || now - run.startedAt > STALE_RUN_MS) return false;
+    return run.marks[run.marks.length - 1]?.stage === 'reload';
 }
 
 /** Side-effect-free read for React snapshots (no stale retirement). */

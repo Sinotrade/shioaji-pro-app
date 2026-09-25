@@ -10,6 +10,7 @@ import {
     type OrderEventReport,
 } from './order-report';
 import { reportLedger } from './report-ledger';
+import { markStage } from './startup-timing';
 import { knownServerInfo } from './server-info-store';
 
 /** `stale`: the EventSource still looks open but no heartbeat or event
@@ -596,6 +597,7 @@ let started = false;
 export function ensureStream() {
     if (!started) {
         started = true;
+        markStage('stream-connect'); // startup timing (#142); no-op otherwise
         connect();
         lastCheckAt = Date.now();
         watchdogTimer = setInterval(checkWatchdog, WATCHDOG_TICK_MS);

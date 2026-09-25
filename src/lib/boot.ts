@@ -17,7 +17,7 @@ import {
     fetchInfo,
     subscribeTradeEvents,
 } from './shioaji';
-import { onOrderEvent } from './stream';
+import { ensureStream, onOrderEvent } from './stream';
 import {
     harnessOwnershipCompatible,
     loadDesktopSettings,
@@ -31,6 +31,8 @@ import {
     beginBootTiming,
     getActiveTiming,
     markStage,
+    peekActiveTiming,
+    reloadedIntoHealthyServer,
     type TimingOutcome,
 } from './startup-timing';
 import { appReadySignals, watchFrontendReady } from './frontend-ready';
@@ -89,7 +91,20 @@ export function bootstrap() {
             body: d.lines.map((l) => l.text).join(' ｜ '),
         });
     });
+    // Right after our own post-start reload the server is known healthy:
+    // open the quote/order stream now instead of after the dashboard's
+    // first render (the stream opened ~2 s after boot-checked natively,
+    // #142). ensureStream is idempotent; panels mounting later reuse it.
+    if (shouldOpenStreamEarly()) ensureStream();
     void run();
+}
+
+// only the main window, only on a reload that a timing run marked as
+// "server healthy → reload" — never on a cold start, where an early
+// connection would only fail and back off against a server still starting
+function shouldOpenStreamEarly(): boolean {
+    if (!isTauri || isChildWindow()) return false;
+    return reloadedIntoHealthyServer(pageWasReloaded(), peekActiveTiming());
 }
 
 async function run() {
