@@ -6,7 +6,7 @@ import type { Trade } from '../lib/types/order';
 import type { ContractInfo } from '../lib/types/contract';
 const mocks = vi.hoisted(() => ({ cancel: vi.fn(), place: vi.fn(), stockExit: vi.fn(), notify: vi.fn(), selected: 'A' }));
 const accounts: Account[] = ['A', 'B'].map(account_id => ({ account_type: 'F', broker_id: 'BR', account_id, signed: true, person_id: '', username: '' }));
-vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts, selectedStock: accounts.find(a => a.account_id === mocks.selected), selectedFutures: accounts.find(a => a.account_id === mocks.selected) }) }));
+vi.mock('../lib/account-store', () => ({ ensureAccounts: () => undefined, useAccounts: () => ({ loaded: true, accounts, selectedStock: accounts.find(a => a.account_id === mocks.selected), selectedFutures: accounts.find(a => a.account_id === mocks.selected) }) }));
 vi.mock('../hooks/use-stream', () => ({ useTradingLive: () => true }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: undefined, snapshot: { close: 100 }, book: undefined }) }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: mocks.cancel,

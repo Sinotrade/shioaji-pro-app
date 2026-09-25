@@ -105,4 +105,19 @@ describe('per-panel flash account (#139)', () => {
             expect(loadPopoutFlashAccounts('w59')).toEqual({});
         } finally { spy.mockRestore(); }
     }));
+    it('a 閃電全開 tile with nothing to pin still gets a record ({} → user must pick)', () => withStorage(store => {
+        const { win } = flashPopoutParams(undefined, {});
+        expect(JSON.parse(store.get('sj-pro-flash-popout-windows')!)[win].keys).toEqual({});
+        expect(loadPopoutFlashAccounts(win)).toEqual({});
+    }));
+    it('re-reads the shared map before each write so another window\'s entry survives', () => withStorage(store => {
+        savePopoutFlashAccounts('mine', { F: 'F:B:A' });
+        // another window writes its own entry in between
+        const shared = JSON.parse(store.get('sj-pro-flash-popout-windows')!);
+        shared.theirs = { keys: { F: 'F:B:B' }, at: Date.now() };
+        store.set('sj-pro-flash-popout-windows', JSON.stringify(shared));
+        savePopoutFlashAccounts('mine', { F: 'F:B:C' });
+        expect(loadPopoutFlashAccounts('theirs')).toEqual({ F: 'F:B:B' });
+        expect(loadPopoutFlashAccounts('mine')).toEqual({ F: 'F:B:C' });
+    }));
 });

@@ -85,6 +85,8 @@ export interface Block {
     type: BlockType;
     // null → follows the globally selected symbol; string → pinned to a code
     pin: string | null;
+    // 閃電下單面板自己的帳戶（每市場一組 key）— 沒有 key 的市場跟隨主畫面
+    flashAccounts?: import('./flash-account').FlashAccountKeys;
     // Market-pulse presets can open multiple panels on distinct views.
     pulseVisualization?: 'distribution' | 'flow';
     pulseSections?: PulseSection[];
@@ -94,8 +96,6 @@ export interface Block {
     wallList?: string;
     wallCols?: number;
     wallRows?: number;
-    // 閃電下單面板自己的帳戶（每市場一組 key）— 沒有 key 的市場跟隨主畫面
-    flashAccounts?: import('./flash-account').FlashAccountKeys;
 }
 
 export interface Workspace {
@@ -797,4 +797,13 @@ let blockCounter = Date.now() % 100000;
 export function newBlockId(type: BlockType): string {
     blockCounter += 1;
     return `${type}-${blockCounter}`;
+}
+
+// Merge a partial update into one block (panel settings persisted with the
+// workspace / layout library).
+export function withBlockPatch(w: Workspace, id: string, patch: Partial<Block>): Workspace {
+    return {
+        ...w,
+        blocks: w.blocks.map((block) => (block.id === id ? { ...block, ...patch } : block)),
+    };
 }

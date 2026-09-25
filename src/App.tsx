@@ -81,6 +81,7 @@ import {
 import { isTauri, openPopout } from './lib/tauri';
 import { notify } from './lib/trade';
 import { tradingActionObserved, useTradingState } from './lib/trading-state';
+import { ensureAccounts } from './lib/account-store';
 import type { ContractInfo } from './lib/types/contract';
 import {
     BLOCK_META,
@@ -100,6 +101,7 @@ import {
     type PulseSection,
     type PulseSectionWeights,
     type Workspace,
+    withBlockPatch,
 } from './lib/workspace';
 import { mainFlashSelection } from './lib/order-account';
 import {
@@ -128,8 +130,6 @@ const POPOUT_TYPES: ReadonlySet<string> = new Set([
 const popoutQuery = new URLSearchParams(window.location.search);
 const POPOUT_TYPE = popoutQuery.get('popout');
 const POPOUT_CODE = popoutQuery.get('code') || null;
-// 閃電下單 popout 的視窗 id（issue #139）— 帳戶選擇依此存在本機，URL 不帶帳號
-const POPOUT_WINDOW_ID = popoutQuery.get('win') || null;
 
 // resolves a block's contract: pinned code (contract cache) or global selection
 function useBlockContract(
@@ -482,6 +482,9 @@ function BlockView(props: BlockViewProps) {
     );
 }
 
+// 閃電下單 popout 的視窗 id（issue #139）— 帳戶選擇依此存在本機，URL 不帶帳號
+const POPOUT_WINDOW_ID = popoutQuery.get('win') || null;
+
 function PopoutView({
     type,
     code,
@@ -494,6 +497,9 @@ function PopoutView({
         if (code) ensureContract(code).catch(() => undefined);
     }, [code]);
     const trading = useTradingState();
+    // popouts (incl. 閃電全開 tiles, web and desktop alike) have no dock or
+    // settings dialog to trigger the account fetch — load it here (#139)
+    useEffect(ensureAccounts, []);
     const tradesState = { data: trading.trades, refresh: tradingActionObserved };
     const popoutPositionsState = { data: trading.positions, refresh: tradingActionObserved };
     // popout 不在 workspace 裡 — 帳戶依視窗 id 存在本機（開啟時由開啟端固定並預先寫入）
@@ -983,16 +989,17 @@ function MainApp() {
         [workspace, updateWorkspace],
     );
 
-    const setBlockFlashAccounts = useCallback(
-        (id: string, flashAccounts: FlashAccountKeys) => {
-            updateWorkspace({
-                ...workspace,
-                blocks: workspace.blocks.map((block) =>
-                    block.id === id ? { ...block, flashAccounts } : block,
-                ),
-            });
+    // generic per-block field update (persisted with the workspace)
+    const patchBlock = useCallback(
+        (id: string, patch: Partial<Block>) => {
+            updateWorkspace(withBlockPatch(workspace, id, patch));
         },
         [workspace, updateWorkspace],
+    );
+    const setBlockFlashAccounts = useCallback(
+        (id: string, flashAccounts: FlashAccountKeys) =>
+            patchBlock(id, { flashAccounts }),
+        [patchBlock],
     );
 
     const setBlockPulseConfig = useCallback(

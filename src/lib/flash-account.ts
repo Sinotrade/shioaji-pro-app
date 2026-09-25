@@ -77,6 +77,10 @@ function readPopoutEntries(): Record<string, PopoutEntry> {
     }
 }
 
+// Read-modify-write of the shared map: always re-read right before writing
+// (never from a cached copy) and change only this window's entry. Another
+// window's entry can only be lost if both writes land in the same instant —
+// localStorage has no transactions, and each write is synchronous.
 function writePopoutEntry(id: string, keys: FlashAccountKeys): void {
     try {
         const all = readPopoutEntries();

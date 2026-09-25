@@ -6,10 +6,10 @@ import type { Account } from '../lib/types/portfolio';
 import type { Trade } from '../lib/types/order';
 import type { ContractInfo } from '../lib/types/contract';
 import type { FlashAccountKeys } from '../lib/flash-account';
-const mocks = vi.hoisted(() => ({ cancel: vi.fn(), place: vi.fn(), stockExit: vi.fn(), notify: vi.fn(), selected: 'A', privacy: false }));
+const mocks = vi.hoisted(() => ({ cancel: vi.fn(), place: vi.fn(), stockExit: vi.fn(), notify: vi.fn(), ensure: vi.fn(), selected: 'A', privacy: false, loaded: true }));
 const accounts: Account[] = ['A', 'B'].map(account_id => ({ account_type: 'F', broker_id: 'BR', account_id: `12345${account_id}`, signed: true, person_id: '', username: '' }));
 const [accA, accB] = accounts as [Account, Account];
-vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts, selectedStock: undefined, selectedFutures: accounts.find(a => a.account_id.endsWith(mocks.selected)) }) }));
+vi.mock('../lib/account-store', () => ({ ensureAccounts: () => { mocks.ensure(); }, useAccounts: () => ({ loaded: mocks.loaded, accounts: mocks.loaded ? accounts : [], selectedStock: undefined, selectedFutures: accounts.find(a => a.account_id.endsWith(mocks.selected)) }) }));
 vi.mock('../lib/privacy', async (orig) => ({ ...(await orig<typeof import('../lib/privacy')>()), usePrivacyMode: () => mocks.privacy, usePrivacyMoney: () => mocks.privacy }));
 vi.mock('../hooks/use-stream', () => ({ useTradingLive: () => true }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: undefined, snapshot: { close: 100 }, book: undefined }) }));
@@ -41,6 +41,7 @@ beforeEach(() => {
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     mocks.selected = 'A';
     mocks.privacy = false;
+    mocks.loaded = true;
     mocks.cancel.mockResolvedValue({ status: { status: 'Cancelled' } });
     mocks.place.mockResolvedValue(trades[0]);
     keys = [{ F: 'F:BR:12345A' }, { F: 'F:BR:12345B' }];
@@ -175,4 +176,26 @@ it('a popout with nothing pinned has no account until the user picks one', async
     expect(text(sel)).toContain('請選擇帳戶');
     expect(text(view.root)).not.toContain('多 3');
     expect(view.root.findAllByType('button').find(b => text(b).includes('啟用閃電下單'))!.props.disabled).toBe(true);
+});
+
+it('fetches the account list on mount (popouts / tiles have no dock to do it)', async () => {
+    await act(async () => { view = create(createElement(FlashOrder, { contract, trades, positions, accountKeys: {}, onAccountKeysChange: vi.fn(), followMain: false })); });
+    expect(mocks.ensure).toHaveBeenCalled();
+});
+
+it('shows 帳戶載入中 (not 帳戶不可用) until the account list has loaded, with ordering disabled', async () => {
+    mocks.loaded = false;
+    const pop = () => createElement(FlashOrder, { contract, trades, positions, accountKeys: { F: 'F:BR:12345B' }, onAccountKeysChange: vi.fn(), followMain: false });
+    await act(async () => { view = create(pop()); });
+    const sel = () => view.root.findByType('select');
+    expect(text(sel())).toContain('帳戶載入中');
+    expect(text(sel())).not.toContain('帳戶不可用');
+    expect(view.root.findAllByType('button').find(b => text(b).includes('啟用閃電下單'))!.props.disabled).toBe(true);
+    mocks.loaded = true;
+    await act(async () => { view.update(pop()); });
+    expect(text(view.root)).toContain('多 5');
+    // a docked panel following main says loading too
+    mocks.loaded = false;
+    await act(async () => { view.update(createElement(FlashOrder, { contract, trades, positions, accountKeys: {}, onAccountKeysChange: vi.fn() })); });
+    expect(text(view.root.findByType('select'))).toContain('跟隨主畫面（帳戶載入中）');
 });

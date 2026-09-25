@@ -7,7 +7,7 @@ import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
 // price). Click bid/ask columns to fire LMT orders, click your own order
 // chips to cancel, market buy/sell + flatten + cancel-all in the action bar.
 
-import { useAccounts } from '../lib/account-store';
+import { ensureAccounts, useAccounts } from '../lib/account-store';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { accountMatches, flashAccountKey, resolveFlashAccount, scopedFlashRows, type FlashAccountKeys, type FlashMarket } from '../lib/flash-account';
 import { Zap } from 'lucide-react';
@@ -212,6 +212,12 @@ export function FlashOrder({
     const eligible = accountState.accounts.filter(a => a.signed && a.account_type === market);
     const resolved = resolveFlashAccount(accountState.accounts, market, panelKeys[market], globalAccount, followMain);
     const activeAccount = resolved.account;
+    // account list not fetched yet (startup / a fresh popout): a saved key
+    // is not "unavailable" yet — say so, ordering stays disabled meanwhile
+    const accountsLoading = !accountState.loaded;
+    // idempotent — a popout / 閃電全開 tile has no dock or settings dialog
+    // that would otherwise fetch the account list (#139)
+    useEffect(ensureAccounts, []);
     const accountKey = activeAccount ? flashAccountKey(activeAccount) : '';
     const trades = scopedFlashRows(allTrades, activeAccount);
     const positions = scopedFlashRows(allPositions, activeAccount);
@@ -653,10 +659,12 @@ export function FlashOrder({
                                 ? '跟隨主畫面'
                                 : activeAccount
                                   ? `跟隨主畫面 ${activeAccount.broker_id}-${maskAccountId(activeAccount.account_id, privacy)}`
-                                  : '跟隨主畫面（無可用帳戶）'}
+                                  : accountsLoading
+                                    ? '跟隨主畫面（帳戶載入中）'
+                                    : '跟隨主畫面（無可用帳戶）'}
                         </option>
                     ) : resolved.unset && <option value=''>請選擇帳戶</option>}
-                    {resolved.missing && <option value={panelKeys[market]}>帳戶不可用</option>}
+                    {resolved.missing && <option value={panelKeys[market]}>{accountsLoading ? '帳戶載入中' : '帳戶不可用'}</option>}
                     {eligible.map(a => <option key={flashAccountKey(a)} value={flashAccountKey(a)}>
                         {a.broker_id}-{maskAccountId(a.account_id, privacy)}
                     </option>)}

@@ -1193,7 +1193,12 @@ export async function pickEnvFile(): Promise<{
 
 let popoutCounter = 0;
 
-export async function openPopout(type: string, code: string | null, extra?: Record<string, string>) {
+export async function openPopout(
+    type: string,
+    code: string | null,
+    // 面板設定帶進彈出視窗當初始值（例：session = 圖表時段選擇）
+    extra: Record<string, string> = {},
+) {
     const qs = new URLSearchParams({ popout: type, code: code ?? '', ...extra });
     if (!isTauri) {
         window.open(
@@ -1201,7 +1206,7 @@ export async function openPopout(type: string, code: string | null, extra?: Reco
             // a flash popout carries its own window id (#139) — name the
             // browser window by it so a second popout of the same code opens
             // beside the first instead of replacing it
-            `sj-popout-${type}-${code ?? 'x'}${extra?.win ? `-${extra.win}` : ''}`,
+            `sj-popout-${type}-${code ?? 'x'}${extra.win ? `-${extra.win}` : ''}`,
             'width=900,height=620,menubar=no,toolbar=no',
         );
         return;
