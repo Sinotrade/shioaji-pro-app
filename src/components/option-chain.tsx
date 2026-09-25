@@ -41,9 +41,10 @@ import * as panel from './panel.css';
 
 type OptContract = ChainContract;
 
-// 各商品代碼的合約每個台北交易日載一次（週選每週掛牌／到期）。只快取
-// 有資料的成功結果與已知的占位代碼；其他失敗（一次性 500、逾時）與空
-// 結果都不快取，下次載入會重試。
+// 各商品代碼的合約每個台北交易日載一次（週選每週掛牌／到期）。快取在
+// 模組層級、只存在於單一視窗：彈出視窗是獨立的 webview，各自每天載一次。
+// 只快取有資料的成功結果與已知的占位代碼；其他失敗（一次性 500、逾時）
+// 與空結果都不快取，下次載入會重試。
 interface RootRows {
     rows: OptContract[];
     // 回應中不是有效選擇權合約（缺到期日、履約價等欄位）的筆數
@@ -55,6 +56,9 @@ let rootsCache: { day: string; roots: string[]; identified: string[] } | null =
 const inflight = new Map<string, Promise<ChainLoad>>();
 // resetChainContractsCache 之後，先前發出的請求晚到也不能寫回快取
 let generation = 0;
+// 跨午夜時舊交易日晚到的回應不能蓋掉較新交易日的快取（YYYY-MM-DD 可直接比字串）
+const canCache = (cached: string | undefined, day: string, gen: number) =>
+    gen === generation && (cached ?? '') <= day;
 
 /** 測試用：清掉跨掛載的合約快取。 */
 export function resetChainContractsCache() {
@@ -143,12 +147,12 @@ async function loadRoot(
         ).map((c) => (c.root ? c : { ...c, root }));
         const rows = raw.filter(isChainContract);
         const result = { rows, invalid: raw.length - rows.length };
-        if (rows.length && gen === generation)
+        if (rows.length && canCache(rootCache.get(root)?.day, day, gen))
             rootCache.set(root, { day, ...result });
         return result;
     } catch (e) {
         if (isPlaceholderRootError(e)) {
-            if (gen === generation)
+            if (canCache(rootCache.get(root)?.day, day, gen))
                 rootCache.set(root, { day, rows: [], invalid: 0 });
             return { rows: [], invalid: 0 };
         }
@@ -178,7 +182,7 @@ export function loadChainContracts(day: string): Promise<ChainLoad> {
                 if (roots.length === 0) throw new Error('empty roots');
                 wanted = pickChainRoots(roots);
                 identified = identifiedChainRoots(roots);
-                if (gen === generation)
+                if (canCache(rootsCache?.day, day, gen))
                     rootsCache = { day, roots: wanted, identified };
             } catch (e) {
                 // roots 查不到時先只載月選，下次載入再重試

@@ -35,7 +35,8 @@ vi.mock('../hooks/use-live-snapshots', () => ({
 }));
 vi.mock('../lib/option-pick', () => ({ pickOptionLeg: vi.fn() }));
 
-const { OptionChain, EXPIRY_KEY, LEGACY_MONTH_KEY, resetChainContractsCache } = await import('./option-chain');
+const { OptionChain, EXPIRY_KEY, LEGACY_MONTH_KEY, loadChainContracts, resetChainContractsCache } =
+    await import('./option-chain');
 const { OptionExpiryPicker } = await import('./option-expiry-picker');
 const { buildExpiries } = await import('../lib/option-expiry');
 const chainStyles = await import('./option-chain.css');
@@ -585,4 +586,25 @@ it('reports identified-root contracts left out for missing or mismatched fields'
     const r = await renderChain();
     expect(keys(r)).toEqual(['TXY:2026-09-29', 'TXU:2026-10-02', 'TXO:2026-10-21']);
     expect(statusText(r)).toBe('22 筆合約資料不完整或標的不符，未列出');
+});
+
+it('does not let a straggling older-day response overwrite a newer day cache', async () => {
+    const pending: Array<(v: unknown) => void> = [];
+    api.fetchOptions.mockImplementation((root: string) => {
+        if (root === 'TXZ') return Promise.reject(placeholderError());
+        if (root === 'TXO' && pending.length < 2)
+            return new Promise((resolve) => pending.push(resolve));
+        return Promise.resolve(BY_ROOT[root] ?? []);
+    });
+    const txoCalls = () => fetchedRoots().filter((x) => x === 'TXO').length;
+    const day1 = loadChainContracts('2026-09-24');
+    const day2 = loadChainContracts('2026-09-25');
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1]!(BY_ROOT.TXO); // 新交易日先回
+    await day2;
+    pending[0]!(BY_ROOT.TXO); // 前一天的請求晚到
+    await day1;
+    expect(txoCalls()).toBe(2);
+    await loadChainContracts('2026-09-25');
+    expect(txoCalls()).toBe(2);
 });
