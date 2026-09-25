@@ -470,9 +470,21 @@ function scheduleReconnect(cap = NORMAL_RETRY_MAX_MS, fixedDelayMs?: number) {
 // the normal backoff applies unchanged. Marks record exactly what happened.
 export const STARTUP_FAST_RETRIES = 3;
 export const STARTUP_RETRY_MS = 250;
+// a drop in the first seconds of a page (the connection opened during page
+// load) is treated like a startup failure too
+export const STARTUP_WINDOW_MS = 15_000;
 let openedOnce = false;
+let openedAt: number | null = null;
 let startupFailures = 0;
 let heartbeatSeen = false;
+const pageAge = () =>
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Number.POSITIVE_INFINITY;
+/** When this page's stream first opened (epoch ms), or null. */
+export function streamOpenedAt(): number | null {
+    return openedAt;
+}
 function markStream(stage: 'stream-open' | 'stream-error' | 'stream-heartbeat', detail?: string) {
     if (!isChildWindow()) markStage(stage, detail);
 }
@@ -520,6 +532,7 @@ function connect() {
     es.onopen = () => {
         if (!openedOnce) {
             openedOnce = true;
+            openedAt = Date.now();
             markStream('stream-open', `failures=${startupFailures}`);
         }
         // A connection only proves healthy once a heartbeat arrives; until
@@ -589,12 +602,12 @@ function connect() {
 
     es.onerror = () => {
         setStatus('down');
-        if (!openedOnce) {
+        if (!openedOnce || pageAge() < STARTUP_WINDOW_MS) {
             startupFailures++;
             const fast = startupFailures <= STARTUP_FAST_RETRIES;
             markStream(
                 'stream-error',
-                `failure=${startupFailures} retry=${fast ? STARTUP_RETRY_MS : Math.min(retryDelay, NORMAL_RETRY_MAX_MS)}ms`,
+                `failure=${startupFailures}${openedOnce ? ' after open' : ''} retry=${fast ? STARTUP_RETRY_MS : Math.min(retryDelay, NORMAL_RETRY_MAX_MS)}ms`,
             );
             if (fast) {
                 scheduleReconnect(NORMAL_RETRY_MAX_MS, STARTUP_RETRY_MS);

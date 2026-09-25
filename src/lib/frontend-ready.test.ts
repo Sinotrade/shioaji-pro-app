@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./account-store', () => ({ getAccountState: vi.fn(), subscribeAccounts: vi.fn() }));
-vi.mock('./stream', () => ({ getStreamStatus: vi.fn(), subscribeStatusStore: vi.fn() }));
+vi.mock('./stream', () => ({ getStreamStatus: vi.fn(), subscribeStatusStore: vi.fn(), streamOpenedAt: vi.fn() }));
 vi.mock('./trading-state', () => ({ getTradingState: vi.fn(), subscribeTradingState: vi.fn() }));
 
 const store = new Map<string, string>();
@@ -53,6 +53,21 @@ afterEach(() => {
 });
 
 describe('watchFrontendReady', () => {
+    it('marks a signal within one tick even if its store never notifies', () => {
+        timing.beginTiming('cold-start');
+        const id = timing.getActiveTiming()!.id;
+        let live = false;
+        const silent: Signal = { stage: 'stream-live', subscribe: () => () => undefined, ready: () => live };
+        watchFrontendReady(id, [silent]);
+        vi.advanceTimersByTime(1000);
+        expect(timing.getActiveTiming()).not.toBeNull();
+        live = true; // flipped with no notification
+        vi.advanceTimersByTime(50);
+        const run = timing.getTimingHistory()[0]!;
+        expect(run.outcome).toBe('ok');
+        expect(run.marks.find((m) => m.stage === 'stream-live')!.at).toBe(1050);
+    });
+
     it('reports how long the main thread was blocked while waiting', () => {
         timing.beginTiming('restart');
         const id = timing.getActiveTiming()!.id;

@@ -13,7 +13,7 @@ import {
     type TimingOutcome,
     type TimingStage,
 } from './startup-timing';
-import { getStreamStatus, subscribeStatusStore } from './stream';
+import { getStreamStatus, streamOpenedAt, subscribeStatusStore } from './stream';
 import { getTradingState, subscribeTradingState } from './trading-state';
 
 export interface ReadySignal {
@@ -57,6 +57,11 @@ export function watchFrontendReady(
             maxStallMs = Math.max(maxStallMs, late);
         }
         lastTick = now;
+        // also re-evaluate every tick: a signal must be marked when it IS
+        // ready, not only when some store happens to notify (#142: a
+        // subscription that missed or preceded a transition left
+        // stream-live marked seconds after the stream was actually open)
+        check();
     }, TICK);
     const markStalls = () =>
         markStage('main-thread', `busy=${busyMs}ms maxStall=${maxStallMs}ms`, { runId });
@@ -129,6 +134,11 @@ export function appReadySignals(): ReadySignal[] {
             stage: 'stream-live',
             subscribe: subscribeStatusStore,
             ready: () => getStreamStatus() === 'live',
+            // how long the stream had already been open when this was marked
+            detail: () => {
+                const at = streamOpenedAt();
+                return at === null ? undefined : `open for ${Date.now() - at}ms`;
+            },
         },
     ];
 }

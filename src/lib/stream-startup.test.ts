@@ -80,10 +80,22 @@ it('after the fast retries the normal backoff applies unchanged', async () => {
     expect(FakeEventSource.all).toHaveLength(n + 2);
 });
 
-it('once the page\'s stream has opened, later outages use the normal backoff', async () => {
+it('a drop right after opening (page still starting) also retries fast', async () => {
     const stream = await import('./stream');
     stream.ensureStream();
     last().onopen!();
+    last().onerror!();
+    vi.advanceTimersByTime(250);
+    expect(FakeEventSource.all).toHaveLength(2);
+    expect(m.marks).toContainEqual(['stream-error', 'failure=1 after open retry=250ms']);
+    expect(stream.streamOpenedAt()).not.toBeNull();
+});
+
+it('once the page\'s stream has opened and startup is over, outages use the normal backoff', async () => {
+    const stream = await import('./stream');
+    stream.ensureStream();
+    last().onopen!();
+    vi.spyOn(performance, 'now').mockReturnValue(stream.STARTUP_WINDOW_MS + 1);
     last().onerror!();
     vi.advanceTimersByTime(999);
     expect(FakeEventSource.all).toHaveLength(1);
