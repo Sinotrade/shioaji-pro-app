@@ -126,6 +126,7 @@ async function confirmManualOrder(
     orderLot?: StockOrderLot,
     note?: string,
     account?: Account,
+    livePriceCode?: string,
 ): Promise<void> {
     if (!getRiskSettings().confirmManualOrders) return;
     const approved = await requestOrderConfirm({
@@ -138,6 +139,7 @@ async function confirmManualOrder(
         // the account the order is bound to, not whatever is selected now
         accountLabel: account ? accountConfirmLabel(account) : undefined,
         note,
+        livePriceCode,
     });
     if (!approved) throw new OrderConfirmCancelled();
 }
@@ -159,6 +161,8 @@ export async function placeQuickOrder(
         // runs synchronously after confirmation and risk checks, right
         // before sending; throwing refuses the order (nothing is sent)
         beforeSend?: () => void;
+        // 待確認觸價單在人工確認視窗顯示持續更新的目前成交價。
+        confirmLivePriceCode?: string;
     },
 ): Promise<Trade> {
     const startedBase = getApiBase();
@@ -186,6 +190,7 @@ export async function placeQuickOrder(
             opts?.orderLot,
             undefined,
             capturedAccount,
+            opts?.confirmLivePriceCode,
         );
     }
     assertTradingLive();

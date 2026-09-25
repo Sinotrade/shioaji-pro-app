@@ -392,6 +392,34 @@ describe('restore confirmation (#144)', () => {
         expect(m.place).toHaveBeenCalledTimes(1);
     });
 
+    it('refuses a price that crosses back while the manual confirmation is open', async () => {
+        await restoredStop();
+        await tick(47900);
+        const id = only().id;
+        let approve!: () => void;
+        m.place.mockImplementationOnce((...args: unknown[]) => new Promise((resolve, reject) => {
+            approve = () => {
+                try {
+                    (args[4] as { beforeSend: () => void }).beforeSend();
+                    resolve({ order: { id: 'late' }, status: { status: 'PendingSubmit' } });
+                } catch (e) { reject(e); }
+            };
+        }));
+        await engine.resolvePendingTrigger(id, 'send');
+        await flush();
+        await tick(48100); // now above the stop, after the user entered the dialog
+        approve();
+        await flush();
+        expect(only().pending).toBeTruthy();
+        expect(engine.getExits()).toHaveLength(0);
+        expect(m.notify.mock.calls.some(([n]) => n.title === '觸價單未送出（仍待確認）'
+            && n.body.includes('目前價 48100'))).toBe(true);
+        await engine.resolvePendingTrigger(id, 'send', { allowUnpast: true });
+        await flush();
+        expect(m.place).toHaveBeenCalledTimes(2);
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
     it('switching back to the trigger\'s environment is a restore', async () => {
         await boot();
         await addStop();
@@ -441,6 +469,7 @@ describe('restore confirmation (#144)', () => {
         expect(m.place).toHaveBeenCalledTimes(1);
         const [, action, price, qty, opts] = m.place.mock.calls[0]!;
         expect([action, price, qty, opts.account.account_id]).toEqual(['Sell', null, 1, 'fixture-account-F']);
+        expect(opts.confirmLivePriceCode).toBe('TXFR1');
         // a manual trigger may be an entry: risk checks apply, recorded as a user order
         expect([opts.bypassRisk, opts.source]).toEqual([false, 'manual']);
         await expect(engine.resolvePendingTrigger(id, 'send')).rejects.toThrow('不在待確認');

@@ -19,6 +19,8 @@ export interface OrderConfirmRequest {
     price: number | null;
     // 複數限價委託可用明確區間覆寫單一價格顯示
     priceLabel?: string;
+    // 待確認觸價單的即時行情代碼；確認視窗顯示最新成交價，市價仍非保證成交價。
+    livePriceCode?: string;
     quantity: number;
     // 口/張/股（或組合描述，如「1 張＋234 股」）
     unit: string;

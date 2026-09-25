@@ -667,16 +667,16 @@ const userSending = new Set<string>();
  * fires: meanwhile it stays 待確認 and its OCO siblings stay armed. The
  * firing (OCO, reservation) happens synchronously right before sending, and
  * only if the trigger is still 待確認 then. */
-async function userSend(id: string) {
+async function userSend(id: string, allowUnpast: boolean) {
     try {
-        await sendPending(id);
+        await sendPending(id, allowUnpast);
     } finally {
         userSending.delete(id);
         publishPrices();
     }
 }
 
-async function sendPending(id: string) {
+async function sendPending(id: string, allowUnpast: boolean) {
     const first = triggers.find(x => x.id === id);
     if (!first?.pending) return;
     const refused = (reason: string) => {
@@ -697,13 +697,20 @@ async function sendPending(id: string) {
             source: userOrder ? 'manual' : 'auto',
             account: ctx.account,
             ocType: first.octype,
+            confirmLivePriceCode: userOrder ? first.code : undefined,
             beforeSend: () => {
                 const cur = triggers.find(x => x.id === id);
                 if (!cur?.pending) throw new Error('已不在待確認（OCO 另一邊可能已觸發或已被處理），未送出');
                 if (currentProtectionEnv() !== cur.env) throw new Error('伺服器或模擬／正式模式已切換，未送出');
                 if (cur.group && processedGroups[groupKey(cur.env, cur.group)]) throw new Error('此 OCO 群組已觸發，未送出');
                 const price = lastPrices.get(cur.code);
-                if (price === undefined) throw new Error('行情中斷，未送出');
+                if (getStreamStatus() !== 'live' || price === undefined) throw new Error('行情中斷，未送出');
+                // The manual order dialog can stay open while the price crosses
+                // back. An earlier confirmation of a crossed price does not
+                // authorize sending after it is no longer crossed.
+                if (!isPast(cur, price) && !allowUnpast) {
+                    throw new Error(`目前已未穿價（目前價 ${price}），未送出；如仍要送出請再確認`);
+                }
                 const next = { ...cur, pending: undefined };
                 if (planFor(next).quantity !== planned.quantity) throw new Error('可送出數量已變動，請重新確認');
                 triggers = triggers.map(x => x.id === id ? next : x);
@@ -1002,7 +1009,7 @@ function resolvePending(id: string, choice: PendingChoice, allowUnpast = false):
     if (userSending.has(id)) throw new Error('送出處理中');
     userSending.add(id);
     publishPrices(); // mirrors show 送出處理中
-    void userSend(id); // OCO siblings, reservation and unknown-outcome rules apply as usual
+    void userSend(id, allowUnpast); // OCO siblings, reservation and unknown-outcome rules apply as usual
     return true;
 }
 
