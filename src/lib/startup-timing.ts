@@ -53,6 +53,9 @@ export const STAGE_LABELS = {
     'page-loaded': '畫面載入中',
     'boot-checked': '伺服器確認完成',
     'stream-connect': '行情串流連線中',
+    'stream-error': '行情串流連線失敗，重試中',
+    'stream-open': '行情串流已開啟',
+    'stream-heartbeat': '收到第一個串流心跳',
     // the dashboard's first commit (all panels mounted, their effects run)
     'app-mounted': '畫面元件已掛載',
     // detail only: how long the JS main thread was blocked while the front

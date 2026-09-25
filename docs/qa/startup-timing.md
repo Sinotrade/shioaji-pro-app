@@ -34,6 +34,9 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | `page-loaded` | 畫面載入中 | 重新載入後的前端 bootstrap 開始 |
 | `boot-checked` | 伺服器確認完成 | 重新載入後 boot 的伺服器檢查結束，之後的時間都屬前端就緒 |
 | `stream-connect` | 行情串流連線中 | 建立 SSE 連線的時間點；重新載入進已健康的伺服器時會在 `page-loaded` 之前（提前連線） |
+| `stream-error` | 行情串流連線失敗，重試中 | 本頁串流第一次開啟前的連線失敗（附第幾次、下次重試間隔）；前 3 次 250 ms 後重試，之後照原本 1 s→2 s… 退避 |
+| `stream-open` | 行情串流已開啟 | 本頁串流第一次開啟（SSE `open`，即畫面轉為 LIVE），附開啟前失敗次數 |
+| `stream-heartbeat` | 收到第一個串流心跳 | 伺服器連線時立即送出第一個 heartbeat，之後每 30 秒 |
 | `app-mounted` | 畫面元件已掛載 | 儀表板第一次 commit 完成（所有面板掛載、effect 已執行） |
 | `main-thread` | 主執行緒忙碌統計 | 只記附註：等待前端就緒期間 JS 主執行緒被占用的總時間與最長一次卡住（`busy=…ms maxStall=…ms`）；SSE 開啟或第一個事件在主執行緒忙時無法處理，`stream-live` 會一起變晚 |
 | `accounts-loaded` | 帳戶已載入 | 帳戶清單第一次載入完成（附帳戶數） |

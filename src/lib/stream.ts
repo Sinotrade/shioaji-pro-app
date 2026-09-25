@@ -446,14 +446,35 @@ const NORMAL_RETRY_MAX_MS = 15_000;
 /** `cap` bounds this and the following delay: connection errors use the
  *  normal backoff; only a connection that opened but never delivered a
  *  heartbeat may escalate beyond it. */
-function scheduleReconnect(cap = NORMAL_RETRY_MAX_MS) {
+function scheduleReconnect(cap = NORMAL_RETRY_MAX_MS, fixedDelayMs?: number) {
     everDown = true;
     es?.close();
     es = null;
     if (retryTimer) clearTimeout(retryTimer);
+    if (fixedDelayMs !== undefined) {
+        // one-off quick retry: leaves the backoff sequence untouched
+        retryTimer = setTimeout(connect, fixedDelayMs);
+        return;
+    }
     const delay = Math.min(retryDelay, cap);
     retryTimer = setTimeout(connect, delay);
     retryDelay = Math.min(delay * 2, cap);
+}
+
+// ---- first connection of this page (startup, issue #142) ----
+// Native timing showed LIVE landing a steady ~3.5 s after the SSE connect
+// although the sidecar answers the stream at once (its heartbeat interval's
+// first tick is immediate) — the shape of two failed attempts under the
+// 1 s → 2 s backoff. Until this page's stream has opened once, the first
+// few failures retry after 250 ms instead; after that (or once it opened)
+// the normal backoff applies unchanged. Marks record exactly what happened.
+export const STARTUP_FAST_RETRIES = 3;
+export const STARTUP_RETRY_MS = 250;
+let openedOnce = false;
+let startupFailures = 0;
+let heartbeatSeen = false;
+function markStream(stage: 'stream-open' | 'stream-error' | 'stream-heartbeat', detail?: string) {
+    if (!isChildWindow()) markStage(stage, detail);
 }
 let lastCheckGap = 0;
 function checkWatchdog() {
@@ -497,6 +518,10 @@ function connect() {
     es = new EventSource(`${getStreamBase()}/api/v1/stream/data?region=TW`);
 
     es.onopen = () => {
+        if (!openedOnce) {
+            openedOnce = true;
+            markStream('stream-open', `failures=${startupFailures}`);
+        }
         // A connection only proves healthy once a heartbeat arrives; until
         // then keep the backoff so silent connections do not loop every ~80 s.
         if (silentConnections === 0) retryDelay = 1000;
@@ -548,6 +573,10 @@ function connect() {
         emitContractChange(change);
     });
     listen(es, 'heartbeat', () => {
+        if (!heartbeatSeen) {
+            heartbeatSeen = true;
+            markStream('stream-heartbeat');
+        }
         lastHeartbeat = Date.now();
         heartbeatSinceOpen = true;
         silentConnections = 0;
@@ -560,6 +589,18 @@ function connect() {
 
     es.onerror = () => {
         setStatus('down');
+        if (!openedOnce) {
+            startupFailures++;
+            const fast = startupFailures <= STARTUP_FAST_RETRIES;
+            markStream(
+                'stream-error',
+                `failure=${startupFailures} retry=${fast ? STARTUP_RETRY_MS : Math.min(retryDelay, NORMAL_RETRY_MAX_MS)}ms`,
+            );
+            if (fast) {
+                scheduleReconnect(NORMAL_RETRY_MAX_MS, STARTUP_RETRY_MS);
+                return;
+            }
+        }
         // A refused/failed connection is a normal outage (e.g. sidecar
         // restarting): normal backoff, even after silent connections.
         scheduleReconnect(NORMAL_RETRY_MAX_MS);
