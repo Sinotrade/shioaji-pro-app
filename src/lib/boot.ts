@@ -35,9 +35,10 @@ import {
     reloadedIntoHealthyServer,
     type TimingOutcome,
 } from './startup-timing';
-import { appReadySignals, watchFrontendReady } from './frontend-ready';
+import { appReadySignals, startStallProbe, watchFrontendReady } from './frontend-ready';
 import { ensureAccounts, loadAccountsShared } from './account-store';
 import { timedAutostart } from './server-actions';
+import { startTradingState } from './trading-state';
 import { logNotice, notify } from './trade';
 import { isChildWindow } from './window-role';
 
@@ -95,7 +96,18 @@ export function bootstrap() {
     // open the quote/order stream now instead of after the dashboard's
     // first render (the stream opened ~2 s after boot-checked natively,
     // #142). ensureStream is idempotent; panels mounting later reuse it.
-    if (shouldOpenStreamEarly()) ensureStream();
+    // measure the main thread from page load (the first render included)
+    if (isTauri && !isChildWindow() && (peekActiveTiming() || !pageWasReloaded())) {
+        startStallProbe();
+    }
+    if (shouldOpenStreamEarly()) {
+        ensureStream();
+        // and the trading snapshot: its first read starts as soon as the
+        // stream is live (subscribe-before-snapshot rule unchanged), no
+        // longer after the dashboard mounted
+        startTradingState();
+        markStage('trading-start');
+    }
     // A real App launch: until boot knows whether this page will be
     // replaced by the post-start reload, don't let the dashboard open a
     // stream to a server that may not be up (released on every path that

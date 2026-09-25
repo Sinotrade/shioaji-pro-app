@@ -38,8 +38,9 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | `stream-open` | 行情串流已開啟 | 本頁串流第一次開啟（SSE `open`，即畫面轉為 LIVE），附開啟前失敗次數 |
 | `stream-heartbeat` | 收到第一個串流心跳 | 伺服器連線時立即送出第一個 heartbeat，之後每 30 秒 |
 | `stream-restart` | 行情串流重新連線 | 主動關閉並重連（附 `reason=stale／silent／connect-while-open`）；正常啟動不應出現 |
+| `trading-start` | 交易資料開始載入 | 重新載入進已健康伺服器時，頁面一載入就啟動交易資料（帳戶、持倉、委託），與儀表板第一次 render 重疊 |
 | `app-mounted` | 畫面元件已掛載 | 儀表板第一次 commit 完成（所有面板掛載、effect 已執行） |
-| `main-thread` | 主執行緒忙碌統計 | 只記附註：等待前端就緒期間 JS 主執行緒被占用的總時間與最長一次卡住（`busy=…ms maxStall=…ms`）；SSE 開啟或第一個事件在主執行緒忙時無法處理，`stream-live` 會一起變晚 |
+| `main-thread` | 主執行緒忙碌統計 | 只記附註：從頁面載入（含儀表板第一次 render）到前端就緒，JS 主執行緒被占用的總時間與最長一次卡住（`busy=…ms maxStall=…ms`）；SSE 開啟或第一個事件在主執行緒忙時無法處理，`stream-live` 會一起變晚 |
 | `accounts-loaded` | 帳戶已載入 | 帳戶清單第一次載入完成（附帳戶數） |
 | `positions-loaded` | 持倉已載入 | 第一次持倉查詢完成；失敗或需對帳也算完成並註明 |
 | `stream-live` | 行情串流已連線 | SSE 串流狀態轉為 LIVE |

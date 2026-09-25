@@ -67,6 +67,13 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('shared trading state with isolated broker fixtures', () => {
+    it('startTradingState outside React is idempotent with the hook (#142)', async () => {
+        const calls = mocks.positions.mock.calls.length;
+        await act(async () => { store.startTradingState(); store.startTradingState(); });
+        await flush();
+        expect(mocks.positions.mock.calls.length).toBe(calls); // no second initial read
+    });
+
     it('caps concurrent account reads at ACCOUNT_READ_CONCURRENCY (broker rate limit)', async () => {
         mocks.extraAccounts = ['b', 'c', 'd', 'e'].map(id => ({ ...mocks.account, account_id: id }));
         let inFlight = 0, max = 0;

@@ -667,6 +667,13 @@ function applyConfirmedCancellation(trade: AccountedTrade): boolean {
     resolve('orders', ['mutation-outcome'], undefined, `mutation:${trade.order.id}`);
     return true;
 }
+/** Start the shared trading store outside React (idempotent; the hook's
+ *  mount effect then finds it running). Boot calls this at page load on
+ *  the reload into a server already known healthy, so the first accounts
+ *  + positions/orders read overlaps the dashboard's first render instead of
+ *  waiting for it (#142: ~1.5 s of render, then ~2.4 s to positions). */
+export function startTradingState() { start(); }
+
 function start() {
     if (started) return;
     started = true;

@@ -26,6 +26,45 @@ export interface ReadySignal {
 // generous: covers a slow production account/positions read
 export const FRONTEND_READY_TIMEOUT_MS = 60_000;
 
+// ---- page-level main-thread stall probe ----
+// A 50 ms tick that runs late was blocked by other JS (parsing, the first
+// render). Started by boot at page load so the first render is measured
+// even when boot-checked comes after it (the earlier busy=0 readings only
+// covered the time after boot-checked, when the render was already over).
+const TICK = 50;
+const PROBE_MAX_MS = 90_000;
+let probe: { timer: ReturnType<typeof setInterval>; stop: ReturnType<typeof setTimeout>; last: number; busy: number; max: number } | null = null;
+const probeListeners = new Set<() => void>();
+export function startStallProbe(): void {
+    if (probe) return;
+    const p = {
+        last: Date.now(),
+        busy: 0,
+        max: 0,
+        timer: setInterval(() => {
+            const now = Date.now();
+            const late = now - p.last - TICK;
+            if (late > TICK) {
+                p.busy += late;
+                p.max = Math.max(p.max, late);
+            }
+            p.last = now;
+            for (const fn of probeListeners) fn();
+        }, TICK),
+        stop: setTimeout(() => stopStallProbe(), PROBE_MAX_MS),
+    };
+    probe = p;
+}
+export function stopStallProbe(): void {
+    if (!probe) return;
+    clearInterval(probe.timer);
+    clearTimeout(probe.stop);
+    probe = null;
+}
+export function stallStats(): { busyMs: number; maxStallMs: number } {
+    return { busyMs: probe?.busy ?? 0, maxStallMs: probe?.max ?? 0 };
+}
+
 /**
  * Mark each signal's stage the moment it turns ready, and end run `runId`
  * with `outcome` once all are ready — or as `partial` (listing what was
@@ -41,35 +80,20 @@ export function watchFrontendReady(
     const offs: (() => void)[] = [];
     let timer: ReturnType<typeof setTimeout> | undefined;
     let closed = false;
-    // main-thread stall probe: a 50 ms tick that runs late was blocked by
-    // other JS (rendering, parsing). An EventSource `open` or first event
-    // that arrives meanwhile is only handled after the stall, so this tells
-    // "the stream was slow" apart from "the page was busy" (#142).
-    const TICK = 50;
-    let lastTick = Date.now();
-    let busyMs = 0;
-    let maxStallMs = 0;
-    const stall = setInterval(() => {
-        const now = Date.now();
-        const late = now - lastTick - TICK;
-        if (late > TICK) {
-            busyMs += late;
-            maxStallMs = Math.max(maxStallMs, late);
-        }
-        lastTick = now;
-        // also re-evaluate every tick: a signal must be marked when it IS
-        // ready, not only when some store happens to notify (#142: a
-        // subscription that missed or preceded a transition left
-        // stream-live marked seconds after the stream was actually open)
-        check();
-    }, TICK);
-    const markStalls = () =>
+    // the stall probe (started at page load by boot, or here) also drives
+    // a re-check every tick: a signal is marked when it IS ready, not only
+    // when some store happens to notify
+    startStallProbe();
+    const tick = () => check();
+    probeListeners.add(tick);
+    const markStalls = ({ busyMs, maxStallMs }: ReturnType<typeof stallStats>) =>
         markStage('main-thread', `busy=${busyMs}ms maxStall=${maxStallMs}ms`, { runId });
     const dispose = () => {
         if (closed) return;
         closed = true;
         clearTimeout(timer);
-        clearInterval(stall);
+        probeListeners.delete(tick);
+        stopStallProbe();
         for (const off of offs) off();
     };
     const check = () => {
@@ -82,8 +106,9 @@ export function watchFrontendReady(
             }
         }
         if (done.size === signals.length) {
+            const stats = stallStats(); // before dispose stops the probe
             dispose(); // first: the marks below re-notify timing listeners
-            markStalls();
+            markStalls(stats);
             endTiming(opts.outcome ?? 'ok', undefined, { runId });
         }
     };
@@ -95,8 +120,9 @@ export function watchFrontendReady(
             .filter((sig) => !done.has(sig))
             .map((sig) => sig.stage)
             .join(',');
+        const stats = stallStats();
         dispose();
-        markStalls();
+        markStalls(stats);
         endTiming('partial', `not ready: ${missing}`, { runId });
     }, opts.timeoutMs ?? FRONTEND_READY_TIMEOUT_MS);
     check();

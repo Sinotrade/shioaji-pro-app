@@ -10,13 +10,15 @@ const m = vi.hoisted(() => ({
     ensureStream: vi.fn(),
     holdStream: vi.fn(),
     releaseStream: vi.fn(),
+    startTrading: vi.fn(),
 }));
 vi.mock('./runtime', async (orig) => ({ ...(await orig<object>()), isTauri: true }));
 vi.mock('./window-role', () => ({ isChildWindow: () => m.child }));
 vi.mock('./features', () => ({ agentModule: undefined }));
 vi.mock('./stream', () => ({ ensureStream: m.ensureStream, holdStream: m.holdStream, releaseStream: m.releaseStream, onOrderEvent: vi.fn() }));
 vi.mock('./trade', () => ({ notify: vi.fn(), logNotice: vi.fn() }));
-vi.mock('./frontend-ready', () => ({ appReadySignals: () => [], watchFrontendReady: vi.fn() }));
+vi.mock('./frontend-ready', () => ({ appReadySignals: () => [], watchFrontendReady: vi.fn(), startStallProbe: vi.fn() }));
+vi.mock('./trading-state', () => ({ startTradingState: m.startTrading }));
 vi.mock('./account-store', () => ({ ensureAccounts: vi.fn(), loadAccountsShared: vi.fn() }));
 vi.mock('./shioaji', () => ({
     fetchHealth: vi.fn(async () => ({})),
@@ -60,6 +62,7 @@ beforeEach(() => {
     m.child = false;
     m.navType = 'reload';
     m.ensureStream.mockClear();
+    m.startTrading.mockClear();
     m.holdStream.mockClear();
     m.releaseStream.mockClear();
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
@@ -73,12 +76,15 @@ describe('early stream at bootstrap', () => {
     it('opens it synchronously on the post-health reload in the main window', async () => {
         await boot('reload');
         expect(m.ensureStream).toHaveBeenCalledTimes(1);
+        // the trading snapshot starts at page load too, not after React mounts
+        expect(m.startTrading).toHaveBeenCalledTimes(1);
     });
 
     it('never in a child window', async () => {
         m.child = true;
         await boot('reload');
         expect(m.ensureStream).not.toHaveBeenCalled();
+        expect(m.startTrading).not.toHaveBeenCalled();
     });
 
     it('not on an app launch, without a run, or before the server was healthy', async () => {

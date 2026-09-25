@@ -59,6 +59,7 @@ export const STAGE_LABELS = {
     'stream-restart': '行情串流重新連線',
     // the dashboard's first commit (all panels mounted, their effects run)
     'app-mounted': '畫面元件已掛載',
+    'trading-start': '交易資料開始載入',
     // detail only: how long the JS main thread was blocked while the front
     // end got ready — an SSE open/first event cannot be handled meanwhile
     'main-thread': '主執行緒忙碌統計',

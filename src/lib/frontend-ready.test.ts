@@ -53,6 +53,21 @@ afterEach(() => {
 });
 
 describe('watchFrontendReady', () => {
+    it('counts a render stall that happened before the watch started (probe from page load)', async () => {
+        const { startStallProbe } = await import('./frontend-ready');
+        startStallProbe(); // boot, at page load
+        vi.advanceTimersByTime(100);
+        vi.setSystemTime(Date.now() + 1000); // the first render blocks 1 s
+        vi.advanceTimersByTime(50);
+        timing.beginTiming('restart'); // boot-checked comes after the render
+        const id = timing.getActiveTiming()!.id;
+        const live = signal('stream-live');
+        live.set();
+        watchFrontendReady(id, [live.sig]);
+        const detail = timing.getTimingHistory()[0]!.marks.find((m) => m.stage === 'main-thread')!.detail!;
+        expect(Number(/maxStall=(\d+)ms/.exec(detail)![1])).toBeGreaterThanOrEqual(900);
+    });
+
     it('marks a signal within one tick even if its store never notifies', () => {
         timing.beginTiming('cold-start');
         const id = timing.getActiveTiming()!.id;
