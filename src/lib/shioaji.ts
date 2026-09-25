@@ -310,6 +310,7 @@ export function fetchOptions(
         strikeMax?: number;
         expiryWeekday?: string;
     } = {},
+    opts?: { signal?: AbortSignal },
 ) {
     return apiGet<ContractInfo[]>(
         `/api/v1/data/contracts/options${contractQuery({
@@ -321,12 +322,14 @@ export function fetchOptions(
             expiry_weekday: filters.expiryWeekday,
             region: 'TW',
         })}`,
+        opts,
     );
 }
 
-export function fetchOptionRoots() {
+export function fetchOptionRoots(opts?: { signal?: AbortSignal }) {
     return apiGet<ContractRoot[]>(
         '/api/v1/data/contracts/options/roots?region=TW',
+        opts,
     );
 }
 

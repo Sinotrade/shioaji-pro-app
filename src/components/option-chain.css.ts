@@ -1,6 +1,6 @@
 // src/components/option-chain.css.ts
 
-import { style, styleVariants } from '@vanilla-extract/css';
+import { style } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const wrap = style({
@@ -13,39 +13,39 @@ export const wrap = style({
 export const toolbar = style({
     display: 'flex',
     alignItems: 'center',
-    gap: '2px',
+    gap: '6px',
+    minWidth: 0,
     padding: `4px ${vars.space.sm}`,
     borderBottom: `1px solid ${vars.color.border}`,
     flexShrink: 0,
 });
 
-const monthBase = style({
-    fontFamily: vars.font.mono,
-    fontSize: '0.66rem',
-    fontWeight: 500,
-    padding: '2px 8px',
-    cursor: 'pointer',
-    background: 'transparent',
-    border: '1px solid transparent',
-    borderRadius: vars.radius.sm,
-    color: vars.color.mutedForeground,
-    ':hover': { color: vars.color.foreground },
-});
-
-export const month = styleVariants({
-    off: [monthBase],
-    on: [
-        monthBase,
-        { color: vars.color.foreground, background: vars.color.muted },
-    ],
-});
-
 export const atm = style({
     marginLeft: 'auto',
+    // 極窄面板時讓位給到期選擇器的最小寬度，以省略號截斷（全文在 title）
+    flexShrink: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
     fontFamily: vars.font.mono,
     fontSize: '0.68rem',
     color: vars.color.mutedForeground,
     fontVariantNumeric: 'tabular-nums',
+});
+
+// 合約載入狀態：工具列下方單獨一列，過長時以省略號截斷（全文在 title）
+export const status = style({
+    flexShrink: 0,
+    minWidth: 0,
+    padding: `2px ${vars.space.sm}`,
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    textOverflow: 'ellipsis',
+    fontFamily: vars.font.mono,
+    fontSize: '0.64rem',
+    color: vars.color.mutedForeground,
+    borderBottom: `1px solid ${vars.color.border}`,
 });
 
 export const table = style({
