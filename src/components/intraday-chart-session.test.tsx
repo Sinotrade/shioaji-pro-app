@@ -333,4 +333,66 @@ describe('IntradayChart session toggle', () => {
         await flush();
         expect(iso((price().last as any[])[0].time)).toBe('2026-09-25T15:01');
     });
+
+    const text = (r: ReactTestRenderer) =>
+        r.root
+            .findAll((n) => typeof n.type === 'string')
+            .flatMap((n) => n.children.filter((c) => typeof c === 'string'))
+            .join('|');
+    const openSettings = (r: ReactTestRenderer) =>
+        act(() =>
+            r.root
+                .find((n) => n.type === 'button' && String(n.props.title ?? '').startsWith('顯示設定'))
+                .props.onClick(),
+        );
+
+    it('past session: change is marked approximate and band mode explains auto-scale', async () => {
+        setNow('2026-09-25T20:00:30');
+        fetchMock.mockResolvedValue(DATA);
+        const r = mount({ contract: stkFut, sessionMode: 'day', onSessionModeChange: () => {} });
+        await flush();
+        expect(text(r)).toContain('≈');
+        openSettings(r);
+        expect(r.root.findAll((n) => n.props.className === styles.settingsHint)).toHaveLength(1);
+    });
+
+    it('live session: no approximate marker, no band hint', async () => {
+        setNow('2026-09-25T20:00:30');
+        fetchMock.mockResolvedValue(DATA);
+        const r = mount({ contract: stkFut, sessionMode: 'night', onSessionModeChange: () => {} });
+        await flush();
+        expect(text(r)).not.toContain('≈');
+        openSettings(r);
+        expect(r.root.findAll((n) => n.props.className === styles.settingsHint)).toHaveLength(0);
+    });
+
+    it('unknown persisted value falls back to 自動', async () => {
+        setNow('2026-09-25T20:00:30');
+        fetchMock.mockResolvedValue(DATA);
+        const r = mount({ contract: fut, sessionMode: 'foo', onSessionModeChange: () => {} });
+        await flush();
+        const chip = r.root.find((n) => n.type === 'button' && n.props['aria-haspopup'] === 'menu');
+        expect(chip.props.className).toBe(styles.sessionChipBtn.auto);
+        expect(iso((price().last as any[])[0].time)).toBe('2026-09-25T15:01');
+    });
+
+    it('manual lock without data on a weekend → latest real session, with its date', async () => {
+        // 週六 11:00，範圍內只有夜盤資料 → 鎖日盤退到週五日盤並標日期
+        setNow('2026-09-26T11:00:00');
+        fetchMock.mockResolvedValue(kbars([['2026-09-25T15:00:00', '2026-09-26T05:00:00', () => 22800]]));
+        const r = mount({ contract: fut, sessionMode: 'day', onSessionModeChange: () => {} });
+        await flush();
+        const chip = r.root.find((n) => n.type === 'button' && n.props['aria-haspopup'] === 'menu');
+        expect(chip.children.join('')).toBe('09/25 日盤');
+    });
+
+    it('manual lock without data today still shows the date', async () => {
+        // 週五 10:00 鎖夜盤、範圍內沒有夜盤資料 → 昨晚（週四）夜盤空框架＋日期
+        setNow('2026-09-25T10:00:00');
+        fetchMock.mockResolvedValue(kbars([['2026-09-25T08:45:00', '2026-09-25T10:00:00', () => 22500]]));
+        const r = mount({ contract: fut, sessionMode: 'night', onSessionModeChange: () => {} });
+        await flush();
+        const chip = r.root.find((n) => n.type === 'button' && n.props['aria-haspopup'] === 'menu');
+        expect(chip.children.join('')).toBe('09/24 夜盤');
+    });
 });

@@ -225,6 +225,12 @@ export const settingsLabel = style({
     minWidth: '2.2em',
 });
 
+// 設定列的說明（例如回顧時段停板模式暫以自動縮放）
+export const settingsHint = style({
+    color: vars.color.amber,
+    fontSize: '0.6rem',
+});
+
 // 自訂 range 滑桿：4px 軌道以 --sj-fill 漸層填到滑塊位置，
 // 滑塊是帶光暈的圓點，hover/拖曳時放大
 export const slider = style({

@@ -8,7 +8,10 @@ import {
     hasNightSession,
     isDaySessionLabel,
     isDaySessionTick,
+    daySessionLabel,
     isPastSession,
+    parseChartSessionMode,
+    parseIntradaySessionMode,
     pastSessionReference,
     pickIntradayWindow,
     supportsSessionSplit,
@@ -464,5 +467,35 @@ describe('past-session reference (晚上回顧日盤)', () => {
         // 前一天的日盤在隔天 13:50 仍是舊時段
         const prevDay = sessionWindowFor('FUT', t('2026-08-06T09:00:00'));
         expect(isPastSession('FUT', prevDay, t('2026-08-07T13:50:00'))).toBe(true);
+    });
+});
+
+describe('persisted session values', () => {
+    it('accept only the known modes', () => {
+        expect(parseIntradaySessionMode('night')).toBe('night');
+        expect(parseIntradaySessionMode('foo')).toBeUndefined();
+        expect(parseIntradaySessionMode(undefined)).toBeUndefined();
+        expect(parseChartSessionMode('day')).toBe('day');
+        expect(parseChartSessionMode('night')).toBeUndefined();
+    });
+});
+
+describe('daySessionLabel', () => {
+    it('reflects the product session hours', () => {
+        expect(daySessionLabel('FUT')).toBe('08:45–13:45');
+        expect(daySessionLabel('STK')).toBe('09:00–13:30');
+    });
+});
+
+describe('manual lock fallback skips non-existent weekend sessions', () => {
+    it('Saturday day / Sunday night / Monday-morning night roll back to Friday', () => {
+        // 週六 11:00 鎖日盤 → 週五日盤
+        expect(pickIntradayWindow('FUT', [], 'day', t('2026-09-26T11:00:00')).start).toBe(t('2026-09-25T08:45:00'));
+        // 週日 20:00 鎖夜盤 → 週五夜盤
+        expect(pickIntradayWindow('FUT', [], 'night', t('2026-09-27T20:00:00')).start).toBe(t('2026-09-25T15:00:00'));
+        // 週一 10:00 鎖夜盤（前一晚是週日，不存在）→ 週五夜盤
+        expect(pickIntradayWindow('FUT', [], 'night', t('2026-09-28T10:00:00')).start).toBe(t('2026-09-25T15:00:00'));
+        // 週一 08:30 鎖日盤 → 即將開始的週一日盤
+        expect(pickIntradayWindow('FUT', [], 'day', t('2026-09-28T08:30:00')).start).toBe(t('2026-09-28T08:45:00'));
     });
 });

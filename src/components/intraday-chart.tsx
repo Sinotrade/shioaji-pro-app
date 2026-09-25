@@ -30,6 +30,7 @@ import {
     CLOSE_GRACE,
     followsSession,
     isPastSession,
+    parseIntradaySessionMode,
     pastSessionReference,
     pickIntradayWindow,
     sessionMinutes,
@@ -298,12 +299,14 @@ export function IntradayChart({
     const [empty, setEmpty] = useState(false);
     const [reloadSeq, setReloadSeq] = useState(0);
     // 時段：自動（依資料）/ 手動鎖日盤或夜盤 — 只對有夜盤的期/選有意義
+    // 存檔值只認 auto|day|night，其餘退回自動
+    const propMode = parseIntradaySessionMode(sessionModeProp);
     const [localSessionMode, setLocalSessionMode] =
-        useState<IntradaySessionMode>(sessionModeProp ?? 'auto');
+        useState<IntradaySessionMode>(propMode ?? 'auto');
     const canPickSession = supportsSessionSplit(contract);
     const sessionMode: IntradaySessionMode = canPickSession
         ? onSessionModeChange
-            ? (sessionModeProp ?? 'auto')
+            ? (propMode ?? 'auto')
             : localSessionMode
         : 'auto';
     const sessionModeRef = useRef(sessionMode);
@@ -1281,11 +1284,14 @@ export function IntradayChart({
     const sessionDate = win
         ? new Date((win.night ? win.start : win.end) * 1000)
         : null;
+    // 手動鎖定但該時段沒資料（假日/範圍外）— 一律標日期，不讓空框架
+    // 看起來像今天
     const staleDate =
         win &&
         sessionDate &&
-        !sameTwDay(new Date(win.start * 1000)) &&
-        !sameTwDay(new Date(win.end * 1000))
+        ((!sameTwDay(new Date(win.start * 1000)) &&
+            !sameTwDay(new Date(win.end * 1000))) ||
+            (sessionMode !== 'auto' && empty))
             ? `${String(sessionDate.getUTCMonth() + 1).padStart(2, '0')}/${String(
                   sessionDate.getUTCDate(),
               ).padStart(2, '0')}`
@@ -1398,7 +1404,15 @@ export function IntradayChart({
                 >
                     {shownPrice !== undefined ? fmtPrice(shownPrice) : '—'}
                 </span>
-                <span className={panel.dirText[dir]}>
+                <span
+                    className={panel.dirText[dir]}
+                    title={
+                        pastRef.current
+                            ? '回顧已結束的時段：參考價以前一個日盤最後收盤近似（非官方結算價），漲跌僅供參考'
+                            : undefined
+                    }
+                >
+                    {pastRef.current && chg !== undefined ? '≈' : ''}
                     {chg !== undefined
                         ? `${chg > 0 ? '+' : ''}${fmtPrice(chg)}`
                         : ''}
@@ -1537,13 +1551,27 @@ export function IntradayChart({
                                                                 : 'normal'
                                                         ]
                                                     }
-                                                    title='Y 軸固定為漲跌停整段區間並標出漲停/跌停線'
+                                                    title={
+                                                        pastRef.current
+                                                            ? '回顧已結束的時段沒有該時段的漲跌停資料，暫以自動縮放顯示'
+                                                            : 'Y 軸固定為漲跌停整段區間並標出漲停/跌停線'
+                                                    }
                                                     onClick={() =>
                                                         pickScaleMode('band')
                                                     }
                                                 >
                                                     漲跌停
                                                 </button>
+                                                {pastRef.current &&
+                                                    scaleMode === 'band' && (
+                                                        <span
+                                                            className={
+                                                                styles.settingsHint
+                                                            }
+                                                        >
+                                                            回顧時段無停板，暫以自動縮放
+                                                        </span>
+                                                    )}
                                             </span>
                                         )}
                                     <span className={styles.settingsRow}>

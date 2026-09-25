@@ -102,6 +102,31 @@ export function filterDaySession<T extends { time: number }>(
 // 當日走勢的時段選擇：auto = 依資料所在（原行為）；day/night =
 // 使用者手動鎖定，取「有資料的最近一段」該種時段（晚上複盤今天日盤）
 export type IntradaySessionMode = 'auto' | 'day' | 'night';
+export type ChartSessionMode = 'all' | 'day';
+
+// 存檔讀回的時段值只接受已知值，其餘（舊版/手改/壞檔）退回預設
+export function parseIntradaySessionMode(
+    v: unknown,
+): IntradaySessionMode | undefined {
+    return v === 'auto' || v === 'day' || v === 'night' ? v : undefined;
+}
+
+export function parseChartSessionMode(v: unknown): ChartSessionMode | undefined {
+    return v === 'all' || v === 'day' ? v : undefined;
+}
+
+// 商品日盤時間字串（按鈕說明用，不寫死）
+export function daySessionLabel(secType: SecurityType): string {
+    // 取任一交易日 10:00 的日盤框架
+    const w = sessionWindowFor(secType, 10 * H);
+    const hm = (t: number) => {
+        const tod = ((t % DAY) + DAY) % DAY;
+        return `${String(Math.floor(tod / H)).padStart(2, '0')}:${String(
+            Math.floor((tod % H) / 60),
+        ).padStart(2, '0')}`;
+    };
+    return `${hm(w.start)}–${hm(w.end)}`;
+}
 
 // 最近一段（含進行中/即將開始）指定種類的時段框架 — 手動模式下
 // 完全沒有該種時段資料時，用它開空框架
@@ -111,15 +136,30 @@ function latestWindowOfKind(
     now: number,
 ): SessionWindow {
     const cur = sessionWindowFor(secType, now);
-    if (cur.night === night) return cur;
     const d0 = Math.floor(now / DAY) * DAY;
     const tod = now - d0;
-    if (night) {
-        // 日盤時段 → 前一晚開始的夜盤（凌晨已收的那段）
-        return sessionWindowFor(secType, d0 + H);
+    let win =
+        cur.night === night
+            ? cur
+            : night
+              ? // 日盤時段 → 前一晚開始的夜盤（凌晨已收的那段）
+                sessionWindowFor(secType, d0 + H)
+              : // 夜盤時段：15:00 後 → 今天日盤；凌晨 → 昨天日盤
+                sessionWindowFor(
+                    secType,
+                    (tod <= 5 * H ? d0 - DAY : d0) + 9 * H,
+                );
+    // 週六、週日開始的時段不存在（週六日盤、週六/週日夜盤）— 往前退到
+    // 週五那段。國定假日無從得知，由呼叫端標日期提示
+    for (let i = 0; i < 3 && isWeekendStart(win); i++) {
+        win = sessionWindowFor(secType, win.start - DAY + 60);
     }
-    // 夜盤時段：15:00 後 → 今天日盤；凌晨 → 昨天日盤
-    return sessionWindowFor(secType, (tod <= 5 * H ? d0 - DAY : d0) + 9 * H);
+    return win;
+}
+
+function isWeekendStart(win: SessionWindow): boolean {
+    const wd = new Date(win.start * 1000).getUTCDay(); // 牆鐘編碼 → 台灣星期
+    return wd === 0 || wd === 6;
 }
 
 // 依模式挑出要畫的時段。times = 已排序的 1 分 K label；pendStart =

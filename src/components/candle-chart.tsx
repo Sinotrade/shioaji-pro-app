@@ -51,8 +51,11 @@ import {
 } from '../lib/indicator-defs';
 import { IndicatorInstanceContext } from '../lib/indicator-instance-context';
 import {
+    daySessionLabel,
     filterDaySession,
     isDaySessionTick,
+    parseChartSessionMode,
+    type ChartSessionMode,
     supportsSessionSplit,
     type SessionContractLike,
 } from '../lib/intraday-session';
@@ -117,7 +120,7 @@ const TRADE_MODES: { key: TradeMode; label: string }[] = [
 // keep paging until this floor — one page per fetch, spans widen with tf
 const MAX_HISTORY_DAYS = 1095; // ~3 years
 
-export type ChartSessionMode = 'all' | 'day';
+export type { ChartSessionMode };
 
 export function CandleChart({
     panelId,
@@ -145,14 +148,15 @@ export function CandleChart({
     const [tfIdx, setTfIdx] = useState(1); // default 5m
     // 僅日盤：aggregate 前濾掉夜盤 1 分 K、live 夜盤 tick 不入圖，指標
     // 也就只吃日盤 K 棒。只開給日盤 08:45–13:45 的期/選，其他商品一律全盤
+    // 存檔值只認 all|day，其餘退回全盤
+    const propMode = parseChartSessionMode(sessionModeProp);
     const [localSessionMode, setLocalSessionMode] =
-        useState<ChartSessionMode>(sessionModeProp ?? 'all');
+        useState<ChartSessionMode>(propMode ?? 'all');
     const canDayOnly = supportsSessionSplit(contract as SessionContractLike);
     const dayOnly =
         canDayOnly &&
-        (onSessionModeChange
-            ? (sessionModeProp ?? 'all')
-            : localSessionMode) === 'day';
+        (onSessionModeChange ? (propMode ?? 'all') : localSessionMode) ===
+            'day';
     const pickSessionMode = (m: ChartSessionMode) => {
         setLocalSessionMode(m);
         onSessionModeChange?.(m);
@@ -1535,25 +1539,20 @@ export function CandleChart({
                     </button>
                 ))}
                 {canDayOnly && (
-                    <>
-                        <span className={styles.toolbarDivider} />
-                        <button
-                            className={styles.tfBtn[dayOnly ? 'normal' : 'active']}
-                            title='全盤：日盤＋夜盤 K 棒'
-                            aria-pressed={!dayOnly}
-                            onClick={() => pickSessionMode('all')}
-                        >
-                            全盤
-                        </button>
-                        <button
-                            className={styles.tfBtn[dayOnly ? 'active' : 'normal']}
-                            title='僅日盤：只畫 08:45–13:45 日盤 K 棒，指標也只用日盤計算'
-                            aria-pressed={dayOnly}
-                            onClick={() => pickSessionMode('day')}
-                        >
-                            日盤
-                        </button>
-                    </>
+                    // 單一切換鈕（亮＝僅日盤）— 工具列寬度吃緊，不另開
+                    // 「全盤」鈕與分隔線，窄面板才不會提早折行
+                    <button
+                        className={styles.tfBtn[dayOnly ? 'active' : 'normal']}
+                        title={
+                            dayOnly
+                                ? `僅日盤（${daySessionLabel(contract.security_type)}），指標也只用日盤計算 — 點擊切回全盤`
+                                : `全盤（日盤＋夜盤）— 點擊改為僅日盤 ${daySessionLabel(contract.security_type)}`
+                        }
+                        aria-pressed={dayOnly}
+                        onClick={() => pickSessionMode(dayOnly ? 'all' : 'day')}
+                    >
+                        日盤
+                    </button>
                 )}
                 <button
                     className={styles.iconBtn}

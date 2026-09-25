@@ -127,8 +127,9 @@ describe('CandleChart 全盤/日盤 ', () => {
         // default all → night bars present (5m)
         let d = candles().last as any[];
         expect(d.some((b) => b.close === 200)).toBe(true);
-        const [all] = btn(r, '全盤');
-        expect(all!.props['aria-pressed']).toBe(true);
+        const [toggle] = btn(r, '日盤');
+        expect(toggle!.props['aria-pressed']).toBe(false);
+        expect(toggle!.props.title).toContain('08:45–13:45');
         const before = created.length;
         act(() => btn(r, '日盤')[0]!.props.onClick());
         expect(mode).toBe('day');
@@ -196,7 +197,7 @@ describe('CandleChart 全盤/日盤 ', () => {
         await flush();
         act(() => r.update(createElement(CandleChart, { contract: fut, sessionMode: undefined, onSessionModeChange: onChange } as any)));
         await flush();
-        expect(btn(r, '全盤')[0]!.props['aria-pressed']).toBe(true);
+        expect(btn(r, '日盤')[0]!.props['aria-pressed']).toBe(false);
     });
 
     it('long day-session products (FX, underlying E) get no toggle and keep all bars', async () => {
@@ -204,7 +205,7 @@ describe('CandleChart 全盤/日盤 ', () => {
         fetchMock.mockResolvedValue(DATA);
         const r = mount({ contract: { ...fut, code: 'RTFR1', underlying_kind: 'E' }, sessionMode: 'day', onSessionModeChange: () => {} });
         await flush();
-        expect(btn(r, '全盤')).toHaveLength(0);
+        expect(btn(r, '日盤')).toHaveLength(0);
         expect((candles().last as any[]).some((b) => b.close === 200)).toBe(true);
     });
 
@@ -214,8 +215,27 @@ describe('CandleChart 全盤/日盤 ', () => {
         const r = mount({ contract: fut, sessionMode: 'day' });
         await flush();
         expect((candles().last as any[]).every((b) => b.close === 100)).toBe(true);
-        act(() => btn(r, '全盤')[0]!.props.onClick());
+        expect(btn(r, '日盤')[0]!.props['aria-pressed']).toBe(true);
+        act(() => btn(r, '日盤')[0]!.props.onClick()); // 單一切換鈕：再按回全盤
         await flush();
         expect((candles().last as any[]).some((b) => b.close === 200)).toBe(true);
+    });
+
+    it('unknown persisted value falls back to 全盤', async () => {
+        setNow('2026-09-25T20:00:30');
+        fetchMock.mockResolvedValue(DATA);
+        const r = mount({ contract: fut, sessionMode: 'foo', onSessionModeChange: () => {} });
+        await flush();
+        expect(btn(r, '日盤')[0]!.props['aria-pressed']).toBe(false);
+        expect((candles().last as any[]).some((b) => b.close === 200)).toBe(true);
+    });
+
+    it('the toggle is a single compact button (no separate 全盤 button)', async () => {
+        setNow('2026-09-25T20:00:30');
+        fetchMock.mockResolvedValue(DATA);
+        const r = mount({ contract: fut, onSessionModeChange: () => {} });
+        await flush();
+        expect(btn(r, '全盤')).toHaveLength(0);
+        expect(btn(r, '日盤')).toHaveLength(1);
     });
 });
