@@ -61,7 +61,10 @@ export function OptionExpiryPicker({
                                 className={styles.chip[on ? 'on' : 'off']}
                                 onClick={() => onChange(e.key)}
                             >
-                                <span className={styles.date}>
+                                <span
+                                    className={styles.date[e.shiftedFrom === null ? 'normal' : 'shifted']}
+                                    data-shifted={e.shiftedFrom !== null || undefined}
+                                >
                                     {e.date.slice(5, 7)}/{e.date.slice(8, 10)}
                                 </span>
                                 <span className={styles.kind[e.kind === 'monthly' ? 'monthly' : 'weekly']}>

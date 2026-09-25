@@ -3,6 +3,10 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildExpiries,
+    chooseAtmReference,
+    migrateLegacyMonth,
+    msUntilNextBoundary,
+    taipeiClock,
     contractsForExpiry,
     daysLeftLabel,
     expiryTitle,
@@ -88,6 +92,18 @@ describe('pickChainRoots', () => {
         expect(pickChainRoots(roots)).toContain('TZW');
     });
 
+    it('requires the 臺指選擇權 name prefix and uses the TX? pattern only without a name', () => {
+        const roots = [
+            { root: 'TXO', name: '臺指選擇權' },
+            { root: 'TXQ', name: '其他選擇權' },
+            { root: 'TX9', name: '' },
+            { root: 'TXAB' },
+        ];
+        expect(pickChainRoots(roots)).toEqual(['TXO', 'TX9']);
+        // no monthly row: the family name still gates named roots
+        expect(pickChainRoots([{ root: 'TX1', name: '臺指選擇權 週三W1' }, { root: 'TXQ', name: '其他' }])).toEqual(['TXO', 'TX1']);
+    });
+
     it('always keeps the monthly root when roots omit it', () => {
         expect(pickChainRoots([])).toEqual(['TXO']);
     });
@@ -147,7 +163,45 @@ describe('buildExpiries', () => {
     });
 
     it('describes an expiry for tooltips', () => {
-        expect(expiryTitle(expiries[0]!)).toBe('2026/09/29 到期 · 週五週選（TXY）· 剩 4 天');
+        // 模擬資料：TXY 原定週五，實際 09/29 是週二（遇假日調整）
+        expect(expiryTitle(expiries[0]!)).toBe(
+            '2026/09/29（二）到期 · 週五週選（TXY） · 原定週五，遇假日調整為週二 · 剩 4 天',
+        );
+        expect(expiries[0]!.shiftedFrom).toBe(5);
+        expect(expiries.find((e) => e.key === 'TXU:2026-10-02')!.shiftedFrom).toBeNull();
+    });
+
+    it('falls back to the delivery date weekday when expiry_weekday is missing', () => {
+        const list = buildExpiries(
+            [
+                ...series('TXA', '2026-10-09', 30, { expiry_weekday: undefined }),
+                ...series('TXB', '2026-10-14', 30, { expiry_weekday: undefined }),
+                ...series('TXO', '2026-10-21', 30),
+            ],
+            TODAY,
+        );
+        expect(list.map((e) => [e.root, e.kind, e.shiftedFrom])).toEqual([
+            ['TXA', 'fri', null],
+            ['TXB', 'wed', null],
+            ['TXO', 'monthly', null],
+        ]);
+    });
+
+    it('drops contracts without underlying_code once the monthly has one', () => {
+        const list = buildExpiries(
+            [...series('TXO', '2026-10-21', 30), ...series('TX1', '2026-10-07', 30, { underlying_code: undefined })],
+            TODAY,
+        );
+        expect(list.map((e) => e.key)).toEqual(['TXO:2026-10-21']);
+    });
+
+    it('keeps an expiry until the 13:45 close on its delivery day', () => {
+        const before = buildExpiries(CONTRACTS, { date: '2026-09-29', minutes: 13 * 60 + 44 });
+        const after = buildExpiries(CONTRACTS, { date: '2026-09-29', minutes: 13 * 60 + 45 });
+        expect(before[0]!.key).toBe('TXY:2026-09-29');
+        expect(resolveExpiry(before, null)).toBe('TXY:2026-09-29');
+        expect(after.map((e) => e.key)).not.toContain('TXY:2026-09-29');
+        expect(resolveExpiry(after, 'TXY:2026-09-29')).toBe('TX5:2026-09-30');
     });
 });
 
@@ -174,7 +228,41 @@ describe('resolveExpiry', () => {
     });
 });
 
+describe('legacy month memory', () => {
+    const expiries = buildExpiries(CONTRACTS, TODAY);
+
+    it('maps an old YYYYMM to that month\'s monthly expiry', () => {
+        expect(migrateLegacyMonth(expiries, '202610')).toBe('TXO:2026-10-21');
+        expect(migrateLegacyMonth(expiries, '202611')).toBe('TXO:2026-11-18');
+    });
+
+    it('returns null when the old month is gone or unset', () => {
+        expect(migrateLegacyMonth(expiries, '202609')).toBeNull();
+        expect(migrateLegacyMonth(expiries, null)).toBeNull();
+    });
+});
+
+describe('chooseAtmReference', () => {
+    it('takes the first usable price in order', () => {
+        expect(
+            chooseAtmReference([
+                { label: '加權', value: undefined },
+                { label: 'TXF', value: 40500, change: -20 },
+            ]),
+        ).toEqual({ label: 'TXF', value: 40500, change: -20 });
+        expect(chooseAtmReference([{ label: '加權', value: 0 }, { label: 'TXF', value: Number.NaN }])).toBeNull();
+    });
+});
+
 describe('helpers', () => {
+    it('reports the Taipei clock and the next close/midnight boundary', () => {
+        const at = Date.UTC(2026, 8, 25, 5, 0); // 13:00 Taipei
+        expect(taipeiClock(at)).toEqual({ date: '2026-09-25', minutes: 13 * 60 });
+        expect(msUntilNextBoundary(at)).toBe(45 * 60_000);
+        const evening = Date.UTC(2026, 8, 25, 12, 0); // 20:00 Taipei
+        expect(msUntilNextBoundary(evening)).toBe(4 * 3600_000);
+    });
+
     it('computes the Taipei calendar date', () => {
         // 2026-09-25 16:30 UTC = 2026-09-26 00:30 Taipei
         expect(taipeiToday(Date.UTC(2026, 8, 25, 16, 30))).toBe('2026-09-26');

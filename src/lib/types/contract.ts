@@ -52,6 +52,10 @@ export interface ContractInfo extends Contract {
     option_right?: string;
     delivery_month?: string;
     delivery_date?: string;
+    // TAIFEX 1.7 選擇權到期規則：原定到期星期（'Wed'/'Fri'）與當月第幾週；
+    // 遇假日調整時 delivery_date 的實際星期可能不同
+    expiry_weekday?: string;
+    week_of_month?: number;
     last_trading_date?: string;
     root?: string;
     underlying_code?: string;

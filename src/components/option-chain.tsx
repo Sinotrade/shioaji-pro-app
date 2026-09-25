@@ -1,25 +1,35 @@
 import { RefreshButton } from './refresh-button';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
 // src/components/option-chain.tsx — 臺指選擇權 T 字報價表（月選＋週選）.
-// Loads the TAIEX option contracts once per day (cached): the monthly TXO
-// root plus every weekly root discovered from options/roots (issue #152).
-// Expiries are keyed by (root, delivery_date); shows strikes around ATM for
-// the selected expiry and refreshes quotes via batched snapshots.
+// Loads the TAIEX option contracts once per Taipei day: the monthly TXO root
+// plus every weekly root discovered from options/roots (issue #152).
+// Expiries are keyed by (root, delivery_date); shows strikes around the
+// underlying index (fallback TXFR1, then the median strike) for the
+// selected expiry and refreshes quotes via batched snapshots.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery } from '../hooks/use-query';
 import { useQuote } from '../hooks/use-stream';
+import { ensureContract } from '../lib/contracts-cache';
 import {
     buildExpiries,
+    chainUnderlying,
+    chooseAtmReference,
     contractsForExpiry,
     isChainContract,
+    migrateLegacyMonth,
     MONTHLY_ROOT,
+    msUntilNextBoundary,
     pickChainRoots,
     resolveExpiry,
-    taipeiToday,
+    taipeiClock,
+    underlyingLabel,
     type ChainContract,
+    type ExpiryClock,
 } from '../lib/option-expiry';
 import { pickOptionLeg } from '../lib/option-pick';
-import { fetchOptionRoots, fetchOptions } from '../lib/shioaji';
+import { fetchOptionRoots, fetchOptions, fetchSnapshots } from '../lib/shioaji';
+import type { Snapshot } from '../lib/types/market';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as styles from './option-chain.css';
@@ -29,40 +39,96 @@ import * as panel from './panel.css';
 
 type OptContract = ChainContract;
 
-// 合約清單一天載一次：週選每週掛牌／到期，跨日要重新發現
-let optCache: { day: string; rows: OptContract[] } | null = null;
-let optLoading: { day: string; p: Promise<OptContract[]> } | null = null;
+// 各商品代碼的合約每個台北交易日載一次（週選每週掛牌／到期）。只快取
+// 成功結果與已知的占位代碼；其他失敗（如一次性 500）下次載入會重試。
+const rootCache = new Map<string, { day: string; rows: OptContract[] }>();
+let rootsCache: { day: string; roots: string[] } | null = null;
+const inflight = new Map<string, Promise<ChainLoad>>();
 
-export async function loadChainContracts(
-    day: string = taipeiToday(),
-): Promise<OptContract[]> {
-    if (optCache?.day === day) return optCache.rows;
-    if (optLoading?.day === day) return optLoading.p;
-    const p = (async () => {
-        // roots 查不到時退回只載月選
-        const roots = await fetchOptionRoots().catch(() => []);
-        const wanted = roots.length ? pickChainRoots(roots) : [MONTHLY_ROOT];
-        const settled = await Promise.allSettled(
-            wanted.map(async (root) =>
-                (await fetchOptions(root)).map((c) =>
-                    c.root ? c : { ...c, root },
-                ),
-            ),
-        );
-        const loaded = settled.flatMap((r) =>
-            r.status === 'fulfilled' ? [r.value] : [],
-        );
-        // 全部失敗才算失敗；個別週選代碼（如占位 root）讀不到就略過
-        const failed = settled.find((r) => r.status === 'rejected');
-        if (loaded.length === 0 && failed) throw failed.reason;
-        const rows = loaded.flat().filter(isChainContract);
-        optCache = { day, rows };
+/** 測試用：清掉跨掛載的合約快取。 */
+export function resetChainContractsCache() {
+    rootCache.clear();
+    rootsCache = null;
+    inflight.clear();
+}
+
+export interface ChainLoad {
+    rows: OptContract[];
+    // false：roots 或某些代碼讀取失敗（非占位），可以重試
+    complete: boolean;
+}
+
+/** 交易所預留、尚未有合約資料的週選代碼（sidecar 回 500 no info_hash）。 */
+export function isPlaceholderRootError(e: unknown): boolean {
+    const status = (e as { status?: number } | null)?.status;
+    return status === 500 && /info_hash/i.test(String((e as Error)?.message ?? e));
+}
+
+async function loadRoot(root: string, day: string): Promise<OptContract[]> {
+    const hit = rootCache.get(root);
+    if (hit?.day === day) return hit.rows;
+    try {
+        const rows = (await fetchOptions(root))
+            .map((c) => (c.root ? c : { ...c, root }))
+            .filter(isChainContract);
+        rootCache.set(root, { day, rows });
         return rows;
+    } catch (e) {
+        if (isPlaceholderRootError(e)) {
+            rootCache.set(root, { day, rows: [] });
+            return [];
+        }
+        throw e;
+    }
+}
+
+export function loadChainContracts(day: string): Promise<ChainLoad> {
+    const pending = inflight.get(day);
+    if (pending) return pending;
+    const p = (async (): Promise<ChainLoad> => {
+        let complete = true;
+        let wanted: string[];
+        if (rootsCache?.day === day) wanted = rootsCache.roots;
+        else {
+            try {
+                const roots = await fetchOptionRoots();
+                wanted = pickChainRoots(roots);
+                rootsCache = { day, roots: wanted };
+            } catch {
+                // roots 查不到時先只載月選，下次載入再重試
+                wanted = [MONTHLY_ROOT];
+                complete = false;
+            }
+        }
+        const settled = await Promise.allSettled(
+            wanted.map((root) => loadRoot(root, day)),
+        );
+        const failed = settled.filter((r) => r.status === 'rejected');
+        if (failed.length === settled.length)
+            throw (failed[0] as PromiseRejectedResult).reason;
+        if (failed.length) complete = false;
+        return {
+            rows: settled.flatMap((r) =>
+                r.status === 'fulfilled' ? r.value : [],
+            ),
+            complete,
+        };
     })();
-    optLoading = { day, p };
-    return p.finally(() => {
-        if (optLoading?.p === p) optLoading = null;
-    });
+    inflight.set(day, p);
+    return p.finally(() => inflight.delete(day));
+}
+
+/** 台北日期／收盤時刻；跨 13:45 或午夜時更新，讓到期列表與合約重新計算。 */
+function useExpiryClock(): ExpiryClock {
+    const [clock, setClock] = useState(() => taipeiClock());
+    useEffect(() => {
+        const timer = setTimeout(
+            () => setClock(taipeiClock()),
+            msUntilNextBoundary() + 1000,
+        );
+        return () => clearTimeout(timer);
+    }, [clock]);
+    return clock;
 }
 
 const STRIKE_SPAN = 8; // strikes above/below ATM
@@ -71,12 +137,14 @@ function isCall(c: OptContract): boolean {
     return c.option_right.toUpperCase().startsWith('C');
 }
 
-// 記住 `${root}:${delivery_date}`；舊版只記月份（sj-pro-optchain-month）
+// 記住 `${root}:${delivery_date}`
 export const EXPIRY_KEY = 'sj-pro-optchain-expiry';
+// 舊版只記月份（YYYYMM）；第一次載入時遷移成該月的月選後移除
+export const LEGACY_MONTH_KEY = 'sj-pro-optchain-month';
 
-function readSavedExpiry(): string | null {
+function readStored(key: string): string | null {
     try {
-        return localStorage.getItem(EXPIRY_KEY);
+        return localStorage.getItem(key);
     } catch {
         return null;
     }
@@ -90,44 +158,121 @@ function saveExpiry(key: string) {
     }
 }
 
+function dropLegacyMonth() {
+    try {
+        localStorage.removeItem(LEGACY_MONTH_KEY);
+    } catch {
+        // ignore
+    }
+}
+
 export function OptionChain({
     onPick,
 }: {
     onPick?: (code: string) => void;
 }) {
     const [contracts, setContracts] = useState<OptContract[]>([]);
-    const [choice, setChoice] = useState<string | null>(readSavedExpiry);
+    const [complete, setComplete] = useState(true);
+    const [reloadSeq, setReloadSeq] = useState(0);
+    const [choice, setChoice] = useState<string | null>(() =>
+        readStored(EXPIRY_KEY),
+    );
+    const [legacyMonth, setLegacyMonth] = useState<string | null>(() =>
+        readStored(LEGACY_MONTH_KEY),
+    );
     const [loading, setLoading] = useState(true);
-    const txf = useQuote('TXFR1');
+    const clock = useExpiryClock();
 
+    // 台北日期改變（面板一直開著跨日）或手動重試時重新載入合約
     useEffect(() => {
         let stale = false;
-        loadChainContracts()
-            .then((cs) => {
-                if (!stale) setContracts(cs);
+        loadChainContracts(clock.date)
+            .then((r) => {
+                if (stale) return;
+                setContracts(r.rows);
+                setComplete(r.complete);
             })
-            .catch(() => undefined)
+            .catch(() => {
+                if (!stale) setComplete(false);
+            })
             .finally(() => {
                 if (!stale) setLoading(false);
             });
         return () => {
             stale = true;
         };
-    }, []);
+    }, [clock.date, reloadSeq]);
 
-    const today = taipeiToday();
     const expiries = useMemo(
-        () => buildExpiries(contracts, today),
-        [contracts, today],
+        () => buildExpiries(contracts, clock),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [contracts, clock.date, clock.minutes],
     );
+
+    // 舊版月份記憶：遷移成該月月選（新值優先），之後移除舊 key
+    useEffect(() => {
+        if (legacyMonth === null || expiries.length === 0) return;
+        if (choice === null) {
+            const key = migrateLegacyMonth(expiries, legacyMonth);
+            if (key) {
+                setChoice(key);
+                saveExpiry(key);
+            }
+        }
+        dropLegacyMonth();
+        setLegacyMonth(null);
+    }, [expiries, legacyMonth, choice]);
+
     // 記住的到期若已到期或不再列出，改選最近到期的
     const expiry = resolveExpiry(expiries, choice);
+    const inExpiry = useMemo(
+        () => contractsForExpiry(contracts, expiry),
+        [contracts, expiry],
+    );
 
-    const atm = txf?.tick ? Number(txf.tick.close) : null;
+    // 置中基準：合約標的指數（IX0001 加權）→ 台指期近月 → 履約價中位數
+    const underlying =
+        inExpiry.find((c) => c.underlying_code)?.underlying_code ??
+        chainUnderlying(contracts) ??
+        'IX0001';
+    const indexLive = useQuote(underlying);
+    const txf = useQuote('TXFR1');
+    const refQuery = useQuery<Snapshot[]>(
+        useCallback(async () => {
+            const cs = await Promise.all([
+                ensureContract(underlying, 'IND'),
+                ensureContract('TXFR1', 'FUT'),
+            ]);
+            return fetchSnapshots(cs);
+        }, [underlying]),
+        `optchain-atm-ref:${underlying}`,
+    );
+    const indexSnap = refQuery.data?.find((s) => s.code === underlying);
+    const txfSnap = refQuery.data?.find((s) => s.code !== underlying);
+    const ref = chooseAtmReference([
+        {
+            label: underlyingLabel(underlying),
+            value: indexLive?.index
+                ? Number(indexLive.index.close)
+                : indexSnap?.close,
+            change: indexLive?.index
+                ? Number(indexLive.index.close) -
+                  Number(indexLive.index.reference)
+                : indexSnap?.change_price,
+        },
+        {
+            label: 'TXF',
+            value: txf?.tick ? Number(txf.tick.close) : txfSnap?.close,
+            change: txf?.tick?.price_chg
+                ? Number(txf.tick.price_chg)
+                : txfSnap?.change_price,
+        },
+    ]);
+    const atm = ref?.value ?? null;
 
     // strikes around ATM for the selected expiry
     const rows = useMemo(() => {
-        const inMonth = contractsForExpiry(contracts, expiry);
+        const inMonth = inExpiry;
         const strikes = [
             ...new Set(inMonth.map((c) => c.strike_price)),
         ].sort((a, b) => a - b);
@@ -154,7 +299,7 @@ export function OptionChain({
             ),
         }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contracts, expiry, atm === null ? 0 : Math.round(atm / 100)]);
+    }, [inExpiry, atm === null ? 0 : Math.round(atm / 100)]);
 
     const { snapshots: snaps, refresh: refreshQuotes, loading: quotesLoading, error: quotesError } = useLiveSnapshots(rows.flatMap(r => [r.call, r.put]).filter((c): c is OptContract => !!c));
 
@@ -224,14 +369,34 @@ export function OptionChain({
                         saveExpiry(key);
                     }}
                 />
-                {atm !== null && (
-                    <span className={styles.atm}>
-                        TXF {fmtPrice(atm, 0)}{' '}
-                        {txf?.tick?.price_chg &&
-                            fmtSigned(Number(txf.tick.price_chg), 0)}
-                    </span>
-                )}
-                <RefreshButton label="更新報價" loading={quotesLoading} onClick={() => void refreshQuotes()} />
+                <span
+                    className={styles.atm}
+                    title={
+                        ref
+                            ? `履約價以 ${ref.label} 為中心`
+                            : '尚無標的報價，履約價以中位數為中心'
+                    }
+                >
+                    {ref ? (
+                        <>
+                            {ref.label} {fmtPrice(ref.value, 0)}{' '}
+                            {ref.change !== undefined &&
+                                fmtSigned(ref.change, 0)}
+                        </>
+                    ) : (
+                        '中位數置中'
+                    )}
+                </span>
+                <RefreshButton
+                    label="更新報價"
+                    loading={quotesLoading}
+                    onClick={() => {
+                        void refreshQuotes();
+                        void refQuery.refresh();
+                        // 合約有讀取失敗時一併重試
+                        if (!complete) setReloadSeq((n) => n + 1);
+                    }}
+                />
             </div>
             <div className={panel.panelBody}>
                 <table className={styles.table}>

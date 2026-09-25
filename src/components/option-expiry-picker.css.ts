@@ -77,8 +77,20 @@ export const chip = styleVariants({
     ],
 });
 
-export const date = style({
+const dateBase = style({
     fontWeight: 600,
+});
+
+// 遇假日調整的到期日：虛線底線提示，詳情見 tooltip
+export const date = styleVariants({
+    normal: [dateBase],
+    shifted: [
+        dateBase,
+        {
+            textDecoration: 'underline dotted',
+            textUnderlineOffset: '2px',
+        },
+    ],
 });
 
 const kindBase = style({
