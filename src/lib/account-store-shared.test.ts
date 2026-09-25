@@ -66,6 +66,17 @@ describe('shared account read', () => {
         expect(mod.getAccountState().selectedStock).toEqual(account);
     });
 
+    it('a type with no signed account at first load still gets the saved pick later', async () => {
+        const a2 = { ...account, account_id: 'a2' };
+        store.set('sj-pro-accounts-selected', JSON.stringify({ stock: 'b-a2' }));
+        fetchAccounts.mockResolvedValue([{ ...account, signed: false }, { ...a2, signed: false }]);
+        await mod.loadAccountsShared();
+        expect(mod.getAccountState().selectedStock).toBeNull();
+        fetchAccounts.mockResolvedValue([account, a2]); // both signed now
+        await mod.loadAccountsShared();
+        expect(mod.getAccountState().selectedStock).toEqual(a2); // not the first
+    });
+
     it('the first load still honours the saved selection', async () => {
         const a2 = { ...account, account_id: 'a2' };
         store.set('sj-pro-accounts-selected', JSON.stringify({ stock: 'b-a2' }));

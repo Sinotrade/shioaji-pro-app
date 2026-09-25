@@ -69,28 +69,30 @@ function fetchShared(): Promise<Account[]> {
     return fetching;
 }
 
-// The saved selection seeds only the FIRST load. Afterwards this window's
-// in-memory choice wins while that account is still listed and signed:
-// re-reading storage on every re-read (each trade-report re-subscription)
+// This window's in-memory choice wins while that account is still listed
+// and signed; the saved selection only fills a type with no usable pick:
+// letting storage win on every re-read (each trade-report re-subscription)
 // would silently switch the order account to whatever ANOTHER window saved.
 function apply(all: Account[]) {
     // only signed accounts are candidates for the order account
     const signed = all.filter((a) => a.signed);
     const stocks = signed.filter((a) => a.account_type === 'S');
     const futures = signed.filter((a) => a.account_type === 'F');
+    // per type: keep the current pick while it is still listed and signed;
+    // with no usable pick (first load, or none of that type was signed
+    // before) the saved choice applies, then the first signed account
     const current = (picked: Account | null, pool: Account[]) =>
         picked ? pool.find((a) => keyOf(a) === keyOf(picked)) : undefined;
-    const seeded = state.accounts.length > 0;
-    const saved = seeded ? {} : loadSelection();
+    const saved = loadSelection();
     state = {
         accounts: all,
         selectedStock:
-            (seeded ? current(state.selectedStock, stocks) : undefined) ??
+            current(state.selectedStock, stocks) ??
             stocks.find((a) => keyOf(a) === saved.stock) ??
             stocks[0] ??
             null,
         selectedFutures:
-            (seeded ? current(state.selectedFutures, futures) : undefined) ??
+            current(state.selectedFutures, futures) ??
             futures.find((a) => keyOf(a) === saved.futures) ??
             futures[0] ??
             null,

@@ -24,6 +24,7 @@ import {
 } from './lib/desktop-setup-state';
 import { isTauri, loadDesktopSettings } from './lib/tauri';
 import { isChildWindow } from './lib/window-role';
+import { markStage } from './lib/startup-timing';
 
 type MainGateState = 'loading' | 'setup' | 'app' | 'error';
 
@@ -48,6 +49,11 @@ function MainWindowGate() {
             cancelled = true;
         };
     }, [attempt]);
+    // parent effects run after the whole subtree committed: this marks the
+    // dashboard's first mount for startup timing (#142; no-op without a run)
+    useEffect(() => {
+        if (state === 'app') markStage('app-mounted');
+    }, [state]);
     if (state === 'loading') return null; // instant local read, no flash
     if (state === 'error') {
         return (

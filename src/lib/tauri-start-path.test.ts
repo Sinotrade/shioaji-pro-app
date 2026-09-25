@@ -158,3 +158,11 @@ describe('page-start reads', () => {
         expect(st).toMatchObject({ running: true, port: 8080 });
     });
 });
+
+describe('candidate order', () => {
+    it('both the App port and 8080 answer: the App port wins', async () => {
+        listening.add(21322);
+        listening.add(8080);
+        expect(await tauri.serverStatus()).toMatchObject({ running: true, port: 21322 });
+    });
+});

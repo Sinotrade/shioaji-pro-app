@@ -1156,6 +1156,9 @@ function assertMainWindowSettingsAccess(): void {
     }
 }
 
+let storeModulePromise: Promise<typeof import('@tauri-apps/plugin-store')> | null = null;
+const storeModule = () => (storeModulePromise ??= import('@tauri-apps/plugin-store'));
+
 // boot and the main-window gate both read settings at page start: share one
 // in-flight read (≈10 store IPC calls) instead of doing it twice. Only the
 // pending promise is shared — a later call always reads fresh values.
@@ -1172,7 +1175,7 @@ export function loadDesktopSettings(): Promise<DesktopSettings> {
 async function readDesktopSettings(): Promise<DesktopSettings> {
     if (!isTauri) return { ...EMPTY_SETTINGS };
     assertMainWindowSettingsAccess();
-    const { LazyStore } = await import('@tauri-apps/plugin-store');
+    const { LazyStore } = await storeModule();
     const store = new LazyStore('settings.json');
     const safeDefaultMigrated =
         (await store.get<boolean>('agentHarnessSafeDefaultV1')) ?? false;
@@ -1207,7 +1210,7 @@ export async function saveDesktopSettings(s: DesktopSettings) {
     if (!isTauri) return;
     assertMainWindowSettingsAccess();
     settingsRead = null; // a read already in flight must not be shared after a save
-    const { LazyStore } = await import('@tauri-apps/plugin-store');
+    const { LazyStore } = await storeModule();
     const store = new LazyStore('settings.json');
     await store.set('apiKey', s.apiKey);
     await store.set('secretKey', s.secretKey);

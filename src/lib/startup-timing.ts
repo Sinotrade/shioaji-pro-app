@@ -9,6 +9,8 @@
 // Only stage names, offsets, ports, modes and poll counts are recorded —
 // never keys, passwords, paths or server output.
 
+import { isChildWindow } from './window-role';
+
 export type TimingScenario =
     | 'cold-start'
     | 'onboarding'
@@ -51,6 +53,11 @@ export const STAGE_LABELS = {
     'page-loaded': '畫面載入中',
     'boot-checked': '伺服器確認完成',
     'stream-connect': '行情串流連線中',
+    // the dashboard's first commit (all panels mounted, their effects run)
+    'app-mounted': '畫面元件已掛載',
+    // detail only: how long the JS main thread was blocked while the front
+    // end got ready — an SSE open/first event cannot be handled meanwhile
+    'main-thread': '主執行緒忙碌統計',
     // front-end bootstrap after the reload, until trading data is usable
     'accounts-loaded': '帳戶已載入',
     'positions-loaded': '持倉已載入',
@@ -139,10 +146,14 @@ let state: TimingState = readStorage();
 
 function commit(next: TimingState) {
     state = next;
-    try {
-        globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-        // storage full/unavailable — in-memory still works
+    // runs are owned by the main window: a popout holds only the copy it
+    // read at load and must never write it back over the main window's
+    if (!isChildWindow()) {
+        try {
+            globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(next));
+        } catch {
+            // storage full/unavailable — in-memory still works
+        }
     }
     for (const fn of listeners) fn();
 }

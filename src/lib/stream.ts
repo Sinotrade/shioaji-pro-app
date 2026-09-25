@@ -11,6 +11,7 @@ import {
 } from './order-report';
 import { reportLedger } from './report-ledger';
 import { markStage } from './startup-timing';
+import { isChildWindow } from './window-role';
 import { knownServerInfo } from './server-info-store';
 
 /** `stale`: the EventSource still looks open but no heartbeat or event
@@ -597,7 +598,8 @@ let started = false;
 export function ensureStream() {
     if (!started) {
         started = true;
-        markStage('stream-connect'); // startup timing (#142); no-op otherwise
+        // startup timing (#142): main window only (no-op without a run)
+        if (!isChildWindow()) markStage('stream-connect');
         connect();
         lastCheckAt = Date.now();
         watchdogTimer = setInterval(checkWatchdog, WATCHDOG_TICK_MS);

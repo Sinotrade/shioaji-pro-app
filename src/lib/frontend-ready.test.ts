@@ -53,6 +53,23 @@ afterEach(() => {
 });
 
 describe('watchFrontendReady', () => {
+    it('reports how long the main thread was blocked while waiting', () => {
+        timing.beginTiming('restart');
+        const id = timing.getActiveTiming()!.id;
+        const live = signal('stream-live');
+        watchFrontendReady(id, [live.sig]);
+        vi.advanceTimersByTime(200);
+        // a 1.2 s synchronous render: timers resume only afterwards
+        vi.setSystemTime(Date.now() + 1200);
+        vi.advanceTimersByTime(50);
+        live.set();
+        const run = timing.getTimingHistory()[0]!;
+        const detail = run.marks.find((m) => m.stage === 'main-thread')!.detail!;
+        const [, busy, max] = /busy=(\d+)ms maxStall=(\d+)ms/.exec(detail)!.map(Number);
+        expect(max).toBeGreaterThanOrEqual(1100);
+        expect(busy).toBeGreaterThanOrEqual(max!);
+    });
+
     it('marks each signal as it arrives and ends when all are in', () => {
         timing.beginTiming('restart');
         const id = timing.getActiveTiming()!.id;
@@ -73,7 +90,10 @@ describe('watchFrontendReady', () => {
             ['accounts-loaded', 400],
             ['stream-live', 1500],
             ['positions-loaded', 2000],
+            ['main-thread', 2000],
         ]);
+        // fake timers never run late: no stall recorded
+        expect(run.marks.at(-1)!.detail).toBe('busy=0ms maxStall=0ms');
         expect(acc.listeners()).toBe(0);
     });
 

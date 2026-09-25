@@ -34,6 +34,8 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | `page-loaded` | 畫面載入中 | 重新載入後的前端 bootstrap 開始 |
 | `boot-checked` | 伺服器確認完成 | 重新載入後 boot 的伺服器檢查結束，之後的時間都屬前端就緒 |
 | `stream-connect` | 行情串流連線中 | 建立 SSE 連線的時間點；重新載入進已健康的伺服器時會在 `page-loaded` 之前（提前連線） |
+| `app-mounted` | 畫面元件已掛載 | 儀表板第一次 commit 完成（所有面板掛載、effect 已執行） |
+| `main-thread` | 主執行緒忙碌統計 | 只記附註：等待前端就緒期間 JS 主執行緒被占用的總時間與最長一次卡住（`busy=…ms maxStall=…ms`）；SSE 開啟或第一個事件在主執行緒忙時無法處理，`stream-live` 會一起變晚 |
 | `accounts-loaded` | 帳戶已載入 | 帳戶清單第一次載入完成（附帳戶數） |
 | `positions-loaded` | 持倉已載入 | 第一次持倉查詢完成；失敗或需對帳也算完成並註明 |
 | `stream-live` | 行情串流已連線 | SSE 串流狀態轉為 LIVE |
@@ -138,7 +140,7 @@ Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 
 - `wait-exit` 接近 5 秒：舊伺服器未及時結束。
 - 舊版紀錄的 `settle` 固定 1.2 秒；新版已移除。重新載入後舊版的 `probe` 耗時包含整段前端 bootstrap，新版以 `boot-checked` 分開。
 - 冷啟動 `app-js-start` 偏大：webview／前端載入慢，與伺服器無關。
-- 前端就緒偏長：看三個前端階段哪個最晚；`positions-loaded` 最晚通常是帳務
+- 前端就緒偏長：先看 `main-thread` 附註。`busy` 接近 `stream-live` 的耗時，代表時間花在畫面 render（主執行緒忙），不是串流連線慢；再比對 `app-mounted` 的時間點。看三個前端階段哪個最晚；`positions-loaded` 最晚通常是帳務
   查詢，`stream-live` 最晚是 SSE 連線。
 - 開機時接手「仍在登入中的伺服器」：與全新啟動一樣以快速健康輪詢等待
   （上限 90 秒）；超過後改由開機 watchdog 每 4 秒檢查、不設上限，此時 run

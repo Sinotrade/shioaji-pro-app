@@ -41,10 +41,30 @@ export function watchFrontendReady(
     const offs: (() => void)[] = [];
     let timer: ReturnType<typeof setTimeout> | undefined;
     let closed = false;
+    // main-thread stall probe: a 50 ms tick that runs late was blocked by
+    // other JS (rendering, parsing). An EventSource `open` or first event
+    // that arrives meanwhile is only handled after the stall, so this tells
+    // "the stream was slow" apart from "the page was busy" (#142).
+    const TICK = 50;
+    let lastTick = Date.now();
+    let busyMs = 0;
+    let maxStallMs = 0;
+    const stall = setInterval(() => {
+        const now = Date.now();
+        const late = now - lastTick - TICK;
+        if (late > TICK) {
+            busyMs += late;
+            maxStallMs = Math.max(maxStallMs, late);
+        }
+        lastTick = now;
+    }, TICK);
+    const markStalls = () =>
+        markStage('main-thread', `busy=${busyMs}ms maxStall=${maxStallMs}ms`, { runId });
     const dispose = () => {
         if (closed) return;
         closed = true;
         clearTimeout(timer);
+        clearInterval(stall);
         for (const off of offs) off();
     };
     const check = () => {
@@ -57,8 +77,9 @@ export function watchFrontendReady(
             }
         }
         if (done.size === signals.length) {
+            dispose(); // first: the marks below re-notify timing listeners
+            markStalls();
             endTiming(opts.outcome ?? 'ok', undefined, { runId });
-            dispose();
         }
     };
     offs.push(subscribeTiming(check));
@@ -69,8 +90,9 @@ export function watchFrontendReady(
             .filter((sig) => !done.has(sig))
             .map((sig) => sig.stage)
             .join(',');
-        endTiming('partial', `not ready: ${missing}`, { runId });
         dispose();
+        markStalls();
+        endTiming('partial', `not ready: ${missing}`, { runId });
     }, opts.timeoutMs ?? FRONTEND_READY_TIMEOUT_MS);
     check();
     return dispose;

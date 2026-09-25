@@ -28,7 +28,7 @@ export function currentWindowLabel(): string | null {
  * in depth for a child window opened without the query).
  */
 export function isChildWindow(
-    search: string = typeof window === 'undefined' ? '' : window.location.search,
+    search: string = typeof window === 'undefined' ? '' : (window.location?.search ?? ''),
     label: string | null = currentWindowLabel(),
 ): boolean {
     if (new URLSearchParams(search).has('popout')) return true;
