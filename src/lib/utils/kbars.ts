@@ -61,26 +61,22 @@ export function aggregate(candles: Candle[], minutes: number): Candle[] {
     return out;
 }
 
-// 現在時刻的台灣牆鐘時間，用 wallClockToUtc 同款編碼（本機時區
-// 即台灣 — dateStrOffset 同一假設）
+// 台灣（交易所）時間 UTC+8、無日光節約 — 與本機時區無關，海外或
+// 系統時區不是台北的使用者也要拿到同一套時段/日期
+const TW_OFFSET_SEC = 8 * 3600;
+
+// 現在時刻的台灣牆鐘時間，用 wallClockToUtc 同款編碼
 export function nowWallClockUtc(): number {
-    const d = new Date();
-    return (
-        Date.UTC(
-            d.getFullYear(),
-            d.getMonth(),
-            d.getDate(),
-            d.getHours(),
-            d.getMinutes(),
-            d.getSeconds(),
-        ) / 1000
-    );
+    return Math.floor(Date.now() / 1000) + TW_OFFSET_SEC;
 }
 
+// 台灣日期 N 天前（負數 = 之後）的 YYYY-MM-DD
 export function dateStrOffset(daysAgo: number): string {
-    const d = new Date(Date.now() - daysAgo * 86400_000);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
+    const d = new Date(
+        Date.now() + TW_OFFSET_SEC * 1000 - daysAgo * 86400_000,
+    );
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
 }

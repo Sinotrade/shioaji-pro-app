@@ -1192,8 +1192,13 @@ export async function pickEnvFile(): Promise<{
 
 let popoutCounter = 0;
 
-export async function openPopout(type: string, code: string | null) {
-    const qs = new URLSearchParams({ popout: type, code: code ?? '' });
+export async function openPopout(
+    type: string,
+    code: string | null,
+    // 面板設定帶進彈出視窗當初始值（例：session = 圖表時段選擇）
+    extra: Record<string, string> = {},
+) {
+    const qs = new URLSearchParams({ popout: type, code: code ?? '', ...extra });
     if (!isTauri) {
         window.open(
             `${window.location.pathname}?${qs}`,
