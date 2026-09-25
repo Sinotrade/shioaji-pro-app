@@ -17,6 +17,27 @@ import { cancelledByQuantity, readMark } from './cancel-verification';
 import type { OrderEventReport } from './order-report';
 import type { Account, AccountBalance, AccountedPosition, AccountFunds, Margin } from './types/portfolio';
 import type { AccountedTrade, Trade, TradeCacheHealth } from './types/order';
+import { markStage } from './startup-timing';
+
+// Startup timing (#142): each accounting read of the initial refresh is
+// marked with its own duration, so a slow `positions-loaded` shows whether
+// the broker/sidecar was slow or the page was. No-op without an active run;
+// accounts are named by type and order only (S1, F1), never by id.
+async function timedRead<T>(label: string, read: () => Promise<T>): Promise<T> {
+    const start = Date.now();
+    let ok = false;
+    try {
+        const value = await read();
+        ok = true;
+        return value;
+    } finally {
+        markStage('account-read', `${label} ${Date.now() - start}ms${ok ? '' : ' failed'}`);
+    }
+}
+function accountLabel(account: Account, accounts: Account[]): string {
+    const sameType = accounts.filter(a => a.account_type === account.account_type);
+    return `${account.account_type}${sameType.indexOf(account) + 1}`;
+}
 
 export type TradingQueryScope = 'positions' | 'orders' | 'account';
 
@@ -291,7 +312,7 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
         try {
             let subscribed = true;
             if (readPositions || readOrders) {
-                try { await subscribeTradeReports(); }
+                try { await timedRead('subscribe', () => subscribeTradeReports()); }
                 catch (e) {
                     subscribed = false;
                     const message = e instanceof Error ? e.message : String(e);
@@ -314,7 +335,7 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                     if (readPositions) try {
                         const positionStart = eventSequence;
                         const hadSnapshot = snapshotEnds.has(accountKey(account));
-                        const positions = await fetchPositions(account.account_type as 'S' | 'F', account);
+                        const positions = await timedRead(`${accountLabel(account, accounts)} positions`, () => fetchPositions(account.account_type as 'S' | 'F', account));
                         if (positionStart === eventSequence || !hadSnapshot) {
                             snapshotEnds.set(accountKey(account), Date.now() / 1000);
                             state = { ...state, positions: [...state.positions.filter(p => !matches(p.account)), ...positions.map(p => ({ ...p, account }))] };
@@ -329,7 +350,7 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                     if (readOrders) try {
                         // Initial/manual reconciliation stays authoritative:
                         // refresh:true runs update_status(account) (accounting quota).
-                        const trades = await fetchTrades(account.account_type as 'S' | 'F', account, { refresh: true });
+                        const trades = await timedRead(`${accountLabel(account, accounts)} orders`, () => fetchTrades(account.account_type as 'S' | 'F', account, { refresh: true }));
                         // A kept (not rebuilt) view resolves nothing.
                         if (!mergeOrders(account, trades, accounts, problems.orders)) { ordersOk = false; failed.add('orders'); }
                     } catch {
@@ -345,8 +366,8 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                         const previous = state.funds?.find(f => accountKey(f.account) === accountKey(account));
                         try {
                             const value = account.account_type === 'S'
-                                ? { balance: await fetchAccountBalance(account) }
-                                : { margin: await fetchMargin(account) };
+                                ? { balance: await timedRead(`${accountLabel(account, accounts)} balance`, () => fetchAccountBalance(account)) }
+                                : { margin: await timedRead(`${accountLabel(account, accounts)} margin`, () => fetchMargin(account)) };
                             if (value.balance?.errmsg?.trim()) throw new Error('券商餘額查詢回報錯誤');
                             return { account, ...value, updatedAt: Date.now() };
                         } catch {

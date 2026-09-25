@@ -67,6 +67,21 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('shared trading state with isolated broker fixtures', () => {
+    it('marks each accounting read of a refresh with its duration, accounts by type/order only (#142)', async () => {
+        const timing = await import('./startup-timing');
+        vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        mocks.extraAccounts = [{ ...mocks.account, account_id: 'f', account_type: 'F' }];
+        mocks.margin.mockResolvedValue({ equity: 1 });
+        mocks.positions.mockImplementation(async () => { await new Promise(r => setTimeout(r, 120)); return [baseline()]; });
+        timing.beginTiming('restart', { replace: true });
+        vi.advanceTimersByTime(1500);
+        await act(async () => { const run = store.refreshTradingState('all'); await vi.advanceTimersByTimeAsync(500); await run; });
+        const reads = timing.getActiveTiming()!.marks.filter(m => m.stage === 'account-read').map(m => m.detail);
+        expect(reads).toEqual(expect.arrayContaining(['subscribe 0ms', 'S1 positions 120ms', 'F1 positions 120ms', 'S1 orders 0ms', 'F1 orders 0ms', 'S1 balance 0ms', 'F1 margin 0ms']));
+        expect(reads.join(' ')).not.toContain(mocks.account.account_id + ' ');
+        timing.endTiming('ok');
+    });
+
     it('startTradingState outside React is idempotent with the hook (#142)', async () => {
         const calls = mocks.positions.mock.calls.length;
         await act(async () => { store.startTradingState(); store.startTradingState(); });
