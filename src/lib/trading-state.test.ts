@@ -67,6 +67,34 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('shared trading state with isolated broker fixtures', () => {
+    it('reads every account concurrently, keeping each account\'s positions → orders order (#142)', async () => {
+        mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }];
+        const gates = new Map<string, ReturnType<typeof deferred<ReturnType<typeof baseline>[]>>>();
+        const calls: string[] = [];
+        mocks.positions.mockImplementation((_t: string, a: Account) => {
+            calls.push(`positions:${a.account_id}`);
+            const d = deferred<ReturnType<typeof baseline>[]>();
+            gates.set(a.account_id, d);
+            return d.promise;
+        });
+        mocks.trades.mockImplementation(async (_t: string, a: Account) => { calls.push(`orders:${a.account_id}`); return []; });
+        vi.advanceTimersByTime(1500);
+        let done = false;
+        const run = store.refreshTradingState('all').then(() => { done = true; });
+        await flush(); await flush();
+        // both accounts' positions are in flight before either answers
+        expect(calls).toEqual(['positions:a', 'positions:b']);
+        await act(async () => { gates.get('b')!.resolve([{ ...baseline(), id: 2, code: '2317' }]); });
+        await flush();
+        expect(calls).toEqual(['positions:a', 'positions:b', 'orders:b']);
+        expect(done).toBe(false);
+        await act(async () => { gates.get('a')!.resolve([baseline()]); await run; });
+        expect(calls.slice(-1)).toEqual(['orders:a']);
+        const positions = store.getTradingState().positions;
+        expect(positions.map(p => `${p.account?.account_id}:${p.code}`).sort()).toEqual(['a:2330', 'b:2317']);
+        expect(store.getTradingState().queries.positions.updatedAt).not.toBeNull();
+    });
+
     it('reads funds for every signed account and preserves only the failed account snapshot', async () => {
         mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }, { ...mocks.account, account_id: 'f', account_type: 'F' }];
         mocks.balance.mockImplementation(async (a: Account) => ({ acc_balance: a.account_id === 'b' ? 200 : 100, date: '2026-09-15', errmsg: '' }));

@@ -13,7 +13,6 @@ import {
     setApiScheme,
 } from './runtime';
 import {
-    fetchAccounts,
     fetchHealth,
     fetchInfo,
     subscribeTradeEvents,
@@ -35,6 +34,7 @@ import {
     type TimingOutcome,
 } from './startup-timing';
 import { appReadySignals, watchFrontendReady } from './frontend-ready';
+import { ensureAccounts, loadAccountsShared } from './account-store';
 import { timedAutostart } from './server-actions';
 import { logNotice, notify } from './trade';
 import { isChildWindow } from './window-role';
@@ -200,8 +200,10 @@ async function run() {
                             body: `模式：${settings.production ? '⚠ 正式環境' : '模擬環境'}`,
                         });
                     }
+                    // the probe above is milliseconds old: hand it over
+                    // instead of probing everything a second time
                     const res = await timedAutostart(() =>
-                        serverStart(settings),
+                        serverStart({ ...settings, knownStatus: status }),
                     );
                     if (!res.ok) {
                         notify({
@@ -296,6 +298,11 @@ function settleBootRun(outcome: TimingOutcome) {
     const run = getActiveTiming();
     if (!run || settling) return;
     settling = true;
+    // separates boot's own server checks from the front-end wait below
+    markStage('boot-checked', undefined, { runId: run.id });
+    // the server is up: start the account read now rather than whenever
+    // the first panel that needs it mounts (shared, never duplicated)
+    ensureAccounts();
     watchFrontendReady(run.id, appReadySignals(), { outcome });
 }
 
@@ -345,7 +352,7 @@ async function serverVersionOk(): Promise<boolean> {
 // 1.7.5 simulation accepted it as a harmless no-op, so no version gate.
 export async function subscribeTradeReports() {
     try {
-        const accounts = await fetchAccounts();
+        const accounts = await loadAccountsShared();
         await Promise.all(
             accounts
                 .filter((a) => a.signed)

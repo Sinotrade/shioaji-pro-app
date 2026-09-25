@@ -57,31 +57,55 @@ function persistSelection() {
 }
 
 let inflight: Promise<void> | null = null;
+// one /auth/accounts request at a time, shared by the store load and the
+// trade-report subscription (boot used to issue both back to back)
+let fetching: Promise<Account[]> | null = null;
+function fetchShared(): Promise<Account[]> {
+    if (!fetching) {
+        fetching = fetchAccounts().finally(() => {
+            fetching = null;
+        });
+    }
+    return fetching;
+}
+
+function apply(all: Account[]) {
+    const saved = loadSelection();
+    // only signed accounts are candidates for the order account
+    const signed = all.filter((a) => a.signed);
+    const stocks = signed.filter((a) => a.account_type === 'S');
+    const futures = signed.filter((a) => a.account_type === 'F');
+    state = {
+        accounts: all,
+        selectedStock:
+            stocks.find((a) => keyOf(a) === saved.stock) ??
+            stocks[0] ??
+            null,
+        selectedFutures:
+            futures.find((a) => keyOf(a) === saved.futures) ??
+            futures[0] ??
+            null,
+        loaded: true,
+    };
+}
 
 async function load(): Promise<void> {
     try {
-        const all = await fetchAccounts();
-        const saved = loadSelection();
-        // only signed accounts are candidates for the order account
-        const signed = all.filter((a) => a.signed);
-        const stocks = signed.filter((a) => a.account_type === 'S');
-        const futures = signed.filter((a) => a.account_type === 'F');
-        state = {
-            accounts: all,
-            selectedStock:
-                stocks.find((a) => keyOf(a) === saved.stock) ??
-                stocks[0] ??
-                null,
-            selectedFutures:
-                futures.find((a) => keyOf(a) === saved.futures) ??
-                futures[0] ??
-                null,
-            loaded: true,
-        };
+        apply(await fetchShared());
     } catch {
         state = { ...state, loaded: true };
     }
     emit();
+}
+
+/** Accounts for the trade-report subscription: joins an in-flight read
+ * instead of issuing a second one, updates the store, and — unlike the
+ * store load — rethrows, so the caller can mark itself not subscribed. */
+export async function loadAccountsShared(): Promise<Account[]> {
+    const all = await fetchShared();
+    apply(all);
+    emit();
+    return all;
 }
 
 function startLoad(): Promise<void> {

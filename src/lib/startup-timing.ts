@@ -49,6 +49,7 @@ export const STAGE_LABELS = {
     healthy: '健康檢查通過',
     reload: '重新載入畫面',
     'page-loaded': '畫面載入中',
+    'boot-checked': '伺服器確認完成',
     // front-end bootstrap after the reload, until trading data is usable
     'accounts-loaded': '帳戶已載入',
     'positions-loaded': '持倉已載入',

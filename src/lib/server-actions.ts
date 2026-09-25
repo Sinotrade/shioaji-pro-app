@@ -17,7 +17,6 @@ export interface ServerActionDeps {
     serverStop: (opts: { stopAgents: boolean }) => Promise<SidecarResult>;
     reloadWhenHealthy: () => Promise<unknown>;
     scheduleReload: (delayMs: number) => void;
-    sleep: (ms: number) => Promise<void>;
 }
 
 /** Start (or, nested inside a restart, continue) a run and hand it on:
@@ -107,7 +106,7 @@ export async function timedStop(deps: ServerActionDeps): Promise<SidecarResult> 
     }
 }
 
-/** Stop, settle, then `start` (the component's nested doStart, which
+/** Stop, then `start` (the component's nested doStart, which
  * closes the run through timedStart). A refused stop ends the run. */
 export async function timedRestart(
     scenario: TimingScenario,
@@ -122,10 +121,9 @@ export async function timedRestart(
             endTiming('failed', 'stop refused', { runId });
             return { stopped, started: false };
         }
-        // kept as-is (measured, not removed): lets the OS release the old
-        // listener's port before serverStart picks one
-        markStage('settle', undefined, { runId });
-        await deps.sleep(1200);
+        // no fixed settle any more (was 1.2 s): serverStop returns once the
+        // old server stopped answering, and serverStart re-checks the port
+        // right after a stop, waiting only while it is really still taken
         return { stopped, started: await start() };
     } catch (e) {
         endTiming('failed', 'restart threw', { runId });

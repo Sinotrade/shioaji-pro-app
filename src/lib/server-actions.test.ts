@@ -29,7 +29,6 @@ const deps = (over: Partial<Parameters<typeof timedStop>[0]> = {}) => ({
     serverStop: vi.fn(async () => ({ ok: true, output: '' })),
     reloadWhenHealthy: vi.fn(async () => undefined),
     scheduleReload: vi.fn(),
-    sleep: vi.fn(async () => undefined),
     ...over,
 });
 const last = () => timing.getTimingHistory()[0];
@@ -195,16 +194,18 @@ describe('timedRestart', () => {
         expect(last()).toMatchObject({ scenario: 'sim-to-prod', outcome: 'failed', detail: 'stop refused' });
     });
 
-    it('settles then runs the nested start inside the same run', async () => {
+    it('starts right after the stop — no fixed settle — inside the same run', async () => {
+        vi.useFakeTimers();
         const d = deps();
         const res = await timedRestart('prod-to-sim', d, () =>
             timedStart(cfg, 'prod-to-sim', d, true).then((r) => r.ok),
         );
+        vi.useRealTimers();
         expect(res.started).toBe(true);
-        expect(d.sleep).toHaveBeenCalledWith(1200);
+        expect(d.serverStart).toHaveBeenCalledTimes(1);
         const run = timing.getActiveTiming()!;
         expect(run.scenario).toBe('prod-to-sim');
-        expect(run.marks.map((m) => m.stage)).toEqual(['settle']);
+        expect(run.marks).toEqual([]);
         expect(timing.getTimingHistory()).toEqual([]);
     });
 

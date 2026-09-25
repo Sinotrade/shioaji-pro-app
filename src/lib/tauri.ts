@@ -38,8 +38,29 @@ import {
 } from './sidecar-ownership';
 import { notify } from './trade';
 import { STOP_SCHEDULE, pollUntil, throttled } from './poll-until';
+import {
+    boundPorts,
+    freePortAfterStop,
+    waitForRememberedSpawn,
+} from './startup-probes';
 
 const PROCESS_ALIVE_INTERVAL_MS = 1500;
+
+// native helpers for the start path; a missing command (older shell) or IPC
+// failure must never read as "the process died" or "the port is free"
+async function processAlive(pid: number): Promise<boolean> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<boolean>('process_alive', { pid }).catch(() => true);
+}
+async function findFreePort(preferred: number): Promise<number> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<number>('find_free_port', { preferred });
+}
+
+// when we last stopped our own server: its port may need a moment before it
+// is bindable again (replaces the fixed 1.2 s restart sleep)
+let lastOwnStopAt = 0;
+const RECENT_STOP_MS = 10_000;
 import {
     endTiming,
     markStage,
@@ -687,6 +708,9 @@ export interface StartResult extends SidecarResult {
 }
 
 export async function serverStart(opts: {
+    // boot already probed the servers a moment ago: reuse that result
+    // instead of a second identical round of probes (cold start)
+    knownStatus?: ServerStatus | null;
     apiKey: string;
     secretKey: string;
     production: boolean;
@@ -708,8 +732,13 @@ export async function serverStart(opts: {
     // user's own CLI daemon on :8080)? Attach only if it can actually trade
     // in the requested mode — a CA-less daemon here is exactly why
     // "加了 CA 還是 400" on the installed app.
-    markStage('probe');
-    let st = await serverStatus();
+    let st: ServerStatus | null;
+    if (opts.knownStatus !== undefined) {
+        st = opts.knownStatus;
+    } else {
+        markStage('probe');
+        st = await serverStatus();
+    }
     // a child we spawned may still be inside its login window: the 1.7.2
     // server binds its listener only AFTER login (~5-8s blind spot). Any
     // reload landing in that window used to see "not running", then the
@@ -717,15 +746,20 @@ export async function serverStart(opts: {
     // restart loop. Wait for the remembered spawn to surface instead.
     if (!st?.running && getServerPid() && getSpawnPort() && (!getDevServerPort() || getSpawnPort() === getDevServerPort())) {
         const spawnPort = getSpawnPort()!;
-        // returns as soon as the warming spawn answers; up to 20 s otherwise
+        const rememberedPid = getServerPid()!;
+        // returns as soon as the warming spawn answers, or at once when the
+        // remembered process no longer exists (App relaunch); up to 20 s
         markStage('wait-warming', `port=${spawnPort}`);
-        const warm = await pollUntil(
-            async () => (await probeInfoEither(spawnPort)) ?? undefined,
-            // probeInfoEither = up to two 5 s probes: a last one started
-            // before 20 s is awaited up to 15 s past the deadline
-            { timeoutMs: 20_000, attemptTimeoutMs: 15_000 },
-        );
-        const hit = warm.value;
+        const warm = await waitForRememberedSpawn({
+            probe: () => probeInfoEither(spawnPort),
+            alive: () => processAlive(rememberedPid),
+        });
+        const hit = warm.kind === 'answered' ? warm.hit : null;
+        if (warm.kind === 'dead') {
+            // nothing of ours is warming: drop the stale record so the
+            // reclaim below never targets that (possibly recycled) pid
+            setServerPid(null);
+        }
         if (hit) {
             st = {
                 running: true,
@@ -738,22 +772,26 @@ export async function serverStart(opts: {
                 pid: getServerPid() ?? undefined,
             };
         }
-        markStage('probe', `warming ${hit ? 'answered' : 'gone'} after ${warm.attempts} polls`);
+        markStage('probe', `warming ${warm.kind} after ${warm.attempts} polls`);
     }
     if (!st?.running && !getDevServerPort()) {
         // an orphan of ours can sit on a fallback port with its record lost
         // (cleared web storage) — sweep the find_free_port windows (current
         // default + the pre-21322 legacy one) before piling yet another
         // server on top of it
-        markStage('sweep-orphans');
         const win = [
             ...Array.from({ length: 9 }, (_, i) => DEFAULT_PORT + 1 + i),
             ...Array.from({ length: 5 }, (_, i) => LEGACY_PORT + 1 + i),
         ];
-        const hits = await Promise.all(win.map((p) => probeInfoEither(p)));
-        const hit = win.findIndex((_, i) => hits[i]);
+        // HTTP-probe only the ports something is actually bound to (was:
+        // two probes on each of 14 ports, ~0.9 s natively on every start)
+        markStage('sweep-orphans');
+        const bound = await boundPorts(win, findFreePort);
+        const toProbe = bound ?? win;
+        const hits = await Promise.all(toProbe.map((p) => probeInfoEither(p)));
+        const hit = toProbe.findIndex((_, i) => hits[i]);
         if (hit >= 0) {
-            const port = win[hit] as number;
+            const port = toProbe[hit] as number;
             const found = hits[hit]!;
             st = {
                 running: true,
@@ -894,9 +932,19 @@ export async function serverStart(opts: {
             }).catch(() => undefined);
         }
         setServerPid(null);
-        const free = await invoke<number>('find_free_port', {
-            preferred: preferredPort,
-        });
+        // just after our own stop, give the old listener's port up to
+        // 1.2 s to free up (checked at once, so usually no wait at all);
+        // otherwise a single check as before
+        const recentlyStopped = Date.now() - lastOwnStopAt < RECENT_STOP_MS;
+        const picked = await freePortAfterStop(
+            preferredPort,
+            findFreePort,
+            recentlyStopped ? 1200 : 0,
+        );
+        const free = picked.port;
+        if (picked.attempts > 1) {
+            markStage('reclaim-port', `port freed after ${picked.elapsedMs} ms`);
+        }
         if (getDevServerPort() && free !== preferredPort) {
             return { ok: false, output: '隔離測試連接埠已被占用；不切換至其他伺服器', port: preferredPort, attached: false, portChanged: false };
         }
@@ -1027,7 +1075,10 @@ export async function serverStop(opts?: {
             });
             setServerPid(null);
             setSpawnPort(null);
-            if (killed) killNote = `已終止伺服器（:${port}）`;
+            if (killed) {
+                lastOwnStopAt = Date.now();
+                killNote = `已終止伺服器（:${port}）`;
+            }
         } catch (e) {
             // Preserve ownership records and the native explanation on refusal.
             return { ok: false, output: String(e) };
@@ -1043,6 +1094,7 @@ export async function serverStop(opts?: {
             { timeoutMs: 5000, schedule: STOP_SCHEDULE },
         );
         if (gone.value) {
+            lastOwnStopAt = Date.now();
             markStage('stopped', `polls=${gone.attempts}`);
             return {
                 ok: true,

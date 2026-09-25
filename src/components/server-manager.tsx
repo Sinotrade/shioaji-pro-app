@@ -84,7 +84,6 @@ const serverActionDeps: ServerActionDeps = {
     scheduleReload: (ms) => {
         setTimeout(() => window.location.reload(), ms);
     },
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
 // "9h" reads fine but "0h" while the token auto-renews in minutes is

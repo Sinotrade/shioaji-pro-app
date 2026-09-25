@@ -16,14 +16,14 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | --- | --- | --- |
 | `app-js-start` | App 啟動 | 冷啟動：前端程式開始執行（相對 webview 開始載入，見下方說明） |
 | `probe` | 檢查現有伺服器 | 探測已在運行的伺服器、決定可否沿用 |
-| `wait-warming` | 等待先前啟動中的伺服器 | 上一次 spawn 可能仍在登入，最多等 20 秒 |
-| `sweep-orphans` | 搜尋遺留的伺服器 | 掃描備用 port 上的孤兒伺服器 |
+| `wait-warming` | 等待先前啟動中的伺服器 | 上一次 spawn 可能仍在登入，最多等 20 秒；記錄中的程序已不存在（例如 App 重開）時立即結束，下一個 `probe` 附註 `warming dead` |
+| `sweep-orphans` | 搜尋遺留的伺服器 | 掃描備用 port 上的孤兒伺服器；先以 bind 測試找出有人監聽的 port，只對這些 port 發 HTTP 探測 |
 | `attach` | 連接既有伺服器 | 沿用健康、模式正確的伺服器；附註 `server still starting` 表示接手仍在登入中的伺服器，之後進入 `wait-health` |
 | `stop-agents` | 停止 Agent | 使用者操作前先停止 Agent runtime |
 | `kill` | 停止伺服器 | 送出停止指令 |
 | `wait-exit` | 等待伺服器結束 | 等舊伺服器不再回應，最多 5 秒 |
 | `stopped` | 伺服器已停止 | 舊伺服器已不回應（附輪詢次數） |
-| `settle` | 等待連接埠釋放 | 重啟時停止後固定等待 1.2 秒 |
+| `settle` | 等待連接埠釋放 | 舊版重啟時固定等待 1.2 秒；已移除，改在 `reclaim-port` 只在 port 仍被占用時短暫等待（附註 `port freed after N ms`） |
 | `reclaim-port` | 清理連接埠 | 回收殭屍 listener、挑選可用 port |
 | `spawn` | 啟動伺服器程序 | 啟動 sidecar 程序（附 port、sim/prod） |
 | `wait-listener` | 登入與載入合約（約需 10–30 秒） | sidecar 登入＋合約載入後才開始 listen；App 端無法再細分 |
@@ -32,6 +32,7 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | `healthy` | 健康檢查通過 | 第一次健康回應（附輪詢次數） |
 | `reload` | 重新載入畫面 | App 重新載入頁面 |
 | `page-loaded` | 畫面載入中 | 重新載入後的前端 bootstrap 開始 |
+| `boot-checked` | 伺服器確認完成 | 重新載入後 boot 的伺服器檢查結束，之後的時間都屬前端就緒 |
 | `accounts-loaded` | 帳戶已載入 | 帳戶清單第一次載入完成（附帳戶數） |
 | `positions-loaded` | 持倉已載入 | 第一次持倉查詢完成；失敗或需對帳也算完成並註明 |
 | `stream-live` | 行情串流已連線 | SSE 串流狀態轉為 LIVE |
@@ -134,7 +135,7 @@ Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 
 - `wait-warming` 接近 20 秒：前一次 spawn 未存活，重啟被白等；是 App 端
   可改善項目。
 - `wait-exit` 接近 5 秒：舊伺服器未及時結束。
-- `settle` 固定 1.2 秒，可作為之後是否移除的依據。
+- 舊版紀錄的 `settle` 固定 1.2 秒；新版已移除。重新載入後舊版的 `probe` 耗時包含整段前端 bootstrap，新版以 `boot-checked` 分開。
 - 冷啟動 `app-js-start` 偏大：webview／前端載入慢，與伺服器無關。
 - 前端就緒偏長：看三個前端階段哪個最晚；`positions-loaded` 最晚通常是帳務
   查詢，`stream-live` 最晚是 SSE 連線。

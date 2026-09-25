@@ -283,7 +283,11 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                 const accounts = tradableAccounts();
                 if (!accounts.length) throw new Error('尚未取得可查詢帳戶；請連線後按更新');
                 let ordersOk = true;
-                for (const account of accounts) {
+                // accounts are read concurrently (was one after another):
+                // each account's own positions → orders order is kept, and
+                // every state write below is a synchronous merge scoped to
+                // that account, so interleaving across accounts is safe
+                await Promise.all(accounts.map(async (account) => {
                     const matches = (a: typeof account | undefined) => a && accountKey(a) === accountKey(account);
                     if (readPositions) try {
                         const positionStart = eventSequence;
@@ -311,25 +315,25 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                         failed.add('orders');
                         problems.orders.push(['query-failed', `${account.account_type} 委託查詢失敗，保留上次資料`]);
                     }
-                }
+                }));
                 if (readOrders && ordersOk) ordersRead = true;
                 if (readAccount) {
-                    const funds: AccountFunds[] = [];
-                    for (const account of accounts) {
+                    // concurrently too; results keep the account order
+                    const funds: AccountFunds[] = await Promise.all(accounts.map(async (account): Promise<AccountFunds> => {
                         const previous = state.funds?.find(f => accountKey(f.account) === accountKey(account));
                         try {
                             const value = account.account_type === 'S'
                                 ? { balance: await fetchAccountBalance(account) }
                                 : { margin: await fetchMargin(account) };
                             if (value.balance?.errmsg?.trim()) throw new Error('券商餘額查詢回報錯誤');
-                            funds.push({ account, ...value, updatedAt: Date.now() });
+                            return { account, ...value, updatedAt: Date.now() };
                         } catch {
                             const error = `${account.account_type === 'S' ? '餘額' : '保證金'}查詢失敗，保留此帳戶上次資料`;
-                            funds.push({ ...previous, account, error });
                             failed.add('account');
                             problems.account.push(['query-failed', error]);
+                            return { ...previous, account, error };
                         }
-                    }
+                    }));
                     const stock = getAccountState().selectedStock ?? accounts.find(a => a.account_type === 'S');
                     const future = getAccountState().selectedFutures ?? accounts.find(a => a.account_type === 'F');
                     state = { ...state, funds,
