@@ -21,7 +21,7 @@ import {
     serverStart,
     type DesktopSettings,
 } from '../lib/tauri';
-import { beginTiming, endTiming } from '../lib/startup-timing';
+import { timedOnboarding } from '../lib/server-actions';
 import { FeatureGate } from './feature-gate';
 import * as headerStyles from './hud-header.css';
 import * as styles from './onboarding-setup.css';
@@ -77,11 +77,14 @@ export function OnboardingSetup() {
         setError('');
         setBusy(true);
         try {
-            await saveDesktopSettings(settings);
-            beginTiming('onboarding', { replace: true });
-            const res = await serverStart(settings);
+            // stay busy on success — reloadWhenHealthy takes over and
+            // reloads the page once /health answers, which re-runs boot.ts
+            const res = await timedOnboarding({
+                save: () => saveDesktopSettings(settings),
+                start: () => serverStart(settings),
+                reloadWhenHealthy: () => reloadWhenHealthy(),
+            });
             if (!res.ok) {
-                endTiming('failed');
                 setError(
                     diagnoseOutput(res.output) ||
                         errorLines(res.output) ||
@@ -91,11 +94,7 @@ export function OnboardingSetup() {
                 setBusy(false);
                 return;
             }
-            // stay busy — reloadWhenHealthy takes over and reloads the page
-            // once /health answers, which re-runs boot.ts from scratch
-            void reloadWhenHealthy();
         } catch (e) {
-            endTiming('failed');
             setError(e instanceof Error ? e.message : String(e));
             setBusy(false);
         }

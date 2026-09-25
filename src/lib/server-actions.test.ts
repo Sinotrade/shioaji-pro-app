@@ -13,7 +13,7 @@ const store = new Map<string, string>();
 };
 
 const timing = await import('./startup-timing');
-const { timedAutostart, timedRestart, timedStart, timedStop } = await import('./server-actions');
+const { timedAutostart, timedOnboarding, timedRestart, timedStart, timedStop } = await import('./server-actions');
 
 const cfg = { production: false } as DesktopSettings;
 const started = (over: Partial<StartResult>): StartResult => ({
@@ -131,6 +131,41 @@ describe('timedAutostart (boot)', () => {
         });
         await expect(p).rejects.toThrow('late');
         expect(timing.getActiveTiming()?.scenario).toBe('restart');
+    });
+});
+
+describe('timedOnboarding', () => {
+    const ob = (over: Partial<Parameters<typeof timedOnboarding>[0]> = {}) => ({
+        save: vi.fn(async () => undefined),
+        start: vi.fn(async () => started({})),
+        reloadWhenHealthy: vi.fn(async () => true),
+        ...over,
+    });
+
+    it('a failed save opens no run and ends no unrelated run', async () => {
+        timing.beginTiming('restart');
+        const d = ob({ save: vi.fn(async () => { throw new Error('store'); }) });
+        await expect(timedOnboarding(d)).rejects.toThrow('store');
+        expect(d.start).not.toHaveBeenCalled();
+        expect(timing.getActiveTiming()?.scenario).toBe('restart');
+        expect(timing.getTimingHistory()).toEqual([]);
+    });
+
+    it('failed or throwing start ends the onboarding run', async () => {
+        await timedOnboarding(ob({ start: vi.fn(async () => started({ ok: false })) }));
+        expect(last()).toMatchObject({ scenario: 'onboarding', outcome: 'failed' });
+        await expect(
+            timedOnboarding(ob({ start: vi.fn(async () => { throw new Error('ipc'); }) })),
+        ).rejects.toThrow('ipc');
+        expect(last()).toMatchObject({ scenario: 'onboarding', outcome: 'failed', detail: 'onboarding threw' });
+        expect(timing.getActiveTiming()).toBeNull();
+    });
+
+    it('success hands the run to the health wait', async () => {
+        const d = ob();
+        await timedOnboarding(d);
+        expect(d.reloadWhenHealthy).toHaveBeenCalledTimes(1);
+        expect(timing.getActiveTiming()?.scenario).toBe('onboarding');
     });
 });
 

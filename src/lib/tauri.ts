@@ -37,7 +37,9 @@ import {
     recoverHarnessOwnership,
 } from './sidecar-ownership';
 import { notify } from './trade';
-import { STOP_SCHEDULE, pollUntil } from './poll-until';
+import { STOP_SCHEDULE, pollUntil, throttled } from './poll-until';
+
+const PROCESS_ALIVE_INTERVAL_MS = 1500;
 import {
     endTiming,
     markStage,
@@ -64,7 +66,9 @@ export { harnessOwnershipCompatible } from './sidecar-ownership';
 // clicked restart/stop/switch meanwhile), cancels this one — its timeout
 // must neither close the newer run nor reload the page under it.
 let healthWait: AbortController | null = null;
-export function reloadWhenHealthy(timeoutMs = 90_000): Promise<void> {
+// Resolves true when it triggered the reload, false when it timed out or
+// was cancelled.
+export function reloadWhenHealthy(timeoutMs = 90_000): Promise<boolean> {
     healthWait?.abort();
     const wait = new AbortController();
     healthWait = wait;
@@ -84,16 +88,17 @@ export function reloadWhenHealthy(timeoutMs = 90_000): Promise<void> {
                 },
                 { timeoutMs, attemptTimeoutMs: 5000, signal: wait.signal },
             );
-            if (res.cancelled) return;
+            if (res.cancelled) return false;
             if (res.timedOut) {
                 endTiming('failed', `health not ok after ${res.attempts} polls`, {
                     runId,
                 });
-                return;
+                return false;
             }
             markStage('healthy', `polls=${res.attempts}`, { runId });
             markStage('reload', undefined, { runId });
             window.location.reload();
+            return true;
         } finally {
             off();
             if (healthWait === wait) healthWait = null;
@@ -180,15 +185,20 @@ async function spawnServer(
     // then quickly, backing off to 1 s (was: first probe after 1.5 s, then
     // every 1.5 s)
     markStage('wait-listener');
+    // /info on the fast schedule; process_alive (PowerShell per call on
+    // Windows) no more often than the old 1.5 s loop did
+    const alive = throttled(
+        () =>
+            invoke<boolean>('process_alive', { pid }).catch(
+                () => true, // transient IPC failure must not read as "died"
+            ),
+        PROCESS_ALIVE_INTERVAL_MS,
+        true,
+    );
     const waited = await pollUntil<'up' | 'died'>(
         async () => {
             if (await probeInfo(port, scheme)) return 'up';
-            const alive = await invoke<boolean>('process_alive', {
-                pid,
-            }).catch(
-                () => true, // transient IPC failure must not read as "died"
-            );
-            return alive ? undefined : 'died';
+            return (await alive()) ? undefined : 'died';
         },
         { timeoutMs: 45_000 },
     );

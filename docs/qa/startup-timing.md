@@ -14,11 +14,11 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 
 | 階段 key | 畫面顯示 | 意義 |
 | --- | --- | --- |
-| `app-js-start` | App 啟動 | 冷啟動：前端程式開始執行（相對 webview 開始載入） |
+| `app-js-start` | App 啟動 | 冷啟動：前端程式開始執行（相對 webview 開始載入，見下方說明） |
 | `probe` | 檢查現有伺服器 | 探測已在運行的伺服器、決定可否沿用 |
 | `wait-warming` | 等待先前啟動中的伺服器 | 上一次 spawn 可能仍在登入，最多等 20 秒 |
 | `sweep-orphans` | 搜尋遺留的伺服器 | 掃描備用 port 上的孤兒伺服器 |
-| `attach` | 連接既有伺服器 | 沿用健康、模式正確的伺服器 |
+| `attach` | 連接既有伺服器 | 沿用健康、模式正確的伺服器；附註 `server still starting` 表示接手仍在登入中的伺服器，之後進入 `wait-health` |
 | `stop-agents` | 停止 Agent | 使用者操作前先停止 Agent runtime |
 | `kill` | 停止伺服器 | 送出停止指令 |
 | `wait-exit` | 等待伺服器結束 | 等舊伺服器不再回應，最多 5 秒 |
@@ -35,6 +35,10 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | `accounts-loaded` | 帳戶已載入 | 帳戶清單第一次載入完成（附帳戶數） |
 | `positions-loaded` | 持倉已載入 | 第一次持倉查詢完成；失敗或需對帳也算完成並註明 |
 | `stream-live` | 行情串流已連線 | SSE 串流狀態轉為 LIVE |
+
+冷啟動的起點是 webview 的 `performance.timeOrigin`（頁面開始載入），**不含**
+從點開 App 到原生程序啟動、建立 webview 的時間；需要這段時請另以碼錶或 OS
+工具量測，填在備註。
 
 三個前端階段到齊時 run 才結束（順序不固定）；60 秒內未到齊則以 `partial`
 結束並列出缺少的階段。
@@ -132,6 +136,9 @@ Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 
 - 冷啟動 `app-js-start` 偏大：webview／前端載入慢，與伺服器無關。
 - 前端就緒偏長：看三個前端階段哪個最晚；`positions-loaded` 最晚通常是帳務
   查詢，`stream-live` 最晚是 SSE 連線。
+- 開機時接手「仍在登入中的伺服器」：與全新啟動一樣以快速健康輪詢等待
+  （上限 90 秒）；超過後改由開機 watchdog 每 4 秒檢查、不設上限，此時 run
+  已記為 `failed`，之後的 reload 不會再計入。
 - 量不到的部分：App 無法看到 sidecar 內部的登入、CA 啟用、合約下載等細項
   （全部落在 `wait-listener`），也看不到「畫面各面板第一次畫完」的時間；
   需要時另開 issue 在伺服器端或個別面板量測。

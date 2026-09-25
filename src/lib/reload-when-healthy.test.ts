@@ -41,7 +41,7 @@ describe('reloadWhenHealthy', () => {
     it('reloads on the first check when the server is already healthy', async () => {
         fetchHealth.mockResolvedValue({ status: 'healthy' });
         timing.beginTiming('restart');
-        await reloadWhenHealthy();
+        expect(await reloadWhenHealthy()).toBe(true);
         expect(fetchHealth).toHaveBeenCalledTimes(1);
         expect(reload).toHaveBeenCalledTimes(1);
         expect(Date.now()).toBe(0); // no leading 2 s wait
@@ -68,8 +68,8 @@ describe('reloadWhenHealthy', () => {
         fetchHealth.mockRejectedValue(new Error('down'));
         timing.beginTiming('start');
         const done = reloadWhenHealthy(3000);
-        await vi.advanceTimersByTimeAsync(4000);
-        await done;
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(await done).toBe(false); // boot falls back to its watchdog
         expect(reload).not.toHaveBeenCalled();
         expect(timing.getTimingHistory()[0]).toMatchObject({
             scenario: 'start',
@@ -85,7 +85,7 @@ describe('reloadWhenHealthy', () => {
         // the user clicks 重啟 at 80 s: a new run begins …
         timing.beginTiming('restart', { replace: true });
         const restartId = timing.getActiveTiming()!.id;
-        await first; // … which cancels the old wait at once
+        expect(await first).toBe(false); // … which cancels the old wait at once
         await vi.advanceTimersByTimeAsync(20_000); // past the old deadline
         const run = timing.getActiveTiming();
         expect(run?.id).toBe(restartId);

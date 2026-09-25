@@ -8,6 +8,7 @@ import {
     STOP_SCHEDULE,
     pollDelay,
     pollUntil,
+    throttled,
 } from './poll-until';
 
 beforeEach(() => {
@@ -16,6 +17,53 @@ beforeEach(() => {
 });
 afterEach(() => {
     vi.useRealTimers();
+});
+
+describe('throttled (process_alive cadence)', () => {
+    it('runs at most once per interval, the first time one interval in', async () => {
+        const fn = vi.fn(async () => false);
+        const alive = throttled(fn, 1500, true);
+        expect(await alive()).toBe(true); // t=0: skipped, fallback
+        await vi.advanceTimersByTimeAsync(1499);
+        expect(await alive()).toBe(true);
+        expect(fn).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await alive()).toBe(false);
+        expect(await alive()).toBe(true); // same instant: throttled again
+        expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it('a 30 s spawn wait calls process_alive no more than the old 1.5 s loop', async () => {
+        const probe = vi.fn(async () => false);
+        const aliveFn = vi.fn(async () => true);
+        const alive = throttled(aliveFn, 1500, true);
+        const p = pollUntil(
+            async () => {
+                if (await probe()) return 'up' as const;
+                return (await alive()) ? undefined : ('died' as const);
+            },
+            { timeoutMs: 30_000 },
+        );
+        await vi.advanceTimersByTimeAsync(40_000);
+        await p;
+        // the probe runs on the fast schedule …
+        expect(probe.mock.calls.length).toBeGreaterThan(30);
+        // … liveness at most once per 1.5 s (old loop: 20 in 30 s)
+        expect(aliveFn.mock.calls.length).toBeLessThanOrEqual(20);
+        expect(aliveFn.mock.calls.length).toBeGreaterThanOrEqual(15);
+    });
+
+    it('a dead process is still detected within about 1.5 s', async () => {
+        const alive = throttled(async () => false, 1500, true);
+        const p = pollUntil(
+            async () => ((await alive()) ? undefined : 'died'),
+            { timeoutMs: 45_000 },
+        );
+        await vi.advanceTimersByTimeAsync(5000);
+        const res = await p;
+        expect(res.value).toBe('died');
+        expect(res.elapsedMs).toBeLessThanOrEqual(2500);
+    });
 });
 
 describe('pollDelay', () => {

@@ -50,6 +50,27 @@ export interface PollResult<T> {
     cancelled: boolean; // opts.signal aborted the whole wait
 }
 
+/**
+ * Wrap an expensive side check so it runs at most once per `minIntervalMs`
+ * (the first run only `minIntervalMs` after creation); in between, calls
+ * resolve to `fallback` without running it. Used for `process_alive`, which
+ * on Windows spawns PowerShell on the shell's main thread — the probe loop
+ * may poll quickly, the liveness check keeps the old 1.5 s cadence.
+ */
+export function throttled<T>(
+    fn: () => Promise<T>,
+    minIntervalMs: number,
+    fallback: T,
+): () => Promise<T> {
+    let last = Date.now();
+    return async () => {
+        const now = Date.now();
+        if (now - last < minIntervalMs) return fallback;
+        last = now;
+        return fn();
+    };
+}
+
 // cap for a last attempt without attemptTimeoutMs: the sidecar probes
 // (probeInfo/probeHealthy) carry their own 5 s request timeout
 export const ATTEMPT_GRACE_MS = 5000;

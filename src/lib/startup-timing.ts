@@ -81,6 +81,7 @@ export interface TimingRun {
     endedAt?: number; // ms since run start
     outcome?: TimingOutcome;
     detail?: string;
+    droppedMarks?: number;
 }
 
 interface TimingState {
@@ -88,7 +89,11 @@ interface TimingState {
     history: TimingRun[]; // finished, newest first
 }
 
-const STORAGE_KEY = 'sjpro.startupTiming.v1';
+const STORAGE_KEY = 'sj-pro-startup-timing';
+const LEGACY_STORAGE_KEY = 'sjpro.startupTiming.v1'; // first PR #149 builds
+// repeated reloads must not grow one run without bound: past this the last
+// slot keeps the newest mark and `droppedMarks` counts the rest
+export const MAX_MARKS = 64;
 const HISTORY_LIMIT = 12;
 // longer than any legitimate run — 20 s warming + 45 s spawn + 90 s health
 // + 60 s front-end watch = 215 s, plus the last probes' grace: an older
@@ -101,7 +106,17 @@ const listeners = new Set<Listener>();
 
 function readStorage(): TimingState {
     try {
-        const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
+        const ls = globalThis.localStorage;
+        let raw = ls?.getItem(STORAGE_KEY);
+        const legacy = ls?.getItem(LEGACY_STORAGE_KEY);
+        if (legacy !== null && legacy !== undefined) {
+            // one-time migration of the old key
+            if (!raw) {
+                raw = legacy;
+                ls?.setItem(STORAGE_KEY, legacy);
+            }
+            ls?.removeItem(LEGACY_STORAGE_KEY);
+        }
         if (raw) {
             const parsed = JSON.parse(raw) as Partial<TimingState>;
             return {
@@ -221,7 +236,15 @@ export function markStage(
     const d = clip(detail);
     if (d) mark.detail = d;
     debugLog(run, `+${fmtSec(mark.at)} ${stage}${d ? ` ${d}` : ''}`);
-    commit({ ...state, active: { ...run, marks: [...run.marks, mark] } });
+    const next =
+        run.marks.length < MAX_MARKS
+            ? { ...run, marks: [...run.marks, mark] }
+            : {
+                  ...run,
+                  marks: [...run.marks.slice(0, MAX_MARKS - 1), mark],
+                  droppedMarks: (run.droppedMarks ?? 0) + 1,
+              };
+    commit({ ...state, active: next });
 }
 
 export function endTiming(
@@ -316,7 +339,7 @@ export function formatTimingRun(run: TimingRun): string[] {
         run.outcome ?? 'in progress'
     }${run.endedAt !== undefined ? ` · total ${fmtSec(run.endedAt)}` : ''}${
         run.detail ? ` · ${run.detail}` : ''
-    }`;
+    }${run.droppedMarks ? ` · ${run.droppedMarks} marks dropped` : ''}`;
     const lines = [head];
     run.marks.forEach((m, i) => {
         const next = run.marks[i + 1]?.at ?? run.endedAt;

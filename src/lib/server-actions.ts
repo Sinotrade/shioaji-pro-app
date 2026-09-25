@@ -15,7 +15,7 @@ import type { DesktopSettings, SidecarResult, StartResult } from './tauri';
 export interface ServerActionDeps {
     serverStart: (cfg: DesktopSettings) => Promise<StartResult>;
     serverStop: (opts: { stopAgents: boolean }) => Promise<SidecarResult>;
-    reloadWhenHealthy: () => Promise<void>;
+    reloadWhenHealthy: () => Promise<unknown>;
     scheduleReload: (delayMs: number) => void;
     sleep: (ms: number) => Promise<void>;
 }
@@ -70,6 +70,28 @@ export async function timedAutostart(
     }
     if (!res.ok && runId) endTiming('failed', 'autostart', { runId });
     return res;
+}
+
+/** First-run setup: save, then start timed as `onboarding`. A failed
+ * save opens no run, so it must not end one (the user's may be open). */
+export async function timedOnboarding(deps: {
+    save: () => Promise<void>;
+    start: () => Promise<StartResult>;
+    reloadWhenHealthy: () => Promise<unknown>;
+}): Promise<StartResult> {
+    let runId: string | undefined;
+    try {
+        await deps.save();
+        beginTiming('onboarding', { replace: true });
+        runId = peekActiveTiming()?.id;
+        const res = await deps.start();
+        if (!res.ok) endTiming('failed', undefined, { runId });
+        else void deps.reloadWhenHealthy();
+        return res;
+    } catch (e) {
+        if (runId) endTiming('failed', 'onboarding threw', { runId });
+        throw e;
+    }
 }
 
 export async function timedStop(deps: ServerActionDeps): Promise<SidecarResult> {

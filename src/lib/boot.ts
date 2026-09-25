@@ -176,11 +176,14 @@ async function run() {
                     settleBootRun(coldStart ? 'attached' : 'ok');
                 } else if (matches) {
                     // the right server is starting up — adopt its address
-                    // and fall through to the bootstrap watchdog below,
-                    // which reloads once /health answers
-                    markStage('wait-health', 'adopting warming server');
+                    // and reload once /health answers, on the same fast
+                    // health wait as a fresh start (was: the 4 s watchdog
+                    // below). Past its 90 s budget, fall through to that
+                    // watchdog, which keeps waiting without a limit.
                     if (status.port) setApiPort(status.port);
                     if (status.scheme) setApiScheme(status.scheme);
+                    markStage('attach', 'server still starting');
+                    if (await reloadWhenHealthy()) return;
                 } else {
                     // not running, unhealthy, or wrong mode — serverStart
                     // stops a broken daemon and starts fresh

@@ -21,6 +21,7 @@ const {
     beginTiming,
     describeActiveStage,
     endTiming,
+    MAX_MARKS,
     beginBootTiming,
     getActiveTiming,
     getTimingHistory,
@@ -146,6 +147,41 @@ describe('startup timing runs', () => {
         expect(console.info).toHaveBeenLastCalledWith(
             '[startup-timing] restart +1.23s wait-listener',
         );
+    });
+});
+
+describe('storage', () => {
+    it('migrates the legacy key to sj-pro-startup-timing once', () => {
+        const legacy = { active: null, history: [{ id: 'x', scenario: 'stop', startedAt: 0, marks: [], endedAt: 10, outcome: 'ok' }] };
+        store.set('sjpro.startupTiming.v1', JSON.stringify(legacy));
+        __resetTimingForTest();
+        expect(getTimingHistory()[0]!.id).toBe('x');
+        expect(store.has('sjpro.startupTiming.v1')).toBe(false);
+        expect(JSON.parse(store.get('sj-pro-startup-timing')!).history[0].id).toBe('x');
+        beginTiming('start');
+        expect(JSON.parse(store.get('sj-pro-startup-timing')!).active.scenario).toBe('start');
+    });
+
+    it('the new key wins over a leftover legacy one', () => {
+        store.set('sj-pro-startup-timing', JSON.stringify({ active: null, history: [] }));
+        store.set('sjpro.startupTiming.v1', JSON.stringify({ active: null, history: [{ id: 'old' }] }));
+        __resetTimingForTest();
+        expect(getTimingHistory()).toEqual([]);
+        expect(store.has('sjpro.startupTiming.v1')).toBe(false);
+    });
+
+    it('caps marks per run, keeping the first ones and the newest', () => {
+        beginTiming('restart');
+        for (let i = 0; i < MAX_MARKS + 10; i++) {
+            vi.advanceTimersByTime(1);
+            markStage(i % 2 ? 'reload' : 'page-loaded', `#${i}`);
+        }
+        const run = getActiveTiming()!;
+        expect(run.marks).toHaveLength(MAX_MARKS);
+        expect(run.marks[0]!.detail).toBe('#0');
+        expect(run.marks.at(-1)!.detail).toBe(`#${MAX_MARKS + 9}`);
+        expect(run.droppedMarks).toBe(10);
+        expect(timingDiagnostics()).toContain('10 marks dropped');
     });
 });
 
