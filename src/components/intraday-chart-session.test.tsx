@@ -395,4 +395,20 @@ describe('IntradayChart session toggle', () => {
         const chip = r.root.find((n) => n.type === 'button' && n.props['aria-haspopup'] === 'menu');
         expect(chip.children.join('')).toBe('09/24 夜盤');
     });
+
+    it('holiday: locking the same session 自動 shows keeps the official reference', async () => {
+        // 週五假日 10:00：資料只到週四夜盤（凌晨 05:00 收）— 自動與鎖夜盤都是那段
+        setNow('2026-09-25T10:00:00');
+        const data = kbars([
+            ['2026-09-24T08:45:00', '2026-09-24T13:45:00', () => 22400],
+            ['2026-09-24T15:00:00', '2026-09-25T05:00:00', () => 22450],
+        ]);
+        fetchMock.mockResolvedValue(data);
+        const r = mount({ contract: stkFut, sessionMode: 'night', onSessionModeChange: () => {} });
+        await flush();
+        expect(iso((price().last as any[])[0].time)).toBe('2026-09-24T15:01');
+        expect(price().options.baseValue?.price).toBe(22500); // 合約官方參考價
+        expect(text(r)).not.toContain('≈');
+        expect(limitLines().length).toBeGreaterThan(0);
+    });
 });

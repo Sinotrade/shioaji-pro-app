@@ -10,6 +10,7 @@ import {
     isDaySessionTick,
     daySessionLabel,
     isPastSession,
+    isReviewingPastSession,
     parseChartSessionMode,
     parseIntradaySessionMode,
     pastSessionReference,
@@ -497,5 +498,34 @@ describe('manual lock fallback skips non-existent weekend sessions', () => {
         expect(pickIntradayWindow('FUT', [], 'night', t('2026-09-28T10:00:00')).start).toBe(t('2026-09-25T15:00:00'));
         // 週一 08:30 鎖日盤 → 即將開始的週一日盤
         expect(pickIntradayWindow('FUT', [], 'day', t('2026-09-28T08:30:00')).start).toBe(t('2026-09-28T08:45:00'));
+    });
+});
+
+describe('isReviewingPastSession', () => {
+    // 週四日盤＋週四夜盤資料；週五是假日（今天 10:00 沒有任何週五資料）
+    const times = [
+        '2026-09-24T08:46:00',
+        '2026-09-24T13:45:00',
+        '2026-09-24T15:01:00',
+        '2026-09-25T05:00:00',
+    ].map(t);
+    const now = t('2026-09-25T10:00:00');
+
+    it('locking the session 自動 would show uses the official reference', () => {
+        const win = pickIntradayWindow('FUT', times, 'night', now);
+        expect(win.start).toBe(t('2026-09-24T15:00:00'));
+        expect(isPastSession('FUT', win, now)).toBe(true);
+        expect(isReviewingPastSession('FUT', 'night', win, times, now)).toBe(false);
+    });
+
+    it('locking an older session than 自動 is a review', () => {
+        const win = pickIntradayWindow('FUT', times, 'day', now);
+        expect(win.start).toBe(t('2026-09-24T08:45:00'));
+        expect(isReviewingPastSession('FUT', 'day', win, times, now)).toBe(true);
+    });
+
+    it('自動 is never a review', () => {
+        const win = pickIntradayWindow('FUT', times, 'auto', now);
+        expect(isReviewingPastSession('FUT', 'auto', win, times, now)).toBe(false);
     });
 });

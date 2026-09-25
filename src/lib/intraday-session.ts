@@ -249,6 +249,23 @@ export function isPastSession(
     return true;
 }
 
+// 手動鎖定的時段是否要當「回顧」處理（參考價近似、不畫停板）。
+// 與「自動」會選的時段相同時（例如假日：自動與鎖夜盤都顯示昨晚那段）
+// 合約參考價/停板就是屬於它的 — 照自動用官方值，不改近似
+export function isReviewingPastSession(
+    secType: SecurityType,
+    mode: IntradaySessionMode,
+    win: SessionWindow,
+    times: number[],
+    now: number,
+    pendStart = 0,
+): boolean {
+    if (mode === 'auto') return false;
+    const autoWin = pickIntradayWindow(secType, times, 'auto', now, pendStart);
+    if (autoWin.start === win.start) return false;
+    return isPastSession(secType, win, now);
+}
+
 // every 1-minute bar-label time of a session, for whitespace axis fill
 export function sessionMinutes(win: SessionWindow): number[] {
     const out: number[] = [];

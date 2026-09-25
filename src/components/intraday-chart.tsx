@@ -29,7 +29,7 @@ import { colorWithOpacity } from '../lib/indicator-defs';
 import {
     CLOSE_GRACE,
     followsSession,
-    isPastSession,
+    isReviewingPastSession,
     parseIntradaySessionMode,
     pastSessionReference,
     pickIntradayWindow,
@@ -801,9 +801,14 @@ export function IntradayChart({
             );
             applyRefPrice(ref);
             // 空框架沒有歷史可推參考價 — 已結束時段至少不畫漲跌停
-            const past =
-                sessionMode !== 'auto' &&
-                isPastSession(contract.security_type, win, nowWallClockUtc());
+            const past = isReviewingPastSession(
+                contract.security_type,
+                sessionMode,
+                win,
+                [],
+                nowWallClockUtc(),
+                pend,
+            );
             pastRef.current = past;
             const minutes = sessionMinutes(win);
             fillerSeriesRef.current.setData(
@@ -897,15 +902,16 @@ export function IntradayChart({
                         i--;
                     }
                 }
-                // 手動回顧已結束的時段：合約參考價/漲跌停屬於現在的
-                // 時段 — 參考價改由歷史推，漲跌停不畫
-                const past =
-                    sessionMode !== 'auto' &&
-                    isPastSession(
-                        contract.security_type,
-                        win,
-                        nowWallClockUtc(),
-                    );
+                // 手動回顧已結束的時段：合約參考價/漲跌停屬於現在（自動
+                // 會選）的時段 — 參考價改由歷史推，漲跌停不畫
+                const past = isReviewingPastSession(
+                    contract.security_type,
+                    sessionMode,
+                    win,
+                    all.map((b) => b.time),
+                    nowWallClockUtc(),
+                    pend,
+                );
                 pastRef.current = past;
                 const ref =
                     (past
