@@ -17,7 +17,7 @@ import {
     fetchInfo,
     subscribeTradeEvents,
 } from './shioaji';
-import { ensureStream, onOrderEvent } from './stream';
+import { ensureStream, holdStream, onOrderEvent, releaseStream } from './stream';
 import {
     harnessOwnershipCompatible,
     loadDesktopSettings,
@@ -96,6 +96,11 @@ export function bootstrap() {
     // first render (the stream opened ~2 s after boot-checked natively,
     // #142). ensureStream is idempotent; panels mounting later reuse it.
     if (shouldOpenStreamEarly()) ensureStream();
+    // A real App launch: until boot knows whether this page will be
+    // replaced by the post-start reload, don't let the dashboard open a
+    // stream to a server that may not be up (released on every path that
+    // keeps this page; expires on its own after 30 s)
+    else if (isTauri && !isChildWindow() && !pageWasReloaded()) holdStream();
     void run();
 }
 
@@ -237,7 +242,10 @@ async function run() {
                         });
                         // sequential, immediate-first health poll (was a
                         // 2 s interval whose first check waited 2 s)
-                        void reloadWhenHealthy();
+                        void reloadWhenHealthy().then((reloading) => {
+                            // health wait gave up: this page stays
+                            if (!reloading) releaseStream('health wait ended');
+                        });
                         return;
                     } else {
                         settleBootRun('attached');
@@ -249,6 +257,9 @@ async function run() {
         }
         openBootTiming(false); // settings unreadable: still continue/retire
     }
+
+    // this page is kept (no reload is under way): let its stream connect
+    releaseStream('boot kept page');
 
     // bootstrap watchdog: reload once the server becomes reachable. Uses
     // the scheme-agnostic status probe (NOT fetchHealth, which is locked to
@@ -313,6 +324,7 @@ function settleBootRun(outcome: TimingOutcome) {
     const run = getActiveTiming();
     if (!run || settling) return;
     settling = true;
+    releaseStream('server confirmed');
     // separates boot's own server checks from the front-end wait below
     markStage('boot-checked', undefined, { runId: run.id });
     // the server is up: start the account read now rather than whenever

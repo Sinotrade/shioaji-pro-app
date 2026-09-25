@@ -51,13 +51,12 @@ it('first attempts that fail retry after 250 ms, and opening is recorded', async
     last().onopen!();
     last().emit('heartbeat');
     expect(stream.getStreamStatus()).toBe('live');
-    expect(m.marks).toEqual([
-        ['stream-connect', undefined],
-        ['stream-error', 'failure=1 retry=250ms'],
-        ['stream-error', 'failure=2 retry=250ms'],
-        ['stream-open', 'failures=2'],
-        ['stream-heartbeat', undefined],
-    ]);
+    const page = expect.stringMatching(/^page=\S+/);
+    expect(m.marks.map(([s]) => s)).toEqual(['stream-connect', 'stream-error', 'stream-error', 'stream-open', 'stream-heartbeat']);
+    expect(m.marks[0]![1]).toEqual(page);
+    expect(m.marks[1]![1]).toMatch(/^page=\S+ failure=1 retry=250ms$/);
+    expect(m.marks[2]![1]).toMatch(/^page=\S+ failure=2 retry=250ms$/);
+    expect(m.marks[3]![1]).toMatch(/^page=\S+ failures=2 after=\d+ms$/);
 });
 
 it('after the fast retries the normal backoff applies unchanged', async () => {
@@ -87,7 +86,7 @@ it('a drop right after opening (page still starting) also retries fast', async (
     last().onerror!();
     vi.advanceTimersByTime(250);
     expect(FakeEventSource.all).toHaveLength(2);
-    expect(m.marks).toContainEqual(['stream-error', 'failure=1 after open retry=250ms']);
+    expect(m.marks.find(([s]) => s === 'stream-error')![1]).toMatch(/failure=1 after open retry=250ms$/);
     expect(stream.streamOpenedAt()).not.toBeNull();
 });
 
@@ -112,4 +111,30 @@ it('child windows record nothing', async () => {
     vi.advanceTimersByTime(250);
     last().onopen!();
     expect(m.marks).toEqual([]);
+});
+
+it('a held stream connects only on release (or when the hold expires)', async () => {
+    const stream = await import('./stream');
+    stream.holdStream();
+    stream.ensureStream(); // the dashboard mounts
+    expect(FakeEventSource.all).toHaveLength(0);
+    stream.releaseStream('server confirmed');
+    expect(FakeEventSource.all).toHaveLength(1);
+    expect(m.marks[0]![1]).toMatch(/server confirmed$/);
+});
+
+it('a hold nobody releases expires and connects anyway', async () => {
+    const stream = await import('./stream');
+    stream.holdStream();
+    stream.ensureStream();
+    vi.advanceTimersByTime(stream.STREAM_HOLD_MAX_MS);
+    expect(FakeEventSource.all).toHaveLength(1);
+});
+
+it('a hold after the stream started is a no-op', async () => {
+    const stream = await import('./stream');
+    stream.ensureStream();
+    stream.holdStream();
+    stream.releaseStream();
+    expect(FakeEventSource.all).toHaveLength(1);
 });

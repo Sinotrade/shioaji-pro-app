@@ -8,11 +8,13 @@ const m = vi.hoisted(() => ({
     child: false,
     navType: 'reload' as string,
     ensureStream: vi.fn(),
+    holdStream: vi.fn(),
+    releaseStream: vi.fn(),
 }));
 vi.mock('./runtime', async (orig) => ({ ...(await orig<object>()), isTauri: true }));
 vi.mock('./window-role', () => ({ isChildWindow: () => m.child }));
 vi.mock('./features', () => ({ agentModule: undefined }));
-vi.mock('./stream', () => ({ ensureStream: m.ensureStream, onOrderEvent: vi.fn() }));
+vi.mock('./stream', () => ({ ensureStream: m.ensureStream, holdStream: m.holdStream, releaseStream: m.releaseStream, onOrderEvent: vi.fn() }));
 vi.mock('./trade', () => ({ notify: vi.fn(), logNotice: vi.fn() }));
 vi.mock('./frontend-ready', () => ({ appReadySignals: () => [], watchFrontendReady: vi.fn() }));
 vi.mock('./account-store', () => ({ ensureAccounts: vi.fn(), loadAccountsShared: vi.fn() }));
@@ -58,6 +60,8 @@ beforeEach(() => {
     m.child = false;
     m.navType = 'reload';
     m.ensureStream.mockClear();
+    m.holdStream.mockClear();
+    m.releaseStream.mockClear();
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
 });
 afterEach(() => {
@@ -86,5 +90,22 @@ describe('early stream at bootstrap', () => {
         expect(m.ensureStream).not.toHaveBeenCalled();
         await boot('wait-health');
         expect(m.ensureStream).not.toHaveBeenCalled();
+    });
+
+    it('an App launch holds the stream until boot keeps the page', async () => {
+        m.navType = 'navigate';
+        await boot(null);
+        expect(m.holdStream).toHaveBeenCalledTimes(1);
+        // autostart off in this fixture → boot keeps the page → released
+        await vi.waitFor(() => expect(m.releaseStream).toHaveBeenCalled());
+    });
+
+    it('no hold on a reload or in a child window', async () => {
+        await boot('reload');
+        expect(m.holdStream).not.toHaveBeenCalled();
+        m.navType = 'navigate';
+        m.child = true;
+        await boot(null);
+        expect(m.holdStream).not.toHaveBeenCalled();
     });
 });

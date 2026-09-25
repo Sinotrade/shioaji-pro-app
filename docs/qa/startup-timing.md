@@ -37,6 +37,7 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | `stream-error` | 行情串流連線失敗，重試中 | 本頁串流第一次開啟前的連線失敗（附第幾次、下次重試間隔）；前 3 次 250 ms 後重試，之後照原本 1 s→2 s… 退避 |
 | `stream-open` | 行情串流已開啟 | 本頁串流第一次開啟（SSE `open`，即畫面轉為 LIVE），附開啟前失敗次數 |
 | `stream-heartbeat` | 收到第一個串流心跳 | 伺服器連線時立即送出第一個 heartbeat，之後每 30 秒 |
+| `stream-restart` | 行情串流重新連線 | 主動關閉並重連（附 `reason=stale／silent／connect-while-open`）；正常啟動不應出現 |
 | `app-mounted` | 畫面元件已掛載 | 儀表板第一次 commit 完成（所有面板掛載、effect 已執行） |
 | `main-thread` | 主執行緒忙碌統計 | 只記附註：等待前端就緒期間 JS 主執行緒被占用的總時間與最長一次卡住（`busy=…ms maxStall=…ms`）；SSE 開啟或第一個事件在主執行緒忙時無法處理，`stream-live` 會一起變晚 |
 | `accounts-loaded` | 帳戶已載入 | 帳戶清單第一次載入完成（附帳戶數） |
@@ -46,6 +47,11 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 冷啟動的起點是 webview 的 `performance.timeOrigin`（頁面開始載入），**不含**
 從點開 App 到原生程序啟動、建立 webview 的時間；需要這段時請另以碼錶或 OS
 工具量測，填在備註。
+
+所有 `stream-*` 附註都以 `page=…` 開頭，標明是哪一個頁面的連線：冷啟動橫跨
+「重新載入前」與「重新載入後」兩個頁面，各有自己的連線；`stream-open` 的
+`after=…ms` 是該頁從建立連線到開啟的時間。冷啟動的第一個頁面在確定不會被
+重新載入前不建立串流（最多等 30 秒）。
 
 三個前端階段到齊時 run 才結束（順序不固定）；60 秒內未到齊則以 `partial`
 結束並列出缺少的階段。

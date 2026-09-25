@@ -485,8 +485,46 @@ const pageAge = () =>
 export function streamOpenedAt(): number | null {
     return openedAt;
 }
-function markStream(stage: 'stream-open' | 'stream-error' | 'stream-heartbeat', detail?: string) {
-    if (!isChildWindow()) markStage(stage, detail);
+// Every stream mark names its page: a cold start spans two pages (before
+// and after the post-start reload), each with its own connection, and one
+// timeline must not read as "the stream opened, then was replaced".
+const PAGE_TAG = typeof performance !== 'undefined' && performance.timeOrigin
+    ? `page=${Math.round(performance.timeOrigin) % 100_000}`
+    : 'page=?';
+let connectStartedAt = 0;
+function markStream(
+    stage: 'stream-connect' | 'stream-open' | 'stream-error' | 'stream-heartbeat' | 'stream-restart',
+    detail?: string,
+) {
+    if (!isChildWindow()) markStage(stage, detail ? `${PAGE_TAG} ${detail}` : PAGE_TAG);
+}
+
+// ---- cold-start hold ----
+// On a cold start the first page only exists until the server turns healthy
+// and boot reloads it: a stream opened there connects to a server that is
+// not up yet (the failures seen natively) and is torn down by the reload a
+// moment later. Boot holds the connection on that page and releases it on
+// every path that does NOT reload; the hold also expires on its own so a
+// missed release can never leave the App without a stream.
+export const STREAM_HOLD_MAX_MS = 30_000;
+let held = false;
+let holdTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingConnect = false;
+export function holdStream() {
+    if (held || started) return; // only before the first connection
+    held = true;
+    holdTimer = setTimeout(() => releaseStream('hold expired'), STREAM_HOLD_MAX_MS);
+}
+export function releaseStream(reason = 'released') {
+    if (!held) return;
+    held = false;
+    if (holdTimer) clearTimeout(holdTimer);
+    holdTimer = null;
+    if (pendingConnect) {
+        pendingConnect = false;
+        markStream('stream-connect', reason);
+        startConnection();
+    }
 }
 let lastCheckGap = 0;
 function checkWatchdog() {
@@ -507,6 +545,7 @@ function checkWatchdog() {
     const silent = !heartbeatSinceOpen;
     if (silent) silentConnections++;
     setStatus('stale');
+    markStream('stream-restart', `reason=${silent ? 'silent' : 'stale'}`);
     scheduleReconnect(silent ? SILENT_RETRY_MAX_MS : NORMAL_RETRY_MAX_MS);
 }
 /** Watchdog diagnostics for Debug: consecutive connections that opened but
@@ -523,7 +562,12 @@ function listen(source: EventSource, name: string, handler: (event: MessageEvent
 }
 
 function connect() {
-    if (es) es.close();
+    if (es) {
+        // never expected while a connection is live: record it if it happens
+        markStream('stream-restart', 'reason=connect-while-open');
+        es.close();
+    }
+    connectStartedAt = Date.now();
     // Keep STALE visible until the reconnect actually opens.
     setStatus(status === 'stale' ? 'stale' : 'connecting');
     // region filters contract_event only; other families are unfiltered
@@ -533,7 +577,7 @@ function connect() {
         if (!openedOnce) {
             openedOnce = true;
             openedAt = Date.now();
-            markStream('stream-open', `failures=${startupFailures}`);
+            markStream('stream-open', `failures=${startupFailures} after=${openedAt - connectStartedAt}ms`);
         }
         // A connection only proves healthy once a heartbeat arrives; until
         // then keep the backoff so silent connections do not loop every ~80 s.
@@ -652,14 +696,22 @@ let started = false;
 export function ensureStream() {
     if (!started) {
         started = true;
+        if (held) {
+            pendingConnect = true; // connects on release (or hold expiry)
+            return;
+        }
         // startup timing (#142): main window only (no-op without a run)
-        if (!isChildWindow()) markStage('stream-connect');
-        connect();
-        lastCheckAt = Date.now();
-        watchdogTimer = setInterval(checkWatchdog, WATCHDOG_TICK_MS);
-        void watchMaintenance();
-        setInterval(watchMaintenance, 60000);
+        markStream('stream-connect');
+        startConnection();
     }
+}
+
+function startConnection() {
+    connect();
+    lastCheckAt = Date.now();
+    watchdogTimer = setInterval(checkWatchdog, WATCHDOG_TICK_MS);
+    void watchMaintenance();
+    setInterval(watchMaintenance, 60000);
 }
 
 // ---- store API (for useSyncExternalStore) ----
