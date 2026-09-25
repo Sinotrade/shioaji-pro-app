@@ -1,7 +1,8 @@
-// src/lib/futures-fifo.ts — FIFO lot matching for one futures contract.
+// src/lib/futures-fifo.ts — FIFO lot matching for one futures/options contract.
 // Intra-session the broker returns separate Buy and Sell position rows for the
-// same contract (netting happens after close), so the rows alone cannot say
-// which lots are still open. Replaying today's deals oldest-first against the
+// same contract (netting happens after close), and the App's live projection
+// does the same for New fills, so the rows alone cannot say which lots are
+// still open. Replaying today's deals oldest-first against the
 // oldest opposite lots gives the same open lots / cost the broker's FIFO
 // netting will (#116). Pure: no stores, no network.
 
@@ -11,6 +12,9 @@ import type { FuturePosition } from './types/portfolio';
 export interface FifoFill {
     /** `<orderId>:<exchange seq>` — one identity per real fill. */
     key: string;
+    orderId: string;
+    /** Exchange seq; numbered per order, so it only orders one order's fills. */
+    seq: string;
     action: Action;
     price: number;
     quantity: number;
@@ -28,7 +32,7 @@ export interface FifoPosition {
     net: number;
     /** Weighted average price of the lots still open. */
     avg: number;
-    /** Unrealised P&L of the open lots at `last`, whole dollars. */
+    /** Unrealised P&L of the open lots at the caller's last price, whole dollars. */
     pnl: number;
     lots: FifoLot[];
     /** Lots from earlier sessions were inferred from the rows. A missing
@@ -37,17 +41,35 @@ export interface FifoPosition {
     seeded: boolean;
 }
 
-type Row = Pick<FuturePosition, 'direction' | 'quantity' | 'price' | 'last_price'>;
+type Row = Pick<FuturePosition, 'direction' | 'quantity' | 'price'>;
 
 const positive = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
 
-/** Order of two fills with the same timestamp: exchange seq when both are
- * numeric, else unknown (null). */
+/** Order of two same-time fills: the exchange seq, which counts per order
+ * (two orders' first fills are both 000001), so only within one order. */
 function seqOrder(a: FifoFill, b: FifoFill): number | null {
-    const sa = a.key.slice(a.key.lastIndexOf(':') + 1);
-    const sb = b.key.slice(b.key.lastIndexOf(':') + 1);
-    if (!/^\d+$/.test(sa) || !/^\d+$/.test(sb) || sa === sb) return null;
-    return Number(sa) - Number(sb);
+    if (a.orderId !== b.orderId || !/^\d+$/.test(a.seq) || !/^\d+$/.test(b.seq) || a.seq === b.seq) return null;
+    return Number(a.seq) - Number(b.seq);
+}
+
+const TAIPEI_OFFSET = 8 * 3600;
+
+/**
+ * Start (epoch seconds) of the TAIFEX trading day `nowSec` belongs to: the
+ * night session opening at 15:00 Taipei time on the previous weekday belongs
+ * to the next trading day. `/order/trades` also returns the previous
+ * session's fills, which must not be replayed against today's rows. Holidays
+ * are not known here; around them the start is later than the real one,
+ * which can only drop fills (→ estimate), never add old ones.
+ */
+export function tradingDayStart(nowSec: number): number {
+    const local = nowSec + TAIPEI_OFFSET;
+    const day = Math.floor(local / 86400);
+    let start = day * 86400 + 15 * 3600; // today 15:00 local
+    if (local < start) start -= 86400;
+    // 1970-01-01 was a Thursday: weekday 0 = Sunday … 6 = Saturday.
+    while ([0, 6].includes((Math.floor(start / 86400) + 4) % 7)) start -= 86400;
+    return start - TAIPEI_OFFSET;
 }
 
 /** Legs a spread/combo trade code touches ("TXFI6/J6" → TXFI6, TXFJ6). */
@@ -63,11 +85,11 @@ function comboLegCodes(t: Trade): string[] {
 }
 
 /** Today's own-code fills include both a buy and a sell (any offsetting). */
-export function hasTwoWayFills(trades: Trade[], code: string): boolean {
+export function hasTwoWayFills(trades: Trade[], code: string, since = -Infinity): boolean {
     const sides = new Set<Action>();
     for (const t of trades) {
         if ((t.contract.target_code || t.contract.code) !== code) continue;
-        if ((t.status.deals ?? []).some(d => d.quantity > 0)) sides.add(t.order.action);
+        if ((t.status.deals ?? []).some(d => d.quantity > 0 && !(d.ts < since))) sides.add(t.order.action);
     }
     return sides.size === 2;
 }
@@ -81,21 +103,23 @@ export function hasTwoWayFills(trades: Trade[], code: string): boolean {
  * this contract (its leg is not an order on this code), or same-time fills
  * whose order cannot be told and would change the result.
  */
-export function collectFills(trades: Trade[], code: string): FifoFill[] | null {
+export function collectFills(trades: Trade[], code: string, since = -Infinity): FifoFill[] | null {
     const seen = new Map<string, FifoFill>();
     for (const t of trades) {
         const own = (t.contract.target_code || t.contract.code) === code;
         if (!own) {
-            if (comboLegCodes(t).includes(code) && (t.status.deals ?? []).some(d => d.quantity)) return null;
+            if (comboLegCodes(t).includes(code) && (t.status.deals ?? []).some(d => d.quantity && !(d.ts < since))) return null;
             continue;
         }
         for (const d of t.status.deals ?? []) {
             if (!d.quantity) continue;
             if (typeof d.seq !== 'string' || !d.seq || !positive(d.quantity) || !positive(Number(d.price))
                 || typeof d.ts !== 'number' || !Number.isFinite(d.ts)) return null;
+            if (d.ts < since) continue; // an earlier trading day
             const key = `${t.order.id}:${d.seq}`;
             if (seen.has(key)) continue;
-            seen.set(key, { key, action: t.order.action, price: Number(d.price), quantity: d.quantity, ts: d.ts });
+            seen.set(key, { key, orderId: t.order.id, seq: d.seq, action: t.order.action, price: Number(d.price),
+                quantity: d.quantity, ts: d.ts });
         }
     }
     let ambiguous = false;
@@ -152,8 +176,8 @@ function pricesExplained(rowQty: Record<Action, number>, rowCost: Record<Action,
  * locally netted rows when nothing is carried. Returns null when rows and
  * fills disagree, so the caller can fall back to an estimate.
  */
-export function fifoPosition(rows: Row[], fills: FifoFill[], multiplier: number): FifoPosition | null {
-    if (rows.length === 0 || !positive(multiplier)) return null;
+export function fifoPosition(rows: Row[], fills: FifoFill[], multiplier: number, last: number): FifoPosition | null {
+    if (rows.length === 0 || !positive(multiplier) || !positive(last)) return null;
     const rowQty = { Buy: 0, Sell: 0 };
     const rowCost = { Buy: 0, Sell: 0 };
     for (const r of rows) {
@@ -205,11 +229,9 @@ export function fifoPosition(rows: Row[], fills: FifoFill[], multiplier: number)
         qty += l.quantity;
         cost += l.price * l.quantity;
     }
-    if (net !== rowsNet) return null;
+    // FIFO keeps the net: net = carried + today's net = the rows' net.
     const seeded = carried !== 0;
     if (qty === 0) return { net: 0, avg: 0, pnl: 0, lots, seeded };
-    const last = rows.map(r => r.last_price).find(positive);
-    if (last === undefined) return null;
     const avg = cost / qty;
     const pnl = Math.round((last - avg) * net * multiplier);
     return { net, avg, pnl: pnl === 0 ? 0 : pnl, lots, seeded };

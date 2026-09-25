@@ -10,7 +10,7 @@ import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
 import { accountFor, selectAccount, useAccounts } from '../lib/account-store';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { accountMatches, scopedFlashRows } from '../lib/flash-account';
-import { collectFills, fifoPosition, hasTwoWayFills } from '../lib/futures-fifo';
+import { collectFills, fifoPosition, hasTwoWayFills, tradingDayStart } from '../lib/futures-fifo';
 import { Zap } from 'lucide-react';
 import {
     memo,
@@ -41,6 +41,22 @@ const ROW_H = 22; // must match row height in flash-order.css.ts
 const EDGE = 2; // auto-recenter when last price gets this close to the edge
 
 const keyOf = (p: number) => p.toFixed(2);
+
+type PosMarks = { mixed: boolean; twoWay: boolean; stale: boolean; fifo: boolean };
+
+// 閃電持倉列的成本來源標記（僅期貨）
+function posLabel(p: PosMarks): string {
+    const state = p.stale ? '待更新' : p.fifo ? '' : '估算';
+    if (p.mixed) return state ? `多空並存 ${state}` : '多空並存';
+    return state || 'FIFO';
+}
+
+function posNote(p: PosMarks): string {
+    const rows = p.mixed ? '持倉同時有買、賣兩列（券商或即時估算尚未沖銷）；' : '今日有買賣沖銷；';
+    if (p.stale) return `${rows}有成交回報尚未套用或委託／持倉待對帳，數字可能過時，請更新持倉確認`;
+    if (p.fifo) return `${rows}成本與損益依本交易日成交逐筆先進先出（FIFO）沖銷計算`;
+    return `${rows}本交易日成交無法完整對上持倉（可能含前期留倉或成交未載入），顯示持倉列加權平均，可能與先進先出（FIFO）結果不同，請以持倉面板確認`;
+}
 
 interface RowProps {
     price: number;
@@ -455,49 +471,46 @@ export function FlashOrder({
                 getAliasFor(p.code) === contract.code,
         );
         if (matches.length === 0) return null;
-        // Intra-session the broker returns separate Buy and Sell rows for the
-        // same futures contract (netting happens after close). Blending both
-        // sides' cost over the gross quantity gives a price nobody traded at
-        // (#116), so futures total each side on its own and show the side that
-        // stays open. Stock margin longs and short sales are genuinely separate
-        // positions, so stocks keep the gross blend.
-        const side = { Buy: { qty: 0, cost: 0, pnl: 0 }, Sell: { qty: 0, cost: 0, pnl: 0 } };
+        let net = 0;
         let cost = 0;
         let qtySum = 0;
-        let grossPnl = 0;
+        let rowPnl = 0;
+        const sideQty = { Buy: 0, Sell: 0 };
         for (const p of matches) {
-            const s = side[p.direction === 'Sell' ? 'Sell' : 'Buy'];
-            s.qty += p.quantity;
-            s.cost += p.price * p.quantity;
-            s.pnl += p.pnl || 0;
+            net += p.direction === 'Sell' ? -p.quantity : p.quantity;
             cost += p.price * p.quantity;
             qtySum += p.quantity;
-            grossPnl += p.pnl || 0;
+            rowPnl += p.pnl || 0;
+            sideQty[p.direction === 'Sell' ? 'Sell' : 'Buy'] += p.quantity;
         }
-        const net = side.Buy.qty - side.Sell.qty;
         if (net === 0) return null;
-        const mixed = market === 'F' && side.Buy.qty > 0 && side.Sell.qty > 0;
-        // Futures with offsetting activity (un-netted rows, or today's fills
-        // in both directions that the live projection netted at the row
-        // average): replay today's fills FIFO, as the broker's netting will.
-        // Only a result fully explained by today's fills is shown as FIFO;
-        // otherwise mixed rows fall back to the open side's average and its
-        // |net| share of P&L (rounded), and single-direction rows keep the
-        // row figures; both are marked 估算.
+        // Futures only (stock margin longs and short sales are real separate
+        // positions). Intra-session the broker — and the live projection of
+        // New fills — keeps separate Buy and Sell rows for one contract, and
+        // blending them (#116) is not the cost the broker's FIFO netting will
+        // give. With offsetting activity, replay this trading day's fills
+        // FIFO; show it only when today's fills fully explain the rows.
+        // Otherwise keep exactly the rows' figures and mark them 估算, or
+        // 待更新 while reports await reconciliation.
+        const futures = market === 'F';
+        const mixed = futures && sideQty.Buy > 0 && sideQty.Sell > 0;
         const codes = new Set(matches.map(p => p.code));
-        const twoWay = market === 'F' && codes.size === 1 && hasTwoWayFills(trades, matches[0]!.code);
-        const fills = (mixed || twoWay) && codes.size === 1 && !reconcilePending
-            ? collectFills(trades, matches[0]!.code) : null;
-        const fifo = fills ? fifoPosition(matches, fills, contract.multiplier ?? 0) : null;
-        const fifoOk = fifo !== null && !fifo.seeded && fifo.net === net;
-        const open = net > 0 ? side.Buy : side.Sell;
-        const avg = fifoOk ? fifo.avg : mixed ? open.cost / open.qty : qtySum > 0 ? cost / qtySum : 0;
-        const pnl = fifoOk ? fifo.pnl : mixed ? Math.round(open.pnl * Math.abs(net) / open.qty) : grossPnl;
+        const code = codes.size === 1 ? matches[0]!.code : null;
+        const since = tradingDayStart(Date.now() / 1000);
+        const twoWay = futures && code !== null && hasTwoWayFills(trades, code, since);
+        const fills = (mixed || twoWay) && code !== null && !reconcilePending ? collectFills(trades, code, since) : null;
+        const mark = last !== null && last > 0 ? last : matches.find(p => p.last_price > 0)?.last_price ?? 0;
+        const fifo = fills ? fifoPosition(matches, fills, contract.multiplier ?? 0, mark) : null;
+        const fifoOk = fifo !== null && !fifo.seeded;
+        const rowAvg = qtySum > 0 ? cost / qtySum : 0;
+        const avg = fifoOk ? fifo.avg : rowAvg;
+        const pnl = fifoOk ? fifo.pnl : rowPnl;
+        const stale = futures && reconcilePending;
         const safeExit = matches.every(p => Number.isInteger(p.quantity) && p.quantity > 0)
             && new Set(matches.map(p => p.direction)).size === 1
             && (market !== 'S' || matches.every(p => 'cond' in p && p.cond === 'Cash'));
-        return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit, mixed, twoWay, fifo: fifoOk };
-    }, [positions, trades, contract, reconcilePending]);
+        return { net, avg, avgKey: keyOf(roundToTick(contract, avg)), pnl, safeExit, mixed, twoWay, stale, fifo: fifoOk };
+    }, [positions, trades, contract, reconcilePending, last]);
 
 
     // ---- order actions (all gated by the arm toggle) ----
@@ -744,18 +757,9 @@ export function FlashOrder({
                         {pos.net > 0 ? '多' : '空'} {Math.abs(pos.net)}
                     </span>
                     <span>@ {fmtPrice(pos.avg)}</span>
-                    {(pos.mixed || pos.twoWay) && (
-                        <span
-                            className={styles.posMixed}
-                            title={pos.mixed
-                                ? pos.fifo
-                                    ? '券商尚未沖銷同商品的買賣持倉；成本與損益依今日成交逐筆先進先出（FIFO）沖銷計算'
-                                    : '券商尚未沖銷同商品的買賣持倉，且今日成交無法完整對上持倉（可能含前期留倉、成交未載入或待對帳）；成本與損益以未平方向的加權平均估算，請以持倉面板確認'
-                                : pos.fifo
-                                    ? '成本與損益依今日成交逐筆先進先出（FIFO）沖銷計算；持倉面板的即時估算以平均成本沖銷，收盤對帳後會一致'
-                                    : '今日有買賣沖銷，但成交無法完整對上持倉（可能含前期留倉、成交未載入或待對帳）；成本為持倉平均價，可能與先進先出（FIFO）結果不同，請以持倉面板確認'}
-                        >
-                            {pos.mixed ? (pos.fifo ? '多空並存' : '多空並存 估算') : pos.fifo ? 'FIFO' : '估算'}
+                    {(pos.mixed || pos.twoWay || pos.stale) && (
+                        <span className={styles.posMixed} title={posNote(pos)}>
+                            {posLabel(pos)}
                         </span>
                     )}
                     <span

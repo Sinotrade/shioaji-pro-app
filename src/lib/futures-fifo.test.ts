@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectFills, fifoPosition, type FifoFill } from './futures-fifo';
+import { collectFills, fifoPosition as fifoAt, hasTwoWayFills, tradingDayStart, type FifoFill } from './futures-fifo';
 import type { Action, Deal, Trade } from './types/order';
 
 const trade = (id: string, action: Action, deals: Deal[], code = 'MXFI6', target: string | null = null, status = 'Filled'): Trade => ({
@@ -9,7 +9,13 @@ const trade = (id: string, action: Action, deals: Deal[], code = 'MXFI6', target
 }) as Trade;
 const deal = (seq: string, price: number, quantity: number, ts: number): Deal => ({ seq, price, quantity, ts });
 const row = (direction: Action, quantity: number, price: number, last_price: number) => ({ direction, quantity, price, last_price });
-const fill = (key: string, action: Action, price: number, quantity: number, ts: number): FifoFill => ({ key, action, price, quantity, ts });
+const fill = (key: string, action: Action, price: number, quantity: number, ts: number): FifoFill => {
+    const [orderId = key, seq = '1'] = key.split(':');
+    return { key, orderId, seq, action, price, quantity, ts };
+};
+// Rows' shared last price as the mark (the panel passes its live last price).
+const fifoPosition = (rows: ReturnType<typeof row>[], fills: FifoFill[], multiplier: number) =>
+    fifoAt(rows, fills, multiplier, rows[0]!.last_price);
 
 describe('collectFills', () => {
     it('keeps the exact contract, resolves continuous aliases and sorts by fill time', () => {
@@ -34,18 +40,29 @@ describe('collectFills', () => {
         expect(collectFills([trade('a', 'Sell', [{ seq: '1', price: 100, quantity: 1 } as Deal])], 'MXFI6')).toBeNull();
     });
 
-    it('breaks same-time ties by exchange seq and refuses ties it cannot order', () => {
-        const bySeq = collectFills([
-            trade('b', 'Sell', [deal('000012', 45559, 1, 10)]), trade('a', 'Sell', [deal('000011', 45546, 1, 10)]),
-        ], 'MXFI6');
+    it('breaks same-time ties by exchange seq within one order only; refuses ties it cannot order', () => {
+        const bySeq = collectFills([trade('a', 'Sell', [deal('000002', 45559, 1, 10), deal('000001', 45546, 1, 10)])], 'MXFI6');
         expect(bySeq?.map(f => f.price)).toEqual([45546, 45559]);
+        // Exchange seq counts per order (both orders' first fill is 000001), so it cannot order two orders.
         expect(collectFills([
-            trade('b', 'Sell', [deal('x2', 45559, 1, 10)]), trade('a', 'Sell', [deal('x1', 45546, 1, 10)]),
+            trade('b', 'Sell', [deal('000001', 45559, 1, 10)]), trade('a', 'Sell', [deal('000001', 45546, 1, 10)]),
         ], 'MXFI6')).toBeNull();
         // Same side and price: order does not change the result.
         expect(collectFills([
-            trade('b', 'Sell', [deal('x2', 45546, 1, 10)]), trade('a', 'Sell', [deal('x1', 45546, 1, 10)]),
+            trade('b', 'Sell', [deal('000001', 45546, 1, 10)]), trade('a', 'Sell', [deal('000001', 45546, 1, 10)]),
         ], 'MXFI6')).toHaveLength(2);
+    });
+
+    it('drops fills from an earlier trading day (/order/trades returns the previous session)', () => {
+        const since = 1000;
+        const fills = collectFills([
+            trade('old', 'Buy', [deal('1', 45000, 1, 999)]),
+            trade('a', 'Sell', [deal('1', 45546, 1, 1000)]), trade('b', 'Buy', [deal('1', 45513, 1, 1001)]),
+        ], 'MXFI6', since);
+        expect(fills?.map(f => f.key)).toEqual(['a:1', 'b:1']);
+        expect(hasTwoWayFills([trade('old', 'Buy', [deal('1', 45000, 1, 999)]), trade('a', 'Sell', [deal('1', 45546, 1, 1000)])], 'MXFI6', since)).toBe(false);
+        // An old combo fill does not block today's FIFO either.
+        expect(collectFills([trade('a', 'Sell', [deal('1', 45546, 1, 1000)]), trade('s', 'Buy', [deal('1', 30, 1, 5)], 'MXFI6/J6')], 'MXFI6', since)).toHaveLength(1);
     });
 
     it('refuses when a spread/combo fill touches this contract under another code', () => {
@@ -60,6 +77,21 @@ describe('collectFills', () => {
     it('ignores empty deals but refuses a fill it cannot identify', () => {
         expect(collectFills([trade('a', 'Buy', [deal('1', 100, 0, 1)], 'MXFI6', null, 'Cancelled')], 'MXFI6')).toEqual([]);
         expect(collectFills([trade('a', 'Buy', [deal('', 100, 1, 1)])], 'MXFI6')).toBeNull();
+    });
+});
+
+describe('tradingDayStart', () => {
+    // Taipei is UTC+8; the night session opening 15:00 belongs to the next trading day.
+    const tpe = (iso: string) => Date.parse(`${iso}+08:00`) / 1000;
+    it.each([
+        ['2026-09-23T10:00:00', '2026-09-22T15:00:00'], // Wed day session
+        ['2026-09-23T15:00:00', '2026-09-23T15:00:00'], // Wed night session opens Thu's trading day
+        ['2026-09-24T03:00:00', '2026-09-23T15:00:00'], // after midnight, same night session
+        ['2026-09-23T14:00:00', '2026-09-22T15:00:00'], // after the day close, before the night open
+        ['2026-09-28T09:00:00', '2026-09-25T15:00:00'], // Monday: Friday's night session
+        ['2026-09-26T04:00:00', '2026-09-25T15:00:00'], // Saturday early: still Friday's night session
+    ])('%s → %s', (now, start) => {
+        expect(tradingDayStart(tpe(now))).toBe(tpe(start));
     });
 });
 
