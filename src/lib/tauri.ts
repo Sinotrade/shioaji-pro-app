@@ -48,12 +48,15 @@ const PROCESS_ALIVE_INTERVAL_MS = 1500;
 
 // native helpers for the start path; a missing command (older shell) or IPC
 // failure must never read as "the process died" or "the port is free"
+// one shared import for the fan-out below (14 concurrent find_free_port)
+let coreModule: Promise<typeof import('@tauri-apps/api/core')> | null = null;
+const core = () => (coreModule ??= import('@tauri-apps/api/core'));
 async function processAlive(pid: number): Promise<boolean> {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const { invoke } = await core();
     return invoke<boolean>('process_alive', { pid }).catch(() => true);
 }
 async function findFreePort(preferred: number): Promise<number> {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const { invoke } = await core();
     return invoke<number>('find_free_port', { preferred });
 }
 
@@ -933,13 +936,13 @@ export async function serverStart(opts: {
         }
         setServerPid(null);
         // just after our own stop, give the old listener's port up to
-        // 1.2 s to free up (checked at once, so usually no wait at all);
+        // 2.5 s to free up (checked at once, so usually no wait at all);
         // otherwise a single check as before
         const recentlyStopped = Date.now() - lastOwnStopAt < RECENT_STOP_MS;
         const picked = await freePortAfterStop(
             preferredPort,
             findFreePort,
-            recentlyStopped ? 1200 : 0,
+            recentlyStopped ? 2500 : 0,
         );
         const free = picked.port;
         if (picked.attempts > 1) {

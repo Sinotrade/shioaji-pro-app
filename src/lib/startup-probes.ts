@@ -69,13 +69,13 @@ export async function boundPorts(
 /**
  * Right after stopping our own server its port can take a moment to be
  * bindable again. Instead of the old fixed 1.2 s sleep before every
- * restart, check at once and poll briefly (≤ `timeoutMs`) only while the
+ * restart, check at once and poll briefly (≤ `timeoutMs`, 2.5 s) only while the
  * preferred port is still taken; returns what find_free_port last chose.
  */
 export async function freePortAfterStop(
     preferred: number,
     findFreePort: (preferred: number) => Promise<number>,
-    timeoutMs = 1200,
+    timeoutMs = 2500,
 ): Promise<{ port: number; attempts: number; elapsedMs: number }> {
     const start = Date.now();
     // the first call may throw (older shell): the caller keeps its fallback

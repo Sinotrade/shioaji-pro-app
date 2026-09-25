@@ -243,6 +243,26 @@ function mergeOrders(account: Account, trades: Trade[], accounts: Account[], pro
     return applied;
 }
 
+// Accounting reads (positions, orders, balance/margin) share a broker rate
+// limit (25 per 5 s); two accounts in flight roughly halves a two-account
+// refresh without letting many accounts burst past it.
+export const ACCOUNT_READ_CONCURRENCY = 2;
+
+/** Run `fn` over `items` with at most `limit` in flight; results keep the
+ *  input order. */
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < items.length) {
+            const i = next++;
+            results[i] = await fn(items[i]!);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+}
+
 /** Initial connection reads all groups; manual actions reconcile only their tab. */
 export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): Promise<void> {
     if (isMirror) {
@@ -283,11 +303,13 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                 const accounts = tradableAccounts();
                 if (!accounts.length) throw new Error('尚未取得可查詢帳戶；請連線後按更新');
                 let ordersOk = true;
-                // accounts are read concurrently (was one after another):
-                // each account's own positions → orders order is kept, and
-                // every state write below is a synchronous merge scoped to
-                // that account, so interleaving across accounts is safe
-                await Promise.all(accounts.map(async (account) => {
+                // accounts are read up to ACCOUNT_READ_CONCURRENCY at a time
+                // (was one after another): each account's own positions →
+                // orders order is kept, and every state write below is a
+                // synchronous merge scoped to that account, so interleaving
+                // across accounts is safe. The cap keeps a many-account user
+                // under the broker's accounting-query rate limit.
+                await mapLimit(accounts, ACCOUNT_READ_CONCURRENCY, async (account) => {
                     const matches = (a: typeof account | undefined) => a && accountKey(a) === accountKey(account);
                     if (readPositions) try {
                         const positionStart = eventSequence;
@@ -315,11 +337,11 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                         failed.add('orders');
                         problems.orders.push(['query-failed', `${account.account_type} 委託查詢失敗，保留上次資料`]);
                     }
-                }));
+                });
                 if (readOrders && ordersOk) ordersRead = true;
                 if (readAccount) {
                     // concurrently too; results keep the account order
-                    const funds: AccountFunds[] = await Promise.all(accounts.map(async (account): Promise<AccountFunds> => {
+                    const funds: AccountFunds[] = await mapLimit(accounts, ACCOUNT_READ_CONCURRENCY, async (account): Promise<AccountFunds> => {
                         const previous = state.funds?.find(f => accountKey(f.account) === accountKey(account));
                         try {
                             const value = account.account_type === 'S'
@@ -333,7 +355,7 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                             problems.account.push(['query-failed', error]);
                             return { ...previous, account, error };
                         }
-                    }));
+                    });
                     const stock = getAccountState().selectedStock ?? accounts.find(a => a.account_type === 'S');
                     const future = getAccountState().selectedFutures ?? accounts.find(a => a.account_type === 'F');
                     state = { ...state, funds,

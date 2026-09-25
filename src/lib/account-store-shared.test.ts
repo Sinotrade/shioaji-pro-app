@@ -11,6 +11,7 @@ const store = new Map<string, string>();
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => void store.set(k, String(v)),
     removeItem: (k: string) => void store.delete(k),
+    clear: () => store.clear(),
 };
 
 const account = { account_type: 'S', broker_id: 'b', account_id: 'a', person_id: 'p', signed: true, username: 'u' };
@@ -18,6 +19,7 @@ const account = { account_type: 'S', broker_id: 'b', account_id: 'a', person_id:
 let mod: typeof import('./account-store');
 beforeEach(async () => {
     vi.resetModules();
+    store.clear();
     fetchAccounts.mockReset();
     mod = await import('./account-store');
 });
@@ -39,6 +41,37 @@ describe('shared account read', () => {
         await expect(mod.loadAccountsShared()).rejects.toThrow('503');
         await mod.refreshAccounts();
         expect(mod.getAccountState()).toMatchObject({ loaded: true, accounts: [] });
+    });
+
+    it('a re-read keeps this window\'s selection, not what another window saved', async () => {
+        const a2 = { ...account, account_id: 'a2' };
+        fetchAccounts.mockResolvedValue([account, a2]);
+        await mod.loadAccountsShared();
+        mod.selectAccount(account); // this window trades on 'a'
+        // another window picks a2 and saves it
+        store.set('sj-pro-accounts-selected', JSON.stringify({ stock: 'b-a2' }));
+        await mod.loadAccountsShared(); // e.g. trade-report re-subscription
+        expect(mod.getAccountState().selectedStock).toEqual(account);
+        await mod.refreshAccounts();
+        expect(mod.getAccountState().selectedStock).toEqual(account);
+    });
+
+    it('falls back when the selected account is gone or no longer signed', async () => {
+        const a2 = { ...account, account_id: 'a2' };
+        fetchAccounts.mockResolvedValue([account, a2]);
+        await mod.loadAccountsShared();
+        mod.selectAccount(a2);
+        fetchAccounts.mockResolvedValue([account, { ...a2, signed: false }]);
+        await mod.loadAccountsShared();
+        expect(mod.getAccountState().selectedStock).toEqual(account);
+    });
+
+    it('the first load still honours the saved selection', async () => {
+        const a2 = { ...account, account_id: 'a2' };
+        store.set('sj-pro-accounts-selected', JSON.stringify({ stock: 'b-a2' }));
+        fetchAccounts.mockResolvedValue([account, a2]);
+        await mod.loadAccountsShared();
+        expect(mod.getAccountState().selectedStock).toEqual(a2);
     });
 
     it('a later read is a fresh request', async () => {

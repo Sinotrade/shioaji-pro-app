@@ -106,7 +106,8 @@ describe('freePortAfterStop', () => {
         await vi.advanceTimersByTimeAsync(10_000);
         const res = await pending;
         expect(res.port).toBe(21323);
-        expect(res.elapsedMs).toBeLessThanOrEqual(1200 + 100);
+        expect(res.elapsedMs).toBeGreaterThanOrEqual(2400);
+        expect(res.elapsedMs).toBeLessThanOrEqual(2500 + 100);
     });
 
     it('no recent stop (budget 0): a single check, as before', async () => {
