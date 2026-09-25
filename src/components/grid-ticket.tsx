@@ -7,7 +7,16 @@
 import { RefreshCw, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
-import { requestOrderConfirm } from '../lib/order-confirm';
+import { accountConfirmLabel, requestOrderConfirm } from '../lib/order-confirm';
+import {
+    ACCOUNT_CHANGED_MESSAGE,
+    captureSelectedAccount,
+    isSelectedAccountUnchanged,
+    usableCapturedAccount,
+} from '../lib/order-account';
+import { accountMatches } from '../lib/flash-account';
+import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import type { Account } from '../lib/types/portfolio';
 import { cancellationSummary } from '../lib/trade-mutations';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
 import {
@@ -56,6 +65,9 @@ export function GridTicket({
     const [armed, setArmed] = useState(false);
     const [follow, setFollow] = useState(false);
     const [busy, setBusy] = useState(false);
+    // account pinned by the running 動態跟隨 loop (display only)
+    const [followAccountShown, setFollowAccountShown] = useState<Account | null>(null);
+    const priv = usePrivacyMode();
 
     const last = quote?.tick
         ? Number(quote.tick.close)
@@ -119,7 +131,7 @@ export function GridTicket({
         return out;
     };
 
-    const placeAt = async (price: number) => {
+    const placeAt = async (price: number, account: Account) => {
         recentPlace.current.set(keyOf(price), Date.now());
         const c = contractRef.current;
         const p = paramsRef.current;
@@ -136,13 +148,13 @@ export function GridTicket({
                 ...req,
                 price_type: 'LMT',
                 octype: 'Auto',
-            });
+            }, account);
         }
         return placeStockOrder(c, {
             ...req,
             price_type: 'LMT',
             order_lot: 'Common',
-        });
+        }, account);
     };
 
     const layGrid = async () => {
@@ -153,6 +165,14 @@ export function GridTicket({
             return;
         }
         const prices = desiredPrices(last);
+        // 鋪單帳戶在確認前固定（#139），確認後比對，變了就整批不送
+        const gridAccount = captureSelectedAccount(
+            isFuturesContract(contract) ? 'F' : 'S',
+        );
+        if (!gridAccount) {
+            notify({ kind: 'err', title: '鋪單未送出', body: '缺少有效且已簽署的下單帳戶' });
+            return;
+        }
         // 手動鋪單整批確認一次（動態跟隨的補單不屬手動，不再問）
         if (getRiskSettings().confirmManualOrders && prices.length > 0) {
             const priceRange = `${fmtPrice(Math.min(...prices))} ～ ${fmtPrice(
@@ -167,14 +187,19 @@ export function GridTicket({
                 quantity: qtyPer * prices.length,
                 unit: isFuturesContract(contract) ? '口' : '張',
                 note: `網格鋪單 ${prices.length} 檔 × ${qtyPer}`,
+                accountLabel: accountConfirmLabel(gridAccount),
             }).catch(() => false);
             if (!approved) return;
+        }
+        if (!isSelectedAccountUnchanged(gridAccount)) {
+            notify({ kind: 'err', title: '鋪單未送出', body: ACCOUNT_CHANGED_MESSAGE });
+            return;
         }
         setBusy(true);
         let ok = 0;
         for (const price of prices) {
             try {
-                await placeAt(price);
+                await placeAt(price, gridAccount);
                 ok += 1;
             } catch (e) {
                 notify({
@@ -213,10 +238,28 @@ export function GridTicket({
     // capped per cycle so a fast market can't burst orders
     useEffect(() => {
         if (!follow || !armed) return;
+        // 跟隨啟動時固定帳戶（#139）：補單、刪單只針對這個帳戶的網格單，
+        // 之後改選帳戶不影響；帳戶不可用就停止跟隨
+        const followAccount = captureSelectedAccount(
+            isFuturesContract(contractRef.current) ? 'F' : 'S',
+        );
+        const stop = (body: string) => {
+            setFollow(false);
+            notify({ kind: 'err', title: '鋪單跟隨已停止', body });
+        };
+        if (!followAccount) {
+            stop('缺少有效且已簽署的下單帳戶');
+            return;
+        }
+        setFollowAccountShown(followAccount);
         const timer = setInterval(async () => {
             if (cycleBusy.current) return;
             const base = lastRef.current;
             if (base === null) return;
+            if (!usableCapturedAccount(followAccount)) {
+                stop('跟隨啟動時的帳戶已不可用');
+                return;
+            }
             cycleBusy.current = true;
             try {
                 const desired = new Set(desiredPrices(base).map(keyOf));
@@ -226,6 +269,7 @@ export function GridTicket({
                         ACTIVE_ORDER_STATUSES.has(t.status.status) &&
                         t.order.custom_field === GRID_TAG &&
                         t.order.action === sideRef.current &&
+                        accountMatches((t as Trade & { account?: Account }).account ?? t.order.account, followAccount) &&
                         (t.contract.code === c.code ||
                             getAliasFor(t.contract.code) === c.code),
                 );
@@ -262,8 +306,14 @@ export function GridTicket({
                     // skip levels visible in trades OR placed moments ago
                     // (the poll hasn't caught up — re-placing would double)
                     if (!have.has(k) && !recentPlace.current.has(k)) {
+                        // 風控鎖／單筆上限／當日虧損上限同樣擋自動補單
+                        const blocked = checkOrderAllowed(paramsRef.current.qtyPer);
+                        if (blocked) {
+                            stop(blocked);
+                            break;
+                        }
                         ops += 1;
-                        await placeAt(Number(k)).catch(() => undefined);
+                        await placeAt(Number(k), followAccount).catch(() => undefined);
                     }
                 }
                 if (ops > 0) onChangedRef.current?.();
@@ -271,7 +321,10 @@ export function GridTicket({
                 cycleBusy.current = false;
             }
         }, FOLLOW_INTERVAL_MS);
-        return () => clearInterval(timer);
+        return () => {
+            clearInterval(timer);
+            setFollowAccountShown(null);
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [follow, armed]);
 
@@ -400,6 +453,11 @@ export function GridTicket({
                     '動態跟隨現價'
                 )}
             </button>
+            {follow && followAccountShown && (
+                <span className={styles.costRow} title='動態跟隨啟動時固定的下單帳戶'>
+                    跟隨帳戶 {followAccountShown.broker_id}-{maskAccountId(followAccountShown.account_id, priv)}
+                </span>
+            )}
 
             {gridOrders.length > 0 && (
                 <span className={styles.costRow}>

@@ -6,7 +6,7 @@ import type { Trade } from '../lib/types/order';
 import type { ContractInfo } from '../lib/types/contract';
 const mocks = vi.hoisted(() => ({ cancel: vi.fn(), place: vi.fn(), stockExit: vi.fn(), notify: vi.fn(), selected: 'A' }));
 const accounts: Account[] = ['A', 'B'].map(account_id => ({ account_type: 'F', broker_id: 'BR', account_id, signed: true, person_id: '', username: '' }));
-vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts, selectedStock: accounts.find(a => a.account_id === mocks.selected), selectedFutures: accounts.find(a => a.account_id === mocks.selected) }), selectAccount: (a: Account) => { mocks.selected = a.account_id; }, accountFor: () => accounts.find(a => a.account_id === mocks.selected) }));
+vi.mock('../lib/account-store', () => ({ ensureAccounts: () => undefined, useAccounts: () => ({ loaded: true, accounts, selectedStock: accounts.find(a => a.account_id === mocks.selected), selectedFutures: accounts.find(a => a.account_id === mocks.selected) }) }));
 vi.mock('../hooks/use-stream', () => ({ useTradingLive: () => true }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: undefined, snapshot: { close: 100 }, book: undefined }) }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: mocks.cancel,
@@ -36,9 +36,12 @@ it('real FlashOrder switches ownership, cancels only selected trades, and captur
         expect(mocks.cancel.mock.calls.map(call => call[0])).toEqual(['A', 'B']);
         await act(async () => { button('啟用閃電下單').props.onClick(); });
         await act(async () => { await button('市價買').props.onClick(); });
-        expect(mocks.place.mock.calls[0]![4]).toEqual({ account: accounts[1] });
+        expect(mocks.place.mock.calls[0]![4]).toMatchObject({ account: accounts[1] });
+        // panel choice is local — the app-wide selection is untouched
+        expect(mocks.selected).toBe('A');
         await act(async () => { await button('平倉').props.onClick(); });
-        expect(mocks.place.mock.calls[1]!.slice(1)).toEqual(['Sell', null, 5, { account: accounts[1], ocType: 'Cover' }]);
+        expect(mocks.place.mock.calls[1]!.slice(1, 4)).toEqual(['Sell', null, 5]);
+        expect(mocks.place.mock.calls[1]![4]).toMatchObject({ account: accounts[1], ocType: 'Cover' });
         await act(async () => { view.update(createElement(FlashOrder, { ...props, positions: [...props.positions, { ...props.positions[1]!, id: 9, direction: 'Sell' as const, quantity: 1 }] })); });
         expect(button('平倉').props.disabled).toBe(true);
         await act(async () => { view.update(createElement(FlashOrder, { ...props })); });
@@ -48,10 +51,11 @@ it('real FlashOrder switches ownership, cancels only selected trades, and captur
         accounts.forEach(account => { account.account_type = 'S'; });
         const stockContract = { ...contract, security_type: 'STK', code: '2330' } as ContractInfo;
         await act(async () => { view.update(createElement(FlashOrder, { contract: stockContract, trades: [], positions: [{ ...props.positions[1]!, code: '2330', quantity: 1500, cond: 'Cash' }] })); });
+        await act(async () => { view.root.findByType('select').props.onChange({ target: { value: 'S:BR:B' } }); });
         await act(async () => { button('啟用閃電下單').props.onClick(); });
         mocks.stockExit.mockRejectedValueOnce(new Error('second leg unknown'));
         await act(async () => { await button('平倉').props.onClick(); });
-        expect(mocks.stockExit).toHaveBeenCalledWith(stockContract, 'Sell', 1500, accounts[1]);
+        expect(mocks.stockExit).toHaveBeenCalledWith(stockContract, 'Sell', 1500, accounts[1], expect.objectContaining({ isAccountCurrent: expect.any(Function) }));
         expect(mocks.notify.mock.calls.at(-1)![0]).toMatchObject({ title: '⚡ 平倉未完整確認', body: expect.stringContaining('可能已有部分委託送出或結果未知') });
     } finally { await act(async () => view?.unmount()); vi.unstubAllGlobals(); }
 });

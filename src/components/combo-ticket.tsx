@@ -41,6 +41,9 @@ import {
     type ManagedComboContract
 } from '../lib/shioaji';
 import { assertTradingLive, notify } from '../lib/trade';
+import { captureSelectedAccount, usableCapturedAccount } from '../lib/order-account';
+import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import type { Account } from '../lib/types/portfolio';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
@@ -176,6 +179,13 @@ export function ComboTicket() {
     const optPick = useOptionLegPick();
 
     const { selectedFutures } = useAccounts();
+    // 帳戶選擇改變就解除送單武裝（與下單面板一致），避免第二下送到新帳戶
+    const selectedFuturesKey = selectedFutures
+        ? `${selectedFutures.broker_id}-${selectedFutures.account_id}`
+        : '';
+    useEffect(() => {
+        setArmed(false);
+    }, [selectedFuturesKey]);
     const tradesQuery = useQuery<ComboTrade[]>(
         useCallback(() => fetchComboTrades(), [selectedFutures]),
         `combo-trades:${selectedFutures?.broker_id}:${selectedFutures?.account_id}`, !!selectedFutures,
@@ -188,6 +198,11 @@ export function ComboTicket() {
     const [watchPrice, setWatchPrice] = useState('');
     const [attempts, setAttempts] = useState(0);
     const watchRef = useRef({ lastFire: 0, firing: false });
+    // 監控啟動時固定的帳戶（#139）— 每次觸發都用它，不隨之後的選擇改變
+    const watchAccountRef = useRef<Account | undefined>(undefined);
+    // same account, for display next to the toggle while the watch runs
+    const [watchAccount, setWatchAccount] = useState<Account | undefined>(undefined);
+    const priv = usePrivacyMode();
     const MAX_ATTEMPTS = 3;
     const COOLDOWN_MS = 5000;
 
@@ -506,6 +521,16 @@ export function ComboTicket() {
             });
             return;
         }
+        const watchAccount = usableCapturedAccount(watchAccountRef.current);
+        if (!watchAccount) {
+            setWatchOn(false);
+            notify({
+                kind: 'err',
+                title: '🎯 到價監控停止',
+                body: '監控啟動時的帳戶已不可用，未送單',
+            });
+            return;
+        }
         w.firing = true;
         w.lastFire = Date.now();
         setAttempts((a) => a + 1);
@@ -518,7 +543,7 @@ export function ComboTicket() {
                     price_type: 'LMT',
                     order_type: 'IOC',
                     octype: 'Auto',
-                });
+                }, watchAccount);
                 notify({
                     kind: 'ok',
                     title: `🎯 到價觸發第 ${attempts + 1} 次`,
@@ -566,6 +591,9 @@ export function ComboTicket() {
         setBusy(true);
         try {
             assertTradingLive();
+            // 帳戶在送出這一刻固定並明確傳入（#139）
+            const comboAccount = captureSelectedAccount('F');
+            if (!comboAccount) throw new Error('缺少有效且已簽署的期貨下單帳戶');
             const trade = await placeComboOrder(buildOrderCombo(), {
                 action,
                 price: p,
@@ -573,7 +601,7 @@ export function ComboTicket() {
                 price_type: 'LMT',
                 order_type: orderType,
                 octype: 'Auto',
-            });
+            }, comboAccount);
             notify({
                 kind: 'ok',
                 title: '🧩 組合單已送出',
@@ -897,7 +925,18 @@ export function ComboTicket() {
                     title={`組合${action === 'Buy' ? '賣價跌至' : '買價漲至'}目標時自動送 IOC（最多 ${MAX_ATTEMPTS} 次，間隔 ${COOLDOWN_MS / 1000}s）`}
                     onClick={() => {
                         setAttempts(0);
-                        setWatchOn((v) => !v);
+                        if (watchOn) {
+                            setWatchOn(false);
+                            return;
+                        }
+                        const account = captureSelectedAccount('F');
+                        if (!account) {
+                            notify({ kind: 'err', title: '到價監控未啟動', body: '缺少有效且已簽署的期貨下單帳戶' });
+                            return;
+                        }
+                        watchAccountRef.current = account;
+                        setWatchAccount(account);
+                        setWatchOn(true);
                     }}
                 >
                     {watchOn ? (
@@ -909,6 +948,11 @@ export function ComboTicket() {
                         '啟動監控'
                     )}
                 </button>
+                {watchOn && watchAccount && (
+                    <span className={styles.costRow} title='監控啟動時固定的下單帳戶'>
+                        帳戶 {watchAccount.broker_id}-{maskAccountId(watchAccount.account_id, priv)}
+                    </span>
+                )}
             </div>
             {watchOn && (
                 <span className={styles.costRow}>

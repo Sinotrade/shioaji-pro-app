@@ -22,11 +22,16 @@ import { BracketStatusList } from './bracket-status';
 import { usePickedPrice } from '../lib/price-sync';
 import { maskAccountId, maskName, usePrivacyMode } from '../lib/privacy';
 import {
-    getAccountState,
     selectAccount,
     useAccounts,
 } from '../lib/account-store';
-import { requestOrderConfirm } from '../lib/order-confirm';
+import { accountConfirmLabel, requestOrderConfirm } from '../lib/order-confirm';
+import {
+    ACCOUNT_CHANGED_MESSAGE,
+    captureSelectedAccount,
+    isAccountAvailable,
+    isSelectedAccountUnchanged,
+} from '../lib/order-account';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
 import { currentProtectionEnv } from '../lib/protection-env';
 import { fetchInfo, placeFuturesOrder, placeStockOrder } from '../lib/shioaji';
@@ -247,15 +252,8 @@ export function OrderTicket({
                     octype,
                 });
                 if (invalid) throw new Error(invalid);
-                const accounts = getAccountState();
-                entryAccount =
-                    (isFutures
-                        ? accounts.selectedFutures
-                        : accounts.selectedStock) ?? undefined;
-                if (
-                    !entryAccount?.signed ||
-                    entryAccount.account_type !== (isFutures ? 'F' : 'S')
-                ) {
+                entryAccount = captureSelectedAccount(isFutures ? 'F' : 'S');
+                if (!entryAccount) {
                     throw new Error('括號單需要有效的已簽署下單帳戶');
                 }
                 bracketEnv = currentProtectionEnv();
@@ -263,6 +261,13 @@ export function OrderTicket({
                     throw new Error('伺服器模式（模擬／正式）尚未確認，括號單未送出');
                 }
                 await ensureBracketHost();
+            }
+            // 送單帳戶在確認前固定（#139）：確認視窗開著時，本視窗其他面板
+            // 仍可改選帳戶 — 送出時不再重新解析，改為比對後中止
+            const orderAccount =
+                entryAccount ?? captureSelectedAccount(isFutures ? 'F' : 'S');
+            if (!orderAccount) {
+                throw new Error('缺少有效且已簽署的下單帳戶，請重新選擇帳戶');
             }
             if (getRiskSettings().confirmManualOrders) {
                 const approved = await requestOrderConfirm({
@@ -281,8 +286,12 @@ export function OrderTicket({
                             ? `・${orderCond === 'MarginTrading' ? '融資' : '融券'}`
                             : ''
                     }${!isFutures && daytradeShort && action === 'Sell' ? '・現股當沖' : ''}`,
+                    accountLabel: accountConfirmLabel(orderAccount),
                 });
                 if (!approved) throw new Error('已取消下單');
+            }
+            if (!isSelectedAccountUnchanged(orderAccount)) {
+                throw new Error(ACCOUNT_CHANGED_MESSAGE);
             }
             const trade = isFutures
                 ? await placeFuturesOrder(contract, {
@@ -292,7 +301,7 @@ export function OrderTicket({
                       price_type: priceType as 'LMT' | 'MKT' | 'MKP',
                       order_type: orderType,
                       octype,
-                  }, entryAccount)
+                  }, orderAccount)
                 : await placeStockOrder(contract, {
                       action,
                       price: p,
@@ -308,7 +317,7 @@ export function OrderTicket({
                           orderCond === 'Cash'
                               ? true
                               : undefined,
-                  }, entryAccount);
+                  }, orderAccount);
             setFeedback({
                 kind: 'ok',
                 text: `▸ ${trade.status.status} #${trade.order.seqno || trade.order.id.slice(0, 8)}`,
@@ -370,6 +379,14 @@ export function OrderTicket({
     const { accounts, selectedStock, selectedFutures } = useAccounts();
     const priv = usePrivacyMode();
     const activeAccount = isFutures ? selectedFutures : selectedStock;
+    // any selection change in this window (this ticket's menu or another
+    // panel's) disarms the ticket so a pending second click can't route
+    // elsewhere
+    const activeAccountKey = activeAccount ? acctKey(activeAccount) : '';
+    useEffect(() => {
+        setArmed(false);
+        setSplitArmed(false);
+    }, [activeAccountKey]);
     const acctTag = isFutures ? '[期]' : '[證]';
     // same-type SIGNED accounts are the routing candidates（未簽署不可下單）
     const routable = accounts.filter(
@@ -458,8 +475,15 @@ export function OrderTicket({
                     quantity: splitTotal,
                     unit: isFutures ? '口' : '張',
                     note: `分倉送出 ${allocation.length} 個帳戶`,
+                    accountLabel: `分倉 ${allocation.length} 戶：${allocation
+                        .map((e) => `${accountConfirmLabel(e.account)}×${e.qty}`)
+                        .join('、')}`,
                 });
                 if (!approved) throw new Error('已取消下單');
+            }
+            // 分倉帳戶是明確指定的；確認期間任一帳戶不可用就整批不送
+            if (allocation.some((e) => !isAccountAvailable(e.account))) {
+                throw new Error(ACCOUNT_CHANGED_MESSAGE);
             }
             const ok: string[] = [];
             const fail: string[] = [];

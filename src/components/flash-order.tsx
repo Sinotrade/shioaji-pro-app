@@ -7,9 +7,9 @@ import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
 // price). Click bid/ask columns to fire LMT orders, click your own order
 // chips to cancel, market buy/sell + flatten + cancel-all in the action bar.
 
-import { accountFor, selectAccount, useAccounts } from '../lib/account-store';
+import { ensureAccounts, useAccounts } from '../lib/account-store';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
-import { accountMatches, scopedFlashRows } from '../lib/flash-account';
+import { accountMatches, flashAccountKey, resolveFlashAccount, scopedFlashRows, type FlashAccountKeys, type FlashMarket } from '../lib/flash-account';
 import { Zap } from 'lucide-react';
 import {
     memo,
@@ -31,7 +31,7 @@ import { useTickBandsVersion } from '../lib/tick-bands';
 import { notify, placeQuickOrder, placeStockExitByShares } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import { ACTIVE_ORDER_STATUSES, type Action, type Trade } from '../lib/types/order';
-import type { AccountedPosition } from '../lib/types/portfolio';
+import type { Account, AccountedPosition } from '../lib/types/portfolio';
 import { fmtInt, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import * as styles from './flash-order.css';
@@ -40,6 +40,7 @@ const ROW_H = 22; // must match row height in flash-order.css.ts
 const EDGE = 2; // auto-recenter when last price gets this close to the edge
 
 const keyOf = (p: number) => p.toFixed(2);
+const FOLLOW_GLOBAL = '__follow__';
 
 interface RowProps {
     price: number;
@@ -181,22 +182,43 @@ export function FlashOrder({
     trades: allTrades = [],
     positions: allPositions = [],
     onOrdersChanged,
+    accountKeys,
+    onAccountKeysChange,
+    followMain = true,
 }: {
     contract: ContractInfo;
     snapshot?: Snapshot;
     trades?: Trade[];
     positions?: AccountedPosition[];
     onOrdersChanged?: () => void;
+    // this panel's own account per market (issue #139); a market without a
+    // key follows the app-wide selection. With onAccountKeysChange the
+    // owner (workspace block / popout window) persists it; otherwise the
+    // choice lives only in this component.
+    accountKeys?: FlashAccountKeys;
+    onAccountKeysChange?: (keys: FlashAccountKeys) => void;
+    // false in popout windows: they cannot see the main window's live
+    // selection, so they only ever use their pinned/chosen account
+    followMain?: boolean;
 }) {
     const { quote, snapshot: initialSnapshot, book: display } = useDisplayBook(contract.code, snapshot, contract);
     const live = useTradingLive();
     const accountState = useAccounts();
     const privacy = usePrivacyMode();
-    const market = contract.security_type === 'STK' ? 'S' : 'F';
-    const account = market === 'S' ? accountState.selectedStock : accountState.selectedFutures;
+    const market: FlashMarket = contract.security_type === 'STK' ? 'S' : 'F';
+    const [localKeys, setLocalKeys] = useState<FlashAccountKeys>(accountKeys ?? {});
+    const panelKeys = onAccountKeysChange ? (accountKeys ?? {}) : localKeys;
+    const globalAccount = market === 'S' ? accountState.selectedStock : accountState.selectedFutures;
     const eligible = accountState.accounts.filter(a => a.signed && a.account_type === market);
-    const activeAccount = eligible.find(a => accountMatches(a, account));
-    const accountKey = activeAccount ? `${activeAccount.account_type}:${activeAccount.broker_id}:${activeAccount.account_id}` : '';
+    const resolved = resolveFlashAccount(accountState.accounts, market, panelKeys[market], globalAccount, followMain);
+    const activeAccount = resolved.account;
+    // account list not fetched yet (startup / a fresh popout): a saved key
+    // is not "unavailable" yet — say so, ordering stays disabled meanwhile
+    const accountsLoading = !accountState.loaded;
+    // idempotent — a popout / 閃電全開 tile has no dock or settings dialog
+    // that would otherwise fetch the account list (#139)
+    useEffect(ensureAccounts, []);
+    const accountKey = activeAccount ? flashAccountKey(activeAccount) : '';
     const trades = scopedFlashRows(allTrades, activeAccount);
     const positions = scopedFlashRows(allPositions, activeAccount);
     const accountRef = useRef(activeAccount);
@@ -471,9 +493,13 @@ export function FlashOrder({
 
     // ---- order actions (all gated by the arm toggle) ----
 
+    // the panel must still trade with the account captured at click time —
+    // re-checked after the (optional) confirmation dialog
+    const stillPanelAccount = useCallback((captured: Account) => () => accountMatches(accountRef.current, captured), []);
+
     const send = useCallback(async (action: Action, price: number | null) => {
         const capturedAccount = accountRef.current;
-        if (!armedRef.current || !capturedAccount || !accountMatches(capturedAccount, accountFor(capturedAccount.account_type as 'S' | 'F'))) return;
+        if (!armedRef.current || !capturedAccount) return;
         const q = Math.max(1, qtyRef.current);
         const key = `${action}:${price === null ? 'MKT' : keyOf(price)}`;
         if (inflightRef.current.has(key)) return; // double-click guard
@@ -485,7 +511,7 @@ export function FlashOrder({
                 action,
                 price,
                 q,
-                { account: capturedAccount },
+                { account: capturedAccount, isAccountCurrent: stillPanelAccount(capturedAccount) },
             );
             notify({
                 kind: 'ok',
@@ -505,7 +531,7 @@ export function FlashOrder({
             inflightRef.current.delete(key);
             force();
         }
-    }, []);
+    }, [stillPanelAccount]);
 
     const onCell = useCallback(
         (action: Action, price: number) => void send(action, price),
@@ -518,7 +544,7 @@ export function FlashOrder({
         const code = contractRef.current.code;
         const targets = tradesRef.current.filter(
             (t) =>
-                accountMatches((t as Trade & { account?: import('../lib/types/portfolio').Account }).account ?? t.order.account, capturedAccount) &&
+                accountMatches((t as Trade & { account?: Account }).account ?? t.order.account, capturedAccount) &&
                 remainingWorkingOrderQuantity(t) > 0 &&
                 (t.contract.code === code ||
                     getAliasFor(t.contract.code) === code) &&
@@ -548,7 +574,7 @@ export function FlashOrder({
         const code = contractRef.current.code;
         const targets = tradesRef.current.filter(
             (t) =>
-                accountMatches((t as Trade & { account?: import('../lib/types/portfolio').Account }).account ?? t.order.account, capturedAccount) &&
+                accountMatches((t as Trade & { account?: Account }).account ?? t.order.account, capturedAccount) &&
                 remainingWorkingOrderQuantity(t) > 0 &&
                 (t.contract.code === code ||
                     getAliasFor(t.contract.code) === code),
@@ -569,8 +595,7 @@ export function FlashOrder({
 
     const flatten = useCallback(async () => {
         const account = accountRef.current;
-        if (!pos?.safeExit || !armedRef.current || !account
-            || !accountMatches(account, accountFor(account.account_type as 'S' | 'F'))) return;
+        if (!pos?.safeExit || !armedRef.current || !account) return;
         const key = `flatten:${account.account_type}:${account.broker_id}:${account.account_id}`;
         if (inflightRef.current.has(key)) return;
         inflightRef.current.add(key);
@@ -578,16 +603,16 @@ export function FlashOrder({
         const action = pos.net > 0 ? 'Sell' : 'Buy';
         try {
             if (account.account_type === 'S') {
-                await placeStockExitByShares(contract, action, Math.abs(pos.net), account);
+                await placeStockExitByShares(contract, action, Math.abs(pos.net), account, { isAccountCurrent: stillPanelAccount(account) });
             } else {
-                await placeQuickOrder(contract, action, null, Math.abs(pos.net), { account, ocType: 'Cover' });
+                await placeQuickOrder(contract, action, null, Math.abs(pos.net), { account, ocType: 'Cover', isAccountCurrent: stillPanelAccount(account) });
             }
             notify({ kind: 'info', title: '⚡ 平倉已送出', body: '請以委託與成交回報確認結果' });
             onOrdersChangedRef.current?.();
         } catch (error) {
             notify({ kind: 'err', title: '⚡ 平倉未完整確認', body: `可能已有部分委託送出或結果未知，請手動核對委託，勿直接重送。${error instanceof Error ? error.message : String(error)}` });
         } finally { inflightRef.current.delete(key); }
-    }, [pos]);
+    }, [pos, stillPanelAccount]);
 
     // ---- render ----
 
@@ -609,14 +634,38 @@ export function FlashOrder({
     return (
         <div className={styles.wrap}>
             <div className={styles.controls}>
-                <select aria-label="閃電下單帳戶" value={accountKey} onChange={e => {
-                    armedRef.current = false;
-                    setArmed(false);
-                    const next = eligible.find(a => `${a.account_type}:${a.broker_id}:${a.account_id}` === e.target.value);
-                    if (next) selectAccount(next);
-                }}>
-                    {!activeAccount && <option value="">無可用帳戶</option>}
-                    {eligible.map(a => <option key={`${a.broker_id}:${a.account_id}`} value={`${a.account_type}:${a.broker_id}:${a.account_id}`}>
+                <select
+                    aria-label="閃電下單帳戶"
+                    title={resolved.following ? '跟隨主畫面帳戶 — 選擇帳戶後此視窗固定使用該帳戶' : '此視窗固定帳戶，不影響其他視窗與主畫面'}
+                    value={resolved.following ? FOLLOW_GLOBAL : resolved.unset ? '' : panelKeys[market]}
+                    onChange={e => {
+                        armedRef.current = false;
+                        setArmed(false);
+                        const value = e.target.value;
+                        if (value === FOLLOW_GLOBAL ? !followMain : !eligible.some(a => flashAccountKey(a) === value)) return;
+                        const next = { ...panelKeys };
+                        if (value === FOLLOW_GLOBAL) delete next[market];
+                        else next[market] = value;
+                        // drop the old account right away so nothing queued before
+                        // the re-render can still fire with it
+                        accountRef.current = undefined;
+                        if (onAccountKeysChange) onAccountKeysChange(next);
+                        else setLocalKeys(next);
+                    }}
+                >
+                    {followMain ? (
+                        <option value={FOLLOW_GLOBAL}>
+                            {!resolved.following
+                                ? '跟隨主畫面'
+                                : activeAccount
+                                  ? `跟隨主畫面 ${activeAccount.broker_id}-${maskAccountId(activeAccount.account_id, privacy)}`
+                                  : accountsLoading
+                                    ? '跟隨主畫面（帳戶載入中）'
+                                    : '跟隨主畫面（無可用帳戶）'}
+                        </option>
+                    ) : resolved.unset && <option value=''>請選擇帳戶</option>}
+                    {resolved.missing && <option value={panelKeys[market]}>{accountsLoading ? '帳戶載入中' : '帳戶不可用'}</option>}
+                    {eligible.map(a => <option key={flashAccountKey(a)} value={flashAccountKey(a)}>
                         {a.broker_id}-{maskAccountId(a.account_id, privacy)}
                     </option>)}
                 </select>

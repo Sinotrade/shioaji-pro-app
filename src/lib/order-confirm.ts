@@ -10,6 +10,7 @@
 import { fetchInfo } from './shioaji';
 import { getAccountState } from './account-store';
 import type { Action } from './types/order';
+import type { Account } from './types/portfolio';
 
 export interface OrderConfirmRequest {
     code: string;
@@ -62,13 +63,17 @@ export function resolveOrderConfirm(approved: boolean): void {
 let simulationCache: boolean | null = null;
 let simulationInflight: Promise<void> | null = null;
 
-function selectedAccountLabel(unit: string): string | undefined {
-    const state = getAccountState();
-    const account = unit === '口' ? state.selectedFutures : state.selectedStock;
-    if (!account) return undefined;
+// 確認視窗一律遮罩帳號（只露末四碼），不受隱私模式開關影響
+export function accountConfirmLabel(account: Pick<Account, 'broker_id' | 'account_id'>): string {
     const id = account.account_id;
     const masked = id.length > 4 ? `${'*'.repeat(id.length - 4)}${id.slice(-4)}` : id;
     return `${account.broker_id}-${masked}`;
+}
+
+function selectedAccountLabel(unit: string): string | undefined {
+    const state = getAccountState();
+    const account = unit === '口' ? state.selectedFutures : state.selectedStock;
+    return account ? accountConfirmLabel(account) : undefined;
 }
 
 function primeSimulation(): Promise<void> {
