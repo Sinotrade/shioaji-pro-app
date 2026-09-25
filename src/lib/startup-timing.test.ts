@@ -185,6 +185,63 @@ describe('storage', () => {
     });
 });
 
+describe('retired runs keep their real durations', () => {
+    it('an 8 h old leftover retired at the next launch ends at its last mark', () => {
+        beginTiming('restart');
+        vi.advanceTimersByTime(900);
+        markStage('probe');
+        __resetTimingForTest(); // app quit
+        vi.advanceTimersByTime(8 * 3600_000); // relaunched 8 h later
+        beginBootTiming({ reloaded: false, autoStart: true, navigationStart: Date.now() - 500 });
+        const old = getTimingHistory()[0]!;
+        expect(old).toMatchObject({
+            scenario: 'restart',
+            outcome: 'abandoned',
+            detail: 'previous app session',
+            endedAt: 900,
+            retired: true,
+        });
+        const text = timingDiagnostics();
+        expect(text).toContain(
+            '[restart] 2026-09-25T01:00:00.000Z · abandoned · no end recorded, last mark +0.90s · previous app session',
+        );
+        expect(text).toContain('  +   0.90s           probe');
+        expect(text).not.toContain('28800');
+    });
+
+    it('a stale run retired in the same session also stops at its last mark', () => {
+        beginTiming('start');
+        vi.advanceTimersByTime(1200);
+        markStage('wait-listener');
+        vi.advanceTimersByTime(STALE_RUN_MS + 5000);
+        const text = timingDiagnostics(); // printing retires it first
+        expect(getActiveTiming()).toBeNull();
+        expect(getTimingHistory()[0]).toMatchObject({
+            outcome: 'abandoned',
+            endedAt: 1200,
+            detail: 'stale: never ended',
+            retired: true,
+        });
+        expect(text).toContain('last mark +1.20s');
+        expect(text).not.toContain('in progress');
+    });
+
+    it('a run with no marks retires at +0', () => {
+        beginTiming('stop');
+        vi.advanceTimersByTime(STALE_RUN_MS + 1);
+        expect(getActiveTiming()).toBeNull();
+        expect(getTimingHistory()[0]!.endedAt).toBe(0);
+    });
+
+    it('a run superseded by a click keeps its real elapsed time', () => {
+        beginTiming('start');
+        vi.advanceTimersByTime(4000);
+        beginTiming('stop', { replace: true });
+        expect(getTimingHistory()[0]).toMatchObject({ outcome: 'abandoned', endedAt: 4000 });
+        expect(getTimingHistory()[0]!.retired).toBeUndefined();
+    });
+});
+
 describe('run pinning', () => {
     it('a mark or end for another run id is ignored', () => {
         beginTiming('start');

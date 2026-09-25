@@ -82,6 +82,9 @@ export interface TimingRun {
     outcome?: TimingOutcome;
     detail?: string;
     droppedMarks?: number;
+    // retired without a real end (stale, or left by a previous app
+    // session): endedAt is the last mark, never the retirement time
+    retired?: boolean;
 }
 
 interface TimingState {
@@ -157,16 +160,23 @@ function finish(
     outcome: TimingOutcome,
     detail?: string,
     now = Date.now(),
+    retired = false,
 ): TimingState {
+    // a retired run's end is unknown: stop the clock at its last real mark
+    // so an 8 h old leftover never reads as an 8 h stage
+    const lastAt = run.marks[run.marks.length - 1]?.at ?? 0;
     const done: TimingRun = {
         ...run,
-        endedAt: now - run.startedAt,
+        endedAt: retired ? lastAt : now - run.startedAt,
         outcome,
         detail: clip(detail),
     };
+    if (retired) done.retired = true;
     debugLog(
         done,
-        `end ${outcome} +${fmtSec(done.endedAt!)}${detail ? ` ${detail}` : ''}`,
+        `end ${outcome} +${fmtSec(done.endedAt!)}${retired ? ' (last mark)' : ''}${
+            detail ? ` ${detail}` : ''
+        }`,
     );
     return {
         active: null,
@@ -178,7 +188,7 @@ function finish(
 export function getActiveTiming(now = Date.now()): TimingRun | null {
     const run = state.active;
     if (run && now - run.startedAt > STALE_RUN_MS) {
-        commit(finish(run, 'abandoned', undefined, now));
+        commit(finish(run, 'abandoned', 'stale: never ended', now, true));
         return null;
     }
     return run;
@@ -271,7 +281,10 @@ export function beginBootTiming(opts: {
     now?: number;
 }): 'continued' | 'cold-start' | 'none' {
     const now = opts.now ?? Date.now();
-    if (!opts.reloaded) endTiming('abandoned', 'previous app session', { now });
+    // retire directly (stale or not) so the record says why it never ended
+    if (!opts.reloaded && state.active) {
+        commit(finish(state.active, 'abandoned', 'previous app session', now, true));
+    }
     if (getActiveTiming(now)) {
         markStage('page-loaded', undefined, { now });
         return 'continued';
@@ -335,14 +348,22 @@ function fmtSec(ms: number): string {
 /** Human-readable lines: each mark with its offset and how long the stage
  * lasted until the next mark (or the end). */
 export function formatTimingRun(run: TimingRun): string[] {
+    const total =
+        run.endedAt === undefined
+            ? ''
+            : run.retired
+              ? ` · no end recorded, last mark +${fmtSec(run.endedAt)}`
+              : ` · total ${fmtSec(run.endedAt)}`;
     const head = `[${run.scenario}] ${new Date(run.startedAt).toISOString()} · ${
         run.outcome ?? 'in progress'
-    }${run.endedAt !== undefined ? ` · total ${fmtSec(run.endedAt)}` : ''}${
+    }${total}${
         run.detail ? ` · ${run.detail}` : ''
     }${run.droppedMarks ? ` · ${run.droppedMarks} marks dropped` : ''}`;
     const lines = [head];
     run.marks.forEach((m, i) => {
-        const next = run.marks[i + 1]?.at ?? run.endedAt;
+        // a retired run's last stage has no known end: leave it blank
+        const next =
+            run.marks[i + 1]?.at ?? (run.retired ? undefined : run.endedAt);
         const dur =
             next !== undefined ? fmtSec(next - m.at).padStart(8) : ' '.repeat(8);
         lines.push(
@@ -356,6 +377,7 @@ export function formatTimingRun(run: TimingRun): string[] {
 
 /** Block appended to 複製診斷: the in-flight run, then recent ones. */
 export function timingDiagnostics(limit = 6): string {
+    getActiveTiming(); // retire a stale leftover before printing it
     const runs = [
         ...(state.active ? [state.active] : []),
         ...state.history,
