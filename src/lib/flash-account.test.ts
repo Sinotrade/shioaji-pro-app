@@ -74,6 +74,31 @@ describe('per-panel flash account (#139)', () => {
         expect(loadPopoutFlashAccounts(one.win).F).toBe(flashAccountKey(a));
         expect(loadPopoutFlashAccounts(two.win).F).toBe(flashAccountKey(b));
     }));
+    it('reopens one stable popout per source with its own account after restart', () => withStorage(() => {
+        const first = flashPopoutParams({}, main, 'panel:one');
+        const other = flashPopoutParams({}, main, 'panel:other');
+        expect(first.win).not.toBe(other.win);
+        savePopoutFlashAccounts(first.win, { F: flashAccountKey(b) });
+        savePopoutFlashAccounts(other.win, { F: flashAccountKey(a) });
+
+        // No session counter or opening-order guess: both sources retain their
+        // identity even when reopened in the opposite order after App restart.
+        const reopenedOther = flashPopoutParams({ F: flashAccountKey(b) }, { F: b }, 'panel:other');
+        const reopenedFirst = flashPopoutParams({ F: flashAccountKey(a) }, { F: a }, 'panel:one');
+        expect([reopenedFirst.win, reopenedOther.win]).toEqual([first.win, other.win]);
+        expect(loadPopoutFlashAccounts(reopenedFirst.win)).toEqual({ F: flashAccountKey(b) });
+        expect(loadPopoutFlashAccounts(reopenedOther.win)).toEqual({ F: flashAccountKey(a) });
+        expect(flashPopoutParams({}, main, 'panel:one').win).toBe(first.win); // another click focuses this window
+    }));
+    it('keeps different products from the same panel in separate popouts', () => withStorage(() => {
+        const oldProduct = flashPopoutParams({}, main, 'panel:one:TMF');
+        savePopoutFlashAccounts(oldProduct.win, { F: flashAccountKey(b) });
+        const newProduct = flashPopoutParams({}, main, 'panel:one:TXF');
+        expect(newProduct.win).not.toBe(oldProduct.win);
+        expect(loadPopoutFlashAccounts(newProduct.win).F).toBe(flashAccountKey(a));
+        expect(flashPopoutParams({}, main, 'panel:one:TMF').win).toBe(oldProduct.win);
+        expect(loadPopoutFlashAccounts(oldProduct.win).F).toBe(flashAccountKey(b));
+    }));
     it('an unknown window id has no account; the URL never carries an account id', () => withStorage(store => {
         expect(loadPopoutFlashAccounts(newPopoutWindowId())).toEqual({});
         expect(loadPopoutFlashAccounts(null)).toEqual({});

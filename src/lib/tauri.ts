@@ -1212,8 +1212,16 @@ export async function openPopout(
         return;
     }
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-    popoutCounter += 1;
-    new WebviewWindow(`popout-${type}-${popoutCounter}`, {
+    const label = type === 'flash' && extra.win
+        ? `popout-flash-${extra.win}`
+        : `popout-${type}-${++popoutCounter}`;
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+        await existing.show();
+        await existing.setFocus();
+        return;
+    }
+    new WebviewWindow(label, {
         url: `index.html?${qs}`,
         // Tauri's drag-drop interception eats in-page HTML5 drag on
         // WKWebView (watchlist reorder) — no file-drop feature needs it
@@ -1228,8 +1236,8 @@ export async function openPopout(
 
 // 閃電全開: pop a flash-order window per code, arranged by the chosen
 // layout — full-screen grids, a right-side column, or a bottom row.
-// Each tile gets a fresh popout window id; the caller pins the main
-// window's current account under it (popouts never follow live, #139).
+// The caller supplies each tile's window id and pinned account. A tile source
+// can reuse its id so reopening it keeps that window's own selection (#139).
 export interface FlashTileLayout {
     cols: number;
     rows: number;
@@ -1240,7 +1248,7 @@ export async function openFlashTiles(
     codes: string[],
     layout: FlashTileLayout = { cols: 3, rows: 3, region: 'full' },
     // per-tile extra URL params (the pinned-account window id, #139)
-    tileParams: () => Record<string, string> = () => ({ win: newPopoutWindowId() }),
+    tileParams: (code: string) => Record<string, string> = () => ({ win: newPopoutWindowId() }),
 ) {
     const count = Math.min(codes.length, layout.cols * layout.rows);
     if (count === 0) return;
@@ -1267,7 +1275,7 @@ export async function openFlashTiles(
     if (!isTauri) {
         use.forEach((code, i) => {
             const { x, y } = posOf(i);
-            const qs = new URLSearchParams({ popout: 'flash', code, ...tileParams() });
+            const qs = new URLSearchParams({ popout: 'flash', code, ...tileParams(code) });
             window.open(
                 `${window.location.pathname}?${qs}`,
                 `sj-flash-tile-${code}`,
@@ -1277,11 +1285,18 @@ export async function openFlashTiles(
         return;
     }
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-    use.forEach((code, i) => {
+    for (const [i, code] of use.entries()) {
         const { x, y } = posOf(i);
-        const qs = new URLSearchParams({ popout: 'flash', code, ...tileParams() });
-        popoutCounter += 1;
-        new WebviewWindow(`popout-flashtile-${popoutCounter}`, {
+        const extra = tileParams(code);
+        const qs = new URLSearchParams({ popout: 'flash', code, ...extra });
+        const label = extra.win ? `popout-flashtile-${extra.win}` : `popout-flashtile-${++popoutCounter}`;
+        const existing = await WebviewWindow.getByLabel(label);
+        if (existing) {
+            await existing.show();
+            await existing.setFocus();
+            continue;
+        }
+        new WebviewWindow(label, {
             url: `index.html?${qs}`,
             dragDropEnabled: false,
             title: `⚡ ${code}`,
@@ -1294,7 +1309,7 @@ export async function openFlashTiles(
             minWidth: 210,
             minHeight: 280,
         });
-    });
+    }
 }
 
 // ---- app version (for support: shown in the server panel & debug) ----

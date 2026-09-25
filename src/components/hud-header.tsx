@@ -155,8 +155,8 @@ function FlashTilesMenu({ flashCodes }: { flashCodes: string[] }) {
                                 className={styles.flashLayoutItem}
                                 onClick={() => {
                                     close();
-                                    void openFlashTiles(flashCodes, lay, () =>
-                                        flashPopoutParams(undefined, mainFlashSelection()),
+                                    void openFlashTiles(flashCodes, lay, (code) =>
+                                        flashPopoutParams(undefined, mainFlashSelection(), `tile:${code}`),
                                     );
                                 }}
                             >

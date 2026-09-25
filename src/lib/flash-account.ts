@@ -52,11 +52,11 @@ export function resolveFlashAccount(accounts: Account[], market: FlashMarket, sa
 // only the opaque id, never an account number. Afterwards the popout's own
 // choices overwrite the entry, so a reload keeps them.
 const POPOUT_STORAGE_KEY = 'sj-pro-flash-popout-windows';
-// bound the map — ids of closed popouts are never reused; the least recently
-// seen records (by open, reload, change or the open-window heartbeat) go first
+// bound the map — the least recently seen records (by open, reload, change or
+// the open-window heartbeat) go first
 const POPOUT_MAX_ENTRIES = 50;
 
-interface PopoutEntry { keys: FlashAccountKeys; at: number }
+interface PopoutEntry { keys: FlashAccountKeys; at: number; source?: string }
 
 function isKeys(v: unknown): v is FlashAccountKeys {
     return !!v && typeof v === 'object' && Object.entries(v).every(([k, s]) => (k === 'S' || k === 'F') && typeof s === 'string');
@@ -69,7 +69,11 @@ function readPopoutEntries(): Record<string, PopoutEntry> {
         const out: Record<string, PopoutEntry> = {};
         for (const [id, e] of Object.entries(all as Record<string, unknown>)) {
             const entry = e as Partial<PopoutEntry> | null;
-            if (entry && isKeys(entry.keys)) out[id] = { keys: entry.keys, at: Number(entry.at) || 0 };
+            if (entry && isKeys(entry.keys)) out[id] = {
+                keys: entry.keys,
+                at: Number(entry.at) || 0,
+                ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
+            };
         }
         return out;
     } catch {
@@ -81,10 +85,10 @@ function readPopoutEntries(): Record<string, PopoutEntry> {
 // (never from a cached copy) and change only this window's entry. Another
 // window's entry can only be lost if both writes land in the same instant —
 // localStorage has no transactions, and each write is synchronous.
-function writePopoutEntry(id: string, keys: FlashAccountKeys): void {
+function writePopoutEntry(id: string, keys: FlashAccountKeys, source?: string): void {
     try {
         const all = readPopoutEntries();
-        all[id] = { keys, at: Date.now() };
+        all[id] = { ...all[id], ...(source ? { source } : {}), keys, at: Date.now() };
         const kept = Object.entries(all).sort((a, b) => b[1].at - a[1].at).slice(0, POPOUT_MAX_ENTRIES);
         localStorage.setItem(POPOUT_STORAGE_KEY, JSON.stringify(Object.fromEntries(kept)));
     } catch { /* best effort */ }
@@ -148,13 +152,20 @@ export function pinnedFlashAccounts(panelKeys: FlashAccountKeys | undefined, glo
 }
 
 /**
- * URL params for a flash popout (from a panel or a 閃電全開 tile): the pinned
- * accounts are written under a fresh window id before the window loads and
- * used as-is on first open, whatever an older popout stored. Only the opaque
+ * URL params for a flash popout. Each panel/tile is one stable popout source;
+ * reopening it (including after an App restart) reuses its own saved account.
+ * Different panels of the same product remain independent. Only the opaque
  * window id goes into the URL.
  */
-export function flashPopoutParams(panelKeys: FlashAccountKeys | undefined, global: GlobalFlashSelection): { win: string } {
+export function flashPopoutParams(panelKeys: FlashAccountKeys | undefined, global: GlobalFlashSelection, source?: string): { win: string } {
+    if (source) {
+        const old = Object.entries(readPopoutEntries()).find(([, entry]) => entry.source === source);
+        if (old) {
+            writePopoutEntry(old[0], old[1].keys);
+            return { win: old[0] };
+        }
+    }
     const win = newPopoutWindowId();
-    seedPopoutFlashAccounts(win, pinnedFlashAccounts(panelKeys, global));
+    writePopoutEntry(win, pinnedFlashAccounts(panelKeys, global), source);
     return { win };
 }

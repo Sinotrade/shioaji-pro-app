@@ -469,7 +469,7 @@ function BlockView(props: BlockViewProps) {
                                   // popout 開啟時固定帳戶：面板自己的選擇，跟隨主畫面的市場
                                   // 則取此刻主畫面的選擇（popout 不會即時跟隨）
                                   block.type === 'flash'
-                                      ? flashPopoutParams(block.flashAccounts, mainFlashSelection())
+                                      ? flashPopoutParams(block.flashAccounts, mainFlashSelection(), `panel:${block.id}:${contract?.code ?? ''}`)
                                       : undefined,
                               )
                         : undefined
