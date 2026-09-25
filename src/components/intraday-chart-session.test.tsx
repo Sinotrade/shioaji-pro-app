@@ -411,4 +411,73 @@ describe('IntradayChart session toggle', () => {
         expect(text(r)).not.toContain('≈');
         expect(limitLines().length).toBeGreaterThan(0);
     });
+
+    // 回歸：同一張已掛載的圖切時段後歷史失敗/空 → 不可殘留前一段走勢
+    const seriesOf = (kind: string) => created.filter((c) => c.kind === kind);
+    const dataPoints = () =>
+        ['Baseline', 'Bar', 'Histogram'].flatMap((k) =>
+            seriesOf(k).flatMap((c) => (c.last as any[]).filter((p) => p.value !== undefined || p.close !== undefined)),
+        );
+    const switchTo = async (r: ReactTestRenderer, label: string, rerender: (m: any) => void) => {
+        const chip = r.root.find((n) => n.type === 'button' && n.props['aria-haspopup'] === 'menu');
+        act(() => chip.props.onClick());
+        const item = r.root.find((n) => n.type === 'button' && n.props.role === 'menuitemradio' && n.children.join('') === label);
+        act(() => item.props.onClick());
+        rerender(label === '日盤' ? 'day' : label === '夜盤' ? 'night' : 'auto');
+        await flush();
+    };
+
+    for (const [name, second] of [
+        ['rejects', () => Promise.reject(new Error('403'))],
+        ['returns empty', () => Promise.resolve(kbars([]))],
+    ] as const) {
+        it(`switching auto(night) → 日盤 when history ${name} leaves no night data`, async () => {
+            setNow('2026-09-25T20:00:30');
+            fetchMock.mockResolvedValueOnce(DATA);
+            fetchMock.mockImplementation(second);
+            let mode: any = 'auto';
+            const onChange = (m: any) => (mode = m);
+            const r = mount({ contract: fut, sessionMode: mode, onSessionModeChange: onChange });
+            await flush();
+            expect(iso((price().last as any[])[0].time)).toBe('2026-09-25T15:01');
+            await switchTo(r, '日盤', (m) =>
+                act(() => r.update(createElement(IntradayChart, { contract: fut, sessionMode: m, onSessionModeChange: onChange } as any))),
+            );
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            const chip = r.root.find((n) => n.type === 'button' && n.props['aria-haspopup'] === 'menu');
+            expect(chip.children.join('')).toContain('日盤');
+            expect(dataPoints()).toHaveLength(0);
+        });
+    }
+
+    it('manual 更新歷史 failing (403) clears the stale curve', async () => {
+        setNow('2026-09-25T20:00:30');
+        fetchMock.mockResolvedValueOnce(DATA);
+        fetchMock.mockRejectedValue(new Error('HTTP 403'));
+        const r = mount({ contract: fut, sessionMode: 'auto', onSessionModeChange: () => {} });
+        await flush();
+        expect(dataPoints().length).toBeGreaterThan(0);
+        const refresh = r.root.find((n) => n.type === 'button' && n.props['aria-label'] === '更新歷史');
+        act(() => refresh.props.onClick());
+        await flush();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(dataPoints()).toHaveLength(0);
+    });
+
+    it('same-session settings reload keeps the curve (no flash)', async () => {
+        setNow('2026-09-25T20:00:30');
+        let resolve!: (v: unknown) => void;
+        fetchMock.mockResolvedValueOnce(DATA);
+        fetchMock.mockReturnValueOnce(new Promise((res) => (resolve = res)));
+        const r = mount({ contract: fut, sessionMode: 'auto', onSessionModeChange: () => {} });
+        await flush();
+        const refresh = r.root.find((n) => n.type === 'button' && n.props['aria-label'] === '更新歷史');
+        act(() => refresh.props.onClick());
+        await flush();
+        // 重載進行中：同時段資料仍在
+        expect(iso((price().last as any[])[0].time)).toBe('2026-09-25T15:01');
+        resolve(DATA);
+        await flush();
+        expect(iso((price().last as any[])[0].time)).toBe('2026-09-25T15:01');
+    });
 });

@@ -293,7 +293,7 @@ export function IntradayChart({
     // 換時段重載的目標時段 — 試搓觸發切換時新時段還沒有 kbar，load
     // 不能又依最後一根 kbar 選回上一段（會空轉重載）
     const pendingWinRef = useRef<{ code: string; start: number } | null>(null);
-    const drawnCodeRef = useRef('');
+    const drawnKeyRef = useRef('');
 
     const [loading, setLoading] = useState(false);
     const [empty, setEmpty] = useState(false);
@@ -679,6 +679,15 @@ export function IntradayChart({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [themeKey]);
 
+    // 價格/美國線/%/均價/量能資料清空（filler 時段軸另外處理）
+    const clearSeries = () => {
+        priceSeriesRef.current?.setData([]);
+        barSeriesRef.current?.setData([]);
+        pctSeriesRef.current?.setData([]);
+        avgSeriesRef.current?.setData([]);
+        volSeriesRef.current?.setData([]);
+    };
+
     const applyRefPrice = (ref: number) => {
         if (!Number.isFinite(ref) || ref <= 0) return;
         if (Math.abs(ref - refPriceRef.current) < 1e-9) return;
@@ -710,16 +719,16 @@ export function IntradayChart({
             fillerSeriesRef.current?.removePriceLine(line);
         }
         limitLinesRef.current = [];
-        // 換商品：清掉前一檔殘影 — 載入（或載入卡住）期間不能繼續
-        // 掛著別檔的走勢；同商品的設定/主題重載不清，切換才不閃
-        if (drawnCodeRef.current !== contract.code) {
-            drawnCodeRef.current = contract.code;
+        // 換商品或換時段選擇：清掉前一段殘影 — 載入（或載入卡住/
+        // 失敗）期間不能在「日盤」標籤下繼續掛著夜盤走勢；同商品同
+        // 時段的設定/主題重載不清，切換才不閃
+        if (!drawnKeyRef.current.startsWith(`${contract.code}|`)) {
             pendingWinRef.current = null;
-            priceSeriesRef.current?.setData([]);
-            barSeriesRef.current?.setData([]);
-            pctSeriesRef.current?.setData([]);
-            avgSeriesRef.current?.setData([]);
-            volSeriesRef.current?.setData([]);
+        }
+        const drawnKey = `${contract.code}|${sessionMode}`;
+        if (drawnKeyRef.current !== drawnKey) {
+            drawnKeyRef.current = drawnKey;
+            clearSeries();
             fillerSeriesRef.current?.setData([]);
         }
         // 樣式切換：line=分時線；bars=美國線疊在透明漸層上（baseline
@@ -786,6 +795,9 @@ export function IntradayChart({
         // 立刻開始作畫；手動更新歷史後整段覆蓋
         const scaffoldEmptyFrame = () => {
             if (!priceSeriesRef.current || !fillerSeriesRef.current) return;
+            // 空框架＝沒有這段的歷史（零 kbars/載入失敗/403）— 先清掉
+            // 圖上殘留的前一次資料，live 從現在開始重畫
+            clearSeries();
             const ref = Number(contract.reference);
             if (!Number.isFinite(ref) || ref <= 0) return;
             const pend =
