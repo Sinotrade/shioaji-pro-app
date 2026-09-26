@@ -7,12 +7,16 @@ const mocks = vi.hoisted(() => ({
     sync: vi.fn(),
     fetchLists: vi.fn(),
     create: vi.fn(),
+    add: vi.fn(),
+    remove: vi.fn(),
 }));
 vi.mock('../lib/shioaji', () => ({
     fetchWatchlists: mocks.fetchLists,
     resolveContract: mocks.resolve,
     syncWatchlist: mocks.sync,
     createWatchlist: mocks.create,
+    addWatchlistContracts: mocks.add,
+    removeWatchlistContracts: mocks.remove,
     fetchSnapshots: async () => [],
 }));
 vi.mock('../lib/contracts-cache', () => ({
@@ -49,6 +53,8 @@ beforeEach(() => {
     }));
     mocks.sync.mockReset().mockResolvedValue(undefined);
     mocks.create.mockReset().mockResolvedValue(undefined);
+    mocks.add.mockReset().mockResolvedValue(undefined);
+    mocks.remove.mockReset().mockResolvedValue(undefined);
     mocks.fetchLists.mockReset().mockResolvedValue([
         { id: 'first', name: '我的自選', contracts: [{ code: '2330', security_type: 'STK' }] },
         { id: 'second', name: '第二組', contracts: [{ code: '2317', security_type: 'STK' }] },
@@ -80,6 +86,67 @@ it('shows a retryable partial list without replacing unresolved server contracts
     await act(async () => { state.retryLoad(); });
     expect(state).toMatchObject({ loading: false, loadError: false });
     expect(state.items.map((item) => item.contract.code)).toEqual(['A', 'B', 'C']);
+});
+
+it('shows the first resolved product while another watchlist contract is still pending', async () => {
+    let finishSlow!: (value: { code: string; security_type: string; exchange: string; target_code: null }) => void;
+    mocks.fetchLists.mockResolvedValue([
+        { id: 'first', name: '我的自選', contracts: ['A', 'B'].map((code) => ({ code, security_type: 'STK' })) },
+    ]);
+    mocks.resolve.mockImplementation((code: string) => {
+        if (code === 'A') return Promise.resolve({ code, security_type: 'STK', exchange: 'TSE', target_code: null });
+        return new Promise((resolve) => { finishSlow = resolve; });
+    });
+
+    await act(async () => { root = create(createElement(Probe)); });
+    expect(state.loading).toBe(true);
+    expect(state.items.map((item) => item.contract.code)).toEqual(['A']);
+    expect(mocks.sync).not.toHaveBeenCalled();
+    await act(async () => {
+        await state.removeSymbol('A');
+        await expect(state.addSymbol('C')).rejects.toThrow('自選清單載入中');
+    });
+    expect(mocks.remove).not.toHaveBeenCalled();
+    expect(mocks.add).not.toHaveBeenCalled();
+    expect(state.items.map((item) => item.contract.code)).toEqual(['A']);
+
+    await act(async () => { finishSlow({ code: 'B', security_type: 'STK', exchange: 'TSE', target_code: null }); });
+    expect(state.loading).toBe(false);
+    expect(state.items.map((item) => item.contract.code)).toEqual(['A', 'B']);
+});
+
+it('shows an available product when the first watchlist contract is slow', async () => {
+    let finishFirst!: (value: { code: string; security_type: string; exchange: string; target_code: null }) => void;
+    mocks.fetchLists.mockResolvedValue([
+        { id: 'first', name: '我的自選', contracts: ['A', 'B'].map((code) => ({ code, security_type: 'STK' })) },
+    ]);
+    mocks.resolve.mockImplementation((code: string) => {
+        if (code === 'A') return new Promise((resolve) => { finishFirst = resolve; });
+        return Promise.resolve({ code, security_type: 'STK', exchange: 'TSE', target_code: null });
+    });
+
+    await act(async () => { root = create(createElement(Probe)); });
+    expect(state.loading).toBe(true);
+    expect(state.items.map((item) => item.contract.code)).toEqual(['B']);
+
+    await act(async () => { finishFirst({ code: 'A', security_type: 'STK', exchange: 'TSE', target_code: null }); });
+    expect(state.loading).toBe(false);
+    expect(state.items.map((item) => item.contract.code)).toEqual(['A', 'B']);
+});
+
+it('shows an available product when the first watchlist contract fails', async () => {
+    mocks.fetchLists.mockResolvedValue([
+        { id: 'first', name: '我的自選', contracts: ['A', 'B'].map((code) => ({ code, security_type: 'STK' })) },
+    ]);
+    mocks.resolve.mockImplementation(async (code: string) => {
+        if (code === 'A') throw new Error('broker unavailable');
+        return { code, security_type: 'STK', exchange: 'TSE', target_code: null };
+    });
+
+    await act(async () => { root = create(createElement(Probe)); });
+    expect(state).toMatchObject({ loading: false, loadError: true });
+    expect(state.items.map((item) => item.contract.code)).toEqual(['B']);
+    expect(mocks.sync).not.toHaveBeenCalled();
 });
 
 it('ends loading and exposes retry after migration sync fails during list switch', async () => {

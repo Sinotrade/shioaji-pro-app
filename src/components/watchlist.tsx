@@ -67,6 +67,7 @@ const WatchRow = memo(function WatchRow({
     arrange,
     canUp,
     canDown,
+    canRemove,
     onMove,
     onSelect,
     onRemove,
@@ -83,6 +84,7 @@ const WatchRow = memo(function WatchRow({
     arrange: boolean;
     canUp: boolean;
     canDown: boolean;
+    canRemove: boolean;
     onMove: (code: string, dir: -1 | 1) => void;
     onSelect: (c: ContractInfo) => void;
     onRemove: (code: string) => void;
@@ -218,6 +220,7 @@ const WatchRow = memo(function WatchRow({
                 <button
                     className={styles.rowRemove}
                     title='從清單移除'
+                    disabled={!canRemove}
                     onClick={(e) => {
                         e.stopPropagation();
                         onRemove(item.contract.code);
@@ -619,6 +622,7 @@ export function Watchlist({
                             arrange={arrange && !loading && !loadError}
                             canUp={idx > 0 && !loading && !loadError}
                             canDown={idx < viewItems.length - 1 && !loading && !loadError}
+                            canRemove={!loading}
                             onMove={moveRow}
                             dropTarget={
                                 arrange && item.contract.code === dropCode
@@ -646,6 +650,7 @@ export function Watchlist({
                             <button
                                 key={s.code}
                                 className={styles.suggestRow}
+                                disabled={loading}
                                 onClick={async () => {
                                     setSuggestions([]);
                                     setInput('');

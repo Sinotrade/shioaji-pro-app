@@ -137,11 +137,22 @@ export function useWatchlist() {
             setLoadError(false);
             setItems([]);
             try {
-                const results = await Promise.allSettled(
-                    list.contracts.map((c) =>
-                        resolveContract(c.code, c.security_type),
-                    ),
+                const resolutions = list.contracts.map((c) =>
+                    resolveContract(c.code, c.security_type),
                 );
+                // The linked panels only need one symbol to stop showing
+                // "等待商品…". Let the first available one render immediately;
+                // the full list can keep loading without holding the workspace.
+                // Editing stays locked until every contract has been checked.
+                let finished = false;
+                void Promise.any(resolutions).then(async (first) => {
+                    if (loadSeq.current !== seq || finished) return;
+                    await subscribeContract(first);
+                    if (loadSeq.current !== seq || finished) return;
+                    setItems([{ contract: first }]);
+                }).catch(() => undefined);
+                const results = await Promise.allSettled(resolutions);
+                finished = true;
                 if (loadSeq.current !== seq) return;
                 const contracts = results
                     .filter(
@@ -196,6 +207,7 @@ export function useWatchlist() {
             type?: SecurityType,
             resolved?: ContractInfo,
         ) => {
+            if (loading) throw new Error('自選清單載入中，請稍後再試');
             if (!activeIdRef.current) throw new Error('自選清單尚未就緒');
             const contract = resolved ?? (await resolveContract(code, type));
             // 組合商品（合成合約）不能進自選 — server 端自選清單只收
@@ -221,6 +233,7 @@ export function useWatchlist() {
         },
         [
             items,
+            loading,
             subscribeContract,
             attachSnapshots,
             refreshLists,
@@ -229,6 +242,7 @@ export function useWatchlist() {
 
     const removeSymbol = useCallback(
         async (code: string) => {
+            if (loading) return;
             const item = items.find((i) => i.contract.code === code);
             if (!item) return;
             const id = activeIdRef.current;
@@ -240,7 +254,7 @@ export function useWatchlist() {
                 prev.filter((i) => i.contract.code !== code),
             );
         },
-        [items, refreshLists],
+        [items, loading, refreshLists],
     );
 
     // drag-to-reorder: move `fromCode` to the position of `toCode`
