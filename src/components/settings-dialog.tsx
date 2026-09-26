@@ -13,6 +13,7 @@ import {
     X,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { AsyncStatus } from './async-status';
 import {
     ensureAccounts,
     refreshAccounts,
@@ -325,13 +326,14 @@ export function AccountsSection() {
             })}
             {loaded && accounts.length === 0 && (
                 <span className={hud.emptyHint}>
-                    {loadError
-                        ? '帳號讀取失敗 — 請確認伺服器連線後按下方「重新整理帳號」。'
-                        : '尚未取得帳號 — 伺服器就緒後按下方「重新整理帳號」。'}
+                    <AsyncStatus phase={loadError ? 'error' : 'idle'}
+                        text={loadError
+                            ? '帳號讀取失敗 — 請確認伺服器連線後按下方「重新整理帳號」。'
+                            : '尚未取得帳號 — 伺服器就緒後按下方「重新整理帳號」。'} />
                 </span>
             )}
             {!loaded && (
-                <span className={hud.emptyHint}>載入帳號中…</span>
+                <span className={hud.emptyHint}><AsyncStatus phase='loading' text='載入帳號中…' /></span>
             )}
             <span className={hud.emptyHint}>
                 下單與帳務查詢都使用選定的帳號；尚未完成 API

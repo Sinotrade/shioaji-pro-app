@@ -216,7 +216,7 @@ export function ScannerPanel({
                 )}
                 {error && (
                     <div className={styles.errorBox}>
-                        <span className={styles.scName}>排行資料無法取得</span>
+                        <AsyncStatus phase='error' text='排行資料無法取得' className={styles.scName} />
                         <button
                             className={styles.retryBtn}
                             disabled={query.loading} onClick={() => void query.refresh()}

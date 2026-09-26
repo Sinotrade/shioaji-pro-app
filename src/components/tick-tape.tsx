@@ -90,12 +90,15 @@ const TapeRowView = memo(function TapeRowView({
 export function TickTape({ contract }: { contract: ContractBase }) {
     const [rows, setRows] = useState<TapeRow[]>([]);
     const [loading, setLoading] = useState(true);
+    const [historyError, setHistoryError] = useState(false);
+    const [retrySeq, setRetrySeq] = useState(0);
 
     // history preload, then live stream on top
     useEffect(() => {
         let cancelled = false;
         setRows([]);
         setLoading(true);
+        setHistoryError(false);
 
         loadHistory(contract, MAX_ROWS)
             .then((h) => {
@@ -115,7 +118,7 @@ export function TickTape({ contract }: { contract: ContractBase }) {
                 // live rows may already have arrived — keep them on top
                 setRows((live) => [...live, ...hist].slice(0, MAX_ROWS));
             })
-            .catch(() => undefined)
+            .catch(() => { if (!cancelled) setHistoryError(true); })
             .finally(() => {
                 if (!cancelled) setLoading(false);
             });
@@ -123,6 +126,7 @@ export function TickTape({ contract }: { contract: ContractBase }) {
         const releaseQuote = retainQuote(contract, 'Tick');
         const off = onAnyTick((tick) => {
             if (tick.code !== contract.code) return;
+            setHistoryError(false);
             setRows((prev) =>
                 [
                     {
@@ -141,7 +145,7 @@ export function TickTape({ contract }: { contract: ContractBase }) {
             off();
             releaseQuote();
         };
-    }, [contract]);
+    }, [contract, retrySeq]);
 
     // big-lot threshold from the rolling average of visible rows
     const bigThreshold = useMemo(() => {
@@ -162,6 +166,9 @@ export function TickTape({ contract }: { contract: ContractBase }) {
                         <span className={styles.time}>
                             {loading ? (
                                 <AsyncStatus phase='loading' text='載入歷史成交…' />
+                            ) : historyError ? (
+                                <AsyncStatus phase='error' text='歷史成交無法取得'
+                                    action={<button type='button' onClick={() => setRetrySeq(n => n + 1)}>重試</button>} />
                             ) : (
                                 <AsyncStatus phase='empty' text='今日尚無成交' />
                             )}
