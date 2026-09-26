@@ -2,6 +2,7 @@ import { Eye, EyeOff, FileUp, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { pickCaFile, pickEnvFile, type DesktopSettings, type ServerStatus } from '../lib/tauri';
 import * as s from './server-settings-dialog.css';
+import { AsyncStatus } from './async-status';
 
 export type ServerConnectionSettings = Pick<DesktopSettings, 'apiKey' | 'secretKey' | 'production' | 'caPath' | 'caPasswd'>;
 export const connectionSettings = (settings: DesktopSettings): ServerConnectionSettings => ({
@@ -79,7 +80,9 @@ export function ServerSettingsDialog({ settings, status, busy, pendingApply = fa
         <div ref={dialog} className={s.dialog} role="dialog" aria-modal="true" aria-labelledby="server-settings-title" aria-describedby="server-settings-description" tabIndex={-1}>
             <header className={s.header}>
                 <div><h2 id="server-settings-title" className={s.title}>伺服器設定</h2>
-                    <p className={s.hint}>目前{status?.running ? `運行：${currentMode} · ${(status.scheme ?? 'http').toUpperCase()}` : status ? '未啟動' : '狀態讀取中'}</p>
+                    <p className={s.hint}>目前{status?.running
+                        ? `運行：${currentMode} · ${(status.scheme ?? 'http').toUpperCase()}`
+                        : status ? '未啟動' : <AsyncStatus phase='loading' text='狀態讀取中' size={10} />}</p>
                 </div>
                 <button className={s.button} aria-label="關閉伺服器設定" disabled={locked} onClick={onClose}><X size={16} /></button>
             </header>

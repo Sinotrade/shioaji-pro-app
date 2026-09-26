@@ -18,6 +18,7 @@ interface AccountState {
     selectedStock: Account | null;
     selectedFutures: Account | null;
     loaded: boolean;
+    loadError: boolean;
 }
 
 let state: AccountState = {
@@ -25,6 +26,7 @@ let state: AccountState = {
     selectedStock: null,
     selectedFutures: null,
     loaded: false,
+    loadError: false,
 };
 const listeners = new Set<() => void>();
 
@@ -57,31 +59,67 @@ function persistSelection() {
 }
 
 let inflight: Promise<void> | null = null;
+// one /auth/accounts request at a time, shared by the store load and the
+// trade-report subscription (boot used to issue both back to back)
+let fetching: Promise<Account[]> | null = null;
+function fetchShared(): Promise<Account[]> {
+    if (!fetching) {
+        fetching = fetchAccounts().finally(() => {
+            fetching = null;
+        });
+    }
+    return fetching;
+}
+
+// This window's in-memory choice wins while that account is still listed
+// and signed; the saved selection only fills a type with no usable pick:
+// letting storage win on every re-read (each trade-report re-subscription)
+// would silently switch the order account to whatever ANOTHER window saved.
+function apply(all: Account[]) {
+    // only signed accounts are candidates for the order account
+    const signed = all.filter((a) => a.signed);
+    const stocks = signed.filter((a) => a.account_type === 'S');
+    const futures = signed.filter((a) => a.account_type === 'F');
+    // per type: keep the current pick while it is still listed and signed;
+    // with no usable pick (first load, or none of that type was signed
+    // before) the saved choice applies, then the first signed account
+    const current = (picked: Account | null, pool: Account[]) =>
+        picked ? pool.find((a) => keyOf(a) === keyOf(picked)) : undefined;
+    const saved = loadSelection();
+    state = {
+        accounts: all,
+        selectedStock:
+            current(state.selectedStock, stocks) ??
+            stocks.find((a) => keyOf(a) === saved.stock) ??
+            stocks[0] ??
+            null,
+        selectedFutures:
+            current(state.selectedFutures, futures) ??
+            futures.find((a) => keyOf(a) === saved.futures) ??
+            futures[0] ??
+            null,
+        loaded: true,
+        loadError: false,
+    };
+}
 
 async function load(): Promise<void> {
     try {
-        const all = await fetchAccounts();
-        const saved = loadSelection();
-        // only signed accounts are candidates for the order account
-        const signed = all.filter((a) => a.signed);
-        const stocks = signed.filter((a) => a.account_type === 'S');
-        const futures = signed.filter((a) => a.account_type === 'F');
-        state = {
-            accounts: all,
-            selectedStock:
-                stocks.find((a) => keyOf(a) === saved.stock) ??
-                stocks[0] ??
-                null,
-            selectedFutures:
-                futures.find((a) => keyOf(a) === saved.futures) ??
-                futures[0] ??
-                null,
-            loaded: true,
-        };
+        apply(await fetchShared());
     } catch {
-        state = { ...state, loaded: true };
+        state = { ...state, loaded: true, loadError: true };
     }
     emit();
+}
+
+/** Accounts for the trade-report subscription: joins an in-flight read
+ * instead of issuing a second one, updates the store, and — unlike the
+ * store load — rethrows, so the caller can mark itself not subscribed. */
+export async function loadAccountsShared(): Promise<Account[]> {
+    const all = await fetchShared();
+    apply(all);
+    emit();
+    return all;
 }
 
 function startLoad(): Promise<void> {
@@ -130,6 +168,13 @@ export function getAccountState(): AccountState {
 export function accountFor(type: 'S' | 'F'): Account | undefined {
     const acc = type === 'S' ? state.selectedStock : state.selectedFutures;
     return acc?.signed ? acc : undefined;
+}
+
+export function subscribeAccounts(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => {
+        listeners.delete(listener);
+    };
 }
 
 export function useAccounts(): AccountState {

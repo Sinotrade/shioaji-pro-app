@@ -8,6 +8,7 @@ import {
 } from '../lib/product-search';
 import { BLOCK_META, type BlockType } from '../lib/workspace';
 import * as styles from './command-palette.css';
+import { AsyncStatus } from './async-status';
 
 const PANEL_TYPES = Object.keys(BLOCK_META) as BlockType[];
 const PANEL_MATCH_LIMIT = 4;
@@ -195,13 +196,9 @@ export function CommandPalette({
                     </div>
                 )}
                 <div className={styles.hint}>
-                    <span className={error ? styles.err : ''}>
-                        {busy
-                            ? '查詢中…'
-                            : error
-                              ? '找不到此商品代碼'
-                              : 'Enter 跳轉 · Esc 關閉'}
-                    </span>
+                    <AsyncStatus phase={busy ? 'loading' : error ? 'error' : 'idle'}
+                        text={busy ? '查詢商品中…' : error ? '找不到此商品代碼' : 'Enter 跳轉 · Esc 關閉'}
+                        className={error ? styles.err : ''} />
                     <span>⌘K</span>
                 </div>
             </div>

@@ -44,7 +44,7 @@ import {
     type MarketFilter,
 } from './bottom-dock-shared';
 import * as styles from './bottom-dock.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 
 // ---- helpers ----
@@ -77,12 +77,7 @@ function settleDateLabel(raw: string): string {
 }
 
 function Loading({ text }: { text: string }) {
-    return (
-        <span className={styles.loadingRow}>
-            <Orb size={12} />
-            {text}
-        </span>
-    );
+    return <AsyncStatus phase='loading' text={text} className={styles.loadingRow} />;
 }
 
 function Row({

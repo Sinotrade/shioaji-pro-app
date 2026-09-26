@@ -15,7 +15,7 @@ import {
 import * as styles from './order-ticket.css';
 import * as css from './combo-ticket.css';
 import * as dx from './derivative-explorer.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 
 interface OptLite {
     code: string;
@@ -79,6 +79,7 @@ export function OptionStrategyBuilder({
         () => localStorage.getItem(SB_ROOT_KEY) || 'TXO',
     );
     const [contracts, setContracts] = useState<OptLite[] | null>(null);
+    const [contractError, setContractError] = useState(false);
     const [month, setMonth] = useState('');
     const [strategy, setStrategy] = useState<Strategy>('vertical');
     const [right, setRight] = useState<'C' | 'P'>('C');
@@ -95,12 +96,16 @@ export function OptionStrategyBuilder({
     useEffect(() => {
         let stale = false;
         setContracts(null);
+        setContractError(false);
         loadOptRoot(root)
             .then((rows) => {
                 if (!stale) setContracts(rows);
             })
             .catch(() => {
-                if (!stale) setContracts([]);
+                if (!stale) {
+                    setContracts([]);
+                    setContractError(true);
+                }
             });
         return () => {
             stale = true;
@@ -334,11 +339,12 @@ export function OptionStrategyBuilder({
                 )}
                 {contracts === null ? (
                     <span className={styles.costRow}>
-                        <Orb size={11} style={{ marginRight: 4, verticalAlign: '-2px' }} />
-                        載入 {root} 合約…
+                        <AsyncStatus phase='loading' size={11} text={`載入 ${root} 合約…`} />
                     </span>
+                ) : contractError ? (
+                    <span className={styles.costRow}><AsyncStatus phase='error' text={`${root} 合約讀取失敗`} /></span>
                 ) : strikes.length === 0 ? (
-                    <span className={styles.costRow}>此月份沒有合約</span>
+                    <span className={styles.costRow}><AsyncStatus phase='empty' text='此月份沒有合約' /></span>
                 ) : (
                     <>
                         {strikeSelect(k1, setK1, '履約價')}

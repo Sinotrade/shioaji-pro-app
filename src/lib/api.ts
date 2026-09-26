@@ -2,6 +2,7 @@
 
 import { getApiBase, isTauri } from './runtime';
 import { isAgentHarnessEnabled } from './agent-harness-state';
+import { serverIdentityVerified } from './server-identity';
 
 // resolved per request — the server port can move at runtime (e.g. the boot
 // flow discovers the default port occupied and starts on a fallback), and a
@@ -42,8 +43,99 @@ export function shouldRejectUnsignedAgentMutation(
     );
 }
 
+const WEBVIEW_INFO_MAX_IN_FLIGHT = 4; // leave browser connections free for SSE reconnects
+const WEBVIEW_INFO_RETRY_MS = 5_000;
+const webviewInfoSlots = new Map<string, { inFlight: number; waiters: Array<() => void> }>();
+const webviewInfoRetryAt = new Map<string, number>();
+
+function loopbackContractInfoOrigin(url: string, init?: RequestInit): string | undefined {
+    if (init?.method && init.method.toUpperCase() !== 'GET') return undefined;
+    try {
+        const parsed = new URL(url);
+        return (
+            (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+            parsed.hostname === '127.0.0.1' &&
+            /^\/api\/v1\/data\/contracts\/[^/]+\/info$/.test(parsed.pathname)
+        ) ? parsed.origin : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function abortReason(signal: AbortSignal): unknown {
+    return signal.reason ?? new DOMException('aborted', 'AbortError');
+}
+
+async function withWebviewInfoSlot<T>(origin: string, signal: AbortSignal | undefined, request: () => Promise<T>): Promise<T> {
+    if (signal?.aborted) throw abortReason(signal);
+    let slots = webviewInfoSlots.get(origin);
+    if (!slots) {
+        slots = { inFlight: 0, waiters: [] };
+        webviewInfoSlots.set(origin, slots);
+    }
+    if (slots.inFlight < WEBVIEW_INFO_MAX_IN_FLIGHT) {
+        slots.inFlight++;
+    } else {
+        await new Promise<void>((resolve, reject) => {
+            const grant = () => {
+                signal?.removeEventListener('abort', onAbort);
+                resolve(); // transfer the occupied slot to this waiter
+            };
+            const onAbort = () => {
+                const index = slots.waiters.indexOf(grant);
+                if (index >= 0) slots.waiters.splice(index, 1);
+                reject(abortReason(signal!));
+            };
+            slots.waiters.push(grant);
+            signal?.addEventListener('abort', onAbort, { once: true });
+            if (signal?.aborted) onAbort();
+        });
+    }
+    try {
+        if (signal?.aborted) throw abortReason(signal);
+        return await request();
+    } finally {
+        const next = slots.waiters.shift();
+        if (next) next();
+        else {
+            slots.inFlight--;
+            if (slots.inFlight === 0) webviewInfoSlots.delete(origin);
+        }
+    }
+}
+
 async function doFetch(url: string, init?: RequestInit): Promise<Response> {
     if (isTauri) {
+        // Info is read-only and frequently requested in parallel by watchlists.
+        // The WebView can reach the loopback sidecar directly, avoiding the
+        // plugin-http queue. Keep the native transport for WebViews that reject
+        // the local origin or certificate; never retry a caller-aborted request.
+        const infoOrigin = loopbackContractInfoOrigin(url, init);
+        if (infoOrigin && Date.now() >= (webviewInfoRetryAt.get(infoOrigin) ?? 0)) {
+            try {
+                return await withWebviewInfoSlot(infoOrigin, init?.signal ?? undefined, async () => {
+                    if (Date.now() < (webviewInfoRetryAt.get(infoOrigin) ?? 0)) {
+                        throw new Error('WebView Info transport unavailable');
+                    }
+                    try {
+                        const response = await fetch(url, init);
+                        // fetch() resolves at headers. Buffer the small Info
+                        // body before releasing this slot so slow bodies cannot
+                        // occupy all browser connections during an SSE reconnect.
+                        const body = await response.arrayBuffer();
+                        return new Response(
+                            [204, 205, 304].includes(response.status) ? null : body,
+                            { status: response.status, statusText: response.statusText, headers: response.headers },
+                        );
+                    } catch (error) {
+                        if (!init?.signal?.aborted) webviewInfoRetryAt.set(infoOrigin, Date.now() + WEBVIEW_INFO_RETRY_MS);
+                        throw error;
+                    }
+                });
+            } catch (error) {
+                if (init?.signal?.aborted) throw error;
+            }
+        }
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
         return tauriFetch(url, init);
     }
@@ -101,6 +193,12 @@ export async function apiPost<T>(
     body: unknown,
     opts?: { timeoutMs?: number; agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
 ): Promise<T> {
+    if (isTauri && AGENT_HARNESS_MUTATIONS.has(path) && !serverIdentityVerified()) {
+        throw Object.assign(
+            new Error('伺服器身分尚未驗證，已暫停交易操作；請等待重新連線'),
+            { mutationNotStarted: true },
+        );
+    }
     const harnessEnabled = isAgentHarnessEnabled();
     if (
         shouldRejectUnsignedAgentMutation(

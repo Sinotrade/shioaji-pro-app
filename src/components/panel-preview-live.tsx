@@ -20,7 +20,7 @@ import { SectorHeatmap } from './sector-heatmap';
 import { TickTape } from './tick-tape';
 import { VolProfile } from './vol-profile';
 import * as styles from './panel-library.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 
 // feature flag: default on; flip off per-user via
 // localStorage.setItem('sj-pro-live-preview', 'off') or change the default
@@ -78,16 +78,18 @@ export function LivePanelPreview({
     const direct = NO_CONTRACT_PREVIEWS[type];
     const withContract = CONTRACT_PREVIEWS[type];
     const [contract, setContract] = useState<ContractInfo | null>(null);
+    const [failedCode, setFailedCode] = useState<string | null>(null);
 
     useEffect(() => {
         if (!withContract) return;
         let active = true;
         setContract(null);
+        setFailedCode(null);
         void ensureContract(code)
             .then((info) => {
                 if (active) setContract(info);
             })
-            .catch(() => undefined);
+            .catch(() => { if (active) setFailedCode(code); });
         return () => {
             active = false;
         };
@@ -100,8 +102,10 @@ export function LivePanelPreview({
         if (!contract) {
             return (
                 <div className={styles.livePreviewLoading}>
-                    <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                    載入 {code} …
+                    <AsyncStatus
+                        phase={failedCode === code ? 'error' : 'loading'}
+                        text={failedCode === code ? `${code} 商品讀取失敗` : `載入 ${code} 商品…`}
+                    />
                 </div>
             );
         }

@@ -25,6 +25,7 @@ export const dot = style({
     animationName: pulse,
     animationIterationCount: 'infinite',
     animationTimingFunction: 'ease-in-out',
+    '@media': { '(prefers-reduced-motion: reduce)': { animationPlayState: 'paused' } },
 });
 
 // ---- globe（3D 點球儀）：8 個路徑點展開成 12.5% 間隔的 keyframe，
@@ -52,6 +53,7 @@ export const globeDot = style({
     animationName: globeSpin,
     animationIterationCount: 'infinite',
     animationTimingFunction: 'linear',
+    '@media': { '(prefers-reduced-motion: reduce)': { animationPlayState: 'paused' } },
 });
 
 // ---- focus（四圓佔方角，「清晰焦點」順時針巡迴；blur 讀作景深）----
@@ -88,6 +90,7 @@ export const focusShape = style({
     animationName: focusTurn,
     animationIterationCount: 'infinite',
     animationTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    '@media': { '(prefers-reduced-motion: reduce)': { animationPlayState: 'paused' } },
 });
 
 // ---- morph（8 點在四個幾何形狀間變形）：4 個路徑點 ----
@@ -109,4 +112,5 @@ export const morphDot = style({
     animationName: morphShape,
     animationIterationCount: 'infinite',
     animationTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    '@media': { '(prefers-reduced-motion: reduce)': { animationPlayState: 'paused' } },
 });

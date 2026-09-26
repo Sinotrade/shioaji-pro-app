@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
     invoke: vi.fn(),
     harnessEnabled: true,
+    identityVerified: true,
 }));
 
 vi.mock('./runtime', () => ({
@@ -12,6 +13,7 @@ vi.mock('./runtime', () => ({
 vi.mock('./agent-harness-state', () => ({
     isAgentHarnessEnabled: () => mocks.harnessEnabled,
 }));
+vi.mock('./server-identity', () => ({ serverIdentityVerified: () => mocks.identityVerified }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 
 import { apiPost } from './api';
@@ -20,6 +22,17 @@ describe('agent harness native POST proxy', () => {
     beforeEach(() => {
         mocks.invoke.mockReset();
         mocks.harnessEnabled = true;
+        mocks.identityVerified = true;
+    });
+
+    it('rejects a desktop mutation before native or direct HTTP while identity is unverified', async () => {
+        mocks.identityVerified = false;
+        const browserFetch = vi.spyOn(globalThis, 'fetch');
+        const error = await apiPost('/api/v1/order/place_order', { code: '2330' }).catch((caught: unknown) => caught);
+        expect(error).toMatchObject({ mutationNotStarted: true });
+        expect(mocks.invoke).not.toHaveBeenCalled();
+        expect(browserFetch).not.toHaveBeenCalled();
+        browserFetch.mockRestore();
     });
 
     it('sends the exact serialized mutation through the native bridge', async () => {

@@ -92,8 +92,9 @@ function streamContractKey(c: ContractBase) {
 
 // ---- health / info / auth ----
 
-export function fetchHealth() {
-    return apiGet<Health>('/api/v1/health');
+// signal: lets a poller abort a hung probe so attempts never overlap
+export function fetchHealth(opts?: { signal?: AbortSignal }) {
+    return apiGet<Health>('/api/v1/health', opts);
 }
 
 export function fetchInfo() {

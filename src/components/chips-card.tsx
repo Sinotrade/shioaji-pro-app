@@ -9,6 +9,7 @@ import type { ContractInfo } from '../lib/types/contract';
 import { fmtInt } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
+import { AsyncStatus } from './async-status';
 
 interface CreditEnquire {
     stock_id: string;
@@ -74,7 +75,9 @@ export function ChipsCard({ contract }: { contract: ContractInfo }) {
         {(error || data?.errors.length) ? <span role="status">{error || data?.errors.join("；")}</span> : null}
         <RefreshButton label="更新籌碼" loading={loading} onClick={() => void refresh()} />
     </div>;
-    if (!data) return <div className={panel.panelBody}>{control}<div className={dock.emptyState}>{loading ? '載入籌碼資訊…' : '尚無資料'}</div></div>;
+    if (!data) return <div className={panel.panelBody}>{control}<div className={dock.emptyState}>
+        <AsyncStatus phase={error ? 'error' : 'loading'} text={error ? '籌碼資訊無法取得' : '載入籌碼資訊…'} />
+    </div></div>;
 
     const items: { label: string; value: string; warn?: boolean }[] = [
         {

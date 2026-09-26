@@ -13,6 +13,7 @@ import {
     X,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { AsyncStatus } from './async-status';
 import {
     ensureAccounts,
     refreshAccounts,
@@ -257,7 +258,7 @@ function SoundPrivacySection() {
 }
 
 export function AccountsSection() {
-    const { accounts, selectedStock, selectedFutures, loaded } = useAccounts();
+    const { accounts, selectedStock, selectedFutures, loaded, loadError } = useAccounts();
     const priv = usePrivacyMode();
     const [refreshing, setRefreshing] = useState(false);
     useEffect(ensureAccounts, []);
@@ -325,11 +326,14 @@ export function AccountsSection() {
             })}
             {loaded && accounts.length === 0 && (
                 <span className={hud.emptyHint}>
-                    尚未取得帳號 — 伺服器就緒後按下方「重新整理帳號」。
+                    <AsyncStatus phase={loadError ? 'error' : 'idle'}
+                        text={loadError
+                            ? '帳號讀取失敗 — 請確認伺服器連線後按下方「重新整理帳號」。'
+                            : '尚未取得帳號 — 伺服器就緒後按下方「重新整理帳號」。'} />
                 </span>
             )}
             {!loaded && (
-                <span className={hud.emptyHint}>載入帳號中…</span>
+                <span className={hud.emptyHint}><AsyncStatus phase='loading' text='載入帳號中…' /></span>
             )}
             <span className={hud.emptyHint}>
                 下單與帳務查詢都使用選定的帳號；尚未完成 API
@@ -537,10 +541,6 @@ function AgentSection() {
                 // 撿到孤兒 sidecar（上次 app 異常退出）— 已透過 native
                 // spawn 重啟以取得 harness 所有權
                 setNote('伺服器已自動重啟以建立 Agent Harness 所有權');
-            }
-            if (res.portChanged) {
-                // API base 換了 port — 全面重載讓每個面板接上新伺服器
-                window.location.reload();
             }
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));

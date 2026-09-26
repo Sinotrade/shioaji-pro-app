@@ -83,7 +83,7 @@ import {
 } from '../lib/utils/kbars';
 import { roundToTick } from '../lib/utils/ticksize';
 import * as styles from './candle-chart.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
@@ -130,6 +130,7 @@ export function CandleChart({
     const [tfIdx, setTfIdx] = useState(1); // default 5m
     const [empty, setEmpty] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [historyError, setHistoryError] = useState(false);
     // 歷史斷層自癒（issue #18）：開盤前抓的歷史可能缺少上游尚未發布的
     // 跨午夜夜盤段，live 進來出現大斷層時補抓一次
     const [historySeq, setHistorySeq] = useState(0);
@@ -500,6 +501,7 @@ export function CandleChart({
         loadMoreRef.current = null;
         setEmpty(false);
         setLoading(true);
+        setHistoryError(false);
         const clearSeries = () => {
             // the series must never keep a stale timeframe's data — a later
             // tick bucketed for the new timeframe would be "older" than the
@@ -618,6 +620,7 @@ export function CandleChart({
                 // 保留即時作畫；歷史查詢失敗後由使用者手動更新。
                 clearSeries();
                 setEmpty(true);
+                setHistoryError(true);
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -710,6 +713,7 @@ export function CandleChart({
         // 歷史載入失敗後 live bar 已開始堆 — 圖上有東西就不該再掛
         // 「無 K 線資料」（同值 setState React 會 bail out）
         setEmpty(false);
+        setHistoryError(false);
     }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
@@ -1579,15 +1583,14 @@ export function CandleChart({
             <div ref={hostRef} className={styles.chartHost}>
                 {loading && (
                     <div className={styles.emptyMsg}>
-                        <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                        <span className={panel.mono}>
-                            載入 {tf.label} K 線…
-                        </span>
+                        <AsyncStatus phase='loading' text={`載入 ${tf.label} K 線…`} className={panel.mono} />
                     </div>
                 )}
                 {empty && !loading && (
                     <div className={styles.emptyMsg}>
-                        <span className={panel.mono}>無 K 線資料</span>
+                        <AsyncStatus phase={historyError ? 'error' : 'empty'}
+                            text={historyError ? 'K 線歷史無法取得，請更新歷史' : '無 K 線資料'}
+                            className={panel.mono} />
                     </div>
                 )}
                 {mode !== 'observe' && (

@@ -67,6 +67,85 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('shared trading state with isolated broker fixtures', () => {
+    it('marks each accounting read of a refresh with its duration, accounts by type/order only (#142)', async () => {
+        const timing = await import('./startup-timing');
+        vi.spyOn(console, 'info').mockImplementation(() => undefined);
+        mocks.extraAccounts = [{ ...mocks.account, account_id: 'f', account_type: 'F' }];
+        mocks.margin.mockResolvedValue({ equity: 1 });
+        mocks.positions.mockImplementation(async () => { await new Promise(r => setTimeout(r, 120)); return [baseline()]; });
+        timing.beginTiming('restart', { replace: true });
+        vi.advanceTimersByTime(1500);
+        await act(async () => { const run = store.refreshTradingState('all'); await vi.advanceTimersByTimeAsync(500); await run; });
+        const reads = timing.getActiveTiming()!.marks.filter(m => m.stage === 'account-read').map(m => m.detail);
+        expect(reads).toEqual(expect.arrayContaining(['subscribe 0ms', 'S1 positions 120ms', 'F1 positions 120ms', 'S1 orders 0ms', 'F1 orders 0ms', 'S1 balance 0ms', 'F1 margin 0ms']));
+        expect(reads.join(' ')).not.toContain(mocks.account.account_id + ' ');
+        timing.endTiming('ok');
+    });
+
+    it('startTradingState outside React is idempotent with the hook (#142)', async () => {
+        const calls = mocks.positions.mock.calls.length;
+        await act(async () => { store.startTradingState(); store.startTradingState(); });
+        await flush();
+        expect(mocks.positions.mock.calls.length).toBe(calls); // no second initial read
+    });
+
+    it('caps concurrent account reads at ACCOUNT_READ_CONCURRENCY (broker rate limit)', async () => {
+        mocks.extraAccounts = ['b', 'c', 'd', 'e'].map(id => ({ ...mocks.account, account_id: id }));
+        let inFlight = 0, max = 0;
+        const slow = async <T,>(value: T) => { inFlight++; max = Math.max(max, inFlight); await new Promise(r => setTimeout(r, 10)); inFlight--; return value; };
+        mocks.positions.mockClear();
+        mocks.positions.mockImplementation(() => slow([baseline()]));
+        mocks.trades.mockImplementation(() => slow([]));
+        mocks.balance.mockImplementation(() => slow({ acc_balance: 1, date: '2026-09-25', errmsg: '' }));
+        vi.advanceTimersByTime(1500);
+        await act(async () => { const run = store.refreshTradingState('all'); await vi.advanceTimersByTimeAsync(1000); await run; });
+        expect(max).toBe(store.ACCOUNT_READ_CONCURRENCY);
+        expect(mocks.positions).toHaveBeenCalledTimes(5);
+        expect(store.getTradingState().funds!.map(f => f.account.account_id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    });
+
+    it('one account failing while another succeeds: keeps the good one, flags the failure', async () => {
+        mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }];
+        mocks.positions.mockImplementation(async (_t: string, a: Account) => { if (a.account_id === 'b') throw new Error('503'); return [baseline()]; });
+        mocks.trades.mockClear();
+        mocks.trades.mockImplementation(async (_t: string, a: Account) => { if (a.account_id === 'a') throw new Error('503'); return []; });
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('all'); });
+        const st = store.getTradingState();
+        expect(st.positions.map(p => p.account?.account_id)).toEqual(['a']);
+        expect(st.queries.positions.needsReconcile).toBe(true);
+        expect(st.queries.orders.needsReconcile).toBe(true);
+        expect(mocks.trades).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads every account concurrently, keeping each account\'s positions → orders order (#142)', async () => {
+        mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }];
+        const gates = new Map<string, ReturnType<typeof deferred<ReturnType<typeof baseline>[]>>>();
+        const calls: string[] = [];
+        mocks.positions.mockImplementation((_t: string, a: Account) => {
+            calls.push(`positions:${a.account_id}`);
+            const d = deferred<ReturnType<typeof baseline>[]>();
+            gates.set(a.account_id, d);
+            return d.promise;
+        });
+        mocks.trades.mockImplementation(async (_t: string, a: Account) => { calls.push(`orders:${a.account_id}`); return []; });
+        vi.advanceTimersByTime(1500);
+        let done = false;
+        const run = store.refreshTradingState('all').then(() => { done = true; });
+        await flush(); await flush();
+        // both accounts' positions are in flight before either answers
+        expect(calls).toEqual(['positions:a', 'positions:b']);
+        await act(async () => { gates.get('b')!.resolve([{ ...baseline(), id: 2, code: '2317' }]); });
+        await flush();
+        expect(calls).toEqual(['positions:a', 'positions:b', 'orders:b']);
+        expect(done).toBe(false);
+        await act(async () => { gates.get('a')!.resolve([baseline()]); await run; });
+        expect(calls.slice(-1)).toEqual(['orders:a']);
+        const positions = store.getTradingState().positions;
+        expect(positions.map(p => `${p.account?.account_id}:${p.code}`).sort()).toEqual(['a:2330', 'b:2317']);
+        expect(store.getTradingState().queries.positions.updatedAt).not.toBeNull();
+    });
+
     it('reads funds for every signed account and preserves only the failed account snapshot', async () => {
         mocks.extraAccounts = [{ ...mocks.account, account_id: 'b' }, { ...mocks.account, account_id: 'f', account_type: 'F' }];
         mocks.balance.mockImplementation(async (a: Account) => ({ acc_balance: a.account_id === 'b' ? 200 : 100, date: '2026-09-15', errmsg: '' }));

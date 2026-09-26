@@ -37,6 +37,7 @@ import {
 } from '../lib/product-search';
 import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { Sparkline } from './sparkline';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import * as styles from './watchlist.css';
 
@@ -67,6 +68,7 @@ const WatchRow = memo(function WatchRow({
     arrange,
     canUp,
     canDown,
+    canRemove,
     onMove,
     onSelect,
     onRemove,
@@ -83,6 +85,7 @@ const WatchRow = memo(function WatchRow({
     arrange: boolean;
     canUp: boolean;
     canDown: boolean;
+    canRemove: boolean;
     onMove: (code: string, dir: -1 | 1) => void;
     onSelect: (c: ContractInfo) => void;
     onRemove: (code: string) => void;
@@ -218,6 +221,7 @@ const WatchRow = memo(function WatchRow({
                 <button
                     className={styles.rowRemove}
                     title='從清單移除'
+                    disabled={!canRemove}
                     onClick={(e) => {
                         e.stopPropagation();
                         onRemove(item.contract.code);
@@ -244,6 +248,9 @@ export function Watchlist({
     onRenameList,
     onDeleteList,
     loading,
+    structureBusy,
+    loadError,
+    onRetryLoad,
 }: {
     items: WatchItem[];
     selectedCode: string | null;
@@ -263,6 +270,9 @@ export function Watchlist({
     onRenameList: (name: string) => Promise<boolean>;
     onDeleteList: () => Promise<unknown>;
     loading: boolean;
+    structureBusy: boolean;
+    loadError: boolean;
+    onRetryLoad: () => void;
 }) {
     const [input, setInput] = useState('');
     const [busy, setBusy] = useState(false);
@@ -390,7 +400,7 @@ export function Watchlist({
 
     const submit = async () => {
         const code = input.trim().toUpperCase();
-        if (!code || busy) return;
+        if (!code || busy || loading || !activeListId) return;
         setBusy(true);
         try {
             await onAdd(code);
@@ -404,7 +414,7 @@ export function Watchlist({
 
     const submitNewList = async () => {
         const name = newName.trim();
-        if (!name) return;
+        if (!name || loading || loadError) return;
         try {
             await onCreateList(name);
             setCreating(false);
@@ -462,6 +472,7 @@ export function Watchlist({
                         <select
                             className={styles.listSelect}
                             value={activeListId}
+                            disabled={structureBusy}
                             onChange={(e) => {
                                 setConfirmDelete(false);
                                 onSelectList(e.target.value);
@@ -484,10 +495,12 @@ export function Watchlist({
                             className={`${styles.listBtn} ${
                                 arrange ? styles.listBtnOn : ''
                             }`}
-                            disabled={!arrange && sortMode !== 'custom'}
+                            disabled={!arrange && (sortMode !== 'custom' || loading || loadError)}
                             title={
                                 arrange
                                     ? '完成調整'
+                                    : loading || loadError
+                                      ? '清單尚未完整載入，請先重試'
                                     : sortMode !== 'custom'
                                       ? '依漲跌幅排序中無法調整順序 — 先切回自訂順序'
                                       : '調整順序（拖曳或上下移，存回伺服器）'
@@ -557,6 +570,7 @@ export function Watchlist({
                         <button
                             className={styles.listBtn}
                             title='建立新清單'
+                            disabled={loading || loadError}
                             onClick={() => setCreating(true)}
                         >
                             <Plus size={12} />
@@ -591,12 +605,16 @@ export function Watchlist({
             <div className={panel.panelBody}>
                 <div className={styles.list}>
                     {loading && items.length === 0 && (
-                        <div className={styles.loadingHint}>載入清單…</div>
+                        <AsyncStatus phase='loading' text='載入清單…' className={styles.loadingHint} />
                     )}
-                    {!loading && items.length === 0 && (
-                        <div className={styles.loadingHint}>
-                            清單是空的 — 在下方輸入代碼加入
-                        </div>
+                    {!loading && loadError && (
+                        <AsyncStatus phase='error' text='自選清單讀取或同步失敗。'
+                            action={<button type="button" onClick={onRetryLoad}>重試</button>}
+                            className={styles.loadingHint} />
+                    )}
+                    {!loading && !loadError && items.length === 0 && (
+                        <AsyncStatus phase='empty' text='清單是空的 — 在下方輸入代碼加入'
+                            className={styles.loadingHint} />
                     )}
                     {viewItems.map((item, idx) => (
                         <WatchRow
@@ -604,9 +622,10 @@ export function Watchlist({
                             item={item}
                             selected={item.contract.code === selectedCode}
                             spark={spark}
-                            arrange={arrange}
-                            canUp={idx > 0}
-                            canDown={idx < viewItems.length - 1}
+                            arrange={arrange && !loading && !loadError}
+                            canUp={idx > 0 && !loading && !loadError}
+                            canDown={idx < viewItems.length - 1 && !loading && !loadError}
+                            canRemove={!loading}
                             onMove={moveRow}
                             dropTarget={
                                 arrange && item.contract.code === dropCode
@@ -625,6 +644,9 @@ export function Watchlist({
                             onDragEnd={clearDragState}
                         />
                     ))}
+                    {loading && items.length > 0 && (
+                        <AsyncStatus phase='loading' text='載入其餘商品…' className={styles.loadingHint} />
+                    )}
                 </div>
             </div>
             <div className={styles.addRow}>
@@ -634,6 +656,7 @@ export function Watchlist({
                             <button
                                 key={s.code}
                                 className={styles.suggestRow}
+                                disabled={loading}
                                 onClick={async () => {
                                     setSuggestions([]);
                                     setInput('');
@@ -665,6 +688,7 @@ export function Watchlist({
                 <input
                     className={styles.addInput}
                     placeholder='股票、期貨或指數（如 台積電期）'
+                    disabled={loading || !activeListId}
                     value={input}
                     onChange={(e) => {
                         setInput(e.target.value);
@@ -677,7 +701,7 @@ export function Watchlist({
                         if (e.key === 'Escape') setSuggestions([]);
                     }}
                 />
-                <button className={panel.btn} onClick={submit} disabled={busy}>
+                <button className={panel.btn} onClick={submit} disabled={busy || loading || !activeListId}>
                     {busy ? '…' : '+'}
                 </button>
             </div>

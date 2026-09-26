@@ -16,6 +16,7 @@ import {
 } from '../lib/shioaji';
 import { getAliasFor } from '../lib/stream';
 import { useTradingState } from '../lib/trading-state';
+import { queryDisplayState } from '../lib/query-display-state';
 import type { ScannerItem } from '../lib/types/market';
 import {
     fmtInt,
@@ -24,7 +25,7 @@ import {
     fmtSigned,
     fmtStockLots,
 } from '../lib/utils/format';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import { Sparkline } from './sparkline';
 import * as styles from './tray-panel.css';
@@ -116,9 +117,10 @@ export function TrayPanel() {
     );
     const [gearOpen, setGearOpen] = useState(false);
     const privMoney = usePrivacyMoney();
-    const { items } = useWatchlist();
+    const { items, loading: watchlistLoading, loadError: watchlistError } = useWatchlist();
 
-    const positionsPoll = { data: useTradingState().positions };
+    const portfolio = useTradingState();
+    const positionsQuery = portfolio.queries.positions;
     const moversPoll = useQuery<ScannerItem[]>(
         useCallback(
             () =>
@@ -130,7 +132,10 @@ export function TrayPanel() {
         'tray-movers', sections.has('movers'),
     );
 
-    const positions = positionsPoll.data ?? [];
+    const positions = portfolio.positions;
+    const positionsState = queryDisplayState(positionsQuery);
+    const positionsFailed = positionsState === 'failed';
+    const positionsPending = positionsState === 'loading';
     const totalPnl = positions.reduce((s, p) => s + (p.pnl || 0), 0);
     const topPositions = useMemo(
         () =>
@@ -225,10 +230,15 @@ export function TrayPanel() {
                 {sections.has('positions') && (
                     <>
                         <span className={styles.sectionTitle}>
-                            持倉 [{positions.length}]
+                            持倉 [{positionsQuery.updatedAt !== null && !positionsFailed ? positions.length : positions.length > 0 ? `${positions.length}+` : '…'}]
                         </span>
                         {topPositions.length === 0 && (
-                            <span className={styles.empty}>無持倉</span>
+                            <span className={styles.empty}>
+                                <AsyncStatus
+                                    phase={positionsPending ? 'loading' : positionsFailed ? 'error' : 'empty'}
+                                    text={positionsPending ? '載入持倉…' : positionsFailed ? '持倉尚未確認' : '無持倉'}
+                                />
+                            </span>
                         )}
                         {topPositions.map((p) => {
                             const dir =
@@ -279,9 +289,14 @@ export function TrayPanel() {
                         ))}
                         {items.length === 0 && (
                             <span className={styles.empty}>
-                                <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                                清單載入中…
+                                <AsyncStatus
+                                    phase={watchlistLoading ? 'loading' : watchlistError ? 'error' : 'empty'}
+                                    text={watchlistLoading ? '載入清單…' : watchlistError ? '自選清單尚未取得' : '自選清單是空的'}
+                                />
                             </span>
+                        )}
+                        {watchlistLoading && items.length > 0 && (
+                            <span className={styles.empty}><AsyncStatus phase='loading' text='載入其餘商品…' /></span>
                         )}
                     </>
                 )}
@@ -326,6 +341,14 @@ export function TrayPanel() {
                                 </button>
                             );
                         })}
+                        {(moversPoll.data?.length ?? 0) === 0 && (
+                            <span className={styles.empty}>
+                                <AsyncStatus
+                                    phase={moversPoll.error ? 'error' : moversPoll.updatedAt === null ? 'loading' : 'empty'}
+                                    text={moversPoll.error ? '排行尚未取得' : moversPoll.updatedAt === null ? '載入排行…' : '目前沒有排行資料'}
+                                />
+                            </span>
+                        )}
                     </>
                 )}
             </div>

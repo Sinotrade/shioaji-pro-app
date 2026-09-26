@@ -10,6 +10,8 @@ import {
     type OrderEventReport,
 } from './order-report';
 import { reportLedger } from './report-ledger';
+import { markStage } from './startup-timing';
+import { isChildWindow } from './window-role';
 import { knownServerInfo } from './server-info-store';
 
 /** `stale`: the EventSource still looks open but no heartbeat or event
@@ -444,14 +446,85 @@ const NORMAL_RETRY_MAX_MS = 15_000;
 /** `cap` bounds this and the following delay: connection errors use the
  *  normal backoff; only a connection that opened but never delivered a
  *  heartbeat may escalate beyond it. */
-function scheduleReconnect(cap = NORMAL_RETRY_MAX_MS) {
+function scheduleReconnect(cap = NORMAL_RETRY_MAX_MS, fixedDelayMs?: number) {
     everDown = true;
     es?.close();
     es = null;
     if (retryTimer) clearTimeout(retryTimer);
+    if (fixedDelayMs !== undefined) {
+        // one-off quick retry: leaves the backoff sequence untouched
+        retryTimer = setTimeout(connect, fixedDelayMs);
+        return;
+    }
     const delay = Math.min(retryDelay, cap);
     retryTimer = setTimeout(connect, delay);
     retryDelay = Math.min(delay * 2, cap);
+}
+
+// ---- first connection of this page (startup, issue #142) ----
+// Native timing showed LIVE landing a steady ~3.5 s after the SSE connect
+// although the sidecar answers the stream at once (its heartbeat interval's
+// first tick is immediate) — the shape of two failed attempts under the
+// 1 s → 2 s backoff. Until this page's stream has opened once, the first
+// few failures retry after 250 ms instead; after that (or once it opened)
+// the normal backoff applies unchanged. Marks record exactly what happened.
+export const STARTUP_FAST_RETRIES = 3;
+export const STARTUP_RETRY_MS = 250;
+// a drop in the first seconds of a page (the connection opened during page
+// load) is treated like a startup failure too
+export const STARTUP_WINDOW_MS = 15_000;
+let openedOnce = false;
+let openedAt: number | null = null;
+let startupFailures = 0;
+let heartbeatSeen = false;
+const pageAge = () =>
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Number.POSITIVE_INFINITY;
+/** When this page's stream first opened (epoch ms), or null. */
+export function streamOpenedAt(): number | null {
+    return openedAt;
+}
+// Every stream mark names its page: a cold start spans two pages (before
+// and after the post-start reload), each with its own connection, and one
+// timeline must not read as "the stream opened, then was replaced".
+const PAGE_TAG = typeof performance !== 'undefined' && performance.timeOrigin
+    ? `page=${Math.round(performance.timeOrigin) % 100_000}`
+    : 'page=?';
+let connectStartedAt = 0;
+function markStream(
+    stage: 'stream-connect' | 'stream-open' | 'stream-error' | 'stream-heartbeat' | 'stream-restart',
+    detail?: string,
+) {
+    if (!isChildWindow()) markStage(stage, detail ? `${PAGE_TAG} ${detail}` : PAGE_TAG);
+}
+
+// ---- cold-start hold ----
+// On a cold start the first page only exists until the server turns healthy
+// and boot reloads it: a stream opened there connects to a server that is
+// not up yet (the failures seen natively) and is torn down by the reload a
+// moment later. Boot holds the connection on that page and releases it on
+// every path that does NOT reload; the hold also expires on its own so a
+// missed release can never leave the App without a stream.
+export const STREAM_HOLD_MAX_MS = 30_000;
+let held = false;
+let holdTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingConnect = false;
+export function holdStream() {
+    if (held || started) return; // only before the first connection
+    held = true;
+    holdTimer = setTimeout(() => releaseStream('hold expired'), STREAM_HOLD_MAX_MS);
+}
+export function releaseStream(reason = 'released') {
+    if (!held) return;
+    held = false;
+    if (holdTimer) clearTimeout(holdTimer);
+    holdTimer = null;
+    if (pendingConnect) {
+        pendingConnect = false;
+        markStream('stream-connect', reason);
+        startConnection();
+    }
 }
 let lastCheckGap = 0;
 function checkWatchdog() {
@@ -472,6 +545,7 @@ function checkWatchdog() {
     const silent = !heartbeatSinceOpen;
     if (silent) silentConnections++;
     setStatus('stale');
+    markStream('stream-restart', `reason=${silent ? 'silent' : 'stale'}`);
     scheduleReconnect(silent ? SILENT_RETRY_MAX_MS : NORMAL_RETRY_MAX_MS);
 }
 /** Watchdog diagnostics for Debug: consecutive connections that opened but
@@ -488,13 +562,23 @@ function listen(source: EventSource, name: string, handler: (event: MessageEvent
 }
 
 function connect() {
-    if (es) es.close();
+    if (es) {
+        // never expected while a connection is live: record it if it happens
+        markStream('stream-restart', 'reason=connect-while-open');
+        es.close();
+    }
+    connectStartedAt = Date.now();
     // Keep STALE visible until the reconnect actually opens.
     setStatus(status === 'stale' ? 'stale' : 'connecting');
     // region filters contract_event only; other families are unfiltered
     es = new EventSource(`${getStreamBase()}/api/v1/stream/data?region=TW`);
 
     es.onopen = () => {
+        if (!openedOnce) {
+            openedOnce = true;
+            openedAt = Date.now();
+            markStream('stream-open', `failures=${startupFailures} after=${openedAt - connectStartedAt}ms`);
+        }
         // A connection only proves healthy once a heartbeat arrives; until
         // then keep the backoff so silent connections do not loop every ~80 s.
         if (silentConnections === 0) retryDelay = 1000;
@@ -546,6 +630,10 @@ function connect() {
         emitContractChange(change);
     });
     listen(es, 'heartbeat', () => {
+        if (!heartbeatSeen) {
+            heartbeatSeen = true;
+            markStream('stream-heartbeat');
+        }
         lastHeartbeat = Date.now();
         heartbeatSinceOpen = true;
         silentConnections = 0;
@@ -558,6 +646,18 @@ function connect() {
 
     es.onerror = () => {
         setStatus('down');
+        if (!openedOnce || pageAge() < STARTUP_WINDOW_MS) {
+            startupFailures++;
+            const fast = startupFailures <= STARTUP_FAST_RETRIES;
+            markStream(
+                'stream-error',
+                `failure=${startupFailures}${openedOnce ? ' after open' : ''} retry=${fast ? STARTUP_RETRY_MS : Math.min(retryDelay, NORMAL_RETRY_MAX_MS)}ms`,
+            );
+            if (fast) {
+                scheduleReconnect(NORMAL_RETRY_MAX_MS, STARTUP_RETRY_MS);
+                return;
+            }
+        }
         // A refused/failed connection is a normal outage (e.g. sidecar
         // restarting): normal backoff, even after silent connections.
         scheduleReconnect(NORMAL_RETRY_MAX_MS);
@@ -596,12 +696,22 @@ let started = false;
 export function ensureStream() {
     if (!started) {
         started = true;
-        connect();
-        lastCheckAt = Date.now();
-        watchdogTimer = setInterval(checkWatchdog, WATCHDOG_TICK_MS);
-        void watchMaintenance();
-        setInterval(watchMaintenance, 60000);
+        if (held) {
+            pendingConnect = true; // connects on release (or hold expiry)
+            return;
+        }
+        // startup timing (#142): main window only (no-op without a run)
+        markStream('stream-connect');
+        startConnection();
     }
+}
+
+function startConnection() {
+    connect();
+    lastCheckAt = Date.now();
+    watchdogTimer = setInterval(checkWatchdog, WATCHDOG_TICK_MS);
+    void watchMaintenance();
+    setInterval(watchMaintenance, 60000);
 }
 
 // ---- store API (for useSyncExternalStore) ----

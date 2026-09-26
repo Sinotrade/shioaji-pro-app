@@ -72,3 +72,45 @@ describe('settings.json access is main-window only', () => {
         expect(localStorage.getItem('sj-desktop-configured')).toBe('false');
     });
 });
+
+describe('shared settings read at page start (#142)', () => {
+    beforeEach(() => {
+        vi.stubGlobal('localStorage', new MemoryStorage());
+        vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout }));
+        mocks.child = false;
+        mocks.values = new Map<string, unknown>([['apiKey', 'A'], ['secretKey', 'S'], ['agentHarnessSafeDefaultV1', true]]);
+        mocks.lazyStore.mockClear();
+    });
+
+    it('concurrent callers (boot + main-window gate) join one in-flight read', async () => {
+        const [a, b] = await Promise.all([loadDesktopSettings(), loadDesktopSettings()]);
+        expect(a).toBe(b);
+        expect(mocks.lazyStore).toHaveBeenCalledTimes(1);
+    });
+
+    it('a later call reads fresh values', async () => {
+        await loadDesktopSettings();
+        mocks.values.set('apiKey', 'B');
+        expect((await loadDesktopSettings()).apiKey).toBe('B');
+        expect(mocks.lazyStore).toHaveBeenCalledTimes(2);
+    });
+
+    it('a save drops a read still in flight, so the next load sees the save', async () => {
+        const stale = loadDesktopSettings(); // in flight, would return 'A'
+        const current = await stale;
+        await saveDesktopSettings({ ...current, apiKey: 'SAVED' });
+        const pending = loadDesktopSettings();
+        expect(pending).not.toBe(stale);
+        expect((await pending).apiKey).toBe('SAVED');
+    });
+
+    it('a save during an in-flight read: loads after it do not reuse that read', async () => {
+        const inFlight = loadDesktopSettings();
+        const save = saveDesktopSettings({ apiKey: 'X', secretKey: 'S', production: false, autoStart: true, caPath: '', caPasswd: '', httpsEnabled: false, agentHarnessEnabled: true });
+        const after = loadDesktopSettings();
+        expect(after).not.toBe(inFlight);
+        await save;
+        await inFlight;
+        expect((await loadDesktopSettings()).apiKey).toBe('X');
+    });
+});

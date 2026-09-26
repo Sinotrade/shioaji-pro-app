@@ -11,6 +11,7 @@ import { dateStrOffset } from '../lib/utils/kbars';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
 import * as styles from './vol-profile.css';
+import { AsyncStatus } from './async-status';
 
 interface Level {
     buy: number; // 外盤 (成交在賣方掛單價, tick_type 1)
@@ -34,24 +35,31 @@ export function VolProfile({ contract }: { contract: ContractBase }) {
     const [version, setVersion] = useState(0);
     const [profile, setProfile] = useState<Profile>(new Map());
     const [loading, setLoading] = useState(true);
+    const [historyError, setHistoryError] = useState(false);
+    const [retrySeq, setRetrySeq] = useState(0);
 
     useEffect(() => {
         let cancelled = false;
         const prof: Profile = new Map();
         setProfile(prof);
         setLoading(true);
+        setHistoryError(false);
 
         const isFop =
             contract.security_type === 'FUT' ||
             contract.security_type === 'OPT';
         const load = async () => {
+            let successfulDates = 0;
+            let foundTicks = false;
             const dates = isFop
                 ? [dateStrOffset(-1), dateStrOffset(0)]
                 : [dateStrOffset(0)];
             for (const d of dates) {
                 try {
                     const h = await fetchHistoryTicks(contract, d);
+                    successfulDates += 1;
                     if (h.datetime.length > 0) {
+                        foundTicks = true;
                         for (let i = 0; i < h.close.length; i++) {
                             addTo(
                                 prof,
@@ -67,6 +75,7 @@ export function VolProfile({ contract }: { contract: ContractBase }) {
                 }
             }
             if (!cancelled) {
+                setHistoryError(!foundTicks && successfulDates !== dates.length);
                 setVersion((v) => v + 1);
                 setLoading(false);
             }
@@ -84,7 +93,7 @@ export function VolProfile({ contract }: { contract: ContractBase }) {
             off();
             releaseQuote();
         };
-    }, [contract]);
+    }, [contract, retrySeq]);
 
     const { rows, maxTotal, buySum, sellSum } = useMemo(() => {
         const entries = [...profile.entries()]
@@ -120,10 +129,14 @@ export function VolProfile({ contract }: { contract: ContractBase }) {
     const buyPct = total > 0 ? (buySum / total) * 100 : 50;
 
     if (loading && rows.length === 0) {
-        return <div className={dock.emptyState}>統計分價量中…</div>;
+        return <div className={dock.emptyState}><AsyncStatus phase='loading' text='統計分價量中…' /></div>;
     }
     if (rows.length === 0) {
-        return <div className={dock.emptyState}>今日尚無成交資料</div>;
+        if (historyError) return <div className={dock.emptyState}>
+            <AsyncStatus phase='error' text='分價量歷史無法取得'
+                action={<button type='button' onClick={() => setRetrySeq(n => n + 1)}>重試</button>} />
+        </div>;
+        return <div className={dock.emptyState}><AsyncStatus phase='empty' text='今日尚無成交資料' /></div>;
     }
 
     return (

@@ -21,6 +21,7 @@ import {
 } from '../lib/utils/format';
 import { vars } from '../theme.css';
 import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import * as styles from './bottom-dock.css';
 import {
@@ -66,6 +67,7 @@ interface PosGroup {
 
 export function PositionsPane({
     positions,
+    initialStatus,
     mode,
     market,
     scopeKey,
@@ -74,6 +76,7 @@ export function PositionsPane({
     onSelectCode,
 }: {
     positions: AccountedPosition[];
+    initialStatus: 'loading' | 'failed' | 'ready';
     mode: ViewMode;
     market: MarketFilter;
     scopeKey: string; // '' = 全部帳戶
@@ -552,9 +555,17 @@ export function PositionsPane({
     return (
         <div className={styles.dockBody} ref={measureRef}>
             <div className={styles.paneScroll}>
-                {rows.length === 0 ? (
+                {rows.length === 0 && initialStatus === 'loading' ? (
                     <div className={styles.emptyState}>
-                        NO OPEN POSITIONS · 無持倉
+                        <AsyncStatus phase='loading' text='載入持倉…' />
+                    </div>
+                ) : rows.length === 0 && initialStatus === 'failed' ? (
+                    <div className={styles.emptyState}>
+                        <AsyncStatus phase='error' text='持倉尚未確認，請更新' />
+                    </div>
+                ) : rows.length === 0 ? (
+                    <div className={styles.emptyState}>
+                        <AsyncStatus phase='empty' text='NO OPEN POSITIONS · 無持倉' />
                     </div>
                 ) : mode === 'grouped' ? (
                     groups.map((g) => {

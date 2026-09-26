@@ -17,6 +17,27 @@ import { cancelledByQuantity, readMark } from './cancel-verification';
 import type { OrderEventReport } from './order-report';
 import type { Account, AccountBalance, AccountedPosition, AccountFunds, Margin } from './types/portfolio';
 import type { AccountedTrade, Trade, TradeCacheHealth } from './types/order';
+import { markStage } from './startup-timing';
+
+// Startup timing (#142): each accounting read of the initial refresh is
+// marked with its own duration, so a slow `positions-loaded` shows whether
+// the broker/sidecar was slow or the page was. No-op without an active run;
+// accounts are named by type and order only (S1, F1), never by id.
+async function timedRead<T>(label: string, read: () => Promise<T>): Promise<T> {
+    const start = Date.now();
+    let ok = false;
+    try {
+        const value = await read();
+        ok = true;
+        return value;
+    } finally {
+        markStage('account-read', `${label} ${Date.now() - start}ms${ok ? '' : ' failed'}`);
+    }
+}
+function accountLabel(account: Account, accounts: Account[]): string {
+    const sameType = accounts.filter(a => a.account_type === account.account_type);
+    return `${account.account_type}${sameType.indexOf(account) + 1}`;
+}
 
 export type TradingQueryScope = 'positions' | 'orders' | 'account';
 
@@ -243,6 +264,26 @@ function mergeOrders(account: Account, trades: Trade[], accounts: Account[], pro
     return applied;
 }
 
+// Accounting reads (positions, orders, balance/margin) share a broker rate
+// limit (25 per 5 s); two accounts in flight roughly halves a two-account
+// refresh without letting many accounts burst past it.
+export const ACCOUNT_READ_CONCURRENCY = 2;
+
+/** Run `fn` over `items` with at most `limit` in flight; results keep the
+ *  input order. */
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < items.length) {
+            const i = next++;
+            results[i] = await fn(items[i]!);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+}
+
 /** Initial connection reads all groups; manual actions reconcile only their tab. */
 export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): Promise<void> {
     if (isMirror) {
@@ -271,7 +312,7 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
         try {
             let subscribed = true;
             if (readPositions || readOrders) {
-                try { await subscribeTradeReports(); }
+                try { await timedRead('subscribe', () => subscribeTradeReports()); }
                 catch (e) {
                     subscribed = false;
                     const message = e instanceof Error ? e.message : String(e);
@@ -283,12 +324,18 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                 const accounts = tradableAccounts();
                 if (!accounts.length) throw new Error('尚未取得可查詢帳戶；請連線後按更新');
                 let ordersOk = true;
-                for (const account of accounts) {
+                // accounts are read up to ACCOUNT_READ_CONCURRENCY at a time
+                // (was one after another): each account's own positions →
+                // orders order is kept, and every state write below is a
+                // synchronous merge scoped to that account, so interleaving
+                // across accounts is safe. The cap keeps a many-account user
+                // under the broker's accounting-query rate limit.
+                await mapLimit(accounts, ACCOUNT_READ_CONCURRENCY, async (account) => {
                     const matches = (a: typeof account | undefined) => a && accountKey(a) === accountKey(account);
                     if (readPositions) try {
                         const positionStart = eventSequence;
                         const hadSnapshot = snapshotEnds.has(accountKey(account));
-                        const positions = await fetchPositions(account.account_type as 'S' | 'F', account);
+                        const positions = await timedRead(`${accountLabel(account, accounts)} positions`, () => fetchPositions(account.account_type as 'S' | 'F', account));
                         if (positionStart === eventSequence || !hadSnapshot) {
                             snapshotEnds.set(accountKey(account), Date.now() / 1000);
                             state = { ...state, positions: [...state.positions.filter(p => !matches(p.account)), ...positions.map(p => ({ ...p, account }))] };
@@ -303,7 +350,7 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                     if (readOrders) try {
                         // Initial/manual reconciliation stays authoritative:
                         // refresh:true runs update_status(account) (accounting quota).
-                        const trades = await fetchTrades(account.account_type as 'S' | 'F', account, { refresh: true });
+                        const trades = await timedRead(`${accountLabel(account, accounts)} orders`, () => fetchTrades(account.account_type as 'S' | 'F', account, { refresh: true }));
                         // A kept (not rebuilt) view resolves nothing.
                         if (!mergeOrders(account, trades, accounts, problems.orders)) { ordersOk = false; failed.add('orders'); }
                     } catch {
@@ -311,25 +358,25 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                         failed.add('orders');
                         problems.orders.push(['query-failed', `${account.account_type} 委託查詢失敗，保留上次資料`]);
                     }
-                }
+                });
                 if (readOrders && ordersOk) ordersRead = true;
                 if (readAccount) {
-                    const funds: AccountFunds[] = [];
-                    for (const account of accounts) {
+                    // concurrently too; results keep the account order
+                    const funds: AccountFunds[] = await mapLimit(accounts, ACCOUNT_READ_CONCURRENCY, async (account): Promise<AccountFunds> => {
                         const previous = state.funds?.find(f => accountKey(f.account) === accountKey(account));
                         try {
                             const value = account.account_type === 'S'
-                                ? { balance: await fetchAccountBalance(account) }
-                                : { margin: await fetchMargin(account) };
+                                ? { balance: await timedRead(`${accountLabel(account, accounts)} balance`, () => fetchAccountBalance(account)) }
+                                : { margin: await timedRead(`${accountLabel(account, accounts)} margin`, () => fetchMargin(account)) };
                             if (value.balance?.errmsg?.trim()) throw new Error('券商餘額查詢回報錯誤');
-                            funds.push({ account, ...value, updatedAt: Date.now() });
+                            return { account, ...value, updatedAt: Date.now() };
                         } catch {
                             const error = `${account.account_type === 'S' ? '餘額' : '保證金'}查詢失敗，保留此帳戶上次資料`;
-                            funds.push({ ...previous, account, error });
                             failed.add('account');
                             problems.account.push(['query-failed', error]);
+                            return { ...previous, account, error };
                         }
-                    }
+                    });
                     const stock = getAccountState().selectedStock ?? accounts.find(a => a.account_type === 'S');
                     const future = getAccountState().selectedFutures ?? accounts.find(a => a.account_type === 'F');
                     state = { ...state, funds,
@@ -641,6 +688,13 @@ function applyConfirmedCancellation(trade: AccountedTrade): boolean {
     resolve('orders', ['mutation-outcome'], undefined, `mutation:${trade.order.id}`);
     return true;
 }
+/** Start the shared trading store outside React (idempotent; the hook's
+ *  mount effect then finds it running). Boot calls this at page load on
+ *  the reload into a server already known healthy, so the first accounts
+ *  + positions/orders read overlaps the dashboard's first render instead of
+ *  waiting for it (#142: ~1.5 s of render, then ~2.4 s to positions). */
+export function startTradingState() { start(); }
+
 function start() {
     if (started) return;
     started = true;

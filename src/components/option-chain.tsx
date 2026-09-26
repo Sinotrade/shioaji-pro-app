@@ -12,7 +12,7 @@ import type { ContractInfo } from '../lib/types/contract';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as styles from './option-chain.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 
 interface OptContract extends ContractInfo {
@@ -39,7 +39,7 @@ async function loadTxo(): Promise<OptContract[]> {
                 typeof c.option_right === 'string',
         );
         return optCache;
-    })();
+    })().finally(() => { optLoading = null; });
     return optLoading;
 }
 
@@ -61,11 +61,17 @@ export function OptionChain({
         () => localStorage.getItem(MONTH_KEY) ?? '',
     );
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
+    const [retrySeq, setRetrySeq] = useState(0);
     const txf = useQuote('TXFR1');
 
     useEffect(() => {
-        loadTxo()
+        let active = true;
+        setLoading(true);
+        setLoadError(false);
+        void loadTxo()
             .then((cs) => {
+                if (!active) return;
                 setContracts(cs);
                 const months = [...new Set(cs.map((c) => c.delivery_month))]
                     .filter(Boolean)
@@ -75,8 +81,10 @@ export function OptionChain({
                     m && months.includes(m) ? m : (months[0] ?? ''),
                 );
             })
-            .finally(() => setLoading(false));
-    }, []);
+            .catch(() => { if (active) setLoadError(true); })
+            .finally(() => { if (active) setLoading(false); });
+        return () => { active = false; };
+    }, [retrySeq]);
 
     const months = useMemo(
         () =>
@@ -140,12 +148,17 @@ export function OptionChain({
 
     if (loading) {
         return <div className={dock.emptyState}>
-                <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                載入 TXO 合約…
+                <AsyncStatus phase='loading' text='載入 TXO 合約…' />
             </div>;
     }
+    if (loadError) {
+        return <div className={dock.emptyState}>
+            <AsyncStatus phase='error' text='TXO 合約無法取得'
+                action={<button type='button' onClick={() => setRetrySeq(n => n + 1)}>重試</button>} />
+        </div>;
+    }
     if (rows.length === 0) {
-        return <div className={dock.emptyState}>無可用合約</div>;
+        return <div className={dock.emptyState}><AsyncStatus phase='empty' text='無可用合約' /></div>;
     }
 
     const Cell = ({ code }: { code?: string }) => {

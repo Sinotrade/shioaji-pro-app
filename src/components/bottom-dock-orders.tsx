@@ -18,6 +18,7 @@ import type { Trade } from '../lib/types/order';
 import { fmtInt, fmtPrice } from '../lib/utils/format';
 import { vars } from '../theme.css';
 import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import * as styles from './bottom-dock.css';
 import {
@@ -229,6 +230,7 @@ interface OrderGroup {
 
 export function OrdersPane({
     trades,
+    initialStatus,
     mode,
     market,
     scopeKey,
@@ -238,6 +240,7 @@ export function OrdersPane({
     onShowAll,
 }: {
     trades: Trade[];
+    initialStatus: 'loading' | 'failed' | 'ready';
     mode: ViewMode;
     market: MarketFilter;
     scopeKey: string; // '' = 全部帳戶
@@ -629,8 +632,13 @@ export function OrdersPane({
             <div className={styles.paneScroll}>
                 {rows.length === 0 ? (
                     <div className={styles.emptyState}>
-                        {trades.length === 0 ? (
-                            'NO ORDERS · 無委託'
+                        {initialStatus !== 'ready' ? (
+                            <AsyncStatus
+                                phase={initialStatus === 'loading' ? 'loading' : 'error'}
+                                text={initialStatus === 'loading' ? '載入委託…' : '委託尚未確認，請更新'}
+                            />
+                        ) : trades.length === 0 ? (
+                            <AsyncStatus phase='empty' text='NO ORDERS · 無委託' />
                         ) : (
                             // 有抓到委託但被篩選隱藏 — 不講清楚會被當成
                             // 「委託消失」回報（issue #19：持久化的狀態/
