@@ -12,6 +12,7 @@ import {
     addWatchlistContracts,
     createWatchlist,
     deleteWatchlist,
+    fetchContractInfo,
     fetchSnapshots,
     fetchWatchlists,
     removeWatchlistContracts,
@@ -49,6 +50,18 @@ async function resolveContract(
 ): Promise<ContractInfo> {
     if (type) return resolveContractV2(code, type);
     return ensureContract(code);
+}
+
+function resolveWatchlistContract(
+    base: ServerWatchlist['contracts'][number],
+): Promise<ContractInfo> {
+    // The watchlist already contains a Base contract. Fetch only the typed
+    // details; preserve the generic lookup for legacy/missing types and WRT,
+    // whose Info endpoint requires an underlying shard.
+    if (base.security_type && base.security_type !== 'WRT') {
+        return fetchContractInfo(base.code, base.security_type);
+    }
+    return resolveContract(base.code, base.security_type);
 }
 
 export function useWatchlist() {
@@ -137,9 +150,7 @@ export function useWatchlist() {
             setLoadError(false);
             setItems([]);
             try {
-                const resolutions = list.contracts.map((c) =>
-                    resolveContract(c.code, c.security_type),
-                );
+                const resolutions = list.contracts.map(resolveWatchlistContract);
                 // The linked panels only need one symbol to stop showing
                 // "等待商品…". Let the first available one render immediately;
                 // the full list can keep loading without holding the workspace.

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     resolve: vi.fn(),
+    info: vi.fn(),
     sync: vi.fn(),
     fetchLists: vi.fn(),
     create: vi.fn(),
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../lib/shioaji', () => ({
     fetchWatchlists: mocks.fetchLists,
     resolveContract: mocks.resolve,
+    fetchContractInfo: mocks.info,
     syncWatchlist: mocks.sync,
     createWatchlist: mocks.create,
     addWatchlistContracts: mocks.add,
@@ -51,6 +53,9 @@ beforeEach(() => {
     mocks.resolve.mockReset().mockImplementation(async (code: string) => ({
         code, security_type: 'STK', exchange: 'TSE', target_code: null,
     }));
+    mocks.info.mockReset().mockImplementation(async (code: string) => ({
+        code, security_type: 'STK', exchange: 'TSE', target_code: null,
+    }));
     mocks.sync.mockReset().mockResolvedValue(undefined);
     mocks.create.mockReset().mockResolvedValue(undefined);
     mocks.add.mockReset().mockResolvedValue(undefined);
@@ -59,6 +64,37 @@ beforeEach(() => {
         { id: 'first', name: '我的自選', contracts: [{ code: '2330', security_type: 'STK' }] },
         { id: 'second', name: '第二組', contracts: [{ code: '2317', security_type: 'STK' }] },
     ]);
+});
+
+it('uses watchlist Base identity to request only Info for typed contracts', async () => {
+    mocks.fetchLists.mockResolvedValue([
+        { id: 'first', name: '我的自選', contracts: [
+            { code: '2330', security_type: 'STK', exchange: 'TSE' },
+            { code: 'TXFR1', security_type: 'FUT', exchange: 'TAIFEX' },
+        ] },
+    ]);
+    mocks.info.mockImplementation(async (code: string, securityType: string) => ({
+        code, security_type: securityType,
+        exchange: securityType === 'FUT' ? 'TAIFEX' : 'TSE',
+        target_code: securityType === 'FUT' ? 'TXFI6' : null,
+    }));
+    await act(async () => { root = create(createElement(Probe)); });
+    expect(mocks.info.mock.calls.map(([code, type]) => [code, type])).toEqual([
+        ['2330', 'STK'], ['TXFR1', 'FUT'],
+    ]);
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(state.items[1]?.contract.target_code).toBe('TXFI6');
+});
+
+it('keeps generic lookup for warrants whose Info requires an underlying shard', async () => {
+    mocks.fetchLists.mockResolvedValue([
+        { id: 'first', name: '我的自選', contracts: [
+            { code: 'W123', security_type: 'WRT', exchange: 'TSE' },
+        ] },
+    ]);
+    await act(async () => { root = create(createElement(Probe)); });
+    expect(mocks.resolve).toHaveBeenCalledWith('W123', 'WRT');
+    expect(mocks.info).not.toHaveBeenCalled();
 });
 afterEach(async () => {
     await act(async () => { root?.unmount(); });
@@ -70,7 +106,7 @@ it('shows a retryable partial list without replacing unresolved server contracts
     mocks.fetchLists.mockResolvedValue([
         { id: 'first', name: '我的自選', contracts: ['A', 'B', 'C'].map((code) => ({ code, security_type: 'STK' })) },
     ]);
-    mocks.resolve.mockImplementation(async (code: string) => {
+    mocks.info.mockImplementation(async (code: string) => {
         if (code === 'C') throw new Error('broker unavailable');
         return { code, security_type: 'STK', exchange: 'TSE', target_code: null };
     });
@@ -80,7 +116,7 @@ it('shows a retryable partial list without replacing unresolved server contracts
     await act(async () => { state.reorderSymbol('A', 'B'); });
     expect(mocks.sync).not.toHaveBeenCalled();
 
-    mocks.resolve.mockImplementation(async (code: string) => ({
+    mocks.info.mockImplementation(async (code: string) => ({
         code, security_type: 'STK', exchange: 'TSE', target_code: null,
     }));
     await act(async () => { state.retryLoad(); });
@@ -93,7 +129,7 @@ it('shows the first resolved product while another watchlist contract is still p
     mocks.fetchLists.mockResolvedValue([
         { id: 'first', name: '我的自選', contracts: ['A', 'B'].map((code) => ({ code, security_type: 'STK' })) },
     ]);
-    mocks.resolve.mockImplementation((code: string) => {
+    mocks.info.mockImplementation((code: string) => {
         if (code === 'A') return Promise.resolve({ code, security_type: 'STK', exchange: 'TSE', target_code: null });
         return new Promise((resolve) => { finishSlow = resolve; });
     });
@@ -120,7 +156,7 @@ it('shows an available product when the first watchlist contract is slow', async
     mocks.fetchLists.mockResolvedValue([
         { id: 'first', name: '我的自選', contracts: ['A', 'B'].map((code) => ({ code, security_type: 'STK' })) },
     ]);
-    mocks.resolve.mockImplementation((code: string) => {
+    mocks.info.mockImplementation((code: string) => {
         if (code === 'A') return new Promise((resolve) => { finishFirst = resolve; });
         return Promise.resolve({ code, security_type: 'STK', exchange: 'TSE', target_code: null });
     });
@@ -138,7 +174,7 @@ it('shows an available product when the first watchlist contract fails', async (
     mocks.fetchLists.mockResolvedValue([
         { id: 'first', name: '我的自選', contracts: ['A', 'B'].map((code) => ({ code, security_type: 'STK' })) },
     ]);
-    mocks.resolve.mockImplementation(async (code: string) => {
+    mocks.info.mockImplementation(async (code: string) => {
         if (code === 'A') throw new Error('broker unavailable');
         return { code, security_type: 'STK', exchange: 'TSE', target_code: null };
     });
@@ -151,7 +187,7 @@ it('shows an available product when the first watchlist contract fails', async (
 
 it('ends loading and exposes retry after migration sync fails during list switch', async () => {
     await act(async () => { root = create(createElement(Probe)); });
-    mocks.resolve.mockImplementation(async (code: string) => ({
+    mocks.info.mockImplementation(async (code: string) => ({
         code: code === '2317' ? '2317.TW' : code,
         security_type: 'STK', exchange: 'TSE', target_code: null,
     }));
