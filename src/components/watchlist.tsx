@@ -488,10 +488,12 @@ export function Watchlist({
                             className={`${styles.listBtn} ${
                                 arrange ? styles.listBtnOn : ''
                             }`}
-                            disabled={!arrange && sortMode !== 'custom'}
+                            disabled={!arrange && (sortMode !== 'custom' || loading || loadError)}
                             title={
                                 arrange
                                     ? '完成調整'
+                                    : loading || loadError
+                                      ? '清單尚未完整載入，請先重試'
                                     : sortMode !== 'custom'
                                       ? '依漲跌幅排序中無法調整順序 — 先切回自訂順序'
                                       : '調整順序（拖曳或上下移，存回伺服器）'
@@ -614,9 +616,9 @@ export function Watchlist({
                             item={item}
                             selected={item.contract.code === selectedCode}
                             spark={spark}
-                            arrange={arrange}
-                            canUp={idx > 0}
-                            canDown={idx < viewItems.length - 1}
+                            arrange={arrange && !loading && !loadError}
+                            canUp={idx > 0 && !loading && !loadError}
+                            canDown={idx < viewItems.length - 1 && !loading && !loadError}
                             onMove={moveRow}
                             dropTarget={
                                 arrange && item.contract.code === dropCode

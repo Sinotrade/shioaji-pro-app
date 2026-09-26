@@ -1,0 +1,106 @@
+import { createElement } from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+    resolve: vi.fn(),
+    sync: vi.fn(),
+    fetchLists: vi.fn(),
+    create: vi.fn(),
+}));
+vi.mock('../lib/shioaji', () => ({
+    fetchWatchlists: mocks.fetchLists,
+    resolveContract: mocks.resolve,
+    syncWatchlist: mocks.sync,
+    createWatchlist: mocks.create,
+    fetchSnapshots: async () => [],
+}));
+vi.mock('../lib/contracts-cache', () => ({
+    ensureContract: mocks.resolve,
+    primeContract: vi.fn(),
+    refreshCachedContracts: vi.fn(),
+}));
+vi.mock('../lib/stream', () => ({
+    onContractEvent: () => () => undefined,
+    registerCodeAlias: vi.fn(),
+}));
+vi.mock('../lib/trade', () => ({ notify: vi.fn() }));
+
+const { useWatchlist } = await import('./use-watchlist');
+type State = ReturnType<typeof useWatchlist>;
+let state!: State;
+let root: ReactTestRenderer | undefined;
+const data = new Map<string, string>();
+
+function Probe() {
+    state = useWatchlist();
+    return null;
+}
+
+beforeEach(() => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('localStorage', {
+        getItem: (key: string) => data.get(key) ?? null,
+        setItem: (key: string, value: string) => void data.set(key, value),
+    });
+    data.clear();
+    mocks.resolve.mockReset().mockImplementation(async (code: string) => ({
+        code, security_type: 'STK', exchange: 'TSE', target_code: null,
+    }));
+    mocks.sync.mockReset().mockResolvedValue(undefined);
+    mocks.create.mockReset().mockResolvedValue(undefined);
+    mocks.fetchLists.mockReset().mockResolvedValue([
+        { id: 'first', name: '我的自選', contracts: [{ code: '2330', security_type: 'STK' }] },
+        { id: 'second', name: '第二組', contracts: [{ code: '2317', security_type: 'STK' }] },
+    ]);
+});
+afterEach(async () => {
+    await act(async () => { root?.unmount(); });
+    root = undefined;
+    vi.unstubAllGlobals();
+});
+
+it('shows a retryable partial list without replacing unresolved server contracts', async () => {
+    mocks.fetchLists.mockResolvedValue([
+        { id: 'first', name: '我的自選', contracts: ['A', 'B', 'C'].map((code) => ({ code, security_type: 'STK' })) },
+    ]);
+    mocks.resolve.mockImplementation(async (code: string) => {
+        if (code === 'C') throw new Error('broker unavailable');
+        return { code, security_type: 'STK', exchange: 'TSE', target_code: null };
+    });
+    await act(async () => { root = create(createElement(Probe)); });
+    expect(state).toMatchObject({ loading: false, loadError: true });
+    expect(state.items.map((item) => item.contract.code)).toEqual(['A', 'B']);
+    await act(async () => { state.reorderSymbol('A', 'B'); });
+    expect(mocks.sync).not.toHaveBeenCalled();
+
+    mocks.resolve.mockImplementation(async (code: string) => ({
+        code, security_type: 'STK', exchange: 'TSE', target_code: null,
+    }));
+    await act(async () => { state.retryLoad(); });
+    expect(state).toMatchObject({ loading: false, loadError: false });
+    expect(state.items.map((item) => item.contract.code)).toEqual(['A', 'B', 'C']);
+});
+
+it('ends loading and exposes retry after migration sync fails during list switch', async () => {
+    await act(async () => { root = create(createElement(Probe)); });
+    mocks.resolve.mockImplementation(async (code: string) => ({
+        code: code === '2317' ? '2317.TW' : code,
+        security_type: 'STK', exchange: 'TSE', target_code: null,
+    }));
+    mocks.sync.mockRejectedValueOnce(new Error('server unavailable'));
+
+    await act(async () => { state.setActiveList('second'); });
+    expect(state).toMatchObject({ loading: false, loadError: true, activeListId: 'second' });
+    expect(state.items.map((item) => item.contract.code)).toEqual(['2317.TW']);
+});
+
+it('does not create a truncated server list when legacy migration cannot resolve every contract', async () => {
+    data.set('sj-pro-watchlist', JSON.stringify([{ code: 'C', type: 'STK' }]));
+    mocks.fetchLists.mockResolvedValue([]);
+    mocks.resolve.mockRejectedValueOnce(new Error('broker unavailable'));
+    await act(async () => { root = create(createElement(Probe)); });
+    expect(state).toMatchObject({ loading: false, loadError: true });
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(data.get('sj-pro-watchlist')).toContain('C');
+});

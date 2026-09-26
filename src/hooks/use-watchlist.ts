@@ -60,10 +60,12 @@ export function useWatchlist() {
     const [activeListId, setActiveListId] = useState<string>('');
     const initStarted = useRef(false);
     const loadSeq = useRef(0);
+    const canReplaceList = useRef(false);
     const activeIdRef = useRef('');
     activeIdRef.current = activeListId;
     const retryLoad = useCallback(() => {
         initStarted.current = false;
+        canReplaceList.current = false;
         setLoadError(false);
         setLoading(true);
         setRetryKey((key) => key + 1);
@@ -105,19 +107,24 @@ export function useWatchlist() {
     const persistItems = useCallback(
         (next: WatchItem[]) => {
             const id = activeIdRef.current;
-            if (!id) return;
+            if (!id || !canReplaceList.current) return;
+            const seq = loadSeq.current;
             syncWatchlist(
                 id,
                 next.map((i) => i.contract),
             )
                 .then(() => refreshLists())
-                .catch(() =>
+                .catch(() => {
+                    if (activeIdRef.current === id && loadSeq.current === seq) {
+                        canReplaceList.current = false;
+                        setLoadError(true);
+                    }
                     notify({
                         kind: 'err',
                         title: '自選清單同步失敗',
                         body: '與伺服器同步時發生錯誤',
-                    }),
-                );
+                    });
+                });
         },
         [refreshLists],
     );
@@ -125,35 +132,47 @@ export function useWatchlist() {
     const loadList = useCallback(
         async (list: ServerWatchlist) => {
             const seq = ++loadSeq.current;
+            canReplaceList.current = false;
             setLoading(true);
+            setLoadError(false);
             setItems([]);
-            const results = await Promise.allSettled(
-                list.contracts.map((c) =>
-                    resolveContract(c.code, c.security_type),
-                ),
-            );
-            if (loadSeq.current !== seq) return;
-            const contracts = results
-                .filter(
-                    (r): r is PromiseFulfilledResult<ContractInfo> =>
-                        r.status === 'fulfilled',
-                )
-                .map((r) => r.value);
-            const migrated =
-                results.every((result) => result.status === 'fulfilled') &&
-                contracts.some(
+            try {
+                const results = await Promise.allSettled(
+                    list.contracts.map((c) =>
+                        resolveContract(c.code, c.security_type),
+                    ),
+                );
+                if (loadSeq.current !== seq) return;
+                const contracts = results
+                    .filter(
+                        (r): r is PromiseFulfilledResult<ContractInfo> =>
+                            r.status === 'fulfilled',
+                    )
+                    .map((r) => r.value);
+                const resolveFailed = results.some((r) => r.status === 'rejected');
+                const migrated = !resolveFailed && contracts.some(
                     (contract, index) =>
                         contract.code !== list.contracts[index]?.code,
                 );
-            await Promise.allSettled(contracts.map(subscribeContract));
-            if (loadSeq.current !== seq) return;
-            setItems(contracts.map((c) => ({ contract: c })));
-            attachSnapshots(contracts);
-            if (migrated) {
-                await syncWatchlist(list.id, contracts);
-                await refreshLists();
+                const subscriptions = await Promise.allSettled(contracts.map(subscribeContract));
+                if (loadSeq.current !== seq) return;
+                setItems(contracts.map((c) => ({ contract: c })));
+                attachSnapshots(contracts);
+                if (migrated) {
+                    await syncWatchlist(list.id, contracts);
+                    await refreshLists();
+                }
+                if (loadSeq.current === seq) {
+                    const complete = !resolveFailed &&
+                        subscriptions.every((r) => r.status === 'fulfilled');
+                    canReplaceList.current = complete;
+                    setLoadError(!complete);
+                }
+            } catch {
+                if (loadSeq.current === seq) setLoadError(true);
+            } finally {
+                if (loadSeq.current === seq) setLoading(false);
             }
-            setLoading(false);
         },
         [subscribeContract, attachSnapshots, refreshLists],
     );
@@ -227,6 +246,7 @@ export function useWatchlist() {
     // drag-to-reorder: move `fromCode` to the position of `toCode`
     const reorderSymbol = useCallback(
         (fromCode: string, toCode: string) => {
+            if (!canReplaceList.current) return;
             setItems((prev) => {
                 const fromIdx = prev.findIndex(
                     (i) => i.contract.code === fromCode,
@@ -376,6 +396,9 @@ export function useWatchlist() {
                             resolveContract(s.code, s.type ?? undefined),
                         ),
                     );
+                    if (resolved.some((r) => r.status === 'rejected')) {
+                        throw new Error('自選清單合約尚未全數解析，稍後重試');
+                    }
                     const contracts = resolved
                         .filter(
                             (
