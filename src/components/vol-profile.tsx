@@ -11,6 +11,7 @@ import { dateStrOffset } from '../lib/utils/kbars';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
 import * as styles from './vol-profile.css';
+import { AsyncStatus } from './async-status';
 
 interface Level {
     buy: number; // 外盤 (成交在賣方掛單價, tick_type 1)
@@ -120,10 +121,10 @@ export function VolProfile({ contract }: { contract: ContractBase }) {
     const buyPct = total > 0 ? (buySum / total) * 100 : 50;
 
     if (loading && rows.length === 0) {
-        return <div className={dock.emptyState}>統計分價量中…</div>;
+        return <div className={dock.emptyState}><AsyncStatus phase='loading' text='統計分價量中…' /></div>;
     }
     if (rows.length === 0) {
-        return <div className={dock.emptyState}>今日尚無成交資料</div>;
+        return <div className={dock.emptyState}><AsyncStatus phase='empty' text='今日尚無成交資料' /></div>;
     }
 
     return (

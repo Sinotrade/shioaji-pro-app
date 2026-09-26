@@ -15,6 +15,7 @@ export const blockPlaceholder = style({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: vars.space.xs,
     color: vars.color.mutedForeground,
     fontSize: '0.72rem',
 });

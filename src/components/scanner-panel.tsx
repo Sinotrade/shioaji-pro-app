@@ -15,6 +15,7 @@ import type { ScannerItem, ScannerType } from '../lib/types/market';
 import { fmtInt, fmtPct, fmtPrice } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './scanner-panel.css';
+import { AsyncStatus } from './async-status';
 
 // NOTE: the server's `ascending` flag is inverted (sinotrade/shioaji#207):
 // true → largest first. Encode the working values per mode here.
@@ -205,6 +206,14 @@ export function ScannerPanel({
                 </div>
             )}
             <div className={panel.panelBody}>
+                {items.length === 0 && !error && (
+                    <div className={styles.errorBox}>
+                        <AsyncStatus
+                            phase={query.updatedAt === null ? 'loading' : 'empty'}
+                            text={query.updatedAt === null ? '載入排行資料…' : '目前沒有符合條件的排行資料'}
+                        />
+                    </div>
+                )}
                 {error && (
                     <div className={styles.errorBox}>
                         <span className={styles.scName}>排行資料無法取得</span>

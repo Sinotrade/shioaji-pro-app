@@ -42,7 +42,7 @@ import {
     wallClockToUtc,
 } from '../lib/utils/kbars';
 import * as styles from './intraday-chart.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 
 interface MinBar {
@@ -1550,14 +1550,7 @@ export function IntradayChart({ contract }: { contract: ContractInfo }) {
                 )}
                 {loading && (
                     <div className={styles.emptyMsg}>
-                        <Orb
-                            size={12}
-                            style={{
-                                marginRight: 6,
-                                verticalAlign: '-2px',
-                            }}
-                        />
-                        <span className={panel.mono}>載入走勢中…</span>
+                        <AsyncStatus phase='loading' text='載入走勢中…' className={panel.mono} />
                     </div>
                 )}
                 {empty && !loading && (

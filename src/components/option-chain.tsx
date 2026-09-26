@@ -12,7 +12,7 @@ import type { ContractInfo } from '../lib/types/contract';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as styles from './option-chain.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 
 interface OptContract extends ContractInfo {
@@ -140,12 +140,11 @@ export function OptionChain({
 
     if (loading) {
         return <div className={dock.emptyState}>
-                <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                載入 TXO 合約…
+                <AsyncStatus phase='loading' text='載入 TXO 合約…' />
             </div>;
     }
     if (rows.length === 0) {
-        return <div className={dock.emptyState}>無可用合約</div>;
+        return <div className={dock.emptyState}><AsyncStatus phase='empty' text='無可用合約' /></div>;
     }
 
     const Cell = ({ code }: { code?: string }) => {

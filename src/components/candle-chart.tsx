@@ -83,7 +83,7 @@ import {
 } from '../lib/utils/kbars';
 import { roundToTick } from '../lib/utils/ticksize';
 import * as styles from './candle-chart.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
@@ -1579,10 +1579,7 @@ export function CandleChart({
             <div ref={hostRef} className={styles.chartHost}>
                 {loading && (
                     <div className={styles.emptyMsg}>
-                        <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                        <span className={panel.mono}>
-                            載入 {tf.label} K 線…
-                        </span>
+                        <AsyncStatus phase='loading' text={`載入 ${tf.label} K 線…`} className={panel.mono} />
                     </div>
                 )}
                 {empty && !loading && (

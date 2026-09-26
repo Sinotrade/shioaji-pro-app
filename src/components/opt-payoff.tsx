@@ -13,7 +13,9 @@ import { fmtPrice } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as ticket from './order-ticket.css';
 import * as styles from './opt-payoff.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
+import { useTradingState } from '../lib/trading-state';
+import { queryDisplayState } from '../lib/query-display-state';
 
 interface Leg {
     id: string;
@@ -43,6 +45,10 @@ export function OptPayoff({ positions = [] }: { positions?: Position[] }) {
     const [legs, setLegs] = useState<Leg[]>([]);
     const [month, setMonth] = useState('');
     const [loadingPos, setLoadingPos] = useState(true);
+    const positionsQuery = useTradingState().queries.positions;
+    const positionsState = queryDisplayState(positionsQuery);
+    const positionsFailed = positionsState === 'failed';
+    const positionsPending = positionsState === 'loading';
     // simulated-leg form
     const [simRight, setSimRight] = useState<'C' | 'P' | 'F'>('C');
     const [simSide, setSimSide] = useState<'Buy' | 'Sell'>('Buy');
@@ -266,15 +272,17 @@ export function OptPayoff({ positions = [] }: { positions?: Position[] }) {
             </div>
             <canvas ref={canvasRef} className={styles.chart} />
             <div className={styles.legList}>
-                {loadingPos && legs.length === 0 && (
+                {(loadingPos || positionsPending) && !positionsFailed && legs.length === 0 && (
                     <span className={dock.emptyState}>
-                        <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                        載入持倉…
+                        <AsyncStatus phase='loading' text='載入選擇權持倉…' />
                     </span>
                 )}
-                {!loadingPos && legs.length === 0 && (
+                {positionsFailed && legs.length === 0 && (
+                    <span className={dock.emptyState}><AsyncStatus phase='error' text='選擇權持倉尚未取得' /></span>
+                )}
+                {!loadingPos && !positionsPending && !positionsFailed && legs.length === 0 && (
                     <span className={dock.emptyState}>
-                        無選擇權持倉 — 可在下方加入模擬部位
+                        <AsyncStatus phase='empty' text='無選擇權持倉 — 可在下方加入模擬部位' />
                     </span>
                 )}
                 {legs.map((l) => (

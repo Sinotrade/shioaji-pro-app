@@ -15,7 +15,7 @@ import type { Snapshot } from '../lib/types/market';
 import { todayStr } from '../lib/utils/date';
 import { fmtPrice } from '../lib/utils/format';
 import * as styles from './derivative-explorer.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import { UnderlyingPicker } from './underlying-picker';
 
@@ -174,13 +174,12 @@ export function WarrantPanel({
             </div>
             {loading ? (
                 <div className={styles.empty}>
-                    <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                    載入權證市場…
+                    <AsyncStatus phase='loading' text='載入權證市場…' />
                 </div>
             ) : error ? (
-                <div className={styles.error}>權證資料載入失敗</div>
+                <div className={styles.error}><AsyncStatus phase='error' text='權證資料載入失敗' /></div>
             ) : filtered.length === 0 ? (
-                <div className={styles.empty}>目前篩選條件沒有權證</div>
+                <div className={styles.empty}><AsyncStatus phase='empty' text='目前篩選條件沒有權證' /></div>
             ) : (
                 <div className={styles.scroll}>
                     <table className={styles.table}>

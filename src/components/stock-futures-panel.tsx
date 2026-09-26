@@ -11,7 +11,7 @@ import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as styles from './derivative-explorer.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import { UnderlyingPicker } from './underlying-picker';
 
@@ -140,13 +140,12 @@ export function StockFuturesPanel({
             </div>
             {loading ? (
                 <div className={styles.empty}>
-                    <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                    載入個股期合約…
+                    <AsyncStatus phase='loading' text='載入個股期合約…' />
                 </div>
             ) : error ? (
-                <div className={styles.error}>個股期合約載入失敗</div>
+                <div className={styles.error}><AsyncStatus phase='error' text='個股期合約載入失敗' /></div>
             ) : visible.length === 0 ? (
-                <div className={styles.empty}>此標的目前沒有個股期</div>
+                <div className={styles.empty}><AsyncStatus phase='empty' text='此標的目前沒有個股期' /></div>
             ) : (
                 <div className={styles.scroll}>
                     <table className={styles.table}>

@@ -18,7 +18,7 @@ import { fmtInt, fmtPrice } from '../lib/utils/format';
 import { dateStrOffset, wallClockToUtc } from '../lib/utils/kbars';
 import * as dock from './bottom-dock.css';
 import * as styles from './replay-panel.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 
 interface ReplayTick {
     time: number;
@@ -264,10 +264,7 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
                             ? `${fmtPrice(cur.price)} · ${fmtInt(idx)}/${fmtInt(ticks.length)}`
                             : `${fmtInt(ticks.length)} ticks`
                         : (
-                              <>
-                                  <Orb size={10} style={{ marginRight: 5, verticalAlign: '-1px' }} />
-                                  載入中…
-                              </>
+                              <AsyncStatus phase='loading' size={10} text='載入重播資料…' />
                           )}
                 </span>
             </div>

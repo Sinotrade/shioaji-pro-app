@@ -25,7 +25,7 @@ import type { ContractBase } from '../lib/types/contract';
 import type { IcProjection } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
 import { vars } from '../theme.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import * as styles from './sector-heatmap.css';
 
@@ -653,14 +653,10 @@ export function SectorHeatmap({
                         <HeatTreemap leaves={panoramaLeaves} />
                         {panoramaLeaves.length === 0 && (
                             <div className={styles.empty}>
-                                {bootstrapPending && !icError ? (
-                                    <>
-                                        <Orb size={12} />
-                                        產業資料載入中…
-                                    </>
-                                ) : (
-                                    '等待產業資料'
-                                )}
+                                <AsyncStatus
+                                    phase={icError ? 'error' : bootstrapPending ? 'loading' : 'idle'}
+                                    text={icError ? '產業資料無法取得' : bootstrapPending ? '載入產業資料…' : '等待產業資料'}
+                                />
                             </div>
                         )}
                     </div>
@@ -891,14 +887,10 @@ export function SectorHeatmap({
                             })}
                             {drillEntries.length === 0 && (
                                 <div className={styles.empty}>
-                                    {icError ? (
-                                        '排行資料無法取得'
-                                    ) : (
-                                        <>
-                                            <Orb size={12} />
-                                            排行載入中…
-                                        </>
-                                    )}
+                                    <AsyncStatus
+                                        phase={icError ? 'error' : drillState ? 'empty' : 'loading'}
+                                        text={icError ? '排行資料無法取得' : drillState ? '目前沒有排行資料' : '載入排行…'}
+                                    />
                                 </div>
                             )}
                             {drillEntries.length > 0 && drillGroup && (

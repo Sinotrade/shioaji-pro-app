@@ -42,6 +42,10 @@
 
 ## 本專案使用準則（風格裁決）
 
+資料面板的 loading／empty／error 判定與共用呈現方式，見
+[`async-loading-states.md`](async-loading-states.md)；新畫面應透過 `AsyncStatus`
+使用 Orb，不另寫一套載入提示。
+
 - **泛用載入＝`radial`**：低調、對稱、無方向性，最符合專業終端調性 —— 全 app 預設。
 - **伺服器啟動中／連線中＝`ring`**：旋轉語彙銜接被取代的舊弧形 spinner，
   「有東西在跑」的方向感明確（已套用，琥珀色）。

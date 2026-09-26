@@ -18,9 +18,24 @@ afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlob
 async function mount(row: AccountedPosition) {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
-    await act(async () => { view = create(createElement(PositionsPane, { positions: [row], mode: 'merged', market: 'all', scopeKey: '', fallback: { stock: null, futures: selected }, onChanged: vi.fn(), onSelectCode: vi.fn() })); });
+    await act(async () => { view = create(createElement(PositionsPane, { positions: [row], initialStatus: 'ready', mode: 'merged', market: 'all', scopeKey: '', fallback: { stock: null, futures: selected }, onChanged: vi.fn(), onSelectCode: vi.fn() })); });
     await act(async () => { view!.root.findAllByType(ArmLockButton)[0]!.props.onToggle(); });
 }
+it('shows loading before the first positions result and empty only after a successful read', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+    const props = { positions: [], mode: 'merged' as const, market: 'all' as const,
+        scopeKey: '', fallback: { stock: null, futures: selected },
+        onChanged: vi.fn(), onSelectCode: vi.fn() };
+    await act(async () => { view = create(createElement(PositionsPane, { ...props, initialStatus: 'loading' })); });
+    expect(JSON.stringify(view!.toJSON())).toContain('載入持倉');
+    expect(JSON.stringify(view!.toJSON())).not.toContain('NO OPEN POSITIONS');
+    await act(async () => { view!.update(createElement(PositionsPane, { ...props, initialStatus: 'ready' })); });
+    expect(JSON.stringify(view!.toJSON())).toContain('NO OPEN POSITIONS');
+    await act(async () => { view!.update(createElement(PositionsPane, { ...props, initialStatus: 'failed' })); });
+    expect(JSON.stringify(view!.toJSON())).toContain('持倉尚未確認');
+    expect(JSON.stringify(view!.toJSON())).not.toContain('NO OPEN POSITIONS');
+});
 async function click(label: string) {
     const button = view!.root.findAllByType('button').find(b => b.children.filter(c => typeof c === 'string').join('').trim() === label)!;
     await act(async () => { await button.props.onClick({ stopPropagation: vi.fn() }); });

@@ -27,7 +27,7 @@ import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtPrice } from '../lib/utils/format';
 import * as styles from './derivative-explorer.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import { UnderlyingPicker } from './underlying-picker';
 
@@ -222,14 +222,13 @@ export function ComboListPanel({
             </div>
             {loading ? (
                 <div className={styles.empty}>
-                    <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                    載入組合商品…
+                    <AsyncStatus phase='loading' text='載入組合商品…' />
                 </div>
             ) : error ? (
-                <div className={styles.error}>組合商品載入失敗</div>
+                <div className={styles.error}><AsyncStatus phase='error' text='組合商品載入失敗' /></div>
             ) : sorted.length === 0 ? (
                 <div className={styles.empty}>
-                    {rootLabel} 目前沒有可交易的組合
+                    <AsyncStatus phase='empty' text={`${rootLabel} 目前沒有可交易的組合`} />
                 </div>
             ) : (
                 <div className={styles.scroll}>

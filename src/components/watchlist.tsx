@@ -37,6 +37,7 @@ import {
 } from '../lib/product-search';
 import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { Sparkline } from './sparkline';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import * as styles from './watchlist.css';
 
@@ -601,17 +602,16 @@ export function Watchlist({
             <div className={panel.panelBody}>
                 <div className={styles.list}>
                     {loading && items.length === 0 && (
-                        <div className={styles.loadingHint}>載入清單…</div>
+                        <AsyncStatus phase='loading' text='載入清單…' className={styles.loadingHint} />
                     )}
                     {!loading && loadError && (
-                        <div className={styles.loadingHint}>
-                            自選清單讀取或同步失敗。<button type="button" onClick={onRetryLoad}>重試</button>
-                        </div>
+                        <AsyncStatus phase='error' text='自選清單讀取或同步失敗。'
+                            action={<button type="button" onClick={onRetryLoad}>重試</button>}
+                            className={styles.loadingHint} />
                     )}
                     {!loading && !loadError && items.length === 0 && (
-                        <div className={styles.loadingHint}>
-                            清單是空的 — 在下方輸入代碼加入
-                        </div>
+                        <AsyncStatus phase='empty' text='清單是空的 — 在下方輸入代碼加入'
+                            className={styles.loadingHint} />
                     )}
                     {viewItems.map((item, idx) => (
                         <WatchRow
@@ -641,6 +641,9 @@ export function Watchlist({
                             onDragEnd={clearDragState}
                         />
                     ))}
+                    {loading && items.length > 0 && (
+                        <AsyncStatus phase='loading' text='載入其餘商品…' className={styles.loadingHint} />
+                    )}
                 </div>
             </div>
             <div className={styles.addRow}>

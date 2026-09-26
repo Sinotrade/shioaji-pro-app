@@ -11,6 +11,7 @@ import { dateStrOffset } from '../lib/utils/kbars';
 import * as dock from './bottom-dock.css';
 import * as panel from './panel.css';
 import * as styles from './pnl-panel.css';
+import { AsyncStatus } from './async-status';
 
 interface PnlRow {
     date: string;
@@ -103,7 +104,10 @@ export function PnlPanel() {
     if (rows.length === 0) {
         return (
             <div className={panel.panelBody}>{controls}<div className={dock.emptyState}>
-                {loading ? '載入中…' : error ? '損益資料無法取得' : data ? '近 30 日無已實現損益' : '尚無帳戶資料'}
+                <AsyncStatus
+                    phase={loading && !data ? 'loading' : error && !data ? 'error' : data ? 'empty' : 'idle'}
+                    text={loading && !data ? '載入已實現損益…' : error && !data ? '損益資料無法取得' : data ? '近 30 日無已實現損益' : '尚無帳戶資料'}
+                />
             </div></div>
         );
     }

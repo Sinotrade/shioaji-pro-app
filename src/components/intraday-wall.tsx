@@ -52,7 +52,7 @@ import {
 } from './intraday-chart';
 import * as chartUi from './intraday-chart.css';
 import * as styles from './intraday-wall.css';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 
 const CLOSE_GRACE = 240;
@@ -774,12 +774,12 @@ function MiniIntraday({
             <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
             {loading && (
                 <div className={styles.centerMsg} style={{ position: 'absolute', inset: 0 }}>
-                    <Orb size={10} />
+                    <AsyncStatus phase='loading' size={10} text='載入走勢…' />
                 </div>
             )}
             {empty && !loading && (
                 <div className={styles.centerMsg} style={{ position: 'absolute', inset: 0 }}>
-                    <span className={panel.mono}>無資料</span>
+                    <AsyncStatus phase='empty' text='無資料' className={panel.mono} />
                 </div>
             )}
         </div>
@@ -1052,8 +1052,7 @@ export function IntradayWallPanel({
         return (
             <div className={styles.wrap}>
                 <div className={styles.centerMsg}>
-                    <Orb size={12} />
-                    <span className={panel.mono}>載入自選清單…</span>
+                    <AsyncStatus phase='loading' text='載入自選清單…' className={panel.mono} />
                 </div>
             </div>
         );

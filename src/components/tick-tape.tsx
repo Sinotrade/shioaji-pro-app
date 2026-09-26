@@ -11,7 +11,7 @@ import type { ContractBase } from '../lib/types/contract';
 import type { HistoryTicks } from '../lib/types/tick';
 import { fmtInt, fmtPrice } from '../lib/utils/format';
 import { dateStrOffset } from '../lib/utils/kbars';
-import { Orb } from './orb';
+import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import * as styles from './tick-tape.css';
 
@@ -161,12 +161,9 @@ export function TickTape({ contract }: { contract: ContractBase }) {
                         <span />
                         <span className={styles.time}>
                             {loading ? (
-                                <>
-                                    <Orb size={12} style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                                    載入歷史成交…
-                                </>
+                                <AsyncStatus phase='loading' text='載入歷史成交…' />
                             ) : (
-                                '今日尚無成交'
+                                <AsyncStatus phase='empty' text='今日尚無成交' />
                             )}
                         </span>
                         <span />

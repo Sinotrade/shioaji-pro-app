@@ -10,6 +10,7 @@ import GridLayout, {
 import 'react-grid-layout/css/styles.css';
 import * as styles from './App.css';
 import { BottomDock } from './components/bottom-dock';
+import { AsyncStatus, type AsyncPhase } from './components/async-status';
 import { CandleChart } from './components/candle-chart';
 import { ChipsCard } from './components/chips-card';
 import { ComboListPanel } from './components/combo-list';
@@ -125,25 +126,35 @@ const POPOUT_CODE = popoutQuery.get('code') || null;
 function useBlockContract(
     block: Block,
     selected: ContractInfo | null,
-): ContractInfo | null {
+): { contract: ContractInfo | null; pinFailed: boolean } {
     const pinned = useContract(block.pin);
+    const [failedPin, setFailedPin] = useState<string | null>(null);
     useEffect(() => {
         if (block.pin && !pinned) {
-            ensureContract(block.pin).catch(() =>
+            let active = true;
+            setFailedPin(null);
+            ensureContract(block.pin).catch(() => {
+                if (!active) return;
+                setFailedPin(block.pin);
                 notify({
                     kind: 'err',
                     title: '找不到商品',
                     body: `代碼 ${block.pin} 無法解析`,
-                }),
-            );
+                });
+            });
+            return () => { active = false; };
         }
     }, [block.pin, pinned]);
-    return block.pin ? (pinned ?? null) : selected;
+    return {
+        contract: block.pin ? (pinned ?? null) : selected,
+        pinFailed: !!block.pin && !pinned && failedPin === block.pin,
+    };
 }
 
 function BlockBody({
     block,
     contract,
+    missingContractPhase,
     snapshot,
     watchlistProps,
     dockProps,
@@ -154,6 +165,7 @@ function BlockBody({
 }: {
     block: Block;
     contract: ContractInfo | null;
+    missingContractPhase: AsyncPhase;
     snapshot?: import('./lib/types/market').Snapshot;
     watchlistProps: React.ComponentProps<typeof Watchlist>;
     dockProps: React.ComponentProps<typeof BottomDock>;
@@ -200,13 +212,13 @@ function BlockBody({
                     />
                 </>
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'intraday':
             return contract ? (
                 <IntradayChart contract={contract} />
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'intradaywall':
             return (
@@ -224,19 +236,19 @@ function BlockBody({
             return contract ? (
                 <DepthLadder contract={contract} code={contract.code} snapshot={snapshot} />
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'ticket':
             return contract ? (
                 <OrderTicket contract={contract} onPlaced={refreshTrading} />
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'tape':
             return contract ? (
                 <TickTape contract={contract} />
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'flash':
             return contract ? (
@@ -248,7 +260,7 @@ function BlockBody({
                     onOrdersChanged={dockProps.onTradesChanged}
                 />
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'pnl':
             return <PnlPanel />;
@@ -256,13 +268,13 @@ function BlockBody({
             return contract ? (
                 <ChipsCard contract={contract} />
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'volprofile':
             return contract ? (
                 <VolProfile contract={contract} />
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'optchain':
             return <OptionChain onPick={onSelectCode} />;
@@ -311,7 +323,7 @@ function BlockBody({
                     onOrdersChanged={dockProps.onTradesChanged}
                 />
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'heatmap':
             return <SectorHeatmap onPick={onSelectCode} />;
@@ -356,19 +368,25 @@ function BlockBody({
             return contract ? (
                 <ReplayPanel contract={contract} />
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'depthmap':
             return contract ? (
                 <DepthMap contract={contract} snapshot={snapshot} />
             ) : (
-                <BlockPlaceholder />
+                <BlockPlaceholder phase={missingContractPhase} />
             );
     }
 }
 
-function BlockPlaceholder() {
-    return <div className={styles.blockPlaceholder}>等待商品…</div>;
+function BlockPlaceholder({ phase = 'idle' }: { phase?: AsyncPhase }) {
+    return <div className={styles.blockPlaceholder}>
+        <AsyncStatus
+            phase={phase}
+            size={14}
+            text={phase === 'loading' ? '載入商品…' : phase === 'error' ? '商品讀取失敗' : '等待商品…'}
+        />
+    </div>;
 }
 
 function indexBlockMessage(type: BlockType): string | null {
@@ -426,7 +444,11 @@ interface BlockViewProps {
 
 function BlockView(props: BlockViewProps) {
     const { block, selected, onPinChange, onRemove, ...bodyProps } = props;
-    const contract = useBlockContract(block, selected);
+    const { contract, pinFailed } = useBlockContract(block, selected);
+    const missingContractPhase: AsyncPhase = block.pin
+        ? pinFailed ? 'error' : 'loading'
+        : bodyProps.watchlistProps.loading && bodyProps.watchlistProps.items.length === 0
+            ? 'loading' : 'idle';
     const meta = BLOCK_META[block.type];
     const symbol = meta.pinnable && contract ? contract : null;
     const pulseMarket =
@@ -456,7 +478,7 @@ function BlockView(props: BlockViewProps) {
                 }
             />
             <PanelErrorBoundary label={meta.label}>
-                <BlockBody {...bodyProps} block={block} contract={contract} />
+                <BlockBody {...bodyProps} block={block} contract={contract} missingContractPhase={missingContractPhase} />
             </PanelErrorBoundary>
         </section>
     );
