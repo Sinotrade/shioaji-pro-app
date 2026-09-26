@@ -616,6 +616,7 @@ function MainApp() {
     const {
         items,
         loading,
+        structureBusy,
         loadError,
         retryLoad,
         addSymbol,
@@ -1150,6 +1151,7 @@ function MainApp() {
         onRenameList: renameCurrentList,
         onDeleteList: deleteCurrentList,
         loading,
+        structureBusy,
         loadError,
         onRetryLoad: retryLoad,
     };

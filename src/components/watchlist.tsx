@@ -248,6 +248,7 @@ export function Watchlist({
     onRenameList,
     onDeleteList,
     loading,
+    structureBusy,
     loadError,
     onRetryLoad,
 }: {
@@ -269,6 +270,7 @@ export function Watchlist({
     onRenameList: (name: string) => Promise<boolean>;
     onDeleteList: () => Promise<unknown>;
     loading: boolean;
+    structureBusy: boolean;
     loadError: boolean;
     onRetryLoad: () => void;
 }) {
@@ -470,6 +472,7 @@ export function Watchlist({
                         <select
                             className={styles.listSelect}
                             value={activeListId}
+                            disabled={structureBusy}
                             onChange={(e) => {
                                 setConfirmDelete(false);
                                 onSelectList(e.target.value);

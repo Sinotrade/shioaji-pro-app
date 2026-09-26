@@ -67,6 +67,8 @@ function resolveWatchlistContract(
 export function useWatchlist() {
     const [items, setItems] = useState<WatchItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [structureBusy, setStructureBusy] = useState(false);
+    const structureBusyRef = useRef(false);
     const [loadError, setLoadError] = useState(false);
     const [retryKey, setRetryKey] = useState(0);
     const [serverLists, setServerLists] = useState<ServerWatchlist[]>([]);
@@ -75,10 +77,25 @@ export function useWatchlist() {
     const loadSeq = useRef(0);
     const canReplaceList = useRef(false);
     const activeIdRef = useRef('');
+    const serverListsRef = useRef<ServerWatchlist[]>([]);
+    const refreshRequest = useRef(0);
+    const refreshApplied = useRef(0);
+    const pendingServerContracts = useRef(new Map<string, ServerWatchlist['contracts']>());
+    const pendingRenames = useRef(new Map<string, ServerWatchlist>());
+    const pendingDeletions = useRef(new Set<string>());
+    const committedMembership = useRef(new Map<string, Map<string, ContractInfo | null>>());
+    const committedOrder = useRef(new Map<string, ContractInfo[]>());
+    const desiredContracts = useRef(new Map<string, ContractInfo[]>());
+    const mutationTails = useRef(new Map<string, Promise<void>>());
+    const pendingMutations = useRef(new Map<string, number>());
+    const failedSaves = useRef(new Set<string>());
+    const deferredContractEvents = useRef(new Set<string>());
+    const replayContractEvent = useRef<(id: string) => void>(() => undefined);
     activeIdRef.current = activeListId;
     const retryLoad = useCallback(() => {
         initStarted.current = false;
         canReplaceList.current = false;
+        failedSaves.current.clear();
         setLoadError(false);
         setLoading(true);
         setRetryKey((key) => key + 1);
@@ -110,28 +127,187 @@ export function useWatchlist() {
             .catch(() => undefined);
     }, []);
 
+    const keepCommittedOrder = useCallback((id: string, list: ServerWatchlist) => {
+        const anchor = committedOrder.current.get(id);
+        if (!anchor) return list;
+        const key = (contract: { security_type: string | null; code: string }) =>
+            `${contract.security_type}:${contract.code}`;
+        const byKey = new Map(list.contracts.map((contract) => [key(contract), contract]));
+        const anchored = anchor.flatMap((contract) => {
+            const base = byKey.get(key(contract));
+            if (!base) return [];
+            byKey.delete(key(contract));
+            return [base];
+        });
+        return { ...list, contracts: [...anchored, ...byKey.values()] };
+    }, []);
+
     const refreshLists = useCallback(async (): Promise<ServerWatchlist[]> => {
-        const lists = await fetchWatchlists();
+        const request = ++refreshRequest.current;
+        let lists = await fetchWatchlists();
+        // An older response may still apply while a newer GET is pending;
+        // this keeps the just-saved list available for its deferred reload.
+        // Once a newer response has applied, an older one cannot replace it.
+        if (request < refreshApplied.current) return serverListsRef.current;
+        for (const [oldId, renamed] of pendingRenames.current) {
+            if (lists.some((list) => list.id === renamed.id) &&
+                !lists.some((list) => list.id === oldId)) {
+                pendingRenames.current.delete(oldId);
+            } else {
+                lists = [...lists.filter((list) => list.id !== oldId && list.id !== renamed.id), renamed];
+            }
+        }
+        for (const id of pendingDeletions.current) {
+            if (!lists.some((list) => list.id === id)) pendingDeletions.current.delete(id);
+            else lists = lists.filter((list) => list.id !== id);
+        }
+        lists = lists.map((list) => {
+            // A single successful GET is not a consistency barrier: a later
+            // read can still come from an older server snapshot. Keep this
+            // session's confirmed membership edits until they are superseded.
+            const unconfirmed = committedMembership.current.get(list.id);
+            const membership = unconfirmed?.size
+                ? { ...list, contracts: [
+                    ...list.contracts.filter((contract) => !unconfirmed.has(contract.code)),
+                    ...[...unconfirmed.values()].flatMap((contract) => contract ? [{
+                        security_type: contract.security_type,
+                        exchange: contract.exchange ?? '',
+                        code: contract.code,
+                    }] : []),
+                ] }
+                : list;
+            const reconciled = keepCommittedOrder(list.id, membership);
+            const expected = pendingServerContracts.current.get(list.id);
+            if (!expected) return reconciled;
+            if (expected.length === reconciled.contracts.length && expected.every((contract, index) =>
+                contract.code === reconciled.contracts[index]?.code &&
+                contract.security_type === reconciled.contracts[index]?.security_type)) {
+                pendingServerContracts.current.delete(list.id);
+                return reconciled;
+            }
+            return { ...reconciled, contracts: expected };
+        });
+        refreshApplied.current = request;
+        serverListsRef.current = lists;
         setServerLists(lists);
         return lists;
+    }, [keepCommittedOrder]);
+
+    const applyLocalLists = useCallback((lists: ServerWatchlist[]) => {
+        // A server mutation has committed. Invalidate older GET responses so
+        // a failed or slow follow-up read cannot restore the old snapshot.
+        refreshApplied.current = ++refreshRequest.current;
+        serverListsRef.current = lists;
+        setServerLists(lists);
+    }, []);
+
+    const patchLocalContracts = useCallback((id: string, contracts: ContractInfo[]) => {
+        pendingServerContracts.current.set(id, contracts.map((contract) => ({
+            security_type: contract.security_type,
+            exchange: contract.exchange ?? '',
+            code: contract.code,
+        })));
+        applyLocalLists(serverListsRef.current.map((list) => list.id === id
+            ? { ...list, contracts: pendingServerContracts.current.get(id)! }
+            : list));
+    }, [applyLocalLists]);
+
+    const reconcileFailedMembership = useCallback((id: string, list: ServerWatchlist) => {
+        const changes = committedMembership.current.get(id);
+        if (!changes?.size) return keepCommittedOrder(id, list);
+        const unchanged = list.contracts.filter((contract) => !changes.has(contract.code));
+        const added = [...changes.values()].flatMap((contract) => contract ? [{
+            security_type: contract.security_type,
+            exchange: contract.exchange ?? '',
+            code: contract.code,
+        }] : []);
+        return keepCommittedOrder(id, { ...list, contracts: [...unchanged, ...added] });
+    }, [keepCommittedOrder]);
+
+    const enqueueMutation = useCallback((id: string, task: () => Promise<void>) => {
+        pendingMutations.current.set(id, (pendingMutations.current.get(id) ?? 0) + 1);
+        const write = (mutationTails.current.get(id) ?? Promise.resolve()).then(task);
+        mutationTails.current.set(id, write.then(() => undefined, () => undefined));
+        void write.then(
+            () => finish(),
+            () => finish(),
+        );
+        function finish() {
+            const remaining = (pendingMutations.current.get(id) ?? 1) - 1;
+            if (remaining > 0) pendingMutations.current.set(id, remaining);
+            else {
+                pendingMutations.current.delete(id);
+                if (!failedSaves.current.has(id) && deferredContractEvents.current.delete(id)) {
+                    replayContractEvent.current(id);
+                }
+            }
+        }
+        return write;
     }, []);
 
     // push the current items to the server (PUT replaces all contracts)
     const persistItems = useCallback(
-        (next: WatchItem[]) => {
-            const id = activeIdRef.current;
+        (id: string) => {
             if (!id || !canReplaceList.current) return;
             const seq = loadSeq.current;
-            syncWatchlist(
-                id,
-                next.map((i) => i.contract),
-            )
-                .then(() => refreshLists())
+            // Every list mutation shares this list's queue. Read the latest
+            // desired order when the PUT starts so a preceding add/remove is
+            // included even if the user moved another row while it was pending.
+            const write = enqueueMutation(id, async () => {
+                const contractsToSave = desiredContracts.current.get(id) ?? [];
+                try {
+                    await syncWatchlist(id, contractsToSave);
+                } catch (error) {
+                    failedSaves.current.add(id);
+                    throw error;
+                }
+                committedOrder.current.set(id, contractsToSave);
+                patchLocalContracts(id, contractsToSave);
+                // The PUT committed. A failed follow-up GET must not make us
+                // roll the visible order back to the previous list snapshot.
+                await refreshLists().catch(() => undefined);
+            });
+            void write
                 .catch(() => {
                     if (activeIdRef.current === id && loadSeq.current === seq) {
                         canReplaceList.current = false;
                         setLoadError(true);
                     }
+                    // A later POST/DELETE does not save a failed PUT's order.
+                    // Queue the authoritative read after this list's pending
+                    // writes. New writes will then use its corrected order.
+                    deferredContractEvents.current.add(id);
+                    void enqueueMutation(id, async () => {
+                        if (!failedSaves.current.has(id)) return;
+                        // The optimistic reorder was rejected; a later POST
+                        // may have committed only membership. Read the raw
+                        // server order for recovery, without our commit overlay.
+                        pendingServerContracts.current.delete(id);
+                        const lists = await fetchWatchlists();
+                        const raw = lists.find((candidate) => candidate.id === id);
+                        if (!raw) throw new Error('自選清單已不存在');
+                        const list = reconcileFailedMembership(id, raw);
+                        const previous = new Map(
+                            (desiredContracts.current.get(id) ?? []).map((contract) => [
+                                `${contract.security_type}:${contract.code}`,
+                                contract,
+                            ]),
+                        );
+                        const authoritative = await Promise.all(list.contracts.map(
+                            (base) => previous.get(`${base.security_type}:${base.code}`) ??
+                                resolveWatchlistContract(base),
+                        ));
+                        desiredContracts.current.set(id, authoritative);
+                        pendingServerContracts.current.set(id, list.contracts);
+                        // Merge this list's raw recovery result into the
+                        // current snapshot; a newer update to another list
+                        // must not invalidate or replace this read.
+                        const current = serverListsRef.current;
+                        applyLocalLists(current.some((candidate) => candidate.id === id)
+                            ? current.map((candidate) => candidate.id === id ? list : candidate)
+                            : [...current, list]);
+                        failedSaves.current.delete(id);
+                    }).catch(() => undefined);
                     notify({
                         kind: 'err',
                         title: '自選清單同步失敗',
@@ -139,16 +315,16 @@ export function useWatchlist() {
                     });
                 });
         },
-        [refreshLists],
+        [enqueueMutation, patchLocalContracts, applyLocalLists, reconcileFailedMembership, refreshLists],
     );
 
     const loadList = useCallback(
-        async (list: ServerWatchlist) => {
+        async (list: ServerWatchlist, preserveVisible = false) => {
             const seq = ++loadSeq.current;
             canReplaceList.current = false;
             setLoading(true);
             setLoadError(false);
-            setItems([]);
+            if (!preserveVisible) setItems([]);
             try {
                 const resolutions = list.contracts.map(resolveWatchlistContract);
                 // The linked panels only need one symbol to stop showing
@@ -156,12 +332,14 @@ export function useWatchlist() {
                 // the full list can keep loading without holding the workspace.
                 // Editing stays locked until every contract has been checked.
                 let finished = false;
-                void Promise.any(resolutions).then(async (first) => {
-                    if (loadSeq.current !== seq || finished) return;
-                    await subscribeContract(first);
-                    if (loadSeq.current !== seq || finished) return;
-                    setItems([{ contract: first }]);
-                }).catch(() => undefined);
+                if (!preserveVisible) {
+                    void Promise.any(resolutions).then(async (first) => {
+                        if (loadSeq.current !== seq || finished) return;
+                        await subscribeContract(first);
+                        if (loadSeq.current !== seq || finished) return;
+                        setItems([{ contract: first }]);
+                    }).catch(() => undefined);
+                }
                 const results = await Promise.allSettled(resolutions);
                 finished = true;
                 if (loadSeq.current !== seq) return;
@@ -178,8 +356,11 @@ export function useWatchlist() {
                 );
                 const subscriptions = await Promise.allSettled(contracts.map(subscribeContract));
                 if (loadSeq.current !== seq) return;
-                setItems(contracts.map((c) => ({ contract: c })));
-                attachSnapshots(contracts);
+                if (!preserveVisible || !resolveFailed) {
+                    setItems(contracts.map((c) => ({ contract: c })));
+                    attachSnapshots(contracts);
+                }
+                if (!resolveFailed) desiredContracts.current.set(list.id, contracts);
                 if (migrated) {
                     await syncWatchlist(list.id, contracts);
                     await refreshLists();
@@ -201,16 +382,50 @@ export function useWatchlist() {
 
     const setActiveList = useCallback(
         (listId: string, listsOverride?: ServerWatchlist[]) => {
+            if (structureBusyRef.current) return;
             const list = (listsOverride ?? serverLists).find(
                 (l) => l.id === listId,
             );
             if (!list) return;
             setActiveListId(listId);
+            activeIdRef.current = listId;
             localStorage.setItem(ACTIVE_KEY, listId);
+            if (pendingMutations.current.has(listId) || failedSaves.current.has(listId)) {
+                ++loadSeq.current;
+                // The picker still holds the pre-save server snapshot. Show
+                // the desired order and reload from the server after the last
+                // queued mutation settles instead of undoing the local move.
+                const desired = desiredContracts.current.get(listId);
+                canReplaceList.current = !!desired && !failedSaves.current.has(listId);
+                setItems(desired?.map((contract) => ({ contract })) ?? []);
+                setLoading(!desired);
+                setLoadError(failedSaves.current.has(listId));
+                if (desired) attachSnapshots(desired);
+                deferredContractEvents.current.add(listId);
+                return;
+            }
             void loadList(list);
         },
-        [serverLists, loadList],
+        [serverLists, loadList, attachSnapshots],
     );
+
+    replayContractEvent.current = (id) => {
+        if (activeIdRef.current !== id) return;
+        if (pendingMutations.current.has(id)) {
+            deferredContractEvents.current.add(id);
+            return;
+        }
+        const list = serverListsRef.current.find((candidate) => candidate.id === id);
+        if (list) {
+            const desired = desiredContracts.current.get(id);
+            const contracts = desired?.map((contract) => ({
+                security_type: contract.security_type,
+                exchange: contract.exchange ?? '',
+                code: contract.code,
+            })) ?? list.contracts;
+            void loadList({ ...list, contracts }, true);
+        }
+    };
 
     const addSymbol = useCallback(
         async (
@@ -219,7 +434,9 @@ export function useWatchlist() {
             resolved?: ContractInfo,
         ) => {
             if (loading) throw new Error('自選清單載入中，請稍後再試');
-            if (!activeIdRef.current) throw new Error('自選清單尚未就緒');
+            if (structureBusyRef.current) throw new Error('自選清單更新中，請稍後再試');
+            const id = activeIdRef.current;
+            if (!id) throw new Error('自選清單尚未就緒');
             const contract = resolved ?? (await resolveContract(code, type));
             // 組合商品（合成合約）不能進自選 — server 端自選清單只收
             // 一般合約 code，同步會 400；組合請用「組合商品」面板
@@ -233,13 +450,28 @@ export function useWatchlist() {
                 return contract;
             }
             await subscribeContract(contract);
-            const id = activeIdRef.current;
-            if (id) {
-                await addWatchlistContracts(id, [contract]);
-                await refreshLists();
+            // Resolution can outlive a rename that replaced this list ID.
+            // Do not queue a POST against the retired list.
+            if (structureBusyRef.current || activeIdRef.current !== id) {
+                throw new Error('自選清單已切換，請重新新增商品');
             }
-            setItems((prev) => [...prev, { contract }]);
-            attachSnapshots([contract]);
+            await enqueueMutation(id, async () => {
+                const desired = desiredContracts.current.get(id) ?? [];
+                if (desired.some((item) => item.code === contract.code)) return;
+                await addWatchlistContracts(id, [contract]);
+                const changes = committedMembership.current.get(id) ?? new Map();
+                changes.set(contract.code, contract);
+                committedMembership.current.set(id, changes);
+                // A move can update the desired order while POST is in flight.
+                const latest = desiredContracts.current.get(id) ?? desired;
+                desiredContracts.current.set(id, [...latest, contract]);
+                patchLocalContracts(id, desiredContracts.current.get(id) ?? []);
+                if (activeIdRef.current === id) {
+                    setItems((prev) => [...prev, { contract }]);
+                    attachSnapshots([contract]);
+                }
+                await refreshLists().catch(() => undefined);
+            });
             return contract;
         },
         [
@@ -247,49 +479,57 @@ export function useWatchlist() {
             loading,
             subscribeContract,
             attachSnapshots,
+            enqueueMutation,
+            patchLocalContracts,
             refreshLists,
         ],
     );
 
     const removeSymbol = useCallback(
         async (code: string) => {
-            if (loading) return;
+            if (loading || structureBusyRef.current) return;
             const item = items.find((i) => i.contract.code === code);
             if (!item) return;
             const id = activeIdRef.current;
             if (id) {
-                await removeWatchlistContracts(id, [item.contract]);
-                await refreshLists();
+                await enqueueMutation(id, async () => {
+                    await removeWatchlistContracts(id, [item.contract]);
+                    const changes = committedMembership.current.get(id) ?? new Map();
+                    changes.set(code, null);
+                    committedMembership.current.set(id, changes);
+                    const desired = desiredContracts.current.get(id) ?? [];
+                    desiredContracts.current.set(id, desired.filter((contract) => contract.code !== code));
+                    patchLocalContracts(id, desiredContracts.current.get(id) ?? []);
+                    if (activeIdRef.current === id) {
+                        setItems((prev) => prev.filter((i) => i.contract.code !== code));
+                    }
+                    await refreshLists().catch(() => undefined);
+                });
             }
-            setItems((prev) =>
-                prev.filter((i) => i.contract.code !== code),
-            );
         },
-        [items, loading, refreshLists],
+        [items, loading, enqueueMutation, patchLocalContracts, refreshLists],
     );
 
     // drag-to-reorder: move `fromCode` to the position of `toCode`
     const reorderSymbol = useCallback(
         (fromCode: string, toCode: string) => {
-            if (!canReplaceList.current) return;
+            const id = activeIdRef.current;
+            if (!id || !canReplaceList.current) return;
+            const current = desiredContracts.current.get(id) ?? items.map((item) => item.contract);
+            const fromIdx = current.findIndex((contract) => contract.code === fromCode);
+            const toIdx = current.findIndex((contract) => contract.code === toCode);
+            if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
+            const next = [...current];
+            const [moved] = next.splice(fromIdx, 1);
+            next.splice(toIdx, 0, moved!);
+            desiredContracts.current.set(id, next);
             setItems((prev) => {
-                const fromIdx = prev.findIndex(
-                    (i) => i.contract.code === fromCode,
-                );
-                const toIdx = prev.findIndex(
-                    (i) => i.contract.code === toCode,
-                );
-                if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) {
-                    return prev;
-                }
-                const next = [...prev];
-                const [moved] = next.splice(fromIdx, 1);
-                next.splice(toIdx, 0, moved!);
-                persistItems(next);
-                return next;
+                const byCode = new Map(prev.map((item) => [item.contract.code, item]));
+                return next.map((contract) => byCode.get(contract.code) ?? { contract });
             });
+            persistItems(id);
         },
-        [persistItems],
+        [items, persistItems],
     );
 
     const createList = useCallback(
@@ -315,6 +555,7 @@ export function useWatchlist() {
             const list = serverLists.find((l) => l.id === id);
             const trimmed = name.trim();
             if (!id || !list || !trimmed) return false;
+            if (structureBusyRef.current) return false;
             if (trimmed === list.name) return true;
             if (serverLists.some((l) => l.id !== id && l.name === trimmed)) {
                 notify({
@@ -324,14 +565,53 @@ export function useWatchlist() {
                 });
                 return false;
             }
+            const wasReplaceable = canReplaceList.current;
+            canReplaceList.current = false;
+            structureBusyRef.current = true;
+            setStructureBusy(true);
             try {
-                const created = await renameWatchlist(list, trimmed);
-                // update the ref eagerly — a persistItems fired before the
-                // re-render must not PUT against the deleted old id
-                activeIdRef.current = created.id;
-                setActiveListId(created.id);
-                localStorage.setItem(ACTIVE_KEY, created.id);
-                await refreshLists();
+                await enqueueMutation(id, async () => {
+                    // A preceding queued move may have changed the contracts
+                    // since this render. Rename from the latest server list.
+                    const raw = (await fetchWatchlists()).find((candidate) => candidate.id === id) ?? list;
+                    const recovering = failedSaves.current.has(id);
+                    // A successful POST/PUT may still be absent from a stale
+                    // GET; recreate from confirmed local commits in either case.
+                    const current = reconcileFailedMembership(id, raw);
+                    const authoritative = recovering
+                        ? await Promise.all(current.contracts.map(resolveWatchlistContract))
+                        : null;
+                    const created = await renameWatchlist(current, trimmed);
+                    desiredContracts.current.set(
+                        created.id,
+                        authoritative ?? desiredContracts.current.get(id) ?? [],
+                    );
+                    desiredContracts.current.delete(id);
+                    pendingServerContracts.current.delete(id);
+                    const membership = committedMembership.current.get(id);
+                    if (membership) committedMembership.current.set(created.id, membership);
+                    committedMembership.current.delete(id);
+                    const order = committedOrder.current.get(id);
+                    if (order) committedOrder.current.set(created.id, order);
+                    committedOrder.current.delete(id);
+                    pendingRenames.current.set(id, created);
+                    if (recovering) {
+                        failedSaves.current.delete(id);
+                        if (activeIdRef.current === id) {
+                            setItems((authoritative ?? []).map((contract) => ({ contract })));
+                        }
+                    }
+                    activeIdRef.current = created.id;
+                    setActiveListId(created.id);
+                    localStorage.setItem(ACTIVE_KEY, created.id);
+                    applyLocalLists(serverListsRef.current.map((candidate) => candidate.id === id
+                        ? created : candidate));
+                    await refreshLists().catch(() => undefined);
+                    if (deferredContractEvents.current.delete(id)) {
+                        replayContractEvent.current(created.id);
+                    }
+                });
+                if (activeIdRef.current !== id) canReplaceList.current = wasReplaceable;
                 notify({
                     kind: 'ok',
                     title: '已重新命名',
@@ -339,6 +619,7 @@ export function useWatchlist() {
                 });
                 return true;
             } catch {
+                if (activeIdRef.current === id) canReplaceList.current = wasReplaceable;
                 await refreshLists().catch(() => undefined);
                 notify({
                     kind: 'err',
@@ -346,30 +627,59 @@ export function useWatchlist() {
                     body: '與伺服器同步時發生錯誤',
                 });
                 return false;
+            } finally {
+                structureBusyRef.current = false;
+                setStructureBusy(false);
             }
         },
-        [serverLists, refreshLists],
+        [serverLists, enqueueMutation, applyLocalLists, reconcileFailedMembership, refreshLists],
     );
 
     const deleteCurrentList = useCallback(async () => {
         const id = activeIdRef.current;
         const list = serverLists.find((l) => l.id === id);
-        if (!id || !list) return;
-        await deleteWatchlist(id);
-        const lists = await refreshLists();
+        if (!id || !list || structureBusyRef.current) return;
+        const wasReplaceable = canReplaceList.current;
+        canReplaceList.current = false;
+        structureBusyRef.current = true;
+        setStructureBusy(true);
+        let lists: ServerWatchlist[] = [];
+        try {
+            await enqueueMutation(id, async () => {
+                await deleteWatchlist(id);
+                desiredContracts.current.delete(id);
+                pendingServerContracts.current.delete(id);
+                committedMembership.current.delete(id);
+                committedOrder.current.delete(id);
+                pendingDeletions.current.add(id);
+                deferredContractEvents.current.delete(id);
+                failedSaves.current.delete(id);
+                applyLocalLists(serverListsRef.current.filter((candidate) => candidate.id !== id));
+                lists = await refreshLists().catch(() => serverListsRef.current);
+            });
+        } catch (error) {
+            if (activeIdRef.current === id) canReplaceList.current = wasReplaceable;
+            throw error;
+        } finally {
+            structureBusyRef.current = false;
+            setStructureBusy(false);
+        }
         notify({
             kind: 'ok',
             title: '已刪除清單',
             body: `「${list.name}」已刪除`,
         });
         const fallback = lists[0];
+        if (activeIdRef.current !== id) return;
         if (fallback) {
             setActiveList(fallback.id, lists);
         } else {
+            activeIdRef.current = '';
+            localStorage.removeItem(ACTIVE_KEY);
             setItems([]);
             setActiveListId('');
         }
-    }, [serverLists, refreshLists, setActiveList]);
+    }, [serverLists, enqueueMutation, applyLocalLists, refreshLists, setActiveList]);
 
     // boot: load lists; migrate legacy local list / create default if empty.
     // The first fetch can race a server that is still warming up after an
@@ -468,11 +778,10 @@ export function useWatchlist() {
             }
             if (timer) clearTimeout(timer);
             timer = setTimeout(() => {
-                const list = serverLists.find(
-                    (candidate) => candidate.id === activeIdRef.current,
-                );
+                const id = activeIdRef.current;
                 void refreshCachedContracts(pendingType ?? undefined);
-                if (list) void loadList(list);
+                if (pendingMutations.current.has(id)) deferredContractEvents.current.add(id);
+                else replayContractEvent.current(id);
                 timer = null;
                 pendingType = undefined;
             }, 250);
@@ -481,11 +790,12 @@ export function useWatchlist() {
             off();
             if (timer) clearTimeout(timer);
         };
-    }, [serverLists, loadList]);
+    }, [loadList]);
 
     return {
         items,
-        loading,
+        loading: loading || structureBusy,
+        structureBusy,
         loadError,
         retryLoad,
         addSymbol,
