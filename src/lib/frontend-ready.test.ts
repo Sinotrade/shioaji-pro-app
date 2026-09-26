@@ -141,6 +141,26 @@ describe('watchFrontendReady', () => {
         });
     });
 
+    it('records settled but failed account and position reads as partial', () => {
+        timing.beginTiming('restart');
+        const id = timing.getActiveTiming()!.id;
+        const acc = signal('accounts-loaded');
+        const pos = signal('positions-loaded');
+        const live = signal('stream-live');
+        watchFrontendReady(id, [
+            { ...acc.sig, successful: () => false },
+            { ...pos.sig, successful: () => false },
+            live.sig,
+        ]);
+        acc.set();
+        pos.set();
+        live.set();
+        expect(timing.getTimingHistory()[0]).toMatchObject({
+            outcome: 'partial',
+            detail: 'failed: accounts-loaded,positions-loaded',
+        });
+    });
+
     it('keeps the given outcome (attached) and ends at once if already ready', () => {
         timing.beginTiming('cold-start');
         const id = timing.getActiveTiming()!.id;

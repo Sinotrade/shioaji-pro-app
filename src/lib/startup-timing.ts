@@ -59,6 +59,7 @@ export const STAGE_LABELS = {
     'stream-restart': '行情串流重新連線',
     // the dashboard's first commit (all panels mounted, their effects run)
     'app-mounted': '畫面元件已掛載',
+    'workspace-visible': '交易終端已顯示',
     'trading-start': '交易資料開始載入',
     // detail only: one accounting read of the first refresh and its duration
     'account-read': '帳務查詢完成',

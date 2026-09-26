@@ -21,7 +21,7 @@ vi.mock('./frontend-ready', () => ({ appReadySignals: () => [], watchFrontendRea
 vi.mock('./trading-state', () => ({ startTradingState: m.startTrading }));
 vi.mock('./account-store', () => ({ ensureAccounts: vi.fn(), loadAccountsShared: vi.fn() }));
 vi.mock('./shioaji', () => ({
-    fetchHealth: vi.fn(async () => ({})),
+    fetchHealth: vi.fn(async () => ({ status: 'healthy' })),
     fetchInfo: vi.fn(async () => ({ version: '' })),
     subscribeTradeEvents: vi.fn(),
 }));
@@ -33,12 +33,14 @@ vi.mock('./tauri', () => ({
     reloadWhenHealthy: vi.fn(),
     localTlsCertExists: vi.fn(async () => false),
     nativeOwnsHarnessSidecar: vi.fn(async () => false),
+    caActive: vi.fn(async () => false),
     harnessOwnershipCompatible: () => true,
 }));
 
 const store = new Map<string, string>();
+const bootTimers = new Set<ReturnType<typeof setTimeout>>();
 
-async function boot(lastStage: 'reload' | 'wait-health' | null) {
+async function boot(lastStage: 'reload' | 'wait-health' | null, configure?: () => Promise<void>) {
     vi.resetModules();
     store.clear();
     vi.stubGlobal('localStorage', {
@@ -46,8 +48,21 @@ async function boot(lastStage: 'reload' | 'wait-health' | null) {
         setItem: (k: string, v: string) => void store.set(k, v),
         removeItem: (k: string) => void store.delete(k),
     });
-    vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval, location: { search: '', reload: vi.fn() } }));
+    vi.stubGlobal('window', Object.assign(new EventTarget(), {
+        setTimeout: (fn: (...args: unknown[]) => void, ms: number) => {
+            const timer = setTimeout(fn, ms);
+            bootTimers.add(timer);
+            return timer;
+        },
+        clearTimeout: (timer: ReturnType<typeof setTimeout>) => {
+            clearTimeout(timer);
+            bootTimers.delete(timer);
+        },
+        setInterval, clearInterval,
+        location: { search: '', reload: vi.fn() },
+    }));
     vi.stubGlobal('performance', { getEntriesByType: () => [{ type: m.navType }], timeOrigin: Date.now(), now: () => 0 });
+    await configure?.();
     const timing = await import('./startup-timing');
     if (lastStage) {
         timing.beginTiming('restart');
@@ -59,6 +74,7 @@ async function boot(lastStage: 'reload' | 'wait-health' | null) {
 }
 
 beforeEach(() => {
+    vi.clearAllMocks();
     m.child = false;
     m.navType = 'reload';
     m.ensureStream.mockClear();
@@ -68,6 +84,8 @@ beforeEach(() => {
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
 });
 afterEach(() => {
+    for (const timer of bootTimers) clearTimeout(timer);
+    bootTimers.clear();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
 });
@@ -85,6 +103,16 @@ describe('early stream at bootstrap', () => {
         await boot('reload');
         expect(m.ensureStream).not.toHaveBeenCalled();
         expect(m.startTrading).not.toHaveBeenCalled();
+    });
+
+    it('a child window cannot clear the main window trade block', async () => {
+        m.child = true;
+        await boot(null, async () => {
+            store.set('sj-pro-server-identity-verified', '0');
+        });
+        const shioaji = await import('./shioaji');
+        await vi.waitFor(() => expect(shioaji.fetchHealth).toHaveBeenCalled());
+        expect(store.get('sj-pro-server-identity-verified')).toBe('0');
     });
 
     it('not on an app launch, without a run, or before the server was healthy', async () => {
@@ -113,5 +141,75 @@ describe('early stream at bootstrap', () => {
         m.child = true;
         await boot(null);
         expect(m.holdStream).not.toHaveBeenCalled();
+    });
+
+    it('does not adopt an incompatible server after autostart refuses it', async () => {
+        m.navType = 'navigate';
+        await boot(null, async () => {
+            const tauri = await import('./tauri');
+            vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
+                autoStart: true, apiKey: 'k', secretKey: 's', production: true,
+            } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
+            vi.mocked(tauri.serverStatus).mockResolvedValueOnce({
+                running: true, healthy: true, port: 21322, simulation: true,
+                version: '1.7.6', scheme: 'http',
+            });
+            vi.mocked(tauri.serverStart).mockResolvedValueOnce({
+                ok: false, output: 'foreign server', port: 21322,
+                attached: false, portChanged: false,
+            });
+        });
+        const tauri = await import('./tauri');
+        const shioaji = await import('./shioaji');
+        const timing = await import('./startup-timing');
+        await vi.waitFor(() => expect(timing.getTimingHistory()[0]?.outcome).toBe('failed'));
+        expect(tauri.serverStart).toHaveBeenCalledTimes(1);
+        expect(shioaji.fetchHealth).not.toHaveBeenCalled();
+        expect(m.releaseStream).toHaveBeenCalledWith('boot kept page');
+        expect(m.startTrading).not.toHaveBeenCalled();
+        expect(window.location.reload).not.toHaveBeenCalled();
+    });
+
+    it('keeps watching after a spawn failure and adopts only a compatible healthy server', async () => {
+        m.navType = 'navigate';
+        await boot(null, async () => {
+            const tauri = await import('./tauri');
+            vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
+                autoStart: true, apiKey: 'k', secretKey: 's', production: false,
+            } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
+            vi.mocked(tauri.serverStatus)
+                .mockResolvedValueOnce({ running: false })
+                .mockResolvedValueOnce({ running: true, healthy: true, port: 21322,
+                    simulation: true, version: '1.7.6', scheme: 'http' });
+            vi.mocked(tauri.serverStart).mockResolvedValueOnce({
+                ok: false, output: 'spawn failed', port: 21322,
+                attached: false, portChanged: false,
+            });
+        });
+        await vi.waitFor(() => expect(window.location.reload).toHaveBeenCalledTimes(1));
+        expect(m.releaseStream).toHaveBeenCalledWith('boot kept page');
+    });
+
+    it('refuses a production listener whose configured CA is inactive', async () => {
+        m.navType = 'navigate';
+        await boot(null, async () => {
+            const tauri = await import('./tauri');
+            vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
+                autoStart: true, apiKey: 'k', secretKey: 's', production: true,
+                caPath: '/qa/cert.pfx',
+            } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
+            vi.mocked(tauri.serverStatus).mockResolvedValueOnce({
+                running: true, healthy: true, port: 21322, simulation: false,
+                version: '1.7.6', scheme: 'http',
+            });
+            vi.mocked(tauri.serverStart).mockResolvedValueOnce({
+                ok: false, output: 'CA inactive', port: 21322,
+                attached: false, portChanged: false,
+            });
+        });
+        const tauri = await import('./tauri');
+        await vi.waitFor(() => expect(tauri.caActive).toHaveBeenCalledWith(21322, 'http'));
+        expect(tauri.serverStart).not.toHaveBeenCalled();
+        expect(m.startTrading).not.toHaveBeenCalled();
     });
 });

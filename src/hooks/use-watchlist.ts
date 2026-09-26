@@ -54,13 +54,20 @@ async function resolveContract(
 export function useWatchlist() {
     const [items, setItems] = useState<WatchItem[]>([]);
     const [loading, setLoading] = useState(true);
-    const [initialLoading, setInitialLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
+    const [retryKey, setRetryKey] = useState(0);
     const [serverLists, setServerLists] = useState<ServerWatchlist[]>([]);
     const [activeListId, setActiveListId] = useState<string>('');
     const initStarted = useRef(false);
     const loadSeq = useRef(0);
     const activeIdRef = useRef('');
     activeIdRef.current = activeListId;
+    const retryLoad = useCallback(() => {
+        initStarted.current = false;
+        setLoadError(false);
+        setLoading(true);
+        setRetryKey((key) => key + 1);
+    }, []);
 
     const subscribeContract = useCallback(async (contract: ContractInfo) => {
         if (contract.target_code) {
@@ -170,6 +177,7 @@ export function useWatchlist() {
             type?: SecurityType,
             resolved?: ContractInfo,
         ) => {
+            if (!activeIdRef.current) throw new Error('自選清單尚未就緒');
             const contract = resolved ?? (await resolveContract(code, type));
             // 組合商品（合成合約）不能進自選 — server 端自選清單只收
             // 一般合約 code，同步會 400；組合請用「組合商品」面板
@@ -325,6 +333,7 @@ export function useWatchlist() {
     useEffect(() => {
         if (initStarted.current) return;
         initStarted.current = true;
+        setLoadError(false);
         (async () => {
             try {
                 let lists: ServerWatchlist[] = [];
@@ -337,10 +346,8 @@ export function useWatchlist() {
                     } catch (e) {
                         lastErr = e;
                         // A healthy HTTP server can still be waiting for its
-                        // Shioaji session. Keep retrying in the background,
-                        // but do not hold the entire terminal behind the boot
-                        // screen for the full backoff window.
-                        if (attempt === 0) setInitialLoading(false);
+                        // Shioaji session. Keep retrying in the background;
+                        // the terminal itself never waits for this one list.
                         await new Promise((r) =>
                             setTimeout(r, 1500 + attempt * 1000),
                         );
@@ -393,13 +400,12 @@ export function useWatchlist() {
                     setLoading(false);
                 }
             } catch {
+                setLoadError(true);
                 setLoading(false);
-            } finally {
-                setInitialLoading(false);
             }
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [retryKey]);
 
     useEffect(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -432,7 +438,8 @@ export function useWatchlist() {
     return {
         items,
         loading,
-        initialLoading,
+        loadError,
+        retryLoad,
         addSymbol,
         removeSymbol,
         reorderSymbol,

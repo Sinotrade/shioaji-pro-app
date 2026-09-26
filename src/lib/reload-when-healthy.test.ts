@@ -64,12 +64,29 @@ describe('reloadWhenHealthy', () => {
         expect(reload).toHaveBeenCalledTimes(1);
     });
 
+    it('does not reload on HTTP 200 while the broker is unhealthy or recovering', async () => {
+        fetchHealth
+            .mockResolvedValueOnce({ status: 'unhealthy' })
+            .mockResolvedValueOnce({ status: 'healthy', session_recovering: true })
+            .mockResolvedValueOnce({ status: 'warming' })
+            .mockResolvedValue({ status: 'degraded', session_recovering: false });
+        const done = reloadWhenHealthy();
+        await vi.advanceTimersByTimeAsync(249);
+        expect(reload).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(await done).toBe(true);
+        expect(fetchHealth).toHaveBeenCalledTimes(4);
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
     it('gives up at the deadline and closes the run as failed', async () => {
         fetchHealth.mockRejectedValue(new Error('down'));
         timing.beginTiming('start');
-        const done = reloadWhenHealthy(3000);
+        const onTimeout = vi.fn();
+        const done = reloadWhenHealthy(3000, onTimeout);
         await vi.advanceTimersByTimeAsync(10_000);
         expect(await done).toBe(false); // boot falls back to its watchdog
+        expect(onTimeout).toHaveBeenCalledTimes(1);
         expect(reload).not.toHaveBeenCalled();
         expect(timing.getTimingHistory()[0]).toMatchObject({
             scenario: 'start',
@@ -80,7 +97,8 @@ describe('reloadWhenHealthy', () => {
     it('a restart during a never-healthy wait is not closed by the old timeout', async () => {
         fetchHealth.mockRejectedValue(new Error('down'));
         timing.beginTiming('start');
-        const first = reloadWhenHealthy(); // 90 s budget
+        const onTimeout = vi.fn();
+        const first = reloadWhenHealthy(90_000, onTimeout); // 90 s budget
         await vi.advanceTimersByTimeAsync(80_000);
         // the user clicks 重啟 at 80 s: a new run begins …
         timing.beginTiming('restart', { replace: true });
@@ -95,6 +113,7 @@ describe('reloadWhenHealthy', () => {
             outcome: 'abandoned',
         });
         expect(reload).not.toHaveBeenCalled();
+        expect(onTimeout).not.toHaveBeenCalled();
     });
 
     it('a newer wait cancels the older one; only the newer reloads', async () => {

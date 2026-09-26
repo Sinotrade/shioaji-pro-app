@@ -11,17 +11,19 @@ import {
     type TimingScenario,
 } from './startup-timing';
 import type { DesktopSettings, SidecarResult, StartResult } from './tauri';
+import { setServerIdentityVerified } from './server-identity';
 
 export interface ServerActionDeps {
     serverStart: (cfg: DesktopSettings) => Promise<StartResult>;
     serverStop: (opts: { stopAgents: boolean }) => Promise<SidecarResult>;
     reloadWhenHealthy: () => Promise<unknown>;
     scheduleReload: (delayMs: number) => void;
+    reloadAfterFailedStop: () => void;
 }
 
 /** Start (or, nested inside a restart, continue) a run and hand it on:
- * a fresh spawn to the health wait, a moved port to the reload; an
- * attach or failure ends it here. Rethrows after closing the run. */
+ * a fresh spawn to the health wait, an already healthy attach to a reload;
+ * a failure ends it here. Rethrows after closing the run. */
 export async function timedStart(
     cfg: DesktopSettings,
     scenario: TimingScenario,
@@ -29,6 +31,7 @@ export async function timedStart(
     nested = false,
 ): Promise<StartResult> {
     if (!nested) beginTiming(scenario, { replace: true });
+    setServerIdentityVerified(false);
     const runId = peekActiveTiming()?.id;
     let res: StartResult;
     try {
@@ -39,14 +42,17 @@ export async function timedStart(
     }
     if (!res.ok) {
         endTiming('failed', undefined, { runId });
-    } else if (res.portChanged) {
-        // boot closes the run after the reload
-        markStage('reload', 'port/scheme moved', { runId });
-        deps.scheduleReload(1800);
     } else if (!res.attached) {
+        // /info can answer before the broker session is usable. A changed
+        // port/scheme is no reason to reload early or sleep a fixed 1.8 s.
         void deps.reloadWhenHealthy();
     } else {
-        endTiming('attached', undefined, { runId });
+        // serverStart only attaches after a successful /health body check,
+        // but this page can still show accounts from the previous listener.
+        // Reload immediately so boot re-verifies identity and snapshots.
+        markStage('healthy', 'attached server', { runId });
+        markStage('reload', res.portChanged ? 'port/scheme moved' : 'attached server', { runId });
+        deps.scheduleReload(0);
     }
     return res;
 }
@@ -82,6 +88,7 @@ export async function timedOnboarding(deps: {
     try {
         await deps.save();
         beginTiming('onboarding', { replace: true });
+        setServerIdentityVerified(false);
         runId = peekActiveTiming()?.id;
         const res = await deps.start();
         if (!res.ok) endTiming('failed', undefined, { runId });
@@ -95,13 +102,16 @@ export async function timedOnboarding(deps: {
 
 export async function timedStop(deps: ServerActionDeps): Promise<SidecarResult> {
     beginTiming('stop', { replace: true });
+    setServerIdentityVerified(false);
     const runId = peekActiveTiming()?.id;
     try {
         const res = await deps.serverStop({ stopAgents: true });
         endTiming(res.ok ? 'ok' : 'failed', undefined, { runId });
+        if (!res.ok) deps.reloadAfterFailedStop();
         return res;
     } catch (e) {
         endTiming('failed', 'stop threw', { runId });
+        deps.reloadAfterFailedStop();
         throw e;
     }
 }
@@ -114,11 +124,13 @@ export async function timedRestart(
     start: () => Promise<boolean>,
 ): Promise<{ stopped: SidecarResult; started: boolean }> {
     beginTiming(scenario, { replace: true });
+    setServerIdentityVerified(false);
     const runId = peekActiveTiming()?.id;
     try {
         const stopped = await deps.serverStop({ stopAgents: true });
         if (!stopped.ok) {
             endTiming('failed', 'stop refused', { runId });
+            deps.reloadAfterFailedStop();
             return { stopped, started: false };
         }
         // no fixed settle any more (was 1.2 s): serverStop returns once the
@@ -127,6 +139,7 @@ export async function timedRestart(
         return { stopped, started: await start() };
     } catch (e) {
         endTiming('failed', 'restart threw', { runId });
+        deps.reloadAfterFailedStop();
         throw e;
     }
 }

@@ -37,7 +37,9 @@ import {
     recoverHarnessOwnership,
 } from './sidecar-ownership';
 import { notify } from './trade';
-import { STOP_SCHEDULE, pollUntil, throttled } from './poll-until';
+import { FAST_START_SCHEDULE, STOP_SCHEDULE, pollDelay, pollUntil, throttled } from './poll-until';
+import { serverHealthReady } from './server-health';
+import { serverIdentityVerified, setServerIdentityVerified } from './server-identity';
 import {
     boundPorts,
     freePortAfterStop,
@@ -80,7 +82,7 @@ export {
 } from './agent-harness-state';
 export { harnessOwnershipCompatible } from './sidecar-ownership';
 
-// poll /health until it answers, then reload — used after a fresh start so
+// poll /health until the broker session is usable, then reload — used after a fresh start so
 // every panel bootstraps cleanly instead of racing a server that's still
 // warming up (login + CA activation + contract load). The first check runs
 // immediately: by the time serverStart returns, /info already answered, so
@@ -92,7 +94,10 @@ export { harnessOwnershipCompatible } from './sidecar-ownership';
 let healthWait: AbortController | null = null;
 // Resolves true when it triggered the reload, false when it timed out or
 // was cancelled.
-export function reloadWhenHealthy(timeoutMs = 90_000): Promise<boolean> {
+export function reloadWhenHealthy(
+    timeoutMs = 90_000,
+    onTimeout?: () => void,
+): Promise<boolean> {
     healthWait?.abort();
     const wait = new AbortController();
     healthWait = wait;
@@ -107,8 +112,8 @@ export function reloadWhenHealthy(timeoutMs = 90_000): Promise<boolean> {
             const res = await pollUntil(
                 async (_attempt, signal) => {
                     const { fetchHealth } = await import('./shioaji');
-                    await fetchHealth({ signal });
-                    return true;
+                    const health = await fetchHealth({ signal });
+                    return serverHealthReady(health) ? true : undefined;
                 },
                 { timeoutMs, attemptTimeoutMs: 5000, signal: wait.signal },
             );
@@ -117,6 +122,7 @@ export function reloadWhenHealthy(timeoutMs = 90_000): Promise<boolean> {
                 endTiming('failed', `health not ok after ${res.attempts} polls`, {
                     runId,
                 });
+                onTimeout?.();
                 return false;
             }
             markStage('healthy', `polls=${res.attempts}`, { runId });
@@ -228,7 +234,11 @@ async function spawnServer(
     );
     if (waited.value === 'up') {
         markStage('listener-up', `polls=${waited.attempts}`);
-        return { ok: true, output: await readServerLog(port) };
+        // The listener already answered. Reading the startup log through
+        // plugin-fs can take seconds and held back the first health check.
+        // Only production needs that log here to surface CA activation
+        // failures; simulation has no CA to validate.
+        return { ok: true, output: args.includes('--production') ? await readServerLog(port) : '' };
     }
     if (waited.value === 'died') {
         setServerPid(null);
@@ -259,12 +269,65 @@ export async function nativeOwnsHarnessSidecar(port: number): Promise<boolean> {
 // Single-flight so a settings toggle and an agent start racing each other
 // (or a boot-time restore) never stack concurrent respawns.
 let harnessRecoveryInFlight: Promise<StartResult | null> | null = null;
-export function ensureHarnessOwnedServer(): Promise<StartResult | null> {
+let harnessRecoveryReloaded = false;
+let harnessFailureWatch: object | null = null;
+function reloadIfConfiguredServerHealthy(): void {
+    if (harnessFailureWatch || isChildWindow()) return;
+    const watch = {};
+    harnessFailureWatch = watch;
+    const runId = peekActiveTiming()?.id;
+    const off = subscribeTiming(() => {
+        const active = peekActiveTiming();
+        if (active && active.id !== runId) {
+            if (harnessFailureWatch === watch) harnessFailureWatch = null;
+            off();
+        }
+    });
+    let attempt = 0;
+    const check = async () => {
+        if (harnessFailureWatch !== watch) return;
+        if (serverIdentityVerified()) {
+            harnessFailureWatch = null;
+            off();
+            return;
+        }
+        try {
+            const settings = await loadDesktopSettings();
+            const status = await serverStatus(async (candidate) => {
+                if (!candidate.healthy || candidate.simulation !== !settings.production) return false;
+                if (EXPECTED_SERVER_VERSION && candidate.version && candidate.version !== EXPECTED_SERVER_VERSION) return false;
+                const scheme = candidate.scheme ?? 'http';
+                if (settings.httpsEnabled
+                    ? scheme !== 'https' && await localTlsCertExists()
+                    : scheme !== 'http') return false;
+                if (!harnessOwnershipCompatible(settings.agentHarnessEnabled,
+                    !!candidate.port && await nativeOwnsHarnessSidecar(candidate.port))) return false;
+                return !settings.production || !settings.caPath ||
+                    (!!candidate.port && await caActive(candidate.port, scheme));
+            });
+            if (harnessFailureWatch !== watch || !status?.running) return;
+            harnessFailureWatch = null;
+            off();
+            if (status.port) setApiPort(status.port);
+            if (status.scheme) setApiScheme(status.scheme);
+            window.location.reload(); // boot verifies again before lifting the gate
+        } catch {
+            // Keep the mutation gate closed when identity cannot be proven.
+        } finally {
+            if (harnessFailureWatch === watch) {
+                window.setTimeout(check, pollDelay(++attempt, FAST_START_SCHEDULE));
+            }
+        }
+    };
+    void check();
+}
+export function ensureHarnessOwnedServer(opts: { deferReload?: boolean } = {}): Promise<StartResult | null> {
     if (!harnessRecoveryInFlight) {
         harnessRecoveryInFlight = recoverHarnessOwnership({
             nativeOwned: () => nativeOwnsHarnessSidecar(getApiPort()),
             loadSettings: loadDesktopSettings,
             restart: async () => {
+                setServerIdentityVerified(false);
                 const settings = await loadDesktopSettings();
                 return serverStart({ ...settings, agentHarnessEnabled: true });
             },
@@ -272,7 +335,16 @@ export function ensureHarnessOwnedServer(): Promise<StartResult | null> {
             harnessRecoveryInFlight = null;
         });
     }
-    return harnessRecoveryInFlight;
+    return harnessRecoveryInFlight.then((res) => {
+        if (res && !opts.deferReload && !harnessRecoveryReloaded) {
+            harnessRecoveryReloaded = true;
+            void reloadWhenHealthy(90_000, reloadIfConfiguredServerHealthy);
+        }
+        return res;
+    }).catch((error) => {
+        if (!serverIdentityVerified()) void reloadIfConfiguredServerHealthy();
+        throw error;
+    });
 }
 
 // startup/login output lands in ~/.shioaji/sjpro-server-<port>.log now —
@@ -491,7 +563,9 @@ export async function ensureLocalTlsCert(): Promise<SidecarResult> {
 // its state file goes stale. Ground truth is therefore an HTTP probe of the
 // candidate ports; the CLI registry is only consulted as a last resort for
 // daemons living on some other port.
-export async function serverStatus(): Promise<ServerStatus | null> {
+export async function serverStatus(
+    accept?: (status: ServerStatus) => Promise<boolean>,
+): Promise<ServerStatus | null> {
     if (!isTauri) return null;
     const ports = candidatePorts();
     // probe all candidates at once but decide in order, returning as soon as
@@ -502,7 +576,7 @@ export async function serverStatus(): Promise<ServerStatus | null> {
     for (const [i, port] of ports.entries()) {
         const hit = await pending[i];
         if (!hit) continue;
-        return {
+        const status: ServerStatus = {
             running: true,
             port,
             healthy: await probeHealthy(port, hit.scheme),
@@ -518,6 +592,7 @@ export async function serverStatus(): Promise<ServerStatus | null> {
                     ? (getServerPid() ?? undefined)
                     : undefined,
         };
+        if (!accept || await accept(status)) return status;
     }
     if (getDevServerPort()) return { running: false };
     try {
@@ -530,7 +605,7 @@ export async function serverStatus(): Promise<ServerStatus | null> {
             if (st.running && st.port && !ports.includes(st.port)) {
                 const hit = await probeInfoEither(st.port);
                 if (hit) {
-                    return {
+                    const status: ServerStatus = {
                         running: true,
                         port: st.port,
                         healthy: await probeHealthy(st.port, hit.scheme),
@@ -540,6 +615,7 @@ export async function serverStatus(): Promise<ServerStatus | null> {
                         agentHarnessEnabled: hit.info.agentHarnessEnabled,
                         pid: st.pid,
                     };
+                    if (!accept || await accept(status)) return status;
                 }
             }
         }
@@ -549,16 +625,29 @@ export async function serverStatus(): Promise<ServerStatus | null> {
     return { running: false };
 }
 
-// all probes go through plugin-http; its reqwest is built with
-// rustls-tls-native-roots so 本機 HTTPS (mkcert, trust chain in the OS
-// keychain/cert store) validates the same way the webview does. If the
-// Rust side still rejects the certificate (e.g. a CA that only lives in
-// the login keychain), fall back to the webview's own fetch, which uses
-// the OS networking stack.
+// Plaintext localhost probes use the webview first; HTTPS and fallbacks use
+// plugin-http with rustls-tls-native-roots. If Rust rejects a cert trusted
+// only by the login keychain, fall back to the webview's OS networking stack.
 async function probeFetch(
     url: string,
     timeoutMs: number,
 ): Promise<Response> {
+    // The webview already reaches the local HTTP API for every panel. At
+    // startup the plugin-http queue can take several seconds to answer even
+    // while that API is healthy, delaying (or falsely failing) /info and
+    // /health. Use the same fast path as the panels for plaintext localhost;
+    // retain the native client for a CLI with restrictive CORS or HTTPS.
+    if (url.startsWith('http://127.0.0.1:')) {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), Math.min(timeoutMs, 1500));
+        try {
+            return await fetch(url, { signal: controller.signal });
+        } catch {
+            // Native fallback below.
+        } finally {
+            window.clearTimeout(timer);
+        }
+    }
     try {
         return await tauriFetchWithTimeout(url, timeoutMs);
     } catch (err) {
@@ -654,12 +743,11 @@ async function probeHealthy(
             5000,
         );
         if (!res.ok) return false;
-        // the server answers 200 even when its upstream session is dead
-        // (status "unhealthy", token expired — Shioaji#215); trust the body.
-        // "degraded" (token renewal due) still counts as healthy — it's a
-        // transient state, and restarting on it would cause churn.
-        const body = (await res.json()) as { status?: string };
-        return body.status !== 'unhealthy';
+        // The server can answer 200 while its upstream session is dead or
+        // recovering; the body decides readiness. "degraded" (token renewal
+        // due) remains usable and must not cause restart churn.
+        const body = (await res.json()) as { status?: string; session_recovering?: boolean };
+        return serverHealthReady(body);
     } catch {
         return false;
     }
@@ -668,7 +756,7 @@ async function probeHealthy(
 // is CA active on this daemon? production orders 400 without it. We only
 // attach to / keep a daemon for production if its CA is live — otherwise the
 // user sets CA in the app but the running daemon never had it (issue #1).
-async function caActive(
+export async function caActive(
     port: number,
     scheme: ApiScheme = getApiScheme(),
 ): Promise<boolean> {
@@ -1241,14 +1329,20 @@ export async function setAgentHarnessEnabled(
     // dialog — recover by respawning natively first. Disable is left as-is:
     // an unowned sidecar cannot be signed for either way, and the existing
     // error already points at the server restart.
-    const recovered = enabled ? await ensureHarnessOwnedServer() : null;
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('agent_harness_set_enabled', {
-        origin: new URL(getApiBase()).origin,
-        enabled,
-    });
-    const settings = await loadDesktopSettings();
-    await saveDesktopSettings({ ...settings, agentHarnessEnabled: enabled });
+    const recovered = enabled ? await ensureHarnessOwnedServer({ deferReload: true }) : null;
+    try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('agent_harness_set_enabled', {
+            origin: new URL(getApiBase()).origin,
+            enabled,
+        });
+        const settings = await loadDesktopSettings();
+        await saveDesktopSettings({ ...settings, agentHarnessEnabled: enabled });
+    } catch (error) {
+        if (recovered) void reloadIfConfiguredServerHealthy();
+        throw error;
+    }
+    if (recovered) void reloadWhenHealthy(90_000, reloadIfConfiguredServerHealthy);
     return {
         restarted: recovered !== null,
         portChanged: recovered?.portChanged ?? false,

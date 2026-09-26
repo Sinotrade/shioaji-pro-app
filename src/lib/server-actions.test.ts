@@ -28,6 +28,7 @@ const deps = (over: Partial<Parameters<typeof timedStop>[0]> = {}) => ({
     serverStart: vi.fn(async () => started({})),
     serverStop: vi.fn(async () => ({ ok: true, output: '' })),
     reloadWhenHealthy: vi.fn(async () => undefined),
+    reloadAfterFailedStop: vi.fn(),
     scheduleReload: vi.fn(),
     ...over,
 });
@@ -48,21 +49,29 @@ describe('timedStart', () => {
         expect(timing.getActiveTiming()?.scenario).toBe('start');
     });
 
-    it('attached: ends the run as attached', async () => {
+    it('attached: reloads immediately to verify fresh frontend state', async () => {
         const d = deps({ serverStart: vi.fn(async () => started({ attached: true })) });
         await timedStart(cfg, 'start', d);
-        expect(timing.getActiveTiming()).toBeNull();
-        expect(last()).toMatchObject({ scenario: 'start', outcome: 'attached' });
+        expect(d.scheduleReload).toHaveBeenCalledWith(0);
+        expect(timing.getActiveTiming()?.marks.at(-1)?.stage).toBe('reload');
         expect(d.reloadWhenHealthy).not.toHaveBeenCalled();
     });
 
-    it('port moved: marks the reload and schedules it (boot closes the run)', async () => {
+    it('healthy attached port moved: reloads without a fixed delay', async () => {
         const d = deps({
             serverStart: vi.fn(async () => started({ attached: true, portChanged: true })),
         });
         await timedStart(cfg, 'start', d);
-        expect(d.scheduleReload).toHaveBeenCalledWith(1800);
+        expect(d.scheduleReload).toHaveBeenCalledWith(0);
         expect(timing.getActiveTiming()!.marks.at(-1)!.stage).toBe('reload');
+    });
+
+    it('fresh spawn on another port waits for real health before reloading', async () => {
+        const d = deps({ serverStart: vi.fn(async () => started({ portChanged: true })) });
+        await timedStart(cfg, 'start', d);
+        expect(d.reloadWhenHealthy).toHaveBeenCalledTimes(1);
+        expect(d.scheduleReload).not.toHaveBeenCalled();
+        expect(timing.getActiveTiming()?.marks.some((m) => m.stage === 'reload')).toBe(false);
     });
 
     it('failed: ends the run as failed', async () => {
@@ -170,10 +179,14 @@ describe('timedOnboarding', () => {
 
 describe('timedStop', () => {
     it('ok and failed both end the run', async () => {
-        await timedStop(deps());
+        const ok = deps();
+        await timedStop(ok);
         expect(last()).toMatchObject({ scenario: 'stop', outcome: 'ok' });
-        await timedStop(deps({ serverStop: vi.fn(async () => ({ ok: false, output: 'x' })) }));
+        expect(ok.reloadAfterFailedStop).not.toHaveBeenCalled();
+        const failed = deps({ serverStop: vi.fn(async () => ({ ok: false, output: 'x' })) });
+        await timedStop(failed);
         expect(last()).toMatchObject({ scenario: 'stop', outcome: 'failed' });
+        expect(failed.reloadAfterFailedStop).toHaveBeenCalledTimes(1);
         expect(timing.getActiveTiming()).toBeNull();
     });
 
@@ -181,6 +194,7 @@ describe('timedStop', () => {
         const d = deps({ serverStop: vi.fn(async () => { throw new Error('boom'); }) });
         await expect(timedStop(d)).rejects.toThrow('boom');
         expect(last()).toMatchObject({ scenario: 'stop', outcome: 'failed' });
+        expect(d.reloadAfterFailedStop).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -192,6 +206,7 @@ describe('timedRestart', () => {
         expect(res.started).toBe(false);
         expect(start).not.toHaveBeenCalled();
         expect(last()).toMatchObject({ scenario: 'sim-to-prod', outcome: 'failed', detail: 'stop refused' });
+        expect(d.reloadAfterFailedStop).toHaveBeenCalledTimes(1);
     });
 
     it('starts right after the stop — no fixed settle — inside the same run', async () => {
@@ -216,10 +231,11 @@ describe('timedRestart', () => {
         expect(last()).toMatchObject({ scenario: 'restart', outcome: 'failed' });
     });
 
-    it('nested start attach ends the restart run as attached', async () => {
+    it('nested start attach keeps the restart run through a fresh page load', async () => {
         const d = deps({ serverStart: vi.fn(async () => started({ attached: true })) });
         await timedRestart('restart', d, () => timedStart(cfg, 'restart', d, true).then((r) => r.ok));
-        expect(last()).toMatchObject({ scenario: 'restart', outcome: 'attached' });
+        expect(d.scheduleReload).toHaveBeenCalledWith(0);
+        expect(timing.getActiveTiming()).toMatchObject({ scenario: 'restart' });
     });
 
     it('a throwing stop or start ends the run and rethrows', async () => {

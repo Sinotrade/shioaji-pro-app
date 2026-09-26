@@ -20,12 +20,15 @@ import {
 import { ensureStream, holdStream, onOrderEvent, releaseStream } from './stream';
 import {
     harnessOwnershipCompatible,
+    caActive,
     loadDesktopSettings,
     localTlsCertExists,
     nativeOwnsHarnessSidecar,
     reloadWhenHealthy,
     serverStart,
     serverStatus,
+    type DesktopSettings,
+    type ServerStatus,
 } from './tauri';
 import {
     beginBootTiming,
@@ -39,10 +42,37 @@ import { appReadySignals, startStallProbe, watchFrontendReady } from './frontend
 import { ensureAccounts, loadAccountsShared } from './account-store';
 import { timedAutostart } from './server-actions';
 import { startTradingState } from './trading-state';
+import { serverHealthReady } from './server-health';
+import { FAST_START_SCHEDULE, pollDelay } from './poll-until';
+import { setServerIdentityVerified } from './server-identity';
 import { logNotice, notify } from './trade';
 import { isChildWindow } from './window-role';
 
 let booted = false;
+
+async function matchesServerIdentity(status: ServerStatus | null, settings: DesktopSettings): Promise<boolean> {
+    if (!status?.running) return false;
+    // An HTTPS listener proves its cert exists. Only an HTTP listener needs
+    // the file check before deciding the setting is incompatible.
+    const scheme = status.scheme ?? 'http';
+    const schemeOk = settings.httpsEnabled
+        ? scheme === 'https' || !(await localTlsCertExists().catch(() => false))
+        : scheme === 'http';
+    const harnessOwned = harnessOwnershipCompatible(
+        settings.agentHarnessEnabled,
+        !!status.port && await nativeOwnsHarnessSidecar(status.port),
+    );
+    if (status.simulation !== !settings.production || !schemeOk || !harnessOwned ||
+        (EXPECTED_SERVER_VERSION !== '' && status.version !== undefined && status.version !== EXPECTED_SERVER_VERSION)) {
+        return false;
+    }
+    return true;
+}
+
+async function serverCaReady(status: ServerStatus, settings: DesktopSettings): Promise<boolean> {
+    return !settings.production || !settings.caPath ||
+        (!!status.port && await caActive(status.port, status.scheme));
+}
 
 // Windows/WebView2 keyboard-focus self-heal. The native window can be
 // ACTIVE while the webview holds no keyboard focus — mouse keeps working
@@ -80,6 +110,7 @@ function installKeyboardFocusHeal() {
 export function bootstrap() {
     if (booted) return;
     booted = true;
+    if (isTauri && !isChildWindow()) setServerIdentityVerified(false);
     installKeyboardFocusHeal();
     // agent scheduled/triggered tasks run for the app's lifetime
     agentModule?.ensureScheduler();
@@ -138,6 +169,8 @@ async function run() {
     const timed = isTauri && !isPopout;
     let coldStart = false;
     let bootTimed = false;
+    let expectedSettings: DesktopSettings | null = null;
+    let settingsLoaded = !isTauri || isPopout;
     const openBootTiming = (autoStart: boolean) => {
         if (!timed || bootTimed) return;
         bootTimed = true;
@@ -151,62 +184,49 @@ async function run() {
     if (isTauri && !isPopout) {
         try {
             const settings = await loadDesktopSettings();
+            settingsLoaded = true;
+            expectedSettings = settings;
             const autoStart =
                 settings.autoStart && !!settings.apiKey && !!settings.secretKey;
             openBootTiming(autoStart);
             if (autoStart) {
                 markStage('probe');
+                const statusProbeStarted = Date.now();
                 const status = await serverStatus();
-                // 本機 HTTPS：the desired listener scheme also has to match
-                // — an http daemon while HTTPS is enabled (or vice versa)
-                // needs a restart to swap the listener. Judge a RUNNING
-                // https listener by its scheme alone: it serving TLS proves
-                // the certificate exists, and probing the cert file here
-                // (plugin-fs right at boot) can transiently fail — which
-                // used to misread "cert missing → want http", kill the
-                // healthy https server, and loop forever.
-                const scheme = status?.scheme ?? 'http';
-                const schemeOk = settings.httpsEnabled
-                    ? scheme === 'https' ||
-                      !(await localTlsCertExists().catch(() => false))
-                    : scheme === 'http';
-                const harnessOwned = harnessOwnershipCompatible(
-                    settings.agentHarnessEnabled,
-                    !!status?.port &&
-                        (await nativeOwnsHarnessSidecar(status.port)),
-                );
+                markStage('probe', `status ${Date.now() - statusProbeStarted}ms`);
+                const matches = await matchesServerIdentity(status, settings);
+                markStage('probe', 'identity checked');
                 // identity match: right mode, right listener scheme, right
                 // version — health is judged separately so a server that is
                 // merely WARMING UP (login + contract load, /health not yet
                 // 200) is never killed. Restart-kill during warmup was a
                 // reload loop: each reload landed inside the next server's
                 // warmup window and killed it again.
-                const matches =
-                    status?.running &&
-                    status.simulation === !settings.production &&
-                    schemeOk &&
-                    harnessOwned &&
-                    // version handshake — 不接版本不符的 server（例如
-                    // 使用者 8080 上的舊 CLI），改起自帶 sidecar
-                    (EXPECTED_SERVER_VERSION === '' ||
-                        status.version === undefined ||
-                        status.version === EXPECTED_SERVER_VERSION);
-                if (matches && status.healthy) {
-                    // daemon survived from a previous run (possibly on a
-                    // non-default port) — make sure the API base follows it
-                    const schemeChanged = status.scheme
-                        ? setApiScheme(status.scheme)
-                        : false;
-                    if (
-                        (status.port && setApiPort(status.port)) ||
-                        schemeChanged
-                    ) {
-                        markStage('reload', 'port/scheme moved');
-                        window.location.reload();
+                if (matches && status?.healthy) {
+                    if (!(await serverCaReady(status, settings))) {
+                        notify({ kind: 'err', title: 'CA 尚未啟用',
+                            body: '正式環境 CA 未通過，交易已暫停。請檢查憑證並在伺服器面板手動重啟以套用設定。' });
+                    } else {
+                        // daemon survived from a previous run (possibly on a
+                        // non-default port) — make sure the API base follows it
+                        const schemeChanged = status.scheme
+                            ? setApiScheme(status.scheme)
+                            : false;
+                        if (
+                            (status.port && setApiPort(status.port)) ||
+                            schemeChanged
+                        ) {
+                            markStage('reload', 'port/scheme moved');
+                            window.location.reload();
+                            return;
+                        }
+                        settleBootRun(coldStart ? 'attached' : 'ok');
+                        setServerIdentityVerified(true);
+                        releaseStream('server confirmed');
+                        startTradingState();
                         return;
                     }
-                    settleBootRun(coldStart ? 'attached' : 'ok');
-                } else if (matches) {
+                } else if (matches && status) {
                     // the right server is starting up — adopt its address
                     // and reload once /health answers, on the same fast
                     // health wait as a fresh start (was: the 4 s watchdog
@@ -243,6 +263,9 @@ async function run() {
                             title: '伺服器自動啟動失敗',
                             body: res.output.slice(0, 120),
                         });
+                        // The identity-aware watchdog below can recover if
+                        // a compatible server appears later. It must never
+                        // adopt a foreign or wrong-mode listener by health.
                     } else if (!res.attached || res.portChanged) {
                         // the daemon (re)started while panels were already
                         // firing their one-shot requests into the gap —
@@ -260,8 +283,30 @@ async function run() {
                         });
                         return;
                     } else {
-                        settleBootRun('attached');
+                        // A concurrent healthy attach may carry a different
+                        // account snapshot than this page. Refresh once.
+                        markStage('healthy', 'attached server');
+                        markStage('reload', 'attached server');
+                        window.location.reload();
+                        return;
                     }
+                }
+            } else {
+                // Autostart disabled: an existing desktop listener still
+                // needs the configured mode, scheme, CA and ownership before
+                // it can authorize mutations. If absent, keep watching.
+                const status = await serverStatus();
+                if (status?.healthy && await matchesServerIdentity(status, settings) &&
+                    await serverCaReady(status, settings)) {
+                    const portMoved = status.port ? setApiPort(status.port) : false;
+                    const schemeMoved = status.scheme ? setApiScheme(status.scheme) : false;
+                    const moved = portMoved || schemeMoved;
+                    if (moved) { window.location.reload(); return; }
+                    setServerIdentityVerified(true);
+                    settleBootRun('ok');
+                    releaseStream('server confirmed');
+                    startTradingState();
+                    return;
                 }
             }
         } catch {
@@ -277,31 +322,44 @@ async function run() {
     // the scheme-agnostic status probe (NOT fetchHealth, which is locked to
     // the persisted scheme) so it still finds the server after a 本機 HTTPS
     // toggle left localStorage pointing at the other listener type.
-    try {
-        await fetchHealth();
-        if (await serverVersionOk()) {
-            if (timed) settleBootRun('ok');
-            // The shared trading store subscribes before its initial snapshot.
-            return; // server was up at boot — components loaded normally
-        }
-        // wrong-version server answering on the persisted port — fall
-        // through to the watchdog: adopt it only after it's replaced
-    } catch {
-        notify({
-            kind: 'info',
-            title: '等待 shioaji server…',
-            body: '伺服器就緒後將自動載入畫面',
-        });
-    }
-    let ticking = false; // async ticks must not overlap — probe pile-ups
-    // congest plugin-http until even live-server probes time out
-    const timer = setInterval(async () => {
-        if (ticking) return;
-        ticking = true;
+    if (!settingsLoaded && isTauri && !isPopout) return;
+    if (!expectedSettings) {
         try {
-            const st = isTauri ? await serverStatus() : null;
+            const health = await fetchHealth();
+            if (serverHealthReady(health) && await serverVersionOk()) {
+                if (!isPopout) setServerIdentityVerified(true);
+                if (timed) settleBootRun('ok');
+                if (!isPopout) startTradingState();
+                // The shared trading store subscribes before its initial snapshot.
+                return; // server was up at boot — components loaded normally
+            }
+            // wrong-version server answering on the persisted port — fall
+            // through to the watchdog: adopt it only after it's replaced
+        } catch {
+            notify({
+                kind: 'info',
+                title: '等待 shioaji server…',
+                body: '伺服器就緒後將自動載入畫面',
+            });
+        }
+    }
+    // Keep the unlimited watchdog for servers that outlive the initial
+    // health wait, but check immediately and back off sequentially. A fixed
+    // 4 s interval made a healthy server sit idle for up to four seconds.
+    let attempt = 0;
+    let reloading = false;
+    const check = async () => {
+        try {
+            const st = isTauri
+                ? await serverStatus(expectedSettings
+                    ? async (candidate) => candidate.healthy === true &&
+                        await matchesServerIdentity(candidate, expectedSettings!) &&
+                        await serverCaReady(candidate, expectedSettings!)
+                    : undefined)
+                : null;
             if (st) {
                 if (!st.running || !st.healthy) return;
+                if (expectedSettings && !(await matchesServerIdentity(st, expectedSettings))) return;
                 if (
                     EXPECTED_SERVER_VERSION !== '' &&
                     st.version !== undefined &&
@@ -312,10 +370,10 @@ async function run() {
                 if (st.port) setApiPort(st.port);
                 if (st.scheme) setApiScheme(st.scheme);
             } else {
-                await fetchHealth();
+                if (!serverHealthReady(await fetchHealth())) return;
                 if (!(await serverVersionOk())) return; // warned; keep waiting
             }
-            clearInterval(timer);
+            reloading = true;
             if (timed) {
                 markStage('healthy', 'boot watchdog');
                 markStage('reload');
@@ -324,9 +382,10 @@ async function run() {
         } catch {
             // keep waiting
         } finally {
-            ticking = false;
+            if (!reloading) window.setTimeout(check, pollDelay(++attempt, FAST_START_SCHEDULE));
         }
-    }, 4000);
+    };
+    void check();
 }
 
 // the server is healthy: the run ends once the front end is usable

@@ -40,7 +40,7 @@ describe('shared account read', () => {
         fetchAccounts.mockRejectedValue(new Error('503'));
         await expect(mod.loadAccountsShared()).rejects.toThrow('503');
         await mod.refreshAccounts();
-        expect(mod.getAccountState()).toMatchObject({ loaded: true, accounts: [] });
+        expect(mod.getAccountState()).toMatchObject({ loaded: true, loadError: true, accounts: [] });
     });
 
     it('a re-read keeps this window\'s selection, not what another window saved', async () => {

@@ -18,6 +18,7 @@ interface AccountState {
     selectedStock: Account | null;
     selectedFutures: Account | null;
     loaded: boolean;
+    loadError: boolean;
 }
 
 let state: AccountState = {
@@ -25,6 +26,7 @@ let state: AccountState = {
     selectedStock: null,
     selectedFutures: null,
     loaded: false,
+    loadError: false,
 };
 const listeners = new Set<() => void>();
 
@@ -97,6 +99,7 @@ function apply(all: Account[]) {
             futures[0] ??
             null,
         loaded: true,
+        loadError: false,
     };
 }
 
@@ -104,7 +107,7 @@ async function load(): Promise<void> {
     try {
         apply(await fetchShared());
     } catch {
-        state = { ...state, loaded: true };
+        state = { ...state, loaded: true, loadError: true };
     }
     emit();
 }

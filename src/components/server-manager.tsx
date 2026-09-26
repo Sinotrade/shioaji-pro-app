@@ -75,14 +75,21 @@ import { Orb } from './orb';
 import { ServerSettingsDialog, type ServerConnectionSettings } from './server-settings-dialog';
 import * as dialogStyles from './server-settings-dialog.css';
 import type { Health } from '../lib/types/health';
+import { setServerIdentityVerified } from '../lib/server-identity';
 import * as styles from './hud-header.css';
 
 const serverActionDeps: ServerActionDeps = {
     serverStart,
     serverStop,
     reloadWhenHealthy: () => reloadWhenHealthy(),
+    reloadAfterFailedStop: () => {
+        // A refused stop may leave the old listener healthy or warming.
+        // Reboot the page; boot verifies identity and keeps watching if it
+        // is not yet healthy. The mutation gate stays closed meanwhile.
+        setTimeout(() => globalThis.window?.location?.reload?.(), 0);
+    },
     scheduleReload: (ms) => {
-        setTimeout(() => window.location.reload(), ms);
+        setTimeout(() => globalThis.window?.location?.reload?.(), ms);
     },
 };
 
@@ -339,8 +346,12 @@ export function ServerManager({
         setConfirmLogout(false);
         void (async () => {
             try {
+                setServerIdentityVerified(false);
                 const stopped = await serverStop({ stopAgents: true });
-                if (!stopped.ok) throw new Error(stopped.output || '無法停止本機伺服器');
+                if (!stopped.ok) {
+                    serverActionDeps.reloadAfterFailedStop();
+                    throw new Error(stopped.output || '無法停止本機伺服器');
+                }
                 const current = await loadDesktopSettings();
                 await saveDesktopSettings({ ...current, apiKey: '', secretKey: '' });
                 clearStoredSpawnKeyHash();

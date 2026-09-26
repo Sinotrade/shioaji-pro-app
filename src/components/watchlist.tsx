@@ -244,6 +244,8 @@ export function Watchlist({
     onRenameList,
     onDeleteList,
     loading,
+    loadError,
+    onRetryLoad,
 }: {
     items: WatchItem[];
     selectedCode: string | null;
@@ -263,6 +265,8 @@ export function Watchlist({
     onRenameList: (name: string) => Promise<boolean>;
     onDeleteList: () => Promise<unknown>;
     loading: boolean;
+    loadError: boolean;
+    onRetryLoad: () => void;
 }) {
     const [input, setInput] = useState('');
     const [busy, setBusy] = useState(false);
@@ -390,7 +394,7 @@ export function Watchlist({
 
     const submit = async () => {
         const code = input.trim().toUpperCase();
-        if (!code || busy) return;
+        if (!code || busy || loading || !activeListId) return;
         setBusy(true);
         try {
             await onAdd(code);
@@ -404,7 +408,7 @@ export function Watchlist({
 
     const submitNewList = async () => {
         const name = newName.trim();
-        if (!name) return;
+        if (!name || loading || loadError) return;
         try {
             await onCreateList(name);
             setCreating(false);
@@ -557,6 +561,7 @@ export function Watchlist({
                         <button
                             className={styles.listBtn}
                             title='建立新清單'
+                            disabled={loading || loadError}
                             onClick={() => setCreating(true)}
                         >
                             <Plus size={12} />
@@ -593,7 +598,12 @@ export function Watchlist({
                     {loading && items.length === 0 && (
                         <div className={styles.loadingHint}>載入清單…</div>
                     )}
-                    {!loading && items.length === 0 && (
+                    {!loading && loadError && (
+                        <div className={styles.loadingHint}>
+                            自選清單讀取或同步失敗。<button type="button" onClick={onRetryLoad}>重試</button>
+                        </div>
+                    )}
+                    {!loading && !loadError && items.length === 0 && (
                         <div className={styles.loadingHint}>
                             清單是空的 — 在下方輸入代碼加入
                         </div>
@@ -665,6 +675,7 @@ export function Watchlist({
                 <input
                     className={styles.addInput}
                     placeholder='股票、期貨或指數（如 台積電期）'
+                    disabled={loading || !activeListId}
                     value={input}
                     onChange={(e) => {
                         setInput(e.target.value);
@@ -677,7 +688,7 @@ export function Watchlist({
                         if (e.key === 'Escape') setSuggestions([]);
                     }}
                 />
-                <button className={panel.btn} onClick={submit} disabled={busy}>
+                <button className={panel.btn} onClick={submit} disabled={busy || loading || !activeListId}>
                     {busy ? '…' : '+'}
                 </button>
             </div>

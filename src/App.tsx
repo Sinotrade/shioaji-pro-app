@@ -32,7 +32,6 @@ import {
 import { NoticeCenter } from './components/notice-center';
 import { OptPayoff } from './components/opt-payoff';
 import { OptionChain } from './components/option-chain';
-import { Orb } from './components/orb';
 import { OrderConfirmHost } from './components/order-confirm-dialog';
 import { OrderTicket } from './components/order-ticket';
 import { PanelChrome } from './components/panel-chrome';
@@ -54,6 +53,7 @@ import { Watchlist } from './components/watchlist';
 import * as grid from './grid.css';
 import { useHotkeys } from './hooks/use-hotkeys';
 import { useWatchlist } from './hooks/use-watchlist';
+import { markWorkspaceVisible } from './lib/frontend-ready';
 import { trackActivity } from './lib/activity';
 import { registerAgentAppCommandHost } from './lib/agent-app-command';
 import {
@@ -594,7 +594,8 @@ function MainApp() {
     const {
         items,
         loading,
-        initialLoading,
+        loadError,
+        retryLoad,
         addSymbol,
         removeSymbol,
         reorderSymbol,
@@ -621,6 +622,10 @@ function MainApp() {
     const itemsRef = useRef(items);
     itemsRef.current = items;
     const { width, containerRef, mounted } = useContainerWidth();
+
+    useEffect(() => {
+        if (mounted) markWorkspaceVisible();
+    }, [mounted]);
 
     useEffect(
         () => subscribeAgentHarnessEnabled(setAgentHarnessEnabledState),
@@ -1109,9 +1114,6 @@ function MainApp() {
         [items],
     );
 
-    const booting = initialLoading;
-
-
     const watchlistProps = {
         items,
         selectedCode: selected?.code ?? null,
@@ -1126,6 +1128,8 @@ function MainApp() {
         onRenameList: renameCurrentList,
         onDeleteList: deleteCurrentList,
         loading,
+        loadError,
+        onRetryLoad: retryLoad,
     };
     const dockProps = {
         positions: positionsState.data ?? [],
@@ -1172,16 +1176,7 @@ function MainApp() {
             />
 
             <div className={grid.gridWrap} ref={containerRef}>
-                {booting && (
-                    <div className={styles.loading}>
-                        <Orb size={20} />
-                        <span>Shioaji Pro</span>
-                        <span style={{ fontSize: '0.7rem' }}>
-                            載入交易終端…
-                        </span>
-                    </div>
-                )}
-                {!booting && mounted && (
+                {mounted && (
                     <GridLayout
                         layout={renderLayout}
                         width={width}

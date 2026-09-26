@@ -2,6 +2,7 @@
 
 import { getApiBase, isTauri } from './runtime';
 import { isAgentHarnessEnabled } from './agent-harness-state';
+import { serverIdentityVerified } from './server-identity';
 
 // resolved per request — the server port can move at runtime (e.g. the boot
 // flow discovers the default port occupied and starts on a fallback), and a
@@ -101,6 +102,12 @@ export async function apiPost<T>(
     body: unknown,
     opts?: { timeoutMs?: number; agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
 ): Promise<T> {
+    if (isTauri && AGENT_HARNESS_MUTATIONS.has(path) && !serverIdentityVerified()) {
+        throw Object.assign(
+            new Error('伺服器身分尚未驗證，已暫停交易操作；請等待重新連線'),
+            { mutationNotStarted: true },
+        );
+    }
     const harnessEnabled = isAgentHarnessEnabled();
     if (
         shouldRejectUnsignedAgentMutation(

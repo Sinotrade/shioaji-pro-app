@@ -15,7 +15,7 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | 階段 key | 畫面顯示 | 意義 |
 | --- | --- | --- |
 | `app-js-start` | App 啟動 | 冷啟動：前端程式開始執行（相對 webview 開始載入，見下方說明） |
-| `probe` | 檢查現有伺服器 | 探測已在運行的伺服器、決定可否沿用 |
+| `probe` | 檢查現有伺服器 | 探測已在運行的伺服器、決定可否沿用；`status Nms` 附註是原生狀態探測耗時，`identity checked` 是模式／版本／Harness 檢查結束 |
 | `wait-warming` | 等待先前啟動中的伺服器 | 上一次 spawn 可能仍在登入，最多等 20 秒；記錄中的程序已不存在（例如 App 重開）時立即結束，下一個 `probe` 附註 `warming dead` |
 | `sweep-orphans` | 搜尋遺留的伺服器 | 掃描備用 port 上的孤兒伺服器；先以 bind 測試找出有人監聽的 port，只對這些 port 發 HTTP 探測 |
 | `attach` | 連接既有伺服器 | 沿用健康、模式正確的伺服器；附註 `server still starting` 表示接手仍在登入中的伺服器，之後進入 `wait-health` |
@@ -29,7 +29,7 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | `wait-listener` | 登入與載入合約（約需 10–30 秒） | sidecar 登入＋合約載入後才開始 listen；App 端無法再細分 |
 | `listener-up` | 伺服器已回應 | `/api/v1/info` 第一次回應（附輪詢次數） |
 | `wait-health` | 等待健康檢查 | 輪詢 `/api/v1/health` |
-| `healthy` | 健康檢查通過 | 第一次健康回應（附輪詢次數） |
+| `healthy` | 健康檢查通過 | `/health` 回應 `healthy` 或 `degraded` 且未在 session recovery；HTTP 200 本身不算就緒（附輪詢次數） |
 | `reload` | 重新載入畫面 | App 重新載入頁面 |
 | `page-loaded` | 畫面載入中 | 重新載入後的前端 bootstrap 開始 |
 | `boot-checked` | 伺服器確認完成 | 重新載入後 boot 的伺服器檢查結束，之後的時間都屬前端就緒 |
@@ -41,9 +41,10 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 | `trading-start` | 交易資料開始載入 | 重新載入進已健康伺服器時，頁面一載入就啟動交易資料（帳戶、持倉、委託），與儀表板第一次 render 重疊 |
 | `account-read` | 帳務查詢完成 | 只記附註：第一次交易資料讀取的每個請求與耗時（`subscribe`、`S1 positions`、`S1 orders`、`S1 balance`、`F1 margin`…，帳戶只以類型＋順序表示）；判斷持倉慢在券商／sidecar 還是頁面 |
 | `app-mounted` | 畫面元件已掛載 | 儀表板第一次 commit 完成（所有面板掛載、effect 已執行） |
+| `workspace-visible` | 交易終端已顯示 | 版面第一個 commit 完成；自選清單仍可在自己的面板中載入，不遮住整個交易終端 |
 | `main-thread` | 主執行緒忙碌統計 | 只記附註：從頁面載入（含儀表板第一次 render）到前端就緒，JS 主執行緒被占用的總時間與最長一次卡住（`busy=…ms maxStall=…ms`）；SSE 開啟或第一個事件在主執行緒忙時無法處理，`stream-live` 會一起變晚 |
 | `accounts-loaded` | 帳戶已載入 | 帳戶清單第一次載入完成（附帳戶數） |
-| `positions-loaded` | 持倉已載入 | 第一次持倉查詢完成；失敗或需對帳也算完成並註明 |
+| `positions-loaded` | 持倉已載入 | 第一次交易資料整批查詢結束（訂閱、持倉、委託與帳務）；此階段等待其他查詢，因此各請求耗時應看 `account-read`；失敗或需對帳也算完成並註明 |
 | `stream-live` | 行情串流已連線 | SSE 串流狀態轉為 LIVE |
 
 冷啟動的起點是 webview 的 `performance.timeOrigin`（頁面開始載入），**不含**
@@ -55,10 +56,14 @@ API Key、Secret、憑證路徑、密碼或伺服器 log。
 `after=…ms` 是該頁從建立連線到開啟的時間。冷啟動的第一個頁面在確定不會被
 重新載入前不建立串流（最多等 30 秒）。
 
-三個前端階段到齊時 run 才結束（順序不固定）；60 秒內未到齊則以 `partial`
-結束並列出缺少的階段。
+版面顯示、帳戶讀取、持倉快照及 SSE LIVE 到齊時 run 才結束（順序不固定）；
+帳戶或持倉讀取失敗／需對帳只代表第一次嘗試已結束，run 記為 `partial`，
+不會誤寫成可用。60 秒內未到齊也以 `partial` 結束並列出缺少的階段。
+桌面版在 boot 驗證伺服器模式、協定、版本、Harness 所有權及已設定的正式環境
+CA 前會阻擋委託相關操作；健康檢查通過或 SSE LIVE 本身不解除這道限制。
+CA 未通過時顯示手動重啟指引，不自動反覆重啟正式服務。
 
-結束狀態：`ok`、`attached`（沿用既有伺服器）、`partial`（伺服器已健康但前端
+結束狀態：`ok`、`attached`（冷啟動沿用既有伺服器；手動接手也會立即重新載入，重新確認交易資料）、`partial`（伺服器已健康但前端
 60 秒內未就緒）、`failed`、`abandoned`（被下一個操作取代、上次 App 結束時仍未
 完成，或超過 270 秒沒有結束）。過期或上次 session 留下的 run 沒有真正的結束時間，
 診斷會顯示 `no end recorded, last mark +X`，總耗時停在最後一個階段、最後一個
@@ -154,8 +159,9 @@ Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 
 - 前端就緒偏長：先看 `main-thread` 附註。`busy` 接近 `stream-live` 的耗時，代表時間花在畫面 render（主執行緒忙），不是串流連線慢；再比對 `app-mounted` 的時間點。看三個前端階段哪個最晚；`positions-loaded` 最晚通常是帳務
   查詢，`stream-live` 最晚是 SSE 連線。
 - 開機時接手「仍在登入中的伺服器」：與全新啟動一樣以快速健康輪詢等待
-  （上限 90 秒）；超過後改由開機 watchdog 每 4 秒檢查、不設上限，此時 run
+  （上限 90 秒）；超過後改由開機 watchdog 立即檢查，接著 250 ms 起退避至每秒、
+  不設總上限，此時 run
   已記為 `failed`，之後的 reload 不會再計入。
 - 量不到的部分：App 無法看到 sidecar 內部的登入、CA 啟用、合約下載等細項
-  （全部落在 `wait-listener`），也看不到「畫面各面板第一次畫完」的時間；
+  （全部落在 `wait-listener`），也看不到「個別面板資料第一次畫完」的時間；
   需要時另開 issue 在伺服器端或個別面板量測。

@@ -20,7 +20,20 @@ export interface ReadySignal {
     stage: TimingStage;
     subscribe: (fn: () => void) => () => void;
     ready: () => boolean;
+    // A failed first read has settled, but must not be reported as usable.
+    successful?: () => boolean;
     detail?: () => string | undefined;
+}
+
+// The workspace must be on screen before a timing run can claim that the
+// front end is usable. Watchlist loading is independent of other panels.
+let workspaceVisibleAt: number | null = null;
+const workspaceListeners = new Set<() => void>();
+export function markWorkspaceVisible(): void {
+    if (workspaceVisibleAt !== null) return;
+    workspaceVisibleAt = Date.now();
+    markStage('workspace-visible');
+    workspaceListeners.forEach((listener) => listener());
 }
 
 // generous: covers a slow production account/positions read
@@ -102,14 +115,21 @@ export function watchFrontendReady(
         for (const sig of signals) {
             if (!done.has(sig) && sig.ready()) {
                 done.add(sig);
-                markStage(sig.stage, sig.detail?.(), { runId });
+                // The workspace records its own exact commit time. A wait
+                // installed later must not add another, delayed mark.
+                const run = peekActiveTiming();
+                const alreadyMarked = sig.stage === 'workspace-visible' && workspaceVisibleAt !== null &&
+                    run?.marks.some((m) => m.stage === sig.stage && run.startedAt + m.at === workspaceVisibleAt);
+                if (!alreadyMarked) markStage(sig.stage, sig.detail?.(), { runId });
             }
         }
         if (done.size === signals.length) {
+            const failed = signals.filter((sig) => sig.successful?.() === false).map((sig) => sig.stage);
             const stats = stallStats(); // before dispose stops the probe
             dispose(); // first: the marks below re-notify timing listeners
             markStalls(stats);
-            endTiming(opts.outcome ?? 'ok', undefined, { runId });
+            endTiming(failed.length ? 'partial' : opts.outcome ?? 'ok',
+                failed.length ? `failed: ${failed.join(',')}` : undefined, { runId });
         }
     };
     offs.push(subscribeTiming(check));
@@ -133,10 +153,19 @@ export function watchFrontendReady(
 export function appReadySignals(): ReadySignal[] {
     return [
         {
+            stage: 'workspace-visible',
+            subscribe: (listener) => {
+                workspaceListeners.add(listener);
+                return () => { workspaceListeners.delete(listener); };
+            },
+            ready: () => workspaceVisibleAt !== null,
+        },
+        {
             stage: 'accounts-loaded',
             subscribe: subscribeAccounts,
             ready: () => getAccountState().loaded,
-            detail: () => `accounts=${getAccountState().accounts.length}`,
+            successful: () => !getAccountState().loadError,
+            detail: () => getAccountState().loadError ? 'error' : `accounts=${getAccountState().accounts.length}`,
         },
         {
             stage: 'positions-loaded',
@@ -146,6 +175,10 @@ export function appReadySignals(): ReadySignal[] {
             ready: () => {
                 const q = getTradingState().queries.positions;
                 return q.updatedAt !== null || q.needsReconcile || q.error !== null;
+            },
+            successful: () => {
+                const q = getTradingState().queries.positions;
+                return q.updatedAt !== null && q.error === null && !q.needsReconcile;
             },
             detail: () => {
                 const q = getTradingState().queries.positions;

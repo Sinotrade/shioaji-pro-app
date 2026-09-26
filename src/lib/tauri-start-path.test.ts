@@ -137,6 +137,19 @@ describe('serverStart start path', () => {
 });
 
 describe('page-start reads', () => {
+    it('uses the already-working webview for local HTTP even if native probes stall', async () => {
+        listening.add(21322);
+        vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+            new Response(JSON.stringify(url.endsWith('/info')
+                ? { version: '1.7.6', simulation: true }
+                : { status: 'healthy', session_recovering: false }))));
+        native.fetch.mockImplementation(async (_url: string, init?: RequestInit) =>
+            new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))));
+        const st = await tauri.serverStatus();
+        expect(st).toMatchObject({ running: true, port: 21322, healthy: true });
+        expect(native.fetch).not.toHaveBeenCalledWith(expect.stringContaining(':21322/'), expect.anything());
+    });
+
     it('serverStatus returns as soon as the App port answers, without waiting on 8080', async () => {
         listening.add(21322);
         // 8080 hangs until its 5 s probe timeout (a congested plugin-http queue)
@@ -164,5 +177,12 @@ describe('candidate order', () => {
         listening.add(21322);
         listening.add(8080);
         expect(await tauri.serverStatus()).toMatchObject({ running: true, port: 21322 });
+    });
+
+    it('finds a later compatible server when an earlier port answers with the wrong identity', async () => {
+        listening.add(21322);
+        listening.add(8080);
+        const status = await tauri.serverStatus(async (candidate) => candidate.port === 8080);
+        expect(status).toMatchObject({ running: true, port: 8080 });
     });
 });
