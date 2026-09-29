@@ -21,6 +21,8 @@
 - 核心只接收「策略產物」,不執行使用者程式:
   - `signal-plan`:Signal DSL 產出的四條訊號序列(以該商品自己的 K 棒列為索引)與延伸規則。
   - `intent-stream`:狀態式／目標部位策略在每個決策時間產出的意圖。重播只在核心重現同樣狀態時才精確;之後以內嵌 QuickJS 在核心內直接執行。
+    - 記錄不得改變核心的判定:只有「JSON 複本完全等價」的輸出才以 intents 記錄,由核心重新驗證(intent 本身的欄位值為 `undefined` 視同省略;`order` 等巢狀物件仍嚴格)。沒有等價 JSON 形式的輸出(例如 Date 型別的 tag、NaN)先保留,若即時執行的核心拒絕它,串流記錄該錯誤本身(`failure.kind = 'rejected'`,完整的 code／params／time／assetId／cause),重播直接以同一錯誤失敗,JSON 複本永遠不會被接受;若核心接受,才記錄其 JSON 複本。
+    - callback 丟出的錯誤:核心錯誤碼(例如 `ctx.asset` 查無商品)記錄 code、params 與 assetId(`failure.kind = 'core'`);回傳形狀錯誤記為 `STRATEGY_RESULT_INVALID`;其他錯誤記錄文字(`'script'`)。重播以相同的 `STRATEGY_CALLBACK_FAILED`、位置與 cause 失敗。
 - `mode: 'portfolio'` 是共享資金的逐 bar 引擎;`mode: 'vector'` 是面板多商品掃描仍在使用的單商品向量引擎。
 - 最佳化的候選產生、門檻、敏感度與排名是純函式,以 `selectCandidates` 納入同一介面;每個候選的 train／test 仍各自是一次 `run`。
 
@@ -29,7 +31,8 @@
 - 選用欄位(`name?`)不存在時省略,不寫 `null` 或 `undefined`;可為 null 的欄位(`T | null`)一定存在。
 - 序列中的 `null` 代表該位置沒有值:指標暖機、缺 K、停牌。序列比 K 棒短時,缺少的尾端視為 `null`。
 - 請求一律帶完整值:`execution.defaults` 為完整設定、`risk` 與 `liquidateAtEnd` 明確給定,不依賴預設值。
-- `profitFactor` 的無限大寫成字串 `'Infinity'`;其他非有限數值以 `{ "__researchNumber": "Infinity" | "-Infinity" | "NaN" }` 表示(與研究紀錄儲存相同),不得變成 `null`。
+- `resultMultiplier` 是報表用的乘數,與 `execution` 無關:單商品 portfolio 的 `result` 交易投影與 vector 模式的 research turnover 使用它。既有 worker 以面板 `CostConfig.multiplier` 計算這兩者,可能與執行乘數不同(例如 config 1000、execution 10),呼叫端傳入該值即可逐位重現;多商品投影仍用各商品的有效執行乘數,成交、損益與 portfolio 數值一律用 execution。
+- `profitFactor` 的無限大寫成字串 `'Infinity'`。其他可能非有限的欄位在型別上明確標為 `JsonNumber = number | { "__researchNumber": "Infinity" | "-Infinity" | "NaN" }`(與研究紀錄儲存相同的標記),不得變成 `null`;目前只有 research 指標的 `annualizedReturnPct`(短期間年化溢位為 `Infinity`),其 JSON 形狀是 `ResearchMetricsRecord`,以 `researchMetricsToRecord`／`researchMetricsFromRecord` 轉換。其餘數值欄位一律有限;若實作在其他欄位產生標記,視為與 golden 不一致。
 
 ### 錯誤與訊息
 

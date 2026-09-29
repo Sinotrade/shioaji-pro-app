@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-    btResultFromRecord, btResultToRecord, formatCoreError, fromJsonValue, toJsonValue,
-    type BacktestCore, type CoreResponse,
+    btResultFromRecord, btResultToRecord, formatCoreError, fromJsonNumber, fromJsonValue, researchMetricsFromRecord,
+    researchMetricsToRecord, toJsonNumber, toJsonValue, type BacktestCore, type CoreResponse, type ResearchMetricsRecord,
 } from './core';
 import { checkGoldenCase, compareGoldenValue, type GoldenRunCase } from './conformance';
 import {
@@ -47,6 +47,22 @@ describe('backtest core JSON records', () => {
         expect(encoded).toEqual({ a: { __researchNumber: 'Infinity' }, b: { __researchNumber: '-Infinity' },
             c: { __researchNumber: 'NaN' }, e: [1, null] });
         expect(fromJsonValue(encoded)).toEqual({ a: Infinity, b: -Infinity, c: NaN, e: [1, null] });
+    });
+
+    it('types research annualizedReturnPct as a JSON number that may carry the Infinity marker', () => {
+        const metrics = { schemaVersion: 'research-v1' as const, returnPct: 0.1, annualizedReturnPct: Infinity,
+            maxDrawdown: 0, maxDrawdownPct: 0, winRate: 1, profitFactor: 'Infinity' as const, expectancy: 1, sharpe: 0,
+            sortino: 0, trades: 1, averageHoldingBars: 1, exposure: 1, totalCost: 0, costToGrossProfit: 0, turnover: 1,
+            long: { trades: 1, pnl: 1, wins: 1 }, short: { trades: 0, pnl: 0, wins: 0 }, buyAndHoldReturnPct: null };
+        const record: ResearchMetricsRecord = researchMetricsToRecord(metrics);
+        expect(record.annualizedReturnPct).toEqual({ __researchNumber: 'Infinity' });
+        // The wire form equals the canonical JSON encoding and decodes back without loss.
+        expect(toJsonValue(metrics)).toEqual(record);
+        expect(JSON.parse(JSON.stringify(record))).toEqual(record);
+        expect(researchMetricsFromRecord(JSON.parse(JSON.stringify(record)))).toEqual(metrics);
+        expect(researchMetricsToRecord({ ...metrics, annualizedReturnPct: 0.25 }).annualizedReturnPct).toBe(0.25);
+        expect([Infinity, -Infinity, NaN, 1.5].map(value => fromJsonNumber(toJsonNumber(value)))).toEqual([Infinity, -Infinity, NaN, 1.5]);
+        expect(() => fromJsonNumber({ __researchNumber: 'big' } as never)).toThrow(TypeError);
     });
 });
 

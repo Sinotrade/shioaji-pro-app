@@ -58,16 +58,35 @@ export interface SignalPlan {
 }
 
 /**
- * The intents one decision produced. `scriptError` is the message a strategy
- * callback threw at this decision (the run then fails there), otherwise null.
- * Intents are untrusted script output: a core validates them exactly as it
- * validates live callback output.
+ * How the script step failed at one decision. The run fails at that decision;
+ * a core raises exactly what the live run raised:
+ * - 'script': the callback threw its own (non-core) error. The run fails with
+ *   STRATEGY_CALLBACK_FAILED `{ detail: message }` located at the primary asset.
+ * - 'core': the callback raised a core error (for example `ctx.asset` of an
+ *   unknown asset) or returned an invalid shape (STRATEGY_RESULT_INVALID). The
+ *   run fails with STRATEGY_CALLBACK_FAILED whose `cause` is `{ code, params }`,
+ *   located at `assetId` (the primary asset when null).
+ * - 'rejected': the callback returned output that has no exact JSON form (a
+ *   Date tag, a NaN, an undefined property, ...) and the live core rejected it.
+ *   The run fails with exactly `error`. A JSON copy of such output could pass
+ *   validation, so it is never recorded as intents.
+ */
+export type DecisionFailure =
+    | { kind: 'script'; message: string }
+    | { kind: 'core'; code: CoreErrorCode; params: Record<string, string | number>; assetId: string | null }
+    | { kind: 'rejected'; error: CoreError };
+
+/**
+ * The intents one decision produced, or how it failed (`failure`; intents and
+ * diagnostics are then empty). Intents are untrusted script output: a core
+ * validates them exactly as it validates live callback output. They are the
+ * exact callback output: plain JSON data, or output the live core accepted.
  */
 export interface IntentDecision {
     time: number;
     intents: StrategyIntent[];
     diagnostics: SignalConflictDiagnostic[];
-    scriptError: string | null;
+    failure: DecisionFailure | null;
 }
 
 /**
@@ -112,6 +131,16 @@ export interface CoreRequest {
     liquidateAtEnd: boolean;
     /** Compute research-v1 metrics for this bar interval ('1d', '5m', '1h', ...); null skips them. */
     research: { interval: string } | null;
+    /**
+     * Notional multiplier of the reporting views, independent of `execution`:
+     * the `result` trade projection of a single-asset 'portfolio' run and the
+     * research turnover of a 'vector' run use it. Callers pass the panel cost
+     * multiplier (the existing worker's `CostConfig.multiplier`), which may
+     * differ from the execution multiplier. Multi-asset projections use each
+     * asset's effective execution multiplier; fills, PnL and every portfolio
+     * number always use execution.
+     */
+    resultMultiplier: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +156,22 @@ export interface BtResultRecord {
     metrics: BtMetricsRecord;
 }
 
+/**
+ * A number field that can be non-finite on the wire. Only fields typed
+ * JsonNumber (and `profitFactor`, which uses the string 'Infinity') may carry a
+ * non-finite value; every other number in a request or result is finite.
+ */
+export type JsonNumber = number | NonFiniteNumber;
+
+/**
+ * JSON form of ResearchMetrics. `annualizedReturnPct` overflows to
+ * `{ "__researchNumber": "Infinity" }` when a short span annualizes a gain
+ * (e.g. synthetic second-level timestamps); it is never null.
+ */
+export type ResearchMetricsRecord = Omit<ResearchMetrics, 'annualizedReturnPct'> & {
+    annualizedReturnPct: JsonNumber;
+};
+
 /** JSON form of PortfolioResult; the vector-engine projection is null when absent. */
 export type PortfolioResultRecord = Omit<PortfolioResult, 'legacyResult'> & {
     legacyResult: BtResultRecord | null;
@@ -138,7 +183,7 @@ export interface CoreResult {
     /** Panel / persisted trade view: trades, cumulative PnL curve and legacy metrics. */
     result: BtResultRecord;
     /** research-v1 metrics; null when `request.research` is null. */
-    research: ResearchMetrics | null;
+    research: ResearchMetricsRecord | null;
 }
 
 export interface CoreErrorCause {
@@ -170,9 +215,9 @@ export type OptimizationSearch = { kind: 'grid' } | { kind: 'random'; seed: numb
 
 export interface CandidateOutcome {
     /** Null when the train run did not complete; the test run is then never started. */
-    train: ResearchMetrics | null;
+    train: ResearchMetricsRecord | null;
     /** Null when the held-out run did not complete. */
-    test: ResearchMetrics | null;
+    test: ResearchMetricsRecord | null;
 }
 
 /**
@@ -261,19 +306,39 @@ export interface NonFiniteNumber {
     __researchNumber: 'Infinity' | '-Infinity' | 'NaN';
 }
 
+export function toJsonNumber(value: number): JsonNumber {
+    return Number.isFinite(value) ? value
+        : { __researchNumber: Number.isNaN(value) ? 'NaN' : value > 0 ? 'Infinity' : '-Infinity' };
+}
+
+export function fromJsonNumber(value: JsonNumber): number {
+    if (typeof value === 'number') return value;
+    const marker = value?.__researchNumber;
+    if (marker === 'Infinity') return Infinity;
+    if (marker === '-Infinity') return -Infinity;
+    if (marker === 'NaN') return NaN;
+    throw new TypeError(`invalid JSON number ${JSON.stringify(value)}`);
+}
+
+export function researchMetricsToRecord(metrics: ResearchMetrics): ResearchMetricsRecord {
+    return { ...metrics, annualizedReturnPct: toJsonNumber(metrics.annualizedReturnPct) };
+}
+
+export function researchMetricsFromRecord(record: ResearchMetricsRecord): ResearchMetrics {
+    return { ...record, annualizedReturnPct: fromJsonNumber(record.annualizedReturnPct) };
+}
+
 /**
  * Canonical JSON form used on both sides of a core boundary: drops `undefined`
  * properties and encodes a non-finite number as a NonFiniteNumber marker
- * instead of letting JSON turn it into null. Only `profitFactor` has a typed
- * non-finite value ('Infinity'); any other number field carrying the marker is
- * an engine edge case (for example an overflowing annualized return) that
- * implementations must still reproduce.
+ * instead of letting JSON turn it into null. The fields that can legitimately
+ * be non-finite are typed JsonNumber (plus `profitFactor`'s 'Infinity');
+ * elsewhere the marker only appears if an implementation diverges, and then
+ * fails the golden comparison instead of silently becoming null.
  */
 export function toJsonValue<T>(value: T): T {
     return JSON.parse(JSON.stringify(value, (_key, item: unknown) =>
-        typeof item === 'number' && !Number.isFinite(item)
-            ? { __researchNumber: Number.isNaN(item) ? 'NaN' : item > 0 ? 'Infinity' : '-Infinity' } satisfies NonFiniteNumber
-            : item)) as T;
+        typeof item === 'number' && !Number.isFinite(item) ? toJsonNumber(item) : item)) as T;
 }
 
 /** Inverse of toJsonValue's number encoding. */

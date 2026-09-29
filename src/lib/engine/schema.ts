@@ -363,9 +363,11 @@ export interface BtResult {
 
 export const RESULT_SCHEMA_VERSION = 'research-v1';
 
+/** In-memory research-v1 metrics; the JSON form is ResearchMetricsRecord (core.ts). */
 export interface ResearchMetrics {
     schemaVersion: typeof RESULT_SCHEMA_VERSION;
     returnPct: number;
+    /** In memory `Infinity` when a short span overflows the annualization; see ResearchMetricsRecord for JSON. */
     annualizedReturnPct: number;
     maxDrawdown: number;
     maxDrawdownPct: number;
