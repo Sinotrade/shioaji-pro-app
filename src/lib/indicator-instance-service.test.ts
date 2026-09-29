@@ -74,8 +74,9 @@ describe('IndicatorInstanceService', () => {
         expect(seeded.instances.map((instance) => instance.type)).toEqual(
             expect.arrayContaining(['vwap', 'ema', 'bbi', 'boll', 'atrdefense', 'v9macd', 'v9kdj', 'v8trend']),
         );
-        expect(seeded.instances.find((instance) => instance.type === 'ema')!.params.period).toBe(8);
-        expect(seeded.presetVersion).toBe('v9-research-v2');
+        expect(seeded.instances.filter((instance) => instance.type === 'ema').map((instance) => instance.params.period)).toEqual([3, 8]);
+        expect(seeded.instances.filter((instance) => instance.type === 'ema').map((instance) => instance.styles?.line?.color)).toEqual(['#ff4d6d', '#f6c94c']);
+        expect(seeded.presetVersion).toBe('v9-research-v4');
         const removed = {
             ...ws,
             blocks: [{ ...ws.blocks[0]!, indicatorState: {
@@ -84,6 +85,35 @@ describe('IndicatorInstanceService', () => {
             } }],
         };
         expect(initializeIndicatorPanels(removed)).toBe(removed);
+    });
+
+    it('adds EMA3 to the v2 research chart without restoring removed layers or changing EMA8', () => {
+        const ema8 = { id: 'ema-8', type: 'ema', params: { period: 8 }, colors: {} };
+        const ws = initializeIndicatorPanels({ blocks: [{
+            id: 'chart-v9', type: 'chart', pin: null,
+            indicatorState: {
+                revision: 'v2', presetVersion: 'v9-research-v2',
+                instances: [ema8, { id: 'vwap', type: 'vwap', params: {}, colors: {} }],
+            },
+        }], layout: [] });
+        const state = ws.blocks[0]!.indicatorState!;
+        expect(state.instances.filter((instance) => instance.type === 'ema').map((instance) => instance.params.period)).toEqual([8, 3]);
+        expect(state.instances.map((instance) => instance.type)).toEqual(['ema', 'vwap', 'ema']);
+        expect(state.presetVersion).toBe('v9-research-v4');
+    });
+
+    it('migrates v3 ATR colors without retuning parameters or restoring deleted layers', () => {
+        const ws = initializeIndicatorPanels({ blocks: [{ id: 'chart-v9', type: 'chart', pin: null,
+            indicatorState: { revision: 'v3', presetVersion: 'v9-research-v3', instances: [
+                { id: 'atr', type: 'atrdefense', params: { period: 19, multiplier: 2.5 }, colors: {}, hidden: true },
+                { id: 'macd', type: 'v9macd', params: { fast: 45, slow: 117, signal: 21 }, colors: {} },
+            ] } }], layout: [] });
+        const state = ws.blocks[0]!.indicatorState!;
+        expect(state.instances).toHaveLength(2);
+        expect(state.instances[0]).toMatchObject({ hidden: true, params: { period: 19, multiplier: 2.5 },
+            styles: { up: { color: '#fb7185', width: 3 }, down: { color: '#4ade80', width: 3 } } });
+        expect(state.instances[1]!.params.signal).toBe(21);
+        expect(initializeIndicatorPanels(ws)).toBe(ws);
     });
 
     it('updates, reorders, hides and removes one instance, with revisions and notifications', () => {

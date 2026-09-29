@@ -10,6 +10,13 @@ export const wrap = style({
     minHeight: 0,
 });
 
+export const researchReferenceStrip = style({
+    display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0,
+    overflowX: 'auto', whiteSpace: 'nowrap', padding: '3px 8px',
+    fontSize: '10px', fontWeight: 600, fontFamily: vars.font.mono,
+    background: vars.color.panel, borderBottom: `1px solid ${vars.color.border}`,
+});
+
 export const toolbar = style({
     display: 'flex',
     flexWrap: 'wrap',
@@ -215,7 +222,7 @@ const legendItemBase = style({
     alignItems: 'center',
     gap: '6px',
     padding: '1px 4px 1px 6px',
-    background: 'color-mix(in srgb, ' + vars.color.panel + ' 72%, transparent)',
+    background: 'color-mix(in srgb, ' + vars.color.panel + ' 58%, transparent)',
     borderRadius: vars.radius.sm,
     fontFamily: vars.font.mono,
     fontSize: '0.62rem',

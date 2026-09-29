@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { Candle } from '../types/market';
-import { aggregate, wallClockToUtc } from './kbars';
+import { aggregate, kbarsToCandles, wallClockToUtc } from './kbars';
 
 const t = (s: string) => wallClockToUtc(s);
 
@@ -30,7 +30,7 @@ describe('aggregate close-label-right', () => {
     it('day-session open: labels 08:46-08:50 form the 08:50 bar', () => {
         const bars = aggregate(
             minBars('2026-08-12T08:45:00', '2026-08-12T08:55:00'),
-            5,
+            5, 'FUT',
         );
         expect(bars.map((b) => b.time)).toEqual([
             t('2026-08-12T08:50:00'),
@@ -44,7 +44,7 @@ describe('aggregate close-label-right', () => {
 
     it('boundary label lands in its own closing bucket (08:50→08:50)', () => {
         const one = minBars('2026-08-12T08:49:00', '2026-08-12T08:50:00');
-        const bars = aggregate(one, 5);
+        const bars = aggregate(one, 5, 'FUT');
         expect(bars).toHaveLength(1);
         expect(bars[0]!.time).toBe(t('2026-08-12T08:50:00'));
     });
@@ -52,7 +52,7 @@ describe('aggregate close-label-right', () => {
     it('full TXF day session yields 60 bars ending 13:45', () => {
         const bars = aggregate(
             minBars('2026-08-12T08:45:00', '2026-08-12T13:45:00'),
-            5,
+            5, 'FUT',
         );
         expect(bars).toHaveLength(60);
         expect(bars[0]!.time).toBe(t('2026-08-12T08:50:00'));
@@ -79,8 +79,42 @@ describe('aggregate close-label-right', () => {
         expect(bars[0]!.time).toBe(t('2026-08-12T00:00:00'));
     });
 
-    it('1-minute passthrough unchanged', () => {
+    it('1-minute values unchanged, but storage is independent', () => {
         const src = minBars('2026-08-12T09:00:00', '2026-08-12T09:03:00');
-        expect(aggregate(src, 1)).toBe(src);
+        const bars = aggregate(src, 1);
+        expect(bars).toEqual(src);
+        expect(bars).not.toBe(src);
+        bars.forEach((bar, i) => expect(bar).not.toBe(src[i]));
+    });
+
+    it('live minute rollover does not append the same timestamp twice', () => {
+        const raw = minBars('2026-09-29T09:00:00', '2026-09-29T09:03:00');
+        const bars = aggregate(raw, 1);
+        const next = { time: t('2026-09-29T09:04:00'), open: 25.7, high: 25.7, low: 25.7, close: 25.7, volume: 3 };
+        raw.push({ ...next });
+        bars.push({ ...next });
+        expect(raw).toHaveLength(4);
+        expect(bars).toHaveLength(4);
+        expect(bars.every((bar, i) => i === 0 || bar.time > bars[i - 1]!.time)).toBe(true);
+    });
+
+    it('same-minute tick volume is added once to each independent series', () => {
+        const raw = minBars('2026-09-29T09:00:00', '2026-09-29T09:01:00');
+        const bars = aggregate(raw, 1);
+        raw[0]!.volume += 3;
+        bars[0]!.volume += 3;
+        expect(raw[0]!.volume).toBe(13);
+        expect(bars[0]!.volume).toBe(13);
+    });
+
+    it('history duplicates keep the latest snapshot and strict time order', () => {
+        const bars = kbarsToCandles({
+            datetime: ['2026-09-29T09:02:00', '2026-09-29T09:01:00', '2026-09-29T09:02:00'],
+            Open: [20, 19, 20], High: [21, 20, 22], Low: [20, 18, 19],
+            Close: [21, 20, 22], Volume: [10, 5, 13], Amount: [210, 100, 286],
+        });
+        expect(bars.map(bar => bar.time)).toEqual([t('2026-09-29T09:01:00'), t('2026-09-29T09:02:00')]);
+        expect(bars[1]).toMatchObject({ close: 22, volume: 13 });
+        expect(aggregate(bars, 5)[0]!.volume).toBe(18);
     });
 });

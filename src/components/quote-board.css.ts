@@ -1,6 +1,6 @@
 // src/components/quote-board.css.ts
 
-import { style, styleVariants } from '@vanilla-extract/css';
+import { globalStyle, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const board = style({
@@ -92,3 +92,18 @@ export const limitBadge = styleVariants({
     up: [limitBadgeBase, { background: vars.color.up }],
     down: [limitBadgeBase, { background: vars.color.down }],
 });
+
+export const compactBoard = style({ flexWrap: 'wrap', gap: '6px 14px', padding: '7px 12px', containerType: 'inline-size' });
+globalStyle(`${compactBoard} ${symbolBlock}`, { minWidth: 80 });
+globalStyle(`${compactBoard} ${symbolCode}`, { fontSize: 15 });
+globalStyle(`${compactBoard} ${symbolName}`, { fontSize: 11 });
+globalStyle(`${compactBoard} ${bigPriceBase}`, { fontSize: 26 });
+globalStyle(`${compactBoard} ${changeBlock}`, { fontSize: 12 });
+export const quickStats = style({ display: 'flex', flex: 1, justifyContent: 'flex-end', gap: 16, fontSize: 11,
+    color: vars.color.mutedForeground, whiteSpace: 'nowrap',
+    '@container': { '(max-width: 760px)': { display: 'none' } } });
+export const detailButton = style({ marginLeft: 'auto', minHeight: 32, padding: '5px 9px', fontSize: 12,
+    color: vars.color.foreground, background: vars.color.panelRaised, border: `1px solid ${vars.color.border}`,
+    borderRadius: 5, cursor: 'pointer', ':focus-visible': { outline: '2px solid #22d3ee', outlineOffset: 2 } });
+export const expandedStats = style({ flexBasis: '100%', marginLeft: 0, padding: '8px 0 2px',
+    borderTop: `1px solid ${vars.color.border}`, maxHeight: 150, overflow: 'auto' });

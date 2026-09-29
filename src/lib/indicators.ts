@@ -3,10 +3,13 @@
 // Points may carry value: undefined to encode a gap (whitespace data).
 
 import type { Candle } from './types/market';
+import type { SecurityType } from './types/contract';
+import { sessionWindowFor } from './intraday-session';
 
 export interface IndicatorPoint {
     time: number;
     value?: number;
+    color?: string;
 }
 
 const tp = (b: Candle) => (b.high + b.low + b.close) / 3;
@@ -353,10 +356,11 @@ function v9Ema(values: number[], period: number): number[] {
     return out;
 }
 
-function taiwanSessionKey(time: number): string {
-    // The Shioaji stock feed is UTC seconds. Shift before deriving a day so
-    // day-boundary calculations remain stable for Taiwan market data.
-    return new Date((time + 8 * 60 * 60) * 1000).toISOString().slice(0, 10);
+function taiwanSessionKey(time: number, securityType: SecurityType): string {
+    // Chart timestamps encode Taiwan wall-clock as UTC seconds. Use the same
+    // exchange session window as bar aggregation so futures 15:00–05:00 stays
+    // intact across midnight without a second timezone shift.
+    return String(sessionWindowFor(securityType, time).start);
 }
 
 /** V9 KDJ: RSV then EMA smoothing, matching the original V9 chart formula. */
@@ -440,12 +444,15 @@ export function v9AtrDefense(
     bars: Candle[],
     period = 14,
     multiple = 2,
+    securityType: SecurityType = 'STK',
+    timeframeMinutes = 1,
 ): { up: IndicatorPoint[]; down: IndicatorPoint[] } {
     const trend = v8CompositeTrend(bars).map((point) => point.value ?? 50);
     const up: IndicatorPoint[] = [];
     const down: IndicatorPoint[] = [];
     const alpha = 2 / (period + 1);
     let atrValue = 0;
+    let sessionBar = 0;
     let previousKey = '';
     let previousClose = 0;
     let visualSide = 0;
@@ -456,7 +463,10 @@ export function v9AtrDefense(
     let blockedSide = 0;
     for (let index = 0; index < bars.length; index++) {
         const bar = bars[index]!;
-        const key = taiwanSessionKey(bar.time);
+        // Intraday rails restart at each exchange session. Daily candles are
+        // already session-complete observations, so their ATR/trend state must
+        // carry across days to warm up and produce a usable daily rail.
+        const key = timeframeMinutes >= 1440 ? 'daily-series' : taiwanSessionKey(bar.time, securityType);
         const newSession = key !== previousKey;
         const tr = newSession || index === 0
             ? bar.high - bar.low
@@ -469,8 +479,10 @@ export function v9AtrDefense(
             side = 0;
             defense = 0;
             blockedSide = 0;
+            sessionBar = 0;
             previousKey = key;
         }
+        sessionBar += 1;
         const rawSide = trend[index]! >= 55 ? 1 : trend[index]! <= 45 ? -1 : 0;
         if (rawSide === visualSide) {
             pending = 0;
@@ -487,26 +499,37 @@ export function v9AtrDefense(
             pendingCount = 0;
         }
         if (blockedSide !== 0 && visualSide !== blockedSide) blockedSide = 0;
-        if (side === 1 && defense > 0 && bar.close < defense) {
-            blockedSide = 1;
-            side = 0;
-            defense = 0;
-        } else if (side === -1 && defense > 0 && bar.close > defense) {
-            blockedSide = -1;
-            side = 0;
-            defense = 0;
+        // ATR 防守軌只在 ATR 已完成暖機且為正時才輸出。開盤前 period 根 ATR
+        // 尚未收斂；零波動（ATR≈0，見於處置/停牌股、或歷史分鐘 K 缺失被扁平
+        // 回填成 high=low=close）會讓 candidate = high - 2*ATR 退化為 high，使
+        // 多方軌貼到 K 棒最高價（空方對稱貼最低價），看似跑到價格另一側。這些
+        // 情況一律留白（不更新 ratchet、不輸出該根），底色也隨之保持中性。
+        const atrReady = sessionBar > period && atrValue > 1e-9;
+        if (atrReady) {
+            if (side === 1 && defense > 0 && bar.close <= defense) {
+                blockedSide = 1;
+                side = 0;
+                defense = 0;
+            } else if (side === -1 && defense > 0 && bar.close >= defense) {
+                blockedSide = -1;
+                side = 0;
+                defense = 0;
+            }
+            if (visualSide === 1 && blockedSide !== 1) {
+                const candidate = Math.min(bar.high - atrValue * multiple, bar.close - atrValue * 0.1);
+                defense = side === 1 && defense > 0 ? Math.max(defense, candidate) : candidate;
+                side = 1;
+            } else if (visualSide === -1 && blockedSide !== -1) {
+                const candidate = Math.max(bar.low + atrValue * multiple, bar.close + atrValue * 0.1);
+                defense = side === -1 && defense > 0 ? Math.min(defense, candidate) : candidate;
+                side = -1;
+            }
         }
-        if (visualSide === 1 && blockedSide !== 1) {
-            const candidate = bar.high - atrValue * multiple;
-            defense = side === 1 && defense > 0 ? Math.max(defense, candidate) : candidate;
-            side = 1;
-        } else if (visualSide === -1 && blockedSide !== -1) {
-            const candidate = bar.low + atrValue * multiple;
-            defense = side === -1 && defense > 0 ? Math.min(defense, candidate) : candidate;
-            side = -1;
-        }
-        up.push(side === 1 ? { time: bar.time, value: defense - atrValue * 0.1 } : { time: bar.time });
-        down.push(side === -1 ? { time: bar.time, value: defense + atrValue * 0.1 } : { time: bar.time });
+        const drawSide = atrReady ? side : 0;
+        // Draw the actual invalidation boundary: no hidden offset between
+        // the displayed rail and the close used to invalidate it.
+        up.push(drawSide === 1 ? { time: bar.time, value: defense } : { time: bar.time });
+        down.push(drawSide === -1 ? { time: bar.time, value: defense } : { time: bar.time });
         previousClose = bar.close;
     }
     return { up, down };

@@ -49,6 +49,55 @@ describe('V9 research indicators', () => {
         expect(defense.down).toHaveLength(bars.length);
     });
 
+    it('emits no ATR-defense line on flat (zero-range / ATR=0) session bars', () => {
+        // 處置/停牌或歷史分鐘 K 缺失被扁平回填成 high=low=close 時 ATR=0；
+        // 此時不得輸出防守軌，否則多方軌會退化貼在 high、空方軌貼在 low。
+        const base = Date.UTC(2026, 8, 21, 1, 0) / 1000; // Taiwan 09:00
+        const flat: Candle[] = Array.from({ length: 60 }, (_, i) => ({
+            time: base + i * 60, open: 34.2, high: 34.2, low: 34.2, close: 34.2, volume: 0,
+        }));
+        const defense = v9AtrDefense(flat);
+        expect(defense.up).toHaveLength(flat.length);
+        expect(defense.down).toHaveLength(flat.length);
+        expect(defense.up.every(point => point.value === undefined)).toBe(true);
+        expect(defense.down.every(point => point.value === undefined)).toBe(true);
+    });
+
+    it('keeps the bullish ATR-defense line below the bar high once ATR warms up', () => {
+        const base = Date.UTC(2026, 8, 21, 1, 0) / 1000;
+        const climb: Candle[] = Array.from({ length: 80 }, (_, i) => {
+            const close = 30 + i * 0.06;
+            return {
+                time: base + i * 60, open: close - 0.05, high: close + 0.3,
+                low: close - 0.3, close, volume: 1000,
+            };
+        });
+        const defense = v9AtrDefense(climb);
+        const longPoints = defense.up
+            .map((point, i) => ({ value: point.value, high: climb[i]!.high }))
+            .filter(point => point.value !== undefined);
+        expect(longPoints.length).toBeGreaterThan(0);
+        // 多方防守軌必須落在 K 棒高點之下；貼到 high 之上即為 ATR=0 退化缺陷。
+        expect(longPoints.every(point => point.value! < point.high)).toBe(true);
+    });
+
+    it('keeps the bearish ATR-defense line above the closing price once ATR warms up', () => {
+        const base = Date.UTC(2026, 8, 21, 1, 0) / 1000;
+        const decline: Candle[] = Array.from({ length: 80 }, (_, i) => {
+            const close = 50 - i * 0.08;
+            return {
+                time: base + i * 60, open: close + 0.05, high: close + 0.3,
+                low: close - 0.3, close, volume: 1000,
+            };
+        });
+        const defense = v9AtrDefense(decline);
+        const shortPoints = defense.down
+            .map((point, i) => ({ value: point.value, close: decline[i]!.close }))
+            .filter(point => point.value !== undefined);
+        expect(shortPoints.length).toBeGreaterThan(0);
+        expect(shortPoints.every(point => point.value! > point.close)).toBe(true);
+    });
+
     it('emits SuperTrend flips only when the confirmed close flips the trend', () => {
         const base = 1_700_000_000;
         // Persistent downtrend (must flip bearish) followed by a persistent

@@ -32,6 +32,7 @@ import {
     type IndicatorPoint,
 } from './indicators';
 import type { Candle } from './types/market';
+import type { SecurityType } from './types/contract';
 
 export type OutputKind = 'line' | 'dashed' | 'histogram' | 'points';
 
@@ -49,7 +50,7 @@ export interface OutputDef {
     label: string;
     kind: OutputKind;
     color: string; // default color
-    width?: 1 | 2;
+    width?: 1 | 2 | 3 | 4;
     // histogram only: color positive/negative halves with up/down colors
     signed?: boolean;
 }
@@ -68,6 +69,8 @@ export interface IndicatorDef {
     compute: (
         bars: Candle[],
         p: Record<string, number>,
+        securityType?: SecurityType,
+        timeframeMinutes?: number,
     ) => Record<string, IndicatorPoint[]>;
 }
 
@@ -199,11 +202,11 @@ export const INDICATOR_DEFS: IndicatorDef[] = [
             { key: 'mult', label: 'ATR 倍數', def: 2, min: 0.5, max: 10, step: 0.5 },
         ],
         outputs: [
-            { key: 'up', label: '多方防守', kind: 'line', color: '#4ade80', width: 2 },
-            { key: 'down', label: '空方防守', kind: 'line', color: '#fb7185', width: 2 },
+            { key: 'up', label: '多方防守', kind: 'line', color: '#fb7185', width: 3 },
+            { key: 'down', label: '空方防守', kind: 'line', color: '#4ade80', width: 3 },
         ],
-        compute: (b, p) => {
-            const r = v9AtrDefense(b, p.period!, p.mult!);
+        compute: (b, p, securityType, timeframeMinutes) => {
+            const r = v9AtrDefense(b, p.period!, p.mult!, securityType, timeframeMinutes);
             return { up: r.up, down: r.down };
         },
     },
@@ -367,7 +370,9 @@ export const INDICATOR_DEFS: IndicatorDef[] = [
         params: [],
         outputs: [{ key: 'line', label: 'V8多空線', kind: 'line', color: '#f78b92', width: 2 }],
         levels: [45, 55],
-        compute: (b) => ({ line: v8CompositeTrend(b) }),
+        compute: (b) => ({ line: v8CompositeTrend(b).map(point => ({ ...point,
+            color: (point.value ?? 50) >= 55 ? '#fb7185' : (point.value ?? 50) <= 45 ? '#4ade80' : '#facc15',
+        })) }),
     },
     {
         type: 'stochrsi',

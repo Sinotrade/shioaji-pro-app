@@ -67,6 +67,8 @@ export type BlockType =
     | 'grid'
     | 'heatmap'
     | 'pulse'
+    | 'picker'
+    | 'radar'
     | 'signals'
     | 'optpnl'
     | 'backtest'
@@ -182,6 +184,22 @@ export const BLOCK_META: Record<
         pinnable: false,
         singleton: false,
         defaultSize: { w: 12, h: 14, minW: 6, minH: 6 },
+    },
+    radar: {
+        label: '多檔雷達',
+        description: '自選多檔 V9 多週期方向矩陣、翻轉與共振即時預警',
+        category: 'market',
+        pinnable: false,
+        singleton: true,
+        defaultSize: { w: 4, h: 12, minW: 3, minH: 6 },
+    },
+    picker: {
+        label: '短線選股',
+        description: '自選＋漲量前40 多條件評分 TOP5、過熱排除',
+        category: 'market',
+        pinnable: false,
+        singleton: true,
+        defaultSize: { w: 6, h: 13, minW: 4, minH: 7 },
     },
     depth: {
         label: '五檔',
@@ -335,7 +353,7 @@ export const BLOCK_META: Record<
         category: 'market',
         pinnable: false,
         singleton: false,
-        defaultSize: { w: 10, h: 12, minW: 7, minH: 7 },
+        defaultSize: { w: 10, h: 12, minW: 6, minH: 7 },
     },
     signals: {
         label: '即時訊號',
@@ -419,13 +437,13 @@ const RAW_V9_RESEARCH_WORKSPACE: Workspace = {
         },
     ],
     layout: [
-        { i: 'watch-v9', x: 0, y: 0, w: 4, h: 15, minW: 3, minH: 6 },
-        { i: 'movers-v9', x: 0, y: 15, w: 4, h: 10, minW: 3, minH: 5 },
-        { i: 'chart-v9', x: 4, y: 0, w: 13, h: 16, minW: 6, minH: 7 },
-        { i: 'depth-v9', x: 17, y: 0, w: 7, h: 8, minW: 4, minH: 7 },
-        { i: 'tape-v9', x: 17, y: 8, w: 7, h: 8, minW: 3, minH: 4 },
-        { i: 'heatmap-v9', x: 4, y: 16, w: 13, h: 9, minW: 5, minH: 6 },
-        { i: 'pulse-v9', x: 17, y: 16, w: 7, h: 9, minW: 7, minH: 7 },
+        { i: 'watch-v9', x: 0, y: 0, w: 4, h: 14, minW: 3, minH: 6 },
+        { i: 'movers-v9', x: 0, y: 14, w: 4, h: 11, minW: 3, minH: 5 },
+        { i: 'chart-v9', x: 4, y: 0, w: 14, h: 17, minW: 6, minH: 7 },
+        { i: 'depth-v9', x: 18, y: 0, w: 6, h: 8, minW: 4, minH: 7 },
+        { i: 'tape-v9', x: 18, y: 8, w: 6, h: 8, minW: 3, minH: 4 },
+        { i: 'heatmap-v9', x: 4, y: 17, w: 14, h: 8, minW: 5, minH: 6 },
+        { i: 'pulse-v9', x: 18, y: 16, w: 6, h: 9, minW: 6, minH: 7 },
     ],
 };
 
@@ -755,7 +773,7 @@ export const LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace 
 // 無損升階。profiles 同理。
 const WS_KEY = 'sj-pro-workspace-v3';
 const WS_KEY_LEGACY = 'sj-pro-workspace-v2';
-const WS_KEY_V9_RESEARCH = 'sj-pro-workspace-v9-research-v1';
+const WS_KEY_V9_RESEARCH = 'sj-pro-workspace-v9-research-v2';
 const PROFILES_KEY = 'sj-pro-profiles-v2';
 const PROFILES_KEY_LEGACY = 'sj-pro-profiles-v1';
 

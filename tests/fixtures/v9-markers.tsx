@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CandlestickSeries, HistogramSeries, ColorType, createChart, createSeriesMarkers,
-    type ISeriesMarkersPluginApi, type Time, type UTCTimestamp } from 'lightweight-charts';
+    type IPriceLine, type ISeriesApi, type ISeriesMarkersPluginApi, type Time, type UTCTimestamp } from 'lightweight-charts';
 import { ResearchMarkerControls } from '../../src/components/research-marker-controls';
 import { DEFAULT_MARKER_OPTIONS, EMPTY_FLOW, V9FlowTracker, v9KbarMarkers, selectResearchMarkers,
     researchMarkerGap, mergeResearchMarkerLabels } from '../../src/lib/utils/v9-chart-markers';
+import { researchLevels, v9Resonance } from '../../src/lib/utils/research-chart';
 import { darkTwClass } from '../../src/theme.css';
 import type { Candle } from '../../src/lib/types/market';
 document.body.className = darkTwClass;
@@ -25,10 +26,19 @@ for (const [i, tickType] of [[25, 1], [60, 2], [110, 1], [150, 2], [200, 1], [25
     tracker.push({ time: start + i! * 60 + 1, volume: 40, tickType: tickType! });
 }
 const recorded = tracker.snapshot(1);
+// Separate, synthetic multi-day series makes all four resonance badges
+// inspectable without a market-data request.
+const resonanceBars: Candle[] = Array.from({ length: 140 }, (_, i) => {
+    const close = 80 + i;
+    return { time: Date.UTC(2026, 0, 1 + i, 1) / 1000, open: close - .2,
+        high: close + .4, low: close - .4, close, volume: 100 };
+});
 function Fixture() {
     const host = useRef<HTMLDivElement>(null);
     const priceMarkers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
     const volumeMarkers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+    const candlesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+    const levelLines = useRef<IPriceLine[]>([]);
     const [options, setOptions] = useState(DEFAULT_MARKER_OPTIONS);
     const [tablet, setTablet] = useState(false);
     const [hasTicks, setHasTicks] = useState(true);
@@ -44,6 +54,7 @@ function Fixture() {
         });
         const candles = chart.addSeries(CandlestickSeries, { upColor: '#f23645', downColor: '#16b389',
             wickUpColor: '#f23645', wickDownColor: '#16b389', borderVisible: false });
+        candlesRef.current = candles;
         const volume = chart.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' } });
         chart.priceScale('right').applyOptions({ scaleMargins: { top: .12, bottom: .3 } });
         chart.priceScale('vol').applyOptions({ scaleMargins: { top: .83, bottom: 0 } });
@@ -60,7 +71,7 @@ function Fixture() {
         const resize = new ResizeObserver(() => { chart.timeScale().fitContent(); updateGap(); });
         resize.observe(host.current!);
         chart.timeScale().fitContent();
-        return () => { resize.disconnect(); priceMarkers.current?.detach(); volumeMarkers.current?.detach(); chart.remove(); };
+        return () => { resize.disconnect(); priceMarkers.current?.detach(); volumeMarkers.current?.detach(); chart.remove(); candlesRef.current = null; };
     }, []);
     useEffect(() => {
         priceMarkers.current?.setMarkers(mergeResearchMarkerLabels(markers.filter(marker => marker.group !== 'volume'))
@@ -68,13 +79,26 @@ function Fixture() {
         volumeMarkers.current?.setMarkers(markers.filter(marker => marker.group === 'volume')
             .map(marker => ({ ...marker, time: marker.time as UTCTimestamp, position: 'aboveBar' as const, size: .8 })));
     }, [markers]);
+    useEffect(() => {
+        const candles = candlesRef.current;
+        if (!candles) return;
+        levelLines.current.forEach(line => candles.removePriceLine(line));
+        levelLines.current = options.levels ? researchLevels(bars).map(level => candles.createPriceLine({
+            price: level.price,
+            color: level.kind === 'opening-range' ? '#3d8bff' : level.kind === 'open' ? '#e0a43c' : '#8b94a7',
+            lineStyle: 2, axisLabelVisible: true, title: level.title,
+        })) : [];
+        return () => levelLines.current.forEach(line => candles.removePriceLine(line));
+    }, [options.levels]);
     return <main style={{ padding: 16, maxWidth: tablet ? 650 : 1280, margin: 'auto' }}>
         <h2>V9 研究標記 · 離線驗證</h2>
         <p style={{ color: '#e0a43c' }}>測試資料／非市場行情。本頁不連券商、不查歷史、不下單。</p>
         <p><button onClick={() => setTablet(!tablet)}>{tablet ? '桌面寬度' : '平板窄面板'}</button>{' '}
             <button onClick={() => setHasTicks(!hasTicks)}>{hasTicks ? '測試無 Tick 狀態' : '顯示測試 Tick'}</button></p>
         <div style={{ border: '1px solid #253243', borderRadius: 8, overflow: 'hidden' }}>
-            <ResearchMarkerControls options={options} onChange={setOptions} flow={flow} markers={markers} barCount={bars.length} />
+            <ResearchMarkerControls options={options} onChange={setOptions} flow={flow} markers={markers}
+                barCount={bars.length} resonance={v9Resonance(resonanceBars)}
+                levels={researchLevels(bars)} currentPrice={bars.at(-1)?.close} />
             <div ref={host} style={{ height: 580 }} />
         </div>
     </main>;

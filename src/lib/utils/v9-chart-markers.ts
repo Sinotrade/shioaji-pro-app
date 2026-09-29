@@ -5,6 +5,7 @@ import type { Candle } from '../types/market';
 import type { SecurityType } from '../types/contract';
 import { sessionWindowFor } from '../intraday-session';
 import { supertrend } from '../indicators';
+import type { EntrySignal, ShortSignal } from '../stock-picker';
 
 export interface V9ChartMarker {
     time: number;
@@ -12,7 +13,7 @@ export interface V9ChartMarker {
     shape: 'circle' | 'square' | 'arrowUp' | 'arrowDown';
     color: string;
     text: string;
-    group: 'volume' | 'divergence' | 'flow' | 'trend' | 'trendShort';
+    group: 'volume' | 'divergence' | 'flow' | 'trend' | 'trendShort' | 'entry' | 'shortEntry';
 }
 
 export interface FlowTick {
@@ -212,14 +213,76 @@ export function supertrendShortTradeMarkers(
             color: '#1fd286', text: '補',
         }));
 }
+/**
+ * 把選股「強勢上車」日 K 信號對到主圖 marker：主圖日 K 直接標在信號日；
+ * 主圖分 K 標在當日首次收盤越過突破位那根，找不到就標當日最後一根。
+ */
+export function entrySignalsToMarkers(
+    signals: EntrySignal[],
+    visibleBars: Candle[],
+    tfMinutes: number,
+): V9ChartMarker[] {
+    const out: V9ChartMarker[] = [];
+    for (const sig of signals) {
+        let at: number | null = null;
+        if (tfMinutes >= 1440) {
+            at = sig.time;
+        } else {
+            const dayBars = visibleBars.filter(
+                (b) => b.time >= sig.time && b.time < sig.time + 86400,
+            );
+            const hit = dayBars.find((b) => b.close >= sig.level) ?? dayBars.at(-1);
+            at = hit ? hit.time : null;
+        }
+        if (at === null) continue;
+        out.push({ time: at, group: 'entry', position: 'belowBar',
+            shape: 'arrowUp', color: '#f5c451', text: '強勢上車' });
+    }
+    return out;
+}
 
-// Same end labels as the live chart, with the closing auction kept in the
-// session's last minute. Daily bars use the exchange calendar date, not tomorrow.
+/**
+ * 把選股「弱勢放空」日 K 信號對到主圖 marker（空方鏡像）：主圖日 K 標信號日；
+ * 主圖分 K 標在當日首次收盤跌破前低那根，找不到就標當日最後一根。
+ */
+export function shortSignalsToMarkers(
+    signals: ShortSignal[],
+    visibleBars: Candle[],
+    tfMinutes: number,
+): V9ChartMarker[] {
+    const out: V9ChartMarker[] = [];
+    for (const sig of signals) {
+        let at: number | null = null;
+        if (tfMinutes >= 1440) {
+            at = sig.time;
+        } else {
+            const dayBars = visibleBars.filter(
+                (b) => b.time >= sig.time && b.time < sig.time + 86400,
+            );
+            const hit = dayBars.find((b) => b.close <= sig.level) ?? dayBars.at(-1);
+            at = hit ? hit.time : null;
+        }
+        if (at === null) continue;
+        out.push({ time: at, group: 'shortEntry', position: 'aboveBar',
+            shape: 'arrowDown', color: '#f5c451', text: '弱勢放空' });
+    }
+    return out;
+}
+
+// Same session-aligned close labels as aggregate(), with closing trades kept
+// in the session's last bucket. Futures night bars belong to the next trade date.
 export function researchTickBucket(time: number, minutes: number, securityType: SecurityType = 'STK'): number {
-    if (minutes >= 1440) return Math.floor(time / 86400) * 86400;
-    const end = sessionWindowFor(securityType, time).end;
+    const session = sessionWindowFor(securityType, time);
+    if (minutes >= 1440) {
+        const day = securityType === 'FUT' || securityType === 'OPT'
+            ? session.night ? session.end - 5 * 3600 : session.start
+            : time;
+        return Math.floor(day / 86400) * 86400;
+    }
+    const end = session.end;
     const minuteEnd = Math.min(Math.floor(time / 60) * 60 + 60, end);
-    return Math.ceil(minuteEnd / (Math.max(1, minutes) * 60)) * Math.max(1, minutes) * 60;
+    const bucketSec = Math.max(1, minutes) * 60;
+    return Math.min(end, session.start + Math.max(1, Math.ceil((minuteEnd - session.start) / bucketSec)) * bucketSec);
 }
 
 export interface FlowSnapshot {
@@ -328,10 +391,17 @@ export function v9LargeOrderFlowMarkers(
 /** K bars use end labels except daily bars, which use date-start labels.
  * Future/current bars are not presented as confirmed pattern observations.
  */
-export function completedResearchBars(bars: Candle[], minutes: number, now: number): Candle[] {
-    return bars.filter(bar => minutes >= 1440
-        ? bar.time + 86400 <= now
-        : bar.time <= now);
+export function completedResearchBars(
+    bars: Candle[],
+    minutes: number,
+    now: number,
+    securityType: SecurityType = 'STK',
+): Candle[] {
+    return bars.filter(bar => {
+        if (minutes < 1440) return bar.time <= now;
+        if (securityType === 'FUT' || securityType === 'OPT') return bar.time + 86400 + 5 * 3600 <= now;
+        return bar.time + 13.5 * 3600 <= now;
+    });
 }
 
 export interface ResearchMarkerOptions {
@@ -340,11 +410,17 @@ export interface ResearchMarkerOptions {
     flow: boolean;
     trend: boolean;
     trendShort: boolean;
+    entry: boolean;
+    shortEntry: boolean;
     tint: boolean;
+    levels: boolean;
+    opening: boolean;
+    transitions: boolean;
+    pivot: boolean;
     compact: boolean;
 }
 export const DEFAULT_MARKER_OPTIONS: ResearchMarkerOptions = {
-    volume: true, divergence: true, flow: true, trend: true, trendShort: true, tint: true, compact: true,
+    volume: true, divergence: true, flow: true, trend: true, trendShort: true, entry: true, shortEntry: true, tint: true, levels: true, opening: true, transitions: true, pivot: true, compact: true,
 };
 
 export function researchMarkerGap(visibleBars: number, width: number): number {

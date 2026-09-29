@@ -13,14 +13,20 @@ export class IndicatorControlError extends Error {
 }
 const copy = <T,>(value: T): T => structuredClone(value);
 const EMPTY: IndicatorPanelState = { revision: '', instances: [] };
-const V9_RESEARCH_PRESET = 'v9-research-v2';
+const V9_RESEARCH_PRESET = 'v9-research-v4';
+
+function researchEma(period: number, color: string): IndicatorInstance {
+    const instance = newInstance('ema');
+    instance.params.period = period;
+    instance.styles = { ...instance.styles, line: { ...instance.styles?.line, color, width: 2 } };
+    return instance;
+}
 
 function v9ResearchInstances(): IndicatorInstance[] {
-    const ema8 = newInstance('ema');
-    ema8.params.period = 8;
     return [
         newInstance('vwap'),
-        ema8,
+        researchEma(3, '#ff4d6d'),
+        researchEma(8, '#f6c94c'),
         newInstance('bbi'),
         newInstance('boll'),
         newInstance('atrdefense'),
@@ -52,10 +58,23 @@ function mergeV9ResearchInstances(instances: IndicatorInstance[]): IndicatorInst
         ...instances,
         // An existing generic MACD/KDJ may be intentionally tuned. In that
         // case keep it and add only the missing V9-only visual layers.
-        ...v9ResearchInstances().filter((instance) => !present.has(instance.type)
-            && !((instance.type === 'v9macd' && present.has('macd'))
-                || (instance.type === 'v9kdj' && present.has('kd')))),
+        ...v9ResearchInstances().filter((instance) => {
+            if (instance.type === 'ema') {
+                return !instances.some((current) => current.type === 'ema'
+                    && current.params.period === instance.params.period);
+            }
+            return !present.has(instance.type)
+                && !((instance.type === 'v9macd' && present.has('macd'))
+                    || (instance.type === 'v9kdj' && present.has('kd')));
+        }),
     ];
+}
+
+function addV9Ema3(instances: IndicatorInstance[]): IndicatorInstance[] {
+    if (instances.some((instance) => instance.type === 'ema' && instance.params.period === 3)) {
+        return instances;
+    }
+    return [...instances, researchEma(3, '#ff4d6d')];
 }
 
 // Seed each legacy chart separately. Global defaults remain available to
@@ -69,7 +88,18 @@ export function initializeIndicatorPanels(workspace: Workspace): Workspace {
             ? old.instances.filter(i => DEF_BY_TYPE.has(i.type))
             : copy(loadInstances());
         const shouldSeedV9 = block.id === 'chart-v9' && old?.presetVersion !== V9_RESEARCH_PRESET;
-        if (shouldSeedV9) instances = mergeV9ResearchInstances(instances);
+        if (shouldSeedV9) {
+            // v2 already seeded the other research layers. Add only EMA3 so
+            // intentionally removed indicators and tuned settings stay untouched.
+            instances = old?.presetVersion === 'v9-research-v3' ? instances
+                : old?.presetVersion === 'v9-research-v2' ? addV9Ema3(instances)
+                    : mergeV9ResearchInstances(instances);
+            instances = instances.map(instance => instance.type === 'atrdefense' ? {
+                ...instance, styles: { ...instance.styles,
+                    up: { ...instance.styles?.up, color: '#fb7185', width: 3, plot: 'step' },
+                    down: { ...instance.styles?.down, color: '#4ade80', width: 3, plot: 'step' } },
+            } : instance);
+        }
         if (old && instances.length === old.instances.length && !shouldSeedV9) return block;
         changed = true;
         return {

@@ -1,5 +1,6 @@
 // src/components/quote-board.tsx — selected symbol mega display
 
+import { useState } from 'react';
 import { useDisplayBook } from '../hooks/use-display-book';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
@@ -10,10 +11,13 @@ import * as styles from './quote-board.css';
 export function QuoteBoard({
     contract,
     snapshot: suppliedSnapshot,
+    compact = false,
 }: {
     contract: ContractInfo;
     snapshot?: Snapshot;
+    compact?: boolean;
 }) {
+    const [details, setDetails] = useState(false);
     const { quote, snapshot, book } = useDisplayBook(contract.code, suppliedSnapshot, contract);
     const tick = quote?.tick;
     const index = quote?.index;
@@ -71,7 +75,7 @@ export function QuoteBoard({
             : null;
 
     return (
-        <div className={`${styles.board} drag-handle`}>
+        <div className={`${styles.board} ${compact ? styles.compactBoard : ''} drag-handle`}>
             <div className={styles.symbolBlock}>
                 <span className={styles.symbolCode}>{contract.code}</span>
                 <span className={styles.symbolName}>{contract.name}</span>
@@ -89,7 +93,18 @@ export function QuoteBoard({
                 <span>{fmtPct(pct)}</span>
             </div>
 
-            <div className={styles.statGrid}>
+            {compact && <>
+                <div className={styles.quickStats}>
+                    <span>開 <b>{fmtPrice(open)}</b></span>
+                    <span>高 <b className={panel.dirText.up}>{fmtPrice(high)}</b></span>
+                    <span>低 <b className={panel.dirText.down}>{fmtPrice(low)}</b></span>
+                    <span>量 <b>{fmtInt(vol)}</b></span>
+                </div>
+                <button className={styles.detailButton} aria-expanded={details}
+                    onMouseDown={event => event.stopPropagation()} onTouchStart={event => event.stopPropagation()}
+                    onClick={() => setDetails(value => !value)}>{details ? '收合行情 ▴' : '行情明細 ▾'}</button>
+            </>}
+            {(!compact || details) && <div className={`${styles.statGrid} ${compact ? styles.expandedStats : ''}`}>
                 {isIndex ? (
                     <>
                         <span className={styles.statLabel}>開</span>
@@ -181,7 +196,7 @@ export function QuoteBoard({
                         </span>
                     </>
                 )}
-            </div>
+            </div>}
         </div>
     );
 }

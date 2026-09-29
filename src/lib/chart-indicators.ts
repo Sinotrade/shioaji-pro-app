@@ -22,6 +22,7 @@ import {
     outputStyle,
 } from './indicator-defs';
 import type { IndicatorPoint } from './indicators';
+import { defenseSegments } from './research-visuals';
 import type { ChartColors } from './theme-store';
 import type { Candle } from './types/market';
 
@@ -44,7 +45,7 @@ export function renderIndicatorSeries(
         pts.map((p) =>
             p.value === undefined
                 ? { time: p.time as UTCTimestamp }
-                : { time: p.time as UTCTimestamp, value: p.value },
+                : { time: p.time as UTCTimestamp, value: p.value, ...(p.color ? { color: p.color } : {}) },
         ) as SeriesDataItemTypeMap['Line'][];
 
     let paneIdx = 1;
@@ -83,6 +84,17 @@ export function renderIndicatorSeries(
             const st = outputStyle(inst, def, o.key);
             if (!st.visible) continue;
             const color = colorWithOpacity(st.color, st.opacity);
+            if (inst.type === 'atrdefense') {
+                for (const segment of defenseSegments(pts)) {
+                    const rail = chart.addSeries(LineSeries, { color, lineWidth: st.width,
+                        lineType: LineType.WithSteps, crosshairMarkerVisible: false,
+                        pointMarkersVisible: segment.length === 1, pointMarkersRadius: 2,
+                        ...quiet, ...priceFormatOpt }, pane);
+                    rail.setData(toLineData(segment));
+                    firstSeries ??= rail;
+                }
+                continue;
+            }
             let s: ISeriesApi<'Line' | 'Histogram' | 'Area'>;
             if (st.plot === 'histogram') {
                 s = chart.addSeries(

@@ -225,7 +225,7 @@ describe('incremental large-order flow', () => {
         expect(researchTickBucket(open, 1)).toBe(open + 60);
         expect(researchTickBucket(open + 60, 5)).toBe(open + 300);
         expect(researchTickBucket(day + 13.5 * 3600, 1)).toBe(day + 13.5 * 3600);
-        expect(researchTickBucket(day + 13.5 * 3600, 60)).toBe(day + 14 * 3600);
+        expect(researchTickBucket(day + 13.5 * 3600, 60)).toBe(day + 13.5 * 3600);
         expect(researchTickBucket(open + 100, 1440)).toBe(day);
     });
 });
