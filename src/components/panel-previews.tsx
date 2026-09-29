@@ -631,6 +631,36 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             ))}
         </Frame>
     ),
+    picker: (
+        <Frame>
+            {[0, 1, 2, 3, 4].map((i) => (
+                <g key={i}>
+                    <Ln x={8} y={14 + i * 12} w={18 + (4 - i) * 7} color={i === 0 ? accent : up} />
+                    <rect x={68} y={10 + i * 12} width={30 - i * 3} height='7' rx='1.5' fill={i < 2 ? up : i < 4 ? accent : border} />
+                </g>
+            ))}
+        </Frame>
+    ),
+    radar: (
+        <Frame>
+            {[0, 1, 2, 3, 4].map((i) => (
+                <g key={i}>
+                    <Ln x={8} y={14 + i * 12} w={24} />
+                    {[0, 1, 2, 3].map((j) => (
+                        <rect
+                            key={j}
+                            x={42 + j * 9}
+                            y={10 + i * 12}
+                            width='7'
+                            height='7'
+                            rx='1.5'
+                            fill={(i + j) % 3 === 0 ? down : up}
+                        />
+                    ))}
+                </g>
+            ))}
+        </Frame>
+    ),
     signals: (
         <Frame>
             {[up, down, up, up, down].map((color, i) => (

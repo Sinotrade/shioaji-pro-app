@@ -15,6 +15,8 @@ import { ChipsCard } from './chips-card';
 import { DepthLadder } from './depth-ladder';
 import { MarketPulsePanel, MarketSignalPanel } from './market-pulse-panel';
 import { OptionChain } from './option-chain';
+import { RadarPanel } from './radar-panel';
+import { StockPickerPanel } from './stock-picker-panel';
 import { ScannerPanel } from './scanner-panel';
 import { SectorHeatmap } from './sector-heatmap';
 import { TickTape } from './tick-tape';
@@ -37,6 +39,8 @@ const NO_CONTRACT_PREVIEWS: Partial<Record<BlockType, () => ReactElement>> = {
     movers: () => <ScannerPanel onPick={noop} />,
     heatmap: () => <SectorHeatmap onPick={noop} />,
     pulse: () => <MarketPulsePanel />,
+    picker: () => <StockPickerPanel onPick={noop} />,
+    radar: () => <RadarPanel onPick={noop} />,
     signals: () => <MarketSignalPanel />,
     optchain: () => <OptionChain onPick={noop} />,
 };

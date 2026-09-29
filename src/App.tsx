@@ -11,6 +11,7 @@ import 'react-grid-layout/css/styles.css';
 import * as styles from './App.css';
 import { BottomDock } from './components/bottom-dock';
 import { CandleChart } from './components/candle-chart';
+import { ChartDayRange } from './components/chart-day-range';
 import { ChipsCard } from './components/chips-card';
 import { ComboListPanel } from './components/combo-list';
 import { ComboTicket } from './components/combo-ticket';
@@ -30,6 +31,8 @@ import {
     MarketSignalPanel,
 } from './components/market-pulse-panel';
 import { NoticeCenter } from './components/notice-center';
+import { RadarPanel } from './components/radar-panel';
+import { StockPickerPanel } from './components/stock-picker-panel';
 import { OptPayoff } from './components/opt-payoff';
 import { OptionChain } from './components/option-chain';
 import { Orb } from './components/orb';
@@ -85,6 +88,7 @@ import type { ContractInfo } from './lib/types/contract';
 import {
     BLOCK_META,
     ACTIVE_DEFAULT_WORKSPACE,
+    V9_RESEARCH_MODE,
     GRID_LEGACY_COLS,
     GRID_LEGACY_SCALE,
     LAYOUT_PRESETS,
@@ -191,7 +195,7 @@ function BlockBody({
         case 'chart':
             return contract ? (
                 <>
-                    <QuoteBoard contract={contract} snapshot={snapshot} />
+                    {!V9_RESEARCH_MODE && <QuoteBoard contract={contract} snapshot={snapshot} />}
                     <CandleChart
                         panelId={block.id}
                         contract={contract}
@@ -330,6 +334,10 @@ function BlockBody({
                     }
                 />
             );
+        case 'picker':
+            return <StockPickerPanel onPick={onSelectCode} />;
+        case 'radar':
+            return <RadarPanel onPick={onSelectCode} />;
         case 'signals':
             return <MarketSignalPanel onPick={onSelectCode} />;
         case 'backtest': {
@@ -425,11 +433,15 @@ interface BlockViewProps {
 }
 
 function BlockView(props: BlockViewProps) {
-    const { block, selected, onPinChange, onRemove, ...bodyProps } = props;
+    const { block, selected, onPinChange, onRemove, snapshot, ...bodyProps } =
+        props;
     const contract = useBlockContract(block, selected);
     const meta = BLOCK_META[block.type];
+    const isChart = block.type === 'chart';
     const showSymbol =
-        meta.pinnable && contract ? ` · ${contract.code}` : '';
+        meta.pinnable && contract
+            ? ` · ${contract.code}${isChart ? ` ${contract.name}` : ''}`
+            : '';
     const pulseMarket =
         block.type === 'pulse' && block.pulseIndex
             ? ` · ${block.pulseIndex === 'IX0001' ? '上市' : '上櫃'}`
@@ -440,6 +452,13 @@ function BlockView(props: BlockViewProps) {
             <PanelChrome
                 title={`${meta.label}${pulseMarket}${showSymbol}`}
                 pinnable={meta.pinnable}
+                {...(isChart && contract
+                    ? {
+                          children: (
+                              <ChartDayRange contract={contract} snapshot={snapshot} />
+                          ),
+                      }
+                    : {})}
                 pin={block.pin}
                 currentCode={selected?.code ?? null}
                 onPinChange={(pin) => onPinChange(block.id, pin)}
@@ -507,7 +526,7 @@ function PopoutView({
             case 'chart':
                 body = (
                     <>
-                        <QuoteBoard contract={contract} />
+                        {!V9_RESEARCH_MODE && <QuoteBoard contract={contract} />}
                         <CandleChart
                             contract={contract}
                             trades={tradesState.data ?? []}
