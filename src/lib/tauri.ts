@@ -7,6 +7,7 @@ import type {
 } from '@tauri-apps/plugin-updater';
 import {
     type ApiScheme,
+    APP_PROFILE,
     DEFAULT_PORT,
     EXPECTED_SERVER_VERSION,
     LEGACY_PORT,
@@ -460,7 +461,18 @@ async function spawnServerViaChannels(
 // the app default, and the CLI default (a user-run `shioaji server` daemon).
 function candidatePorts(): number[] {
     if (getDevServerPort()) return [getDevServerPort()!];
+    // a secondary profile (issue #205) only ever looks inside its own port
+    // window — never at :8080 or the primary App's ports, so it can neither
+    // adopt nor stop the other App's sidecar
+    if (APP_PROFILE) {
+        return [...new Set([getApiPort(), DEFAULT_PORT])].filter(inProfilePortWindow);
+    }
     return [...new Set([getApiPort(), DEFAULT_PORT, LEGACY_PORT])];
+}
+
+// find_free_port falls back within preferred..preferred+50
+function inProfilePortWindow(port: number): boolean {
+    return port >= DEFAULT_PORT && port < DEFAULT_PORT + 50;
 }
 
 // ---- 本機 HTTPS（mkcert 憑證）----
@@ -625,7 +637,8 @@ export async function serverStatus(
         };
         if (!accept || await accept(status)) return status;
     }
-    if (getDevServerPort()) return { running: false };
+    // the CLI daemon registry is global (shared by every App profile)
+    if (getDevServerPort() || APP_PROFILE) return { running: false };
     try {
         const res = await sidecar(['server', 'status', '--format', 'json']);
         const jsonStart = res.output.indexOf('{');
@@ -909,7 +922,8 @@ export async function serverStart(opts: {
         // server on top of it
         const win = [
             ...Array.from({ length: 9 }, (_, i) => DEFAULT_PORT + 1 + i),
-            ...Array.from({ length: 5 }, (_, i) => LEGACY_PORT + 1 + i),
+            // the pre-21322 legacy window only ever held primary-App orphans
+            ...(APP_PROFILE ? [] : Array.from({ length: 5 }, (_, i) => LEGACY_PORT + 1 + i)),
         ];
         // HTTP-probe only the ports something is actually bound to (was:
         // two probes on each of 14 ports, ~0.9 s natively on every start)
@@ -1053,7 +1067,10 @@ export async function serverStart(opts: {
         // ports is a zombie orphan (SIGKILLed app → dead pipe → HTTP dead) —
         // reclaim our own before picking a port; foreign listeners refuse
         // the ownership check and find_free_port dodges them below
-        for (const p of new Set(getDevServerPort() ? [preferredPort] : [getApiPort(), DEFAULT_PORT])) {
+        const reclaim = getDevServerPort()
+            ? [preferredPort]
+            : [getApiPort(), DEFAULT_PORT].filter((p) => !APP_PROFILE || inProfilePortWindow(p));
+        for (const p of new Set(reclaim)) {
             await invoke('kill_shioaji', {
                 port: p,
                 pid: getServerPid(),
@@ -1548,7 +1565,8 @@ export async function openPopout(
         // Tauri's drag-drop interception eats in-page HTML5 drag on
         // WKWebView (watchlist reorder) — no file-drop feature needs it
         dragDropEnabled: false,
-        title: `Shioaji Pro — ${type}${code ? ` · ${code}` : ''}`,
+        title: `Shioaji Pro — ${type}${code ? ` · ${code}` : ''}${profileTitleSuffix()}`,
+        ...profileWebviewOptions(),
         width: 900,
         height: 620,
         minWidth: 420,
@@ -1630,7 +1648,8 @@ export async function openFlashTiles(
         new WebviewWindow(label, {
             url: `index.html?${qs}`,
             dragDropEnabled: false,
-            title: `⚡ ${code}`,
+            title: `⚡ ${code}${profileTitleSuffix()}`,
+            ...profileWebviewOptions(),
             x,
             y,
             width: w,
@@ -1824,6 +1843,18 @@ export async function restartAndInstallUpdate() {
     ) {
         return;
     }
+    // Installing replaces the bundle both Apps run from (Windows' installer
+    // even closes every running copy): with a second profile open, its
+    // sidecar would be orphaned or restarted onto a mismatched version.
+    const others = await otherProfilesRunning();
+    if (others.length > 0) {
+        notify({
+            kind: 'err',
+            title: '請先關閉另一個 Shioaji Pro',
+            body: `${others.join('、')} 仍在執行；關閉後再重新啟動並更新`,
+        });
+        return;
+    }
     updateInFlight = true;
     const update = pendingUpdate;
     setAppUpdateState({ phase: 'installing', version: update.version });
@@ -1867,6 +1898,68 @@ export async function openExternalUrl(url: string, failTitle = '無法開啟連�
 
 export async function openLatestRelease() {
     await openExternalUrl(APP_RELEASE_URL, '無法開啟下載頁');
+}
+
+// ---- app profiles (issue #205: 模擬＋正式 two Apps side by side) ----
+
+export interface AppProfileInfo {
+    id: string;
+    label: string;
+    portBase: number;
+    isDefault: boolean;
+    counterpartId: string;
+    counterpartLabel: string;
+    othersRunning: string[];
+}
+
+export async function appProfileInfo(): Promise<AppProfileInfo | null> {
+    if (!isTauri) return null;
+    try {
+        const { invoke } = await core();
+        return await invoke<AppProfileInfo>('app_profile_info');
+    } catch {
+        return null; // older native shell without profiles
+    }
+}
+
+/** Labels of the other profiles' Apps that are running right now. */
+export async function otherProfilesRunning(): Promise<string[]> {
+    const info = await appProfileInfo();
+    if (!info) return [];
+    return info.othersRunning.map((id) =>
+        id === info.counterpartId ? info.counterpartLabel : id,
+    );
+}
+
+/** Start (or focus) the other profile's App — separate settings, data and
+ * sidecar; this App keeps running untouched. */
+export async function openCounterpartProfile(): Promise<void> {
+    const info = await appProfileInfo();
+    if (!info) throw new Error('此版本不支援同時開啟第二個 App');
+    const { invoke } = await core();
+    await invoke('open_profile_instance', { profileId: info.counterpartId });
+}
+
+/** Tell the native shell which environment this App's sidecar serves
+ * (window title / tray tooltip / macOS menu-bar text). */
+export function setInstanceMode(mode: 'simulation' | 'production' | 'unknown'): void {
+    if (!isTauri || isChildWindow()) return;
+    void core()
+        .then(({ invoke }) => invoke('set_instance_mode', { mode }))
+        .catch(() => undefined);
+}
+
+function profileTitleSuffix(): string {
+    return APP_PROFILE ? `（${APP_PROFILE.label}）` : '';
+}
+
+// Popouts share the main window's storage (port, workspace, layout) — on
+// macOS a secondary profile's WKWebsiteDataStore must be named explicitly,
+// Windows/Linux derive the data directory from the per-profile identifier.
+function profileWebviewOptions(): { dataStoreIdentifier?: number[] } {
+    return APP_PROFILE?.dataStoreIdentifier
+        ? { dataStoreIdentifier: APP_PROFILE.dataStoreIdentifier }
+        : {};
 }
 
 // ---- tray events ----

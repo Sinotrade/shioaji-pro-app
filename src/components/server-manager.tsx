@@ -2,6 +2,7 @@
 // status, start/stop/restart, API-key settings, simulation/production mode.
 
 import {
+    AppWindow,
     Clipboard,
     Download,
     ExternalLink,
@@ -25,7 +26,7 @@ import { usePoll } from '../hooks/use-poll';
 import { useStreamStatus } from '../hooks/use-stream';
 import { UNSIGNED_BLOCKED_LABEL } from '../lib/account-signing';
 import { getPrivacyMode, maskAccountId } from '../lib/privacy';
-import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
+import { APP_PROFILE, EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
 import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
 import {
@@ -57,6 +58,7 @@ import {
     getAppUpdateState,
     isTauri,
     loadDesktopSettings,
+    openCounterpartProfile,
     openLatestRelease,
     reloadWhenHealthy,
     restartAndInstallUpdate,
@@ -1048,6 +1050,24 @@ export function ServerManager({
                             </div>
                             {updateState.phase === 'ready' && <p className={dialogStyles.hint}>更新已下載，按上方按鈕才會安裝並重新啟動 App。</p>}
                             {updateState.phase === 'error' && <p className={dialogStyles.warning}>{updateState.error}</p>}
+                        </details>
+                        <details className={dialogStyles.details}>
+                            <summary>同時開啟第二個 App（模擬／正式）</summary>
+                            <p className={dialogStyles.hint}>
+                                {APP_PROFILE
+                                    ? `這是「${APP_PROFILE.label}」App。可開啟或切換到主要 App；兩者的設定、自選、執行中的委託程式與伺服器完全分開。`
+                                    : '另開一個設定、自選、執行中的委託程式與伺服器完全分開的 App（例如這邊正式、那邊模擬）。關閉任一個都不會影響另一個。'}
+                            </p>
+                            <button
+                                className={dialogStyles.button}
+                                onClick={() => {
+                                    openCounterpartProfile().catch((e) =>
+                                        notify({ kind: 'err', title: '無法開啟第二個 App', body: String(e) }),
+                                    );
+                                }}
+                            >
+                                <AppWindow size={14} />{APP_PROFILE ? '開啟主要 App' : '開啟第二個 App'}
+                            </button>
                         </details>
                         <details className={dialogStyles.details}>
                             <summary>登出這個 App</summary>
