@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Candle } from '../types/market';
-import { researchLevels, toHeikinAshi, v9TrendTint } from './research-chart';
+import { researchLevels, toHeikinAshi, v9Resonance, v9TrendTint } from './research-chart';
 
 const bar = (time: number, open: number, high: number, low: number, close: number): Candle => ({
     time, open, high, low, close, volume: 1,
@@ -17,8 +17,8 @@ describe('research chart helpers', () => {
     });
 
     it('reports prior-session support/resistance and the opening range', () => {
-        const d1 = Date.UTC(2026, 8, 17, 1, 0) / 1000;
-        const d2 = Date.UTC(2026, 8, 18, 1, 0) / 1000;
+        const d1 = Date.UTC(2026, 8, 17, 9, 1) / 1000;
+        const d2 = Date.UTC(2026, 8, 18, 9, 1) / 1000;
         const levels = researchLevels([
             bar(d1, 10, 12, 9, 11),
             bar(d1 + 60, 11, 13, 10, 12),
@@ -33,6 +33,40 @@ describe('research chart helpers', () => {
             { id: 'prev-low', title: '昨低', price: 9, kind: 'previous' },
             { id: 'prev-close', title: '昨收', price: 12, kind: 'previous' },
         ]));
+    });
+
+    it('keeps a futures night session intact across midnight for support/resistance', () => {
+        const daySession = Date.UTC(2026, 8, 17, 8, 46) / 1000;
+        const nightStart = Date.UTC(2026, 8, 17, 15, 1) / 1000;
+        const afterMidnight = Date.UTC(2026, 8, 18, 1, 1) / 1000;
+        const levels = researchLevels([
+            bar(daySession, 100, 104, 98, 102),
+            bar(nightStart, 105, 108, 103, 106),
+            bar(afterMidnight, 106, 110, 104, 109),
+        ], 5, 'FUT');
+        expect(levels).toEqual(expect.arrayContaining([
+            { id: 'open', title: '開盤', price: 105, kind: 'open' },
+            { id: 'or-high', title: '開盤5分高', price: 108, kind: 'opening-range' },
+            { id: 'prev-high', title: '昨高', price: 104, kind: 'previous' },
+            { id: 'prev-low', title: '昨低', price: 98, kind: 'previous' },
+        ]));
+    });
+
+    it('labels incomplete multi-timeframe sources instead of inventing V9 resonance', () => {
+        const sparse = Array.from({ length: 116 }, (_, i) => bar(
+            Date.UTC(2026, 0, 1 + i, 1) / 1000, 100 + i, 101 + i, 99 + i, 100.5 + i,
+        ));
+        expect(v9Resonance(sparse).frames.every(frame => frame.side === 'insufficient')).toBe(true);
+        expect(v9Resonance(sparse).summary).toContain('資料不足4');
+    });
+
+    it('shows four-timeframe alignment only after all V9 slow-MACD windows are present', () => {
+        const rising = Array.from({ length: 140 }, (_, i) => bar(
+            Date.UTC(2026, 0, 1 + i, 1) / 1000, 100 + i, 101.5 + i, 99.5 + i, 101 + i,
+        ));
+        const resonance = v9Resonance(rising);
+        expect(resonance.frames.every(frame => frame.side === 'long')).toBe(true);
+        expect(resonance.summary).toBe('四週期同多');
     });
 
     it('tints confirmed long/short sessions and leaves warm-up neutral', () => {
