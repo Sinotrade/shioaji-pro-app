@@ -178,6 +178,23 @@ export const prodBadge = style({
     whiteSpace: 'nowrap',
 });
 
+// second App profile (issue #205) — which of two open Apps this is
+export const profileBadge = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.64rem',
+    fontWeight: 600,
+    letterSpacing: '0.06em',
+    color: vars.color.foreground,
+    border: `1px dashed ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    padding: '0 8px',
+    height: '25px',
+    boxSizing: 'border-box',
+    display: 'inline-flex',
+    alignItems: 'center',
+    whiteSpace: 'nowrap',
+});
+
 export const settingsWrap = style({
     position: 'relative',
     // block 容器包 inline-flex 按鈕會產生 line box — wrapper 高度吃到

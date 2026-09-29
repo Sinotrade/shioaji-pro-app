@@ -4,10 +4,54 @@
 export const isTauri =
     typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+// App profile (issue #205: a second, fully isolated App — e.g. 模擬 next to
+// 正式). The native shell injects `window.__SJ_PRO_PROFILE__` into every
+// webview of a NON-default profile before page scripts run; the default
+// profile injects nothing and keeps every port/key it always had.
+export interface AppProfile {
+    id: string;
+    label: string;
+    portBase: number;
+    /** macOS WKWebsiteDataStore id — popouts must reuse it. */
+    dataStoreIdentifier: number[] | null;
+}
+
+export function readAppProfile(
+    source: unknown = typeof window === 'undefined'
+        ? undefined
+        : (window as unknown as { __SJ_PRO_PROFILE__?: unknown }).__SJ_PRO_PROFILE__,
+): AppProfile | null {
+    if (!source || typeof source !== 'object') return null;
+    const p = source as Record<string, unknown>;
+    if (
+        typeof p.id !== 'string' ||
+        !/^[a-z0-9-]{1,24}$/.test(p.id) ||
+        typeof p.label !== 'string' ||
+        typeof p.portBase !== 'number' ||
+        !Number.isInteger(p.portBase) ||
+        p.portBase < 1024 ||
+        p.portBase > 65000
+    ) {
+        return null;
+    }
+    const ds = p.dataStoreIdentifier;
+    const dataStoreIdentifier =
+        Array.isArray(ds) && ds.length === 16 && ds.every((b) => Number.isInteger(b) && b >= 0 && b < 256)
+            ? (ds as number[])
+            : null;
+    return { id: p.id, label: p.label, portBase: p.portBase, dataStoreIdentifier };
+}
+
+/** null = the default (primary) profile. */
+export const APP_PROFILE: AppProfile | null = readAppProfile();
+
 // Default port for the bundled shioaji server. 21322 = 0x534A ("SJ") —
 // far from 8080/8000/3000-style dev defaults and below every OS ephemeral
-// range, so it's essentially never taken by another service.
-export const DEFAULT_PORT = 21322;
+// range, so it's essentially never taken by another service. A secondary
+// profile gets its own window (native `port_base`, ≥100 apart) so neither
+// App ever probes, adopts or reclaims the other's sidecar.
+export const PRIMARY_PORT = 21322;
+export const DEFAULT_PORT = APP_PROFILE?.portBase ?? PRIMARY_PORT;
 // 隔離 dev App 的整組服務，包含原生管理與 SSE；不可只覆寫 REST URL。
 export function getDevServerPort(): number | undefined {
     const raw = import.meta.env.DEV ? import.meta.env.VITE_DEV_SERVER_PORT : undefined;

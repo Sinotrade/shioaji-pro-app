@@ -14,8 +14,10 @@ import {
     checkForUpdates,
     listenTrayEvents,
     openFlashTiles,
+    setInstanceMode,
     type FlashTileLayout,
 } from '../lib/tauri';
+import { APP_PROFILE } from '../lib/runtime';
 import { fmtMoney } from '../lib/utils/format';
 import type { Profile, Workspace } from '../lib/workspace';
 import { LayoutLibrary } from './layout-library';
@@ -254,6 +256,16 @@ export function HudHeader({
         };
     }, []);
 
+    // native title / tray say 模擬／正式 too — with two Apps open the window
+    // you trade in must be unmistakable (issue #205). Re-sent periodically so
+    // the primary App picks up the menu-bar label once a second App appears.
+    useEffect(() => {
+        const mode = simulation === null ? 'unknown' : simulation ? 'simulation' : 'production';
+        setInstanceMode(mode);
+        const t = setInterval(() => setInstanceMode(mode), 15_000);
+        return () => clearInterval(t);
+    }, [simulation]);
+
     return (
         <header className={styles.header}>
             <div className={styles.logoBlock}>
@@ -271,6 +283,14 @@ export function HudHeader({
                 ) : (
                     <span className={styles.prodBadge}>正式環境</span>
                 ))}
+            {APP_PROFILE && (
+                <span
+                    className={styles.profileBadge}
+                    title="第二個 Shioaji Pro：設定、資料與伺服器都與主要 App 分開"
+                >
+                    {APP_PROFILE.label}
+                </span>
+            )}
 
             <MarketBar />
 
