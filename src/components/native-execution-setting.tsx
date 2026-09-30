@@ -50,6 +50,7 @@ export function NativeExecutionSetting() {
                 <br />
                 狀態：{state} · 原生單 {programs.length} 筆
                 {health?.lastError ? ` · ${health.lastError}` : ''}
+                {health?.staleQuotes?.length ? ` · 行情暫無成交（已重新訂閱）：${health.staleQuotes.join('、')}` : ''}
             </span>
         </>
     );

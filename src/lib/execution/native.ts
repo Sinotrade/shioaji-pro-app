@@ -36,6 +36,8 @@ export interface NativeHealth {
     serverId: string | null;
     lastError: string | null;
     partitionErrors: string[];
+    /** Watched quotes without a tick for a while (the engine resubscribes them). */
+    staleQuotes?: string[];
     programs: number;
     activePrograms?: number;
     revision: number;
