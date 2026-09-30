@@ -33,7 +33,7 @@ import {
     isSelectedAccountUnchanged,
 } from '../lib/order-account';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
-import { clampLotQuantity, isOddLot, lotLabel, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT, orderQtyUnit, stockOrderProblem } from '../lib/odd-lot';
+import { clampLotQuantity, isOddLot, lotLabel, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT, ODD_LOT_WAITING, oddLotReferencePrice, orderQtyUnit, stockOrderProblem } from '../lib/odd-lot';
 import { currentProtectionEnv } from '../lib/protection-env';
 import { fetchInfo, placeFuturesOrder, placeStockOrder } from '../lib/shioaji';
 import { notify } from '../lib/trade';
@@ -52,7 +52,7 @@ import {
     stockTaxRate,
 } from '../lib/utils/contract-cost';
 import { fmtPrice } from '../lib/utils/format';
-import { stepPrice } from '../lib/utils/ticksize';
+import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import * as panel from './panel.css';
 import * as styles from './order-ticket.css';
 
@@ -79,11 +79,13 @@ export function OrderTicket({
     const [orderType, setOrderType] = useState<OrderType>('ROD');
     const [orderLot, setOrderLot] = useState<StockOrderLot>('Common');
     const [orderCond, setOrderCond] = useState<StockOrderCond>('Cash');
-    // 盤中零股：帶價與括號單參考價取零股成交價（另一個撮合市場，#204）；
-    // 尚無零股成交時退回整股成交價。盤後零股沒有即時行情。
+    // 盤中零股：帶價與括號單參考價只看零股行情（另一個撮合市場，#204）—
+    // 零股成交價，否則零股最佳買賣中價／單邊；沒有零股行情就不帶價，
+    // 絕不以整股價格帶入零股限價。盤後零股沒有即時行情，沿用整股。
     const intradayOdd = !isFutures && orderLot === 'IntradayOdd';
     const oddQuote = useQuote(intradayOdd ? contract.code : null, { oddLot: true });
-    const lastClose = (intradayOdd ? oddQuote?.tick?.close : undefined) ?? quote?.tick?.close;
+    const oddReference = intradayOdd ? oddLotReferencePrice(oddQuote, p => roundToTick(contract, p)) : null;
+    const lastClose: string | number | undefined = intradayOdd ? (oddReference ?? undefined) : quote?.tick?.close;
     const [octype, setOctype] = useState<FuturesOCType>('Auto');
     const [daytradeShort, setDaytradeShort] = useState(false);
     const [armed, setArmed] = useState(false);
@@ -115,6 +117,7 @@ export function OrderTicket({
     const [presetSel, setPresetSel] = useState('');
     const [presetName, setPresetName] = useState('');
 
+    const unitClassRef = useRef(isFutures);
     // reset on symbol change — split state deliberately collapses too
     // (never persisted: a forgotten split from last time must not fire)
     useEffect(() => {
@@ -124,8 +127,11 @@ export function OrderTicket({
         setFeedback(null);
         setPriceType('LMT');
         setOrderType('ROD');
-        // 零股數量是股數：換商品回到整股時歸 1，避免股數被當成張數
-        if (orderLotRef.current !== 'Common') setQty(1);
+        // 數量只在輸入時的單位有效：原本是零股（股數），或商品類別（股票／
+        // 期貨）變了，都歸 1 — 股數不會被當成張數或口數（#204）
+        const classChanged = unitClassRef.current !== isFutures;
+        unitClassRef.current = isFutures;
+        if (orderLotRef.current !== 'Common' || classChanged) setQty(1);
         setOrderLot('Common');
         setOrderCond('Cash');
         setOctype('Auto');
@@ -211,10 +217,11 @@ export function OrderTicket({
     // autofill price from live quote until user edits it
     const liveClose = lastClose;
     useEffect(() => {
-        if (!priceTouched.current && liveClose) {
-            setPrice(String(Number(liveClose)));
-        }
-    }, [liveClose]);
+        if (priceTouched.current) return;
+        if (liveClose) setPrice(String(Number(liveClose)));
+        // 切到盤中零股但還沒有零股行情：清掉先前以整股價格帶入的價格
+        else if (intradayOdd) setPrice('');
+    }, [liveClose, intradayOdd]);
 
     // price picked from chart hover/click or depth ladder (same symbol only)
     const picked = usePickedPrice(contract.code);
@@ -254,6 +261,10 @@ export function OrderTicket({
             let entryAccount: Account | undefined;
             let bracketEnv: string | null = null;
             if (bracketOn) {
+                // 零股括號單以零股市場判斷方向：沒有零股行情時不能確認
+                if (intradayOdd && oddReference === null) {
+                    throw new Error(`${ODD_LOT_WAITING}：尚未收到盤中零股行情，無法確認停損停利方向`);
+                }
                 const invalid = validateBracketRequest({
                     isFutures,
                     action,
@@ -915,6 +926,7 @@ export function OrderTicket({
                     <span className={styles.costRow}>
                         {lotLabel(orderLot)}：以股計（1～{ODD_LOT_MAX_SHARES} 股）· 限價 ROD · 僅現股，不可融資券或當沖
                         {orderLot === 'Odd' ? ' · 13:40–14:30 收單，14:30 一次撮合' : ''}
+                        {intradayOdd && oddReference === null ? ` · ${ODD_LOT_WAITING}（不自動帶價）` : ''}
                     </span>
                 )}
 

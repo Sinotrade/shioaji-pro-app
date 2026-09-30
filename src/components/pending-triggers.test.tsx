@@ -251,3 +251,25 @@ it('falls back to the code while the contract is not loaded', () => {
     const r = render();
     expect(r.root.findAll(n => n.type === 'span' && text(n) === 'TXFR1')).toHaveLength(1);
 });
+
+it('odd-lot exits are described as a limit at the price limit that waits for odd-lot matching, not a market order (#204)', () => {
+    m.triggers = [stop({ code: '2330', orderCode: '2330', quantity: 300, orderLot: 'IntradayOdd',
+        account: { account_type: 'S', broker_id: 'b', account_id: 'a1' } })];
+    // odd-lot triggers price on the odd-lot feed (priceKeyOf)
+    m.prices = { '2330#odd': 48100 };
+    m.contracts = { '2330': { name: '台積電' } };
+    const r = render();
+    const t = text(r.root);
+    expect(t).toContain('目前已未穿價');
+    expect(t).toContain('零股限價 ROD，等下一次零股撮合');
+    expect(t).not.toContain('立刻以市價成交');
+    expect(String(button(r, '立即送出').props.title)).toContain('零股限價單');
+    expect(String(button(r, '立即送出').props.title)).not.toContain('市價單');
+});
+
+it('whole-lot / futures exits keep the market-order wording', () => {
+    m.prices = { TXFR1: 48100 };
+    const r = render();
+    expect(text(r.root)).toContain('立刻以市價成交');
+    expect(String(button(r, '立即送出').props.title)).toContain('市價單');
+});

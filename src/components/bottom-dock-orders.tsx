@@ -1,5 +1,5 @@
 import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
-import { isOddLot, lotLabel } from '../lib/odd-lot';
+import { canUpdateOrderPrice, isOddLot, lotLabel } from '../lib/odd-lot';
 import { cancellationSummary } from '../lib/trade-mutations';
 import { isCancelUnconfirmed } from '../lib/cancel-verification';
 // src/components/bottom-dock-orders.tsx — 委託 tab：成交進度圈、狀態篩選、
@@ -420,7 +420,8 @@ export function OrdersPane({
                 {withEditors && (
                     <>
                         <span onClick={(e) => e.stopPropagation()}>
-                            {(t.order.price_type ?? 'LMT') === 'LMT' && (
+                            {/* 零股只能減量／刪單，不提供改價（#204） */}
+                            {canUpdateOrderPrice(t.order) && (
                                 <>
                                     <OrderEditor
                                         trade={t}

@@ -15,7 +15,7 @@ vi.mock('../lib/account-store', () => ({ getAccountState: () => ({ accounts: h.a
 vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: m.confirm, accountConfirmLabel: (a: Account) => `${a.broker_id}-${a.account_id}` }));
 vi.mock('../lib/risk', () => ({ checkOrderAllowed: m.risk, getRiskSettings: () => ({ confirmManualOrders: true }) }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: m.cancel, cancelOrders: m.cancelMany, placeFuturesOrder: vi.fn(), placeStockOrder: m.stock }));
-vi.mock('../lib/trade', () => ({ notify: m.notify, isFuturesContract: () => false }));
+vi.mock('../lib/trade', () => ({ notify: m.notify, isFuturesContract: (c: { security_type?: string }) => c.security_type === 'FUT' || c.security_type === 'OPT' }));
 vi.mock('../lib/stream', () => ({ getAliasFor: () => undefined }));
 vi.mock('../hooks/use-stream', () => ({ useQuote: (code: string | null, o?: { oddLot?: boolean }) => (o?.oddLot ? (code ? h.odd : undefined) : { tick: { close: '100' } }), useTradingLive: () => true }));
 vi.mock('../lib/utils/ticksize', () => ({ stepPrice: (_c: unknown, p: number, step: number) => p + step, roundToTick: (_c: unknown, p: number) => Math.round(p) }));
@@ -210,4 +210,23 @@ it('全撤 uses the account selected at click time and cancels nothing without a
     await act(async () => { view.update(createElement(GridTicket, { panelId: 'p1', contract, trades })); });
     await act(async () => { await btn('全撤').props.onClick(); });
     expect(m.cancelMany.mock.calls[0]![0]).toEqual(trades.map(t => t.order.id));
+});
+
+it('odd 500 股 → futures → stock: 每檔量 resets instead of becoming 500 口 / 500 張', async () => {
+    const fut = { code: 'TXFR1', security_type: 'FUT', exchange: 'TAIFEX', reference: 100, limit_up: 0, limit_down: 0 } as unknown as ContractInfo;
+    const qtyIn = () => view.root.findAllByType('input')[3]!;
+    await act(async () => { view = create(createElement(GridTicket, { contract, trades: [] })); });
+    await act(async () => { btn('盤中零股').props.onClick(); });
+    await act(async () => { qtyIn().props.onChange({ target: { value: '500' } }); });
+    expect(qtyIn().props.value).toBe(500);
+    await act(async () => { view.update(createElement(GridTicket, { contract: fut, trades: [] })); });
+    expect(qtyIn().props.value).toBe(1);
+    expect(text(view.root)).toContain('每檔量(口)');
+    await act(async () => { view.update(createElement(GridTicket, { contract, trades: [] })); });
+    expect(qtyIn().props.value).toBe(1);
+    expect(text(view.root)).toContain('每檔量(張)');
+    // whole lots do not carry into futures either
+    await act(async () => { qtyIn().props.onChange({ target: { value: '7' } }); });
+    await act(async () => { view.update(createElement(GridTicket, { contract: fut, trades: [] })); });
+    expect(qtyIn().props.value).toBe(1);
 });

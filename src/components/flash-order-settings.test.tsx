@@ -115,3 +115,59 @@ it('設為預設 seeds new panels of the same market; futures are fixed at 口',
     expect(text(pop()!)).not.toContain('盤中零股');
     expect(summary()).toBe('點買量／賣量以 ROD 限價送出 1 口，帳號 跟隨 F5678；市價買／賣以市價 IOC 送出。');
 });
+
+it('odd 500 股 → futures → stock: the quantity never crosses units or instrument classes', async () => {
+    await mount(stk);
+    await act(async () => { gear().props.onClick(); });
+    await act(async () => { btnIn(pop()!, '盤中零股（股）').props.onClick(); });
+    await act(async () => { btnIn(pop()!, '500').props.onClick(); });
+    await act(async () => { btnIn(pop()!, '完成').props.onClick(); });
+    expect(qty().props.value).toBe(500);
+    await act(async () => { view.update(createElement(FlashOrder, { contract: fut, trades: [], positions: [] })); });
+    expect(qty().props.value).toBe(1); // 1 口, never 500 口
+    expect(text(view.root)).toContain('口');
+    await act(async () => { view.update(createElement(FlashOrder, { contract: stk, trades: [], positions: [] })); });
+    expect(qty().props.value).toBe(1); // 1 張, never 500 張
+    expect(qty().props['aria-label']).toBe('數量');
+    // whole lots do not carry into futures either
+    await act(async () => { qty().props.onChange({ target: { value: '5' } }); });
+    await act(async () => { view.update(createElement(FlashOrder, { contract: fut, trades: [], positions: [] })); });
+    expect(qty().props.value).toBe(1);
+    // …but stay within the same unit and class
+    await act(async () => { qty().props.onChange({ target: { value: '3' } }); });
+    await act(async () => { view.update(createElement(FlashOrder, { contract: { ...fut, code: 'MXFR1' } as ContractInfo, trades: [], positions: [] })); });
+    expect(qty().props.value).toBe(3);
+});
+
+it('another panel saving 設為預設 does not change an existing panel, even on its next symbol change', async () => {
+    await mount(stk);
+    const other = create(createElement(FlashOrder, { contract: stk, trades: [], positions: [] }));
+    await act(async () => { gear().props.onClick(); });
+    await act(async () => { btnIn(pop()!, '盤中零股（股）').props.onClick(); });
+    await act(async () => { btnIn(pop()!, '500').props.onClick(); });
+    await act(async () => { btnIn(pop()!, '設為預設').props.onClick(); });
+    const otherQty = () => other.root.findAll(n => n.type === 'input' && String(n.props['aria-label']).startsWith('數量'))[0]!;
+    expect(otherQty().props.value).toBe(1);
+    await act(async () => { other.update(createElement(FlashOrder, { contract: { ...stk, code: '2317' } as ContractInfo, trades: [], positions: [] })); });
+    expect(otherQty().props.value).toBe(1);
+    expect(otherQty().props['aria-label']).toBe('數量');
+    await act(async () => other.unmount());
+});
+
+it('a futures panel that later switches to a stock keeps the stock default it had when it was created', async () => {
+    // futures panel created first, while the stock default is still 1 張
+    await mount(fut);
+    let writer!: ReactTestRenderer;
+    await act(async () => { writer = create(createElement(FlashOrder, { contract: stk, trades: [], positions: [] })); });
+    const wGear = () => writer.root.findAll(n => n.type === 'button' && n.props['aria-label'] === '閃電下單設定')[0]!;
+    const wPop = () => writer.root.findAll(n => n.props.role === 'dialog')[0]!;
+    await act(async () => { wGear().props.onClick(); });
+    await act(async () => { btnIn(wPop(), '盤中零股（股）').props.onClick(); });
+    await act(async () => { btnIn(wPop(), '500').props.onClick(); });
+    await act(async () => { btnIn(wPop(), '設為預設').props.onClick(); });
+    // the futures panel now moves to a stock: still 1 張, not 500 股 odd lot
+    await act(async () => { view.update(createElement(FlashOrder, { contract: stk, trades: [], positions: [] })); });
+    expect(qty().props.value).toBe(1);
+    expect(qty().props['aria-label']).toBe('數量');
+    await act(async () => writer.unmount());
+});

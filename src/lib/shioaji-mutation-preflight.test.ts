@@ -39,6 +39,17 @@ it.each([
     expect(m.post.mock.calls.some(c => c[0] === '/api/v1/order/trades' && c[1].refresh !== false)).toBe(false);
     if (path !== '/api/v1/order/cancel_order') expect(m.post).toHaveBeenCalledTimes(1);
 });
+it('refuses a price update on an odd-lot order before sending; reduce quantity still goes out (#204)', async () => {
+    const stock = { ...account, account_type: 'S' }; m.accounts = [stock];
+    for (const lot of ['IntradayOdd', 'Odd']) {
+        m.post.mockClear();
+        m.rows = [{ ...row(), account: stock, order: { ...row().order, account: stock, order_lot: lot, quantity: 300 }, contract: { code: '2330', security_type: 'STK', exchange: 'TSE', target_code: null } } as AccountedTrade];
+        await expect(updateOrderPrice('fixture', 490)).rejects.toMatchObject({ mutationNotStarted: true, message: '零股委託不能改價，只能減量或刪單' });
+        expect(m.post.mock.calls.some(c => c[0] === '/api/v1/order/update_price')).toBe(false);
+        await updateOrderQty('fixture', 100);
+        expect(m.post.mock.calls.some(c => c[0] === '/api/v1/order/update_qty')).toBe(true);
+    }
+});
 it('sends stock mutations directly as before', async () => {
     const stock = { ...account, account_type: 'S' }; m.accounts = [stock];
     m.rows = [{ ...row(), account: stock, order: { ...row().order, account: stock }, contract: { code: '2330', security_type: 'STK', exchange: 'TSE', target_code: null } } as AccountedTrade];

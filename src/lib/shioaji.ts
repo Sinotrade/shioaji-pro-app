@@ -1,7 +1,7 @@
 import { getApiBase } from './runtime';
 import { remainingWorkingOrderQuantity } from './working-order-quantity';
 import { noteMutationIntent } from './mutation-intent';
-import { stockOrderProblem } from './odd-lot';
+import { isOddLot, ODD_LOT_NO_PRICE_UPDATE, stockOrderProblem } from './odd-lot';
 import { markConfirmedCancellation, observeTradeMutation } from './trade-mutations';
 import { createCancelBatch, readMark, sharedAuthoritativeTrades, verifyCancellation, type CancelBatchMember } from './cancel-verification';
 import { observeMarketSnapshots } from './market-snapshot-store';
@@ -943,6 +943,8 @@ export function updateOrderPrice(tradeId: string, price: number) {
     return observeTradeMutation(tradeId, async () => {
         const target = await prepareOrderMutation(tradeId);
         if (target.base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
+        // 零股委託只能減量（#204）— 任何改價路徑都在送出前擋下
+        if (isOddLot(target.trade.order.order_lot)) throw Object.assign(new Error(ODD_LOT_NO_PRICE_UPDATE), { mutationNotStarted: true });
         noteMutationIntent(tradeId, { kind: 'price', price });
         return apiPost<Trade>('/api/v1/order/update_price', {
         trade_id: target.tradeId,

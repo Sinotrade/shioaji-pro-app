@@ -69,6 +69,7 @@ import { subscribeCustoms } from '../lib/custom-indicators';
 import type { IndicatorPoint } from '../lib/indicators';
 import { setHoverPickedPrice, setPickedPrice } from '../lib/price-sync';
 import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
+import { canUpdateOrderPrice } from '../lib/odd-lot';
 import { getChartColors, useThemeSettings, themeKey as themeKeyOf } from '../lib/theme-store';
 import { notify, placeQuickOrder } from '../lib/trade';
 import {
@@ -214,12 +215,19 @@ export function CandleChart({
             : contract.security_type === 'FUT' || contract.security_type === 'OPT' ? 'F' : null;
     const [localOrder, setLocalOrder] = useState<ChartOrderPanelState>(() => orderSettingsProp ?? {});
     const panelOrder = onOrderSettingsChange ? (orderSettingsProp ?? {}) : localOrder;
-    const [defaultsVer, setDefaultsVer] = useState(0);
+    // 沒有自訂過的市場用「設為預設」的值 — 圖表建立時就對股票與期貨兩種
+    // 市場各取一份快照，之後別的圖按「設為預設」不會改到這張圖（包括它之後
+    // 才切到的市場）；這張圖自己的「設為預設」才更新快照（#204）
+    const defaultSnapshot = useRef<Record<ChartOrderMarket, ChartOrderSettings> | null>(null);
+    defaultSnapshot.current ??= { S: loadChartOrderDefault('S'), F: loadChartOrderDefault('F') };
+    const defaultFor = (m: ChartOrderMarket) => defaultSnapshot.current![m];
+    const savedOrder = panelOrder[orderMarket ?? 'S'];
     const orderSettings: ChartOrderSettings = useMemo(() => {
         const m = orderMarket ?? 'S';
-        const saved = panelOrder[m];
-        return saved ? normalizeChartOrder(saved, m) : loadChartOrderDefault(m);
-    }, [panelOrder, orderMarket, defaultsVer]);
+        return savedOrder ? normalizeChartOrder(savedOrder, m) : defaultFor(m);
+        // defaultFor reads a per-chart snapshot, stable for the chart's lifetime
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [savedOrder, orderMarket]);
     const setOrderSettings = (next: ChartOrderSettings) => {
         if (!orderMarket) return;
         const value = { ...panelOrder, [orderMarket]: normalizeChartOrder(next, orderMarket) };
@@ -1275,6 +1283,8 @@ export function CandleChart({
             const series = candleSeriesRef.current;
             if (!series) return null;
             for (const t of workingOrdersRef.current) {
+                // 零股委託不能改價（#204）：委託線不可拖曳
+                if (!canUpdateOrderPrice(t.order)) continue;
                 const line = orderLinesRef.current.get(t.order.id);
                 if (!line) continue;
                 const coord = series.priceToCoordinate(line.options().price);
@@ -1688,7 +1698,7 @@ export function CandleChart({
                         onChange={setOrderSettings}
                         onSaveDefault={() => {
                             saveChartOrderDefault(orderMarket, orderSettings);
-                            setDefaultsVer(v => v + 1);
+                            defaultSnapshot.current![orderMarket] = orderSettings;
                             notify({ kind: 'info', title: '已設為圖表下單預設', body: `新開的${orderMarket === 'F' ? '期貨' : '股票'}圖表使用這組設定（不含帳號）；其他現有圖表維持原設定。` });
                         }}
                         account={orderAccountView}

@@ -30,6 +30,21 @@ export function exitStyleLabel(t: Pick<TriggerOrder, 'orderLot'>): string {
     return isOddLot(t.orderLot) ? '零股漲跌停限價' : '市價';
 }
 
+/** 送出後會怎樣：整股／期貨是市價單會立即成交；零股是漲跌停價限價 ROD，
+ * 要等下一次零股撮合（約每 5 秒），不保證立即成交（#204） */
+export function sendOutcomeText(t: Pick<TriggerOrder, 'orderLot'>): string {
+    return isOddLot(t.orderLot)
+        ? '會以漲跌停價送出零股限價 ROD，等下一次零股撮合（約每 5 秒）成交，不保證立即成交'
+        : '會立刻以市價成交';
+}
+
+/** 送出按鈕的提示 */
+export function sendButtonTitle(t: Pick<TriggerOrder, 'orderLot'>): string {
+    return isOddLot(t.orderLot)
+        ? '重新檢查行情連線、環境與帳戶後，以原設定立即送出零股限價單（漲跌停價、ROD，等零股撮合）'
+        : '重新檢查行情連線、環境與帳戶後，以原設定立即送出市價單';
+}
+
 /** 「價格漲到 48,151 以上時觸發」 */
 export function conditionLabel(t: Pick<TriggerOrder, 'condition' | 'price'>): string {
     return t.condition === 'above' ? `漲到 ${fmtPrice(t.price)} 以上` : `跌到 ${fmtPrice(t.price)} 以下`;

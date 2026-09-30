@@ -269,9 +269,15 @@ export function FlashOrder({
     accountRef.current = activeAccount;
     const privMoney = usePrivacyMoney();
     // 單位與數量的起始值來自「設為預設」（依股票／期貨）
-    const [qty, setQty] = useState(() => loadFlashOrderDefault(market).qty);
+    // 預設在面板建立時就對股票與期貨「兩種」類別各取一份快照（#204）：之後
+    // 別的面板按「設為預設」不會改到這個面板（包括它之後才切到的類別），
+    // 只有這個面板自己的「設為預設」會更新它的快照
+    const defaultSnapshot = useRef<Record<FlashMarket, ReturnType<typeof loadFlashOrderDefault>> | null>(null);
+    defaultSnapshot.current ??= { S: loadFlashOrderDefault('S'), F: loadFlashOrderDefault('F') };
+    const defaultFor = (m: FlashMarket) => defaultSnapshot.current![m];
+    const [qty, setQty] = useState(() => defaultFor(market).qty);
     // 股票：整股（張）或盤中零股（股）（#204）— 每個面板自己的 state
-    const [lot, setLot] = useState<'Common' | 'IntradayOdd'>(() => loadFlashOrderDefault(market).lot);
+    const [lot, setLot] = useState<'Common' | 'IntradayOdd'>(() => defaultFor(market).lot);
     const odd = market === 'S' && lot === 'IntradayOdd';
     // 盤中零股是另一個撮合市場：零股模式的五檔、成交價與單量一律取零股
     // 行情（intraday_odd，量以股計），只在這個面板處於零股時才訂閱；
@@ -339,14 +345,21 @@ export function FlashOrder({
 
     // 換商品回預設單位；單位變了（或原本是零股）數量也回預設 —
     // 零股的股數不能沿用成張數
+    // 數量只在輸入時的單位有效：商品類別（股票／期貨）或單位一變就回預設 —
+    // 比對的是切換「之前」的類別與單位（render 後的 odd 已經是新商品的值），
+    // 500 股絕不會變成 500 口或 500 張（#204）
     const lotRef = useRef(lot);
     lotRef.current = lot;
+    const unitClassRef = useRef<FlashMarket>(market);
     const firstCode = useRef(true);
     useEffect(() => {
+        const prevClass = unitClassRef.current;
+        unitClassRef.current = market;
         if (firstCode.current) { firstCode.current = false; return; }
-        const d = loadFlashOrderDefault(contract.security_type === 'STK' ? 'S' : 'F');
-        if (oddRef.current || d.lot !== lotRef.current) setQty(d.qty);
+        const d = defaultFor(market);
+        if (prevClass !== market || lotRef.current !== d.lot || lotRef.current === 'IntradayOdd') setQty(d.qty);
         setLot(d.lot);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract.code]);
 
     // safety: drop out of armed mode the moment the feed isn't LIVE so a
@@ -864,7 +877,8 @@ export function FlashOrder({
                     }}
                     onSaveDefault={() => {
                         saveFlashOrderDefault(market, flashSettings);
-                        notify({ kind: 'info', title: '已設為閃電下單預設', body: `新開的${market === 'F' ? '期貨' : '股票'}閃電下單面板與換商品時使用這組單位與數量；帳號不變。` });
+                        defaultSnapshot.current![market] = flashSettings;
+                        notify({ kind: 'info', title: '已設為閃電下單預設', body: `新開的${market === 'F' ? '期貨' : '股票'}閃電下單面板使用這組單位與數量（這個面板換商品時也是）；其他現有面板維持原設定，帳號不變。` });
                     }}
                     layout={{
                         title: '閃電下單設定',

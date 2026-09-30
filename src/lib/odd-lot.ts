@@ -13,6 +13,14 @@
 import type { StockOrderCond, StockOrderLot } from './types/order';
 
 export const ODD_LOT_MAX_SHARES = 999;
+
+/** 盤中零股委託不能改價，只能減量（Shioaji ORDERS：IntradayOdd orders
+ * cannot update price, only reduce quantity）。盤後零股同樣一次撮合，不提供改價。 */
+export const ODD_LOT_NO_PRICE_UPDATE = '零股委託不能改價，只能減量或刪單';
+
+export function canUpdateOrderPrice(order: { order_lot?: string | null; price_type?: string | null }): boolean {
+    return !isOddLot(order.order_lot) && (order.price_type ?? 'LMT') === 'LMT';
+}
 export const SHARES_PER_LOT = 1000;
 
 export function isOddLot(lot: StockOrderLot | string | undefined | null): boolean {
@@ -100,3 +108,26 @@ export function clampLotQuantity(v: number, lot: StockOrderLot | string | undefi
     const upper = isOddLot(lot) ? Math.min(max, ODD_LOT_MAX_SHARES) : max;
     return Math.max(1, Math.min(upper, Math.trunc(v)));
 }
+
+/** 零股行情來源的最小形狀（stream QuoteState 相容） */
+export interface OddBaseQuote {
+    tick?: { close: string | number };
+    bidask?: { bid_price: (string | number)[]; ask_price: (string | number)[] };
+}
+
+/** 盤中零股的參考價只看零股行情（#204）：零股成交價；沒有成交時取零股最佳
+ * 買賣中價（依跳動點取整，只有一邊就用那一邊）；都沒有回 null（等待零股
+ * 行情）— 絕不退回整股價格。 */
+export function oddLotReferencePrice(oddQuote: OddBaseQuote | undefined, round: (p: number) => number): number | null {
+    if (oddQuote?.tick && Number(oddQuote.tick.close) > 0) return Number(oddQuote.tick.close);
+    const bid = Number(oddQuote?.bidask?.bid_price?.[0]);
+    const ask = Number(oddQuote?.bidask?.ask_price?.[0]);
+    const okBid = Number.isFinite(bid) && bid > 0;
+    const okAsk = Number.isFinite(ask) && ask > 0;
+    if (okBid && okAsk) return round((bid + ask) / 2);
+    if (okBid) return bid;
+    if (okAsk) return ask;
+    return null;
+}
+
+export const ODD_LOT_WAITING = '等待零股行情';

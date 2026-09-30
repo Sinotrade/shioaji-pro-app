@@ -14,6 +14,8 @@ import {
     contractLabel,
     distanceLabel,
     kindLabel,
+    sendButtonTitle,
+    sendOutcomeText,
 } from '../lib/pending-trigger-view';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
@@ -155,7 +157,7 @@ function Row({ trigger, price, envNow, sending }: {
                 <span className={styles.message}>原委託可能仍在券商：先前送出的結果不明，只是在委託清單中多次查不到。重新送出可能造成重複委託，請先到委託／成交確認；送出需要多確認一次。</span>
             )}
             {unpast && (
-                <span className={styles.message}>目前已未穿價：價格已經回到觸發價另一側。現在送出仍會立刻以市價成交，需要多確認一次。</span>
+                <span className={styles.message}>目前已未穿價：價格已經回到觸發價另一側。現在送出仍{sendOutcomeText(trigger)}，需要多確認一次。</span>
             )}
             {sending && <span className={styles.message}>送出處理中…（若開啟下單確認，請在主視窗確認）</span>}
             {message && <span className={styles.message}>{message}</span>}
@@ -163,7 +165,7 @@ function Row({ trigger, price, envNow, sending }: {
                 <button
                     className={styles.primary}
                     disabled={busy || sending || shown === undefined}
-                    title='重新檢查行情連線、環境與帳戶後，以原設定立即送出市價單'
+                    title={sendButtonTitle(trigger)}
                     onClick={() => {
                         if (confirm !== 'send' && confirm !== 'send-unpast' && confirm !== 'send-duplicate') {
                             setConfirm('send');

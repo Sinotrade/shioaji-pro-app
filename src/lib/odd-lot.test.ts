@@ -86,3 +86,20 @@ describe('placeStockOrder last check', () => {
         expect(api.post).not.toHaveBeenCalled();
     });
 });
+
+describe('odd-lot price updates and reference price (#204 follow-up)', () => {
+    it('odd-lot orders cannot change price (Shioaji: IntradayOdd only reduces quantity); whole-lot limits can', () => {
+        expect(odd.canUpdateOrderPrice({ order_lot: 'IntradayOdd', price_type: 'LMT' })).toBe(false);
+        expect(odd.canUpdateOrderPrice({ order_lot: 'Odd', price_type: 'LMT' })).toBe(false);
+        expect(odd.canUpdateOrderPrice({ order_lot: 'Common', price_type: 'LMT' })).toBe(true);
+        expect(odd.canUpdateOrderPrice({ price_type: 'MKT' })).toBe(false);
+        expect(odd.canUpdateOrderPrice({})).toBe(true);
+    });
+    it('the odd-lot reference only comes from odd-lot quotes', () => {
+        const r = (p: number) => Math.round(p);
+        expect(odd.oddLotReferencePrice(undefined, r)).toBeNull();
+        expect(odd.oddLotReferencePrice({ tick: { close: '99' }, bidask: { bid_price: ['96'], ask_price: ['98'] } }, r)).toBe(99);
+        expect(odd.oddLotReferencePrice({ bidask: { bid_price: ['96'], ask_price: ['99'] } }, r)).toBe(98);
+        expect(odd.oddLotReferencePrice({ bidask: { bid_price: ['96'], ask_price: [] } }, r)).toBe(96);
+    });
+});
