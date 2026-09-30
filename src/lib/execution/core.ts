@@ -860,10 +860,15 @@ function reject(ctx: Ctx, p: OrderProgram | null, code: string, detail: string) 
     notice(ctx, `rejected.${code}`, p, null, detail);
 }
 
+/** Most levels a program may have (the grid ticket offers 15). */
+export const MAX_LEVELS = 32;
+
 function validateProgram(p: OrderProgram): string | null {
     if (!p.id || !p.binding?.serverId || !p.binding.account?.accountId || !p.binding.contract?.orderCode) return 'invalidBinding';
     if (p.binding.env !== 'simulation' && p.binding.env !== 'production') return 'invalidBinding';
     if (!Array.isArray(p.levels) || p.levels.length === 0) return 'noLevels';
+    // bounds what a crash can leave unrecorded (Rust executor's suspicion)
+    if (p.levels.length > MAX_LEVELS) return 'tooManyLevels';
     if (p.hooks.length > 0) return 'hooksUnsupported';
     const ids = new Set<string>();
     for (const lv of p.levels) {
