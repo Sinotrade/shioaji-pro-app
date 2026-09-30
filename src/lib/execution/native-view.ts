@@ -44,7 +44,7 @@ export function nativeRowId(programId: string, levelId: string, leg: LegName): s
 }
 
 const restoreReason = (r: string | undefined): TriggerRestoreReason =>
-    r === 'disconnect' || r === 'env' ? r : 'restart';
+    r === 'disconnect' || r === 'env' || r === 'unknownNotSent' ? r : 'restart';
 
 /** A stop sells below / buys above; a take the other way round (the chart
  * infers the direction the same way when it creates them). */

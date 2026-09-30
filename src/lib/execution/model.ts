@@ -354,6 +354,10 @@ export interface OrderEvent extends Source {
      * that is the only outstanding one; otherwise the cancel becomes
      * `unknown` (retried after the timeout unless settled). */
     cancelKey?: string;
+    /** Cancel reports: the order's cumulative cancelled quantity. A cancel
+     * that leaves `filled + cancelQty < qty` did not end the order (the rest
+     * still works; the cancel is retried after the timeout). */
+    cancelQty?: number;
 }
 export interface DealEvent extends Source {
     type: 'deal'; ts: number; orderId: string;

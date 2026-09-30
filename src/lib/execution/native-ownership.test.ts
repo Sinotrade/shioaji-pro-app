@@ -307,6 +307,10 @@ describe('native programs in the UI shape', () => {
             quantity: 1, kind: 'take', env: 'http://s|simulation', account: { account_type: 'F', broker_id: 'b', account_id: 'a' },
             orderCode: 'TXFJ6' })!;
         expect(view.triggerRowsFromPrograms([trig])[0]!.kind).toBe('take');
+        trig.levels[0]!.phase = 'needsConfirm';
+        trig.levels[0]!.pending = { leg: 'entry', price: 51, ts: 9, reason: 'unknownNotSent' };
+        expect(view.triggerRowsFromPrograms([trig])[0]!.pending).toEqual({ price: 51, at: 9, reason: 'unknownNotSent' });
+        trig.levels[0]!.pending = null;
         trig.levels[0]!.phase = 'done';
         expect(view.programFinished(trig)).toBe(true);
         expect(view.triggerRowsFromPrograms([trig])).toHaveLength(0);

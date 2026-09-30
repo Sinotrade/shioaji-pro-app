@@ -27,7 +27,7 @@ vi.mock('../lib/trigger-engine', () => ({
     requestPendingPrices: m.request,
     isPendingUnpast: (t: TriggerOrder, price: number) => t.condition === 'below' ? price > t.price : price < t.price,
     priceKeyOf: (t: TriggerOrder) => (t.kind !== 'alert' && t.orderLot === 'IntradayOdd' ? `${t.code}#odd` : t.code),
-    RESTORE_REASON_TEXT: { restart: 'R-restart', disconnect: 'R-disconnect', env: 'R-env' },
+    RESTORE_REASON_TEXT: { restart: 'R-restart', disconnect: 'R-disconnect', env: 'R-env', unknownNotSent: 'R-unknownNotSent' },
 }));
 vi.mock('../lib/window-role', () => ({ focusMainWindow: m.focus }));
 vi.mock('../lib/bracket', () => ({ dismissBracket: m.dismiss }));
@@ -97,6 +97,32 @@ it('send needs two clicks; the armed label follows the latest price', async () =
     expect(text(button(r, '再按一次'))).toContain('目前 47,850'); // still armed
     await click(button(r, '再按一次'));
     expect(m.resolve).toHaveBeenCalledWith('tg-1', 'send', { allowUnpast: false });
+});
+
+it('native unknownNotSent: warns the original may still exist and needs one more confirmation', async () => {
+    m.triggers = [stop({ pending: { price: 47900, at: Date.now(), reason: 'unknownNotSent' } })];
+    const r = render();
+    expect(text(r.root)).toContain('原委託可能仍在券商');
+    await click(button(r, '送出'));
+    await click(button(r, '再按一次'));
+    expect(m.resolve).not.toHaveBeenCalled();
+    expect(text(button(r, '原委託可能仍存在'))).toContain('再按一次仍重新送出');
+    // a double-click never passes it
+    await click(button(r, '原委託可能仍存在'), true);
+    expect(m.resolve).not.toHaveBeenCalled();
+    await click(button(r, '原委託可能仍存在'));
+    expect(m.resolve).toHaveBeenCalledWith('tg-1', 'send', { allowUnpast: false });
+});
+
+it('native unknownNotSent while unpast: the extra step covers both and allows unpast', async () => {
+    m.triggers = [stop({ pending: { price: 47900, at: Date.now(), reason: 'unknownNotSent' } })];
+    m.prices = { TXFR1: 48100 };
+    const r = render();
+    await click(button(r, '送出'));
+    await click(button(r, '再按一次'));
+    expect(text(button(r, '原委託可能仍存在'))).toContain('已未穿價');
+    await click(button(r, '原委託可能仍存在'));
+    expect(m.resolve).toHaveBeenCalledWith('tg-1', 'send', { allowUnpast: true });
 });
 
 it('cancel needs two clicks; keep is a single click', async () => {

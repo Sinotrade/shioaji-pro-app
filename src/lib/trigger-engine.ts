@@ -79,12 +79,14 @@ import type { Account } from './types/portfolio';
 import type { Action, FuturesOCType, StockOrderLot, Trade } from './types/order';
 
 /** Why protection resumed with a first-tick check (#144). */
-export type RestoreReason = 'restart' | 'disconnect' | 'env';
+export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'unknownNotSent';
 
 export const RESTORE_REASON_TEXT: Record<RestoreReason, string> = {
     restart: 'App 關閉、重新載入或切換主視窗期間已穿價',
     disconnect: '行情連線中斷（或伺服器模式未確認）超過 1 分鐘期間已穿價',
     env: '先前不在此伺服器環境執行，切回時已穿價',
+    // #201 native engine only: an earlier send's outcome was unknown
+    unknownNotSent: '先前送出的委託結果不明，券商委託清單多次查詢都找不到它；原委託仍可能存在，請先到委託／成交確認',
 };
 
 export interface TriggerOrder {

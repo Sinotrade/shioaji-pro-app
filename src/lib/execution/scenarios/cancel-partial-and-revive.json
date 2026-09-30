@@ -1,0 +1,353 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "cancel-partial-and-revive",
+  "description": "#201 wiring review: a successful Cancel report ends an order only when filled + cancelQty covers its quantity; otherwise the order keeps working and the cancel is retried after the unknown timeout. A listing that still shows an ended order working revives it and turns a stopped program back into stopping (cancelled again).",
+  "covers": [
+    "#201",
+    "cancelQty",
+    "reconcile-revive"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1001,
+        "id": "c1001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "t1",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Sell",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 100,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Auto"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "tick",
+        "ts": 1002,
+        "code": "TXFR1",
+        "price": 100
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/t1/L1/entry/0/0"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "intentResult",
+        "ts": 1003,
+        "key": "simulation/local-a/t1/L1/entry/0/0",
+        "outcome": "accepted",
+        "orderId": "o1"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1004,
+        "id": "c1004",
+        "command": {
+          "op": "stop",
+          "programId": "t1",
+          "version": 1
+        }
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "cancel",
+            "key": "simulation/local-a/t1/L1/entry/0/0/cancel/1",
+            "orderId": "o1"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "intentResult",
+        "ts": 1005,
+        "key": "simulation/local-a/t1/L1/entry/0/0/cancel/1",
+        "outcome": "accepted"
+      }
+    },
+    {
+      "note": "a successful Cancel report that cancelled nothing: the order still works, not stopped",
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "order",
+        "ts": 1006,
+        "orderId": "o1",
+        "op": "Cancel",
+        "failed": false,
+        "cancelQty": 0
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "status": "stopping",
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "working",
+                    "cancel": {
+                      "status": "unknown",
+                      "detail": "partialCancel"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "note": "retried only after the unknown-cancel timeout",
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "heartbeat",
+        "ts": 31006
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "cancel",
+            "key": "simulation/local-a/t1/L1/entry/0/0/cancel/2",
+            "orderId": "o1"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "order",
+        "ts": 31007,
+        "orderId": "o1",
+        "op": "Cancel",
+        "failed": false,
+        "cancelQty": 1
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "status": "stopped",
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "ended",
+                    "cancel": {
+                      "status": "confirmed"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "note": "the broker listing still shows it working: revived, stopping again",
+      "event": {
+        "type": "reconcile",
+        "ts": 31008,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/t1/L1/entry/0/0",
+            "orderId": "o1",
+            "status": "working",
+            "qty": 1,
+            "deals": []
+          }
+        ],
+        "complete": false
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "status": "stopping",
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "working",
+                    "detail": "reconciledWorking",
+                    "cancel": {
+                      "status": "unknown"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "heartbeat",
+        "ts": 62000
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "cancel",
+            "key": "simulation/local-a/t1/L1/entry/0/0/cancel/3",
+            "orderId": "o1"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 62001,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/t1/L1/entry/0/0",
+            "orderId": "o1",
+            "status": "ended",
+            "qty": 1,
+            "deals": []
+          }
+        ],
+        "complete": false
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "status": "stopped",
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "ended",
+                    "cancel": {
+                      "status": "confirmed"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

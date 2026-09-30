@@ -558,6 +558,13 @@ function applyOrder(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, e: Or
             addIssue(ctx, p, 'cancelReportUnkeyed', `${slot.key}: Cancel failure without attempt key, ${c.outstanding.length} attempts outstanding`);
             return;
         }
+        if (e.cancelQty !== undefined && isActive(slot) && slot.filled + e.cancelQty < slot.qty) {
+            // part of the order is still working at the broker: not ended;
+            // the cancel is retried after the timeout
+            if (slot.cancel) { slot.cancel.status = 'unknown'; slot.cancel.detail = 'partialCancel'; slot.cancel.outstanding = []; }
+            addIssue(ctx, p, 'partialCancel', `${slot.key}: cancelled ${e.cancelQty}, filled ${slot.filled} of ${slot.qty}`);
+            return;
+        }
         if (slot.cancel) { slot.cancel.status = 'confirmed'; slot.cancel.outstanding = []; }
     }
     const ended = (e.op === 'New' && e.failed) || (e.op === 'Cancel' && !e.failed);
@@ -667,6 +674,8 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
         for (const lv of p.levels) {
             let touched = false;
             for (const slot of lv.orders) {
+                // ended before this listing (not by a report drained just now)
+                const wasEnded = slot.status === 'ended';
                 const row = slot.orderId
                     ? e.orders.find(o => o.orderId === slot.orderId)
                     : e.orders.find(o => o.intentKey === slot.key);
@@ -696,6 +705,17 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                     touched = true;
                 }
                 if (!row || !slot.orderId) continue;
+                if (wasEnded && slot.status === 'ended' && !slot.acknowledged && row.status === 'working') {
+                    // the broker still works it (e.g. a cancel that did not take
+                    // effect): back to working, and a stopped program is
+                    // stopping again until it is cancelled
+                    slot.status = 'working';
+                    slot.detail = 'reconciledWorking';
+                    if (slot.cancel) { slot.cancel.status = 'unknown'; slot.cancel.detail = 'stillWorking'; slot.cancel.outstanding = []; }
+                    if (lv.phase === 'done' || lv.phase === 'disabled') lv.phase = 'idle';
+                    if (p.status === 'stopped') p.status = 'stopping';
+                    addIssue(ctx, p, 'revived', `${slot.key}: still working at the broker`);
+                }
                 for (const d of row.deals) {
                     if (Number.isSafeInteger(d.qty) && d.qty > 0) {
                         applyFill(ctx, p, lv, slot, `${row.orderId}:${d.seq}`, d.qty, d.ts);

@@ -41,7 +41,7 @@ export const CONFIRM_GUARD_MS = 400;
 /** An armed confirmation falls back to the plain button after this. */
 export const CONFIRM_TIMEOUT_MS = 10_000;
 
-type ConfirmStep = 'send' | 'send-unpast' | 'cancel';
+type ConfirmStep = 'send' | 'send-unpast' | 'send-duplicate' | 'cancel';
 
 function detectedAt(at: number): string {
     const d = new Date(at);
@@ -72,9 +72,12 @@ function Row({ trigger, price, envNow, sending }: {
     // the tick feed belongs to the current environment only
     const shown = here ? price : undefined;
     const unpast = shown !== undefined && isPendingUnpast(trigger, shown);
+    // #201 native: a submit with an unknown outcome that the listings never
+    // showed — the original order may still exist at the broker
+    const mayDuplicate = trigger.pending?.reason === 'unknownNotSent';
     // no current price (stream down, environment changed): disarm 送出
     useEffect(() => {
-        if (shown === undefined) setConfirmState(c => c === 'send' || c === 'send-unpast' ? null : c);
+        if (shown === undefined) setConfirmState(c => c === 'send' || c === 'send-unpast' || c === 'send-duplicate' ? null : c);
     }, [shown]);
     // an armed confirmation does not wait forever
     useEffect(() => {
@@ -148,6 +151,9 @@ function Row({ trigger, price, envNow, sending }: {
                     {envNow ? '這筆不屬於目前的伺服器環境，切回該環境才能送出' : '伺服器模式尚未確認，暫時不能送出'}
                 </span>
             )}
+            {mayDuplicate && (
+                <span className={styles.message}>原委託可能仍在券商：先前送出的結果不明，只是在委託清單中多次查不到。重新送出可能造成重複委託，請先到委託／成交確認；送出需要多確認一次。</span>
+            )}
             {unpast && (
                 <span className={styles.message}>目前已未穿價：價格已經回到觸發價另一側。現在送出仍會立刻以市價成交，需要多確認一次。</span>
             )}
@@ -159,17 +165,20 @@ function Row({ trigger, price, envNow, sending }: {
                     disabled={busy || sending || shown === undefined}
                     title='重新檢查行情連線、環境與帳戶後，以原設定立即送出市價單'
                     onClick={() => {
-                        if (confirm !== 'send' && confirm !== 'send-unpast') {
+                        if (confirm !== 'send' && confirm !== 'send-unpast' && confirm !== 'send-duplicate') {
                             setConfirm('send');
                             void requestPendingPrices().catch(() => undefined);
                             return;
                         }
                         if (!settled()) return;
+                        // the original may still exist: one more explicit step
+                        if (confirm === 'send' && mayDuplicate) { setConfirm('send-duplicate'); return; }
                         if (confirm === 'send' && unpast) { setConfirm('send-unpast'); return; }
-                        resolve('send', confirm === 'send-unpast');
+                        resolve('send', confirm === 'send-unpast' || (confirm === 'send-duplicate' && unpast));
                     }}
                 >
                     {sending ? '送出處理中'
+                        : confirm === 'send-duplicate' ? `原委託可能仍存在${unpast ? '且已未穿價' : ''}：再按一次仍重新送出${style}${act}（目前 ${fmtPrice(shown)}）`
                         : confirm === 'send-unpast' ? `目前已未穿價：再按一次仍${style}${act}（目前 ${fmtPrice(shown)}）`
                             : confirm === 'send' ? `再按一次確認：${style}${act}（目前 ${fmtPrice(shown)}）` : `立即送出${style}單`}
                 </button>
