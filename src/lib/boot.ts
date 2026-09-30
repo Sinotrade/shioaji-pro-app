@@ -8,6 +8,7 @@ import { agentModule } from './features';
 import { describeOrderReport } from './order-report';
 import {
     EXPECTED_SERVER_VERSION,
+    getApiBase,
     isTauri,
     setApiPort,
     setApiScheme,
@@ -482,12 +483,28 @@ async function serverVersionOk(): Promise<boolean> {
 // A missing/failed health route falls back to subscribe for older servers.
 // Share the account read with the early trading snapshot and update the store.
 let tradeSubscriptionInFlight: Promise<void> | null = null;
+
+/** Desktop: the native host owns trade-report subscription (health first,
+ * subscribe only on NotSubscribed, one check at a time per account, shared
+ * with the native execution engine — sw#183). False when the sidecar is not
+ * the App-owned one: the caller keeps the direct path below. */
+async function nativeEnsureTradeReports(account: { account_type: string; broker_id: string; account_id: string }): Promise<boolean> {
+    if (!isTauri) return false;
+    const { invoke } = await import('@tauri-apps/api/core');
+    const outcome = await invoke<string>('execution_ensure_trade_reports', {
+        origin: getApiBase(),
+        account: { accountType: account.account_type, brokerId: account.broker_id, accountId: account.account_id },
+    });
+    return outcome === 'ok';
+}
+
 export function subscribeTradeReports(): Promise<void> {
     if (tradeSubscriptionInFlight) return tradeSubscriptionInFlight;
     const run = (async () => {
         try {
             const accounts = await loadAccountsShared();
             for (const account of accounts.filter(a => a.signed)) {
+                if (await nativeEnsureTradeReports(account)) continue;
                 let subscribed = false;
                 try {
                     const health = await fetchTradeCacheHealth(account.account_type as 'S' | 'F', account);
