@@ -266,7 +266,7 @@ function ensureExits(ctx: Ctx, p: OrderProgram, lv: Level) {
     if (lv.exit?.type !== 'takeProfit') return;
     if (['unknown', 'needsConfirm', 'disabled'].includes(lv.phase)) return;
     if (p.status !== 'running' && p.status !== 'stopping') return;
-    const covered = cycleSlots(lv, 'exit').filter(isActive).reduce((sum, o) => sum + Math.max(0, o.qty - o.filled), 0);
+    const covered = cycleSlots(lv, 'exit').filter(isActive).reduce((sum, o) => sum + Math.max(0, remaining(o)), 0);
     const uncovered = lv.position - covered;
     if (uncovered > 0) emitPlace(ctx, p, lv, 'exit', 'tp', uncovered, lv.exit.price, lv.exit.order);
 }
@@ -361,9 +361,18 @@ function onTick(ctx: Ctx, e: Extract<ExecEvent, { type: 'tick' }>) {
     noteActivity(ctx, e);
     if (e.simtrade || !Number.isFinite(e.price) || e.price <= 0 || !fromLive(s, e)) return;
     s.lastPrices[e.code] = e.price;
+    // A coalesced tick carries the range of real trade prices since the last
+    // one: a leg fires when any price in it touched (a 99 → 101 burst still
+    // crosses a stop at 100), and a kept leg re-arms when any price in it was
+    // on the other side. Limit entries use the latest price.
+    const lo = Math.min(e.price, validPrice(e.low) ?? e.price);
+    const hi = Math.max(e.price, validPrice(e.high) ?? e.price);
+    const toward = (l: { condition: TouchCondition }) => l.condition === 'below' ? lo : hi;
+    const away = (l: { condition: TouchCondition }) => l.condition === 'below' ? hi : lo;
+    const touched = (l: { condition: TouchCondition; price: number }) => isPast(l.condition, l.price, toward(l));
     for (const p of s.programs) {
         if (p.binding.contract.quoteCode !== e.code || p.hold !== null) continue;
-        if (p.status === 'running') checkBounds(ctx, p, e.price);
+        if (p.status === 'running') checkBounds(ctx, p, lo, hi);
         if (p.status !== 'running' && p.status !== 'stopping') continue;
         const limitCandidates: Level[] = [];
         for (const lv of p.levels) {
@@ -373,21 +382,20 @@ function onTick(ctx: Ctx, e: Extract<ExecEvent, { type: 'tick' }>) {
                 if (lv.check) {
                     const reason = lv.check;
                     lv.check = null;
-                    const past = legs.find(l => !lv.recross.includes(l.name) && isPast(l.condition, l.price, e.price));
+                    const past = legs.find(l => !lv.recross.includes(l.name) && touched(l));
                     if (past) {
                         lv.phase = 'needsConfirm';
-                        lv.pending = { leg: past.name, price: e.price, ts: ctx.ts, reason };
-                        notice(ctx, 'needsConfirm', p, lv.id, `${past.name} ${reason} @${e.price}`);
+                        lv.pending = { leg: past.name, price: toward(past), ts: ctx.ts, reason };
+                        notice(ctx, 'needsConfirm', p, lv.id, `${past.name} ${reason} @${toward(past)}`);
                         continue;
                     }
                 }
                 for (const leg of legs) {
-                    const past = isPast(leg.condition, leg.price, e.price);
                     if (lv.recross.includes(leg.name)) {
-                        if (!past) lv.recross = lv.recross.filter(x => x !== leg.name);
+                        if (!isPast(leg.condition, leg.price, away(leg))) lv.recross = lv.recross.filter(x => x !== leg.name);
                         continue;
                     }
-                    if (past && lv.phase !== 'done') { fire(ctx, p, lv, leg.name, e.price); break; }
+                    if (touched(leg) && lv.phase !== 'done') { fire(ctx, p, lv, leg.name, toward(leg)); break; }
                 }
             } else if (p.status === 'running' && lv.phase === 'idle' && lv.entry.type === 'limit') {
                 const eligible = lv.side === 'Buy' ? fixed(e.price) > fixed(lv.entry.price) : fixed(e.price) < fixed(lv.entry.price);
@@ -409,10 +417,16 @@ function onTick(ctx: Ctx, e: Extract<ExecEvent, { type: 'tick' }>) {
     }
 }
 
-function checkBounds(ctx: Ctx, p: OrderProgram, price: number) {
+function validPrice(v: number | undefined): number | undefined {
+    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+function checkBounds(ctx: Ctx, p: OrderProgram, lo: number, hi: number) {
     const b = p.bounds;
-    const action = b.upper !== null && fixed(price) > fixed(b.upper) ? b.onBreakUpper
-        : b.lower !== null && fixed(price) < fixed(b.lower) ? b.onBreakLower : 'none';
+    const upper = b.upper !== null && fixed(hi) > fixed(b.upper);
+    const action = upper ? b.onBreakUpper
+        : b.lower !== null && fixed(lo) < fixed(b.lower) ? b.onBreakLower : 'none';
+    const price = upper ? hi : lo;
     if (action === 'pause') {
         p.status = 'paused';
         p.pauseReason = 'boundBreak';
@@ -536,7 +550,30 @@ function onIntentResult(ctx: Ctx, e: IntentResultEvent) {
     refreshStopping(p);
 }
 
+const remaining = (slot: OrderSlot) => slot.qty - slot.filled - (slot.cancelled ?? 0);
+
+/** Record the quantity a report cancelled (once per report id). */
+function noteCancelled(slot: OrderSlot, e: OrderEvent) {
+    if (e.failed || e.cancelQty === undefined || !(e.cancelQty > 0)) return;
+    if (e.reportId) {
+        slot.cancels = slot.cancels ?? {};
+        if (e.reportId in slot.cancels) return;
+        slot.cancels[e.reportId] = e.cancelQty;
+    }
+    slot.cancelled = (slot.cancelled ?? 0) + e.cancelQty;
+}
+
+/** Fills + cancels cover the order: nothing works at the broker any more. */
+function closeIfCovered(slot: OrderSlot, detail: string): boolean {
+    if (!isActive(slot) || !(slot.cancelled ?? 0) || remaining(slot) > 0) return false;
+    slot.status = slot.filled >= slot.qty ? 'filled' : 'ended';
+    if (slot.status === 'ended') slot.detail = detail;
+    if (slot.cancel) { slot.cancel.status = 'confirmed'; slot.cancel.outstanding = []; }
+    return true;
+}
+
 function applyOrder(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, e: OrderEvent) {
+    noteCancelled(slot, e);
     if (e.op === 'Cancel') {
         if (e.failed) {
             const c = slot.cancel;
@@ -558,15 +595,17 @@ function applyOrder(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, e: Or
             addIssue(ctx, p, 'cancelReportUnkeyed', `${slot.key}: Cancel failure without attempt key, ${c.outstanding.length} attempts outstanding`);
             return;
         }
-        if (e.cancelQty !== undefined && isActive(slot) && slot.filled + e.cancelQty < slot.qty) {
+        if (e.cancelQty !== undefined && isActive(slot) && remaining(slot) > 0) {
             // part of the order is still working at the broker: not ended;
             // the cancel is retried after the timeout
             if (slot.cancel) { slot.cancel.status = 'unknown'; slot.cancel.detail = 'partialCancel'; slot.cancel.outstanding = []; }
-            addIssue(ctx, p, 'partialCancel', `${slot.key}: cancelled ${e.cancelQty}, filled ${slot.filled} of ${slot.qty}`);
+            addIssue(ctx, p, 'partialCancel', `${slot.key}: cancelled ${slot.cancelled ?? 0}, filled ${slot.filled} of ${slot.qty}`);
             return;
         }
         if (slot.cancel) { slot.cancel.status = 'confirmed'; slot.cancel.outstanding = []; }
     }
+    // e.g. UpdateQty reduced the rest away
+    if (closeIfCovered(slot, e.op === 'Cancel' ? 'cancelled' : 'reduced')) return;
     const ended = (e.op === 'New' && e.failed) || (e.op === 'Cancel' && !e.failed);
     if (!ended || !isActive(slot)) return;
     slot.status = slot.filled >= slot.qty ? 'filled' : 'ended';
@@ -583,6 +622,7 @@ function onOrder(ctx: Ctx, e: OrderEvent) {
     }
     const { p, lv, slot } = hit;
     applyOrder(ctx, p, lv, slot, e);
+    ensureExits(ctx, p, lv); // a reduced / ended exit leaves position uncovered
     settle(ctx, p, lv);
     refreshStopping(p);
 }
@@ -618,6 +658,7 @@ function applyFill(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, key: s
     if (added <= 0) return;
     slot.filled += added;
     if (slot.filled >= slot.qty && (slot.status === 'working' || slot.status === 'ended')) slot.status = 'filled';
+    else closeIfCovered(slot, 'reduced'); // the rest was cancelled / reduced earlier
     if (slot.role === 'entry') {
         if (slot.cycle !== lv.cycles) { addIssue(ctx, p, 'lateFill', `${slot.key}: fill after its cycle ended`); return; }
         lv.entryFilled += added;
@@ -690,7 +731,7 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                         slot.status = 'working';
                         slot.detail = 'reconciled';
                         drainOrphans(ctx, p, lv, slot);
-                    } else if (e.complete) {
+                    } else if (e.complete || (e.notSent ?? []).includes(slot.key)) {
                         slot.status = 'notSent';
                         slot.detail = 'reconciledNotSent';
                         // confirmed never accepted: the user decides whether to send now
@@ -705,7 +746,11 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                     touched = true;
                 }
                 if (!row || !slot.orderId) continue;
-                if (wasEnded && slot.status === 'ended' && !slot.acknowledged && row.status === 'working') {
+                // the listing's cumulative cancelled quantity is authoritative
+                if (row.cancelled !== undefined) slot.cancelled = row.cancelled;
+                if (wasEnded && slot.status === 'ended' && !slot.acknowledged && row.status === 'working'
+                    && slot.qty - slot.filled - (row.cancelled ?? 0) > 0) {
+                    slot.cancelled = row.cancelled ?? 0;
                     // the broker still works it (e.g. a cancel that did not take
                     // effect): back to working, and a stopped program is
                     // stopping again until it is cancelled
@@ -721,6 +766,7 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                         applyFill(ctx, p, lv, slot, `${row.orderId}:${d.seq}`, d.qty, d.ts);
                     }
                 }
+                closeIfCovered(slot, 'reconciledEnded');
                 if (isActive(slot) && row.status !== 'working') {
                     slot.status = slot.filled >= slot.qty ? 'filled' : 'ended';
                     if (slot.status === 'ended') slot.detail = 'reconciledEnded';

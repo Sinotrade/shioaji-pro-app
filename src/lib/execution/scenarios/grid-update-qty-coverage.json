@@ -1,0 +1,323 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "grid-update-qty-coverage",
+  "description": "#201 wiring review: UpdateQty / Cancel reports carry the quantity each one cancelled; it accumulates per order (deduplicated by report id), coverage is qty - filled - cancelled, and an order whose fills + cancels cover it is no longer working.",
+  "covers": [
+    "#201",
+    "cancelQty",
+    "UpdateQty"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1001,
+        "id": "c1001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "g1",
+            "kind": "grid",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Buy",
+                "qty": 2,
+                "entry": {
+                  "type": "limit",
+                  "price": 99,
+                  "order": {
+                    "priceType": "LMT",
+                    "timeInForce": "ROD",
+                    "octype": "New"
+                  }
+                },
+                "exit": {
+                  "type": "takeProfit",
+                  "price": 100,
+                  "order": {
+                    "priceType": "LMT",
+                    "timeInForce": "ROD",
+                    "octype": "Cover"
+                  }
+                },
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": {
+              "type": "ladder",
+              "anchor": {
+                "type": "fixed",
+                "price": 99
+              },
+              "spacing": {
+                "type": "abs",
+                "value": 1
+              },
+              "count": 3,
+              "direction": "down",
+              "qty": 2,
+              "takeProfit": {
+                "type": "abs",
+                "value": 1
+              },
+              "order": {
+                "priceType": "LMT",
+                "timeInForce": "ROD",
+                "octype": "New"
+              },
+              "exitOrder": {
+                "priceType": "LMT",
+                "timeInForce": "ROD",
+                "octype": "Cover"
+              }
+            },
+            "cycle": {
+              "rearmAfterExit": true,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": 2
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "tick",
+        "ts": 1002,
+        "code": "TXFR1",
+        "price": 100
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/g1/L1/entry/0/0",
+            "qty": 2
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "intentResult",
+        "ts": 1003,
+        "key": "simulation/local-a/g1/L1/entry/0/0",
+        "outcome": "accepted",
+        "orderId": "o1"
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "deal",
+        "ts": 1004,
+        "orderId": "o1",
+        "eventId": null,
+        "seq": "a1",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "action": "Buy",
+        "qty": 2,
+        "price": 99
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/g1/L1/tp/0/1",
+            "qty": 2,
+            "action": "Sell"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "intentResult",
+        "ts": 1005,
+        "key": "simulation/local-a/g1/L1/tp/0/1",
+        "outcome": "accepted",
+        "orderId": "o2"
+      }
+    },
+    {
+      "note": "the take-profit was reduced by 1 at the broker: 1 lot is uncovered again",
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "order",
+        "ts": 1006,
+        "orderId": "o2",
+        "op": "UpdateQty",
+        "failed": false,
+        "cancelQty": 1,
+        "reportId": "r1"
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/g1/L1/tp/0/2",
+            "qty": 1
+          }
+        ],
+        "programs": {
+          "g1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {},
+                  {
+                    "status": "working",
+                    "cancelled": 1
+                  },
+                  {
+                    "status": "pendingSubmit"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "note": "the same report again counts once",
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "order",
+        "ts": 1007,
+        "orderId": "o2",
+        "op": "UpdateQty",
+        "failed": false,
+        "cancelQty": 1,
+        "reportId": "r1"
+      },
+      "expect": {}
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "intentResult",
+        "ts": 1008,
+        "key": "simulation/local-a/g1/L1/tp/0/2",
+        "outcome": "accepted",
+        "orderId": "o3"
+      }
+    },
+    {
+      "note": "the rest of o2 cancelled (a report of 1): o2 ended, its lot uncovered again",
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "order",
+        "ts": 1009,
+        "orderId": "o2",
+        "op": "Cancel",
+        "failed": false,
+        "cancelQty": 1,
+        "reportId": "r2"
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/g1/L1/tp/0/3",
+            "qty": 1
+          }
+        ],
+        "programs": {
+          "g1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {},
+                  {
+                    "status": "ended",
+                    "cancelled": 2
+                  },
+                  {
+                    "status": "working"
+                  },
+                  {
+                    "status": "pendingSubmit"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

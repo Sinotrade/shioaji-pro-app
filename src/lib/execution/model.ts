@@ -141,6 +141,12 @@ export interface OrderSlot {
     detail: string | null;
     acknowledged: boolean;
     cancel: CancelState | null;
+    /** Quantity the broker cancelled (UpdateQty reductions + Cancel), summed
+     * over reports (deduplicated by report id) and raised to the listing's
+     * cumulative value. The order still works `qty - filled - cancelled`. */
+    cancelled?: number;
+    /** report id → quantity it cancelled (dedupe). */
+    cancels?: Record<string, number>;
 }
 
 export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'resume' | 'unknownNotSent';
@@ -337,7 +343,14 @@ export interface EngineState {
  * is connected now" — so a late simulation tick can never drive production. */
 export interface Source { env: Env; serverId: string }
 
-export interface TickEvent extends Source { type: 'tick'; ts: number; code: string; price: number; simtrade?: boolean }
+/** `price` is the latest trade. A coalesced tick (the native engine merges
+ * ticks that arrived while it was busy) also carries `low` / `high`: the
+ * range of real (non-simtrade) trade prices since the previous tick, so a
+ * crossing inside the burst is never lost. Absent = just `price`. */
+export interface TickEvent extends Source {
+    type: 'tick'; ts: number; code: string; price: number; simtrade?: boolean;
+    low?: number; high?: number;
+}
 export interface HeartbeatEvent extends Source { type: 'heartbeat'; ts: number }
 export interface ConnectionEvent { type: 'connection'; ts: number; live: boolean; env: Env | null; serverId: string | null }
 export interface IntentResultEvent extends Source {
@@ -354,10 +367,14 @@ export interface OrderEvent extends Source {
      * that is the only outstanding one; otherwise the cancel becomes
      * `unknown` (retried after the timeout unless settled). */
     cancelKey?: string;
-    /** Cancel reports: the order's cumulative cancelled quantity. A cancel
-     * that leaves `filled + cancelQty < qty` did not end the order (the rest
-     * still works; the cancel is retried after the timeout). */
+    /** Quantity THIS report cancelled (Cancel, UpdateQty — the broker
+     * reports it per operation, e.g. reduce 1 then cancel the last 1 = two
+     * reports of 1). Summed into the slot's `cancelled`; the order ends once
+     * `filled + cancelled >= qty`. A successful Cancel that leaves quantity
+     * working did not end the order (the cancel is retried after the timeout). */
     cancelQty?: number;
+    /** Report identity (event id) so a repeated report is counted once. */
+    reportId?: string;
 }
 export interface DealEvent extends Source {
     type: 'deal'; ts: number; orderId: string;
@@ -373,6 +390,8 @@ export interface ReconciledOrder {
     status: 'working' | 'filled' | 'ended';
     qty: number;
     deals: { seq: string; qty: number; price: number; ts?: number }[];
+    /** Cumulative cancelled quantity of the order at the broker. */
+    cancelled?: number;
 }
 export interface ReconcileEvent {
     type: 'reconcile'; ts: number;
@@ -381,6 +400,10 @@ export interface ReconcileEvent {
     /** The listing covers every order of the account today: an unknown
      * intent whose key is absent was never accepted. */
     complete: boolean;
+    /** Unknown submits (by key) the evidence shows were never accepted;
+     * concluded even when `complete` is false (per-slot decision: a slot that
+     * became unknown after the listing was requested is never concluded). */
+    notSent?: string[];
 }
 /** The executor (re)started from persisted state. */
 export interface RestoreEvent { type: 'restore'; ts: number }
