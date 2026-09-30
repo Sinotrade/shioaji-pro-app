@@ -8,8 +8,11 @@
 // - Environment isolation: a program only fires / submits while the
 //   connection is live AND its env + serverId equal the binding. Otherwise it
 //   is held ('disconnected' | 'unknownEnv' | 'envMismatch') and emits nothing.
-// - Every intent is recorded as a `pendingSubmit` slot BEFORE it is returned;
-//   the executor journals the state before sending (Rust: WAL + fsync).
+// - Every intent is recorded as a `pendingSubmit` slot BEFORE it is returned.
+//   The Rust executor sends it at once and journals asynchronously (ticks are
+//   never written); a crash can lose the newest records, so recovery relies
+//   on deterministic keys / tags, reconcile before live, and holding each
+//   program's first order after an unclean shutdown as `unknown`.
 // - `restore` (executor restarted from persisted state) turns every
 //   `pendingSubmit` slot into `unknown`: never resent, only a reconcile
 //   (matched by idempotency key) or a user acknowledgement clears it.
