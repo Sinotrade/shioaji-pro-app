@@ -55,6 +55,17 @@ import {
     reportEnvMatches,
     watchProtectionEnv,
 } from './protection-env';
+import {
+    createNativeProgram,
+    getNativeLastPrices,
+    getNativePrograms,
+    nativeOwnsNew,
+    refreshNative,
+    removeNativeProgram,
+    resolveNativePending,
+    subscribeNative,
+} from './execution/native';
+import { isNativeId, nativeRowId, programForNewTrigger, triggerRowsFromPrograms, type NativeTriggerOrder } from './execution/native-view';
 import { retainQuote } from './quote-ownership';
 import { getApiBase } from './runtime';
 import { fetchTrades } from './shioaji';
@@ -319,6 +330,9 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase): Promis
         notify({ kind: 'err', title: '觸價單未建立', body: prepared });
         return null;
     }
+    // #201: with the native engine on, a new stop / take is created as a
+    // native program and never enters the TS runtime (one owner per trigger)
+    if (prepared.kind !== 'alert' && nativeOwnsNew()) return addNativeTrigger(prepared);
     const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : newId();
     try {
         return await bus.send({ op: 'add', trigger: { ...prepared, requestId } }) as TriggerOrder;
@@ -328,7 +342,40 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase): Promis
     }
 }
 
+async function addNativeTrigger(prepared: NewTrigger): Promise<TriggerOrder | null> {
+    const t: TriggerOrder = { ...prepared, id: newId(), createdAt: Date.now() };
+    delete t.requestId;
+    const program = programForNewTrigger(t);
+    if (!program) {
+        notify({ kind: 'err', title: '觸價單未建立', body: '觸價單缺少帳戶或伺服器資訊，未建立' });
+        return null;
+    }
+    try {
+        await createNativeProgram(program);
+    } catch (e) {
+        notify({ kind: 'err', title: '觸價單未建立（原生引擎）', body: e instanceof Error ? e.message : String(e) });
+        return null;
+    }
+    notify({ kind: 'info', title: `${kindLabel(t)}（原生）`, body: describe(t) });
+    const id = nativeRowId(program.id, t.id, 'entry');
+    return nativeRows().find(r => r.id === id) ?? { ...t, id };
+}
+
+function nativeRow(id: string): NativeTriggerOrder | undefined {
+    return nativeRows().find(r => r.id === id);
+}
+
 export async function removeTrigger(id: string): Promise<void> {
+    if (isNativeId(id)) {
+        const row = nativeRow(id);
+        try {
+            if (row?.bracketId) throw new Error('括號單保護請在下單面板的括號單狀態中移除追蹤');
+            if (row) await removeNativeProgram(row.native.programId);
+        } catch (e) {
+            notify({ kind: 'err', title: '觸價單移除未確認', body: e instanceof Error ? e.message : String(e) });
+        }
+        return;
+    }
     try {
         await bus.send({ op: 'remove', id });
     } catch (e) {
@@ -347,6 +394,11 @@ export function acknowledgeExit(id: string): Promise<unknown> {
  * last (re)connect. `cancel` removes it (bracket protection is removed from
  * its bracket status instead). `keep` re-arms it for a fresh crossing only. */
 export function resolvePendingTrigger(id: string, choice: PendingChoice, opts: { allowUnpast?: boolean } = {}): Promise<unknown> {
+    if (isNativeId(id)) {
+        const row = nativeRow(id);
+        if (!row) return Promise.reject(new Error('找不到此原生觸價單'));
+        return resolveNativePending(row.native.programId, row.native.levelId, choice, opts.allowUnpast);
+    }
     return bus.send({ op: 'resolve-pending', id, choice, allowUnpast: opts.allowUnpast });
 }
 
@@ -357,6 +409,7 @@ export function isPendingUnpast(t: Pick<TriggerOrder, 'condition' | 'price'>, pr
 
 /** Ask the executor to publish the latest prices of 待確認 codes now. */
 export function requestPendingPrices(): Promise<unknown> {
+    void refreshNative();
     return bus.send({ op: 'publish-prices' });
 }
 
@@ -373,8 +426,36 @@ function subscribe(l: () => void) {
     return () => { listeners.delete(l); };
 }
 
+// ---- native programs as rows (#201) ----
+// Display only: the TS executor never sees these (they are not in
+// `triggers`), and native rows are never evaluated here.
+
+let nativeCache: { programs: unknown; rows: NativeTriggerOrder[] } = { programs: null, rows: [] };
+function nativeRows(): NativeTriggerOrder[] {
+    const programs = getNativePrograms();
+    if (nativeCache.programs !== programs) nativeCache = { programs, rows: triggerRowsFromPrograms(programs) };
+    return nativeCache.rows;
+}
+
+let mergedCache: { ts: TriggerOrder[]; native: NativeTriggerOrder[]; all: TriggerOrder[] } = { ts: [], native: [], all: [] };
+/** TS triggers followed by the native engine's armed legs (marked `native`). */
+export function getDisplayTriggers(): TriggerOrder[] {
+    const ts = snapshot.triggers;
+    const native = nativeRows();
+    if (mergedCache.ts !== ts || mergedCache.native !== native) {
+        mergedCache = { ts, native, all: native.length ? [...ts, ...native] : ts };
+    }
+    return mergedCache.all;
+}
+
+function subscribeAll(l: () => void) {
+    const a = subscribe(l);
+    const b = subscribeNative(l);
+    return () => { a(); b(); };
+}
+
 export function useTriggers(): TriggerOrder[] {
-    return useSyncExternalStore(subscribe, () => snapshot.triggers);
+    return useSyncExternalStore(subscribeAll, getDisplayTriggers);
 }
 
 const NO_SENDING: string[] = [];
@@ -385,8 +466,20 @@ export function useSendingTriggers(): string[] {
 
 const NO_PRICES: Record<string, number> = {};
 /** Latest tick price of every code that has a 待確認 trigger. */
+let pricesCache: { ts: unknown; native: unknown; rows: unknown; all: Record<string, number> } = { ts: null, native: null, rows: null, all: NO_PRICES };
+function pendingPricesNow(): Record<string, number> {
+    const ts = snapshot.prices ?? NO_PRICES;
+    const native = getNativeLastPrices();
+    const rows = nativeRows();
+    if (pricesCache.ts !== ts || pricesCache.native !== native || pricesCache.rows !== rows) {
+        const extra: Record<string, number> = {};
+        for (const r of rows) if (r.pending && native[r.code] !== undefined) extra[r.code] = native[r.code]!;
+        pricesCache = { ts, native, rows, all: Object.keys(extra).length ? { ...ts, ...extra } : ts };
+    }
+    return pricesCache.all;
+}
 export function usePendingPrices(): Record<string, number> {
-    return useSyncExternalStore(subscribe, () => snapshot.prices ?? NO_PRICES);
+    return useSyncExternalStore(subscribeAll, pendingPricesNow);
 }
 
 export function useTriggerExits(): ExitRecord[] {

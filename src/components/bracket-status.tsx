@@ -10,6 +10,7 @@ import {
     bracketSnapshotStale,
     cancelRemainingEntry,
     dismissBracket,
+    isNativeBracket,
     reconcileBracket,
     useBrackets,
     type BracketPlan,
@@ -21,6 +22,7 @@ import {
     unprotectedQuantity,
     workingEntryAfterExit,
 } from '../lib/bracket-core';
+import { useNativeHealth } from '../lib/execution/native';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
 import { useServerInfo } from '../lib/server-info-store';
@@ -62,7 +64,13 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
     const unprotected = unprotectedQuantity(plan);
     const unknownExit = plan.exit?.status === 'unknown' && !plan.exit.acknowledged;
     const elsewhere = plan.env !== envNow;
-    const notRunning = stale || (isLive(plan) && (elsewhere || feedMissing || !executing));
+    // #201: a native bracket runs in the App's native engine, not in a window
+    const native = isNativeBracket(plan);
+    const nativeHealth = useNativeHealth();
+    const nativeLive = native && nativeHealth?.state === 'live' && `${nativeHealth.serverId}|${nativeHealth.env}` === plan.env;
+    const notRunning = native
+        ? isLive(plan) && (elsewhere || !nativeLive || plan.native.hold !== null)
+        : stale || (isLive(plan) && (elsewhere || feedMissing || !executing));
     const tone = unprotected > 0 || unknownExit || plan.exit?.status === 'not-sent' || plan.exit?.status === 'incomplete'
         ? 'err' : plan.issues.length > 0 || notRunning ? 'warn' : 'ok';
     const run = async (fn: () => Promise<unknown>, done?: (v: unknown) => string) => {
@@ -81,7 +89,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
         <div className={styles.row[tone]}>
             <div className={styles.head}>
                 <span>{plan.account.account_type === 'F' ? '[期]' : '[證]'} {maskAccountId(plan.account.account_id, priv)}</span>
-                <span className={styles.grow}>{PHASE[phase]}</span>
+                <span className={styles.grow}>{PHASE[phase]}{native && <span title='由 App 原生執行引擎（實驗）執行，重新載入視窗不影響'> · 原生</span>}</span>
                 <span>成交 {Math.min(plan.filled, plan.quantity)}/{plan.quantity}</span>
             </div>
             <div className={styles.note.muted}>
@@ -97,7 +105,10 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                     {plan.exit.detail ? ` — ${plan.exit.detail}` : ''}
                 </div>
             )}
-            {stale && (
+            {native && isLive(plan) && !elsewhere && !nativeLive && (
+                <div className={styles.note.warn}>原生執行引擎未連線，保護暫停；連上後先對帳再恢復</div>
+            )}
+            {!native && stale && (
                 <div className={styles.note.warn}>主視窗狀態未更新（可能已關閉或重新載入），以下為最後已知狀態，不代表保護正在執行</div>
             )}
             {workingEntry > 0 && (
@@ -111,10 +122,10 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                     此括號單屬於{protectionEnvLabel(plan.env)}環境／其他伺服器，目前不執行{envNow ? '' : '（伺服器模式未確認）'}
                 </div>
             )}
-            {isLive(plan) && !elsewhere && !executing && !stale && (
+            {!native && isLive(plan) && !elsewhere && !executing && !stale && (
                 <div className={styles.note.warn}>此視窗／分頁不是執行中的主視窗，保護由主視窗執行</div>
             )}
-            {isLive(plan) && feedMissing && (
+            {!native && isLive(plan) && feedMissing && (
                 <div className={styles.note.warn}>此商品行情尚未訂閱成功，觸價可能不會觸發（自動重試中）</div>
             )}
             {plan.issues.length > 0 ? (
@@ -126,7 +137,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
             ) : null}
             {message && <div className={styles.note.muted}>{message}</div>}
             <div className={styles.actions}>
-                {isLive(plan) && (
+                {isLive(plan) && !native && (
                     <button
                         className={styles.button}
                         disabled={busy}
@@ -137,7 +148,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                         對帳
                     </button>
                 )}
-                {workingEntry > 0 && plan.entryCancel === 'unconfirmed' && (
+                {!native && workingEntry > 0 && plan.entryCancel === 'unconfirmed' && (
                     <button
                         className={styles.button}
                         disabled={busy}
@@ -184,7 +195,9 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                         void run(() => dismissBracket(plan.id));
                     }}
                 >
-                    {confirmRemove ? '再按一次：移除並撤銷保護' : isLive(plan) ? '移除追蹤' : '關閉'}
+                    {confirmRemove
+                        ? native ? '再按一次：停止（刪除剩餘進場單並撤銷保護）' : '再按一次：移除並撤銷保護'
+                        : isLive(plan) ? native ? '停止' : '移除追蹤' : '關閉'}
                 </button>
             </div>
         </div>

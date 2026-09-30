@@ -46,6 +46,17 @@ import {
     refreshProtectionEnv,
     reportEnvMatches,
 } from './protection-env';
+import {
+    acknowledgeNativeUnknown,
+    createNativeProgram,
+    ensureNativeHost,
+    getNativePrograms,
+    nativeOwnsNew,
+    removeNativeProgram,
+    sendNativeCommand,
+    subscribeNative,
+} from './execution/native';
+import { bracketPlansFromPrograms, programForNewBracket, type NativeBracketPlan } from './execution/native-view';
 import { getApiBase } from './runtime';
 import { getStreamStatus, subscribeStatusStore } from './stream';
 import { notify } from './trade';
@@ -182,7 +193,7 @@ function commit() {
 
 const planId = (env: string, account: AccountRef, orderId: string) => `${env}|${accountRefKey(account)}|${orderId}`;
 
-function describeProtection(p: BracketPlan) {
+function describeProtection(p: Pick<BracketPlan, 'stopPrice' | 'takePrice'>) {
     return `${p.stopPrice !== null ? ` 停損@${p.stopPrice}` : ''}${p.takePrice !== null ? ` 停利@${p.takePrice}` : ''}`;
 }
 
@@ -453,6 +464,8 @@ function handle(cmd: Command): unknown {
 
 /** Confirms the main window can track brackets BEFORE an entry is sent. */
 export async function ensureBracketHost(): Promise<void> {
+    // #201: a native bracket needs the native engine live on this environment
+    if (nativeOwnsNew()) return ensureNativeHost(currentProtectionEnv());
     await bus.send({ op: 'ping' });
 }
 
@@ -460,7 +473,39 @@ export async function ensureBracketHost(): Promise<void> {
  * timeout would invite a second, manual exit. Same budget as reconcile. */
 export const REGISTER_TIMEOUT_MS = 60_000;
 export async function registerBracket(spec: BracketSpec): Promise<BracketPlan> {
+    // #201: one owner per bracket, decided here — a native bracket never
+    // enters the TS plans (and so is never armed by the TS trigger engine)
+    if (nativeOwnsNew()) return registerNativeBracket(spec);
     return await bus.send({ op: 'register', spec }, REGISTER_TIMEOUT_MS) as BracketPlan;
+}
+
+async function registerNativeBracket(spec: BracketSpec): Promise<BracketPlan> {
+    if (!spec.env || spec.env !== currentProtectionEnv()) throw new Error('伺服器或模擬／正式模式已切換或未確認，括號單未登記');
+    if (!spec.orderId || !spec.account?.broker_id || !spec.account?.account_id) throw new Error('進場單缺少委託或帳戶識別，括號單未登記');
+    if (!Number.isSafeInteger(spec.quantity) || spec.quantity <= 0) throw new Error('進場數量無效');
+    const now = Date.now();
+    const program = programForNewBracket(spec, `nb-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`, now);
+    if (!program) throw new Error('伺服器模式未確認，括號單未登記');
+    await createNativeProgram(program);
+    notify({ kind: 'info', title: '括號單待命（原生）', body: `${spec.quoteCode} 成交後依成交量自動掛${describeProtection(spec)}` });
+    return nativePlans().find(p => p.id === program.id) ?? bracketPlansFromPrograms([program])[0]!;
+}
+
+// ---- native brackets (#201) as plans, display + commands ----
+
+let nativeCache: { programs: unknown; plans: NativeBracketPlan[] } = { programs: null, plans: [] };
+function nativePlans(): NativeBracketPlan[] {
+    const programs = getNativePrograms();
+    if (nativeCache.programs !== programs) nativeCache = { programs, plans: bracketPlansFromPrograms(programs) };
+    return nativeCache.plans;
+}
+
+function nativePlan(id: string): NativeBracketPlan | undefined {
+    return nativePlans().find(p => p.id === id);
+}
+
+export function isNativeBracket(p: BracketPlan): p is NativeBracketPlan {
+    return 'native' in p && !!(p as NativeBracketPlan).native;
 }
 
 /** What to tell the user when registering after the entry was sent failed.
@@ -476,15 +521,20 @@ export function registrationFailureText(error: unknown): string {
 }
 
 export function reconcileBracket(id: string) {
+    if (nativePlan(id)) return Promise.reject(new Error('原生括號單由原生引擎自動對帳'));
     // update_status can take a while; a short ACK timeout would misreport it.
     return bus.send({ op: 'reconcile', id }, 60_000) as Promise<{ health: TradeCacheHealth['state'] }>;
 }
 
 export function dismissBracket(id: string) {
+    const native = nativePlan(id);
+    if (native) return removeNativeProgram(native.native.programId);
     return bus.send({ op: 'dismiss', id });
 }
 
 export function acknowledgeBracketExit(id: string) {
+    const native = nativePlan(id);
+    if (native) return acknowledgeNativeUnknown(native.native.programId, native.native.levelId);
     return bus.send({ op: 'ack-exit', id });
 }
 
@@ -499,6 +549,9 @@ export function bracketSnapshotStale(now = Date.now()): boolean {
 /** User-initiated cancel of an entry that is still working after its exit
  * fired. One request, no retry; the Cancel report closes the entry. */
 export function cancelRemainingEntry(plan: BracketPlan) {
+    // native: stopping the program cancels its working entry (the exit has
+    // already fired when this is offered)
+    if (isNativeBracket(plan)) return sendNativeCommand({ op: 'stop', programId: plan.native.programId, version: plan.native.version });
     return bus.send({ op: 'cancel-entry', id: plan.id }, REGISTER_TIMEOUT_MS);
 }
 
@@ -541,8 +594,22 @@ function subscribe(l: () => void) {
     return () => { listeners.delete(l); };
 }
 
+let mergedCache: { ts: BracketPlan[]; native: NativeBracketPlan[]; all: BracketPlan[] } = { ts: [], native: [], all: [] };
+/** TS plans followed by native bracket programs (marked `native`). */
+export function getDisplayBrackets(): BracketPlan[] {
+    const native = nativePlans();
+    if (mergedCache.ts !== snapshot || mergedCache.native !== native) {
+        mergedCache = { ts: snapshot, native, all: native.length ? [...snapshot, ...native] : snapshot };
+    }
+    return mergedCache.all;
+}
+
 export function useBrackets(): BracketPlan[] {
-    return useSyncExternalStore(subscribe, () => snapshot);
+    return useSyncExternalStore(l => {
+        const a = subscribe(l);
+        const b = subscribeNative(l);
+        return () => { a(); b(); };
+    }, getDisplayBrackets);
 }
 
 // ---- main-window runtime ----

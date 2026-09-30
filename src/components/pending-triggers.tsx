@@ -28,6 +28,7 @@ import {
     type PendingChoice,
     type TriggerOrder,
 } from '../lib/trigger-engine';
+import { isNativeTrigger } from '../lib/execution/native-view';
 import { fmtPrice } from '../lib/utils/format';
 import { focusMainWindow } from '../lib/window-role';
 import * as styles from './pending-triggers.css';
@@ -107,6 +108,7 @@ function Row({ trigger, price, envNow, sending }: {
                 <span className={trigger.kind === 'take' ? styles.kindTake : styles.kindStop}>{kindLabel(trigger)}</span>
                 <span className={trigger.action === 'Buy' ? styles.buy : styles.sell}>{act}</span>
                 <span className={styles.orderType}>市價單</span>
+                {isNativeTrigger(trigger) && <span className={styles.orderType} title='由 App 原生執行引擎（實驗）執行'>原生</span>}
                 {trigger.pending && <span className={styles.detected}>偵測於 {detectedAt(trigger.pending.at)}</span>}
             </div>
             <div className={styles.product}>

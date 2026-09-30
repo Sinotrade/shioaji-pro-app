@@ -11,6 +11,7 @@ import { startAnalytics } from './lib/analytics';
 import { bootstrap } from './lib/boot';
 import { initTheme } from './lib/theme-store';
 import { startBracketRuntime } from './lib/bracket';
+import { startNativeExecution } from './lib/execution/native';
 import { startTriggerEngine } from './lib/trigger-engine';
 
 initTheme();
@@ -18,6 +19,9 @@ startAnalytics();
 // both are no-ops outside the main window (#102: main-only execution)
 startTriggerEngine();
 startBracketRuntime();
+// #201: mirror of the native engine (desktop only; every window displays,
+// the main window syncs the experimental toggle)
+startNativeExecution();
 bootstrap();
 
 const rootElement = document.getElementById('root');
