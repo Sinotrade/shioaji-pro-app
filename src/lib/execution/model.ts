@@ -396,6 +396,10 @@ export interface ReconciledOrder {
     deals: { seq: string; qty: number; price: number; ts?: number }[];
     /** Cumulative cancelled quantity of the order at the broker. */
     cancelled?: number;
+    /** A report of this order was applied after the listing was requested:
+     * the row may only add (fills, cumulative cancels, a final status), it
+     * never revives the order nor downgrades anything. */
+    stale?: boolean;
 }
 export interface ReconcileEvent {
     type: 'reconcile'; ts: number;

@@ -764,14 +764,18 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                     touched = true;
                 }
                 if (!row || !slot.orderId) continue;
-                // the listing's cumulative cancelled quantity is authoritative
-                if (row.cancelled !== undefined) { slot.listedCancelled = row.cancelled; refreshCancelled(slot); }
-                if (wasEnded && slot.status === 'ended' && !slot.acknowledged && row.status === 'working'
+                // cumulative values only ever grow (a listing adds, never downgrades)
+                if (row.cancelled !== undefined) {
+                    slot.listedCancelled = Math.max(slot.listedCancelled ?? 0, row.cancelled);
+                    refreshCancelled(slot);
+                }
+                // a stale row (a report of this order is newer than the listing
+                // request) never revives: only a listing newer than every report may
+                if (!row.stale && wasEnded && slot.status === 'ended' && !slot.acknowledged && row.status === 'working'
                     && slot.qty - slot.filled - (row.cancelled ?? 0) > 0) {
                     // the listing shows it working: the reports that ended it are
                     // taken as absorbed by the listing (kept for dedupe, count 0)
                     for (const id of Object.keys(slot.cancels ?? {})) slot.cancels![id] = 0;
-                    slot.listedCancelled = row.cancelled ?? 0;
                     refreshCancelled(slot);
                     // the broker still works it (e.g. a cancel that did not take
                     // effect): back to working, and a stopped program is
