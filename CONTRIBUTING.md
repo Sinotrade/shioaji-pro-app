@@ -89,3 +89,4 @@ access for low-trust workflow triggers](https://docs.github.com/en/actions/refer
   and the deploy key in runner memory, so a malicious PR could exfiltrate them.
   Review before labeling; rotate the deploy key if a suspicious PR was ever labeled.
 <!-- fork CI 流程測試 -->
+<!-- fork CI 流程測試：新 commit 移除標籤驗證 -->
