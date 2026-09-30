@@ -92,6 +92,13 @@ test coverage 門檻、quality metrics 等。落地時更新本節。
 - 尚未開 PR 的分支若要合成驗證，使用 `workflow_dispatch` 手動選擇分支。
 - concurrency 依 workflow、事件與 PR 編號／ref 分組。新 commit 可取消
   同 PR 的舊 run，但手動執行、main push 與其他 PR 不互相取消。
+- 步驟定義在 reusable workflow `desktop-agent-build.yml`。外部 fork PR 拿不到
+  secrets，`combined-agent` 會 skip（fork-notice 寫 summary）；維護者 review
+  並對目前 head 送出 Approve review 後加 `run-desktop-ci` label（gate 驗證
+  加 label 者為 write+ 且其 APPROVED review 綁定該 SHA），由 `desktop-agent-ci-fork.yml`
+  （`pull_request_target`）對加 label 當下的 head SHA 跑同一套步驟，結果以
+  commit status `desktop-agent-ci (maintainer-approved)` 回報；新 push 自動
+  移除 label。安全設計與殘餘風險見 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 - 回報 CI 完成前，核對最新 PR head 的完整 check rollup；若仍有 failed、
   cancelled 或 pending，不得只挑成功的 run 宣告全綠。取消原因與重跑結果
   須寫回 PR，等待所有檢查完成後再交付。

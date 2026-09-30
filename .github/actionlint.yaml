@@ -1,0 +1,6 @@
+# actionlint 內建的 actions/checkout@v4 input 清單尚未包含 2026-06 回推的
+# allow-unsafe-pr-checkout（已於 actions/checkout v4 tag 的 action.yml 確認存在）。
+paths:
+  .github/workflows/desktop-agent-build.yml:
+    ignore:
+      - 'input "allow-unsafe-pr-checkout" is not defined in action "actions/checkout@v4"'

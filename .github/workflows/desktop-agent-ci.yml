@@ -1,3 +1,11 @@
+# Desktop agent 合成測試（Linux/Windows）。實際步驟定義在
+# desktop-agent-build.yml（reusable workflow），與 fork PR 的維護者核准路徑
+# desktop-agent-ci-fork.yml 共用。
+#
+# 外部 fork 的 PR 拿不到 AGENT_SSH_KEY，這裡不跑私有合成測試（job 顯示
+# skipped，不是紅叉），改由 fork-notice 寫 job summary 說明：需維護者 review
+# 後加 `run-desktop-ci` label 才會跑完整 desktop CI。公開 build／test
+# （ci.yml、web-build.yml）對 fork PR 照常執行。
 name: desktop-agent-ci
 
 on:
@@ -14,116 +22,43 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   combined-agent:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: ubuntu-22.04
-            sidecar: shioaji-x86_64-unknown-linux-gnu
-            mkcert: mkcert-x86_64-unknown-linux-gnu
-          - platform: windows-latest
-            sidecar: shioaji-x86_64-pc-windows-msvc.exe
-            mkcert: mkcert-x86_64-pc-windows-msvc.exe
-    runs-on: ${{ matrix.platform }}
-    permissions:
-      contents: read
+    # fork PR 沒有 secrets — 乾淨 skip，交給 desktop-agent-ci-fork.yml
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/desktop-agent-build.yml
+    with:
+      untrusted: false
+    secrets:
+      AGENT_SSH_KEY: ${{ secrets.AGENT_SSH_KEY }}
+
+  fork-notice:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions: {}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Read pinned desktop SHA
-        id: desktop-ref
-        shell: bash
+      - name: Explain maintainer-gated desktop CI
         run: |
-          DESKTOP_REF="$(tr -d '[:space:]' < DESKTOP_MODULES_REF)"
-          if [[ ! "$DESKTOP_REF" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "DESKTOP_MODULES_REF must contain one full commit SHA" >&2
-            exit 1
-          fi
-          echo "sha=$DESKTOP_REF" >> "$GITHUB_OUTPUT"
+          cat >> "$GITHUB_STEP_SUMMARY" <<'MD'
+          ## Desktop agent CI：需要維護者核准
 
-      - name: Checkout pinned desktop modules
-        uses: ./.github/actions/desktop-overlay
-        with:
-          ssh-key: ${{ secrets.AGENT_SSH_KEY }}
-          sha: ${{ steps.desktop-ref.outputs.sha }}
+          這個 PR 來自外部 fork。完整的桌面合成測試需要私有模組（唯讀 deploy key），
+          基於安全考量不會自動對 fork 程式碼執行，因此 `combined-agent` 顯示為 **skipped**，
+          這不代表失敗。
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
+          - 公開檢查（`CI / checks`、`web-build`）已照常執行，merge 只需要它們綠燈。
+          - 維護者 review 過程式碼、Approve 目前 head 後，會加上 **`run-desktop-ci`** label 觸發完整 desktop CI
+            （`desktop-agent-ci-fork`），結果會出現在這個 PR 的 checks。
+          - 之後每次 push 新 commit，label 會自動移除，需要維護者重新 review 再加一次。
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
+          ---
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Install Linux desktop dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
-            librsvg2-dev patchelf libgtk-3-dev
-
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Stage test sidecar
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          mkdir -p src-tauri/binaries
-          install -m 755 /bin/true "src-tauri/binaries/${{ matrix.sidecar }}"
-          install -m 755 /bin/true "src-tauri/binaries/${{ matrix.mkcert }}"
-
-      - name: Stage test sidecar (Windows)
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
-          Copy-Item "$env:SystemRoot/System32/where.exe" "src-tauri/binaries/${{ matrix.sidecar }}"
-          Copy-Item "$env:SystemRoot/System32/where.exe" "src-tauri/binaries/${{ matrix.mkcert }}"
-
-      - name: Frontend production build
-        run: pnpm build
-
-      - name: Frontend tests
-        run: pnpm test
-
-      - name: Official agent plugin contract tests
-        shell: bash
-        run: |
-          if [[ -f plugins/shioaji-pro/test/manifest-consistency.test.mjs ]]; then
-            node --test plugins/shioaji-pro/test/manifest-consistency.test.mjs
-          fi
-
-      - name: Pi permission policy tests
-        run: node --test src-tauri/src/pi_policy_extension.test.mjs
-
-      - name: Pi native onboarding protocol tests
-        run: node --test src-tauri/src/pi_onboarding_extension.test.mjs
-
-      - name: Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
-
-      - name: Rust runtime and capability tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-
-      - name: Windows TCP owner E2E
-        if: matrix.platform == 'windows-latest'
-        run: cargo test --manifest-path src-tauri/Cargo.toml --bin windows_tcp_owner_e2e
-
-      - name: Windows agent Job Object E2E
-        if: matrix.platform == 'windows-latest'
-        run: cargo run --manifest-path src-tauri/Cargo.toml --bin windows_agent_job_e2e
-
-      - name: Rust lint
-        if: matrix.platform == 'ubuntu-22.04'
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-
-      - name: Windows Rust compile and lint
-        if: matrix.platform == 'windows-latest'
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib --bins -- -D warnings
+          **English:** This PR comes from a fork, so the private desktop CI (`combined-agent`)
+          is skipped, not failed. Public checks (`CI / checks`, `web-build`) still run.
+          A maintainer will review the code and add the `run-desktop-ci` label to run the full
+          desktop CI; the label is removed automatically on every new push.
+          MD
+          echo "::notice title=Desktop CI needs maintainer approval::Fork PR — a maintainer must add label 'run-desktop-ci' to run the full desktop CI."

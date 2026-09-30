@@ -1,0 +1,189 @@
+# Desktop agent 合成 build／test 的單一定義（reusable workflow）。
+# 呼叫端：
+# - desktop-agent-ci.yml：同 repo PR、main push、workflow_dispatch（受信任程式碼）
+# - desktop-agent-ci-fork.yml：外部 fork PR，維護者加 `run-desktop-ci` label 後
+#   以 pull_request_target 觸發（untrusted: true）
+#
+# 安全設計（fork 路徑）：
+# - 私有 overlay action 與 DESKTOP_MODULES_REF 一律從「受信任 checkout」讀取：
+#   github.sha 在 reusable workflow 內等於呼叫端的 sha；pull_request_target 時
+#   就是 base（main）— PR 改不到 overlay action，也改不到要拉哪個私有 SHA。
+# - SSH key 只出現在 overlay 那一個 step 的 env，step 結束即從磁碟刪除；
+#   不使用 ssh-agent。
+# - untrusted 模式不使用 pnpm cache（pull_request_target 對 main scope cache
+#   本來就只有唯讀，關掉只是避免還原不必要的 cache）。
+# - GITHUB_TOKEN 只有 contents: read。
+# 殘餘風險：PR 程式碼（pnpm install／build／test／cargo）在私有模組已在磁碟上
+# 之後執行，且同一 job 的 runner 記憶體裡仍有 secret — 惡意程式可外流私有
+# 原始碼或 deploy key。這是「用私有模組測 PR 程式碼」本質上無法消除的風險，
+# 所以維護者必須先逐行 review PR 再加 label（詳見 CONTRIBUTING.md）。
+name: desktop-agent-build
+
+on:
+  workflow_call:
+    inputs:
+      checkout-ref:
+        description: 要 build 的 commit；空字串＝呼叫端預設 ref（github.sha）
+        type: string
+        default: ''
+      untrusted:
+        description: true＝外部 fork 程式碼（關 cache 等保護）
+        type: boolean
+        default: false
+    secrets:
+      AGENT_SSH_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  combined-agent:
+    name: combined-agent (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            sidecar: shioaji-x86_64-unknown-linux-gnu
+            mkcert: mkcert-x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            sidecar: shioaji-x86_64-pc-windows-msvc.exe
+            mkcert: mkcert-x86_64-pc-windows-msvc.exe
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code under test
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+          # actions/checkout 在 pull_request_target 下預設拒絕 checkout fork 程式碼。
+          # 只有 fork 路徑（untrusted）開啟：desktop-agent-ci-fork.yml 的 approved
+          # job 已確認加 label 者為 write+ 維護者，且其 APPROVED review 綁定此 SHA。
+          # 同 repo 路徑為 false，行為不變。
+          allow-unsafe-pr-checkout: ${{ inputs.untrusted }}
+
+      - name: Reject reserved path in code under test
+        shell: bash
+        run: |
+          if [[ -e .ci-trusted || -L .ci-trusted ]]; then
+            echo "'.ci-trusted' is reserved for CI tooling; remove it from the PR" >&2
+            exit 1
+          fi
+
+      # 受信任的 CI 工具：overlay action 與私有 SHA pin。放在 workspace 子目錄
+      # （checkout 會先清掉 PR 內同名目錄），overlay 完即刪除。
+      - name: Checkout trusted CI tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .ci-trusted
+          persist-credentials: false
+          sparse-checkout: |
+            /.github/
+            /DESKTOP_MODULES_REF
+          sparse-checkout-cone-mode: false
+
+      - name: Read pinned desktop SHA
+        id: desktop-ref
+        shell: bash
+        run: |
+          DESKTOP_REF="$(tr -d '[:space:]' < .ci-trusted/DESKTOP_MODULES_REF)"
+          if [[ ! "$DESKTOP_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "DESKTOP_MODULES_REF must contain one full commit SHA" >&2
+            exit 1
+          fi
+          echo "sha=$DESKTOP_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned desktop modules
+        uses: ./.ci-trusted/.github/actions/desktop-overlay
+        with:
+          ssh-key: ${{ secrets.AGENT_SSH_KEY }}
+          sha: ${{ steps.desktop-ref.outputs.sha }}
+
+      - name: Remove trusted tooling and key material
+        shell: bash
+        run: |
+          rm -rf .ci-trusted
+          rm -f ~/.ssh/agent_key
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: ${{ !inputs.untrusted && 'pnpm' || '' }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stage test sidecar
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          mkdir -p src-tauri/binaries
+          install -m 755 /bin/true "src-tauri/binaries/${{ matrix.sidecar }}"
+          install -m 755 /bin/true "src-tauri/binaries/${{ matrix.mkcert }}"
+
+      - name: Stage test sidecar (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          Copy-Item "$env:SystemRoot/System32/where.exe" "src-tauri/binaries/${{ matrix.sidecar }}"
+          Copy-Item "$env:SystemRoot/System32/where.exe" "src-tauri/binaries/${{ matrix.mkcert }}"
+
+      - name: Frontend production build
+        run: pnpm build
+
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Official agent plugin contract tests
+        shell: bash
+        run: |
+          if [[ -f plugins/shioaji-pro/test/manifest-consistency.test.mjs ]]; then
+            node --test plugins/shioaji-pro/test/manifest-consistency.test.mjs
+          fi
+
+      - name: Pi permission policy tests
+        run: node --test src-tauri/src/pi_policy_extension.test.mjs
+
+      - name: Pi native onboarding protocol tests
+        run: node --test src-tauri/src/pi_onboarding_extension.test.mjs
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Rust runtime and capability tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Windows TCP owner E2E
+        if: matrix.platform == 'windows-latest'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --bin windows_tcp_owner_e2e
+
+      - name: Windows agent Job Object E2E
+        if: matrix.platform == 'windows-latest'
+        run: cargo run --manifest-path src-tauri/Cargo.toml --bin windows_agent_job_e2e
+
+      - name: Rust lint
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Windows Rust compile and lint
+        if: matrix.platform == 'windows-latest'
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib --bins -- -D warnings

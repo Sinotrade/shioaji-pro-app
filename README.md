@@ -207,3 +207,6 @@ curl -X POST http://localhost:8080/api/v1/apps/shioaji-pro-app "${ARGS[@]}"
 External contributions: by submitting a PR you agree to license your
 contribution under AGPL-3.0 and grant the maintainers the right to
 include it in dual-licensed distributions.
+
+外部貢獻者的 CI 流程（fork PR 的 desktop CI 需維護者加 `run-desktop-ci`
+label 核准）見 [CONTRIBUTING.md](CONTRIBUTING.md#外部-fork-pr-的-ci-流程).

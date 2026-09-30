@@ -1,0 +1,218 @@
+# 外部 fork PR 的 desktop agent CI — 維護者核准制。
+#
+# 流程：
+# 1. fork PR 開啟／更新時，desktop-agent-ci.yml 的 combined-agent 會 skip，
+#    fork-notice 寫 job summary 說明需要維護者核准。
+# 2. 維護者逐行 review，對「目前 head commit」送出 Approve review，再加上
+#    `run-desktop-ci` label → 本 workflow 以 pull_request_target 觸發。
+# 3. approved job（不碰 PR 程式碼）檢查：
+#    a. 加 label 的人（event.sender）對本 repo 有 write／maintain／admin 權限
+#      （collaborator permission API 的 permission 為 write 或 admin）；
+#       Triage 使用者或 bot 加的 label 一律拒絕。
+#    b. 該 sender 對「加 label 當下的 head SHA」最新一筆有效 review 是
+#       APPROVED（review.commit_id == head SHA）— 把核准綁到實際 review 過的
+#       commit，避免「review A、加 label 前被換成 B」的 TOCTOU。
+#    不符 → 移除 label、在 head SHA 回報 failure status、寫 summary，job 失敗。
+# 4. 通過 → build 該 SHA（payload 的 pull_request.head.sha，不跟著之後的 push
+#    走），結果以 commit status `desktop-agent-ci (maintainer-approved)` 回報。
+# 5. PR 之後只要有新 push（synchronize）或 reopened，自動移除 label。
+#    新 push 不會取消已核准的舊 SHA build — 它 build 的仍是 review 過的
+#    commit，結果只掛在那個 SHA 上，不會變成新 head 的綠燈。
+#
+# pull_request_target 安全守則：
+# - 本檔與 desktop-agent-build.yml、overlay action 都從 base（main）讀取；
+#   PR 內對這些檔案的修改在這條路徑上不生效。
+# - gate 通過之前不 checkout、不執行任何 PR 程式碼；event 欄位一律經 env 傳入。
+# - 有寫入權限的 job（label、status）完全不 checkout PR 程式碼；build job
+#   只有 contents: read。
+# 殘餘風險見 desktop-agent-build.yml 開頭與 CONTRIBUTING.md。
+name: desktop-agent-ci-fork
+
+on:
+  pull_request_target:
+    types: [labeled, synchronize, reopened]
+    branches:
+      - main
+
+permissions: {}
+
+env:
+  LABEL: run-desktop-ci
+  STATUS_CONTEXT: desktop-agent-ci (maintainer-approved)
+
+jobs:
+  # 新 commit 進來 → 撤銷核准。只呼叫 GitHub API，不碰 PR 程式碼。
+  revoke-approval:
+    if: >-
+      github.event.action != 'labeled' &&
+      github.event.pull_request.head.repo.full_name != github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'run-desktop-ci')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove run-desktop-ci label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # 只容忍 404（label 已不在）；其他錯誤重試 3 次後讓 job 失敗。
+          result=""
+          for attempt in 1 2 3; do
+            if err=$(gh api -X DELETE "repos/$REPO/issues/$PR/labels/$LABEL" --silent 2>&1); then
+              result=removed; break
+            fi
+            if grep -q "HTTP 404" <<<"$err"; then
+              result=absent; break
+            fi
+            echo "::warning::remove label attempt $attempt failed: $err"
+            sleep $((attempt * 5))
+          done
+          if [[ -z "$result" ]]; then
+            {
+              echo "## ❌ 無法移除 \`$LABEL\` label"
+              echo
+              echo "PR 有新 commit（\`$HEAD_SHA\`），但 API 移除 label 失敗：\`$err\`。"
+              echo "**請維護者手動移除 label**；新 commit 未經 review 前不得重新加上。"
+              echo
+              echo "**English:** Failed to remove the \`$LABEL\` label after new commits. Remove it manually."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::failed to remove label '$LABEL' from PR #$PR: $err"
+            exit 1
+          fi
+          {
+            echo "## \`$LABEL\` label 已撤銷（$result）"
+            echo
+            echo "PR 有新 commit（\`$HEAD_SHA\`），維護者須重新 review、對新 head 送出 Approve review 後再加 label。"
+            echo
+            echo "**English:** New commits were pushed; re-review, approve the new head, then re-apply \`$LABEL\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 核准 gate：驗證加 label 的人與其 review 綁定的 SHA。不 checkout 任何程式碼。
+  approved:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'run-desktop-ci' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write # 讀 reviews；拒絕時移除 label
+      statuses: write
+    outputs:
+      head-sha: ${{ steps.gate.outputs.sha }}
+    steps:
+      - name: Verify approver and reviewed SHA
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SENDER: ${{ github.event.sender.login }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -o pipefail
+          reject() {
+            local zh="$1" en="$2"
+            gh api -X DELETE "repos/$REPO/issues/$PR/labels/$LABEL" --silent 2>/dev/null \
+              || echo "::warning::could not remove label (may already be absent)"
+            if [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              gh api -X POST "repos/$REPO/statuses/$HEAD_SHA" \
+                -f state=failure -f context="$STATUS_CONTEXT" \
+                -f description="${en:0:139}" -f target_url="$RUN_URL" --silent \
+                || echo "::warning::could not post failure status"
+            fi
+            {
+              echo "## ❌ desktop CI 未執行：核准不成立"
+              echo
+              echo "$zh"
+              echo
+              echo "**English:** $en"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$en"
+            exit 1
+          }
+
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            reject "head SHA 格式不正確：\`$HEAD_SHA\`。" "Invalid head SHA."
+          fi
+
+          # a. 加 label 者必須有 write／maintain／admin（API 的 permission 將
+          #    maintain 映射為 write、triage 映射為 read）。
+          perm=$(gh api "repos/$REPO/collaborators/$SENDER/permission" --jq .permission 2>/dev/null || echo none)
+          case "$perm" in
+            admin|write) ;;
+            *) reject "@$SENDER 的權限為 \`$perm\`，只有 write／maintain／admin 維護者能以 \`$LABEL\` 核准 desktop CI。label 已移除。" \
+                      "@$SENDER ($perm) is not allowed to approve desktop CI; write/maintain/admin required." ;;
+          esac
+
+          # b. sender 對這個 head SHA 最新一筆有效 review（排除 COMMENTED／PENDING）
+          #    必須是 APPROVED。
+          state=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
+                    --jq ".[] | select(.user.login == \"$SENDER\" and .commit_id == \"$HEAD_SHA\" and (.state == \"APPROVED\" or .state == \"CHANGES_REQUESTED\" or .state == \"DISMISSED\")) | .state" \
+                  | tail -n 1)
+          if [[ "$state" != "APPROVED" ]]; then
+            reject "@$SENDER 沒有對目前 head \`$HEAD_SHA\` 的有效 Approve review（最新狀態：\`${state:-無}\`）。請 review 目前的 head、送出 **Approve** review，再重新加上 \`$LABEL\` label。label 已移除。" \
+                   "No APPROVED review by @$SENDER on head $HEAD_SHA. Approve the current head, then re-apply the label."
+          fi
+
+          echo "sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "Approved by @$SENDER ($perm) with an APPROVED review on \`$HEAD_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report pending status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.gate.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api -X POST "repos/$REPO/statuses/$SHA" \
+            -f state=pending \
+            -f context="$STATUS_CONTEXT" \
+            -f description="maintainer-approved desktop CI running" \
+            -f target_url="$RUN_URL" --silent
+
+  combined-agent:
+    needs: approved
+    concurrency:
+      group: desktop-agent-ci-fork-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+    uses: ./.github/workflows/desktop-agent-build.yml
+    with:
+      checkout-ref: ${{ needs.approved.outputs.head-sha }}
+      untrusted: true
+    secrets:
+      AGENT_SSH_KEY: ${{ secrets.AGENT_SSH_KEY }}
+
+  # 把結果掛到 PR head SHA 上（pull_request_target 的 check run 掛在 base
+  # commit，這個 status 讓結果跟著被核准的那個 commit）。不碰 PR 程式碼。
+  report:
+    needs: [approved, combined-agent]
+    if: always() && needs.approved.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Report commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.approved.outputs.head-sha }}
+          RESULT: ${{ needs.combined-agent.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          case "$RESULT" in
+            success) STATE=success; DESC="maintainer-approved desktop CI passed" ;;
+            cancelled) STATE=error; DESC="desktop CI cancelled; re-apply run-desktop-ci" ;;
+            *) STATE=failure; DESC="maintainer-approved desktop CI $RESULT" ;;
+          esac
+          gh api -X POST "repos/$REPO/statuses/$SHA" \
+            -f state="$STATE" \
+            -f context="$STATUS_CONTEXT" \
+            -f description="$DESC" \
+            -f target_url="$RUN_URL" --silent
+          echo "Reported \`$STATE\` on \`$SHA\`" >> "$GITHUB_STEP_SUMMARY"
