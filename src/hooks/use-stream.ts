@@ -27,17 +27,23 @@ export function useTradingLive(): boolean {
     return status === 'live' && mirrorFresh;
 }
 
-export function useQuote(code: string | null): QuoteState | undefined {
+export interface UseQuoteOptions {
+    /** 盤中零股行情（intraday_odd）：獨立訂閱與 store，量以股計（#204） */
+    oddLot?: boolean;
+}
+
+export function useQuote(code: string | null, options?: UseQuoteOptions): QuoteState | undefined {
+    const oddLot = options?.oddLot === true;
     useEffect(() => {
         ensureStream();
         let active = true;
         let release: (() => void) | undefined;
-        if (code) void ensureContract(code).then(c => { if (active) release = retainContractQuotes(c); }).catch(() => undefined);
+        if (code) void ensureContract(code).then(c => { if (active) release = retainContractQuotes(c, oddLot ? { oddLot } : undefined); }).catch(() => undefined);
         return () => { active = false; release?.(); };
-    }, [code]);
+    }, [code, oddLot]);
     return useSyncExternalStore(
         (listener) =>
-            code ? subscribeQuoteStore(code, listener) : () => undefined,
-        () => (code ? getQuote(code) : undefined),
+            code ? subscribeQuoteStore(code, listener, oddLot) : () => undefined,
+        () => (code ? getQuote(code, oddLot) : undefined),
     );
 }

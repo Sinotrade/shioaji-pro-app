@@ -39,6 +39,23 @@ export function fmtMoney(v: number | undefined) {
     return `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 }
 
+// Compact volume for tight ladder cells — odd-lot (盤中零股) books are in
+// shares and routinely reach six digits: 9,999 → "9,999"  104,264 → "10.4萬"
+// 2,345,678 → "235萬"  123,456,789 → "1.2億"
+export function fmtCompactInt(v: number | undefined) {
+    if (v === undefined || v === null || !Number.isFinite(v)) return '—';
+    const a = Math.abs(v);
+    if (a < 10_000) return Math.round(v).toLocaleString('en-US');
+    if (a < 100_000_000) return `${(v / 10_000).toFixed(a < 1_000_000 ? 1 : 0)}萬`;
+    return `${(v / 100_000_000).toFixed(1)}億`;
+}
+
+/** hh:mm:ss of an exchange time string (drops fractional seconds). */
+export function fmtClock(time: string | undefined): string {
+    const m = /(\d{1,2}:\d{2}:\d{2})/.exec(time ?? '');
+    return m ? m[1]! : '';
+}
+
 // stock quantities arrive in SHARES (unit=Share). Brokers, fills and
 // exchange statements show odd lots as 股, never as fractional 張 — render
 // whole lots as 張 and the odd-lot remainder as 股 (issue #3). Compact,

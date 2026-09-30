@@ -11,7 +11,7 @@ const accounts: Account[] = ['A', 'B'].map(account_id => ({ account_type: 'F', b
 const [accA, accB] = accounts as [Account, Account];
 vi.mock('../lib/account-store', () => ({ ensureAccounts: () => { mocks.ensure(); }, useAccounts: () => ({ loaded: mocks.loaded, accounts: mocks.loaded ? accounts : [], selectedStock: undefined, selectedFutures: accounts.find(a => a.account_id.endsWith(mocks.selected)) }) }));
 vi.mock('../lib/privacy', async (orig) => ({ ...(await orig<typeof import('../lib/privacy')>()), usePrivacyMode: () => mocks.privacy, usePrivacyMoney: () => mocks.privacyMoney }));
-vi.mock('../hooks/use-stream', () => ({ useTradingLive: () => true }));
+vi.mock('../hooks/use-stream', () => ({ useQuote: () => undefined, useTradingLive: () => true }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: undefined, snapshot: { close: 100 }, book: undefined }) }));
 vi.mock('../lib/shioaji', () => ({ cancelOrders: (ids: string[]) => Promise.allSettled(ids.map(id => mocks.cancel(id))) }));
 vi.mock('../lib/trade', () => ({ notify: mocks.notify, placeQuickOrder: mocks.place, placeStockExitByShares: mocks.stockExit }));

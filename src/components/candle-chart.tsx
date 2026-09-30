@@ -71,6 +71,23 @@ import { setHoverPickedPrice, setPickedPrice } from '../lib/price-sync';
 import { cancelOrder, updateOrderPrice } from '../lib/shioaji';
 import { getChartColors, useThemeSettings, themeKey as themeKeyOf } from '../lib/theme-store';
 import { notify, placeQuickOrder } from '../lib/trade';
+import {
+    chartModeHint,
+    chartPlaceOptions,
+    chartTriggerFields,
+    loadChartOrderDefault,
+    normalizeChartOrder,
+    saveChartOrderDefault,
+    type ChartOrderMarket,
+    type ChartOrderPanelState,
+    type ChartOrderSettings,
+} from '../lib/chart-order-settings';
+import { ensureAccounts, useAccounts } from '../lib/account-store';
+import { accountMatches, resolveFlashAccount } from '../lib/flash-account';
+import { flashAccountLabels } from '../lib/flash-display';
+import { usePrivacyMode } from '../lib/privacy';
+import type { Account } from '../lib/types/portfolio';
+import { ChartOrderButton, type ChartOrderAccountView } from './chart-order-popover';
 import { isCancelUnconfirmed } from '../lib/cancel-verification';
 import { cancellationSummary } from '../lib/trade-mutations';
 import {
@@ -130,6 +147,8 @@ export function CandleChart({
     onOrdersChanged,
     sessionMode: sessionModeProp,
     onSessionModeChange,
+    orderSettings: orderSettingsProp,
+    onOrderSettingsChange,
 }: {
     panelId?: string;
     contract: ContractBase;
@@ -140,6 +159,10 @@ export function CandleChart({
     // 初始值，之後用元件內 state
     sessionMode?: ChartSessionMode;
     onSessionModeChange?: (mode: ChartSessionMode) => void;
+    // 圖表下單設定（#204）：有 onOrderSettingsChange（主視窗 block）時跟版面
+    // 一起存；沒有時（彈出視窗）只在元件內
+    orderSettings?: ChartOrderPanelState;
+    onOrderSettingsChange?: (next: ChartOrderPanelState) => void;
 }) {
     const hostRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -185,7 +208,40 @@ export function CandleChart({
     const colors = getChartColors(themeSettings);
     const themeKey = themeKeyOf(themeSettings);
     const [mode, setMode] = useState<TradeMode>('observe');
-    const [tradeQty, setTradeQty] = useState(1);
+    // 圖表下單設定（#204）：每張圖自己一組（每市場一份），缺省取「設為預設」
+    const orderMarket: ChartOrderMarket | null =
+        contract.security_type === 'STK' ? 'S'
+            : contract.security_type === 'FUT' || contract.security_type === 'OPT' ? 'F' : null;
+    const [localOrder, setLocalOrder] = useState<ChartOrderPanelState>(() => orderSettingsProp ?? {});
+    const panelOrder = onOrderSettingsChange ? (orderSettingsProp ?? {}) : localOrder;
+    const [defaultsVer, setDefaultsVer] = useState(0);
+    const orderSettings: ChartOrderSettings = useMemo(() => {
+        const m = orderMarket ?? 'S';
+        const saved = panelOrder[m];
+        return saved ? normalizeChartOrder(saved, m) : loadChartOrderDefault(m);
+    }, [panelOrder, orderMarket, defaultsVer]);
+    const setOrderSettings = (next: ChartOrderSettings) => {
+        if (!orderMarket) return;
+        const value = { ...panelOrder, [orderMarket]: normalizeChartOrder(next, orderMarket) };
+        if (onOrderSettingsChange) onOrderSettingsChange(value);
+        else setLocalOrder(value);
+    };
+    const orderSettingsRef = useRef(orderSettings);
+    orderSettingsRef.current = orderSettings;
+    // 帳號：沒固定就跟隨主畫面；固定的帳號不可用時絕不改用別的帳號
+    const accountState = useAccounts();
+    const privacy = usePrivacyMode();
+    useEffect(ensureAccounts, []);
+    const orderAccountView: ChartOrderAccountView = useMemo(() => {
+        const m = orderMarket ?? 'S';
+        const eligible = accountState.accounts.filter(a => a.signed && a.account_type === m);
+        const global = m === 'S' ? accountState.selectedStock : accountState.selectedFutures;
+        const resolved = resolveFlashAccount(accountState.accounts, m, orderSettings.accountKey, global, true);
+        const labels = flashAccountLabels(eligible, privacy);
+        return { eligible, active: resolved.account, following: resolved.following, missing: resolved.missing, ...labels };
+    }, [accountState, orderMarket, orderSettings.accountKey, privacy]);
+    const orderAccountRef = useRef(orderAccountView);
+    orderAccountRef.current = orderAccountView;
     // 組合商品（合成合約）只能用組合單下單 — 圖上禁用交易模式
     const isCombo = Boolean((contract as { combo?: unknown }).combo);
     // 在點價/停損/停利模式中切到組合商品 → 強制回觀察，殘留的交易
@@ -271,11 +327,17 @@ export function CandleChart({
     // refs so the chart click handler always sees current values
     const modeRef = useRef(mode);
     modeRef.current = mode;
-    const qtyRef = useRef(tradeQty);
-    qtyRef.current = tradeQty;
     const contractRef = useRef(contract);
     contractRef.current = contract;
     const lastPriceRef = useRef<number | null>(null);
+    // 零股停損停利：觸價引擎看零股成交價，建立時判斷在現價上方／下方也必須
+    // 用零股成交價（#204），否則兩市場價格分處觸發價兩側時方向會判反
+    const oddChartQuote = useQuote(
+        orderMarket === 'S' && orderSettings.lot === 'IntradayOdd' ? contract.code : null,
+        { oddLot: true },
+    );
+    const oddLastRef = useRef<number | null>(null);
+    oddLastRef.current = oddChartQuote?.tick && Number(oddChartQuote.tick.close) > 0 ? Number(oddChartQuote.tick.close) : null;
 
     // legend readout — crosshair position when hovering, latest bar otherwise
     const fmtLegendVal = (v: number, precision?: number) =>
@@ -378,17 +440,30 @@ export function CandleChart({
                 setPickedPrice(c.code, price); // sync to order tickets
                 return;
             }
-            const qty = qtyRef.current;
+            const market: ChartOrderMarket = c.security_type === 'STK' ? 'S' : 'F';
+            const settings = orderSettingsRef.current;
+            const qty = settings.qty;
             const last = lastPriceRef.current;
+            const oddLast = oddLastRef.current;
+            const odd = market === 'S' && settings.lot === 'IntradayOdd';
+            const view = orderAccountRef.current;
+            const account: Account | undefined = view.active;
             setMode('observe'); // one-shot
+            if (m !== 'alert' && (view.missing || !account)) {
+                notify({ kind: 'err', title: '圖表下單未送出', body: view.missing ? '圖表設定的固定帳號已不可用，請在下單設定重新選擇' : '沒有可用的下單帳號' });
+                return;
+            }
+            // a pinned account must still be this chart's account when the
+            // (optional) confirmation returns
+            const isAccountCurrent = () => accountMatches(orderAccountRef.current.active, account);
             if (m === 'buy' || m === 'sell') {
                 const action = m === 'buy' ? 'Buy' : 'Sell';
-                placeQuickOrder(c, action, price, qty)
+                placeQuickOrder(c, action, price, qty, { ...chartPlaceOptions(settings, market), account, isAccountCurrent })
                     .then((trade) =>
                         notify({
                             kind: 'ok',
                             title: `📈 圖表${action === 'Buy' ? '買進' : '賣出'}已送出`,
-                            body: `${c.code} ${qty} @ ${fmtPrice(price)} (${trade.status.status})`,
+                            body: `${c.code} ${qty}${odd ? ' 股（零股）' : ''} @ ${fmtPrice(price)} (${trade.status.status})`,
                         }),
                     )
                     .catch((e) =>
@@ -401,15 +476,18 @@ export function CandleChart({
                 return;
             }
             // stop / take triggers — direction inferred from click vs last
-            if (last === null) {
+            // alerts stay on the round-lot price; odd-lot stops/takes decide
+            // their side from the odd-lot trade price they will fire on
+            const ref = m !== 'alert' && odd ? oddLast : last;
+            if (ref === null) {
                 notify({
                     kind: 'err',
                     title: '無法掛觸價單',
-                    body: '尚未收到即時成交價',
+                    body: m !== 'alert' && odd ? '等待零股行情：尚未收到盤中零股成交價' : '尚未收到即時成交價',
                 });
                 return;
             }
-            const below = price <= last;
+            const below = price <= ref;
             if (m === 'alert') {
                 addTrigger({
                     code: c.code,
@@ -421,6 +499,8 @@ export function CandleChart({
                 });
                 return;
             }
+            const fields = chartTriggerFields(settings, market);
+            const fixed = view.following ? undefined : { account };
             if (m === 'stop') {
                 addTrigger({
                     code: c.code,
@@ -429,7 +509,8 @@ export function CandleChart({
                     action: below ? 'Sell' : 'Buy',
                     quantity: qty,
                     kind: 'stop',
-                }, c);
+                    ...fields,
+                }, c, fixed);
             } else {
                 addTrigger({
                     code: c.code,
@@ -438,7 +519,8 @@ export function CandleChart({
                     action: below ? 'Buy' : 'Sell',
                     quantity: qty,
                     kind: 'take',
-                }, c);
+                    ...fields,
+                }, c, fixed);
             }
         });
 
@@ -510,7 +592,6 @@ export function CandleChart({
             wickUpColor: colors.up,
             wickDownColor: colors.down,
         });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [themeKey]);
 
     // recolor volume bars from cached data on theme change — never refetch
@@ -524,7 +605,6 @@ export function CandleChart({
                 color: b.close >= b.open ? colors.upVol : colors.downVol,
             })),
         );
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [themeKey]);
 
     // load kbars on symbol/timeframe change; pages of older history are
@@ -682,7 +762,6 @@ export function CandleChart({
         return () => {
             cancelled = true;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract, tf, historySeq, dayOnly]);
 
     // Live trade/index quote -> update the current bar. Index products use
@@ -1056,7 +1135,6 @@ export function CandleChart({
             paneRoRef.current?.disconnect();
             paneRoRef.current = null;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dataVersion, instancesKey, themeKey, tf.minutes, customVer]);
 
     const commitInstances = (list: IndicatorInstance[]) => {
@@ -1178,7 +1256,6 @@ export function CandleChart({
             for (const line of lines.values()) series.removePriceLine(line);
             orderLinesRef.current = new Map();
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [orderKey, themeKey, contract.code]);
 
     // drag an order line to modify its price
@@ -1312,13 +1389,12 @@ export function CandleChart({
                 title:
                     t.kind === 'alert'
                         ? '警示'
-                        : `${isNativeTrigger(t) ? '原生·' : ''}${t.kind === 'stop' ? '停損' : '停利'}${t.action === 'Buy' ? '買' : '賣'}${t.quantity}`,
+                        : `${isNativeTrigger(t) ? '原生·' : ''}${t.kind === 'stop' ? '停損' : '停利'}${t.action === 'Buy' ? '買' : '賣'}${t.quantity}${t.orderLot === 'IntradayOdd' ? '股' : ''}`,
             }),
         );
         return () => {
             for (const line of lines) series.removePriceLine(line);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [JSON.stringify(triggers), themeKey, contract.code]);
 
     // 單列 legend（主圖堆疊與各副圖 pane 共用同一套列與控制）
@@ -1605,21 +1681,20 @@ export function CandleChart({
                         {m.label}
                     </button>
                 ))}
-                <label
-                    className={styles.qtyWrap}
-                    title='圖表下單數量（點價買賣/停損/停利的口數或張數）'
-                >
-                    量
-                    <input
-                        className={styles.qtyInput}
-                        value={tradeQty}
-                        inputMode='numeric'
-                        onChange={(e) => {
-                            const v = Number(e.target.value);
-                            if (Number.isInteger(v) && v >= 1) setTradeQty(v);
+                {orderMarket && !isCombo && (
+                    <ChartOrderButton
+                        market={orderMarket}
+                        settings={orderSettings}
+                        onChange={setOrderSettings}
+                        onSaveDefault={() => {
+                            saveChartOrderDefault(orderMarket, orderSettings);
+                            setDefaultsVer(v => v + 1);
+                            notify({ kind: 'info', title: '已設為圖表下單預設', body: `新開的${orderMarket === 'F' ? '期貨' : '股票'}圖表使用這組設定（不含帳號）；其他現有圖表維持原設定。` });
                         }}
+                        account={orderAccountView}
+                        contractLabel={`${contract.code}${(contract as { name?: string }).name ? ` ${(contract as { name?: string }).name}` : ''}`}
                     />
-                </label>
+                )}
                 <button
                     className={
                         styles.indicatorBtn[
@@ -1673,11 +1748,7 @@ export function CandleChart({
                 )}
                 {mode !== 'observe' && (
                     <div className={styles.modeHint}>
-                        {mode === 'buy' && '點擊圖表價位 → 限價買進'}
-                        {mode === 'sell' && '點擊圖表價位 → 限價賣出'}
-                        {mode === 'stop' && '點擊價位掛停損（觸價市價單）'}
-                        {mode === 'take' && '點擊價位掛停利（觸價市價單）'}
-                        {mode === 'alert' && '點擊價位設定到價警示（只通知不下單）'}
+                        {chartModeHint(mode, orderSettings, orderMarket ?? 'S')}
                     </div>
                 )}
                 {(workingOrders.length > 0 ||
@@ -1754,7 +1825,7 @@ export function CandleChart({
                                     {t.condition === 'below' ? '≤' : '≥'}
                                     {fmtPrice(t.price)}
                                     {t.kind !== 'alert' &&
-                                        ` ${t.action === 'Buy' ? '買' : '賣'}${t.quantity}`}
+                                        ` ${t.action === 'Buy' ? '買' : '賣'}${t.quantity}${t.orderLot === 'IntradayOdd' ? '股' : ''}`}
                                     {isNativeTrigger(t) && (
                                         <span title='由 App 原生執行引擎（實驗）執行，重新載入視窗不影響'> 原生</span>
                                     )}

@@ -17,6 +17,7 @@ const m = vi.hoisted(() => ({
     status: 'live' as string,
     order: null as ((r: OrderEventReport) => void) | null,
     tick: null as ((t: { code: string; close: number; simtrade?: boolean }) => void) | null,
+    oddTick: null as ((t: { code: string; close: number; simtrade?: boolean }) => void) | null,
     heartbeat: null as (() => void) | null,
     statusChanged: [] as (() => void)[],
     accounts: [] as Account[],
@@ -45,6 +46,7 @@ vi.mock('./stream', () => ({
     subscribeStatusStore: (cb: () => void) => { m.statusChanged.push(cb); return () => undefined; },
     onOrderEvent: (cb: (r: OrderEventReport) => void) => { m.order = cb; return () => undefined; },
     onAnyTick: (cb: typeof m.tick) => { m.tick = cb; return () => undefined; },
+    onOddLotTick: (cb: typeof m.tick) => { m.oddTick = cb; return () => undefined; },
     onStreamEvent: (name: string, cb: () => void) => { if (name === 'heartbeat') m.heartbeat = cb; return () => undefined; },
 }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts, selectedFutures: m.accounts.find(a => a.account_type === 'F') ?? null,
@@ -853,8 +855,11 @@ describe('pre-order bracket validation (entry is not sent when invalid)', () => 
         expect(validateBracketRequest({ ...base, referencePrice: null })).toMatch('參考價');
         expect(validateBracketRequest({ ...base, stopPrice: null, takePrice: null })).toMatch('需要停損價或停利價');
         expect(validateBracketRequest({ ...base, octype: 'Cover' })).toMatch('Cover');
-        expect(validateBracketRequest({ ...base, isFutures: false, orderLot: 'IntradayOdd' })).toMatch('現股整張');
-        expect(validateBracketRequest({ ...base, isFutures: false, orderCond: 'MarginTrading' })).toMatch('現股整張');
+        // #204: 盤中零股（現股）可以掛括號單；盤後零股與信用條件不行
+        expect(validateBracketRequest({ ...base, isFutures: false, orderLot: 'IntradayOdd' })).toBeNull();
+        expect(validateBracketRequest({ ...base, isFutures: false, orderLot: 'Odd' })).toMatch('盤後零股');
+        expect(validateBracketRequest({ ...base, isFutures: false, orderLot: 'IntradayOdd', orderCond: 'MarginTrading' })).toMatch('融資券');
+        expect(validateBracketRequest({ ...base, isFutures: false, orderCond: 'MarginTrading' })).toMatch('僅支援現股');
         expect(validateBracketRequest({ ...base, isFutures: false, orderLot: 'Common', orderCond: 'Cash' })).toBeNull();
     });
 });

@@ -111,14 +111,20 @@ to whole lots, and a nonzero request smaller than one lot fails validation.
 An omitted entry size uses the run's configured quantity or one lot.
 
 `pyramiding: n` on an entry permits at most `n` additional same-side entries
-of that entry size. The default is zero. `tag` is a nonempty string carried to
+of that entry size. The default is zero. A weight-sized pyramid step adds
+`weight` of the current equity, so the resulting quantity varies with price and
+equity. `tag` is a nonempty string carried to
 fills; entry tags own the resulting position PnL in tag attribution, including
 untagged or end-of-run exits. `order` defaults to `{ type: 'market' }`, filled
 at the next available open. `{ type: 'limit', price: 100 }` may fill at a
 better open or at the limit if the next available bar crosses it; it expires
-after that bar and an unfilled limit is recorded as a rejection. Slippage must
-still respect the limit. Missing bars defer pending orders without fabricating
-prices.
+after that bar and an unfilled limit is recorded as a rejection. A limit price
+off the exchange tick grid is rounded against the order (buys down, sells up),
+and slippage steps tick by tick through the stock/futures tick ladder. Slippage
+must still respect the limit. Missing bars defer pending orders without
+fabricating prices. A bar that traded entirely at limit-up does not fill buys
+(entirely at limit-down: sells); the order waits for the next fillable bar and
+the run records a `limit-locked` deferral.
 
 ```js
 longEntry('2330', breakout, {
@@ -128,8 +134,10 @@ longEntry('2330', breakout, {
 longExit('2330', exitSignal, { size: position.percent(0.5) })
 ```
 
-Simultaneous vector signals retain legacy priority and produce a conflict
-diagnostic. Direct conflicting intents fail validation. Choose
+Call each collector at most once per asset: a second `longExit(...)` for the
+same symbol fails with a duplicate-collector error instead of silently replacing
+the first condition. Simultaneous vector signals retain legacy priority and
+produce a conflict diagnostic. Direct conflicting intents fail validation. Choose
 `authoring_style: stateful` for `onBar`, `currentPosition`, `enterLong`,
 `enterShort`, `reducePosition`, and `closePosition`. Choose
 `authoring_style: target-portfolio` for `targetWeight` or `targetQuantity`;
@@ -139,7 +147,13 @@ the static universe; `asset(symbol)` reads named bars and availability.
 These research calls never grant broker order authority.
 
 A value greater than zero or `true` means the signal is confirmed at that bar's
-close. At least one entry is required. A long entry needs `longExit` or a reverse
+close. Signals must use only the current and earlier bars: reading `close[i + 1]`,
+`close.length`, the last bar, or a whole-history statistic (maximum, average) to
+compute earlier signals or options fails the run with a look-ahead error, and so
+does a negative `ta.offset` shift. Price series such as `close` are read-only;
+copy them (`close.slice()`) before changing values. `Math.random`, `Date.now`, `new Date()` without
+an argument, and timers are not available; use bar `time` and parameters so
+every run of the same inputs gives the same result. At least one entry is required. A long entry needs `longExit` or a reverse
 `shortEntry`; a short entry needs `shortExit` or a reverse `longEntry`.
 
 Example, long-only EMA crossover:
@@ -163,9 +177,29 @@ longExit(ta.crossunder(close, priorLow))
 ## Backtest Semantics
 
 - A signal confirmed on bar `i` executes at bar `i + 1` open, including configured
-  slippage. This built-in delay prevents same-close look-ahead.
+  slippage. This built-in delay prevents same-close look-ahead. A fill's time is
+  the label of the bar it executed on (bars are labelled at their close), while
+  its price is that bar's open: a 60-minute fill labelled 11:00 executed at 10:00.
 - A reverse entry closes the current position before opening the opposite side.
-- An open position on the final bar is forced closed at that bar's close.
+  When capital blocks the new side, only the opening leg is rejected; the close
+  still executes at the next open (also when the entry's limit is not reached),
+  and exits of other symbols in the same batch are never cancelled by it.
+- An open position on the final bar is forced closed at that bar's close, except
+  when that bar is missing/suspended or limit-locked against the close: the
+  position then stays open, is valued at its last close, and the run records an
+  end-of-run rejection.
+- Futures daily bars follow the exchange trading day: the night session from
+  15:00 belongs to the next date that has a day session (after a holiday, the
+  day after it); night minutes after the last day session in the data are
+  left out until the next day session is available. Night sessions follow the
+  TAIFEX after-hours list (15:00 for index futures, TXO and its weeklies, and
+  crude oil; 17:25 for TOPIX, FX, gold and listed stock/ETF futures); some
+  ETF futures trade until 16:15. Minutes outside the instrument's sessions are dropped; index
+  closing values printed at 13:31–13:33 belong to the 13:30 bar. Daily
+  price limits are ±10% of the previous close (futures: previous day-session
+  close as the settlement stand-in). Sharpe and Sortino annualize with
+  the actual number of bars per trading day (for example 5,040 per year for
+  60-minute TAIFEX day+night bars).
 - Fees, stock tax, futures tax, and slippage are applied by the backtest engine
   according to the panel configuration; they do not belong in strategy source.
 - A save receipt may include validation signal counts. Those counts are not a

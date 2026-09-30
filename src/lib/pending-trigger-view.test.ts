@@ -1,7 +1,7 @@
 // src/lib/pending-trigger-view.test.ts — plain-language 待確認 wording (#144).
 
 import { describe, expect, it } from 'vitest';
-import { actionLabel, conditionLabel, contractLabel, distanceLabel, kindLabel } from './pending-trigger-view';
+import { actionLabel, conditionLabel, contractLabel, distanceLabel, exitStyleLabel, kindLabel } from './pending-trigger-view';
 
 describe('pending trigger wording', () => {
     it('names the contract with its month, or falls back to the code', () => {
@@ -16,6 +16,10 @@ describe('pending trigger wording', () => {
         expect(kindLabel({ kind: 'take', bracketId: 'b1' })).toBe('括號單停利');
         expect(actionLabel({ action: 'Sell', quantity: 2 })).toBe('賣出 2 口');
         expect(actionLabel({ action: 'Buy', quantity: 3, account: { account_type: 'S', broker_id: 'b', account_id: 'a' } })).toBe('買進 3 張');
+        // #204 盤中零股以股計，沒有市價單
+        expect(actionLabel({ action: 'Sell', quantity: 300, orderLot: 'IntradayOdd', account: { account_type: 'S', broker_id: 'b', account_id: 'a' } })).toBe('賣出 300 股');
+        expect(exitStyleLabel({ orderLot: 'IntradayOdd' })).toBe('零股漲跌停限價');
+        expect(exitStyleLabel({})).toBe('市價');
         expect(conditionLabel({ condition: 'above', price: 48151 })).toBe('漲到 48,151 以上');
         expect(conditionLabel({ condition: 'below', price: 47800 })).toBe('跌到 47,800 以下');
     });

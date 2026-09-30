@@ -20,7 +20,7 @@
 
 import type { OrderEventReport } from './order-report';
 import { reportBody } from './portfolio-projection';
-import type { Action, Trade } from './types/order';
+import type { Action, StockOrderLot, Trade } from './types/order';
 
 export interface AccountRef {
     account_type: 'S' | 'F';
@@ -82,7 +82,8 @@ export interface BracketPlan {
     securityType: 'STK' | 'FUT' | 'OPT';
     exchange: string;
     action: Action; // entry direction
-    quantity: number; // entry quantity (lots / contracts)
+    quantity: number; // entry quantity (lots / contracts; shares for odd lots)
+    orderLot?: StockOrderLot; // stocks: IntradayOdd → quantities are shares (#204)
     stopPrice: number | null;
     takePrice: number | null;
     group: string; // OCO group id of the protection triggers

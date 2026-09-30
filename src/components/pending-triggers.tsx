@@ -9,6 +9,7 @@ import { dismissBracket } from '../lib/bracket';
 import { ensureContract, useContract } from '../lib/contracts-cache';
 import {
     actionLabel,
+    exitStyleLabel,
     conditionLabel,
     contractLabel,
     distanceLabel,
@@ -19,6 +20,7 @@ import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env'
 import { useServerInfo } from '../lib/server-info-store';
 import {
     isPendingUnpast,
+    priceKeyOf,
     RESTORE_REASON_TEXT,
     requestPendingPrices,
     resolvePendingTrigger,
@@ -98,6 +100,7 @@ function Row({ trigger, price, envNow, sending }: {
     useEffect(() => { void ensureContract(trigger.code).catch(() => undefined); }, [trigger.code]);
     const name = contractLabel(trigger.code, contract);
     const act = actionLabel(trigger);
+    const style = exitStyleLabel(trigger);
     const distance = shown === undefined ? null : distanceLabel(trigger, shown);
     const acct = trigger.account
         ? `${trigger.account.account_type === 'F' ? '期貨' : '證券'}帳戶 ${maskAccountId(trigger.account.account_id, priv)}`
@@ -107,7 +110,7 @@ function Row({ trigger, price, envNow, sending }: {
             <div className={styles.rowHead}>
                 <span className={trigger.kind === 'take' ? styles.kindTake : styles.kindStop}>{kindLabel(trigger)}</span>
                 <span className={trigger.action === 'Buy' ? styles.buy : styles.sell}>{act}</span>
-                <span className={styles.orderType}>市價單</span>
+                <span className={styles.orderType}>{style}單</span>
                 {isNativeTrigger(trigger) && <span className={styles.orderType} title='由 App 原生執行引擎（實驗）執行'>原生</span>}
                 {trigger.pending && <span className={styles.detected}>偵測於 {detectedAt(trigger.pending.at)}</span>}
             </div>
@@ -167,8 +170,8 @@ function Row({ trigger, price, envNow, sending }: {
                     }}
                 >
                     {sending ? '送出處理中'
-                        : confirm === 'send-unpast' ? `目前已未穿價：再按一次仍市價${act}（目前 ${fmtPrice(shown)}）`
-                            : confirm === 'send' ? `再按一次確認：市價${act}（目前 ${fmtPrice(shown)}）` : '立即送出市價單'}
+                        : confirm === 'send-unpast' ? `目前已未穿價：再按一次仍${style}${act}（目前 ${fmtPrice(shown)}）`
+                            : confirm === 'send' ? `再按一次確認：${style}${act}（目前 ${fmtPrice(shown)}）` : `立即送出${style}單`}
                 </button>
                 <button
                     className={styles.button}
@@ -229,7 +232,7 @@ export function PendingTriggers({ compact = false }: { compact?: boolean }) {
                     <div className={styles.hint}>
                         App 恢復盯價時，價格已經穿過這些單的觸發價。為了避免意外成交，系統先不送單，請逐筆決定。同一組停損停利（OCO）送出其中一筆後，其餘會自動取消。
                     </div>
-                    {pending.map(t => <Row key={t.id} trigger={t} price={prices[t.code]} envNow={envNow} sending={sending.includes(t.id)} />)}
+                    {pending.map(t => <Row key={t.id} trigger={t} price={prices[priceKeyOf(t)]} envNow={envNow} sending={sending.includes(t.id)} />)}
                 </>
             )}
         </div>

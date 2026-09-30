@@ -1,4 +1,5 @@
 import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
+import { isOddLot, lotLabel } from '../lib/odd-lot';
 import { cancellationSummary } from '../lib/trade-mutations';
 import { isCancelUnconfirmed } from '../lib/cancel-verification';
 // src/components/bottom-dock-orders.tsx — 委託 tab：成交進度圈、狀態篩選、
@@ -97,6 +98,8 @@ function FillRing({ t }: { t: Trade }) {
 
 export function OrderQuantity({ trade }: { trade: Trade }) {
     const remaining = remainingWorkingOrderQuantity(trade);
+    // 零股委託以股計（#204）；整股／期貨維持原本不加單位
+    const unit = isOddLot(trade.order.order_lot) ? ' 股' : '';
     return (
         <span
             className={styles.ringWrap}
@@ -104,9 +107,9 @@ export function OrderQuantity({ trade }: { trade: Trade }) {
         >
             <FillRing t={trade} />
             <span className={styles.priceDual}>
-                <span>未成交 {fmtInt(remaining)}</span>
+                <span>未成交 {fmtInt(remaining)}{unit}</span>
                 <span className={styles.priceDualSub}>
-                    成交 {fmtInt(trade.status.deal_quantity)} · 取消 {fmtInt(trade.status.cancel_quantity)}
+                    成交 {fmtInt(trade.status.deal_quantity)} · 取消 {fmtInt(trade.status.cancel_quantity)}{unit}
                 </span>
             </span>
         </span>
@@ -213,11 +216,7 @@ function orderDetail(t: Trade): string {
         );
     }
     if (t.order.order_lot && t.order.order_lot !== 'Common') {
-        parts.push(
-            { IntradayOdd: '零股', Odd: '零股', Fixing: '定盤', BlockTrade: '鉅額' }[
-                t.order.order_lot
-            ] ?? t.order.order_lot,
-        );
+        parts.push(lotLabel(t.order.order_lot));
     }
     return parts.join(' ');
 }

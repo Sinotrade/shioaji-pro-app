@@ -3,7 +3,9 @@
 // flipping the manual lock blocks all order entries.
 
 import { useSyncExternalStore } from 'react';
+import { isOddLot, riskLots } from './odd-lot';
 import { getPrivacyMoney, maskMoney } from './privacy';
+import type { StockOrderLot } from './types/order';
 
 export interface RiskSettings {
     enabled: boolean; // master switch for the rules below
@@ -92,14 +94,17 @@ export function useRiskSettings(): RiskSettings {
     );
 }
 
-// returns an error message when the order must be blocked, null when OK
-export function checkOrderAllowed(quantity: number): string | null {
+// returns an error message when the order must be blocked, null when OK.
+// maxQty is set in 張／口; odd lots (股) are compared as a fraction of 張.
+export function checkOrderAllowed(quantity: number, orderLot?: StockOrderLot | string | null): string | null {
     if (settings.locked) {
         return '風控鎖啟動中 — 所有下單已封鎖';
     }
     if (!settings.enabled) return null;
-    if (settings.maxQty > 0 && quantity > settings.maxQty) {
-        return `超過單筆上限 ${settings.maxQty}（本筆 ${quantity}）`;
+    if (settings.maxQty > 0 && riskLots(quantity, orderLot) > settings.maxQty) {
+        return isOddLot(orderLot)
+            ? `超過單筆上限 ${settings.maxQty} 張（本筆 ${quantity} 股）`
+            : `超過單筆上限 ${settings.maxQty}（本筆 ${quantity}）`;
     }
     if (settings.maxDailyLoss > 0 && dailyPnl <= -settings.maxDailyLoss) {
         // 這段文字會進 toast 與通知中心：開啟遮金額時不顯示金額

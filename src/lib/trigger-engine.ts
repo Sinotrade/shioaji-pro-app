@@ -44,7 +44,7 @@ import {
 import { onTrackedReport, recentReportsFor } from './bracket-reports';
 import { getPrivacyMode, maskAccountId } from './privacy';
 import { ensureContract, getCachedContract } from './contracts-cache';
-import { actionLabel, conditionLabel, contractLabel, kindLabel as pendingKindLabel } from './pending-trigger-view';
+import { actionLabel, conditionLabel, contractLabel, exitStyleLabel, kindLabel as pendingKindLabel } from './pending-trigger-view';
 import { claimExecutor, createCommandBus, isExecutor, isMainWindow } from './main-window-commands';
 import type { OrderEventReport } from './order-report';
 import {
@@ -69,13 +69,14 @@ import { isNativeId, nativeRowId, programForNewTrigger, triggerRowsFromPrograms,
 import { retainQuote } from './quote-ownership';
 import { getApiBase } from './runtime';
 import { fetchTrades } from './shioaji';
-import { getStreamStatus, onAnyTick, onStreamEvent, subscribeStatusStore } from './stream';
+import { getStreamStatus, onAnyTick, onOddLotTick, onStreamEvent, subscribeStatusStore } from './stream';
 import { notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
 import { fmtPrice } from './utils/format';
+import { isOddLot, ODD_LOT_MAX_SHARES, oddLotMarketablePrice, SHARES_PER_LOT, sharesToUnits, stockQtyUnit } from './odd-lot';
 import type { ContractBase } from './types/contract';
 import type { Account } from './types/portfolio';
-import type { Action, FuturesOCType, Trade } from './types/order';
+import type { Action, FuturesOCType, StockOrderLot, Trade } from './types/order';
 
 /** Why protection resumed with a first-tick check (#144). */
 export type RestoreReason = 'restart' | 'disconnect' | 'env';
@@ -100,6 +101,9 @@ export interface TriggerOrder {
     account?: AccountRef;
     orderCode?: string; // tradable code (target_code || code)
     octype?: FuturesOCType; // futures exits from brackets use Cover
+    // stocks: IntradayOdd → quantity in shares, sent as a LIMIT at the price
+    // limit (零股沒有市價單, #204); absent = Common lots (張)
+    orderLot?: StockOrderLot;
     bracketId?: string;
     suspended?: string; // reason this trigger will not execute
     createdAt?: number;
@@ -117,6 +121,7 @@ export interface ExitRecord extends BracketExit {
     market: 'stock' | 'futures';
     orderCode: string;
     action: Action; // exit direction
+    orderLot?: StockOrderLot; // IntradayOdd → quantities in shares
     reserveKey: string;
     requested: number;
     acknowledged?: boolean;
@@ -191,6 +196,22 @@ const restoreCheck = new Map<string, RestoreReason>();
 let lastRestoreReason: RestoreReason = 'restart';
 const lastPrices = new Map<string, number>();
 
+// 價格來源（#204）：盤中零股停損停利／觸價單以「零股成交價」判斷 — 零股
+// 出場單送進零股市場撮合，零股與整股分開撮合、價格可能不同，觸發條件要看
+// 實際成交的那個市場。整股單與價格警示仍看整股成交價。零股成交較稀疏，
+// 觸發時點以零股實際成交為準。lastPrices／待確認價格以 priceKey 區分兩者。
+const ODD_PRICE_SUFFIX = '#odd';
+function feedKey(code: string, oddLot: boolean): string {
+    return oddLot ? `${code}${ODD_PRICE_SUFFIX}` : code;
+}
+/** Key of the price feed a trigger is evaluated on (see usePendingPrices). */
+export function priceKeyOf(t: Pick<TriggerOrder, 'code' | 'orderLot' | 'kind'>): string {
+    return feedKey(t.code, usesOddFeed(t));
+}
+function usesOddFeed(t: Pick<TriggerOrder, 'orderLot' | 'kind'>): boolean {
+    return t.kind !== 'alert' && t.orderLot === 'IntradayOdd';
+}
+
 
 export type PendingChoice = 'send' | 'cancel' | 'keep';
 
@@ -264,10 +285,23 @@ function kindLabel(t: Pick<TriggerOrder, 'kind'>) {
     return t.kind === 'stop' ? '停損單已掛' : t.kind === 'take' ? '停利單已掛' : '警示已設';
 }
 
+function qtyText(t: Pick<TriggerOrder, 'quantity' | 'orderLot'>, quantity = t.quantity): string {
+    return isOddLot(t.orderLot) ? `${quantity} 股` : `${quantity}`;
+}
+
 function describe(t: TriggerOrder) {
     return t.kind === 'alert'
         ? `${t.code} 觸價 ${t.condition === 'below' ? '≤' : '≥'} ${t.price} 時通知`
-        : `${t.code} 觸價 ${t.condition === 'below' ? '≤' : '≥'} ${t.price} → 市價${t.action === 'Buy' ? '買' : '賣'} ${t.quantity}${t.group ? '（OCO）' : ''}`;
+        : `${t.code} 觸價 ${t.condition === 'below' ? '≤' : '≥'} ${t.price} → ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t)}${t.group ? '（OCO）' : ''}`;
+}
+
+/** Odd-lot triggers: stocks only, 盤中零股 only, 1–999 shares. */
+function oddLotTriggerProblem(t: Pick<TriggerOrder, 'kind' | 'orderLot' | 'quantity' | 'account'>): string | null {
+    if (t.kind === 'alert' || !t.orderLot || t.orderLot === 'Common') return null;
+    if (t.account?.account_type !== 'S') return '零股觸價單僅支援股票';
+    if (t.orderLot !== 'IntradayOdd') return '觸價單僅支援整股與盤中零股；盤後零股為收盤後一次撮合，無法即時觸價';
+    if (!Number.isSafeInteger(t.quantity) || t.quantity < 1 || t.quantity > ODD_LOT_MAX_SHARES) return `零股觸價單數量須為 1～${ODD_LOT_MAX_SHARES} 股`;
+    return null;
 }
 
 function handleCommand(cmd: Command): unknown {
@@ -280,6 +314,8 @@ function handleCommand(cmd: Command): unknown {
         delete t.awaitingRecross;
         if (!hasContext(t)) throw new Error('觸價單缺少帳戶或伺服器資訊，未建立');
         if (t.bracketId) throw new Error('括號單保護只由主視窗建立');
+        const oddProblem = oddLotTriggerProblem(t);
+        if (oddProblem) throw new Error(oddProblem);
         if (t.group && processedGroups[groupKey(t.env, t.group)]) throw new Error('此 OCO 群組已觸發過，不再建立');
         triggers = [...triggers, t];
         commit();
@@ -307,13 +343,20 @@ function handleCommand(cmd: Command): unknown {
 }
 
 /** Capture the fixed execution context for a manual stop/take trigger. */
-function withContext(t: NewTrigger, contract?: ContractBase): NewTrigger | string {
+/** `account`: a panel's own account (chart order settings, #204) instead of
+ * the app-wide selection — it must still be a signed account of the market. */
+function withContext(t: NewTrigger, contract?: ContractBase, account?: Account): NewTrigger | string {
     if (t.kind === 'alert' || (t.env && t.account && t.orderCode)) return t;
     if (!contract) return '缺少商品資訊，無法固定下單帳戶';
     const futures = contract.security_type === 'FUT' || contract.security_type === 'OPT';
     if (!futures && contract.security_type !== 'STK') return '此商品不支援觸價下單';
+    if (futures && t.orderLot && t.orderLot !== 'Common') return '期貨選擇權沒有零股，觸價單未建立';
     const s = getAccountState();
-    const selected = futures ? s.selectedFutures : s.selectedStock;
+    const selected = account
+        ? s.accounts.find(a => a.signed && a.account_type === account.account_type
+            && a.broker_id === account.broker_id && a.account_id === account.account_id)
+        : futures ? s.selectedFutures : s.selectedStock;
+    if (account && !selected) return '指定的下單帳戶已不可用，觸價單未建立';
     if (!selected?.signed || selected.account_type !== (futures ? 'F' : 'S')) return '沒有可用的已簽署帳戶，觸價單未建立';
     const env = currentProtectionEnv();
     if (!env) return '伺服器模式（模擬／正式）尚未確認，觸價單未建立';
@@ -324,15 +367,17 @@ function withContext(t: NewTrigger, contract?: ContractBase): NewTrigger | strin
 
 /** Add a trigger from any window. Stop/take bind the currently selected
  * account for the contract's market; the main window executes it. */
-export async function addTrigger(t: NewTrigger, contract?: ContractBase): Promise<TriggerOrder | null> {
-    const prepared = withContext(t, contract);
+export async function addTrigger(t: NewTrigger, contract?: ContractBase, opts?: { account?: Account }): Promise<TriggerOrder | null> {
+    const prepared = withContext(t, contract, opts?.account);
     if (typeof prepared === 'string') {
         notify({ kind: 'err', title: '觸價單未建立', body: prepared });
         return null;
     }
     // #201: with the native engine on, a new stop / take is created as a
-    // native program and never enters the TS runtime (one owner per trigger)
-    if (prepared.kind !== 'alert' && nativeOwnsNew()) return addNativeTrigger(prepared);
+    // native program and never enters the TS runtime (one owner per trigger).
+    // Odd-lot triggers (#204: shares, limit at the price limit, odd-lot feed)
+    // are not expressible in execution-v1 yet and stay in TS.
+    if (nativeHandles(prepared)) return addNativeTrigger(prepared);
     const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : newId();
     try {
         return await bus.send({ op: 'add', trigger: { ...prepared, requestId } }) as TriggerOrder;
@@ -340,6 +385,11 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase): Promis
         notify({ kind: 'err', title: '觸價單未確認', body: e instanceof Error ? e.message : String(e) });
         return null;
     }
+}
+
+/** Whether a new trigger is created as a native program (#201). */
+export function nativeHandles(t: Pick<TriggerOrder, 'kind' | 'orderLot'>): boolean {
+    return t.kind !== 'alert' && !isOddLot(t.orderLot) && nativeOwnsNew();
 }
 
 async function addNativeTrigger(prepared: NewTrigger): Promise<TriggerOrder | null> {
@@ -512,6 +562,7 @@ export interface BracketArm {
     orderCode: string;
     entryAction: Action;
     octype?: FuturesOCType;
+    orderLot?: StockOrderLot; // IntradayOdd → quantity in shares
     stopPrice: number | null;
     takePrice: number | null;
     quantity: number;
@@ -532,7 +583,8 @@ export function armBracketGroup(arm: BracketArm): boolean {
         return true;
     }
     const base = { code: arm.code, action: exit, quantity: arm.quantity, group: arm.group, env: arm.env,
-        account: arm.account, orderCode: arm.orderCode, octype: arm.octype, bracketId: arm.bracketId, createdAt: Date.now() };
+        account: arm.account, orderCode: arm.orderCode, octype: arm.octype, bracketId: arm.bracketId, createdAt: Date.now(),
+        ...(arm.orderLot && isOddLot(arm.orderLot) ? { orderLot: arm.orderLot } : {}) };
     const added: TriggerOrder[] = [];
     if (arm.stopPrice !== null) {
         added.push({ ...base, id: newId(), kind: 'stop', price: arm.stopPrice,
@@ -582,8 +634,16 @@ export function reservedQuantity(key: string): number {
         .reduce((s, e) => s + Math.max(0, e.quantity - e.filled), 0);
 }
 
-/** Known position (in exit order units) that `action` would close, or null
- * when the shared position view is not a confirmed snapshot. */
+/** Stock reservations in SHARES: whole-lot and odd-lot exits of the same
+ * stock and side draw on the same holding (#204). */
+function reservedShares(key: string): number {
+    return exits.filter(e => e.reserveKey === key && !isResolved(e))
+        .reduce((s, e) => s + Math.max(0, e.quantity - e.filled) * (isOddLot(e.orderLot) ? 1 : SHARES_PER_LOT), 0);
+}
+
+/** Known position that `action` would close — shares for stocks, contracts
+ * for futures — or null when the shared position view is not a confirmed
+ * snapshot. */
 function closablePosition(account: AccountRef, orderCode: string, action: Action): number | null {
     const state = getTradingState();
     const q = state.queries?.positions;
@@ -594,9 +654,8 @@ function closablePosition(account: AccountRef, orderCode: string, action: Action
         && p.code === orderCode && p.direction === direction
         // bracket stock exits are Cash sells: margin/short rows are not closable by them
         && (account.account_type !== 'S' || !('cond' in p) || !p.cond || p.cond === 'Cash'));
-    const total = rows.reduce((s, p) => s + p.quantity, 0);
-    // stock positions are held in shares; bracket exits are Common lots
-    return account.account_type === 'S' ? Math.floor(total / 1000) : total;
+    // stock positions are held in shares
+    return rows.reduce((s, p) => s + p.quantity, 0);
 }
 
 /** Decide the exit quantity for a firing trigger.
@@ -607,7 +666,7 @@ function closablePosition(account: AccountRef, orderCode: string, action: Action
  * - stock bracket exits are Cash sells that could otherwise open a day-trade
  *   short: capped by the confirmed Cash position minus reserved exits, and
  *   refused while the position is unknown and another exit is unresolved. */
-export function planExitQuantity(t: Pick<TriggerOrder, 'quantity' | 'bracketId' | 'account'>, reserved: number,
+export function planExitQuantity(t: Pick<TriggerOrder, 'quantity' | 'bracketId' | 'account' | 'orderLot'>, reserved: number,
     closable: number | null): { quantity: number; detail?: string } {
     if (!t.bracketId) return { quantity: t.quantity };
     if (t.account?.account_type === 'F') {
@@ -618,7 +677,10 @@ export function planExitQuantity(t: Pick<TriggerOrder, 'quantity' | 'bracketId' 
     if (closable !== null) {
         const free = Math.max(0, closable - reserved);
         if (free <= 0) return { quantity: 0, detail: '現股持倉已被其他出場委託保留或已無部位，未送出' };
-        if (free < t.quantity) return { quantity: free, detail: `可賣出現股僅 ${free} 張，其餘 ${t.quantity - free} 張未保護` };
+        if (free < t.quantity) {
+            const unit = stockQtyUnit(t.orderLot);
+            return { quantity: free, detail: `可賣出現股僅 ${free} ${unit}，其餘 ${t.quantity - free} ${unit}未保護` };
+        }
         return { quantity: t.quantity };
     }
     if (reserved > 0) return { quantity: 0, detail: '持倉未確認且另有出場委託未完成；為避免超賣未送出' };
@@ -655,6 +717,7 @@ function reserve(t: TriggerOrder, lastPrice: number): { rec: ExitRecord; sibling
         id: `ex-${t.id}`, triggerId: t.id, bracketId: t.bracketId, env, account,
         market: account.account_type === 'S' ? 'stock' : 'futures', orderCode, action: t.action,
         reserveKey, requested: t.quantity, kind: t.kind, quantity: plan.quantity,
+        ...(isOddLot(t.orderLot) ? { orderLot: t.orderLot } : {}),
         status: plan.quantity > 0 ? 'sending' : 'not-sent', filled: 0, fills: {}, detail: plan.detail, at: Date.now(),
     };
     exits = [...exits, rec];
@@ -672,8 +735,22 @@ function reserve(t: TriggerOrder, lastPrice: number): { rec: ExitRecord; sibling
 
 function planFor(t: TriggerOrder) {
     const reserveKey = reserveKeyOf(t.env!, t.account!, t.orderCode!, t.action);
-    return planExitQuantity(t, reservedQuantity(reserveKey), t.bracketId ? closablePosition(t.account!, t.orderCode!, t.action) : null);
+    const closable = t.bracketId ? closablePosition(t.account!, t.orderCode!, t.action) : null;
+    if (t.account?.account_type !== 'S') return planExitQuantity(t, reservedQuantity(reserveKey), closable);
+    // Stocks: holdings and reservations are compared in shares, then expressed
+    // in this exit's unit (whole lots for 整股, shares for 零股).
+    const resShares = reservedShares(reserveKey);
+    const reserved = isOddLot(t.orderLot) ? resShares : Math.ceil(resShares / SHARES_PER_LOT);
+    return planExitQuantity(t, reserved,
+        closable === null ? null : reserved + sharesToUnits(Math.max(0, closable - resShares), t.orderLot));
 }
+
+/** Limit price of an odd-lot exit (none for whole lots / futures). */
+function exitPrice(t: TriggerOrder, contract: ContractBase): number | null | 'missing' {
+    if (!isOddLot(t.orderLot)) return null;
+    return oddLotMarketablePrice(contract as ContractBase & { limit_up?: number; limit_down?: number }, t.action) ?? 'missing';
+}
+const ODD_PRICE_MISSING = '零股需要有效漲跌停價作為限價，未送出';
 
 function fire(t: TriggerOrder, lastPrice: number) {
     const r = reserve(t, lastPrice);
@@ -720,11 +797,15 @@ const notSentExit = (t: TriggerOrder, rec: ExitRecord, detail: string) => {
 
 function exitSent(t: TriggerOrder, rec: ExitRecord, trade: Trade, lastPrice: number) {
     const orderId = trade.order.id;
-    updateExit(rec.id, e => ({ ...e, status: e.filled >= e.quantity ? 'filled' : 'working', orderId, at: Date.now() }));
+    const odd = isOddLot(t.orderLot);
+    updateExit(rec.id, e => ({ ...e, status: e.filled >= e.quantity ? 'filled' : 'working', orderId, at: Date.now(),
+        // odd-lot exits are ROD limits at the price limit: the rest keeps
+        // working until filled or cancelled (reports / 對帳), no IOC settle
+        ...(odd && e.filled < e.quantity ? { detail: `${e.detail ? `${e.detail}；` : ''}零股以漲跌停價限價 ROD 送出，依成交回報更新` } : {}) }));
     for (const report of recentReportsFor(envBase(rec.env), orderId)) applyExitReport(report, envBase(rec.env));
-    scheduleIocCheck(rec.id);
+    if (!odd) scheduleIocCheck(rec.id);
     notify({ kind: 'ok', title: t.kind === 'stop' ? '停損觸發' : '停利觸發',
-        body: `${t.code} @${lastPrice} → 市價${t.action === 'Buy' ? '買' : '賣'} ${rec.quantity} (${trade.status.status})` });
+        body: `${t.code} @${lastPrice} → ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t, rec.quantity)} (${trade.status.status})` });
 }
 
 function exitUnknown(t: TriggerOrder, rec: ExitRecord, message: string) {
@@ -738,12 +819,15 @@ const notStarted = (e: unknown) => !!(e as { mutationNotStarted?: boolean })?.mu
 async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
     const ctx = await sendContext(t, rec.env);
     if (typeof ctx === 'string') { notSentExit(t, rec, ctx); return; }
+    const price = exitPrice(t, ctx.contract);
+    if (price === 'missing') { notSentExit(t, rec, ODD_PRICE_MISSING); return; }
     try {
-        const trade = await placeQuickOrder(ctx.contract, t.action, null, rec.quantity, {
+        const trade = await placeQuickOrder(ctx.contract, t.action, price, rec.quantity, {
             bypassRisk: true, // protective exit — never blocked by kill switch
             source: 'auto', // 使用者可能不在場，不彈確認
             account: ctx.account,
             ocType: t.octype,
+            orderLot: isOddLot(t.orderLot) ? t.orderLot : undefined,
         });
         exitSent(t, rec, trade, lastPrice);
     } catch (e) {
@@ -782,23 +866,26 @@ async function sendPending(id: string, allowUnpast: boolean) {
     if (typeof ctx === 'string') { refused(ctx); return; }
     const planned = planFor(first);
     if (planned.quantity <= 0) { refused(planned.detail ?? '沒有可送出的數量'); return; }
+    const price = exitPrice(first, ctx.contract);
+    if (price === 'missing') { refused(ODD_PRICE_MISSING); return; }
     // A manual trigger may be an entry: it is a user order (risk checks,
     // manual confirm). Bracket exits stay protective.
     const userOrder = !first.bracketId;
     const box: { fired: { t: TriggerOrder; rec: ExitRecord; siblings: TriggerOrder[]; gk: string | null; price: number } | null } = { fired: null };
     try {
-        const trade = await placeQuickOrder(ctx.contract, first.action, null, planned.quantity, {
+        const trade = await placeQuickOrder(ctx.contract, first.action, price, planned.quantity, {
             bypassRisk: !userOrder,
             source: userOrder ? 'manual' : 'auto',
             account: ctx.account,
             ocType: first.octype,
-            confirmLivePriceCode: userOrder ? first.code : undefined,
+            orderLot: isOddLot(first.orderLot) ? first.orderLot : undefined,
+            confirmLivePriceCode: userOrder ? priceKeyOf(first) : undefined,
             beforeSend: () => {
                 const cur = triggers.find(x => x.id === id);
                 if (!cur?.pending) throw new Error('已不在待確認（OCO 另一邊可能已觸發或已被處理），未送出');
                 if (currentProtectionEnv() !== cur.env) throw new Error('伺服器或模擬／正式模式已切換，未送出');
                 if (cur.group && processedGroups[groupKey(cur.env, cur.group)]) throw new Error('此 OCO 群組已觸發，未送出');
-                const price = lastPrices.get(cur.code);
+                const price = lastPrices.get(priceKeyOf(cur));
                 if (getStreamStatus() !== 'live' || price === undefined) throw new Error('行情中斷，未送出');
                 // The manual order dialog can stay open while the price crosses
                 // back. An earlier confirmation of a crossed price does not
@@ -829,8 +916,8 @@ async function sendPending(id: string, allowUnpast: boolean) {
         triggers = [...triggers, ...back];
         commit();
         notify({ kind: 'err', title: '觸價單未送出（仍待確認）', body: `${f.t.code} ${message}` });
-        const latest = lastPrices.get(f.t.code);
-        if (latest !== undefined) evaluateTick(f.t.code, latest);
+        const latest = lastPrices.get(priceKeyOf(f.t));
+        if (latest !== undefined) evaluateTick(f.t.code, latest, usesOddFeed(f.t));
     }
 }
 
@@ -906,16 +993,19 @@ export function applyExitTrade(trade: Trade, opts: { settle?: boolean } = {}) {
 const isPast = (t: Pick<TriggerOrder, 'condition' | 'price'>, price: number) =>
     (t.condition === 'below' && price <= t.price) || (t.condition === 'above' && price >= t.price);
 
-export function evaluateTick(code: string, price: number) {
+/** `oddLot`: a 盤中零股 trade — evaluates only odd-lot triggers of `code`;
+ * a regular-lot trade evaluates everything else (#204). */
+export function evaluateTick(code: string, price: number, oddLot = false) {
     if (!main || !executing || !Number.isFinite(price) || price <= 0) return;
-    const previous = lastPrices.get(code);
-    lastPrices.set(code, price);
+    const key = feedKey(code, oddLot);
+    const previous = lastPrices.get(key);
+    lastPrices.set(key, price);
     if (triggers.length === 0) return;
     const env = currentProtectionEnv(); // null → only alerts may fire
     let rearmed = false;
     const held: { t: TriggerOrder; reason: RestoreReason }[] = [];
     for (const t of triggers.slice()) {
-        if (t.code !== code || t.suspended || t.pending) continue;
+        if (t.code !== code || usesOddFeed(t) !== oddLot || t.suspended || t.pending) continue;
         if (t.kind !== 'alert' && t.env !== env) continue;
         const past = isPast(t, price);
         if (t.awaitingRecross) {
@@ -940,7 +1030,7 @@ export function evaluateTick(code: string, price: number) {
     const stillHeld = held.filter(h => triggers.some(x => x.id === h.t.id));
     if (stillHeld.length) holdPending(stillHeld, price);
     else if (rearmed) commit();
-    else if (previous !== price && triggers.some(t => t.pending && t.code === code)) schedulePricePublish();
+    else if (previous !== price && triggers.some(t => t.pending && priceKeyOf(t) === key)) schedulePricePublish();
 }
 
 // ---- restore confirmation (#144) ----
@@ -1015,8 +1105,9 @@ function noteActivity() {
 function pendingPrices(): Record<string, number> {
     const out: Record<string, number> = {};
     for (const t of triggers) {
-        const p = t.pending ? lastPrices.get(t.code) : undefined;
-        if (p !== undefined) out[t.code] = p;
+        const key = priceKeyOf(t);
+        const p = t.pending ? lastPrices.get(key) : undefined;
+        if (p !== undefined) out[key] = p;
     }
     return out;
 }
@@ -1052,7 +1143,7 @@ const fmtDiff = (d: number) => `${d > 0 ? '+' : ''}${Number(d.toFixed(4))}`;
 export function describePending(t: TriggerOrder, price: number | undefined, priv: boolean): string {
     const acct = t.account ? `${t.account.account_type === 'F' ? '[期]' : '[證]'}${maskAccountId(t.account.account_id, priv)} ` : '';
     const now = price === undefined ? '目前價未知' : `目前 ${price}（差 ${fmtDiff(price - t.price)}）`;
-    return `${t.code} ${acct}${t.kind === 'stop' ? '停損' : '停利'} 市價${t.action === 'Buy' ? '買' : '賣'} ${t.quantity}`
+    return `${t.code} ${acct}${t.kind === 'stop' ? '停損' : '停利'} ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t)}`
         + ` 觸價 ${t.condition === 'below' ? '≤' : '≥'} ${t.price} · ${now}`;
 }
 
@@ -1067,7 +1158,7 @@ function holdPending(held: { t: TriggerOrder; reason: RestoreReason }[], price: 
     commit();
     for (const { t, reason } of held) {
         notify({ kind: 'err', title: '觸價單待確認（未自動送出）',
-            body: `${pendingName(t)}　${pendingKindLabel(t)}・市價${actionLabel(t)}。`
+            body: `${pendingName(t)}　${pendingKindLabel(t)}・${exitStyleLabel(t)}${actionLabel(t)}。`
                 + `價格已${conditionLabel(t)}（偵測時 ${fmtPrice(price)}），沒有自動送單，請到畫面下方的待確認面板處理。` });
     }
 }
@@ -1103,7 +1194,7 @@ function resolvePending(id: string, choice: PendingChoice, allowUnpast = false):
     const account = t.account && getAccountState().accounts.find(a => a.signed && a.account_type === t.account!.account_type
         && a.broker_id === t.account!.broker_id && a.account_id === t.account!.account_id);
     if (!account) throw new Error('建立時的帳戶已不可用，未送出');
-    const latest = lastPrices.get(t.code);
+    const latest = lastPrices.get(priceKeyOf(t));
     if (getStreamStatus() !== 'live' || latest === undefined) throw new Error('行情未連線或連線後尚未收到新成交價，未送出');
     if (!isPast(t, latest) && !allowUnpast) throw new Error(`目前已未穿價（目前價 ${latest}），未送出；如仍要送出請再確認`);
     if (userSending.has(id)) throw new Error('送出處理中');
@@ -1124,25 +1215,30 @@ function syncQuotes() {
     if (!main || !executing) return;
     const env = currentProtectionEnv();
     const base = getApiBase();
-    const codes = new Set(triggers.filter(t => !t.suspended && (t.kind === 'alert' || t.env === env
-        || (!env && t.env?.startsWith(`${base}|`)))).map(t => t.code));
-    for (const [code, hold] of quoteHolds) {
-        if (!codes.has(code)) { hold.release?.(); quoteHolds.delete(code); }
+    // one hold per price feed: 整股 Tick, and 盤中零股 Tick for odd-lot triggers
+    const feeds = new Map<string, { code: string; oddLot: boolean }>();
+    for (const t of triggers) {
+        if (t.suspended || !(t.kind === 'alert' || t.env === env || (!env && t.env?.startsWith(`${base}|`)))) continue;
+        feeds.set(priceKeyOf(t), { code: t.code, oddLot: usesOddFeed(t) });
+    }
+    const codes = new Set([...feeds.values()].map(f => f.code));
+    for (const [key, hold] of quoteHolds) {
+        if (!feeds.has(key)) { hold.release?.(); quoteHolds.delete(key); }
     }
     let changed = false;
     for (const code of [...feedMissing]) if (!codes.has(code)) { feedMissing.delete(code); changed = true; }
-    for (const code of codes) {
-        if (quoteHolds.has(code)) continue;
+    for (const [key, { code, oddLot }] of feeds) {
+        if (quoteHolds.has(key)) continue;
         const hold: { release?: () => void } = {};
-        quoteHolds.set(code, hold);
+        quoteHolds.set(key, hold);
         void ensureContract(code).then(contract => {
-            if (quoteHolds.get(code) !== hold) return;
-            hold.release = retainQuote(contract, 'Tick');
+            if (quoteHolds.get(key) !== hold) return;
+            hold.release = oddLot ? retainQuote(contract, 'Tick', { oddLot: true }) : retainQuote(contract, 'Tick');
             retryDelay = 5000;
             if (feedMissing.delete(code)) publishFeed();
         }).catch(() => {
-            if (quoteHolds.get(code) !== hold) return;
-            quoteHolds.delete(code);
+            if (quoteHolds.get(key) !== hold) return;
+            quoteHolds.delete(key);
             if (!feedMissing.has(code)) {
                 feedMissing.add(code);
                 publishFeed();
@@ -1200,6 +1296,10 @@ function becomeExecutor() {
     onAnyTick(tick => {
         noteActivity();
         if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close));
+    });
+    onOddLotTick(tick => {
+        noteActivity();
+        if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close), true);
     });
     onStreamEvent('heartbeat', () => noteActivity());
     onTrackedReport((report, _info, base) => applyExitReport(report, base));

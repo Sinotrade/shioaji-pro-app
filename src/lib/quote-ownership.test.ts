@@ -87,4 +87,29 @@ describe('quote ownership shared consumers', () => {
         await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledWith(contract, 'Tick'));
         release();
     });
+    it('counts 盤中零股 consumers apart from regular-lot ones of the same code (#204)', async () => {
+        vi.useFakeTimers();
+        try {
+            const { retainQuote, retainContractQuotes, RELEASE_GRACE_MS } = await import('./quote-ownership');
+            const round = retainQuote(contract, 'Tick');
+            const oddA = retainQuote(contract, 'Tick', { oddLot: true });
+            const oddB = retainQuote(contract, 'Tick', { oddLot: true });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(mocks.subscribe.mock.calls).toEqual([[contract, 'Tick'], [contract, 'Tick', { oddLot: true }]]);
+            oddA();
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS + 10);
+            expect(mocks.unsubscribe).not.toHaveBeenCalled(); // oddB still holds the odd feed
+            oddB();
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS + 10);
+            // only the odd-lot feed goes; the round-lot panel keeps its feed
+            expect(mocks.unsubscribe.mock.calls).toEqual([[contract, 'Tick', { oddLot: true }]]);
+            round();
+            await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS + 10);
+            expect(mocks.unsubscribe.mock.calls.at(-1)).toEqual([contract, 'Tick']);
+            // futures have no odd-lot feed
+            retainContractQuotes({ ...contract, code: 'TXFJ6', security_type: 'FUT' as const, exchange: 'TAIFEX' as const }, { oddLot: true })();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(mocks.subscribe).toHaveBeenCalledTimes(2);
+        } finally { vi.useRealTimers(); }
+    });
 });

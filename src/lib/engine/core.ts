@@ -12,10 +12,10 @@ import { coreErrorText, type CoreErrorCode, type MessageParams } from './message
 import type {
     BtMetrics, BtResult, BtTrade, PortfolioBarsInput, PortfolioCalendar, PortfolioExecutionConfig,
     PortfolioResult, PortfolioRiskLimits, ResearchMetrics, SignalConflictDiagnostic, SignalRule,
-    SignalSeries, StrategyIntent,
+    SignalSeries, StrategyIntent, TickBand,
 } from './schema';
 
-export const CORE_REQUEST_SCHEMA_VERSION = 'backtest-core-v1';
+export const CORE_REQUEST_SCHEMA_VERSION = 'backtest-core-v2';
 
 // ---------------------------------------------------------------------------
 // Request
@@ -104,6 +104,22 @@ export interface IntentStream {
 export type StrategyProduct = SignalPlan | IntentStream;
 
 /**
+ * Strategy source run by the core's own script step (backtest-spec-v2.1 §8):
+ * a Signal DSL source becomes a signal plan (entry quantity `quantity` for
+ * every asset); a stateful / target-portfolio source runs at every decision.
+ * Cores that cannot execute ECMAScript reject it.
+ */
+export interface SourceStrategy {
+    kind: 'source';
+    authoringStyle: 'signal' | 'stateful' | 'target-portfolio';
+    source: string;
+    params: Record<string, number>;
+    quantity: number;
+}
+
+export type CoreStrategy = StrategyProduct | SourceStrategy;
+
+/**
  * - 'portfolio': sequential shared-capital engine (research runs, extended
  *   Signal DSL, stateful and target-portfolio strategies).
  * - 'vector': the single-asset legacy vector engine used by the panel's
@@ -119,7 +135,7 @@ export interface CoreRequest {
     universe: CoreUniverse;
     /** Keyed by asset id; every universe asset must be present (empty arrays = never observed). */
     bars: Record<string, PortfolioBarsInput>;
-    strategy: StrategyProduct;
+    strategy: CoreStrategy;
     capital: number;
     execution: {
         defaults: PortfolioExecutionConfig;
@@ -129,18 +145,12 @@ export interface CoreRequest {
     risk: PortfolioRiskLimits;
     /** Close every open position at the final available close. */
     liquidateAtEnd: boolean;
-    /** Compute research-v1 metrics for this bar interval ('1d', '5m', '1h', ...); null skips them. */
-    research: { interval: string } | null;
     /**
-     * Notional multiplier of the reporting views, independent of `execution`:
-     * the `result` trade projection of a single-asset 'portfolio' run and the
-     * research turnover of a 'vector' run use it. Callers pass the panel cost
-     * multiplier (the existing worker's `CostConfig.multiplier`), which may
-     * differ from the execution multiplier. Multi-asset projections use each
-     * asset's effective execution multiplier; fills, PnL and every portfolio
-     * number always use execution.
+     * Compute research metrics for this bar interval ('1d', '5m', '1h', ...);
+     * null skips them. `periodsPerYear` annualizes Sharpe / Sortino (CHANGE-9:
+     * the caller derives it from the session calendar, spec §4.9).
      */
-    resultMultiplier: number;
+    research: { interval: string; periodsPerYear: number } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,13 +187,26 @@ export type PortfolioResultRecord = Omit<PortfolioResult, 'legacyResult'> & {
     legacyResult: BtResultRecord | null;
 };
 
+/**
+ * Run identity (CHANGE-6): SHA-256 hex of the RFC 8785 canonical JSON of the
+ * request as given, of each asset's bars, and of the strategy source (null
+ * unless the strategy is a source). `engineVersion` is the behaviour version.
+ */
+export interface RunIdentity {
+    engineVersion: string;
+    requestHash: string;
+    dataHashes: Record<string, string>;
+    sourceHash: string | null;
+}
+
 export interface CoreResult {
     /** Sequential portfolio result; null in 'vector' mode. */
     portfolio: PortfolioResultRecord | null;
     /** Panel / persisted trade view: trades, cumulative PnL curve and legacy metrics. */
     result: BtResultRecord;
-    /** research-v1 metrics; null when `request.research` is null. */
+    /** Research metrics; null when `request.research` is null. */
     research: ResearchMetricsRecord | null;
+    identity: RunIdentity;
 }
 
 export interface CoreErrorCause {
@@ -206,6 +229,82 @@ export interface CoreError {
 }
 
 export type CoreResponse = { ok: true; result: CoreResult } | { ok: false; error: CoreError };
+
+// ---------------------------------------------------------------------------
+// Data preparation (L1, backtest-spec-v2.1 §4)
+// ---------------------------------------------------------------------------
+
+/** Trading sessions in Taiwan wall-clock 'HH:MM'; close < open is an overnight session. */
+export interface SessionCalendar {
+    name: string;
+    /**
+     * `closeGrace`: minutes after a day session's close whose bars still
+     * belong to the close (merged into the close label), e.g. 3 for TWSE
+     * indices whose official close is published at 13:31–13:33.
+     */
+    sessions: { open: string; close: string; closeGrace?: number }[];
+    /** Weekday dates that are not trading days. */
+    holidays: string[];
+    /** Weekend dates that are trading days (make-up days). */
+    extraTradingDays: string[];
+}
+
+export interface InstrumentMeta {
+    securityType: 'STK' | 'FUT' | 'OPT' | 'IND';
+    code: string;
+    root?: string;
+    specKind?: string;
+    underlyingKind?: string;
+    underlyingCode?: string;
+    isWarrant?: boolean;
+    multiplier?: number;
+    tick?: number;
+    tickLadder?: TickBand[];
+    priceLimitPct?: number | null;
+    /**
+     * Reference price of derived daily limits when no `daily` entry supplies
+     * one: stocks always use the previous trading day's last close;
+     * 'previous-close' opts other instruments (futures without settlement
+     * data) into the same rule.
+     */
+    limitReference?: 'previous-close';
+}
+
+export interface PrepareRequest {
+    schemaVersion: 'backtest-prepare-v1';
+    minutes: 1 | 5 | 15 | 30 | 60 | 1440;
+    /** Taiwan dates 'YYYY-MM-DD', inclusive. */
+    range: { from: string; to: string };
+    minBars: number;
+    costSettings: { discount: number; futuresFee: number; slippageTicks: number };
+    assets: {
+        id: string;
+        symbol: string;
+        instrument: InstrumentMeta;
+        calendar: SessionCalendar;
+        /** 'YYYY-MM-DD HH:MM[:SS]' Taiwan time, close-label-right minutes. */
+        minuteBars: { datetime: string; open: number | null; high: number | null; low: number | null;
+            close: number | null; volume: number | null }[];
+        daily?: { tradingDay: string; referencePrice?: number; limitUp?: number; limitDown?: number }[];
+    }[];
+}
+
+/**
+ * out-of-session: minutes outside every session were dropped.
+ * trading-day-assumed: night-session minutes after the last day session in
+ * the data; their trading day is unknown (the next weekday may be a holiday),
+ * so they are left out of the bars until a later day session is in the data.
+ */
+export interface PrepareDiagnostic {
+    kind: 'out-of-session' | 'trading-day-assumed';
+    assetId: string;
+    count: number;
+}
+
+export type PrepareResponse =
+    | { ok: true; bars: Record<string, PortfolioBarsInput>; execution: Record<string, PortfolioExecutionConfig>;
+        periodsPerYear: number; diagnostics: PrepareDiagnostic[] }
+    | { ok: false; error: { code: 'DATA_TOO_FEW_BARS' | 'DATA_NO_BARS' | 'DATA_INVALID'; params: Record<string, string | number> } };
 
 // ---------------------------------------------------------------------------
 // Optimization candidate selection
@@ -261,6 +360,8 @@ export interface BacktestCore {
     readonly version: string;
     run(request: CoreRequest): Promise<CoreResponse>;
     selectCandidates(request: SelectionRequest): Promise<SelectionResult>;
+    /** L1 data preparation (spec §4); optional for cores that receive prepared bars only. */
+    prepare?(request: PrepareRequest): Promise<PrepareResponse>;
 }
 
 // ---------------------------------------------------------------------------

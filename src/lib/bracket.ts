@@ -87,7 +87,8 @@ export interface BracketSpec {
     securityType: 'STK' | 'FUT' | 'OPT';
     exchange: string;
     action: Action;
-    quantity: number;
+    quantity: number; // 張／口；盤中零股為股數
+    orderLot?: StockOrderLot; // stocks: Common (default) or IntradayOdd (#204)
     stopPrice: number | null;
     takePrice: number | null;
 }
@@ -112,8 +113,12 @@ export function validateBracketRequest(r: BracketRequest): string | null {
     }
     if (r.isFutures) {
         if (r.octype && r.octype !== 'Auto' && r.octype !== 'New') return '括號單僅支援期貨新倉（Auto／New）進場，出場固定以平倉（Cover）送出';
-    } else if ((r.orderLot ?? 'Common') !== 'Common' || (r.orderCond ?? 'Cash') !== 'Cash') {
-        return '股票括號單僅支援現股整張；零股、融資券與借券條件請手動設定出場';
+    } else if ((r.orderCond ?? 'Cash') !== 'Cash') {
+        return '股票括號單僅支援現股（整股或盤中零股）；融資券與借券條件請手動設定出場';
+    } else if (r.orderLot === 'Odd') {
+        return '盤後零股是收盤後一次撮合，無法即時停損停利；請改用盤中零股或整股';
+    } else if ((r.orderLot ?? 'Common') !== 'Common' && r.orderLot !== 'IntradayOdd') {
+        return '股票括號單僅支援整股與盤中零股';
     }
     const ref = r.referencePrice;
     if (ref === null || !Number.isFinite(ref) || ref <= 0) return '沒有有效的參考價（限價或即時成交價），無法確認停損停利方向';
@@ -214,6 +219,7 @@ function arm(p: BracketPlan) {
         restore: restoring,
         group: p.group, bracketId: p.id, env: p.env, account: p.account, code: p.quoteCode,
         orderCode: p.orderCode, entryAction: p.action, octype: p.market === 'futures' ? 'Cover' : undefined,
+        orderLot: p.market === 'stock' && p.orderLot === 'IntradayOdd' ? 'IntradayOdd' : undefined,
         stopPrice: p.stopPrice, takePrice: p.takePrice, quantity: qty,
     });
 }
@@ -417,6 +423,9 @@ function register(spec: BracketSpec): BracketPlan {
     if (!spec.env || spec.env !== currentProtectionEnv()) throw new Error('伺服器或模擬／正式模式已切換或未確認，括號單未登記');
     if (!spec.orderId || !spec.account?.broker_id || !spec.account?.account_id) throw new Error('進場單缺少委託或帳戶識別，括號單未登記');
     if (!Number.isSafeInteger(spec.quantity) || spec.quantity <= 0) throw new Error('進場數量無效');
+    if (spec.orderLot && spec.orderLot !== 'Common' && (spec.account.account_type !== 'S' || spec.orderLot !== 'IntradayOdd')) {
+        throw new Error('括號單僅支援整股與盤中零股，未登記');
+    }
     const id = planId(spec.env, spec.account, spec.orderId);
     const existing = plans.find(p => p.id === id);
     if (existing) return existing; // idempotent
@@ -463,9 +472,9 @@ function handle(cmd: Command): unknown {
 // ---- public API (any window) ----
 
 /** Confirms the main window can track brackets BEFORE an entry is sent. */
-export async function ensureBracketHost(): Promise<void> {
+export async function ensureBracketHost(opts: { orderLot?: StockOrderLot } = {}): Promise<void> {
     // #201: a native bracket needs the native engine live on this environment
-    if (nativeOwnsNew()) return ensureNativeHost(currentProtectionEnv());
+    if (nativeBracket(opts.orderLot)) return ensureNativeHost(currentProtectionEnv());
     await bus.send({ op: 'ping' });
 }
 
@@ -475,8 +484,15 @@ export const REGISTER_TIMEOUT_MS = 60_000;
 export async function registerBracket(spec: BracketSpec): Promise<BracketPlan> {
     // #201: one owner per bracket, decided here — a native bracket never
     // enters the TS plans (and so is never armed by the TS trigger engine)
-    if (nativeOwnsNew()) return registerNativeBracket(spec);
+    if (nativeBracket(spec.orderLot)) return registerNativeBracket(spec);
     return await bus.send({ op: 'register', spec }, REGISTER_TIMEOUT_MS) as BracketPlan;
+}
+
+/** Native owns new whole-lot / futures brackets; odd-lot brackets (#204:
+ * quantities in shares, odd-lot exits) are not expressible in execution-v1
+ * yet and stay in the TS runtime. */
+function nativeBracket(orderLot: StockOrderLot | undefined): boolean {
+    return (orderLot ?? 'Common') === 'Common' && nativeOwnsNew();
 }
 
 async function registerNativeBracket(spec: BracketSpec): Promise<BracketPlan> {

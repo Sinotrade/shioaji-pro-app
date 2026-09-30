@@ -9,7 +9,7 @@ import type { ContractInfo } from '../lib/types/contract';
 const m = vi.hoisted(() => ({ selected: 'A', dropped: false, confirm: vi.fn(), future: vi.fn(), cancel: vi.fn(), notify: vi.fn(), blocked: null as string | null, confirmOn: true }));
 const h = vi.hoisted(() => ({ accounts: ['A', 'B'].map(id => ({ account_type: 'F', broker_id: 'BR', account_id: id, signed: true, person_id: '', username: '' })) }));
 const accounts = h.accounts as Account[];
-vi.mock('../lib/account-store', () => ({ getAccountState: () => ({ accounts: m.dropped ? h.accounts.filter(a => a.account_id !== 'A') : h.accounts, selectedStock: null, selectedFutures: h.accounts.find(a => a.account_id === m.selected) ?? null, loaded: true }) }));
+vi.mock('../lib/account-store', () => ({ getAccountState: () => ({ accounts: m.dropped ? h.accounts.filter(a => a.account_id !== 'A') : h.accounts, selectedStock: null, selectedFutures: h.accounts.find(a => a.account_id === m.selected) ?? null, loaded: true }), useAccounts: () => ({}) }));
 vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: m.confirm, accountConfirmLabel: (a: Account) => `${a.broker_id}-${a.account_id}` }));
 vi.mock('../lib/risk', () => ({ checkOrderAllowed: () => m.blocked, getRiskSettings: () => ({ confirmManualOrders: m.confirmOn }) }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: m.cancel, cancelOrders: vi.fn(), placeFuturesOrder: m.future, placeStockOrder: vi.fn() }));

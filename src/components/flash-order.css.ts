@@ -94,6 +94,8 @@ export const rowBreak = style({
 
 // wraps so an 8-strip tile (~240px wide) still shows every control
 export const controls = style({
+    // the settings popover spans this row (see OrderSettingsButton align='panel')
+    position: 'relative',
     display: 'flex',
     alignItems: 'center',
     flexWrap: 'wrap',
@@ -195,6 +197,28 @@ export const followBtn = styleVariants({
             ':hover': { color: vars.color.foreground },
         },
     ],
+});
+
+export const qtyUnit = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.64rem',
+    color: vars.color.mutedForeground,
+});
+
+export const oddBanner = style({
+    padding: `2px ${vars.space.sm}`,
+    fontFamily: vars.font.body,
+    fontSize: '0.62rem',
+    color: vars.color.amber,
+    background: 'rgba(224, 164, 60, 0.08)',
+    borderBottom: `1px solid ${vars.color.border}`,
+    lineHeight: 1.35,
+    flexShrink: 0,
+});
+
+export const oddMatchTime = style({
+    fontFamily: vars.font.mono,
+    whiteSpace: 'nowrap',
 });
 
 export const recenterBtn = style({

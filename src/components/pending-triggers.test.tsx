@@ -26,6 +26,7 @@ vi.mock('../lib/trigger-engine', () => ({
     resolvePendingTrigger: m.resolve,
     requestPendingPrices: m.request,
     isPendingUnpast: (t: TriggerOrder, price: number) => t.condition === 'below' ? price > t.price : price < t.price,
+    priceKeyOf: (t: TriggerOrder) => (t.kind !== 'alert' && t.orderLot === 'IntradayOdd' ? `${t.code}#odd` : t.code),
     RESTORE_REASON_TEXT: { restart: 'R-restart', disconnect: 'R-disconnect', env: 'R-env' },
 }));
 vi.mock('../lib/window-role', () => ({ focusMainWindow: m.focus }));

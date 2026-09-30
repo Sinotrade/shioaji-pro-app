@@ -4,9 +4,13 @@
 // golden JSON files with these rules. The golden files themselves live with the
 // closed-source cores; this module only defines their shape and how to compare.
 
-import type { BacktestCore, CoreRequest, CoreResponse, SelectionRequest, SelectionResult } from './core';
+import type {
+    BacktestCore, CoreRequest, CoreResponse, PrepareRequest, PrepareResponse, SelectionRequest, SelectionResult,
+} from './core';
 
-export const GOLDEN_SCHEMA_VERSION = 'backtest-golden-v1';
+export const GOLDEN_SCHEMA_VERSION = 'backtest-golden-v2';
+/** Normative behaviour specification the expected outputs follow (#202). */
+export const GOLDEN_SPEC_VERSION = 'backtest-spec-v2';
 
 export type GoldenCategory =
     | 'signal'
@@ -17,7 +21,10 @@ export type GoldenCategory =
     | 'calendar'
     | 'validation'
     | 'metrics'
-    | 'optimization';
+    | 'optimization'
+    | 'prepare'
+    | 'lookahead'
+    | 'limit-lock';
 
 /**
  * Where a case's inputs came from. Expected outputs are always the output of
@@ -30,11 +37,17 @@ export type GoldenCategory =
  * - parity-fixture: inputs of a TS-vs-TS parity check (vector vs sequential);
  *   agreement between two TS paths, not an independent answer.
  * - derived: new inputs added for coverage; output is an unreviewed snapshot.
+ * - reference-impl: inputs taken from the independent reference implementation's cases.
  */
-export type GoldenProvenanceKind = 'hand-calculated' | 'behaviour-test' | 'parity-fixture' | 'derived';
+export type GoldenProvenanceKind = 'hand-calculated' | 'behaviour-test' | 'parity-fixture' | 'derived' | 'reference-impl';
 
-/** Review state, maintained by QA (#202). */
-export type GoldenVerification = 'unverified' | 'independently-verified' | 'disputed';
+/**
+ * Review state, maintained by QA (#202). `refimpl-agreed`: the independent
+ * reference implementation of backtest-spec-v2 reproduces `expected` under
+ * GOLDEN_TOLERANCE; any case where it does not keeps another state and says
+ * why in `note`.
+ */
+export type GoldenVerification = 'unverified' | 'independently-verified' | 'refimpl-agreed' | 'disputed';
 
 export interface GoldenProvenance {
     kind: GoldenProvenanceKind;
@@ -66,10 +79,27 @@ export interface GoldenSelectionCase {
     expected: SelectionResult;
 }
 
-export type GoldenCase = GoldenRunCase | GoldenSelectionCase;
+/** A request whose strategy is a source (the core's own script step, spec §8). */
+export interface GoldenScriptCase extends Omit<GoldenRunCase, 'kind'> {
+    kind: 'script';
+}
+
+/** An L1 data preparation case (spec §4). */
+export interface GoldenPrepareCase {
+    kind: 'prepare';
+    id: string;
+    title: string;
+    categories: GoldenCategory[];
+    provenance: GoldenProvenance;
+    request: PrepareRequest;
+    expected: PrepareResponse;
+}
+
+export type GoldenCase = GoldenRunCase | GoldenScriptCase | GoldenPrepareCase | GoldenSelectionCase;
 
 export interface GoldenFile {
     schemaVersion: typeof GOLDEN_SCHEMA_VERSION;
+    specVersion: typeof GOLDEN_SPEC_VERSION;
     /** Implementation id/version whose output became `expected`. */
     generatedBy: string;
     cases: GoldenCase[];
@@ -92,7 +122,7 @@ export const GOLDEN_TOLERANCE = Object.freeze({
         'time', 'entryTime', 'exitTime', 'decisionTime', 'index', 'sourceIndex', 'sourceIndices',
         'quantity', 'qty', 'targetQuantity', 'roundedQuantity', 'lotSize', 'fills', 'trades', 'wins',
         'bars', 'barsHeld', 'positions', 'ranking', 'minTrades', 'seed', 'count', 'pyramiding',
-        'params', 'space', 'quantities',
+        'params', 'space', 'quantities', 'orderTarget', 'periodsPerYear', 'minutes',
     ]),
     /** Records keyed by asset id / parameter name: their direct values use the record's own key. */
     mapKeys: Object.freeze(['positions', 'sourceIndices', 'availability', 'params', 'space', 'quantities',
@@ -161,9 +191,16 @@ export interface GoldenCaseReport {
 
 /** Runs one golden case against a core; the response crosses a JSON boundary first. */
 export async function checkGoldenCase(core: BacktestCore, testCase: GoldenCase): Promise<GoldenCaseReport> {
-    const actual = testCase.kind === 'run'
-        ? JSON.parse(JSON.stringify(await core.run(structuredClone(testCase.request)))) as unknown
-        : JSON.parse(JSON.stringify(await core.selectCandidates(structuredClone(testCase.request)))) as unknown;
+    const response = async (): Promise<unknown> => {
+        switch (testCase.kind) {
+            case 'run': case 'script': return core.run(structuredClone(testCase.request));
+            case 'selection': return core.selectCandidates(structuredClone(testCase.request));
+            case 'prepare':
+                if (!core.prepare) throw new Error(`core ${core.id} has no prepare step`);
+                return core.prepare(structuredClone(testCase.request));
+        }
+    };
+    const actual = JSON.parse(JSON.stringify(await response())) as unknown;
     const mismatches = compareGoldenValue(actual, testCase.expected);
     return { id: testCase.id, passed: mismatches.length === 0, mismatches };
 }

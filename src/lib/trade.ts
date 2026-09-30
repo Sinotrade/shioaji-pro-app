@@ -6,6 +6,7 @@ import { cancellationSummary } from './trade-mutations';
 import { getAccountState } from './account-store';
 import { trackActivity } from './activity';
 import { accountConfirmLabel, requestOrderConfirm } from './order-confirm';
+import { isOddLot, lotLabel, ODD_LOT_TEXT, orderQtyUnit } from './odd-lot';
 import { checkOrderAllowed, getRiskSettings } from './risk';
 import {
     cancelOrders,
@@ -21,6 +22,7 @@ import {
     type Action,
     type StockOrderLot,
     type FuturesOCType,
+    type OrderType,
     type Trade,
 } from './types/order';
 
@@ -112,8 +114,7 @@ export class OrderConfirmCancelled extends Error {
 }
 
 function orderUnit(contract: ContractBase, orderLot?: StockOrderLot): string {
-    if (isFuturesContract(contract)) return '口';
-    return orderLot === 'IntradayOdd' || orderLot === 'Odd' ? '股' : '張';
+    return orderQtyUnit(isFuturesContract(contract), orderLot);
 }
 
 // 可視化委託確認（RiskSettings.confirmManualOrders opt-in）— 只攔手動
@@ -155,6 +156,8 @@ export async function placeQuickOrder(
         orderLot?: StockOrderLot;
         account?: Account;
         ocType?: FuturesOCType;
+        // 限價單的委託條件（圖表下單設定，#204）；缺省 ROD。市價單一律 IOC
+        orderType?: OrderType;
         // 'auto' = 系統觸發（停損/停利等），永不彈手動確認
         source?: 'manual' | 'auto' | 'agent';
         agentCallId?: string;
@@ -180,8 +183,11 @@ export async function placeQuickOrder(
             && a.broker_id === capturedAccount.broker_id && a.account_id === capturedAccount.account_id)) {
         throw mutationNotStartedError('缺少有效且符合商品市場的下單帳戶，請重新選擇帳戶');
     }
+    const odd = !isFuturesContract(contract) && isOddLot(opts?.orderLot);
+    // 零股沒有市價單（#204）；需要立即成交的呼叫端自行帶漲跌停限價
+    if (odd && price === null) throw mutationNotStartedError(ODD_LOT_TEXT.priceType);
     if (!opts?.bypassRisk) {
-        const blocked = checkOrderAllowed(quantity);
+        const blocked = checkOrderAllowed(quantity, odd ? opts?.orderLot : undefined);
         if (blocked) throw mutationNotStartedError(blocked);
     }
     if ((opts?.source ?? 'manual') === 'manual') {
@@ -191,7 +197,8 @@ export async function placeQuickOrder(
             price,
             quantity,
             opts?.orderLot,
-            undefined,
+            odd ? `${lotLabel(opts?.orderLot)}・限價 ROD`
+                : price !== null && opts?.orderType && opts.orderType !== 'ROD' ? `限價 ${opts.orderType}` : undefined,
             capturedAccount,
             opts?.confirmLivePriceCode,
         );
@@ -200,7 +207,7 @@ export async function placeQuickOrder(
     if (getApiBase() !== startedBase) throw mutationNotStartedError('確認期間伺服器已切換，請重新確認');
     if (opts?.isAccountCurrent && !opts.isAccountCurrent()) throw mutationNotStartedError('確認期間帳戶已變更，請重新確認');
     if (capturedAccount && !getAccountState().accounts.some(a => a.signed && a.account_type === capturedAccount.account_type && a.broker_id === capturedAccount.broker_id && a.account_id === capturedAccount.account_id)) throw mutationNotStartedError('帳戶已不可用，請重新確認');
-    if (!opts?.bypassRisk) { const blocked = checkOrderAllowed(quantity); if (blocked) throw mutationNotStartedError(blocked); }
+    if (!opts?.bypassRisk) { const blocked = checkOrderAllowed(quantity, odd ? opts?.orderLot : undefined); if (blocked) throw mutationNotStartedError(blocked); }
     if (opts?.beforeSend) {
         try {
             opts.beforeSend();
@@ -211,7 +218,7 @@ export async function placeQuickOrder(
     }
     trackActivity(
         '下單',
-        `${contract.code} ${action === 'Buy' ? '買' : '賣'} ${quantity} @${price ?? '市價'}`,
+        `${contract.code} ${action === 'Buy' ? '買' : '賣'} ${quantity}${odd ? '股（零股）' : ''} @${price ?? '市價'}`,
     );
     const market = price === null;
     return sendOrder(
@@ -227,6 +234,7 @@ export async function placeQuickOrder(
             ? { agentCallId: opts.agentCallId, agentAuto: opts.agentAuto }
             : undefined,
         opts?.ocType,
+        opts?.orderType,
     );
 }
 
@@ -241,6 +249,7 @@ async function sendOrder(
     account?: Account,
     agentContext?: { agentCallId?: string; agentAuto?: boolean },
     ocType: FuturesOCType = 'Auto',
+    orderType: OrderType = 'ROD',
 ): Promise<Trade> {
     if (contract.security_type === 'IND') {
         throw new Error('指數商品僅提供行情，不可下單');
@@ -251,7 +260,7 @@ async function sendOrder(
               price: price ?? 0,
               quantity,
               price_type: market ? 'MKT' : 'LMT',
-              order_type: market ? 'IOC' : 'ROD',
+              order_type: market ? 'IOC' : orderType,
               octype: ocType,
           }, account, { agentInitiated, ...agentContext })
         : await placeStockOrder(contract, {
@@ -259,7 +268,7 @@ async function sendOrder(
               price: price ?? 0,
               quantity,
               price_type: market ? 'MKT' : 'LMT',
-              order_type: market ? 'IOC' : 'ROD',
+              order_type: market ? 'IOC' : orderType,
               order_lot: orderLot ?? 'Common',
           }, account, { agentInitiated, ...agentContext });
     return trade;

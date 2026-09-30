@@ -9,13 +9,17 @@ import type { QuoteTypeName } from './types/market';
 const mirror = typeof location !== 'undefined' && new URLSearchParams(location.search).has('popout');
 const client = typeof crypto !== 'undefined' ? crypto.randomUUID() : String(Math.random());
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-quote-owners:${getApiBase()}`) : null;
-type Desired = { contract: ContractBase; type: QuoteTypeName };
+// `odd`: 盤中零股 feed (intraday_odd) — a separate broker subscription with
+// its own consumers; releasing the last odd-lot panel never touches the
+// regular-lot feed of the same code and vice versa (#204).
+type Desired = { contract: ContractBase; type: QuoteTypeName; odd?: boolean };
 const local = new Map<string, { desired: Desired; refs: number }>();
 const clients = new Map<string, Map<string, Desired>>();
 const active = new Map<string, Desired>();
 const canOwn = () => !mirror || isStreamOwner();
 let queue = Promise.resolve();
-const keyOf = (d: Desired) => JSON.stringify([d.contract.security_type, d.contract.exchange, d.contract.target_code || d.contract.code, d.type]);
+const keyOf = (d: Desired) => JSON.stringify([d.contract.security_type, d.contract.exchange, d.contract.target_code || d.contract.code, d.type, ...(d.odd ? ['odd'] : [])]);
+const oddOpts = (d: Desired) => (d.odd ? [{ oddLot: true }] as const : [] as const);
 // A consumer that remounts (e.g. contract metadata refreshed after a
 // reconnect) releases and re-retains asynchronously. Unsubscribing in that
 // gap caused an unsubscribe+subscribe pair per quote on every reconnect, on
@@ -37,21 +41,22 @@ function sync(immediate = false) {
         const desired = desiredNow();
         for (const [key, value] of desired) if (!active.has(key)) {
             if (!canOwn()) return;
-            try { await subscribeQuote(value.contract, value.type); active.set(key, value); } catch { /* reconnect registry/manual re-acquire retries */ }
+            try { await subscribeQuote(value.contract, value.type, ...oddOpts(value)); active.set(key, value); } catch { /* reconnect registry/manual re-acquire retries */ }
         }
         if (![...active.keys()].some(key => !desired.has(key))) return;
         if (!immediate) await new Promise(resolve => setTimeout(resolve, RELEASE_GRACE_MS));
         const still = immediate ? desired : desiredNow();
         for (const [key, value] of active) if (!still.has(key)) {
             if (!canOwn()) return;
-            try { await unsubscribeQuote(value.contract, value.type); active.delete(key); } catch { /* preserve ownership for a later retry */ }
+            try { await unsubscribeQuote(value.contract, value.type, ...oddOpts(value)); active.delete(key); } catch { /* preserve ownership for a later retry */ }
         }
     });
 }
 channel?.addEventListener('message', e => {
     if (e.data?.kind === 'hello') { if (!canOwn()) sync(); return; }
     if (!canOwn() || e.data?.kind !== 'desired' || typeof e.data.client !== 'string' || !Array.isArray(e.data.desired)) return;
-    const desired = (e.data.desired as Desired[]).filter(d => d?.contract?.code && ['Tick', 'BidAsk', 'Quote'].includes(d.type));
+    const desired = (e.data.desired as Desired[]).filter(d => d?.contract?.code && ['Tick', 'BidAsk', 'Quote'].includes(d.type))
+        .map((d): Desired => (d.odd === true ? { contract: d.contract, type: d.type, odd: true } : { contract: d.contract, type: d.type }));
     clients.set(e.data.client, new Map(desired.map(d => [keyOf(d), d])));
     sync();
 });
@@ -64,8 +69,12 @@ const stopOwner = subscribeStreamOwner(() => {
     if (canOwn()) channel?.postMessage({ kind: 'hello' });
     sync();
 });
-export function retainQuote(contract: ContractBase, type: QuoteTypeName): () => void {
-    const desired = { contract, type };
+export interface RetainOptions {
+    /** 盤中零股行情（intraday_odd），與整股分開計數 */
+    oddLot?: boolean;
+}
+export function retainQuote(contract: ContractBase, type: QuoteTypeName, options?: RetainOptions): () => void {
+    const desired: Desired = options?.oddLot ? { contract, type, odd: true } : { contract, type };
     const key = keyOf(desired);
     const old = local.get(key);
     local.set(key, { desired, refs: (old?.refs ?? 0) + 1 });
@@ -80,8 +89,10 @@ export function retainQuote(contract: ContractBase, type: QuoteTypeName): () => 
         sync();
     };
 }
-export function retainContractQuotes(contract: ContractBase): () => void {
-    const releases = (contract.security_type === 'IND' ? ['Quote'] as const : ['Tick', 'BidAsk'] as const).map(t => retainQuote(contract, t));
+export function retainContractQuotes(contract: ContractBase, options?: RetainOptions): () => void {
+    // 零股只有股票（Tick／BidAsk）；其他商品沒有零股行情
+    if (options?.oddLot && contract.security_type !== 'STK') return () => undefined;
+    const releases = (contract.security_type === 'IND' ? ['Quote'] as const : ['Tick', 'BidAsk'] as const).map(t => retainQuote(contract, t, options));
     return () => releases.forEach(release => release());
 }
 function dispose() {

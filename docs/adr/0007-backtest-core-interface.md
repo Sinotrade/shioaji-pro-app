@@ -31,7 +31,7 @@
 - 選用欄位(`name?`)不存在時省略,不寫 `null` 或 `undefined`;可為 null 的欄位(`T | null`)一定存在。
 - 序列中的 `null` 代表該位置沒有值:指標暖機、缺 K、停牌。序列比 K 棒短時,缺少的尾端視為 `null`。
 - 請求一律帶完整值:`execution.defaults` 為完整設定、`risk` 與 `liquidateAtEnd` 明確給定,不依賴預設值。
-- `resultMultiplier` 是報表用的乘數,與 `execution` 無關:單商品 portfolio 的 `result` 交易投影與 vector 模式的 research turnover 使用它。既有 worker 以面板 `CostConfig.multiplier` 計算這兩者,可能與執行乘數不同(例如 config 1000、execution 10),呼叫端傳入該值即可逐位重現;多商品投影仍用各商品的有效執行乘數,成交、損益與 portfolio 數值一律用 execution。
+- ~~`resultMultiplier` 是報表用的乘數,與 `execution` 無關:單商品 portfolio 的 `result` 交易投影與 vector 模式的 research turnover 使用它。既有 worker 以面板 `CostConfig.multiplier` 計算這兩者,可能與執行乘數不同(例如 config 1000、execution 10),呼叫端傳入該值即可逐位重現;多商品投影仍用各商品的有效執行乘數,成交、損益與 portfolio 數值一律用 execution。~~ 已由 backtest-spec-v2.1 CHANGE-15 取消(#202):單商品交易投影與 vector research turnover 一律使用執行乘數。
 - `profitFactor` 的無限大寫成字串 `'Infinity'`。其他可能非有限的欄位在型別上明確標為 `JsonNumber = number | { "__researchNumber": "Infinity" | "-Infinity" | "NaN" }`(與研究紀錄儲存相同的標記),不得變成 `null`;目前只有 research 指標的 `annualizedReturnPct`(短期間年化溢位為 `Infinity`),其 JSON 形狀是 `ResearchMetricsRecord`,以 `researchMetricsToRecord`／`researchMetricsFromRecord` 轉換。其餘數值欄位一律有限;若實作在其他欄位產生標記,視為與 golden 不一致。
 
 ### 錯誤與訊息

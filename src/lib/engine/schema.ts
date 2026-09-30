@@ -23,6 +23,12 @@
 
 export type PortfolioCalendar = 'union' | 'intersection';
 
+/** One band of a tick ladder: prices at or above `from` trade in steps of `tick`. */
+export interface TickBand {
+    from: number;
+    tick: number;
+}
+
 /** Per-asset simulated execution assumptions. */
 export interface PortfolioExecutionConfig {
     /** Notional multiplier per quantity unit (e.g. 1000 shares per lot, 200 per TXF contract). */
@@ -39,8 +45,14 @@ export interface PortfolioExecutionConfig {
     taxBothPct: number;
     /** Adverse slippage in ticks per side. */
     slippageTicks: number;
-    /** Price of one tick. */
+    /** Price of one tick when no `tickLadder` is given (and in the legacy vector engine). */
     tickSize: number;
+    /**
+     * Exchange tick bands by price (stocks: 0.01 below 10, 0.05 below 50, ...).
+     * Slippage steps tick by tick across bands and limit prices are rounded onto
+     * the grid (buys down, sells up). Omitted: one band of `tickSize`.
+     */
+    tickLadder?: readonly TickBand[];
 }
 
 export interface StrategyAsset {
@@ -70,6 +82,14 @@ export interface PortfolioBarsInput {
     close: (number | null)[];
     volume: (number | null)[];
     availability?: boolean[];
+    /**
+     * DECIDED-2: daily upper / lower price limit valid for each row (null =
+     * unknown). A row that traded entirely at its limit-up blocks buys and one
+     * entirely at its limit-down blocks sells; such orders wait for the next
+     * fillable bar. Both omitted: no limit-lock handling.
+     */
+    limitUp?: (number | null)[];
+    limitDown?: (number | null)[];
 }
 
 /** Portfolio clock: `sourceIndices[asset][i]` is the row of that asset's bars at `time[i]`, null when unavailable. */
@@ -192,6 +212,13 @@ export interface NormalizedIntent {
 
 export interface PlannedOrder extends NormalizedIntent {
     decisionTime: number;
+    /**
+     * Present only on the risk-reducing projection of a rejected order
+     * (DECIDED-1): the order now closes to zero; this is the target and
+     * closeFirst flag that were rejected. A projection of a closeFirst order is
+     * its closing leg and executes at the market open.
+     */
+    projectedFrom?: { targetQuantity: number; closeFirst: boolean };
 }
 
 export interface PortfolioFill {
@@ -206,6 +233,12 @@ export interface PortfolioFill {
     cost: number;
     reason: 'intent' | 'eod';
     tag?: string;
+    /**
+     * CHANGE-4: the final quantity the filled order intended (for a
+     * risk-reducing projection, the rejected original target); null for EOD
+     * liquidation. Fills persisted before v2 have no such field.
+     */
+    orderTarget: number | null;
 }
 
 export interface TagAttribution {
@@ -260,7 +293,7 @@ export type PortfolioDiagnostic = SignalConflictDiagnostic | LotRoundingDiagnost
 export type PortfolioDiagnosticKind = PortfolioDiagnostic['kind'];
 
 export type RiskReason = 'missing-price' | 'nonpositive-equity' | 'gross-leverage' | 'net-leverage' |
-    'unavailable-bar' | 'invalid-fill-price' | 'limit-not-reached';
+    'unavailable-bar' | 'invalid-fill-price' | 'limit-not-reached' | 'limit-locked';
 
 export interface PortfolioRejection {
     time: number;
@@ -272,6 +305,12 @@ export interface PortfolioRejection {
     reason: { code: RiskReason; message: string };
     /** Null means valuation prevented normalization; raw intents remain above. */
     plannedBatch: PlannedOrder[] | null;
+    /**
+     * DECIDED-1: the risk-reducing part of a rejected batch that still proceeds
+     * (exits, reductions, the closing leg of a blocked reversal). Empty for
+     * deferred records. Records persisted before v2 have no such field.
+     */
+    retained: PlannedOrder[];
 }
 
 export interface PortfolioMetrics {
@@ -361,11 +400,18 @@ export interface BtResult {
     metrics: BtMetrics;
 }
 
-export const RESULT_SCHEMA_VERSION = 'research-v1';
+/**
+ * research-v2 (CHANGE-9): Sharpe / Sortino annualize with the request's
+ * periodsPerYear (session calendar, spec §4.9) and buy-and-hold uses the first
+ * and last available close. Persisted research-v1 records stay readable with
+ * their stored values.
+ */
+export const RESULT_SCHEMA_VERSION = 'research-v2';
+export type ResearchSchemaVersion = typeof RESULT_SCHEMA_VERSION | 'research-v1';
 
-/** In-memory research-v1 metrics; the JSON form is ResearchMetricsRecord (core.ts). */
+/** In-memory research metrics; the JSON form is ResearchMetricsRecord (core.ts). */
 export interface ResearchMetrics {
-    schemaVersion: typeof RESULT_SCHEMA_VERSION;
+    schemaVersion: ResearchSchemaVersion;
     returnPct: number;
     /** In memory `Infinity` when a short span overflows the annualization; see ResearchMetricsRecord for JSON. */
     annualizedReturnPct: number;

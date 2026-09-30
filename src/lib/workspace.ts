@@ -100,6 +100,8 @@ export interface Block {
     // 跟版面一起持久化；缺省 = 全盤 / 自動
     chartSession?: 'all' | 'day';
     intradaySession?: 'auto' | 'day' | 'night';
+    // K 線圖下單設定（#204，每市場一組）— 跟版面一起持久化
+    chartOrder?: import('./chart-order-settings').ChartOrderPanelState;
 }
 
 export interface Workspace {
@@ -108,7 +110,7 @@ export interface Workspace {
 }
 
 export type SessionConfigPatch = Partial<
-    Pick<Block, 'chartSession' | 'intradaySession'>
+    Pick<Block, 'chartSession' | 'intradaySession' | 'chartOrder'>
 >;
 
 // 開彈出視窗時把面板的時段選擇帶進 URL（session=…）

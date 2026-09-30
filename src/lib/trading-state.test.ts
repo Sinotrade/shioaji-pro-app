@@ -25,7 +25,7 @@ vi.mock('./quote-ownership', () => ({ retainQuote: () => vi.fn() }));
 vi.mock('./shioaji', () => ({ fetchPositions: mocks.positions, fetchTrades: mocks.trades, fetchAccountBalance: mocks.balance, fetchMargin: mocks.margin, fetchTradeCacheHealth: mocks.health }));
 vi.mock('./stream', () => ({ ensureStream: vi.fn(), getStreamStatus: () => mocks.status, isStreamOwner: () => false,
     onOrderEvent: (cb: typeof mocks.order) => { mocks.order = cb; return vi.fn(); },
-    onAnyTick: (cb: typeof mocks.tick) => { mocks.tick = cb; return vi.fn(); }, subscribeStatusStore: (cb: typeof mocks.statusChanged) => { mocks.statusChanged = cb; return vi.fn(); },
+    onAnyTick: (cb: typeof mocks.tick) => { mocks.tick = cb; return vi.fn(); }, onOddLotTick: () => vi.fn(), subscribeStatusStore: (cb: typeof mocks.statusChanged) => { mocks.statusChanged = cb; return vi.fn(); },
 }));
 const epoch = 1789200000;
 const baseline = () => ({ id: 1, code: '2330', direction: 'Buy', quantity: 1000, price: 100, last_price: 100, pnl: 0, yd_quantity: 1000 });

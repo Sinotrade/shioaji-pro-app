@@ -45,6 +45,9 @@ export interface QuoteState {
 type Listener = () => void;
 
 const quotes = new Map<string, QuoteState>();
+// 盤中零股（intraday_odd）行情：同一個 code 的零股 tick／五檔是另一個市場
+// （分開撮合、量以股計），存在獨立的 store，永遠不和整股行情混在一起（#204）
+const oddQuotes = new Map<string, QuoteState>();
 // continuous-month aliases (e.g. TXFR1): SSE events carry the resolved
 // contract code (e.g. TXFF6); map it back to the display code.
 const codeAlias = new Map<string, string>();
@@ -70,9 +73,11 @@ export function subscribeStreamOwner(listener: () => void) {
 }
 
 const quoteListeners = new Map<string, Set<Listener>>();
+const oddQuoteListeners = new Map<string, Set<Listener>>();
 const statusListeners = new Set<Listener>();
 const orderEventListeners = new Set<(ev: OrderEventReport) => void>();
 const tickTapeListeners = new Set<(tick: SseTick) => void>();
+const oddTickListeners = new Set<(tick: SseTick) => void>();
 const contractEventListeners = new Set<
     (event: ContractChangeEvent) => void
 >();
@@ -109,14 +114,14 @@ function emitFullContractRefresh(
 // 啟動風暴時 flush 落在 render 中間仍會觸發巢狀更新告警。
 const QUOTE_FLUSH_MS = 50;
 const dirtyQuoteCodes = new Set<string>();
+const dirtyOddQuoteCodes = new Set<string>();
 let quoteFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
-function flushQuoteEmits() {
-    quoteFlushTimer = null;
-    const codes = Array.from(dirtyQuoteCodes);
-    dirtyQuoteCodes.clear();
+function flushDirty(dirty: Set<string>, listeners: Map<string, Set<Listener>>) {
+    const codes = Array.from(dirty);
+    dirty.clear();
     for (const code of codes) {
-        quoteListeners.get(code)?.forEach((l) => {
+        listeners.get(code)?.forEach((l) => {
             // 單一 listener 拋錯不能中斷整批 flush — dirty set 已清空，
             // 中斷會讓其他 code 的更新無聲丟失直到下一筆 tick
             try {
@@ -128,8 +133,14 @@ function flushQuoteEmits() {
     }
 }
 
-function emitQuote(code: string) {
-    dirtyQuoteCodes.add(code);
+function flushQuoteEmits() {
+    quoteFlushTimer = null;
+    flushDirty(dirtyQuoteCodes, quoteListeners);
+    flushDirty(dirtyOddQuoteCodes, oddQuoteListeners);
+}
+
+function emitQuote(code: string, oddLot = false) {
+    (oddLot ? dirtyOddQuoteCodes : dirtyQuoteCodes).add(code);
     if (quoteFlushTimer === null) {
         quoteFlushTimer = setTimeout(flushQuoteEmits, QUOTE_FLUSH_MS);
     }
@@ -145,14 +156,17 @@ function setStatus(s: StreamStatus) {
 
 function handleTick(raw: string) {
     const tick = JSON.parse(raw) as SseTick;
-    if (tick.intraday_odd) return; // board shows regular-lot stream only
+    if (tick.intraday_odd) {
+        // 零股：獨立 store、不進 onAnyTick（成交明細／整股觸價只看整股）
+        ingestOddTick(tick);
+        return;
+    }
     ingestTick(tick);
     const alias = codeAlias.get(tick.code);
     if (alias) ingestTick({ ...tick, code: alias });
 }
 
-function ingestTick(tick: SseTick) {
-    const prev = quotes.get(tick.code);
+function nextTickState(prev: QuoteState | undefined, tick: SseTick): QuoteState {
     const prevClose = prev?.tick ? Number(prev.tick.close) : undefined;
     const close = Number(tick.close);
     const lastDir: QuoteState['lastDir'] =
@@ -161,40 +175,58 @@ function ingestTick(tick: SseTick) {
             : close > prevClose
               ? 1
               : -1;
-    // flash only on real deals — simtrade (試撮) updates must not blink
     const isRealTrade = !tick.simtrade && tick.volume > 0;
-    quotes.set(tick.code, {
+    return {
         tick,
         bidask: prev?.bidask,
         index: prev?.index,
         lastDir,
         seq: (prev?.seq ?? 0) + 1,
         flashSeq: (prev?.flashSeq ?? 0) + (isRealTrade ? 1 : 0),
-    });
+    };
+}
+
+function ingestOddTick(tick: SseTick) {
+    oddQuotes.set(tick.code, nextTickState(oddQuotes.get(tick.code), tick));
+    emitQuote(tick.code, true);
+    if (!tick.simtrade && tick.volume > 0) oddTickListeners.forEach((l) => l(tick));
+}
+
+function ingestTick(tick: SseTick) {
+    const state = nextTickState(quotes.get(tick.code), tick);
+    quotes.set(tick.code, state);
     emitQuote(tick.code);
-    if (isRealTrade) {
+    // flash only on real deals — simtrade (試撮) updates must not blink
+    if (!tick.simtrade && tick.volume > 0) {
         tickTapeListeners.forEach((l) => l(tick));
     }
 }
 
-function handleBidAsk(raw: string) {
-    const bidask = JSON.parse(raw) as SseBidAsk;
-    if (bidask.intraday_odd) return;
-    ingestBidAsk(bidask);
-    const alias = codeAlias.get(bidask.code);
-    if (alias) ingestBidAsk({ ...bidask, code: alias });
-}
-
-function ingestBidAsk(bidask: SseBidAsk) {
-    const prev = quotes.get(bidask.code);
-    quotes.set(bidask.code, {
+function nextBidAskState(prev: QuoteState | undefined, bidask: SseBidAsk): QuoteState {
+    return {
         tick: prev?.tick,
         bidask,
         index: prev?.index,
         lastDir: prev?.lastDir ?? 0,
         seq: (prev?.seq ?? 0) + 1,
         flashSeq: prev?.flashSeq ?? 0,
-    });
+    };
+}
+
+function handleBidAsk(raw: string) {
+    const bidask = JSON.parse(raw) as SseBidAsk;
+    if (bidask.intraday_odd) {
+        oddQuotes.set(bidask.code, nextBidAskState(oddQuotes.get(bidask.code), bidask));
+        emitQuote(bidask.code, true);
+        return;
+    }
+    ingestBidAsk(bidask);
+    const alias = codeAlias.get(bidask.code);
+    if (alias) ingestBidAsk({ ...bidask, code: alias });
+}
+
+function ingestBidAsk(bidask: SseBidAsk) {
+    quotes.set(bidask.code, nextBidAskState(quotes.get(bidask.code), bidask));
     emitQuote(bidask.code);
 }
 
@@ -301,11 +333,21 @@ export function registerSubscription(body: {
     quote_type: string;
     intraday_odd: boolean;
 }) {
-    subscriptionRegistry.set(`${body.code}:${body.quote_type}`, body);
+    subscriptionRegistry.set(subscriptionKey(body.code, body.quote_type, body.intraday_odd), body);
 }
 
-export function unregisterSubscription(code: string, quoteType: string) {
-    subscriptionRegistry.delete(`${code}:${quoteType}`);
+/** 整股與零股是兩個獨立訂閱：key 帶零股旗標，重連重播兩者都會還原 */
+function subscriptionKey(code: string, quoteType: string, oddLot = false) {
+    return `${code}:${quoteType}${oddLot ? ':odd' : ''}`;
+}
+
+export function unregisterSubscription(code: string, quoteType: string, oddLot = false) {
+    subscriptionRegistry.delete(subscriptionKey(code, quoteType, oddLot));
+}
+
+/** Bodies replayed after a reconnect (diagnostics / tests). */
+export function getRegisteredSubscriptions(): Record<string, unknown>[] {
+    return [...subscriptionRegistry.values()];
 }
 
 // 巢狀 body 的訂閱（如 managed 組合合約 {contract:{legs,...}}）— key 用
@@ -792,11 +834,12 @@ function startConnection(reason?: string) {
 
 // ---- store API (for useSyncExternalStore) ----
 
-export function subscribeQuoteStore(code: string, listener: Listener) {
-    let set = quoteListeners.get(code);
+export function subscribeQuoteStore(code: string, listener: Listener, oddLot = false) {
+    const listeners = oddLot ? oddQuoteListeners : quoteListeners;
+    let set = listeners.get(code);
     if (!set) {
         set = new Set();
-        quoteListeners.set(code, set);
+        listeners.set(code, set);
     }
     set.add(listener);
     return () => {
@@ -804,8 +847,9 @@ export function subscribeQuoteStore(code: string, listener: Listener) {
     };
 }
 
-export function getQuote(code: string): QuoteState | undefined {
-    return quotes.get(code);
+/** `oddLot`: the 盤中零股 store (shares), never the regular-lot one. */
+export function getQuote(code: string, oddLot = false): QuoteState | undefined {
+    return (oddLot ? oddQuotes : quotes).get(code);
 }
 
 export function subscribeStatusStore(listener: Listener) {
@@ -838,6 +882,14 @@ export function onAnyTick(listener: (tick: SseTick) => void) {
     tickTapeListeners.add(listener);
     return () => {
         tickTapeListeners.delete(listener);
+    };
+}
+
+/** Real (non-simtrade) 盤中零股 trades — kept apart from onAnyTick. */
+export function onOddLotTick(listener: (tick: SseTick) => void) {
+    oddTickListeners.add(listener);
+    return () => {
+        oddTickListeners.delete(listener);
     };
 }
 

@@ -35,8 +35,10 @@ export const CORE_MESSAGE_TABLE = {
         BARS_VOLUME_INVALID: '{assetId}.volume[{index}] 無效',
         BARS_PRICE_INVALID: '{assetId}.{field}[{index}] 無效；價格範圍 [{min}, {max}]',
         BARS_OHLC_INCONSISTENT: '{assetId} OHLC 範圍不一致',
+        BARS_LIMIT_INCONSISTENT: '{assetId}.limitDown[{index}] 必須小於 limitUp',
         EXECUTION_FIELD_MISSING: '缺少 execution.{field}',
         EXECUTION_FIELD_UNKNOWN: '未知 execution 欄位: {field}',
+        TICK_LADDER_INVALID: '{assetId} tickLadder 無效',
         LIQUIDATE_AT_END_INVALID: 'liquidateAtEnd 必須是 boolean',
         STRATEGY_RESULT_NOT_ARRAY: 'strategy 必須回傳 intent 陣列或 undefined',
         STRATEGY_RESULT_INVALID: 'strategy 必須回傳 intent 陣列、{ intents, diagnostics } 或 undefined',
@@ -63,6 +65,21 @@ export const CORE_MESSAGE_TABLE = {
         REQUEST_INVALID: '回測請求格式無效: {detail}',
         MODE_UNSUPPORTED: '{mode} 模式不支援: {detail}',
         INTENT_STREAM_UNKNOWN_TIME: 'intent stream 含有不在決策時間軸上的紀錄: {time}',
+        STRATEGY_SCRIPT_FAILED: '策略執行失敗: {detail}',
+        STRATEGY_LOOKAHEAD: '策略讀取了未來的 K 棒資料：{assetId} 的 {name} 在第 {index} 根（由 0 起算）的訊號會被之後的 K 棒改變。訊號只能用當根與之前的資料計算（例如不要讀 close[i + 1]、不要用整段資料的最高價、長度或平均）',
+        STRATEGY_NONDETERMINISTIC_API: '策略不能使用每次執行結果都不同的功能：{name}（例如亂數、目前時間、計時器）。回測必須每次跑出相同結果，請改用 K 棒的 time 與固定參數',
+        STRATEGY_LOOKAHEAD_OFFSET: 'ta.offset 的位移是 {n}：負數會讀到未來的 K 棒。位移必須是 0 或正數（例如 ta.offset(close, 1) 取前一根）',
+        SCRIPT_UNKNOWN_ASSET: 'universe 外商品: {asset}',
+        SCRIPT_COLLECTOR_INVALID: '{name}() 參數無效: {problem}',
+        SCRIPT_SIZE_INVALID: 'position.{kind}() 數值無效',
+        SCRIPT_RESERVED_FUNCTION: '{name}() 保留給 sequential/target-portfolio DSL，Signal DSL 不提供持倉狀態',
+        SCRIPT_NO_SIGNALS: '策略沒有產生任何訊號 — 至少要呼叫 longEntry() 或 shortEntry()',
+        SCRIPT_LONG_ENTRY_WITHOUT_EXIT: 'longEntry() 有了，但沒有 longExit()（或反向 shortEntry() 翻單）— 加上出場條件',
+        SCRIPT_SHORT_ENTRY_WITHOUT_EXIT: 'shortEntry() 有了，但沒有 shortExit()（或反向 longEntry() 翻單）— 加上出場條件',
+        SCRIPT_COLLECTOR_IN_STATEFUL: 'Signal DSL collector 不可用於 stateful/target strategy',
+        SCRIPT_ONBAR_INVALID: 'onBar 需要單一 callback',
+        SCRIPT_ENTRY_PERCENT: '進場不可使用 position.percent',
+        SCRIPT_REDUCE_SIZE_REQUIRED: 'reducePosition 需要 quantity 或 percent',
         INTERNAL: '{detail}',
     },
     rejections: {
@@ -77,6 +94,8 @@ export const CORE_MESSAGE_TABLE = {
         RISK_INVALID_FILL_PRICE: { reason: 'invalid-fill-price', message: '滑價後成交價必須大於 0' },
         RISK_LIMIT_NOT_REACHED: { reason: 'limit-not-reached', message: '下一根可用 K 棒未觸及限價' },
         RISK_UNAVAILABLE_BAR: { reason: 'unavailable-bar', message: '缺 K 或停牌，等待下一個可成交 open' },
+        RISK_LIMIT_LOCKED: { reason: 'limit-locked', message: '漲跌停鎖死，等待下一根可成交 K 棒' },
+        RISK_FINAL_BAR_UNAVAILABLE: { reason: 'unavailable-bar', message: '最後一根缺 K 或停牌，部位未平倉並以最後收盤估值' },
     },
     riskReasonLabels: {
         'gross-leverage': '槓桿／資金不足',
@@ -86,6 +105,7 @@ export const CORE_MESSAGE_TABLE = {
         'unavailable-bar': '行情資料暫缺',
         'invalid-fill-price': '成交價格無效',
         'limit-not-reached': '限價未觸及',
+        'limit-locked': '漲跌停鎖死',
     },
     diagnosticLabels: {
         'signal-conflict': '同時觸發多個訊號',
@@ -120,7 +140,8 @@ export function isCoreErrorCode(value: unknown): value is CoreErrorCode {
 
 /** zh-TW text of one error code, without time/asset context. */
 export function coreErrorText(code: CoreErrorCode, params: MessageParams = {}): string {
-    return render(table.errors[code], params);
+    // A replayed recording may carry a code this table does not know; show the code itself.
+    return render(Object.hasOwn(table.errors, code) ? table.errors[code] : code, params);
 }
 
 /** Reason code and exact persisted message of a simulated order rejection. */

@@ -91,32 +91,6 @@ export const modeBtn = styleVariants({
     ],
 });
 
-// 圖表下單數量 — 緊貼交易模式按鈕群，帶「量」標籤（不再孤懸右側）
-export const qtyWrap = style({
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '4px',
-    fontFamily: vars.font.body,
-    fontSize: '0.64rem',
-    color: vars.color.mutedForeground,
-    marginLeft: '2px',
-});
-
-export const qtyInput = style({
-    width: '2.6rem',
-    fontFamily: vars.font.mono,
-    fontSize: '0.7rem',
-    fontWeight: 600,
-    textAlign: 'right',
-    color: vars.color.foreground,
-    background: vars.color.inset,
-    border: `1px solid ${vars.color.border}`,
-    borderRadius: vars.radius.sm,
-    padding: '1px 6px',
-    outline: 'none',
-    ':focus': { borderColor: vars.color.accent },
-});
-
 // 指標按鈕獨立靠右（它屬於圖表工具，不屬於交易模式群）
 export const indicatorBtn = styleVariants({
     normal: [modeBase, { marginLeft: 'auto' }],

@@ -11,7 +11,7 @@ import {
 describe('backtest core message table', () => {
     it('renders every placeholder from params and keeps literal braces', () => {
         const params = { label: 'capital', min: 0.01, max: 1e13, assetId: 'A', symbol: 'AAA', field: 'open', index: 1,
-            detail: 'd', asset: 'X', kind: 'entry', name: 'longEntry', mode: 'vector', time: 5, leverage: '1.2345', limit: 1 };
+            detail: 'd', asset: 'X', kind: 'entry', name: 'longEntry', problem: 'order-invalid', n: -1, mode: 'vector', time: 5, leverage: '1.2345', limit: 1 };
         for (const code of CORE_ERROR_CODES) expect(coreErrorText(code, params)).not.toMatch(/\{[A-Za-z][A-Za-z0-9]*\}/);
         for (const key of REJECTION_MESSAGE_KEYS) expect(rejectionReason(key, params).message).not.toMatch(/\{[A-Za-z][A-Za-z0-9]*\}/);
         expect(coreErrorText('STRATEGY_RESULT_INVALID')).toBe('strategy 必須回傳 intent 陣列、{ intents, diagnostics } 或 undefined');

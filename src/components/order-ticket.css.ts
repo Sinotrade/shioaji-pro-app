@@ -130,6 +130,8 @@ const segBase = style({
     borderRadius: vars.radius.sm,
     color: vars.color.mutedForeground,
     transition: 'all 0.12s',
+    // 不支援的組合（例：零股的市價／IOC）顯示為停用，title 說明原因
+    ':disabled': { opacity: 0.35, cursor: 'not-allowed' },
 });
 
 export const seg = styleVariants({

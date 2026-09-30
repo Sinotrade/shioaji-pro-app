@@ -30,6 +30,7 @@ vi.mock('../stream', () => ({
     subscribeStatusStore: (cb: () => void) => { m.statusChanged.push(cb); return () => undefined; },
     onOrderEvent: () => () => undefined,
     onAnyTick: (cb: typeof m.tick) => { m.tick = cb; return () => undefined; },
+    onOddLotTick: () => () => undefined,
     onStreamEvent: (name: string, cb: () => void) => { if (name === 'heartbeat') m.heartbeat = cb; return () => undefined; },
 }));
 vi.mock('../account-store', () => ({ getAccountState: () => ({ accounts: m.accounts,
@@ -203,6 +204,21 @@ describe('ownership: one executor per trigger / bracket', () => {
         await addStop({ price: 47000 });
         expect(engine.getTriggers()).toHaveLength(1); // the new one is TS again
         expect(creates()).toHaveLength(1);
+    });
+
+    it('odd-lot triggers and brackets stay in TS (not expressible in execution-v1 yet)', async () => {
+        await boot({ enabled: true });
+        expect(engine.nativeHandles({ kind: 'stop', orderLot: 'IntradayOdd' })).toBe(false);
+        expect(engine.nativeHandles({ kind: 'stop', orderLot: 'Common' })).toBe(true);
+        expect(engine.nativeHandles({ kind: 'stop' })).toBe(true);
+        // no native host check for an odd-lot bracket: it registers in TS
+        await bracket.ensureBracketHost({ orderLot: 'IntradayOdd' });
+        const plan = await bracket.registerBracket({ env: m.env!, account: { account_type: 'S', broker_id: 'b', account_id: 'a' },
+            orderId: 'S1', seqno: 'S1', quoteCode: '2330', orderCode: '2330', securityType: 'STK', exchange: 'TSE',
+            action: 'Buy', quantity: 500, orderLot: 'IntradayOdd', stopPrice: 900, takePrice: 1100 });
+        expect(creates()).toHaveLength(0);
+        expect(bracket.isNativeBracket(plan)).toBe(false);
+        expect(bracket.getBrackets()).toHaveLength(1);
     });
 
     it('price alerts never become native programs', async () => {

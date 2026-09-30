@@ -240,6 +240,10 @@ function BlockBody({
                         onSessionModeChange={(chartSession) =>
                             onSessionConfigChange(block.id, { chartSession })
                         }
+                        orderSettings={block.chartOrder}
+                        onOrderSettingsChange={(chartOrder) =>
+                            onSessionConfigChange(block.id, { chartOrder })
+                        }
                     />
                 </>
             ) : (
@@ -357,6 +361,7 @@ function BlockBody({
         case 'grid':
             return contract ? (
                 <GridTicket
+                    panelId={block.id}
                     contract={contract}
                     trades={dockProps.trades}
                     onOrdersChanged={dockProps.onTradesChanged}
