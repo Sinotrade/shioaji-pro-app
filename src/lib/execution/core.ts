@@ -11,8 +11,9 @@
 // - Every intent is recorded as a `pendingSubmit` slot BEFORE it is returned.
 //   The Rust executor sends it at once and journals asynchronously (ticks are
 //   never written); a crash can lose the newest records, so recovery relies
-//   on deterministic keys / tags, reconcile before live, and holding each
-//   program's first order after an unclean shutdown as `unknown`.
+//   on deterministic keys / tags, reconcile before live, and holding every
+//   order of a program that may have sent unrecorded orders (an unclean
+//   shutdown) as `unknown` until listings settle it.
 // - `restore` (executor restarted from persisted state) turns every
 //   `pendingSubmit` slot into `unknown`: never resent, only a reconcile
 //   (matched by idempotency key) or a user acknowledgement clears it.
@@ -160,6 +161,16 @@ export function touchLegs(lv: Level): Leg[] {
         return legs;
     }
     return [];
+}
+
+/** A stop: a bracket's stop exit, or a trigger whose order and condition read
+ * as a stop (sell below / buy above — the UI's stop / take split). Entries of
+ * other programs and take-profit legs are not. */
+function protective(p: OrderProgram, lv: Level, leg: Leg): boolean {
+    if (leg.name === 'stop') return true;
+    if (leg.name !== 'entry') return false;
+    return p.kind === 'trigger'
+        && ((lv.side === 'Sell' && leg.condition === 'below') || (lv.side === 'Buy' && leg.condition === 'above'));
 }
 
 function legOf(lv: Level, name: LegName): Leg | null {
@@ -400,8 +411,9 @@ function onTick(ctx: Ctx, e: Extract<ExecEvent, { type: 'tick' }>) {
                         lv.recross = lv.recross.filter(x => x !== leg.name);
                         // the order inside a burst is lost: a range holding both the
                         // re-arm side and the trigger price counts as re-armed AND
-                        // re-crossed (protective); a single price cannot hold both
-                        if (!touched(leg)) continue;
+                        // re-crossed only for a protective leg (a stop); any other
+                        // leg re-arms and waits for a later tick
+                        if (!touched(leg) || !protective(p, lv, leg)) continue;
                     }
                     if (touched(leg) && lv.phase !== 'done') { fire(ctx, p, lv, leg.name, toward(leg)); break; }
                 }
