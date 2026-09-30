@@ -1,0 +1,379 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "ambiguous-tag-pins-the-slot",
+  "description": "#201 wiring review round 9: a reconcile naming a slot as ambiguous flags it (tagAmbiguous) in the journaled state; from then on no listing — incomplete, complete or notSent, before or after a restart — concludes it never-accepted.",
+  "covers": [
+    "#201",
+    "reconcile",
+    "unknown"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1001,
+        "id": "c1001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "t1",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Sell",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 100,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Auto"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1002,
+        "id": "c1002",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "t2",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Sell",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 100,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Auto"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "tick",
+        "ts": 1003,
+        "code": "TXFR1",
+        "price": 99
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/t1/L1/entry/0/0"
+          },
+          {
+            "kind": "place",
+            "key": "simulation/local-a/t2/L1/entry/0/0"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "intentResult",
+        "ts": 1004,
+        "key": "simulation/local-a/t1/L1/entry/0/0",
+        "outcome": "unknown",
+        "detail": "timeout"
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "intentResult",
+        "ts": 1005,
+        "key": "simulation/local-a/t2/L1/entry/0/0",
+        "outcome": "unknown",
+        "detail": "timeout"
+      }
+    },
+    {
+      "note": "rows with t1 tag were ambiguous: t1 is flagged for good (journaled with this event)",
+      "event": {
+        "type": "reconcile",
+        "ts": 1006,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [],
+        "complete": false,
+        "ambiguous": [
+          "simulation/local-a/t1/L1/entry/0/0"
+        ]
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "phase": "unknown",
+                "orders": [
+                  {
+                    "status": "unknown",
+                    "tagAmbiguous": true
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "note": "a later notSent (even complete) never concludes a flagged slot; t2 is concluded",
+      "event": {
+        "type": "reconcile",
+        "ts": 1007,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [],
+        "complete": true,
+        "notSent": [
+          "simulation/local-a/t1/L1/entry/0/0",
+          "simulation/local-a/t2/L1/entry/0/0"
+        ]
+      },
+      "expect": {
+        "notices": [
+          "needsConfirm"
+        ],
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "phase": "unknown",
+                "orders": [
+                  {
+                    "status": "unknown",
+                    "tagAmbiguous": true
+                  }
+                ]
+              }
+            }
+          },
+          "t2": {
+            "levels": {
+              "L1": {
+                "phase": "needsConfirm",
+                "orders": []
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "restart": {
+        "ts": 2000
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "unknown",
+                    "tagAmbiguous": true
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 2001,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [],
+        "complete": true,
+        "notSent": [
+          "simulation/local-a/t1/L1/entry/0/0"
+        ]
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "phase": "unknown",
+                "orders": [
+                  {
+                    "status": "unknown",
+                    "tagAmbiguous": true
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

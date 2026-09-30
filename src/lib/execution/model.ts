@@ -151,6 +151,10 @@ export interface OrderSlot {
     /** Cumulative cancelled quantity of the latest listing (authoritative
      * floor); `cancelled = max(listedCancelled, sum(cancels))`. */
     listedCancelled?: number;
+    /** A listing had rows with this slot's tag that could not be bound to it
+     * (duplicate / mismatching): the order may exist. Set by the reconcile
+     * that saw it; never concluded never-accepted. */
+    tagAmbiguous?: boolean;
 }
 
 export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'resume' | 'unknownNotSent';
@@ -412,6 +416,9 @@ export interface ReconcileEvent {
      * concluded even when `complete` is false (per-slot decision: a slot that
      * became unknown after the listing was requested is never concluded). */
     notSent?: string[];
+    /** Slots (by key) whose tag rows are duplicated / mismatching in this
+     * listing: flagged `tagAmbiguous` for good. */
+    ambiguous?: string[];
 }
 /** The executor (re)started from persisted state. */
 export interface RestoreEvent { type: 'restore'; ts: number }

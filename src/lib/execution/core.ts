@@ -733,6 +733,12 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
         for (const lv of p.levels) {
             let touched = false;
             for (const slot of lv.orders) {
+                // a listing row carries this slot's tag but cannot be bound to
+                // it: the order may exist — pinned for good, never concluded
+                if ((e.ambiguous ?? []).includes(slot.key) && !slot.tagAmbiguous) {
+                    slot.tagAmbiguous = true;
+                    addIssue(ctx, p, 'tagAmbiguous', `${slot.key}: duplicate / mismatching listing rows for its tag`);
+                }
                 // ended before this listing (not by a report drained just now)
                 const wasEnded = slot.status === 'ended';
                 const row = slot.orderId
@@ -749,7 +755,7 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                         slot.status = 'working';
                         slot.detail = 'reconciled';
                         drainOrphans(ctx, p, lv, slot);
-                    } else if (e.complete || (e.notSent ?? []).includes(slot.key)) {
+                    } else if ((e.complete || (e.notSent ?? []).includes(slot.key)) && !slot.tagAmbiguous) {
                         slot.status = 'notSent';
                         slot.detail = 'reconciledNotSent';
                         // confirmed never accepted: the user decides whether to send now
