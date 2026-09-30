@@ -141,12 +141,16 @@ export interface OrderSlot {
     detail: string | null;
     acknowledged: boolean;
     cancel: CancelState | null;
-    /** Quantity the broker cancelled (UpdateQty reductions + Cancel), summed
-     * over reports (deduplicated by report id) and raised to the listing's
-     * cumulative value. The order still works `qty - filled - cancelled`. */
+    /** Quantity the broker cancelled (UpdateQty reductions + Cancel):
+     * max(listing's cumulative, sum of report deltas) — never their sum (a
+     * report may already be in the listing). The order still works
+     * `qty - filled - cancelled`. */
     cancelled?: number;
     /** report id → quantity it cancelled (dedupe). */
     cancels?: Record<string, number>;
+    /** Cumulative cancelled quantity of the latest listing (authoritative
+     * floor); `cancelled = max(listedCancelled, sum(cancels))`. */
+    listedCancelled?: number;
 }
 
 export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'resume' | 'unknownNotSent';

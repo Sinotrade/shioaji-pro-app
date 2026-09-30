@@ -47,6 +47,7 @@ import {
     type OrderEvent,
     type OrderIntent,
     type OrderProgram,
+    type BreakAction,
     type OrderSlot,
     type OrderSpec,
     PRICE_SCALE,
@@ -392,8 +393,12 @@ function onTick(ctx: Ctx, e: Extract<ExecEvent, { type: 'tick' }>) {
                 }
                 for (const leg of legs) {
                     if (lv.recross.includes(leg.name)) {
-                        if (!isPast(leg.condition, leg.price, away(leg))) lv.recross = lv.recross.filter(x => x !== leg.name);
-                        continue;
+                        if (isPast(leg.condition, leg.price, away(leg))) continue; // not re-armed
+                        lv.recross = lv.recross.filter(x => x !== leg.name);
+                        // the order inside a burst is lost: a range holding both the
+                        // re-arm side and the trigger price counts as re-armed AND
+                        // re-crossed (protective); a single price cannot hold both
+                        if (!touched(leg)) continue;
                     }
                     if (touched(leg) && lv.phase !== 'done') { fire(ctx, p, lv, leg.name, toward(leg)); break; }
                 }
@@ -423,10 +428,13 @@ function validPrice(v: number | undefined): number | undefined {
 
 function checkBounds(ctx: Ctx, p: OrderProgram, lo: number, hi: number) {
     const b = p.bounds;
-    const upper = b.upper !== null && fixed(hi) > fixed(b.upper);
-    const action = upper ? b.onBreakUpper
-        : b.lower !== null && fixed(lo) < fixed(b.lower) ? b.onBreakLower : 'none';
-    const price = upper ? hi : lo;
+    // every bound the range broke counts; the protective action wins
+    const broken: { action: BreakAction; price: number }[] = [];
+    if (b.upper !== null && fixed(hi) > fixed(b.upper)) broken.push({ action: b.onBreakUpper, price: hi });
+    if (b.lower !== null && fixed(lo) < fixed(b.lower)) broken.push({ action: b.onBreakLower, price: lo });
+    const pick = broken.find(x => x.action === 'stop') ?? broken.find(x => x.action === 'pause');
+    const action: BreakAction = pick?.action ?? 'none';
+    const price = pick?.price ?? 0;
     if (action === 'pause') {
         p.status = 'paused';
         p.pauseReason = 'boundBreak';
@@ -555,12 +563,22 @@ const remaining = (slot: OrderSlot) => slot.qty - slot.filled - (slot.cancelled 
 /** Record the quantity a report cancelled (once per report id). */
 function noteCancelled(slot: OrderSlot, e: OrderEvent) {
     if (e.failed || e.cancelQty === undefined || !(e.cancelQty > 0)) return;
-    if (e.reportId) {
-        slot.cancels = slot.cancels ?? {};
-        if (e.reportId in slot.cancels) return;
-        slot.cancels[e.reportId] = e.cancelQty;
-    }
-    slot.cancelled = (slot.cancelled ?? 0) + e.cancelQty;
+    slot.cancels = slot.cancels ?? {};
+    const id = e.reportId ?? `anon:${Object.keys(slot.cancels).length}`;
+    if (id in slot.cancels) return;
+    slot.cancels[id] = e.cancelQty;
+    refreshCancelled(slot);
+}
+
+/** Cancelled quantity = max(listing's cumulative, sum of report deltas) —
+ * never their sum: a report may be one the listing already counted (their
+ * timestamps cannot be ordered: a report's exchange ts can be later than
+ * the listing's modified ts for the same operation). Under doubt this
+ * UNDER-counts: the order still looks working, so no extra exit is placed;
+ * the next listing corrects it. */
+function refreshCancelled(slot: OrderSlot) {
+    const reported = Object.values(slot.cancels ?? {}).reduce((a, b) => a + b, 0);
+    slot.cancelled = Math.max(slot.listedCancelled ?? 0, reported);
 }
 
 /** Fills + cancels cover the order: nothing works at the broker any more. */
@@ -747,10 +765,14 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                 }
                 if (!row || !slot.orderId) continue;
                 // the listing's cumulative cancelled quantity is authoritative
-                if (row.cancelled !== undefined) slot.cancelled = row.cancelled;
+                if (row.cancelled !== undefined) { slot.listedCancelled = row.cancelled; refreshCancelled(slot); }
                 if (wasEnded && slot.status === 'ended' && !slot.acknowledged && row.status === 'working'
                     && slot.qty - slot.filled - (row.cancelled ?? 0) > 0) {
-                    slot.cancelled = row.cancelled ?? 0;
+                    // the listing shows it working: the reports that ended it are
+                    // taken as absorbed by the listing (kept for dedupe, count 0)
+                    for (const id of Object.keys(slot.cancels ?? {})) slot.cancels![id] = 0;
+                    slot.listedCancelled = row.cancelled ?? 0;
+                    refreshCancelled(slot);
                     // the broker still works it (e.g. a cancel that did not take
                     // effect): back to working, and a stopped program is
                     // stopping again until it is cancelled
