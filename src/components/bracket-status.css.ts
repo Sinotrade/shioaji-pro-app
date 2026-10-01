@@ -79,3 +79,20 @@ export const banner = style({
     fontSize: '0.74rem',
     fontWeight: 700,
 });
+
+export const confirmEntry = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: vars.space.xs,
+});
+
+export const qtyInput = style({
+    width: '4.5em',
+    fontFamily: vars.font.mono,
+    fontSize: '0.7rem',
+    padding: '1px 4px',
+    background: vars.color.background,
+    color: vars.color.foreground,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+});

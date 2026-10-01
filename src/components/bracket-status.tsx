@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import {
     acknowledgeBracketExit,
     bracketSnapshotStale,
+    confirmBracketEntry,
     cancelRemainingEntry,
     dismissBracket,
     isNativeBracket,
@@ -46,6 +47,12 @@ const EXIT: Record<string, string> = {
     unknown: '出場結果未知（不會自動重送）',
 };
 
+function validEntryFilled(raw: string, known: number, max: number): boolean {
+    if (raw.trim() === '') return false;
+    const n = Number(raw);
+    return Number.isSafeInteger(n) && n >= known && n <= max;
+}
+
 function Row({ plan, envNow, feedMissing, executing, stale }: {
     plan: BracketPlan;
     envNow: string | null;
@@ -58,6 +65,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
     const [message, setMessage] = useState<string | null>(null);
     const [confirmRemove, setConfirmRemove] = useState(false);
     const [confirmCancel, setConfirmCancel] = useState(false);
+    const [entryFilled, setEntryFilled] = useState('');
     const workingEntry = workingEntryAfterExit(plan);
     const phase = bracketPhase(plan);
     const protectedQty = protectionQuantity(plan);
@@ -66,12 +74,13 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
     const elsewhere = plan.env !== envNow;
     // #201: a native bracket runs in the App's native engine, not in a window
     const native = isNativeBracket(plan);
+    const acrossDay = native ? plan.native.entryAcrossDay : null;
     const nativeHealth = useNativeHealth();
     const nativeLive = native && nativeHealth?.state === 'live' && `${nativeHealth.serverId}|${nativeHealth.env}` === plan.env;
     const notRunning = native
         ? isLive(plan) && (elsewhere || !nativeLive || plan.native.hold !== null)
         : stale || (isLive(plan) && (elsewhere || feedMissing || !executing));
-    const tone = unprotected > 0 || unknownExit || plan.exit?.status === 'not-sent' || plan.exit?.status === 'incomplete'
+    const tone = unprotected > 0 || unknownExit || acrossDay !== null || plan.exit?.status === 'not-sent' || plan.exit?.status === 'incomplete'
         ? 'err' : plan.issues.length > 0 || notRunning ? 'warn' : 'ok';
     const run = async (fn: () => Promise<unknown>, done?: (v: unknown) => string) => {
         setBusy(true);
@@ -110,6 +119,13 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
             )}
             {!native && stale && (
                 <div className={styles.note.warn}>主視窗狀態未更新（可能已關閉或重新載入），以下為最後已知狀態，不代表保護正在執行</div>
+            )}
+            {acrossDay && (
+                <div className={styles.note.err} role='alert'>
+                    進場單跨過交易日仍未結束：委託編號可能已被他單沿用，成交無法再自動對應。
+                    請在委託／成交查詢確認這筆進場單實際共成交幾口後輸入（至少 {acrossDay.known} 口，最多 {plan.quantity} 口）；
+                    確認前不會依此單送出任何出場委託，也不會重送進場單
+                </div>
             )}
             {workingEntry > 0 && (
                 <div className={styles.note.err}>進場單仍有 {workingEntry} 未成交委託在場上；出場已觸發，之後的成交不受保護</div>
@@ -173,6 +189,32 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                     >
                         {plan.entryCancel === 'sending' ? '刪單處理中…' : confirmCancel ? '再按一次：刪除剩餘進場單' : '刪除剩餘進場單'}
                     </button>
+                )}
+                {acrossDay && (
+                    <span className={styles.confirmEntry}>
+                        <input
+                            className={styles.qtyInput}
+                            type='number'
+                            inputMode='numeric'
+                            min={acrossDay.known}
+                            max={plan.quantity}
+                            step={1}
+                            aria-label='進場單實際成交口數'
+                            placeholder={`${acrossDay.known}–${plan.quantity}`}
+                            value={entryFilled}
+                            disabled={busy}
+                            onChange={e => setEntryFilled(e.target.value)}
+                        />
+                        <button
+                            className={styles.button}
+                            disabled={busy || !validEntryFilled(entryFilled, acrossDay.known, plan.quantity)}
+                            title='以你確認的成交口數更新此括號單；不會送出任何委託'
+                            onClick={() => void run(() => confirmBracketEntry(plan.id, Number(entryFilled)),
+                                () => '已更新進場成交口數')}
+                        >
+                            確認成交 {validEntryFilled(entryFilled, acrossDay.known, plan.quantity) ? `${Number(entryFilled)} 口` : ''}
+                        </button>
+                    </span>
                 )}
                 {unknownExit && (
                     <button
