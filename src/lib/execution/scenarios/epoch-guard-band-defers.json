@@ -1,7 +1,7 @@
 {
   "schema": "execution-conformance-v1",
   "name": "epoch-guard-band-defers",
-  "description": "#201 round 25: within the guard band before an epoch boundary (2 × the connect+TLS+write bound) nothing is placed or cancelled — a request could otherwise reach the wire after the boundary; the trigger fires on the first tick after it.",
+  "description": "#201 round 25/26: within the 4 s guard band before an epoch boundary nothing is placed or cancelled (a request written just before it would still travel to the broker across it); the trigger fires on the first tick after it.",
   "covers": [
     "#201",
     "trade-id-epoch",

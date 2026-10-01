@@ -89,15 +89,12 @@ export const EPOCH_BOUNDARIES_UTC_MIN = [0, 30, 410] as const;
  * nothing was sent. */
 export const EPOCH_CHANGED = 'epochChanged';
 
-/** Upper bound on the time from the send-time gate to the request's bytes
- * being on the wire (connect + TLS + write), on every send path. */
-export const SEND_WIRE_TIMEOUT_MS = 2_000;
-
 /** Guard band before every time boundary: nothing is emitted (core) and nothing
- * passes the send-time gate when the next boundary is nearer than this — a
- * request that passed the gate is on the wire before the boundary. Every
- * boundary is outside the trading sessions. */
-export const EPOCH_GUARD_BAND_MS = 2 * SEND_WIRE_TIMEOUT_MS;
+ * passes the send-time gate when the next boundary is nearer than this. An
+ * order is on the wire the instant it passes the gate (written in the same
+ * synchronous section), so this keeps a request clear of the boundary while it
+ * travels sidecar → broker. Every boundary is outside the trading sessions. */
+export const EPOCH_GUARD_BAND_MS = 4_000;
 
 /** The first time boundary after `ts` (epoch ms). */
 export function nextEpochBoundary(ts: number): number {
