@@ -48,6 +48,7 @@ import {
 } from './protection-env';
 import {
     acknowledgeNativeUnknown,
+    confirmNativeEntry,
     createNativeProgram,
     ensureNativeHost,
     getNativePrograms,
@@ -546,6 +547,14 @@ export function dismissBracket(id: string) {
     const native = nativePlan(id);
     if (native) return removeNativeProgram(native.native.programId);
     return bus.send({ op: 'dismiss', id });
+}
+
+/** Native bracket whose entry stayed open across a trade-id epoch: the
+ * user's total fill quantity (from the orders / deals query). Sends no order. */
+export function confirmBracketEntry(id: string, filled: number) {
+    const native = nativePlan(id);
+    if (!native) throw new Error('找不到此原生括號單');
+    return confirmNativeEntry(native.native.programId, native.native.levelId, filled);
 }
 
 export function acknowledgeBracketExit(id: string) {

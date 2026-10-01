@@ -28,7 +28,10 @@ export interface NativeRef {
 export type NativeTriggerOrder = TriggerOrder & { native: NativeRef };
 export type NativeBracketPlan = BracketPlan & {
     native: { programId: string; levelId: string; version: number; status: OrderProgram['status'];
-        hold: OrderProgram['hold']; phase: Level['phase'] };
+        hold: OrderProgram['hold']; phase: Level['phase'];
+        /** The entry stayed open across a trade-id epoch: its fills cannot be
+         * matched any more; the user confirms the total (at least `known`). */
+        entryAcrossDay: { known: number } | null };
 };
 
 export function isNativeTrigger(t: TriggerOrder): t is NativeTriggerOrder {
@@ -157,7 +160,8 @@ export function bracketPlansFromPrograms(programs: readonly OrderProgram[]): Nat
             dismissed: p.status === 'stopped',
             createdAt: p.createdAt,
             updatedAt: p.updatedAt,
-            native: { programId: p.id, levelId: lv.id, version: p.version, status: p.status, hold: p.hold, phase: lv.phase },
+            native: { programId: p.id, levelId: lv.id, version: p.version, status: p.status, hold: p.hold, phase: lv.phase,
+                entryAcrossDay: lv.pending?.reason === 'unknownEntryAcrossDay' ? { known: entry?.filled ?? 0 } : null },
         });
     }
     return out;

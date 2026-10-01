@@ -277,6 +277,33 @@ describe('ownership: one executor per trigger / bracket', () => {
         expect(engine.getTriggers()).toHaveLength(0);
     });
 
+    it('an entry open across a trade-id epoch is settled only by the user\'s fill quantity', async () => {
+        await boot({ enabled: true });
+        await bracket.ensureBracketHost();
+        await bracket.registerBracket({ env: m.env!, account: { account_type: 'F', broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'fixture-f1', seqno: 'fixture-f1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT', exchange: 'TAIFEX', action: 'Buy', quantity: 2, stopPrice: 48000, takePrice: 48600 });
+        const p = host.programs[0]!;
+        const lv = p.levels[0]!;
+        lv.orders[0]!.filled = 1;
+        lv.orders[0]!.unconfirmed = true;
+        lv.phase = 'holding';
+        lv.pending = { leg: 'entry', price: null, ts: 9, reason: 'unknownEntryAcrossDay' };
+        host.bump();
+        await native.refreshNative();
+        const [plan] = bracket.getDisplayBrackets();
+        expect(bracket.isNativeBracket(plan!) && plan.native.entryAcrossDay).toEqual({ known: 1 });
+        await bracket.confirmBracketEntry(plan!.id, 2);
+        expect(host.commands[host.commands.length - 1]).toEqual({ op: 'confirmEntry', programId: p.id, version: 1,
+            levelId: lv.id, filled: 2 });
+        expect(m.place).not.toHaveBeenCalled();
+        lv.pending = null;
+        host.bump();
+        await native.refreshNative();
+        const [after] = bracket.getDisplayBrackets();
+        expect(bracket.isNativeBracket(after!) && after.native.entryAcrossDay).toBeNull();
+    });
+
     it('a native bracket is refused BEFORE the entry is sent when the engine is not live', async () => {
         await boot({ enabled: true, live: false });
         await expect(bracket.ensureBracketHost()).rejects.toThrow('原生執行引擎尚未連上伺服器');

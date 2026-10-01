@@ -155,9 +155,17 @@ export interface OrderSlot {
      * (duplicate / mismatching): the order may exist. Set by the reconcile
      * that saw it; never concluded never-accepted. */
     tagAmbiguous?: boolean;
+    /** The trade id is from an earlier epoch (another connection / trading
+     * day): it no longer identifies the order. Nothing matches it (reports,
+     * listings, cancels) until a listing of the current epoch rebinds the
+     * slot by its tag (an ended slot never is). */
+    unconfirmed?: boolean;
 }
 
-export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'resume' | 'unknownNotSent';
+export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'resume' | 'unknownNotSent'
+    /** An external (bracket) entry still open across an epoch boundary: the
+     * user confirms how much it filled before any exit counts on it. */
+    | 'unknownEntryAcrossDay';
 
 export type LevelPhase =
     | 'idle' // waiting to enter (touch watching / limit not yet submitted)
@@ -342,6 +350,8 @@ export interface EngineState {
     /** Order reports (e.g. New failed) whose order id is not yet known. */
     orphanOrders: BufferedOrder[];
     programs: OrderProgram[];
+    /** Trade-id epoch (see core.ts epochMark) of the last `epoch` event. */
+    epochMark?: number;
 }
 
 // ---- events in ----
@@ -383,12 +393,20 @@ export interface OrderEvent extends Source {
     cancelQty?: number;
     /** Report identity (event id) so a repeated report is counted once. */
     reportId?: string;
+    /** The order's account and contract as reported: an id is only an
+     * identity within (account, contract) — stock and futures sequences are
+     * independent and can produce the same id. */
+    account?: { brokerId: string; accountId: string } | null;
+    code?: string;
+    securityType?: string;
 }
 export interface DealEvent extends Source {
     type: 'deal'; ts: number; orderId: string;
     eventId: string | null; seq: string | null;
     account: { brokerId: string; accountId: string } | null;
     code: string; action: Side; qty: number; price: number;
+    /** The order's security type as reported (stock and futures ids repeat). */
+    securityType?: string;
     /** Exchange fill time (epoch s) used to pair event-only fills. */
     fillTs?: number;
 }
@@ -422,6 +440,9 @@ export interface ReconcileEvent {
 }
 /** The executor (re)started from persisted state. */
 export interface RestoreEvent { type: 'restore'; ts: number }
+/** A new trade-id epoch on a connection: ids bound before no longer
+ * identify orders. */
+export interface EpochEvent extends Source { type: 'epoch'; ts: number }
 
 export type UserCommand =
     | { op: 'create'; program: OrderProgram }
@@ -431,13 +452,16 @@ export type UserCommand =
     | { op: 'remove'; programId: string; version: number }
     | { op: 'resolvePending'; programId: string; version: number; levelId: string;
         choice: 'send' | 'cancel' | 'keep'; allowUnpast?: boolean }
-    | { op: 'ackUnknown'; programId: string; version: number; levelId: string };
+    | { op: 'ackUnknown'; programId: string; version: number; levelId: string }
+    /** The user's answer for an external entry open across an epoch
+     * (`unknownEntryAcrossDay`): how much of it filled in total. */
+    | { op: 'confirmEntry'; programId: string; version: number; levelId: string; filled: number };
 
 export interface CommandEvent { type: 'command'; ts: number; id: string; command: UserCommand }
 
 export type ExecEvent =
     | TickEvent | HeartbeatEvent | ConnectionEvent | IntentResultEvent | OrderEvent
-    | DealEvent | ReconcileEvent | RestoreEvent | CommandEvent;
+    | DealEvent | ReconcileEvent | RestoreEvent | EpochEvent | CommandEvent;
 
 // ---- intents out ----
 

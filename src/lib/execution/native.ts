@@ -245,6 +245,15 @@ export async function resolveNativePending(programId: string, levelId: string, c
         ...(allowUnpast ? { allowUnpast: true } : {}) });
 }
 
+/** The user's total fill quantity for an external entry that stayed open
+ * across a trade-id epoch (`unknownEntryAcrossDay`). Sends no order. */
+export async function confirmNativeEntry(programId: string, levelId: string, filled: number): Promise<void> {
+    await refreshNative();
+    const p = findProgram(programId);
+    if (!p) throw new Error('找不到此原生單');
+    await sendNativeCommand({ op: 'confirmEntry', programId, version: p.version, levelId, filled });
+}
+
 export async function acknowledgeNativeUnknown(programId: string, levelId: string): Promise<void> {
     await refreshNative();
     const p = findProgram(programId);

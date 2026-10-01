@@ -1,0 +1,344 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "epoch-reused-id-new-order",
+  "description": "#201 round 22: an id bound before an epoch boundary stops identifying its order; a new order that reuses the id (the next trading day's sequence) gets its own fills, never the old slot.",
+  "covers": [
+    "#201",
+    "trade-id-epoch"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1790730000000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790730000001,
+        "id": "c1790730000001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "t1",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Sell",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 100,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Auto"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790730000002,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 105
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790730000003,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 99
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/t1/L1/entry/0/0"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "intentResult",
+        "ts": 1790730000004,
+        "env": "simulation",
+        "serverId": "local-a",
+        "key": "simulation/local-a/t1/L1/entry/0/0",
+        "outcome": "accepted",
+        "orderId": "T1"
+      }
+    },
+    {
+      "event": {
+        "type": "epoch",
+        "ts": 1790751600000,
+        "env": "simulation",
+        "serverId": "local-a"
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "orderId": "T1",
+                    "unconfirmed": true
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790751600001,
+        "id": "c1790751600001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "t2",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Sell",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 100,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Auto"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790751600002,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 105
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790751600003,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 99
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/t2/L1/entry/0/0"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "intentResult",
+        "ts": 1790751600004,
+        "env": "simulation",
+        "serverId": "local-a",
+        "key": "simulation/local-a/t2/L1/entry/0/0",
+        "outcome": "accepted",
+        "orderId": "T1"
+      }
+    },
+    {
+      "event": {
+        "type": "deal",
+        "ts": 1790751600005,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "T1",
+        "eventId": null,
+        "seq": "000001",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "action": "Sell",
+        "qty": 1,
+        "price": 100
+      },
+      "expect": {
+        "programs": {
+          "t2": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "filled",
+                    "filled": 1
+                  }
+                ]
+              }
+            }
+          },
+          "t1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "working",
+                    "filled": 0,
+                    "unconfirmed": true
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

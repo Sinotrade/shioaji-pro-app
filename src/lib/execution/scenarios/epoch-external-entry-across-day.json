@@ -1,16 +1,16 @@
 {
   "schema": "execution-conformance-v1",
-  "name": "bracket-report-mismatch",
-  "description": "Deals of another account are ignored; a deal of another contract is another order (an id is only an identity within account + contract: stock and futures sequences can repeat an id) and is never applied; wrong side / missing account raise an issue and are not counted.",
+  "name": "epoch-external-entry-across-day",
+  "description": "#201 round 22: an external (bracket) entry carries no tag of ours: within an epoch its id identifies it; still open across an epoch boundary it waits for the user to confirm how much filled (never inferred) before the exit counts on it.",
   "covers": [
-    "bracket",
-    "isolation"
+    "#201",
+    "trade-id-epoch"
   ],
   "steps": [
     {
       "event": {
         "type": "connection",
-        "ts": 1000,
+        "ts": 1790730000000,
         "live": true,
         "env": "simulation",
         "serverId": "local-a"
@@ -19,8 +19,8 @@
     {
       "event": {
         "type": "command",
-        "ts": 1001,
-        "id": "c1001",
+        "ts": 1790730000001,
+        "id": "c1790730000001",
         "command": {
           "op": "create",
           "program": {
@@ -129,28 +129,23 @@
     },
     {
       "event": {
-        "type": "deal",
-        "ts": 1002,
+        "type": "epoch",
+        "ts": 1790730000002,
         "env": "simulation",
-        "serverId": "local-a",
-        "orderId": "o-entry",
-        "eventId": null,
-        "seq": "s1",
-        "account": {
-          "brokerId": "F002000",
-          "accountId": "9999999"
-        },
-        "code": "TXFJ6",
-        "action": "Buy",
-        "qty": 1,
-        "price": 100
+        "serverId": "local-a"
       },
+      "note": "a reconnect within the same epoch keeps the external entry's id",
       "expect": {
         "programs": {
           "b1": {
             "levels": {
               "L1": {
-                "entryFilled": 0
+                "phase": "working",
+                "orders": [
+                  {
+                    "orderId": "o-entry"
+                  }
+                ]
               }
             }
           }
@@ -159,78 +154,68 @@
     },
     {
       "event": {
-        "type": "deal",
-        "ts": 1003,
+        "type": "epoch",
+        "ts": 1790751600000,
         "env": "simulation",
-        "serverId": "local-a",
-        "orderId": "o-entry",
-        "eventId": null,
-        "seq": "s2",
-        "account": {
-          "brokerId": "F002000",
-          "accountId": "1234567"
-        },
-        "code": "MXFJ6",
-        "action": "Buy",
-        "qty": 1,
-        "price": 100
+        "serverId": "local-a"
       },
       "expect": {
+        "notices": [
+          "needsConfirm"
+        ],
         "programs": {
           "b1": {
             "levels": {
               "L1": {
-                "entryFilled": 0
+                "phase": "needsConfirm",
+                "pending": {
+                  "reason": "unknownEntryAcrossDay"
+                }
               }
             }
           }
         }
-      },
-      "note": "#201 round 22: another contract with the same id is another order — buffered, never applied"
+      }
     },
     {
       "event": {
-        "type": "deal",
-        "ts": 1004,
-        "env": "simulation",
-        "serverId": "local-a",
-        "orderId": "o-entry",
-        "eventId": null,
-        "seq": "s3",
-        "account": {
-          "brokerId": "F002000",
-          "accountId": "1234567"
-        },
-        "code": "TXFJ6",
-        "action": "Sell",
-        "qty": 1,
-        "price": 100
+        "type": "command",
+        "ts": 1790751600001,
+        "id": "c1790751600001",
+        "command": {
+          "op": "resolvePending",
+          "programId": "b1",
+          "version": 1,
+          "levelId": "L1",
+          "choice": "send"
+        }
       },
       "expect": {
         "notices": [
-          "issue.reportMismatch"
+          "rejected.confirmEntry"
         ]
       }
     },
     {
       "event": {
         "type": "deal",
-        "ts": 1005,
+        "ts": 1790751600002,
         "env": "simulation",
         "serverId": "local-a",
         "orderId": "o-entry",
         "eventId": null,
-        "seq": "s4",
-        "account": null,
+        "seq": "000001",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
         "price": 100
       },
+      "note": "its old id identifies nothing now",
       "expect": {
-        "notices": [
-          "issue.reportMismatch"
-        ],
         "programs": {
           "b1": {
             "levels": {
@@ -244,28 +229,46 @@
     },
     {
       "event": {
-        "type": "deal",
-        "ts": 1006,
-        "env": "simulation",
-        "serverId": "local-a",
-        "orderId": "o-entry",
-        "eventId": null,
-        "seq": "s5",
-        "account": {
-          "brokerId": "F002000",
-          "accountId": "1234567"
-        },
-        "code": "TXFJ6",
-        "action": "Buy",
-        "qty": 1,
-        "price": 100
+        "type": "command",
+        "ts": 1790751600003,
+        "id": "c1790751600003",
+        "command": {
+          "op": "confirmEntry",
+          "programId": "b1",
+          "version": 1,
+          "levelId": "L1",
+          "filled": 3
+        }
       },
+      "expect": {
+        "notices": [
+          "rejected.invalidQty"
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790751600004,
+        "id": "c1790751600004",
+        "command": {
+          "op": "confirmEntry",
+          "programId": "b1",
+          "version": 1,
+          "levelId": "L1",
+          "filled": 1
+        }
+      },
+      "note": "the user's quantity: the position is protected from now on",
       "expect": {
         "programs": {
           "b1": {
             "levels": {
               "L1": {
-                "entryFilled": 1
+                "entryFilled": 1,
+                "position": 1,
+                "phase": "holding",
+                "pending": null
               }
             }
           }

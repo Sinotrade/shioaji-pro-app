@@ -1,0 +1,227 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "epoch-cancel-waits-for-rebind",
+  "description": "#201 round 22: after an epoch boundary a stop has no confirmed id to cancel: no cancel (nor retry) is sent to the old id; the listing rebinds the slot by its tag and the cancel goes to that id.",
+  "covers": [
+    "#201",
+    "trade-id-epoch"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1790730000000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790730000001,
+        "id": "c1790730000001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "t1",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Sell",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 100,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Auto"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790730000002,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 105
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790730000003,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 99
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/t1/L1/entry/0/0"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "intentResult",
+        "ts": 1790730000004,
+        "env": "simulation",
+        "serverId": "local-a",
+        "key": "simulation/local-a/t1/L1/entry/0/0",
+        "outcome": "accepted",
+        "orderId": "T1"
+      }
+    },
+    {
+      "event": {
+        "type": "epoch",
+        "ts": 1790751600000,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790751600001,
+        "id": "c1790751600001",
+        "command": {
+          "op": "stop",
+          "programId": "t1",
+          "version": 1
+        }
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "status": "stopping"
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "heartbeat",
+        "ts": 1790751640000,
+        "env": "simulation",
+        "serverId": "local-a"
+      },
+      "note": "no cancel to an id of an earlier epoch, not even a retry"
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1790751640001,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "complete": false,
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/t1/L1/entry/0/0",
+            "orderId": "T9",
+            "status": "working",
+            "qty": 1,
+            "deals": []
+          }
+        ]
+      },
+      "note": "this epoch's listing rebinds the slot by its tag (new id T9): the cancel goes there",
+      "expect": {
+        "intents": [
+          {
+            "kind": "cancel",
+            "orderId": "T9"
+          }
+        ],
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "orderId": "T9"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -43,6 +43,7 @@ import {
     type ConnectionEvent,
     type DealEvent,
     type EngineState,
+    type EpochEvent,
     type ExecEvent,
     type IntentResultEvent,
     type LegName,
@@ -71,6 +72,39 @@ export const CANCEL_UNKNOWN_RETRY_MS = 30_000;
 
 /** Globally unique idempotency key: the partition (env + server identity) is
  * part of the key itself, so a sender may dedupe across environments. */
+/** Trade-id epoch boundaries, minutes after 00:00 UTC. Trade ids repeat:
+ * paper ids are a per-site sequence reset at 00:00 UTC; production ids are
+ * xxh32 of the broker's 6-digit seqno, which does not reset per day but
+ * wraps after 999999 or resets at STS maintenance (time unknown), and stock
+ * and futures counters overlap. So an id binding is trusted only within one
+ * epoch and one (account, market). Conservative: 00:00 UTC, 08:30 Taipei
+ * (before the day session), 14:50 Taipei (before the night session); every
+ * connection is a boundary too (the executor).
+ * TODO(#201): simplify once the backend confirms when the seqno wraps / resets. */
+export const EPOCH_BOUNDARIES_UTC_MIN = [0, 30, 410] as const;
+
+/** The epoch `ts` (epoch ms) falls in: changes at every boundary. */
+export function epochMark(ts: number): number {
+    const DAY = 86_400_000;
+    const day = Math.floor(ts / DAY);
+    const minute = Math.floor((ts - day * DAY) / 60_000);
+    const passed = EPOCH_BOUNDARIES_UTC_MIN.filter(b => b <= minute).length;
+    return day * EPOCH_BOUNDARIES_UTC_MIN.length + passed;
+}
+
+/** An id is only an identity within (account, market, contract): production
+ * ids are xxh32 of the broker's seqno, and the stock and futures counters
+ * are independent with overlapping ranges. */
+function reportMatches(p: OrderProgram, account: { brokerId: string; accountId: string } | null | undefined,
+    code: string | undefined, securityType: string | undefined): boolean {
+    const b = p.binding;
+    return (!account || (account.brokerId === b.account.brokerId && account.accountId === b.account.accountId))
+        && (code === undefined || code === b.contract.orderCode || code === b.contract.quoteCode)
+        && (securityType === undefined || securityType === b.contract.securityType);
+}
+
+const isExternalEntry = (lv: Level, slot: OrderSlot) => slot.role === 'entry' && lv.entry.type === 'external';
+
 export function intentKey(p: OrderProgram, lv: Level, leg: LegName): string {
     return `${p.binding.env}/${encodeURIComponent(p.binding.serverId)}/${p.id}/${lv.id}/${leg}/${lv.cycles}/${p.intentSeq}`;
 }
@@ -204,7 +238,8 @@ function emitPlace(ctx: Ctx, p: OrderProgram, lv: Level, role: 'entry' | 'exit',
 }
 
 function emitCancel(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot): boolean {
-    if (!envMatches(ctx.s, p) || !slot.orderId) return false;
+    // an id of an earlier epoch may name another order: never cancel it
+    if (!envMatches(ctx.s, p) || !slot.orderId || slot.unconfirmed) return false;
     const attempts = (slot.cancel?.attempts ?? 0) + 1;
     const key = `${slot.key}/cancel/${attempts}`;
     slot.cancel = { key, status: 'pendingSubmit', attempts, detail: null, sentAt: ctx.ts,
@@ -223,7 +258,8 @@ function ensureCancels(ctx: Ctx, p: OrderProgram, retry: boolean) {
     if (p.status !== 'stopping' || !envMatches(ctx.s, p)) return;
     for (const lv of p.levels) {
         for (const slot of lv.orders) {
-            if (slot.role !== 'entry' || slot.status !== 'working' || !slot.orderId) continue;
+            // no confirmed id this epoch: wait for a listing to rebind it
+            if (slot.role !== 'entry' || slot.status !== 'working' || !slot.orderId || slot.unconfirmed) continue;
             const c = slot.cancel;
             if (c === null) emitCancel(ctx, p, lv, slot);
             else if (retry && c.attempts < MAX_CANCEL_ATTEMPTS && (c.status === 'failed'
@@ -512,11 +548,15 @@ function findSlotByKey(s: EngineState, key: string, src: Source) {
     return null;
 }
 
-function findSlotByOrderId(s: EngineState, orderId: string, src: Source) {
+/** A report only matches its own environment's programs, its own account
+ * and contract, and a binding of the current epoch. */
+function findSlotByOrderId(s: EngineState, orderId: string, src: Source,
+    account: { brokerId: string; accountId: string } | null | undefined, code: string | undefined,
+    securityType: string | undefined) {
     for (const p of s.programs) {
-        if (!boundTo(p, src)) continue; // a report only matches its own environment's programs
+        if (!boundTo(p, src) || !reportMatches(p, account, code, securityType)) continue;
         for (const lv of p.levels) {
-            const slot = lv.orders.find(o => o.orderId === orderId);
+            const slot = lv.orders.find(o => !o.unconfirmed && o.orderId === orderId);
             if (slot) return { p, lv, slot };
         }
     }
@@ -526,7 +566,9 @@ function findSlotByOrderId(s: EngineState, orderId: string, src: Source) {
 /** Apply reports that raced the order id becoming known (deals, then order events). */
 function drainOrphans(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot) {
     const s = ctx.s;
-    const mine = (e: Source & { orderId: string }) => e.orderId === slot.orderId && boundTo(p, e);
+    const mine = (e: Source & { orderId: string; account?: { brokerId: string; accountId: string } | null;
+        code?: string; securityType?: string }) =>
+        e.orderId === slot.orderId && boundTo(p, e) && reportMatches(p, e.account, e.code, e.securityType);
     const deals = s.orphanDeals.filter(d => mine(d.deal));
     s.orphanDeals = s.orphanDeals.filter(d => !mine(d.deal));
     for (const d of deals) applyDeal(ctx, p, lv, slot, d.deal);
@@ -646,7 +688,7 @@ function applyOrder(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, e: Or
 }
 
 function onOrder(ctx: Ctx, e: OrderEvent) {
-    const hit = findSlotByOrderId(ctx.s, e.orderId, e);
+    const hit = findSlotByOrderId(ctx.s, e.orderId, e, e.account, e.code, e.securityType);
     if (!hit) {
         // e.g. a New failure reported before the submit result: keep it for the binding
         ctx.s.orphanOrders.push({ order: e, ts: ctx.ts });
@@ -727,7 +769,7 @@ function applyDeal(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, d: Dea
 }
 
 function onDeal(ctx: Ctx, e: DealEvent) {
-    const hit = findSlotByOrderId(ctx.s, e.orderId, e);
+    const hit = findSlotByOrderId(ctx.s, e.orderId, e, e.account, e.code, e.securityType);
     if (!hit) {
         ctx.s.orphanDeals.push({ deal: e, ts: ctx.ts });
         if (ctx.s.orphanDeals.length > ORPHAN_DEAL_LIMIT) ctx.s.orphanDeals.splice(0, ctx.s.orphanDeals.length - ORPHAN_DEAL_LIMIT);
@@ -756,9 +798,34 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                 }
                 // ended before this listing (not by a report drained just now)
                 const wasEnded = slot.status === 'ended';
-                const row = slot.orderId
-                    ? e.orders.find(o => o.orderId === slot.orderId)
+                const external = isExternalEntry(lv, slot);
+                // an id is never enough: the row must carry this slot's tag
+                // (only an external entry has none — its id, this epoch)
+                const row = slot.orderId && !slot.unconfirmed
+                    ? e.orders.find(o => o.orderId === slot.orderId && (external || o.intentKey === slot.key))
                     : e.orders.find(o => o.intentKey === slot.key);
+                if (slot.unconfirmed) {
+                    // bound in an earlier epoch: only this epoch's row with its
+                    // tag rebinds it — an ended slot never takes part again
+                    const open = isActive(slot) || (slot.status === 'unknown' && !slot.acknowledged);
+                    if (!open) continue;
+                    if (row) {
+                        slot.orderId = row.orderId;
+                        slot.unconfirmed = false;
+                        if (slot.status === 'unknown') slot.status = 'working';
+                        slot.detail = 'rebound';
+                        drainOrphans(ctx, p, lv, slot);
+                        touched = true;
+                    } else if (isActive(slot) && (e.notSent ?? []).includes(slot.key)) {
+                        // absent from this epoch's listings: what became of it is
+                        // unknown — the user acknowledges it
+                        slot.status = 'unknown';
+                        slot.detail = 'missingAfterEpoch';
+                        notice(ctx, 'unknown', p, lv.id, `${slot.key} missingAfterEpoch`);
+                        touched = true;
+                        continue;
+                    } else continue;
+                }
                 if (slot.status === 'pendingSubmit' && !slot.orderId && row) {
                     // the listing answered before the submit result did
                     slot.orderId = row.orderId;
@@ -831,6 +898,45 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
         refreshStopping(p);
     }
 }
+
+/** A new trade-id epoch on (env, server): every id bound before stops
+ * identifying its order (`unconfirmed`); reports buffered for such ids are
+ * dropped. A slot still open is rebound by the next listing through its tag.
+ * An external entry (no tag) keeps its id within a trading epoch (a
+ * reconnect only) — across an epoch boundary the user confirms how much it
+ * filled before any exit counts on it. */
+function onEpoch(ctx: Ctx, e: EpochEvent) {
+    const s = ctx.s;
+    const mark = epochMark(ctx.ts);
+    const crossed = s.epochMark !== mark;
+    s.epochMark = mark;
+    s.orphanDeals = s.orphanDeals.filter(d => !boundToSource(d.deal, e));
+    s.orphanOrders = s.orphanOrders.filter(o => !boundToSource(o.order, e));
+    for (const p of s.programs) {
+        if (!boundTo(p, e)) continue;
+        for (const lv of p.levels) {
+            const external = lv.entry.type === 'external';
+            let openEntry = false;
+            for (const slot of lv.orders) {
+                if (!slot.orderId || slot.unconfirmed) continue;
+                if (external && slot.role === 'entry') {
+                    if (!crossed) continue;
+                    openEntry ||= isActive(slot);
+                }
+                slot.unconfirmed = true;
+            }
+            if (openEntry) {
+                lv.pending = { leg: 'entry', price: null, ts: ctx.ts, reason: 'unknownEntryAcrossDay' };
+                // nothing known filled: wait for the user; a known position
+                // keeps its protection meanwhile (the phase stays)
+                if (lv.position === 0 && lv.phase !== 'needsConfirm') lv.phase = 'needsConfirm';
+                notice(ctx, 'needsConfirm', p, lv.id, 'entry unknownEntryAcrossDay');
+            }
+        }
+    }
+}
+
+const boundToSource = (a: Source, b: Source) => a.env === b.env && a.serverId === b.serverId;
 
 function onRestore(ctx: Ctx) {
     const s = ctx.s;
@@ -911,6 +1017,9 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
         p.updatedAt = ctx.ts;
         p.hold = null;
         s.programs.push(p);
+        // a program created now belongs to the current epoch (a new
+        // partition has seen no epoch event yet)
+        s.epochMark ??= epochMark(ctx.ts);
         updateHolds(ctx);
         notice(ctx, 'created', p, null, p.kind);
         return;
@@ -959,9 +1068,31 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             refreshStopping(p);
             return;
         }
+        case 'confirmEntry': {
+            const lv = p.levels.find(l => l.id === c.levelId && l.pending?.reason === 'unknownEntryAcrossDay');
+            if (!lv) { reject(ctx, p, 'notPending', c.levelId); return; }
+            const slot = [...lv.orders].reverse().find(o => o.role === 'entry' && o.cycle === lv.cycles);
+            if (!slot) { reject(ctx, p, 'noEntry', c.levelId); return; }
+            if (!Number.isSafeInteger(c.filled) || c.filled < slot.filled || c.filled > slot.qty) {
+                reject(ctx, p, 'invalidQty', `${c.filled}`);
+                return;
+            }
+            if (c.filled > slot.filled) applyFill(ctx, p, lv, slot, `confirmed:${ctx.ts}`, c.filled - slot.filled, undefined);
+            if (isActive(slot)) slot.status = slot.filled >= slot.qty ? 'filled' : 'ended';
+            slot.detail = 'confirmedAcrossDay';
+            lv.pending = null;
+            if (lv.phase === 'needsConfirm') lv.phase = 'working';
+            accept();
+            ensureExits(ctx, p, lv);
+            settle(ctx, p, lv);
+            refreshStopping(p);
+            return;
+        }
         case 'resolvePending': {
             const lv = p.levels.find(l => l.id === c.levelId);
             if (!lv || lv.phase !== 'needsConfirm' || !lv.pending) { reject(ctx, p, 'notPending', c.levelId); return; }
+            // only the user's fill quantity settles it (confirmEntry)
+            if (lv.pending.reason === 'unknownEntryAcrossDay') { reject(ctx, p, 'confirmEntry', c.levelId); return; }
             const leg = lv.pending.leg;
             if (c.choice === 'keep') {
                 lv.pending = null;
@@ -1013,6 +1144,7 @@ export function step(state: EngineState, event: ExecEvent): StepResult {
         case 'deal': onDeal(ctx, event); break;
         case 'reconcile': onReconcile(ctx, event); break;
         case 'restore': onRestore(ctx); break;
+        case 'epoch': onEpoch(ctx, event); break;
         case 'command': onCommand(ctx, event); break;
     }
     // time advanced on the live connection: cancel retries / timeouts run for
