@@ -83,6 +83,10 @@ export const CANCEL_UNKNOWN_RETRY_MS = 30_000;
  * TODO(#201): simplify once the backend confirms when the seqno wraps / resets. */
 export const EPOCH_BOUNDARIES_UTC_MIN = [0, 30, 410] as const;
 
+/** Detail of a request refused by the send-time gate because a trade-id
+ * epoch boundary passed after it was created: nothing was sent. */
+export const EPOCH_CHANGED = 'epochChanged';
+
 /** The epoch `ts` (epoch ms) falls in: changes at every boundary. */
 export function epochMark(ts: number): number {
     const DAY = 86_400_000;
@@ -262,6 +266,9 @@ function ensureCancels(ctx: Ctx, p: OrderProgram, retry: boolean) {
             if (slot.role !== 'entry' || slot.status !== 'working' || !slot.orderId || slot.unconfirmed) continue;
             const c = slot.cancel;
             if (c === null) emitCancel(ctx, p, lv, slot);
+            // refused at the send-time gate (never sent): goes out as soon as
+            // the id is confirmed in this epoch, not an attempt toward giving up
+            else if (c.status === 'failed' && c.detail === EPOCH_CHANGED) emitCancel(ctx, p, lv, slot);
             else if (retry && c.attempts < MAX_CANCEL_ATTEMPTS && (c.status === 'failed'
                 || ((c.status === 'unknown' || c.status === 'requested')
                     && ctx.ts - c.sentAt >= CANCEL_UNKNOWN_RETRY_MS))) {
@@ -590,6 +597,13 @@ function onIntentResult(ctx: Ctx, e: IntentResultEvent) {
         }
         if (c.status !== 'pendingSubmit') return; // duplicate
         if (e.outcome === 'accepted') c.status = 'requested';
+        // refused at the send-time gate across an epoch boundary: never sent —
+        // the cancel returns to its slot until this epoch's listing rebinds the id
+        else if (e.outcome === 'notSent' && e.detail === EPOCH_CHANGED) {
+            c.outstanding = c.outstanding.filter(k => k !== e.key);
+            c.status = 'failed';
+            c.detail = EPOCH_CHANGED;
+        }
         else if (e.outcome === 'notSent') cancelFailed(ctx, p, lv, slot, e.detail ?? 'notSent');
         else { c.status = 'unknown'; c.detail = e.detail ?? 'unknown'; }
         refreshStopping(p);

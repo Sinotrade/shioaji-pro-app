@@ -9,6 +9,7 @@
 // - `intents`: omitted means NONE may be emitted; otherwise the emitted list
 //   must have the same length and each element must subset-match.
 // - `notices`: every listed code must appear among the step's notices.
+// - `absentNotices`: no listed code may appear among the step's notices.
 // - `programs`: keyed by program id; `null` = the program must not exist;
 //   an object subset-matches the program, where `levels` may be given as an
 //   object keyed by level id (matched against the level with that id).
@@ -28,6 +29,7 @@ export const CONFORMANCE_SCHEMA_VERSION = 'execution-conformance-v1';
 export interface ScenarioExpect {
     intents?: unknown[];
     notices?: string[];
+    absentNotices?: string[];
     programs?: Record<string, unknown>;
     state?: unknown;
 }
@@ -90,6 +92,9 @@ export function checkExpect(expect: ScenarioExpect | undefined, state: EngineSta
     if (m) return m;
     for (const code of e.notices ?? []) {
         if (!notices.some(n => n.code === code)) return `notices: missing ${code} in ${JSON.stringify(notices.map(n => n.code))}`;
+    }
+    for (const code of e.absentNotices ?? []) {
+        if (notices.some(n => n.code === code)) return `notices: unexpected ${code}`;
     }
     for (const [id, exp] of Object.entries(e.programs ?? {})) {
         const p = state.programs.find(x => x.id === id);
