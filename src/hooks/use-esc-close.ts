@@ -58,7 +58,8 @@ export function useEscClose(onClose: Handler) {
     );
 }
 
-// 測試用
+// 目前疊了幾層 modal。測試用，也給需要「有 modal 開著就別搶鍵盤」的
+// 面板層 hook 判斷（例如 K 線圖的畫圖工具）。
 export function escStackDepth() {
     return stack.length;
 }

@@ -121,6 +121,18 @@ export const modeHint = style({
     pointerEvents: 'none',
 });
 
+// 畫圖模式的提示：與交易模式同一個位置，但用中性的面板色，不搶琥珀
+// 那組「武裝中、下一下會下單」的警示語彙
+export const drawHint = style([
+    modeHint,
+    {
+        color: vars.color.foreground,
+        background: 'color-mix(in srgb, ' + vars.color.panelRaised + ' 92%, transparent)',
+        border: `1px solid ${vars.color.border}`,
+        fontWeight: 500,
+    },
+]);
+
 export const triggerList = style({
     position: 'absolute',
     top: '8px',
@@ -174,10 +186,23 @@ export const triggerRemove = style({
     ':hover': { color: vars.color.danger },
 });
 
+// 左側畫圖工具列與圖表本體並排。工具列佔位而不是浮在圖上 — 浮動會蓋住
+// 最左邊那幾根 K 棒，往左拖載入更舊歷史時特別礙事。
+export const chartRow = style({
+    display: 'flex',
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+});
+
 export const chartHost = style({
     flex: 1,
     minHeight: 0,
+    minWidth: 0,
     position: 'relative',
+    // 點圖表時取得鍵盤焦點（畫圖的 Delete 只在焦點在圖上時作用），
+    // 不畫焦點框
+    outline: 'none',
 });
 
 // ---- indicator legend（TradingView 式，圖上左上角，一列一個實例）----
