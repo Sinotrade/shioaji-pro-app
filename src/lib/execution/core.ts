@@ -1089,6 +1089,19 @@ function startStop(ctx: Ctx, p: OrderProgram) {
     refreshStopping(p);
 }
 
+/** Do `a` and `b` track the same external entry order: an order id within one
+ * (environment, account, market, contract)? */
+export function sameExternalEntry(a: OrderProgram, b: OrderProgram): boolean {
+    const entries = (p: OrderProgram) =>
+        p.levels.flatMap(lv => lv.entry.type === 'external' ? [lv.entry.orderId] : []);
+    const [ba, bb] = [a.binding, b.binding];
+    if (ba.env !== bb.env || ba.serverId !== bb.serverId || !sameAccount(ba.account, bb.account)
+        || ba.contract.market !== bb.contract.market || ba.contract.securityType !== bb.contract.securityType
+        || ba.contract.orderCode !== bb.contract.orderCode) return false;
+    const theirs = entries(b);
+    return entries(a).some(id => theirs.includes(id));
+}
+
 function onCommand(ctx: Ctx, e: CommandEvent) {
     const s = ctx.s;
     const c = e.command;
@@ -1097,6 +1110,10 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
         if (s.programs.some(x => x.id === p.id)) { reject(ctx, null, 'duplicateProgram', p.id); return; }
         const invalid = validateProgram(p);
         if (invalid) { reject(ctx, null, invalid, p.id); return; }
+        // one live program per external entry order: two would each reconcile
+        // the same fills and each send a full-size exit
+        const other = s.programs.find(x => x.status !== 'stopped' && sameExternalEntry(x, p));
+        if (other) { reject(ctx, null, 'duplicateEntry', `${p.id} (${other.id})`); return; }
         if (!canEvaluate(s)) { reject(ctx, null, 'unknownEnv', p.id); return; }
         if (s.conn.env !== p.binding.env || s.conn.serverId !== p.binding.serverId) { reject(ctx, null, 'envMismatch', p.id); return; }
         p.version = 1;

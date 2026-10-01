@@ -500,10 +500,24 @@ async function registerNativeBracket(spec: BracketSpec): Promise<BracketPlan> {
     if (!spec.env || spec.env !== currentProtectionEnv()) throw new Error('伺服器或模擬／正式模式已切換或未確認，括號單未登記');
     if (!spec.orderId || !spec.account?.broker_id || !spec.account?.account_id) throw new Error('進場單缺少委託或帳戶識別，括號單未登記');
     if (!Number.isSafeInteger(spec.quantity) || spec.quantity <= 0) throw new Error('進場數量無效');
+    // idempotent: an entry order has at most one live bracket (the engine
+    // refuses a second one too: both would send a full-size exit)
+    const existingFor = () => nativePlans().find(p => p.native.status !== 'stopped' && p.env === spec.env
+        && p.orderId === spec.orderId && p.orderCode === spec.orderCode
+        && accountRefKey(p.account) === accountRefKey(spec.account));
+    const existing = existingFor();
+    if (existing) return existing;
     const now = Date.now();
     const program = programForNewBracket(spec, `nb-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`, now);
     if (!program) throw new Error('伺服器模式未確認，括號單未登記');
-    await createNativeProgram(program);
+    try {
+        await createNativeProgram(program);
+    } catch (e) {
+        // registered meanwhile (another window): that one is the bracket
+        const again = existingFor();
+        if (again) return again;
+        throw e;
+    }
     notify({ kind: 'info', title: '括號單待命', body: `${spec.quoteCode} 成交後依成交量自動掛${describeProtection(spec)}` });
     return nativePlans().find(p => p.id === program.id) ?? bracketPlansFromPrograms([program])[0]!;
 }

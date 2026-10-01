@@ -277,6 +277,23 @@ describe('ownership: one executor per trigger / bracket', () => {
         expect(engine.getTriggers()).toHaveLength(0);
     });
 
+    it('registering the same entry again returns its bracket: one program per entry order', async () => {
+        await boot({ enabled: true });
+        await bracket.ensureBracketHost();
+        const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'fixture-f1', seqno: 'fixture-f1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
+        const a = await bracket.registerBracket(spec);
+        const b = await bracket.registerBracket(spec);
+        expect(b.id).toBe(a.id);
+        expect(creates()).toHaveLength(1);
+        expect(host.programs).toHaveLength(1);
+        // another entry order is another bracket
+        const c = await bracket.registerBracket({ ...spec, orderId: 'fixture-f2', seqno: 'fixture-f2' });
+        expect(c.id).not.toBe(a.id);
+        expect(creates()).toHaveLength(2);
+    });
+
     it('an entry open across a trade-id epoch is settled only by the user\'s fill quantity', async () => {
         await boot({ enabled: true });
         await bracket.ensureBracketHost();

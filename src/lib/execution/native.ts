@@ -186,6 +186,7 @@ const REJECT_TEXT: Record<string, string> = {
     'rejected.unknownEnv': '執行引擎尚未連上伺服器（模式未確認）',
     'rejected.staleVersion': '狀態已變更，請再試一次',
     'rejected.duplicateProgram': '此單已建立',
+    'rejected.duplicateEntry': '此進場單已有括號單',
     'rejected.hasOrdersOrPosition': '仍有委託或部位，先停止並等待結束',
     'rejected.unpast': '目前已未穿價，需要再確認',
     'rejected.noPrice': '尚未收到即時成交價',
