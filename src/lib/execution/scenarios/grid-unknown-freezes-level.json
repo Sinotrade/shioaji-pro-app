@@ -253,7 +253,8 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 98
+        "price": 98,
+        "fillTs": 1.005
       },
       "expect": {
         "intents": [

@@ -294,7 +294,8 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 99
+        "price": 99,
+        "fillTs": 1.005
       },
       "expect": {
         "intents": [
@@ -341,7 +342,8 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 99
+        "price": 99,
+        "fillTs": 1.006
       },
       "expect": {
         "programs": {
@@ -371,7 +373,8 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 99
+        "price": 99,
+        "fillTs": 1.007
       },
       "expect": {
         "intents": [
@@ -448,7 +451,8 @@
         "code": "TXFJ6",
         "action": "Sell",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.011
       },
       "expect": {
         "programs": {
@@ -480,7 +484,8 @@
         "code": "TXFJ6",
         "action": "Sell",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.012
       },
       "expect": {
         "programs": {
@@ -527,7 +532,8 @@
         "serverId": "local-a",
         "orderId": "o3",
         "op": "Cancel",
-        "failed": false
+        "failed": false,
+        "exchTs": 1.015
       },
       "expect": {
         "programs": {

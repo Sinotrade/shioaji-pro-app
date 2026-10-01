@@ -184,7 +184,8 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 2,
-        "price": 99
+        "price": 99,
+        "fillTs": 1.004
       },
       "expect": {
         "intents": [
@@ -285,7 +286,8 @@
         "op": "UpdateQty",
         "failed": false,
         "cancelQty": 1,
-        "reportId": "r1"
+        "reportId": "r1",
+        "exchTs": 1.007
       },
       "expect": {
         "programs": {

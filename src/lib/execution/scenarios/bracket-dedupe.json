@@ -163,7 +163,8 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.003
       },
       "expect": {
         "programs": {

@@ -175,7 +175,8 @@
         "op": "Cancel",
         "failed": false,
         "cancelQty": 1,
-        "reportId": "r1"
+        "reportId": "r1",
+        "exchTs": 1.006
       },
       "expect": {
         "programs": {

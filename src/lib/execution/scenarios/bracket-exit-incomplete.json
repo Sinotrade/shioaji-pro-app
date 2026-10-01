@@ -142,7 +142,8 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 2,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.002
       }
     },
     {
@@ -195,7 +196,8 @@
         "code": "TXFJ6",
         "action": "Sell",
         "qty": 1,
-        "price": 111
+        "price": 111,
+        "fillTs": 1.005
       }
     },
     {
@@ -206,7 +208,8 @@
         "serverId": "local-a",
         "orderId": "o-take",
         "op": "Cancel",
-        "failed": false
+        "failed": false,
+        "exchTs": 1.006
       },
       "expect": {
         "programs": {

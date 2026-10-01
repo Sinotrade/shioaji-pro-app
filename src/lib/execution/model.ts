@@ -408,6 +408,9 @@ export interface OrderEvent extends Source {
     account?: { brokerId: string; accountId: string } | null;
     code?: string;
     securityType?: string;
+    /** Exchange time of the operation (epoch seconds, `status.exchange_ts`):
+     * which trade-id epoch the report belongs to. */
+    exchTs?: number;
 }
 export interface DealEvent extends Source {
     type: 'deal'; ts: number; orderId: string;

@@ -141,7 +141,8 @@ describe('bracket adapter', () => {
         expect(fired.intents).toHaveLength(1);
         expect(fired.intents[0]).toMatchObject({ action: 'Sell', qty: protectionQuantity(web), leg: 'stop', order: { octype: 'Cover' } });
         const late = run([{ type: 'deal', ts: 11, ...SRC, orderId: 'o-entry', eventId: 'e3', seq: 's3',
-            account: { brokerId: 'F002000', accountId: '1234567' }, code: 'TXFJ6', action: 'Buy', qty: 1, price: 100 }], fired.state);
+            account: { brokerId: 'F002000', accountId: '1234567' }, code: 'TXFJ6', action: 'Buy', qty: 1, price: 100,
+            fillTs: 1700000003 }], fired.state);
         const webAfter = applyEntryFill({ ...web, exit: { status: 'sending', kind: 'stop', quantity: 2, filled: 0, fills: {}, at: 1 } },
             { orderId: 'o-entry', key: 'o-entry:s3', quantity: 1 }, 2);
         expect(late.state.programs[0]!.levels[0]!.unprotected).toBe(unprotectedQuantity(webAfter));

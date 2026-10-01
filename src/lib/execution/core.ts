@@ -609,17 +609,30 @@ function findSlotByOrderId(s: EngineState, orderId: string, src: Source,
     return null;
 }
 
-/** Apply reports that raced the order id becoming known (deals, then order events). */
+/** A report may be matched to a binding only when it is known to belong to the
+ * current trade-id epoch: its exchange time (epoch seconds) falls in the
+ * current epoch or later. An id is reused across epochs and a report can arrive
+ * late — one from before the boundary naming a reused id is another order's.
+ * Without an exchange time its epoch cannot be told: held, never applied to a
+ * binding (the listing decides). */
+function reportInEpoch(mark: number | null | undefined, exchTs: number | null | undefined): boolean {
+    if (exchTs === undefined || exchTs === null || !Number.isFinite(exchTs) || exchTs <= 0) return false;
+    return mark === undefined || mark === null || epochMark(Math.trunc(exchTs * 1000)) >= mark;
+}
+
+/** Apply reports that raced the order id becoming known (deals, then order
+ * events) — those of the current epoch only (`reportInEpoch`). */
 function drainOrphans(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot) {
     const s = ctx.s;
     const mine = (e: Source & { orderId: string; account?: { brokerId: string; accountId: string } | null;
-        code?: string; securityType?: string }) =>
-        e.orderId === slot.orderId && boundTo(p, e) && reportMatches(p, e.account, e.code, e.securityType);
-    const deals = s.orphanDeals.filter(d => mine(d.deal));
-    s.orphanDeals = s.orphanDeals.filter(d => !mine(d.deal));
+        code?: string; securityType?: string }, exchTs: number | undefined) =>
+        e.orderId === slot.orderId && reportInEpoch(s.epochMark, exchTs) && boundTo(p, e)
+        && reportMatches(p, e.account, e.code, e.securityType);
+    const deals = s.orphanDeals.filter(d => mine(d.deal, d.deal.fillTs));
+    s.orphanDeals = s.orphanDeals.filter(d => !mine(d.deal, d.deal.fillTs));
     for (const d of deals) applyDeal(ctx, p, lv, slot, d.deal);
-    const orders = s.orphanOrders.filter(o => mine(o.order));
-    s.orphanOrders = s.orphanOrders.filter(o => !mine(o.order));
+    const orders = s.orphanOrders.filter(o => mine(o.order, o.order.exchTs));
+    s.orphanOrders = s.orphanOrders.filter(o => !mine(o.order, o.order.exchTs));
     for (const o of orders) applyOrder(ctx, p, lv, slot, o.order);
 }
 
@@ -749,7 +762,8 @@ function applyOrder(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, e: Or
 }
 
 function onOrder(ctx: Ctx, e: OrderEvent) {
-    const hit = findSlotByOrderId(ctx.s, e.orderId, e, e.account, e.code, e.securityType);
+    const hit = reportInEpoch(ctx.s.epochMark, e.exchTs)
+        ? findSlotByOrderId(ctx.s, e.orderId, e, e.account, e.code, e.securityType) : null;
     if (!hit) {
         // e.g. a New failure reported before the submit result: keep it for the binding
         ctx.s.orphanOrders.push({ order: e, ts: ctx.ts });
@@ -830,7 +844,8 @@ function applyDeal(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, d: Dea
 }
 
 function onDeal(ctx: Ctx, e: DealEvent) {
-    const hit = findSlotByOrderId(ctx.s, e.orderId, e, e.account, e.code, e.securityType);
+    const hit = reportInEpoch(ctx.s.epochMark, e.fillTs)
+        ? findSlotByOrderId(ctx.s, e.orderId, e, e.account, e.code, e.securityType) : null;
     if (!hit) {
         ctx.s.orphanDeals.push({ deal: e, ts: ctx.ts });
         if (ctx.s.orphanDeals.length > ORPHAN_DEAL_LIMIT) ctx.s.orphanDeals.splice(0, ctx.s.orphanDeals.length - ORPHAN_DEAL_LIMIT);

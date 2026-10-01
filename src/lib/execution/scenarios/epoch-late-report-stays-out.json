@@ -1,7 +1,7 @@
 {
   "schema": "execution-conformance-v1",
-  "name": "epoch-reused-id-new-order",
-  "description": "#201 round 22: an id bound before an epoch boundary stops identifying its order; a new order that reuses the id (the next trading day's sequence) gets its own fills, never the old slot.",
+  "name": "epoch-late-report-stays-out",
+  "description": "#201 round 28: reports are matched like listings — within (account, market, contract) and the trade-id epoch. A report whose exchange time is before the current epoch (late) never touches a binding of this epoch, even when the id was reused by our own new order; one without an exchange time is held for the listing.",
   "covers": [
     "#201",
     "trade-id-epoch"
@@ -328,6 +328,117 @@
         "serverId": "local-a",
         "orderId": "T1",
         "eventId": null,
+        "seq": "000777",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "action": "Sell",
+        "qty": 1,
+        "price": 100,
+        "fillTs": 1790740000.0
+      },
+      "expect": {
+        "programs": {
+          "t2": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "orderId": "T1",
+                    "status": "working",
+                    "filled": 0
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "note": "a report from before the 06:50 UTC boundary (exchange time 03:46 UTC), delivered late, names T1 — the id t2's order got in this epoch: another order's fill, never t2's"
+    },
+    {
+      "event": {
+        "type": "order",
+        "ts": 1790751600009,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "T1",
+        "op": "Cancel",
+        "failed": false,
+        "cancelQty": 1,
+        "exchTs": 1790740001.0,
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
+      },
+      "note": "a late cancel report of that other order: t2's order is not cancelled",
+      "expect": {
+        "programs": {
+          "t2": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "orderId": "T1",
+                    "status": "working"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "deal",
+        "ts": 1790751600010,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "T1",
+        "eventId": null,
+        "seq": "000778",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "action": "Sell",
+        "qty": 1,
+        "price": 100
+      },
+      "note": "a report without an exchange time: its epoch cannot be told — held, never applied to the binding (the listing decides)",
+      "expect": {
+        "programs": {
+          "t2": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "orderId": "T1",
+                    "status": "working",
+                    "filled": 0
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "deal",
+        "ts": 1790751600011,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "T1",
+        "eventId": null,
         "seq": "000001",
         "account": {
           "brokerId": "F002000",
@@ -337,7 +448,7 @@
         "action": "Sell",
         "qty": 1,
         "price": 100,
-        "fillTs": 1790751600.008
+        "fillTs": 1790751600.011
       },
       "expect": {
         "programs": {
@@ -352,22 +463,10 @@
                 ]
               }
             }
-          },
-          "t1": {
-            "levels": {
-              "L1": {
-                "orders": [
-                  {
-                    "status": "working",
-                    "filled": 0,
-                    "unconfirmed": true
-                  }
-                ]
-              }
-            }
           }
         }
-      }
+      },
+      "note": "t2's own fill (exchange time in this epoch) applies"
     }
   ]
 }

@@ -481,7 +481,8 @@
         "code": "TXFJ6",
         "action": "Sell",
         "qty": 1,
-        "price": 90
+        "price": 90,
+        "fillTs": 3.004
       },
       "expect": {
         "programs": {
@@ -515,7 +516,8 @@
         "code": "TXFJ6",
         "action": "Sell",
         "qty": 1,
-        "price": 90
+        "price": 90,
+        "fillTs": 3.005
       },
       "expect": {
         "programs": {

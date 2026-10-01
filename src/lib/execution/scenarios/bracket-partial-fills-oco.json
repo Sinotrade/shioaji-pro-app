@@ -144,7 +144,8 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.002
       },
       "expect": {
         "programs": {
@@ -233,7 +234,8 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.006
       },
       "expect": {
         "programs": {
@@ -276,7 +278,8 @@
         "code": "TXFJ6",
         "action": "Sell",
         "qty": 1,
-        "price": 94
+        "price": 94,
+        "fillTs": 1.008
       },
       "expect": {
         "programs": {

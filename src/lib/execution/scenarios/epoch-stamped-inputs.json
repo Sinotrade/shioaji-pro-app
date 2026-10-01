@@ -185,7 +185,8 @@
         "code": "TXFJ6",
         "action": "Sell",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1790751600.002
       },
       "note": "its id confirms nothing yet: the report is held as an orphan",
       "expect": {

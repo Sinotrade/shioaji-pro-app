@@ -278,7 +278,8 @@
         "orderId": "o1",
         "op": "Cancel",
         "failed": true,
-        "cancelKey": "simulation/local-a/g1/L1/entry/0/0/cancel/2"
+        "cancelKey": "simulation/local-a/g1/L1/entry/0/0/cancel/2",
+        "exchTs": 31.006
       },
       "expect": {
         "notices": [
@@ -321,7 +322,8 @@
         "serverId": "local-a",
         "orderId": "o1",
         "op": "Cancel",
-        "failed": false
+        "failed": false,
+        "exchTs": 31.009
       },
       "expect": {
         "programs": {

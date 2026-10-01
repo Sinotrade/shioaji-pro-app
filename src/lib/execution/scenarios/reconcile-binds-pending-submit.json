@@ -134,7 +134,8 @@
         "serverId": "local-a",
         "orderId": "o1",
         "op": "New",
-        "failed": true
+        "failed": true,
+        "exchTs": 1.003
       }
     },
     {

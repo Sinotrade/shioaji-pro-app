@@ -247,7 +247,8 @@
         "code": "TXFJ6",
         "action": "Sell",
         "qty": 1,
-        "price": 90
+        "price": 90,
+        "fillTs": 1.009
       }
     },
     {

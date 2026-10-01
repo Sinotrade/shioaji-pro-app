@@ -212,7 +212,8 @@
         "serverId": "local-a",
         "orderId": "o1",
         "op": "Cancel",
-        "failed": false
+        "failed": false,
+        "exchTs": 1.005
       },
       "expect": {
         "programs": {

@@ -284,7 +284,8 @@
         "action": "Sell",
         "qty": 1,
         "price": 100,
-        "securityType": "STK"
+        "securityType": "STK",
+        "fillTs": 1790730000.009
       },
       "expect": {
         "programs": {
@@ -332,7 +333,8 @@
         "action": "Sell",
         "qty": 1,
         "price": 100,
-        "securityType": "FUT"
+        "securityType": "FUT",
+        "fillTs": 1790730000.01
       },
       "expect": {
         "programs": {

@@ -174,7 +174,8 @@
         "orderId": "o1",
         "op": "Cancel",
         "failed": false,
-        "cancelQty": 0
+        "cancelQty": 0,
+        "exchTs": 1.006
       },
       "expect": {
         "programs": {
@@ -224,7 +225,8 @@
         "orderId": "o1",
         "op": "Cancel",
         "failed": false,
-        "cancelQty": 1
+        "cancelQty": 1,
+        "exchTs": 31.007
       },
       "expect": {
         "programs": {
