@@ -39,6 +39,7 @@
 
 import {
     EXECUTION_SCHEMA_VERSION,
+    type AccountKey,
     type CommandEvent,
     type ConnectionEvent,
     type DealEvent,
@@ -84,8 +85,37 @@ export const CANCEL_UNKNOWN_RETRY_MS = 30_000;
 export const EPOCH_BOUNDARIES_UTC_MIN = [0, 30, 410] as const;
 
 /** Detail of a request refused by the send-time gate because a trade-id
- * epoch boundary passed after it was created: nothing was sent. */
+ * epoch boundary passed after it was created, or is within the guard band:
+ * nothing was sent. */
 export const EPOCH_CHANGED = 'epochChanged';
+
+/** Upper bound on the time from the send-time gate to the request's bytes
+ * being on the wire (connect + TLS + write), on every send path. */
+export const SEND_WIRE_TIMEOUT_MS = 2_000;
+
+/** Guard band before every time boundary: nothing is emitted (core) and nothing
+ * passes the send-time gate when the next boundary is nearer than this — a
+ * request that passed the gate is on the wire before the boundary. Every
+ * boundary is outside the trading sessions. */
+export const EPOCH_GUARD_BAND_MS = 2 * SEND_WIRE_TIMEOUT_MS;
+
+/** The first time boundary after `ts` (epoch ms). */
+export function nextEpochBoundary(ts: number): number {
+    const DAY = 86_400_000;
+    const day = Math.floor(ts / DAY);
+    for (const d of [0, 1]) {
+        for (const m of EPOCH_BOUNDARIES_UTC_MIN) {
+            const t = (day + d) * DAY + m * 60_000;
+            if (t > ts) return t;
+        }
+    }
+    throw new Error('a boundary every day');
+}
+
+/** `ts` is within the guard band before the next boundary. */
+export function inEpochGuardBand(ts: number): boolean {
+    return nextEpochBoundary(ts) - ts < EPOCH_GUARD_BAND_MS;
+}
 
 /** The epoch `ts` (epoch ms) falls in: changes at every boundary. */
 export function epochMark(ts: number): number {
@@ -144,6 +174,16 @@ const isActive = (slot: OrderSlot) => slot.status === 'pendingSubmit' || slot.st
 
 function canEvaluate(s: EngineState): boolean {
     return s.conn.live && s.conn.env !== null && s.conn.serverId !== null;
+}
+
+const sameAccount = (a: AccountKey, b: AccountKey) =>
+    a.accountType === b.accountType && a.brokerId === b.brokerId && a.accountId === b.accountId;
+
+/** Nothing is placed or cancelled for an account until this epoch's first
+ * listing of it has been applied (triggers meanwhile wait: a touch re-fires
+ * on a later tick, exits and cancels are ensured once the listing is in). */
+function awaitingListing(s: EngineState, p: OrderProgram): boolean {
+    return (s.conn.awaitingEpochListing ?? []).some(a => sameAccount(a, p.binding.account));
 }
 
 function envMatches(s: EngineState, p: OrderProgram): boolean {
@@ -227,7 +267,8 @@ const exitFired = (lv: Level) => lv.exit?.type === 'oco' && cycleSlots(lv, 'exit
 
 function emitPlace(ctx: Ctx, p: OrderProgram, lv: Level, role: 'entry' | 'exit', leg: LegName, qty: number,
     price: number | null, order: OrderSpec): boolean {
-    if (!envMatches(ctx.s, p) || qty <= 0) return false; // isolation guard: never cross environments
+    // isolation guard: never cross environments
+    if (!envMatches(ctx.s, p) || awaitingListing(ctx.s, p) || inEpochGuardBand(ctx.ts) || qty <= 0) return false;
     const key = intentKey(p, lv, leg);
     p.intentSeq += 1;
     lv.orders.push({ key, role, leg, cycle: lv.cycles, qty, status: 'pendingSubmit', orderId: null, filled: 0,
@@ -243,7 +284,8 @@ function emitPlace(ctx: Ctx, p: OrderProgram, lv: Level, role: 'entry' | 'exit',
 
 function emitCancel(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot): boolean {
     // an id of an earlier epoch may name another order: never cancel it
-    if (!envMatches(ctx.s, p) || !slot.orderId || slot.unconfirmed) return false;
+    if (!envMatches(ctx.s, p) || !slot.orderId || slot.unconfirmed || awaitingListing(ctx.s, p)
+        || inEpochGuardBand(ctx.ts)) return false;
     const attempts = (slot.cancel?.attempts ?? 0) + 1;
     const key = `${slot.key}/cancel/${attempts}`;
     slot.cancel = { key, status: 'pendingSubmit', attempts, detail: null, sentAt: ctx.ts,
@@ -805,6 +847,10 @@ function onDeal(ctx: Ctx, e: DealEvent) {
 }
 
 function onReconcile(ctx: Ctx, e: ReconcileEvent) {
+    // this epoch's listing of the account is in: it may place / cancel again
+    const waiting = (ctx.s.conn.awaitingEpochListing ?? []).filter(a => !sameAccount(a, e.account));
+    if (waiting.length > 0) ctx.s.conn.awaitingEpochListing = waiting;
+    else delete ctx.s.conn.awaitingEpochListing;
     for (const p of ctx.s.programs) {
         const b = p.binding;
         if (b.env !== e.env || b.serverId !== e.serverId || b.account.accountType !== e.account.accountType
@@ -933,6 +979,14 @@ function onEpoch(ctx: Ctx, e: EpochEvent) {
     const crossed = s.epochMark !== mark;
     s.epochMark = mark;
     s.epochSeq = (s.epochSeq ?? 0) + 1;
+    // live for reports, but nothing goes out for an account until this
+    // epoch's first listing of it has been applied
+    const waiting: AccountKey[] = [];
+    for (const p of s.programs) {
+        if (boundTo(p, e) && !waiting.some(a => sameAccount(a, p.binding.account))) waiting.push(p.binding.account);
+    }
+    if (waiting.length > 0) s.conn.awaitingEpochListing = waiting;
+    else delete s.conn.awaitingEpochListing;
     s.orphanDeals = s.orphanDeals.filter(d => !boundToSource(d.deal, e));
     s.orphanOrders = s.orphanOrders.filter(o => !boundToSource(o.order, e));
     for (const p of s.programs) {

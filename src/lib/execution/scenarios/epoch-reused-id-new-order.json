@@ -272,6 +272,33 @@
         "code": "TXFR1",
         "price": 99
       },
+      "note": "#201 round 25: before this epoch's first listing of the account is applied nothing is placed (the cross waits)"
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1790751600004,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "complete": false,
+        "orders": []
+      },
+      "note": "this epoch's first listing of the account: placing may resume (t1 stays unconfirmed: it is not listed with its tag)"
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790751600005,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 99
+      },
       "expect": {
         "intents": [
           {
@@ -279,12 +306,13 @@
             "key": "simulation/local-a/t2/L1/entry/0/0"
           }
         ]
-      }
+      },
+      "note": "the next tick still past the trigger fires"
     },
     {
       "event": {
         "type": "intentResult",
-        "ts": 1790751600004,
+        "ts": 1790751600007,
         "env": "simulation",
         "serverId": "local-a",
         "key": "simulation/local-a/t2/L1/entry/0/0",
@@ -295,7 +323,7 @@
     {
       "event": {
         "type": "deal",
-        "ts": 1790751600005,
+        "ts": 1790751600008,
         "env": "simulation",
         "serverId": "local-a",
         "orderId": "T1",

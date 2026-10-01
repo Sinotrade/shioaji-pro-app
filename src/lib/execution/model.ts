@@ -326,6 +326,9 @@ export interface ConnectionState {
     /** Environment last evaluated (a different one on resume = 'env' restore). */
     lastEvalEnv: Env | null;
     lastEvalServerId: string | null;
+    /** Accounts whose first listing of the current trade-id epoch has not been
+     * applied yet: reports are taken, nothing is placed or cancelled. */
+    awaitingEpochListing?: AccountKey[];
 }
 
 export interface BufferedDeal {
