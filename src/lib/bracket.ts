@@ -504,7 +504,7 @@ async function registerNativeBracket(spec: BracketSpec): Promise<BracketPlan> {
     const program = programForNewBracket(spec, `nb-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`, now);
     if (!program) throw new Error('伺服器模式未確認，括號單未登記');
     await createNativeProgram(program);
-    notify({ kind: 'info', title: '括號單待命（原生）', body: `${spec.quoteCode} 成交後依成交量自動掛${describeProtection(spec)}` });
+    notify({ kind: 'info', title: '括號單待命', body: `${spec.quoteCode} 成交後依成交量自動掛${describeProtection(spec)}` });
     return nativePlans().find(p => p.id === program.id) ?? bracketPlansFromPrograms([program])[0]!;
 }
 
@@ -538,7 +538,7 @@ export function registrationFailureText(error: unknown): string {
 }
 
 export function reconcileBracket(id: string) {
-    if (nativePlan(id)) return Promise.reject(new Error('原生括號單由原生引擎自動對帳'));
+    if (nativePlan(id)) return Promise.reject(new Error('括號單由執行引擎自動對帳'));
     // update_status can take a while; a short ACK timeout would misreport it.
     return bus.send({ op: 'reconcile', id }, 60_000) as Promise<{ health: TradeCacheHealth['state'] }>;
 }
@@ -553,7 +553,7 @@ export function dismissBracket(id: string) {
  * user's total fill quantity (from the orders / deals query). Sends no order. */
 export function confirmBracketEntry(id: string, filled: number, noRemainder: boolean) {
     const native = nativePlan(id);
-    if (!native) throw new Error('找不到此原生括號單');
+    if (!native) throw new Error('找不到此括號單');
     return confirmNativeEntry(native.native.programId, native.native.levelId, filled, noRemainder);
 }
 

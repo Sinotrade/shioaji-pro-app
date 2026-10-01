@@ -113,7 +113,6 @@ import type { ContractBase } from '../lib/types/contract';
 import type { Candle } from '../lib/types/market';
 import type { Trade } from '../lib/types/order';
 import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
-import { isNativeTrigger } from '../lib/execution/native-view';
 import { fmtPrice } from '../lib/utils/format';
 import {
     aggregate,
@@ -1487,7 +1486,7 @@ export function CandleChart({
                 title:
                     t.kind === 'alert'
                         ? '警示'
-                        : `${isNativeTrigger(t) ? '原生·' : ''}${t.kind === 'stop' ? '停損' : '停利'}${t.action === 'Buy' ? '買' : '賣'}${t.quantity}${t.orderLot === 'IntradayOdd' ? '股' : ''}`,
+                        : `${t.kind === 'stop' ? '停損' : '停利'}${t.action === 'Buy' ? '買' : '賣'}${t.quantity}${t.orderLot === 'IntradayOdd' ? '股' : ''}`,
             }),
         );
         return () => {
@@ -1931,9 +1930,6 @@ export function CandleChart({
                                     {fmtPrice(t.price)}
                                     {t.kind !== 'alert' &&
                                         ` ${t.action === 'Buy' ? '買' : '賣'}${t.quantity}${t.orderLot === 'IntradayOdd' ? '股' : ''}`}
-                                    {isNativeTrigger(t) && (
-                                        <span title='由 App 原生執行引擎（實驗）執行，重新載入視窗不影響'> 原生</span>
-                                    )}
                                     {t.suspended && (
                                         <span title={t.suspended}> 未啟用</span>
                                     )}

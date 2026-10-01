@@ -99,7 +99,7 @@ async function syncToggle() {
         health = await invoke<NativeHealth>('execution_set_enabled', { enabled: getNativeExecutionEnabled() });
         emit();
     } catch (e) {
-        notify({ kind: 'err', title: '原生執行引擎', body: e instanceof Error ? e.message : String(e) });
+        notify({ kind: 'err', title: '執行引擎', body: e instanceof Error ? e.message : String(e) });
     }
 }
 
@@ -182,26 +182,26 @@ export function refreshNative(): Promise<void> {
 // ---- commands ----
 
 const REJECT_TEXT: Record<string, string> = {
-    'rejected.envMismatch': '原生引擎目前連線的伺服器／模式與此單不同',
-    'rejected.unknownEnv': '原生引擎尚未連上伺服器（模式未確認）',
+    'rejected.envMismatch': '執行引擎目前連線的伺服器／模式與此單不同',
+    'rejected.unknownEnv': '執行引擎尚未連上伺服器（模式未確認）',
     'rejected.staleVersion': '狀態已變更，請再試一次',
     'rejected.duplicateProgram': '此單已建立',
     'rejected.hasOrdersOrPosition': '仍有委託或部位，先停止並等待結束',
     'rejected.unpast': '目前已未穿價，需要再確認',
     'rejected.noPrice': '尚未收到即時成交價',
-    'partition.failed': '原生引擎儲存失敗，已停止此環境的執行',
+    'partition.failed': '執行引擎儲存失敗，已停止此環境的執行',
 };
 
 function rejection(reply: CommandReply): string {
     const bad = reply.notices.find(n => n.code.startsWith('rejected.') || n.code === 'partition.failed');
-    return bad ? (REJECT_TEXT[bad.code] ?? `${bad.code} ${bad.detail}`) : '原生引擎未接受此指令';
+    return bad ? (REJECT_TEXT[bad.code] ?? `${bad.code} ${bad.detail}`) : '執行引擎未接受此指令';
 }
 
 let seq = 0;
 /** Programs a remove is in flight for (user or housekeeping). */
 const removing = new Set<string>();
 export async function sendNativeCommand(command: UserCommand): Promise<CommandReply> {
-    if (!isTauri) throw new Error('原生執行引擎僅限桌面版');
+    if (!isTauri) throw new Error('執行引擎僅限桌面版');
     const id = `ui-${Date.now().toString(36)}-${(seq++).toString(36)}`;
     const reply = await invoke<CommandReply>('execution_command', { envelope: { schema: EXECUTION_SCHEMA_VERSION, id, command } });
     await refreshNative();
@@ -240,7 +240,7 @@ export async function resolveNativePending(programId: string, levelId: string, c
     allowUnpast?: boolean): Promise<void> {
     await refreshNative();
     const p = findProgram(programId);
-    if (!p) throw new Error('找不到此原生單');
+    if (!p) throw new Error('找不到此單');
     await sendNativeCommand({ op: 'resolvePending', programId, version: p.version, levelId, choice,
         ...(allowUnpast ? { allowUnpast: true } : {}) });
 }
@@ -251,14 +251,14 @@ export async function confirmNativeEntry(programId: string, levelId: string, fil
     noRemainder: boolean): Promise<void> {
     await refreshNative();
     const p = findProgram(programId);
-    if (!p) throw new Error('找不到此原生單');
+    if (!p) throw new Error('找不到此單');
     await sendNativeCommand({ op: 'confirmEntry', programId, version: p.version, levelId, filled, noRemainder });
 }
 
 export async function acknowledgeNativeUnknown(programId: string, levelId: string): Promise<void> {
     await refreshNative();
     const p = findProgram(programId);
-    if (!p) throw new Error('找不到此原生單');
+    if (!p) throw new Error('找不到此單');
     await sendNativeCommand({ op: 'ackUnknown', programId, version: p.version, levelId });
 }
 
@@ -266,8 +266,8 @@ export async function acknowledgeNativeUnknown(programId: string, levelId: strin
  * on exactly the environment the order goes to. */
 export function ensureNativeHost(env: string | null): void {
     const h = health;
-    if (!h || h.state !== 'live' || !h.env || !h.serverId) throw new Error('原生執行引擎尚未連上伺服器，括號單未送出');
-    if (!env || `${h.serverId}|${h.env}` !== env) throw new Error('原生執行引擎連線的伺服器／模式與目前不同，括號單未送出');
+    if (!h || h.state !== 'live' || !h.env || !h.serverId) throw new Error('執行引擎尚未連上伺服器，括號單未送出');
+    if (!env || `${h.serverId}|${h.env}` !== env) throw new Error('執行引擎連線的伺服器／模式與目前不同，括號單未送出');
 }
 
 // ---- main window upkeep ----
@@ -304,10 +304,10 @@ function syncQuotes() {
 }
 
 const NOTICE_TEXT: Record<string, string> = {
-    needsConfirm: '原生觸價單待確認：恢復盯價時已穿價，未自動送單',
-    notSent: '原生委託未送出',
-    unknown: '原生委託結果未知（不會自動重送）',
-    'partition.failed': '原生執行引擎儲存失敗，此環境已停止執行',
+    needsConfirm: '觸價單待確認：恢復盯價時已穿價，未自動送單',
+    notSent: '委託未送出',
+    unknown: '委託結果未知（不會自動重送）',
+    'partition.failed': '執行引擎儲存失敗，此環境已停止執行',
 };
 
 let started = false;

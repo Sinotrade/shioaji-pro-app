@@ -306,7 +306,7 @@ describe('ownership: one executor per trigger / bracket', () => {
 
     it('a native bracket is refused BEFORE the entry is sent when the engine is not live', async () => {
         await boot({ enabled: true, live: false });
-        await expect(bracket.ensureBracketHost()).rejects.toThrow('原生執行引擎尚未連上伺服器');
+        await expect(bracket.ensureBracketHost()).rejects.toThrow('執行引擎尚未連上伺服器');
         m.env = 'http://sim.invalid|production';
         await boot({ enabled: true });
         await expect(bracket.ensureBracketHost()).rejects.toThrow('模式與目前不同');

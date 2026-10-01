@@ -193,7 +193,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
             <div className={styles.head}>
                 <span className={styles.code}>{plan.orderCode}</span>
                 <span>{plan.account.account_type === 'F' ? '[期]' : '[證]'} {maskAccountId(plan.account.account_id, priv)}</span>
-                <span className={styles.grow}>{PHASE[phase]}{native && <span title='由 App 原生執行引擎（實驗）執行，重新載入視窗不影響'> · 原生</span>}</span>
+                <span className={styles.grow}>{PHASE[phase]}</span>
                 <span>成交 {Math.min(plan.filled, plan.quantity)}/{plan.quantity}</span>
             </div>
             <div className={styles.note.muted}>
@@ -210,7 +210,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                 </div>
             )}
             {native && isLive(plan) && !elsewhere && !nativeLive && (
-                <div className={styles.note.warn}>原生執行引擎未連線，保護暫停；連上後先對帳再恢復</div>
+                <div className={styles.note.warn}>執行引擎未連線，保護暫停；連上後先對帳再恢復</div>
             )}
             {!native && stale && (
                 <div className={styles.note.warn}>主視窗狀態未更新（可能已關閉或重新載入），以下為最後已知狀態，不代表保護正在執行</div>

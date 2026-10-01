@@ -27,28 +27,26 @@ export function NativeExecutionSetting() {
     const state = health ? `${STATE[health.state] ?? health.state}${health.env ? `（${health.env === 'simulation' ? '模擬' : '正式'}）` : ''}` : '無法取得狀態';
     return (
         <>
-            <span className={hud.settingLabel}>原生執行引擎（實驗）</span>
+            <span className={hud.settingLabel}>背景持續執行（實驗）</span>
             <div className={hud.switchRow}>
                 <span
                     className={hud.switchLabel}
-                    title='新的停損／停利觸價單與括號單改由 App 原生程序執行，視窗重新載入不影響'
+                    title='新建立的停損／停利觸價單與括號單在視窗關閉或重新載入時仍會持續盯價與送單'
                 >
-                    原生執行引擎（實驗）
+                    背景持續執行（實驗）
                 </span>
                 <button
                     className={hud.switchTrack[on ? 'on' : 'off']}
-                    aria-label='原生執行引擎（實驗）'
+                    aria-label='背景持續執行（實驗）'
                     aria-pressed={on}
-                    title={on ? '關閉：新單改回由主視窗執行' : '啟用：新單由原生引擎執行'}
+                    title={on ? '關閉：只影響之後新建的單' : '啟用：新單在視窗關閉或重新載入時持續執行'}
                     onClick={() => setNativeExecutionEnabled(!on)}
                 />
             </div>
             <span className={hud.emptyHint}>
-                預設關閉。開啟後新建立的停損／停利觸價單與括號單由 App 原生程序執行（標示「原生」），
-                視窗重新載入或隱藏不影響；已存在的單維持原本的執行方式直到結束，不會重複執行。
-                關閉只影響之後新建的單，原生單會繼續執行到結束。
+                開啟後，新建立的停損／停利觸價單與括號單在視窗關閉或重新載入時仍會持續盯價與送單；關閉只影響之後新建的單
                 <br />
-                狀態：{state} · 原生單 {programs.length} 筆
+                狀態：{state} · 執行中 {programs.length} 筆
                 {health?.lastError ? ` · ${health.lastError}` : ''}
                 {health?.staleQuotes?.length ? ` · 行情暫無成交（已重新訂閱）：${health.staleQuotes.join('、')}` : ''}
             </span>

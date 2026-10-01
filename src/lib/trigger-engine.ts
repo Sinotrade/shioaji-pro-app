@@ -405,10 +405,10 @@ async function addNativeTrigger(prepared: NewTrigger): Promise<TriggerOrder | nu
     try {
         await createNativeProgram(program);
     } catch (e) {
-        notify({ kind: 'err', title: '觸價單未建立（原生引擎）', body: e instanceof Error ? e.message : String(e) });
+        notify({ kind: 'err', title: '觸價單未建立（執行引擎）', body: e instanceof Error ? e.message : String(e) });
         return null;
     }
-    notify({ kind: 'info', title: `${kindLabel(t)}（原生）`, body: describe(t) });
+    notify({ kind: 'info', title: `${kindLabel(t)}`, body: describe(t) });
     const id = nativeRowId(program.id, t.id, 'entry');
     return nativeRows().find(r => r.id === id) ?? { ...t, id };
 }
@@ -448,7 +448,7 @@ export function acknowledgeExit(id: string): Promise<unknown> {
 export function resolvePendingTrigger(id: string, choice: PendingChoice, opts: { allowUnpast?: boolean } = {}): Promise<unknown> {
     if (isNativeId(id)) {
         const row = nativeRow(id);
-        if (!row) return Promise.reject(new Error('找不到此原生觸價單'));
+        if (!row) return Promise.reject(new Error('找不到此觸價單'));
         return resolveNativePending(row.native.programId, row.native.levelId, choice, opts.allowUnpast);
     }
     return bus.send({ op: 'resolve-pending', id, choice, allowUnpast: opts.allowUnpast });
