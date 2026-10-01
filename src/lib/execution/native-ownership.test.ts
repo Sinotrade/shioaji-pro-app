@@ -293,9 +293,9 @@ describe('ownership: one executor per trigger / bracket', () => {
         await native.refreshNative();
         const [plan] = bracket.getDisplayBrackets();
         expect(bracket.isNativeBracket(plan!) && plan.native.entryAcrossDay).toEqual({ known: 1 });
-        await bracket.confirmBracketEntry(plan!.id, 2);
+        await bracket.confirmBracketEntry(plan!.id, 2, true);
         expect(host.commands[host.commands.length - 1]).toEqual({ op: 'confirmEntry', programId: p.id, version: 1,
-            levelId: lv.id, filled: 2 });
+            levelId: lv.id, filled: 2, noRemainder: true });
         expect(m.place).not.toHaveBeenCalled();
         lv.pending = null;
         host.bump();

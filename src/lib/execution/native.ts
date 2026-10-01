@@ -247,11 +247,12 @@ export async function resolveNativePending(programId: string, levelId: string, c
 
 /** The user's total fill quantity for an external entry that stayed open
  * across a trade-id epoch (`unknownEntryAcrossDay`). Sends no order. */
-export async function confirmNativeEntry(programId: string, levelId: string, filled: number): Promise<void> {
+export async function confirmNativeEntry(programId: string, levelId: string, filled: number,
+    noRemainder: boolean): Promise<void> {
     await refreshNative();
     const p = findProgram(programId);
     if (!p) throw new Error('找不到此原生單');
-    await sendNativeCommand({ op: 'confirmEntry', programId, version: p.version, levelId, filled });
+    await sendNativeCommand({ op: 'confirmEntry', programId, version: p.version, levelId, filled, noRemainder });
 }
 
 export async function acknowledgeNativeUnknown(programId: string, levelId: string): Promise<void> {

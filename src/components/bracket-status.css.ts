@@ -80,8 +80,16 @@ export const banner = style({
     fontWeight: 700,
 });
 
-export const confirmEntry = style({
-    display: 'inline-flex',
+export const acrossDay = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '3px',
+    padding: '4px 0',
+});
+
+export const field = style({
+    display: 'flex',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: vars.space.xs,
 });

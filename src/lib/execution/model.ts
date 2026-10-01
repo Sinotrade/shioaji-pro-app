@@ -352,6 +352,10 @@ export interface EngineState {
     programs: OrderProgram[];
     /** Trade-id epoch (see core.ts epochMark) of the last `epoch` event. */
     epochMark?: number;
+    /** Number of `epoch` events: the current epoch. An input stamped with
+     * another one (a late place response, a listing requested before the
+     * boundary) never confirms an id. */
+    epochSeq?: number;
 }
 
 // ---- events in ----
@@ -375,6 +379,8 @@ export interface IntentResultEvent extends Source {
     type: 'intentResult'; ts: number; key: string;
     outcome: 'accepted' | 'notSent' | 'unknown';
     orderId?: string; detail?: string;
+    /** Epoch the request was sent in (`EngineState.epochSeq`). */
+    epoch?: number;
 }
 export interface OrderEvent extends Source {
     type: 'order'; ts: number; orderId: string;
@@ -422,6 +428,8 @@ export interface ReconciledOrder {
      * the row may only add (fills, cumulative cancels, a final status), it
      * never revives the order nor downgrades anything. */
     stale?: boolean;
+    /** The row's security type (scopes its id: stock and futures repeat). */
+    securityType?: string;
 }
 export interface ReconcileEvent {
     type: 'reconcile'; ts: number;
@@ -437,6 +445,9 @@ export interface ReconcileEvent {
     /** Slots (by key) whose tag rows are duplicated / mismatching in this
      * listing: flagged `tagAmbiguous` for good. */
     ambiguous?: string[];
+    /** Epoch the listing was requested in: from another epoch it is
+     * ignored (its ids may name other orders now). */
+    epoch?: number;
 }
 /** The executor (re)started from persisted state. */
 export interface RestoreEvent { type: 'restore'; ts: number }
@@ -455,7 +466,10 @@ export type UserCommand =
     | { op: 'ackUnknown'; programId: string; version: number; levelId: string }
     /** The user's answer for an external entry open across an epoch
      * (`unknownEntryAcrossDay`): how much of it filled in total. */
-    | { op: 'confirmEntry'; programId: string; version: number; levelId: string; filled: number };
+    | { op: 'confirmEntry'; programId: string; version: number; levelId: string; filled: number;
+        /** The user confirms nothing of the entry still works (all filled or
+         * the rest cancelled): required to end it. */
+        noRemainder: boolean };
 
 export interface CommandEvent { type: 'command'; ts: number; id: string; command: UserCommand }
 

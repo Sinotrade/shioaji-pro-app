@@ -53,6 +53,69 @@ function validEntryFilled(raw: string, known: number, max: number): boolean {
     return Number.isSafeInteger(n) && n >= known && n <= max;
 }
 
+/** A native bracket entry still open across a trade-id epoch: its id may
+ * name another order now, so its fills cannot be matched any more. The user
+ * confirms both the total filled AND that nothing of it still works (all
+ * filled, or the rest cancelled) — only then does the engine end it and arm
+ * the exit. Nothing is inferred; nothing is sent from here. */
+export function EntryAcrossDayConfirm({ known, quantity, busy, onConfirm }: {
+    known: number;
+    quantity: number;
+    busy: boolean;
+    onConfirm: (filled: number, noRemainder: true) => void;
+}) {
+    const [filled, setFilled] = useState('');
+    const [noRemainder, setNoRemainder] = useState(false);
+    const qtyOk = validEntryFilled(filled, known, quantity);
+    return (
+        <div className={styles.acrossDay} role='group' aria-label='跨交易日進場單確認'>
+            <div className={styles.note.err}>
+                進場單跨過交易日仍未結束：委託編號可能已被他單沿用，成交無法再自動對應。
+                請到委託／成交查詢確認後填寫；確認前不會依此單送出出場委託，也不會重送進場單。
+            </div>
+            <label className={styles.field}>
+                <span>實際共成交</span>
+                <input
+                    className={styles.qtyInput}
+                    type='number'
+                    inputMode='numeric'
+                    min={known}
+                    max={quantity}
+                    step={1}
+                    aria-label='進場單實際成交口數'
+                    placeholder={`${known}–${quantity}`}
+                    value={filled}
+                    disabled={busy}
+                    onChange={e => setFilled(e.target.value)}
+                />
+                <span>口（已知 {known}，委託 {quantity}）</span>
+            </label>
+            <label className={styles.field}>
+                <input
+                    type='checkbox'
+                    checked={noRemainder}
+                    disabled={busy}
+                    onChange={e => setNoRemainder(e.target.checked)}
+                />
+                <span>進場單已無剩餘委託（已全部成交或已刪除）</span>
+            </label>
+            {!noRemainder && (
+                <div className={styles.note.warn}>若不確定是否還有剩餘：請先到委託查詢刪除剩餘進場單，再回來勾選</div>
+            )}
+            <div className={styles.actions}>
+                <button
+                    className={styles.button}
+                    disabled={busy || !qtyOk || !noRemainder}
+                    title='以你確認的成交口數更新此括號單並啟用出場保護；不會送出任何委託'
+                    onClick={() => onConfirm(Number(filled), true)}
+                >
+                    {qtyOk ? `確認成交 ${Number(filled)} 口` : '確認成交'}
+                </button>
+            </div>
+        </div>
+    );
+}
+
 function Row({ plan, envNow, feedMissing, executing, stale }: {
     plan: BracketPlan;
     envNow: string | null;
@@ -65,7 +128,6 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
     const [message, setMessage] = useState<string | null>(null);
     const [confirmRemove, setConfirmRemove] = useState(false);
     const [confirmCancel, setConfirmCancel] = useState(false);
-    const [entryFilled, setEntryFilled] = useState('');
     const workingEntry = workingEntryAfterExit(plan);
     const phase = bracketPhase(plan);
     const protectedQty = protectionQuantity(plan);
@@ -121,11 +183,9 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                 <div className={styles.note.warn}>主視窗狀態未更新（可能已關閉或重新載入），以下為最後已知狀態，不代表保護正在執行</div>
             )}
             {acrossDay && (
-                <div className={styles.note.err} role='alert'>
-                    進場單跨過交易日仍未結束：委託編號可能已被他單沿用，成交無法再自動對應。
-                    請在委託／成交查詢確認這筆進場單實際共成交幾口後輸入（至少 {acrossDay.known} 口，最多 {plan.quantity} 口）；
-                    確認前不會依此單送出任何出場委託，也不會重送進場單
-                </div>
+                <EntryAcrossDayConfirm known={acrossDay.known} quantity={plan.quantity} busy={busy}
+                    onConfirm={(filled, noRemainder) => void run(() => confirmBracketEntry(plan.id, filled, noRemainder),
+                        () => '已更新進場成交口數')} />
             )}
             {workingEntry > 0 && (
                 <div className={styles.note.err}>進場單仍有 {workingEntry} 未成交委託在場上；出場已觸發，之後的成交不受保護</div>
@@ -189,32 +249,6 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                     >
                         {plan.entryCancel === 'sending' ? '刪單處理中…' : confirmCancel ? '再按一次：刪除剩餘進場單' : '刪除剩餘進場單'}
                     </button>
-                )}
-                {acrossDay && (
-                    <span className={styles.confirmEntry}>
-                        <input
-                            className={styles.qtyInput}
-                            type='number'
-                            inputMode='numeric'
-                            min={acrossDay.known}
-                            max={plan.quantity}
-                            step={1}
-                            aria-label='進場單實際成交口數'
-                            placeholder={`${acrossDay.known}–${plan.quantity}`}
-                            value={entryFilled}
-                            disabled={busy}
-                            onChange={e => setEntryFilled(e.target.value)}
-                        />
-                        <button
-                            className={styles.button}
-                            disabled={busy || !validEntryFilled(entryFilled, acrossDay.known, plan.quantity)}
-                            title='以你確認的成交口數更新此括號單；不會送出任何委託'
-                            onClick={() => void run(() => confirmBracketEntry(plan.id, Number(entryFilled)),
-                                () => '已更新進場成交口數')}
-                        >
-                            確認成交 {validEntryFilled(entryFilled, acrossDay.known, plan.quantity) ? `${Number(entryFilled)} 口` : ''}
-                        </button>
-                    </span>
                 )}
                 {unknownExit && (
                     <button

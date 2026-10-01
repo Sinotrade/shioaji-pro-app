@@ -596,7 +596,15 @@ function onIntentResult(ctx: Ctx, e: IntentResultEvent) {
         return;
     }
     if (slot.status !== 'pendingSubmit') return; // duplicate or stale result
-    if (e.outcome === 'accepted' && e.orderId) {
+    if (e.outcome === 'accepted' && e.orderId && e.epoch !== undefined && e.epoch !== (ctx.s.epochSeq ?? 0)) {
+        // sent in an earlier epoch, answered after the boundary: the id may
+        // name another order by now — only this epoch's listing with the
+        // slot's tag confirms (rebinds) it
+        slot.orderId = e.orderId;
+        slot.unconfirmed = true;
+        slot.status = 'working';
+        slot.detail = 'acceptedAcrossEpoch';
+    } else if (e.outcome === 'accepted' && e.orderId) {
         slot.orderId = e.orderId;
         slot.status = slot.filled >= slot.qty ? 'filled' : 'working';
         drainOrphans(ctx, p, lv, slot);
@@ -910,6 +918,7 @@ function onEpoch(ctx: Ctx, e: EpochEvent) {
     const mark = epochMark(ctx.ts);
     const crossed = s.epochMark !== mark;
     s.epochMark = mark;
+    s.epochSeq = (s.epochSeq ?? 0) + 1;
     s.orphanDeals = s.orphanDeals.filter(d => !boundToSource(d.deal, e));
     s.orphanOrders = s.orphanOrders.filter(o => !boundToSource(o.order, e));
     for (const p of s.programs) {
@@ -1069,6 +1078,9 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             return;
         }
         case 'confirmEntry': {
+            // a remainder may still work: ending it here would leave its later
+            // fills without an exit — the user cancels it first
+            if (c.noRemainder !== true) { reject(ctx, p, 'remainderNotConfirmed', c.levelId); return; }
             const lv = p.levels.find(l => l.id === c.levelId && l.pending?.reason === 'unknownEntryAcrossDay');
             if (!lv) { reject(ctx, p, 'notPending', c.levelId); return; }
             const slot = [...lv.orders].reverse().find(o => o.role === 'entry' && o.cycle === lv.cycles);
@@ -1142,7 +1154,9 @@ export function step(state: EngineState, event: ExecEvent): StepResult {
         case 'intentResult': onIntentResult(ctx, event); break;
         case 'order': onOrder(ctx, event); break;
         case 'deal': onDeal(ctx, event); break;
-        case 'reconcile': onReconcile(ctx, event); break;
+        // a listing requested in another epoch: its ids may name other
+        // orders now — it confirms nothing
+        case 'reconcile': if (event.epoch === undefined || event.epoch === (s.epochSeq ?? 0)) onReconcile(ctx, event); break;
         case 'restore': onRestore(ctx); break;
         case 'epoch': onEpoch(ctx, event); break;
         case 'command': onCommand(ctx, event); break;

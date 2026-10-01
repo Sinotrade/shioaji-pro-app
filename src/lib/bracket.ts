@@ -551,10 +551,10 @@ export function dismissBracket(id: string) {
 
 /** Native bracket whose entry stayed open across a trade-id epoch: the
  * user's total fill quantity (from the orders / deals query). Sends no order. */
-export function confirmBracketEntry(id: string, filled: number) {
+export function confirmBracketEntry(id: string, filled: number, noRemainder: boolean) {
     const native = nativePlan(id);
     if (!native) throw new Error('找不到此原生括號單');
-    return confirmNativeEntry(native.native.programId, native.native.levelId, filled);
+    return confirmNativeEntry(native.native.programId, native.native.levelId, filled, noRemainder);
 }
 
 export function acknowledgeBracketExit(id: string) {
