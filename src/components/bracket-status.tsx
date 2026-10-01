@@ -4,6 +4,7 @@
 // authoritative reconcile (update_status), acknowledging an unknown exit and
 // removing a plan. Nothing here sends or resends an order.
 
+import { CircleHelp, Minus, Plus, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
     acknowledgeBracketExit,
@@ -58,7 +59,11 @@ function validEntryFilled(raw: string, known: number, max: number): boolean {
  * confirms both the total filled AND that nothing of it still works (all
  * filled, or the rest cancelled) — only then does the engine end it and arm
  * the exit. Nothing is inferred; nothing is sent from here. */
-export function EntryAcrossDayConfirm({ known, quantity, busy, onConfirm }: {
+export function EntryAcrossDayConfirm({ code, action, seqno, placedAt, known, quantity, busy, onConfirm }: {
+    code: string;
+    action: 'Buy' | 'Sell';
+    seqno: string;
+    placedAt: number; // ms
     known: number;
     quantity: number;
     busy: boolean;
@@ -66,15 +71,39 @@ export function EntryAcrossDayConfirm({ known, quantity, busy, onConfirm }: {
 }) {
     const [filled, setFilled] = useState('');
     const [noRemainder, setNoRemainder] = useState(false);
+    const [why, setWhy] = useState(false);
     const qtyOk = validEntryFilled(filled, known, quantity);
+    const n = Number(filled);
+    const step = (d: number) => {
+        const base = qtyOk ? n : d > 0 ? known - 1 : quantity + 1;
+        setFilled(String(Math.min(quantity, Math.max(known, base + d))));
+    };
+    const placed = new Date(placedAt);
+    const day = `${placed.getMonth() + 1}/${placed.getDate()}`;
     return (
         <div className={styles.acrossDay} role='group' aria-label='跨交易日進場單確認'>
-            <div className={styles.note.err}>
-                進場單跨過交易日仍未結束：委託編號可能已被他單沿用，成交無法再自動對應。
-                請到委託／成交查詢確認後填寫；確認前不會依此單送出出場委託，也不會重送進場單。
+            <div className={styles.acrossTitle}>
+                <TriangleAlert size={13} aria-hidden />
+                <span className={styles.grow}>進場單跨日未結束，請確認成交</span>
+                <button type='button' className={styles.iconButton} aria-label='為什麼要確認'
+                    aria-expanded={why} onClick={() => setWhy(w => !w)}>
+                    <CircleHelp size={13} aria-hidden />
+                </button>
             </div>
-            <label className={styles.field}>
-                <span>實際共成交</span>
+            {why && (
+                <div className={styles.note.muted}>
+                    跨過交易日後委託編號可能被別張單沿用，系統無法再自動對應這張進場單的成交。
+                    請到「委託／成交查詢」核對後填寫；確認前不會送出場單，也不會重送進場單。
+                </div>
+            )}
+            <div className={styles.facts}>
+                <span className={styles.chip} title={code}>{action === 'Buy' ? '買進' : '賣出'} {quantity} 口</span>
+                <span className={styles.chip}>{day} 下單 · #{seqno}</span>
+            </div>
+            <div className={styles.stepRow}>
+                <span className={styles.stepLabel}>① 實際成交</span>
+                <button type='button' className={styles.iconButton} aria-label='減少' disabled={busy}
+                    onClick={() => step(-1)}><Minus size={12} aria-hidden /></button>
                 <input
                     className={styles.qtyInput}
                     type='number'
@@ -88,29 +117,32 @@ export function EntryAcrossDayConfirm({ known, quantity, busy, onConfirm }: {
                     disabled={busy}
                     onChange={e => setFilled(e.target.value)}
                 />
-                <span>口（已知 {known}，委託 {quantity}）</span>
-            </label>
-            <label className={styles.field}>
+                <button type='button' className={styles.iconButton} aria-label='增加' disabled={busy}
+                    onClick={() => step(1)}><Plus size={12} aria-hidden /></button>
+                <span className={styles.note.muted}>口 · 已知 {known}</span>
+            </div>
+            <label className={styles.stepRow}>
+                <span className={styles.stepLabel}>②</span>
                 <input
                     type='checkbox'
                     checked={noRemainder}
                     disabled={busy}
                     onChange={e => setNoRemainder(e.target.checked)}
                 />
-                <span>進場單已無剩餘委託（已全部成交或已刪除）</span>
+                <span>已無剩餘委託<span className={styles.note.muted}>（全成交或已刪除）</span></span>
             </label>
-            {!noRemainder && (
-                <div className={styles.note.warn}>若不確定是否還有剩餘：請先到委託查詢刪除剩餘進場單，再回來勾選</div>
-            )}
-            <div className={styles.actions}>
-                <button
-                    className={styles.button}
-                    disabled={busy || !qtyOk || !noRemainder}
-                    title='以你確認的成交口數更新此括號單並啟用出場保護；不會送出任何委託'
-                    onClick={() => onConfirm(Number(filled), true)}
-                >
-                    {qtyOk ? `確認成交 ${Number(filled)} 口` : '確認成交'}
-                </button>
+            <button
+                type='button'
+                className={styles.primary}
+                aria-label='確認成交'
+                disabled={busy || !qtyOk || !noRemainder}
+                title='以你確認的成交口數啟用停損停利保護；不會送出任何委託'
+                onClick={() => onConfirm(n, true)}
+            >
+                {qtyOk ? `確認成交 ${n} 口，啟用保護` : '確認成交，啟用保護'}
+            </button>
+            <div className={styles.note.muted}>
+                {noRemainder ? '此按鈕不會送出任何委託' : '還有剩餘委託？請先到委託查詢刪除，再勾選 ②'}
             </div>
         </div>
     );
@@ -159,6 +191,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
     return (
         <div className={styles.row[tone]}>
             <div className={styles.head}>
+                <span className={styles.code}>{plan.orderCode}</span>
                 <span>{plan.account.account_type === 'F' ? '[期]' : '[證]'} {maskAccountId(plan.account.account_id, priv)}</span>
                 <span className={styles.grow}>{PHASE[phase]}{native && <span title='由 App 原生執行引擎（實驗）執行，重新載入視窗不影響'> · 原生</span>}</span>
                 <span>成交 {Math.min(plan.filled, plan.quantity)}/{plan.quantity}</span>
@@ -183,7 +216,8 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                 <div className={styles.note.warn}>主視窗狀態未更新（可能已關閉或重新載入），以下為最後已知狀態，不代表保護正在執行</div>
             )}
             {acrossDay && (
-                <EntryAcrossDayConfirm known={acrossDay.known} quantity={plan.quantity} busy={busy}
+                <EntryAcrossDayConfirm code={plan.orderCode} action={plan.action} seqno={plan.seqno} placedAt={plan.createdAt}
+                    known={acrossDay.known} quantity={plan.quantity} busy={busy}
                     onConfirm={(filled, noRemainder) => void run(() => confirmBracketEntry(plan.id, filled, noRemainder),
                         () => '已更新進場成交口數')} />
             )}

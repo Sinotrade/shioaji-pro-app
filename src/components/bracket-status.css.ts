@@ -80,11 +80,91 @@ export const banner = style({
     fontWeight: 700,
 });
 
+export const code = style({
+    fontWeight: 700,
+    color: vars.color.foreground,
+});
+
 export const acrossDay = style({
     display: 'flex',
     flexDirection: 'column',
+    gap: '4px',
+    margin: '2px 0',
+    padding: '5px 6px',
+    borderRadius: vars.radius.sm,
+    background: vars.color.background,
+    border: `1px solid ${vars.color.border}`,
+});
+
+export const acrossTitle = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    color: vars.color.danger,
+    fontWeight: 700,
+});
+
+export const facts = style({
+    display: 'flex',
+    flexWrap: 'wrap',
     gap: '3px',
-    padding: '4px 0',
+});
+
+export const chip = style({
+    fontFamily: vars.font.mono,
+    padding: '0 5px',
+    borderRadius: vars.radius.sm,
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    whiteSpace: 'nowrap',
+});
+
+export const stepRow = style({
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '4px',
+});
+
+export const stepLabel = style({
+    fontWeight: 600,
+    minWidth: '1.2em',
+});
+
+export const iconButton = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '18px',
+    height: '18px',
+    padding: 0,
+    cursor: 'pointer',
+    background: 'transparent',
+    color: vars.color.foreground,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    ':hover': { borderColor: vars.color.borderBright },
+    ':disabled': { opacity: 0.5, cursor: 'default' },
+});
+
+export const primary = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.68rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    width: '100%',
+    padding: '3px 6px',
+    borderRadius: vars.radius.sm,
+    border: `1px solid ${vars.color.accent}`,
+    background: vars.color.accent,
+    color: vars.color.background,
+    ':disabled': {
+        opacity: 1,
+        cursor: 'default',
+        background: 'transparent',
+        color: vars.color.mutedForeground,
+        borderColor: vars.color.border,
+    },
 });
 
 export const field = style({
@@ -95,7 +175,8 @@ export const field = style({
 });
 
 export const qtyInput = style({
-    width: '4.5em',
+    width: '3.6em',
+    textAlign: 'center',
     fontFamily: vars.font.mono,
     fontSize: '0.7rem',
     padding: '1px 4px',
