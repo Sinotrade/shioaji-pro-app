@@ -17,6 +17,7 @@ import {
 import {
     ensureBracketHost,
     assertBracketAdmission,
+    verifyBracketProtectionReceipt,
     type BracketAdmission,
     registerBracket,
     registrationFailureText,
@@ -301,7 +302,13 @@ export function OrderTicket({
                 if (!bracketEnv) {
                     throw new Error('伺服器模式（模擬／正式）尚未確認，括號單未送出');
                 }
-                bracketAdmission = await ensureBracketHost({ orderLot: isFutures ? undefined : orderLot, securityType: contract.security_type as 'STK' | 'FUT' | 'OPT' });
+                bracketAdmission = await ensureBracketHost({ orderLot: isFutures ? undefined : orderLot, securityType: contract.security_type as 'STK' | 'FUT' | 'OPT',
+                    entry: { env: bracketEnv, account: { account_type: isFutures ? 'F' : 'S', broker_id: entryAccount.broker_id, account_id: entryAccount.account_id },
+                        quoteCode: contract.code, orderCode: contract.target_code || contract.code, securityType: contract.security_type as 'STK' | 'FUT' | 'OPT',
+                        exchange: contract.exchange ?? '', action, quantity: qty, orderLot: isFutures ? undefined : orderLot,
+                        stopPrice: bracketStop, takePrice: bracketTake,
+                        entryOrder: { action, price: p, quantity: qty, price_type: priceType, order_type: orderType,
+                            ...(isFutures ? { octype } : { order_lot: orderLot, order_cond: orderCond, daytrade_short: daytradeShort && action === 'Sell' }) } } });
             }
             // 送單帳戶在確認前固定（#139）：確認視窗開著時，本視窗其他面板
             // 仍可改選帳戶 — 送出時不再重新解析，改為比對後中止
@@ -334,14 +341,14 @@ export function OrderTicket({
             if (!isSelectedAccountUnchanged(orderAccount)) {
                 throw new Error(ACCOUNT_CHANGED_MESSAGE);
             }
-            const dispatch = { beforeDispatch: () => {
+            const dispatch = { beforeDispatch: async () => {
                 if (bracketAdmission) {
-                    try { assertBracketAdmission(bracketAdmission); } catch (e) { throw Object.assign(e instanceof Error ? e : new Error(String(e)), { tradingGateRejected: true }); }
+                    try { await verifyBracketProtectionReceipt(bracketAdmission); assertBracketAdmission(bracketAdmission); } catch (e) { throw Object.assign(e instanceof Error ? e : new Error(String(e)), { tradingGateRejected: true }); }
                 }
                 if (!isContextCurrent()) throw Object.assign(new Error(ORDER_CONTEXT_CHANGED_MESSAGE), { tradingGateRejected: true });
                 if (!isSelectedAccountUnchanged(orderAccount)) throw Object.assign(new Error(ACCOUNT_CHANGED_MESSAGE), { tradingGateRejected: true });
             } };
-            dispatch.beforeDispatch();
+            await dispatch.beforeDispatch();
             const trade = isFutures
                 ? await placeFuturesOrder(contract, {
                       action,

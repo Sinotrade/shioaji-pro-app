@@ -270,7 +270,10 @@
           "removed"
         ],
         "programs": {
-          "t1": null
+          "t1": {
+            "observationOnly": true,
+            "status": "stopped"
+          }
         }
       }
     }

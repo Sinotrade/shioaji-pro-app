@@ -83,6 +83,7 @@ function row(p: OrderProgram, lv: Level, leg: LegName, fields: Pick<TriggerOrder
 export function triggerRowsFromPrograms(programs: readonly OrderProgram[]): NativeTriggerOrder[] {
     const out: NativeTriggerOrder[] = [];
     for (const p of programs) {
+        if (p.observationOnly) continue;
         if ((p.status === 'stopped' || p.status === 'stopping') && !p.levels.some(lv => lv.orders.some(o => o.status === 'unknown' && !o.acknowledged))) continue;
         for (const lv of p.levels) {
             if (p.kind === 'trigger' && lv.entry.type === 'touch' && (lv.phase === 'idle' || lv.phase === 'needsConfirm' || lv.orders.some(o => o.status === 'unknown' && !o.acknowledged))) {
@@ -159,13 +160,14 @@ export function bracketPlansFromPrograms(programs: readonly OrderProgram[]): Nat
             fills: { ...(entry?.fills ?? {}) },
             fillTs: { ...(entry?.fillTs ?? {}) },
             nativeRisk: { position: lv.position, unprotected: lv.unprotected,
-                armed: p.hold === null && (p.status === 'running' || p.status === 'stopping')
+                armed: !p.observationOnly && p.hold === null && (p.status === 'running' || p.status === 'stopping')
                     && touchLegs(lv).length > 0 && lv.check === null && lv.pending === null && !externalEntryPending(lv) },
             filled: lv.entryFilled,
             entryClosed: !entry || (entry.status !== 'working' && entry.status !== 'pendingSubmit'),
             exit,
             issues: p.issues.map(i => ({ code: 'report-mismatch' as const, detail: i.detail, at: i.ts })),
-            dismissed: p.status === 'stopped' && programFinished(p),
+            observationOnly: p.observationOnly,
+            dismissed: (p.observationOnly || p.status === 'stopped') && programFinished(p),
             createdAt: p.createdAt,
             updatedAt: p.updatedAt,
             native: { programId: p.id, levelId: lv.id, version: p.version, status: p.status, hold: p.hold, phase: lv.phase,

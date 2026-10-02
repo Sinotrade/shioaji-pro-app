@@ -225,7 +225,10 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                     {plan.exit.detail ? ` — ${plan.exit.detail}` : ''}
                 </div>
             )}
-            {native && isLive(plan) && !elsewhere && !nativeLive && (
+            {plan.observationOnly && (
+                <div className={styles.note.warn}>保護已關閉，僅保留委託與成交觀察；請核對實際持倉，系統不會重新掛保護或重送委託</div>
+            )}
+            {native && !plan.observationOnly && isLive(plan) && !elsewhere && !nativeLive && (
                 <div className={styles.note.warn}>執行引擎未連線，保護暫停；連上後先對帳再恢復</div>
             )}
             {!native && stale && (

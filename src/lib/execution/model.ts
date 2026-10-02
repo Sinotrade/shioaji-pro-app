@@ -306,6 +306,8 @@ export interface OrderProgram {
      * were issued against and are refused when stale. */
     version: number;
     status: ProgramStatus;
+    /** Removed ledger retains strict evidence, with no active authority. */
+    observationOnly?: boolean;
     pauseReason: string | null;
     hold: ProgramHold;
     /** First leg that fires cancels every other level's legs (OCO across

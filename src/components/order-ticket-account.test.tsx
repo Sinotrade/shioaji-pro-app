@@ -20,7 +20,7 @@ vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: m.confirm, account
 vi.mock('../lib/risk', () => ({ checkOrderAllowed: () => null, getRiskSettings: () => ({ confirmManualOrders: m.confirmOn }) }));
 vi.mock('../lib/shioaji', () => ({ fetchInfo: () => new Promise(() => undefined), placeFuturesOrder: m.future, placeStockOrder: m.stock }));
 vi.mock('../lib/trade', () => ({ notify: vi.fn() }));
-vi.mock('../lib/bracket', () => ({ assertBracketAdmission: m.admissionGate, ensureBracketHost: m.ensure, registerBracket: m.register, registrationFailureText: String, validateBracketRequest: () => null }));
+vi.mock('../lib/bracket', () => ({ verifyBracketProtectionReceipt: async () => undefined, assertBracketAdmission: m.admissionGate, ensureBracketHost: m.ensure, registerBracket: m.register, registrationFailureText: String, validateBracketRequest: () => null }));
 vi.mock('./bracket-status', () => ({ BracketStatusList: () => null }));
 vi.mock('../lib/protection-env', () => ({ currentProtectionEnv: () => 'sim' }));
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => ({ tick: { close: '100' } }), useTradingLive: () => true }));
@@ -135,7 +135,7 @@ it.each(['confirmation', 'first order', 'dispatch', 'unmount', 'switch back'])(
         else m.future.mockImplementationOnce(async (_c, _o, _a, opts) => {
             if (phase !== 'dispatch') dispatched();
             await wait;
-            if (phase === 'dispatch') { opts.beforeDispatch(); dispatched(); }
+            if (phase === 'dispatch') { await opts.beforeDispatch(); dispatched(); }
             return result;
         });
         const props = { contract, onPlaced: vi.fn() };
@@ -174,7 +174,7 @@ it('r33 ticket rejects owner changes during confirmation before the entry call',
 });
 it('r33 ticket passes its admission to the actual delayed dispatch gate', async () => {
     m.future.mockImplementationOnce(async (_contract, _order, _account, dispatch) => {
-        m.invalidOwner = true;dispatch.beforeDispatch();m.writes++;
+        m.invalidOwner = true;await dispatch.beforeDispatch();m.writes++;
         return { status: { status: 'Submitted' }, order: { id: 'never', seqno: 'never' } };
     });
     await r33ProtectedTicket();
@@ -182,7 +182,7 @@ it('r33 ticket passes its admission to the actual delayed dispatch gate', async 
 });
 it('r33 ticket post-entry registration receives exactly the original admission', async () => {
     m.future.mockImplementationOnce(async (_contract, _order, _account, dispatch) => {
-        dispatch.beforeDispatch();m.writes++;m.invalidOwner = true;
+        await dispatch.beforeDispatch();m.writes++;m.invalidOwner = true;
         return { status: { status: 'Submitted' }, order: { id: 'fixture-entry', seqno: 'fixture-seq', ordno: 'fixture-ord' } };
     });
     await r33ProtectedTicket();

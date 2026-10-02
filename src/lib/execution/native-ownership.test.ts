@@ -585,3 +585,11 @@ it('r36 chart OPT capture and fixed-context OPT keep their actual type; missing 
     expect(host.programs[1]!.binding.contract.securityType).toBe('OPT');
     expect(engine.nativeHandles({kind:'stop',account:{...F1,account_type:'F' as const}})).toBe(false);
 });
+
+it.each([false,true])('r40 finished native upkeep respects observation retirement=%s',async retired=>{
+    await boot({enabled:true});await addStop();const p=host.programs[0]!;
+    p.status='stopped';p.levels[0]!.phase='done';p.observationOnly=retired;
+    host.bump();await native.refreshNative();await flush();
+    expect(host.commands.filter(c=>c.op==='remove')).toHaveLength(retired?0:1);
+    if(retired){expect(host.programs).toHaveLength(1);host.bump();await native.refreshNative();await flush();expect(host.commands.filter(c=>c.op==='remove')).toHaveLength(0);}
+});

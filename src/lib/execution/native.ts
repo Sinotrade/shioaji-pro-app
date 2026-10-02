@@ -351,7 +351,7 @@ export function ensureNativeHost(env: string | null): void {
  * user closes them in the bracket panel, like the TS plans). */
 function housekeeping() {
     for (const p of programs) {
-        if (p.kind !== 'trigger' || !programFinished(p) || removing.has(p.id)) continue;
+        if (p.observationOnly || p.kind !== 'trigger' || !programFinished(p) || removing.has(p.id)) continue;
         removing.add(p.id);
         void sendNativeCommand({ op: 'remove', programId: p.id, version: p.version })
             .catch(() => undefined).finally(() => removing.delete(p.id));
@@ -363,7 +363,7 @@ const quoteHolds = new Map<string, { release?: () => void }>();
  * retained by this window's quote ownership (the engine subscribes it too). */
 function syncQuotes() {
     const env = currentProtectionEnv();
-    const codes = new Set(programs.filter(p => p.status !== 'stopped' && envKeyOf(p.binding) === env)
+    const codes = new Set(programs.filter(p => !p.observationOnly && p.status !== 'stopped' && envKeyOf(p.binding) === env)
         .map(p => p.binding.contract.quoteCode));
     for (const [code, hold] of quoteHolds) {
         if (!codes.has(code)) { hold.release?.(); quoteHolds.delete(code); }

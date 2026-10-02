@@ -17,7 +17,7 @@ vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: m.confirm, account
 vi.mock('../lib/risk', () => ({ checkOrderAllowed: m.risk, getRiskSettings: () => ({ confirmManualOrders: true }) }));
 vi.mock('../lib/shioaji', () => ({ fetchInfo: () => new Promise(() => undefined), placeFuturesOrder: vi.fn(), placeStockOrder: m.stock }));
 vi.mock('../lib/trade', () => ({ notify: vi.fn() }));
-vi.mock('../lib/bracket', () => ({ assertBracketAdmission: vi.fn(), ensureBracketHost: vi.fn(), registerBracket: vi.fn(), registrationFailureText: String, validateBracketRequest: () => null }));
+vi.mock('../lib/bracket', () => ({ verifyBracketProtectionReceipt: async () => undefined, assertBracketAdmission: vi.fn(), ensureBracketHost: vi.fn(), registerBracket: vi.fn(), registrationFailureText: String, validateBracketRequest: () => null }));
 vi.mock('./bracket-status', () => ({ BracketStatusList: () => null }));
 vi.mock('../lib/protection-env', () => ({ currentProtectionEnv: () => 'sim' }));
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => ({ tick: { close: '100' } }), useTradingLive: () => true }));

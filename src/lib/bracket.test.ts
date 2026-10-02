@@ -435,7 +435,9 @@ describe('trigger execution (main window only)', () => {
         expect(m.notify.mock.calls.some(([n]) => n.title === '觸價單移除未確認')).toBe(true);
         await bracket.dismissBracket(plan.id);
         expect(triggersOf(plan.id)).toHaveLength(0);
-        expect(bracket.getBrackets()).toHaveLength(0);
+        expect(bracket.getBrackets()).toHaveLength(1);
+        expect(bracket.getBrackets()[0]).toMatchObject({ observationOnly: true });
+        expect((await import('./bracket-core')).protectionQuantity(bracket.getBrackets()[0]!)).toBe(0);
     });
 
     function exitRow(status: string, deals: { seq: string; quantity: number; ts?: number }[], cancel = 0) {
@@ -1227,4 +1229,53 @@ it.each(['cancel-first','deal-first'])('r37 ordinary protective dispatch remains
     expect([action,price,qty,opts.ocType,opts.account.account_id]).toEqual(['Sell',null,1,'Cover',F1.account_id]);
     expect(planOf(p.id).exit).toMatchObject({quantity:1,status:'working'});
     await emit(deal);await tick(47000);expect(m.place).toHaveBeenCalledTimes(1);expect(m.cancel).not.toHaveBeenCalled();
+});
+
+// r40 production register API + new reader, not a rewritten storage oracle.
+it('r40 a possibly sent entry remains visible to a cold reader if registration storage fails', async () => {
+    await boot();
+    const sent = spec(F1, 'r40-sent', { seqno: 'R40-S1', quantity: 1 });
+    const { orderId: _id, seqno: _seq, ...request } = sent;
+    const admission = await bracket.ensureBracketHost({ entry: { ...request, entryOrder: { action: 'Buy', quantity: 1, price_type: 'MKT', price: 0, order_type: 'IOC', octype: 'New' } } });
+    // This boundary is after an entry reply; deny the real pending store's first write.
+    const storage = globalThis.localStorage;
+    const original = storage.setItem;
+    storage.setItem = (key, value) => { if (key.startsWith('sj-pro-bracket-registrations:operation:')) throw new Error('fixture quota'); original(key, value); };
+    m.env = null; // owner registration cannot acknowledge the sent entry.
+    await expect(bracket.registerBracket(sent, admission)).rejects.toThrow();
+    expect(bracket.getDisplayBrackets().filter(p => p.registrationPending)).toHaveLength(1);
+    await boot({ keepStore: true });
+    expect(bracket.getDisplayBrackets().filter(p => p.registrationPending)).toHaveLength(1);
+    expect(m.place).not.toHaveBeenCalled();
+});
+
+it.each(r37Markets)('r40 $market Close retains own late risk with no restored protection authority', async market => {
+    const p = await r37Rebound(market);
+    await emit(r37Order(market, 'Cancel'));
+    expect(planOf(p.id)).toMatchObject({ filled: 0, entryClosed: true });
+    await bracket.dismissBracket(p.id);
+    await emit(edit(r37Deal(market), { seqno: 'foreign-stable' }));
+    expect(bracket.getDisplayBrackets().find(x => x.id === p.id)?.filled).toBe(0);
+    await emit(r37Deal(market));
+    await emit(r37Deal(market));
+    expect(bracket.getDisplayBrackets().find(x => x.id === p.id)).toMatchObject({ filled: 1, observationOnly: true });
+    const core = await import('./bracket-core');
+    expect(core.protectionQuantity(planOf(p.id))).toBe(0);
+    expect(core.unprotectedQuantity(planOf(p.id))).toBe(1);
+    await tick(47000);
+    expect(triggersOf(p.id)).toHaveLength(0);
+    expect(m.place).not.toHaveBeenCalled();
+    m.cached.mockResolvedValue([]);
+    await boot({ keepStore: true });
+    expect(core.unprotectedQuantity(planOf(p.id))).toBe(1);
+    expect(triggersOf(p.id)).toHaveLength(0);
+});
+
+it('r40 Close storage failure never revokes current protection or fakes retirement ACK',async()=>{
+    const p=await r37Rebound(r37Markets[0]!);
+    await emit(r37Deal(r37Markets[0]!));expect(triggersOf(p.id).length).toBeGreaterThan(0);
+    const write=globalThis.localStorage.setItem.bind(globalThis.localStorage);
+    vi.spyOn(globalThis.localStorage,'setItem').mockImplementation((key,value)=>{if(key==='sj-pro-brackets')throw new Error('fixture denied retirement');write(key,value);});
+    await expect(bracket.dismissBracket(p.id)).rejects.toThrow('fixture denied retirement');
+    expect(planOf(p.id).observationOnly).toBeUndefined();expect(triggersOf(p.id).length).toBeGreaterThan(0);
 });

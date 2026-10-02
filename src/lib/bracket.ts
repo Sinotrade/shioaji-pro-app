@@ -17,6 +17,7 @@
 //   resent automatically.
 
 import { useSyncExternalStore } from 'react';
+import { prepareProtectionObligation, verifyProtectionReceipt, completeProtectionObligation, getProtectionObligations, subscribeProtectionObligations, acknowledgeProtectionObligation, type ProtectionReceipt, type ProtectionRequest } from './protection-obligations';
 import { pendingProtectionStore } from './pending-protection-store';
 import { createAccountQuery } from './account-query';
 import { reportLedger } from './report-ledger';
@@ -174,6 +175,7 @@ const roleDecided = new Promise<void>(resolve => { decideRole = resolve; });
 if (!main) decideRole();
 let snapshot: BracketPlan[] = plans;
 const listeners = new Set<() => void>();
+subscribeProtectionObligations(() => { mergedCache.obligations = null; listeners.forEach(l => l()); });
 const exitIds = new Map<string, string>(); // plan id → exit record id
 
 type Command =
@@ -206,7 +208,7 @@ const bus = createCommandBus<Command, BracketPlan[] | { hostId: string; plans: B
 function commit() {
     if (!executing) return; // mirrors never write shared state
     const now = Date.now();
-    plans = plans.filter(p => !p.dismissed && (isLive(p) || unprotectedQuantity(p) > 0 || now - p.updatedAt < KEEP_DONE_MS));
+    plans = plans.filter(p => p.observationOnly || (!p.dismissed && (isLive(p) || unprotectedQuantity(p) > 0 || now - p.updatedAt < KEEP_DONE_MS)));
     try { globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(plans)); } catch { /* quota */ }
     plans = plans.map(p => ({ ...p, identityConfirmed: !!p.reportContext && p.reportContext === currentReportContext() }));
     snapshot = plans;
@@ -244,7 +246,7 @@ function arm(p: BracketPlan) {
 
 /** Arm/resize protection for the filled quantity; notify once per change. */
 function syncProtection(before: BracketPlan | undefined, p: BracketPlan) {
-    if (p.dismissed) return; // the user removed this plan and its protection
+    if (p.dismissed && !p.observationOnly) return; // legacy discarded plan
     const qty = protectionQuantity(p);
     arm(p);
     const prevQty = before ? protectionQuantity(before) : 0;
@@ -265,7 +267,8 @@ function syncProtection(before: BracketPlan | undefined, p: BracketPlan) {
 function update(id: string, fn: (p: BracketPlan) => BracketPlan) {
     const before = plans.find(p => p.id === id);
     if (!before) return;
-    const after = fn(before);
+    let after = fn(before);
+    if (after.observationOnly && unprotectedQuantity(after) > 0) after = { ...after, dismissed: false };
     if (after === before) return;
     plans = plans.map(p => p === before ? after : p);
     syncProtection(before, after);
@@ -463,11 +466,12 @@ function register(spec: BracketSpec): BracketPlan {
     }
     const context = currentReportContext();
     if (!context || !(spec.seqno?.trim() || spec.ordno?.trim())) throw new Error('進場單身分或連線尚未確認，保護登記待確認；請核對委託，勿重送');
-    const candidates = plans.filter(p => p.env === spec.env && sameEntryPartition(p, spec) && !p.dismissed);
+    const candidates = plans.filter(p => p.env === spec.env && sameEntryPartition(p, spec) && (!p.dismissed || p.observationOnly));
     for (const p of candidates) {
         const identity = externalIdentity({ ...p, confirmed: false }, { ...spec, confirmed: false });
         if (identity === 'unknown') throw new Error('進場單身分可能與既有保護重複，請先對帳，保護登記待確認');
         if (identity === 'same') {
+            if (p.observationOnly) throw new Error('此進場單的保護已關閉，保留觀察紀錄；請核對委託與持倉，勿重複登記');
             if (!sameEntryScope(p, spec)) throw new Error('進場單身分相同但方向或原量不一致，保護登記待確認；請對帳，勿重複保護');
             if (p.reportContext !== context) throw new Error('既有進場單連線代次尚未確認，請先對帳，保護登記待確認');
             return p;
@@ -503,8 +507,17 @@ function handle(cmd: Command): unknown {
         case 'dismiss': {
             const p = plans.find(x => x.id === cmd.id);
             if (!p) { dropBracketTriggers(cmd.id); return true; } // orphaned protection
+            // Publish durable retirement before revoking protection or acknowledging Close.
+            // A later own fill remains observable without restoring authority.
+            const retired = { ...p, observationOnly: true, dismissed: unprotectedQuantity(p) === 0, updatedAt: Date.now() };
+            const retained = plans.map(x => x === p ? retired : x);
+            const encoded = JSON.stringify(retained);
+            if (!globalThis.localStorage) throw new Error('觀察紀錄無法保存，尚未關閉保護');
+            globalThis.localStorage.setItem(STORAGE_KEY, encoded);
+            if (globalThis.localStorage.getItem(STORAGE_KEY) !== encoded) throw new Error('觀察紀錄未保存確認，尚未關閉保護');
             disarmBracketGroup(p.env, p.group);
-            update(p.id, x => ({ ...x, dismissed: true, updatedAt: Date.now() }));
+            plans = retained;
+            commit();
             return true;
         }
         case 'cancel-entry': return cancelEntry(cmd.id);
@@ -527,11 +540,12 @@ export interface BracketAdmission {
     readonly contextGeneration: number;
     readonly ownerGeneration: number;
     readonly hostId: string | null;
+    readonly protectionReceipt?: ProtectionReceipt;
 }
 const hostId = `host-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 let mirrorHostId: string | null = null;
 const ADMISSION_CHANGED = '保護執行環境已變更，未送出進場單，請重新確認';
-export async function ensureBracketHost(opts: { orderLot?: StockOrderLot; securityType?: BracketSpec['securityType'] } = {}): Promise<BracketAdmission> {
+export async function ensureBracketHost(opts: { orderLot?: StockOrderLot; securityType?: BracketSpec['securityType']; entry?: ProtectionRequest } = {}): Promise<BracketAdmission> {
     const env = currentProtectionEnv();
     if (!env) throw new Error('伺服器模式尚未確認，括號單未送出');
     const admission: BracketAdmission = {
@@ -549,6 +563,12 @@ export async function ensureBracketHost(opts: { orderLot?: StockOrderLot; securi
         ready = { ...admission, hostId: id };
     }
     assertBracketAdmission(ready);
+    if (opts.entry) {
+        if (opts.entry.env !== ready.env) throw new Error(ADMISSION_CHANGED);
+        const protectionReceipt = await prepareProtectionObligation(opts.entry, ready);
+        assertBracketAdmission(ready);
+        ready = { ...ready, protectionReceipt };
+    }
     return Object.freeze(ready);
 }
 /** Synchronous send-time gate, called again by the actual order dispatch. */
@@ -559,6 +579,13 @@ export function assertBracketAdmission(admission: BracketAdmission): void {
     }
     if (admission.owner === 'native') ensureNativeHost(admission.env);
     else if (admission.hostId !== (executing ? hostId : mirrorHostId) || bracketSnapshotStale()) throw new Error(ADMISSION_CHANGED);
+}
+
+/** The ticket must have a persistent obligation at the final API boundary. */
+export async function verifyBracketProtectionReceipt(admission: BracketAdmission): Promise<void> {
+    if (!admission.protectionReceipt) throw new Error('保護義務尚未持久確認，未送出進場單');
+    await verifyProtectionReceipt(admission.protectionReceipt);
+    assertBracketAdmission(admission);
 }
 
 /** A sent entry is persisted before registration; failed/late ACKs retain its identity.
@@ -588,7 +615,8 @@ function savePendingRegistration(plan: BracketPlan | null, id: string): void {
 }
 /** Explicit user acknowledgment after checking broker orders/positions and
  * protection. Never a new registration's success and never sends an order. */
-export function acknowledgePendingRegistration(id: string): void {
+export async function acknowledgePendingRegistration(id: string): Promise<void> {
+    if (getProtectionObligations().some(r => r.id === id)) { await acknowledgeProtectionObligation(id); return; }
     registrationLedger.acknowledge(id);
     pendingRegistrations = loadPendingRegistrations();
     listeners.forEach(l => l());
@@ -604,7 +632,7 @@ function pendingRegistration(spec: BracketSpec, admission: BracketAdmission, det
     return { ...spec, id: `registration:${admission.owner}:${planId(spec.env, spec.account, spec.orderId)}:${encodeURIComponent(spec.seqno)}:${encodeURIComponent(spec.ordno ?? '')}:${spec.action}:${spec.quantity}:${spec.orderLot ?? 'Common'}${`:${globalThis.crypto?.randomUUID?.() ?? `${now}:${Math.random().toString(36).slice(2)}`}`}`,
         market: spec.account.account_type === 'S' ? 'stock' : 'futures', group: '', fills: {}, filled: 0,
         entryClosed: false, exit: null, issues: [], createdAt: now, updatedAt: now,
-        registrationPending: { owner: admission.owner, detail } };
+        registrationPending: { owner: admission.owner, detail, ...(admission.protectionReceipt ? { operationId: admission.protectionReceipt.record.id } : {}) } };
 }
 
 export const REGISTER_TIMEOUT_MS = 60_000;
@@ -641,6 +669,19 @@ export async function registerBracket(spec: BracketSpec, admission?: BracketAdmi
             || (admission.owner === 'window' && admission.hostId !== (executing ? hostId : mirrorHostId))) {
             throw new Error('保護登記回覆前連線或執行視窗已變更，登記仍待確認；請核對原委託與保護紀錄，勿重送');
         }
+        // Window authority must survive a new reader too, not merely return a bus ACK.
+        if (admission.owner === 'window') {
+            const persisted = JSON.parse(globalThis.localStorage?.getItem(STORAGE_KEY) ?? '[]') as BracketPlan[];
+            if (!persisted.some(p => p.id === plan.id && sameEntryScope(p, spec)
+                && externalIdentity({ ...p, confirmed: false }, { ...spec, confirmed: false }) === 'same')) {
+                throw new Error('保護登記紀錄尚未持久確認；請核對委託，勿重送');
+            }
+        }
+        if (admission.protectionReceipt) await completeProtectionObligation(admission.protectionReceipt, spec, plan.id);
+        if (admission.env !== currentProtectionEnv() || admission.contextGeneration !== getProtectionContextVersion()
+            || (admission.owner === 'window' && admission.hostId !== (executing ? hostId : mirrorHostId))) {
+            throw new Error('保護登記持久回覆前環境已變更，登記仍待確認；請核對原委託與保護紀錄，勿重送');
+        }
         savePendingRegistration(null, record.id);
         return plan;
     } catch (e) {
@@ -665,12 +706,15 @@ async function registerNativeBracket(spec: BracketSpec): Promise<BracketPlan> {
     // idempotent: an entry order has at most one live bracket (the engine
     // refuses a second one too: both would send a full-size exit)
     const existingFor = () => {
-        const candidates = nativePlans().filter(p => p.native.status !== 'stopped' && p.env === spec.env
+        const candidates = nativePlans().filter(p => (p.native.status !== 'stopped' || p.observationOnly) && p.env === spec.env
             && p.orderCode === spec.orderCode && p.securityType === spec.securityType
             && accountRefKey(p.account) === accountRefKey(spec.account));
         for (const p of candidates) {
             const identity = externalIdentity({ ...p, confirmed: !p.native.entryUnconfirmed }, spec);
-            if (identity === 'same') return p;
+            if (identity === 'same') {
+                if (p.observationOnly) throw new Error('此進場單已移除保護，保留觀察紀錄；請核對委託與持倉，勿重複登記');
+                return p;
+            }
             if (identity === 'unknown') throw new Error('進場單身分尚未確認，請先核對委託與成交；括號單未登記');
         }
         return undefined;
@@ -817,13 +861,23 @@ function subscribe(l: () => void) {
     return () => { listeners.delete(l); };
 }
 
-let mergedCache: { ts: BracketPlan[]; native: NativeBracketPlan[]; pending: BracketPlan[]; all: BracketPlan[] } = { ts: [], native: [], pending: [], all: [] };
+let mergedCache: { obligations: ReturnType<typeof getProtectionObligations> | null; ts: BracketPlan[]; native: NativeBracketPlan[]; pending: BracketPlan[]; all: BracketPlan[] } = { obligations: null, ts: [], native: [], pending: [], all: [] };
 /** TS plans followed by native bracket programs (marked `native`). */
 export function getDisplayBrackets(): BracketPlan[] {
     const native = nativePlans();
-    if (mergedCache.ts !== snapshot || mergedCache.native !== native || mergedCache.pending !== pendingRegistrations) {
+    const obligations = getProtectionObligations();
+    if (mergedCache.obligations !== obligations || mergedCache.ts !== snapshot || mergedCache.native !== native || mergedCache.pending !== pendingRegistrations) {
         const pending = pendingRegistrations;
-        mergedCache = { ts: snapshot, native, pending: pendingRegistrations, all: [...snapshot, ...native, ...pending] };
+        const unresolved: BracketPlan[] = obligations.filter(r => !r.acknowledged
+            && !pending.some(p => p.registrationPending?.operationId === r.id)
+            && !(r.completed && [...snapshot, ...native].some(p => p.id === r.completed!.planId
+                && sameEntryScope(p, r.completed!) && externalIdentity({ ...p, confirmed: false }, { ...r.completed!, confirmed: false }) === 'same')))
+            .map(r => ({ ...r.obligation.request, orderId: r.completed?.orderId ?? '', seqno: r.completed?.seqno ?? '',
+                ordno: r.completed?.ordno, id: r.id, group: '', market: r.obligation.request.account.account_type === 'S' ? 'stock' : 'futures',
+                fills: {}, filled: 0, entryClosed: false, exit: null, issues: [], createdAt: 0, updatedAt: 0,
+                registrationPending: { owner: r.obligation.owner, operationId: r.id,
+                    detail: '進場或保護結果尚未確認；請核對原帳戶委託／持倉與保護紀錄，勿重送或另掛重複出場單' } }));
+        mergedCache = { obligations, ts: snapshot, native, pending: pendingRegistrations, all: [...snapshot, ...native, ...pending, ...unresolved] };
     }
     return mergedCache.all;
 }

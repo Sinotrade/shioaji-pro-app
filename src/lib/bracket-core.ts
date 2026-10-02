@@ -75,7 +75,7 @@ export interface BracketPlan {
     /** Authoritative native projection: evidence is separate from armed protection. */
     nativeRisk?: { position: number; unprotected: number; armed: boolean };
     /** A sent entry whose fixed owner has not acknowledged protection. Never armed here. */
-    registrationPending?: { owner: 'window' | 'native'; detail: string };
+    registrationPending?: { owner: 'window' | 'native'; detail: string; operationId?: string };
     id: string;
     env: string;
     account: AccountRef;
@@ -106,6 +106,8 @@ export interface BracketPlan {
     exit: BracketExit | null;
     issues: BracketIssue[];
     dismissed?: boolean;
+    /** Durable retirement: evidence only, never restored order authority. */
+    observationOnly?: boolean;
     createdAt: number;
     updatedAt: number;
 }
@@ -117,6 +119,7 @@ export function bracketPhase(p: BracketPlan): BracketPhase {
         if (p.exit.status === 'sending' || p.exit.status === 'working') return 'exiting';
         return 'done';
     }
+    if (p.observationOnly) return 'closed';
     if (p.filled > 0) return p.nativeRisk && !p.nativeRisk.armed ? 'closed' : 'protected';
     return p.entryClosed ? 'closed' : 'waiting';
 }
@@ -125,7 +128,7 @@ export function bracketPhase(p: BracketPlan): BracketPhase {
  * This grants neither active protection nor send/cancel authority. The runtime
  * still validates stable identity, full scope and current report context. */
 export function observesEntryEvidence(p: BracketPlan): boolean {
-    return !p.dismissed && !p.registrationPending;
+    return (!p.dismissed || !!p.observationOnly) && !p.registrationPending;
 }
 
 /** Active protection lifecycle. Terminal entries may still receive late fills:
@@ -141,7 +144,7 @@ export function isLive(p: BracketPlan): boolean {
 
 /** Quantity the OCO triggers should hold right now. */
 export function protectionQuantity(p: BracketPlan): number {
-    if (p.exit) return 0;
+    if (p.observationOnly || p.exit) return 0;
     if (p.nativeRisk) return p.nativeRisk.armed ? Math.min(p.nativeRisk.position, p.quantity) : 0;
     return Math.min(p.filled, p.quantity);
 }
@@ -152,7 +155,7 @@ export function protectionQuantity(p: BracketPlan): number {
 export function unprotectedQuantity(p: BracketPlan): number {
     if (p.nativeRisk) return Math.max(p.nativeRisk.unprotected,
         !p.nativeRisk.armed && !p.exit ? p.nativeRisk.position : 0);
-    if (!p.exit) return 0;
+    if (!p.exit) return p.observationOnly ? Math.min(p.filled, p.quantity) : 0;
     const counted = p.exit.status === 'not-sent' ? 0
         : p.exit.status === 'incomplete' ? p.exit.filled : p.exit.quantity;
     return Math.max(0, Math.min(p.filled, p.quantity) - counted);

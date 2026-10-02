@@ -294,7 +294,7 @@ const exitFired = (lv: Level) => lv.exit?.type === 'oco' && cycleSlots(lv, 'exit
 function emitPlace(ctx: Ctx, p: OrderProgram, lv: Level, role: 'entry' | 'exit', leg: LegName, qty: number,
     price: number | null, order: OrderSpec): boolean {
     // isolation guard: never cross environments
-    if (!envMatches(ctx.s, p) || awaitingListing(ctx.s, p) || inEpochGuardBand(ctx.ts) || !Number.isSafeInteger(qty) || qty <= 0) return false;
+    if (p.observationOnly || !envMatches(ctx.s, p) || awaitingListing(ctx.s, p) || inEpochGuardBand(ctx.ts) || !Number.isSafeInteger(qty) || qty <= 0) return false;
     const key = intentKey(p, lv, leg);
     p.intentSeq += 1;
     lv.orders.push({ submitVersion: p.version, key, role, leg, cycle: lv.cycles, qty, status: 'pendingSubmit', orderId: null, filled: 0,
@@ -310,7 +310,7 @@ function emitPlace(ctx: Ctx, p: OrderProgram, lv: Level, role: 'entry' | 'exit',
 
 function emitCancel(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot): boolean {
     // an id of an earlier epoch may name another order: never cancel it
-    if (!envMatches(ctx.s, p) || !slot.orderId || slot.unconfirmed || slot.cancelAmbiguous || awaitingListing(ctx.s, p)
+    if (p.observationOnly || !envMatches(ctx.s, p) || !slot.orderId || slot.unconfirmed || slot.cancelAmbiguous || awaitingListing(ctx.s, p)
         || inEpochGuardBand(ctx.ts)) return false;
     const attempts = (slot.cancel?.attempts ?? 0) + 1;
     const key = `${slot.key}/cancel/${attempts}`;
@@ -1238,7 +1238,7 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
         if (invalid) { reject(ctx, null, invalid, p.id); return; }
         // one live program per external entry order: two would each reconcile
         // the same fills and each send a full-size exit
-        const other = s.programs.find(x => x.status !== 'stopped' && sameExternalEntry(x, p));
+        const other = s.programs.find(x => (x.status !== 'stopped' || x.observationOnly) && sameExternalEntry(x, p));
         if (other) { reject(ctx, null, 'duplicateEntry', `${p.id} (${other.id})`); return; }
         if (!canEvaluate(s)) { reject(ctx, null, 'unknownEnv', p.id); return; }
         if (s.conn.env !== p.binding.env || s.conn.serverId !== p.binding.serverId) { reject(ctx, null, 'envMismatch', p.id); return; }
@@ -1264,6 +1264,7 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
     const p = s.programs.find(x => x.id === c.programId);
     if (!p) { reject(ctx, null, 'noProgram', c.programId); return; }
     if (c.version !== p.version) { reject(ctx, p, 'staleVersion', `${c.version} != ${p.version}`); return; }
+    if (p.observationOnly) { reject(ctx, p, 'retired', p.id); return; }
     const accept = () => { p.version += 1; p.updatedAt = ctx.ts; };
     switch (c.op) {
         case 'pause':
@@ -1289,7 +1290,12 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             const busy = p.levels.some(lv => lv.orders.some(o => isActive(o) || (o.status === 'unknown' && !o.acknowledged))
                 || lv.position > 0 || lv.unprotected > 0 || !!externalEntryPending(lv));
             if (busy) { reject(ctx, p, 'hasOrdersOrPosition', p.id); return; }
-            s.programs = s.programs.filter(x => x !== p);
+            if (p.levels.some(lv => lv.orders.some(o => !!o.orderId || o.status !== 'notSent'))) {
+                accept();
+                p.observationOnly = true;
+                p.status = 'stopped';
+                p.pauseReason = null;
+            } else s.programs = s.programs.filter(x => x !== p);
             notice(ctx, 'removed', p, null, p.id);
             return;
         }
