@@ -6,6 +6,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { dismissBracket } from '../lib/bracket';
+import { acknowledgeNativeUnknown, reconcileNativeProgram, removeNativeProgram } from '../lib/execution/native';
+import { isNativeTrigger } from '../lib/execution/native-view';
 import { ensureContract, useContract } from '../lib/contracts-cache';
 import {
     actionLabel,
@@ -42,7 +44,7 @@ export const CONFIRM_GUARD_MS = 400;
 /** An armed confirmation falls back to the plain button after this. */
 export const CONFIRM_TIMEOUT_MS = 10_000;
 
-type ConfirmStep = 'send' | 'send-unpast' | 'send-duplicate' | 'cancel';
+type ConfirmStep = 'send' | 'send-unpast' | 'send-duplicate' | 'cancel' | 'ack-unknown';
 
 function detectedAt(at: number): string {
     const d = new Date(at);
@@ -75,6 +77,7 @@ function Row({ trigger, price, envNow, sending }: {
     const unpast = shown !== undefined && isPendingUnpast(trigger, shown);
     // #201 native: a submit with an unknown outcome that the listings never
     // showed — the original order may still exist at the broker
+    const manualNativeUnavailable = isNativeTrigger(trigger) && !trigger.bracketId;
     const mayDuplicate = trigger.pending?.reason === 'unknownNotSent';
     // no current price (stream down, environment changed): disarm 送出
     useEffect(() => {
@@ -106,6 +109,24 @@ function Row({ trigger, price, envNow, sending }: {
     const act = actionLabel(trigger);
     const style = exitStyleLabel(trigger);
     const distance = shown === undefined ? null : distanceLabel(trigger, shown);
+    if (trigger.unresolved && isNativeTrigger(trigger)) return (
+        <div className={styles.row} role='status'>
+            <div className={styles.product}>{name} · 委託結果待確認</div>
+            <span className={styles.message}>{trigger.unresolved.detail}</span>
+            <span className={styles.hint}>{trigger.action === 'Buy' ? '買進' : '賣出'} {trigger.quantity} · {trigger.env ? protectionEnvLabel(trigger.env) : '環境未知'} · {trigger.account ? maskAccountId(trigger.account.account_id, priv) : '帳戶未知'}</span>
+            <span className={styles.hint}>請核對券商委託、成交與持倉；系統不會重新送出。停止追蹤仍會保留尚未確認的風險。</span>
+            {message && <span className={styles.message}>{message}</span>}
+            <div className={styles.actions}>
+                <button className={styles.button} disabled={busy} onClick={() => void run(() => reconcileNativeProgram(trigger.native.programId))}>更新對帳狀態</button>
+                <button className={styles.button} disabled={busy} onClick={() => void run(() => removeNativeProgram(trigger.native.programId))}>停止追蹤，保留未確認紀錄</button>
+                <button className={styles.button} disabled={busy} onClick={() => {
+                    if (confirm !== 'ack-unknown') { setConfirm('ack-unknown'); return; }
+                    if (!settled()) return;
+                    void run(() => acknowledgeNativeUnknown(trigger.native.programId, trigger.native.levelId));
+                }}>{confirm === 'ack-unknown' ? '再按一次：已人工核對並處理委託／持倉，解除待確認' : '已人工核對並處理，解除待確認'}</button>
+            </div>
+        </div>
+    );
     const acct = trigger.account
         ? `${trigger.account.account_type === 'F' ? '期貨' : '證券'}帳戶 ${maskAccountId(trigger.account.account_id, priv)}`
         : null;
@@ -162,8 +183,8 @@ function Row({ trigger, price, envNow, sending }: {
             <div className={styles.actions}>
                 <button
                     className={styles.primary}
-                    disabled={busy || sending || shown === undefined}
-                    title={sendButtonTitle(trigger)}
+                    disabled={busy || sending || shown === undefined || manualNativeUnavailable}
+                    title={manualNativeUnavailable ? '背景觸價單尚未支援當代手動風控確認，請保留或取消' : sendButtonTitle(trigger)}
                     onClick={() => {
                         if (confirm !== 'send' && confirm !== 'send-unpast' && confirm !== 'send-duplicate') {
                             setConfirm('send');
@@ -177,7 +198,7 @@ function Row({ trigger, price, envNow, sending }: {
                         resolve('send', confirm === 'send-unpast' || (confirm === 'send-duplicate' && unpast));
                     }}
                 >
-                    {sending ? '送出處理中'
+                    {manualNativeUnavailable ? '手動送出暫不支援' : sending ? '送出處理中'
                         : confirm === 'send-duplicate' ? `原委託可能仍存在${unpast ? '且已未穿價' : ''}：再按一次仍重新送出${style}${act}（目前 ${fmtPrice(shown)}）`
                         : confirm === 'send-unpast' ? `目前已未穿價：再按一次仍${style}${act}（目前 ${fmtPrice(shown)}）`
                             : confirm === 'send' ? `再按一次確認：${style}${act}（目前 ${fmtPrice(shown)}）` : `立即送出${style}單`}
@@ -212,7 +233,7 @@ function Row({ trigger, price, envNow, sending }: {
 }
 
 export function PendingTriggers({ compact = false }: { compact?: boolean }) {
-    const pending = useTriggers().filter(t => t.pending);
+    const pending = useTriggers().filter(t => t.pending || t.unresolved);
     const prices = usePendingPrices();
     const sending = useSendingTriggers();
     const [open, setOpen] = useState(true);
@@ -239,7 +260,7 @@ export function PendingTriggers({ compact = false }: { compact?: boolean }) {
             {open && (
                 <>
                     <div className={styles.hint}>
-                        App 恢復盯價時，價格已經穿過這些單的觸發價。為了避免意外成交，系統先不送單，請逐筆決定。同一組停損停利（OCO）送出其中一筆後，其餘會自動取消。
+                        請逐筆核對已穿價或結果不明的委託；結果不明的委託不會重新送出。同一組停損停利（OCO）送出其中一筆後，其餘會自動取消。
                     </div>
                     {pending.map(t => <Row key={t.id} trigger={t} price={prices[priceKeyOf(t)]} envNow={envNow} sending={sending.includes(t.id)} />)}
                 </>

@@ -301,7 +301,7 @@ export function OrderTicket({
                 if (!bracketEnv) {
                     throw new Error('伺服器模式（模擬／正式）尚未確認，括號單未送出');
                 }
-                bracketAdmission = await ensureBracketHost({ orderLot: isFutures ? undefined : orderLot });
+                bracketAdmission = await ensureBracketHost({ orderLot: isFutures ? undefined : orderLot, securityType: contract.security_type as 'STK' | 'FUT' | 'OPT' });
             }
             // 送單帳戶在確認前固定（#139）：確認視窗開著時，本視窗其他面板
             // 仍可改選帳戶 — 送出時不再重新解析，改為比對後中止

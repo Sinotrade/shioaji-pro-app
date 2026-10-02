@@ -17,6 +17,7 @@
 //   resent automatically.
 
 import { useSyncExternalStore } from 'react';
+import { pendingProtectionStore } from './pending-protection-store';
 import { createAccountQuery } from './account-query';
 import { reportLedger } from './report-ledger';
 import { cancelVerifiedOrder, fetchTradeCacheHealth, fetchTrades } from './shioaji';
@@ -461,7 +462,7 @@ function register(spec: BracketSpec): BracketPlan {
     }
     const context = currentReportContext();
     if (!context || !(spec.seqno?.trim() || spec.ordno?.trim())) throw new Error('進場單身分或連線尚未確認，保護登記待確認；請核對委託，勿重送');
-    const candidates = plans.filter(p => sameEntryPartition(p, spec) && !p.dismissed);
+    const candidates = plans.filter(p => p.env === spec.env && sameEntryPartition(p, spec) && !p.dismissed);
     for (const p of candidates) {
         const identity = externalIdentity({ ...p, confirmed: false }, { ...spec, confirmed: false });
         if (identity === 'unknown') throw new Error('進場單身分可能與既有保護重複，請先對帳，保護登記待確認');
@@ -529,11 +530,11 @@ export interface BracketAdmission {
 const hostId = `host-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 let mirrorHostId: string | null = null;
 const ADMISSION_CHANGED = '保護執行環境已變更，未送出進場單，請重新確認';
-export async function ensureBracketHost(opts: { orderLot?: StockOrderLot } = {}): Promise<BracketAdmission> {
+export async function ensureBracketHost(opts: { orderLot?: StockOrderLot; securityType?: BracketSpec['securityType'] } = {}): Promise<BracketAdmission> {
     const env = currentProtectionEnv();
     if (!env) throw new Error('伺服器模式尚未確認，括號單未送出');
     const admission: BracketAdmission = {
-        owner: nativeBracket(opts.orderLot) ? 'native' : 'window', env,
+        owner: nativeBracket(opts.orderLot, opts.securityType) ? 'native' : 'window', env,
         orderLot: opts.orderLot ?? 'Common', contextGeneration: getProtectionContextVersion(),
         ownerGeneration: getNativeOwnerGeneration(), hostId: null,
     };
@@ -562,31 +563,44 @@ export function assertBracketAdmission(admission: BracketAdmission): void {
 /** A sent entry is persisted before registration; failed/late ACKs retain its identity.
  * These rows never enter either executor's plans and never submit any order. */
 const PENDING_REGISTRATION_KEY = 'sj-pro-bracket-registrations';
-function loadPendingRegistrations(): BracketPlan[] {
-    try {
-        const data: unknown = JSON.parse(globalThis.localStorage?.getItem(PENDING_REGISTRATION_KEY) ?? '[]');
-        return Array.isArray(data) ? data.filter((p: BracketPlan) => p?.registrationPending && p.account && p.orderId) : [];
-    } catch { return []; }
-}
+const registrationLedger = pendingProtectionStore<BracketPlan>(PENDING_REGISTRATION_KEY,
+    (v): v is BracketPlan => !!v && typeof v === 'object' && typeof (v as BracketPlan).id === 'string'
+        && !!(v as BracketPlan).registrationPending && !!(v as BracketPlan).account && !!(v as BracketPlan).orderId);
+function loadPendingRegistrations(): BracketPlan[] { try { return registrationLedger.rows(); } catch { return []; } }
 let pendingRegistrations = loadPendingRegistrations();
 function savePendingRegistration(plan: BracketPlan | null, id: string): void {
-    const latest = loadPendingRegistrations().filter(p => p.id !== id);
-    pendingRegistrations = plan ? [...latest, plan] : latest;
-    try { globalThis.localStorage?.setItem(PENDING_REGISTRATION_KEY, JSON.stringify(pendingRegistrations)); } catch {
-        // Keep the in-memory row and make the persistence limitation visible.
-        if (plan?.registrationPending) plan.registrationPending.detail += '；此紀錄無法保存，請立即核對委託';
+    try {
+        if (plan) registrationLedger.write(plan); else registrationLedger.complete(id);
+        pendingRegistrations = loadPendingRegistrations();
+        // Minimal test/session Storage implementations may not enumerate;
+        // the current writer still retains its own risk row in memory.
+        if (plan && !pendingRegistrations.some(p => p.id === id)) pendingRegistrations.push(plan);
+    } catch {
+        const latest = pendingRegistrations.filter(p => p.id !== id);
+        if (plan?.registrationPending) {
+            plan.registrationPending.detail += '；此紀錄無法保存，請立即核對委託';
+            pendingRegistrations = [...latest, plan];
+        }
+        // A failed removal keeps the existing risk visible.
     }
     listeners.forEach(l => l());
 }
+/** Explicit user acknowledgment after checking broker orders/positions and
+ * protection. Never a new registration's success and never sends an order. */
+export function acknowledgePendingRegistration(id: string): void {
+    registrationLedger.acknowledge(id);
+    pendingRegistrations = loadPendingRegistrations();
+    listeners.forEach(l => l());
+}
 if (typeof window !== 'undefined') window.addEventListener?.('storage', e => {
-    if (e.key === PENDING_REGISTRATION_KEY) {
+    if (registrationLedger.handles(e.key)) {
         pendingRegistrations = loadPendingRegistrations();
         listeners.forEach(l => l());
     }
 });
 function pendingRegistration(spec: BracketSpec, admission: BracketAdmission, detail: string): BracketPlan {
     const now = Date.now();
-    return { ...spec, id: `registration:${admission.owner}:${planId(spec.env, spec.account, spec.orderId)}:${encodeURIComponent(spec.seqno)}:${encodeURIComponent(spec.ordno ?? '')}:${spec.action}:${spec.quantity}:${spec.orderLot ?? 'Common'}${spec.seqno?.trim() || spec.ordno?.trim() ? '' : `:${now}:${Math.random().toString(36).slice(2)}`}`,
+    return { ...spec, id: `registration:${admission.owner}:${planId(spec.env, spec.account, spec.orderId)}:${encodeURIComponent(spec.seqno)}:${encodeURIComponent(spec.ordno ?? '')}:${spec.action}:${spec.quantity}:${spec.orderLot ?? 'Common'}${`:${globalThis.crypto?.randomUUID?.() ?? `${now}:${Math.random().toString(36).slice(2)}`}`}`,
         market: spec.account.account_type === 'S' ? 'stock' : 'futures', group: '', fills: {}, filled: 0,
         entryClosed: false, exit: null, issues: [], createdAt: now, updatedAt: now,
         registrationPending: { owner: admission.owner, detail } };
@@ -605,7 +619,7 @@ function assertRegistrationOwner(spec: BracketSpec, owner: BracketAdmission['own
 export async function registerBracket(spec: BracketSpec, admission?: BracketAdmission): Promise<BracketPlan> {
     // Legacy direct registration chooses an owner once here; the ticket always supplies its preflight admission.
     if (!admission) {
-        admission = await ensureBracketHost({ orderLot: spec.orderLot });
+        admission = await ensureBracketHost({ orderLot: spec.orderLot, securityType: spec.securityType });
     }
     const record = pendingRegistration(spec, admission, '進場單已送出，保護登記尚未確認；請核對委託與保護紀錄，勿重送進場或另掛重複出場單');
     savePendingRegistration(record, record.id);
@@ -638,8 +652,9 @@ export async function registerBracket(spec: BracketSpec, admission?: BracketAdmi
 /** Native owns new whole-lot / futures brackets; odd-lot brackets (#204:
  * quantities in shares, odd-lot exits) are not expressible in execution-v1
  * yet and stay in the TS runtime. */
-function nativeBracket(orderLot: StockOrderLot | undefined): boolean {
-    return (orderLot ?? 'Common') === 'Common' && nativeOwnsNew();
+function nativeBracket(orderLot: StockOrderLot | undefined, securityType?: BracketSpec['securityType']): boolean {
+    // Shared Cash holdings/reservations are currently owned by the window.
+    return securityType !== 'STK' && (orderLot ?? 'Common') === 'Common' && nativeOwnsNew();
 }
 
 async function registerNativeBracket(spec: BracketSpec): Promise<BracketPlan> {

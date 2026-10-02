@@ -5,8 +5,8 @@ import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 
-const r33 = vi.hoisted(() => ({ plans: [] as unknown[], cancel: vi.fn() }));
-vi.mock('../lib/bracket', () => ({ useBrackets: () => r33.plans, isNativeBracket: (p: object) => 'native' in p, bracketSnapshotStale: () => false, cancelRemainingEntry: r33.cancel }));
+const r33 = vi.hoisted(() => ({ plans: [] as unknown[], cancel: vi.fn(), ack: vi.fn() }));
+vi.mock('../lib/bracket', () => ({ useBrackets: () => r33.plans, isNativeBracket: (p: object) => 'native' in p, bracketSnapshotStale: () => false, cancelRemainingEntry: r33.cancel, acknowledgePendingRegistration:r33.ack }));
 vi.mock('../lib/bracket-core', async () => await vi.importActual('../lib/bracket-core'));
 vi.mock('../lib/execution/native', () => ({ useNativeHealth: () => null }));
 vi.mock('../lib/privacy', () => ({ maskAccountId: (s: string) => s, usePrivacyMode: () => false }));
@@ -89,12 +89,15 @@ it('a legacy stopped snapshot with a failed Cover and known position stays visib
     act(() => view.unmount());
 });
 it('a persisted failed registration displays its entry identity and no financial action', async () => {
+    r33.cancel.mockClear();
     const { BracketStatusList } = await import('./bracket-status');
     const fixture = await r33NativePlan();
     r33.plans = [{ ...fixture.map(), registrationPending: { owner: 'native', detail: '進場單已送出，勿重送進場或另掛重複出場單' } }];
     let view!: ReactTestRenderer;
     act(() => { view = create(createElement(BracketStatusList, { code: 'TXFR1' })); });
     const output = JSON.stringify(view.toJSON());expect(output).toContain('保護登記待確認');expect(output).toContain('stable-entry');
-    expect(view.root.findAllByType('button')).toHaveLength(0);
+    expect(view.root.findAllByType('button')).toHaveLength(1);
+    expect(JSON.stringify(view.toJSON())).toContain('已人工核對');
+    expect(r33.cancel).not.toHaveBeenCalled();
     act(() => view.unmount());
 });

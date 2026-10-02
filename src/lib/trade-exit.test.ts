@@ -171,3 +171,16 @@ it('sends the chosen order type on limit orders, keeps ROD by default and IOC fo
     await placeQuickOrder(future,'Sell',100,1,{orderType:'IOC',ocType:'New'});
     expect(m.future.mock.calls[0]![1]).toMatchObject({order_type:'IOC',price_type:'LMT',octype:'New'});
 });
+
+it.each(['risk-before','risk-after','confirm-cancel','context','account','normal'])('r36 manual pending shared preflight %s never sends',async change=>{
+    const {authorizeManualPendingOrder}=await import('./trade');setSimulation(true);
+    if(change==='risk-before')m.risk.mockReturnValue('風控鎖');
+    if(change==='risk-after')m.confirm.mockImplementation(async()=>{m.risk.mockReturnValue('風控鎖');return true;});
+    if(change==='confirm-cancel')m.confirm.mockResolvedValue(false);
+    if(change==='context')m.confirm.mockImplementation(async()=>{m.base='other';return true;});
+    if(change==='account')m.confirm.mockImplementation(async()=>{m.accounts=[];return true;});
+    const call=authorizeManualPendingOrder(contract,'Sell',1,account);
+    if(change==='normal')await expect(call).resolves.toBeUndefined();else await expect(call).rejects.toThrow();
+    expect(m.confirm).toHaveBeenCalledTimes(change==='risk-before'?0:1);
+    expect(m.stock).not.toHaveBeenCalled();expect(m.future).not.toHaveBeenCalled();
+});

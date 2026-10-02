@@ -35,7 +35,7 @@ const tick = (ts: number, price: number, code = 'TXFR1'): ExecEvent => ({ type: 
 
 const trigger = (over: Partial<TriggerOrder>): TriggerOrder => ({
     id: 'tg-1', code: 'TXFR1', condition: 'below', price: 100, action: 'Sell', quantity: 2, kind: 'stop',
-    env: ENV, account, orderCode: 'TXFJ6', createdAt: 1, ...over,
+    env: ENV, account, securityType:'FUT', orderCode: 'TXFJ6', createdAt: 1, ...over,
 });
 
 describe('env key', () => {
@@ -150,4 +150,23 @@ describe('bracket adapter', () => {
             { orderId: 'o-entry', key: 'o-entry:s3', quantity: 1 }, 2);
         expect(late.state.programs[0]!.levels[0]!.unprotected).toBe(unprotectedQuantity(webAfter));
     });
+});
+
+it('r36 binds the actual OPT type independently of an F account and keeps FUT/STK controls',()=>{
+    for (const securityType of ['OPT','FUT','STK'] as const) {
+        const t=trigger({securityType, account: securityType==='STK'?{...account,account_type:'S'}:account});
+        const [p]=programsFromTriggers([t]);expect(p!.binding.contract.securityType).toBe(securityType);
+    }
+});
+
+it('r36 legacy F account without actual security type cannot be migrated as a guessed FUT',()=>{
+    expect(programsFromTriggers([trigger({securityType:undefined})])).toEqual([]);
+});
+it('r36 actual OPT accepts own-type fill and refuses a same-identity FUT report',()=>{
+    const ts=Date.UTC(2026,9,2,1);const [p]=programsFromTriggers([trigger({securityType:'OPT',quantity:1})]);
+    const fired=run([live(ts),create(ts+1,p!),tick(ts+2,90)]);const key=fired.intents[0]!.key;
+    const accepted=run([{type:'intentResult',ts:ts+3,...SRC,key,outcome:'accepted',orderId:'OPT-ID',seqno:'OPT-S'}],fired.state);
+    const deal={type:'deal' as const,ts:ts+4,...SRC,orderId:'OPT-ID',seqno:'OPT-S',seq:'1',eventId:'opt-own',fillTs:ts/1000,account:{brokerId:account.broker_id,accountId:account.account_id},code:'TXFJ6',action:'Sell' as const,qty:1,price:90};
+    const wrong=run([{...deal,securityType:'FUT'}],accepted.state);expect(wrong.state.programs[0]!.levels[0]!.entryFilled).toBe(0);
+    const own=run([{...deal,securityType:'OPT'}],wrong.state);expect(own.state.programs[0]!.levels[0]!.orders[0]!.filled).toBe(1);expect(own.state.programs[0]!.levels[0]!.phase).toBe('done');
 });

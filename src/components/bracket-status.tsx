@@ -5,9 +5,10 @@
 // removing a plan. Nothing here sends or resends an order.
 
 import { CircleHelp, Minus, Plus, TriangleAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     acknowledgeBracketExit,
+    acknowledgePendingRegistration,
     bracketSnapshotStale,
     confirmBracketEntry,
     cancelRemainingEntry,
@@ -161,6 +162,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
     const [message, setMessage] = useState<string | null>(null);
     const [confirmRemove, setConfirmRemove] = useState(false);
     const [confirmCancel, setConfirmCancel] = useState(false);
+    const registrationAckAt = useRef(0);
     const workingEntry = workingEntryAfterExit(plan);
     const phase = bracketPhase(plan);
     const protectedQty = protectionQuantity(plan);
@@ -194,6 +196,12 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
             <div className={styles.head}><span className={styles.code}>{plan.orderCode}</span><span>保護登記待確認</span></div>
             <div className={styles.note.err}>{plan.action === 'Buy' ? '買進' : '賣出'} {plan.quantity} · #{plan.seqno || plan.orderId}</div>
             <div className={styles.note.warn}>{plan.registrationPending.detail}</div>
+            <button className={styles.button} onClick={() => {
+                if (!confirmRemove) { registrationAckAt.current=Date.now(); setConfirmRemove(true); return; }
+                if (Date.now()-registrationAckAt.current < 400) return;
+                setConfirmRemove(false);
+                void run(() => Promise.resolve(acknowledgePendingRegistration(plan.id)));
+            }}>{confirmRemove ? '再按一次：已核對委託、持倉與保護，移除此提醒' : '已人工核對，移除此提醒'}</button>
         </div>
     );
     return (

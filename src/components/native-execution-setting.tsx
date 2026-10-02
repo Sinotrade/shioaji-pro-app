@@ -31,7 +31,7 @@ export function NativeExecutionSetting() {
             <div className={hud.switchRow}>
                 <span
                     className={hud.switchLabel}
-                    title='新建立的停損／停利觸價單與括號單在視窗關閉或重新載入時仍會持續盯價與送單'
+                    title='新建立的期貨／選擇權停損停利與括號單在視窗關閉或重新載入時持續執行'
                 >
                     背景持續執行（實驗）
                 </span>
@@ -44,7 +44,9 @@ export function NativeExecutionSetting() {
                 />
             </div>
             <span className={hud.emptyHint}>
-                開啟後，新建立的停損／停利觸價單與括號單在視窗關閉或重新載入時仍會持續盯價與送單；關閉只影響之後新建的單
+                開啟後，新建立的期貨／選擇權停損停利與括號單在視窗關閉或重新載入時持續執行；關閉只影響之後新建的單
+                <br />
+                股票保護沿用視窗執行。背景觸價單待確認的手動送出暫不支援，請保留或取消；委託結果不明時請先核對委託／成交。
                 <br />
                 狀態：{state} · 執行中 {programs.length} 筆
                 {health?.lastError ? ` · ${health.lastError}` : ''}

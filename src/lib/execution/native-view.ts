@@ -68,6 +68,7 @@ function row(p: OrderProgram, lv: Level, leg: LegName, fields: Pick<TriggerOrder
         env: envKeyOf(b),
         account: accountRef(b.account),
         orderCode: b.contract.orderCode,
+        securityType: b.contract.securityType as TriggerOrder['securityType'],
         createdAt: p.createdAt,
         ...fields,
         ...(pending ? { pending } : {}),
@@ -82,12 +83,14 @@ function row(p: OrderProgram, lv: Level, leg: LegName, fields: Pick<TriggerOrder
 export function triggerRowsFromPrograms(programs: readonly OrderProgram[]): NativeTriggerOrder[] {
     const out: NativeTriggerOrder[] = [];
     for (const p of programs) {
-        if (p.status === 'stopped' || p.status === 'stopping') continue;
+        if ((p.status === 'stopped' || p.status === 'stopping') && !p.levels.some(lv => lv.orders.some(o => o.status === 'unknown' && !o.acknowledged))) continue;
         for (const lv of p.levels) {
-            if (p.kind === 'trigger' && lv.entry.type === 'touch' && (lv.phase === 'idle' || lv.phase === 'needsConfirm')) {
+            if (p.kind === 'trigger' && lv.entry.type === 'touch' && (lv.phase === 'idle' || lv.phase === 'needsConfirm' || lv.orders.some(o => o.status === 'unknown' && !o.acknowledged))) {
                 const e = lv.entry;
                 out.push(row(p, lv, 'entry', { condition: e.condition, price: e.price, action: lv.side, quantity: lv.qty,
                     kind: triggerKind(e.condition, lv.side) }));
+                const unknown = lv.orders.find(o => o.status === 'unknown' && !o.acknowledged);
+                if (unknown) out[out.length - 1]!.unresolved = { detail: unknown.detail ?? '委託結果未知；請核對券商委託與成交，系統不會重送', at: p.updatedAt };
             }
             if (p.kind === 'bracket' && lv.exit?.type === 'oco' && lv.position > 0
                 && (lv.phase === 'holding' || lv.phase === 'needsConfirm')) {

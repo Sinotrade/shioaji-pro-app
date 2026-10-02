@@ -14,7 +14,7 @@ const spec = {env:'http://fixture.invalid|simulation',account:{account_type:'F' 
 beforeEach(()=>{
  vi.resetModules();m.callbacks=[];m.creates=0;m.status='live';m.base='http://fixture.invalid';
  const store=new Map<string,string>();
- vi.stubGlobal('localStorage',{getItem:(k:string)=>store.get(k)??null,setItem:(k:string,v:string)=>store.set(k,v)});
+ vi.stubGlobal('localStorage',{getItem:(k:string)=>store.get(k)??null,setItem:(k:string,v:string)=>store.set(k,v),removeItem:(k:string)=>store.delete(k),key:(i:number)=>[...store.keys()][i]??null,get length(){return store.size;}});
  vi.stubGlobal('BroadcastChannel',undefined);vi.stubGlobal('location',{search:''});vi.stubGlobal('window',{addEventListener:vi.fn(),removeEventListener:vi.fn()});vi.stubGlobal('navigator',{});
 });
 async function boot(nativeOwner:boolean){
@@ -100,7 +100,7 @@ it.each([false,true])('r35 held native registration ACK preserves risk after con
  if(changed){server.observeServerInfo(server.beginServerInfoRequest(),{...info,simulation:false});server.observeServerInfo(server.beginServerInfoRequest(),info);}
  else server.observeServerInfo(server.beginServerInfoRequest(),{...info});
  release();
- if(changed){await expect(result).rejects.toThrow('待確認');expect(bracket.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(1);expect(JSON.parse(localStorage.getItem('sj-pro-bracket-registrations')!)).toHaveLength(1);}
+ if(changed){await expect(result).rejects.toThrow('待確認');expect(bracket.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(1);expect(Array.from({length:localStorage.length},(_,i)=>localStorage.key(i)).filter(k=>k?.startsWith('sj-pro-bracket-registrations:operation:'))).toHaveLength(1);}
  else{await expect(result).resolves.toMatchObject({seqno:spec.seqno});expect(bracket.getDisplayBrackets().some(p=>p.registrationPending)).toBe(false);}
  expect(created).toHaveLength(1);
 });
@@ -111,5 +111,5 @@ it('r35 window register ACK crossing an await cannot clear pending after away/ba
  server.observeServerInfo(server.beginServerInfoRequest(),{...info,simulation:false});server.observeServerInfo(server.beginServerInfoRequest(),info);
  await expect(result).rejects.toThrow('待確認');
  expect(bracket.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(1);
- expect(JSON.parse(localStorage.getItem('sj-pro-bracket-registrations')!)).toHaveLength(1);
+ expect(Array.from({length:localStorage.length},(_,i)=>localStorage.key(i)).filter(k=>k?.startsWith('sj-pro-bracket-registrations:operation:'))).toHaveLength(1);
 });

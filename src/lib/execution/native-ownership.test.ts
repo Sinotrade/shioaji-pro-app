@@ -97,7 +97,7 @@ async function flush() { for (let i = 0; i < 8; i++) await Promise.resolve(); aw
 async function boot(opts: { enabled?: boolean; desktop?: boolean; live?: boolean; keepStore?: boolean } = {}) {
     vi.resetModules();
     if (!opts.keepStore) store = new Map();
-    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); }, key: (i: number) => [...store.keys()][i] ?? null, get length() { return store.size; } });
     vi.stubGlobal('location', { search: '' });
     vi.stubGlobal('navigator', { locks: { request: (_n: string, a: unknown, b?: (lock: object | null) => unknown) => {
         const cb = (typeof a === 'function' ? a : b) as (lock: object | null) => unknown;
@@ -209,8 +209,8 @@ describe('ownership: one executor per trigger / bracket', () => {
     it('odd-lot triggers and brackets stay in TS (not expressible in execution-v1 yet)', async () => {
         await boot({ enabled: true });
         expect(engine.nativeHandles({ kind: 'stop', orderLot: 'IntradayOdd' })).toBe(false);
-        expect(engine.nativeHandles({ kind: 'stop', orderLot: 'Common' })).toBe(true);
-        expect(engine.nativeHandles({ kind: 'stop' })).toBe(true);
+        expect(engine.nativeHandles({ kind: 'stop', orderLot: 'Common', securityType:'FUT', account:{...F1,account_type:'F' as const} })).toBe(true);
+        expect(engine.nativeHandles({ kind: 'stop' })).toBe(false);
         // no native host check for an odd-lot bracket: it registers in TS
         await bracket.ensureBracketHost({ orderLot: 'IntradayOdd' });
         const plan = await bracket.registerBracket({ env: m.env!, account: { account_type: 'S', broker_id: 'b', account_id: 'a' },
@@ -428,7 +428,7 @@ describe('native programs in the UI shape', () => {
             entryClosed: false, exit: null, env: 'http://s|simulation' });
         expect(view.programFinished(program)).toBe(false);
         const trig = view.programForNewTrigger({ id: 't', code: 'TXFR1', condition: 'above', price: 50, action: 'Sell',
-            quantity: 1, kind: 'take', env: 'http://s|simulation', account: { account_type: 'F', broker_id: 'b', account_id: 'a' },
+            quantity: 1, kind: 'take', env: 'http://s|simulation', securityType:'FUT', account: { account_type: 'F', broker_id: 'b', account_id: 'a' },
             orderCode: 'TXFJ6' })!;
         expect(view.triggerRowsFromPrograms([trig])[0]!.kind).toBe('take');
         trig.levels[0]!.phase = 'needsConfirm';
@@ -551,4 +551,37 @@ describe('r34 current-generation enable ACK', () => {
   pending[0]!.resolve({enabled:false,state:'down',env:null,serverId:null});await flush();
   expect(()=>native.ensureNativeHost(m.env)).not.toThrow();expect(native.getNativeHealth()?.enabled).toBe(true);expect(m.place).not.toHaveBeenCalled();
  });
+});
+
+it('r36 keeps all new stock protection in the shared holdings/reservation window owner', async()=>{
+    await boot({enabled:true});
+    expect(engine.nativeHandles({kind:'stop',securityType:'STK',account:{account_type:'S',broker_id:'S',account_id:'S'}})).toBe(false);
+    expect((await bracket.ensureBracketHost({securityType:'STK'})).owner).toBe('window');
+    expect((await bracket.ensureBracketHost({securityType:'OPT'})).owner).toBe('native');
+});
+it('r36 standalone native manual send is fail-closed without a host-current risk ACK, while keep is retained',async()=>{
+    await boot({enabled:true});await addStop(); const p=host.programs[0]!;
+    const lv=p.levels[0]!;lv.phase='needsConfirm';lv.pending={leg:'entry',price:47900,ts:1,reason:'restart'};host.bump();await native.refreshNative();
+    await expect(native.resolveNativePending(p.id,lv.id,'send')).rejects.toThrow('當代風控');
+    expect(host.commands.filter(c=>c.op==='resolvePending')).toHaveLength(0);
+    await native.resolveNativePending(p.id,lv.id,'keep');expect(host.commands.at(-1)).toMatchObject({op:'resolvePending',choice:'keep'});
+});
+it('r36 unknown standalone records remain visible/actionable after reload and Stop, never as resend choices',async()=>{
+    await boot({enabled:true});await addStop();const p=host.programs[0]!;
+    const lv=p.levels[0]!;lv.phase='unknown';lv.orders=[{key:'unknown-key',role:'entry',leg:'entry',qty:1,filled:0,fills:{},fillTs:{},status:'unknown',orderId:null,cycle:0,acknowledged:false,tagAmbiguous:true,detail:'timeout',cancel:null}];
+    p.status='stopping';host.bump();await native.refreshNative();
+    const rows=engine.getDisplayTriggers();expect(rows).toHaveLength(1);expect(rows[0]!.unresolved?.detail).toBe('timeout');expect(rows[0]!.pending).toBeUndefined();
+    native.__setNativeInvokeForTest(host.invoke as never,{desktop:true,enabled:true});await native.refreshNative();
+    expect(engine.getDisplayTriggers()[0]!.unresolved).toBeDefined();
+    await expect(engine.resolvePendingTrigger(rows[0]!.id,'send')).rejects.toThrow('結果未知');
+    await native.acknowledgeNativeUnknown(p.id,lv.id);expect(host.commands.at(-1)).toMatchObject({op:'ackUnknown'});
+});
+
+it('r36 chart OPT capture and fixed-context OPT keep their actual type; missing legacy type stays in window owner',async()=>{
+    await boot({enabled:true});const opt={...TXF,code:'OPT-SYN',target_code:'OPT-ORDER',security_type:'OPT'};
+    await engine.addTrigger({code:opt.code,condition:'below',price:100,action:'Sell',quantity:1,kind:'stop'},opt as never);
+    expect(host.programs[0]!.binding.contract.securityType).toBe('OPT');
+    await engine.addTrigger({code:opt.code,env:m.env!,account:{...F1,account_type:'F' as const},orderCode:opt.target_code,condition:'below',price:100,action:'Sell',quantity:1,kind:'stop'},opt as never);
+    expect(host.programs[1]!.binding.contract.securityType).toBe('OPT');
+    expect(engine.nativeHandles({kind:'stop',account:{...F1,account_type:'F' as const}})).toBe(false);
 });

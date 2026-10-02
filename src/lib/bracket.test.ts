@@ -111,7 +111,7 @@ let bracket: Bracket;
 async function boot(opts: { keepStore?: boolean; noHeartbeat?: boolean } = {}) {
     vi.resetModules();
     if (!opts.keepStore) store = new Map();
-    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); }, key: (i: number) => [...store.keys()][i] ?? null, get length() { return store.size; } });
     vi.stubGlobal('location', { search: m.search });
     m.order = null; m.tick = null; m.heartbeat = null; m.statusChanged = []; m.envChanged = [];
     m.queued = null;
@@ -1057,4 +1057,11 @@ it.each(['quantity','action','orderLot'] as const)('r34 same stable identity wit
 it.each(r34Lots)('r34 %s stable buffered fill survives a raw ID change before entry HTTP returns',async(lot)=>{
  await boot();m.cached.mockResolvedValue([]);await emit(r34Deal(lot,'S1','O1','1','report-raw'));
  const p=await bracket.registerBracket(r34Spec(lot,'S1','O1','response-raw'));expect(p.filled).toBe(1);expect(m.place).not.toHaveBeenCalled();
+});
+
+it('r36 scopes entry deduplication to the fixed env/server partition',async()=>{
+    await boot();const old=await bracket.registerBracket(spec(F1,'same-id',{seqno:'same-stable'}));
+    m.env='http://other.invalid|production';m.base='http://other.invalid';m.envChanged.forEach(cb=>cb());
+    const fresh=await bracket.registerBracket(spec(F1,'same-id',{seqno:'same-stable'}));
+    expect(fresh.id).not.toBe(old.id);expect(fresh.env).toBe(m.env);expect(bracket.getBrackets()).toHaveLength(2);
 });

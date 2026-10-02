@@ -76,7 +76,7 @@ import { retainQuote } from './quote-ownership';
 import { getApiBase } from './runtime';
 import { fetchTrades } from './shioaji';
 import { getStreamStatus, onAnyTick, onOddLotTick, onStreamEvent, subscribeStatusStore } from './stream';
-import { notify, placeQuickOrder } from './trade';
+import { authorizeManualPendingOrder, notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
 import { fmtPrice } from './utils/format';
 import { isOddLot, ODD_LOT_MAX_SHARES, oddLotMarketablePrice, SHARES_PER_LOT, sharesToUnits, stockQtyUnit } from './odd-lot';
@@ -108,6 +108,8 @@ export interface TriggerOrder {
     env?: string;
     account?: AccountRef;
     orderCode?: string; // tradable code (target_code || code)
+    securityType?: 'STK' | 'FUT' | 'OPT'; // actual contract, never inferred from an F account
+    unresolved?: { detail: string; at: number }; // durable native unknown outcome; no send/keep
     octype?: FuturesOCType; // futures exits from brackets use Cover
     // stocks: IntradayOdd → quantity in shares, sent as a LIMIT at the price
     // limit (零股沒有市價單, #204); absent = Common lots (張)
@@ -361,7 +363,17 @@ function handleCommand(cmd: Command): unknown {
 /** `account`: a panel's own account (chart order settings, #204) instead of
  * the app-wide selection — it must still be a tradable account of the market. */
 function withContext(t: NewTrigger, contract?: ContractBase, account?: Account): NewTrigger | string {
-    if (t.kind === 'alert' || (t.env && t.account && t.orderCode)) return t;
+    if (t.kind === 'alert') return t;
+    if (t.env && t.account && t.orderCode) {
+        // Old window-owned triggers without a type stay in that owner.
+        // A provided contract can establish it; an F account alone cannot.
+        if (!contract) return t;
+        const type = contract.security_type;
+        if ((type !== 'FUT' && type !== 'OPT' && type !== 'STK') || (t.securityType && t.securityType !== type)
+            || t.orderCode !== (contract.target_code || contract.code) || t.code !== contract.code
+            || t.account.account_type !== (type === 'STK' ? 'S' : 'F')) return '商品身分與固定帳戶不一致，觸價單未建立';
+        return { ...t, securityType: type };
+    }
     if (!contract) return '缺少商品資訊，無法固定下單帳戶';
     const futures = contract.security_type === 'FUT' || contract.security_type === 'OPT';
     if (!futures && contract.security_type !== 'STK') return '此商品不支援觸價下單';
@@ -377,7 +389,7 @@ function withContext(t: NewTrigger, contract?: ContractBase, account?: Account):
     if (!env) return '伺服器模式（模擬／正式）尚未確認，觸價單未建立';
     return { ...t, env,
         account: { account_type: futures ? 'F' : 'S', broker_id: selected.broker_id, account_id: selected.account_id },
-        orderCode: contract.target_code || contract.code };
+        orderCode: contract.target_code || contract.code, securityType: contract.security_type as 'STK' | 'FUT' | 'OPT' };
 }
 
 /** Add a trigger from any window. Stop/take bind the currently selected
@@ -403,8 +415,8 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase, opts?: 
 }
 
 /** Whether a new trigger is created as a native program (#201). */
-export function nativeHandles(t: Pick<TriggerOrder, 'kind' | 'orderLot'>): boolean {
-    return t.kind !== 'alert' && !isOddLot(t.orderLot) && nativeOwnsNew();
+export function nativeHandles(t: Pick<TriggerOrder, 'kind' | 'orderLot' | 'securityType' | 'account'>): boolean {
+    return t.kind !== 'alert' && (t.securityType === 'FUT' || t.securityType === 'OPT') && t.account?.account_type === 'F' && !isOddLot(t.orderLot) && nativeOwnsNew();
 }
 
 async function addNativeTrigger(prepared: NewTrigger): Promise<TriggerOrder | null> {
@@ -458,10 +470,19 @@ export function acknowledgeExit(id: string): Promise<unknown> {
  * re-checking stream, environment, account and that a tick arrived since the
  * last (re)connect. `cancel` removes it (bracket protection is removed from
  * its bracket status instead). `keep` re-arms it for a fresh crossing only. */
-export function resolvePendingTrigger(id: string, choice: PendingChoice, opts: { allowUnpast?: boolean } = {}): Promise<unknown> {
+export async function resolvePendingTrigger(id: string, choice: PendingChoice, opts: { allowUnpast?: boolean } = {}): Promise<unknown> {
     if (isNativeId(id)) {
         const row = nativeRow(id);
         if (!row) return Promise.reject(new Error('找不到此觸價單'));
+        if (row.unresolved) throw new Error('委託結果未知，請先核對委託／成交；不會重新送出');
+        if (choice === 'send' && !row.bracketId) {
+            const contract = await ensureContract(row.code);
+            const account = getAccountState().accounts.find(a => a.account_type === row.account?.account_type
+                && a.broker_id === row.account?.broker_id && a.account_id === row.account?.account_id && canTrade(a));
+            if (!contract || !account || contract.security_type !== row.securityType
+                || (contract.target_code || contract.code) !== row.orderCode) throw new Error('商品或帳戶尚未確認，未送出');
+            await authorizeManualPendingOrder(contract, row.action, row.quantity, account, row.orderLot, row.code);
+        }
         return resolveNativePending(row.native.programId, row.native.levelId, choice, opts.allowUnpast);
     }
     return bus.send({ op: 'resolve-pending', id, choice, allowUnpast: opts.allowUnpast });

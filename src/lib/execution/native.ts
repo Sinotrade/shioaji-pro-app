@@ -306,6 +306,7 @@ export async function resolveNativePending(programId: string, levelId: string, c
     await refreshNative();
     const p = findProgram(programId);
     if (!p) throw new Error('找不到此單');
+    if (choice === 'send' && p.kind === 'trigger') throw new Error('背景觸價單的手動送出尚未取得當代風控確認，未送出；請保留或取消此筆');
     await sendNativeCommand({ op: 'resolvePending', programId, version: p.version, levelId, choice,
         ...(allowUnpast ? { allowUnpast: true } : {}) });
 }
@@ -318,6 +319,12 @@ export async function confirmNativeEntry(programId: string, levelId: string, fil
     const p = findProgram(programId);
     if (!p) throw new Error('找不到此單');
     await sendNativeCommand({ op: 'confirmEntry', programId, version: p.version, levelId, filled, noRemainder });
+}
+
+/** Requests an authoritative listing; does not conclude absence or resend. */
+export async function reconcileNativeProgram(programId: string): Promise<void> {
+    await invoke('execution_reconcile', { programId });
+    await refreshNative();
 }
 
 export async function acknowledgeNativeUnknown(programId: string, levelId: string): Promise<void> {

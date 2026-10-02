@@ -55,10 +55,10 @@ export function triggerOrderSpec(octype: FuturesOCType | undefined, market: 'sto
     return octype ? { priceType: 'MKT', timeInForce: 'IOC', octype } : { priceType: 'MKT', timeInForce: 'IOC' };
 }
 
-function contractOf(t: { code: string; orderCode?: string; account?: AccountRef }): ContractKey {
-    const futures = t.account?.account_type === 'F';
+function contractOf(t: { code: string; orderCode?: string; account?: AccountRef; securityType?: 'STK' | 'FUT' | 'OPT' }): ContractKey {
+    const futures = t.securityType !== 'STK';
     return { market: futures ? 'futures' : 'stock', quoteCode: t.code, orderCode: t.orderCode ?? t.code,
-        securityType: futures ? 'FUT' : 'STK' };
+        securityType: t.securityType! /* actual type established by levelFromTrigger */ };
 }
 
 function baseLevel(id: string, over: Partial<Level> & Pick<Level, 'side' | 'qty' | 'entry' | 'exit'>): Level {
@@ -77,7 +77,8 @@ const pendingReason = (r: string | undefined): RestoreReason =>
 
 /** One level for one order-sending trigger (not a bracket leg). */
 export function levelFromTrigger(t: TriggerOrder): Level | null {
-    if (t.kind === 'alert' || t.suspended || t.bracketId || !t.env || !t.account || !t.orderCode) return null;
+    if (t.kind === 'alert' || t.suspended || t.bracketId || !t.env || !t.account || !t.orderCode || !t.securityType) return null;
+    if (t.account.account_type === 'F' ? t.securityType !== 'FUT' && t.securityType !== 'OPT' : t.securityType !== 'STK') return null;
     const market = t.account.account_type === 'F' ? 'futures' : 'stock';
     return baseLevel(t.id, {
         side: t.action,
