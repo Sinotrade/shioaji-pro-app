@@ -438,3 +438,85 @@ describe('native programs in the UI shape', () => {
         expect(view.triggerRowsFromPrograms([trig])).toHaveLength(0);
     });
 });
+
+const r33Entry = () => ({ env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id, account_id: F1.account_id }, orderId: 'fixture-r33-entry', seqno: 'fixture-r33-seq', quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 });
+describe('r33 fixed bracket admission', () => {
+    it('rejects a changed owner at send-time, including toggle away and back', async () => {
+        await boot({ enabled: false });
+        const admission = await bracket.ensureBracketHost();
+        native.setNativeExecutionEnabled(true);
+        native.setNativeExecutionEnabled(false);
+        expect(() => bracket.assertBracketAdmission(admission)).toThrow('保護執行環境已變更');
+        expect(m.place).not.toHaveBeenCalled();
+    });
+    it('keeps the preflight TS owner after entry when the toggle changes', async () => {
+        await boot({ enabled: false, live: false });
+        const admission = await bracket.ensureBracketHost();
+        native.setNativeExecutionEnabled(true);
+        await flush();
+        await bracket.registerBracket(r33Entry(), admission);
+        expect(bracket.getBrackets()).toHaveLength(1);
+        expect(host.programs).toHaveLength(0);
+        expect(bracket.getDisplayBrackets().filter(p => p.registrationPending)).toHaveLength(0);
+    });
+    it('requires native enabled to have actually taken effect before entry', async () => {
+        await boot({ enabled: true });
+        native.__setNativeInvokeForTest(async <T>(cmd: string, args?: Record<string, unknown>) => {
+            if (cmd === 'execution_status') return { enabled: false, state: 'live', env: 'simulation', serverId: 'http://sim.invalid', revision: 1, programs: 0 } as T;
+            return await host.invoke(cmd, args) as T;
+        }, { desktop: true, enabled: true });
+        await native.refreshNative();
+        await expect(bracket.ensureBracketHost()).rejects.toThrow('尚未啟用完成');
+        expect(m.place).not.toHaveBeenCalled();
+    });
+    it('retains a sent entry on native disable without switching to TS or resending, across reload', async () => {
+        await boot({ enabled: true });
+        const admission = await bracket.ensureBracketHost();
+        native.setNativeExecutionEnabled(false);
+        native.__setNativeInvokeForTest(async <T>(cmd: string, args?: Record<string, unknown>) => {
+            if (cmd === 'execution_status') return { enabled: false, state: 'live', env: 'simulation', serverId: 'http://sim.invalid', revision: 1, programs: 0 } as T;
+            return await host.invoke(cmd, args) as T;
+        }, { desktop: true, enabled: false });
+        await native.refreshNative();
+        await expect(bracket.registerBracket(r33Entry(), admission)).rejects.toThrow('尚未啟用完成');
+        expect(bracket.getBrackets()).toHaveLength(0);
+        expect(host.programs).toHaveLength(0);
+        expect(bracket.getDisplayBrackets()).toMatchObject([{ orderId: 'fixture-r33-entry', seqno: 'fixture-r33-seq', registrationPending: { owner: 'native' } }]);
+        await boot({ enabled: false, keepStore: true });
+        expect(bracket.getDisplayBrackets()).toMatchObject([{ orderId: 'fixture-r33-entry', registrationPending: { owner: 'native' } }]);
+        expect(m.place).not.toHaveBeenCalled();
+    });
+    it('retains the old environment entry when HTTP answers after an environment change', async () => {
+        await boot({ enabled: false });
+        const admission = await bracket.ensureBracketHost();
+        const spec = r33Entry();
+        m.env = 'http://sim.invalid|production';
+        m.envChanged.forEach(cb => cb());
+        await expect(bracket.registerBracket(spec, admission)).rejects.toThrow('環境已變更');
+        expect(bracket.getDisplayBrackets()).toMatchObject([{ env: spec.env, orderId: spec.orderId, registrationPending: { owner: 'window' } }]);
+        expect(bracket.getBrackets()).toHaveLength(0);
+        expect(m.place).not.toHaveBeenCalled();
+    });
+    it('the partial-entry cancel UI callsite changes Stop version without dismissing an open position', async () => {
+        await boot({ enabled: true });
+        await bracket.registerBracket(r33Entry());
+        const p = host.programs[0]!;
+        const lv = p.levels[0]!;
+        lv.position = 1; lv.entryFilled = 1; lv.phase = 'exiting'; lv.orders[0]!.filled = 1;
+        await native.refreshNative();
+        const plan = bracket.getDisplayBrackets()[0]!;
+        await bracket.cancelRemainingEntry(plan);
+        expect(host.commands.at(-1)).toMatchObject({ op: 'stop', programId: p.id, version: 1 });
+        expect(bracket.getDisplayBrackets()[0]!.dismissed).toBe(false);
+        expect(m.place).not.toHaveBeenCalled();
+    });
+});
+
+it('r33 direct registration cannot migrate an existing protected entry into the other owner', async () => {
+    await boot({ enabled: true });
+    await bracket.registerBracket(r33Entry());
+    native.setNativeExecutionEnabled(false);
+    await expect(bracket.registerBracket(r33Entry())).rejects.toThrow('其他執行器追蹤');
+    expect(host.programs).toHaveLength(1);expect(bracket.getBrackets()).toHaveLength(0);
+    expect(m.place).not.toHaveBeenCalled();
+});

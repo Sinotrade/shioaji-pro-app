@@ -53,6 +53,7 @@ import {
     createNativeProgram,
     ensureNativeHost,
     getNativePrograms,
+    getNativeOwnerGeneration,
     nativeOwnsNew,
     removeNativeProgram,
     sendNativeCommand,
@@ -170,22 +171,27 @@ const exitIds = new Map<string, string>(); // plan id → exit record id
 
 type Command =
     | { op: 'ping' }
-    | { op: 'register'; spec: BracketSpec }
+    | { op: 'register'; spec: BracketSpec; hostId?: string }
     | { op: 'reconcile'; id: string }
     | { op: 'dismiss'; id: string }
     | { op: 'ack-exit'; id: string }
     | { op: 'cancel-entry'; id: string };
 
-const bus = createCommandBus<Command, BracketPlan[]>({
+const bus = createCommandBus<Command, BracketPlan[] | { hostId: string; plans: BracketPlan[] }>({
     channel: typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-brackets:${getApiBase()}`) : null,
     main: () => executing,
     ready: roleDecided,
     heartbeatMs: SNAPSHOT_HEARTBEAT_MS,
     handle: cmd => handle(cmd),
-    snapshot: () => snapshot,
+    snapshot: () => ({ hostId, plans: snapshot }),
     onState: state => {
-        if (!Array.isArray(state)) return;
-        snapshot = state;
+        if (Array.isArray(state)) {
+            mirrorHostId = null; // old state has no trustworthy owner generation
+            snapshot = state;
+        } else if (state && typeof state.hostId === 'string' && Array.isArray(state.plans)) {
+            mirrorHostId = state.hostId;
+            snapshot = state.plans;
+        } else return;
         listeners.forEach(l => l());
     },
 });
@@ -459,8 +465,10 @@ function register(spec: BracketSpec): BracketPlan {
 
 function handle(cmd: Command): unknown {
     switch (cmd.op) {
-        case 'ping': return true;
-        case 'register': return register(cmd.spec);
+        case 'ping': return hostId;
+        case 'register':
+            if (cmd.hostId && cmd.hostId !== hostId) throw new Error('主視窗已重新載入，保護登記待確認');
+            return register(cmd.spec);
         case 'reconcile': return reconcile(cmd.id);
         case 'dismiss': {
             const p = plans.find(x => x.id === cmd.id);
@@ -481,21 +489,120 @@ function handle(cmd: Command): unknown {
 
 // ---- public API (any window) ----
 
-/** Confirms the main window can track brackets BEFORE an entry is sent. */
-export async function ensureBracketHost(opts: { orderLot?: StockOrderLot } = {}): Promise<void> {
-    // #201: a native bracket needs the native engine live on this environment
-    if (nativeBracket(opts.orderLot)) return ensureNativeHost(currentProtectionEnv());
-    await bus.send({ op: 'ping' });
+/** One preflight admission for this entry. Ownership is never reselected after dispatch. */
+export interface BracketAdmission {
+    readonly owner: 'window' | 'native';
+    readonly env: string;
+    readonly orderLot: StockOrderLot;
+    readonly contextGeneration: number;
+    readonly ownerGeneration: number;
+    readonly hostId: string | null;
+}
+const hostId = `host-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+let contextGeneration = 0;
+let mirrorHostId: string | null = null;
+onProtectionEnvChange(() => { contextGeneration++; });
+subscribeStatusStore(() => { contextGeneration++; });
+const ADMISSION_CHANGED = '保護執行環境已變更，未送出進場單，請重新確認';
+export async function ensureBracketHost(opts: { orderLot?: StockOrderLot } = {}): Promise<BracketAdmission> {
+    const env = currentProtectionEnv();
+    if (!env) throw new Error('伺服器模式尚未確認，括號單未送出');
+    const admission: BracketAdmission = {
+        owner: nativeBracket(opts.orderLot) ? 'native' : 'window', env,
+        orderLot: opts.orderLot ?? 'Common', contextGeneration,
+        ownerGeneration: getNativeOwnerGeneration(), hostId: null,
+    };
+    let ready: BracketAdmission;
+    if (admission.owner === 'native') {
+        ensureNativeHost(env);
+        ready = admission;
+    } else {
+        const id = await bus.send({ op: 'ping' });
+        if (typeof id !== 'string') throw new Error('主視窗尚未確認，括號單未送出');
+        ready = { ...admission, hostId: id };
+    }
+    assertBracketAdmission(ready);
+    return Object.freeze(ready);
+}
+/** Synchronous send-time gate, called again by the actual order dispatch. */
+export function assertBracketAdmission(admission: BracketAdmission): void {
+    if (admission.env !== currentProtectionEnv() || admission.contextGeneration !== contextGeneration
+        || (admission.orderLot === 'Common' && admission.ownerGeneration !== getNativeOwnerGeneration())) {
+        throw new Error(ADMISSION_CHANGED);
+    }
+    if (admission.owner === 'native') ensureNativeHost(admission.env);
+    else if (admission.hostId !== (executing ? hostId : mirrorHostId) || bracketSnapshotStale()) throw new Error(ADMISSION_CHANGED);
 }
 
-/** Registration may apply late (the main window can be busy); a short ACK
- * timeout would invite a second, manual exit. Same budget as reconcile. */
+/** A sent entry is persisted before registration; failed/late ACKs retain its identity.
+ * These rows never enter either executor's plans and never submit any order. */
+const PENDING_REGISTRATION_KEY = 'sj-pro-bracket-registrations';
+function loadPendingRegistrations(): BracketPlan[] {
+    try {
+        const data: unknown = JSON.parse(globalThis.localStorage?.getItem(PENDING_REGISTRATION_KEY) ?? '[]');
+        return Array.isArray(data) ? data.filter((p: BracketPlan) => p?.registrationPending && p.account && p.orderId) : [];
+    } catch { return []; }
+}
+let pendingRegistrations = loadPendingRegistrations();
+function savePendingRegistration(plan: BracketPlan | null, id: string): void {
+    const latest = loadPendingRegistrations().filter(p => p.id !== id);
+    pendingRegistrations = plan ? [...latest, plan] : latest;
+    try { globalThis.localStorage?.setItem(PENDING_REGISTRATION_KEY, JSON.stringify(pendingRegistrations)); } catch {
+        // Keep the in-memory row and make the persistence limitation visible.
+        if (plan?.registrationPending) plan.registrationPending.detail += '；此紀錄無法保存，請立即核對委託';
+    }
+    listeners.forEach(l => l());
+}
+if (typeof window !== 'undefined') window.addEventListener?.('storage', e => {
+    if (e.key === PENDING_REGISTRATION_KEY) {
+        pendingRegistrations = loadPendingRegistrations();
+        listeners.forEach(l => l());
+    }
+});
+function pendingRegistration(spec: BracketSpec, admission: BracketAdmission, detail: string): BracketPlan {
+    const now = Date.now();
+    return { ...spec, id: `registration:${admission.owner}:${planId(spec.env, spec.account, spec.seqno || spec.orderId)}`,
+        market: spec.account.account_type === 'S' ? 'stock' : 'futures', group: '', fills: {}, filled: 0,
+        entryClosed: false, exit: null, issues: [], createdAt: now, updatedAt: now,
+        registrationPending: { owner: admission.owner, detail } };
+}
+
 export const REGISTER_TIMEOUT_MS = 60_000;
-export async function registerBracket(spec: BracketSpec): Promise<BracketPlan> {
-    // #201: one owner per bracket, decided here — a native bracket never
-    // enters the TS plans (and so is never armed by the TS trigger engine)
-    if (nativeBracket(spec.orderLot)) return registerNativeBracket(spec);
-    return await bus.send({ op: 'register', spec }, REGISTER_TIMEOUT_MS) as BracketPlan;
+function assertRegistrationOwner(spec: BracketSpec, owner: BracketAdmission['owner']): void {
+    const foreign = owner === 'native' ? [...snapshot, ...pendingRegistrations.filter(p => p.registrationPending?.owner === 'window')]
+        : [...nativePlans(), ...pendingRegistrations.filter(p => p.registrationPending?.owner === 'native')];
+    if (foreign.some(p => p.env === spec.env && accountRefKey(p.account) === accountRefKey(spec.account)
+        && p.orderCode === spec.orderCode && p.securityType === spec.securityType && !p.dismissed
+        && externalIdentity(p, spec) !== 'different')) {
+        throw new Error('此進場單可能已由其他執行器追蹤，請先核對保護紀錄，未重複登記');
+    }
+}
+export async function registerBracket(spec: BracketSpec, admission?: BracketAdmission): Promise<BracketPlan> {
+    // Legacy direct registration chooses an owner once here; the ticket always supplies its preflight admission.
+    if (!admission) {
+        const owner = nativeBracket(spec.orderLot) ? 'native' : 'window';
+        assertRegistrationOwner(spec, owner);
+        return owner === 'native' ? registerNativeBracket(spec) : await bus.send({ op: 'register', spec }, REGISTER_TIMEOUT_MS) as BracketPlan;
+    }
+    const record = pendingRegistration(spec, admission, '進場單已送出，保護登記尚未確認；請核對委託與保護紀錄，勿重送進場或另掛重複出場單');
+    savePendingRegistration(record, record.id);
+    try {
+        assertRegistrationOwner(spec, admission.owner);
+        if (spec.env !== admission.env || spec.env !== currentProtectionEnv()
+            || (spec.orderLot ?? 'Common') !== admission.orderLot || admission.contextGeneration !== contextGeneration) {
+            throw new Error('進場送出後環境已變更，保護登記待確認；請切回原環境核對');
+        }
+        // A disabled native host must not create anew. Retain the pending record instead of migrating owners.
+        if (admission.owner === 'native') ensureNativeHost(admission.env);
+        const plan = admission.owner === 'native' ? await registerNativeBracket(spec)
+            : await bus.send({ op: 'register', spec, hostId: admission.hostId ?? undefined }, REGISTER_TIMEOUT_MS) as BracketPlan;
+        savePendingRegistration(null, record.id);
+        return plan;
+    } catch (e) {
+        record.registrationPending!.detail = `${record.registrationPending!.detail}；${e instanceof Error ? e.message : String(e)}`;
+        savePendingRegistration(record, record.id);
+        throw e;
+    }
 }
 
 /** Native owns new whole-lot / futures brackets; odd-lot brackets (#204:
@@ -650,12 +757,15 @@ function subscribe(l: () => void) {
     return () => { listeners.delete(l); };
 }
 
-let mergedCache: { ts: BracketPlan[]; native: NativeBracketPlan[]; all: BracketPlan[] } = { ts: [], native: [], all: [] };
+let mergedCache: { ts: BracketPlan[]; native: NativeBracketPlan[]; pending: BracketPlan[]; all: BracketPlan[] } = { ts: [], native: [], pending: [], all: [] };
 /** TS plans followed by native bracket programs (marked `native`). */
 export function getDisplayBrackets(): BracketPlan[] {
     const native = nativePlans();
-    if (mergedCache.ts !== snapshot || mergedCache.native !== native) {
-        mergedCache = { ts: snapshot, native, all: native.length ? [...snapshot, ...native] : snapshot };
+    if (mergedCache.ts !== snapshot || mergedCache.native !== native || mergedCache.pending !== pendingRegistrations) {
+        const pending = pendingRegistrations.filter(record => !(record.registrationPending?.owner === 'native' ? native : snapshot)
+            .some(plan => plan.env === record.env && accountRefKey(plan.account) === accountRefKey(record.account)
+                && plan.orderCode === record.orderCode && plan.securityType === record.securityType && externalIdentity(plan, record) === 'same'));
+        mergedCache = { ts: snapshot, native, pending: pendingRegistrations, all: [...snapshot, ...native, ...pending] };
     }
     return mergedCache.all;
 }

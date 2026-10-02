@@ -125,6 +125,8 @@ export type SlotStatus =
 
 /** One order the program asked for (or tracks). */
 export interface OrderSlot {
+    /** Immutable emission generation; absent only in legacy/external slots. */
+    submitVersion?: number;
     /** The broker listing reuses this raw id for multiple stable orders. */
     cancelAmbiguous?: boolean;
     seqno?: string; ordno?: string;

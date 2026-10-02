@@ -863,3 +863,34 @@ describe('pre-order bracket validation (entry is not sent when invalid)', () => 
         expect(validateBracketRequest({ ...base, isFutures: false, orderLot: 'Common', orderCond: 'Cash' })).toBeNull();
     });
 });
+
+it('r33 mirror admission is invalidated by a main-window generation change, retaining any sent entry', async () => {
+    let currentHost = 'fixture-host-1';
+    let bracketChannel: FakeChannel | null = null;
+    class FakeChannel {
+        listener: ((event: { data: unknown }) => void) | null = null;
+        constructor(public name: string) { if (name.startsWith('sj-brackets:')) bracketChannel = this; }
+        addEventListener(_name: string, cb: (event: { data: unknown }) => void) { this.listener = cb; }
+        close() { this.listener = null; }
+        state() { this.listener?.({ data: { kind: 'state', state: { hostId: currentHost, plans: [] } } }); }
+        postMessage(value: { kind: string; id?: string; cmd?: { op: string; hostId?: string } }) {
+            if (!this.name.startsWith('sj-brackets:')) return;
+            queueMicrotask(() => {
+                this.state();
+                if (value.kind === 'cmd') this.listener?.({ data: { kind: 'ack', id: value.id,
+                    ok: value.cmd?.op !== 'register' || value.cmd.hostId === currentHost,
+                    result: value.cmd?.op === 'ping' ? currentHost : undefined,
+                    error: '主視窗已重新載入，保護登記待確認' } });
+            });
+        }
+    }
+    m.search = '?popout=flash';vi.stubGlobal('BroadcastChannel', FakeChannel);
+    await boot();
+    const admission = await bracket.ensureBracketHost();
+    expect(() => bracket.assertBracketAdmission(admission)).not.toThrow();
+    currentHost = 'fixture-host-2';(bracketChannel as FakeChannel | null)?.state();
+    expect(() => bracket.assertBracketAdmission(admission)).toThrow('保護執行環境已變更');
+    await expect(bracket.registerBracket({ env: m.env!, account: { account_type: 'F', broker_id: F1.broker_id, account_id: F1.account_id }, orderId: 'fixture-late-entry', seqno: 'fixture-late-seq', quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT', exchange: 'TAIFEX', action: 'Buy', quantity: 1, stopPrice: 95, takePrice: 110 }, admission)).rejects.toThrow('主視窗已重新載入');
+    expect(bracket.getDisplayBrackets()).toMatchObject([{ orderId: 'fixture-late-entry', registrationPending: { owner: 'window' } }]);
+    expect(m.place).not.toHaveBeenCalled();
+});

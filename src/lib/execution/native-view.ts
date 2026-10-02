@@ -159,7 +159,7 @@ export function bracketPlansFromPrograms(programs: readonly OrderProgram[]): Nat
             entryClosed: !entry || (entry.status !== 'working' && entry.status !== 'pendingSubmit'),
             exit,
             issues: p.issues.map(i => ({ code: 'report-mismatch' as const, detail: i.detail, at: i.ts })),
-            dismissed: p.status === 'stopped',
+            dismissed: p.status === 'stopped' && programFinished(p),
             createdAt: p.createdAt,
             updatedAt: p.updatedAt,
             native: { programId: p.id, levelId: lv.id, version: p.version, status: p.status, hold: p.hold, phase: lv.phase,
@@ -216,7 +216,7 @@ export function programForNewBracket(spec: NativeBracketSpec, id: string, at: nu
  * done / disabled with nothing working, no unacknowledged unknown and no
  * position left. */
 export function programFinished(p: OrderProgram): boolean {
-    const busy = p.levels.some(lv => lv.position > 0 || lv.orders.some(o =>
+    const busy = p.levels.some(lv => lv.position > 0 || lv.unprotected > 0 || lv.orders.some(o =>
         o.status === 'pendingSubmit' || o.status === 'working' || (o.status === 'unknown' && !o.acknowledged)));
     if (busy) return false;
     return p.status === 'stopped' || p.levels.every(lv => lv.phase === 'done' || lv.phase === 'disabled');

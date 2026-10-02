@@ -5,8 +5,9 @@ import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 
-vi.mock('../lib/bracket', () => ({}));
-vi.mock('../lib/bracket-core', () => ({}));
+const r33 = vi.hoisted(() => ({ plans: [] as unknown[], cancel: vi.fn() }));
+vi.mock('../lib/bracket', () => ({ useBrackets: () => r33.plans, isNativeBracket: (p: object) => 'native' in p, bracketSnapshotStale: () => false, cancelRemainingEntry: r33.cancel }));
+vi.mock('../lib/bracket-core', async () => await vi.importActual('../lib/bracket-core'));
 vi.mock('../lib/execution/native', () => ({ useNativeHealth: () => null }));
 vi.mock('../lib/privacy', () => ({ maskAccountId: (s: string) => s, usePrivacyMode: () => false }));
 vi.mock('../lib/protection-env', () => ({ currentProtectionEnv: () => null, protectionEnvLabel: () => '' }));
@@ -52,4 +53,48 @@ it('the stepper stays within known..quantity', async () => {
     expect(qty().props.value).toBe('3');
     for (let i = 0; i < 5; i++) act(() => btn('減少').props.onClick());
     expect(qty().props.value).toBe('1');
+});
+
+async function r33NativePlan() {
+    const { programForNewBracket, bracketPlansFromPrograms } = await import('../lib/execution/native-view');
+    const p = programForNewBracket({ env: 'local|simulation', account: { account_type: 'F', broker_id: 'fixture-broker', account_id: 'fixture-account' }, orderId: 'entry', seqno: 'stable-entry', quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT', exchange: 'TAIFEX', action: 'Buy', quantity: 2, stopPrice: 95, takePrice: 110 }, 'r33-ui', 1)!;
+    const lv = p.levels[0]!;
+    lv.entryFilled = 1; lv.position = 1; lv.phase = 'exiting'; lv.orders[0]!.filled = 1;
+    lv.orders.push({ submitVersion: 1, key: 'queued-cover', role: 'exit', leg: 'stop', cycle: 0, qty: 1, status: 'pendingSubmit', orderId: null, filled: 0, fills: {}, fillTs: {}, detail: null, acknowledged: false, cancel: null });
+    return { p, lv, map: () => bracketPlansFromPrograms([p])[0]! };
+}
+it('partial 1/2 queued Cover retains the actual cancel-remainder UI action', async () => {
+    const { BracketStatusList } = await import('./bracket-status');
+    const fixture = await r33NativePlan();
+    const plan = fixture.map();r33.plans = [plan];r33.cancel.mockReset().mockResolvedValue(undefined);
+    let view!: ReactTestRenderer;
+    act(() => { view = create(createElement(BracketStatusList, { code: 'TXFR1' })); });
+    const button = () => view.root.find(n => n.type === 'button' && n.children.join('') === '刪除剩餘進場單');
+    await act(async () => { await button().props.onClick(); });
+    const confirm = view.root.find(n => n.type === 'button' && n.children.join('').includes('再按一次：刪除剩餘進場單'));
+    await act(async () => { await confirm.props.onClick(); });
+    expect(r33.cancel).toHaveBeenCalledWith(plan);
+    expect(view.root.findAllByType('span').map(n => n.children.join('')).join('|')).toContain('成交 1/2');
+    act(() => view.unmount());
+});
+it('a legacy stopped snapshot with a failed Cover and known position stays visible', async () => {
+    const { BracketStatusList } = await import('./bracket-status');
+    const fixture = await r33NativePlan();
+    fixture.p.status = 'stopped';fixture.lv.phase = 'disabled';fixture.lv.unprotected = 1;
+    fixture.lv.orders[1]!.status = 'notSent';r33.plans = [fixture.map()];
+    let view!: ReactTestRenderer;
+    act(() => { view = create(createElement(BracketStatusList, { code: 'TXFR1' })); });
+    const output = JSON.stringify(view.toJSON());
+    expect(output).toContain('出場未送出');expect(view.root.findAllByType('div').map(n => n.children.filter(c => typeof c === 'string').join('')).join('|')).toContain('可能未保護 1');
+    act(() => view.unmount());
+});
+it('a persisted failed registration displays its entry identity and no financial action', async () => {
+    const { BracketStatusList } = await import('./bracket-status');
+    const fixture = await r33NativePlan();
+    r33.plans = [{ ...fixture.map(), registrationPending: { owner: 'native', detail: '進場單已送出，勿重送進場或另掛重複出場單' } }];
+    let view!: ReactTestRenderer;
+    act(() => { view = create(createElement(BracketStatusList, { code: 'TXFR1' })); });
+    const output = JSON.stringify(view.toJSON());expect(output).toContain('保護登記待確認');expect(output).toContain('stable-entry');
+    expect(view.root.findAllByType('button')).toHaveLength(0);
+    act(() => view.unmount());
 });

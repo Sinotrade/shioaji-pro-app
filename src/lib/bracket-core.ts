@@ -71,6 +71,8 @@ export interface BracketExit {
 }
 
 export interface BracketPlan {
+    /** A sent entry whose fixed owner has not acknowledged protection. Never armed here. */
+    registrationPending?: { owner: 'window' | 'native'; detail: string };
     id: string;
     env: string;
     account: AccountRef;

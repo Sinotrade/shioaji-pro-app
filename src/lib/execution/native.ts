@@ -69,6 +69,8 @@ function readToggle(): boolean {
 }
 
 let enabled = readToggle();
+let ownerGeneration = 0;
+export const getNativeOwnerGeneration = () => ownerGeneration;
 const toggleListeners = new Set<() => void>();
 
 /** The desktop App can run the native engine; the web build never does. */
@@ -88,6 +90,7 @@ export function nativeOwnsNew(): boolean {
 
 export function setNativeExecutionEnabled(on: boolean): void {
     if (!isTauri) return;
+    if (enabled !== on) ownerGeneration++;
     enabled = on;
     try { globalThis.localStorage?.setItem(NATIVE_TOGGLE_KEY, on ? '1' : '0'); } catch { /* session only */ }
     toggleListeners.forEach(l => l());
@@ -106,7 +109,9 @@ async function syncToggle() {
 if (typeof window !== 'undefined') {
     window.addEventListener?.('storage', e => {
         if (e.key !== NATIVE_TOGGLE_KEY) return;
-        enabled = readToggle();
+        const next = readToggle();
+        if (enabled !== next) ownerGeneration++;
+        enabled = next;
         toggleListeners.forEach(l => l());
     });
 }
@@ -267,6 +272,7 @@ export async function acknowledgeNativeUnknown(programId: string, levelId: strin
  * on exactly the environment the order goes to. */
 export function ensureNativeHost(env: string | null): void {
     const h = health;
+    if (!h?.enabled) throw new Error('背景持續執行尚未啟用完成，括號單未送出');
     if (!h || h.state !== 'live' || !h.env || !h.serverId) throw new Error('執行引擎尚未連上伺服器，括號單未送出');
     if (!env || `${h.serverId}|${h.env}` !== env) throw new Error('執行引擎連線的伺服器／模式與目前不同，括號單未送出');
 }

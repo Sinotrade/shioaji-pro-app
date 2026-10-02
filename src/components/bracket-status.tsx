@@ -189,12 +189,19 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
             setBusy(false);
         }
     };
+    if (plan.registrationPending) return (
+        <div className={styles.row.err} role='status'>
+            <div className={styles.head}><span className={styles.code}>{plan.orderCode}</span><span>保護登記待確認</span></div>
+            <div className={styles.note.err}>{plan.action === 'Buy' ? '買進' : '賣出'} {plan.quantity} · #{plan.seqno || plan.orderId}</div>
+            <div className={styles.note.warn}>{plan.registrationPending.detail}</div>
+        </div>
+    );
     return (
         <div className={styles.row[tone]}>
             <div className={styles.head}>
                 <span className={styles.code}>{plan.orderCode}</span>
                 <span>{plan.account.account_type === 'F' ? '[期]' : '[證]'} {maskAccountId(plan.account.account_id, priv)}</span>
-                <span className={styles.grow}>{PHASE[phase]}</span>
+                <span className={styles.grow}>{unprotected > 0 || plan.exit?.status === 'not-sent' ? '保護未確認' : PHASE[phase]}</span>
                 <span>成交 {Math.min(plan.filled, plan.quantity)}/{plan.quantity}</span>
             </div>
             <div className={styles.note.muted}>

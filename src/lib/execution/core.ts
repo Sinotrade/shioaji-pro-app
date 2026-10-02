@@ -311,7 +311,7 @@ function emitPlace(ctx: Ctx, p: OrderProgram, lv: Level, role: 'entry' | 'exit',
     if (!envMatches(ctx.s, p) || awaitingListing(ctx.s, p) || inEpochGuardBand(ctx.ts) || qty <= 0) return false;
     const key = intentKey(p, lv, leg);
     p.intentSeq += 1;
-    lv.orders.push({ key, role, leg, cycle: lv.cycles, qty, status: 'pendingSubmit', orderId: null, filled: 0,
+    lv.orders.push({ submitVersion: p.version, key, role, leg, cycle: lv.cycles, qty, status: 'pendingSubmit', orderId: null, filled: 0,
         fills: {}, fillTs: {}, detail: null, acknowledged: false, cancel: null });
     const b = p.binding;
     ctx.intents.push({ kind: 'place', key, programId: p.id, levelId: lv.id, version: p.version, role, leg,
@@ -466,10 +466,16 @@ function settle(ctx: Ctx, p: OrderProgram, lv: Level) {
 }
 
 function refreshStopping(p: OrderProgram) {
+    // Old snapshots may falsely mark a failed Cover stopped. Expose risk,
+    // without rearming or resending anything.
+    for (const lv of p.levels) if (lv.position > 0 && cycleSlots(lv, 'exit').some(o => o.status === 'notSent')) {
+        lv.unprotected = Math.max(lv.unprotected, lv.entryFilled - cycleSlots(lv, 'exit').reduce((n, o) => n + o.filled, 0));
+    }
+    if (p.status === 'stopped' && p.levels.some(lv => lv.position > 0 || lv.unprotected > 0)) p.status = 'stopping';
     if (p.status !== 'stopping') return;
     // an unacknowledged unknown submit may be live at the broker: not stopped yet
     const busy = p.levels.some(lv => lv.orders.some(o => isActive(o) || (o.status === 'unknown' && !o.acknowledged))
-        || (lv.position > 0 && lv.phase !== 'disabled'));
+        || lv.position > 0 || lv.unprotected > 0);
     if (!busy) p.status = 'stopped';
 }
 
@@ -1248,7 +1254,7 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             return;
         case 'remove': {
             const busy = p.levels.some(lv => lv.orders.some(o => isActive(o) || (o.status === 'unknown' && !o.acknowledged))
-                || lv.position > 0);
+                || lv.position > 0 || lv.unprotected > 0);
             if (busy) { reject(ctx, p, 'hasOrdersOrPosition', p.id); return; }
             s.programs = s.programs.filter(x => x !== p);
             notice(ctx, 'removed', p, null, p.id);

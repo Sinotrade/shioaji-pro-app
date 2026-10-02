@@ -16,6 +16,8 @@ import {
 } from '../lib/allocation';
 import {
     ensureBracketHost,
+    assertBracketAdmission,
+    type BracketAdmission,
     registerBracket,
     registrationFailureText,
     validateBracketRequest,
@@ -271,6 +273,7 @@ export function OrderTicket({
             const bracketTake = bracketOn && takePrice.trim() !== '' ? tp : null;
             let entryAccount: Account | undefined;
             let bracketEnv: string | null = null;
+            let bracketAdmission: BracketAdmission | undefined;
             if (bracketOn) {
                 // 零股括號單以零股市場判斷方向：沒有零股行情時不能確認
                 if (intradayOdd && oddReference === null) {
@@ -298,7 +301,7 @@ export function OrderTicket({
                 if (!bracketEnv) {
                     throw new Error('伺服器模式（模擬／正式）尚未確認，括號單未送出');
                 }
-                await ensureBracketHost({ orderLot: isFutures ? undefined : orderLot });
+                bracketAdmission = await ensureBracketHost({ orderLot: isFutures ? undefined : orderLot });
             }
             // 送單帳戶在確認前固定（#139）：確認視窗開著時，本視窗其他面板
             // 仍可改選帳戶 — 送出時不再重新解析，改為比對後中止
@@ -332,6 +335,9 @@ export function OrderTicket({
                 throw new Error(ACCOUNT_CHANGED_MESSAGE);
             }
             const dispatch = { beforeDispatch: () => {
+                if (bracketAdmission) {
+                    try { assertBracketAdmission(bracketAdmission); } catch (e) { throw Object.assign(e instanceof Error ? e : new Error(String(e)), { tradingGateRejected: true }); }
+                }
                 if (!isContextCurrent()) throw Object.assign(new Error(ORDER_CONTEXT_CHANGED_MESSAGE), { tradingGateRejected: true });
                 if (!isSelectedAccountUnchanged(orderAccount)) throw Object.assign(new Error(ACCOUNT_CHANGED_MESSAGE), { tradingGateRejected: true });
             } };
@@ -393,7 +399,7 @@ export function OrderTicket({
                         orderLot: isFutures ? undefined : orderLot,
                         stopPrice: bracketStop,
                         takePrice: bracketTake,
-                    });
+                    }, bracketAdmission);
                 } catch (err) {
                     // 進場單已送出：保護登記結果必須明示，不自動重送任何單，
                     // 也不建議另掛停損（登記可能晚到生效 → 重複出場）
