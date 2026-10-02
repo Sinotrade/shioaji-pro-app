@@ -457,11 +457,11 @@ function refreshStopping(p: OrderProgram) {
     for (const lv of p.levels) if (lv.position > 0 && cycleSlots(lv, 'exit').some(o => o.status === 'notSent')) {
         lv.unprotected = Math.max(lv.unprotected, lv.entryFilled - cycleSlots(lv, 'exit').reduce((n, o) => n + o.filled, 0));
     }
-    if (p.status === 'stopped' && p.levels.some(lv => lv.position > 0 || lv.unprotected > 0)) p.status = 'stopping';
+    if (p.status === 'stopped' && p.levels.some(lv => lv.position > 0 || lv.unprotected > 0 || externalEntryPending(lv))) p.status = 'stopping';
     if (p.status !== 'stopping') return;
     // an unacknowledged unknown submit may be live at the broker: not stopped yet
     const busy = p.levels.some(lv => lv.orders.some(o => isActive(o) || (o.status === 'unknown' && !o.acknowledged))
-        || lv.position > 0 || lv.unprotected > 0);
+        || lv.position > 0 || lv.unprotected > 0 || !!externalEntryPending(lv));
     if (!busy) p.status = 'stopped';
 }
 
@@ -939,7 +939,32 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                 const rows = e.orders.filter(o => o.intentKey === slot.key
                     && (slot.unconfirmed || !slot.orderId || o.orderId === slot.orderId));
                 const row = rows.length === 1 ? rows[0] : undefined;
+                // Terminal evidence is a ledger fact, not permission to rebind a
+                // raw ID or send/cancel. Preserve unconfirmed; only the same-day
+                // uniquely mapped stable identity can extend its fill ledger.
+                if (slot.unconfirmed && !isActive(slot) && slot.status !== 'unknown') {
+                    if (row && !(e.ambiguous ?? []).includes(slot.key) && !row.cancelAmbiguous
+                        && row.qty === slot.qty && slotReportMatches(lv, slot, row)
+                        && slot.evidenceEpoch === epochMark(ctx.ts)) {
+                        for (const d of row.deals) if (Number.isSafeInteger(d.qty) && d.qty > 0) {
+                            applyFill(ctx, p, lv, slot, `${slot.orderId ?? row.orderId}:${d.seq}`, d.qty, d.ts);
+                        }
+                        touched = true;
+                    } else if (row?.deals.length) {
+                        addIssue(ctx, p, 'terminalFillUnconfirmed', `${slot.key}: terminal fill identity/day requires confirmation`);
+                        if (external && row.qty === slot.qty && !(e.ambiguous ?? []).includes(slot.key)
+                            && !row.cancelAmbiguous && slotReportMatches(lv, slot, row) && !externalEntryPending(lv)) {
+                            lv.entryPending = { leg: 'entry', price: null, ts: ctx.ts,
+                                reason: slot.evidenceEpoch === undefined ? 'unknownEntryAfterReconnect' : 'unknownEntryAcrossDay' };
+                            if (lv.position === 0) lv.phase = 'needsConfirm';
+                            notice(ctx, 'needsConfirm', p, lv.id, `entry ${lv.entryPending.reason}`);
+                            touched = true;
+                        }
+                    }
+                    continue;
+                }
                 if (row) {
+                    slot.evidenceEpoch = epochMark(ctx.ts);
                     if (row.cancelAmbiguous && !slot.cancelAmbiguous) {
                         addIssue(ctx, p, 'orderIdAmbiguous', '委託編號對應多筆委託，請先核對；暫停自動取消委託。');
                     }
@@ -1240,7 +1265,7 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             return;
         case 'remove': {
             const busy = p.levels.some(lv => lv.orders.some(o => isActive(o) || (o.status === 'unknown' && !o.acknowledged))
-                || lv.position > 0 || lv.unprotected > 0);
+                || lv.position > 0 || lv.unprotected > 0 || !!externalEntryPending(lv));
             if (busy) { reject(ctx, p, 'hasOrdersOrPosition', p.id); return; }
             s.programs = s.programs.filter(x => x !== p);
             notice(ctx, 'removed', p, null, p.id);

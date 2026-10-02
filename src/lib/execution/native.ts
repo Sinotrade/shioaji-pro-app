@@ -24,6 +24,7 @@ import { EXECUTION_SCHEMA_VERSION, type Notice, type OrderProgram, type UserComm
 import { programFinished } from './native-view';
 
 export const NATIVE_TOGGLE_KEY = 'sj-pro-native-execution';
+const DESIRED_RECEIPT_KEY = 'sj-pro-native-execution-desired';
 
 // Same detection as runtime.ts `isTauri`, evaluated here so that this module
 // stays importable from tests that mock runtime.ts partially.
@@ -31,6 +32,8 @@ let isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 export interface NativeHealth {
     enabled: boolean;
+    /** Main-only setting receipt exposed by the live host through readonly status. */
+    enableReceipt?: string | null;
     state: 'idle' | 'connecting' | 'live' | 'down' | 'failed';
     env: 'simulation' | 'production' | null;
     serverId: string | null;
@@ -68,14 +71,30 @@ function readToggle(): boolean {
     try { return globalThis.localStorage?.getItem(NATIVE_TOGGLE_KEY) === '1'; } catch { return false; }
 }
 
+function readDesired(): { enabled: boolean; receipt: string } | null {
+    try {
+        const value = JSON.parse(globalThis.localStorage?.getItem(DESIRED_RECEIPT_KEY) ?? 'null');
+        return value && typeof value.enabled === 'boolean' && typeof value.receipt === 'string' && value.receipt
+            && value.enabled === readToggle() ? value : null;
+    } catch { return null; }
+}
 let enabled = readToggle();
+let desiredReceipt: string | null = readDesired()?.receipt ?? null;
+function newReceipt(): string { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}:${Math.random()}`; }
+function persistDesired(): void {
+    try {
+        globalThis.localStorage?.setItem(DESIRED_RECEIPT_KEY, JSON.stringify({ enabled, receipt: desiredReceipt }));
+        globalThis.localStorage?.setItem(NATIVE_TOGGLE_KEY, enabled ? '1' : '0');
+    } catch { /* session-only receipt: other windows remain fail-closed */ }
+}
 let ownerGeneration = 0;
 let enabledAckGeneration: number | null = null;
 let attemptedGeneration = -1;
 let toggleSequence = 0;
 let healthSequence = 0;
-function changeDesired(on: boolean) {
-    if (enabled === on) return;
+function changeDesired(on: boolean, receipt: string | null = desiredReceipt) {
+    if (enabled === on && receipt === desiredReceipt) return;
+    desiredReceipt = receipt;
     ownerGeneration++;
     enabled = on;
     enabledAckGeneration = null;
@@ -102,13 +121,16 @@ export function nativeOwnsNew(): boolean {
 
 export function setNativeExecutionEnabled(on: boolean): void {
     if (!isTauri) return;
-    changeDesired(on);
-    try { globalThis.localStorage?.setItem(NATIVE_TOGGLE_KEY, on ? '1' : '0'); } catch { /* session only */ }
+    changeDesired(on, on !== enabled || !desiredReceipt ? newReceipt() : desiredReceipt);
+    persistDesired();
     toggleListeners.forEach(l => l());
     if (isMainWindow()) void syncToggle();
 }
 
 async function syncToggle() {
+    if (!isMainWindow()) return;
+    if (!desiredReceipt) { changeDesired(enabled, newReceipt()); persistDesired(); }
+    const receipt = desiredReceipt;
     const generation = ownerGeneration;
     const desired = getNativeExecutionEnabled();
     const request = ++toggleSequence;
@@ -116,9 +138,9 @@ async function syncToggle() {
     attemptedGeneration = generation;
     enabledAckGeneration = null;
     try {
-        const reply = await invoke<NativeHealth>('execution_set_enabled', { enabled: desired });
+        const reply = await invoke<NativeHealth>('execution_set_enabled', { enabled: desired, desiredReceipt: receipt });
         if (generation !== ownerGeneration || request !== toggleSequence) return;
-        if (desired && reply.enabled) enabledAckGeneration = generation;
+        if (desired && reply.enabled && (!reply.enableReceipt || reply.enableReceipt === receipt)) enabledAckGeneration = generation;
         if (statusRequest === healthSequence) health = reply;
         emit();
     } catch (e) {
@@ -131,9 +153,10 @@ async function syncToggle() {
 
 if (typeof window !== 'undefined') {
     window.addEventListener?.('storage', e => {
-        if (e.key !== NATIVE_TOGGLE_KEY) return;
-        const next = typeof e.newValue === 'string' ? e.newValue === '1' : readToggle();
-        changeDesired(next);
+        if (e.key !== NATIVE_TOGGLE_KEY && e.key !== DESIRED_RECEIPT_KEY) return;
+        const desired = readDesired();
+        const next = e.key === NATIVE_TOGGLE_KEY && typeof e.newValue === 'string' ? e.newValue === '1' : readToggle();
+        changeDesired(next, desired?.enabled === next ? desired.receipt : null);
         toggleListeners.forEach(l => l());
         if (isMainWindow()) void syncToggle();
     });
@@ -187,7 +210,9 @@ export function refreshNative(): Promise<void> {
         try {
             // Establish the desired state once on attachment/reload. A failed/pending
             // explicit toggle is not retried by status refreshes.
-            if (attemptedGeneration !== ownerGeneration) await syncToggle();
+            const desired = readDesired();
+            if (desired) changeDesired(desired.enabled, desired.receipt);
+            if (isMainWindow() && attemptedGeneration !== ownerGeneration) await syncToggle();
             const generation = ownerGeneration;
             const request = ++healthSequence;
             const [view, h] = await Promise.all([
@@ -198,7 +223,13 @@ export function refreshNative(): Promise<void> {
                 revision = view.revision;
                 programs = view.programs;
                 lastPrices = view.lastPrices ?? {};
-                if (generation === ownerGeneration && request === healthSequence) health = h;
+                if (generation === ownerGeneration && request === healthSequence) {
+                    health = h;
+                    // Readonly status may prove ONLY this exact main-acknowledged
+                    // desired token. Cached enabled/live alone proves nothing.
+                    if (!isMainWindow()) enabledAckGeneration = enabled && desiredReceipt
+                        && h.enabled && h.enableReceipt === desiredReceipt ? generation : null;
+                }
                 emit();
                 if (isMainWindow()) { housekeeping(); syncQuotes(); }
             }
@@ -299,6 +330,8 @@ export async function acknowledgeNativeUnknown(programId: string, levelId: strin
 /** Before an entry is sent with a native bracket: the engine must be live
  * on exactly the environment the order goes to. */
 export function ensureNativeHost(env: string | null): void {
+    const desired = readDesired();
+    if (desired) changeDesired(desired.enabled, desired.receipt);
     const h = health;
     if (!getNativeExecutionEnabled() || enabledAckGeneration !== ownerGeneration || !h?.enabled) throw new Error('背景持續執行尚未啟用完成，括號單未送出');
     if (!h || h.state !== 'live' || !h.env || !h.serverId) throw new Error('執行引擎尚未連上伺服器，括號單未送出');
@@ -377,6 +410,7 @@ export function __setNativeInvokeForTest(fn: Invoke | null, opts: { enabled?: bo
     lastPrices = {};
     health = null;
     enabledAckGeneration = null;
+    desiredReceipt = readDesired()?.receipt ?? null;
     attemptedGeneration = -1;
     toggleSequence++;
     healthSequence++;

@@ -85,3 +85,31 @@ it.each([false,true])('r34 ordinary status publication is not a session change %
  m.callbacks.forEach(cb=>cb());expect(()=>bracket.assertBracketAdmission(admission)).not.toThrow();
  await expect(bracket.registerBracket(spec,admission)).resolves.toMatchObject({seqno:spec.seqno});
 });
+
+it.each([false,true])('r35 held native registration ACK preserves risk after context changed=%s',async(changed)=>{
+ const {native,server,bracket}=await boot(true);
+ let release!:()=>void; const held=new Promise<void>(r=>{release=r;}); let created:any[]=[];let revision=1;
+ native.__setNativeInvokeForTest(async<T>(cmd:string,args?:any)=>{
+  if(cmd==='execution_status'||cmd==='execution_set_enabled')return {enabled:true,state:'live',env:'simulation',serverId:'http://fixture.invalid',revision,programs:created.length} as T;
+  if(cmd==='execution_programs')return {revision,programs:created,lastPrices:{}} as T;
+  if(cmd==='execution_command'){created=[args.envelope.command.program];await held;revision++;return {accepted:true,notices:[],revision} as T;}
+  throw new Error(cmd);
+ },{enabled:true,desktop:true});await native.refreshNative();
+ const admission=await bracket.ensureBracketHost();const result=bracket.registerBracket(spec,admission);
+ for(let i=0;i<12;i++)await Promise.resolve();
+ if(changed){server.observeServerInfo(server.beginServerInfoRequest(),{...info,simulation:false});server.observeServerInfo(server.beginServerInfoRequest(),info);}
+ else server.observeServerInfo(server.beginServerInfoRequest(),{...info});
+ release();
+ if(changed){await expect(result).rejects.toThrow('待確認');expect(bracket.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(1);expect(JSON.parse(localStorage.getItem('sj-pro-bracket-registrations')!)).toHaveLength(1);}
+ else{await expect(result).resolves.toMatchObject({seqno:spec.seqno});expect(bracket.getDisplayBrackets().some(p=>p.registrationPending)).toBe(false);}
+ expect(created).toHaveLength(1);
+});
+
+it('r35 window register ACK crossing an await cannot clear pending after away/back',async()=>{
+ const {server,bracket}=await boot(false);const admission=await bracket.ensureBracketHost();
+ const result=bracket.registerBracket(spec,admission);
+ server.observeServerInfo(server.beginServerInfoRequest(),{...info,simulation:false});server.observeServerInfo(server.beginServerInfoRequest(),info);
+ await expect(result).rejects.toThrow('待確認');
+ expect(bracket.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(1);
+ expect(JSON.parse(localStorage.getItem('sj-pro-bracket-registrations')!)).toHaveLength(1);
+});

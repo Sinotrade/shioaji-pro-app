@@ -165,6 +165,9 @@ export interface OrderSlot {
      * listings, cancels) until a listing of the current epoch rebinds the
      * slot by its tag (an ended slot never is). */
     unconfirmed?: boolean;
+    /** Trading epoch of the last strictly verified listing. Terminal fill evidence
+     * may extend this ledger after reconnect, never across a trading-day boundary. */
+    evidenceEpoch?: number;
 }
 
 export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'resume' | 'unknownNotSent'

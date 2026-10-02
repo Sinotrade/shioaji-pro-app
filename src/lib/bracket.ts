@@ -622,6 +622,10 @@ export async function registerBracket(spec: BracketSpec, admission?: BracketAdmi
         if (!sameEntryScope(plan, spec) || externalIdentity({ ...plan, confirmed: false }, { ...spec, confirmed: false }) !== 'same') {
             throw new Error('保護登記回覆的委託身分尚未確認；請核對紀錄，勿重送');
         }
+        if (admission.env !== currentProtectionEnv() || admission.contextGeneration !== getProtectionContextVersion()
+            || (admission.owner === 'window' && admission.hostId !== (executing ? hostId : mirrorHostId))) {
+            throw new Error('保護登記回覆前連線或執行視窗已變更，登記仍待確認；請核對原委託與保護紀錄，勿重送');
+        }
         savePendingRegistration(null, record.id);
         return plan;
     } catch (e) {
@@ -802,10 +806,7 @@ let mergedCache: { ts: BracketPlan[]; native: NativeBracketPlan[]; pending: Brac
 export function getDisplayBrackets(): BracketPlan[] {
     const native = nativePlans();
     if (mergedCache.ts !== snapshot || mergedCache.native !== native || mergedCache.pending !== pendingRegistrations) {
-        const pending = pendingRegistrations.filter(record => !(record.registrationPending?.owner === 'native' ? native : snapshot)
-            .some(plan => plan.env === record.env && accountRefKey(plan.account) === accountRefKey(record.account)
-                && sameEntryScope(plan, record) && externalIdentity({ ...plan, confirmed: false }, { ...record, confirmed: false }) === 'same'
-                && (record.registrationPending?.owner === 'native' || (plan.identityConfirmed && !bracketSnapshotStale()))));
+        const pending = pendingRegistrations;
         mergedCache = { ts: snapshot, native, pending: pendingRegistrations, all: [...snapshot, ...native, ...pending] };
     }
     return mergedCache.all;

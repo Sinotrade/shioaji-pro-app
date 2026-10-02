@@ -155,7 +155,7 @@ describe('toggle 原生執行引擎（實驗）', () => {
         native.setNativeExecutionEnabled(true);
         await flush();
         expect(store.get(native.NATIVE_TOGGLE_KEY)).toBe('1');
-        expect(host.invoke).toHaveBeenCalledWith('execution_set_enabled', { enabled: true });
+        expect(host.invoke).toHaveBeenCalledWith('execution_set_enabled', expect.objectContaining({ enabled: true, desiredReceipt: expect.any(String) }));
     });
 });
 
