@@ -294,7 +294,7 @@ const exitFired = (lv: Level) => lv.exit?.type === 'oco' && cycleSlots(lv, 'exit
 function emitPlace(ctx: Ctx, p: OrderProgram, lv: Level, role: 'entry' | 'exit', leg: LegName, qty: number,
     price: number | null, order: OrderSpec): boolean {
     // isolation guard: never cross environments
-    if (!envMatches(ctx.s, p) || awaitingListing(ctx.s, p) || inEpochGuardBand(ctx.ts) || qty <= 0) return false;
+    if (!envMatches(ctx.s, p) || awaitingListing(ctx.s, p) || inEpochGuardBand(ctx.ts) || !Number.isSafeInteger(qty) || qty <= 0) return false;
     const key = intentKey(p, lv, leg);
     p.intentSeq += 1;
     lv.orders.push({ submitVersion: p.version, key, role, leg, cycle: lv.cycles, qty, status: 'pendingSubmit', orderId: null, filled: 0,
@@ -412,6 +412,11 @@ function completeCycle(p: OrderProgram, lv: Level) {
 
 /** Recompute a level's phase from its slots; sticky phases stay. */
 function settle(ctx: Ctx, p: OrderProgram, lv: Level) {
+    if (lv.phase === 'done' && lv.position > 0 && !exitFired(lv)) {
+        lv.phase = 'holding';
+        lv.detail = 'lateEntryExposure';
+        if (p.status !== 'running' || cycleSlots(lv, 'entry').some(o => o.unconfirmed)) lv.check = 'restart';
+    }
     if (lv.phase === 'needsConfirm' || lv.phase === 'disabled' || lv.phase === 'done') return;
     if (lv.orders.some(o => o.status === 'unknown' && !o.acknowledged)) { lv.phase = 'unknown'; return; }
     const entries = cycleSlots(lv, 'entry');
@@ -1185,7 +1190,7 @@ function validateProgram(p: OrderProgram): string | null {
     for (const lv of p.levels) {
         if (!lv.id || ids.has(lv.id)) return 'duplicateLevel';
         ids.add(lv.id);
-        if (!Number.isSafeInteger(lv.qty) || lv.qty <= 0) return 'invalidQty';
+        if (!Number.isSafeInteger(lv.qty) || lv.qty <= 0 || lv.orders.some(o => !Number.isSafeInteger(o.qty) || o.qty <= 0)) return 'invalidQty';
     }
     return null;
 }

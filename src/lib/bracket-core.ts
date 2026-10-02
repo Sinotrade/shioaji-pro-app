@@ -72,6 +72,8 @@ export interface BracketExit {
 }
 
 export interface BracketPlan {
+    /** Authoritative native projection: evidence is separate from armed protection. */
+    nativeRisk?: { position: number; unprotected: number; armed: boolean };
     /** A sent entry whose fixed owner has not acknowledged protection. Never armed here. */
     registrationPending?: { owner: 'window' | 'native'; detail: string };
     id: string;
@@ -115,7 +117,7 @@ export function bracketPhase(p: BracketPlan): BracketPhase {
         if (p.exit.status === 'sending' || p.exit.status === 'working') return 'exiting';
         return 'done';
     }
-    if (p.filled > 0) return 'protected';
+    if (p.filled > 0) return p.nativeRisk && !p.nativeRisk.armed ? 'closed' : 'protected';
     return p.entryClosed ? 'closed' : 'waiting';
 }
 
@@ -134,12 +136,13 @@ export function isLive(p: BracketPlan): boolean {
         || (phase === 'done' && p.exit?.status === 'unknown' && !p.exit.acknowledged)
         // exit done but the entry still works (or its cancel is unconfirmed):
         // its reports still matter and 對帳 must stay available
-        || workingEntryAfterExit(p) > 0;
+        || workingEntryAfterExit(p) > 0 || unprotectedQuantity(p) > 0;
 }
 
 /** Quantity the OCO triggers should hold right now. */
 export function protectionQuantity(p: BracketPlan): number {
     if (p.exit) return 0;
+    if (p.nativeRisk) return p.nativeRisk.armed ? Math.min(p.nativeRisk.position, p.quantity) : 0;
     return Math.min(p.filled, p.quantity);
 }
 
@@ -147,6 +150,8 @@ export function protectionQuantity(p: BracketPlan): number {
  * dispatched, a capped/refused exit, or an exit that ended unfilled. An
  * `unknown` exit counts as covering its quantity but is flagged separately. */
 export function unprotectedQuantity(p: BracketPlan): number {
+    if (p.nativeRisk) return Math.max(p.nativeRisk.unprotected,
+        !p.nativeRisk.armed && !p.exit ? p.nativeRisk.position : 0);
     if (!p.exit) return 0;
     const counted = p.exit.status === 'not-sent' ? 0
         : p.exit.status === 'incomplete' ? p.exit.filled : p.exit.quantity;

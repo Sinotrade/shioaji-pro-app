@@ -1,4 +1,4 @@
-import { externalEntryPending } from './core';
+import { externalEntryPending, touchLegs } from './core';
 // src/lib/execution/native-view.ts — pure mapping between the native
 // execution engine (#201, desktop, experimental) and the existing trigger /
 // bracket UI. No I/O: native.ts talks to the Tauri host; this file decides
@@ -158,6 +158,9 @@ export function bracketPlansFromPrograms(programs: readonly OrderProgram[]): Nat
             group: p.id,
             fills: { ...(entry?.fills ?? {}) },
             fillTs: { ...(entry?.fillTs ?? {}) },
+            nativeRisk: { position: lv.position, unprotected: lv.unprotected,
+                armed: p.hold === null && (p.status === 'running' || p.status === 'stopping')
+                    && touchLegs(lv).length > 0 && lv.check === null && lv.pending === null && !externalEntryPending(lv) },
             filled: lv.entryFilled,
             entryClosed: !entry || (entry.status !== 'working' && entry.status !== 'pendingSubmit'),
             exit,
