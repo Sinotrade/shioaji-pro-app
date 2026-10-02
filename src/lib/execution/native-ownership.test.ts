@@ -302,6 +302,51 @@ describe('ownership: one executor per trigger / bracket', () => {
         expect(creates()).toHaveLength(2);
     });
 
+    it('a reused trade id with contradictory broker identity creates a distinct protected bracket', async () => {
+        await boot({ enabled: true });
+        const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'reused-id', seqno: 'S1', ordno: 'O1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
+        const old = await bracket.registerBracket(spec);
+        host.programs[0]!.levels[0]!.orders[0]!.unconfirmed = true;
+        host.bump(); await native.refreshNative();
+        const fresh = await bracket.registerBracket({ ...spec, seqno: 'S2', ordno: 'O2' });
+        expect(fresh.id).not.toBe(old.id);
+        expect(creates()).toHaveLength(2);
+        const partial = await bracket.registerBracket({ ...spec, seqno: '', ordno: 'O3' });
+        expect(partial.id).not.toBe(old.id);
+        expect(creates()).toHaveLength(3);
+    });
+
+    it('an unconfirmed legacy collision refuses registration instead of reporting the old bracket as success', async () => {
+        await boot({ enabled: true });
+        const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'legacy-id', seqno: '', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
+        await bracket.registerBracket(spec);
+        host.programs[0]!.levels[0]!.orders[0]!.unconfirmed = true;
+        host.bump(); await native.refreshNative();
+        await expect(bracket.registerBracket(spec)).rejects.toThrow('進場單身分尚未確認');
+        expect(creates()).toHaveLength(1);
+    });
+
+    it('independent entry confirmation keeps the existing exit decision visible and operable', async () => {
+        await boot({ enabled: true });
+        await bracket.registerBracket({ env: m.env!, account: { account_type: 'F', broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'fixture-f1', seqno: 'S1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT', exchange: 'TAIFEX', action: 'Buy', quantity: 2, stopPrice: 48000, takePrice: 48600 });
+        const lv = host.programs[0]!.levels[0]!;
+        lv.position = 1; lv.entryFilled = 1; lv.orders[0]!.filled = 1; lv.phase = 'needsConfirm';
+        lv.pending = { leg: 'stop', price: 47900, ts: 9, reason: 'disconnect' };
+        lv.entryPending = { leg: 'entry', price: null, ts: 10, reason: 'unknownEntryAfterReconnect' };
+        host.bump(); await native.refreshNative();
+        const plan = bracket.getDisplayBrackets()[0]!;
+        expect(bracket.isNativeBracket(plan) && plan.native.entryAcrossDay).toEqual({ known: 1 });
+        expect(engine.getDisplayTriggers().find(t => t.kind === 'stop')?.pending?.reason).toBe('disconnect');
+        await bracket.confirmBracketEntry(plan.id, 1, true);
+        expect(host.commands.at(-1)?.op).toBe('confirmEntry');
+    });
+
     it('an entry open across a trade-id epoch is settled only by the user\'s fill quantity', async () => {
         await boot({ enabled: true });
         await bracket.ensureBracketHost();

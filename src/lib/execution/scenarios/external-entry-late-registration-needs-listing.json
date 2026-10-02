@@ -1,18 +1,17 @@
 {
   "schema": "execution-conformance-v1",
-  "name": "bracket-restore-recovered-fill",
-  "description": "#144: a fill recovered after restart (reconcile before live) arms protection with a first-tick check; 取消 of a bracket leg is refused; 送出 exits.",
+  "name": "external-entry-late-registration-needs-listing",
+  "description": "A late renderer registration from an older sidecar never trusts the frontend trade id before a verified current-session listing.",
   "covers": [
     "bracket",
-    "#144",
-    "restart",
-    "reconcile"
+    "reconnect",
+    "registration"
   ],
   "steps": [
     {
       "event": {
         "type": "connection",
-        "ts": 1000,
+        "ts": 1790730000000,
         "live": true,
         "env": "simulation",
         "serverId": "local-a"
@@ -20,9 +19,17 @@
     },
     {
       "event": {
+        "type": "epoch",
+        "ts": 1790730000100,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
         "type": "command",
-        "ts": 1001,
-        "id": "c1001",
+        "ts": 1790730000101,
+        "id": "late",
         "command": {
           "op": "create",
           "program": {
@@ -55,7 +62,9 @@
                 "qty": 2,
                 "entry": {
                   "type": "external",
-                  "orderId": "o-entry"
+                  "orderId": "o-entry",
+                  "seqno": "S1",
+                  "ordno": "O1"
                 },
                 "exit": {
                   "type": "oco",
@@ -127,72 +136,17 @@
             "updatedAt": 0
           }
         }
-      }
-    },
-    {
-      "event": {
-        "type": "reconcile",
-        "ts": 1001,
-        "account": {
-          "accountType": "F",
-          "brokerId": "F002000",
-          "accountId": "1234567"
-        },
-        "env": "simulation",
-        "serverId": "local-a",
-        "orders": [
-          {
-            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
-            "orderId": "o-entry",
-            "status": "working",
-            "qty": 2,
-            "deals": []
-          }
-        ],
-        "complete": false
-      }
-    },
-    {
-      "restart": {
-        "ts": 5000
-      }
-    },
-    {
-      "event": {
-        "type": "reconcile",
-        "ts": 5001,
-        "account": {
-          "accountType": "F",
-          "brokerId": "F002000",
-          "accountId": "1234567"
-        },
-        "env": "simulation",
-        "serverId": "local-a",
-        "orders": [
-          {
-            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
-            "orderId": "o-entry",
-            "status": "filled",
-            "qty": 2,
-            "deals": [
-              {
-                "seq": "s1",
-                "qty": 2,
-                "price": 100
-              }
-            ]
-          }
-        ],
-        "complete": true
       },
       "expect": {
         "programs": {
           "b1": {
             "levels": {
               "L1": {
-                "phase": "holding",
-                "position": 2,
-                "check": "restart"
+                "orders": [
+                  {
+                    "unconfirmed": true
+                  }
+                ]
               }
             }
           }
@@ -201,93 +155,124 @@
     },
     {
       "event": {
-        "type": "connection",
-        "ts": 5002,
-        "live": true,
+        "type": "deal",
+        "ts": 1790730000102,
         "env": "simulation",
-        "serverId": "local-a"
+        "serverId": "local-a",
+        "orderId": "o-entry",
+        "eventId": "other-deal",
+        "seq": "000099",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT",
+        "action": "Buy",
+        "qty": 1,
+        "price": 100,
+        "fillTs": 1790730000.01
+      },
+      "expect": {
+        "programs": {
+          "b1": {
+            "levels": {
+              "L1": {
+                "entryFilled": 0,
+                "position": 0
+              }
+            }
+          }
+        },
+        "intents": []
       }
     },
     {
       "event": {
         "type": "tick",
-        "ts": 5003,
+        "ts": 1790730000103,
         "env": "simulation",
         "serverId": "local-a",
         "code": "TXFR1",
         "price": 94
       },
       "expect": {
-        "notices": [
-          "needsConfirm"
-        ],
-        "programs": {
-          "b1": {
-            "levels": {
-              "L1": {
-                "phase": "needsConfirm",
-                "pending": {
-                  "leg": "stop"
-                }
-              }
-            }
-          }
-        }
+        "intents": []
       }
     },
     {
       "event": {
-        "type": "command",
-        "ts": 5004,
-        "id": "c5004",
-        "command": {
-          "op": "resolvePending",
-          "programId": "b1",
-          "version": 1,
-          "levelId": "L1",
-          "choice": "cancel"
-        }
-      },
-      "expect": {
-        "notices": [
-          "rejected.bracketCancel"
-        ]
-      }
-    },
-    {
-      "event": {
-        "type": "command",
-        "ts": 5005,
-        "id": "c5005",
-        "command": {
-          "op": "resolvePending",
-          "programId": "b1",
-          "version": 1,
-          "levelId": "L1",
-          "choice": "send"
-        }
-      },
-      "expect": {
-        "intents": [
+        "type": "reconcile",
+        "ts": 1790730000104,
+        "env": "simulation",
+        "serverId": "local-a",
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "orders": [
           {
-            "kind": "place",
-            "key": "simulation/local-a/b1/L1/stop/0/0",
-            "action": "Sell",
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "fresh-id",
+            "status": "working",
             "qty": 2,
-            "leg": "stop",
-            "role": "exit",
-            "price": null
+            "deals": []
           }
         ],
+        "complete": false
+      },
+      "expect": {
         "programs": {
           "b1": {
             "levels": {
               "L1": {
-                "phase": "exiting"
+                "entryFilled": 0,
+                "position": 0,
+                "orders": [
+                  {
+                    "orderId": "fresh-id"
+                  }
+                ]
               }
             }
           }
-        }
+        },
+        "intents": []
+      }
+    },
+    {
+      "event": {
+        "type": "deal",
+        "ts": 1790730000105,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "fresh-id",
+        "eventId": "our-deal",
+        "seq": "000001",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT",
+        "action": "Buy",
+        "qty": 1,
+        "price": 100,
+        "fillTs": 1790730000.01
+      },
+      "expect": {
+        "programs": {
+          "b1": {
+            "levels": {
+              "L1": {
+                "entryFilled": 1,
+                "position": 1
+              }
+            }
+          }
+        },
+        "intents": []
       }
     }
   ]

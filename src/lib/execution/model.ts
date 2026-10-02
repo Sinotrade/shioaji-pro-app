@@ -198,6 +198,8 @@ export interface Level {
      * non-trigger side and crosses again. */
     recross: LegName[];
     pending: PendingConfirm | null;
+    /** External entry identity/remainder confirmation, independent of an exit decision. */
+    entryPending?: PendingConfirm | null;
     orders: OrderSlot[];
     /** Entry filled minus exit filled in the current cycle. */
     position: number;

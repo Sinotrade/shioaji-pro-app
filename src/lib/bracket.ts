@@ -59,7 +59,7 @@ import {
     subscribeNative,
 } from './execution/native';
 import { bracketPlansFromPrograms, programForNewBracket, type NativeBracketPlan } from './execution/native-view';
-import { brokerIdentityMatches } from './execution/core';
+import { externalIdentity } from './execution/core';
 import { getApiBase } from './runtime';
 import { getStreamStatus, subscribeStatusStore } from './stream';
 import { notify } from './trade';
@@ -511,10 +511,17 @@ async function registerNativeBracket(spec: BracketSpec): Promise<BracketPlan> {
     if (!Number.isSafeInteger(spec.quantity) || spec.quantity <= 0) throw new Error('進場數量無效');
     // idempotent: an entry order has at most one live bracket (the engine
     // refuses a second one too: both would send a full-size exit)
-    const existingFor = () => nativePlans().find(p => p.native.status !== 'stopped' && p.env === spec.env
-        && (brokerIdentityMatches(p, spec) || p.orderId === spec.orderId)
-        && p.orderCode === spec.orderCode && p.securityType === spec.securityType
-        && accountRefKey(p.account) === accountRefKey(spec.account));
+    const existingFor = () => {
+        const candidates = nativePlans().filter(p => p.native.status !== 'stopped' && p.env === spec.env
+            && p.orderCode === spec.orderCode && p.securityType === spec.securityType
+            && accountRefKey(p.account) === accountRefKey(spec.account));
+        for (const p of candidates) {
+            const identity = externalIdentity({ ...p, confirmed: !p.native.entryUnconfirmed }, spec);
+            if (identity === 'same') return p;
+            if (identity === 'unknown') throw new Error('進場單身分尚未確認，請先核對委託與成交；括號單未登記');
+        }
+        return undefined;
+    };
     const existing = existingFor();
     if (existing) return existing;
     const now = Date.now();

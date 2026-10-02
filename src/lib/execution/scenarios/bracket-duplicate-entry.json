@@ -139,6 +139,29 @@
     },
     {
       "event": {
+        "type": "reconcile",
+        "ts": 1001,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "o-entry",
+            "status": "working",
+            "qty": 3,
+            "deals": []
+          }
+        ],
+        "complete": false
+      }
+    },
+    {
+      "event": {
         "type": "command",
         "ts": 1002,
         "id": "c1002",
@@ -377,6 +400,29 @@
             "status": "running"
           }
         }
+      }
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1003,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "7654321"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "o-entry",
+            "status": "working",
+            "qty": 3,
+            "deals": []
+          }
+        ],
+        "complete": false
       }
     }
   ]

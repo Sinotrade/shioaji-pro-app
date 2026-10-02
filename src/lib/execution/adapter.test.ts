@@ -127,7 +127,10 @@ describe('bracket adapter', () => {
         let web = plan();
         for (const f of fills) web = applyEntryFill(web, f, 1);
         const program = programFromBracket(plan())!;
-        const r = run([live(1), create(2, program), ...fills.map((f, i): ExecEvent => ({
+        const r = run([live(1), create(2, program), { type: 'reconcile', ts: 2, ...SRC,
+            account: program.binding.account, complete: false,
+            orders: [{ intentKey: program.levels[0]!.orders[0]!.key, orderId: 'o-entry', status: 'working', qty: 3, deals: [] }] },
+        ...fills.map((f, i): ExecEvent => ({
             type: 'deal', ts: 3 + i, ...SRC, orderId: f.orderId, eventId: f.eventId, seq: f.seq,
             account: { brokerId: 'F002000', accountId: '1234567' }, code: 'TXFJ6', action: 'Buy', qty: f.quantity, price: 100, fillTs: f.ts,
         }))]);

@@ -1,3 +1,4 @@
+import { externalEntryPending } from './core';
 // src/lib/execution/native-view.ts — pure mapping between the native
 // execution engine (#201, desktop, experimental) and the existing trigger /
 // bracket UI. No I/O: native.ts talks to the Tauri host; this file decides
@@ -31,7 +32,7 @@ export type NativeBracketPlan = BracketPlan & {
         hold: OrderProgram['hold']; phase: Level['phase'];
         /** The entry stayed open across a trade-id epoch: its fills cannot be
          * matched any more; the user confirms the total (at least `known`). */
-        entryAcrossDay: { known: number } | null };
+        entryAcrossDay: { known: number } | null; entryUnconfirmed?: boolean };
 };
 
 export function isNativeTrigger(t: TriggerOrder): t is NativeTriggerOrder {
@@ -162,7 +163,8 @@ export function bracketPlansFromPrograms(programs: readonly OrderProgram[]): Nat
             createdAt: p.createdAt,
             updatedAt: p.updatedAt,
             native: { programId: p.id, levelId: lv.id, version: p.version, status: p.status, hold: p.hold, phase: lv.phase,
-                entryAcrossDay: lv.pending?.reason === 'unknownEntryAcrossDay' || lv.pending?.reason === 'unknownEntryAfterReconnect'
+                entryUnconfirmed: entry?.unconfirmed ?? false,
+                entryAcrossDay: externalEntryPending(lv)
                     ? { known: entry?.filled ?? 0 } : null },
         });
     }

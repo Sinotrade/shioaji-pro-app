@@ -141,6 +141,29 @@ export function brokerIdentityMatches(a: { seqno?: string; ordno?: string }, b: 
     return pairs.some(([x, y]) => !!x && x === y) && pairs.every(([x, y]) => !x || !y || x === y);
 }
 
+/** A conflicting broker identifier always beats a reused trade id. Only a
+ * currently confirmed legacy binding can use that id as a fallback. */
+export function externalIdentity(a: { orderId: string; seqno?: string; ordno?: string; confirmed?: boolean },
+    b: { orderId: string; seqno?: string; ordno?: string; confirmed?: boolean }): 'same' | 'different' | 'unknown' {
+    const pairs = [[a.seqno?.trim(), b.seqno?.trim()], [a.ordno?.trim(), b.ordno?.trim()]];
+    if (pairs.some(([x, y]) => !!x && !!y && x !== y)) return 'different';
+    if (brokerIdentityMatches(a, b)) return 'same';
+    const stableA = !!(a.seqno?.trim() || a.ordno?.trim());
+    const stableB = !!(b.seqno?.trim() || b.ordno?.trim());
+    if (stableA && stableB) return 'unknown';
+    if (a.orderId !== b.orderId) return 'different';
+    return a.confirmed !== false && b.confirmed !== false ? 'same' : 'unknown';
+}
+
+export function externalEntryPending(lv: Level) {
+    return lv.entryPending ?? (unknownExternalEntry(lv.pending?.reason) ? lv.pending : null);
+}
+
+function clearEntryPending(lv: Level) {
+    lv.entryPending = null;
+    if (unknownExternalEntry(lv.pending?.reason)) lv.pending = null;
+}
+
 function rebindSlot(slot: OrderSlot, id: string) {
     if (slot.orderId && slot.orderId !== id) {
         const prefix = `${slot.orderId}:`;
@@ -910,21 +933,21 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                     // tag rebinds it — an ended slot never takes part again
                     const open = isActive(slot) || (slot.status === 'unknown' && !slot.acknowledged);
                     if (!open) continue;
-                    if (external && lv.pending?.reason === 'unknownEntryAcrossDay') continue;
+                    if (external && externalEntryPending(lv)?.reason === 'unknownEntryAcrossDay') continue;
                     if (row) {
                         rebindSlot(slot, row.orderId);
                         slot.unconfirmed = false;
                         if (slot.status === 'unknown') slot.status = 'working';
                         slot.detail = 'rebound';
-                        if (external && lv.pending?.reason === 'unknownEntryAfterReconnect') {
-                            lv.pending = null;
-                            if (lv.phase === 'needsConfirm') lv.phase = lv.position > 0 ? 'holding' : 'working';
+                        if (external && externalEntryPending(lv)?.reason === 'unknownEntryAfterReconnect') {
+                            clearEntryPending(lv);
+                            if (lv.phase === 'needsConfirm' && !lv.pending) lv.phase = lv.position > 0 ? 'holding' : 'working';
                         }
                         drainOrphans(ctx, p, lv, slot);
                         touched = true;
                     } else if (external) {
-                        if (!lv.pending) {
-                            lv.pending = { leg: 'entry', price: null, ts: ctx.ts, reason: 'unknownEntryAfterReconnect' };
+                        if (!externalEntryPending(lv)) {
+                            lv.entryPending = { leg: 'entry', price: null, ts: ctx.ts, reason: 'unknownEntryAfterReconnect' };
                             if (lv.position === 0) lv.phase = 'needsConfirm';
                             notice(ctx, 'needsConfirm', p, lv.id, 'entry unknownEntryAfterReconnect');
                             touched = true;
@@ -1046,7 +1069,8 @@ function onEpoch(ctx: Ctx, e: EpochEvent) {
                 if (slot.orderId) slot.unconfirmed = true;
             }
             if (openEntry) {
-                lv.pending = { leg: 'entry', price: null, ts: ctx.ts, reason: 'unknownEntryAcrossDay' };
+                lv.entryPending = { leg: 'entry', price: null, ts: ctx.ts, reason: 'unknownEntryAcrossDay' };
+                if (unknownExternalEntry(lv.pending?.reason)) lv.pending = null;
                 // nothing known filled: wait for the user; a known position
                 // keeps its protection meanwhile (the phase stays)
                 if (lv.position === 0 && lv.phase !== 'needsConfirm') lv.phase = 'needsConfirm';
@@ -1124,14 +1148,13 @@ function startStop(ctx: Ctx, p: OrderProgram) {
  * (environment, account, market, contract)? */
 export function sameExternalEntry(a: OrderProgram, b: OrderProgram): boolean {
     const entries = (p: OrderProgram) =>
-        p.levels.flatMap(lv => lv.entry.type === 'external' ? [lv.entry] : []);
+        p.levels.flatMap(lv => lv.entry.type === 'external' ? [{ ...lv.entry, confirmed: !lv.orders.some(o => o.role === 'entry' && o.unconfirmed) }] : []);
     const [ba, bb] = [a.binding, b.binding];
     if (ba.env !== bb.env || ba.serverId !== bb.serverId || !sameAccount(ba.account, bb.account)
         || ba.contract.market !== bb.contract.market || ba.contract.securityType !== bb.contract.securityType
         || ba.contract.orderCode !== bb.contract.orderCode) return false;
     const theirs = entries(b);
-    return entries(a).some(ea => theirs.some(eb => brokerIdentityMatches(ea, eb)
-        || ea.orderId === eb.orderId));
+    return entries(a).some(ea => theirs.some(eb => externalIdentity(ea, eb) !== 'different'));
 }
 
 function onCommand(ctx: Ctx, e: CommandEvent) {
@@ -1154,6 +1177,11 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
         p.createdAt = ctx.ts;
         p.updatedAt = ctx.ts;
         p.hold = null;
+        for (const lv of p.levels) {
+            if (lv.entry.type === 'external') for (const slot of lv.orders) {
+                if (slot.role === 'entry' && slot.orderId) slot.unconfirmed = true;
+            }
+        }
         s.programs.push(p);
         // a program created now belongs to the current epoch (a new
         // partition has seen no epoch event yet)
@@ -1210,7 +1238,7 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             // a remainder may still work: ending it here would leave its later
             // fills without an exit — the user cancels it first
             if (c.noRemainder !== true) { reject(ctx, p, 'remainderNotConfirmed', c.levelId); return; }
-            const lv = p.levels.find(l => l.id === c.levelId && unknownExternalEntry(l.pending?.reason));
+            const lv = p.levels.find(l => l.id === c.levelId && externalEntryPending(l));
             if (!lv) { reject(ctx, p, 'notPending', c.levelId); return; }
             const slot = [...lv.orders].reverse().find(o => o.role === 'entry' && o.cycle === lv.cycles);
             if (!slot) { reject(ctx, p, 'noEntry', c.levelId); return; }
@@ -1221,8 +1249,8 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             if (c.filled > slot.filled) applyFill(ctx, p, lv, slot, `confirmed:${ctx.ts}`, c.filled - slot.filled, undefined);
             if (isActive(slot)) slot.status = slot.filled >= slot.qty ? 'filled' : 'ended';
             slot.detail = 'confirmedAcrossDay';
-            lv.pending = null;
-            if (lv.phase === 'needsConfirm') lv.phase = 'working';
+            clearEntryPending(lv);
+            if (lv.phase === 'needsConfirm' && !lv.pending) lv.phase = 'working';
             accept();
             ensureExits(ctx, p, lv);
             settle(ctx, p, lv);
@@ -1231,6 +1259,7 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
         }
         case 'resolvePending': {
             const lv = p.levels.find(l => l.id === c.levelId);
+            if (lv && !lv.pending && externalEntryPending(lv)) { reject(ctx, p, 'confirmEntry', c.levelId); return; }
             if (!lv || lv.phase !== 'needsConfirm' || !lv.pending) { reject(ctx, p, 'notPending', c.levelId); return; }
             // only the user's fill quantity settles it (confirmEntry)
             if (unknownExternalEntry(lv.pending.reason)) { reject(ctx, p, 'confirmEntry', c.levelId); return; }
