@@ -1,0 +1,438 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "protective-exit-not-sent-keeps-position",
+  "description": "Bracket protects accumulated partial fills; the OCO exits min(filled, qty) once; later entry fills are unprotected, never auto-covered.",
+  "covers": [
+    "#201",
+    "notSent",
+    "position-risk",
+    "immutable-slot-generation",
+    "snapshot",
+    "journal"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      },
+      "expect": {
+        "intents": []
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1001,
+        "id": "c1001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "b1",
+            "kind": "bracket",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Buy",
+                "qty": 2,
+                "entry": {
+                  "type": "external",
+                  "orderId": "o-entry",
+                  "seqno": "broker-o-entry"
+                },
+                "exit": {
+                  "type": "oco",
+                  "stop": {
+                    "price": 95,
+                    "condition": "below"
+                  },
+                  "take": {
+                    "price": 110,
+                    "condition": "above"
+                  },
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Cover"
+                  }
+                },
+                "phase": "working",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [
+                  {
+                    "key": "simulation/local-a/b1/L1/entry/0/ext",
+                    "role": "entry",
+                    "leg": "entry",
+                    "cycle": 0,
+                    "qty": 2,
+                    "status": "working",
+                    "orderId": "o-entry",
+                    "filled": 0,
+                    "fills": {},
+                    "fillTs": {},
+                    "detail": null,
+                    "acknowledged": false,
+                    "cancel": null
+                  }
+                ],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      },
+      "expect": {
+        "intents": []
+      }
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1001,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "o-entry",
+            "status": "working",
+            "qty": 2,
+            "deals": [],
+            "seqno": "broker-o-entry"
+          }
+        ],
+        "complete": false
+      },
+      "expect": {
+        "intents": []
+      }
+    },
+    {
+      "event": {
+        "type": "deal",
+        "ts": 1002,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "o-entry",
+        "eventId": null,
+        "seq": "s1",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "action": "Buy",
+        "qty": 1,
+        "price": 100,
+        "fillTs": 1.002,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
+      },
+      "expect": {
+        "intents": []
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1003,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 100
+      },
+      "expect": {
+        "intents": []
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1004,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 95
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/b1/L1/stop/0/0",
+            "programId": "b1",
+            "levelId": "L1",
+            "version": 1,
+            "role": "exit",
+            "leg": "stop",
+            "env": "simulation",
+            "serverId": "local-a",
+            "account": {
+              "accountType": "F",
+              "brokerId": "F002000",
+              "accountId": "1234567"
+            },
+            "orderCode": "TXFJ6",
+            "action": "Sell",
+            "qty": 1,
+            "price": null,
+            "order": {
+              "priceType": "MKT",
+              "timeInForce": "IOC",
+              "octype": "Cover"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1005,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 111
+      },
+      "expect": {
+        "intents": []
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1006,
+        "id": "stop",
+        "command": {
+          "op": "stop",
+          "programId": "b1",
+          "version": 1
+        }
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "cancel",
+            "key": "simulation/local-a/b1/L1/entry/0/ext/cancel/1",
+            "programId": "b1",
+            "levelId": "L1",
+            "version": 2,
+            "env": "simulation",
+            "serverId": "local-a",
+            "account": {
+              "accountType": "F",
+              "brokerId": "F002000",
+              "accountId": "1234567"
+            },
+            "orderId": "o-entry"
+          }
+        ],
+        "programs": {
+          "b1": {
+            "version": 2,
+            "status": "stopping",
+            "levels": {
+              "L1": {
+                "position": 1,
+                "orders": [
+                  {
+                    "key": "simulation/local-a/b1/L1/entry/0/ext"
+                  },
+                  {
+                    "key": "simulation/local-a/b1/L1/stop/0/0",
+                    "submitVersion": 1
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "intentResult",
+        "ts": 1007,
+        "key": "simulation/local-a/b1/L1/stop/0/0",
+        "outcome": "notSent",
+        "detail": "connection changed before sending",
+        "env": "simulation",
+        "serverId": "local-a"
+      },
+      "expect": {
+        "intents": [],
+        "programs": {
+          "b1": {
+            "status": "stopping",
+            "levels": {
+              "L1": {
+                "phase": "disabled",
+                "position": 1,
+                "unprotected": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1008,
+        "env": "simulation",
+        "serverId": "local-a",
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "o-entry",
+            "status": "ended",
+            "qty": 2,
+            "deals": [
+              {
+                "seq": "s1",
+                "qty": 1,
+                "price": 100
+              }
+            ],
+            "seqno": "broker-o-entry",
+            "cancelled": 1
+          }
+        ],
+        "complete": true
+      },
+      "expect": {
+        "intents": [],
+        "programs": {
+          "b1": {
+            "status": "stopping",
+            "levels": {
+              "L1": {
+                "phase": "disabled",
+                "position": 1,
+                "unprotected": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "restart": {
+        "ts": 1009
+      },
+      "expect": {
+        "programs": {
+          "b1": {
+            "status": "stopping",
+            "levels": {
+              "L1": {
+                "position": 1,
+                "unprotected": 1,
+                "orders": [
+                  {
+                    "key": "simulation/local-a/b1/L1/entry/0/ext"
+                  },
+                  {
+                    "key": "simulation/local-a/b1/L1/stop/0/0",
+                    "submitVersion": 1
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1010,
+        "id": "remove",
+        "command": {
+          "op": "remove",
+          "programId": "b1",
+          "version": 2
+        }
+      },
+      "expect": {
+        "intents": [],
+        "notices": [
+          "rejected.hasOrdersOrPosition"
+        ],
+        "programs": {
+          "b1": {
+            "status": "stopping",
+            "levels": {
+              "L1": {
+                "position": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

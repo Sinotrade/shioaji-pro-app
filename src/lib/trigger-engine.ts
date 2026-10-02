@@ -40,9 +40,13 @@ import {
     applyExitOrderReport,
     fillsFromTrade,
     matchDeal,
+    entryReportIdentity,
+    entryTradeIdentity,
+    type EntryIdentity,
     type AccountRef,
     type BracketExit,
 } from './bracket-core';
+import { currentReportContext } from './protection-context';
 import { onTrackedReport, recentReportsFor } from './bracket-reports';
 import { getPrivacyMode, maskAccountId } from './privacy';
 import { ensureContract, getCachedContract } from './contracts-cache';
@@ -57,11 +61,22 @@ import {
     reportEnvMatches,
     watchProtectionEnv,
 } from './protection-env';
+import {
+    createNativeProgram,
+    getNativeLastPrices,
+    getNativePrograms,
+    nativeOwnsNew,
+    refreshNative,
+    removeNativeProgram,
+    resolveNativePending,
+    subscribeNative,
+} from './execution/native';
+import { isNativeId, nativeRowId, programForNewTrigger, triggerRowsFromPrograms, type NativeTriggerOrder } from './execution/native-view';
 import { retainQuote } from './quote-ownership';
 import { getApiBase } from './runtime';
 import { fetchTrades } from './shioaji';
 import { getStreamStatus, onAnyTick, onOddLotTick, onStreamEvent, subscribeStatusStore } from './stream';
-import { notify, placeQuickOrder } from './trade';
+import { authorizeManualPendingOrder, notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
 import { fmtPrice } from './utils/format';
 import { isOddLot, ODD_LOT_MAX_SHARES, oddLotMarketablePrice, SHARES_PER_LOT, sharesToUnits, stockQtyUnit } from './odd-lot';
@@ -70,12 +85,14 @@ import type { Account } from './types/portfolio';
 import type { Action, FuturesOCType, StockOrderLot, Trade } from './types/order';
 
 /** Why protection resumed with a first-tick check (#144). */
-export type RestoreReason = 'restart' | 'disconnect' | 'env';
+export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'unknownNotSent';
 
 export const RESTORE_REASON_TEXT: Record<RestoreReason, string> = {
     restart: 'App 關閉、重新載入或切換主視窗期間已穿價',
     disconnect: '行情連線中斷（或伺服器模式未確認）超過 1 分鐘期間已穿價',
     env: '先前不在此伺服器環境執行，切回時已穿價',
+    // #201 native engine only: an earlier send's outcome was unknown
+    unknownNotSent: '先前送出的委託結果不明，券商委託清單多次查詢都找不到它；原委託仍可能存在，請先到委託／成交確認',
 };
 
 export interface TriggerOrder {
@@ -91,6 +108,8 @@ export interface TriggerOrder {
     env?: string;
     account?: AccountRef;
     orderCode?: string; // tradable code (target_code || code)
+    securityType?: 'STK' | 'FUT' | 'OPT'; // actual contract, never inferred from an F account
+    unresolved?: { detail: string; at: number }; // durable native unknown outcome; no send/keep
     octype?: FuturesOCType; // futures exits from brackets use Cover
     // stocks: IntradayOdd → quantity in shares, sent as a LIMIT at the price
     // limit (零股沒有市價單, #204); absent = Common lots (張)
@@ -104,6 +123,11 @@ export interface TriggerOrder {
 }
 
 export interface ExitRecord extends BracketExit {
+    seqno?: string;
+    ordno?: string;
+    securityType?: 'STK' | 'FUT' | 'OPT';
+    exchange?: string;
+    reportContext?: string | null;
     id: string;
     triggerId: string;
     bracketId?: string;
@@ -119,6 +143,19 @@ export interface ExitRecord extends BracketExit {
 }
 
 export type NewTrigger = Omit<TriggerOrder, 'id'>;
+
+/** Runtime evidence is captured once; permission is read again at actual dispatch.
+ * The bracket owner installs this narrow resolver without a circular import. */
+export type BracketMutationSource = Pick<TriggerOrder, 'bracketId' | 'group' | 'env' | 'account' | 'orderCode' | 'action' | 'orderLot'>;
+let bracketMutationGuard: ((source: BracketMutationSource) => () => void) | undefined;
+export function setBracketMutationGuard(capture: (source: BracketMutationSource) => () => void): void {
+    bracketMutationGuard = capture;
+}
+function captureBracketMutation(source: BracketMutationSource): () => void {
+    if (!source.bracketId) return () => undefined; // standalone policy is unchanged
+    if (!bracketMutationGuard) throw Object.assign(new Error('括號單執行視窗尚未確認，未送出委託'), { mutationNotStarted: true });
+    return bracketMutationGuard(source);
+}
 
 const STORAGE_KEY = 'sj-pro-triggers';
 const GROUPS_KEY = 'sj-pro-trigger-groups';
@@ -162,7 +199,9 @@ function loadExecutorState() {
     processedGroups = readJson<Record<string, number>>(GROUPS_KEY, {});
     // An exit still `sending` when the app went away has an unknown outcome.
     exits = readJson<ExitRecord[]>(EXITS_KEY, []).filter(e => e && typeof e.id === 'string')
-        .map(e => e.status === 'sending' ? { ...e, status: 'unknown' as const, detail: '送單期間 App 重新載入，結果未知' } : e);
+        .map(e => e.status === 'sending' ? { ...e, status: 'unknown' as const, detail: '送單期間 App 重新載入，結果未知' }
+            : e.bracketId && (e.status === 'working' || e.status === 'unknown')
+                ? { ...e, status: 'unknown' as const, detail: '出場委託身分或連線代次待確認；請對帳，系統不會自動重送' } : e);
 }
 const listeners = new Set<() => void>();
 const exitListeners = new Set<(exit: ExitRecord) => void>();
@@ -337,7 +376,17 @@ function handleCommand(cmd: Command): unknown {
 /** `account`: a panel's own account (chart order settings, #204) instead of
  * the app-wide selection — it must still be a tradable account of the market. */
 function withContext(t: NewTrigger, contract?: ContractBase, account?: Account): NewTrigger | string {
-    if (t.kind === 'alert' || (t.env && t.account && t.orderCode)) return t;
+    if (t.kind === 'alert') return t;
+    if (t.env && t.account && t.orderCode) {
+        // Old window-owned triggers without a type stay in that owner.
+        // A provided contract can establish it; an F account alone cannot.
+        if (!contract) return t;
+        const type = contract.security_type;
+        if ((type !== 'FUT' && type !== 'OPT' && type !== 'STK') || (t.securityType && t.securityType !== type)
+            || t.orderCode !== (contract.target_code || contract.code) || t.code !== contract.code
+            || t.account.account_type !== (type === 'STK' ? 'S' : 'F')) return '商品身分與固定帳戶不一致，觸價單未建立';
+        return { ...t, securityType: type };
+    }
     if (!contract) return '缺少商品資訊，無法固定下單帳戶';
     const futures = contract.security_type === 'FUT' || contract.security_type === 'OPT';
     if (!futures && contract.security_type !== 'STK') return '此商品不支援觸價下單';
@@ -353,7 +402,7 @@ function withContext(t: NewTrigger, contract?: ContractBase, account?: Account):
     if (!env) return '伺服器模式（模擬／正式）尚未確認，觸價單未建立';
     return { ...t, env,
         account: { account_type: futures ? 'F' : 'S', broker_id: selected.broker_id, account_id: selected.account_id },
-        orderCode: contract.target_code || contract.code };
+        orderCode: contract.target_code || contract.code, securityType: contract.security_type as 'STK' | 'FUT' | 'OPT' };
 }
 
 /** Add a trigger from any window. Stop/take bind the currently selected
@@ -364,6 +413,11 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase, opts?: 
         notify({ kind: 'err', title: '觸價單未建立', body: prepared });
         return null;
     }
+    // #201: with the native engine on, a new stop / take is created as a
+    // native program and never enters the TS runtime (one owner per trigger).
+    // Odd-lot triggers (#204: shares, limit at the price limit, odd-lot feed)
+    // are not expressible in execution-v1 yet and stay in TS.
+    if (nativeHandles(prepared)) return addNativeTrigger(prepared);
     const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : newId();
     try {
         return await bus.send({ op: 'add', trigger: { ...prepared, requestId } }) as TriggerOrder;
@@ -373,7 +427,45 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase, opts?: 
     }
 }
 
+/** Whether a new trigger is created as a native program (#201). */
+export function nativeHandles(t: Pick<TriggerOrder, 'kind' | 'orderLot' | 'securityType' | 'account'>): boolean {
+    return t.kind !== 'alert' && (t.securityType === 'FUT' || t.securityType === 'OPT') && t.account?.account_type === 'F' && !isOddLot(t.orderLot) && nativeOwnsNew();
+}
+
+async function addNativeTrigger(prepared: NewTrigger): Promise<TriggerOrder | null> {
+    const t: TriggerOrder = { ...prepared, id: newId(), createdAt: Date.now() };
+    delete t.requestId;
+    const program = programForNewTrigger(t);
+    if (!program) {
+        notify({ kind: 'err', title: '觸價單未建立', body: '觸價單缺少帳戶或伺服器資訊，未建立' });
+        return null;
+    }
+    try {
+        await createNativeProgram(program);
+    } catch (e) {
+        notify({ kind: 'err', title: '觸價單未建立（執行引擎）', body: e instanceof Error ? e.message : String(e) });
+        return null;
+    }
+    notify({ kind: 'info', title: `${kindLabel(t)}`, body: describe(t) });
+    const id = nativeRowId(program.id, t.id, 'entry');
+    return nativeRows().find(r => r.id === id) ?? { ...t, id };
+}
+
+function nativeRow(id: string): NativeTriggerOrder | undefined {
+    return nativeRows().find(r => r.id === id);
+}
+
 export async function removeTrigger(id: string): Promise<void> {
+    if (isNativeId(id)) {
+        const row = nativeRow(id);
+        try {
+            if (row?.bracketId) throw new Error('括號單保護請在下單面板的括號單狀態中移除追蹤');
+            if (row) await removeNativeProgram(row.native.programId);
+        } catch (e) {
+            notify({ kind: 'err', title: '觸價單移除未確認', body: e instanceof Error ? e.message : String(e) });
+        }
+        return;
+    }
     try {
         await bus.send({ op: 'remove', id });
     } catch (e) {
@@ -391,7 +483,21 @@ export function acknowledgeExit(id: string): Promise<unknown> {
  * re-checking stream, environment, account and that a tick arrived since the
  * last (re)connect. `cancel` removes it (bracket protection is removed from
  * its bracket status instead). `keep` re-arms it for a fresh crossing only. */
-export function resolvePendingTrigger(id: string, choice: PendingChoice, opts: { allowUnpast?: boolean } = {}): Promise<unknown> {
+export async function resolvePendingTrigger(id: string, choice: PendingChoice, opts: { allowUnpast?: boolean } = {}): Promise<unknown> {
+    if (isNativeId(id)) {
+        const row = nativeRow(id);
+        if (!row) return Promise.reject(new Error('找不到此觸價單'));
+        if (row.unresolved) throw new Error('委託結果未知，請先核對委託／成交；不會重新送出');
+        if (choice === 'send' && !row.bracketId) {
+            const contract = await ensureContract(row.code);
+            const account = getAccountState().accounts.find(a => a.account_type === row.account?.account_type
+                && a.broker_id === row.account?.broker_id && a.account_id === row.account?.account_id && canTrade(a));
+            if (!contract || !account || contract.security_type !== row.securityType
+                || (contract.target_code || contract.code) !== row.orderCode) throw new Error('商品或帳戶尚未確認，未送出');
+            await authorizeManualPendingOrder(contract, row.action, row.quantity, account, row.orderLot, row.code);
+        }
+        return resolveNativePending(row.native.programId, row.native.levelId, choice, opts.allowUnpast);
+    }
     return bus.send({ op: 'resolve-pending', id, choice, allowUnpast: opts.allowUnpast });
 }
 
@@ -402,6 +508,7 @@ export function isPendingUnpast(t: Pick<TriggerOrder, 'condition' | 'price'>, pr
 
 /** Ask the executor to publish the latest prices of 待確認 codes now. */
 export function requestPendingPrices(): Promise<unknown> {
+    void refreshNative();
     return bus.send({ op: 'publish-prices' });
 }
 
@@ -418,8 +525,36 @@ function subscribe(l: () => void) {
     return () => { listeners.delete(l); };
 }
 
+// ---- native programs as rows (#201) ----
+// Display only: the TS executor never sees these (they are not in
+// `triggers`), and native rows are never evaluated here.
+
+let nativeCache: { programs: unknown; rows: NativeTriggerOrder[] } = { programs: null, rows: [] };
+function nativeRows(): NativeTriggerOrder[] {
+    const programs = getNativePrograms();
+    if (nativeCache.programs !== programs) nativeCache = { programs, rows: triggerRowsFromPrograms(programs) };
+    return nativeCache.rows;
+}
+
+let mergedCache: { ts: TriggerOrder[]; native: NativeTriggerOrder[]; all: TriggerOrder[] } = { ts: [], native: [], all: [] };
+/** TS triggers followed by the native engine's armed legs (marked `native`). */
+export function getDisplayTriggers(): TriggerOrder[] {
+    const ts = snapshot.triggers;
+    const native = nativeRows();
+    if (mergedCache.ts !== ts || mergedCache.native !== native) {
+        mergedCache = { ts, native, all: native.length ? [...ts, ...native] : ts };
+    }
+    return mergedCache.all;
+}
+
+function subscribeAll(l: () => void) {
+    const a = subscribe(l);
+    const b = subscribeNative(l);
+    return () => { a(); b(); };
+}
+
 export function useTriggers(): TriggerOrder[] {
-    return useSyncExternalStore(subscribe, () => snapshot.triggers);
+    return useSyncExternalStore(subscribeAll, getDisplayTriggers);
 }
 
 const NO_SENDING: string[] = [];
@@ -430,8 +565,20 @@ export function useSendingTriggers(): string[] {
 
 const NO_PRICES: Record<string, number> = {};
 /** Latest tick price of every code that has a 待確認 trigger. */
+let pricesCache: { ts: unknown; native: unknown; rows: unknown; all: Record<string, number> } = { ts: null, native: null, rows: null, all: NO_PRICES };
+function pendingPricesNow(): Record<string, number> {
+    const ts = snapshot.prices ?? NO_PRICES;
+    const native = getNativeLastPrices();
+    const rows = nativeRows();
+    if (pricesCache.ts !== ts || pricesCache.native !== native || pricesCache.rows !== rows) {
+        const extra: Record<string, number> = {};
+        for (const r of rows) if (r.pending && native[r.code] !== undefined) extra[r.code] = native[r.code]!;
+        pricesCache = { ts, native, rows, all: Object.keys(extra).length ? { ...ts, ...extra } : ts };
+    }
+    return pricesCache.all;
+}
 export function usePendingPrices(): Record<string, number> {
-    return useSyncExternalStore(subscribe, () => snapshot.prices ?? NO_PRICES);
+    return useSyncExternalStore(subscribeAll, pendingPricesNow);
 }
 
 export function useTriggerExits(): ExitRecord[] {
@@ -617,7 +764,7 @@ function reserve(t: TriggerOrder, lastPrice: number): { rec: ExitRecord; sibling
     const plan = planFor(t);
     const rec: ExitRecord = {
         id: `ex-${t.id}`, triggerId: t.id, bracketId: t.bracketId, env, account,
-        market: account.account_type === 'S' ? 'stock' : 'futures', orderCode, action: t.action,
+        market: account.account_type === 'S' ? 'stock' : 'futures', orderCode, action: t.action, reportContext: currentReportContext(),
         reserveKey, requested: t.quantity, kind: t.kind, quantity: plan.quantity,
         ...(isOddLot(t.orderLot) ? { orderLot: t.orderLot } : {}),
         status: plan.quantity > 0 ? 'sending' : 'not-sent', filled: 0, fills: {}, detail: plan.detail, at: Date.now(),
@@ -700,11 +847,16 @@ const notSentExit = (t: TriggerOrder, rec: ExitRecord, detail: string) => {
 function exitSent(t: TriggerOrder, rec: ExitRecord, trade: Trade, lastPrice: number) {
     const orderId = trade.order.id;
     const odd = isOddLot(t.orderLot);
-    updateExit(rec.id, e => ({ ...e, status: e.filled >= e.quantity ? 'filled' : 'working', orderId, at: Date.now(),
+    const type = trade.contract?.security_type;
+    const securityType = type === 'STK' || type === 'FUT' || type === 'OPT' ? type : undefined;
+    updateExit(rec.id, e => ({ ...e, status: e.filled >= e.quantity ? 'filled'
+        : e.bracketId && (!(trade.order.seqno || trade.order.ordno) || !securityType || !trade.contract?.exchange
+            || !e.reportContext || e.reportContext !== currentReportContext()) ? 'unknown' : 'working',
+        orderId, seqno: trade.order.seqno, ordno: trade.order.ordno, securityType, exchange: trade.contract?.exchange ?? undefined, at: Date.now(),
         // odd-lot exits are ROD limits at the price limit: the rest keeps
         // working until filled or cancelled (reports / 對帳), no IOC settle
         ...(odd && e.filled < e.quantity ? { detail: `${e.detail ? `${e.detail}；` : ''}零股以漲跌停價限價 ROD 送出，依成交回報更新` } : {}) }));
-    for (const report of recentReportsFor(envBase(rec.env), orderId)) applyExitReport(report, envBase(rec.env));
+    for (const report of recentReportsFor(envBase(rec.env), orderId, Date.now(), rec.bracketId ? { orderId, seqno: trade.order.seqno, ordno: trade.order.ordno } : undefined)) applyExitReport(report, envBase(rec.env));
     if (!odd) scheduleIocCheck(rec.id);
     notify({ kind: 'ok', title: t.kind === 'stop' ? '停損觸發' : '停利觸發',
         body: `${t.code} @${lastPrice} → ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t, rec.quantity)} (${trade.status.status})` });
@@ -719,17 +871,25 @@ function exitUnknown(t: TriggerOrder, rec: ExitRecord, message: string) {
 const notStarted = (e: unknown) => !!(e as { mutationNotStarted?: boolean })?.mutationNotStarted;
 
 async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
-    const ctx = await sendContext(t, rec.env);
-    if (typeof ctx === 'string') { notSentExit(t, rec, ctx); return; }
-    const price = exitPrice(t, ctx.contract);
-    if (price === 'missing') { notSentExit(t, rec, ODD_PRICE_MISSING); return; }
     try {
+        const assertCurrent = captureBracketMutation(t);
+        const ctx = await sendContext(t, rec.env);
+        assertCurrent();
+        if (typeof ctx === 'string') { notSentExit(t, rec, ctx); return; }
+        const price = exitPrice(t, ctx.contract);
+        if (price === 'missing') { notSentExit(t, rec, ODD_PRICE_MISSING); return; }
         const trade = await placeQuickOrder(ctx.contract, t.action, price, rec.quantity, {
             bypassRisk: true, // protective exit — never blocked by kill switch
             source: 'auto', // 使用者可能不在場，不彈確認
             account: ctx.account,
             ocType: t.octype,
             orderLot: isOddLot(t.orderLot) ? t.orderLot : undefined,
+            beforeSend: () => {
+                assertCurrent();
+                if (rec.bracketId && (!rec.reportContext || rec.reportContext !== currentReportContext())) {
+                    throw Object.assign(new Error('出場送出前連線代次已變更，未送出；請核對持倉與保護'), { mutationNotStarted: true });
+                }
+            },
         });
         exitSent(t, rec, trade, lastPrice);
     } catch (e) {
@@ -764,7 +924,12 @@ async function sendPending(id: string, allowUnpast: boolean) {
         const still = triggers.some(x => x.id === id && x.pending);
         notify({ kind: 'err', title: still ? '觸價單未送出（仍待確認）' : '觸價單未送出', body: `${first.code} ${reason}` });
     };
+    let assertCurrent: () => void;
+    try { assertCurrent = captureBracketMutation(first); }
+    catch (error) { refused(error instanceof Error ? error.message : String(error)); return; }
     const ctx = await sendContext(first, first.env!);
+    try { assertCurrent(); }
+    catch (error) { refused(error instanceof Error ? error.message : String(error)); return; }
     if (typeof ctx === 'string') { refused(ctx); return; }
     const planned = planFor(first);
     if (planned.quantity <= 0) { refused(planned.detail ?? '沒有可送出的數量'); return; }
@@ -783,6 +948,7 @@ async function sendPending(id: string, allowUnpast: boolean) {
             orderLot: isOddLot(first.orderLot) ? first.orderLot : undefined,
             confirmLivePriceCode: userOrder ? priceKeyOf(first) : undefined,
             beforeSend: () => {
+                assertCurrent();
                 const cur = triggers.find(x => x.id === id);
                 if (!cur?.pending) throw new Error('已不在待確認（OCO 另一邊可能已觸發或已被處理），未送出');
                 if (currentProtectionEnv() !== cur.env) throw new Error('伺服器或模擬／正式模式已切換，未送出');
@@ -840,9 +1006,12 @@ function scheduleIocCheck(id: string, previous?: string) {
         if (!rec || rec.status !== 'working' || !rec.orderId || !executing) return;
         if (currentProtectionEnv() !== rec.env) return;
         const query = createAccountQuery();
+        const context = currentReportContext();
         void query.read(rec.account.account_type, rec.account, current => fetchTrades(rec.account.account_type, current, { refresh: false })).then(rows => {
             query.assertCurrent();
-            const trade = rows.find(t => t.order.id === rec.orderId);
+            if (context !== currentReportContext()) return;
+            const candidates = rows.filter(t => matchesExitTrade(t, rec));
+            const trade = candidates.length === 1 ? candidates[0] : undefined;
             if (!trade) {
                 if (previous === undefined) scheduleIocCheck(id, ''); // second (last) read
                 return;
@@ -859,13 +1028,34 @@ function scheduleIocCheck(id: string, previous?: string) {
     }, previous === undefined ? IOC_CHECK_MS : IOC_RECHECK_MS);
 }
 
-function applyExitReport(report: OrderEventReport, base: string) {
+function bracketExitIdentity(rec: ExitRecord): EntryIdentity | null {
+    if (!rec.orderId || !rec.securityType || !rec.exchange) return null;
+    return { ...rec, orderId: rec.orderId, seqno: rec.seqno ?? '', securityType: rec.securityType, exchange: rec.exchange };
+}
+function matchesExitTrade(trade: Trade, rec: ExitRecord): boolean {
+    if (!rec.bracketId) return rec.orderId === trade.order.id;
+    const identity = bracketExitIdentity(rec);
+    return !!identity && entryTradeIdentity(trade, identity) === 'same';
+}
+/** A bracket exit listing is only evidence when it has one scoped stable candidate. */
+export function applyBracketExitTrades(trades: Trade[]) {
+    for (const rec of exits.slice()) {
+        if (!rec.bracketId || rec.env !== currentProtectionEnv()) continue;
+        const matches = trades.filter(t => matchesExitTrade(t, rec));
+        if (matches.length === 1) applyExitTrade(matches[0]!);
+    }
+}
+
+function applyExitReport(report: OrderEventReport, base: string, context = currentReportContext()) {
     const orderId = report.kind === 'deal' ? report.tradeId : report.id;
     for (const rec of exits.slice()) {
-        if (rec.orderId !== orderId || !acceptsFills(rec) || !reportEnvMatches(rec.env, base)) continue;
+        if (!acceptsFills(rec) || !reportEnvMatches(rec.env, base)) continue;
+        const identity = rec.bracketId ? bracketExitIdentity(rec) : null;
+        if (rec.bracketId ? !identity || !context || rec.reportContext !== context
+            || entryReportIdentity(identity, report) !== 'same' : rec.orderId !== orderId) continue;
         updateExit(rec.id, e => {
-            if (report.kind === 'order') return applyExitOrderReport(e, report, e.account, Date.now());
-            const m = matchDeal(report, orderId, e.account, e.market, e.orderCode, e.action);
+            if (report.kind === 'order') return applyExitOrderReport(e, { ...report, id: e.orderId! }, e.account, Date.now());
+            const m = matchDeal(report, e.orderId!, e.account, e.market, e.orderCode, e.action, identity ?? undefined);
             return m.kind === 'fill' ? applyExitFill(e, m.fill, Date.now()) : e;
         });
     }
@@ -877,12 +1067,13 @@ function applyExitReport(report: OrderEventReport, base: string) {
 export function applyExitTrade(trade: Trade, opts: { settle?: boolean } = {}) {
     if (!main) return;
     for (const rec of exits.slice()) {
-        if (rec.orderId !== trade.order.id || !acceptsFills(rec)) continue;
+        if (!matchesExitTrade(trade, rec) || !acceptsFills(rec) || (rec.bracketId && (rec.env !== currentProtectionEnv() || !currentReportContext()))) continue;
         const a = trade.order.account;
         if (a && (a.broker_id !== rec.account.broker_id || a.account_id !== rec.account.account_id)) continue;
         updateExit(rec.id, e => {
-            let next = e;
-            for (const fill of fillsFromTrade(trade)) next = applyExitFill(next, fill, Date.now());
+            let next: ExitRecord = rec.bracketId ? { ...e, reportContext: currentReportContext(), status: e.status === 'unknown' ? 'working' : e.status } : e;
+            for (const fill of fillsFromTrade(trade)) next = applyExitFill(next, { ...fill, orderId: e.orderId!,
+                key: fill.key.replace(`${trade.order.id}:`, `${e.orderId}:`) }, Date.now());
             const ended = ['Cancelled', 'Failed', 'Inactive'].includes(trade.status.status)
                 || (opts.settle && trade.status.status === 'PartFilled');
             if (next.status === 'working' && ended) {
@@ -1206,7 +1397,7 @@ function becomeExecutor() {
         if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close), true);
     });
     onStreamEvent('heartbeat', () => noteActivity());
-    onTrackedReport((report, _info, base) => applyExitReport(report, base));
+    onTrackedReport((report, info, base) => applyExitReport(report, base, info.context));
     markRestore('restart');
     let prevEnv = currentProtectionEnv();
     onProtectionEnvChange(() => {

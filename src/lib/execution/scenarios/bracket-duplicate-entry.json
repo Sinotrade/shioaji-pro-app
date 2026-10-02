@@ -1,0 +1,431 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "bracket-duplicate-entry",
+  "description": "#201 round 28: one live program per external entry order (environment, account, market, contract, order id) — a second registration for the same entry is refused with rejected.duplicateEntry, so two brackets never send two full-size exits for the same fills.",
+  "covers": [
+    "#201",
+    "bracket"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1001,
+        "id": "c1001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "b1",
+            "kind": "bracket",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Buy",
+                "qty": 3,
+                "entry": {
+                  "type": "external",
+                  "orderId": "o-entry"
+                },
+                "exit": {
+                  "type": "oco",
+                  "stop": {
+                    "price": 95,
+                    "condition": "below"
+                  },
+                  "take": {
+                    "price": 110,
+                    "condition": "above"
+                  },
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Cover"
+                  }
+                },
+                "phase": "working",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [
+                  {
+                    "key": "simulation/local-a/b1/L1/entry/0/ext",
+                    "role": "entry",
+                    "leg": "entry",
+                    "cycle": 0,
+                    "qty": 3,
+                    "status": "working",
+                    "orderId": "o-entry",
+                    "filled": 0,
+                    "fills": {},
+                    "fillTs": {},
+                    "detail": null,
+                    "acknowledged": false
+                  }
+                ],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      },
+      "expect": {
+        "notices": [
+          "created"
+        ],
+        "programs": {
+          "b1": {
+            "status": "running"
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1001,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "o-entry",
+            "status": "working",
+            "qty": 3,
+            "deals": [],
+            "seqno": "test-simulation/local-a/b1/L1/entry/0/ext"
+          }
+        ],
+        "complete": false
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1002,
+        "id": "c1002",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "b2",
+            "kind": "bracket",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Buy",
+                "qty": 3,
+                "entry": {
+                  "type": "external",
+                  "orderId": "o-entry"
+                },
+                "exit": {
+                  "type": "oco",
+                  "stop": {
+                    "price": 95,
+                    "condition": "below"
+                  },
+                  "take": {
+                    "price": 110,
+                    "condition": "above"
+                  },
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Cover"
+                  }
+                },
+                "phase": "working",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [
+                  {
+                    "key": "simulation/local-a/b1/L1/entry/0/ext",
+                    "role": "entry",
+                    "leg": "entry",
+                    "cycle": 0,
+                    "qty": 3,
+                    "status": "working",
+                    "orderId": "o-entry",
+                    "filled": 0,
+                    "fills": {},
+                    "fillTs": {},
+                    "detail": null,
+                    "acknowledged": false
+                  }
+                ],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      },
+      "note": "a second bracket for the same entry order (same account and contract): refused — both would protect the same fills",
+      "expect": {
+        "notices": [
+          "rejected.duplicateEntry"
+        ],
+        "programs": {
+          "b2": null
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1003,
+        "id": "c1003",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "b3",
+            "kind": "bracket",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "7654321"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Buy",
+                "qty": 3,
+                "entry": {
+                  "type": "external",
+                  "orderId": "o-entry"
+                },
+                "exit": {
+                  "type": "oco",
+                  "stop": {
+                    "price": 95,
+                    "condition": "below"
+                  },
+                  "take": {
+                    "price": 110,
+                    "condition": "above"
+                  },
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Cover"
+                  }
+                },
+                "phase": "working",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [
+                  {
+                    "key": "simulation/local-a/b1/L1/entry/0/ext",
+                    "role": "entry",
+                    "leg": "entry",
+                    "cycle": 0,
+                    "qty": 3,
+                    "status": "working",
+                    "orderId": "o-entry",
+                    "filled": 0,
+                    "fills": {},
+                    "fillTs": {},
+                    "detail": null,
+                    "acknowledged": false
+                  }
+                ],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      },
+      "note": "the same order id in another account is another order: accepted",
+      "expect": {
+        "notices": [
+          "created"
+        ],
+        "programs": {
+          "b3": {
+            "status": "running"
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1003,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "7654321"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "o-entry",
+            "status": "working",
+            "qty": 3,
+            "deals": [],
+            "seqno": "test-simulation/local-a/b1/L1/entry/0/ext"
+          }
+        ],
+        "complete": false
+      }
+    }
+  ]
+}

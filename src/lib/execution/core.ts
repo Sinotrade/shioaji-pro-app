@@ -8,8 +8,12 @@
 // - Environment isolation: a program only fires / submits while the
 //   connection is live AND its env + serverId equal the binding. Otherwise it
 //   is held ('disconnected' | 'unknownEnv' | 'envMismatch') and emits nothing.
-// - Every intent is recorded as a `pendingSubmit` slot BEFORE it is returned;
-//   the executor journals the state before sending (Rust: WAL + fsync).
+// - Every intent is recorded as a `pendingSubmit` slot BEFORE it is returned.
+//   The Rust service commits the resulting state and waits for a full durable
+//   WAL barrier before dispatch, then rechecks the current sender permit.
+//   Raw ticks are not journaled; their program/slot changes are. Deterministic
+//   keys, reconciliation and unknown recovery remain for uncertain outcomes
+//   and legacy persisted images; no order is automatically resent.
 // - `restore` (executor restarted from persisted state) turns every
 //   `pendingSubmit` slot into `unknown`: never resent, only a reconcile
 //   (matched by idempotency key) or a user acknowledgement clears it.
@@ -33,12 +37,16 @@
 // - Cancels are tracked per slot (CancelState); a stopping program becomes
 //   stopped only when no order is active any more.
 
+import { brokerIdentityMatches, externalIdentity } from '../broker-identity';
+
 import {
     EXECUTION_SCHEMA_VERSION,
+    type AccountKey,
     type CommandEvent,
     type ConnectionEvent,
     type DealEvent,
     type EngineState,
+    type EpochEvent,
     type ExecEvent,
     type IntentResultEvent,
     type LegName,
@@ -47,6 +55,7 @@ import {
     type OrderEvent,
     type OrderIntent,
     type OrderProgram,
+    type BreakAction,
     type OrderSlot,
     type OrderSpec,
     PRICE_SCALE,
@@ -66,6 +75,96 @@ export const CANCEL_UNKNOWN_RETRY_MS = 30_000;
 
 /** Globally unique idempotency key: the partition (env + server identity) is
  * part of the key itself, so a sender may dedupe across environments. */
+/** Trade-id epoch boundaries, minutes after 00:00 UTC. Trade ids repeat:
+ * paper ids are a per-site sequence reset at 00:00 UTC; production ids are
+ * xxh32 of the broker's 6-digit seqno, which does not reset per day but
+ * wraps after 999999 or resets at STS maintenance (time unknown), and stock
+ * and futures counters overlap. So an id binding is trusted only within one
+ * epoch and one (account, market). Conservative: 00:00 UTC, 08:30 Taipei
+ * (before the day session), 14:50 Taipei (before the night session); every
+ * connection is a boundary too (the executor).
+ * TODO(#201): simplify once the backend confirms when the seqno wraps / resets. */
+export const EPOCH_BOUNDARIES_UTC_MIN = [0, 30, 410] as const;
+
+/** Detail of a request refused by the send-time gate because a trade-id
+ * epoch boundary passed after it was created, or is within the guard band:
+ * nothing was sent. */
+export const EPOCH_CHANGED = 'epochChanged';
+
+/** Guard band before every time boundary: nothing is emitted (core) and nothing
+ * passes the send-time gate when the next boundary is nearer than this. An
+ * order is on the wire the instant it passes the gate (written in the same
+ * synchronous section), so this keeps a request clear of the boundary while it
+ * travels sidecar → broker. Every boundary is outside the trading sessions. */
+export const EPOCH_GUARD_BAND_MS = 4_000;
+
+/** The first time boundary after `ts` (epoch ms). */
+export function nextEpochBoundary(ts: number): number {
+    const DAY = 86_400_000;
+    const day = Math.floor(ts / DAY);
+    for (const d of [0, 1]) {
+        for (const m of EPOCH_BOUNDARIES_UTC_MIN) {
+            const t = (day + d) * DAY + m * 60_000;
+            if (t > ts) return t;
+        }
+    }
+    throw new Error('a boundary every day');
+}
+
+/** `ts` is within the guard band before the next boundary. */
+export function inEpochGuardBand(ts: number): boolean {
+    return nextEpochBoundary(ts) - ts < EPOCH_GUARD_BAND_MS;
+}
+
+/** The epoch `ts` (epoch ms) falls in: changes at every boundary. */
+export function epochMark(ts: number): number {
+    const DAY = 86_400_000;
+    const day = Math.floor(ts / DAY);
+    const minute = Math.floor((ts - day * DAY) / 60_000);
+    const passed = EPOCH_BOUNDARIES_UTC_MIN.filter(b => b <= minute).length;
+    return day * EPOCH_BOUNDARIES_UTC_MIN.length + passed;
+}
+
+/** An id is only an identity within (account, market, contract): production
+ * ids are xxh32 of the broker's seqno, and the stock and futures counters
+ * are independent with overlapping ranges. */
+function reportMatches(p: OrderProgram, account: { brokerId: string; accountId: string } | null | undefined,
+    code: string | undefined, securityType: string | undefined): boolean {
+    const b = p.binding;
+    return !!account && account.brokerId === b.account.brokerId && account.accountId === b.account.accountId
+        && (code === b.contract.orderCode || code === b.contract.quoteCode)
+        && securityType === b.contract.securityType;
+}
+
+const isExternalEntry = (lv: Level, slot: OrderSlot) => slot.role === 'entry' && lv.entry.type === 'external';
+
+export { brokerIdentityMatches, externalIdentity } from '../broker-identity';
+
+export function externalEntryPending(lv: Level) {
+    return lv.entryPending ?? (unknownExternalEntry(lv.pending?.reason) ? lv.pending : null);
+}
+
+function clearEntryPending(lv: Level) {
+    lv.entryPending = null;
+    if (unknownExternalEntry(lv.pending?.reason)) lv.pending = null;
+}
+
+function rebindSlot(slot: OrderSlot, id: string) {
+    if (slot.orderId && slot.orderId !== id) {
+        const prefix = `${slot.orderId}:`;
+        for (const values of [slot.fills, slot.fillTs]) {
+            for (const [key, value] of Object.entries(values)) {
+                if (!key.startsWith(prefix)) continue;
+                delete values[key];
+                values[`${id}:${key.slice(prefix.length)}`] = value;
+            }
+        }
+    }
+    slot.orderId = id;
+}
+
+const unknownExternalEntry = (reason?: string) => reason === 'unknownEntryAcrossDay' || reason === 'unknownEntryAfterReconnect';
+
 export function intentKey(p: OrderProgram, lv: Level, leg: LegName): string {
     return `${p.binding.env}/${encodeURIComponent(p.binding.serverId)}/${p.id}/${lv.id}/${leg}/${lv.cycles}/${p.intentSeq}`;
 }
@@ -101,6 +200,16 @@ const isActive = (slot: OrderSlot) => slot.status === 'pendingSubmit' || slot.st
 
 function canEvaluate(s: EngineState): boolean {
     return s.conn.live && s.conn.env !== null && s.conn.serverId !== null;
+}
+
+const sameAccount = (a: AccountKey, b: AccountKey) =>
+    a.accountType === b.accountType && a.brokerId === b.brokerId && a.accountId === b.accountId;
+
+/** Nothing is placed or cancelled for an account until this epoch's first
+ * listing of it has been applied (triggers meanwhile wait: a touch re-fires
+ * on a later tick, exits and cancels are ensured once the listing is in). */
+function awaitingListing(s: EngineState, p: OrderProgram): boolean {
+    return (s.conn.awaitingEpochListing ?? []).some(a => sameAccount(a, p.binding.account));
 }
 
 function envMatches(s: EngineState, p: OrderProgram): boolean {
@@ -158,6 +267,16 @@ export function touchLegs(lv: Level): Leg[] {
     return [];
 }
 
+/** A stop: a bracket's stop exit, or a trigger whose order and condition read
+ * as a stop (sell below / buy above — the UI's stop / take split). Entries of
+ * other programs and take-profit legs are not. */
+function protective(p: OrderProgram, lv: Level, leg: Leg): boolean {
+    if (leg.name === 'stop') return true;
+    if (leg.name !== 'entry') return false;
+    return p.kind === 'trigger'
+        && ((lv.side === 'Sell' && leg.condition === 'below') || (lv.side === 'Buy' && leg.condition === 'above'));
+}
+
 function legOf(lv: Level, name: LegName): Leg | null {
     if (name === 'entry' && lv.entry.type === 'touch') return { name, condition: lv.entry.condition, price: lv.entry.price };
     if ((name === 'stop' || name === 'take') && lv.exit?.type === 'oco') {
@@ -174,10 +293,11 @@ const exitFired = (lv: Level) => lv.exit?.type === 'oco' && cycleSlots(lv, 'exit
 
 function emitPlace(ctx: Ctx, p: OrderProgram, lv: Level, role: 'entry' | 'exit', leg: LegName, qty: number,
     price: number | null, order: OrderSpec): boolean {
-    if (!envMatches(ctx.s, p) || qty <= 0) return false; // isolation guard: never cross environments
+    // isolation guard: never cross environments
+    if (p.observationOnly || !envMatches(ctx.s, p) || awaitingListing(ctx.s, p) || inEpochGuardBand(ctx.ts) || !Number.isSafeInteger(qty) || qty <= 0) return false;
     const key = intentKey(p, lv, leg);
     p.intentSeq += 1;
-    lv.orders.push({ key, role, leg, cycle: lv.cycles, qty, status: 'pendingSubmit', orderId: null, filled: 0,
+    lv.orders.push({ submitVersion: p.version, key, role, leg, cycle: lv.cycles, qty, status: 'pendingSubmit', orderId: null, filled: 0,
         fills: {}, fillTs: {}, detail: null, acknowledged: false, cancel: null });
     const b = p.binding;
     ctx.intents.push({ kind: 'place', key, programId: p.id, levelId: lv.id, version: p.version, role, leg,
@@ -189,7 +309,9 @@ function emitPlace(ctx: Ctx, p: OrderProgram, lv: Level, role: 'entry' | 'exit',
 }
 
 function emitCancel(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot): boolean {
-    if (!envMatches(ctx.s, p) || !slot.orderId) return false;
+    // an id of an earlier epoch may name another order: never cancel it
+    if (p.observationOnly || !envMatches(ctx.s, p) || !slot.orderId || slot.unconfirmed || slot.cancelAmbiguous || awaitingListing(ctx.s, p)
+        || inEpochGuardBand(ctx.ts)) return false;
     const attempts = (slot.cancel?.attempts ?? 0) + 1;
     const key = `${slot.key}/cancel/${attempts}`;
     slot.cancel = { key, status: 'pendingSubmit', attempts, detail: null, sentAt: ctx.ts,
@@ -208,9 +330,13 @@ function ensureCancels(ctx: Ctx, p: OrderProgram, retry: boolean) {
     if (p.status !== 'stopping' || !envMatches(ctx.s, p)) return;
     for (const lv of p.levels) {
         for (const slot of lv.orders) {
-            if (slot.role !== 'entry' || slot.status !== 'working' || !slot.orderId) continue;
+            // no confirmed id this epoch: wait for a listing to rebind it
+            if (slot.role !== 'entry' || slot.status !== 'working' || !slot.orderId || slot.unconfirmed) continue;
             const c = slot.cancel;
             if (c === null) emitCancel(ctx, p, lv, slot);
+            // refused at the send-time gate (never sent): goes out as soon as
+            // the id is confirmed in this epoch, not an attempt toward giving up
+            else if (c.status === 'failed' && c.detail === EPOCH_CHANGED) emitCancel(ctx, p, lv, slot);
             else if (retry && c.attempts < MAX_CANCEL_ATTEMPTS && (c.status === 'failed'
                 || ((c.status === 'unknown' || c.status === 'requested')
                     && ctx.ts - c.sentAt >= CANCEL_UNKNOWN_RETRY_MS))) {
@@ -266,7 +392,7 @@ function ensureExits(ctx: Ctx, p: OrderProgram, lv: Level) {
     if (lv.exit?.type !== 'takeProfit') return;
     if (['unknown', 'needsConfirm', 'disabled'].includes(lv.phase)) return;
     if (p.status !== 'running' && p.status !== 'stopping') return;
-    const covered = cycleSlots(lv, 'exit').filter(isActive).reduce((sum, o) => sum + Math.max(0, o.qty - o.filled), 0);
+    const covered = cycleSlots(lv, 'exit').filter(isActive).reduce((sum, o) => sum + Math.max(0, remaining(o)), 0);
     const uncovered = lv.position - covered;
     if (uncovered > 0) emitPlace(ctx, p, lv, 'exit', 'tp', uncovered, lv.exit.price, lv.exit.order);
 }
@@ -286,6 +412,11 @@ function completeCycle(p: OrderProgram, lv: Level) {
 
 /** Recompute a level's phase from its slots; sticky phases stay. */
 function settle(ctx: Ctx, p: OrderProgram, lv: Level) {
+    if (lv.phase === 'done' && lv.position > 0 && !exitFired(lv)) {
+        lv.phase = 'holding';
+        lv.detail = 'lateEntryExposure';
+        if (p.status !== 'running' || cycleSlots(lv, 'entry').some(o => o.unconfirmed)) lv.check = 'restart';
+    }
     if (lv.phase === 'needsConfirm' || lv.phase === 'disabled' || lv.phase === 'done') return;
     if (lv.orders.some(o => o.status === 'unknown' && !o.acknowledged)) { lv.phase = 'unknown'; return; }
     const entries = cycleSlots(lv, 'entry');
@@ -326,10 +457,16 @@ function settle(ctx: Ctx, p: OrderProgram, lv: Level) {
 }
 
 function refreshStopping(p: OrderProgram) {
+    // Old snapshots may falsely mark a failed Cover stopped. Expose risk,
+    // without rearming or resending anything.
+    for (const lv of p.levels) if (lv.position > 0 && cycleSlots(lv, 'exit').some(o => o.status === 'notSent')) {
+        lv.unprotected = Math.max(lv.unprotected, lv.entryFilled - cycleSlots(lv, 'exit').reduce((n, o) => n + o.filled, 0));
+    }
+    if (p.status === 'stopped' && p.levels.some(lv => lv.position > 0 || lv.unprotected > 0 || externalEntryPending(lv))) p.status = 'stopping';
     if (p.status !== 'stopping') return;
     // an unacknowledged unknown submit may be live at the broker: not stopped yet
     const busy = p.levels.some(lv => lv.orders.some(o => isActive(o) || (o.status === 'unknown' && !o.acknowledged))
-        || (lv.position > 0 && lv.phase !== 'disabled'));
+        || lv.position > 0 || lv.unprotected > 0 || !!externalEntryPending(lv));
     if (!busy) p.status = 'stopped';
 }
 
@@ -361,9 +498,18 @@ function onTick(ctx: Ctx, e: Extract<ExecEvent, { type: 'tick' }>) {
     noteActivity(ctx, e);
     if (e.simtrade || !Number.isFinite(e.price) || e.price <= 0 || !fromLive(s, e)) return;
     s.lastPrices[e.code] = e.price;
+    // A coalesced tick carries the range of real trade prices since the last
+    // one: a leg fires when any price in it touched (a 99 → 101 burst still
+    // crosses a stop at 100), and a kept leg re-arms when any price in it was
+    // on the other side. Limit entries use the latest price.
+    const lo = Math.min(e.price, validPrice(e.low) ?? e.price);
+    const hi = Math.max(e.price, validPrice(e.high) ?? e.price);
+    const toward = (l: { condition: TouchCondition }) => l.condition === 'below' ? lo : hi;
+    const away = (l: { condition: TouchCondition }) => l.condition === 'below' ? hi : lo;
+    const touched = (l: { condition: TouchCondition; price: number }) => isPast(l.condition, l.price, toward(l));
     for (const p of s.programs) {
         if (p.binding.contract.quoteCode !== e.code || p.hold !== null) continue;
-        if (p.status === 'running') checkBounds(ctx, p, e.price);
+        if (p.status === 'running') checkBounds(ctx, p, lo, hi);
         if (p.status !== 'running' && p.status !== 'stopping') continue;
         const limitCandidates: Level[] = [];
         for (const lv of p.levels) {
@@ -373,21 +519,25 @@ function onTick(ctx: Ctx, e: Extract<ExecEvent, { type: 'tick' }>) {
                 if (lv.check) {
                     const reason = lv.check;
                     lv.check = null;
-                    const past = legs.find(l => !lv.recross.includes(l.name) && isPast(l.condition, l.price, e.price));
+                    const past = legs.find(l => !lv.recross.includes(l.name) && touched(l));
                     if (past) {
                         lv.phase = 'needsConfirm';
-                        lv.pending = { leg: past.name, price: e.price, ts: ctx.ts, reason };
-                        notice(ctx, 'needsConfirm', p, lv.id, `${past.name} ${reason} @${e.price}`);
+                        lv.pending = { leg: past.name, price: toward(past), ts: ctx.ts, reason };
+                        notice(ctx, 'needsConfirm', p, lv.id, `${past.name} ${reason} @${toward(past)}`);
                         continue;
                     }
                 }
                 for (const leg of legs) {
-                    const past = isPast(leg.condition, leg.price, e.price);
                     if (lv.recross.includes(leg.name)) {
-                        if (!past) lv.recross = lv.recross.filter(x => x !== leg.name);
-                        continue;
+                        if (isPast(leg.condition, leg.price, away(leg))) continue; // not re-armed
+                        lv.recross = lv.recross.filter(x => x !== leg.name);
+                        // the order inside a burst is lost: a range holding both the
+                        // re-arm side and the trigger price counts as re-armed AND
+                        // re-crossed only for a protective leg (a stop); any other
+                        // leg re-arms and waits for a later tick
+                        if (!touched(leg) || !protective(p, lv, leg)) continue;
                     }
-                    if (past && lv.phase !== 'done') { fire(ctx, p, lv, leg.name, e.price); break; }
+                    if (touched(leg) && lv.phase !== 'done') { fire(ctx, p, lv, leg.name, toward(leg)); break; }
                 }
             } else if (p.status === 'running' && lv.phase === 'idle' && lv.entry.type === 'limit') {
                 const eligible = lv.side === 'Buy' ? fixed(e.price) > fixed(lv.entry.price) : fixed(e.price) < fixed(lv.entry.price);
@@ -409,10 +559,19 @@ function onTick(ctx: Ctx, e: Extract<ExecEvent, { type: 'tick' }>) {
     }
 }
 
-function checkBounds(ctx: Ctx, p: OrderProgram, price: number) {
+function validPrice(v: number | undefined): number | undefined {
+    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+function checkBounds(ctx: Ctx, p: OrderProgram, lo: number, hi: number) {
     const b = p.bounds;
-    const action = b.upper !== null && fixed(price) > fixed(b.upper) ? b.onBreakUpper
-        : b.lower !== null && fixed(price) < fixed(b.lower) ? b.onBreakLower : 'none';
+    // every bound the range broke counts; the protective action wins
+    const broken: { action: BreakAction; price: number }[] = [];
+    if (b.upper !== null && fixed(hi) > fixed(b.upper)) broken.push({ action: b.onBreakUpper, price: hi });
+    if (b.lower !== null && fixed(lo) < fixed(b.lower)) broken.push({ action: b.onBreakLower, price: lo });
+    const pick = broken.find(x => x.action === 'stop') ?? broken.find(x => x.action === 'pause');
+    const action: BreakAction = pick?.action ?? 'none';
+    const price = pick?.price ?? 0;
     if (action === 'pause') {
         p.status = 'paused';
         p.pauseReason = 'boundBreak';
@@ -468,33 +627,82 @@ function findSlotByKey(s: EngineState, key: string, src: Source) {
         for (const lv of p.levels) {
             const slot = lv.orders.find(o => o.key === key);
             if (slot) return { p, lv, slot, cancel: false };
-            const c = lv.orders.find(o => o.cancel !== null && (o.cancel.key === key || o.cancel.outstanding.includes(key)));
+            const c = lv.orders.find(o => o.cancel != null && (o.cancel.key === key || o.cancel.outstanding.includes(key)));
             if (c) return { p, lv, slot: c, cancel: true };
         }
     }
     return null;
 }
 
-function findSlotByOrderId(s: EngineState, orderId: string, src: Source) {
-    for (const p of s.programs) {
-        if (!boundTo(p, src)) continue; // a report only matches its own environment's programs
-        for (const lv of p.levels) {
-            const slot = lv.orders.find(o => o.orderId === orderId);
-            if (slot) return { p, lv, slot };
-        }
+/** A report only matches its own environment's programs, its own account
+ * and contract, and a binding of the current epoch. */
+function slotReportMatches(lv: Level, slot: OrderSlot, identity: { seqno?: string; ordno?: string }): boolean {
+    if (slot.cancelAmbiguous) return false;
+    const stable = slot.seqno || slot.ordno ? slot : slot.role === 'entry' && lv.entry.type === 'external' ? lv.entry : slot;
+    if (isExternalEntry(lv, slot) || ('seqno' in stable && (stable.seqno || stable.ordno))) {
+        return brokerIdentityMatches(stable, identity);
     }
-    return null;
+    // Legacy snapshots can learn identity only from a verified listing.
+    return false;
 }
 
-/** Apply reports that raced the order id becoming known (deals, then order events). */
+function orderReportAdmitted(lv: Level, slot: OrderSlot, e: OrderEvent): boolean {
+    const expected = slot.role === 'entry' ? lv.side : opposite(lv.side);
+    return (e.action === undefined ? !isExternalEntry(lv, slot) : e.action === expected)
+        && (e.originalQty === undefined ? !isExternalEntry(lv, slot)
+            : Number.isSafeInteger(e.originalQty) && e.originalQty > 0 && e.originalQty === slot.qty)
+        && (e.cancelQty === undefined || Number.isSafeInteger(e.cancelQty) && e.cancelQty >= 0);
+}
+
+function validReconciledQuantities(row: ReconcileEvent['orders'][number]): boolean {
+    return Number.isSafeInteger(row.qty) && row.qty > 0
+        && (row.cancelled === undefined || Number.isSafeInteger(row.cancelled) && row.cancelled >= 0)
+        && row.deals.every(d => Number.isSafeInteger(d.qty) && d.qty > 0);
+}
+
+function findSlotByOrderId(s: EngineState, orderId: string, src: Source & { seqno?: string; ordno?: string },
+    account: { brokerId: string; accountId: string } | null | undefined, code: string | undefined,
+    securityType: string | undefined) {
+    let hit = null;
+    for (const p of s.programs) {
+        if (!boundTo(p, src) || !reportMatches(p, account, code, securityType)) continue;
+        for (const lv of p.levels) {
+            for (const slot of lv.orders) {
+                if (slot.unconfirmed || slot.orderId !== orderId || !slotReportMatches(lv, slot, src)) continue;
+                if (isExternalEntry(lv, slot) && (!account || code === undefined || securityType === undefined)) continue;
+                if (hit) return null;
+                hit = { p, lv, slot };
+            }
+        }
+    }
+    return hit;
+}
+
+/** A report may be matched to a binding only when it is known to belong to the
+ * current trade-id epoch: its exchange time (epoch seconds) falls in the
+ * current epoch or later. An id is reused across epochs and a report can arrive
+ * late — one from before the boundary naming a reused id is another order's.
+ * Without an exchange time its epoch cannot be told: held, never applied to a
+ * binding (the listing decides). */
+function reportInEpoch(mark: number | null | undefined, exchTs: number | null | undefined): boolean {
+    if (exchTs === undefined || exchTs === null || !Number.isFinite(exchTs) || exchTs <= 0) return false;
+    return mark === undefined || mark === null || epochMark(Math.trunc(exchTs * 1000)) >= mark;
+}
+
+/** Apply reports that raced the order id becoming known (deals, then order
+ * events) — those of the current epoch only (`reportInEpoch`). */
 function drainOrphans(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot) {
     const s = ctx.s;
-    const mine = (e: Source & { orderId: string }) => e.orderId === slot.orderId && boundTo(p, e);
-    const deals = s.orphanDeals.filter(d => mine(d.deal));
-    s.orphanDeals = s.orphanDeals.filter(d => !mine(d.deal));
+    const mine = (e: Source & { orderId: string; seqno?: string; ordno?: string; account?: { brokerId: string; accountId: string } | null;
+        code?: string; securityType?: string }, exchTs: number | undefined) =>
+        e.orderId === slot.orderId && reportInEpoch(s.epochMark, exchTs) && boundTo(p, e)
+        && findSlotByOrderId(s, e.orderId, e, e.account, e.code, e.securityType)?.slot === slot;
+    const deals = s.orphanDeals.filter(d => mine(d.deal, d.deal.fillTs));
+    s.orphanDeals = s.orphanDeals.filter(d => !mine(d.deal, d.deal.fillTs));
     for (const d of deals) applyDeal(ctx, p, lv, slot, d.deal);
-    const orders = s.orphanOrders.filter(o => mine(o.order));
-    s.orphanOrders = s.orphanOrders.filter(o => !mine(o.order));
+    const acceptedOrder = (o: EngineState['orphanOrders'][number]) => mine(o.order, o.order.exchTs) && orderReportAdmitted(lv, slot, o.order);
+    const orders = s.orphanOrders.filter(acceptedOrder);
+    s.orphanOrders = s.orphanOrders.filter(o => !acceptedOrder(o));
     for (const o of orders) applyOrder(ctx, p, lv, slot, o.order);
 }
 
@@ -511,14 +719,33 @@ function onIntentResult(ctx: Ctx, e: IntentResultEvent) {
         }
         if (c.status !== 'pendingSubmit') return; // duplicate
         if (e.outcome === 'accepted') c.status = 'requested';
+        // refused at the send-time gate across an epoch boundary: never sent —
+        // the cancel returns to its slot until this epoch's listing rebinds the id
+        else if (e.outcome === 'notSent' && e.detail === EPOCH_CHANGED) {
+            c.outstanding = c.outstanding.filter(k => k !== e.key);
+            c.status = 'failed';
+            c.detail = EPOCH_CHANGED;
+        }
         else if (e.outcome === 'notSent') cancelFailed(ctx, p, lv, slot, e.detail ?? 'notSent');
         else { c.status = 'unknown'; c.detail = e.detail ?? 'unknown'; }
         refreshStopping(p);
         return;
     }
     if (slot.status !== 'pendingSubmit') return; // duplicate or stale result
-    if (e.outcome === 'accepted' && e.orderId) {
+    if (e.outcome === 'accepted' && e.orderId && e.epoch !== undefined && e.epoch !== (ctx.s.epochSeq ?? 0)) {
+        // sent in an earlier epoch, answered after the boundary: the id may
+        // name another order by now — only this epoch's listing with the
+        // slot's tag confirms (rebinds) it
         slot.orderId = e.orderId;
+        slot.seqno = e.seqno;
+        slot.ordno = e.ordno;
+        slot.unconfirmed = true;
+        slot.status = 'working';
+        slot.detail = 'acceptedAcrossEpoch';
+    } else if (e.outcome === 'accepted' && e.orderId) {
+        slot.orderId = e.orderId;
+        slot.seqno = e.seqno;
+        slot.ordno = e.ordno;
         slot.status = slot.filled >= slot.qty ? 'filled' : 'working';
         drainOrphans(ctx, p, lv, slot);
     } else if (e.outcome === 'notSent') {
@@ -536,7 +763,40 @@ function onIntentResult(ctx: Ctx, e: IntentResultEvent) {
     refreshStopping(p);
 }
 
+const remaining = (slot: OrderSlot) => slot.qty - slot.filled - (slot.cancelled ?? 0);
+
+/** Record the quantity a report cancelled (once per report id). */
+function noteCancelled(slot: OrderSlot, e: OrderEvent) {
+    if (e.failed || e.cancelQty === undefined || !(e.cancelQty > 0)) return;
+    slot.cancels = slot.cancels ?? {};
+    const id = e.reportId ?? `anon:${Object.keys(slot.cancels).length}`;
+    if (id in slot.cancels) return;
+    slot.cancels[id] = e.cancelQty;
+    refreshCancelled(slot);
+}
+
+/** Cancelled quantity = max(listing's cumulative, sum of report deltas) —
+ * never their sum: a report may be one the listing already counted (their
+ * timestamps cannot be ordered: a report's exchange ts can be later than
+ * the listing's modified ts for the same operation). Under doubt this
+ * UNDER-counts: the order still looks working, so no extra exit is placed;
+ * the next listing corrects it. */
+function refreshCancelled(slot: OrderSlot) {
+    const reported = Object.values(slot.cancels ?? {}).reduce((a, b) => a + b, 0);
+    slot.cancelled = Math.max(slot.listedCancelled ?? 0, reported);
+}
+
+/** Fills + cancels cover the order: nothing works at the broker any more. */
+function closeIfCovered(slot: OrderSlot, detail: string): boolean {
+    if (!isActive(slot) || !(slot.cancelled ?? 0) || remaining(slot) > 0) return false;
+    slot.status = slot.filled >= slot.qty ? 'filled' : 'ended';
+    if (slot.status === 'ended') slot.detail = detail;
+    if (slot.cancel) { slot.cancel.status = 'confirmed'; slot.cancel.outstanding = []; }
+    return true;
+}
+
 function applyOrder(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, e: OrderEvent) {
+    noteCancelled(slot, e);
     if (e.op === 'Cancel') {
         if (e.failed) {
             const c = slot.cancel;
@@ -558,8 +818,17 @@ function applyOrder(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, e: Or
             addIssue(ctx, p, 'cancelReportUnkeyed', `${slot.key}: Cancel failure without attempt key, ${c.outstanding.length} attempts outstanding`);
             return;
         }
+        if (e.cancelQty !== undefined && isActive(slot) && remaining(slot) > 0) {
+            // part of the order is still working at the broker: not ended;
+            // the cancel is retried after the timeout
+            if (slot.cancel) { slot.cancel.status = 'unknown'; slot.cancel.detail = 'partialCancel'; slot.cancel.outstanding = []; }
+            addIssue(ctx, p, 'partialCancel', `${slot.key}: cancelled ${slot.cancelled ?? 0}, filled ${slot.filled} of ${slot.qty}`);
+            return;
+        }
         if (slot.cancel) { slot.cancel.status = 'confirmed'; slot.cancel.outstanding = []; }
     }
+    // e.g. UpdateQty reduced the rest away
+    if (closeIfCovered(slot, e.op === 'Cancel' ? 'cancelled' : 'reduced')) return;
     const ended = (e.op === 'New' && e.failed) || (e.op === 'Cancel' && !e.failed);
     if (!ended || !isActive(slot)) return;
     slot.status = slot.filled >= slot.qty ? 'filled' : 'ended';
@@ -567,8 +836,9 @@ function applyOrder(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, e: Or
 }
 
 function onOrder(ctx: Ctx, e: OrderEvent) {
-    const hit = findSlotByOrderId(ctx.s, e.orderId, e);
-    if (!hit) {
+    const hit = reportInEpoch(ctx.s.epochMark, e.exchTs)
+        ? findSlotByOrderId(ctx.s, e.orderId, e, e.account, e.code, e.securityType) : null;
+    if (!hit || !orderReportAdmitted(hit.lv, hit.slot, e)) {
         // e.g. a New failure reported before the submit result: keep it for the binding
         ctx.s.orphanOrders.push({ order: e, ts: ctx.ts });
         if (ctx.s.orphanOrders.length > ORPHAN_ORDER_LIMIT) ctx.s.orphanOrders.splice(0, ctx.s.orphanOrders.length - ORPHAN_ORDER_LIMIT);
@@ -576,6 +846,7 @@ function onOrder(ctx: Ctx, e: OrderEvent) {
     }
     const { p, lv, slot } = hit;
     applyOrder(ctx, p, lv, slot, e);
+    ensureExits(ctx, p, lv); // a reduced / ended exit leaves position uncovered
     settle(ctx, p, lv);
     refreshStopping(p);
 }
@@ -611,6 +882,7 @@ function applyFill(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, key: s
     if (added <= 0) return;
     slot.filled += added;
     if (slot.filled >= slot.qty && (slot.status === 'working' || slot.status === 'ended')) slot.status = 'filled';
+    else closeIfCovered(slot, 'reduced'); // the rest was cancelled / reduced earlier
     if (slot.role === 'entry') {
         if (slot.cycle !== lv.cycles) { addIssue(ctx, p, 'lateFill', `${slot.key}: fill after its cycle ended`); return; }
         lv.entryFilled += added;
@@ -646,7 +918,8 @@ function applyDeal(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, d: Dea
 }
 
 function onDeal(ctx: Ctx, e: DealEvent) {
-    const hit = findSlotByOrderId(ctx.s, e.orderId, e);
+    const hit = reportInEpoch(ctx.s.epochMark, e.fillTs)
+        ? findSlotByOrderId(ctx.s, e.orderId, e, e.account, e.code, e.securityType) : null;
     if (!hit) {
         ctx.s.orphanDeals.push({ deal: e, ts: ctx.ts });
         if (ctx.s.orphanDeals.length > ORPHAN_DEAL_LIMIT) ctx.s.orphanDeals.splice(0, ctx.s.orphanDeals.length - ORPHAN_DEAL_LIMIT);
@@ -660,6 +933,12 @@ function onDeal(ctx: Ctx, e: DealEvent) {
 }
 
 function onReconcile(ctx: Ctx, e: ReconcileEvent) {
+    const ambiguous = [...(e.ambiguous ?? []), ...e.orders.filter(r => !validReconciledQuantities(r))
+        .flatMap(r => r.intentKey ? [r.intentKey] : [])];
+    // this epoch's listing of the account is in: it may place / cancel again
+    const waiting = (ctx.s.conn.awaitingEpochListing ?? []).filter(a => !sameAccount(a, e.account));
+    if (waiting.length > 0) ctx.s.conn.awaitingEpochListing = waiting;
+    else delete ctx.s.conn.awaitingEpochListing;
     for (const p of ctx.s.programs) {
         const b = p.binding;
         if (b.env !== e.env || b.serverId !== e.serverId || b.account.accountType !== e.account.accountType
@@ -667,9 +946,89 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
         for (const lv of p.levels) {
             let touched = false;
             for (const slot of lv.orders) {
-                const row = slot.orderId
-                    ? e.orders.find(o => o.orderId === slot.orderId)
-                    : e.orders.find(o => o.intentKey === slot.key);
+                // a listing row carries this slot's tag but cannot be bound to
+                // it: the order may exist — pinned for good, never concluded
+                if (ambiguous.includes(slot.key)) slot.unconfirmed = true;
+                if (ambiguous.includes(slot.key) && !slot.tagAmbiguous) {
+                    slot.tagAmbiguous = true;
+                    addIssue(ctx, p, 'tagAmbiguous', `${slot.key}: duplicate / mismatching listing rows for its tag`);
+                }
+                // ended before this listing (not by a report drained just now)
+                const wasEnded = slot.status === 'ended';
+                const external = isExternalEntry(lv, slot);
+                // The wire mapper verifies either the tag or the external
+                // broker identity. A trade id alone never accepts a row.
+                const rows = e.orders.filter(o => validReconciledQuantities(o) && o.intentKey === slot.key
+                    && (slot.unconfirmed || !slot.orderId || o.orderId === slot.orderId));
+                const row = rows.length === 1 ? rows[0] : undefined;
+                // Terminal evidence is a ledger fact, not permission to rebind a
+                // raw ID or send/cancel. Preserve unconfirmed; only the same-day
+                // uniquely mapped stable identity can extend its fill ledger.
+                if (slot.unconfirmed && !isActive(slot) && slot.status !== 'unknown') {
+                    if (row && !ambiguous.includes(slot.key) && !row.cancelAmbiguous
+                        && row.qty === slot.qty && slotReportMatches(lv, slot, row)
+                        && slot.evidenceEpoch === epochMark(ctx.ts)) {
+                        for (const d of row.deals) if (Number.isSafeInteger(d.qty) && d.qty > 0) {
+                            applyFill(ctx, p, lv, slot, `${slot.orderId ?? row.orderId}:${d.seq}`, d.qty, d.ts);
+                        }
+                        touched = true;
+                    } else if (row?.deals.length) {
+                        addIssue(ctx, p, 'terminalFillUnconfirmed', `${slot.key}: terminal fill identity/day requires confirmation`);
+                        if (external && row.qty === slot.qty && !ambiguous.includes(slot.key)
+                            && !row.cancelAmbiguous && slotReportMatches(lv, slot, row) && !externalEntryPending(lv)) {
+                            lv.entryPending = { leg: 'entry', price: null, ts: ctx.ts,
+                                reason: slot.evidenceEpoch === undefined ? 'unknownEntryAfterReconnect' : 'unknownEntryAcrossDay' };
+                            if (lv.position === 0) lv.phase = 'needsConfirm';
+                            notice(ctx, 'needsConfirm', p, lv.id, `entry ${lv.entryPending.reason}`);
+                            touched = true;
+                        }
+                    }
+                    continue;
+                }
+                if (row) {
+                    slot.evidenceEpoch = epochMark(ctx.ts);
+                    if (row.cancelAmbiguous && !slot.cancelAmbiguous) {
+                        addIssue(ctx, p, 'orderIdAmbiguous', '委託編號對應多筆委託，請先核對；暫停自動取消委託。');
+                    }
+                    slot.cancelAmbiguous = row.cancelAmbiguous;
+                    slot.seqno = row.seqno ?? slot.seqno;
+                    slot.ordno = row.ordno ?? slot.ordno;
+                }
+                if (slot.unconfirmed) {
+                    // bound in an earlier epoch: only this epoch's row with its
+                    // tag rebinds it — an ended slot never takes part again
+                    const open = isActive(slot) || (slot.status === 'unknown' && !slot.acknowledged);
+                    if (!open) continue;
+                    if (external && externalEntryPending(lv)?.reason === 'unknownEntryAcrossDay') continue;
+                    if (row) {
+                        rebindSlot(slot, row.orderId);
+                        slot.unconfirmed = false;
+                        if (slot.status === 'unknown') slot.status = 'working';
+                        slot.detail = 'rebound';
+                        if (external && externalEntryPending(lv)?.reason === 'unknownEntryAfterReconnect') {
+                            clearEntryPending(lv);
+                            if (lv.phase === 'needsConfirm' && !lv.pending) lv.phase = lv.position > 0 ? 'holding' : 'working';
+                        }
+                        drainOrphans(ctx, p, lv, slot);
+                        touched = true;
+                    } else if (external) {
+                        if (!externalEntryPending(lv)) {
+                            lv.entryPending = { leg: 'entry', price: null, ts: ctx.ts, reason: 'unknownEntryAfterReconnect' };
+                            if (lv.position === 0) lv.phase = 'needsConfirm';
+                            notice(ctx, 'needsConfirm', p, lv.id, 'entry unknownEntryAfterReconnect');
+                            touched = true;
+                        }
+                        continue;
+                    } else if (isActive(slot) && (e.notSent ?? []).includes(slot.key)) {
+                        // absent from this epoch's listings: what became of it is
+                        // unknown — the user acknowledges it
+                        slot.status = 'unknown';
+                        slot.detail = 'missingAfterEpoch';
+                        notice(ctx, 'unknown', p, lv.id, `${slot.key} missingAfterEpoch`);
+                        touched = true;
+                        continue;
+                    } else continue;
+                }
                 if (slot.status === 'pendingSubmit' && !slot.orderId && row) {
                     // the listing answered before the submit result did
                     slot.orderId = row.orderId;
@@ -681,7 +1040,7 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                         slot.status = 'working';
                         slot.detail = 'reconciled';
                         drainOrphans(ctx, p, lv, slot);
-                    } else if (e.complete) {
+                    } else if ((e.complete || (e.notSent ?? []).includes(slot.key)) && !slot.tagAmbiguous) {
                         slot.status = 'notSent';
                         slot.detail = 'reconciledNotSent';
                         // confirmed never accepted: the user decides whether to send now
@@ -696,11 +1055,35 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                     touched = true;
                 }
                 if (!row || !slot.orderId) continue;
+                // cumulative values only ever grow (a listing adds, never downgrades)
+                if (row.cancelled !== undefined) {
+                    slot.listedCancelled = Math.max(slot.listedCancelled ?? 0, row.cancelled);
+                    refreshCancelled(slot);
+                }
+                // a stale row (a report of this order is newer than the listing
+                // request) never revives: only a listing newer than every report may
+                if (!row.stale && wasEnded && slot.status === 'ended' && !slot.acknowledged && row.status === 'working'
+                    && slot.qty - slot.filled - (row.cancelled ?? 0) > 0) {
+                    // the listing shows it working: the reports that ended it are
+                    // taken as absorbed by the listing (kept for dedupe, count 0)
+                    for (const id of Object.keys(slot.cancels ?? {})) slot.cancels![id] = 0;
+                    refreshCancelled(slot);
+                    // the broker still works it (e.g. a cancel that did not take
+                    // effect): back to working, and a stopped program is
+                    // stopping again until it is cancelled
+                    slot.status = 'working';
+                    slot.detail = 'reconciledWorking';
+                    if (slot.cancel) { slot.cancel.status = 'unknown'; slot.cancel.detail = 'stillWorking'; slot.cancel.outstanding = []; }
+                    if (lv.phase === 'done' || lv.phase === 'disabled') lv.phase = 'idle';
+                    if (p.status === 'stopped') p.status = 'stopping';
+                    addIssue(ctx, p, 'revived', `${slot.key}: still working at the broker`);
+                }
                 for (const d of row.deals) {
                     if (Number.isSafeInteger(d.qty) && d.qty > 0) {
                         applyFill(ctx, p, lv, slot, `${row.orderId}:${d.seq}`, d.qty, d.ts);
                     }
                 }
+                closeIfCovered(slot, 'reconciledEnded');
                 if (isActive(slot) && row.status !== 'working') {
                     slot.status = slot.filled >= slot.qty ? 'filled' : 'ended';
                     if (slot.status === 'ended') slot.detail = 'reconciledEnded';
@@ -718,6 +1101,52 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
         refreshStopping(p);
     }
 }
+
+/** A new trade-id epoch on (env, server): every id bound before stops
+ * identifying its order (`unconfirmed`); reports buffered for such ids are
+ * dropped. A slot still open is rebound by the next listing through its tag.
+ * An external entry rebinds by verified broker identity within the same
+ * trading epoch; across a boundary the user still confirms it (decision A). */
+function onEpoch(ctx: Ctx, e: EpochEvent) {
+    const s = ctx.s;
+    const mark = epochMark(ctx.ts);
+    const crossed = s.epochMark !== mark;
+    s.epochMark = mark;
+    s.epochSeq = (s.epochSeq ?? 0) + 1;
+    // live for reports, but nothing goes out for an account until this
+    // epoch's first listing of it has been applied
+    const waiting: AccountKey[] = [];
+    for (const p of s.programs) {
+        if (boundTo(p, e) && !waiting.some(a => sameAccount(a, p.binding.account))) waiting.push(p.binding.account);
+    }
+    if (waiting.length > 0) s.conn.awaitingEpochListing = waiting;
+    else delete s.conn.awaitingEpochListing;
+    s.orphanDeals = s.orphanDeals.filter(d => !boundToSource(d.deal, e));
+    s.orphanOrders = s.orphanOrders.filter(o => !boundToSource(o.order, e));
+    for (const p of s.programs) {
+        if (!boundTo(p, e)) continue;
+        for (const lv of p.levels) {
+            const external = lv.entry.type === 'external';
+            let openEntry = false;
+            for (const slot of lv.orders) {
+                if (external && slot.role === 'entry') {
+                    openEntry ||= crossed && isActive(slot);
+                }
+                if (slot.orderId) slot.unconfirmed = true;
+            }
+            if (openEntry) {
+                lv.entryPending = { leg: 'entry', price: null, ts: ctx.ts, reason: 'unknownEntryAcrossDay' };
+                if (unknownExternalEntry(lv.pending?.reason)) lv.pending = null;
+                // nothing known filled: wait for the user; a known position
+                // keeps its protection meanwhile (the phase stays)
+                if (lv.position === 0 && lv.phase !== 'needsConfirm') lv.phase = 'needsConfirm';
+                notice(ctx, 'needsConfirm', p, lv.id, 'entry unknownEntryAcrossDay');
+            }
+        }
+    }
+}
+
+const boundToSource = (a: Source, b: Source) => a.env === b.env && a.serverId === b.serverId;
 
 function onRestore(ctx: Ctx) {
     const s = ctx.s;
@@ -747,16 +1176,21 @@ function reject(ctx: Ctx, p: OrderProgram | null, code: string, detail: string) 
     notice(ctx, `rejected.${code}`, p, null, detail);
 }
 
+/** Most levels a program may have (the grid ticket offers 15). */
+export const MAX_LEVELS = 32;
+
 function validateProgram(p: OrderProgram): string | null {
     if (!p.id || !p.binding?.serverId || !p.binding.account?.accountId || !p.binding.contract?.orderCode) return 'invalidBinding';
     if (p.binding.env !== 'simulation' && p.binding.env !== 'production') return 'invalidBinding';
     if (!Array.isArray(p.levels) || p.levels.length === 0) return 'noLevels';
+    // bounds what a crash can leave unrecorded (Rust executor's suspicion)
+    if (p.levels.length > MAX_LEVELS) return 'tooManyLevels';
     if (p.hooks.length > 0) return 'hooksUnsupported';
     const ids = new Set<string>();
     for (const lv of p.levels) {
         if (!lv.id || ids.has(lv.id)) return 'duplicateLevel';
         ids.add(lv.id);
-        if (!Number.isSafeInteger(lv.qty) || lv.qty <= 0) return 'invalidQty';
+        if (!Number.isSafeInteger(lv.qty) || lv.qty <= 0 || lv.orders.some(o => !Number.isSafeInteger(o.qty) || o.qty <= 0)) return 'invalidQty';
     }
     return null;
 }
@@ -776,6 +1210,24 @@ function startStop(ctx: Ctx, p: OrderProgram) {
     refreshStopping(p);
 }
 
+/** Do `a` and `b` track the same external entry order: an order id within one
+ * (environment, account, market, contract)? */
+export function sameExternalEntry(a: OrderProgram, b: OrderProgram): boolean {
+    const entries = (p: OrderProgram) =>
+        p.levels.flatMap(lv => {
+            if (lv.entry.type !== 'external') return [];
+            const slot = lv.orders.find(o => o.role === 'entry');
+            return [{ ...lv.entry, seqno: slot?.seqno ?? lv.entry.seqno, ordno: slot?.ordno ?? lv.entry.ordno,
+                confirmed: !lv.orders.some(o => o.role === 'entry' && o.unconfirmed) }];
+        });
+    const [ba, bb] = [a.binding, b.binding];
+    if (ba.env !== bb.env || ba.serverId !== bb.serverId || !sameAccount(ba.account, bb.account)
+        || ba.contract.market !== bb.contract.market || ba.contract.securityType !== bb.contract.securityType
+        || ba.contract.orderCode !== bb.contract.orderCode) return false;
+    const theirs = entries(b);
+    return entries(a).some(ea => theirs.some(eb => externalIdentity(ea, eb) !== 'different'));
+}
+
 function onCommand(ctx: Ctx, e: CommandEvent) {
     const s = ctx.s;
     const c = e.command;
@@ -784,6 +1236,10 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
         if (s.programs.some(x => x.id === p.id)) { reject(ctx, null, 'duplicateProgram', p.id); return; }
         const invalid = validateProgram(p);
         if (invalid) { reject(ctx, null, invalid, p.id); return; }
+        // one live program per external entry order: two would each reconcile
+        // the same fills and each send a full-size exit
+        const other = s.programs.find(x => (x.status !== 'stopped' || x.observationOnly) && sameExternalEntry(x, p));
+        if (other) { reject(ctx, null, 'duplicateEntry', `${p.id} (${other.id})`); return; }
         if (!canEvaluate(s)) { reject(ctx, null, 'unknownEnv', p.id); return; }
         if (s.conn.env !== p.binding.env || s.conn.serverId !== p.binding.serverId) { reject(ctx, null, 'envMismatch', p.id); return; }
         p.version = 1;
@@ -792,7 +1248,15 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
         p.createdAt = ctx.ts;
         p.updatedAt = ctx.ts;
         p.hold = null;
+        for (const lv of p.levels) {
+            if (lv.entry.type === 'external') for (const slot of lv.orders) {
+                if (slot.role === 'entry' && slot.orderId) slot.unconfirmed = true;
+            }
+        }
         s.programs.push(p);
+        // a program created now belongs to the current epoch (a new
+        // partition has seen no epoch event yet)
+        s.epochMark ??= epochMark(ctx.ts);
         updateHolds(ctx);
         notice(ctx, 'created', p, null, p.kind);
         return;
@@ -800,6 +1264,7 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
     const p = s.programs.find(x => x.id === c.programId);
     if (!p) { reject(ctx, null, 'noProgram', c.programId); return; }
     if (c.version !== p.version) { reject(ctx, p, 'staleVersion', `${c.version} != ${p.version}`); return; }
+    if (p.observationOnly) { reject(ctx, p, 'retired', p.id); return; }
     const accept = () => { p.version += 1; p.updatedAt = ctx.ts; };
     switch (c.op) {
         case 'pause':
@@ -823,9 +1288,14 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             return;
         case 'remove': {
             const busy = p.levels.some(lv => lv.orders.some(o => isActive(o) || (o.status === 'unknown' && !o.acknowledged))
-                || lv.position > 0);
+                || lv.position > 0 || lv.unprotected > 0 || !!externalEntryPending(lv));
             if (busy) { reject(ctx, p, 'hasOrdersOrPosition', p.id); return; }
-            s.programs = s.programs.filter(x => x !== p);
+            if (p.levels.some(lv => lv.orders.some(o => !!o.orderId || o.status !== 'notSent'))) {
+                accept();
+                p.observationOnly = true;
+                p.status = 'stopped';
+                p.pauseReason = null;
+            } else s.programs = s.programs.filter(x => x !== p);
             notice(ctx, 'removed', p, null, p.id);
             return;
         }
@@ -841,9 +1311,35 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             refreshStopping(p);
             return;
         }
+        case 'confirmEntry': {
+            // a remainder may still work: ending it here would leave its later
+            // fills without an exit — the user cancels it first
+            if (c.noRemainder !== true) { reject(ctx, p, 'remainderNotConfirmed', c.levelId); return; }
+            const lv = p.levels.find(l => l.id === c.levelId && externalEntryPending(l));
+            if (!lv) { reject(ctx, p, 'notPending', c.levelId); return; }
+            const slot = [...lv.orders].reverse().find(o => o.role === 'entry' && o.cycle === lv.cycles);
+            if (!slot) { reject(ctx, p, 'noEntry', c.levelId); return; }
+            if (!Number.isSafeInteger(c.filled) || c.filled < slot.filled || c.filled > slot.qty) {
+                reject(ctx, p, 'invalidQty', `${c.filled}`);
+                return;
+            }
+            if (c.filled > slot.filled) applyFill(ctx, p, lv, slot, `confirmed:${ctx.ts}`, c.filled - slot.filled, undefined);
+            if (isActive(slot)) slot.status = slot.filled >= slot.qty ? 'filled' : 'ended';
+            slot.detail = 'confirmedAcrossDay';
+            clearEntryPending(lv);
+            if (lv.phase === 'needsConfirm' && !lv.pending) lv.phase = 'working';
+            accept();
+            ensureExits(ctx, p, lv);
+            settle(ctx, p, lv);
+            refreshStopping(p);
+            return;
+        }
         case 'resolvePending': {
             const lv = p.levels.find(l => l.id === c.levelId);
+            if (lv && !lv.pending && externalEntryPending(lv)) { reject(ctx, p, 'confirmEntry', c.levelId); return; }
             if (!lv || lv.phase !== 'needsConfirm' || !lv.pending) { reject(ctx, p, 'notPending', c.levelId); return; }
+            // only the user's fill quantity settles it (confirmEntry)
+            if (unknownExternalEntry(lv.pending.reason)) { reject(ctx, p, 'confirmEntry', c.levelId); return; }
             const leg = lv.pending.leg;
             if (c.choice === 'keep') {
                 lv.pending = null;
@@ -893,8 +1389,11 @@ export function step(state: EngineState, event: ExecEvent): StepResult {
         case 'intentResult': onIntentResult(ctx, event); break;
         case 'order': onOrder(ctx, event); break;
         case 'deal': onDeal(ctx, event); break;
-        case 'reconcile': onReconcile(ctx, event); break;
+        // a listing requested in another epoch: its ids may name other
+        // orders now — it confirms nothing
+        case 'reconcile': if (event.epoch === undefined || event.epoch === (s.epochSeq ?? 0)) onReconcile(ctx, event); break;
         case 'restore': onRestore(ctx); break;
+        case 'epoch': onEpoch(ctx, event); break;
         case 'command': onCommand(ctx, event); break;
     }
     // time advanced on the live connection: cancel retries / timeouts run for

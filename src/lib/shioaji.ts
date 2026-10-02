@@ -778,7 +778,9 @@ function sendOrderMutation<T>(
     catch (error) { return Promise.reject(error); }
     const beforeDispatch = () => {
         assertAccountCurrent();
-        opts?.beforeDispatch?.();
+        const preparation = opts?.beforeDispatch?.();
+        if (preparation) return Promise.resolve(preparation).then(assertAccountCurrent);
+        assertAccountCurrent();
     };
     return apiPost<T>(path, body, { ...opts, beforeDispatch });
 }
@@ -816,7 +818,7 @@ export function placeStockOrder(
     contract: ContractBase,
     order: StockOrderReq,
     account?: Account,
-    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean; beforeDispatch?: () => void; onResponse?: (res: Response) => void },
+    opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean; beforeDispatch?: () => void | Promise<void>; onResponse?: (res: Response) => void },
 ) {
     // 零股不支援的組合（融資券／當沖／市價／IOC／超過 999 股）一律在送出前擋下（#204）
     const problem = stockOrderProblem(order);

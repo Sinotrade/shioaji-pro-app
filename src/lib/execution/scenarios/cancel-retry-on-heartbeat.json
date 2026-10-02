@@ -169,7 +169,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/g1/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "o1"
+        "orderId": "o1",
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0"
       }
     },
     {
@@ -278,7 +279,15 @@
         "orderId": "o1",
         "op": "Cancel",
         "failed": true,
-        "cancelKey": "simulation/local-a/g1/L1/entry/0/0/cancel/2"
+        "cancelKey": "simulation/local-a/g1/L1/entry/0/0/cancel/2",
+        "exchTs": 31.006,
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "notices": [
@@ -321,7 +330,15 @@
         "serverId": "local-a",
         "orderId": "o1",
         "op": "Cancel",
-        "failed": false
+        "failed": false,
+        "exchTs": 31.009,
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

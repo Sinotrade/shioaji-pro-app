@@ -1,0 +1,202 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "r38-external-wrong-action",
+  "covers": [
+    "strict-external-order-scope",
+    "terminal-order",
+    "reconnect"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1790730000000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790730000001,
+        "id": "create-a",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "b1",
+            "kind": "bracket",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Buy",
+                "qty": 2,
+                "entry": {
+                  "type": "external",
+                  "orderId": "o-entry",
+                  "seqno": "S1",
+                  "ordno": "O1"
+                },
+                "exit": {
+                  "type": "oco",
+                  "stop": {
+                    "price": 95,
+                    "condition": "below"
+                  },
+                  "take": {
+                    "price": 110,
+                    "condition": "above"
+                  },
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Cover"
+                  }
+                },
+                "phase": "working",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [
+                  {
+                    "key": "simulation/local-a/b1/L1/entry/0/ext",
+                    "role": "entry",
+                    "leg": "entry",
+                    "cycle": 0,
+                    "qty": 2,
+                    "status": "working",
+                    "orderId": "o-entry",
+                    "filled": 0,
+                    "fills": {},
+                    "fillTs": {},
+                    "detail": null,
+                    "acknowledged": false,
+                    "cancel": null
+                  }
+                ],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1790730000004,
+        "env": "simulation",
+        "serverId": "local-a",
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "o-entry",
+            "seqno": "S1",
+            "ordno": "O1",
+            "status": "working",
+            "qty": 2,
+            "deals": [],
+            "securityType": "FUT"
+          }
+        ],
+        "complete": false
+      }
+    },
+    {
+      "event": {
+        "type": "order",
+        "ts": 1790730000005,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "o-entry",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT",
+        "seqno": "S1",
+        "ordno": "O1",
+        "op": "Cancel",
+        "failed": false,
+        "cancelQty": 2,
+        "reportId": "foreign-cancel",
+        "exchTs": 1790730000.003,
+        "action": "Sell",
+        "originalQty": 2
+      },
+      "expect": {
+        "programs": {
+          "b1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "working",
+                    "filled": 0
+                  }
+                ],
+                "position": 0
+              }
+            }
+          }
+        },
+        "intents": []
+      }
+    }
+  ]
+}

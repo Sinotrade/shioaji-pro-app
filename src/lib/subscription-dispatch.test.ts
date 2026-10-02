@@ -8,6 +8,7 @@ const m = vi.hoisted(() => ({
     tick: undefined as ((tick: { code: string; close: number }) => void) | undefined,
 }));
 vi.mock('./runtime', () => ({ getApiBase: () => '', get isTauri() { return m.desktop; }, EXPECTED_SERVER_VERSION: '' }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => 'unowned') }));
 vi.mock('./account-store', () => ({
     getAccountState: () => ({ accounts: m.accounts }), accountFor: () => m.accounts[0],
     loadAccountsShared: async () => m.accounts,

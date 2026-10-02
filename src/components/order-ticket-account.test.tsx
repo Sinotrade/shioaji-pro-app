@@ -6,7 +6,7 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Account } from '../lib/types/portfolio';
 import type { ContractInfo } from '../lib/types/contract';
-const m = vi.hoisted(() => ({ selected: 'A', confirm: vi.fn(), future: vi.fn(), stock: vi.fn(), confirmOn: true, dropped: false }));
+const m = vi.hoisted(() => ({ selected: 'A', confirm: vi.fn(), future: vi.fn(), stock: vi.fn(), confirmOn: true, dropped: false, ensure: vi.fn(), admissionGate: vi.fn(), register: vi.fn(), invalidOwner: false, writes: 0 }));
 const h = vi.hoisted(() => {
     const accounts = ['A', 'B'].map(id => ({ account_type: 'F', broker_id: 'BR', account_id: `99887766${id}`, signed: true, person_id: '', username: '' }));
     return { accounts };
@@ -20,7 +20,7 @@ vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: m.confirm, account
 vi.mock('../lib/risk', () => ({ checkOrderAllowed: () => null, getRiskSettings: () => ({ confirmManualOrders: m.confirmOn }) }));
 vi.mock('../lib/shioaji', () => ({ fetchInfo: () => new Promise(() => undefined), placeFuturesOrder: m.future, placeStockOrder: m.stock }));
 vi.mock('../lib/trade', () => ({ notify: vi.fn() }));
-vi.mock('../lib/bracket', () => ({ ensureBracketHost: vi.fn(), registerBracket: vi.fn(), registrationFailureText: String, validateBracketRequest: () => null }));
+vi.mock('../lib/bracket', () => ({ verifyBracketProtectionReceipt: async () => undefined, assertBracketAdmission: m.admissionGate, ensureBracketHost: m.ensure, registerBracket: m.register, registrationFailureText: String, validateBracketRequest: () => null }));
 vi.mock('./bracket-status', () => ({ BracketStatusList: () => null }));
 vi.mock('../lib/protection-env', () => ({ currentProtectionEnv: () => 'sim' }));
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => ({ tick: { close: '100' } }), useTradingLive: () => true }));
@@ -40,7 +40,10 @@ beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
-    m.selected = 'A'; m.confirmOn = true; m.dropped = false;
+    m.selected = 'A'; m.confirmOn = true; m.dropped = false; m.invalidOwner = false; m.writes = 0;
+    m.ensure.mockResolvedValue(r33Admission);
+    m.admissionGate.mockImplementation(() => { if (m.invalidOwner) throw new Error('保護執行環境已變更'); });
+    m.register.mockResolvedValue({ id: 'fixture-protection' });
     forgetServerInfo('');
     h.accounts.forEach(a => { a.signed = true; });
     m.confirm.mockResolvedValue(true);
@@ -132,7 +135,7 @@ it.each(['confirmation', 'first order', 'dispatch', 'unmount', 'switch back'])(
         else m.future.mockImplementationOnce(async (_c, _o, _a, opts) => {
             if (phase !== 'dispatch') dispatched();
             await wait;
-            if (phase === 'dispatch') { opts.beforeDispatch(); dispatched(); }
+            if (phase === 'dispatch') { await opts.beforeDispatch(); dispatched(); }
             return result;
         });
         const props = { contract, onPlaced: vi.fn() };
@@ -152,3 +155,41 @@ it.each(['confirmation', 'first order', 'dispatch', 'unmount', 'switch back'])(
         expect(dispatched).toHaveBeenCalledTimes(phase === 'confirmation' || phase === 'dispatch' ? 0 : 1);
     },
 );
+
+const r33Admission = { owner: 'window' as const, env: 'sim', orderLot: 'Common' as const, contextGeneration: 1, ownerGeneration: 1, hostId: 'fixture-host' };
+async function r33ProtectedTicket() {
+    await act(async () => { view = create(createElement(OrderTicket, { contract: { ...contract, code: 'TXF' }, onPlaced: vi.fn() })); });
+    const protection = view.root.findAllByType('button').find(b => text(b) === '停損停利保護')!;
+    await act(async () => protection.props.onClick());
+    const stop = view.root.find(n => n.type === 'input' && n.props.placeholder === '停損價');
+    await act(async () => stop.props.onChange({ target: { value: '95' } }));
+    await act(async () => { await exec().props.onClick(); });
+    await act(async () => { await exec().props.onClick(); });
+}
+it('r33 ticket rejects owner changes during confirmation before the entry call', async () => {
+    m.confirm.mockImplementationOnce(async () => { m.invalidOwner = true; return true; });
+    await r33ProtectedTicket();
+    expect(m.future).not.toHaveBeenCalled();expect(m.register).not.toHaveBeenCalled();
+    expect(feedback()).toContain('保護執行環境已變更');
+});
+it('r33 ticket passes its admission to the actual delayed dispatch gate', async () => {
+    m.future.mockImplementationOnce(async (_contract, _order, _account, dispatch) => {
+        m.invalidOwner = true;await dispatch.beforeDispatch();m.writes++;
+        return { status: { status: 'Submitted' }, order: { id: 'never', seqno: 'never' } };
+    });
+    await r33ProtectedTicket();
+    expect(m.writes).toBe(0);expect(m.register).not.toHaveBeenCalled();
+});
+it('r33 ticket post-entry registration receives exactly the original admission', async () => {
+    m.future.mockImplementationOnce(async (_contract, _order, _account, dispatch) => {
+        await dispatch.beforeDispatch();m.writes++;m.invalidOwner = true;
+        return { status: { status: 'Submitted' }, order: { id: 'fixture-entry', seqno: 'fixture-seq', ordno: 'fixture-ord' } };
+    });
+    await r33ProtectedTicket();
+    expect(m.writes).toBe(1);expect(m.register.mock.calls[0]![1]).toBe(r33Admission);
+    expect(m.register.mock.calls[0]![0]).toMatchObject({ orderId: 'fixture-entry', seqno: 'fixture-seq', ordno: 'fixture-ord', env: 'sim' });
+});
+it('r33 ticket never passes the financial confirmation rejection', async () => {
+    m.confirm.mockResolvedValueOnce(false);await r33ProtectedTicket();
+    expect(m.future).not.toHaveBeenCalled();expect(m.register).not.toHaveBeenCalled();
+});

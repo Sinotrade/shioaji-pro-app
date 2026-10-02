@@ -1,0 +1,270 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "terminal-entry-legacy",
+  "description": "r35 strict terminal fill evidence does not restore active permissions",
+  "steps": [
+    {
+      "event": {
+        "ts": 1790906400001,
+        "type": "connection",
+        "env": "simulation",
+        "serverId": "mock-sidecar",
+        "live": true
+      }
+    },
+    {
+      "event": {
+        "ts": 1790906400002,
+        "type": "command",
+        "id": "create",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "brk:late-entry",
+            "kind": "bracket",
+            "binding": {
+              "env": "simulation",
+              "serverId": "mock-sidecar",
+              "account": {
+                "accountType": "F",
+                "brokerId": "mock",
+                "accountId": "synthetic"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFJ6",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "phase": "working",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [
+                  {
+                    "key": "brk:late-entry/L1/entry/0/ext",
+                    "role": "entry",
+                    "leg": "entry",
+                    "cycle": 0,
+                    "qty": 2,
+                    "status": "ended",
+                    "orderId": "42",
+                    "filled": 0,
+                    "fills": {},
+                    "fillTs": {},
+                    "detail": null,
+                    "acknowledged": false,
+                    "cancel": null
+                  }
+                ],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null,
+                "side": "Buy",
+                "qty": 2,
+                "entry": {
+                  "type": "external",
+                  "orderId": "42",
+                  "seqno": "000042",
+                  "ordno": "a42"
+                },
+                "exit": {
+                  "type": "oco",
+                  "stop": {
+                    "price": 99,
+                    "condition": "below"
+                  },
+                  "take": {
+                    "price": 110,
+                    "condition": "above"
+                  },
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Cover"
+                  }
+                }
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 1790906400000,
+            "updatedAt": 1790906400000
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "ts": 1790906400003,
+        "type": "epoch",
+        "env": "simulation",
+        "serverId": "mock-sidecar"
+      }
+    },
+    {
+      "event": {
+        "ts": 1790906400004,
+        "type": "heartbeat",
+        "env": "simulation",
+        "serverId": "mock-sidecar"
+      }
+    },
+    {
+      "event": {
+        "ts": 1790906400005,
+        "type": "command",
+        "id": "stop",
+        "command": {
+          "op": "stop",
+          "programId": "brk:late-entry",
+          "version": 1
+        }
+      }
+    },
+    {
+      "event": {
+        "ts": 1790906400006,
+        "type": "connection",
+        "env": "simulation",
+        "serverId": "mock-sidecar",
+        "live": false
+      }
+    },
+    {
+      "event": {
+        "ts": 1790906400007,
+        "type": "connection",
+        "env": "simulation",
+        "serverId": "mock-sidecar",
+        "live": true
+      }
+    },
+    {
+      "event": {
+        "ts": 1790906400008,
+        "type": "epoch",
+        "env": "simulation",
+        "serverId": "mock-sidecar"
+      }
+    },
+    {
+      "event": {
+        "ts": 1790906400009,
+        "type": "reconcile",
+        "env": "simulation",
+        "serverId": "mock-sidecar",
+        "account": {
+          "accountType": "F",
+          "brokerId": "mock",
+          "accountId": "synthetic"
+        },
+        "complete": false,
+        "orders": [
+          {
+            "intentKey": "brk:late-entry/L1/entry/0/ext",
+            "orderId": "42",
+            "seqno": "000042",
+            "ordno": "a42",
+            "securityType": "FUT",
+            "qty": 2,
+            "status": "ended",
+            "cancelled": 1,
+            "deals": [
+              {
+                "seq": "late1",
+                "qty": 1,
+                "price": 100,
+                "ts": 1790906400
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "programs": {
+          "brk:late-entry": {
+            "levels": {
+              "L1": {
+                "entryFilled": 0,
+                "position": 0,
+                "unprotected": 0,
+                "phase": "needsConfirm",
+                "entryPending": {
+                  "reason": "unknownEntryAfterReconnect"
+                }
+              }
+            },
+            "status": "stopping"
+          }
+        },
+        "intents": []
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790906400010,
+        "id": "reject-risk-remove",
+        "command": {
+          "op": "remove",
+          "programId": "brk:late-entry",
+          "version": 2
+        }
+      },
+      "expect": {
+        "notices": [
+          "rejected.hasOrdersOrPosition"
+        ],
+        "programs": {
+          "brk:late-entry": {
+            "levels": {
+              "L1": {
+                "entryFilled": 0,
+                "position": 0,
+                "unprotected": 0,
+                "phase": "needsConfirm",
+                "entryPending": {
+                  "reason": "unknownEntryAfterReconnect"
+                }
+              }
+            },
+            "status": "stopping"
+          }
+        }
+      }
+    }
+  ]
+}

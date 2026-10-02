@@ -1,7 +1,7 @@
 {
   "schema": "execution-conformance-v1",
   "name": "bracket-report-mismatch",
-  "description": "Deals of another account are ignored; wrong code / side / missing account raise an issue and are not counted.",
+  "description": "Deals of another account are ignored; a deal of another contract is another order (an id is only an identity within account + contract: stock and futures sequences can repeat an id) and is never applied; wrong side / missing account raise an issue and are not counted.",
   "covers": [
     "bracket",
     "isolation"
@@ -53,7 +53,8 @@
                 "qty": 2,
                 "entry": {
                   "type": "external",
-                  "orderId": "o-entry"
+                  "orderId": "o-entry",
+                  "seqno": "broker-o-entry"
                 },
                 "exit": {
                   "type": "oco",
@@ -129,6 +130,30 @@
     },
     {
       "event": {
+        "type": "reconcile",
+        "ts": 1001,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "o-entry",
+            "status": "working",
+            "qty": 2,
+            "deals": [],
+            "seqno": "broker-o-entry"
+          }
+        ],
+        "complete": false
+      }
+    },
+    {
+      "event": {
         "type": "deal",
         "ts": 1002,
         "env": "simulation",
@@ -143,7 +168,10 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.002,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {
@@ -173,12 +201,12 @@
         "code": "MXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.003,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
-        "notices": [
-          "issue.reportMismatch"
-        ],
         "programs": {
           "b1": {
             "levels": {
@@ -188,7 +216,8 @@
             }
           }
         }
-      }
+      },
+      "note": "#201 round 22: another contract with the same id is another order — buffered, never applied"
     },
     {
       "event": {
@@ -206,7 +235,10 @@
         "code": "TXFJ6",
         "action": "Sell",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.004,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
         "notices": [
@@ -227,12 +259,12 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.005,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
-        "notices": [
-          "issue.reportMismatch"
-        ],
         "programs": {
           "b1": {
             "levels": {
@@ -260,7 +292,10 @@
         "code": "TXFJ6",
         "action": "Buy",
         "qty": 1,
-        "price": 100
+        "price": 100,
+        "fillTs": 1.006,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

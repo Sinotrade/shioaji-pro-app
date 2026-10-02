@@ -106,7 +106,7 @@ async function withWebviewInfoSlot<T>(origin: string, signal: AbortSignal | unde
     }
 }
 
-async function doFetch(url: string, init?: RequestInit, beforeDispatch?: () => void): Promise<Response> {
+async function doFetch(url: string, init?: RequestInit, beforeDispatch?: () => void | Promise<void>): Promise<Response> {
     if (isTauri) {
         // Info is read-only and frequently requested in parallel by watchlists.
         // The WebView can reach the loopback sidecar directly, avoiding the
@@ -139,10 +139,14 @@ async function doFetch(url: string, init?: RequestInit, beforeDispatch?: () => v
             }
         }
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-        beforeDispatch?.();
+        const preparation = beforeDispatch?.();
+        if (preparation) await preparation;
+        if (init?.signal?.aborted) throw abortReason(init.signal);
         return tauriFetch(url, init);
     }
-    beforeDispatch?.();
+    const preparation = beforeDispatch?.();
+    if (preparation) await preparation;
+    if (init?.signal?.aborted) throw abortReason(init.signal);
     return fetch(url, init);
 }
 
@@ -208,7 +212,7 @@ export async function apiPost<T>(
     body: unknown,
     opts?: {
         timeoutMs?: number; agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean;
-        beforeDispatch?: () => void;
+        beforeDispatch?: () => void | Promise<void>;
         // 讀取回應標頭（例如 X-Shioaji-Instance，SDK 1.7.8+）；在解析 body 前呼叫
         onResponse?: (res: Response) => void;
     },
@@ -216,13 +220,28 @@ export async function apiPost<T>(
     // Trade reports are account-scoped; market-data subscriptions are not.
     // Loading the native transport (or serializing the body) can outlive a
     // mode change, even when the final mode is the same as the initial one.
+    const mutation = AGENT_HARNESS_MUTATIONS.has(path);
+    const mutationBase = base();
+    const mutationVersion = getServerModeVersion();
+    const assertMutationCurrent = () => {
+        if (mutation && (base() !== mutationBase || getServerModeVersion() !== mutationVersion
+            || !getTradingMirrorFresh() || (isTauri && !serverIdentityVerified()))) {
+            throw Object.assign(new Error('交易環境已切換或主視窗狀態已變更，委託尚未送出'), { mutationNotStarted: true, tradingGateRejected: true });
+        }
+    };
     const subscriptionVersion = path === '/api/v1/auth/subscribe_trade' ? getServerModeVersion() : undefined;
-    const beforeDispatch = () => {
+    const assertSubscriptionCurrent = () => {
         if (subscriptionVersion !== undefined && getServerModeVersion() !== subscriptionVersion) {
             throw Object.assign(new Error('訂閱期間伺服器模式已變更，未送出請求；請重新訂閱'),
                 { subscriptionNotStarted: true as const });
         }
-        opts?.beforeDispatch?.();
+    };
+    const beforeDispatch = () => {
+        assertSubscriptionCurrent();
+        const preparation = opts?.beforeDispatch?.();
+        const afterPreparation = () => { assertMutationCurrent(); assertSubscriptionCurrent(); };
+        if (preparation) return Promise.resolve(preparation).then(afterPreparation);
+        afterPreparation();
     };
     if (isTauri && AGENT_HARNESS_MUTATIONS.has(path) && !serverIdentityVerified()) {
         throw Object.assign(
@@ -254,7 +273,8 @@ export async function apiPost<T>(
         const bodyText = JSON.stringify(body);
         const { invoke } = await import('@tauri-apps/api/core');
         let proxied: { status: number; body: string; headers?: Record<string, string> };
-        beforeDispatch();
+        const preparation = beforeDispatch();
+        if (preparation) await preparation;
         try {
             proxied = await invoke<typeof proxied>(
                 'agent_harness_post',

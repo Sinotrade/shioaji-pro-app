@@ -61,6 +61,9 @@ async function boot() {
         if (typeof a === 'function' || !(a as { ifAvailable?: boolean }).ifAvailable) return new Promise(() => undefined);
         const r = cb({}); return Promise.resolve(r instanceof Promise ? undefined : r); } } });
     engine = await import('./trigger-engine');
+    // This unit harness supplies a bracket owner; the production runtime
+    // performs its actual retirement/identity fence in the integrated suite.
+    engine.setBracketMutationGuard(() => () => undefined);
     engine.startTriggerEngine();
     await flush();
     // the first tick after start decides (#144): not past → normal firing

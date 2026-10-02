@@ -73,6 +73,7 @@ import {
 import { CUSTOM_BASES } from '../lib/custom-theme';
 import { CustomThemeEditor } from './custom-theme-editor';
 import { ExternalLink } from './external-link';
+import { NativeExecutionSetting } from './native-execution-setting';
 import { Orb } from './orb';
 import * as hud from './hud-header.css';
 import * as panel from './panel.css';
@@ -484,6 +485,7 @@ function RiskSection() {
                 圖表點價、平倉與鋪單都會先跳委託確認；停損/停利等
                 自動觸發單與 Agent 下單不經過此確認。
             </span>
+            {isTauri && <NativeExecutionSetting />}
             <span className={hud.settingLabel}>圖表帶價 Chart Price</span>
             <div className={hud.switchRow}>
                 <span

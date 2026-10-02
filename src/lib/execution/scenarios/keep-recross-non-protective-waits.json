@@ -1,0 +1,252 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "keep-recross-non-protective-waits",
+  "description": "#201 wiring review round 18: the protective reading (a burst holding both the re-arm side and the trigger re-fires at once) is for stops only. A non-protective leg — here a trigger that buys below (a take / entry) — re-arms on a 90 → 110 burst but does not fire until a later tick crosses.",
+  "covers": [
+    "#201",
+    "#144",
+    "tick-coalescing"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1001,
+        "id": "c1001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "t1",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Buy",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 100,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Auto"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "tick",
+        "ts": 1002,
+        "code": "TXFR1",
+        "price": 105
+      }
+    },
+    {
+      "restart": {
+        "ts": 2000
+      }
+    },
+    {
+      "event": {
+        "type": "connection",
+        "ts": 2001,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "tick",
+        "ts": 2002,
+        "code": "TXFR1",
+        "price": 99
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "phase": "needsConfirm"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 2003,
+        "id": "c2003",
+        "command": {
+          "op": "resolvePending",
+          "programId": "t1",
+          "version": 1,
+          "levelId": "L1",
+          "choice": "keep"
+        }
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "recross": [
+                  "entry"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "note": "a burst still on the trigger side does not re-arm",
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "tick",
+        "ts": 2004,
+        "code": "TXFR1",
+        "price": 99,
+        "low": 98,
+        "high": 99.5
+      },
+      "expect": {
+        "intents": [],
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "recross": [
+                  "entry"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "note": "one burst 90 → 110: re-armed, but a non-protective leg does not fire inside the ambiguous range",
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "tick",
+        "ts": 2005,
+        "code": "TXFR1",
+        "price": 110,
+        "low": 90,
+        "high": 110
+      },
+      "expect": {
+        "intents": [],
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "recross": [],
+                "phase": "idle"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "note": "a later tick crossing fires",
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "tick",
+        "ts": 2006,
+        "code": "TXFR1",
+        "price": 99
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/t1/L1/entry/0/0"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -168,7 +168,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/g1/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "o1"
+        "orderId": "o1",
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0"
       }
     },
     {
@@ -261,7 +262,15 @@
         "serverId": "local-a",
         "orderId": "o1",
         "op": "Cancel",
-        "failed": false
+        "failed": false,
+        "exchTs": 31.005,
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

@@ -120,7 +120,7 @@ describe('bracket entry accumulation on real 1.7.6 simulation wire (de-identifie
     it('merges fills from a cache-only Trade lookup with SSE fills without double counting', () => {
         const sse = feed(plan(), [reports[0]!]);
         const trade = { contract: { code: 'TXFJ6', security_type: 'FUT', exchange: 'TAIFEX', target_code: null },
-            order: { id: 'fixture-f1', seqno: 'fixture-f1', ordno: 'o', action: 'Buy', price: 0, quantity: 2 },
+            order: { account: F, id: 'fixture-f1', seqno: 'fixture-f1', ordno: 'o', action: 'Buy', price: 0, quantity: 2 },
             status: { id: 'fixture-f1', status: 'Filled', status_code: '00', order_quantity: 2, deal_quantity: 2, cancel_quantity: 0,
                 modified_price: 0, msg: '', deals: [{ seq: '000001', price: 1, quantity: 1, ts: 1 }, { seq: '000002', price: 1, quantity: 1, ts: 2 }] } } as unknown as Trade;
         const merged = applyEntryTrade(sse, trade, 2);
@@ -172,7 +172,7 @@ describe('exit outcome and unprotected quantity', () => {
 describe('one identity per fill', () => {
     const cacheRow = (deals: { seq: string; quantity: number; ts: number }[]) => ({
         contract: { code: 'TXFJ6', security_type: 'FUT', exchange: 'TAIFEX', target_code: null },
-        order: { id: 'fixture-f1', seqno: 'fixture-f1', ordno: 'o', action: 'Buy', price: 0, quantity: 2 },
+        order: { account: F, id: 'fixture-f1', seqno: 'fixture-f1', ordno: 'o', action: 'Buy', price: 0, quantity: 2 },
         status: { id: 'fixture-f1', status: 'PartFilled', status_code: '00', order_quantity: 2,
             deal_quantity: deals.reduce((a, d) => a + d.quantity, 0), cancel_quantity: 0, modified_price: 0, msg: '',
             deals: deals.map(d => ({ ...d, price: 1 })) } }) as unknown as Trade;

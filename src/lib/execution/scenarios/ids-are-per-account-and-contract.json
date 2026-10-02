@@ -1,0 +1,373 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "ids-are-per-account-and-contract",
+  "description": "#201 round 22: stock and futures order ids come from independent sequences hashed the same way, so the same id names two orders; a report only matches its own account and contract. Reports also carry the security type; production evidence: stock and futures seqno counters are independent with overlapping ranges.",
+  "covers": [
+    "#201",
+    "trade-id-epoch"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1790730000000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790730000001,
+        "id": "c1790730000001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "f1",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Sell",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 100,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Auto"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790730000002,
+        "id": "c1790730000002",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "s1",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "S",
+                "brokerId": "9A95",
+                "accountId": "0001234"
+              },
+              "contract": {
+                "market": "stock",
+                "quoteCode": "2330",
+                "orderCode": "2330",
+                "securityType": "STK"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Sell",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 600,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "ROD"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790730000003,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 105
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790730000004,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 99
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/f1/L1/entry/0/0"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790730000005,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "2330",
+        "price": 610
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790730000006,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "2330",
+        "price": 590
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/s1/L1/entry/0/0"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "intentResult",
+        "ts": 1790730000007,
+        "env": "simulation",
+        "serverId": "local-a",
+        "key": "simulation/local-a/f1/L1/entry/0/0",
+        "outcome": "accepted",
+        "orderId": "3f2a9c11",
+        "seqno": "test-simulation/local-a/f1/L1/entry/0/0"
+      }
+    },
+    {
+      "event": {
+        "type": "intentResult",
+        "ts": 1790730000008,
+        "env": "simulation",
+        "serverId": "local-a",
+        "key": "simulation/local-a/s1/L1/entry/0/0",
+        "outcome": "accepted",
+        "orderId": "3f2a9c11",
+        "seqno": "test-simulation/local-a/s1/L1/entry/0/0"
+      }
+    },
+    {
+      "event": {
+        "type": "deal",
+        "ts": 1790730000009,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "3f2a9c11",
+        "eventId": null,
+        "seq": "000001",
+        "account": {
+          "brokerId": "9A95",
+          "accountId": "0001234"
+        },
+        "code": "2330",
+        "action": "Sell",
+        "qty": 1,
+        "price": 100,
+        "securityType": "STK",
+        "fillTs": 1790730000.009,
+        "seqno": "test-simulation/local-a/s1/L1/entry/0/0"
+      },
+      "expect": {
+        "programs": {
+          "s1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "filled",
+                    "filled": 1
+                  }
+                ]
+              }
+            }
+          },
+          "f1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "working",
+                    "filled": 0
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "deal",
+        "ts": 1790730000010,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "3f2a9c11",
+        "eventId": null,
+        "seq": "000001",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "action": "Sell",
+        "qty": 1,
+        "price": 100,
+        "securityType": "FUT",
+        "fillTs": 1790730000.01,
+        "seqno": "test-simulation/local-a/f1/L1/entry/0/0"
+      },
+      "expect": {
+        "programs": {
+          "f1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "filled",
+                    "filled": 1
+                  }
+                ]
+              }
+            }
+          },
+          "s1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "filled",
+                    "filled": 1
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

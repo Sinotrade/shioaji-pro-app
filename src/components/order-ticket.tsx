@@ -16,6 +16,9 @@ import {
 } from '../lib/allocation';
 import {
     ensureBracketHost,
+    assertBracketAdmission,
+    verifyBracketProtectionReceipt,
+    type BracketAdmission,
     registerBracket,
     registrationFailureText,
     validateBracketRequest,
@@ -271,6 +274,7 @@ export function OrderTicket({
             const bracketTake = bracketOn && takePrice.trim() !== '' ? tp : null;
             let entryAccount: Account | undefined;
             let bracketEnv: string | null = null;
+            let bracketAdmission: BracketAdmission | undefined;
             if (bracketOn) {
                 // 零股括號單以零股市場判斷方向：沒有零股行情時不能確認
                 if (intradayOdd && oddReference === null) {
@@ -298,7 +302,13 @@ export function OrderTicket({
                 if (!bracketEnv) {
                     throw new Error('伺服器模式（模擬／正式）尚未確認，括號單未送出');
                 }
-                await ensureBracketHost();
+                bracketAdmission = await ensureBracketHost({ orderLot: isFutures ? undefined : orderLot, securityType: contract.security_type as 'STK' | 'FUT' | 'OPT',
+                    entry: { env: bracketEnv, account: { account_type: isFutures ? 'F' : 'S', broker_id: entryAccount.broker_id, account_id: entryAccount.account_id },
+                        quoteCode: contract.code, orderCode: contract.target_code || contract.code, securityType: contract.security_type as 'STK' | 'FUT' | 'OPT',
+                        exchange: contract.exchange ?? '', action, quantity: qty, orderLot: isFutures ? undefined : orderLot,
+                        stopPrice: bracketStop, takePrice: bracketTake,
+                        entryOrder: { action, price: p, quantity: qty, price_type: priceType, order_type: orderType,
+                            ...(isFutures ? { octype } : { order_lot: orderLot, order_cond: orderCond, daytrade_short: daytradeShort && action === 'Sell' }) } } });
             }
             // 送單帳戶在確認前固定（#139）：確認視窗開著時，本視窗其他面板
             // 仍可改選帳戶 — 送出時不再重新解析，改為比對後中止
@@ -331,11 +341,14 @@ export function OrderTicket({
             if (!isSelectedAccountUnchanged(orderAccount)) {
                 throw new Error(ACCOUNT_CHANGED_MESSAGE);
             }
-            const dispatch = { beforeDispatch: () => {
+            const dispatch = { beforeDispatch: async () => {
+                if (bracketAdmission) {
+                    try { await verifyBracketProtectionReceipt(bracketAdmission); assertBracketAdmission(bracketAdmission); } catch (e) { throw Object.assign(e instanceof Error ? e : new Error(String(e)), { tradingGateRejected: true }); }
+                }
                 if (!isContextCurrent()) throw Object.assign(new Error(ORDER_CONTEXT_CHANGED_MESSAGE), { tradingGateRejected: true });
                 if (!isSelectedAccountUnchanged(orderAccount)) throw Object.assign(new Error(ACCOUNT_CHANGED_MESSAGE), { tradingGateRejected: true });
             } };
-            dispatch.beforeDispatch();
+            await dispatch.beforeDispatch();
             const trade = isFutures
                 ? await placeFuturesOrder(contract, {
                       action,
@@ -376,6 +389,7 @@ export function OrderTicket({
                         },
                         orderId: trade.order.id,
                         seqno: trade.order.seqno,
+                        ordno: trade.order.ordno,
                         quoteCode: contract.code,
                         orderCode:
                             trade.contract?.target_code ||
@@ -392,7 +406,7 @@ export function OrderTicket({
                         orderLot: isFutures ? undefined : orderLot,
                         stopPrice: bracketStop,
                         takePrice: bracketTake,
-                    });
+                    }, bracketAdmission);
                 } catch (err) {
                     // 進場單已送出：保護登記結果必須明示，不自動重送任何單，
                     // 也不建議另掛停損（登記可能晚到生效 → 重複出場）

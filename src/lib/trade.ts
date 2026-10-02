@@ -148,6 +148,25 @@ async function confirmManualOrder(
     if (!approved) throw new OrderConfirmCancelled();
 }
 
+/** Shared manual confirmation/risk preflight. Native pending currently
+ * remains fail-closed after this check until its host can prove a current
+ * send-time risk ACK; this preflight alone never authorizes an order. */
+export async function authorizeManualPendingOrder(contract: ContractBase, action: Action, quantity: number,
+    account: Account, orderLot?: StockOrderLot, livePriceCode?: string): Promise<void> {
+    const base = getApiBase();
+    assertTradingLive();
+    const blocked = checkOrderAllowed(quantity, orderLot);
+    if (blocked) throw mutationNotStartedError(blocked);
+    await confirmManualOrder(contract, action, null, quantity, orderLot, undefined, account, livePriceCode);
+    assertTradingLive();
+    if (base !== getApiBase() || !getAccountState().accounts.some(a => canTrade(a)
+        && a.account_type === account.account_type && a.account_id === account.account_id && a.broker_id === account.broker_id)) {
+        throw mutationNotStartedError('確認期間商品環境或帳戶已變更，未送出');
+    }
+    const changed = checkOrderAllowed(quantity, orderLot);
+    if (changed) throw mutationNotStartedError(changed);
+}
+
 export async function placeQuickOrder(
     contract: ContractBase,
     action: Action,
