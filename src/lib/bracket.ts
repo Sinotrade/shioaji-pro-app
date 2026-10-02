@@ -31,6 +31,7 @@ import {
     applyEntryTrade,
     bracketPhase,
     isLive,
+    needsAttention,
     observesEntryEvidence,
     matchDeal,
     protectionQuantity,
@@ -83,6 +84,8 @@ import {
     getExits,
     onBecomeExecutor,
     onExitUpdate,
+    setBracketMutationGuard,
+    type BracketMutationSource,
     type ExitRecord,
 } from './trigger-engine';
 import type { Action, FuturesOCType, StockOrderCond, StockOrderLot, TradeCacheHealth } from './types/order';
@@ -230,6 +233,38 @@ function restoringDo(on: boolean, fn: () => void) {
     const prev = restoring;
     restoring = on || prev;
     try { fn(); } finally { restoring = prev; }
+}
+
+/** Observation and mutation permission are separate. Never trust a captured plan
+ * object after an await: update(), retirement and rebind replace it immutably. */
+function capturePlanMutation(plan: BracketPlan): () => BracketPlan {
+    const owner = hostId;
+    const context = currentReportContext();
+    const evidence = { ...plan, account: { ...plan.account } };
+    const assertCurrent = () => {
+        const current = plans.find(p => p.id === evidence.id);
+        if (!executing || !isExecutor() || owner !== hostId || !current || current.observationOnly || current.dismissed
+            || current.registrationPending || current.group !== evidence.group || current.env !== evidence.env
+            || current.env !== currentProtectionEnv() || !context || context !== currentReportContext()
+            || current.reportContext !== context || !sameEntryScope(current, evidence) || current.exchange !== evidence.exchange
+            || externalIdentity({ ...current, confirmed: false }, { ...evidence, confirmed: false }) !== 'same') {
+            throw Object.assign(new Error('保護已關閉或執行身分已變更，此紀錄僅供觀察；未送出委託，請核對委託與持倉'), { mutationNotStarted: true });
+        }
+        return current;
+    };
+    assertCurrent();
+    return assertCurrent;
+}
+function captureTriggerMutation(source: BracketMutationSource): () => void {
+    const plan = plans.find(p => p.id === source.bracketId);
+    if (!plan || source.group !== plan.group || source.env !== plan.env || !source.account
+        || accountRefKey(source.account) !== accountRefKey(plan.account) || source.orderCode !== plan.orderCode
+        || source.action !== (plan.action === 'Buy' ? 'Sell' : 'Buy')
+        || (source.orderLot ?? 'Common') !== (plan.orderLot ?? 'Common')) {
+        throw Object.assign(new Error('括號單出場身分尚未確認，未送出委託'), { mutationNotStarted: true });
+    }
+    const assertCurrent = capturePlanMutation(plan);
+    return () => { assertCurrent(); };
 }
 
 function arm(p: BracketPlan) {
@@ -509,7 +544,10 @@ function handle(cmd: Command): unknown {
             if (!p) { dropBracketTriggers(cmd.id); return true; } // orphaned protection
             // Publish durable retirement before revoking protection or acknowledging Close.
             // A later own fill remains observable without restoring authority.
-            const retired = { ...p, observationOnly: true, dismissed: unprotectedQuantity(p) === 0, updatedAt: Date.now() };
+            const retired = { ...p, observationOnly: true, updatedAt: Date.now() };
+            // Retirement itself removes protection from known fills. Evaluate the
+            // retained state, not its previously protected predecessor.
+            retired.dismissed = !needsAttention(retired);
             const retained = plans.map(x => x === p ? retired : x);
             const encoded = JSON.stringify(retained);
             if (!globalThis.localStorage) throw new Error('觀察紀錄無法保存，尚未關閉保護');
@@ -802,6 +840,7 @@ export function bracketSnapshotStale(now = Date.now()): boolean {
 /** User-initiated cancel of an entry that is still working after its exit
  * fired. One request, no retry; the Cancel report closes the entry. */
 export function cancelRemainingEntry(plan: BracketPlan) {
+    if (plan.observationOnly) return Promise.reject(new Error('保護已關閉，此紀錄僅供觀察，不會送出刪單；請核對委託與持倉'));
     // native: stopping the program cancels its working entry (the exit has
     // already fired when this is offered)
     if (isNativeBracket(plan)) return sendNativeCommand({ op: 'stop', programId: plan.native.programId, version: plan.native.version });
@@ -814,6 +853,7 @@ export function cancelRemainingEntry(plan: BracketPlan) {
 async function cancelEntry(id: string): Promise<'cancelled' | 'unconfirmed'> {
     const plan = plans.find(p => p.id === id);
     if (!plan) throw new Error('找不到此括號單');
+    const assertCurrent = capturePlanMutation(plan);
     if (plan.entryCancel) throw new Error(plan.entryCancel === 'sending' ? '刪單處理中' : '刪單待確認，請先對帳，勿重送');
     if (workingEntryAfterExit(plan) <= 0) throw new Error('進場單已無剩餘委託');
     if (plan.env !== currentProtectionEnv()) throw new Error('此括號單屬於其他伺服器或模式，未送出刪單');
@@ -823,13 +863,15 @@ async function cancelEntry(id: string): Promise<'cancelled' | 'unconfirmed'> {
         const context = currentReportContext();
         const rows = await query.read(plan.account.account_type, plan.account, current => fetchTrades(plan.account.account_type, current, { refresh: !tradeCacheContinuous() }));
         query.assertCurrent();
-        const candidates = rows.filter(t => entryTradeIdentity(t, plan) === 'same');
+        const current = assertCurrent();
+        const candidates = rows.filter(t => entryTradeIdentity(t, current) === 'same');
         if (!context || context !== currentReportContext() || candidates.length !== 1) {
             throw Object.assign(new Error('進場委託身分或連線尚未確認，未送出刪單；請先對帳'), { mutationNotStarted: true });
         }
         const row = candidates[0]!;
         const trade = await query.read(plan.account.account_type, plan.account, current => cancelVerifiedOrder(row, current, {
             beforeSend: () => {
+                assertCurrent();
                 query.assertCurrent();
                 if (context !== currentReportContext()) throw new Error('刪單前連線已變更，未送出刪單');
             },
@@ -907,6 +949,7 @@ export function startBracketRuntime() {
 function run() {
     plans = loadPlans();
     executing = true;
+    setBracketMutationGuard(captureTriggerMutation);
     decideRole();
     const base = getApiBase();
     const now = Date.now();

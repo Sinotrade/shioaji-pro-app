@@ -21,6 +21,7 @@ import {
 import {
     bracketPhase,
     isLive,
+    needsAttention,
     protectionQuantity,
     unprotectedQuantity,
     workingEntryAfterExit,
@@ -288,7 +289,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                         刪單待確認 · 對帳
                     </button>
                 )}
-                {workingEntry > 0 && plan.entryCancel !== 'unconfirmed' && (
+                {!plan.observationOnly && workingEntry > 0 && plan.entryCancel !== 'unconfirmed' && (
                     <button
                         className={styles.button}
                         disabled={busy || plan.entryCancel === 'sending'}
@@ -334,7 +335,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
 }
 
 export function BracketStatusList({ code }: { code: string }) {
-    const plans = useBrackets().filter(p => !p.dismissed && (p.quoteCode === code || p.orderCode === code));
+    const plans = useBrackets().filter(p => (!p.dismissed || (p.observationOnly && needsAttention(p))) && (p.quoteCode === code || p.orderCode === code));
     useServerInfo(); // re-render when the server mode becomes known / changes
     const feed = useTriggerFeed();
     // re-evaluate mirror staleness without any broker request

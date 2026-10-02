@@ -144,6 +144,19 @@ export interface ExitRecord extends BracketExit {
 
 export type NewTrigger = Omit<TriggerOrder, 'id'>;
 
+/** Runtime evidence is captured once; permission is read again at actual dispatch.
+ * The bracket owner installs this narrow resolver without a circular import. */
+export type BracketMutationSource = Pick<TriggerOrder, 'bracketId' | 'group' | 'env' | 'account' | 'orderCode' | 'action' | 'orderLot'>;
+let bracketMutationGuard: ((source: BracketMutationSource) => () => void) | undefined;
+export function setBracketMutationGuard(capture: (source: BracketMutationSource) => () => void): void {
+    bracketMutationGuard = capture;
+}
+function captureBracketMutation(source: BracketMutationSource): () => void {
+    if (!source.bracketId) return () => undefined; // standalone policy is unchanged
+    if (!bracketMutationGuard) throw Object.assign(new Error('括號單執行視窗尚未確認，未送出委託'), { mutationNotStarted: true });
+    return bracketMutationGuard(source);
+}
+
 const STORAGE_KEY = 'sj-pro-triggers';
 const GROUPS_KEY = 'sj-pro-trigger-groups';
 const EXITS_KEY = 'sj-pro-trigger-exits';
@@ -858,11 +871,13 @@ function exitUnknown(t: TriggerOrder, rec: ExitRecord, message: string) {
 const notStarted = (e: unknown) => !!(e as { mutationNotStarted?: boolean })?.mutationNotStarted;
 
 async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
-    const ctx = await sendContext(t, rec.env);
-    if (typeof ctx === 'string') { notSentExit(t, rec, ctx); return; }
-    const price = exitPrice(t, ctx.contract);
-    if (price === 'missing') { notSentExit(t, rec, ODD_PRICE_MISSING); return; }
     try {
+        const assertCurrent = captureBracketMutation(t);
+        const ctx = await sendContext(t, rec.env);
+        assertCurrent();
+        if (typeof ctx === 'string') { notSentExit(t, rec, ctx); return; }
+        const price = exitPrice(t, ctx.contract);
+        if (price === 'missing') { notSentExit(t, rec, ODD_PRICE_MISSING); return; }
         const trade = await placeQuickOrder(ctx.contract, t.action, price, rec.quantity, {
             bypassRisk: true, // protective exit — never blocked by kill switch
             source: 'auto', // 使用者可能不在場，不彈確認
@@ -870,6 +885,7 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
             ocType: t.octype,
             orderLot: isOddLot(t.orderLot) ? t.orderLot : undefined,
             beforeSend: () => {
+                assertCurrent();
                 if (rec.bracketId && (!rec.reportContext || rec.reportContext !== currentReportContext())) {
                     throw Object.assign(new Error('出場送出前連線代次已變更，未送出；請核對持倉與保護'), { mutationNotStarted: true });
                 }
@@ -908,7 +924,12 @@ async function sendPending(id: string, allowUnpast: boolean) {
         const still = triggers.some(x => x.id === id && x.pending);
         notify({ kind: 'err', title: still ? '觸價單未送出（仍待確認）' : '觸價單未送出', body: `${first.code} ${reason}` });
     };
+    let assertCurrent: () => void;
+    try { assertCurrent = captureBracketMutation(first); }
+    catch (error) { refused(error instanceof Error ? error.message : String(error)); return; }
     const ctx = await sendContext(first, first.env!);
+    try { assertCurrent(); }
+    catch (error) { refused(error instanceof Error ? error.message : String(error)); return; }
     if (typeof ctx === 'string') { refused(ctx); return; }
     const planned = planFor(first);
     if (planned.quantity <= 0) { refused(planned.detail ?? '沒有可送出的數量'); return; }
@@ -927,6 +948,7 @@ async function sendPending(id: string, allowUnpast: boolean) {
             orderLot: isOddLot(first.orderLot) ? first.orderLot : undefined,
             confirmLivePriceCode: userOrder ? priceKeyOf(first) : undefined,
             beforeSend: () => {
+                assertCurrent();
                 const cur = triggers.find(x => x.id === id);
                 if (!cur?.pending) throw new Error('已不在待確認（OCO 另一邊可能已觸發或已被處理），未送出');
                 if (currentProtectionEnv() !== cur.env) throw new Error('伺服器或模擬／正式模式已切換，未送出');
