@@ -31,7 +31,7 @@ import {
     applyEntryTrade,
     bracketPhase,
     isLive,
-    needsAttention,
+    retainedObservationRequired,
     observesEntryEvidence,
     matchDeal,
     protectionQuantity,
@@ -547,7 +547,7 @@ function handle(cmd: Command): unknown {
             const retired = { ...p, observationOnly: true, updatedAt: Date.now() };
             // Retirement itself removes protection from known fills. Evaluate the
             // retained state, not its previously protected predecessor.
-            retired.dismissed = !needsAttention(retired);
+            retired.dismissed = !retainedObservationRequired(retired);
             const retained = plans.map(x => x === p ? retired : x);
             const encoded = JSON.stringify(retained);
             if (!globalThis.localStorage) throw new Error('觀察紀錄無法保存，尚未關閉保護');

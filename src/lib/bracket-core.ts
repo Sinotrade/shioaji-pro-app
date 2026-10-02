@@ -175,6 +175,13 @@ export function needsAttention(p: BracketPlan): boolean {
             || (p.exit.status === 'unknown' && !p.exit.acknowledged)));
 }
 
+/** Retained broker evidence must remain visible while an exit is in flight,
+ * even when its reservation covers every known fill. Waiting/open entry alone
+ * does not require a visible retirement ledger and grants no mutation authority. */
+export function retainedObservationRequired(p: BracketPlan): boolean {
+    return needsAttention(p) || p.exit?.status === 'sending' || p.exit?.status === 'working';
+}
+
 export function addIssue(p: BracketPlan, code: BracketIssueCode, detail: string, now: number): BracketPlan {
     if (p.issues.some(i => i.code === code)) return p;
     return { ...p, issues: [...p.issues, { code, detail, at: now }], updatedAt: now };

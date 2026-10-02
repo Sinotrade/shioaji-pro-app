@@ -21,7 +21,7 @@ import {
 import {
     bracketPhase,
     isLive,
-    needsAttention,
+    retainedObservationRequired,
     protectionQuantity,
     unprotectedQuantity,
     workingEntryAfterExit,
@@ -335,7 +335,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
 }
 
 export function BracketStatusList({ code }: { code: string }) {
-    const plans = useBrackets().filter(p => (!p.dismissed || (p.observationOnly && needsAttention(p))) && (p.quoteCode === code || p.orderCode === code));
+    const plans = useBrackets().filter(p => (!p.dismissed || (p.observationOnly && retainedObservationRequired(p))) && (p.quoteCode === code || p.orderCode === code));
     useServerInfo(); // re-render when the server mode becomes known / changes
     const feed = useTriggerFeed();
     // re-evaluate mirror staleness without any broker request

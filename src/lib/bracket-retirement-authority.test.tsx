@@ -5,7 +5,7 @@ import type { Trade } from './types/order';
 const h=vi.hoisted(()=>({env:'http://synthetic.invalid|simulation',mode:1,status:'live',
     accounts:[] as any[],rows:[] as Trade[],positions:[] as any[],reports:[] as any[],envListeners:[] as any[],statusListeners:[] as any[],
     place:[] as any[],cancel:[] as any[],contract:null as any,contractWait:null as Promise<any>|null,
-    placeWait:null as Promise<void>|null,resultWait:null as Promise<void>|null,cancelWait:null as Promise<void>|null,listingWait:null as Promise<Trade[]>|null,failWrite:false}));
+    placeWait:null as Promise<void>|null,resultWait:null as Promise<void>|null,cancelWait:null as Promise<void>|null,listingWait:null as Promise<Trade[]>|null,failWrite:false,resultFailure:false}));
 vi.mock('./runtime',()=>({getApiBase:()=> 'http://synthetic.invalid'}));
 vi.mock('./protection-env',()=>({currentProtectionEnv:()=>h.env,envBase:(e:string)=>e.split('|')[0],reportEnvMatches:(e:string,b:string)=>e.startsWith(b+'|'),onProtectionEnvChange:(f:any)=>h.envListeners.push(f),refreshProtectionEnv:async()=>h.env,watchProtectionEnv:()=>{},protectionEnvLabel:()=> '模擬'}));
 vi.mock('./server-info-store',()=>({getServerModeVersion:()=>h.mode,useServerInfo:()=>({simulation:true})}));
@@ -24,6 +24,7 @@ vi.mock('./trade',()=>({notify:()=>{},authorizeManualPendingOrder:async()=>{},pl
     opts.beforeSend?.();
     h.place.push({action,price,quantity,ocType:opts.ocType,lot:opts.orderLot});
     if(h.resultWait) await h.resultWait;
+    if(h.resultFailure) throw Error('synthetic response lost after physical write');
     return {...h.rows[0],contract:c,order:{...h.rows[0]?.order,id:'EXIT',seqno:'EXIT-S',ordno:'EXIT-O',action,quantity},status:{status:'Submitted',deals:[]}};
 }}));
 vi.mock('./shioaji',()=>({fetchTrades:async()=>h.listingWait??h.rows,fetchTradeCacheHealth:async()=>({state:'Healthy',reasons:[]}),cancelVerifiedOrder:async(row:any,_account:any,opts:any)=>{
@@ -42,7 +43,7 @@ let storage:MemoryStorage;
 beforeEach(async()=>{
     vi.resetModules();vi.useFakeTimers();vi.stubGlobal('navigator',{});vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.stubGlobal('BroadcastChannel',undefined);vi.stubGlobal('location',{search:''});
     storage=new MemoryStorage();vi.stubGlobal('localStorage',storage);vi.stubGlobal('addEventListener',()=>{});
-    h.env='http://synthetic.invalid|simulation';h.mode=1;h.status='live';h.rows=[];h.accounts=[];h.positions=[];h.reports=[];h.envListeners=[];h.statusListeners=[];h.place=[];h.cancel=[];h.contractWait=null;h.placeWait=null;h.resultWait=null;h.cancelWait=null;h.listingWait=null;h.failWrite=false;
+    h.env='http://synthetic.invalid|simulation';h.mode=1;h.status='live';h.rows=[];h.accounts=[];h.positions=[];h.reports=[];h.envListeners=[];h.statusListeners=[];h.place=[];h.cancel=[];h.contractWait=null;h.placeWait=null;h.resultWait=null;h.cancelWait=null;h.listingWait=null;h.failWrite=false;h.resultFailure=false;
     b=await import('./bracket');
     engine=await import('./trigger-engine');
     core=await import('./bracket-core');
@@ -95,4 +96,46 @@ describe('r41 current window authority and retained retirement risk',()=>{
     it('Close after physical Place preserves the actual sent outcome without a second send',async()=>{await seed('FUT');const held=deferred<void>();h.resultWait=held.promise;engine.evaluateTick(h.contract.code,111);await flush();expect(h.place).toHaveLength(1);await b.dismissBracket(current().id);held.resolve();await flush();expect(h.place).toHaveLength(1);expect(current().exit?.status).toBe('working');expect(current().observationOnly).toBe(true);engine.evaluateTick(h.contract.code,89);await flush();expect(h.place).toHaveLength(1);});
     it('legacy dismissed tombstone with known risk stays visible in the actual component',async()=>{await seed('Common');await b.dismissBracket(current().id);const legacy={...current(),dismissed:true};storage.setItem('sj-pro-brackets',JSON.stringify([legacy]));vi.resetModules();h.reports=[];const fresh=await import('./bracket');const freshEngine=await import('./trigger-engine');fresh.startBracketRuntime();freshEngine.startTriggerEngine();await flush();const tree=await render();expect(tree.toJSON()).not.toBeNull();expect(fresh.getBrackets()[0]?.observationOnly).toBe(true);expect(h.place).toHaveLength(0);await act(async()=>tree.unmount());});
     it('a fresh reader preserves known retired risk without restoring trigger authority',async()=>{await seed('Common');await b.dismissBracket(current().id);const saved=storage.getItem('sj-pro-brackets')!;vi.resetModules();h.reports=[];const fresh=await import('./bracket');const freshEngine=await import('./trigger-engine');fresh.startBracketRuntime();freshEngine.startTriggerEngine();await flush();expect(JSON.parse(saved)[0].dismissed).toBe(false);expect(fresh.getBrackets()[0]?.observationOnly).toBe(true);expect(core.unprotectedQuantity(fresh.getBrackets()[0]!)).toBe(1);expect(freshEngine.getExits()).toHaveLength(0);expect(h.place).toHaveLength(0);});
+});
+
+// r42 uses the actual exit producer and component. Entry is strictly terminal
+// before the exit starts, so neither pending entry nor issues masks visibility.
+async function terminalEntryExit(type:'FUT'|'OPT'|'Common'|'IntradayOdd',sending=false){
+    await seed(type);h.rows[0]!.status.status='Cancelled';h.rows[0]!.status.cancel_quantity=2;
+    await b.reconcileBracket(current().id);expect(current().entryClosed).toBe(true);expect(current().issues).toEqual([]);
+    const wait=deferred<void>();if(sending)h.resultWait=wait.promise;
+    engine.evaluateTick(h.contract.code,111,type==='IntradayOdd');await flush();
+    expect(h.place).toHaveLength(1);expect(current().exit?.status).toBe(sending?'sending':'working');
+    expect(core.needsAttention(current())).toBe(false);return wait;
+}
+describe('r42 retained active exit observation',()=>{
+    for(const type of ['FUT','OPT','Common','IntradayOdd'] as const)for(const status of ['sending','working'] as const){
+        it(`${type} ${status}: successful Close keeps the already physical exit visible and read-only`,async()=>{
+            const wait=await terminalEntryExit(type,status==='sending');const tree=await render();expect(tree.toJSON()).not.toBeNull();
+            const button=()=>tree.root.findAllByType('button').find(x=>String(x.props.children).includes('移除'))!;
+            await act(async()=>{button().props.onClick();});await act(async()=>{button().props.onClick();await flush();});
+            expect(current().observationOnly).toBe(true);expect(core.needsAttention(current())).toBe(false);
+            expect(persisted().dismissed).toBe(false);expect(tree.toJSON()).not.toBeNull();
+            expect(tree.root.findAllByType('button').some(x=>String(x.props.children).includes('刪除剩餘'))).toBe(false);
+            await expect(b.cancelRemainingEntry(current())).rejects.toThrow();expect(h.cancel).toHaveLength(0);
+            await act(async()=>{wait.resolve();await flush();});expect(current().exit?.status).toBe('working');expect(tree.toJSON()).not.toBeNull();
+            engine.evaluateTick(h.contract.code,89,type==='IntradayOdd');await flush();expect(h.place).toHaveLength(1);
+            await act(async()=>tree.unmount());
+        });
+    }
+    it('an already physical exit with lost response remains durable unknown and visible',async()=>{
+        const wait=await terminalEntryExit('FUT',true);await b.dismissBracket(current().id);h.resultFailure=true;wait.resolve();await flush();
+        expect(current().exit?.status).toBe('unknown');expect(persisted().exit.status).toBe('unknown');expect(persisted().dismissed).toBe(false);
+        const tree=await render();expect(tree.toJSON()).not.toBeNull();expect(h.place).toHaveLength(1);expect(h.cancel).toHaveLength(0);await act(async()=>tree.unmount());
+    });
+    it('terminal full exit evidence permits explicit zero-risk Close without restoring authority',async()=>{
+        await terminalEntryExit('FUT');await b.dismissBracket(current().id);
+        const row=h.rows[0]!;engine.applyExitTrade({...row,order:{...row.order,id:'EXIT',seqno:'EXIT-S',ordno:'EXIT-O',action:'Sell',quantity:1},status:{...row.status,status:'Filled',order_quantity:1,cancel_quantity:0,deal_quantity:1,deals:[{seq:'XD1',quantity:1,price:111,ts:Date.now()/1000}]}});
+        expect(current().exit?.status).toBe('filled');expect(core.needsAttention(current())).toBe(false);
+        await b.dismissBracket(current().id);expect(persisted().dismissed).toBe(true);const tree=await render();expect(tree.toJSON()).toBeNull();expect(h.place).toHaveLength(1);await act(async()=>tree.unmount());
+    });
+    it('legacy dismissed observation ledger with a working exit remains visible by the same contract',async()=>{
+        await terminalEntryExit('FUT');await b.dismissBracket(current().id);const legacy={...current(),dismissed:true};
+        vi.spyOn(b,'useBrackets').mockReturnValue([legacy]);const tree=await render();expect(tree.toJSON()).not.toBeNull();expect(h.place).toHaveLength(1);await act(async()=>tree.unmount());
+    });
 });
