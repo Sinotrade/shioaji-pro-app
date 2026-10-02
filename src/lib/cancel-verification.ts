@@ -279,6 +279,7 @@ export async function verifyCancellation(
         try { deps.guard?.(); } catch (error) { readError = message(error); throw unconfirmed(); }
     };
     const record = (rows: Trade[]) => {
+        guard(); // Also validates results joined from an already completed read.
         readError = null;
         const row = findOrderRow(rows, tradeId, account);
         missing = !row;
@@ -330,7 +331,9 @@ export async function verifyCancellation(
     // read follows.
     guard();
     try {
-        health = await deps.readHealth();
+        const result = await deps.readHealth();
+        guard();
+        health = result;
     } catch {
         health = null; // pre-1.7.6 route or read failure: no information
     }

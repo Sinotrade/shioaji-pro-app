@@ -1,3 +1,4 @@
+import { canTrade } from '../lib/account-tradable';
 import { RefreshButton } from './refresh-button';
 // src/components/pnl-panel.tsx — realized P&L analytics (30 days)
 
@@ -5,6 +6,7 @@ import { useCallback } from 'react';
 import { useQuery } from '../hooks/use-query';
 import { useAccounts } from '../lib/account-store';
 import { apiPost } from '../lib/api';
+import { createAccountQuery } from '../lib/account-query';
 import type { Account } from '../lib/types/portfolio';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { dateStrOffset } from '../lib/utils/kbars';
@@ -19,13 +21,14 @@ interface PnlRow {
 }
 
 async function fetchPnl(accounts: Account[]): Promise<PnlRow[]> {
+    const query = createAccountQuery();
     const rows: PnlRow[] = [];
     for (const account of accounts) {
-        const result = await apiPost<PnlRow[]>('/api/v1/portfolio/profit_loss', {
+        const result = await query.read(account.account_type as 'S' | 'F', account, current => apiPost<PnlRow[]>('/api/v1/portfolio/profit_loss', {
             begin_date: dateStrOffset(30), end_date: dateStrOffset(0),
-            account_type: account.account_type, broker_id: account.broker_id,
-            account_id: account.account_id, ...(account.account_type === 'S' ? { unit: 'Common' } : {}),
-        });
+            account_type: current.account_type, broker_id: current.broker_id,
+            account_id: current.account_id, ...(current.account_type === 'S' ? { unit: 'Common' } : {}),
+        }, { beforeDispatch: query.assertCurrent }));
         rows.push(...result);
     }
     return rows.map(r => ({ date: r.date, pnl: Number(r.pnl) || 0 })).sort((a, b) => a.date.localeCompare(b.date));
@@ -78,14 +81,14 @@ function EquityCurve({ rows }: { rows: PnlRow[] }) {
 
 export function PnlPanel() {
     const { accounts } = useAccounts();
-    const signed = accounts.filter(a => a.signed && ['S', 'F'].includes(a.account_type));
-    const key = signed.map(a => `${a.account_type}:${a.broker_id}:${a.account_id}`).join(',');
+    const tradable = accounts.filter(a => canTrade(a) && ['S', 'F'].includes(a.account_type));
+    const key = tradable.map(a => `${a.account_type}:${a.broker_id}:${a.account_id}`).join(',');
     const { data, error, loading, refresh } = useQuery<PnlRow[]>(
-        useCallback(() => fetchPnl(signed), [key]), `pnl-30d:${key}`, signed.length > 0,
+        useCallback(() => fetchPnl(tradable), [key]), `pnl-30d:${key}`, tradable.length > 0, tradable,
     );
     const controls = <div className={panel.refreshToolbar}>
         {error && <span role="status">查詢失敗，保留上次資料：{error}</span>}
-        <RefreshButton label="更新已實現損益" loading={loading} disabled={signed.length === 0} onClick={() => void refresh()} />
+        <RefreshButton label="更新已實現損益" loading={loading} disabled={tradable.length === 0} onClick={() => void refresh()} />
     </div>;
     const rows = data ?? [];
     const total = rows.reduce((s, r) => s + r.pnl, 0);

@@ -1,8 +1,10 @@
+import { canTrade } from '../lib/account-tradable';
 // src/components/order-ticket.tsx — buy/sell ticket with two-step EXECUTE.
 // Stock vs futures aware; price autofills from the live quote.
 
 import { Check, ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { ORDER_CONTEXT_CHANGED_MESSAGE, useOrderContext } from '../hooks/use-order-context';
 import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
 import {
@@ -35,6 +37,7 @@ import {
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
 import { clampLotQuantity, isOddLot, lotLabel, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT, ODD_LOT_WAITING, oddLotReferencePrice, orderQtyUnit, stockOrderProblem } from '../lib/odd-lot';
 import { currentProtectionEnv } from '../lib/protection-env';
+import { loadOrderLotPreference, saveOrderLotPreference, TICKET_LOTS } from '../lib/order-lot-preference';
 import { fetchInfo, placeFuturesOrder, placeStockOrder } from '../lib/shioaji';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
@@ -49,7 +52,10 @@ import type {
 import {
     contractMultiplier,
     futuresTaxRate,
+    priceCents,
+    stockSellTax,
     stockTaxRate,
+    stockTradeFee,
 } from '../lib/utils/contract-cost';
 import { fmtPrice } from '../lib/utils/format';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
@@ -77,7 +83,8 @@ export function OrderTicket({
     const [qty, setQty] = useState(1);
     const [priceType, setPriceType] = useState('LMT');
     const [orderType, setOrderType] = useState<OrderType>('ROD');
-    const [orderLot, setOrderLot] = useState<StockOrderLot>('Common');
+    const [orderLot, setOrderLot] = useState<StockOrderLot>(() => loadOrderLotPreference('ticket', contract, TICKET_LOTS, 'Common'));
+    const lotPreferences = useRef(new Map<string, StockOrderLot>());
     const [orderCond, setOrderCond] = useState<StockOrderCond>('Cash');
     // 盤中零股：帶價與括號單參考價只看零股行情（另一個撮合市場，#204）—
     // 零股成交價，否則零股最佳買賣中價／單邊；沒有零股行情就不帶價，
@@ -100,6 +107,7 @@ export function OrderTicket({
     const priceTouched = useRef(false);
     const orderLotRef = useRef(orderLot);
     orderLotRef.current = orderLot;
+    const captureContext = useOrderContext(contract, orderLot);
 
     // ---- multi-account: chip + split-order (分倉) state ----
     const [acctMenuOpen, setAcctMenuOpen] = useState(false);
@@ -131,8 +139,10 @@ export function OrderTicket({
         // 期貨）變了，都歸 1 — 股數不會被當成張數或口數（#204）
         const classChanged = unitClassRef.current !== isFutures;
         unitClassRef.current = isFutures;
-        if (orderLotRef.current !== 'Common' || classChanged) setQty(1);
-        setOrderLot('Common');
+        const nextLot = isFutures ? 'Common' : lotPreferences.current.get(contract.code) ?? loadOrderLotPreference('ticket', contract, TICKET_LOTS, 'Common');
+        if (orderLotRef.current !== 'Common' || orderLotRef.current !== nextLot || classChanged) setQty(1);
+        setOrderLot(nextLot);
+        setFixedQty({});
         setOrderCond('Cash');
         setOctype('Auto');
         setDaytradeShort(false);
@@ -142,7 +152,7 @@ export function OrderTicket({
         setSplitOpen(false);
         setSplitArmed(false);
         setAcctMenuOpen(false);
-    }, [contract.code]);
+    }, [contract.code, isFutures]);
 
     // 正式環境判斷：chip 上的 danger 視覺（下錯戶的最後防線）
     useEffect(() => {
@@ -241,6 +251,7 @@ export function OrderTicket({
         }
         setArmed(false);
         setBusy(true);
+        const isContextCurrent = captureContext();
         try {
             const blocked = checkOrderAllowed(qty, isFutures ? undefined : orderLot);
             if (blocked) throw new Error(blocked);
@@ -281,7 +292,7 @@ export function OrderTicket({
                 if (invalid) throw new Error(invalid);
                 entryAccount = captureSelectedAccount(isFutures ? 'F' : 'S');
                 if (!entryAccount) {
-                    throw new Error('括號單需要有效的已簽署下單帳戶');
+                    throw new Error('括號單需要有效的下單帳戶');
                 }
                 bracketEnv = currentProtectionEnv();
                 if (!bracketEnv) {
@@ -294,7 +305,7 @@ export function OrderTicket({
             const orderAccount =
                 entryAccount ?? captureSelectedAccount(isFutures ? 'F' : 'S');
             if (!orderAccount) {
-                throw new Error('缺少有效且已簽署的下單帳戶，請重新選擇帳戶');
+                throw new Error('缺少有效的下單帳戶，請重新選擇帳戶');
             }
             if (getRiskSettings().confirmManualOrders) {
                 const approved = await requestOrderConfirm({
@@ -320,6 +331,11 @@ export function OrderTicket({
             if (!isSelectedAccountUnchanged(orderAccount)) {
                 throw new Error(ACCOUNT_CHANGED_MESSAGE);
             }
+            const dispatch = { beforeDispatch: () => {
+                if (!isContextCurrent()) throw Object.assign(new Error(ORDER_CONTEXT_CHANGED_MESSAGE), { tradingGateRejected: true });
+                if (!isSelectedAccountUnchanged(orderAccount)) throw Object.assign(new Error(ACCOUNT_CHANGED_MESSAGE), { tradingGateRejected: true });
+            } };
+            dispatch.beforeDispatch();
             const trade = isFutures
                 ? await placeFuturesOrder(contract, {
                       action,
@@ -328,7 +344,7 @@ export function OrderTicket({
                       price_type: priceType as 'LMT' | 'MKT' | 'MKP',
                       order_type: orderType,
                       octype,
-                  }, orderAccount)
+                  }, orderAccount, dispatch)
                 : await placeStockOrder(contract, {
                       action,
                       price: p,
@@ -344,7 +360,7 @@ export function OrderTicket({
                           orderCond === 'Cash'
                               ? true
                               : undefined,
-                  }, orderAccount);
+                  }, orderAccount, dispatch);
             setFeedback({
                 kind: 'ok',
                 text: `▸ ${trade.status.status} #${trade.order.seqno || trade.order.id.slice(0, 8)}`,
@@ -360,6 +376,7 @@ export function OrderTicket({
                         },
                         orderId: trade.order.id,
                         seqno: trade.order.seqno,
+                        ordno: trade.order.ordno,
                         quoteCode: contract.code,
                         orderCode:
                             trade.contract?.target_code ||
@@ -417,9 +434,9 @@ export function OrderTicket({
         setSplitArmed(false);
     }, [activeAccountKey]);
     const acctTag = isFutures ? '[期]' : '[證]';
-    // same-type SIGNED accounts are the routing candidates（未簽署不可下單）
+    // 同市場的可交易帳戶可分倉；模擬模式允許未簽署帳戶。
     const routable = accounts.filter(
-        (a) => a.signed && a.account_type === (isFutures ? 'F' : 'S'),
+        (a) => canTrade(a) && a.account_type === (isFutures ? 'F' : 'S'),
     );
     const multi = routable.length >= 2;
     const production = simulation === false;
@@ -486,6 +503,10 @@ export function OrderTicket({
         }
         setSplitArmed(false);
         setSplitBusy(true);
+        const isContextCurrent = captureContext();
+        const beforeDispatch = () => {
+            if (!isContextCurrent()) throw Object.assign(new Error(ORDER_CONTEXT_CHANGED_MESSAGE), { tradingGateRejected: true });
+        };
         try {
             if (!splitValid || allocation.length === 0) {
                 throw new Error('分倉設定無效');
@@ -529,12 +550,24 @@ export function OrderTicket({
             // 逐戶送出（sequential — deterministic order, per-order risk）
             for (const { account, qty: q } of allocation) {
                 const label = `${account.broker_id}-${maskAccountId(account.account_id, priv)}`;
+                if (!isContextCurrent()) {
+                    fail.push(`${label}: ${ORDER_CONTEXT_CHANGED_MESSAGE}`);
+                    break;
+                }
+                if (!canTrade(account) || !isAccountAvailable(account)) {
+                    fail.push(`${label}: ${ACCOUNT_CHANGED_MESSAGE}；已停止後續分倉`);
+                    break;
+                }
                 const blocked = checkOrderAllowed(q, isFutures ? undefined : orderLot);
                 if (blocked) {
                     fail.push(`${label}: ${blocked}`);
                     continue;
                 }
                 try {
+                    const dispatch = { beforeDispatch: () => {
+                        beforeDispatch();
+                        if (!canTrade(account) || !isAccountAvailable(account)) throw Object.assign(new Error(ACCOUNT_CHANGED_MESSAGE), { tradingGateRejected: true });
+                    } };
                     const trade = isFutures
                         ? await placeFuturesOrder(
                               contract,
@@ -550,6 +583,7 @@ export function OrderTicket({
                                   octype,
                               },
                               account,
+                              dispatch,
                           )
                         : await placeStockOrder(
                               contract,
@@ -572,6 +606,7 @@ export function OrderTicket({
                                           : undefined,
                               },
                               account,
+                              dispatch,
                           );
                     ok.push(
                         `${label} ${q}${qtyUnit} #${trade.order.seqno || trade.order.id.slice(0, 8)}`,
@@ -580,6 +615,7 @@ export function OrderTicket({
                     fail.push(
                         `${label}: ${e instanceof Error ? e.message : String(e)}`,
                     );
+                    if ((e as { tradingGateRejected?: boolean })?.tradingGateRejected) break;
                 }
             }
             notify({
@@ -880,7 +916,7 @@ export function OrderTicket({
                                     ['Common', '整股'],
                                     ['IntradayOdd', '盤中零股'],
                                     ['Odd', '盤後零股'],
-                                ] as [StockOrderLot, string][]
+                                ] as const
                             ).map(([lot, label]) => (
                                 <button
                                     key={lot}
@@ -898,6 +934,8 @@ export function OrderTicket({
                                     }
                                     onClick={() => {
                                         if (lot === orderLot) return;
+                                        lotPreferences.current.set(contract.code, lot);
+                                        saveOrderLotPreference('ticket', contract, lot);
                                         setOrderLot(lot);
                                         // 單位改變時數量歸 1，避免 500 股變成 500 張；
                                         // 分倉固定量同理清空，確認步驟全部解除
@@ -1406,12 +1444,13 @@ function CostEstimate({
     }
     const shares = odd ? qty : qty * 1000;
     const notional = price * shares;
-    const fee = Math.max(odd ? 1 : 20, Math.round(notional * 0.001425));
+    const cents = priceCents(price) * shares;
+    const fee = stockTradeFee(cents, { odd });
     const baseTaxRate = stockTaxRate(contract);
     // 一般股票當沖賣出減半；ETF 與權證固定 0.1%。
     const taxRate =
         baseTaxRate === 0.003 && daytrade ? 0.0015 : baseTaxRate;
-    const tax = action === 'Sell' ? Math.round(notional * taxRate) : 0;
+    const tax = action === 'Sell' ? stockSellTax(cents, taxRate) : 0;
     return (
         <span className={styles.costRow}>
             金額 {fmtPrice(notional, 0)} · 手續費 ≈ {fee}

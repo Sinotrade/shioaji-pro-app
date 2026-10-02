@@ -162,7 +162,9 @@ export function programFromBracket(plan: BracketPlan, pair: TriggerOrder[] = [])
     const level = baseLevel('L1', {
         side: plan.action,
         qty: plan.quantity,
-        entry: { type: 'external', orderId: plan.orderId },
+        entry: { type: 'external', orderId: plan.orderId,
+            ...(plan.seqno?.trim() ? { seqno: plan.seqno.trim() } : {}),
+            ...(plan.ordno?.trim() ? { ordno: plan.ordno.trim() } : {}) },
         exit: { type: 'oco',
             stop: plan.stopPrice === null ? null : { price: plan.stopPrice, condition: stopCond },
             take: plan.takePrice === null ? null : { price: plan.takePrice, condition: takeCond },

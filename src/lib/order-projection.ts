@@ -1,3 +1,4 @@
+import { canTrade } from './account-tradable';
 import type { OrderEventReport } from './order-report';
 import { reportBody } from './portfolio-projection';
 import type { Account } from './types/portfolio';
@@ -19,7 +20,7 @@ export function projectOrderReport(rows: AccountedTrade[], report: OrderEventRep
     const order = rec(body?.order);
     const ref = rec(order?.account);
     const contract = rec(body?.contract);
-    const account = accounts.find(a => a.signed && a.account_type === (report.market === 'stock' ? 'S' : 'F')
+    const account = accounts.find(a => canTrade(a) && a.account_type === (report.market === 'stock' ? 'S' : 'F')
         && a.broker_id === ref?.broker_id && a.account_id === ref?.account_id);
     if (!account || !report.id || !report.ts || !order || !contract
         || !['Buy', 'Sell'].includes(report.action ?? '') || !num(order.quantity)

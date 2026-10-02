@@ -48,6 +48,55 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); });
 
+it.each(['symbol', 'switch back', 'unit', 'unmount'])(
+    'refuses a pending flash order at dispatch after %s changes', async change => {
+        let release!: () => void;
+        const wait = new Promise<void>(r => { release = r; });
+        const dispatched = vi.fn();
+        mocks.place.mockImplementation(async (_c, _s, _p, _q, opts) => {
+            await wait;
+            opts.beforeSend();
+            dispatched();
+            return { status: { status: 'Submitted' } };
+        });
+        const props = { contract, trades: [], positions: [] };
+        await act(async () => { view = create(createElement(FlashOrder, props)); });
+        await setUnit('IntradayOdd');
+        await act(async () => { button('啟用閃電下單').props.onClick(); });
+        await act(async () => { buyCell().props.onClick(); });
+        expect(mocks.place).toHaveBeenCalledOnce();
+        if (change === 'unmount') await act(async () => view.unmount());
+        else if (change === 'unit') await setUnit('Common');
+        else {
+            await act(async () => { view.update(createElement(FlashOrder, { ...props, contract: { ...contract, code: '2317' } })); });
+            if (change === 'switch back') await act(async () => { view.update(createElement(FlashOrder, props)); });
+        }
+        await act(async () => { release(); });
+        expect(dispatched).not.toHaveBeenCalled();
+        expect(mocks.notify.mock.calls.at(-1)![0]).toMatchObject({ title: '⚡ 閃電下單失敗' });
+    },
+);
+
+it('invalidates a pending stock exit when the flash panel changes symbol', async () => {
+    let release!: () => void;
+    const wait = new Promise<void>(r => { release = r; });
+    const dispatched = vi.fn();
+    mocks.stockExit.mockImplementationOnce(async (_c, _s, _q, _a, opts) => {
+        await wait;
+        opts.beforeSend();
+        dispatched();
+    });
+    const props = { contract, trades: [], positions };
+    await act(async () => { view = create(createElement(FlashOrder, props)); });
+    await act(async () => { button('啟用閃電下單').props.onClick(); });
+    let pending!: Promise<unknown>;
+    await act(async () => { pending = button('平倉').props.onClick(); });
+    expect(mocks.stockExit).toHaveBeenCalledOnce();
+    await act(async () => { view.update(createElement(FlashOrder, { ...props, contract: { ...contract, code: '2317' } })); });
+    await act(async () => { release(); await pending; });
+    expect(dispatched).not.toHaveBeenCalled();
+});
+
 it('switches to 盤中零股: unit 股, limit-only, sends IntradayOdd shares and keeps each unit on its own ladder', async () => {
     await act(async () => { view = create(createElement(FlashOrder, { contract, trades, positions })); });
     // stock position is shown in 張＋股, not raw shares

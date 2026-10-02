@@ -23,7 +23,8 @@ import {
 } from 'react';
 import { usePoll } from '../hooks/use-poll';
 import { useStreamStatus } from '../hooks/use-stream';
-import { UNSIGNED_BLOCKED_LABEL } from '../lib/account-signing';
+import { unsignedAccountLabel } from '../lib/account-signing';
+import { canTrade } from '../lib/account-tradable';
 import { getPrivacyMode, maskAccountId } from '../lib/privacy';
 import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
@@ -196,8 +197,8 @@ export function ServerManager({
                           ? '期貨'
                           : a.account_type;
                 out.push(
-                    `${a.signed ? '✓' : '✗'} ${kind} ${a.broker_id}-${maskAccountId(a.account_id, getPrivacyMode())}` +
-                        `${a.signed ? ' 已簽署' : ` ${UNSIGNED_BLOCKED_LABEL}`}`,
+                    `${canTrade(a) ? '✓' : '✗'} ${kind} ${a.broker_id}-${maskAccountId(a.account_id, getPrivacyMode())}` +
+                        `${a.signed ? ' 已簽署' : ` ${unsignedAccountLabel(info?.simulation === true)}`}`,
                 );
             }
             const pid = accounts[0]?.person_id;

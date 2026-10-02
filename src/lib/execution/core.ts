@@ -136,6 +136,27 @@ function reportMatches(p: OrderProgram, account: { brokerId: string; accountId: 
 
 const isExternalEntry = (lv: Level, slot: OrderSlot) => slot.role === 'entry' && lv.entry.type === 'external';
 
+export function brokerIdentityMatches(a: { seqno?: string; ordno?: string }, b: { seqno?: string; ordno?: string }): boolean {
+    const pairs = [ [a.seqno?.trim(), b.seqno?.trim()], [a.ordno?.trim(), b.ordno?.trim()] ];
+    return pairs.some(([x, y]) => !!x && x === y) && pairs.every(([x, y]) => !x || !y || x === y);
+}
+
+function rebindSlot(slot: OrderSlot, id: string) {
+    if (slot.orderId && slot.orderId !== id) {
+        const prefix = `${slot.orderId}:`;
+        for (const values of [slot.fills, slot.fillTs]) {
+            for (const [key, value] of Object.entries(values)) {
+                if (!key.startsWith(prefix)) continue;
+                delete values[key];
+                values[`${id}:${key.slice(prefix.length)}`] = value;
+            }
+        }
+    }
+    slot.orderId = id;
+}
+
+const unknownExternalEntry = (reason?: string) => reason === 'unknownEntryAcrossDay' || reason === 'unknownEntryAfterReconnect';
+
 export function intentKey(p: OrderProgram, lv: Level, leg: LegName): string {
     return `${p.binding.env}/${encodeURIComponent(p.binding.serverId)}/${p.id}/${lv.id}/${leg}/${lv.cycles}/${p.intentSeq}`;
 }
@@ -879,23 +900,36 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                 // ended before this listing (not by a report drained just now)
                 const wasEnded = slot.status === 'ended';
                 const external = isExternalEntry(lv, slot);
-                // an id is never enough: the row must carry this slot's tag
-                // (only an external entry has none — its id, this epoch)
-                const row = slot.orderId && !slot.unconfirmed
-                    ? e.orders.find(o => o.orderId === slot.orderId && (external || o.intentKey === slot.key))
-                    : e.orders.find(o => o.intentKey === slot.key);
+                // The wire mapper verifies either the tag or the external
+                // broker identity. A trade id alone never accepts a row.
+                const rows = e.orders.filter(o => o.intentKey === slot.key
+                    && (slot.unconfirmed || !slot.orderId || o.orderId === slot.orderId));
+                const row = rows.length === 1 ? rows[0] : undefined;
                 if (slot.unconfirmed) {
                     // bound in an earlier epoch: only this epoch's row with its
                     // tag rebinds it — an ended slot never takes part again
                     const open = isActive(slot) || (slot.status === 'unknown' && !slot.acknowledged);
                     if (!open) continue;
+                    if (external && lv.pending?.reason === 'unknownEntryAcrossDay') continue;
                     if (row) {
-                        slot.orderId = row.orderId;
+                        rebindSlot(slot, row.orderId);
                         slot.unconfirmed = false;
                         if (slot.status === 'unknown') slot.status = 'working';
                         slot.detail = 'rebound';
+                        if (external && lv.pending?.reason === 'unknownEntryAfterReconnect') {
+                            lv.pending = null;
+                            if (lv.phase === 'needsConfirm') lv.phase = lv.position > 0 ? 'holding' : 'working';
+                        }
                         drainOrphans(ctx, p, lv, slot);
                         touched = true;
+                    } else if (external) {
+                        if (!lv.pending) {
+                            lv.pending = { leg: 'entry', price: null, ts: ctx.ts, reason: 'unknownEntryAfterReconnect' };
+                            if (lv.position === 0) lv.phase = 'needsConfirm';
+                            notice(ctx, 'needsConfirm', p, lv.id, 'entry unknownEntryAfterReconnect');
+                            touched = true;
+                        }
+                        continue;
                     } else if (isActive(slot) && (e.notSent ?? []).includes(slot.key)) {
                         // absent from this epoch's listings: what became of it is
                         // unknown — the user acknowledges it
@@ -982,9 +1016,8 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
 /** A new trade-id epoch on (env, server): every id bound before stops
  * identifying its order (`unconfirmed`); reports buffered for such ids are
  * dropped. A slot still open is rebound by the next listing through its tag.
- * An external entry (no tag) keeps its id within a trading epoch (a
- * reconnect only) — across an epoch boundary the user confirms how much it
- * filled before any exit counts on it. */
+ * An external entry rebinds by verified broker identity within the same
+ * trading epoch; across a boundary the user still confirms it (decision A). */
 function onEpoch(ctx: Ctx, e: EpochEvent) {
     const s = ctx.s;
     const mark = epochMark(ctx.ts);
@@ -1007,12 +1040,10 @@ function onEpoch(ctx: Ctx, e: EpochEvent) {
             const external = lv.entry.type === 'external';
             let openEntry = false;
             for (const slot of lv.orders) {
-                if (!slot.orderId || slot.unconfirmed) continue;
                 if (external && slot.role === 'entry') {
-                    if (!crossed) continue;
-                    openEntry ||= isActive(slot);
+                    openEntry ||= crossed && isActive(slot);
                 }
-                slot.unconfirmed = true;
+                if (slot.orderId) slot.unconfirmed = true;
             }
             if (openEntry) {
                 lv.pending = { leg: 'entry', price: null, ts: ctx.ts, reason: 'unknownEntryAcrossDay' };
@@ -1093,13 +1124,14 @@ function startStop(ctx: Ctx, p: OrderProgram) {
  * (environment, account, market, contract)? */
 export function sameExternalEntry(a: OrderProgram, b: OrderProgram): boolean {
     const entries = (p: OrderProgram) =>
-        p.levels.flatMap(lv => lv.entry.type === 'external' ? [lv.entry.orderId] : []);
+        p.levels.flatMap(lv => lv.entry.type === 'external' ? [lv.entry] : []);
     const [ba, bb] = [a.binding, b.binding];
     if (ba.env !== bb.env || ba.serverId !== bb.serverId || !sameAccount(ba.account, bb.account)
         || ba.contract.market !== bb.contract.market || ba.contract.securityType !== bb.contract.securityType
         || ba.contract.orderCode !== bb.contract.orderCode) return false;
     const theirs = entries(b);
-    return entries(a).some(id => theirs.includes(id));
+    return entries(a).some(ea => theirs.some(eb => brokerIdentityMatches(ea, eb)
+        || ea.orderId === eb.orderId));
 }
 
 function onCommand(ctx: Ctx, e: CommandEvent) {
@@ -1178,7 +1210,7 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             // a remainder may still work: ending it here would leave its later
             // fills without an exit — the user cancels it first
             if (c.noRemainder !== true) { reject(ctx, p, 'remainderNotConfirmed', c.levelId); return; }
-            const lv = p.levels.find(l => l.id === c.levelId && l.pending?.reason === 'unknownEntryAcrossDay');
+            const lv = p.levels.find(l => l.id === c.levelId && unknownExternalEntry(l.pending?.reason));
             if (!lv) { reject(ctx, p, 'notPending', c.levelId); return; }
             const slot = [...lv.orders].reverse().find(o => o.role === 'entry' && o.cycle === lv.cycles);
             if (!slot) { reject(ctx, p, 'noEntry', c.levelId); return; }
@@ -1201,7 +1233,7 @@ function onCommand(ctx: Ctx, e: CommandEvent) {
             const lv = p.levels.find(l => l.id === c.levelId);
             if (!lv || lv.phase !== 'needsConfirm' || !lv.pending) { reject(ctx, p, 'notPending', c.levelId); return; }
             // only the user's fill quantity settles it (confirmEntry)
-            if (lv.pending.reason === 'unknownEntryAcrossDay') { reject(ctx, p, 'confirmEntry', c.levelId); return; }
+            if (unknownExternalEntry(lv.pending.reason)) { reject(ctx, p, 'confirmEntry', c.levelId); return; }
             const leg = lv.pending.leg;
             if (c.choice === 'keep') {
                 lv.pending = null;

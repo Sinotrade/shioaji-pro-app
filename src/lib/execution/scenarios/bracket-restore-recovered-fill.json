@@ -147,7 +147,7 @@
         "serverId": "local-a",
         "orders": [
           {
-            "intentKey": null,
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
             "orderId": "o-entry",
             "status": "filled",
             "qty": 2,

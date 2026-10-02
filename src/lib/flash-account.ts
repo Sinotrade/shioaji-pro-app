@@ -1,3 +1,4 @@
+import { canTrade } from './account-tradable';
 import type { Account } from './types/portfolio';
 
 type AccountIdentity = Pick<Account, 'account_type' | 'broker_id' | 'account_id'>;
@@ -29,7 +30,7 @@ export interface ResolvedFlashAccount {
     account: Account | undefined;
     // true = no panel choice yet, mirroring the app-wide selection
     following: boolean;
-    // a saved choice that is no longer a signed account of this market —
+    // a saved choice that is no longer a tradable account of this market —
     // never silently replaced by another account
     missing: boolean;
     // no saved key and following is not allowed (popout) — user must pick
@@ -37,7 +38,7 @@ export interface ResolvedFlashAccount {
 }
 
 export function resolveFlashAccount(accounts: Account[], market: FlashMarket, savedKey: string | undefined, globalAccount: Account | null | undefined, followMain = true): ResolvedFlashAccount {
-    const eligible = accounts.filter(a => a.signed && a.account_type === market);
+    const eligible = accounts.filter(a => canTrade(a) && a.account_type === market);
     if (savedKey) {
         const account = eligible.find(a => flashAccountKey(a) === savedKey);
         return { account, following: false, missing: !account, unset: false };
@@ -138,7 +139,7 @@ export interface GlobalFlashSelection {
  * Popouts cannot follow the main window live (each window has its own
  * account store), so a popout pins its accounts when it opens: the panel's
  * own choice, or — for a market where the panel follows main — the main
- * selection at that moment. Unsigned / wrong-market accounts are never pinned.
+ * selection at that moment. Unavailable / wrong-market accounts are never pinned.
  */
 export function pinnedFlashAccounts(panelKeys: FlashAccountKeys | undefined, global: GlobalFlashSelection): FlashAccountKeys {
     const out: FlashAccountKeys = {};
@@ -146,7 +147,7 @@ export function pinnedFlashAccounts(panelKeys: FlashAccountKeys | undefined, glo
         const own = panelKeys?.[market];
         const main = global[market];
         if (own) out[market] = own;
-        else if (main?.signed && main.account_type === market) out[market] = flashAccountKey(main);
+        else if (main && canTrade(main) && main.account_type === market) out[market] = flashAccountKey(main);
     }
     return out;
 }

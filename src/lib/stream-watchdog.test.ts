@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const m = vi.hoisted(() => ({ post: vi.fn() }));
 vi.mock('./runtime', () => ({ getApiBase: () => 'http://fixture.invalid', getStreamBase: () => 'http://fixture.invalid' }));
 vi.mock('./api', () => ({ apiPost: m.post }));
-vi.mock('./server-info-store', () => ({ knownServerInfo: () => ({ simulation: true }) }));
+vi.mock('./server-info-store', () => ({ forgetServerInfo: vi.fn(), knownServerInfo: () => ({ simulation: true }) }));
 
 type Listener = (event: { data: string }) => void;
 class FakeEventSource {

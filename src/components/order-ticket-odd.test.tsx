@@ -36,6 +36,8 @@ beforeEach(() => {
     vi.clearAllMocks();
     h.accounts = [h.account];
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     m.confirm.mockResolvedValue(true);
@@ -43,6 +45,43 @@ beforeEach(() => {
     m.stock.mockResolvedValue({ status: { status: 'Submitted' }, order: { id: 'o1', seqno: '1' } });
 });
 afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); });
+
+it.each(['盤中零股', '盤後零股'])('remembers %s per symbol, resets quantity on returning, and survives a reload', async label => {
+    const render = async (c = contract) => {
+        await act(async () => { view.update(createElement(OrderTicket, { contract: c, onPlaced: vi.fn() })); });
+    };
+    await act(async () => { view = create(createElement(OrderTicket, { contract, onPlaced: vi.fn() })); });
+    await act(async () => { btn(label).props.onClick(); });
+    await act(async () => { qtyInput().props.onChange({ target: { value: '500' } }); });
+    // A new quote/linked contract object with the same identity must not reset the ticket.
+    await render({ ...contract, reference: 101 });
+    expect(qtyInput().props.value).toBe(500);
+    expect(qtyInput().props['aria-label']).toBe('數量（股）');
+    await render({ ...contract, code: '2317' });
+    expect(qtyInput().props.value).toBe(1);
+    expect(qtyInput().props['aria-label']).toBe('數量（張）');
+    await act(async () => { qtyInput().props.onChange({ target: { value: '7' } }); });
+    await render();
+    expect(qtyInput().props.value).toBe(1);
+    expect(text(view.root)).toContain(`${label}：以股計`);
+    await act(async () => view.unmount());
+    await act(async () => { view = create(createElement(OrderTicket, { contract, onPlaced: vi.fn() })); });
+    expect(qtyInput().props.value).toBe(1);
+    expect(text(view.root)).toContain(`${label}：以股計`);
+    // Same code with a different instrument class still uses the original safety rule.
+    await render({ ...contract, security_type: 'FUT' });
+    expect(qtyInput().props['aria-label']).toBe('數量（口）');
+    expect(btn('盤中零股')).toBeUndefined();
+    await act(async () => { qtyInput().props.onChange({ target: { value: '5' } }); });
+    await render();
+    expect(qtyInput().props.value).toBe(1);
+    expect(qtyInput().props['aria-label']).toBe('數量（股）');
+    // Remember choosing whole lots as well.
+    await act(async () => { btn('整股').props.onClick(); });
+    await render({ ...contract, code: '2317' });
+    await render();
+    expect(qtyInput().props['aria-label']).toBe('數量（張）');
+});
 
 it.each([['盤中零股', 'IntradayOdd'], ['盤後零股', 'Odd']])('%s: margin/day-trade/market are cleared or disabled; sends %s LMT ROD in shares', async (label, lot) => {
     await act(async () => { view = create(createElement(OrderTicket, { contract, onPlaced: vi.fn() })); });
@@ -75,6 +114,20 @@ it('switching unit resets the quantity so shares never become lots', async () =>
     await act(async () => { btn('整股').props.onClick(); });
     expect(qtyInput().props.value).toBe(1);
     expect(qtyInput().props['aria-label']).toBe('數量（張）');
+});
+
+it('keeps the symbol preference in this panel even when storage is unavailable', async () => {
+    vi.stubGlobal('localStorage', {
+        getItem: () => { throw new Error('denied'); },
+        setItem: () => { throw new Error('quota'); },
+    });
+    await act(async () => { view = create(createElement(OrderTicket, { contract, onPlaced: vi.fn() })); });
+    await act(async () => { btn('盤中零股').props.onClick(); });
+    await act(async () => { qtyInput().props.onChange({ target: { value: '500' } }); });
+    await act(async () => { view.update(createElement(OrderTicket, { contract: { ...contract, code: '2317' }, onPlaced: vi.fn() })); });
+    await act(async () => { view.update(createElement(OrderTicket, { contract, onPlaced: vi.fn() })); });
+    expect(qtyInput().props.value).toBe(1);
+    expect(qtyInput().props['aria-label']).toBe('數量（股）');
 });
 
 it('switching unit clears per-account split quantities and disarms the split confirm', async () => {

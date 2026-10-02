@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
     marks: [] as [string, string | undefined][], child: false, autoOwn: true,
+    forget: vi.fn(),
     claim: null as null | (() => void), release: null as null | (() => void),
 }));
 vi.mock('./shared-stream', () => ({
@@ -19,7 +20,7 @@ vi.mock('./shared-stream', () => ({
 }));
 vi.mock('./runtime', () => ({ getApiBase: () => 'http://fixture.invalid', getStreamBase: () => 'http://fixture.invalid' }));
 vi.mock('./api', () => ({ apiPost: vi.fn() }));
-vi.mock('./server-info-store', () => ({ knownServerInfo: () => ({ simulation: true }) }));
+vi.mock('./server-info-store', () => ({ forgetServerInfo: m.forget, knownServerInfo: () => ({ simulation: true }) }));
 vi.mock('./startup-timing', () => ({ markStage: (s: string, d?: string) => m.marks.push([s, d]) }));
 vi.mock('./window-role', () => ({ isChildWindow: () => m.child }));
 
@@ -41,6 +42,7 @@ beforeEach(() => {
     vi.useFakeTimers();
     FakeEventSource.all = [];
     m.marks = [];
+    m.forget.mockClear();
     m.child = false;
     m.autoOwn = true;
     m.claim = null;
@@ -63,6 +65,7 @@ it('first attempts that fail retry after 250 ms, and opening is recorded', async
     last().onerror!();
     vi.advanceTimersByTime(250);
     expect(FakeEventSource.all).toHaveLength(3); // was a further 2000 ms
+    expect(m.forget.mock.calls).toEqual(Array.from({ length: 3 }, () => ['http://fixture.invalid']));
     last().onopen!();
     last().emit('heartbeat');
     expect(stream.getStreamStatus()).toBe('live');

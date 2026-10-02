@@ -90,8 +90,8 @@ it('odd 500 股 → futures → stock: quantity resets per unit and instrument c
     expect(qtyInput().props['aria-label']).toBe('數量（口）');
     await act(async () => { view.update(createElement(OrderTicket, { contract, onPlaced: vi.fn() })); });
     expect(qtyInput().props.value).toBe(1);
-    expect(qtyInput().props['aria-label']).toBe('數量（張）');
+    expect(qtyInput().props['aria-label']).toBe('數量（股）'); // restores the stock preference, with a safe quantity
     await act(async () => { qtyInput().props.onChange({ target: { value: '5' } }); });
     await act(async () => { view.update(createElement(OrderTicket, { contract: fut, onPlaced: vi.fn() })); });
-    expect(qtyInput().props.value).toBe(1); // 5 張 never becomes 5 口
+    expect(qtyInput().props.value).toBe(1); // 5 股 never becomes 5 口
 });

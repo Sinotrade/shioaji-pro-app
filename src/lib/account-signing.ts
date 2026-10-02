@@ -6,6 +6,15 @@
 export const UNSIGNED_LABEL = '未簽署或未測試';
 export const UNSIGNED_BLOCKED_LABEL = `${UNSIGNED_LABEL}（無法下單）`;
 export const UNSIGNED_TITLE = '尚未完成 API 約定書簽署或模擬測試，無法下單';
+export const UNSIGNED_SIMULATION_LABEL = '模擬可下單；正式交易需完成簽署與模擬測試';
+
+export function unsignedAccountLabel(simulation: boolean) {
+    return simulation ? UNSIGNED_SIMULATION_LABEL : UNSIGNED_BLOCKED_LABEL;
+}
+
+export function unsignedAccountTitle(simulation: boolean) {
+    return simulation ? UNSIGNED_SIMULATION_LABEL : UNSIGNED_TITLE;
+}
 
 // 永豐 API 管理頁：查看各帳戶簽署／測試狀態與原因。
 export const API_MANAGEMENT_URL =

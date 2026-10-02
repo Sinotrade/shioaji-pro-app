@@ -16,7 +16,7 @@ const store = new Map<string, string>();
 };
 const reload = vi.fn();
 (globalThis as { window?: unknown }).window = Object.assign(
-    (globalThis as { window?: object }).window ?? {},
+    (globalThis as { window?: object }).window ?? new EventTarget(),
     { location: { reload } },
 );
 

@@ -77,6 +77,7 @@ export interface BracketPlan {
     market: 'stock' | 'futures';
     orderId: string;
     seqno: string;
+    ordno?: string;
     quoteCode: string; // quote-stream code (e.g. TXFR1 alias)
     orderCode: string; // tradable code reported by the broker (e.g. TXFJ6)
     securityType: 'STK' | 'FUT' | 'OPT';

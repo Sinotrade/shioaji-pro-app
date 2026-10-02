@@ -2,15 +2,18 @@ import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useQuery } from './use-query';
+import type { Account } from '../lib/types/portfolio';
+import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from '../lib/server-info-store';
 
-const api = vi.hoisted(() => ({ base: 'http://fixture' }));
+const api = vi.hoisted(() => ({ base: 'http://fixture', accounts: [] as Account[] }));
 vi.mock('../lib/runtime', () => ({ getApiBase: () => api.base }));
+vi.mock('../lib/account-store', () => ({ getAccountState: () => ({ accounts: api.accounts }) }));
 type Snapshot = ReturnType<typeof useQuery<string>>;
 const roots: ReactTestRenderer[] = [];
 let counter = 0;
 function deferred() { let resolve!: (v: string) => void; let reject!: (e: Error) => void; const promise = new Promise<string>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
-function Probe({ fetcher, scope, receive, enabled = true }: { fetcher: () => Promise<string>; scope: string; receive: (v: Snapshot) => void; enabled?: boolean }) {
-    receive(useQuery(fetcher, scope, enabled));
+function Probe({ fetcher, scope, receive, enabled = true, accounts }: { fetcher: () => Promise<string>; scope: string; receive: (v: Snapshot) => void; enabled?: boolean; accounts?: Account[] }) {
+    receive(useQuery(fetcher, scope, enabled, accounts));
     return null;
 }
 async function mount(props: Parameters<typeof Probe>[0]) { let root!: ReactTestRenderer; await act(async () => { root = create(createElement(Probe, props)); }); roots.push(root); return root; }
@@ -18,6 +21,28 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1789200000000); api.base
 afterEach(async () => { await act(async () => { for (const root of roots.splice(0)) root.unmount(); }); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('session shared query', () => {
+    it.each(['production', 'unknown', 'roundtrip', 'removed'] as const)('discards a buffered account report after %s changes while another read waits', async change => {
+        const mode = (simulation: boolean) => observeServerInfo(beginServerInfoRequest(), { simulation } as import('../lib/shioaji').ServerInfo);
+        mode(true);
+        api.accounts = ['a', 'b'].map(account_id => ({ account_type: 'S', broker_id: 'fixture', account_id, signed: false, username: '', person_id: '' }));
+        let value!: Snapshot;
+        const pending = deferred();
+        const fetcher = vi.fn<() => Promise<string>>().mockResolvedValueOnce('previous').mockImplementationOnce(async () => {
+            const firstAccount = await Promise.resolve('buffered');
+            const secondAccount = await pending.promise;
+            return firstAccount + secondAccount;
+        });
+        await mount({ fetcher, scope: 'accounts', accounts: api.accounts, receive: v => { value = v; } });
+        const updatedAt = value.updatedAt;
+        let run!: Promise<void>;
+        await act(async () => { vi.advanceTimersByTime(1600); run = value.refresh(); });
+        if (change === 'removed') api.accounts = api.accounts.slice(1);
+        else if (change === 'unknown') forgetServerInfo(api.base);
+        else { mode(false); if (change === 'roundtrip') mode(true); }
+        await act(async () => { pending.resolve('late'); await run; });
+        expect(value).toMatchObject({ data: 'previous', updatedAt, loading: false, error: expect.stringContaining('已丟棄回應') });
+    });
+
     it('loads once with no idle polling, and reuses its snapshot after remount', async () => {
         const fetcher = vi.fn(async () => 'snapshot'); let value!: Snapshot;
         const root = await mount({ fetcher, scope: 'same', receive: v => { value = v; } });

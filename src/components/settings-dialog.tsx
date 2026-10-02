@@ -1,3 +1,4 @@
+import { canTrade } from '../lib/account-tradable';
 // src/components/settings-dialog.tsx — 統一設定面板：外觀／音效與隱私／
 // 帳號／風控／版面 五分類。原本散在 header 的主題/帳號/版面 popover 全數
 // 收斂到這裡；風控「規則」也在此（Kill Switch 留在 header，一鍵可達）。
@@ -23,9 +24,10 @@ import {
 import {
     API_MANAGEMENT_URL,
     SIGNING_URLS,
-    UNSIGNED_BLOCKED_LABEL,
-    UNSIGNED_TITLE,
+    unsignedAccountLabel,
+    unsignedAccountTitle,
 } from '../lib/account-signing';
+import { useServerInfo } from '../lib/server-info-store';
 import {
     HEADER_ITEMS,
     setHeaderItem,
@@ -269,6 +271,7 @@ function SoundPrivacySection() {
 
 export function AccountsSection() {
     const { accounts, selectedStock, selectedFutures, loaded, loadError } = useAccounts();
+    const simulation = useServerInfo()?.simulation === true;
     const priv = usePrivacyMode();
     const [refreshing, setRefreshing] = useState(false);
     useEffect(ensureAccounts, []);
@@ -310,13 +313,13 @@ export function AccountsSection() {
                                         hud.opt[
                                             g.selected === key ? 'on' : 'off'
                                         ]
-                                    } ${a.signed ? '' : styles.acctUnsigned}`}
+                                    } ${canTrade(a) ? '' : styles.acctUnsigned}`}
                                     style={{ width: '100%', marginTop: 4 }}
-                                    disabled={!a.signed}
+                                    disabled={!canTrade(a)}
                                     title={
                                         a.signed
                                             ? undefined
-                                            : UNSIGNED_TITLE
+                                            : unsignedAccountTitle(simulation)
                                     }
                                     onClick={() => selectAccount(a)}
                                 >
@@ -325,7 +328,7 @@ export function AccountsSection() {
                                     {maskName(a.username, priv)}）
                                     {!a.signed && (
                                         <span className={styles.unsignedTag}>
-                                            {UNSIGNED_BLOCKED_LABEL}
+                                            {unsignedAccountLabel(simulation)}
                                         </span>
                                     )}
                                 </button>
@@ -346,8 +349,10 @@ export function AccountsSection() {
                 <span className={hud.emptyHint}><AsyncStatus phase='loading' text='載入帳號中…' /></span>
             )}
             <span className={hud.emptyHint}>
-                下單與帳務查詢都使用選定的帳號；尚未完成 API
-                約定書簽署或模擬測試的帳戶會列出但無法選為下單帳戶。
+                下單與帳務查詢都使用選定的帳號；
+                {simulation
+                    ? unsignedAccountLabel(true)
+                    : '尚未完成 API 約定書簽署或模擬測試的帳戶會列出但無法選為下單帳戶。'}
                 {unsignedTypes.length > 0 && (
                     <>
                         請到永豐 API 管理頁查看原因並完成：

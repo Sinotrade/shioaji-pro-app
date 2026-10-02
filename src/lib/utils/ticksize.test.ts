@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { clearTickBands, setTickBands } from '../tick-bands';
 import type { ContractBase, ContractInfo } from '../types/contract';
-import { roundToTick, stepPrice, tickSizeFor } from './ticksize';
+import { formatToTick, roundToTick, stepPrice, tickDecimals, tickSizeFor } from './ticksize';
 
 // server 實際回應（/data/contracts/tick-bands/tw_stock_fut_price_band）
 const STOCK_FUT_BANDS = [
@@ -161,5 +161,35 @@ describe('現股 / ETF 級距不受影響', () => {
     it('ETF 級距照舊', () => {
         expect(tickSizeFor(etf, 45)).toBe(0.01);
         expect(tickSizeFor(etf, 60)).toBe(0.05);
+    });
+});
+
+describe('formatToTick — 畫圖標籤依跳動價位顯示', () => {
+    const txf = { code: 'TXFR1', security_type: 'FUT', tick: 1 } as unknown as ContractBase;
+    const stk = { code: '2330', security_type: 'STK' } as ContractBase;
+    const opt = { code: 'TXO48500J6', security_type: 'OPT', tick: 0.1 } as unknown as ContractBase;
+
+    it('小數位數跟著級距走', () => {
+        expect(tickDecimals(1)).toBe(0);
+        expect(tickDecimals(0.05)).toBe(2);
+        expect(tickDecimals(0.1)).toBe(1);
+        expect(tickDecimals(5)).toBe(0);
+    });
+
+    it('TXF 1 點：48692.46 顯示 48,692（不是 48692.46）；輸入框不加千分位', () => {
+        expect(formatToTick(txf, 48692.46)).toBe('48,692');
+        expect(formatToTick(txf, 48692.46, { grouping: false })).toBe('48692');
+    });
+
+    it('股票依價位級距：1085.5 → 1,085（5 元）、45.67 → 45.65（0.05）', () => {
+        expect(formatToTick(stk, 1085.5)).toBe('1,085');
+        expect(formatToTick(stk, 45.67)).toBe('45.65');
+        expect(formatToTick(stk, 45.68)).toBe('45.70');
+    });
+
+    it('選擇權 0.1：一位小數；價差點數依起點價位的級距', () => {
+        expect(formatToTick(opt, 12.34)).toBe('12.3');
+        expect(formatToTick(stk, 2.37, { at: 45 })).toBe('2.35');
+        expect(formatToTick(stk, NaN)).toBe('—');
     });
 });

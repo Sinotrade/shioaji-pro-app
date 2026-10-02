@@ -4,9 +4,12 @@
 // moves so the ladder keeps its distance. Grid orders are tagged with
 // custom_field so only our own orders are touched.
 
+import { canTrade } from '../lib/account-tradable';
+
 import { RefreshCw, Zap } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
+import { ORDER_CONTEXT_CHANGED_MESSAGE, useOrderContext } from '../hooks/use-order-context';
 import { accountConfirmLabel, requestOrderConfirm } from '../lib/order-confirm';
 import {
     ACCOUNT_CHANGED_MESSAGE,
@@ -37,6 +40,7 @@ import {
 import { fmtPrice } from '../lib/utils/format';
 import { isOddLot, ODD_LOT_MAX_SHARES, oddLotReferencePrice, orderQtyUnit, type OddBaseQuote } from '../lib/odd-lot';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
+import { loadOrderLotPreference, saveOrderLotPreference, QUICK_ORDER_LOTS } from '../lib/order-lot-preference';
 import * as styles from './order-ticket.css';
 import * as flash from './flash-order.css';
 import * as panel from './panel.css';
@@ -128,10 +132,12 @@ export function GridTicket({
     const [step, setStep] = useState(1); // ticks between levels
     const [qtyPer, setQtyPer] = useState(1);
     // 股票：整股（張）或盤中零股（股）（#204）
-    const [lot, setLot] = useState<'Common' | 'IntradayOdd'>('Common');
+    const [lot, setLot] = useState<'Common' | 'IntradayOdd'>(() => loadOrderLotPreference('grid', contract, QUICK_ORDER_LOTS, 'Common'));
+    const lotPreferences = useRef(new Map<string, 'Common' | 'IntradayOdd'>());
     const futures = isFuturesContract(contract);
     const odd = !futures && lot === 'IntradayOdd';
     const unit = orderQtyUnit(futures, lot);
+    const captureContext = useOrderContext(contract, lot);
     const [armed, setArmed] = useState(false);
     const [follow, setFollow] = useState(false);
     const [busy, setBusy] = useState(false);
@@ -184,12 +190,14 @@ export function GridTicket({
     useEffect(() => {
         setArmed(false);
         setFollow(false);
+        recentPlace.current.clear();
         const classChanged = unitClassRef.current !== futures;
         unitClassRef.current = futures;
-        if (lotStateRef.current !== 'Common' || classChanged) setQtyPer(1);
-        setLot('Common');
+        const nextLot = futures ? 'Common' : lotPreferences.current.get(contract.code) ?? loadOrderLotPreference('grid', contract, QUICK_ORDER_LOTS, 'Common');
+        if (lotStateRef.current !== 'Common' || lotStateRef.current !== nextLot || classChanged) setQtyPer(1);
+        setLot(nextLot);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contract.code]);
+    }, [contract.code, futures]);
 
     // our working grid orders for this symbol
     const gridOrders = useMemo(
@@ -225,12 +233,13 @@ export function GridTicket({
     const placeAt = async (
         price: number,
         account: Account,
-        batch?: { qtyPer: number; odd: boolean; side: Action },
+        batch: { qtyPer: number; odd: boolean; side: Action; contract: ContractInfo; beforeDispatch: () => void },
     ) => {
+        batch.beforeDispatch();
         recentPlace.current.set(keyOf(price), Date.now());
-        const c = contractRef.current;
-        const p = batch ?? paramsRef.current;
-        const s = batch?.side ?? sideRef.current;
+        const c = batch.contract;
+        const p = batch;
+        const s = batch.side;
         const req = {
             action: s,
             price,
@@ -243,12 +252,12 @@ export function GridTicket({
                 ...req,
                 price_type: 'LMT',
                 octype: 'Auto',
-            }, account)
+            }, account, { beforeDispatch: batch.beforeDispatch })
             : await placeStockOrder(c, {
                 ...req,
                 price_type: 'LMT',
                 order_lot: p.odd ? 'IntradayOdd' : 'Common',
-            }, account);
+            }, account, { beforeDispatch: batch.beforeDispatch });
         const id = (trade as Trade | undefined)?.order?.id;
         if (id) recordGridOwner(account, id, instanceRef.current);
         return trade;
@@ -256,7 +265,10 @@ export function GridTicket({
 
     const layGrid = async () => {
         if (!armed || busy || last === null) return;
-        const batch = { qtyPer, odd, side };
+        const isContextCurrent = captureContext();
+        const batch = { qtyPer, odd, side, contract, beforeDispatch: () => {
+            if (!isContextCurrent()) throw Object.assign(new Error(ORDER_CONTEXT_CHANGED_MESSAGE), { tradingGateRejected: true });
+        } };
         const blocked = checkOrderAllowed(batch.qtyPer * levels, batch.odd ? 'IntradayOdd' : undefined);
         if (blocked) {
             notify({ kind: 'err', title: '風控阻擋', body: blocked });
@@ -268,7 +280,7 @@ export function GridTicket({
             isFuturesContract(contract) ? 'F' : 'S',
         );
         if (!gridAccount) {
-            notify({ kind: 'err', title: '鋪單未送出', body: '缺少有效且已簽署的下單帳戶' });
+            notify({ kind: 'err', title: '鋪單未送出', body: '缺少有效的下單帳戶' });
             return;
         }
         // 從確認到送完都鎖住單位切換
@@ -283,7 +295,7 @@ export function GridTicket({
     const sendBatch = async (
         prices: number[],
         gridAccount: Account,
-        batch: { qtyPer: number; odd: boolean; side: Action },
+        batch: { qtyPer: number; odd: boolean; side: Action; contract: ContractInfo; beforeDispatch: () => void },
     ) => {
         const { qtyPer, odd, side } = batch;
         // 手動鋪單整批確認一次（動態跟隨的補單不屬手動，不再問）
@@ -311,7 +323,15 @@ export function GridTicket({
         let ok = 0;
         for (const price of prices) {
             try {
-                await placeAt(price, gridAccount, batch);
+                if (!canTrade(gridAccount) || !usableCapturedAccount(gridAccount)) {
+                    throw Object.assign(new Error(`${ACCOUNT_CHANGED_MESSAGE}；已停止後續鋪單`), { tradingGateRejected: true });
+                }
+                await placeAt(price, gridAccount, { ...batch, beforeDispatch: () => {
+                    batch.beforeDispatch();
+                    if (!canTrade(gridAccount) || !usableCapturedAccount(gridAccount) || !isSelectedAccountUnchanged(gridAccount)) {
+                        throw Object.assign(new Error(ACCOUNT_CHANGED_MESSAGE), { tradingGateRejected: true });
+                    }
+                } });
                 ok += 1;
             } catch (e) {
                 notify({
@@ -319,6 +339,7 @@ export function GridTicket({
                     title: `鋪單失敗 @${fmtPrice(price)}`,
                     body: e instanceof Error ? e.message : String(e),
                 });
+                if ((e as { tradingGateRejected?: boolean })?.tradingGateRejected) break;
             }
         }
         notify({
@@ -374,22 +395,28 @@ export function GridTicket({
     // capped per cycle so a fast market can't burst orders
     useEffect(() => {
         if (!follow || !armed) return;
-        // 跟隨啟動時固定帳戶（#139）與交易單位（#204）：補單、刪單只針對
-        // 這個帳戶、這個單位的網格單，之後改選帳戶不影響；帳戶不可用就停止跟隨
+        // 跟隨啟動時固定商品、帳戶與交易單位；等待回應期間切換或清理
+        // 會讓整個週期失效，每次 dispatch 也必須重新核對。
+        let active = true;
+        const isContextCurrent = captureContext();
+        const followContract = contractRef.current;
         const followOdd = paramsRef.current.odd;
         const followAccount = captureSelectedAccount(
             isFuturesContract(contractRef.current) ? 'F' : 'S',
         );
         const stop = (body: string) => {
+            if (!active) return;
+            active = false;
             setFollow(false);
             notify({ kind: 'err', title: '鋪單跟隨已停止', body });
         };
         if (!followAccount) {
-            stop('缺少有效且已簽署的下單帳戶');
+            stop('缺少有效的下單帳戶');
             return;
         }
         setFollowAccountShown(followAccount);
         const timer = setInterval(async () => {
+            if (!active) return;
             if (cycleBusy.current) return;
             const base = lastRef.current;
             if (base === null) return;
@@ -397,7 +424,26 @@ export function GridTicket({
             // 方向，這個週期立刻停止，不以新單位送出任何一筆
             const cycle = { qtyPer: paramsRef.current.qtyPer, odd: paramsRef.current.odd, side: sideRef.current };
             if (cycle.odd !== followOdd) return;
-            const changed = () => paramsRef.current.odd !== cycle.odd || sideRef.current !== cycle.side;
+            const changed = () => {
+                if (!active) return true;
+                if (!isContextCurrent() || paramsRef.current.odd !== cycle.odd || sideRef.current !== cycle.side) {
+                    stop(ORDER_CONTEXT_CHANGED_MESSAGE);
+                    return true;
+                }
+                if (!isSelectedAccountUnchanged(followAccount)) {
+                    stop(ACCOUNT_CHANGED_MESSAGE);
+                    return true;
+                }
+                return false;
+            };
+            const beforeDispatch = () => {
+                if (changed()) throw Object.assign(new Error(ORDER_CONTEXT_CHANGED_MESSAGE), { tradingGateRejected: true, mutationNotStarted: true });
+                if (!canTrade(followAccount) || !usableCapturedAccount(followAccount)) {
+                    stop('跟隨啟動時的帳戶已不可用');
+                    throw Object.assign(new Error(ACCOUNT_CHANGED_MESSAGE), { tradingGateRejected: true, mutationNotStarted: true });
+                }
+            };
+            if (changed()) return;
             if (!usableCapturedAccount(followAccount)) {
                 stop('跟隨啟動時的帳戶已不可用');
                 return;
@@ -405,7 +451,7 @@ export function GridTicket({
             cycleBusy.current = true;
             try {
                 const desired = new Set(desiredPrices(base).map(keyOf));
-                const c = contractRef.current;
+                const c = followContract;
                 const owners = readOwners();
                 const same = tradesRef.current.filter(
                     (t) =>
@@ -432,10 +478,11 @@ export function GridTicket({
                 let ops = 0;
                 for (const t of mine) {
                     if (ops >= MAX_OPS_PER_CYCLE || changed()) break;
+                    if (!canTrade(followAccount) || !usableCapturedAccount(followAccount)) { stop('跟隨啟動時的帳戶已不可用'); return; }
                     const k = keyOf(t.status.modified_price || t.order.price);
                     if (!desired.has(k) && !unresolvedCancels.current.has(t.order.id)) {
                         ops += 1;
-                        await cancelOrder(t.order.id).catch((error: unknown) => {
+                        await cancelOrder(t.order.id, { beforeSend: beforeDispatch }).catch((error: unknown) => {
                             // A refusal before sending may be retried next
                             // cycle; anything else may have reached the broker.
                             if ((error as { mutationNotStarted?: unknown } | null)?.mutationNotStarted === true) return;
@@ -454,6 +501,7 @@ export function GridTicket({
                 }
                 for (const k of desired) {
                     if (ops >= MAX_OPS_PER_CYCLE || changed()) break;
+                    if (!canTrade(followAccount) || !usableCapturedAccount(followAccount)) { stop('跟隨啟動時的帳戶已不可用'); return; }
                     // skip levels visible in trades OR placed moments ago
                     // (the poll hasn't caught up — re-placing would double)
                     if (!have.has(k) && !recentPlace.current.has(k)) {
@@ -464,7 +512,7 @@ export function GridTicket({
                             break;
                         }
                         ops += 1;
-                        await placeAt(Number(k), followAccount, cycle).catch(() => undefined);
+                        await placeAt(Number(k), followAccount, { ...cycle, contract: c, beforeDispatch }).catch(() => undefined);
                     }
                 }
                 if (ops > 0) onChangedRef.current?.();
@@ -473,11 +521,12 @@ export function GridTicket({
             }
         }, FOLLOW_INTERVAL_MS);
         return () => {
+            active = false;
             clearInterval(timer);
             setFollowAccountShown(null);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [follow, armed]);
+    }, [follow, armed, contract.code, futures, lot]);
 
     const preview = last !== null ? desiredPrices(last) : [];
     const numField = (
@@ -556,6 +605,8 @@ export function GridTicket({
                                 title={value === 'IntradayOdd' ? '盤中零股：每檔以股計（1～999 股），限價 ROD、僅現股' : '整股以張計'}
                                 onClick={() => {
                                     if (lot === value) return;
+                                    lotPreferences.current.set(contract.code, value);
+                                    saveOrderLotPreference('grid', contract, value);
                                     setLot(value);
                                     setQtyPer(1);
                                     setFollow(false);

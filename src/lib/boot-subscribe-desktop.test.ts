@@ -12,7 +12,8 @@ vi.mock('./shioaji', () => ({
     fetchTradeCacheHealth: mocks.health,
     subscribeTradeEvents: mocks.subscribe,
 }));
-vi.mock('./account-store', () => ({ loadAccountsShared: mocks.accounts }));
+vi.mock('./account-store', () => ({ loadAccountsShared: mocks.accounts,
+    getAccountState: () => ({ accounts: [stock, futures] }) }));
 vi.mock('./trading-state', () => ({ startTradingState: vi.fn() }));
 vi.mock('./trade', () => ({ notify: mocks.notify }));
 vi.mock('./stream', () => ({}));

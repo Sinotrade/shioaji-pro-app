@@ -1,3 +1,4 @@
+import { canTrade } from './account-tradable';
 // src/lib/order-account.ts — capture the order account BEFORE a manual
 // confirmation and re-check it after (issue #139). The selection can change
 // within this window while a confirmation dialog is open (another panel's
@@ -8,16 +9,16 @@ import { getAccountState } from './account-store';
 import { accountMatches } from './flash-account';
 import type { Account } from './types/portfolio';
 
-/** The currently selected, signed account of this market (or undefined). */
+/** The currently selected, tradable account of this market (or undefined). */
 export function captureSelectedAccount(type: 'S' | 'F'): Account | undefined {
     const state = getAccountState();
     const account = type === 'S' ? state.selectedStock : state.selectedFutures;
-    return account?.signed && account.account_type === type ? account : undefined;
+    return account && canTrade(account) && account.account_type === type ? account : undefined;
 }
 
-/** Still a signed account in the current list. */
+/** Still a tradable account in the current list. */
 export function isAccountAvailable(account: Account): boolean {
-    return getAccountState().accounts.some((a) => a.signed && accountMatches(a, account));
+    return getAccountState().accounts.some((a) => canTrade(a) && accountMatches(a, account));
 }
 
 /** The app-wide selection still points at `captured` and it is still usable. */

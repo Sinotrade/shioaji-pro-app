@@ -1,3 +1,4 @@
+import { canTrade } from './account-tradable';
 import type { OrderEventReport } from './order-report';
 import type { Account, AccountedPosition } from './types/portfolio';
 import type { AccountedTrade } from './types/order';
@@ -35,7 +36,7 @@ export function positionFill(report: OrderEventReport, accounts: Account[], trad
     if (!body || !positive(report.price) || !positive(report.quantity) || !report.ts
         || !['Buy', 'Sell'].includes(report.action ?? '') || !text(body.exchange_seq)) return null;
     const type = report.market === 'stock' ? 'S' : 'F';
-    const account = accounts.find(a => a.signed && a.account_type === type
+    const account = accounts.find(a => canTrade(a) && a.account_type === type
         && a.broker_id === text(body.broker_id) && a.account_id === text(body.account_id));
     if (!account || body.combo === true || (body.combo && typeof body.combo === 'object')) return null;
     const trade = trades.find(t => t.order.id === report.tradeId

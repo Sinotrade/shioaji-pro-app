@@ -1,6 +1,6 @@
 // #204 閃電下單設定：零股切換移進一顆設定按鈕，彈出面板只列閃電下單真的會用到
 // 的設定（單位、數量），底部一句話說明送出內容；Esc 只關面板，不觸發面板熱鍵
-import { createElement } from 'react';
+import { createElement, StrictMode } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Account } from '../lib/types/portfolio';
@@ -105,7 +105,7 @@ it('設為預設 seeds new panels of the same market; futures are fixed at 口',
     await act(async () => { btnIn(pop()!, '100').props.onClick(); });
     await act(async () => { btnIn(pop()!, '設為預設').props.onClick(); });
     await act(async () => view.unmount());
-    await mount(stk);
+    await act(async () => { view = create(createElement(StrictMode, null, createElement(FlashOrder, { contract: stk, trades: [], positions: [] }))); });
     expect(qty().props['aria-label']).toBe('數量（股）');
     expect(qty().props.value).toBe(100);
     await act(async () => view.unmount());
@@ -127,8 +127,8 @@ it('odd 500 股 → futures → stock: the quantity never crosses units or instr
     expect(qty().props.value).toBe(1); // 1 口, never 500 口
     expect(text(view.root)).toContain('口');
     await act(async () => { view.update(createElement(FlashOrder, { contract: stk, trades: [], positions: [] })); });
-    expect(qty().props.value).toBe(1); // 1 張, never 500 張
-    expect(qty().props['aria-label']).toBe('數量');
+    expect(qty().props.value).toBe(1); // remembered 1 股, never 500 張
+    expect(qty().props['aria-label']).toBe('數量（股）');
     // whole lots do not carry into futures either
     await act(async () => { qty().props.onChange({ target: { value: '5' } }); });
     await act(async () => { view.update(createElement(FlashOrder, { contract: fut, trades: [], positions: [] })); });
@@ -165,9 +165,43 @@ it('a futures panel that later switches to a stock keeps the stock default it ha
     await act(async () => { btnIn(wPop(), '盤中零股（股）').props.onClick(); });
     await act(async () => { btnIn(wPop(), '500').props.onClick(); });
     await act(async () => { btnIn(wPop(), '設為預設').props.onClick(); });
-    // the futures panel now moves to a stock: still 1 張, not 500 股 odd lot
-    await act(async () => { view.update(createElement(FlashOrder, { contract: stk, trades: [], positions: [] })); });
+    // An unseen stock still uses this panel's original default snapshot.
+    await act(async () => { view.update(createElement(FlashOrder, { contract: { ...stk, code: '2317' }, trades: [], positions: [] })); });
     expect(qty().props.value).toBe(1);
     expect(qty().props['aria-label']).toBe('數量');
     await act(async () => writer.unmount());
+});
+
+it('remembers the symbol unit across navigation and reload, while unit changes reset quantity to 1', async () => {
+    const render = async (c = stk) => { await act(async () => { view.update(createElement(FlashOrder, { contract: c, trades: [], positions: [] })); }); };
+    await mount(stk);
+    await act(async () => { gear().props.onClick(); });
+    await act(async () => { btnIn(pop()!, '盤中零股（股）').props.onClick(); });
+    await act(async () => { btnIn(pop()!, '500').props.onClick(); });
+    await act(async () => { btnIn(pop()!, '完成').props.onClick(); });
+    await render({ ...stk, reference: 101 });
+    expect(qty().props.value).toBe(500);
+    await render({ ...stk, code: '2317' });
+    expect(qty().props.value).toBe(1);
+    expect(qty().props['aria-label']).toBe('數量');
+    await act(async () => { qty().props.onChange({ target: { value: '7' } }); });
+    await render();
+    expect(qty().props.value).toBe(1);
+    expect(qty().props['aria-label']).toBe('數量（股）');
+    await act(async () => view.unmount());
+    await mount(stk);
+    expect(qty().props.value).toBe(1);
+    expect(qty().props['aria-label']).toBe('數量（股）');
+    await render({ ...fut, code: stk.code });
+    expect(qty().props.value).toBe(1);
+    expect(text(view.root)).toContain('口');
+    await act(async () => { gear().props.onClick(); });
+    expect(text(pop()!)).not.toContain('盤中零股');
+    await render();
+    await act(async () => { btnIn(pop()!, '500').props.onClick(); });
+    await act(async () => { btnIn(pop()!, '整股（張）').props.onClick(); });
+    expect(qty().props.value).toBe(1);
+    await render({ ...stk, code: '2317' });
+    await render();
+    expect(qty().props['aria-label']).toBe('數量');
 });

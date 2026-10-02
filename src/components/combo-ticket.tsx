@@ -190,6 +190,7 @@ export function ComboTicket() {
     const tradesQuery = useQuery<ComboTrade[]>(
         useCallback(() => fetchComboTrades(), [selectedFutures]),
         `combo-trades:${selectedFutures?.broker_id}:${selectedFutures?.account_id}`, !!selectedFutures,
+        selectedFutures ? [selectedFutures] : [],
     );
 
     // 到價監控 (issue #2): combos only fill IOC, so watch the book and fire
@@ -611,7 +612,7 @@ export function ComboTicket() {
             assertTradingLive();
             // 帳戶在送出這一刻固定並明確傳入（#139）
             const comboAccount = captureSelectedAccount('F');
-            if (!comboAccount) throw new Error('缺少有效且已簽署的期貨下單帳戶');
+            if (!comboAccount) throw new Error('缺少有效的期貨下單帳戶');
             const trade = await placeComboOrder(buildOrderCombo(), {
                 action,
                 price: p,
@@ -949,7 +950,7 @@ export function ComboTicket() {
                         }
                         const account = captureSelectedAccount('F');
                         if (!account) {
-                            notify({ kind: 'err', title: '到價監控未啟動', body: '缺少有效且已簽署的期貨下單帳戶' });
+                            notify({ kind: 'err', title: '到價監控未啟動', body: '缺少有效的期貨下單帳戶' });
                             return;
                         }
                         const blocked = checkOrderAllowed(qty);

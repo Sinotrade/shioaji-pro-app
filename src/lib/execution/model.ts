@@ -76,7 +76,7 @@ export type EntryRule =
     | { type: 'limit'; price: number; order: OrderSpec }
     /** Entry order placed outside the program (bracket entry sent by the
      * order ticket); the program only tracks its reports. */
-    | { type: 'external'; orderId: string };
+    | { type: 'external'; orderId: string; seqno?: string; ordno?: string };
 
 /** A touch leg of an exit (stop or take). Fires a market-style order. */
 export interface TouchLeg {
@@ -165,7 +165,7 @@ export interface OrderSlot {
 export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'resume' | 'unknownNotSent'
     /** An external (bracket) entry still open across an epoch boundary: the
      * user confirms how much it filled before any exit counts on it. */
-    | 'unknownEntryAcrossDay';
+    | 'unknownEntryAcrossDay' | 'unknownEntryAfterReconnect';
 
 export type LevelPhase =
     | 'idle' // waiting to enter (touch watching / limit not yet submitted)

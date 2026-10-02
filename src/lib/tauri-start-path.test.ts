@@ -38,7 +38,7 @@ beforeEach(() => {
     vi.setSystemTime(clock);
     vi.clearAllMocks();
     storage.clear();
-    vi.stubGlobal('window', { setTimeout, clearTimeout });
+    vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout }));
     // probeFetch retries https through the webview fetch: never hit the network
     vi.stubGlobal('fetch', async () => { throw new Error('connection refused'); });
     vi.stubGlobal('localStorage', {

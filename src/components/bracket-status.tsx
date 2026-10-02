@@ -81,10 +81,10 @@ export function EntryAcrossDayConfirm({ code, action, seqno, placedAt, known, qu
     const placed = new Date(placedAt);
     const day = `${placed.getMonth() + 1}/${placed.getDate()}`;
     return (
-        <div className={styles.acrossDay} role='group' aria-label='跨交易日進場單確認'>
+        <div className={styles.acrossDay} role='group' aria-label='進場單成交確認'>
             <div className={styles.acrossTitle}>
                 <TriangleAlert size={13} aria-hidden />
-                <span className={styles.grow}>進場單跨日未結束，請確認成交</span>
+                <span className={styles.grow}>進場單尚未確認，請核對成交</span>
                 <button type='button' className={styles.iconButton} aria-label='為什麼要確認'
                     aria-expanded={why} onClick={() => setWhy(w => !w)}>
                     <CircleHelp size={13} aria-hidden />
@@ -92,8 +92,9 @@ export function EntryAcrossDayConfirm({ code, action, seqno, placedAt, known, qu
             </div>
             {why && (
                 <div className={styles.note.muted}>
-                    跨過交易日後委託編號可能被別張單沿用，系統無法再自動對應這張進場單的成交。
-                    請到「委託／成交查詢」核對後填寫；確認前不會送出場單，也不會重送進場單。
+                    重新連線或跨過交易日後，系統無法確認這張進場單的成交。
+                    請到「委託／成交查詢」核對後填寫；未確認的成交不會算入出場口數，也不會重送進場單。
+                    已確認的成交口數維持原有保護。
                 </div>
             )}
             <div className={styles.facts}>

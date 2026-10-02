@@ -1,12 +1,14 @@
 // A desktop order mutation needs this page's boot to verify the listener's
 // mode, version, scheme and Harness ownership. Persist the gate across the
 // post-start reload and share it with child windows on the same origin.
-import { isTauri } from './runtime';
+import { getApiBase, isTauri } from './runtime';
+import { forgetServerInfo } from './server-info-store';
 
 const KEY = 'sj-pro-server-identity-verified';
 
 export function setServerIdentityVerified(verified: boolean): void {
     if (!isTauri) return;
+    if (!verified) forgetServerInfo(getApiBase());
     try { localStorage.setItem(KEY, verified ? '1' : '0'); }
     catch { /* unavailable storage keeps desktop mutations blocked */ }
 }

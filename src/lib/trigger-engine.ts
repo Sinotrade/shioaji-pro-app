@@ -1,3 +1,5 @@
+import { canTrade } from './account-tradable';
+import { createAccountQuery } from './account-query';
 // src/lib/trigger-engine.ts — client-side stop-loss / take-profit triggers.
 //
 // Execution model (#102):
@@ -346,7 +348,7 @@ function handleCommand(cmd: Command): unknown {
 
 /** Capture the fixed execution context for a manual stop/take trigger. */
 /** `account`: a panel's own account (chart order settings, #204) instead of
- * the app-wide selection — it must still be a signed account of the market. */
+ * the app-wide selection — it must still be a tradable account of the market. */
 function withContext(t: NewTrigger, contract?: ContractBase, account?: Account): NewTrigger | string {
     if (t.kind === 'alert' || (t.env && t.account && t.orderCode)) return t;
     if (!contract) return '缺少商品資訊，無法固定下單帳戶';
@@ -355,11 +357,11 @@ function withContext(t: NewTrigger, contract?: ContractBase, account?: Account):
     if (futures && t.orderLot && t.orderLot !== 'Common') return '期貨選擇權沒有零股，觸價單未建立';
     const s = getAccountState();
     const selected = account
-        ? s.accounts.find(a => a.signed && a.account_type === account.account_type
+        ? s.accounts.find(a => canTrade(a) && a.account_type === account.account_type
             && a.broker_id === account.broker_id && a.account_id === account.account_id)
         : futures ? s.selectedFutures : s.selectedStock;
     if (account && !selected) return '指定的下單帳戶已不可用，觸價單未建立';
-    if (!selected?.signed || selected.account_type !== (futures ? 'F' : 'S')) return '沒有可用的已簽署帳戶，觸價單未建立';
+    if (!selected || !canTrade(selected) || selected.account_type !== (futures ? 'F' : 'S')) return '沒有可用的下單帳戶，觸價單未建立';
     const env = currentProtectionEnv();
     if (!env) return '伺服器模式（模擬／正式）尚未確認，觸價單未建立';
     return { ...t, env,
@@ -786,7 +788,7 @@ async function sendContext(t: TriggerOrder, env: string): Promise<{ contract: Co
     if ((contract.target_code || contract.code) !== t.orderCode) {
         return `商品已換為 ${contract.target_code || contract.code}，與建立時 ${t.orderCode} 不同`;
     }
-    const account = getAccountState().accounts.find(a => a.signed && a.account_type === t.account?.account_type
+    const account = getAccountState().accounts.find(a => canTrade(a) && a.account_type === t.account?.account_type
         && a.broker_id === t.account?.broker_id && a.account_id === t.account?.account_id);
     if (!account) return '建立時的帳戶已不可用';
     return { contract, account };
@@ -939,7 +941,9 @@ function scheduleIocCheck(id: string, previous?: string) {
         const rec = exits.find(e => e.id === id);
         if (!rec || rec.status !== 'working' || !rec.orderId || !executing) return;
         if (currentProtectionEnv() !== rec.env) return;
-        void fetchTrades(rec.account.account_type, rec.account, { refresh: false }).then(rows => {
+        const query = createAccountQuery();
+        void query.read(rec.account.account_type, rec.account, current => fetchTrades(rec.account.account_type, current, { refresh: false })).then(rows => {
+            query.assertCurrent();
             const trade = rows.find(t => t.order.id === rec.orderId);
             if (!trade) {
                 if (previous === undefined) scheduleIocCheck(id, ''); // second (last) read
@@ -1193,7 +1197,7 @@ function resolvePending(id: string, choice: PendingChoice, allowUnpast = false):
     }
     if (choice !== 'send') throw new Error('未知選項');
     if (currentProtectionEnv() !== t.env) throw new Error('伺服器或模擬／正式模式與建立時不同，未送出');
-    const account = t.account && getAccountState().accounts.find(a => a.signed && a.account_type === t.account!.account_type
+    const account = t.account && getAccountState().accounts.find(a => canTrade(a) && a.account_type === t.account!.account_type
         && a.broker_id === t.account!.broker_id && a.account_id === t.account!.account_id);
     if (!account) throw new Error('建立時的帳戶已不可用，未送出');
     const latest = lastPrices.get(priceKeyOf(t));

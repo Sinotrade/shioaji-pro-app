@@ -47,6 +47,19 @@ function deps(reads: { cache: () => Promise<Trade[]>; refresh: () => Promise<Tra
 const calls = (fn: ReturnType<typeof vi.fn>, refresh: boolean) => fn.mock.calls.filter(c => c[0] === refresh).length;
 
 describe('cancel confirmation rule', () => {
+    it.each([false, true])('discards an otherwise confirmed response when the guard changes during refresh=%s', async refresh => {
+        let switched = false;
+        const stale = async () => { switched = true; return [row({ status: 'Cancelled', cancel_quantity: 1 })]; };
+        const d = deps({ cache: stale, refresh: stale }, {
+            cacheTrusted: () => !refresh,
+            locallyCancelled: () => true,
+            guard: () => { if (switched) throw new Error('查詢期間模式已切換'); },
+        });
+        await expect(verifyCancellation(row(), account, d.value, { windowMs: 0 })).rejects.toBeInstanceOf(CancelUnconfirmedError);
+        expect(d.readTrades).toHaveBeenCalledOnce();
+        expect(d.readHealth).not.toHaveBeenCalled();
+    });
+
     it('requires the remaining quantity from order.quantity, never status.order_quantity', () => {
         expect(requiredCancelQuantity(row({ order_quantity: 0 }, { quantity: 3 }))).toBe(3);
         expect(requiredCancelQuantity(row({ deal_quantity: 1 }, { quantity: 3 }))).toBe(2);

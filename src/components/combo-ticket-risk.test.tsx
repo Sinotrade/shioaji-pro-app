@@ -27,7 +27,7 @@ vi.mock('../hooks/use-query', () => ({ useQuery: () => ({ data: [], loading: fal
 vi.mock('../hooks/use-stream', () => ({ useQuote: (code: string | null) => (code ? m.quotes[code] : undefined), useTradingLive: () => true }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: undefined, snapshot: undefined, book: undefined }) }));
 vi.mock('../hooks/use-hotkeys', () => ({ TICKET_ACTION_EVENT: 'sj-ticket-action' }));
-vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ selectedFutures: m.account }) }));
+vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ selectedFutures: m.account }), getAccountState: () => ({ accounts: [m.account] }) }));
 vi.mock('../lib/order-account', () => ({ captureSelectedAccount: () => m.account, usableCapturedAccount: (a: unknown) => a }));
 vi.mock('../lib/combo-pick', () => ({ useComboPick: () => null }));
 vi.mock('../lib/option-pick', () => ({ useOptionLegPick: () => null }));

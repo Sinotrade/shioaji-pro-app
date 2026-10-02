@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { defaultFibOptions } from './chart-drawing-fib';
 import {
+    channelOffset,
+    estimateTextWidth,
+    fibPrice,
+    fibLabels,
+    formatSpan,
+    magnetAnchor,
+    measureStats,
+    nearestBarIndex,
+    TEXT_FONT_PX,
+    type Shape,
     ANCHOR_RADIUS,
     distanceToSegment,
     dragPoints,
@@ -22,6 +33,36 @@ import {
 const MIN = 60;
 const DAY = 86400;
 const SIZE: PaneSize = { width: 800, height: 400 };
+
+describe('可見範圍命中：未選取的斐波那契不能把指標交給委託線', () => {
+    const pts = [{ x: 200, y: 300 }, { x: 500, y: 100 }];
+    it('色帶內部命中，關閉色帶後空白處不命中', () => {
+        const fib = { ...defaultFibOptions(), showTrend: false };
+        expect(hitTest('fib', pts, SIZE, { x: 280, y: 180 }, 0, { fib })).toEqual({ kind: 'body' });
+        expect(hitTest('fib', pts, SIZE, { x: 280, y: 180 }, 0, { fib: { ...fib, bandOpacity: 0 } })).toBeNull();
+    });
+    it.each(['left', 'right'] as const)('外側價位標籤命中（%s）', (labelH) => {
+        const fib = { ...defaultFibOptions(), labelH, labelV: 'middle' as const, showTrend: false };
+        expect(hitTest('fib', pts, SIZE, { x: labelH === 'left' ? 160 : 550, y: 100 }, 0, { fib })).toEqual({ kind: 'body' });
+    });
+    it.each(['top', 'middle', 'bottom'] as const)('字級16、百分比、反轉與延伸的全部標籤範圍命中（%s）', (labelV) => {
+        const fib = { ...defaultFibOptions(), labelV, fontSize: 16, levelFormat: 'percent' as const, reverse: true, extendLeft: true, extendRight: true };
+        const anchors = [{ time: 1, price: 25123.45 }, { time: 2, price: 24123.45 }];
+        const shape = shapeOf('fib', pts, SIZE, { fib });
+        if (shape?.kind !== 'fib') throw new Error('expected fib');
+        const formatPrice = (v: number) => v.toLocaleString('en-US', { minimumFractionDigits: 2 });
+        for (const r of fibLabels(shape, fib, anchors, SIZE.width, formatPrice)) {
+            for (const at of [{ x: r.left, y: r.top }, { x: r.right, y: r.bottom }]) {
+                expect(hitTest('fib', pts, SIZE, at, 0, { fib, anchors, formatPrice })).toEqual({ kind: 'body' });
+            }
+        }
+    });
+    it('新工具與粗線的完整範圍命中', () => {
+        expect(hitTest('channel', [...pts, { x: 300, y: 330 }], SIZE, { x: 350, y: 280 }, 0)).toEqual({ kind: 'body' });
+        expect(hitTest('text', [{ x: 200, y: 100 }], SIZE, { x: 240, y: 140 }, 0, { text: '兩行文字\n中文與abc' })).toEqual({ kind: 'body' });
+        expect(hitTest('vertical', [{ x: 200, y: 100 }], SIZE, { x: 202, y: 399 }, 0, { style: { width: 4 } })).toEqual({ kind: 'body' });
+    });
+});
 
 // 1 分 K：09:00 起連續 5 根
 const m1 = [0, 1, 2, 3, 4].map((i) => 32400 + i * MIN);
@@ -374,5 +415,138 @@ describe('拖曳', () => {
             { x: 5, y: 5 },
         );
         expect(start).toEqual(before);
+    });
+});
+
+describe('第一期新工具的形狀與命中', () => {
+    it('垂直線縱貫整個 pane，點在線附近命中', () => {
+        expect(shapeOf('vertical', [{ x: 300, y: 50 }], SIZE)).toEqual({
+            kind: 'line',
+            a: { x: 300, y: 0 },
+            b: { x: 300, y: 400 },
+        });
+        expect(hitTest('vertical', [{ x: 300, y: 50 }], SIZE, { x: 304, y: 380 })).toEqual({ kind: 'body' });
+        expect(hitTest('vertical', [{ x: 300, y: 50 }], SIZE, { x: 320, y: 380 })).toBeNull();
+    });
+
+    it('平行通道：第三點決定平行線的垂直位移，中線在正中間，兩線之間可點選', () => {
+        const a = { x: 100, y: 200 };
+        const b = { x: 300, y: 100 };
+        const c = { x: 200, y: 250 }; // 基準線在 x=200 的 y=150 → 位移 +100
+        expect(channelOffset(a, b, c)).toEqual({ x: 0, y: 100 });
+        const s = shapeOf('channel', [a, b, c], SIZE) as Extract<Shape, { kind: 'channel' }>;
+        expect(s.parallel).toEqual({ a: { x: 100, y: 300 }, b: { x: 300, y: 200 } });
+        expect(s.mid).toEqual({ a: { x: 100, y: 250 }, b: { x: 300, y: 150 } });
+        expect(hitTest('channel', [a, b, c], SIZE, { x: 200, y: 200 })).toEqual({ kind: 'body' }); // 通道內
+        expect(hitTest('channel', [a, b, c], SIZE, { x: 200, y: 330 })).toBeNull();
+        // 還在等第三點：只畫基準線
+        expect(shapeOf('channel', [a, b], SIZE)).toEqual({ kind: 'line', a, b });
+    });
+
+    it('斐波那契：終點＝0、起點＝1，比例線在兩點之間；可自訂比例', () => {
+        const a = { x: 100, y: 300 }; // 起點（1）
+        const b = { x: 400, y: 100 }; // 終點（0）
+        const s = shapeOf('fib', [a, b], SIZE) as Extract<Shape, { kind: 'fib' }>;
+        expect(s.levels.map((l) => l.level)).toEqual([0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]);
+        expect(s.levels.find((l) => l.level === 0)!.y).toBe(100);
+        expect(s.levels.find((l) => l.level === 1)!.y).toBe(300);
+        expect(s.levels.find((l) => l.level === 0.5)!.y).toBe(200);
+        expect(fibPrice(48000, 48600, 0.5)).toBe(48300);
+        expect(fibPrice(48000, 48600, 0)).toBe(48600);
+        const fib = defaultFibOptions();
+        const custom = shapeOf('fib', [a, b], SIZE, {
+            fib: {
+                ...fib,
+                levels: [
+                    { value: 0, visible: true, token: 'grey' },
+                    { value: 0.5, visible: false, token: 'green' },
+                    { value: 1.618, visible: true, token: 'teal' },
+                ],
+            },
+        }) as Extract<Shape, { kind: 'fib' }>;
+        // 隱藏的比例不畫也點不到；index 對回 fib.levels 取顏色
+        expect(custom.levels.map((l) => [l.level, l.index])).toEqual([[0, 0], [1.618, 2]]);
+        expect(hitTest('fib', [a, b], SIZE, { x: 250, y: 202 })).toEqual({ kind: 'body' }); // 0.5 線上
+        expect(hitTest('fib', [a, b], SIZE, { x: 600, y: 200 })).toBeNull(); // 範圍外
+    });
+
+    it('文字註記：以錨點為左上角的文字框，框內點得到；中文字比英文寬', () => {
+        const at = { x: 100, y: 100 };
+        const s = shapeOf('text', [at], SIZE, { text: '月線支撐\nok' }) as Extract<Shape, { kind: 'text' }>;
+        expect(s.lines).toEqual(['月線支撐', 'ok']);
+        expect(s.left).toBe(100);
+        expect(s.right - s.left).toBeCloseTo(4 * TEXT_FONT_PX + 12, 6);
+        expect(estimateTextWidth('中')).toBeGreaterThan(estimateTextWidth('a'));
+        expect(hitTest('text', [at], SIZE, { x: 104, y: 103 }, 6, { text: '月線支撐' })).toEqual({ kind: 'anchor', index: 0 });
+        expect(hitTest('text', [at], SIZE, { x: 150, y: 115 }, 6, { text: '月線支撐' })).toEqual({ kind: 'body' });
+        expect(hitTest('text', [at], SIZE, { x: 300, y: 115 }, 6, { text: '月線支撐' })).toBeNull();
+    });
+});
+
+describe('磁吸', () => {
+    const bars = [
+        { time: 1000, open: 100, high: 110, low: 95, close: 105 },
+        { time: 1060, open: 105, high: 120, low: 100, close: 118 },
+    ];
+    const y = (p: number) => 1000 - p; // 價格越高越上面
+
+    it('貼齊最近那根 K 棒，取畫面上最近的開高低收', () => {
+        expect(nearestBarIndex(bars, 1040)).toBe(1);
+        expect(nearestBarIndex(bars, 1020)).toBe(0);
+        expect(magnetAnchor({ time: 1050, price: 119 }, bars, y, y(119))).toEqual({ time: 1060, price: 120 });
+        expect(magnetAnchor({ time: 1005, price: 96 }, bars, y, y(96))).toEqual({ time: 1000, price: 95 });
+    });
+
+    it('沒有 K 棒時原樣回傳', () => {
+        expect(magnetAnchor({ time: 1, price: 2 }, [], y, 0)).toEqual({ time: 1, price: 2 });
+    });
+});
+
+describe('價差量測', () => {
+    const times = [0, 60, 120, 180, 240, 300];
+
+    it('點數、漲跌幅、K 棒數、時間與損益', () => {
+        const s = measureStats({ time: 0, price: 48000 }, { time: 300, price: 47880 }, times, 60, 200);
+        expect(s.points).toBe(-120);
+        expect(s.pct).toBeCloseTo(-0.25, 6);
+        expect(s.bars).toBe(5);
+        expect(s.seconds).toBe(300);
+        expect(s.pnl).toBe(-24000);
+        expect(measureStats({ time: 0, price: 1 }, { time: 60, price: 2 }, times, 60, null).pnl).toBeNull();
+    });
+
+    it('時間長度格式', () => {
+        expect(formatSpan(5400)).toBe('1h30m');
+        expect(formatSpan(3600)).toBe('1h');
+        expect(formatSpan(90000)).toBe('1d 1h');
+        expect(formatSpan(2700)).toBe('45m');
+        expect(formatSpan(30)).toBe('30s');
+        expect(formatSpan(-120)).toBe('−2m');
+    });
+});
+
+describe('斐波那契：反轉、延伸、趨勢線', () => {
+    const a = { x: 100, y: 300 };
+    const b = { x: 400, y: 100 };
+    const fib = defaultFibOptions();
+    const shape = (patch: Partial<typeof fib>) =>
+        shapeOf('fib', [a, b], SIZE, { fib: { ...fib, ...patch } }) as Extract<Shape, { kind: 'fib' }>;
+
+    it('反轉：0 在起點、1 在終點', () => {
+        const s = shape({ reverse: true });
+        expect(s.levels.find((l) => l.level === 0)!.y).toBe(300);
+        expect(s.levels.find((l) => l.level === 1)!.y).toBe(100);
+    });
+
+    it('延伸線段到圖表左右緣；回撤範圍（標籤外側基準）不變', () => {
+        const s = shape({ extendLeft: true, extendRight: true });
+        expect([s.left, s.right]).toEqual([0, SIZE.width]);
+        expect([s.anchorLeft, s.anchorRight]).toEqual([100, 400]);
+        expect(hitTest('fib', [a, b], SIZE, { x: 700, y: 200 }, 6, { fib: { ...fib, extendRight: true } })).toEqual({ kind: 'body' });
+    });
+
+    it('關掉趨勢線就沒有斜虛線', () => {
+        expect(shape({ showTrend: false }).diag).toBeNull();
+        expect(shape({}).diag).toEqual({ a, b });
     });
 });

@@ -4,9 +4,20 @@ import type { Account } from './types/portfolio';
 const m = vi.hoisted(() => ({ accounts: [] as Account[], stock: null as Account | null, futures: null as Account | null }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts, selectedStock: m.stock, selectedFutures: m.futures }) }));
 import { captureSelectedAccount, isSelectedAccountUnchanged, mainFlashSelection, usableCapturedAccount } from './order-account';
+import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from './server-info-store';
 const acc = (account_type: 'S' | 'F', account_id: string, signed = true): Account => ({ account_type, broker_id: 'BR', account_id, signed, person_id: '', username: '' });
 const A = acc('F', 'A'), B = acc('F', 'B'), S = acc('S', 'S');
-beforeEach(() => { m.accounts = [A, B, S]; m.futures = A; m.stock = S; });
+beforeEach(() => { forgetServerInfo(''); m.accounts = [A, B, S]; m.futures = A; m.stock = S; });
+
+it.each([true, false, undefined])('manual and armed paths accept unsigned accounts only when simulation=%s (#228)', simulation => {
+    if (simulation !== undefined) observeServerInfo(beginServerInfoRequest(), { simulation } as import('./shioaji').ServerInfo);
+    const unsigned = acc('F', 'U', false);
+    m.accounts = [unsigned]; m.futures = unsigned;
+    expect(captureSelectedAccount('F')).toBe(simulation === true ? unsigned : undefined);
+    expect(isSelectedAccountUnchanged(unsigned)).toBe(simulation === true);
+    expect(usableCapturedAccount(unsigned)).toBe(simulation === true ? unsigned : undefined);
+    expect(unsigned.signed).toBe(false);
+});
 
 it('captures only a signed account of the requested market', () => {
     expect(captureSelectedAccount('F')).toBe(A);

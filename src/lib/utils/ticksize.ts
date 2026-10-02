@@ -69,3 +69,32 @@ export function stepPrice(
     }
     return p;
 }
+
+// 價格級距的小數位數（1 → 0、0.05 → 2、0.1 → 1）
+export function tickDecimals(tick: number): number {
+    if (!Number.isFinite(tick) || tick <= 0) return 2;
+    const s = String(tick);
+    const exp = /e-(\d+)$/.exec(s);
+    if (exp) return Number(exp[1]);
+    const i = s.indexOf('.');
+    return i < 0 ? 0 : Math.min(8, s.length - i - 1);
+}
+
+// 依商品的跳動價位顯示價格（畫圖標籤、設定視窗）：先吸附到級距再依級距
+// 的小數位數格式化 — TXF（1 點）顯示 48,692，不是 48692.46。存的原始值
+// 不變，只影響顯示。`at` 是決定級距的價位（量測點數用起點價），預設同 price。
+export function formatToTick(
+    contract: TickContract,
+    price: number,
+    opts: { grouping?: boolean; at?: number } = {},
+): string {
+    if (!Number.isFinite(price)) return '—';
+    const tick = tickSizeFor(contract, Math.abs(opts.at ?? price));
+    const decimals = tickDecimals(tick);
+    const rounded = Math.round(price / tick) * tick;
+    return rounded.toLocaleString('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+        useGrouping: opts.grouping ?? true,
+    });
+}

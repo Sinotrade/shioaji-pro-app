@@ -4,6 +4,7 @@ import { getApiBase, isTauri } from './runtime';
 import { isAgentHarnessEnabled } from './agent-harness-state';
 import { serverIdentityVerified } from './server-identity';
 import { getTradingMirrorFresh } from './trading-mirror-lease';
+import { getServerModeVersion } from './server-info-store';
 
 // resolved per request — the server port can move at runtime (e.g. the boot
 // flow discovers the default port occupied and starts on a fallback), and a
@@ -105,7 +106,7 @@ async function withWebviewInfoSlot<T>(origin: string, signal: AbortSignal | unde
     }
 }
 
-async function doFetch(url: string, init?: RequestInit): Promise<Response> {
+async function doFetch(url: string, init?: RequestInit, beforeDispatch?: () => void): Promise<Response> {
     if (isTauri) {
         // Info is read-only and frequently requested in parallel by watchlists.
         // The WebView can reach the loopback sidecar directly, avoiding the
@@ -138,8 +139,10 @@ async function doFetch(url: string, init?: RequestInit): Promise<Response> {
             }
         }
         const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+        beforeDispatch?.();
         return tauriFetch(url, init);
     }
+    beforeDispatch?.();
     return fetch(url, init);
 }
 
@@ -203,8 +206,24 @@ export async function apiGet<T>(path: string, opts?: { signal?: AbortSignal; hea
 export async function apiPost<T>(
     path: string,
     body: unknown,
-    opts?: { timeoutMs?: number; agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean },
+    opts?: {
+        timeoutMs?: number; agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean;
+        beforeDispatch?: () => void;
+        // 讀取回應標頭（例如 X-Shioaji-Instance，SDK 1.7.8+）；在解析 body 前呼叫
+        onResponse?: (res: Response) => void;
+    },
 ): Promise<T> {
+    // Trade reports are account-scoped; market-data subscriptions are not.
+    // Loading the native transport (or serializing the body) can outlive a
+    // mode change, even when the final mode is the same as the initial one.
+    const subscriptionVersion = path === '/api/v1/auth/subscribe_trade' ? getServerModeVersion() : undefined;
+    const beforeDispatch = () => {
+        if (subscriptionVersion !== undefined && getServerModeVersion() !== subscriptionVersion) {
+            throw Object.assign(new Error('訂閱期間伺服器模式已變更，未送出請求；請重新訂閱'),
+                { subscriptionNotStarted: true as const });
+        }
+        opts?.beforeDispatch?.();
+    };
     if (isTauri && AGENT_HARNESS_MUTATIONS.has(path) && !serverIdentityVerified()) {
         throw Object.assign(
             new Error('伺服器身分尚未驗證，已暫停交易操作；請等待重新連線'),
@@ -234,9 +253,10 @@ export async function apiPost<T>(
     if (shouldProxyAgentHarnessMutation(isTauri, harnessEnabled, path)) {
         const bodyText = JSON.stringify(body);
         const { invoke } = await import('@tauri-apps/api/core');
-        let proxied: { status: number; body: string };
+        let proxied: { status: number; body: string; headers?: Record<string, string> };
+        beforeDispatch();
         try {
-            proxied = await invoke<{ status: number; body: string }>(
+            proxied = await invoke<typeof proxied>(
                 'agent_harness_post',
                 {
                     url: base() + path,
@@ -256,10 +276,13 @@ export async function apiPost<T>(
             }
             throw error;
         }
+        const headers = new Headers(proxied.headers);
+        if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
         const res = new Response(proxied.body, {
             status: proxied.status,
-            headers: { 'Content-Type': 'application/json' },
+            headers,
         });
+        opts?.onResponse?.(res);
         if (!res.ok) await throwApiError(res);
         return res.json() as Promise<T>;
     }
@@ -270,7 +293,8 @@ export async function apiPost<T>(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
             signal,
-        });
+        }, beforeDispatch);
+        opts?.onResponse?.(res);
         if (!res.ok) await throwApiError(res);
         return res.json() as Promise<T>;
     }, opts?.timeoutMs ?? (timedMutation ? 3000 : undefined), timedMutation);

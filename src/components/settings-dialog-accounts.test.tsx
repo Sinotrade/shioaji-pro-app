@@ -38,9 +38,11 @@ vi.mock('../lib/tauri', () => ({
 
 import { setPrivacyMode } from '../lib/privacy';
 import { AccountsSection } from './settings-dialog';
+import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from '../lib/server-info-store';
+import { getApiBase } from '../lib/runtime';
 
 let view: ReactTestRenderer | undefined;
-beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); });
+beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); forgetServerInfo(getApiBase()); });
 afterEach(async () => {
     await act(async () => view?.unmount());
     view = undefined;
@@ -59,6 +61,26 @@ it('labels signed=false as 未簽署或未測試 with a consistent tooltip', asy
     const unsigned = view!.root.findAll((n) => n.type === 'button' && n.props.disabled === true);
     expect(unsigned).toHaveLength(1);
     expect(unsigned[0]!.props.title).toBe('尚未完成 API 約定書簽署或模擬測試，無法下單');
+});
+it('enables unsigned accounts and updates signing copy when simulation info arrives (#228)', async () => {
+    await render();
+    const unsignedButton = () => view!.root.findAllByType('button').find(n => n.props.title?.includes('模擬測試'))!;
+    expect(unsignedButton().props.disabled).toBe(true);
+    await act(async () => {
+        observeServerInfo(beginServerInfoRequest(), { simulation: true } as import('../lib/shioaji').ServerInfo);
+    });
+    const label = '模擬可下單；正式交易需完成簽署與模擬測試';
+    expect(unsignedButton().props.disabled).toBe(false);
+    expect(unsignedButton().props.title).toBe(label);
+    expect(text()).toContain(label);
+    expect(text()).not.toContain('無法下單');
+    expect(text()).not.toContain('無法選為下單帳戶');
+    expect(fixture.accounts[1]!.signed).toBe(false);
+    await act(async () => {
+        observeServerInfo(beginServerInfoRequest(), { simulation: false } as import('../lib/shioaji').ServerInfo);
+    });
+    expect(unsignedButton().props.disabled).toBe(true);
+    expect(text()).toContain('未簽署或未測試（無法下單）');
 });
 
 it('links the API management page and only the signing page for the unsigned account type', async () => {

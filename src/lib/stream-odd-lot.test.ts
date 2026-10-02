@@ -10,7 +10,7 @@ const m = vi.hoisted(() => ({
 }));
 vi.mock('./runtime', () => ({ getApiBase: () => 'http://fixture.invalid', getStreamBase: () => 'http://fixture.invalid' }));
 vi.mock('./api', () => ({ apiPost: (...args: unknown[]) => (m.post as (...a: unknown[]) => unknown)(...args) }));
-vi.mock('./server-info-store', () => ({ knownServerInfo: () => undefined }));
+vi.mock('./server-info-store', () => ({ forgetServerInfo: vi.fn(), knownServerInfo: () => undefined }));
 vi.mock('./shared-stream', () => ({
     createSharedStream: (options: typeof m.options) => {
         m.options = options;

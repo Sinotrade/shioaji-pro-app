@@ -2,11 +2,11 @@ import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Account, AccountedPosition } from '../lib/types/portfolio';
-const mocks = vi.hoisted(() => ({ place: vi.fn(), stock: vi.fn(), notify: vi.fn() }));
+const mocks = vi.hoisted(() => ({ place: vi.fn(), stock: vi.fn(), notify: vi.fn(), simulation: undefined as boolean | undefined }));
 vi.mock('../lib/trade', () => ({ placeQuickOrder: mocks.place, placeStockExitByShares: mocks.stock, notify: mocks.notify }));
 vi.mock('../hooks/use-stream', () => ({ useTradingLive: () => true }));
 vi.mock('../lib/contracts-cache', () => ({ ensureContract: async (code: string) => ({ code, name: code, security_type: code === '2330' ? 'STK' : 'FUT' }) }));
-vi.mock('../lib/server-info-store', () => ({ useServerInfo: () => null, yesterdayQuantityNotice: () => null }));
+vi.mock('../lib/server-info-store', () => ({ useServerInfo: () => null, yesterdayQuantityNotice: () => null, knownServerInfo: () => ({ simulation: mocks.simulation }) }));
 vi.mock('./bottom-dock-shared', async original => ({ ...await original<object>(), useMeasuredWidth: () => ({ ref: { current: null }, width: 1400 }) }));
 import { PositionsPane } from './bottom-dock-positions';
 import { ArmLockButton } from './bottom-dock-shared';
@@ -14,7 +14,7 @@ const selected: Account = { account_type: 'F', broker_id: 'BR', account_id: 'SEL
 const owner = { ...selected, account_id: 'OWNER' };
 const position: AccountedPosition = { account: owner, code: 'TMF', id: 1, direction: 'Buy', quantity: 3, price: 100, last_price: 100, pnl: 0 };
 let view: ReactTestRenderer | undefined;
-afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); vi.clearAllMocks(); });
+afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); vi.clearAllMocks(); mocks.simulation = undefined; });
 async function mount(row: AccountedPosition) {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
@@ -44,6 +44,16 @@ it('closes the row owner with Cover even when another account is selected', asyn
     mocks.place.mockResolvedValue({ status: { status: 'Submitted', deal_quantity: 0 } });
     await mount(position); await click('平');
     expect(mocks.place.mock.calls[0]!.slice(1)).toEqual(['Sell', null, 3, { account: owner, ocType: 'Cover' }]);
+});
+it.each([true, false, undefined])('allows unsigned position exits only when simulation=%s (#228)', async simulation => {
+    mocks.simulation = simulation;
+    const unsigned = { ...owner, signed: false };
+    mocks.place.mockResolvedValue({ status: { status: 'Submitted', deal_quantity: 0 } });
+    await mount({ ...position, account: unsigned }); await click('平');
+    if (simulation === true) {
+        expect(mocks.place.mock.calls[0]![4]).toEqual({ account: unsigned, ocType: 'Cover' });
+        expect(unsigned.signed).toBe(false);
+    } else expect(mocks.place).not.toHaveBeenCalled();
 });
 it('does not infer an unknown owner from the selected account', async () => {
     await mount({ ...position, account: undefined }); await click('平');

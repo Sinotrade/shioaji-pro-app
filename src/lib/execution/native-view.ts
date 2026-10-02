@@ -140,8 +140,9 @@ export function bracketPlansFromPrograms(programs: readonly OrderProgram[]): Nat
             env: envKeyOf(b),
             account: accountRef(b.account),
             market: b.contract.market,
-            orderId: lv.entry.orderId,
-            seqno: '',
+            orderId: entry?.orderId ?? lv.entry.orderId,
+            seqno: lv.entry.seqno ?? '',
+            ...(lv.entry.ordno ? { ordno: lv.entry.ordno } : {}),
             quoteCode: b.contract.quoteCode,
             orderCode: b.contract.orderCode,
             securityType: b.contract.securityType,
@@ -161,7 +162,8 @@ export function bracketPlansFromPrograms(programs: readonly OrderProgram[]): Nat
             createdAt: p.createdAt,
             updatedAt: p.updatedAt,
             native: { programId: p.id, levelId: lv.id, version: p.version, status: p.status, hold: p.hold, phase: lv.phase,
-                entryAcrossDay: lv.pending?.reason === 'unknownEntryAcrossDay' ? { known: entry?.filled ?? 0 } : null },
+                entryAcrossDay: lv.pending?.reason === 'unknownEntryAcrossDay' || lv.pending?.reason === 'unknownEntryAfterReconnect'
+                    ? { known: entry?.filled ?? 0 } : null },
         });
     }
     return out;
@@ -178,6 +180,7 @@ export interface NativeBracketSpec {
     account: BracketPlan['account'];
     orderId: string;
     seqno: string;
+    ordno?: string;
     quoteCode: string;
     orderCode: string;
     securityType: BracketPlan['securityType'];

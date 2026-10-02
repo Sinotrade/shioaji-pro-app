@@ -53,6 +53,7 @@ export function setApiPort(port: number): boolean {
     } catch {
         // storage unavailable
     }
+    if (changed && typeof window !== 'undefined') window.dispatchEvent(new Event('sj-pro-api-base-changed'));
     return changed;
 }
 
@@ -79,6 +80,7 @@ export function setApiScheme(scheme: ApiScheme): boolean {
     } catch {
         // storage unavailable
     }
+    if (changed && typeof window !== 'undefined') window.dispatchEvent(new Event('sj-pro-api-base-changed'));
     return changed;
 }
 

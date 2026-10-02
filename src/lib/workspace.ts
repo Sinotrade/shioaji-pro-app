@@ -52,6 +52,7 @@ export type BlockType =
     | 'ticket'
     | 'tape'
     | 'flash'
+    | 'oddspread'
     | 'pnl'
     | 'chips'
     | 'volprofile'
@@ -261,6 +262,14 @@ export const BLOCK_META: Record<
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 14, minW: 4, minH: 8 },
+    },
+    oddspread: {
+        label: '整零價差',
+        description: '整股與盤中零股價差試算、兩市場五檔對照與兩腳送單',
+        category: 'trading',
+        pinnable: true,
+        singleton: false,
+        defaultSize: { w: 6, h: 16, minW: 5, minH: 10 },
     },
     pnl: {
         label: '損益分析',

@@ -1,3 +1,4 @@
+import { canTrade } from '../lib/account-tradable';
 // src/components/bottom-dock-positions.tsx — 持倉 tab：響應式欄位、
 // 分帳戶區段、批次市價平倉（arm-lock 防誤觸）
 
@@ -187,7 +188,7 @@ export function PositionsPane({
     // 捕捉列本身的帳戶；不得以目前選取帳戶補猜持倉歸屬。
     const closeOne = async (p: AccountedPosition, mode2: 'close' | 'reverse') => {
         const account = p.account;
-        if (!account?.signed || !account.broker_id || !account.account_id || !['S', 'F'].includes(account.account_type)) {
+        if (!account || !canTrade(account) || !account.broker_id || !account.account_id || !['S', 'F'].includes(account.account_type)) {
             throw new Error('持倉帳戶歸屬不明，未送出委託');
         }
         if ((isStockPosition(p) ? 'S' : 'F') !== account.account_type) throw new Error('持倉單位與帳戶市場不符，未送出委託');

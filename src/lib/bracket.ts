@@ -17,6 +17,7 @@
 //   resent automatically.
 
 import { useSyncExternalStore } from 'react';
+import { createAccountQuery } from './account-query';
 import { reportLedger } from './report-ledger';
 import { cancelOrder, fetchTradeCacheHealth, fetchTrades } from './shioaji';
 import { checkTradeCacheHealth, tradeCacheContinuous } from './trading-state';
@@ -58,6 +59,7 @@ import {
     subscribeNative,
 } from './execution/native';
 import { bracketPlansFromPrograms, programForNewBracket, type NativeBracketPlan } from './execution/native-view';
+import { brokerIdentityMatches } from './execution/core';
 import { getApiBase } from './runtime';
 import { getStreamStatus, subscribeStatusStore } from './stream';
 import { notify } from './trade';
@@ -83,6 +85,7 @@ export interface BracketSpec {
     account: AccountRef;
     orderId: string;
     seqno: string;
+    ordno?: string;
     quoteCode: string;
     orderCode: string;
     securityType: 'STK' | 'FUT' | 'OPT';
@@ -310,8 +313,9 @@ function applyHealth(account: AccountRef, env: string, health: TradeCacheHealth,
     }
 }
 
-async function checkHealth(account: AccountRef, env: string) {
-    const health = await fetchTradeCacheHealth(account.account_type, account);
+async function checkHealth(account: AccountRef, env: string, query = createAccountQuery()) {
+    const health = await query.read(account.account_type, account, current => fetchTradeCacheHealth(account.account_type, current));
+    query.assertCurrent();
     if (health.reasons.some(r => r.reason === 'NotSubscribed')) {
         // Never subscribe here: trading-state owns (re)subscription and its
         // single-flight health check coalesces with a reconnect already in
@@ -340,11 +344,13 @@ function lookup(account: AccountRef, env: string, restore = false): Promise<void
     if (running) return running;
     const task = (async () => {
         const now = Date.now();
+        const query = createAccountQuery();
         try {
             // Cache-only continuity is proven only by trading-state's
             // authoritative baseline on this sidecar instance (#128).
             const continuous = tradeCacheContinuous();
-            const trades = await fetchTrades(account.account_type, account, { refresh: false });
+            const trades = await query.read(account.account_type, account, current => fetchTrades(account.account_type, current, { refresh: false }));
+            query.assertCurrent();
             if (currentProtectionEnv() !== env) return;
             restoringDo(restore, () => {
                 for (const p of plansFor(account, env)) {
@@ -359,7 +365,7 @@ function lookup(account: AccountRef, env: string, restore = false): Promise<void
                 update(p.id, x => addIssue(x, 'lookup-failed', `委託快取查詢失敗：${e instanceof Error ? e.message : String(e)}`, now));
             }
         }
-        try { await checkHealth(account, env); } catch (e) {
+        try { await checkHealth(account, env, query); } catch (e) {
             for (const p of plansFor(account, env)) {
                 update(p.id, x => addIssue(x, 'lookup-failed', `回報健康狀態查詢失敗：${e instanceof Error ? e.message : String(e)}`, now));
             }
@@ -387,7 +393,9 @@ async function reconcile(id: string): Promise<{ health: TradeCacheHealth['state'
     let result: TradeCacheHealth['state'] = 'Unknown';
     const task = (async () => {
         const env = plan.env;
-        const trades = await fetchTrades(plan.account.account_type, plan.account, { refresh: true });
+        const query = createAccountQuery();
+        const trades = await query.read(plan.account.account_type, plan.account, current => fetchTrades(plan.account.account_type, current, { refresh: true }));
+        query.assertCurrent();
         const now = Date.now();
         for (const p of plansFor(plan.account, env)) {
             const trade = trades.find(t => tradeMatchesPlan(t, p));
@@ -398,7 +406,8 @@ async function reconcile(id: string): Promise<{ health: TradeCacheHealth['state'
             const exitTrade = p.exit?.orderId ? trades.find(t => t.order.id === p.exit?.orderId) : undefined;
             if (exitTrade) applyExitTrade(exitTrade);
         }
-        const health = await checkHealth(plan.account, env);
+        const health = await checkHealth(plan.account, env, query);
+        query.assertCurrent();
         result = health.state;
         if (getStreamStatus() !== 'live') {
             // Reconciled a snapshot, but reports/ticks are not arriving now.
@@ -503,7 +512,8 @@ async function registerNativeBracket(spec: BracketSpec): Promise<BracketPlan> {
     // idempotent: an entry order has at most one live bracket (the engine
     // refuses a second one too: both would send a full-size exit)
     const existingFor = () => nativePlans().find(p => p.native.status !== 'stopped' && p.env === spec.env
-        && p.orderId === spec.orderId && p.orderCode === spec.orderCode
+        && (brokerIdentityMatches(p, spec) || p.orderId === spec.orderId)
+        && p.orderCode === spec.orderCode && p.securityType === spec.securityType
         && accountRefKey(p.account) === accountRefKey(spec.account));
     const existing = existingFor();
     if (existing) return existing;

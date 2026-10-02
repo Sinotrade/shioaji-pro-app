@@ -1,3 +1,5 @@
+import { canTrade } from './account-tradable';
+import { createAccountQuery } from './account-query';
 // src/lib/boot.ts — startup orchestration:
 // 1. Desktop: auto-start the bundled shioaji server when keys are saved.
 // 2. If the app booted while the server was unreachable, watch /health and
@@ -47,12 +49,14 @@ import {
 import { appReadySignals, startStallProbe, watchFrontendReady } from './frontend-ready';
 import { ensureAccounts, loadAccountsShared } from './account-store';
 import { timedAutostart } from './server-actions';
-import { startTradingState } from './trading-state';
+import { refreshTradingStateForModeChange, startTradingState } from './trading-state';
+import { watchProtectionEnv } from './protection-env';
 import { serverHealthReady } from './server-health';
 import { FAST_START_SCHEDULE, pollDelay } from './poll-until';
 import { setServerIdentityVerified } from './server-identity';
 import { logNotice, notify } from './trade';
 import { isChildWindow } from './window-role';
+import { getServerModeVersion, knownServerInfo, subscribeServerInfo } from './server-info-store';
 
 let booted = false;
 let tradingStarted = false;
@@ -124,6 +128,7 @@ function installKeyboardFocusHeal() {
 export function bootstrap() {
     if (booted) return;
     booted = true;
+    watchProtectionEnv();
     if (isTauri && !isChildWindow()) setServerIdentityVerified(false);
     installKeyboardFocusHeal();
     // agent scheduled/triggered tasks run for the app's lifetime
@@ -478,11 +483,13 @@ async function serverVersionOk(): Promise<boolean> {
 }
 
 // Shioaji 1.7.7 restores the token's original trade subscriptions on cached
-// login. Check each signed account before subscribing: a duplicate subscribe
+// login. Check each tradable account before subscribing: a duplicate subscribe
 // can clear another account's relay record on the same session (sw#183).
 // A missing/failed health route falls back to subscribe for older servers.
 // Share the account read with the early trading snapshot and update the store.
 let tradeSubscriptionInFlight: Promise<void> | null = null;
+let stopTradeSubscriptionMode: (() => void) | undefined;
+let tradeSubscriptionModeQueued = false;
 
 /** Desktop: the native host owns trade-report subscription (health first,
  * subscribe only on NotSubscribed, one check at a time per account, shared
@@ -499,20 +506,44 @@ async function nativeEnsureTradeReports(account: { account_type: string; broker_
 }
 
 export function subscribeTradeReports(): Promise<void> {
+    // Install only once subscriptions are actually used (main window).
+    // A new known version must recover even after same-mode reconnects;
+    // ordinary /info refreshes keep the version and need no new queries.
+    if (!stopTradeSubscriptionMode) {
+        let version = getServerModeVersion();
+        stopTradeSubscriptionMode = subscribeServerInfo(() => {
+            const next = getServerModeVersion();
+            if (next === version) return;
+            version = next;
+            if (typeof knownServerInfo()?.simulation !== 'boolean') return;
+            void refreshTradingStateForModeChange();
+            if (tradeSubscriptionInFlight) tradeSubscriptionModeQueued = true;
+            else void subscribeTradeReports().catch(() => undefined);
+        });
+    }
     if (tradeSubscriptionInFlight) return tradeSubscriptionInFlight;
     const run = (async () => {
         try {
             const accounts = await loadAccountsShared();
-            for (const account of accounts.filter(a => a.signed)) {
-                if (await nativeEnsureTradeReports(account)) continue;
+            const query = createAccountQuery();
+            for (const account of accounts.filter(a => canTrade(a))) {
+                query.assertCurrent();
+                if (await nativeEnsureTradeReports(query.account(account.account_type as 'S' | 'F', account))) {
+                    query.assertCurrent();
+                    continue;
+                }
                 let subscribed = false;
                 try {
-                    const health = await fetchTradeCacheHealth(account.account_type as 'S' | 'F', account);
+                    const health = await query.read(account.account_type as 'S' | 'F', account,
+                        current => fetchTradeCacheHealth(current.account_type as 'S' | 'F', current));
+                    query.assertCurrent();
                     subscribed = !health.reasons.some(r => r.reason === 'NotSubscribed');
                 } catch {
                     // Pre-1.7.6 sidecar or a transient health read failure.
                 }
-                if (!subscribed) await subscribeTradeEvents(account);
+                query.assertCurrent();
+                const current = query.account(account.account_type as 'S' | 'F', account);
+                if (!subscribed) await subscribeTradeEvents(current);
             }
         } catch (error) {
             notify({ kind: 'err', title: '委託回報訂閱失敗', body: '資料可能過期；請使用委託分頁右側的更新圖示重試。' });
@@ -520,6 +551,15 @@ export function subscribeTradeReports(): Promise<void> {
         }
     })();
     tradeSubscriptionInFlight = run;
-    void run.finally(() => { tradeSubscriptionInFlight = null; }).catch(() => undefined);
+    void run.finally(() => {
+        tradeSubscriptionInFlight = null;
+        if (tradeSubscriptionModeQueued) {
+            tradeSubscriptionModeQueued = false;
+            if (typeof knownServerInfo()?.simulation === 'boolean') {
+                void subscribeTradeReports().catch(() => undefined);
+            }
+        }
+    }).catch(() => undefined);
     return run;
 }
+import.meta.hot?.dispose(() => { stopTradeSubscriptionMode?.(); });

@@ -1,3 +1,4 @@
+import { canTrade } from '../lib/account-tradable';
 import { remainingWorkingOrderQuantity } from '../lib/working-order-quantity';
 // src/components/bottom-dock.tsx — positions / orders / account tabs.
 // 標題列常駐：帳戶範圍選單、合併｜分帳戶切換、市場篩選 chips、摘要列；
@@ -103,16 +104,16 @@ export function BottomDock({
         'all',
     );
     // 帳戶範圍：'' = 全部帳戶，其餘為 broker_id-account_id。
-    // scope 選項/持倉 fan-out 只用已簽署帳戶；未簽署帳戶（issue #16）另外
-    // 灰字列出，讓使用者知道帳號有抓到、只是不能下單。
+    // scope 選項/持倉 fan-out 使用可交易帳戶；被擋的帳戶（issue #16）
+    // 另外灰字列出。模擬模式允許未簽署帳戶。
     const [scope, setScope] = useState('');
     const tradable = accounts.filter(
         (a) =>
-            a.signed && (a.account_type === 'S' || a.account_type === 'F'),
+            canTrade(a) && (a.account_type === 'S' || a.account_type === 'F'),
     );
     const unsigned = accounts.filter(
         (a) =>
-            !a.signed && (a.account_type === 'S' || a.account_type === 'F'),
+            !canTrade(a) && (a.account_type === 'S' || a.account_type === 'F'),
     );
     useEffect(() => {
         if (

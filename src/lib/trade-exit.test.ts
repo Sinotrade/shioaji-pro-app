@@ -11,9 +11,41 @@ vi.mock('./stream', () => ({ getStreamStatus: () => m.live }));
 vi.mock('./shioaji', () => ({ placeStockOrder: m.stock, placeFuturesOrder: m.future, fetchTrades: m.fetch, cancelOrder: m.cancel, cancelOrders: (ids: string[]) => Promise.allSettled(ids.map(id => m.cancel(id))), fetchTradeCacheHealth: m.health }));
 vi.mock('./trading-state', () => ({ tradeCacheContinuous: () => m.continuous }));
 import { placeStockExitByShares, placeQuickOrder, cancelAllOrders, onNotice } from './trade';
+import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from './server-info-store';
 const account = { account_type:'S', account_id:'a', broker_id:'b', signed:true, person_id:'fixture', username:'fixture' };
 const contract = { code:'2330',security_type:'STK',exchange:'TSE',limit_down:90,limit_up:110 } as ContractBase & {limit_down:number;limit_up:number};
 beforeEach(() => { vi.clearAllMocks(); m.continuous=false; m.health.mockReset().mockResolvedValue({ state: 'Healthy', reasons: [] }); m.base='fixture'; m.live='live'; m.accounts=[account]; m.selected=account; m.risk.mockReturnValue(null); m.confirm.mockResolvedValue(true); m.stock.mockResolvedValue({}); m.future.mockResolvedValue({}); });
+beforeEach(() => { forgetServerInfo(m.base); });
+const setSimulation = (simulation: boolean) => observeServerInfo(beginServerInfoRequest(), { simulation } as import('./shioaji').ServerInfo);
+
+it.each(['S', 'F'] as const)('sends an unsigned %s account unchanged in simulation (#228)', async type => {
+    setSimulation(true);
+    const unsigned = { ...account, signed: false, account_type: type };
+    m.accounts = [unsigned]; m.selected = unsigned;
+    const product = type === 'S' ? contract : { ...contract, security_type: 'FUT', exchange: 'TAIFEX' } as ContractBase;
+    await placeQuickOrder(product, 'Buy', 100, 1);
+    const send = type === 'S' ? m.stock : m.future;
+    expect(send).toHaveBeenCalledOnce();
+    expect(send.mock.calls[0]![2]).toBe(unsigned);
+    expect(unsigned.signed).toBe(false);
+});
+it.each([false, undefined])('blocks unsigned orders when simulation=%s (#228)', async simulation => {
+    if (simulation !== undefined) setSimulation(simulation);
+    const unsigned = { ...account, signed: false };
+    m.accounts = [unsigned]; m.selected = unsigned;
+    await expect(placeQuickOrder(contract, 'Buy', 100, 1)).rejects.toMatchObject({ mutationNotStarted: true });
+    expect(m.confirm).not.toHaveBeenCalled();
+    expect(m.stock).not.toHaveBeenCalled();
+});
+it('blocks an unsigned order if mode changes to production during confirmation (#228)', async () => {
+    setSimulation(true);
+    const unsigned = { ...account, signed: false };
+    m.accounts = [unsigned]; m.selected = unsigned;
+    m.confirm.mockImplementation(async () => { setSimulation(false); return true; });
+    await expect(placeQuickOrder(contract, 'Buy', 100, 1)).rejects.toMatchObject({ mutationNotStarted: true });
+    expect(m.confirm).toHaveBeenCalledOnce();
+    expect(m.stock).not.toHaveBeenCalled();
+});
 it('keeps the captured stock account on both legs after selection changes during confirmation', async () => {
     m.confirm.mockImplementation(async () => { m.selected={...account,account_id:'other'}; return true; });
     await placeStockExitByShares(contract,'Sell',1200,account);
@@ -25,6 +57,22 @@ it('keeps the captured stock account on both legs after selection changes during
 it('rechecks connection after confirmation and does not send a leg', async () => {
     m.confirm.mockImplementation(async () => { m.live='connecting'; return true; });
     await expect(placeStockExitByShares(contract,'Sell',1000,account)).rejects.toThrow('LIVE'); expect(m.stock).not.toHaveBeenCalled();
+});
+
+it.each(['context', 'account'])('rechecks %s before the odd remainder of a stock exit', async change => {
+    let current = true;
+    const dispatched = vi.fn();
+    m.stock.mockImplementation(async (_c, _o, _a, opts) => {
+        opts.beforeDispatch();
+        dispatched();
+        current = false; // the first leg's response arrives after the panel changed
+        return {};
+    });
+    await expect(placeStockExitByShares(contract, 'Sell', 1500, account, {
+        isAccountCurrent: () => change !== 'account' || current,
+        beforeSend: () => { if (change === 'context' && !current) throw new Error('商品已變更'); },
+    })).rejects.toMatchObject({ mutationNotStarted: true });
+    expect(dispatched).toHaveBeenCalledOnce();
 });
 it('passes explicit Cover and retains Auto default', async () => {
     const future = {...contract,security_type:'FUT',exchange:'TAIFEX'} as ContractBase;
@@ -88,11 +136,17 @@ it('passes a pending trigger quote code into the manual confirmation', async () 
 });
 it('beforeSend runs after confirmation; its refusal is mutationNotStarted and nothing is sent', async () => {
     const order: string[] = [];
+    const dispatch = vi.fn();
+    m.stock.mockImplementationOnce(async (_contract, _order, _account, opts) => {
+        opts.beforeDispatch();
+        dispatch();
+        return {};
+    });
     m.confirm.mockImplementation(async () => { order.push('confirm'); return true; });
     await expect(placeQuickOrder(contract, 'Buy', null, 1, { beforeSend: () => { order.push('before'); throw new Error('gone'); } }))
         .rejects.toMatchObject({ mutationNotStarted: true, message: 'gone' });
     expect(order).toEqual(['confirm', 'before']);
-    expect(m.stock).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
 });
 
 // #204 零股：沒有市價單；限價送出帶 IntradayOdd，風控以零股單位檢查

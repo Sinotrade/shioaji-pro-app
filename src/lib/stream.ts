@@ -12,7 +12,7 @@ import {
 import { reportLedger } from './report-ledger';
 import { markStage } from './startup-timing';
 import { isChildWindow } from './window-role';
-import { knownServerInfo } from './server-info-store';
+import { forgetServerInfo, knownServerInfo } from './server-info-store';
 import { createSharedStream, type StreamWire } from './shared-stream';
 import { invalidateTradingMirror } from './trading-mirror-lease';
 
@@ -146,8 +146,18 @@ function emitQuote(code: string, oddLot = false) {
     }
 }
 
+// 連線世代：串流每次「非 live → live」就＋1。sidecar 重啟必然中斷串流，所以同一
+// 世代內的伺服器程序不變；process-local 的 trade_id 只在同一世代可信（整零價差）。
+// 看門狗 stale→live 也會＋1（保守：多一次以標記重新接回，不會誤信）。
+let connectionEpoch = 0;
+/** 目前的串流連線世代（0＝本頁尚未連上） */
+export function streamConnectionEpoch(): number {
+    return status === 'live' ? connectionEpoch : -1;
+}
+
 function setStatus(s: StreamStatus) {
     if (status !== s) {
+        if (s === 'live') connectionEpoch += 1;
         status = s;
         statusListeners.forEach((l) => l());
     }
@@ -676,6 +686,7 @@ function connect() {
     // Only the Web Locks owner may create an EventSource, including retries
     // queued before ownership was handed to another window.
     if (shared && !shared.isOwner()) return;
+    forgetServerInfo(getApiBase());
     if (es) {
         // never expected while a connection is live: record it if it happens
         markStream('stream-restart', 'reason=connect-while-open');

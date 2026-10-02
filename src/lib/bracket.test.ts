@@ -161,7 +161,7 @@ describe('bracket registration and partial-fill accumulation', () => {
         const plan = await bracket.registerBracket(spec(F1));
         await flush();
         expect(m.cached).toHaveBeenCalledTimes(1);
-        expect(m.cached).toHaveBeenCalledWith(spec(F1).account);
+        expect(m.cached).toHaveBeenCalledWith(F1);
         expect(m.health).toHaveBeenCalledTimes(1);
         await vi.advanceTimersByTimeAsync(120_000); // the old code polled every 4s
         expect(m.cached).toHaveBeenCalledTimes(1);

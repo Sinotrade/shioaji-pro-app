@@ -268,7 +268,7 @@ describe('ownership: one executor per trigger / bracket', () => {
         expect(bracket.getBrackets()).toHaveLength(0);
         const program = (creates()[0] as Extract<UserCommand, { op: 'create' }>).program;
         expect(program.kind).toBe('bracket');
-        expect(program.levels[0]!.entry).toEqual({ type: 'external', orderId: 'fixture-f1' });
+        expect(program.levels[0]!.entry).toEqual({ type: 'external', orderId: 'fixture-f1', seqno: 'fixture-f1' });
         expect(program.levels[0]!.exit).toMatchObject({ type: 'oco', stop: { price: 48000, condition: 'below' },
             take: { price: 48600, condition: 'above' }, order: { priceType: 'MKT', octype: 'Cover' } });
         expect(plan.id).toBe(program.id);
@@ -288,6 +288,14 @@ describe('ownership: one executor per trigger / bracket', () => {
         expect(b.id).toBe(a.id);
         expect(creates()).toHaveLength(1);
         expect(host.programs).toHaveLength(1);
+        // A reconnect changes the trade id, not the broker's order identity.
+        host.programs[0]!.levels[0]!.orders[0]!.orderId = 'rebound-f1';
+        host.bump();
+        await native.refreshNative();
+        expect(bracket.getDisplayBrackets()[0]!.orderId).toBe('rebound-f1');
+        const rebound = await bracket.registerBracket({ ...spec, orderId: 'rebound-f1' });
+        expect(rebound.id).toBe(a.id);
+        expect(creates()).toHaveLength(1);
         // another entry order is another bracket
         const c = await bracket.registerBracket({ ...spec, orderId: 'fixture-f2', seqno: 'fixture-f2' });
         expect(c.id).not.toBe(a.id);

@@ -12,6 +12,7 @@ import { bootstrap } from './lib/boot';
 import { initTheme } from './lib/theme-store';
 import { startBracketRuntime } from './lib/bracket';
 import { startNativeExecution } from './lib/execution/native';
+import { startOddSpreadService } from './lib/odd-spread-service';
 import { startTriggerEngine } from './lib/trigger-engine';
 
 initTheme();
@@ -22,6 +23,8 @@ startBracketRuntime();
 // #201: mirror of the native engine (desktop only; every window displays,
 // the main window syncs the experimental toggle)
 startNativeExecution();
+// 整零價差兩腳送單：接回重新整理前的執行並追蹤成交（只在執行中的主視窗）
+startOddSpreadService();
 bootstrap();
 
 const rootElement = document.getElementById('root');

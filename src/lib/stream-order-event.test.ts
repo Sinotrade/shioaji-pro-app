@@ -7,7 +7,7 @@ import type { OrderEventReport } from './order-report';
 const m = vi.hoisted(() => ({ base: 'http://fixture.invalid', simulation: true as boolean | undefined }));
 vi.mock('./runtime', () => ({ getApiBase: () => m.base, getStreamBase: () => m.base }));
 vi.mock('./api', () => ({ apiPost: vi.fn() }));
-vi.mock('./server-info-store', () => ({ knownServerInfo: () => (m.simulation === undefined ? undefined : { simulation: m.simulation }) }));
+vi.mock('./server-info-store', () => ({ forgetServerInfo: vi.fn(), knownServerInfo: () => (m.simulation === undefined ? undefined : { simulation: m.simulation }) }));
 
 type Listener = (event: { data: string }) => void;
 class FakeEventSource {
