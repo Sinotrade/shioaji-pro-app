@@ -181,8 +181,9 @@ class DrawingRenderer implements IPrimitivePaneRenderer {
         if (!shape) return;
         ctx.save();
         ctx.strokeStyle = style.color;
-        // 選取中加粗一點當作視覺回饋
-        ctx.lineWidth = (style.width + (selected ? 1 : 0)) * hr;
+        // 細線不遮 K 棒；選取時只微幅加粗，命中範圍由 geometry
+        // 獨立控制，不需要靠粗線換取可操作性。
+        ctx.lineWidth = (style.width + (selected ? 0.3 : 0)) * hr;
         // 鎖定的物件畫淡一些表示「不會被拖到」；但選取中要看得清楚
         // （選它通常就是為了解鎖或改樣式），所以選取時不淡化
         const baseAlpha = locked && !selected ? 0.55 : 1;
@@ -390,7 +391,7 @@ class DrawingRenderer implements IPrimitivePaneRenderer {
     ): void {
         ctx.save();
         ctx.setLineDash([]);
-        ctx.lineWidth = 1.5 * hr;
+        ctx.lineWidth = 0.75 * hr;
         ctx.strokeStyle = color;
         ctx.fillStyle = muted ? color : '#ffffff';
         for (const p of pts) {
@@ -406,7 +407,9 @@ class DrawingRenderer implements IPrimitivePaneRenderer {
 class DrawingPaneView implements IPrimitivePaneView {
     constructor(private readonly _layer: DrawingLayer) {}
     zOrder(): PrimitivePaneViewZOrder {
-        return 'top'; // 畫在 K 棒之上 — 壓力線被 K 棒蓋住就沒意義了
+        // 可視線放在 K 棒後方；選取與拖曳使用獨立幾何命中判定，
+        // 因此不會因為視覺層在下方而變得難以操作。
+        return 'bottom';
     }
     renderer(): IPrimitivePaneRenderer {
         return new DrawingRenderer(this._layer);

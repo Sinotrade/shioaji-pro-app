@@ -167,7 +167,7 @@ export function contrastTextColor(hex: string): string {
 
 export const DEFAULT_DRAWING_STYLE: DrawingStyle = {
     color: DRAWING_PALETTE[0],
-    width: 2,
+    width: 1,
     dash: 'solid',
     fillOpacity: 0.08,
     opacity: 1,
@@ -243,7 +243,7 @@ const DEFAULT_SETTINGS: DrawingSettings = {
         fillOpacity: DEFAULT_DRAWING_STYLE.fillOpacity,
     },
     toolColors: {},
-    magnet: false,
+    magnet: true,
     // 預設不釘：工具列在預設版面（矮面板）要放得下全部分組與下方操作
     favorites: [],
     groupLast: {},

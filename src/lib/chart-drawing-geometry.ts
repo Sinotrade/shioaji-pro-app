@@ -368,7 +368,8 @@ export function distanceToSegment(p: Point, a: Point, b: Point): number {
 export type Hit = { kind: 'anchor'; index: number } | { kind: 'body' };
 
 export const ANCHOR_RADIUS = 4;
-export const HIT_TOLERANCE = 6;
+// 可視線維持 1px，但線身與端點仍保留約 22px／30px 的容易操作範圍。
+export const HIT_TOLERANCE = 11;
 
 // 控制點優先於本體 — 不然抓不到疊在線上的端點
 export function hitTest(
@@ -448,6 +449,36 @@ export function pickDrawing<
         if (hit) return { drawing: d, hit, points };
     }
     return null;
+}
+
+/**
+ * 找出畫面上離游標最近的既有控制點。建立新物件及拖曳單一控制點時
+ * 共用，讓兩條線可以精確共用端點；畫面距離而非時間／價格距離決定
+ * 是否吸附，縮放後手感才一致。
+ */
+export function nearestDrawingAnchor<
+    T extends { id: string; anchors: DrawingAnchor[]; hidden: boolean },
+>(
+    list: readonly T[],
+    projector: Projector,
+    at: Point,
+    tolerance = 20,
+    excludeId?: string,
+): DrawingAnchor | null {
+    let best: { anchor: DrawingAnchor; distance: number } | null = null;
+    for (const drawing of list) {
+        if (drawing.hidden || drawing.id === excludeId) continue;
+        for (const anchor of drawing.anchors) {
+            const x = projector.xOfTime(anchor.time);
+            const y = projector.yOfPrice(anchor.price);
+            if (x === null || y === null) continue;
+            const distance = Math.hypot(at.x - x, at.y - y);
+            if (distance <= tolerance && (!best || distance < best.distance)) {
+                best = { anchor, distance };
+            }
+        }
+    }
+    return best ? { ...best.anchor } : null;
 }
 
 // ── 拖曳 ─────────────────────────────────────────────────────────────

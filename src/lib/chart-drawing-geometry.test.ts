@@ -8,6 +8,7 @@ import {
     formatSpan,
     magnetAnchor,
     measureStats,
+    nearestDrawingAnchor,
     nearestBarIndex,
     TEXT_FONT_PX,
     type Shape,
@@ -187,6 +188,24 @@ describe('投影', () => {
                 { time: 2, price: 2 },
             ]),
         ).toBeNull();
+    });
+
+    it('線段端點可磁吸到其他圖形的同一價位與時間', () => {
+        const drawings = [
+            {
+                id: 'line-a',
+                hidden: false,
+                anchors: [
+                    { time: 1000, price: 250 },
+                    { time: 2000, price: 260 },
+                ],
+            },
+            { id: 'hidden', hidden: true, anchors: [{ time: 1050, price: 250 }] },
+        ];
+
+        expect(nearestDrawingAnchor(drawings, projector, { x: 103, y: 151 })).toEqual({ time: 1000, price: 250 });
+        expect(nearestDrawingAnchor(drawings, projector, { x: 103, y: 151 }, 20, 'line-a')).toBeNull();
+        expect(nearestDrawingAnchor(drawings, projector, { x: 140, y: 151 })).toBeNull();
     });
 });
 

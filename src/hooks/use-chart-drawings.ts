@@ -55,6 +55,7 @@ import {
     dragPoints,
     formatSpan,
     magnetAnchor,
+    nearestDrawingAnchor,
     measureStats,
     pickDrawing,
     projectAnchors,
@@ -670,13 +671,25 @@ export function useChartDrawings(opts: {
             projector: Projector,
             pt: Point,
             t: DrawingToolId,
+            excludeDrawingId?: string,
         ): DrawingAnchor | null => {
             const anchor = unprojectPoint(projector, pt);
             if (!anchor) return null;
             const bars = getBarsRef.current?.();
-            if (stateRef.current.settings.magnet && bars?.length) {
-                // 磁吸：貼齊最近 K 棒的開高低收（本來就是合法價位）
-                return magnetAnchor(anchor, bars, (p) => projector.yOfPrice(p), pt.y);
+            if (stateRef.current.settings.magnet) {
+                // 既有端點優先，才能在相同位置精確接續另一條線。
+                const existing = nearestDrawingAnchor(
+                    stateRef.current.drawings,
+                    projector,
+                    pt,
+                    20,
+                    excludeDrawingId,
+                );
+                if (existing) return existing;
+                if (bars?.length) {
+                    // 再貼齊最近 K 棒的開高低收（本來就是合法價位）。
+                    return magnetAnchor(anchor, bars, (p) => projector.yOfPrice(p), pt.y);
+                }
             }
             return { time: anchor.time, price: snapPrice(t, anchor.price) };
         };
@@ -786,7 +799,7 @@ export function useChartDrawings(opts: {
                     // 整體平移不磁吸（會把形狀扭掉）
                     const a =
                         hit.kind === 'anchor'
-                            ? anchorAt(projector, moved[i]!, item.tool)
+                            ? anchorAt(projector, moved[i]!, item.tool, item.id)
                             : unprojectPoint(projector, moved[i]!);
                     if (!a) return; // 投影不出來就整筆放棄，不寫半套座標
                     anchors.push(

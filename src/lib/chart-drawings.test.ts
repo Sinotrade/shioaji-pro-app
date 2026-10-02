@@ -622,10 +622,10 @@ describe('載入資料的驗證', () => {
             toolColors: { horizontal: null, trend: '#ABCDEF', box: 'red' },
             shareContinuousMonth: 'yes',
         });
-        expect(s.defaultStyle).toEqual({ width: 2, dash: 'solid', fillOpacity: 1 });
+        expect(s.defaultStyle).toEqual({ width: 1, dash: 'solid', fillOpacity: 1 });
         expect(s.toolColors).toEqual({ trend: '#ABCDEF' });
         expect(s.shareContinuousMonth).toBe(true);
-        expect(sanitizeSettings(null).defaultStyle.width).toBe(2);
+        expect(sanitizeSettings(null).defaultStyle.width).toBe(1);
         expect(sanitizeSettings([1, 2]).toolColors).toEqual({});
     });
 
