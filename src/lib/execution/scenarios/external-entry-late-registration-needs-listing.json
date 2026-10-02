@@ -171,7 +171,8 @@
         "action": "Buy",
         "qty": 1,
         "price": 100,
-        "fillTs": 1790730000.01
+        "fillTs": 1790730000.01,
+        "seqno": "S1"
       },
       "expect": {
         "programs": {
@@ -217,7 +218,8 @@
             "orderId": "fresh-id",
             "status": "working",
             "qty": 2,
-            "deals": []
+            "deals": [],
+            "seqno": "S1"
           }
         ],
         "complete": false
@@ -248,6 +250,7 @@
         "env": "simulation",
         "serverId": "local-a",
         "orderId": "fresh-id",
+        "seqno": "S1",
         "eventId": "our-deal",
         "seq": "000001",
         "account": {

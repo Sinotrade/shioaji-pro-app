@@ -1,11 +1,9 @@
 {
   "schema": "execution-conformance-v1",
-  "name": "external-entry-and-exit-pending-coexist",
-  "description": "An unresolved exit decision cannot hide unknown external entry confirmation; each resolves independently.",
+  "name": "external-report-cancel-missing-after",
   "covers": [
-    "bracket",
-    "reconnect",
-    "pending"
+    "broker-report-identity",
+    "reconnect"
   ],
   "steps": [
     {
@@ -20,8 +18,8 @@
     {
       "event": {
         "type": "command",
-        "id": "create-a",
         "ts": 1790730000001,
+        "id": "create-a",
         "command": {
           "op": "create",
           "program": {
@@ -74,15 +72,10 @@
                     "octype": "Cover"
                   }
                 },
-                "phase": "needsConfirm",
+                "phase": "working",
                 "check": null,
                 "recross": [],
-                "pending": {
-                  "leg": "stop",
-                  "price": 94,
-                  "ts": 1790730000000,
-                  "reason": "disconnect"
-                },
+                "pending": null,
                 "orders": [
                   {
                     "key": "simulation/local-a/b1/L1/entry/0/ext",
@@ -92,17 +85,16 @@
                     "qty": 2,
                     "status": "working",
                     "orderId": "o-entry",
-                    "filled": 1,
-                    "fills": {
-                      "o-entry:000001": 1
-                    },
+                    "filled": 0,
+                    "fills": {},
                     "fillTs": {},
                     "detail": null,
-                    "acknowledged": false
+                    "acknowledged": false,
+                    "cancel": null
                   }
                 ],
-                "position": 1,
-                "entryFilled": 1,
+                "position": 0,
+                "entryFilled": 0,
                 "unprotected": 0,
                 "cycles": 0,
                 "detail": null
@@ -135,37 +127,39 @@
             "updatedAt": 0
           }
         }
-      },
-      "expect": {
-        "notices": [
-          "created"
-        ],
-        "programs": {
-          "b1": {
-            "kind": "bracket"
-          }
-        }
       }
     },
     {
       "event": {
         "type": "reconcile",
-        "ts": 1790730000001,
+        "ts": 1790730000004,
+        "env": "simulation",
+        "serverId": "local-a",
         "account": {
           "accountType": "F",
           "brokerId": "F002000",
           "accountId": "1234567"
         },
-        "env": "simulation",
-        "serverId": "local-a",
         "orders": [
           {
             "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
             "orderId": "o-entry",
+            "seqno": "S1",
+            "ordno": "O1",
             "status": "working",
             "qty": 2,
             "deals": [],
-            "seqno": "S1"
+            "securityType": "FUT"
+          },
+          {
+            "intentKey": null,
+            "orderId": "o-entry",
+            "seqno": "S2",
+            "ordno": "O2",
+            "status": "working",
+            "qty": 2,
+            "deals": [],
+            "securityType": "FUT"
           }
         ],
         "complete": false
@@ -173,98 +167,36 @@
     },
     {
       "event": {
-        "type": "epoch",
-        "ts": 1790730000011,
+        "type": "order",
+        "ts": 1790730000005,
         "env": "simulation",
-        "serverId": "local-a"
-      },
-      "expect": {
-        "programs": {
-          "b1": {
-            "levels": {
-              "L1": {
-                "orders": [
-                  {
-                    "orderId": "o-entry",
-                    "unconfirmed": true,
-                    "filled": 1
-                  }
-                ]
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "event": {
-        "type": "reconcile",
-        "ts": 1790730000012,
+        "serverId": "local-a",
+        "orderId": "o-entry",
         "account": {
-          "accountType": "F",
           "brokerId": "F002000",
           "accountId": "1234567"
         },
-        "env": "simulation",
-        "serverId": "local-a",
-        "orders": [],
-        "complete": false
-      },
-      "expect": {
-        "notices": [
-          "needsConfirm"
-        ],
-        "programs": {
-          "b1": {
-            "levels": {
-              "L1": {
-                "pending": {
-                  "leg": "stop",
-                  "price": 94,
-                  "ts": 1790730000000,
-                  "reason": "disconnect"
-                },
-                "entryPending": {
-                  "reason": "unknownEntryAfterReconnect"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "restart": {
-        "ts": 1790730000013
-      }
-    },
-    {
-      "event": {
-        "type": "command",
-        "id": "confirm-a",
-        "ts": 1790730000014,
-        "command": {
-          "op": "confirmEntry",
-          "programId": "b1",
-          "version": 1,
-          "levelId": "L1",
-          "filled": 1,
-          "noRemainder": true
-        }
+        "code": "TXFJ6",
+        "securityType": "FUT",
+        "op": "Cancel",
+        "failed": false,
+        "cancelQty": 2,
+        "reportId": "foreign-cancel",
+        "exchTs": 1790730000.003
       },
       "expect": {
         "programs": {
           "b1": {
             "levels": {
               "L1": {
-                "pending": {
-                  "leg": "stop",
-                  "price": 94,
-                  "ts": 1790730000000,
-                  "reason": "disconnect"
-                },
-                "entryPending": null,
-                "phase": "needsConfirm"
+                "entryFilled": 0,
+                "position": 0,
+                "orders": [
+                  {
+                    "status": "working",
+                    "filled": 0
+                  }
+                ]
               }
             }
           }
@@ -274,32 +206,14 @@
     },
     {
       "event": {
-        "type": "command",
-        "ts": 1790730000015,
-        "id": "resolve-exit",
-        "command": {
-          "op": "resolvePending",
-          "programId": "b1",
-          "version": 2,
-          "levelId": "L1",
-          "choice": "keep"
-        }
+        "type": "tick",
+        "ts": 1790730000006,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 94
       },
       "expect": {
-        "programs": {
-          "b1": {
-            "levels": {
-              "L1": {
-                "pending": null,
-                "entryPending": null,
-                "phase": "holding",
-                "recross": [
-                  "stop"
-                ]
-              }
-            }
-          }
-        },
         "intents": []
       }
     }

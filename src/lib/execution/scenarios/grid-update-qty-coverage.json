@@ -165,7 +165,8 @@
         "ts": 1003,
         "key": "simulation/local-a/g1/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "o1"
+        "orderId": "o1",
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0"
       }
     },
     {
@@ -185,7 +186,9 @@
         "action": "Buy",
         "qty": 2,
         "price": 99,
-        "fillTs": 1.004
+        "fillTs": 1.004,
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0",
+        "securityType": "FUT"
       },
       "expect": {
         "intents": [
@@ -206,7 +209,8 @@
         "ts": 1005,
         "key": "simulation/local-a/g1/L1/tp/0/1",
         "outcome": "accepted",
-        "orderId": "o2"
+        "orderId": "o2",
+        "seqno": "test-simulation/local-a/g1/L1/tp/0/1"
       }
     },
     {
@@ -221,7 +225,14 @@
         "failed": false,
         "cancelQty": 1,
         "reportId": "r1",
-        "exchTs": 1.006
+        "exchTs": 1.006,
+        "seqno": "test-simulation/local-a/g1/L1/tp/0/1",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "intents": [
@@ -263,7 +274,14 @@
         "failed": false,
         "cancelQty": 1,
         "reportId": "r1",
-        "exchTs": 1.007
+        "exchTs": 1.007,
+        "seqno": "test-simulation/local-a/g1/L1/tp/0/1",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {}
     },
@@ -275,7 +293,8 @@
         "ts": 1008,
         "key": "simulation/local-a/g1/L1/tp/0/2",
         "outcome": "accepted",
-        "orderId": "o3"
+        "orderId": "o3",
+        "seqno": "test-simulation/local-a/g1/L1/tp/0/2"
       }
     },
     {
@@ -290,7 +309,14 @@
         "failed": false,
         "cancelQty": 1,
         "reportId": "r2",
-        "exchTs": 1.009
+        "exchTs": 1.009,
+        "seqno": "test-simulation/local-a/g1/L1/tp/0/1",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "intents": [

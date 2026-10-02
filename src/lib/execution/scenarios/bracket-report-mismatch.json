@@ -53,7 +53,8 @@
                 "qty": 2,
                 "entry": {
                   "type": "external",
-                  "orderId": "o-entry"
+                  "orderId": "o-entry",
+                  "seqno": "broker-o-entry"
                 },
                 "exit": {
                   "type": "oco",
@@ -144,7 +145,8 @@
             "orderId": "o-entry",
             "status": "working",
             "qty": 2,
-            "deals": []
+            "deals": [],
+            "seqno": "broker-o-entry"
           }
         ],
         "complete": false
@@ -167,7 +169,9 @@
         "action": "Buy",
         "qty": 1,
         "price": 100,
-        "fillTs": 1.002
+        "fillTs": 1.002,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {
@@ -198,7 +202,9 @@
         "action": "Buy",
         "qty": 1,
         "price": 100,
-        "fillTs": 1.003
+        "fillTs": 1.003,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {
@@ -230,7 +236,9 @@
         "action": "Sell",
         "qty": 1,
         "price": 100,
-        "fillTs": 1.004
+        "fillTs": 1.004,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
         "notices": [
@@ -252,12 +260,11 @@
         "action": "Buy",
         "qty": 1,
         "price": 100,
-        "fillTs": 1.005
+        "fillTs": 1.005,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
-        "notices": [
-          "issue.reportMismatch"
-        ],
         "programs": {
           "b1": {
             "levels": {
@@ -286,7 +293,9 @@
         "action": "Buy",
         "qty": 1,
         "price": 100,
-        "fillTs": 1.006
+        "fillTs": 1.006,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

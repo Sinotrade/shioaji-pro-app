@@ -139,7 +139,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/t1/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "T1"
+        "orderId": "T1",
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
       }
     },
     {
@@ -196,7 +197,8 @@
             "orderId": "T9",
             "status": "working",
             "qty": 1,
-            "deals": []
+            "deals": [],
+            "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
           }
         ]
       },

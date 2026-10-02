@@ -157,7 +157,8 @@
             "orderId": "o-entry",
             "status": "working",
             "qty": 2,
-            "deals": []
+            "deals": [],
+            "seqno": "S1"
           }
         ],
         "complete": false

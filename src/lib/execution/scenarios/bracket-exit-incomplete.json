@@ -52,7 +52,8 @@
                 "qty": 2,
                 "entry": {
                   "type": "external",
-                  "orderId": "o-entry"
+                  "orderId": "o-entry",
+                  "seqno": "broker-o-entry"
                 },
                 "exit": {
                   "type": "oco",
@@ -143,7 +144,8 @@
             "orderId": "o-entry",
             "status": "working",
             "qty": 2,
-            "deals": []
+            "deals": [],
+            "seqno": "broker-o-entry"
           }
         ],
         "complete": false
@@ -166,7 +168,9 @@
         "action": "Buy",
         "qty": 2,
         "price": 100,
-        "fillTs": 1.002
+        "fillTs": 1.002,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       }
     },
     {
@@ -200,7 +204,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/b1/L1/take/0/0",
         "outcome": "accepted",
-        "orderId": "o-take"
+        "orderId": "o-take",
+        "seqno": "test-simulation/local-a/b1/L1/take/0/0"
       }
     },
     {
@@ -220,7 +225,9 @@
         "action": "Sell",
         "qty": 1,
         "price": 111,
-        "fillTs": 1.005
+        "fillTs": 1.005,
+        "seqno": "test-simulation/local-a/b1/L1/take/0/0",
+        "securityType": "FUT"
       }
     },
     {
@@ -232,7 +239,14 @@
         "orderId": "o-take",
         "op": "Cancel",
         "failed": false,
-        "exchTs": 1.006
+        "exchTs": 1.006,
+        "seqno": "test-simulation/local-a/b1/L1/take/0/0",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

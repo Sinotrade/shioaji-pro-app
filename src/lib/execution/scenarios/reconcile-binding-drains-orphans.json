@@ -144,7 +144,9 @@
         "action": "Sell",
         "qty": 1,
         "price": 99,
-        "fillTs": 1.003
+        "fillTs": 1.003,
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0",
+        "securityType": "FUT"
       },
       "expect": {
         "state": {
@@ -180,7 +182,8 @@
             "orderId": "o1",
             "status": "working",
             "qty": 1,
-            "deals": []
+            "deals": [],
+            "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
           }
         ],
         "complete": true

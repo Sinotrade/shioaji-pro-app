@@ -192,7 +192,8 @@
                 "qty": 1,
                 "price": 99
               }
-            ]
+            ],
+            "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
           }
         ],
         "complete": true
@@ -233,7 +234,9 @@
         "action": "Sell",
         "qty": 1,
         "price": 99,
-        "fillTs": 5.004
+        "fillTs": 5.004,
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

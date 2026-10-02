@@ -1,0 +1,105 @@
+[
+  {
+    "a": {
+      "orderId": "OLD",
+      "seqno": "S1",
+      "ordno": "O1",
+      "confirmed": true
+    },
+    "b": {
+      "orderId": "OLD",
+      "seqno": "S2",
+      "ordno": "O2"
+    },
+    "expected": "different"
+  },
+  {
+    "a": {
+      "orderId": "OLD",
+      "seqno": "S1",
+      "ordno": "O1"
+    },
+    "b": {
+      "orderId": "NEW",
+      "seqno": "S1"
+    },
+    "expected": "same"
+  },
+  {
+    "a": {
+      "orderId": "OLD",
+      "seqno": "S1",
+      "ordno": "O1"
+    },
+    "b": {
+      "orderId": "OLD",
+      "ordno": "O2"
+    },
+    "expected": "different"
+  },
+  {
+    "a": {
+      "orderId": "OLD",
+      "seqno": "S1"
+    },
+    "b": {
+      "orderId": "NEW",
+      "seqno": ""
+    },
+    "expected": "unknown"
+  },
+  {
+    "a": {
+      "orderId": "OLD",
+      "seqno": ""
+    },
+    "b": {
+      "orderId": "NEW",
+      "seqno": "S1"
+    },
+    "expected": "unknown"
+  },
+  {
+    "a": {
+      "orderId": "OLD",
+      "confirmed": true
+    },
+    "b": {
+      "orderId": "OLD",
+      "confirmed": true
+    },
+    "expected": "same"
+  },
+  {
+    "a": {
+      "orderId": "OLD",
+      "confirmed": false
+    },
+    "b": {
+      "orderId": "OLD"
+    },
+    "expected": "unknown"
+  },
+  {
+    "a": {
+      "orderId": "OLD",
+      "confirmed": true
+    },
+    "b": {
+      "orderId": "NEW",
+      "confirmed": true
+    },
+    "expected": "unknown"
+  },
+  {
+    "a": {
+      "orderId": "OLD",
+      "seqno": "S1"
+    },
+    "b": {
+      "orderId": "NEW",
+      "ordno": "O1"
+    },
+    "expected": "unknown"
+  }
+]

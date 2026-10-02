@@ -210,7 +210,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/g1/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "o1"
+        "orderId": "o1",
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0"
       }
     },
     {
@@ -221,7 +222,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/g1/L2/entry/0/1",
         "outcome": "accepted",
-        "orderId": "o2"
+        "orderId": "o2",
+        "seqno": "test-simulation/local-a/g1/L2/entry/0/1"
       }
     },
     {
@@ -273,7 +275,9 @@
         "action": "Buy",
         "qty": 1,
         "price": 99,
-        "fillTs": 1.006
+        "fillTs": 1.006,
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0",
+        "securityType": "FUT"
       },
       "expect": {
         "intents": [
@@ -298,7 +302,14 @@
         "orderId": "o1",
         "op": "Cancel",
         "failed": false,
-        "exchTs": 1.007
+        "exchTs": 1.007,
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       }
     },
     {
@@ -310,7 +321,14 @@
         "orderId": "o2",
         "op": "Cancel",
         "failed": false,
-        "exchTs": 1.008
+        "exchTs": 1.008,
+        "seqno": "test-simulation/local-a/g1/L2/entry/0/1",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {
@@ -346,7 +364,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/g1/L1/tp/0/2",
         "outcome": "accepted",
-        "orderId": "x1"
+        "orderId": "x1",
+        "seqno": "test-simulation/local-a/g1/L1/tp/0/2"
       }
     },
     {
@@ -366,7 +385,9 @@
         "action": "Sell",
         "qty": 1,
         "price": 100,
-        "fillTs": 1.011
+        "fillTs": 1.011,
+        "seqno": "test-simulation/local-a/g1/L1/tp/0/2",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

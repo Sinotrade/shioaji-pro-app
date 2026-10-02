@@ -129,9 +129,9 @@ export function epochMark(ts: number): number {
 function reportMatches(p: OrderProgram, account: { brokerId: string; accountId: string } | null | undefined,
     code: string | undefined, securityType: string | undefined): boolean {
     const b = p.binding;
-    return (!account || (account.brokerId === b.account.brokerId && account.accountId === b.account.accountId))
-        && (code === undefined || code === b.contract.orderCode || code === b.contract.quoteCode)
-        && (securityType === undefined || securityType === b.contract.securityType);
+    return !!account && account.brokerId === b.account.brokerId && account.accountId === b.account.accountId
+        && (code === b.contract.orderCode || code === b.contract.quoteCode)
+        && securityType === b.contract.securityType;
 }
 
 const isExternalEntry = (lv: Level, slot: OrderSlot) => slot.role === 'entry' && lv.entry.type === 'external';
@@ -150,8 +150,7 @@ export function externalIdentity(a: { orderId: string; seqno?: string; ordno?: s
     if (brokerIdentityMatches(a, b)) return 'same';
     const stableA = !!(a.seqno?.trim() || a.ordno?.trim());
     const stableB = !!(b.seqno?.trim() || b.ordno?.trim());
-    if (stableA && stableB) return 'unknown';
-    if (a.orderId !== b.orderId) return 'different';
+    if (stableA || stableB || a.orderId !== b.orderId) return 'unknown';
     return a.confirmed !== false && b.confirmed !== false ? 'same' : 'unknown';
 }
 
@@ -325,7 +324,7 @@ function emitPlace(ctx: Ctx, p: OrderProgram, lv: Level, role: 'entry' | 'exit',
 
 function emitCancel(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot): boolean {
     // an id of an earlier epoch may name another order: never cancel it
-    if (!envMatches(ctx.s, p) || !slot.orderId || slot.unconfirmed || awaitingListing(ctx.s, p)
+    if (!envMatches(ctx.s, p) || !slot.orderId || slot.unconfirmed || slot.cancelAmbiguous || awaitingListing(ctx.s, p)
         || inEpochGuardBand(ctx.ts)) return false;
     const attempts = (slot.cancel?.attempts ?? 0) + 1;
     const key = `${slot.key}/cancel/${attempts}`;
@@ -631,7 +630,7 @@ function findSlotByKey(s: EngineState, key: string, src: Source) {
         for (const lv of p.levels) {
             const slot = lv.orders.find(o => o.key === key);
             if (slot) return { p, lv, slot, cancel: false };
-            const c = lv.orders.find(o => o.cancel !== null && (o.cancel.key === key || o.cancel.outstanding.includes(key)));
+            const c = lv.orders.find(o => o.cancel != null && (o.cancel.key === key || o.cancel.outstanding.includes(key)));
             if (c) return { p, lv, slot: c, cancel: true };
         }
     }
@@ -640,17 +639,32 @@ function findSlotByKey(s: EngineState, key: string, src: Source) {
 
 /** A report only matches its own environment's programs, its own account
  * and contract, and a binding of the current epoch. */
-function findSlotByOrderId(s: EngineState, orderId: string, src: Source,
+function slotReportMatches(lv: Level, slot: OrderSlot, identity: { seqno?: string; ordno?: string }): boolean {
+    if (slot.cancelAmbiguous) return false;
+    const stable = slot.seqno || slot.ordno ? slot : slot.role === 'entry' && lv.entry.type === 'external' ? lv.entry : slot;
+    if (isExternalEntry(lv, slot) || ('seqno' in stable && (stable.seqno || stable.ordno))) {
+        return brokerIdentityMatches(stable, identity);
+    }
+    // Legacy snapshots can learn identity only from a verified listing.
+    return false;
+}
+
+function findSlotByOrderId(s: EngineState, orderId: string, src: Source & { seqno?: string; ordno?: string },
     account: { brokerId: string; accountId: string } | null | undefined, code: string | undefined,
     securityType: string | undefined) {
+    let hit = null;
     for (const p of s.programs) {
         if (!boundTo(p, src) || !reportMatches(p, account, code, securityType)) continue;
         for (const lv of p.levels) {
-            const slot = lv.orders.find(o => !o.unconfirmed && o.orderId === orderId);
-            if (slot) return { p, lv, slot };
+            for (const slot of lv.orders) {
+                if (slot.unconfirmed || slot.orderId !== orderId || !slotReportMatches(lv, slot, src)) continue;
+                if (isExternalEntry(lv, slot) && (!account || code === undefined || securityType === undefined)) continue;
+                if (hit) return null;
+                hit = { p, lv, slot };
+            }
         }
     }
-    return null;
+    return hit;
 }
 
 /** A report may be matched to a binding only when it is known to belong to the
@@ -668,10 +682,10 @@ function reportInEpoch(mark: number | null | undefined, exchTs: number | null | 
  * events) — those of the current epoch only (`reportInEpoch`). */
 function drainOrphans(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot) {
     const s = ctx.s;
-    const mine = (e: Source & { orderId: string; account?: { brokerId: string; accountId: string } | null;
+    const mine = (e: Source & { orderId: string; seqno?: string; ordno?: string; account?: { brokerId: string; accountId: string } | null;
         code?: string; securityType?: string }, exchTs: number | undefined) =>
         e.orderId === slot.orderId && reportInEpoch(s.epochMark, exchTs) && boundTo(p, e)
-        && reportMatches(p, e.account, e.code, e.securityType);
+        && findSlotByOrderId(s, e.orderId, e, e.account, e.code, e.securityType)?.slot === slot;
     const deals = s.orphanDeals.filter(d => mine(d.deal, d.deal.fillTs));
     s.orphanDeals = s.orphanDeals.filter(d => !mine(d.deal, d.deal.fillTs));
     for (const d of deals) applyDeal(ctx, p, lv, slot, d.deal);
@@ -711,11 +725,15 @@ function onIntentResult(ctx: Ctx, e: IntentResultEvent) {
         // name another order by now — only this epoch's listing with the
         // slot's tag confirms (rebinds) it
         slot.orderId = e.orderId;
+        slot.seqno = e.seqno;
+        slot.ordno = e.ordno;
         slot.unconfirmed = true;
         slot.status = 'working';
         slot.detail = 'acceptedAcrossEpoch';
     } else if (e.outcome === 'accepted' && e.orderId) {
         slot.orderId = e.orderId;
+        slot.seqno = e.seqno;
+        slot.ordno = e.ordno;
         slot.status = slot.filled >= slot.qty ? 'filled' : 'working';
         drainOrphans(ctx, p, lv, slot);
     } else if (e.outcome === 'notSent') {
@@ -916,6 +934,7 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
             for (const slot of lv.orders) {
                 // a listing row carries this slot's tag but cannot be bound to
                 // it: the order may exist — pinned for good, never concluded
+                if ((e.ambiguous ?? []).includes(slot.key)) slot.unconfirmed = true;
                 if ((e.ambiguous ?? []).includes(slot.key) && !slot.tagAmbiguous) {
                     slot.tagAmbiguous = true;
                     addIssue(ctx, p, 'tagAmbiguous', `${slot.key}: duplicate / mismatching listing rows for its tag`);
@@ -928,6 +947,14 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                 const rows = e.orders.filter(o => o.intentKey === slot.key
                     && (slot.unconfirmed || !slot.orderId || o.orderId === slot.orderId));
                 const row = rows.length === 1 ? rows[0] : undefined;
+                if (row) {
+                    if (row.cancelAmbiguous && !slot.cancelAmbiguous) {
+                        addIssue(ctx, p, 'orderIdAmbiguous', '委託編號對應多筆委託，請先核對；暫停自動取消委託。');
+                    }
+                    slot.cancelAmbiguous = row.cancelAmbiguous;
+                    slot.seqno = row.seqno ?? slot.seqno;
+                    slot.ordno = row.ordno ?? slot.ordno;
+                }
                 if (slot.unconfirmed) {
                     // bound in an earlier epoch: only this epoch's row with its
                     // tag rebinds it — an ended slot never takes part again
@@ -1148,7 +1175,12 @@ function startStop(ctx: Ctx, p: OrderProgram) {
  * (environment, account, market, contract)? */
 export function sameExternalEntry(a: OrderProgram, b: OrderProgram): boolean {
     const entries = (p: OrderProgram) =>
-        p.levels.flatMap(lv => lv.entry.type === 'external' ? [{ ...lv.entry, confirmed: !lv.orders.some(o => o.role === 'entry' && o.unconfirmed) }] : []);
+        p.levels.flatMap(lv => {
+            if (lv.entry.type !== 'external') return [];
+            const slot = lv.orders.find(o => o.role === 'entry');
+            return [{ ...lv.entry, seqno: slot?.seqno ?? lv.entry.seqno, ordno: slot?.ordno ?? lv.entry.ordno,
+                confirmed: !lv.orders.some(o => o.role === 'entry' && o.unconfirmed) }];
+        });
     const [ba, bb] = [a.binding, b.binding];
     if (ba.env !== bb.env || ba.serverId !== bb.serverId || !sameAccount(ba.account, bb.account)
         || ba.contract.market !== bb.contract.market || ba.contract.securityType !== bb.contract.securityType

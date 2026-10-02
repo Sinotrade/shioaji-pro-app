@@ -1,11 +1,9 @@
 {
   "schema": "execution-conformance-v1",
-  "name": "external-entry-and-exit-pending-coexist",
-  "description": "An unresolved exit decision cannot hide unknown external entry confirmation; each resolves independently.",
+  "name": "external-learned-identity-contradiction",
   "covers": [
-    "bracket",
-    "reconnect",
-    "pending"
+    "duplicateEntry",
+    "learned-broker-identity"
   ],
   "steps": [
     {
@@ -20,8 +18,8 @@
     {
       "event": {
         "type": "command",
-        "id": "create-a",
         "ts": 1790730000001,
+        "id": "create-a",
         "command": {
           "op": "create",
           "program": {
@@ -55,8 +53,7 @@
                 "entry": {
                   "type": "external",
                   "orderId": "o-entry",
-                  "seqno": "S1",
-                  "ordno": "O1"
+                  "seqno": "S1"
                 },
                 "exit": {
                   "type": "oco",
@@ -74,15 +71,10 @@
                     "octype": "Cover"
                   }
                 },
-                "phase": "needsConfirm",
+                "phase": "working",
                 "check": null,
                 "recross": [],
-                "pending": {
-                  "leg": "stop",
-                  "price": 94,
-                  "ts": 1790730000000,
-                  "reason": "disconnect"
-                },
+                "pending": null,
                 "orders": [
                   {
                     "key": "simulation/local-a/b1/L1/entry/0/ext",
@@ -92,17 +84,156 @@
                     "qty": 2,
                     "status": "working",
                     "orderId": "o-entry",
-                    "filled": 1,
-                    "fills": {
-                      "o-entry:000001": 1
-                    },
+                    "filled": 0,
+                    "fills": {},
                     "fillTs": {},
                     "detail": null,
-                    "acknowledged": false
+                    "acknowledged": false,
+                    "cancel": null
                   }
                 ],
-                "position": 1,
-                "entryFilled": 1,
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1790730000004,
+        "env": "simulation",
+        "serverId": "local-a",
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "o-entry",
+            "seqno": "S1",
+            "ordno": "O1",
+            "status": "working",
+            "qty": 2,
+            "deals": [],
+            "securityType": "FUT"
+          }
+        ],
+        "complete": false
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790730000100,
+        "id": "second",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "b2",
+            "kind": "bracket",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Buy",
+                "qty": 2,
+                "entry": {
+                  "type": "external",
+                  "orderId": "o-entry",
+                  "seqno": "S1",
+                  "ordno": "O2"
+                },
+                "exit": {
+                  "type": "oco",
+                  "stop": {
+                    "price": 95,
+                    "condition": "below"
+                  },
+                  "take": {
+                    "price": 110,
+                    "condition": "above"
+                  },
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Cover"
+                  }
+                },
+                "phase": "working",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [
+                  {
+                    "key": "simulation/local-a/b2/L1/entry/0/ext",
+                    "role": "entry",
+                    "leg": "entry",
+                    "cycle": 0,
+                    "qty": 2,
+                    "status": "working",
+                    "orderId": "o-entry",
+                    "filled": 0,
+                    "fills": {},
+                    "fillTs": {},
+                    "detail": null,
+                    "acknowledged": false,
+                    "cancel": null
+                  }
+                ],
+                "position": 0,
+                "entryFilled": 0,
                 "unprotected": 0,
                 "cycles": 0,
                 "detail": null
@@ -140,167 +271,14 @@
         "notices": [
           "created"
         ],
-        "programs": {
-          "b1": {
-            "kind": "bracket"
-          }
-        }
-      }
-    },
-    {
-      "event": {
-        "type": "reconcile",
-        "ts": 1790730000001,
-        "account": {
-          "accountType": "F",
-          "brokerId": "F002000",
-          "accountId": "1234567"
-        },
-        "env": "simulation",
-        "serverId": "local-a",
-        "orders": [
-          {
-            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
-            "orderId": "o-entry",
-            "status": "working",
-            "qty": 2,
-            "deals": [],
-            "seqno": "S1"
-          }
-        ],
-        "complete": false
-      }
-    },
-    {
-      "event": {
-        "type": "epoch",
-        "ts": 1790730000011,
-        "env": "simulation",
-        "serverId": "local-a"
-      },
-      "expect": {
-        "programs": {
-          "b1": {
-            "levels": {
-              "L1": {
-                "orders": [
-                  {
-                    "orderId": "o-entry",
-                    "unconfirmed": true,
-                    "filled": 1
-                  }
-                ]
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "event": {
-        "type": "reconcile",
-        "ts": 1790730000012,
-        "account": {
-          "accountType": "F",
-          "brokerId": "F002000",
-          "accountId": "1234567"
-        },
-        "env": "simulation",
-        "serverId": "local-a",
-        "orders": [],
-        "complete": false
-      },
-      "expect": {
-        "notices": [
-          "needsConfirm"
+        "absentNotices": [
+          "rejected.duplicateEntry"
         ],
         "programs": {
-          "b1": {
-            "levels": {
-              "L1": {
-                "pending": {
-                  "leg": "stop",
-                  "price": 94,
-                  "ts": 1790730000000,
-                  "reason": "disconnect"
-                },
-                "entryPending": {
-                  "reason": "unknownEntryAfterReconnect"
-                }
-              }
-            }
+          "b2": {
+            "id": "b2"
           }
         }
-      }
-    },
-    {
-      "restart": {
-        "ts": 1790730000013
-      }
-    },
-    {
-      "event": {
-        "type": "command",
-        "id": "confirm-a",
-        "ts": 1790730000014,
-        "command": {
-          "op": "confirmEntry",
-          "programId": "b1",
-          "version": 1,
-          "levelId": "L1",
-          "filled": 1,
-          "noRemainder": true
-        }
-      },
-      "expect": {
-        "programs": {
-          "b1": {
-            "levels": {
-              "L1": {
-                "pending": {
-                  "leg": "stop",
-                  "price": 94,
-                  "ts": 1790730000000,
-                  "reason": "disconnect"
-                },
-                "entryPending": null,
-                "phase": "needsConfirm"
-              }
-            }
-          }
-        },
-        "intents": []
-      }
-    },
-    {
-      "event": {
-        "type": "command",
-        "ts": 1790730000015,
-        "id": "resolve-exit",
-        "command": {
-          "op": "resolvePending",
-          "programId": "b1",
-          "version": 2,
-          "levelId": "L1",
-          "choice": "keep"
-        }
-      },
-      "expect": {
-        "programs": {
-          "b1": {
-            "levels": {
-              "L1": {
-                "pending": null,
-                "entryPending": null,
-                "phase": "holding",
-                "recross": [
-                  "stop"
-                ]
-              }
-            }
-          }
-        },
-        "intents": []
       }
     }
   ]

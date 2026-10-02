@@ -148,7 +148,8 @@
         "key": "simulation/local-a/t1/L1/entry/0/0",
         "outcome": "accepted",
         "orderId": "T1",
-        "epoch": 0
+        "epoch": 0,
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
       },
       "note": "the response to a send of the earlier epoch arrives after the boundary: bound, but unconfirmed",
       "expect": {
@@ -186,7 +187,9 @@
         "action": "Sell",
         "qty": 1,
         "price": 100,
-        "fillTs": 1790751600.002
+        "fillTs": 1790751600.002,
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0",
+        "securityType": "FUT"
       },
       "note": "its id confirms nothing yet: the report is held as an orphan",
       "expect": {
@@ -224,7 +227,8 @@
             "orderId": "T1",
             "status": "working",
             "qty": 1,
-            "deals": []
+            "deals": [],
+            "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
           }
         ]
       },
@@ -265,7 +269,8 @@
             "orderId": "T1",
             "status": "working",
             "qty": 1,
-            "deals": []
+            "deals": [],
+            "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
           }
         ]
       },

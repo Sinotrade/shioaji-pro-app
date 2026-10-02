@@ -154,7 +154,8 @@
             "orderId": "o-entry",
             "status": "working",
             "qty": 3,
-            "deals": []
+            "deals": [],
+            "seqno": "test-simulation/local-a/b1/L1/entry/0/ext"
           }
         ],
         "complete": false
@@ -419,7 +420,8 @@
             "orderId": "o-entry",
             "status": "working",
             "qty": 3,
-            "deals": []
+            "deals": [],
+            "seqno": "test-simulation/local-a/b1/L1/entry/0/ext"
           }
         ],
         "complete": false

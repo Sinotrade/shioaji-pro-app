@@ -125,6 +125,9 @@ export type SlotStatus =
 
 /** One order the program asked for (or tracks). */
 export interface OrderSlot {
+    /** The broker listing reuses this raw id for multiple stable orders. */
+    cancelAmbiguous?: boolean;
+    seqno?: string; ordno?: string;
     /** Idempotency key; the only identity reconciliation may use. */
     key: string;
     role: 'entry' | 'exit';
@@ -381,6 +384,7 @@ export interface TickEvent extends Source {
 export interface HeartbeatEvent extends Source { type: 'heartbeat'; ts: number }
 export interface ConnectionEvent { type: 'connection'; ts: number; live: boolean; env: Env | null; serverId: string | null }
 export interface IntentResultEvent extends Source {
+    seqno?: string; ordno?: string;
     type: 'intentResult'; ts: number; key: string;
     outcome: 'accepted' | 'notSent' | 'unknown';
     orderId?: string; detail?: string;
@@ -388,6 +392,7 @@ export interface IntentResultEvent extends Source {
     epoch?: number;
 }
 export interface OrderEvent extends Source {
+    seqno?: string; ordno?: string;
     type: 'order'; ts: number; orderId: string;
     op: 'New' | 'Cancel' | 'UpdatePrice' | 'UpdateQty';
     failed: boolean; detail?: string;
@@ -415,6 +420,7 @@ export interface OrderEvent extends Source {
     exchTs?: number;
 }
 export interface DealEvent extends Source {
+    seqno?: string; ordno?: string;
     type: 'deal'; ts: number; orderId: string;
     eventId: string | null; seq: string | null;
     account: { brokerId: string; accountId: string } | null;
@@ -425,6 +431,8 @@ export interface DealEvent extends Source {
     fillTs?: number;
 }
 export interface ReconciledOrder {
+    cancelAmbiguous?: boolean;
+    seqno?: string; ordno?: string;
     intentKey: string | null;
     orderId: string;
     status: 'working' | 'filled' | 'ended';

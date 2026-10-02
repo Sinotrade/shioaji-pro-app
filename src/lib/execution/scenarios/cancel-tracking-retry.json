@@ -169,7 +169,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/g1/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "o1"
+        "orderId": "o1",
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0"
       }
     },
     {
@@ -251,7 +252,14 @@
         "orderId": "o1",
         "op": "Cancel",
         "failed": true,
-        "exchTs": 1.006
+        "exchTs": 1.006,
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "notices": [
@@ -454,7 +462,14 @@
         "orderId": "o1",
         "op": "Cancel",
         "failed": true,
-        "exchTs": 31.009
+        "exchTs": 31.009,
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "notices": [
@@ -490,7 +505,14 @@
         "op": "Cancel",
         "failed": true,
         "cancelKey": "simulation/local-a/g1/L1/entry/0/0/cancel/2",
-        "exchTs": 31.01
+        "exchTs": 31.01,
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {
@@ -550,7 +572,14 @@
         "orderId": "o1",
         "op": "Cancel",
         "failed": false,
-        "exchTs": 31.012
+        "exchTs": 31.012,
+        "seqno": "test-simulation/local-a/g1/L1/entry/0/0",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

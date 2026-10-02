@@ -144,7 +144,8 @@
             "orderId": "o-entry",
             "status": "working",
             "qty": 2,
-            "deals": []
+            "deals": [],
+            "seqno": "test-simulation/local-a/b1/L1/entry/0/ext"
           }
         ],
         "complete": false
@@ -236,7 +237,9 @@
         "action": "Buy",
         "qty": 1,
         "price": 100,
-        "fillTs": 1790751600.002
+        "fillTs": 1790751600.002,
+        "seqno": "test-simulation/local-a/b1/L1/entry/0/ext",
+        "securityType": "FUT"
       },
       "note": "its old id identifies nothing now",
       "expect": {

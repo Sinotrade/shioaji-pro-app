@@ -139,7 +139,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/t1/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "T1"
+        "orderId": "T1",
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
       }
     },
     {
@@ -317,7 +318,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/t2/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "T1"
+        "orderId": "T1",
+        "seqno": "test-simulation/local-a/t2/L1/entry/0/0"
       }
     },
     {
@@ -337,7 +339,9 @@
         "action": "Sell",
         "qty": 1,
         "price": 100,
-        "fillTs": 1790751600.008
+        "fillTs": 1790751600.008,
+        "seqno": "test-simulation/local-a/t2/L1/entry/0/0",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

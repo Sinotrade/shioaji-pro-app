@@ -54,7 +54,8 @@
                 "qty": 2,
                 "entry": {
                   "type": "external",
-                  "orderId": "o-entry"
+                  "orderId": "o-entry",
+                  "seqno": "broker-o-entry"
                 },
                 "exit": {
                   "type": "oco",
@@ -145,7 +146,8 @@
             "orderId": "o-entry",
             "status": "working",
             "qty": 2,
-            "deals": []
+            "deals": [],
+            "seqno": "broker-o-entry"
           }
         ],
         "complete": false
@@ -168,7 +170,9 @@
         "action": "Buy",
         "qty": 1,
         "price": 100,
-        "fillTs": 1.002
+        "fillTs": 1.002,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {
@@ -258,7 +262,9 @@
         "action": "Buy",
         "qty": 1,
         "price": 100,
-        "fillTs": 1.006
+        "fillTs": 1.006,
+        "seqno": "broker-o-entry",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {
@@ -282,7 +288,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/b1/L1/stop/0/0",
         "outcome": "accepted",
-        "orderId": "o-stop"
+        "orderId": "o-stop",
+        "seqno": "test-simulation/local-a/b1/L1/stop/0/0"
       }
     },
     {
@@ -302,7 +309,9 @@
         "action": "Sell",
         "qty": 1,
         "price": 94,
-        "fillTs": 1.008
+        "fillTs": 1.008,
+        "seqno": "test-simulation/local-a/b1/L1/stop/0/0",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

@@ -146,7 +146,8 @@
             "orderId": "o-entry",
             "status": "working",
             "qty": 2,
-            "deals": []
+            "deals": [],
+            "seqno": "S1"
           }
         ],
         "complete": false
@@ -170,7 +171,8 @@
         "action": "Buy",
         "qty": 1,
         "price": 100,
-        "fillTs": 1790730000.01
+        "fillTs": 1790730000.01,
+        "seqno": "S1"
       },
       "expect": {
         "programs": {
@@ -236,7 +238,8 @@
                 "ts": 1790730000.01
               }
             ],
-            "securityType": "FUT"
+            "securityType": "FUT",
+            "seqno": "S1"
           },
           {
             "orderId": "E9",
@@ -251,7 +254,8 @@
                 "ts": 1790730000.01
               }
             ],
-            "securityType": "FUT"
+            "securityType": "FUT",
+            "seqno": "S1"
           }
         ]
       },

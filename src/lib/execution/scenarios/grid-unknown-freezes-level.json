@@ -234,7 +234,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/g1/L2/entry/0/1",
         "outcome": "accepted",
-        "orderId": "o2"
+        "orderId": "o2",
+        "seqno": "test-simulation/local-a/g1/L2/entry/0/1"
       }
     },
     {
@@ -254,7 +255,9 @@
         "action": "Buy",
         "qty": 1,
         "price": 98,
-        "fillTs": 1.005
+        "fillTs": 1.005,
+        "seqno": "test-simulation/local-a/g1/L2/entry/0/1",
+        "securityType": "FUT"
       },
       "expect": {
         "intents": [

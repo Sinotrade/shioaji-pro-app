@@ -129,9 +129,9 @@ describe('bracket adapter', () => {
         const program = programFromBracket(plan())!;
         const r = run([live(1), create(2, program), { type: 'reconcile', ts: 2, ...SRC,
             account: program.binding.account, complete: false,
-            orders: [{ intentKey: program.levels[0]!.orders[0]!.key, orderId: 'o-entry', status: 'working', qty: 3, deals: [] }] },
+            orders: [{ intentKey: program.levels[0]!.orders[0]!.key, orderId: 'o-entry', seqno: '1', status: 'working', qty: 3, deals: [] }] },
         ...fills.map((f, i): ExecEvent => ({
-            type: 'deal', ts: 3 + i, ...SRC, orderId: f.orderId, eventId: f.eventId, seq: f.seq,
+            type: 'deal', ts: 3 + i, ...SRC, orderId: f.orderId, seqno: '1', securityType: 'FUT', eventId: f.eventId, seq: f.seq,
             account: { brokerId: 'F002000', accountId: '1234567' }, code: 'TXFJ6', action: 'Buy', qty: f.quantity, price: 100, fillTs: f.ts,
         }))]);
         const level = r.state.programs[0]!.levels[0]!;
@@ -143,7 +143,7 @@ describe('bracket adapter', () => {
         const fired = run([tick(10, 94)], r.state);
         expect(fired.intents).toHaveLength(1);
         expect(fired.intents[0]).toMatchObject({ action: 'Sell', qty: protectionQuantity(web), leg: 'stop', order: { octype: 'Cover' } });
-        const late = run([{ type: 'deal', ts: 11, ...SRC, orderId: 'o-entry', eventId: 'e3', seq: 's3',
+        const late = run([{ type: 'deal', ts: 11, ...SRC, orderId: 'o-entry', seqno: '1', securityType: 'FUT', eventId: 'e3', seq: 's3',
             account: { brokerId: 'F002000', accountId: '1234567' }, code: 'TXFJ6', action: 'Buy', qty: 1, price: 100,
             fillTs: 1700000003 }], fired.state);
         const webAfter = applyEntryFill({ ...web, exit: { status: 'sending', kind: 'stop', quantity: 2, filled: 0, fills: {}, at: 1 } },

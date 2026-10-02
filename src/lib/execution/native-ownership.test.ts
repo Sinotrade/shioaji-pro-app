@@ -318,6 +318,21 @@ describe('ownership: one executor per trigger / bracket', () => {
         expect(creates()).toHaveLength(3);
     });
 
+    it('registration uses broker identifiers learned by the current slot', async () => {
+        await boot({ enabled: true });
+        const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'same-id', seqno: 'S1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
+        const old = await bracket.registerBracket(spec);
+        host.programs[0]!.levels[0]!.orders[0]!.seqno = 'S1';
+        host.programs[0]!.levels[0]!.orders[0]!.ordno = 'O1';
+        host.bump(); await native.refreshNative();
+        expect(bracket.getDisplayBrackets()[0]).toMatchObject({ seqno: 'S1', ordno: 'O1' });
+        const fresh = await bracket.registerBracket({ ...spec, ordno: 'O2' });
+        expect(fresh.id).not.toBe(old.id);
+        expect(creates()).toHaveLength(2);
+    });
+
     it('an unconfirmed legacy collision refuses registration instead of reporting the old bracket as success', async () => {
         await boot({ enabled: true });
         const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
@@ -327,6 +342,16 @@ describe('ownership: one executor per trigger / bracket', () => {
         host.programs[0]!.levels[0]!.orders[0]!.unconfirmed = true;
         host.bump(); await native.refreshNative();
         await expect(bracket.registerBracket(spec)).rejects.toThrow('進場單身分尚未確認');
+        expect(creates()).toHaveLength(1);
+    });
+
+    it.each([['S1', ''], ['', 'S1'], ['', '']])('missing broker identity (%s / %s) with a changed id refuses a duplicate bracket', async (oldSeq, newSeq) => {
+        await boot({ enabled: true });
+        const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'old-id', seqno: oldSeq, quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
+        await bracket.registerBracket(spec);
+        await expect(bracket.registerBracket({ ...spec, orderId: 'new-id', seqno: newSeq })).rejects.toThrow('進場單身分尚未確認');
         expect(creates()).toHaveLength(1);
     });
 

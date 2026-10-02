@@ -173,7 +173,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/t1/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "late"
+        "orderId": "late",
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
       },
       "expect": {
         "programs": {
