@@ -1,0 +1,25 @@
+import { globalStyle, style } from '@vanilla-extract/css';
+import { vars } from '../theme.css';
+
+export const launch = style({ padding: '3px 8px', color: vars.color.foreground, background: vars.color.inset, border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.sm, cursor: 'pointer', fontFamily: vars.font.mono, fontSize: '0.65rem', selectors: { '&:disabled': { opacity: 0.35, cursor: 'not-allowed' } } });
+export const panel = style({ position: 'fixed', zIndex: 1000, right: 20, top: 80, width: 370, maxWidth: 'calc(100vw - 24px)', padding: 9, color: vars.color.foreground, background: vars.color.panel, border: `1px solid ${vars.color.accent}`, borderRadius: vars.radius.md, boxShadow: '0 10px 32px rgba(0,0,0,.38)' });
+export const header = style({ display: 'flex', justifyContent: 'space-between', gap: 8, cursor: 'grab', userSelect: 'none', touchAction: 'none', fontSize: '0.7rem' });
+globalStyle(`${header} span`, { color: vars.color.mutedForeground, fontSize: '0.58rem' });
+export const sides = style({ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5, marginTop: 7 });
+globalStyle(`${sides} button`, { padding: 5, color: vars.color.foreground, background: vars.color.inset, border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.sm, cursor: 'pointer' });
+export const active = style({ borderColor: `${vars.color.accent} !important`, color: `${vars.color.accent} !important` });
+export const toggle = style({ display: 'flex', alignItems: 'center', gap: 5, marginTop: 7, color: vars.color.mutedForeground, fontSize: '0.62rem' });
+export const grid = style({ display: 'grid', gap: 5, marginTop: 6 });
+export const stage = style({ display: 'grid', gridTemplateColumns: '55px repeat(4, 1fr)', gap: 4, alignItems: 'end' });
+globalStyle(`${stage} label`, { display: 'grid', gap: 2, color: vars.color.mutedForeground, fontSize: '0.56rem' });
+globalStyle(`${stage} input[type=number]`, { minWidth: 0, width: '100%', boxSizing: 'border-box', padding: 3, color: vars.color.foreground, background: vars.color.inset, border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.sm, fontFamily: vars.font.mono });
+export const stageToggle = style({ alignSelf: 'center', display: 'flex !important', alignItems: 'center', whiteSpace: 'nowrap' });
+export const risk = style({ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 5, alignItems: 'end', marginTop: 7 });
+globalStyle(`${risk} label`, { display: 'grid', gap: 2, color: vars.color.mutedForeground, fontSize: '0.56rem' });
+globalStyle(`${risk} input`, { width: '100%', boxSizing: 'border-box', padding: 3, color: vars.color.foreground, background: vars.color.inset, border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.sm });
+globalStyle(`${risk} strong`, { paddingBottom: 4, color: vars.color.amber, fontFamily: vars.font.mono, fontSize: '0.62rem' });
+export const error = style({ marginTop: 6, color: vars.color.danger, fontSize: '0.58rem', lineHeight: 1.35 });
+export const warning = style({ marginTop: 6, color: vars.color.amber, fontSize: '0.56rem', lineHeight: 1.35 });
+export const actions = style({ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 6, marginTop: 7 });
+globalStyle(`${actions} button`, { padding: 6, color: vars.color.foreground, background: vars.color.inset, border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.sm, cursor: 'pointer' });
+export const primary = style({ color: '#fff !important', background: `${vars.color.accent} !important`, fontWeight: 700 });
