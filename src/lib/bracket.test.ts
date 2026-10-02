@@ -1065,3 +1065,166 @@ it('r36 scopes entry deduplication to the fixed env/server partition',async()=>{
     const fresh=await bracket.registerBracket(spec(F1,'same-id',{seqno:'same-stable'}));
     expect(fresh.id).not.toBe(old.id);expect(fresh.env).toBe(m.env);expect(bracket.getBrackets()).toHaveLength(2);
 });
+
+// r37: terminal entry reports do not end observation of strictly identified late fills.
+function r37Terminal(id: string, op = 'Cancel', failed = false): OrderEventReport {
+    const raw = fNew1!.raw as {state:string;data:Record<string,Record<string,unknown>>};
+    const body=raw.data[raw.state]!;
+    return normalizeOrderEvent({...raw,data:{[raw.state]:{...body,
+        order:{...(body.order as object),id,seqno:'S37',ordno:'O37',quantity:2},
+        operation:{op_type:op,op_code:failed?'99':'00'},
+        status:{order_quantity:0,cancel_quantity:1},event_id:`v1:FO:r37:${op}:${id}`}}})!;
+}
+it.each(['deal-first','cancel-first'])('r37 rebound partial entry stays protected with %s',async(order)=>{
+    await boot();m.cached.mockResolvedValue([]);
+    const p=await bracket.registerBracket(spec(F1,'old37',{seqno:'S37',ordno:'O37'}));
+    m.status='down';m.statusChanged.forEach(cb=>cb());await flush();
+    const rebound=cacheTrade('new37',F1,[]);rebound.order.seqno='S37';rebound.order.ordno='O37';m.cached.mockResolvedValue([rebound]);
+    m.status='live';m.statusChanged.forEach(cb=>cb());await flush();
+    expect(planOf(p.id).currentOrderId).toBe('new37');
+    const deal=edit(fDeal1!,{trade_id:'new37',seqno:'S37',ordno:'O37',exchange_seq:'37'});
+    const cancel=r37Terminal('new37');
+    if(order==='deal-first'){await emit(deal);await emit(cancel);}else{await emit(cancel);await emit(deal);}
+    expect(planOf(p.id)).toMatchObject({filled:1,entryClosed:true,currentOrderId:'new37'});
+    expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    await emit(deal);expect(planOf(p.id).filled).toBe(1);
+    expect(m.place).not.toHaveBeenCalled();
+});
+
+type R37Market = 'FUT' | 'STK' | 'IntradayOdd';
+const r37Markets: R37Market[] = ['FUT','STK','IntradayOdd'];
+function r37Spec(market:R37Market) {
+    return market==='FUT'?spec(F1,'old37',{seqno:'S37',ordno:'O37'}):{...spec(S1,'old37',{seqno:'S37',ordno:'O37'}),
+        account:{account_type:'S' as const,broker_id:S1.broker_id,account_id:S1.account_id},quoteCode:'2330',orderCode:'2330',
+        securityType:'STK' as const,exchange:'TSE',orderLot:market==='IntradayOdd'?'IntradayOdd' as const:'Common' as const};
+}
+function r37Trade(market:R37Market,filled=0,id='new37'):Trade {
+    const t=cacheTrade(id,market==='FUT'?F1:S1,filled?[{seq:'37',quantity:filled}]:[]);t.order.seqno='S37';t.order.ordno='O37';
+    if(market!=='FUT'){t.contract={...t.contract,code:'2330',security_type:'STK',exchange:'TSE'};
+        t.order.account={...t.order.account!,account_type:'S'};t.order.order_lot=market==='IntradayOdd'?'IntradayOdd':'Common';}
+    return t;
+}
+function r37Deal(market:R37Market,patch:Record<string,unknown>={}) {
+    const a=market==='FUT'?F1:S1;const name=market==='FUT'?'FuturesDeal':'StockDeal';
+    return normalizeOrderEvent({state:name,data:{[name]:{trade_id:'new37',seqno:'S37',ordno:'O37',exchange_seq:'37',
+        event_id:`v1:${market==='FUT'?'FD':'SD'}:r37:deal`,broker_id:a.broker_id,account_id:a.account_id,
+        code:market==='FUT'?'TXFJ6':'2330',full_code:market==='FUT'?'TXFJ6':undefined,security_type:market==='FUT'?'FUT':'STK',
+        exchange:market==='FUT'?'TAIFEX':'TSE',order_lot:market==='IntradayOdd'?'IntradayOdd':'Common',action:'Buy',quantity:1,ts:1,...patch}}})!;
+}
+function r37Order(market:R37Market,op:string,failed=false,patch:Record<string,unknown>={}) {
+    const t=r37Trade(market);const name=market==='FUT'?'FuturesOrder':'StockOrder';
+    return normalizeOrderEvent({state:name,data:{[name]:{order:t.order,contract:t.contract,
+        operation:{op_type:op,op_code:failed?'99':'00'},status:{order_quantity:0,cancel_quantity:1},
+        event_id:`v1:${market==='FUT'?'FO':'SO'}:r37:${op}`, ...patch}}})!;
+}
+async function r37Rebound(market:R37Market) {
+    await boot();m.cached.mockResolvedValue([]);const p=await bracket.registerBracket(r37Spec(market));await flush();
+    m.status='down';m.statusChanged.forEach(cb=>cb());await flush();
+    m.cached.mockResolvedValue([r37Trade(market)]);m.status='live';m.statusChanged.forEach(cb=>cb());await flush();
+    expect(planOf(p.id).currentOrderId).toBe('new37');return p;
+}
+it.each(r37Markets.flatMap(market=>['Cancel','New','UpdateQty'].flatMap(op=>['report-first','deal-first'].map(order=>({market,op,order})))))
+('r37 terminal evidence $market $op $order protects only its observed filled quantity',async({market,op,order})=>{
+    const p=await r37Rebound(market);const terminal=r37Order(market,op,op==='New');const deal=r37Deal(market);
+    if(order==='report-first'){await emit(terminal);await emit(deal);}else{await emit(deal);await emit(terminal);}
+    expect(planOf(p.id).filled).toBe(1);expect(planOf(p.id).entryClosed).toBe(op!=='UpdateQty');
+    expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    await emit(deal);await emit(terminal);expect(planOf(p.id).filled).toBe(1);
+    expect(m.place).not.toHaveBeenCalled();expect(m.cancel).not.toHaveBeenCalled();
+});
+const r37Foreign=['seqno','ordno','missing-stable','account','broker','missing-account','code','action','security','exchange','lot','zero','fraction','negative','market'] as const;
+it.each(r37Markets.flatMap(market=>r37Foreign.map(mismatch=>({market,mismatch}))))
+('r37 terminal $market rejects $mismatch evidence with reused current raw ID',async({market,mismatch})=>{
+    const p=await r37Rebound(market);await emit(r37Order(market,'Cancel'));
+    const patch:Record<string,unknown>=mismatch==='seqno'?{seqno:'foreign'}:mismatch==='ordno'?{ordno:'foreign'}:
+        mismatch==='missing-stable'?{seqno:'',ordno:''}:mismatch==='account'?{account_id:'foreign'}:
+        mismatch==='broker'?{broker_id:'foreign'}:mismatch==='missing-account'?{account_id:''}:
+        mismatch==='code'?{code:'foreign',full_code:'foreign'}:mismatch==='action'?{action:'Sell'}:
+        mismatch==='security'?{security_type:market==='FUT'?'OPT':'FUT'}:mismatch==='exchange'?{exchange:'foreign'}:
+        mismatch==='lot'?{order_lot:market==='IntradayOdd'?'Common':'IntradayOdd'}:mismatch==='zero'?{quantity:0}:
+        mismatch==='fraction'?{quantity:1.5}:mismatch==='negative'?{quantity:-1}:{};
+    let bad=r37Deal(market,patch);
+    if(mismatch==='market')bad={...bad,market:market==='FUT'?'stock':'futures'};
+    await emit(bad);expect(planOf(p.id).filled).toBe(0);expect(triggersOf(p.id)).toHaveLength(0);
+    await emit(r37Deal(market));expect(planOf(p.id).filled).toBe(1);expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    expect(m.place).not.toHaveBeenCalled();expect(m.cancel).not.toHaveBeenCalled();
+});
+it.each(r37Markets)('r37 $market terminal reload requires a unique strict listing before late report admission',async market=>{
+    const p=await r37Rebound(market);await emit(r37Order(market,'Cancel'));
+    const foreign=r37Trade(market);foreign.order.seqno='foreign';m.cached.mockResolvedValue([foreign]);
+    await boot({keepStore:true});await emit(r37Deal(market));expect(planOf(p.id).filled).toBe(0);
+    m.refreshed.mockResolvedValue([r37Trade(market,1),r37Trade(market,1,'ambiguous')]);
+    await bracket.reconcileBracket(p.id);expect(planOf(p.id).filled).toBe(0);
+    const missing=r37Trade(market,1);missing.order.seqno='';missing.order.ordno='';m.refreshed.mockResolvedValue([missing]);
+    await bracket.reconcileBracket(p.id);expect(planOf(p.id).filled).toBe(0);
+    m.refreshed.mockResolvedValue([r37Trade(market,1)]);await bracket.reconcileBracket(p.id);
+    expect(planOf(p.id)).toMatchObject({filled:1,entryClosed:true,currentOrderId:'new37'});
+    await emit(r37Deal(market));expect(planOf(p.id).filled).toBe(1);
+    expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);expect(m.place).not.toHaveBeenCalled();
+});
+it.each(r37Markets)('r37 $market terminal listing can precede Deal and conservatively retain empty/missing listing evidence',async market=>{
+    const p=await r37Rebound(market);const terminal=r37Trade(market);terminal.status.status='Cancelled';terminal.status.cancel_quantity=1;
+    m.refreshed.mockResolvedValue([terminal]);await bracket.reconcileBracket(p.id);expect(planOf(p.id)).toMatchObject({entryClosed:true,filled:0});
+    m.refreshed.mockResolvedValue([]);await bracket.reconcileBracket(p.id);expect(planOf(p.id).filled).toBe(0);
+    await emit(r37Deal(market));expect(planOf(p.id).filled).toBe(1);
+    const filled=r37Trade(market,1);filled.status.status='Cancelled';m.refreshed.mockResolvedValue([filled]);
+    await bracket.reconcileBracket(p.id);expect(planOf(p.id).filled).toBe(1);expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    expect(m.place).not.toHaveBeenCalled();
+});
+it('r37 terminal buffered Cancel before Deal remains protected without replaying an older report generation',async()=>{
+    await boot();m.cached.mockResolvedValue([]);await emit(r37Order('FUT','Cancel'));await emit(r37Deal('FUT'));
+    const p=await bracket.registerBracket(r37Spec('FUT'));expect(planOf(p.id).filled).toBe(1);
+    expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    m.status='down';m.statusChanged.forEach(cb=>cb());await flush();m.status='live';m.statusChanged.forEach(cb=>cb());await flush();
+    await emit(r37Deal('FUT',{exchange_seq:'late-generation'}));expect(planOf(p.id).filled).toBe(1);
+    expect(m.place).not.toHaveBeenCalled();
+});
+it('r37 terminal evidence cannot cross env/server context away-and-back without strict listing',async()=>{
+    const p=await r37Rebound('FUT');await emit(r37Order('FUT','Cancel'));
+    m.env='http://other.invalid|production';m.base='http://other.invalid';m.envChanged.forEach(cb=>cb());await flush();
+    await emit(r37Deal('FUT'));expect(planOf(p.id).filled).toBe(0);
+    m.env='http://sim.invalid|simulation';m.base='http://sim.invalid';m.cached.mockResolvedValue([]);m.envChanged.forEach(cb=>cb());await flush();
+    await emit(r37Deal('FUT',{exchange_seq:'away-back'}));expect(planOf(p.id).filled).toBe(0);expect(triggersOf(p.id)).toHaveLength(0);
+    m.refreshed.mockResolvedValue([r37Trade('FUT',1)]);await bracket.reconcileBracket(p.id);expect(planOf(p.id).filled).toBe(1);
+    expect(m.place).not.toHaveBeenCalled();
+});
+it('r37 finished exit late entry fill stays visible and durable beyond terminal retention, never enlarges/resends protection',async()=>{
+    await boot();const p=await bracket.registerBracket(spec(F1));await emit(fDeal1!);await tick(47000);
+    await emit(edit(fCoverDeal1!,{trade_id:'exit-1',seqno:'exit-1',ordno:'o'}));
+    const raw=fNew1!.raw as {state:string;data:Record<string,Record<string,unknown>>};const body=raw.data[raw.state]!;
+    await emit(normalizeOrderEvent({...raw,data:{[raw.state]:{...body,operation:{op_type:'Cancel',op_code:'00'},status:{order_quantity:0,cancel_quantity:1}}}})!);
+    expect(planOf(p.id).exit?.status).toBe('filled');expect(planOf(p.id).entryClosed).toBe(true);
+    await emit(fDeal2!);expect(planOf(p.id).filled).toBe(2);expect(planOf(p.id).exit?.quantity).toBe(1);
+    expect(triggersOf(p.id)).toHaveLength(0);expect(m.place).toHaveBeenCalledTimes(1);
+    const core=await import('./bracket-core');expect(core.unprotectedQuantity(planOf(p.id))).toBe(1);
+    await emit(fDeal2!);expect(planOf(p.id).filled).toBe(2);
+    vi.setSystemTime(Date.now()+25*60*60*1000);m.envChanged.forEach(cb=>cb());await flush();
+    expect(bracket.getDisplayBrackets().some(x=>x.id===p.id)).toBe(true);
+    m.cached.mockResolvedValue([]);await boot({keepStore:true});expect(core.unprotectedQuantity(planOf(p.id))).toBe(1);
+    expect(m.place).toHaveBeenCalledTimes(1);
+});
+
+it.each(r37Markets)('r37 $market unchanged raw ID terminal Cancel still observes its own late Deal',async market=>{
+    await boot();m.cached.mockResolvedValue([]);const p=await bracket.registerBracket(r37Spec(market));await flush();
+    const row=r37Trade(market,0,'old37');await emit(r37Order(market,'Cancel',false,{order:row.order}));
+    await emit(r37Deal(market,{trade_id:'old37'}));expect(planOf(p.id)).toMatchObject({filled:1,entryClosed:true});
+    expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);expect(m.place).not.toHaveBeenCalled();
+});
+it.each(r37Markets.flatMap(market=>['quantity','action','identity'].map(mismatch=>({market,mismatch}))))
+('r37 $market mismatching $mismatch terminal order cannot terminate or gain dispatch permission',async({market,mismatch})=>{
+    const p=await r37Rebound(market);const row=r37Trade(market);
+    if(mismatch==='quantity')row.order.quantity=1;else if(mismatch==='action')row.order.action='Sell';else row.order.seqno='foreign';
+    await emit(r37Order(market,'Cancel',false,{order:row.order}));expect(planOf(p.id)).toMatchObject({filled:0,entryClosed:false});
+    await emit(r37Deal(market));expect(planOf(p.id).filled).toBe(1);expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    expect(m.place).not.toHaveBeenCalled();expect(m.cancel).not.toHaveBeenCalled();
+});
+
+it.each(['cancel-first','deal-first'])('r37 ordinary protective dispatch remains one controlled Cover after %s',async order=>{
+    const p=await r37Rebound('FUT');const cancel=r37Order('FUT','Cancel'),deal=r37Deal('FUT');
+    if(order==='cancel-first'){await emit(cancel);await emit(deal);}else{await emit(deal);await emit(cancel);}
+    await tick(47000);expect(m.place).toHaveBeenCalledTimes(1);
+    const [,action,price,qty,opts]=m.place.mock.calls[0]!;
+    expect([action,price,qty,opts.ocType,opts.account.account_id]).toEqual(['Sell',null,1,'Cover',F1.account_id]);
+    expect(planOf(p.id).exit).toMatchObject({quantity:1,status:'working'});
+    await emit(deal);await tick(47000);expect(m.place).toHaveBeenCalledTimes(1);expect(m.cancel).not.toHaveBeenCalled();
+});

@@ -9,11 +9,11 @@
 //   connection is live AND its env + serverId equal the binding. Otherwise it
 //   is held ('disconnected' | 'unknownEnv' | 'envMismatch') and emits nothing.
 // - Every intent is recorded as a `pendingSubmit` slot BEFORE it is returned.
-//   The Rust executor sends it at once and journals asynchronously (ticks are
-//   never written); a crash can lose the newest records, so recovery relies
-//   on deterministic keys / tags, reconcile before live, and holding every
-//   order of a program that may have sent unrecorded orders (an unclean
-//   shutdown) as `unknown` until listings settle it.
+//   The Rust service commits the resulting state and waits for a full durable
+//   WAL barrier before dispatch, then rechecks the current sender permit.
+//   Raw ticks are not journaled; their program/slot changes are. Deterministic
+//   keys, reconciliation and unknown recovery remain for uncertain outcomes
+//   and legacy persisted images; no order is automatically resent.
 // - `restore` (executor restarted from persisted state) turns every
 //   `pendingSubmit` slot into `unknown`: never resent, only a reconcile
 //   (matched by idempotency key) or a user acknowledgement clears it.

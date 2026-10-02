@@ -30,6 +30,7 @@ import {
     applyEntryTrade,
     bracketPhase,
     isLive,
+    observesEntryEvidence,
     matchDeal,
     protectionQuantity,
     tradeMatchesPlan,
@@ -205,7 +206,7 @@ const bus = createCommandBus<Command, BracketPlan[] | { hostId: string; plans: B
 function commit() {
     if (!executing) return; // mirrors never write shared state
     const now = Date.now();
-    plans = plans.filter(p => !p.dismissed && (isLive(p) || now - p.updatedAt < KEEP_DONE_MS));
+    plans = plans.filter(p => !p.dismissed && (isLive(p) || unprotectedQuantity(p) > 0 || now - p.updatedAt < KEEP_DONE_MS));
     try { globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(plans)); } catch { /* quota */ }
     plans = plans.map(p => ({ ...p, identityConfirmed: !!p.reportContext && p.reportContext === currentReportContext() }));
     snapshot = plans;
@@ -274,7 +275,7 @@ function update(id: string, fn: (p: BracketPlan) => BracketPlan) {
 function applyReport(p: BracketPlan, report: OrderEventReport, now: number, context = currentReportContext()): BracketPlan {
     const identity = entryReportIdentity(p, report);
     if (identity === 'different') return p;
-    if (identity === 'unknown' || !context || p.reportContext !== context) {
+    if (identity === 'unknown' || !context || context !== currentReportContext() || p.reportContext !== context) {
         return addIssue(p, 'report-mismatch', '回報委託身分或連線代次尚未確認，未計入成交或結束狀態；請對帳', now);
     }
     if (report.kind === 'order') return applyEntryOrderReport(p, report, now);
@@ -287,7 +288,7 @@ function applyReport(p: BracketPlan, report: OrderEventReport, now: number, cont
 function onReport(report: OrderEventReport, info: TrackedReportInfo, base: string) {
     const now = Date.now();
     for (const p of plans.slice()) {
-        if (!isLive(p) || !reportEnvMatches(p.env, base)) continue;
+        if (!observesEntryEvidence(p) || !reportEnvMatches(p.env, base)) continue;
         let next = p;
         if (info.untrackable && report.market === p.market) {
             next = addIssue(next, 'untrackable', '收到沒有可追蹤事件 ID 的回報，無法確認是否漏回報', now);
@@ -317,7 +318,7 @@ function onExit(rec: ExitRecord) {
 const inflight = new Map<string, Promise<void>>();
 
 function plansFor(account: AccountRef, env: string) {
-    return plans.filter(p => p.env === env && accountRefKey(p.account) === accountRefKey(account) && isLive(p));
+    return plans.filter(p => p.env === env && accountRefKey(p.account) === accountRefKey(account) && observesEntryEvidence(p));
 }
 
 function applyHealth(account: AccountRef, env: string, health: TradeCacheHealth, now: number) {
@@ -350,12 +351,12 @@ async function checkHealth(account: AccountRef, env: string, query = createAccou
 function onGap(base: string) {
     const now = Date.now();
     for (const p of plans.slice()) {
-        if (!isLive(p) || !reportEnvMatches(p.env, base)) continue;
+        if (!observesEntryEvidence(p) || !reportEnvMatches(p.env, base)) continue;
         update(p.id, x => addIssue(x, 'gap', '回報序號跳號，可能漏收成交；請對帳', now));
     }
 }
 
-/** One-shot cache-only lookup + health for an account's live plans. */
+/** One-shot cache-only evidence lookup, including retained terminal entries. */
 function lookup(account: AccountRef, env: string, restore = false): Promise<void> {
     const key = `lookup|${env}|${accountRefKey(account)}`;
     const running = inflight.get(key);
@@ -396,11 +397,11 @@ function lookup(account: AccountRef, env: string, restore = false): Promise<void
     return task;
 }
 
-function lookupLiveAccounts(restore = false) {
+function lookupObservedAccounts(restore = false) {
     const env = currentProtectionEnv();
     if (!env) return;
     const seen = new Map<string, AccountRef>();
-    for (const p of plans) if (p.env === env && isLive(p)) seen.set(accountRefKey(p.account), p.account);
+    for (const p of plans) if (p.env === env && observesEntryEvidence(p)) seen.set(accountRefKey(p.account), p.account);
     for (const account of seen.values()) void lookup(account, env, restore);
 }
 
@@ -855,7 +856,7 @@ function run() {
     decideRole();
     const base = getApiBase();
     const now = Date.now();
-    plans = plans.map(p => envBase(p.env) !== base || !isLive(p) ? p
+    plans = plans.map(p => envBase(p.env) !== base || !observesEntryEvidence(p) ? p
         : addIssue(p, 'reload', 'App 重新載入，期間的回報可能未收到', now));
     commit();
     onTrackedReport(onReport);
@@ -875,7 +876,7 @@ function run() {
         const restore = resumeWasRestore();
         restoringDo(restore, () => {
             for (const p of plans.slice()) {
-                if (p.env !== env || !isLive(p)) continue;
+                if (p.env !== env || !observesEntryEvidence(p)) continue;
                 const at = Date.now();
                 let next = p;
                 for (const report of recentReportsFor(envBase(env), p.orderId, at, p)) next = applyReport(next, report, at);
@@ -883,7 +884,7 @@ function run() {
                 else arm(p); // re-arm (idempotent) once the mode is known
             }
         });
-        lookupLiveAccounts(restore);
+        lookupObservedAccounts(restore);
     });
     let wasLive = getStreamStatus() === 'live';
     subscribeStatusStore(() => {
@@ -894,15 +895,15 @@ function run() {
         const at = Date.now();
         if (!live) {
             for (const p of plans.slice()) {
-                if (envBase(p.env) === getApiBase() && isLive(p)) update(p.id, x => addIssue(x, 'disconnect', '回報串流中斷，期間的成交可能未收到', at));
+                if (envBase(p.env) === getApiBase() && observesEntryEvidence(p)) update(p.id, x => addIssue(x, 'disconnect', '回報串流中斷，期間的成交可能未收到', at));
             }
         } else {
             void refreshProtectionEnv();
             // cache-only; issues stay until explicit reconcile. After a long
             // outage, fills found now may already be past their exits (#144).
-            if (currentProtectionEnv()) lookupLiveAccounts(resumeWasRestore());
+            if (currentProtectionEnv()) lookupObservedAccounts(resumeWasRestore());
         }
     });
     void refreshProtectionEnv();
-    if (wasLive) lookupLiveAccounts(true);
+    if (wasLive) lookupObservedAccounts(true);
 }

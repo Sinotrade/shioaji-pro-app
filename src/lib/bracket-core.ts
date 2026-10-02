@@ -119,7 +119,15 @@ export function bracketPhase(p: BracketPlan): BracketPhase {
     return p.entryClosed ? 'closed' : 'waiting';
 }
 
-/** Live = still needs reports: waiting for fills, protecting, or exiting. */
+/** Retained entries keep observing evidence after a terminal order/exit.
+ * This grants neither active protection nor send/cancel authority. The runtime
+ * still validates stable identity, full scope and current report context. */
+export function observesEntryEvidence(p: BracketPlan): boolean {
+    return !p.dismissed && !p.registrationPending;
+}
+
+/** Active protection lifecycle. Terminal entries may still receive late fills:
+ * do not use this predicate to admit reports or select listing observations. */
 export function isLive(p: BracketPlan): boolean {
     const phase = bracketPhase(p);
     return phase === 'waiting' || phase === 'protected' || phase === 'exiting'
