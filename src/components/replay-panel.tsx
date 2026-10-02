@@ -9,7 +9,7 @@ import {
     type ISeriesApi,
     type UTCTimestamp,
 } from 'lightweight-charts';
-import { Pause, Play } from 'lucide-react';
+import { Pause, Play, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { fetchHistoryTicks } from '../lib/shioaji';
 import { getChartColors, useThemeSettings, baseMode } from '../lib/theme-store';
@@ -19,6 +19,13 @@ import { dateStrOffset, wallClockToUtc } from '../lib/utils/kbars';
 import * as dock from './bottom-dock.css';
 import * as styles from './replay-panel.css';
 import { AsyncStatus } from './async-status';
+import {
+    closeReplayPosition,
+    loadReplayTrades,
+    replayPoints,
+    type ReplayPracticePosition,
+    type ReplayPracticeTrade,
+} from '../lib/replay-practice';
 
 interface ReplayTick {
     time: number;
@@ -48,7 +55,14 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
     const [empty, setEmpty] = useState(false);
     const [playing, setPlaying] = useState(false);
     const [speedIdx, setSpeedIdx] = useState(1);
-    const [, force] = useState(0);
+    const [cursor, setCursor] = useState(0);
+    const [selectedDate, setSelectedDate] = useState(() => dateStrOffset(1));
+    const [loadRevision, setLoadRevision] = useState(0);
+    const [quantity, setQuantity] = useState(1);
+    const [position, setPosition] = useState<ReplayPracticePosition | null>(null);
+    const [trades, setTrades] = useState<ReplayPracticeTrade[]>(() =>
+        loadReplayTrades(localStorage.getItem('sj-pro-replay-practice-trades-v1')),
+    );
     const themeSettings = useThemeSettings();
 
     // chart lifecycle
@@ -98,14 +112,18 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
         setEmpty(false);
         setPlaying(false);
         idxRef.current = 0;
+        setCursor(0);
+        setPosition(null);
         ticksRef.current = [];
         const isFop =
             contract.security_type === 'FUT' ||
             contract.security_type === 'OPT';
         (async () => {
-            const dates = isFop
-                ? [dateStrOffset(-1), dateStrOffset(0)]
-                : [dateStrOffset(0)];
+            const dates = selectedDate
+                ? [selectedDate]
+                : isFop
+                    ? [dateStrOffset(1), dateStrOffset(0)]
+                    : [dateStrOffset(0)];
             for (const d of dates) {
                 try {
                     const h = await fetchHistoryTicks(contract, d);
@@ -159,7 +177,11 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
         return () => {
             cancelled = true;
         };
-    }, [contract]);
+    }, [contract, selectedDate, loadRevision]);
+
+    useEffect(() => {
+        localStorage.setItem('sj-pro-replay-practice-trades-v1', JSON.stringify(trades.slice(-500)));
+    }, [trades]);
 
     // playback loop
     useEffect(() => {
@@ -187,7 +209,7 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
                 }
                 idxRef.current += 1;
             }
-            force((v) => v + 1);
+            setCursor(idxRef.current);
         }, 50);
         return () => clearInterval(interval);
     }, [playing, speedIdx]);
@@ -196,7 +218,7 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
     // issues at most one setData per frame
     const seek = (idx: number) => {
         idxRef.current = idx;
-        force((v) => v + 1);
+        setCursor(idx);
         if (seekRaf.current) return;
         seekRaf.current = requestAnimationFrame(() => {
             seekRaf.current = 0;
@@ -214,8 +236,22 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
     };
 
     const ticks = ticksRef.current;
-    const idx = idxRef.current;
+    const idx = cursor;
     const cur = ticks[Math.max(0, idx - 1)];
+    const multiplier = Number((contract as ContractBase & { multiplier?: number }).multiplier) || 1;
+    const floatingPoints = cur && position ? replayPoints(position, cur.price) : 0;
+    const totalPnl = trades.reduce((sum, trade) => sum + trade.estimatedPnl, 0);
+
+    const openPosition = (side: ReplayPracticePosition['side']) => {
+        if (!cur || position) return;
+        setPosition({ side, entry: cur.price, enteredAt: cur.time, quantity });
+    };
+
+    const closePosition = () => {
+        if (!cur || !position) return;
+        setTrades((old) => [...old, closeReplayPosition(position, contract.code, cur.price, cur.time, multiplier)]);
+        setPosition(null);
+    };
 
     if (empty) {
         return <div className={dock.emptyState}>無可回放的歷史成交</div>;
@@ -224,6 +260,17 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
     return (
         <div className={styles.wrap}>
             <div className={styles.controls}>
+                <input
+                    className={styles.dateInput}
+                    type='date'
+                    value={selectedDate}
+                    max={dateStrOffset(0)}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    aria-label='回放日期'
+                />
+                <button className={styles.speed.off} onClick={() => setLoadRevision((v) => v + 1)} title='重新載入指定日期'>
+                    <RotateCcw size={11} />
+                </button>
                 <button
                     className={styles.playBtn}
                     disabled={!loaded}
@@ -270,6 +317,21 @@ export function ReplayPanel({ contract }: { contract: ContractBase }) {
                 </span>
             </div>
             <div ref={hostRef} className={styles.chartHost} />
+            <div className={styles.practice}>
+                <div className={styles.practiceStatus}>
+                    <strong>SIM 練習</strong>
+                    <span>{position ? `${position.side === 'long' ? '多' : '空'} ${position.quantity} @ ${fmtPrice(position.entry)}` : '空手'}</span>
+                    <span>浮動 {floatingPoints >= 0 ? '+' : ''}{fmtPrice(floatingPoints)} 點</span>
+                    <span>累計估算 {totalPnl >= 0 ? '+' : ''}{fmtInt(totalPnl)}</span>
+                </div>
+                <div className={styles.practiceActions}>
+                    <label>數量 <input type='number' min={1} max={100} value={quantity} onChange={(e) => setQuantity(Math.max(1, Math.min(100, Math.floor(Number(e.target.value) || 1))))} /></label>
+                    <button className={styles.practiceBuy} disabled={!cur || !!position} onClick={() => openPosition('long')}>模擬買進</button>
+                    <button className={styles.practiceSell} disabled={!cur || !!position} onClick={() => openPosition('short')}>模擬賣出</button>
+                    <button className={styles.practiceFlat} disabled={!position} onClick={closePosition}>模擬平倉</button>
+                </div>
+                <div className={styles.practiceNote}>僅本機歷史練習，不呼叫下單、撤單或任何券商交易 API。{multiplier === 1 ? ' 合約乘數未知，估算欄以點數計。' : ` 估算乘數 ${fmtInt(multiplier)}。`}</div>
+            </div>
         </div>
     );
 }

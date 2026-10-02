@@ -1,6 +1,6 @@
 // src/components/replay-panel.css.ts
 
-import { style, styleVariants } from '@vanilla-extract/css';
+import { globalStyle, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const wrap = style({
@@ -69,3 +69,24 @@ export const chartHost = style({
     flex: 1,
     minHeight: 0,
 });
+
+export const dateInput = style({
+    width: 116,
+    color: vars.color.foreground,
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    fontFamily: vars.font.mono,
+    fontSize: '0.64rem',
+});
+
+export const practice = style({ padding: `5px ${vars.space.sm}`, borderTop: `1px solid ${vars.color.border}`, flexShrink: 0 });
+export const practiceStatus = style({ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', alignItems: 'center', color: vars.color.mutedForeground, fontFamily: vars.font.mono, fontSize: '0.64rem' });
+export const practiceActions = style({ display: 'grid', gridTemplateColumns: '86px 1fr 1fr 1fr', gap: 5, marginTop: 5 });
+globalStyle(`${practiceActions} label`, { display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.62rem', color: vars.color.mutedForeground });
+globalStyle(`${practiceActions} input`, { width: 42, color: vars.color.foreground, background: vars.color.inset, border: `1px solid ${vars.color.border}`, borderRadius: vars.radius.sm });
+const practiceButton = style({ padding: '4px 7px', borderRadius: vars.radius.sm, cursor: 'pointer', fontWeight: 700, fontSize: '0.64rem', selectors: { '&:disabled': { opacity: 0.4, cursor: 'not-allowed' } } });
+export const practiceBuy = style([practiceButton, { color: '#fff', background: vars.color.danger, border: `1px solid ${vars.color.danger}` }]);
+export const practiceSell = style([practiceButton, { color: '#fff', background: '#16846c', border: '1px solid #35d09a' }]);
+export const practiceFlat = style([practiceButton, { color: vars.color.amber, background: vars.color.inset, border: `1px solid ${vars.color.amber}` }]);
+export const practiceNote = style({ marginTop: 4, color: vars.color.mutedForeground, fontSize: '0.56rem' });
