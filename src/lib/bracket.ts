@@ -19,7 +19,7 @@
 import { useSyncExternalStore } from 'react';
 import { createAccountQuery } from './account-query';
 import { reportLedger } from './report-ledger';
-import { cancelOrder, fetchTradeCacheHealth, fetchTrades } from './shioaji';
+import { cancelVerifiedOrder, fetchTradeCacheHealth, fetchTrades } from './shioaji';
 import { checkTradeCacheHealth, tradeCacheContinuous } from './trading-state';
 import {
     accountRefKey,
@@ -32,6 +32,10 @@ import {
     matchDeal,
     protectionQuantity,
     tradeMatchesPlan,
+    entryTradeIdentity,
+    entryReportIdentity,
+    sameEntryScope,
+    sameEntryPartition,
     unprotectedQuantity,
     workingEntryAfterExit,
     type AccountRef,
@@ -60,13 +64,14 @@ import {
     subscribeNative,
 } from './execution/native';
 import { bracketPlansFromPrograms, programForNewBracket, type NativeBracketPlan } from './execution/native-view';
-import { externalIdentity } from './execution/core';
+import { externalIdentity } from './broker-identity';
+import { currentReportContext, getProtectionContextVersion } from './protection-context';
 import { getApiBase } from './runtime';
 import { getStreamStatus, subscribeStatusStore } from './stream';
 import { notify } from './trade';
 import {
     acknowledgeExit,
-    applyExitTrade,
+    applyBracketExitTrades,
     armBracketGroup,
     disarmBracketGroup,
     dropBracketTriggers,
@@ -153,7 +158,7 @@ function loadPlans(): BracketPlan[] {
         // A cancel still 'sending' when the app went away has an unknown
         // outcome: show 刪單待確認 · 對帳, never a stuck 處理中 (and never resend).
         return (arr as BracketPlan[]).filter(p => p && typeof p.id === 'string' && p.account)
-            .map(p => p.entryCancel === 'sending' ? { ...p, entryCancel: 'unconfirmed' as const } : p);
+            .map(p => ({ ...p, identityConfirmed: false, ...(p.entryCancel === 'sending' ? { entryCancel: 'unconfirmed' as const } : {}) }));
     } catch {
         return [];
     }
@@ -201,6 +206,7 @@ function commit() {
     const now = Date.now();
     plans = plans.filter(p => !p.dismissed && (isLive(p) || now - p.updatedAt < KEEP_DONE_MS));
     try { globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(plans)); } catch { /* quota */ }
+    plans = plans.map(p => ({ ...p, identityConfirmed: !!p.reportContext && p.reportContext === currentReportContext() }));
     snapshot = plans;
     listeners.forEach(l => l());
     bus.publish();
@@ -224,7 +230,7 @@ function restoringDo(on: boolean, fn: () => void) {
 
 function arm(p: BracketPlan) {
     const qty = protectionQuantity(p);
-    if (p.dismissed || qty <= 0 || p.env !== currentProtectionEnv()) return;
+    if (p.dismissed || qty <= 0 || p.env !== currentProtectionEnv() || p.reportContext !== currentReportContext()) return;
     armBracketGroup({
         restore: restoring,
         group: p.group, bracketId: p.id, env: p.env, account: p.account, code: p.quoteCode,
@@ -264,9 +270,14 @@ function update(id: string, fn: (p: BracketPlan) => BracketPlan) {
     commit();
 }
 
-function applyReport(p: BracketPlan, report: OrderEventReport, now: number): BracketPlan {
+function applyReport(p: BracketPlan, report: OrderEventReport, now: number, context = currentReportContext()): BracketPlan {
+    const identity = entryReportIdentity(p, report);
+    if (identity === 'different') return p;
+    if (identity === 'unknown' || !context || p.reportContext !== context) {
+        return addIssue(p, 'report-mismatch', '回報委託身分或連線代次尚未確認，未計入成交或結束狀態；請對帳', now);
+    }
     if (report.kind === 'order') return applyEntryOrderReport(p, report, now);
-    const m = matchDeal(report, p.orderId, p.account, p.market, p.orderCode, p.action);
+    const m = matchDeal(report, p.orderId, p.account, p.market, p.orderCode, p.action, p);
     if (m.kind === 'fill') return applyEntryFill(p, m.fill, now);
     if (m.kind === 'mismatch') return addIssue(p, 'report-mismatch', m.detail, now);
     return p;
@@ -280,7 +291,7 @@ function onReport(report: OrderEventReport, info: TrackedReportInfo, base: strin
         if (info.untrackable && report.market === p.market) {
             next = addIssue(next, 'untrackable', '收到沒有可追蹤事件 ID 的回報，無法確認是否漏回報', now);
         }
-        next = applyReport(next, report, now);
+        next = applyReport(next, report, now, info.context);
         if (next !== p) update(p.id, () => next);
     }
 }
@@ -351,21 +362,24 @@ function lookup(account: AccountRef, env: string, restore = false): Promise<void
     const task = (async () => {
         const now = Date.now();
         const query = createAccountQuery();
+        const context = currentReportContext();
         try {
             // Cache-only continuity is proven only by trading-state's
             // authoritative baseline on this sidecar instance (#128).
             const continuous = tradeCacheContinuous();
             const trades = await query.read(account.account_type, account, current => fetchTrades(account.account_type, current, { refresh: false }));
             query.assertCurrent();
-            if (currentProtectionEnv() !== env) return;
+            if (currentProtectionEnv() !== env || !context || context !== currentReportContext()) return;
             restoringDo(restore, () => {
                 for (const p of plansFor(account, env)) {
                     if (!continuous) update(p.id, x => addIssue(x, 'no-baseline', '委託快取尚無連續基準（未完成權威查詢或串流曾中斷）；請對帳', now));
-                    const trade = trades.find(t => tradeMatchesPlan(t, p));
-                    if (trade) update(p.id, x => applyEntryTrade(x, trade, now));
+                    const candidates = trades.filter(t => tradeMatchesPlan(t, p));
+                    const trade = candidates.length === 1 ? candidates[0] : undefined;
+                    if (continuous && trade) update(p.id, x => applyEntryTrade({ ...x, reportContext: context }, trade, now));
                     else update(p.id, x => addIssue(x, 'lookup-failed', '伺服器委託快取找不到此進場單（可能伺服器重啟）；請對帳', now));
                 }
             });
+            if (continuous) applyBracketExitTrades(trades);
         } catch (e) {
             for (const p of plansFor(account, env)) {
                 update(p.id, x => addIssue(x, 'lookup-failed', `委託快取查詢失敗：${e instanceof Error ? e.message : String(e)}`, now));
@@ -400,18 +414,21 @@ async function reconcile(id: string): Promise<{ health: TradeCacheHealth['state'
     const task = (async () => {
         const env = plan.env;
         const query = createAccountQuery();
+        const context = currentReportContext();
         const trades = await query.read(plan.account.account_type, plan.account, current => fetchTrades(plan.account.account_type, current, { refresh: true }));
         query.assertCurrent();
+        if (context !== currentReportContext()) throw new Error('對帳期間連線已變更，請重新核對');
         const now = Date.now();
         for (const p of plansFor(plan.account, env)) {
-            const trade = trades.find(t => tradeMatchesPlan(t, p));
-            if (trade) update(p.id, x => {
-                const next = applyEntryTrade(x, trade, now);
+            const candidates = trades.filter(t => tradeMatchesPlan(t, p));
+            const trade = candidates.length === 1 ? candidates[0] : undefined;
+            if (context && trade) update(p.id, x => {
+                const next = applyEntryTrade({ ...x, reportContext: context }, trade, now);
                 return next.entryClosed && next.entryCancel ? { ...next, entryCancel: undefined } : next;
             });
-            const exitTrade = p.exit?.orderId ? trades.find(t => t.order.id === p.exit?.orderId) : undefined;
-            if (exitTrade) applyExitTrade(exitTrade);
+
         }
+        if (context) applyBracketExitTrades(trades);
         const health = await checkHealth(plan.account, env, query);
         query.assertCurrent();
         result = health.state;
@@ -422,7 +439,7 @@ async function reconcile(id: string): Promise<{ health: TradeCacheHealth['state'
         }
         if (health.state === 'Healthy') {
             for (const p of plansFor(plan.account, env)) {
-                if (trades.some(t => tradeMatchesPlan(t, p))) {
+                if (trades.filter(t => tradeMatchesPlan(t, p)).length === 1) {
                     update(p.id, x => ({ ...x, updatedAt: now, issues: x.issues.filter(i => i.code === 'overfill') }));
                 } else {
                     update(p.id, x => addIssue(x, 'lookup-failed', '對帳結果仍找不到此進場單；請至委託分頁確認', now));
@@ -442,18 +459,29 @@ function register(spec: BracketSpec): BracketPlan {
     if (spec.orderLot && spec.orderLot !== 'Common' && (spec.account.account_type !== 'S' || spec.orderLot !== 'IntradayOdd')) {
         throw new Error('括號單僅支援整股與盤中零股，未登記');
     }
-    const id = planId(spec.env, spec.account, spec.orderId);
-    const existing = plans.find(p => p.id === id);
-    if (existing) return existing; // idempotent
+    const context = currentReportContext();
+    if (!context || !(spec.seqno?.trim() || spec.ordno?.trim())) throw new Error('進場單身分或連線尚未確認，保護登記待確認；請核對委託，勿重送');
+    const candidates = plans.filter(p => sameEntryPartition(p, spec) && !p.dismissed);
+    for (const p of candidates) {
+        const identity = externalIdentity({ ...p, confirmed: false }, { ...spec, confirmed: false });
+        if (identity === 'unknown') throw new Error('進場單身分可能與既有保護重複，請先對帳，保護登記待確認');
+        if (identity === 'same') {
+            if (!sameEntryScope(p, spec)) throw new Error('進場單身分相同但方向或原量不一致，保護登記待確認；請對帳，勿重複保護');
+            if (p.reportContext !== context) throw new Error('既有進場單連線代次尚未確認，請先對帳，保護登記待確認');
+            return p;
+        }
+    }
+    const baseId = planId(spec.env, spec.account, spec.orderId);
+    const id = plans.some(p => p.id === baseId) ? `${baseId}|identity:${encodeURIComponent(spec.seqno)}:${encodeURIComponent(spec.ordno ?? '')}:${plans.length}` : baseId;
     const now = Date.now();
     let plan: BracketPlan = {
-        ...spec, id, market: spec.account.account_type === 'S' ? 'stock' : 'futures',
+        ...spec, id, reportContext: context, identityConfirmed: true, market: spec.account.account_type === 'S' ? 'stock' : 'futures',
         group: `bracket:${spec.orderId}:${now.toString(36)}`, fills: {}, filled: 0,
         entryClosed: false, exit: null, issues: [], createdAt: now, updatedAt: now,
     };
     if (getStreamStatus() !== 'live') plan = addIssue(plan, 'disconnect', '登記時行情／回報串流未連線', now);
     // Reports that reached this window before the registration command.
-    for (const report of recentReportsFor(envBase(spec.env), spec.orderId)) plan = applyReport(plan, report, now);
+    for (const report of recentReportsFor(envBase(spec.env), spec.orderId, now, spec)) plan = applyReport(plan, report, now);
     plans = [...plans, plan];
     notify({ kind: 'info', title: '括號單待命',
         body: `${plan.quoteCode} 成交後依成交量自動掛${describeProtection(plan)}` });
@@ -499,17 +527,14 @@ export interface BracketAdmission {
     readonly hostId: string | null;
 }
 const hostId = `host-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-let contextGeneration = 0;
 let mirrorHostId: string | null = null;
-onProtectionEnvChange(() => { contextGeneration++; });
-subscribeStatusStore(() => { contextGeneration++; });
 const ADMISSION_CHANGED = '保護執行環境已變更，未送出進場單，請重新確認';
 export async function ensureBracketHost(opts: { orderLot?: StockOrderLot } = {}): Promise<BracketAdmission> {
     const env = currentProtectionEnv();
     if (!env) throw new Error('伺服器模式尚未確認，括號單未送出');
     const admission: BracketAdmission = {
         owner: nativeBracket(opts.orderLot) ? 'native' : 'window', env,
-        orderLot: opts.orderLot ?? 'Common', contextGeneration,
+        orderLot: opts.orderLot ?? 'Common', contextGeneration: getProtectionContextVersion(),
         ownerGeneration: getNativeOwnerGeneration(), hostId: null,
     };
     let ready: BracketAdmission;
@@ -526,7 +551,7 @@ export async function ensureBracketHost(opts: { orderLot?: StockOrderLot } = {})
 }
 /** Synchronous send-time gate, called again by the actual order dispatch. */
 export function assertBracketAdmission(admission: BracketAdmission): void {
-    if (admission.env !== currentProtectionEnv() || admission.contextGeneration !== contextGeneration
+    if (admission.env !== currentProtectionEnv() || admission.contextGeneration !== getProtectionContextVersion()
         || (admission.orderLot === 'Common' && admission.ownerGeneration !== getNativeOwnerGeneration())) {
         throw new Error(ADMISSION_CHANGED);
     }
@@ -561,7 +586,7 @@ if (typeof window !== 'undefined') window.addEventListener?.('storage', e => {
 });
 function pendingRegistration(spec: BracketSpec, admission: BracketAdmission, detail: string): BracketPlan {
     const now = Date.now();
-    return { ...spec, id: `registration:${admission.owner}:${planId(spec.env, spec.account, spec.seqno || spec.orderId)}`,
+    return { ...spec, id: `registration:${admission.owner}:${planId(spec.env, spec.account, spec.orderId)}:${encodeURIComponent(spec.seqno)}:${encodeURIComponent(spec.ordno ?? '')}:${spec.action}:${spec.quantity}:${spec.orderLot ?? 'Common'}${spec.seqno?.trim() || spec.ordno?.trim() ? '' : `:${now}:${Math.random().toString(36).slice(2)}`}`,
         market: spec.account.account_type === 'S' ? 'stock' : 'futures', group: '', fills: {}, filled: 0,
         entryClosed: false, exit: null, issues: [], createdAt: now, updatedAt: now,
         registrationPending: { owner: admission.owner, detail } };
@@ -572,30 +597,31 @@ function assertRegistrationOwner(spec: BracketSpec, owner: BracketAdmission['own
     const foreign = owner === 'native' ? [...snapshot, ...pendingRegistrations.filter(p => p.registrationPending?.owner === 'window')]
         : [...nativePlans(), ...pendingRegistrations.filter(p => p.registrationPending?.owner === 'native')];
     if (foreign.some(p => p.env === spec.env && accountRefKey(p.account) === accountRefKey(spec.account)
-        && p.orderCode === spec.orderCode && p.securityType === spec.securityType && !p.dismissed
-        && externalIdentity(p, spec) !== 'different')) {
+        && sameEntryPartition(p, spec) && !p.dismissed
+        && externalIdentity({ ...p, confirmed: false }, { ...spec, confirmed: false }) !== 'different')) {
         throw new Error('此進場單可能已由其他執行器追蹤，請先核對保護紀錄，未重複登記');
     }
 }
 export async function registerBracket(spec: BracketSpec, admission?: BracketAdmission): Promise<BracketPlan> {
     // Legacy direct registration chooses an owner once here; the ticket always supplies its preflight admission.
     if (!admission) {
-        const owner = nativeBracket(spec.orderLot) ? 'native' : 'window';
-        assertRegistrationOwner(spec, owner);
-        return owner === 'native' ? registerNativeBracket(spec) : await bus.send({ op: 'register', spec }, REGISTER_TIMEOUT_MS) as BracketPlan;
+        admission = await ensureBracketHost({ orderLot: spec.orderLot });
     }
     const record = pendingRegistration(spec, admission, '進場單已送出，保護登記尚未確認；請核對委託與保護紀錄，勿重送進場或另掛重複出場單');
     savePendingRegistration(record, record.id);
     try {
         assertRegistrationOwner(spec, admission.owner);
         if (spec.env !== admission.env || spec.env !== currentProtectionEnv()
-            || (spec.orderLot ?? 'Common') !== admission.orderLot || admission.contextGeneration !== contextGeneration) {
+            || (spec.orderLot ?? 'Common') !== admission.orderLot || admission.contextGeneration !== getProtectionContextVersion()) {
             throw new Error('進場送出後環境已變更，保護登記待確認；請切回原環境核對');
         }
         // A disabled native host must not create anew. Retain the pending record instead of migrating owners.
         if (admission.owner === 'native') ensureNativeHost(admission.env);
         const plan = admission.owner === 'native' ? await registerNativeBracket(spec)
             : await bus.send({ op: 'register', spec, hostId: admission.hostId ?? undefined }, REGISTER_TIMEOUT_MS) as BracketPlan;
+        if (!sameEntryScope(plan, spec) || externalIdentity({ ...plan, confirmed: false }, { ...spec, confirmed: false }) !== 'same') {
+            throw new Error('保護登記回覆的委託身分尚未確認；請核對紀錄，勿重送');
+        }
         savePendingRegistration(null, record.id);
         return plan;
     } catch (e) {
@@ -729,8 +755,22 @@ async function cancelEntry(id: string): Promise<'cancelled' | 'unconfirmed'> {
     if (plan.env !== currentProtectionEnv()) throw new Error('此括號單屬於其他伺服器或模式，未送出刪單');
     update(id, p => ({ ...p, entryCancel: 'sending', updatedAt: Date.now() }));
     try {
-        const trade = await cancelOrder(plan.orderId);
-        const confirmed = trade?.order?.id === plan.orderId && trade.status?.status === 'Cancelled';
+        const query = createAccountQuery();
+        const context = currentReportContext();
+        const rows = await query.read(plan.account.account_type, plan.account, current => fetchTrades(plan.account.account_type, current, { refresh: !tradeCacheContinuous() }));
+        query.assertCurrent();
+        const candidates = rows.filter(t => entryTradeIdentity(t, plan) === 'same');
+        if (!context || context !== currentReportContext() || candidates.length !== 1) {
+            throw Object.assign(new Error('進場委託身分或連線尚未確認，未送出刪單；請先對帳'), { mutationNotStarted: true });
+        }
+        const row = candidates[0]!;
+        const trade = await query.read(plan.account.account_type, plan.account, current => cancelVerifiedOrder(row, current, {
+            beforeSend: () => {
+                query.assertCurrent();
+                if (context !== currentReportContext()) throw new Error('刪單前連線已變更，未送出刪單');
+            },
+        }));
+        const confirmed = context === currentReportContext() && trade && entryTradeIdentity(trade, plan) === 'same' && trade.status?.status === 'Cancelled';
         update(id, p => {
             if (!confirmed) return { ...p, entryCancel: 'unconfirmed', updatedAt: Date.now() };
             const next = applyEntryTrade({ ...p, entryCancel: undefined }, trade, Date.now());
@@ -764,7 +804,8 @@ export function getDisplayBrackets(): BracketPlan[] {
     if (mergedCache.ts !== snapshot || mergedCache.native !== native || mergedCache.pending !== pendingRegistrations) {
         const pending = pendingRegistrations.filter(record => !(record.registrationPending?.owner === 'native' ? native : snapshot)
             .some(plan => plan.env === record.env && accountRefKey(plan.account) === accountRefKey(record.account)
-                && plan.orderCode === record.orderCode && plan.securityType === record.securityType && externalIdentity(plan, record) === 'same'));
+                && sameEntryScope(plan, record) && externalIdentity({ ...plan, confirmed: false }, { ...record, confirmed: false }) === 'same'
+                && (record.registrationPending?.owner === 'native' || (plan.identityConfirmed && !bracketSnapshotStale()))));
         mergedCache = { ts: snapshot, native, pending: pendingRegistrations, all: [...snapshot, ...native, ...pending] };
     }
     return mergedCache.all;
@@ -809,6 +850,7 @@ function run() {
     let knownEnv = currentProtectionEnv();
     onProtectionEnvChange(() => {
         const env = currentProtectionEnv();
+        commit();
         if (env === knownEnv) return;
         knownEnv = env;
         if (!env) return;
@@ -820,7 +862,7 @@ function run() {
                 if (p.env !== env || !isLive(p)) continue;
                 const at = Date.now();
                 let next = p;
-                for (const report of recentReportsFor(envBase(env), p.orderId)) next = applyReport(next, report, at);
+                for (const report of recentReportsFor(envBase(env), p.orderId, at, p)) next = applyReport(next, report, at);
                 if (next !== p) update(p.id, () => next);
                 else arm(p); // re-arm (idempotent) once the mode is known
             }
@@ -832,6 +874,7 @@ function run() {
         const live = getStreamStatus() === 'live';
         if (live === wasLive) return;
         wasLive = live;
+        commit();
         const at = Date.now();
         if (!live) {
             for (const p of plans.slice()) {

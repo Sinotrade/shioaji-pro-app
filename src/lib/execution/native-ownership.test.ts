@@ -338,7 +338,8 @@ describe('ownership: one executor per trigger / bracket', () => {
         const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
             account_id: F1.account_id }, orderId: 'legacy-id', seqno: '', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
             securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
-        await bracket.registerBracket(spec);
+        await expect(bracket.registerBracket(spec)).rejects.toThrow('身分');
+        expect(bracket.getDisplayBrackets().some(p => p.registrationPending)).toBe(true);
         host.programs[0]!.levels[0]!.orders[0]!.unconfirmed = true;
         host.bump(); await native.refreshNative();
         await expect(bracket.registerBracket(spec)).rejects.toThrow('進場單身分尚未確認');
@@ -350,7 +351,8 @@ describe('ownership: one executor per trigger / bracket', () => {
         const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
             account_id: F1.account_id }, orderId: 'old-id', seqno: oldSeq, quoteCode: 'TXFR1', orderCode: 'TXFJ6',
             securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
-        await bracket.registerBracket(spec);
+        if (oldSeq) await bracket.registerBracket(spec);
+        else await expect(bracket.registerBracket(spec)).rejects.toThrow('身分');
         await expect(bracket.registerBracket({ ...spec, orderId: 'new-id', seqno: newSeq })).rejects.toThrow('進場單身分尚未確認');
         expect(creates()).toHaveLength(1);
     });
@@ -519,4 +521,34 @@ it('r33 direct registration cannot migrate an existing protected entry into the 
     await expect(bracket.registerBracket(r33Entry())).rejects.toThrow('其他執行器追蹤');
     expect(host.programs).toHaveLength(1);expect(bracket.getBrackets()).toHaveLength(0);
     expect(m.place).not.toHaveBeenCalled();
+});
+
+describe('r34 current-generation enable ACK', () => {
+ it('rejects admission and actual dispatch while the new ACK is pending, then admits exactly the successful generation',async()=>{
+  await boot({enabled:true});const old=await bracket.ensureBracketHost();
+  const base=host.invoke.getMockImplementation()!;
+  const replies: ((value:unknown)=>void)[]=[];
+  host.invoke.mockImplementation((cmd,args)=>cmd==='execution_set_enabled'?new Promise(r=>replies.push(r)):base(cmd,args));
+  native.setNativeExecutionEnabled(false);native.setNativeExecutionEnabled(true);
+  await expect(bracket.ensureBracketHost()).rejects.toThrow('尚未啟用完成');
+  expect(()=>bracket.assertBracketAdmission({...old,ownerGeneration:native.getNativeOwnerGeneration()})).toThrow('尚未啟用完成');
+  await native.refreshNative();await expect(bracket.ensureBracketHost()).rejects.toThrow('尚未啟用完成');
+  replies[0]!({enabled:true,state:'live',env:'simulation',serverId:'http://sim.invalid'});await flush();
+  await expect(bracket.ensureBracketHost()).rejects.toThrow('尚未啟用完成');
+  replies[1]!({enabled:true,state:'live',env:'simulation',serverId:'http://sim.invalid'});await flush();
+  const now=await bracket.ensureBracketHost();expect(()=>bracket.assertBracketAdmission(now)).not.toThrow();
+  expect(()=>bracket.assertBracketAdmission(old)).toThrow('已變更');expect(m.place).not.toHaveBeenCalled();
+ });
+ it('a rejected enable is not repaired by a cached status and a stale late reply cannot overwrite the latest ACK',async()=>{
+  await boot({enabled:true});const base=host.invoke.getMockImplementation()!;
+  const pending: {resolve:(v:unknown)=>void;reject:(e:Error)=>void}[]=[];
+  host.invoke.mockImplementation((cmd,args)=>cmd==='execution_set_enabled'?new Promise((resolve,reject)=>pending.push({resolve,reject})):base(cmd,args));
+  native.setNativeExecutionEnabled(false);native.setNativeExecutionEnabled(true);
+  pending[1]!.reject(new Error('mock rejected enable'));await flush();await native.refreshNative();
+  await expect(bracket.ensureBracketHost()).rejects.toThrow('尚未啟用完成');
+  native.setNativeExecutionEnabled(true);pending[2]!.resolve({enabled:true,state:'live',env:'simulation',serverId:'http://sim.invalid'});await flush();
+  expect(()=>native.ensureNativeHost(m.env)).not.toThrow();
+  pending[0]!.resolve({enabled:false,state:'down',env:null,serverId:null});await flush();
+  expect(()=>native.ensureNativeHost(m.env)).not.toThrow();expect(native.getNativeHealth()?.enabled).toBe(true);expect(m.place).not.toHaveBeenCalled();
+ });
 });

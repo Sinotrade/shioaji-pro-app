@@ -18,6 +18,7 @@
 // - fills after an exit was dispatched, or an exit that did not fully fill,
 //   become explicit unprotected quantity. Nothing here resends orders.
 
+import { externalIdentity } from './broker-identity';
 import type { OrderEventReport } from './order-report';
 import { reportBody } from './portfolio-projection';
 import type { Action, StockOrderLot, Trade } from './types/order';
@@ -78,6 +79,11 @@ export interface BracketPlan {
     account: AccountRef;
     market: 'stock' | 'futures';
     orderId: string;
+    /** Only a strict listing may rebind a process-local raw ID across contexts. */
+    currentOrderId?: string;
+    reportContext?: string;
+    /** Executor-published live binding for mirrors; never trusted after load. */
+    identityConfirmed?: boolean;
     seqno: string;
     ordno?: string;
     quoteCode: string; // quote-stream code (e.g. TXFR1 alias)
@@ -179,7 +185,8 @@ function reportAccountMatches(report: OrderEventReport, account: AccountRef): bo
     const ref = body?.order && typeof body.order === 'object' ? (body.order as Record<string, unknown>).account : undefined;
     const r = ref && typeof ref === 'object' ? ref as Record<string, unknown> : undefined;
     if (!text(r?.broker_id) || !text(r?.account_id)) return null;
-    return r?.broker_id === account.broker_id && r?.account_id === account.account_id;
+    return r?.broker_id === account.broker_id && r?.account_id === account.account_id
+        && (!r?.account_type || r.account_type === account.account_type);
 }
 
 function reportCode(report: OrderEventReport): string {
@@ -191,6 +198,41 @@ function reportCode(report: OrderEventReport): string {
     return report.market === 'futures' ? (text(c?.full_code) || text(c?.code)) : text(c?.code);
 }
 
+export type EntryIdentity = Pick<BracketPlan, 'account' | 'orderId' | 'orderCode' | 'action' | 'seqno' | 'ordno' | 'securityType' | 'exchange' | 'quantity' | 'orderLot'>;
+export function sameEntryPartition(a: EntryIdentity, b: EntryIdentity): boolean {
+    return accountRefKey(a.account) === accountRefKey(b.account) && a.orderCode === b.orderCode
+        && a.securityType === b.securityType && (!a.exchange || !b.exchange || a.exchange === b.exchange);
+}
+export function sameEntryScope(a: EntryIdentity, b: EntryIdentity): boolean {
+    return sameEntryPartition(a, b) && a.action === b.action && a.quantity === b.quantity
+        && (a.orderLot ?? 'Common') === (b.orderLot ?? 'Common');
+}
+export function entryReportIdentity(p: EntryIdentity, report: OrderEventReport): 'same' | 'different' | 'unknown' {
+    if (report.market !== (p.account.account_type === 'S' ? 'stock' : 'futures')) return 'different';
+    const account = reportAccountMatches(report, p.account);
+    if (account === false) return 'different';
+    if (account === null) return 'unknown';
+    if (reportCode(report) !== p.orderCode || report.action !== p.action) return 'different';
+    const body = reportBody(report);
+    const contract = report.kind === 'order' ? body?.contract as Record<string, unknown> | undefined : body;
+    if (text(contract?.security_type) && text(contract?.security_type) !== p.securityType) return 'different';
+    if (text(contract?.exchange) && text(contract?.exchange) !== p.exchange) return 'different';
+    if (report.kind === 'order' && report.quantity !== p.quantity) return 'different';
+    if (report.orderLot && report.orderLot !== (p.orderLot ?? 'Common')) return 'different';
+    return externalIdentity({ ...p, confirmed: false }, { orderId: report.kind === 'deal' ? report.tradeId : report.id,
+        seqno: report.seqno, ordno: report.ordno, confirmed: false });
+}
+export function entryTradeIdentity(trade: Trade, p: EntryIdentity): 'same' | 'different' | 'unknown' {
+    const a = trade.order.account;
+    if (!a?.broker_id || !a.account_id || !a.account_type) return 'unknown';
+    if (accountRefKey(a as AccountRef) !== accountRefKey(p.account)) return 'different';
+    if ((trade.contract.target_code || trade.contract.code) !== p.orderCode || trade.order.action !== p.action
+        || trade.contract.security_type !== p.securityType || trade.contract.exchange !== p.exchange
+        || trade.order.quantity !== p.quantity || (trade.order.order_lot ?? 'Common') !== (p.orderLot ?? 'Common')) return 'different';
+    return externalIdentity({ ...p, confirmed: false }, { orderId: trade.order.id, seqno: trade.order.seqno,
+        ordno: trade.order.ordno, confirmed: false });
+}
+
 export type DealMatch =
     | { kind: 'fill'; fill: FillEvidence }
     | { kind: 'mismatch'; detail: string }
@@ -198,8 +240,13 @@ export type DealMatch =
 
 /** Classify a deal report against an order this plan tracks. */
 export function matchDeal(report: OrderEventReport, orderId: string, account: AccountRef,
-    market: BracketPlan['market'], orderCode: string, action: Action): DealMatch {
-    if (report.kind !== 'deal' || report.market !== market || report.tradeId !== orderId) return { kind: 'unrelated' };
+    market: BracketPlan['market'], orderCode: string, action: Action, identity?: EntryIdentity): DealMatch {
+    if (identity) {
+        const match = entryReportIdentity(identity, report);
+        if (match === 'different') return { kind: 'unrelated' };
+        if (match === 'unknown') return { kind: 'mismatch', detail: '成交回報委託身分尚未確認，未計入保護量；請對帳' };
+    }
+    if (report.kind !== 'deal' || report.market !== market || (!identity && report.tradeId !== orderId)) return { kind: 'unrelated' };
     const accountOk = reportAccountMatches(report, account);
     if (accountOk === false) return { kind: 'unrelated' }; // same id, other account
     if (accountOk === null) return { kind: 'mismatch', detail: '成交回報缺少帳戶欄位，未計入保護量' };
@@ -222,12 +269,8 @@ export function fillsFromTrade(trade: Trade): FillEvidence[] {
             ts: typeof d.ts === 'number' && Number.isFinite(d.ts) ? d.ts : undefined }));
 }
 
-export function tradeMatchesPlan(trade: Trade, p: Pick<BracketPlan, 'account' | 'orderId' | 'orderCode' | 'action'>): boolean {
-    if (trade.order.id !== p.orderId) return false;
-    const a = trade.order.account;
-    if (a && (a.broker_id !== p.account.broker_id || a.account_id !== p.account.account_id)) return false;
-    if ((trade.contract.target_code || trade.contract.code) !== p.orderCode) return false;
-    return trade.order.action === p.action;
+export function tradeMatchesPlan(trade: Trade, p: EntryIdentity): boolean {
+    return entryTradeIdentity(trade, p) === 'same';
 }
 
 /** Add a fill to a fill set, keeping ONE identity per real fill. The
@@ -276,8 +319,10 @@ export function applyEntryFill(p: BracketPlan, fill: FillEvidence, now: number):
 
 /** Entry order report: terminal operations close the entry. */
 export function applyEntryOrderReport(p: BracketPlan, report: OrderEventReport, now: number): BracketPlan {
-    if (report.kind !== 'order' || report.id !== p.orderId || report.market !== p.market) return p;
-    if (reportAccountMatches(report, p.account) === false) return p;
+    if (report.kind !== 'order') return p;
+    const identity = entryReportIdentity(p, report);
+    if (identity === 'different') return p;
+    if (identity === 'unknown') return addIssue(p, 'report-mismatch', '委託回報身分尚未確認，未變更進場狀態；請對帳', now);
     if ((report.opType === 'New' && report.failed) || (report.opType === 'Cancel' && !report.failed)) {
         return p.entryClosed ? p : { ...p, entryClosed: true, entryCancel: undefined, updatedAt: now };
     }
@@ -285,8 +330,12 @@ export function applyEntryOrderReport(p: BracketPlan, report: OrderEventReport, 
 }
 
 export function applyEntryTrade(p: BracketPlan, trade: Trade, now: number): BracketPlan {
-    let next = p;
-    for (const fill of fillsFromTrade(trade)) next = applyEntryFill(next, fill, now);
+    const identity = entryTradeIdentity(trade, p);
+    if (identity === 'different') return p;
+    if (identity === 'unknown') return addIssue(p, 'lookup-failed', '委託清單身分尚未確認，未計入成交或結束狀態；請對帳', now);
+    let next: BracketPlan = { ...p, currentOrderId: trade.order.id };
+    for (const fill of fillsFromTrade(trade)) next = applyEntryFill(next,
+        { ...fill, orderId: p.orderId, key: fill.key.replace(`${trade.order.id}:`, `${p.orderId}:`) }, now);
     const listed = fillsFromTrade(trade).reduce((s, f) => s + f.quantity, 0);
     if (trade.status.deal_quantity > listed) {
         next = addIssue(next, 'lookup-failed', `委託顯示成交 ${trade.status.deal_quantity}，但成交明細只有 ${listed}；請對帳`, now);

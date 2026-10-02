@@ -40,9 +40,13 @@ import {
     applyExitOrderReport,
     fillsFromTrade,
     matchDeal,
+    entryReportIdentity,
+    entryTradeIdentity,
+    type EntryIdentity,
     type AccountRef,
     type BracketExit,
 } from './bracket-core';
+import { currentReportContext } from './protection-context';
 import { onTrackedReport, recentReportsFor } from './bracket-reports';
 import { getPrivacyMode, maskAccountId } from './privacy';
 import { ensureContract, getCachedContract } from './contracts-cache';
@@ -117,6 +121,11 @@ export interface TriggerOrder {
 }
 
 export interface ExitRecord extends BracketExit {
+    seqno?: string;
+    ordno?: string;
+    securityType?: 'STK' | 'FUT' | 'OPT';
+    exchange?: string;
+    reportContext?: string | null;
     id: string;
     triggerId: string;
     bracketId?: string;
@@ -175,7 +184,9 @@ function loadExecutorState() {
     processedGroups = readJson<Record<string, number>>(GROUPS_KEY, {});
     // An exit still `sending` when the app went away has an unknown outcome.
     exits = readJson<ExitRecord[]>(EXITS_KEY, []).filter(e => e && typeof e.id === 'string')
-        .map(e => e.status === 'sending' ? { ...e, status: 'unknown' as const, detail: '送單期間 App 重新載入，結果未知' } : e);
+        .map(e => e.status === 'sending' ? { ...e, status: 'unknown' as const, detail: '送單期間 App 重新載入，結果未知' }
+            : e.bracketId && (e.status === 'working' || e.status === 'unknown')
+                ? { ...e, status: 'unknown' as const, detail: '出場委託身分或連線代次待確認；請對帳，系統不會自動重送' } : e);
 }
 const listeners = new Set<() => void>();
 const exitListeners = new Set<(exit: ExitRecord) => void>();
@@ -719,7 +730,7 @@ function reserve(t: TriggerOrder, lastPrice: number): { rec: ExitRecord; sibling
     const plan = planFor(t);
     const rec: ExitRecord = {
         id: `ex-${t.id}`, triggerId: t.id, bracketId: t.bracketId, env, account,
-        market: account.account_type === 'S' ? 'stock' : 'futures', orderCode, action: t.action,
+        market: account.account_type === 'S' ? 'stock' : 'futures', orderCode, action: t.action, reportContext: currentReportContext(),
         reserveKey, requested: t.quantity, kind: t.kind, quantity: plan.quantity,
         ...(isOddLot(t.orderLot) ? { orderLot: t.orderLot } : {}),
         status: plan.quantity > 0 ? 'sending' : 'not-sent', filled: 0, fills: {}, detail: plan.detail, at: Date.now(),
@@ -802,11 +813,16 @@ const notSentExit = (t: TriggerOrder, rec: ExitRecord, detail: string) => {
 function exitSent(t: TriggerOrder, rec: ExitRecord, trade: Trade, lastPrice: number) {
     const orderId = trade.order.id;
     const odd = isOddLot(t.orderLot);
-    updateExit(rec.id, e => ({ ...e, status: e.filled >= e.quantity ? 'filled' : 'working', orderId, at: Date.now(),
+    const type = trade.contract?.security_type;
+    const securityType = type === 'STK' || type === 'FUT' || type === 'OPT' ? type : undefined;
+    updateExit(rec.id, e => ({ ...e, status: e.filled >= e.quantity ? 'filled'
+        : e.bracketId && (!(trade.order.seqno || trade.order.ordno) || !securityType || !trade.contract?.exchange
+            || !e.reportContext || e.reportContext !== currentReportContext()) ? 'unknown' : 'working',
+        orderId, seqno: trade.order.seqno, ordno: trade.order.ordno, securityType, exchange: trade.contract?.exchange ?? undefined, at: Date.now(),
         // odd-lot exits are ROD limits at the price limit: the rest keeps
         // working until filled or cancelled (reports / 對帳), no IOC settle
         ...(odd && e.filled < e.quantity ? { detail: `${e.detail ? `${e.detail}；` : ''}零股以漲跌停價限價 ROD 送出，依成交回報更新` } : {}) }));
-    for (const report of recentReportsFor(envBase(rec.env), orderId)) applyExitReport(report, envBase(rec.env));
+    for (const report of recentReportsFor(envBase(rec.env), orderId, Date.now(), rec.bracketId ? { orderId, seqno: trade.order.seqno, ordno: trade.order.ordno } : undefined)) applyExitReport(report, envBase(rec.env));
     if (!odd) scheduleIocCheck(rec.id);
     notify({ kind: 'ok', title: t.kind === 'stop' ? '停損觸發' : '停利觸發',
         body: `${t.code} @${lastPrice} → ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t, rec.quantity)} (${trade.status.status})` });
@@ -832,6 +848,11 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
             account: ctx.account,
             ocType: t.octype,
             orderLot: isOddLot(t.orderLot) ? t.orderLot : undefined,
+            beforeSend: () => {
+                if (rec.bracketId && (!rec.reportContext || rec.reportContext !== currentReportContext())) {
+                    throw Object.assign(new Error('出場送出前連線代次已變更，未送出；請核對持倉與保護'), { mutationNotStarted: true });
+                }
+            },
         });
         exitSent(t, rec, trade, lastPrice);
     } catch (e) {
@@ -942,9 +963,12 @@ function scheduleIocCheck(id: string, previous?: string) {
         if (!rec || rec.status !== 'working' || !rec.orderId || !executing) return;
         if (currentProtectionEnv() !== rec.env) return;
         const query = createAccountQuery();
+        const context = currentReportContext();
         void query.read(rec.account.account_type, rec.account, current => fetchTrades(rec.account.account_type, current, { refresh: false })).then(rows => {
             query.assertCurrent();
-            const trade = rows.find(t => t.order.id === rec.orderId);
+            if (context !== currentReportContext()) return;
+            const candidates = rows.filter(t => matchesExitTrade(t, rec));
+            const trade = candidates.length === 1 ? candidates[0] : undefined;
             if (!trade) {
                 if (previous === undefined) scheduleIocCheck(id, ''); // second (last) read
                 return;
@@ -961,13 +985,34 @@ function scheduleIocCheck(id: string, previous?: string) {
     }, previous === undefined ? IOC_CHECK_MS : IOC_RECHECK_MS);
 }
 
-function applyExitReport(report: OrderEventReport, base: string) {
+function bracketExitIdentity(rec: ExitRecord): EntryIdentity | null {
+    if (!rec.orderId || !rec.securityType || !rec.exchange) return null;
+    return { ...rec, orderId: rec.orderId, seqno: rec.seqno ?? '', securityType: rec.securityType, exchange: rec.exchange };
+}
+function matchesExitTrade(trade: Trade, rec: ExitRecord): boolean {
+    if (!rec.bracketId) return rec.orderId === trade.order.id;
+    const identity = bracketExitIdentity(rec);
+    return !!identity && entryTradeIdentity(trade, identity) === 'same';
+}
+/** A bracket exit listing is only evidence when it has one scoped stable candidate. */
+export function applyBracketExitTrades(trades: Trade[]) {
+    for (const rec of exits.slice()) {
+        if (!rec.bracketId || rec.env !== currentProtectionEnv()) continue;
+        const matches = trades.filter(t => matchesExitTrade(t, rec));
+        if (matches.length === 1) applyExitTrade(matches[0]!);
+    }
+}
+
+function applyExitReport(report: OrderEventReport, base: string, context = currentReportContext()) {
     const orderId = report.kind === 'deal' ? report.tradeId : report.id;
     for (const rec of exits.slice()) {
-        if (rec.orderId !== orderId || !acceptsFills(rec) || !reportEnvMatches(rec.env, base)) continue;
+        if (!acceptsFills(rec) || !reportEnvMatches(rec.env, base)) continue;
+        const identity = rec.bracketId ? bracketExitIdentity(rec) : null;
+        if (rec.bracketId ? !identity || !context || rec.reportContext !== context
+            || entryReportIdentity(identity, report) !== 'same' : rec.orderId !== orderId) continue;
         updateExit(rec.id, e => {
-            if (report.kind === 'order') return applyExitOrderReport(e, report, e.account, Date.now());
-            const m = matchDeal(report, orderId, e.account, e.market, e.orderCode, e.action);
+            if (report.kind === 'order') return applyExitOrderReport(e, { ...report, id: e.orderId! }, e.account, Date.now());
+            const m = matchDeal(report, e.orderId!, e.account, e.market, e.orderCode, e.action, identity ?? undefined);
             return m.kind === 'fill' ? applyExitFill(e, m.fill, Date.now()) : e;
         });
     }
@@ -979,12 +1024,13 @@ function applyExitReport(report: OrderEventReport, base: string) {
 export function applyExitTrade(trade: Trade, opts: { settle?: boolean } = {}) {
     if (!main) return;
     for (const rec of exits.slice()) {
-        if (rec.orderId !== trade.order.id || !acceptsFills(rec)) continue;
+        if (!matchesExitTrade(trade, rec) || !acceptsFills(rec) || (rec.bracketId && (rec.env !== currentProtectionEnv() || !currentReportContext()))) continue;
         const a = trade.order.account;
         if (a && (a.broker_id !== rec.account.broker_id || a.account_id !== rec.account.account_id)) continue;
         updateExit(rec.id, e => {
-            let next = e;
-            for (const fill of fillsFromTrade(trade)) next = applyExitFill(next, fill, Date.now());
+            let next: ExitRecord = rec.bracketId ? { ...e, reportContext: currentReportContext(), status: e.status === 'unknown' ? 'working' : e.status } : e;
+            for (const fill of fillsFromTrade(trade)) next = applyExitFill(next, { ...fill, orderId: e.orderId!,
+                key: fill.key.replace(`${trade.order.id}:`, `${e.orderId}:`) }, Date.now());
             const ended = ['Cancelled', 'Failed', 'Inactive'].includes(trade.status.status)
                 || (opts.settle && trade.status.status === 'PartFilled');
             if (next.status === 'working' && ended) {
@@ -1308,7 +1354,7 @@ function becomeExecutor() {
         if (!tick.simtrade) evaluateTick(tick.code, Number(tick.close), true);
     });
     onStreamEvent('heartbeat', () => noteActivity());
-    onTrackedReport((report, _info, base) => applyExitReport(report, base));
+    onTrackedReport((report, info, base) => applyExitReport(report, base, info.context));
     markRestore('restart');
     let prevEnv = currentProtectionEnv();
     onProtectionEnvChange(() => {

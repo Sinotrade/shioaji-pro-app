@@ -70,6 +70,18 @@ function readToggle(): boolean {
 
 let enabled = readToggle();
 let ownerGeneration = 0;
+let enabledAckGeneration: number | null = null;
+let attemptedGeneration = -1;
+let toggleSequence = 0;
+let healthSequence = 0;
+function changeDesired(on: boolean) {
+    if (enabled === on) return;
+    ownerGeneration++;
+    enabled = on;
+    enabledAckGeneration = null;
+    // Cached status is still useful for display, but is never this generation's enable ACK.
+    if (health) health = { ...health, enabled: false };
+}
 export const getNativeOwnerGeneration = () => ownerGeneration;
 const toggleListeners = new Set<() => void>();
 
@@ -90,18 +102,29 @@ export function nativeOwnsNew(): boolean {
 
 export function setNativeExecutionEnabled(on: boolean): void {
     if (!isTauri) return;
-    if (enabled !== on) ownerGeneration++;
-    enabled = on;
+    changeDesired(on);
     try { globalThis.localStorage?.setItem(NATIVE_TOGGLE_KEY, on ? '1' : '0'); } catch { /* session only */ }
     toggleListeners.forEach(l => l());
     if (isMainWindow()) void syncToggle();
 }
 
 async function syncToggle() {
+    const generation = ownerGeneration;
+    const desired = getNativeExecutionEnabled();
+    const request = ++toggleSequence;
+    const statusRequest = ++healthSequence;
+    attemptedGeneration = generation;
+    enabledAckGeneration = null;
     try {
-        health = await invoke<NativeHealth>('execution_set_enabled', { enabled: getNativeExecutionEnabled() });
+        const reply = await invoke<NativeHealth>('execution_set_enabled', { enabled: desired });
+        if (generation !== ownerGeneration || request !== toggleSequence) return;
+        if (desired && reply.enabled) enabledAckGeneration = generation;
+        if (statusRequest === healthSequence) health = reply;
         emit();
     } catch (e) {
+        if (generation !== ownerGeneration || request !== toggleSequence) return;
+        enabledAckGeneration = null;
+        emit();
         notify({ kind: 'err', title: '執行引擎', body: e instanceof Error ? e.message : String(e) });
     }
 }
@@ -109,10 +132,10 @@ async function syncToggle() {
 if (typeof window !== 'undefined') {
     window.addEventListener?.('storage', e => {
         if (e.key !== NATIVE_TOGGLE_KEY) return;
-        const next = readToggle();
-        if (enabled !== next) ownerGeneration++;
-        enabled = next;
+        const next = typeof e.newValue === 'string' ? e.newValue === '1' : readToggle();
+        changeDesired(next);
         toggleListeners.forEach(l => l());
+        if (isMainWindow()) void syncToggle();
     });
 }
 
@@ -162,6 +185,11 @@ export function refreshNative(): Promise<void> {
     if (refreshing) { refreshAgain = true; return refreshing; }
     refreshing = (async () => {
         try {
+            // Establish the desired state once on attachment/reload. A failed/pending
+            // explicit toggle is not retried by status refreshes.
+            if (attemptedGeneration !== ownerGeneration) await syncToggle();
+            const generation = ownerGeneration;
+            const request = ++healthSequence;
             const [view, h] = await Promise.all([
                 invoke<ProgramsView>('execution_programs'),
                 invoke<NativeHealth>('execution_status'),
@@ -170,7 +198,7 @@ export function refreshNative(): Promise<void> {
                 revision = view.revision;
                 programs = view.programs;
                 lastPrices = view.lastPrices ?? {};
-                health = h;
+                if (generation === ownerGeneration && request === healthSequence) health = h;
                 emit();
                 if (isMainWindow()) { housekeeping(); syncQuotes(); }
             }
@@ -272,7 +300,7 @@ export async function acknowledgeNativeUnknown(programId: string, levelId: strin
  * on exactly the environment the order goes to. */
 export function ensureNativeHost(env: string | null): void {
     const h = health;
-    if (!h?.enabled) throw new Error('背景持續執行尚未啟用完成，括號單未送出');
+    if (!getNativeExecutionEnabled() || enabledAckGeneration !== ownerGeneration || !h?.enabled) throw new Error('背景持續執行尚未啟用完成，括號單未送出');
     if (!h || h.state !== 'live' || !h.env || !h.serverId) throw new Error('執行引擎尚未連上伺服器，括號單未送出');
     if (!env || `${h.serverId}|${h.env}` !== env) throw new Error('執行引擎連線的伺服器／模式與目前不同，括號單未送出');
 }
@@ -348,6 +376,10 @@ export function __setNativeInvokeForTest(fn: Invoke | null, opts: { enabled?: bo
     programs = [];
     lastPrices = {};
     health = null;
+    enabledAckGeneration = null;
+    attemptedGeneration = -1;
+    toggleSequence++;
+    healthSequence++;
     revision = 0;
     if (opts.enabled !== undefined) enabled = opts.enabled;
 }

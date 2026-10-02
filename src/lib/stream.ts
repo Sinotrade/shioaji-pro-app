@@ -470,6 +470,7 @@ function attachNamed(source: EventSource, name: string) {
     if (attachedNamed.has(name)) return;
     attachedNamed.add(name);
     source.addEventListener(name, (event) => {
+        if (source !== es) return;
         markActivity();
         dispatchNamed(name, (event as MessageEvent).data);
     });
@@ -635,6 +636,7 @@ export function getStreamWatchdog() {
 
 function listen(source: EventSource, name: string, handler: (event: MessageEvent) => void) {
     source.addEventListener(name, (event) => {
+        if (source !== es) return;
         markActivity();
         const message = event as MessageEvent;
         shared?.publish({ kind: 'event', name, raw: message.data });
@@ -697,9 +699,11 @@ function connect() {
     setStatus(status === 'stale' ? 'stale' : 'connecting');
     // region filters contract_event only; other families are unfiltered
     es = new EventSource(`${getStreamBase()}/api/v1/stream/data?region=TW`);
+    const source = es;
     attachedNamed.clear();
 
     es.onopen = () => {
+        if (source !== es) return;
         if (!openedOnce) {
             openedOnce = true;
             openedAt = Date.now();
@@ -754,6 +758,7 @@ function connect() {
     }
 
     es.onerror = () => {
+        if (source !== es) return;
         if (shared && !shared.isOwner()) return;
         setStatus('down');
         if (!openedOnce || pageAge() < STARTUP_WINDOW_MS) {
