@@ -1,8 +1,9 @@
 {
   "schema": "execution-conformance-v1",
-  "name": "external-report-cancel-contradictory-restart-before",
+  "name": "r38-external-buffered-wrong-qty",
   "covers": [
-    "broker-report-identity",
+    "strict-external-order-scope",
+    "terminal-order",
     "reconnect"
   ],
   "steps": [
@@ -130,31 +131,9 @@
       }
     },
     {
-      "restart": {
-        "ts": 1790730000002
-      }
-    },
-    {
-      "event": {
-        "type": "epoch",
-        "ts": 1790730000002,
-        "env": "simulation",
-        "serverId": "local-a"
-      }
-    },
-    {
-      "event": {
-        "type": "connection",
-        "ts": 1790730000002,
-        "live": true,
-        "env": "simulation",
-        "serverId": "local-a"
-      }
-    },
-    {
       "event": {
         "type": "order",
-        "ts": 1790730000003,
+        "ts": 1790730000002,
         "env": "simulation",
         "serverId": "local-a",
         "orderId": "o-entry",
@@ -164,15 +143,20 @@
         },
         "code": "TXFJ6",
         "securityType": "FUT",
-        "seqno": "S2",
-        "ordno": "O2",
+        "seqno": "S1",
+        "ordno": "O1",
         "op": "Cancel",
         "failed": false,
         "cancelQty": 2,
         "reportId": "foreign-cancel",
         "exchTs": 1790730000.003,
         "action": "Buy",
-        "originalQty": 2
+        "originalQty": 3
+      }
+    },
+    {
+      "restart": {
+        "ts": 1790730000003
       }
     },
     {
@@ -196,16 +180,6 @@
             "qty": 2,
             "deals": [],
             "securityType": "FUT"
-          },
-          {
-            "intentKey": null,
-            "orderId": "o-entry",
-            "seqno": "S2",
-            "ordno": "O2",
-            "status": "working",
-            "qty": 2,
-            "deals": [],
-            "securityType": "FUT"
           }
         ],
         "complete": false
@@ -215,31 +189,17 @@
           "b1": {
             "levels": {
               "L1": {
-                "entryFilled": 0,
-                "position": 0,
                 "orders": [
                   {
                     "status": "working",
                     "filled": 0
                   }
-                ]
+                ],
+                "position": 0
               }
             }
           }
         },
-        "intents": []
-      }
-    },
-    {
-      "event": {
-        "type": "tick",
-        "ts": 1790730000006,
-        "env": "simulation",
-        "serverId": "local-a",
-        "code": "TXFR1",
-        "price": 94
-      },
-      "expect": {
         "intents": []
       }
     }

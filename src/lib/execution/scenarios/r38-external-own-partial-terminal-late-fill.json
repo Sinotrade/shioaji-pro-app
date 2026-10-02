@@ -1,8 +1,9 @@
 {
   "schema": "execution-conformance-v1",
-  "name": "external-report-cancel-contradictory-restart-before",
+  "name": "r38-external-own-partial-terminal-late-fill",
   "covers": [
-    "broker-report-identity",
+    "strict-external-order-scope",
+    "terminal-order",
     "reconnect"
   ],
   "steps": [
@@ -130,52 +131,6 @@
       }
     },
     {
-      "restart": {
-        "ts": 1790730000002
-      }
-    },
-    {
-      "event": {
-        "type": "epoch",
-        "ts": 1790730000002,
-        "env": "simulation",
-        "serverId": "local-a"
-      }
-    },
-    {
-      "event": {
-        "type": "connection",
-        "ts": 1790730000002,
-        "live": true,
-        "env": "simulation",
-        "serverId": "local-a"
-      }
-    },
-    {
-      "event": {
-        "type": "order",
-        "ts": 1790730000003,
-        "env": "simulation",
-        "serverId": "local-a",
-        "orderId": "o-entry",
-        "account": {
-          "brokerId": "F002000",
-          "accountId": "1234567"
-        },
-        "code": "TXFJ6",
-        "securityType": "FUT",
-        "seqno": "S2",
-        "ordno": "O2",
-        "op": "Cancel",
-        "failed": false,
-        "cancelQty": 2,
-        "reportId": "foreign-cancel",
-        "exchTs": 1790730000.003,
-        "action": "Buy",
-        "originalQty": 2
-      }
-    },
-    {
       "event": {
         "type": "reconcile",
         "ts": 1790730000004,
@@ -196,33 +151,40 @@
             "qty": 2,
             "deals": [],
             "securityType": "FUT"
-          },
-          {
-            "intentKey": null,
-            "orderId": "o-entry",
-            "seqno": "S2",
-            "ordno": "O2",
-            "status": "working",
-            "qty": 2,
-            "deals": [],
-            "securityType": "FUT"
           }
         ],
         "complete": false
+      }
+    },
+    {
+      "event": {
+        "type": "deal",
+        "ts": 1790730000005,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "o-entry",
+        "seqno": "S1",
+        "ordno": "O1",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT",
+        "action": "Buy",
+        "qty": 1,
+        "price": 100,
+        "seq": "1",
+        "eventId": "ev1",
+        "fillTs": 1790730000.005
       },
       "expect": {
         "programs": {
           "b1": {
             "levels": {
               "L1": {
-                "entryFilled": 0,
-                "position": 0,
-                "orders": [
-                  {
-                    "status": "working",
-                    "filled": 0
-                  }
-                ]
+                "entryFilled": 1,
+                "position": 1
               }
             }
           }
@@ -232,14 +194,44 @@
     },
     {
       "event": {
-        "type": "tick",
+        "type": "order",
         "ts": 1790730000006,
         "env": "simulation",
         "serverId": "local-a",
-        "code": "TXFR1",
-        "price": 94
+        "orderId": "o-entry",
+        "seqno": "S1",
+        "ordno": "O1",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT",
+        "action": "Buy",
+        "originalQty": 2,
+        "op": "Cancel",
+        "failed": false,
+        "cancelQty": 1,
+        "reportId": "cancel1",
+        "exchTs": 1790730000.006
       },
       "expect": {
+        "programs": {
+          "b1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "ended",
+                    "filled": 1,
+                    "cancelled": 1
+                  }
+                ],
+                "position": 1
+              }
+            }
+          }
+        },
         "intents": []
       }
     }

@@ -184,7 +184,9 @@
         "failed": false,
         "cancelQty": 2,
         "reportId": "foreign-cancel",
-        "exchTs": 1790730000.003
+        "exchTs": 1790730000.003,
+        "action": "Buy",
+        "originalQty": 2
       },
       "expect": {
         "programs": {

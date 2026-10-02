@@ -641,6 +641,20 @@ function slotReportMatches(lv: Level, slot: OrderSlot, identity: { seqno?: strin
     return false;
 }
 
+function orderReportAdmitted(lv: Level, slot: OrderSlot, e: OrderEvent): boolean {
+    const expected = slot.role === 'entry' ? lv.side : opposite(lv.side);
+    return (e.action === undefined ? !isExternalEntry(lv, slot) : e.action === expected)
+        && (e.originalQty === undefined ? !isExternalEntry(lv, slot)
+            : Number.isSafeInteger(e.originalQty) && e.originalQty > 0 && e.originalQty === slot.qty)
+        && (e.cancelQty === undefined || Number.isSafeInteger(e.cancelQty) && e.cancelQty >= 0);
+}
+
+function validReconciledQuantities(row: ReconcileEvent['orders'][number]): boolean {
+    return Number.isSafeInteger(row.qty) && row.qty > 0
+        && (row.cancelled === undefined || Number.isSafeInteger(row.cancelled) && row.cancelled >= 0)
+        && row.deals.every(d => Number.isSafeInteger(d.qty) && d.qty > 0);
+}
+
 function findSlotByOrderId(s: EngineState, orderId: string, src: Source & { seqno?: string; ordno?: string },
     account: { brokerId: string; accountId: string } | null | undefined, code: string | undefined,
     securityType: string | undefined) {
@@ -681,8 +695,9 @@ function drainOrphans(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot) {
     const deals = s.orphanDeals.filter(d => mine(d.deal, d.deal.fillTs));
     s.orphanDeals = s.orphanDeals.filter(d => !mine(d.deal, d.deal.fillTs));
     for (const d of deals) applyDeal(ctx, p, lv, slot, d.deal);
-    const orders = s.orphanOrders.filter(o => mine(o.order, o.order.exchTs));
-    s.orphanOrders = s.orphanOrders.filter(o => !mine(o.order, o.order.exchTs));
+    const acceptedOrder = (o: EngineState['orphanOrders'][number]) => mine(o.order, o.order.exchTs) && orderReportAdmitted(lv, slot, o.order);
+    const orders = s.orphanOrders.filter(acceptedOrder);
+    s.orphanOrders = s.orphanOrders.filter(o => !acceptedOrder(o));
     for (const o of orders) applyOrder(ctx, p, lv, slot, o.order);
 }
 
@@ -818,7 +833,7 @@ function applyOrder(ctx: Ctx, p: OrderProgram, lv: Level, slot: OrderSlot, e: Or
 function onOrder(ctx: Ctx, e: OrderEvent) {
     const hit = reportInEpoch(ctx.s.epochMark, e.exchTs)
         ? findSlotByOrderId(ctx.s, e.orderId, e, e.account, e.code, e.securityType) : null;
-    if (!hit) {
+    if (!hit || !orderReportAdmitted(hit.lv, hit.slot, e)) {
         // e.g. a New failure reported before the submit result: keep it for the binding
         ctx.s.orphanOrders.push({ order: e, ts: ctx.ts });
         if (ctx.s.orphanOrders.length > ORPHAN_ORDER_LIMIT) ctx.s.orphanOrders.splice(0, ctx.s.orphanOrders.length - ORPHAN_ORDER_LIMIT);
@@ -913,6 +928,8 @@ function onDeal(ctx: Ctx, e: DealEvent) {
 }
 
 function onReconcile(ctx: Ctx, e: ReconcileEvent) {
+    const ambiguous = [...(e.ambiguous ?? []), ...e.orders.filter(r => !validReconciledQuantities(r))
+        .flatMap(r => r.intentKey ? [r.intentKey] : [])];
     // this epoch's listing of the account is in: it may place / cancel again
     const waiting = (ctx.s.conn.awaitingEpochListing ?? []).filter(a => !sameAccount(a, e.account));
     if (waiting.length > 0) ctx.s.conn.awaitingEpochListing = waiting;
@@ -926,8 +943,8 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
             for (const slot of lv.orders) {
                 // a listing row carries this slot's tag but cannot be bound to
                 // it: the order may exist — pinned for good, never concluded
-                if ((e.ambiguous ?? []).includes(slot.key)) slot.unconfirmed = true;
-                if ((e.ambiguous ?? []).includes(slot.key) && !slot.tagAmbiguous) {
+                if (ambiguous.includes(slot.key)) slot.unconfirmed = true;
+                if (ambiguous.includes(slot.key) && !slot.tagAmbiguous) {
                     slot.tagAmbiguous = true;
                     addIssue(ctx, p, 'tagAmbiguous', `${slot.key}: duplicate / mismatching listing rows for its tag`);
                 }
@@ -936,14 +953,14 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                 const external = isExternalEntry(lv, slot);
                 // The wire mapper verifies either the tag or the external
                 // broker identity. A trade id alone never accepts a row.
-                const rows = e.orders.filter(o => o.intentKey === slot.key
+                const rows = e.orders.filter(o => validReconciledQuantities(o) && o.intentKey === slot.key
                     && (slot.unconfirmed || !slot.orderId || o.orderId === slot.orderId));
                 const row = rows.length === 1 ? rows[0] : undefined;
                 // Terminal evidence is a ledger fact, not permission to rebind a
                 // raw ID or send/cancel. Preserve unconfirmed; only the same-day
                 // uniquely mapped stable identity can extend its fill ledger.
                 if (slot.unconfirmed && !isActive(slot) && slot.status !== 'unknown') {
-                    if (row && !(e.ambiguous ?? []).includes(slot.key) && !row.cancelAmbiguous
+                    if (row && !ambiguous.includes(slot.key) && !row.cancelAmbiguous
                         && row.qty === slot.qty && slotReportMatches(lv, slot, row)
                         && slot.evidenceEpoch === epochMark(ctx.ts)) {
                         for (const d of row.deals) if (Number.isSafeInteger(d.qty) && d.qty > 0) {
@@ -952,7 +969,7 @@ function onReconcile(ctx: Ctx, e: ReconcileEvent) {
                         touched = true;
                     } else if (row?.deals.length) {
                         addIssue(ctx, p, 'terminalFillUnconfirmed', `${slot.key}: terminal fill identity/day requires confirmation`);
-                        if (external && row.qty === slot.qty && !(e.ambiguous ?? []).includes(slot.key)
+                        if (external && row.qty === slot.qty && !ambiguous.includes(slot.key)
                             && !row.cancelAmbiguous && slotReportMatches(lv, slot, row) && !externalEntryPending(lv)) {
                             lv.entryPending = { leg: 'entry', price: null, ts: ctx.ts,
                                 reason: slot.evidenceEpoch === undefined ? 'unknownEntryAfterReconnect' : 'unknownEntryAcrossDay' };

@@ -397,6 +397,10 @@ export interface IntentResultEvent extends Source {
     epoch?: number;
 }
 export interface OrderEvent extends Source {
+    /** Original order facts, separate from the operation's cancelled delta.
+     * Required for external entries; older engine-owned reports may omit them. */
+    action?: Side;
+    originalQty?: number;
     seqno?: string; ordno?: string;
     type: 'order'; ts: number; orderId: string;
     op: 'New' | 'Cancel' | 'UpdatePrice' | 'UpdateQty';
