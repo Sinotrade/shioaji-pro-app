@@ -36,7 +36,7 @@ export default function DevLogin({ mode, setMode, startWithKeys, switchToApiKey,
                         <div className={styles.subtitle}>選擇登入方式以啟動交易伺服器</div>
                     </div>
 
-                    <ModeSwitch value={mode} onChange={setMode} disabled={locked} />
+                    <ModeSwitch value={mode} onChange={setMode} disabled={locked && mode === 'account'} />
                     <LoginPane id='account' value={mode}>
                         <SinopacWizard onKeysReady={startWithKeys} onUseApiKey={switchToApiKey} onLockedChange={setLocked} />
                     </LoginPane>

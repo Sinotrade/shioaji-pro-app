@@ -78,19 +78,22 @@ export function saveKeysToEnv(
   }
   let resumed: Promise<void> = Promise.resolve();
   try {
-    const next = fs.existsSync(envPath)
-      ? setEnvVar(setEnvVar(fs.readFileSync(envPath, 'utf8'), 'SJ_API_KEY', apiKey), 'SJ_SEC_KEY', secretKey)
+    const exists = fs.existsSync(envPath);
+    // .env 是 symlink 時讀寫實際的檔案，rename 才不會把連結換成一般檔案；監看仍用 envPath。
+    const target = exists ? fs.realpathSync(envPath) : envPath;
+    const next = exists
+      ? setEnvVar(setEnvVar(fs.readFileSync(target, 'utf8'), 'SJ_API_KEY', apiKey), 'SJ_SEC_KEY', secretKey)
       : buildEnvContent({ apiKey, secretKey, production: false });
     // 先寫暫存檔再 rename：中途失敗不會留下寫一半的 .env；最後一律收緊成 0600（含原本就存在的檔案）。
-    const tmpPath = `${envPath}.tmp-${process.pid}`;
+    const tmpPath = `${target}.tmp-${process.pid}`;
     try {
       fs.writeFileSync(tmpPath, next, { encoding: 'utf8', mode: 0o600 });
-      fs.renameSync(tmpPath, envPath);
+      fs.renameSync(tmpPath, target);
     } catch (error) {
       fs.rmSync(tmpPath, { force: true });
       throw error;
     }
-    fs.chmodSync(envPath, 0o600);
+    fs.chmodSync(target, 0o600);
   } finally {
     // 寫入失敗也要恢復監看；延遲一下讓這次寫入的檔案事件先過去。
     resumed = new Promise<void>((resolve) => {

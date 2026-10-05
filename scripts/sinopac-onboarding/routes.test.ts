@@ -17,6 +17,7 @@ import { OnboardingDriverError } from './driver';
 import {
   createOnboardingRouteHandler,
   INVALID_REQUEST_MESSAGE,
+  isLoopbackAddress,
   isLoopbackHost,
   ONBOARDING_API_PREFIX,
 } from './routes';
@@ -409,6 +410,12 @@ describe('REST 邊界（真的 http server + 真的 service + 假 gateway）', (
     expect(isLoopbackHost('127.0.0.1.nip.io:5178')).toBe(false);
   });
 
+  it('連線來源不是本機回送位址時一律拒絕（區網機器自帶 Host: localhost 也一樣）', () => {
+    for (const address of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) expect(isLoopbackAddress(address)).toBe(true);
+    for (const address of [undefined, '', '192.168.1.5', '::ffff:192.168.1.5', '10.0.0.1', '127.0.0.1.evil'])
+      expect(isLoopbackAddress(address)).toBe(false);
+  });
+
   it('帶 Origin 時必須同源：跨站回 403 且不載入 service；同源或沒帶 Origin 照常處理', async () => {
     const { base, nextCalls } = await start();
     for (const origin of ['https://evil.example', 'http://localhost:1', `${base}.evil.example`, 'null']) {
@@ -784,6 +791,19 @@ describe('.env 存檔（saveKeysToEnv）', () => {
     expect(fs.readFileSync(envPath, 'utf8')).toBe(`VITE_X=1\nSJ_API_KEY=${keys.apiKey}\nSJ_SEC_KEY=${keys.secretKey}\n`);
     if (process.platform !== 'win32') expect(fs.statSync(envPath).mode & 0o777).toBe(0o600);
     expect(fs.readdirSync(dir)).toEqual(['.env']);
+  });
+
+  it.skipIf(process.platform === 'win32')('.env 是 symlink：寫進連結指向的檔案，連結本身保留', () => {
+    const dir = tempDir();
+    const real = path.join(dir, 'shared.env');
+    const envPath = path.join(dir, '.env');
+    fs.writeFileSync(real, 'VITE_X=1\n', 'utf8');
+    fs.symlinkSync(real, envPath);
+    saveKeysToEnv(keys, { envPath, resumeDelayMs: 0 });
+    expect(fs.lstatSync(envPath).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(real, 'utf8')).toBe(`VITE_X=1\nSJ_API_KEY=${keys.apiKey}\nSJ_SEC_KEY=${keys.secretKey}\n`);
+    expect(fs.statSync(real).mode & 0o777).toBe(0o600);
+    expect(fs.readdirSync(dir).sort()).toEqual(['.env', 'shared.env']);
   });
 
   it('.env 已存在但沒有這兩個變數：附加在最後', () => {

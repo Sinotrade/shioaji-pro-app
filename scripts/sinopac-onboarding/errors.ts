@@ -33,14 +33,6 @@ export function toDriverError(error: unknown): OnboardingDriverError {
   if (error instanceof OnboardingDriverError) return error;
   const name = error instanceof Error ? error.name : "";
   const message = error instanceof Error ? error.message : "";
-  if (name === "BrowserRunCapacityError") {
-    const retry = (error as { retryAfterSeconds?: unknown }).retryAfterSeconds;
-    return new OnboardingDriverError(
-      "ONBOARDING_QUOTA_EXHAUSTED",
-      "Cloudflare 瀏覽器額度或啟動頻率已達上限，請稍後再試。",
-      typeof retry === "number" ? retry : undefined,
-    );
-  }
   if (
     /target closed|session closed|connection closed|browser has disconnected|browser disconnected|websocket|protocol error/i.test(
       message,

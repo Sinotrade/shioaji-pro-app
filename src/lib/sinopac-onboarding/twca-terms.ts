@@ -12,9 +12,15 @@ export const TWCA_TERMS: readonly string[] = [
 // 頁面文字的換行與標點旁空白不一定和這份相同：比對前全部去掉。
 const squash = (text: string) => text.replace(/\s+/g, '');
 
-/** 永豐金證券頁面上的條款是否包含使用者在登入畫面同意過的每一條。 */
+// 條款編號「一、」「十一、」…；頁面標題等沒有編號的文字不算條款。
+const CLAUSE_MARKER = /[一二三四五六七八九十]+、/g;
+
+/** 永豐金證券頁面上的條款是否正好是使用者在登入畫面同意過的那幾條：每條都在，且沒有多出的編號條款。 */
 export function matchesTwcaTerms(termsText: string | null): boolean {
     if (!termsText) return false;
     const page = squash(termsText);
-    return TWCA_TERMS.every((clause) => page.includes(squash(clause)));
+    return (
+        TWCA_TERMS.every((clause) => page.includes(squash(clause))) &&
+        (page.match(CLAUSE_MARKER)?.length ?? 0) === TWCA_TERMS.length
+    );
 }

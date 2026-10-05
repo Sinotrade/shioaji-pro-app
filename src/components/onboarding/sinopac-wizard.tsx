@@ -394,7 +394,8 @@ export function SinopacWizard({ onKeysReady, onUseApiKey, onLockedChange }: Sino
             if (flag.destroyed || statusRef.current?.step !== 'creating' || flag.busy) return;
             try {
                 const next = await onboardingApi.status();
-                if (flag.destroyed) return;
+                // 等回應期間使用者可能已取消或開始別的動作：晚到的進度不採用。
+                if (flag.destroyed || flag.busy || statusRef.current?.step !== 'creating') return;
                 applyStatus(next, false);
                 if (next.step === 'login') {
                     setNotice(NOTICE_CREATE_ENDED);
@@ -412,7 +413,8 @@ export function SinopacWizard({ onKeysReady, onUseApiKey, onLockedChange }: Sino
         if (!handoff) throw new Error('KEYS_UNAVAILABLE');
         await onKeysReady(handoff.keys, { saveFailed: handoff.saveFailed });
         keysRef.current = null;
-        setFinished((current) => current && { ...current, revealed: null, saveFailed: false });
+        // 只收起 Secret；saveFailed 保留，完成畫面才不會改口說「不需要你複製」。
+        setFinished((current) => current && { ...current, revealed: null });
     }
 
     // 讀不到進度就是沒有後端（打包版或沒有外掛的伺服器），改顯示說明。

@@ -46,7 +46,7 @@ import {
 /**
  * 永豐金證券官網（www / ca / osu.sinotrade.com.tw）的 OnboardingDriver。
  *
- * 只依賴下面的 PageLike／BrowserLike，真實的 @cloudflare/puppeteer Page／Browser 直接滿足，
+ * 只依賴下面的 PageLike／BrowserLike，gateway 用本機 Chrome 的 Puppeteer Page／Browser 直接滿足，
  * 測試則用腳本化的假頁面。每個方法只做一步；登入絕不自動重試，整個流程最多按兩次「登 入」。
  * 這個 driver 不跨請求保存狀態：每次重新接回遠端瀏覽器後，一律以網址重新找出目標頁面。
  *

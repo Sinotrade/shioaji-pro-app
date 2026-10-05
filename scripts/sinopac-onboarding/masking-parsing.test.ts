@@ -23,17 +23,6 @@ import {
 } from "./parsing";
 import { OnboardingDriverError } from "./driver";
 
-// 原專案的 Cloudflare 容量錯誤；toDriverError 只靠 name 與 retryAfterSeconds 分類。
-class BrowserRunCapacityError extends Error {
-  override name = "BrowserRunCapacityError";
-  constructor(
-    readonly reason: string,
-    readonly retryAfterSeconds?: number,
-  ) {
-    super(reason);
-  }
-}
-
 describe("個資遮罩", () => {
   it("手機保留前 2 碼與後 3 碼，已遮罩的輸入得到相同格式", () => {
     expect(maskPhone("0912345678")).toBe("09*****678");
@@ -214,12 +203,6 @@ describe("錯誤對應", () => {
       "固定訊息",
     );
     expect(toDriverError(error)).toBe(error);
-  });
-
-  it("容量錯誤對應到額度用完並保留 retryAfterSeconds", () => {
-    const mapped = toDriverError(new BrowserRunCapacityError("rate_limit", 20));
-    expect(mapped.code).toBe("ONBOARDING_QUOTA_EXHAUSTED");
-    expect(mapped.retryAfterSeconds).toBe(20);
   });
 
   it.each([

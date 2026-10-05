@@ -137,8 +137,8 @@ export function createOnboardingApi(
   const post = (path: string, body: unknown) => status('POST', path, body);
 
   /**
-   * 建立金鑰的請求獨立處理：後端在 ONBOARDING_KEY_CAPTURE_FAILED 且使用者選了顯示 Secret 時，
-   * 會把唯一一份 result 與 revealed 放在錯誤本體裡，這裡必須保留到 OnboardingApiError.salvage。
+   * 建立金鑰的請求獨立處理：存檔失敗（ONBOARDING_KEY_CAPTURE_FAILED）時後端一律把唯一一份 result 與 revealed
+   * 放在錯誤本體裡，這裡必須保留到 OnboardingApiError.salvage；成功時只有 revealSecret（桌面版）才回傳 revealed。
    * 成功與救援內容都可能含 Secret Key：呼叫端用完要立刻丟棄，不要放進長期狀態。
    */
   async function createKey(body: OnboardingKeyRequest): Promise<OnboardingKeyCreated> {

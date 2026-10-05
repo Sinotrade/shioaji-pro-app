@@ -219,6 +219,12 @@ export function isLoopbackHost(host: string): boolean {
   return LOOPBACK_HOSTS.has(name);
 }
 
+// 連線本身也必須來自本機：dev server 綁到 0.0.0.0 時，區網的機器可以自帶 Host: localhost。
+const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+export function isLoopbackAddress(address: string | undefined): boolean {
+  return address !== undefined && LOOPBACK_ADDRESSES.has(address);
+}
+
 function send(
   res: ServerResponse,
   status: number,
@@ -318,11 +324,12 @@ export function createOnboardingRouteHandler(options: OnboardingRouteOptions) {
 
     // 這個前綴底下的請求一律在這裡結束，絕不 next()：否則會被 /api proxy 轉給 sidecar。
     try {
-      // Host 必須是本機回送位址（Vite 的 host 檢查在前面，這裡再擋一次，不依賴它），
+      // 連線來源與 Host 都必須是本機回送位址（Vite 的 host 檢查在前面，這裡再擋一次，不依賴它），
       // 帶 Origin 時必須與本機 dev server 同源，擋其他網站對本機的跨站請求；沒帶 Origin（同源 GET、非瀏覽器）放行。
       const origin = req.headers.origin;
       const host = req.headers.host;
       if (
+        !isLoopbackAddress(req.socket.remoteAddress) ||
         !host ||
         !isLoopbackHost(host) ||
         (origin !== undefined &&

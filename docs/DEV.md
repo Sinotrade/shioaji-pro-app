@@ -179,8 +179,10 @@ Chrome 代為完成永豐金證券的 API Key 申請（設計與限制見
   一般瀏覽器預覽首次登入畫面）；或使用 Tauri dev shell。
 - 需要本機安裝 Google Chrome。找不到時以 `SINOPAC_CHROME_PATH` 指定執行檔
   路徑；`SINOPAC_HEADLESS=0` 會顯示瀏覽器視窗（預設 headless）。
-- 申請成功後金鑰寫入專案根目錄 `.env`（新建時 mode 0600）。OTP 一律由本人輸入。
+- Tauri dev shell 尚未驗證；目前只在瀏覽器 dev 模式實測過。
+- 申請成功後金鑰寫入專案根目錄 `.env`：原子寫入（先寫暫存檔再 rename），每次寫入後權限收緊為 0600（既有檔案也會）。OTP 一律由本人輸入。
 - production build 不含此功能：分頁以 `import.meta.env.DEV` 判斷，後端是
-  Vite dev-server middleware，`vite build` 不載入。
+  Vite dev-server middleware，`vite build` 不掛載它，bundle 內沒有精靈
+  （plugin 模組在載入 Vite 設定時仍會被評估，但不含瀏覽器自動化程式）。
 - 這會對真實的永豐金證券網站操作；開發測試請用 `scripts/sinopac-onboarding/`
   內的 fake-site 單元測試，不要用真實帳密反覆試。

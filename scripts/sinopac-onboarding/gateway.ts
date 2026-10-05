@@ -63,7 +63,7 @@ function launchOptions(): LaunchOptions {
 }
 
 // UNVERIFIED（未對真實網站驗證）：頂層分頁只允許導向這些網域（含子網域）。
-// 只擋頂層 document 導向；子資源、iframe（例如 reCAPTCHA）與憑證彈窗載入的 webcaDepEx.html 一律放行。
+// 只擋頂層 document 導向；子資源與 iframe（例如 reCAPTCHA）放行。憑證彈窗（webcaDepEx.html）也是頂層導向，同樣受這份清單限制。
 const NAVIGATION_ALLOWLIST = [
   "sinotrade.com.tw",
   "sinopac.com",

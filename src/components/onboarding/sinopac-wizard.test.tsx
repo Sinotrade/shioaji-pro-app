@@ -199,6 +199,33 @@ describe('restore after refresh', () => {
         expect(has(view, CreatingStep)).toBe(false);
         expect(textOf(view.root)).toContain('先前的建立程序已經結束');
     });
+
+    it('ignores a creating poll that arrives after the user cancelled', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearInterval', 'clearTimeout'] });
+        let reads = 0;
+        let release = () => {};
+        serve({
+            'GET status': () =>
+                ++reads === 1
+                    ? json(status('creating', { keyRequested: true }))
+                    : new Promise<Response>((done) => (release = () => done(json(status('creating', { keyRequested: true }))))),
+            'POST cancel': () => json({}),
+        });
+        const { view } = await mount();
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(3000);
+        });
+        expect(reads).toBe(2);
+        await act(async () => (buttons(view, '取消申請')[0] as ReactTestInstance).props.onClick());
+        await act(async () => (buttons(view, '取消申請')[0] as ReactTestInstance).props.onClick());
+        expect(has(view, LoginStep)).toBe(true);
+        await act(async () => {
+            release();
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(has(view, LoginStep)).toBe(true);
+        expect(has(view, CreatingStep)).toBe(false);
+    });
 });
 
 describe('capability probe', () => {
@@ -428,7 +455,9 @@ describe('creating the key', () => {
         expect(onKeysReady).toHaveBeenCalledTimes(1);
         expect(onKeysReady).toHaveBeenCalledWith(KEYS, { saveFailed: true });
         for (const secret of Object.values(KEYS)) expect(dump(view)).not.toContain(secret);
-        expect(view.root.findByType(DoneStep).props.revealed).toBeNull();
+        // 仍是存檔失敗：完成畫面不能改口說 Secret 不需要複製。
+        expect(view.root.findByType(DoneStep).props).toMatchObject({ revealed: null, saveFailed: true });
+        expect(textOf(view.root)).not.toContain('不需要你複製');
     });
 
     it('keeps the keys for a retry when the parent fails to start', async () => {
