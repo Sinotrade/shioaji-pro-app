@@ -111,8 +111,8 @@ export function fetchInfo() {
     });
 }
 
-export function fetchAccounts() {
-    return apiGet<Account[]>('/api/v1/auth/accounts');
+export function fetchAccounts(opts?: { signal?: AbortSignal }) {
+    return apiGet<Account[]>('/api/v1/auth/accounts', opts);
 }
 
 // CA expiry for a person_id — production orders fail (400) without an active,

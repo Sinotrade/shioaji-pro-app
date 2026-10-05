@@ -48,3 +48,11 @@ Shioaji Pro 的詞彙表。只放詞彙定義,不放實作細節。
 - **畫圖物件 (drawing)**: 使用者畫在 K 線主圖上的自由物件(水平線、趨勢線、射線、延伸線、方框)。只是標註,不參與任何下單或觸價邏輯。
 - **錨點 (anchor)**: 畫圖物件的控制點,一律以 `(時間, 價格)` 保存,絕不存 K 棒 index — 這是切換週期後位置不變的前提。投影時把時間內插成小數 logical index 再換座標,因為 `timeToCoordinate()` 只認 K 棒格點上的時間。
 - **商品鍵 (symbol key)**: 畫圖物件的保存單位。期貨預設收斂到根代碼(TXFR1、TXFI6、TXFJ6 → TXF),連續月只是近月別名,換月後畫的壓力線仍然有效;可在樣式面板關閉改為每個合約代碼各自獨立。選擇權不收斂 — 不同履約價是不同商品。
+
+## 首次登入 (Onboarding)
+
+- **首次登入精靈 (onboarding wizard)**: 首次使用者沒有 API Key 時,在 DEV 環境由本機驅動永豐金證券官網、代為完成 Key 申請的多步驟流程(帳密 › 生日 › 憑證 › 權限 › 金鑰 › 完成)。不在 production 版本。決策見 [ADR 0008](docs/adr/0008-sinopac-onboarding-dev-wizard.md)。
+- **帳號密碼登入 vs API Key 登入**: 首次登入畫面的兩種入口。API Key 登入是貼上或匯入既有 Key(上游與 production 唯一入口);帳號密碼登入是 DEV 限定、走精靈申請新 Key。兩者最後都產生同一份 `.env` 金鑰。
+- **憑證作業條款 (TWCA)**: 永豐金證券憑證申請流程中的 TWCA 電子憑證作業條款。精靈須先在登入畫面取得使用者本人勾選同意,才會在券商頁面代為勾選。
+- **開通 (activated)**: 帳戶可以用 API 下單的狀態,等於已簽署 API 約定書且已通過模擬下單測試;兩者缺一即「未開通」。與「已取得 API Key」是不同階段。
+- **`ONBOARDING_*` 錯誤碼**: 精靈流程停止或失敗的原因代碼,清單與型別見 `src/lib/sinopac-onboarding/types.ts`(`ONBOARDING_ERROR_CODES`);畫面只顯示固定文案,不轉述伺服器或券商網頁原文。

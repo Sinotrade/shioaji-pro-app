@@ -168,3 +168,19 @@ test coverage 門檻、quality metrics 等。落地時更新本節。
 - 交付時提供 App 名稱、build identity 與啟動方式，保留供使用者實測的
   dev App／Vite 及其 worktree。關閉額外的隔離 QA 程序；使用者結束實測
   或已切換替代版本後，再清理已合併且乾淨、沒有程序依賴的 worktree。
+
+## DEV 限定：首次登入精靈（帳號密碼登入）
+
+沒有 API Key 時，開發環境的首次登入畫面多一個「帳號密碼登入」分頁，用本機
+Chrome 代為完成永豐金證券的 API Key 申請（設計與限制見
+[ADR 0008](adr/0008-sinopac-onboarding-dev-wizard.md)）。
+
+- 啟動：`pnpm dev`，瀏覽器開 `/?setup=1`（`?setup` 只在 dev 生效，用來在
+  一般瀏覽器預覽首次登入畫面）；或使用 Tauri dev shell。
+- 需要本機安裝 Google Chrome。找不到時以 `SINOPAC_CHROME_PATH` 指定執行檔
+  路徑；`SINOPAC_HEADLESS=0` 會顯示瀏覽器視窗（預設 headless）。
+- 申請成功後金鑰寫入專案根目錄 `.env`（新建時 mode 0600）。OTP 一律由本人輸入。
+- production build 不含此功能：分頁以 `import.meta.env.DEV` 判斷，後端是
+  Vite dev-server middleware，`vite build` 不載入。
+- 這會對真實的永豐金證券網站操作；開發測試請用 `scripts/sinopac-onboarding/`
+  內的 fake-site 單元測試，不要用真實帳密反覆試。

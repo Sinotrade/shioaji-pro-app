@@ -16,5 +16,11 @@
         "noEmit": true,
         "types": ["node"]
     },
-    "include": ["vite.config.ts", "src/lib/build-version.ts"]
+    "include": [
+        "vite.config.ts",
+        "src/lib/build-version.ts",
+        "src/lib/sinopac-onboarding/types.ts",
+        "scripts/vite-plugin-sinopac-onboarding.ts",
+        "scripts/sinopac-onboarding/**/*.ts"
+    ]
 }

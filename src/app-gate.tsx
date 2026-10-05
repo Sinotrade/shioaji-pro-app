@@ -28,9 +28,13 @@ import { markStage } from './lib/startup-timing';
 
 type MainGateState = 'loading' | 'setup' | 'app' | 'error';
 
+// dev only: open /?setup in a plain browser to preview the first-run screen
+const previewSetup = () =>
+    import.meta.env.DEV && new URLSearchParams(window.location.search).has('setup');
+
 function MainWindowGate() {
     const [state, setState] = useState<MainGateState>(
-        isTauri ? 'loading' : 'app',
+        isTauri ? 'loading' : previewSetup() ? 'setup' : 'app',
     );
     const [attempt, setAttempt] = useState(0);
     useEffect(() => {
