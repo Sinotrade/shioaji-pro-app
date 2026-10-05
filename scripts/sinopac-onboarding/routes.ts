@@ -1,4 +1,4 @@
-// Node (req, res, next) 版的精靈 REST 路由，移植自 all-set-tw 的 Hono route.ts。
+// 申請精靈的 REST 路由（Node 的 req, res, next 介面，掛在 Vite dev server 上）。
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   isTaiwanIdFormat,
@@ -92,7 +92,7 @@ function otpVerify(raw: unknown) {
   const body = exact(raw, ["purpose", "code"]);
   if (!body) return null;
   const purpose = oneOf(body.purpose, PURPOSES);
-  // UNVERIFIED（沿用原版）：永豐金證券 OTP 的位數與字元集未實測，只擋明顯不合理的輸入。
+  // UNVERIFIED：永豐金證券 OTP 的位數與字元集未實測，只擋明顯不合理的輸入。
   if (
     purpose === null ||
     typeof body.code !== "string" ||

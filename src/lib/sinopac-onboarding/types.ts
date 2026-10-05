@@ -1,6 +1,5 @@
 /**
  * 永豐金證券 Shioaji API Key 申請與登入流程型別契約與檢核工具。
- * 移植自 all-set-tw/shared/sinopac-onboarding.ts。
  */
 
 export const ONBOARDING_STEPS = [

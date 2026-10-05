@@ -1,6 +1,6 @@
 /**
- * /api/sinopac-onboarding/* 的 fetch 客戶端（不依賴 TanStack Query）。
- * 移植自 all-set-tw queries.ts：每一步都是一次性請求，不重試、不快取、不記錄請求內容。
+ * /api/sinopac-onboarding/* 的 fetch 客戶端。
+ * 每一步都是一次性請求，不重試、不快取、不記錄請求內容。
  * 帳密、生日、OTP 只放在 POST 本文，絕不進 URL。
  */
 

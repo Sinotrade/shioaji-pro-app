@@ -1,5 +1,5 @@
-// 移植自 all-set-tw 的 service.ts，與原版只差 Cloudflare/D1 相關部分（binding、容量錯誤、改用記憶體 repository）。
-// 刻意沒有冷卻：原版已取消，任何失敗都不自動重試、登入最多 2 次。
+// 申請流程的狀態機（狀態放在記憶體 repository）。
+// 刻意沒有冷卻：任何失敗都不自動重試，登入最多 2 次。
 import { randomUUID } from "node:crypto";
 import {
   isBirthday8,

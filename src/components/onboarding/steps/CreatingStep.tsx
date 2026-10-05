@@ -1,4 +1,4 @@
-// 建立中步驟：金鑰只會建立一次，這個畫面沒有任何重試入口（移植自 CreatingStep.svelte）。
+// 建立中步驟：金鑰只會建立一次，這個畫面沒有任何重試入口。
 import { KeyRound, LoaderCircle } from 'lucide-react';
 import { useLeaveGuard } from './DoneStep';
 import { StepHeading } from './step-heading';

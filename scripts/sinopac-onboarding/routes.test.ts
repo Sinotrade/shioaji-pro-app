@@ -466,7 +466,7 @@ describe('REST 邊界（真的 http server + 真的 service + 假 gateway）', (
     expect(loads).toBe(1);
   });
 
-  it('錯誤碼 -> HTTP 狀態與原版一致；固定文案，不轉述 driver 的原始訊息或機敏值', async () => {
+  it('錯誤碼 -> HTTP 狀態對照固定；固定文案，不轉述 driver 的原始訊息或機敏值', async () => {
     const expected: Record<(typeof ONBOARDING_ERROR_CODES)[number], number> = {
       ONBOARDING_BAD_CREDENTIALS: 400,
       ONBOARDING_ACCOUNT_LOCKED: 429,

@@ -1,4 +1,4 @@
-// 本機 gateway：一顆長駐的 Chrome，每個申請流程用自己的 BrowserContext（取代 Cloudflare Browser Run）。
+// 本機 gateway：一顆長駐的 Chrome，每個申請流程用自己的 BrowserContext。
 import { randomUUID } from "node:crypto";
 // 只匯入型別：puppeteer-core 在 launch 時才動態載入，vite.config／vitest／vite build 不會載入它。
 import type {

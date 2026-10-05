@@ -1,4 +1,4 @@
-// 完成步驟：寫入成功只顯示路徑；存檔失敗才一次性顯示 Secret Key，確認已保存之前不能離開（移植自 DoneStep.svelte）。
+// 完成步驟：寫入成功只顯示路徑；存檔失敗才一次性顯示 Secret Key，確認已保存之前不能離開。
 // 帳戶是否已開通 API 下單由 checkReadiness 確認，確定還沒開通才列出簽署與模擬測試。
 import { CircleCheckBig, Copy, Download, Eye, EyeOff, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';

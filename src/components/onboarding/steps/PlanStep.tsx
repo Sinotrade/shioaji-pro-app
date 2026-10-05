@@ -1,4 +1,4 @@
-// 方案步驟：選權限、帳戶、IP、名稱與到期日（移植自 PlanStep.svelte）。
+// 方案步驟：選權限、帳戶、IP、名稱與到期日。
 // IP 模式由使用者選（預設無限制 IP，動態 IP 只能這樣設定）；開放交易時，送出前一定要勾選風險確認。
 import { KeyRound } from 'lucide-react';
 import { useId, useState, type FormEvent } from 'react';

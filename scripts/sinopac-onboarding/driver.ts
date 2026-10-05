@@ -1,13 +1,9 @@
 // scripts/sinopac-onboarding/driver.ts
 //
-// 移植自 all-set-tw/apps/worker/src/sources/sinopac-securities/onboarding/driver.ts。
-// 唯一的改動：拿掉 Cloudflare 專用的 `OnboardingBrowserBinding`（@cloudflare/puppeteer
-// 的 launch() 參數型別），以及 OnboardingSession／OnboardingBrowserGateway 上對應的
-// `binding` 參數 —— 本機只有一個長駐的 puppeteer.Browser（見 gateway.ts），不需要
-// 每次呼叫都傳一個 Cloudflare binding 進來。其餘型別、錯誤類別、介面簽章逐字保留。
+// 申請精靈的 driver 介面、錯誤類別與共用型別。本機只有一個長駐的 Chrome（見 gateway.ts），
+// 每個流程各用一個 BrowserContext。
 //
-// PageLike／BrowserLike 定義在 sinopac-driver.ts（不是這個檔案）：原始碼就是這樣排的，
-// 照搬過來維持檔案邊界一致。
+// PageLike／BrowserLike 定義在 sinopac-driver.ts（不是這個檔案）。
 import type {
   OnboardingErrorCode,
   OnboardingOtpChannel,

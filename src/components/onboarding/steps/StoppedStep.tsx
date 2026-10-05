@@ -1,4 +1,4 @@
-// 停止步驟：依錯誤碼引導復原；金鑰可能已建立時，先檢查並刪除孤兒金鑰再重來（移植自 StoppedStep.svelte）。
+// 停止步驟：依錯誤碼引導復原；金鑰可能已建立時，先檢查並刪除孤兒金鑰再重來。
 import { OctagonAlert } from 'lucide-react';
 import {
     ACCOUNT_TYPE_LABELS,
