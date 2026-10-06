@@ -3,7 +3,7 @@
 
 import type { Candle } from '../types/market';
 import type { SecurityType } from '../types/contract';
-import { sessionWindowFor } from '../intraday-session';
+import { dailyBarConfirmedAt, sessionBarBucket, sessionWindowFor } from '../intraday-session';
 import { supertrend } from '../indicators';
 import type { EntrySignal, ShortSignal } from '../stock-picker';
 
@@ -118,8 +118,8 @@ export function v9KbarMarkers(bars: Candle[]): V9ChartMarker[] {
         const bar = bars[i]!;
         const top = bar.high >= high && (k[i]! < kHigh || hist[i]! < histHigh);
         const bottom = bar.low <= low && (k[i]! > kLow || hist[i]! > histLow);
-        if (top) append(divergenceSlots[i]!, 'above', '頂背', '#f472b6', 'arrowDown', 'divergence');
-        if (bottom) append(divergenceSlots[i]!, 'below', '底背', '#22d3ee', 'arrowUp', 'divergence');
+        if (top) append(divergenceSlots[i]!, 'above', '高點力道不足', '#f472b6', 'arrowDown', 'divergence');
+        if (bottom) append(divergenceSlots[i]!, 'below', '低點動能改善', '#22d3ee', 'arrowUp', 'divergence');
     }
 
     for (let i = 5; i < bars.length; i++) {
@@ -148,9 +148,9 @@ export function v9KbarMarkers(bars: Candle[]): V9ChartMarker[] {
             volumeLow = Math.min(volumeLow, volumes[j]!);
         }
         if (bar.high >= priceHigh && bar.volume < volumeHigh) {
-            append(volumeSlots[i]!, 'above', '量背', '#f9a8d4', 'circle', 'volume');
+            append(volumeSlots[i]!, 'above', '高點量未跟', '#f9a8d4', 'circle', 'volume');
         } else if (bar.low <= priceLow && bar.volume > volumeLow) {
-            append(volumeSlots[i]!, 'below', '量背', '#f9a8d4', 'circle', 'volume');
+            append(volumeSlots[i]!, 'below', '低點量未縮', '#f9a8d4', 'circle', 'volume');
         }
     }
 
@@ -214,75 +214,68 @@ export function supertrendShortTradeMarkers(
         }));
 }
 /**
- * 把選股「強勢上車」日 K 信號對到主圖 marker：主圖日 K 直接標在信號日；
- * 主圖分 K 標在當日首次收盤越過突破位那根，找不到就標當日最後一根。
+ * 日 K 選股信號只有日盤收盤後才能確認，不能回投至盤中首次突破棒。
+ * 日 K 圖保留日期 label；分 K 只標確認時點或其後同自然日內的已收棒。
+ * now 由呼叫端傳入即時／回放時鐘，避免在回放中使用未來的日 K 結果。
  */
 export function entrySignalsToMarkers(
     signals: EntrySignal[],
     visibleBars: Candle[],
     tfMinutes: number,
+    securityType: SecurityType = 'STK',
+    now = Number.POSITIVE_INFINITY,
 ): V9ChartMarker[] {
     const out: V9ChartMarker[] = [];
     for (const sig of signals) {
-        let at: number | null = null;
-        if (tfMinutes >= 1440) {
-            at = sig.time;
-        } else {
-            const dayBars = visibleBars.filter(
-                (b) => b.time >= sig.time && b.time < sig.time + 86400,
-            );
-            const hit = dayBars.find((b) => b.close >= sig.level) ?? dayBars.at(-1);
-            at = hit ? hit.time : null;
-        }
+        const at = confirmedDailySignalTime(sig.time, visibleBars, tfMinutes, securityType, now);
         if (at === null) continue;
         out.push({ time: at, group: 'entry', position: 'belowBar',
-            shape: 'arrowUp', color: '#f5c451', text: '強勢上車' });
+            shape: 'arrowUp', color: '#f5c451', text: '日K多確認' });
     }
     return out;
 }
 
 /**
- * 把選股「弱勢放空」日 K 信號對到主圖 marker（空方鏡像）：主圖日 K 標信號日；
- * 主圖分 K 標在當日首次收盤跌破前低那根，找不到就標當日最後一根。
+ * 空方日 K 確認標記，與多方同樣禁止把收盤後才成立的信號投影回盤中。
  */
 export function shortSignalsToMarkers(
     signals: ShortSignal[],
     visibleBars: Candle[],
     tfMinutes: number,
+    securityType: SecurityType = 'STK',
+    now = Number.POSITIVE_INFINITY,
 ): V9ChartMarker[] {
     const out: V9ChartMarker[] = [];
     for (const sig of signals) {
-        let at: number | null = null;
-        if (tfMinutes >= 1440) {
-            at = sig.time;
-        } else {
-            const dayBars = visibleBars.filter(
-                (b) => b.time >= sig.time && b.time < sig.time + 86400,
-            );
-            const hit = dayBars.find((b) => b.close <= sig.level) ?? dayBars.at(-1);
-            at = hit ? hit.time : null;
-        }
+        const at = confirmedDailySignalTime(sig.time, visibleBars, tfMinutes, securityType, now);
         if (at === null) continue;
         out.push({ time: at, group: 'shortEntry', position: 'aboveBar',
-            shape: 'arrowDown', color: '#f5c451', text: '弱勢放空' });
+            shape: 'arrowDown', color: '#f5c451', text: '日K空確認' });
     }
     return out;
+}
+
+function confirmedDailySignalTime(
+    day: number, visibleBars: Candle[], minutes: number, securityType: SecurityType, now: number,
+): number | null {
+    if (!Number.isFinite(day)) return null;
+    const confirmedAt = dailyBarConfirmedAt(day, securityType);
+    if (confirmedAt > now) return null;
+    if (minutes >= 1440) return day;
+    const firstKnown = visibleBars.filter(bar =>
+        bar.time >= confirmedAt && bar.time <= now && bar.time < day + 86400,
+    ).sort((a, b) => a.time - b.time)[0];
+    return firstKnown?.time ?? null;
 }
 
 // Same session-aligned close labels as aggregate(), with closing trades kept
 // in the session's last bucket. Futures night bars belong to the next trade date.
 export function researchTickBucket(time: number, minutes: number, securityType: SecurityType = 'STK'): number {
     const session = sessionWindowFor(securityType, time);
-    if (minutes >= 1440) {
-        const day = securityType === 'FUT' || securityType === 'OPT'
-            ? session.night ? session.end - 5 * 3600 : session.start
-            : time;
-        return Math.floor(day / 86400) * 86400;
-    }
+    if (minutes >= 1440) return sessionBarBucket(securityType, time, minutes);
     const end = session.end;
     const minuteEnd = Math.min(Math.floor(time / 60) * 60 + 60, end);
-    const bucketSec = Math.max(1, minutes) * 60;
-    return Math.min(end, session.start + Math.max(1, Math.ceil((minuteEnd - session.start) / bucketSec)) * bucketSec);
+    return sessionBarBucket(securityType, minuteEnd, minutes);
 }
 
 export interface FlowSnapshot {
@@ -305,7 +298,7 @@ export class V9FlowTracker {
     private baseline: number[] = [];
     private baselineSum = 0;
     private seen = new Set<string>();
-    private buckets = new Map<string, { time: number; day: number; buy: number; sell: number }>();
+    private buckets = new Map<number, { time: number; buy: number; sell: number }>();
     private session = -Infinity;
     private lastTime: number | null = null;
     private qualifiedCount = 0;
@@ -332,12 +325,10 @@ export class V9FlowTracker {
         const threshold = this.threshold();
         if (threshold !== null && tick.volume >= threshold && (tick.tickType === 1 || tick.tickType === 2)) {
             const time = researchTickBucket(tick.time, 1, this.securityType);
-            const day = Math.floor(tick.time / 86400) * 86400;
-            const key = `${day}|${time}`;
-            const bucket = this.buckets.get(key) ?? { time, day, buy: 0, sell: 0 };
+            const bucket = this.buckets.get(time) ?? { time, buy: 0, sell: 0 };
             if (tick.tickType === 1) bucket.buy += tick.volume;
             else bucket.sell += tick.volume;
-            this.buckets.set(key, bucket);
+            this.buckets.set(time, bucket);
             this.qualifiedCount++;
         }
         this.baseline.push(tick.volume);
@@ -353,9 +344,8 @@ export class V9FlowTracker {
 
     snapshot(minutes: number): FlowSnapshot {
         const buckets = new Map<number, { buy: number; sell: number }>();
-        const seconds = Math.max(1, minutes) * 60;
         for (const minute of this.buckets.values()) {
-            const time = minutes >= 1440 ? minute.day : Math.ceil(minute.time / seconds) * seconds;
+            const time = sessionBarBucket(this.securityType, minute.time, minutes);
             const bucket = buckets.get(time) ?? { buy: 0, sell: 0 };
             bucket.buy += minute.buy;
             bucket.sell += minute.sell;
@@ -399,8 +389,7 @@ export function completedResearchBars(
 ): Candle[] {
     return bars.filter(bar => {
         if (minutes < 1440) return bar.time <= now;
-        if (securityType === 'FUT' || securityType === 'OPT') return bar.time + 86400 + 5 * 3600 <= now;
-        return bar.time + 13.5 * 3600 <= now;
+        return dailyBarConfirmedAt(bar.time, securityType) <= now;
     });
 }
 

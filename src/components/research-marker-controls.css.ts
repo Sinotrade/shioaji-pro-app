@@ -1,4 +1,4 @@
-import { style, styleVariants } from '@vanilla-extract/css';
+import { globalStyle, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const root = style({
@@ -12,6 +12,44 @@ export const headline = style({
     flexWrap: 'nowrap', overflowX: 'auto',
 });
 export const headlineMeta = style({ fontSize: 11, color: vars.color.mutedForeground });
+// Three compact readouts, not three large cards. Keep the candle area tall.
+export const decisionSummary = style({ display: 'flex', gap: 5, flexShrink: 0, alignItems: 'stretch' });
+const decisionBadgeBase = style({
+    display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 1,
+    minHeight: 32, padding: '2px 7px', borderRadius: 4, fontSize: 12, whiteSpace: 'nowrap',
+    borderLeft: '2px solid #64748b', background: 'rgba(148,163,184,.05)',
+});
+export const decisionBadge = styleVariants({
+    long: [decisionBadgeBase, { color: '#fb7185', borderLeftColor: '#fb7185', background: 'rgba(244,63,94,.08)' }],
+    short: [decisionBadgeBase, { color: '#4ade80', borderLeftColor: '#4ade80', background: 'rgba(34,197,94,.08)' }],
+    neutral: [decisionBadgeBase, { color: '#fbbf24', borderLeftColor: '#fbbf24', background: 'rgba(245,158,11,.06)' }],
+    insufficient: [decisionBadgeBase, { color: '#94a3b8' }],
+});
+export const decisionRole = style({ fontSize: 10, opacity: .78 });
+export const decisionEntry = style({
+    font: 'inherit', textAlign: 'left', cursor: 'pointer',
+    borderTop: 0, borderRight: 0, borderBottom: 0,
+    ':focus-visible': { outline: '2px solid #22d3ee', outlineOffset: 2 },
+});
+export const decisionReasons = style({
+    padding: '4px 8px', marginBottom: 4, fontSize: 11, lineHeight: 1.45,
+    borderLeft: '2px solid #fbbf24', background: 'rgba(245,158,11,.04)',
+});
+globalStyle(`${decisionReasons} > strong`, { color: '#fbbf24', marginRight: 9 });
+globalStyle(`${decisionReasons} > ul`, { paddingLeft: 18, margin: '3px 0 0' });
+export const entryChecklist = style({ listStyle: 'none', paddingLeft: 0 });
+const entryCheckBase = style({ display: 'flex', gap: 7, alignItems: 'baseline', padding: '1px 0' });
+export const entryCheck = styleVariants({
+    pass: [entryCheckBase, { color: '#94d6b0' }],
+    wait: [entryCheckBase, { color: '#fbbf24' }],
+    missing: [entryCheckBase, { color: '#94a3b8' }],
+});
+globalStyle(`${entryChecklist} > li > strong`, { flexShrink: 0, minWidth: 53 });
+export const formulaSources = style({
+    fontSize: 11, lineHeight: 1.45, margin: '3px 0 5px',
+});
+globalStyle(`${formulaSources} > summary`, { cursor: 'pointer', color: '#67e8f9' });
+globalStyle(`${formulaSources} > p`, { margin: '4px 0', maxWidth: 900 });
 const headlineBiasBase = style({
     display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0, fontSize: 15,
     paddingLeft: 9, borderLeft: '3px solid #64748b',

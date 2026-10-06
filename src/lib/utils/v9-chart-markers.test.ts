@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Candle } from '../types/market';
+import { aggregate, wallClockToUtc } from './kbars';
 import {
     v9KbarMarkers, v9LargeOrderFlowMarkers, V9FlowTracker, researchTickBucket,
     completedResearchBars, selectResearchMarkers, DEFAULT_MARKER_OPTIONS,
@@ -36,6 +37,55 @@ describe('V9 chart markers', () => {
         rows[29] = { ...rows[29]!, open: 106.2, high: 106.25, low: 105.8, close: 105.9, volume: 20 };
         const marker = v9KbarMarkers(rows).find(item => item.time === rows[29]!.time && item.text.includes('洗'));
         expect(marker).toBeDefined();
+    });
+
+    it.each([
+        { side: 'high', previousVolume: 120, text: '高點量未跟', position: 'aboveBar' },
+        { side: 'low', previousVolume: 80, text: '低點量未縮', position: 'belowBar' },
+    ] as const)('describes the computed $side-side volume mismatch without changing its marker metadata', ({
+        side, previousVolume, text, position,
+    }) => {
+        const rows = bars().map(bar => side === 'high' ? bar : {
+            ...bar, open: 200 - bar.open, high: 200 - bar.low,
+            low: 200 - bar.high, close: 200 - bar.close,
+        });
+        // The last bar has ordinary volume (neither attack nor wash); only an
+        // earlier volume extreme differs while price reaches its range edge.
+        rows[20] = { ...rows[20]!, volume: previousVolume };
+        expect(v9KbarMarkers(rows).filter(marker => marker.time === rows[29]!.time)).toEqual([{
+            time: rows[29]!.time, position, shape: 'circle', color: '#f9a8d4', text, group: 'volume',
+        }]);
+        const before = v9KbarMarkers(rows.slice(0, 25));
+        expect(v9KbarMarkers(rows).filter(marker => marker.time < rows[25]!.time)).toEqual(before);
+    });
+
+    it.each([
+        { side: 'high', text: '高點力道不足', position: 'aboveBar', shape: 'arrowDown', color: '#f472b6' },
+        { side: 'low', text: '低點動能改善', position: 'belowBar', shape: 'arrowUp', color: '#22d3ee' },
+    ] as const)('describes computed $side-side momentum divergence after warmup and preserves closed-bar decisions', ({
+        side, text, position, shape, color,
+    }) => {
+        const rows = Array.from({ length: 180 }, (_, i): Candle => {
+            const offset = Math.sin(i / 8);
+            const bar = {
+                time: open + i * 60, open: 100 + offset, close: 100.1 + offset,
+                high: 101 + offset, low: 99 + offset, volume: 100 + i % 9,
+            };
+            return side === 'low' ? bar : {
+                ...bar, open: 200 - bar.open, high: 200 - bar.low,
+                low: 200 - bar.high, close: 200 - bar.close,
+            };
+        });
+        expect(v9KbarMarkers(rows.slice(0, 152)).every(marker => marker.group !== 'divergence')).toBe(true);
+        const actual = v9KbarMarkers(rows);
+        expect(actual.filter(marker => marker.group === 'divergence')).toEqual(
+            [173, 174, 175, 176].map(index => ({
+                time: rows[index]!.time, position, shape, color, text, group: 'divergence',
+            })),
+        );
+        const before = v9KbarMarkers(rows.slice(0, 175));
+        expect(before.some(marker => marker.group === 'divergence')).toBe(true);
+        expect(actual.filter(marker => marker.time < rows[175]!.time)).toEqual(before);
     });
 
     it('waits for a Tick baseline before marking a live large-order flow estimate', () => {
@@ -93,7 +143,7 @@ describe('V9 chart markers', () => {
         expect(researchMarkerGap(270, 500)).toBeGreaterThan(researchMarkerGap(270, 1200));
         const times = [open, open + 60, open + 120];
         const markers = times.map((time, i) => ({
-            time, group: 'volume' as const, text: ['量背', '攻', '洗'][i]!, color: '#fff',
+            time, group: 'volume' as const, text: ['低點量未縮', '攻', '洗'][i]!, color: '#fff',
             position: 'belowBar' as const, shape: 'arrowUp' as const,
         }));
         expect(selectResearchMarkers(markers, times, DEFAULT_MARKER_OPTIONS).map(marker => marker.text)).toEqual(['攻']);
@@ -103,8 +153,8 @@ describe('V9 chart markers', () => {
     it('combines same-bar labels without mutating source observations', () => {
         const a = { time: open, group: 'flow' as const, text: '大單偏賣', color: '#fff',
             position: 'aboveBar' as const, shape: 'arrowDown' as const };
-        const b = { ...a, group: 'divergence' as const, text: '頂背' };
-        expect(mergeResearchMarkerLabels([a, b])).toEqual([{ ...a, text: '大單偏賣·頂背' }]);
+        const b = { ...a, group: 'divergence' as const, text: '高點力道不足' };
+        expect(mergeResearchMarkerLabels([a, b])).toEqual([{ ...a, text: '大單偏賣·高點力道不足' }]);
         expect(a.text).toBe('大單偏賣');
     });
 
@@ -217,7 +267,8 @@ describe('incremental large-order flow', () => {
         tracker.push({ time: day + 86400 - 1, volume: 10, tickType: 1 });
         tracker.push({ time: day + 86400 + 1, volume: 20, tickType: 2 });
         expect(tracker.snapshot(1440).sampleCount).toBe(22);
-        expect(tracker.snapshot(1440).markers.map(marker => marker.time)).toEqual([day, day + 86400]);
+        expect(tracker.snapshot(1440).markers.map(marker => marker.time)).toEqual([day + 3 * 86400]);
+        expect(tracker.snapshot(1440).markers[0]!.text).toBe('大單偏賣');
         tracker.push({ time: day + 86400 + 9 * 3600, volume: 1, tickType: 1 });
         expect(tracker.snapshot(1).sampleCount).toBe(1);
     });
@@ -227,5 +278,24 @@ describe('incremental large-order flow', () => {
         expect(researchTickBucket(day + 13.5 * 3600, 1)).toBe(day + 13.5 * 3600);
         expect(researchTickBucket(day + 13.5 * 3600, 60)).toBe(day + 13.5 * 3600);
         expect(researchTickBucket(open + 100, 1440)).toBe(day);
+    });
+
+    it('puts a daytime futures large order on the same anchored 60m bar as aggregate', () => {
+        const t = wallClockToUtc;
+        const start = t('2026-10-01T08:45:00');
+        const tracker = new V9FlowTracker('FUT');
+        warm(tracker, start);
+        tracker.push({ time: start + 70, volume: 10, tickType: 1 });
+        const minute = researchTickBucket(start + 70, 1, 'FUT');
+        const chart = aggregate([{ time: minute, open: 100, high: 100, low: 100, close: 100, volume: 10 }], 60, 'FUT');
+        expect(tracker.snapshot(60).markers[0]!.time).toBe(t('2026-10-01T09:45:00'));
+        expect(tracker.snapshot(60).markers[0]!.time).toBe(chart[0]!.time);
+    });
+
+    it('requires day close to complete futures daily pattern observations', () => {
+        const t = wallClockToUtc;
+        const daily = [{ time: t('2026-10-01T00:00:00'), open: 100, high: 102, low: 99, close: 101, volume: 10 }];
+        expect(completedResearchBars(daily, 1440, t('2026-10-01T13:44:59'), 'FUT')).toEqual([]);
+        expect(completedResearchBars(daily, 1440, t('2026-10-01T13:45:00'), 'FUT')).toEqual(daily);
     });
 });

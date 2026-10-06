@@ -1,7 +1,10 @@
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useMemo, useState, type ReactNode } from 'react';
 import type { FlowSnapshot, ResearchMarkerOptions, V9ChartMarker } from '../lib/utils/v9-chart-markers';
 import type { ResearchLevel, V9Resonance } from '../lib/utils/research-chart';
 import { PIVOT_ZONE_LABEL, pivotLevels, pivotSignal, pivotZone } from '../lib/pivot-levels';
+import { researchDecision, type ResearchDataStatus } from '../lib/research-decision';
+import type { ResearchEntryContext } from '../lib/research-entry';
+import { researchSetupDisplay, type ResearchSetupEvaluation, type ResearchVwapEvaluation } from '../lib/research-setup-display';
 import * as styles from './research-marker-controls.css';
 
 type MarketTone = 'long' | 'short' | 'neutral' | 'insufficient';
@@ -75,7 +78,8 @@ function frameRole(minutes: V9Resonance['frames'][number]['minutes']): string {
 }
 
 export function ResearchMarkerControls({ options, onChange, flow, markers, barCount, resonance, levels, currentPrice, openingPrice,
-    priceChange, pricePct, reference, toolbar, fibOpen = false, onToggleFib, loading = false }: {
+    priceChange, pricePct, reference, toolbar, fibOpen = false, onToggleFib, loading = false, directionLoading = loading,
+    dataStatus, entryContext, setupEvaluation, vwapEvaluation, macdParams = [45, 117, 17] }: {
     options: ResearchMarkerOptions;
     onChange: (options: ResearchMarkerOptions) => void;
     flow: FlowSnapshot;
@@ -92,12 +96,18 @@ export function ResearchMarkerControls({ options, onChange, flow, markers, barCo
     fibOpen?: boolean;
     onToggleFib?: () => void;
     loading?: boolean;
+    directionLoading?: boolean;
+    dataStatus?: ResearchDataStatus;
+    entryContext?: ResearchEntryContext;
+    setupEvaluation?: ResearchSetupEvaluation;
+    vwapEvaluation?: ResearchVwapEvaluation;
+    macdParams?: readonly [number, number, number];
 }) {
     const [expanded, setExpanded] = useState(false);
     const detailId = useId();
     const toggles = [
-        ['volume', '攻／洗／量背'],
-        ['divergence', '頂／底背'],
+        ['volume', '攻／洗／量價提醒'],
+        ['divergence', '高低點動能提醒'],
         ['trend', '多空線買賣點'],
         ['trendShort', '放空買賣點'],
         ['flow', '大單推估'],
@@ -109,7 +119,18 @@ export function ResearchMarkerControls({ options, onChange, flow, markers, barCo
         ? '尚無已收一分K'
         : new Date(resonance.asOf * 1000).toISOString().slice(5, 16).replace('T', ' ');
     const bias = resonance ? v9MarketBias(resonance) : null;
+    // Callers may distinguish a view-only timeframe load from symbol/source
+    // loading. Without that explicit override, loading remains fail-closed.
+    const decision = useMemo(() => researchDecision(resonance, dataStatus, directionLoading, entryContext),
+        [resonance, dataStatus, directionLoading, entryContext]);
+    const directionAvailable = decision.dataStatus.state === 'fresh' || decision.dataStatus.state === 'closed';
+    const displayFrames = resonance?.frames.map(frame => directionAvailable ? frame : { ...frame, side: 'insufficient' as const });
+    const entryTone = decision.entrySide ?? (decision.entryLabel === '等待資料' ||
+        (decision.dataStatus.state !== 'fresh' && decision.dataStatus.state !== 'closed') ? 'insufficient' : 'neutral');
+    const entryDataLabel = { fresh: '僅研究', closed: '已休市', loading: '載入中', stale: '資料過期', unknown: '資料未確認' }[decision.dataStatus.state];
     const nearest = nearestLevels(levels, currentPrice);
+    const setupDisplay = setupEvaluation && vwapEvaluation
+        ? researchSetupDisplay(setupEvaluation, vwapEvaluation, dataStatus, directionLoading) : undefined;
 
     // 現價漲跌（由 CandleChart 傳入、口徑同 QuoteBoard）。
     const changeTone: 'up' | 'down' | 'flat' =
@@ -131,20 +152,31 @@ export function ResearchMarkerControls({ options, onChange, flow, markers, barCo
 
     return <section className={styles.root} aria-label="V9 研究標記">
         <div className={styles.headline}>
-            <div className={styles.headlineBias[bias?.tone ?? 'insufficient']}>
-                <strong>{bias ? `${bias.arrow} ${bias.label}` : '… 等待資料'}</strong>
-                <span className={styles.headlineMeta}>{loading ? 'K 棒載入中' : `收棒 ${lastClosedBar}`} · 僅研究</span>
+            <div className={styles.decisionSummary} aria-label="盤勢與進場分開判讀">
+                <div className={styles.decisionBadge[decision.background.tone]} aria-label="高週期背景">
+                    <span className={styles.decisionRole}>高週期 · 60分＋日K</span>
+                    <strong>{decision.background.arrow} {decision.background.label}</strong>
+                </div>
+                <div className={styles.decisionBadge[decision.shortTerm.tone]} aria-label="短線方向">
+                    <span className={styles.decisionRole}>短線 · 1分＋5分</span>
+                    <strong>{decision.shortTerm.arrow} {decision.shortTerm.label}</strong>
+                </div>
+                <button type="button" className={`${styles.decisionBadge[entryTone]} ${styles.decisionEntry}`}
+                    aria-label="進場狀態" aria-expanded={expanded} aria-controls={detailId}
+                    onClick={() => setExpanded(value => !value)} title={decision.reasons.join('｜')}>
+                    <span className={styles.decisionRole}>進場 · {entryDataLabel}</span>
+                    <strong>{decision.entryLabel}</strong>
+                </button>
+                {setupDisplay && <button type="button" className={`${styles.decisionBadge[setupDisplay.tone]} ${styles.decisionEntry}`}
+                    aria-label="獨立型態研究" aria-expanded={expanded} aria-controls={detailId}
+                    onClick={() => setExpanded(value => !value)} title={setupDisplay.detail}>
+                    <span className={styles.decisionRole}>型態 · 已收5分 · 獨立研究</span>
+                    <strong>{setupDisplay.label}</strong>
+                </button>}
             </div>
             <div className={styles.regimeQuote}>
                 <strong className={styles.regimePrice}>{priceText(currentPrice)}</strong>
                 <span className={styles.regimeChg[changeTone]}>{changeText}</span>
-            </div>
-            <div className={styles.frameBadges} aria-label="週期方向摘要">
-                {resonance?.frames.map(frame => <span key={frame.minutes}
-                    className={styles.frameBadge[frame.side]}
-                    title={`${frameRole(frame.minutes)} · ${frame.score === undefined ? `${frame.bars}/${frame.requiredBars} 根` : `強度 ${frame.score.toFixed(0)}`}`}>
-                    <span>{frame.label}</span><strong>{frameSideText(frame.side)}</strong>
-                </span>)}
             </div>
             {reference && reference.length > 0 && <div className={styles.regimeReferenceItems}>
                 {reference.map(item => <span key={item.key}
@@ -157,20 +189,41 @@ export function ResearchMarkerControls({ options, onChange, flow, markers, barCo
                 onClick={() => setExpanded(value => !value)}>{expanded ? '收合詳情 ▴' : '圖層／詳情 ▾'}</button>
         </div>
         <div id={detailId} className={styles.detailsPanel} hidden={!expanded}>
+        {setupDisplay && setupEvaluation && vwapEvaluation && <div className={styles.decisionReasons} aria-label="第一階段型態研究說明">
+            <strong>{setupDisplay.label}</strong><span>{setupDisplay.detail}</span>
+            <p>VWAP：固定已收一分K的 (高＋低＋收)/3 × 成交量累計近似；不是逐筆精確成交均價。股票每日09:00起算；期貨日夜盤分開，夜盤跨午夜不重設。</p>
+            <p>資料：{vwapEvaluation.reason}。{vwapEvaluation.status === 'ready' && setupEvaluation.vwap !== undefined
+                ? `已收棒VWAP ${priceText(setupEvaluation.vwap)}` : '資料不完整時不顯示完整時段均價、不確認型態。'}</p>
+            <p>型態固定使用5分EMA3／8（沿用已載背景連續計算，不是1分圖的EMA讀值），候選只觀察本時段。順勢回踩：先有兩根同側且EMA3／8同向的已收5分K，再回踩EMA8但維持VWAP同側；之後最多三根收盤突破回踩棒高／低才研究確認。站回後失守／跌破後站回：原在一側、收盤穿越VWAP、三根內又收回原側才確認。失效或逾期取消，歷史確認不重複當新觸發。</p>
+            {setupDisplay.label === setupEvaluation.label && setupEvaluation.confirmedAt !== undefined && <p>確認時間 {new Date(setupEvaluation.confirmedAt * 1000).toISOString().slice(5, 16).replace('T', ' ')}；不回填到回踩低／高點。</p>}
+            <p>兩套型態獨立觀察，不合併原共振權重或進場門檻；不是買賣許可，未驗證獲利。缺分鐘可能是無成交或來源缺資料，本版不補造也不自動下載。</p>
+        </div>}
+        <div className={styles.decisionReasons} aria-label="等待或不可確認的原因">
+            <strong>{decision.entryLabel}</strong>
+            <span>{loading ? 'K 棒載入中' : `最後收棒 ${lastClosedBar}`} · 僅研究、不下單</span>
+            {decision.entryChecks.length > 0 && <ul className={styles.entryChecklist} aria-label="研究進場缺項檢核">
+                {decision.entryChecks.map(check => <li key={check.id} className={styles.entryCheck[check.state]}>
+                    <strong>{check.state === 'pass' ? '✓ 已成立' : check.state === 'missing' ? '… 缺資料' : '○ 等待'}</strong>
+                    <span>{check.label} · {check.detail}</span>
+                </li>)}
+            </ul>}
+            <ul>{decision.reasons.filter(reason => !decision.entryChecks.some(check => check.detail === reason))
+                .map(reason => <li key={reason}>{reason}</li>)}</ul>
+        </div>
         {resonance && bias && <div className={styles.overview} aria-label="目前盤勢總覽">
-            <div className={styles.directionCard[bias.tone]}>
-                <span className={styles.eyebrow}>目前盤勢</span>
-                <strong className={styles.directionValue}><span aria-hidden="true">{bias.arrow}</span> {bias.label}</strong>
-                <span className={styles.directionNote}>V9 共振 · {resonance.summary}</span>
+            <div className={styles.directionCard[directionAvailable ? bias.tone : 'insufficient']}>
+                <span className={styles.eyebrow}>四週期票數（不代表可進場）</span>
+                <strong className={styles.directionValue}>{directionAvailable ? `${bias.arrow} ${bias.label}` : '… 判讀暫停'}</strong>
+                <span className={styles.directionNote}>V9 共振 · {directionAvailable ? resonance.summary : decision.entryLabel}</span>
                 <span className={styles.directionNote}>最後收棒 {lastClosedBar}</span>
             </div>
             <div className={styles.frameGrid} aria-label="V9 四週期方向">
-                {resonance.frames.map(frame => <div key={frame.minutes}
+                {displayFrames?.map(frame => <div key={frame.minutes}
                     className={styles.frameCard[frame.side]}
                     aria-label={`${frameRole(frame.minutes)} ${frame.label} ${frameSideText(frame.side)}`}>
                     <span className={styles.frameName}>{frameRole(frame.minutes)} · {frame.label}</span>
                     <strong className={styles.frameDirection}>{frameSideText(frame.side)}</strong>
-                    <span className={styles.frameMeta}>{frame.score !== undefined
+                    <span className={styles.frameMeta}>{directionAvailable && frame.score !== undefined
                         ? `強度 ${frame.score.toFixed(0)}`
                         : `${frame.bars}/${frame.requiredBars} 根`}</span>
                 </div>)}
@@ -199,6 +252,13 @@ export function ResearchMarkerControls({ options, onChange, flow, markers, barCo
                 </div>
             </div>
         </div>}
+        <details className={styles.formulaSources}>
+            <summary>公式來源與參數</summary>
+            <p>副圖：收盤價 MACD({macdParams.join(',')})；主圖 EMA3／EMA8、KDJ(45,9,9)、ATR(14,2) 預設不變。副圖可自訂參數，以指標設定為準。</p>
+            <p>綜合方向：加權價 (高＋低＋2×收)/4 的 MACD(45,117,17) ＋ RSI／KDJ，權重為 MACD 30%、RSI 35%、KDJ 35%，再以 EMA3 平滑。即使 MACD 參數相同，價格來源與組合公式仍不同，副圖轉折與共振分數不一定同步。</p>
+            <p>背景只讀 60分＋日K；短線只讀 1分＋5分。55 以上偏多、45 以下偏空，其間中性，沿用原門檻。方向同向後，固定檢核已收5分K的 EMA3／EMA8、ATR(14,2)有效防守與最新 SuperTrend(10,3)翻轉；切圖不改檢核週期。</p>
+            <p>既有指標的研究檢核，非正式進場策略。研究觸發多／空不是可下單、不是已驗證勝率，不改動正式交易公式、成本或風控。</p>
+        </details>
         {pivot && <div className={styles.pivotCard} aria-label="樞紐開盤落點盤前提示">
             <div className={styles.levelHeader}>
                 <span className={styles.eyebrow}>樞紐開盤落點（盤前計畫／獨立預警）</span>
@@ -258,8 +318,10 @@ export function ResearchMarkerControls({ options, onChange, flow, markers, barCo
             <details className={styles.help}>
                 <summary>判讀說明</summary>
                 <div className={styles.explanation}>
-                    <p>攻／洗／量背在成交量區；頂背／底背與大單推估在主圖。數字為目前載入資料的顯示標記數，非視窗內數量。精簡依圖寬減量，量能標記優先保留「攻」、其次「洗」；放大或切「全部標記」可看完整條件。</p>
-                    <p>K 棒型態只使用已收棒的原始 OHLC，切換平均 K 不改計算。背離固定採 20 根比較窗、KDJ(45,9,9) 與加權 MACD(45,117,17)，至少需 153 根有效 K 棒；與可自訂參數的副圖分開計算。</p>
+                    <p>攻／洗／量價提醒在成交量區；高低點動能提醒與大單推估在主圖。數字為目前載入資料的顯示標記數，非視窗內數量。精簡依圖寬減量，量能標記優先保留「攻」、其次「洗」；放大或切「全部標記」可看完整條件。</p>
+                    <p>高點力道不足：價格到近 20 根區間高點，但 KDJ 或 MACD 動能未達同窗最強。低點動能改善：價格到區間低點，但 KDJ 或 MACD 未跟著降到同窗最弱；「改善」是與區間最低動能比較，不保證逐根回升。</p>
+                    <p>高點量未跟：價格到區間高點，但成交量未達同窗最大。低點量未縮：價格到區間低點，但成交量高於同窗最小；不是說比上一根放量，也不代表賣壓耗盡。量價比較窗為近 20 根，未滿時只讀已載入資料；「攻／洗」符合時優先顯示。</p>
+                    <p>這四種文字都是價格與動能／成交量不同步的提醒，不代表已反轉，也不是直接買賣訊號。只使用已收棒的原始 OHLC，切換平均 K 不改計算。動能提醒固定採 20 根比較窗、KDJ(45,9,9) 與加權 MACD(45,117,17)，至少需 153 根有效 K 棒；與可自訂參數的副圖分開計算。</p>
                     <p>大單：前 20～120 筆真實整股／期貨成交量均值 ×3，最低 5 單位；未知方向只入基準、不投買賣票。以同根 K 的合格買賣量差判斷，未收棒仍會變。換股票或交易時段重新暖機，重新整理不保留 Tick。</p>
                     <p>多空線買賣點：依 SuperTrend（ATR 週期 10、倍數 3，與 V9 預設多空趨勢線相同）翻轉，綠「買」為收盤站上軌道、由空翻多，紅「平」為收盤跌破軌道、由多翻空，代表只做多的進出場研究位置；標記落在已收棒，盤中未收棒會變，若你自訂多空線參數，標記尚未連動。</p>
                     <p>放空買賣點：同一組 SuperTrend 翻轉的做空側，紅「賣」為由多翻空（開空），綠「補」為由空翻多（回補空單）。與做多側同時開啟時，同一翻轉點會合併顯示「平·賣」（翻空：平多並開空）與「買·補」（翻多：回補空單並做多）。台股現股放空有券與平盤以下不得放空等限制，期貨方可雙向；此為研究位置、非自動訊號。</p>
@@ -274,9 +336,9 @@ export function ResearchMarkerControls({ options, onChange, flow, markers, barCo
         </div>
         <div className={styles.status}>
             <span>{loading ? 'K 棒載入中' : `已收棒 ${barCount} 根`}</span>
-            {!loading && barCount < 153 && <span>背離暖機 {barCount}/153</span>}
+            {!loading && barCount < 153 && <span>動能提醒資料準備中 {barCount}/153</span>}
             {!loading && barCount >= 153 && !markers.some(marker => marker.group === 'divergence')
-                && options.divergence && <span>背離：目前無顯示標記</span>}
+                && options.divergence && <span>高低點動能：目前無顯示提醒</span>}
             <span>{researchFlowStatus(flow)}</span>
             {lastTick && <span>末筆 {lastTick}</span>}
             <span>僅研究 · 不下單</span>
