@@ -12,6 +12,7 @@ import {
   createFakeGateway,
   createSpyRepository,
   credentials,
+  FAKE_FRAME,
   SENTINEL,
   validPlan,
 } from "./service-fakes";
@@ -515,6 +516,45 @@ describe("永豐金證券 API Key 申請精靈 service（記憶體 repository + 
       expect(status.error?.message).toContain("到永豐金證券官網刪除該組 Key");
       expect(fake.open.size).toBe(0);
       expect(await persisted()).toBeNull();
+    });
+  });
+
+  describe("播放窗畫面", () => {
+    it("流程中給畫面；進入 creating 起（成功視窗會顯示 Secret）一律不給，也不續期", async () => {
+      fake.state.loginOutcome = "logged_in";
+      const service = makeService();
+      expect(await service.liveFrame()).toBeNull();
+
+      await service.start(credentials);
+      const before = await session();
+      expect(await service.liveFrame()).toBe(FAKE_FRAME);
+      // 只讀：看畫面不算流程有動靜，不 connect、不寫 repository。
+      expect(fake.count("connect")).toBe(0);
+      expect(await session()).toEqual(before);
+
+      await toCreating(service);
+      expect(await service.liveFrame()).toBeNull();
+      const release = fake.hold("createKey");
+      const creating = service.createKey(true);
+      await vi.waitFor(() => expect(fake.events).toContain("createKey"));
+      expect(await service.liveFrame()).toBeNull();
+      release();
+      await creating;
+      expect(await service.liveFrame()).toBeNull();
+    });
+
+    it("擷圖期間流程進入 creating：擷到的那一格也丟掉", async () => {
+      const service = makeService({
+        gateway: {
+          ...fake.gateway,
+          async capture() {
+            await patchSession({ step: "creating" });
+            return FAKE_FRAME;
+          },
+        },
+      });
+      await service.start(credentials);
+      expect(await service.liveFrame()).toBeNull();
     });
   });
 

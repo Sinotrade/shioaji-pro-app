@@ -30,6 +30,9 @@ export const credentials = {
   password: SENTINEL.password,
 };
 
+/** 假播放窗畫面：JPEG 的 SOI／EOI 標記夾一個位元組。 */
+export const FAKE_FRAME = new Uint8Array([0xff, 0xd8, 0x2a, 0xff, 0xd9]);
+
 export function validPlan(): OnboardingPlan {
   return {
     name: "tw-fin-hub",
@@ -173,6 +176,9 @@ export function createFakeGateway() {
         );
       }
       return session(sessionId);
+    },
+    async capture(sessionId) {
+      return open.has(sessionId) ? FAKE_FRAME : null;
     },
   };
 

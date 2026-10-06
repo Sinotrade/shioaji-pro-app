@@ -5,9 +5,10 @@
 import { useRef, useState, type ReactNode } from 'react';
 import * as styles from '../onboarding-setup.css';
 import { AmbientBackdrop } from './ambient-backdrop';
+import { LIVE_DEFAULT_WIDTH, LivePlayer } from './live-player';
 import * as glassStyles from './login-glass.css';
 import { LoginPane, ModeSwitch, type LoginMode } from './mode-switch';
-import { SinopacWizard, type SinopacWizardProps } from './sinopac-wizard';
+import { SinopacWizard, type BrowserActivity, type SinopacWizardProps } from './sinopac-wizard';
 import { usePointerParallax } from './use-pointer-parallax';
 
 export interface DevLoginProps {
@@ -24,6 +25,11 @@ export interface DevLoginProps {
 export default function DevLogin({ mode, setMode, startWithKeys, switchToApiKey, form, agent }: DevLoginProps) {
     const shellRef = useRef<HTMLDivElement>(null);
     const [locked, setLocked] = useState(false);
+    const [browser, setBrowser] = useState<BrowserActivity>('off');
+    // 放在這裡：登入失敗重試時按鈕會消失再出現，使用者打開過、拉過的大小都維持
+    const [liveOpen, setLiveOpen] = useState(false);
+    const [liveWidth, setLiveWidth] = useState(LIVE_DEFAULT_WIDTH);
+    const live = mode === 'account' && browser !== 'off';
     usePointerParallax(shellRef);
 
     return (
@@ -38,12 +44,16 @@ export default function DevLogin({ mode, setMode, startWithKeys, switchToApiKey,
 
                     <ModeSwitch value={mode} onChange={setMode} disabled={locked && mode === 'account'} />
                     <LoginPane id='account' value={mode}>
-                        <SinopacWizard onKeysReady={startWithKeys} onUseApiKey={switchToApiKey} onLockedChange={setLocked} />
+                        <SinopacWizard onKeysReady={startWithKeys} onUseApiKey={switchToApiKey} onLockedChange={setLocked} onBrowserChange={setBrowser} />
                     </LoginPane>
                     <LoginPane id='apikey' value={mode}>
                         {form}
                     </LoginPane>
                 </div>
+
+                {/* 只在本機瀏覽器開著時出現，平常的登入畫面不變；固定在右下角，不佔版面。
+                    DOM 放在兩張卡片之間，Tab 順序是精靈 → 即時畫面 → AI 助理 */}
+                {live && <LivePlayer working={browser === 'working'} open={liveOpen} onOpenChange={setLiveOpen} width={liveWidth} onWidthChange={setLiveWidth} />}
 
                 {/* DEV keeps the right column even without the closed agent
                     module, so the two-column layout can be previewed in a

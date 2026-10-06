@@ -59,7 +59,11 @@ export interface SinopacWizardProps {
     onUseApiKey: () => void;
     /** 完成畫面顯示著只出現一次的 Secret、使用者還沒確認已保存時為 true。 */
     onLockedChange?: (locked: boolean) => void;
+    /** 本機瀏覽器的狀態，給播放窗用：working 正在操作官網、waiting 停在官網等使用者輸入、off 沒有可看的畫面。 */
+    onBrowserChange?: (browser: BrowserActivity) => void;
 }
+
+export type BrowserActivity = 'off' | 'waiting' | 'working';
 
 // Vite 熱更新替換這個模組時，舊元件的卸載不是使用者離開：不取消流程、不丟金鑰。
 let hotDisposed = false;
@@ -105,7 +109,7 @@ function Skeleton() {
     );
 }
 
-export function SinopacWizard({ onKeysReady, onUseApiKey, onLockedChange }: SinopacWizardProps) {
+export function SinopacWizard({ onKeysReady, onUseApiKey, onLockedChange, onBrowserChange }: SinopacWizardProps) {
     const [probe, setProbe] = useState<'checking' | 'ready' | 'unavailable'>('checking');
     const [status, setStatus] = useState<OnboardingStatus | null>(null);
     const [busy, setBusy] = useState('');
@@ -500,6 +504,11 @@ export function SinopacWizard({ onKeysReady, onUseApiKey, onLockedChange }: Sino
         if (held && held !== document.body && (!root.contains(held) || !(held as HTMLInputElement).disabled)) return;
         root.querySelector<HTMLElement>('[data-primary], button[type="submit"]')?.focus({ preventScroll: true });
     }, [isBusy]);
+
+    // creating 起不播：永豐金證券的成功視窗會顯示 Secret Key（伺服器端也同樣不給畫面）。
+    const onSite = ACTIVE_STEPS.includes(step) && step !== 'creating';
+    const browser: BrowserActivity = isBusy && (onSite || step === 'login') ? 'working' : onSite ? 'waiting' : 'off';
+    useEffect(() => onBrowserChange?.(browser), [browser]);
 
     if (probe === 'unavailable')
         return (

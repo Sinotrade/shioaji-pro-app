@@ -78,4 +78,6 @@ export interface OnboardingBrowserGateway {
   launch(options: { keepAliveMs: number }): Promise<OnboardingSession>;
   /** 找不到或已逾時的 session 丟 ONBOARDING_SESSION_EXPIRED。 */
   connect(sessionId: string): Promise<OnboardingSession>;
+  /** DEV 播放窗：最上層分頁目前的畫面（JPEG）。不續期、不建 driver；沒有畫面回 null。 */
+  capture?(sessionId: string): Promise<Uint8Array | null>;
 }

@@ -181,6 +181,10 @@ Chrome 代為完成永豐金證券的 API Key 申請（設計與限制見
   路徑；`SINOPAC_HEADLESS=0` 會顯示瀏覽器視窗（預設 headless）。
 - Tauri dev shell 尚未驗證；目前只在瀏覽器 dev 模式實測過。
 - 申請成功後金鑰寫入專案根目錄 `.env`：原子寫入（先寫暫存檔再 rename），每次寫入後權限收緊為 0600（既有檔案也會）。OTP 一律由本人輸入。
+- 即時畫面：精靈開始操作官網後，視窗右下角會出現一顆圓形按鈕（預設收合），點開就能看本機 Chrome 此刻在官網上做什麼；機器人正在操作時圖示有藍點。面板左上角的把手可以調整大小（拖曳、點一下切換大小、方向鍵微調），按 Esc 或再按一次按鈕收合。畫面是 MJPEG 串流（`GET /api/sinopac-onboarding/live`），收合就斷線、伺服器停止擷圖；同時只留一位觀看者。
+  - 進入「建立金鑰」後一律不給畫面（伺服器與前端兩邊都擋）：官網的成功視窗會直接顯示 Secret Key。
+  - 畫面是官網的原樣截圖，**含未遮罩的身分證字號、手機、Email、帳號與機器人輸入的內容**，不經 `masking.ts`；只限本機同源頁面讀取。分享螢幕或錄影前請先收合。
+  - 端點要求 `Sec-Fetch-Site: same-origin` 或 `none`，直接用 `curl` 要加 `-H 'Sec-Fetch-Site: none'`。
 - production build 不含此功能：分頁以 `import.meta.env.DEV` 判斷，後端是
   Vite dev-server middleware，`vite build` 不掛載它，bundle 內沒有精靈
   （plugin 模組在載入 Vite 設定時仍會被評估，但不含瀏覽器自動化程式）。

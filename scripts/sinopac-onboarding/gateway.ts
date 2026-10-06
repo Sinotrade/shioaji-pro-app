@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type {
   Browser,
   BrowserContext,
+  CDPSession,
   HTTPRequest,
   LaunchOptions,
   Page,
@@ -178,6 +179,41 @@ function wrap(sessionId: string, entry: Entry): OnboardingSession {
   };
 }
 
+// 播放窗擷圖走分頁自己的 CDP session：page.screenshot() 會持有 context 的擷圖鎖，driver 的 newPage／close 要等它。
+const captureClients = new WeakMap<Page, Promise<CDPSession>>();
+// 原生對話方塊開著時擷圖會卡住（driver 會自行關掉它）；這一格放棄就好，不悶等 45 秒的 protocol timeout。
+const CAPTURE_TIMEOUT_MS = 2_000;
+
+async function captureTopPage(context: BrowserContext): Promise<Uint8Array | null> {
+  // 最後開的分頁在最上層（例如憑證彈窗）。
+  const page = (await context.pages()).filter((p) => !p.isClosed()).at(-1);
+  if (!page) return null;
+  let client = captureClients.get(page);
+  if (!client) {
+    client = page.createCDPSession();
+    captureClients.set(page, client);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const shot = (await client).send("Page.captureScreenshot", {
+      format: "jpeg",
+      quality: 60,
+      optimizeForSpeed: true,
+    });
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), CAPTURE_TIMEOUT_MS);
+    });
+    const result = await Promise.race([shot, timeout]);
+    return result && Buffer.from(result.data, "base64");
+  } catch {
+    // session 已斷（分頁換頁或關閉）：下次重建。
+    captureClients.delete(page);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 關掉所有追蹤中的 flow context（保留 Chrome）；僅供明確收尾與測試，不要掛在 Vite server close／重建上（會殺掉進行中的流程）。 */
 export async function closeAllOnboardingSessions(): Promise<void> {
   await Promise.all(
@@ -220,5 +256,11 @@ export const localOnboardingGateway: OnboardingBrowserGateway = {
     }
     arm(sessionId, entry);
     return wrap(sessionId, entry);
+  },
+
+  // 不 arm：看畫面不算流程有動靜，閒置逾時照常倒數。
+  async capture(sessionId) {
+    const entry = contexts().get(sessionId);
+    return entry && !entry.closing ? captureTopPage(entry.context) : null;
   },
 };

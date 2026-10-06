@@ -1,5 +1,6 @@
 // 申請精靈的 REST 路由（Node 的 req, res, next 介面，掛在 Vite dev server 上）。
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   isTaiwanIdFormat,
   type OnboardingAccountType,
@@ -298,6 +299,43 @@ function readBody(
 
 const JSON_CONTENT_TYPE = /^application\/(?:[a-z0-9.+-]+\+)?json\s*(?:;.*)?$/i;
 
+const forbidden = () =>
+  failure("ONBOARDING_FORBIDDEN_ORIGIN", "拒絕來自其他網站的請求。");
+
+export const LIVE_BOUNDARY = "frame";
+const LIVE_INTERVAL_MS = 300;
+
+/** DEV 播放窗：multipart/x-mixed-replace（MJPEG），<img> 原生就能播；連線關閉才停止擷圖。 */
+async function streamLive(res: ServerResponse, service: OnboardingService) {
+  res.writeHead(200, {
+    "Content-Type": `multipart/x-mixed-replace; boundary=${LIVE_BOUNDARY}`,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    // 畫面含未遮罩的個資（身分證字號、帳號）：其他網站的 <img> 不得嵌入。
+    "Cross-Origin-Resource-Policy": "same-origin",
+  });
+  res.flushHeaders(); // 還沒有流程時不會有畫面，先讓瀏覽器收到標頭
+  let open = true;
+  res.on("close", () => {
+    open = false;
+  });
+  while (open) {
+    // 用戶端沒在讀（中斷點、背景分頁）：丟格，不擷圖也不堆進寫入緩衝
+    const frame = res.writableNeedDrain
+      ? null
+      : await service.liveFrame().catch(() => null);
+    if (frame && open) {
+      // 每格都帶 Content-Length：瀏覽器讀完就畫，不必等下一個 boundary。
+      res.write(
+        `--${LIVE_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`,
+      );
+      res.write(frame);
+      res.write("\r\n");
+    }
+    await sleep(LIVE_INTERVAL_MS);
+  }
+}
+
 export interface OnboardingRouteOptions {
   /** 第一次需要時才載入／建立 service；呼叫端負責快取。 */
   getService: () => Promise<OnboardingService>;
@@ -309,6 +347,8 @@ export interface OnboardingRouteOptions {
 
 export function createOnboardingRouteHandler(options: OnboardingRouteOptions) {
   const limit = options.maxBodyBytes ?? MAX_BODY_BYTES;
+  // 同時只留一位觀看者：前端漏關、HMR 重新掛載或開了第二個分頁，擷圖迴圈都只會有一條，也不會吃光同源的 6 條連線。
+  let viewer: ServerResponse | undefined;
 
   return async function onboardingRoutes(
     req: IncomingMessage,
@@ -336,14 +376,31 @@ export function createOnboardingRouteHandler(options: OnboardingRouteOptions) {
           origin !== `http://${host}` &&
           origin !== `https://${host}`)
       ) {
-        return send(
-          res,
-          403,
-          failure("ONBOARDING_FORBIDDEN_ORIGIN", "拒絕來自其他網站的請求。"),
-        );
+        return send(res, 403, forbidden());
       }
 
       const name = pathname.slice(ONBOARDING_API_PREFIX.length + 1);
+      if (name === "live") {
+        if (req.method !== "GET")
+          return send(
+            res,
+            405,
+            failure("METHOD_NOT_ALLOWED", "不支援這個請求方法。"),
+            { Allow: "GET" },
+          );
+        // <img> 不帶 Origin，改看 Sec-Fetch-Site：只接受同源頁面或直接開網址。沒有這個標頭也拒絕：
+        // 本機檢查擋不住同一台電腦瀏覽器裡的跨站頁面，放行的話它能把正在看的人踢掉（讀不到畫素，CORP 擋著）。
+        const site = req.headers["sec-fetch-site"];
+        if (site !== "same-origin" && site !== "none")
+          return send(res, 403, forbidden());
+        const service = await options.getService();
+        viewer?.destroy();
+        viewer = res;
+        res.on("close", () => {
+          if (viewer === res) viewer = undefined;
+        });
+        return await streamLive(res, service);
+      }
       const entry = Object.hasOwn(ROUTES, name) ? ROUTES[name] : undefined;
       if (!entry) {
         return send(res, 404, failure("NOT_FOUND", "找不到這個路徑。"));

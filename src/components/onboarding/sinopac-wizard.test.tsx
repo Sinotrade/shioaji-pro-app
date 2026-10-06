@@ -684,6 +684,44 @@ describe('error handling', () => {
     });
 });
 
+describe('live player signal', () => {
+    async function mountWith(onBrowserChange: (browser: string) => void) {
+        let view!: ReactTestRenderer;
+        await act(async () => {
+            view = create(createElement(SinopacWizard, { onKeysReady: vi.fn(), onUseApiKey: vi.fn(), onBrowserChange }));
+        });
+        views.push(view);
+        await settle();
+        return view;
+    }
+
+    it('is working while logging in and waiting once the site waits for the user', async () => {
+        let release!: () => void;
+        serve({
+            'GET status': () => json(status('login')),
+            'POST start': () => new Promise<Response>((done) => (release = () => done(json(status('birthday'))))),
+        });
+        const onBrowserChange = vi.fn();
+        const view = await mountWith(onBrowserChange);
+        expect(onBrowserChange).toHaveBeenLastCalledWith('off');
+        await act(async () => {
+            void view.root.findByType(LoginStep).props.onSubmit({ idNumber: FAKE_ID, password: FAKE_PASSWORD });
+        });
+        expect(onBrowserChange).toHaveBeenLastCalledWith('working');
+        await act(async () => release());
+        await settle();
+        expect(onBrowserChange).toHaveBeenLastCalledWith('waiting');
+    });
+
+    it('is off from creating on: the broker shows the secret on that page', async () => {
+        serve({ 'GET status': () => json(status('creating', { keyRequested: true })) });
+        const onBrowserChange = vi.fn();
+        await mountWith(onBrowserChange);
+        expect(onBrowserChange).not.toHaveBeenCalledWith('waiting');
+        expect(onBrowserChange).not.toHaveBeenCalledWith('working');
+    });
+});
+
 describe('busy, status and focus', () => {
     it('shows one status line and a step-1 skeleton while the progress loads', async () => {
         let release!: () => void;

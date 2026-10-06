@@ -745,6 +745,26 @@ export function createOnboardingService(deps: OnboardingDeps) {
     };
   }
 
+  /**
+   * DEV 播放窗的一格畫面。只讀 repository：不 claim、不續期，也不呼叫 status()（它會丟掉逾時的流程）。
+   * 進入 creating 起一律不給：永豐金證券的成功視窗會直接顯示 Secret Key。
+   */
+  async function liveFrame(): Promise<Uint8Array | null> {
+    const viewable = async () => {
+      const session = (await repository.read())?.session;
+      return session?.sessionId &&
+        session.step !== "creating" &&
+        !session.keyRequested
+        ? session.sessionId
+        : null;
+    };
+    const sessionId = await viewable();
+    if (!sessionId || !gateway.capture) return null;
+    const frame = await gateway.capture(sessionId).catch(() => null);
+    // 擷圖期間（最多 2 秒）流程可能已進入 creating：擷完再確認一次。
+    return (await viewable()) === sessionId ? frame : null;
+  }
+
   async function cancel(): Promise<OnboardingStatus> {
     const now = nowMs();
     let target: SessionState | undefined;
@@ -774,6 +794,7 @@ export function createOnboardingService(deps: OnboardingDeps) {
     submitPlan,
     createKey,
     cancel,
+    liveFrame,
   };
 }
 

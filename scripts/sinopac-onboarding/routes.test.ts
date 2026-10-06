@@ -19,6 +19,7 @@ import {
   INVALID_REQUEST_MESSAGE,
   isLoopbackAddress,
   isLoopbackHost,
+  LIVE_BOUNDARY,
   ONBOARDING_API_PREFIX,
 } from './routes';
 import {
@@ -28,7 +29,7 @@ import {
   type OnboardingRepository,
   type OnboardingService,
 } from './service';
-import { createFakeGateway, credentials, SENTINEL, validPlan } from './service-fakes';
+import { createFakeGateway, credentials, FAKE_FRAME, SENTINEL, validPlan } from './service-fakes';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -414,6 +415,68 @@ describe('REST 邊界（真的 http server + 真的 service + 假 gateway）', (
     for (const address of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) expect(isLoopbackAddress(address)).toBe(true);
     for (const address of [undefined, '', '192.168.1.5', '::ffff:192.168.1.5', '10.0.0.1', '127.0.0.1.evil'])
       expect(isLoopbackAddress(address)).toBe(false);
+  });
+
+  it('/live：MJPEG 串流每格帶 Content-Length、禁止跨源嵌入；跨站的 <img>（Sec-Fetch-Site）回 403', async () => {
+    const { base } = await start();
+    expect((await call(base, 'start', credentials)).status).toBe(200);
+    const url = `${base}${ONBOARDING_API_PREFIX}/live`;
+    const get = (site?: string) =>
+      new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
+        const req = http.get(url, { headers: site ? { 'Sec-Fetch-Site': site } : {} }, (res) => {
+          let body = Buffer.alloc(0);
+          res.on('data', (chunk: Buffer) => {
+            body = Buffer.concat([body, chunk]);
+            if (body.includes(Buffer.concat([FAKE_FRAME, Buffer.from('\r\n')]))) req.destroy();
+          });
+          res.on('error', () => undefined); // 收到一格就主動斷線，res 會報 aborted
+          res.on('close', () => resolve({ status: res.statusCode!, headers: res.headers, body }));
+        });
+        req.on('error', reject);
+      });
+
+    const live = await get('same-origin');
+    expect(live.status).toBe(200);
+    expect(live.headers['content-type']).toBe(`multipart/x-mixed-replace; boundary=${LIVE_BOUNDARY}`);
+    expect(live.headers['cross-origin-resource-policy']).toBe('same-origin');
+    expect(live.body.toString('latin1')).toContain(
+      `--${LIVE_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${FAKE_FRAME.length}\r\n\r\n${Buffer.from(FAKE_FRAME).toString('latin1')}\r\n`,
+    );
+    expect((await get('cross-site')).status).toBe(403);
+    expect((await get('same-site')).status).toBe(403);
+    // 不送這個標頭的舊瀏覽器也拒絕：本機檢查擋不住同一台電腦上的跨站頁面
+    expect((await get()).status).toBe(403);
+  });
+
+  it('/live：同時只留一位觀看者，斷線後就停止擷圖', async () => {
+    let frames = 0;
+    const { base } = await start({
+      service: () =>
+        ({
+          liveFrame: async () => {
+            frames += 1;
+            return FAKE_FRAME;
+          },
+        }) as unknown as OnboardingService,
+    });
+    const watch = () =>
+      new Promise<{ req: http.ClientRequest; closed: Promise<void> }>((resolve, reject) => {
+        const req = http.get(`${base}${ONBOARDING_API_PREFIX}/live`, { headers: { 'Sec-Fetch-Site': 'same-origin' } }, (res) => {
+          res.on('error', () => undefined);
+          const closed = new Promise<void>((done) => res.on('close', () => done()));
+          res.once('data', () => resolve({ req, closed }));
+        });
+        req.on('error', reject);
+      });
+
+    const first = await watch();
+    const second = await watch();
+    await first.closed; // 第二位進來，第一條被伺服器關掉
+    second.req.destroy();
+    await delay(100);
+    const settled = frames;
+    await delay(800);
+    expect(frames).toBe(settled);
   });
 
   it('帶 Origin 時必須同源：跨站回 403 且不載入 service；同源或沒帶 Origin 照常處理', async () => {
