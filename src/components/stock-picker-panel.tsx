@@ -10,6 +10,8 @@ import {
     type PickerSide,
 } from '../hooks/use-stock-picker';
 import { fmtPrice } from '../lib/utils/format';
+import { V9_RESEARCH_MODE } from '../lib/workspace';
+import { ResearchDailyBreakoutPanel } from './research-daily-breakout-panel';
 import * as s from './stock-picker-panel.css';
 
 function fmtClock(ts: number) {
@@ -20,7 +22,8 @@ function fmtClock(ts: number) {
 
 export function StockPickerPanel({ onPick }: { onPick: (code: string) => void }) {
     const [side, setSide] = useState<PickerSide>('long');
-    const { rows, regime, loading, error, lastUpdated, refresh } =
+    const [view, setView] = useState<'classic' | 'daily'>('classic');
+    const { rows, dailyRows, regime, loading, error, lastUpdated, refresh } =
         useStockPicker(side);
 
     const regimeCls = regime
@@ -35,9 +38,16 @@ export function StockPickerPanel({ onPick }: { onPick: (code: string) => void })
 
     return (
         <div className={s.wrap}>
-            <div className={s.toolbar}>
+            <div className={s.toolbar} style={V9_RESEARCH_MODE ? { flexWrap: 'wrap' } : undefined}>
                 <span className={s.title}>短線選股</span>
-                <span className={s.poolCount}>{rows.length} 檔</span>
+                <span className={s.poolCount}>{view === 'daily' ? dailyRows.length : rows.length} 檔</span>
+                {V9_RESEARCH_MODE && <span className={s.segWrap}>
+                    <button className={`${s.seg} ${view === 'classic' ? s.segActiveLong : ''}`}
+                        onClick={() => setView('classic')}>原選股</button>
+                    <button className={`${s.seg} ${view === 'daily' ? s.segActiveLong : ''}`}
+                        onClick={() => { setSide('long'); setView('daily'); }}>日K波段</button>
+                </span>}
+                {view === 'classic' && <>
                 <span className={s.segWrap}>
                     <button
                         className={`${s.seg} ${side === 'long' ? s.segActiveLong : ''}`}
@@ -55,8 +65,10 @@ export function StockPickerPanel({ onPick }: { onPick: (code: string) => void })
                 <span className={`${s.regimeBadge} ${regimeCls}`}>
                     {regime ? regime.label : '盤勢 —'}
                 </span>
+                </>}
                 <button
                     className={s.iconBtn}
+                    style={V9_RESEARCH_MODE ? { flexShrink: 0 } : undefined}
                     title="重新整理"
                     onClick={refresh}
                 >
@@ -64,6 +76,8 @@ export function StockPickerPanel({ onPick }: { onPick: (code: string) => void })
                 </button>
             </div>
 
+            {view === 'daily' && V9_RESEARCH_MODE ? <ResearchDailyBreakoutPanel
+                rows={dailyRows} loading={loading} error={error} onPick={onPick} /> : <>
             {lastUpdated && (
                 <div className={s.updatedAt}>
                     最後更新 {fmtClock(lastUpdated)}
@@ -174,6 +188,7 @@ export function StockPickerPanel({ onPick }: { onPick: (code: string) => void })
                     })}
                 </div>
             )}
+            </>}
         </div>
     );
 }

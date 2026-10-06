@@ -4,7 +4,9 @@
 // 另算大盤 IX0001 regime 作為選股 gate。唯讀、不下單。
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { getDailyCandles } from '../lib/daily-candles';
+import { getDailyCandles, readCachedDailyCandles } from '../lib/daily-candles';
+import { dailyBreakoutClosedSource } from '../lib/research-daily-breakout-source';
+import { V9_RESEARCH_MODE } from '../lib/workspace';
 import { ensureContract } from '../lib/contracts-cache';
 import { fetchScanner, fetchSnapshots } from '../lib/shioaji';
 import {
@@ -13,7 +15,7 @@ import {
     type PickerScore,
 } from '../lib/stock-picker';
 import type { ContractInfo } from '../lib/types/contract';
-import type { Snapshot } from '../lib/types/market';
+import type { Candle, Snapshot } from '../lib/types/market';
 import { useWatchlist } from './use-watchlist';
 
 export type PickerSide = 'long' | 'short';
@@ -26,6 +28,11 @@ export interface PickerRow {
     price: number;
     changeRate: number; // %（快照最新）
     volumeRatio: number;
+}
+
+export interface PickerDailyRow {
+    contract: ContractInfo;
+    daily: Candle[]; // provenance/time checked; never the current partial bar
 }
 
 export interface MarketRegime {
@@ -112,6 +119,7 @@ export function useStockPicker(side: PickerSide = 'long') {
         [watchlist],
     );
     const [rows, setRows] = useState<PickerRow[]>([]);
+    const [dailyRows, setDailyRows] = useState<PickerDailyRow[]>([]);
     const [regime, setRegime] = useState<MarketRegime | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -144,10 +152,17 @@ export function useStockPicker(side: PickerSide = 'long') {
                 }
 
                 const out: PickerRow[] = [];
+                const dailyOut = new Map<string, PickerDailyRow>();
                 await Promise.all(
                     pool.map(async (contract) => {
                         try {
                             const daily = await getDailyCandles(contract);
+                            if (V9_RESEARCH_MODE && contract.security_type === 'STK') {
+                                // Reuse this scan's cache; no second history request.
+                                const checkedAt = Date.now();
+                                const checked = await readCachedDailyCandles(contract, { stockRegularCloseOnly: true, nowMs: checkedAt });
+                                dailyOut.set(contract.code, { contract, daily: dailyBreakoutClosedSource(checked, contract, checkedAt) });
+                            }
                             const sc =
                                 side === 'long'
                                     ? scoreStock(daily)
@@ -164,7 +179,10 @@ export function useStockPicker(side: PickerSide = 'long') {
                                     snap?.volume_ratio ?? sc.volumeRatio,
                             });
                         } catch {
-                            /* 單檔失敗略過 */
+                            // The new view retains missing-data stocks rather
+                            // than silently filling TOP5 with unrelated rows.
+                            if (V9_RESEARCH_MODE && contract.security_type === 'STK')
+                                dailyOut.set(contract.code, { contract, daily: [] });
                         }
                     }),
                 );
@@ -176,6 +194,7 @@ export function useStockPicker(side: PickerSide = 'long') {
                         b.score.score - a.score.score,
                 );
                 setRows(out);
+                setDailyRows([...dailyOut.values()].sort((a, b) => a.contract.code.localeCompare(b.contract.code)));
                 setRegime(mktRegime);
                 setError(null);
                 setLastUpdated(Date.now());
@@ -197,5 +216,5 @@ export function useStockPicker(side: PickerSide = 'long') {
         return () => window.clearInterval(id);
     }, []);
 
-    return { rows, regime, loading, error, lastUpdated, refresh };
+    return { rows, dailyRows, regime, loading, error, lastUpdated, refresh };
 }
