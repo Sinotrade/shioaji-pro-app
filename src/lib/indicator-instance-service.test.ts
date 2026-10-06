@@ -76,7 +76,8 @@ describe('IndicatorInstanceService', () => {
         );
         expect(seeded.instances.filter((instance) => instance.type === 'ema').map((instance) => instance.params.period)).toEqual([3, 8]);
         expect(seeded.instances.filter((instance) => instance.type === 'ema').map((instance) => instance.styles?.line?.color)).toEqual(['#ff4d6d', '#f6c94c']);
-        expect(seeded.presetVersion).toBe('v9-research-v4');
+        expect(seeded.presetVersion).toBe('v9-research-v5-macd17');
+        expect(seeded.instances.find(instance => instance.type === 'v9macd')?.params.signal).toBe(17);
         const removed = {
             ...ws,
             blocks: [{ ...ws.blocks[0]!, indicatorState: {
@@ -99,10 +100,10 @@ describe('IndicatorInstanceService', () => {
         const state = ws.blocks[0]!.indicatorState!;
         expect(state.instances.filter((instance) => instance.type === 'ema').map((instance) => instance.params.period)).toEqual([8, 3]);
         expect(state.instances.map((instance) => instance.type)).toEqual(['ema', 'vwap', 'ema']);
-        expect(state.presetVersion).toBe('v9-research-v4');
+        expect(state.presetVersion).toBe('v9-research-v5-macd17');
     });
 
-    it('migrates v3 ATR colors without retuning parameters or restoring deleted layers', () => {
+    it('migrates v3 ATR colors and requested MACD17 without changing ATR or restoring deleted layers', () => {
         const ws = initializeIndicatorPanels({ blocks: [{ id: 'chart-v9', type: 'chart', pin: null,
             indicatorState: { revision: 'v3', presetVersion: 'v9-research-v3', instances: [
                 { id: 'atr', type: 'atrdefense', params: { period: 19, multiplier: 2.5 }, colors: {}, hidden: true },
@@ -112,7 +113,26 @@ describe('IndicatorInstanceService', () => {
         expect(state.instances).toHaveLength(2);
         expect(state.instances[0]).toMatchObject({ hidden: true, params: { period: 19, multiplier: 2.5 },
             styles: { up: { color: '#fb7185', width: 3 }, down: { color: '#4ade80', width: 3 } } });
-        expect(state.instances[1]!.params.signal).toBe(21);
+        expect(state.instances[1]!.params.signal).toBe(17);
+        expect(initializeIndicatorPanels(ws)).toBe(ws);
+    });
+
+    it('migrates only the old 45/117/21 preset and preserves customized or other-panel MACD', () => {
+        const defaults = { id: 'default', type: 'v9macd', params: { fast: 45, slow: 117, signal: 21 }, colors: {}, hidden: true };
+        const custom = { id: 'custom', type: 'v9macd', params: { fast: 30, slow: 90, signal: 21 }, colors: {} };
+        const ws = initializeIndicatorPanels({ blocks: [
+            { id: 'chart-v9', type: 'chart', pin: null, indicatorState: {
+                revision: 'v4', presetVersion: 'v9-research-v4', instances: [defaults, custom],
+            } },
+            { id: 'chart-other', type: 'chart', pin: null, indicatorState: {
+                revision: 'other', instances: [defaults],
+            } },
+        ], layout: [] });
+        const state = ws.blocks[0]!.indicatorState!;
+        expect(state.instances).toHaveLength(2);
+        expect(state.instances[0]).toMatchObject({ hidden: true, params: { fast: 45, slow: 117, signal: 17 } });
+        expect(state.instances[1]!.params).toEqual(custom.params);
+        expect(ws.blocks[1]!.indicatorState!.instances[0]!.params.signal).toBe(21);
         expect(initializeIndicatorPanels(ws)).toBe(ws);
     });
 

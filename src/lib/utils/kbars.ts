@@ -2,7 +2,7 @@
 
 import type { Candle, KBars } from '../types/market';
 import type { SecurityType } from '../types/contract';
-import { sessionWindowFor } from '../intraday-session';
+import { sessionBarBucket } from '../intraday-session';
 
 // kbar datetimes are Taiwan local; encode wall-clock as UTC so the chart
 // axis shows Taiwan session times regardless of viewer timezone.
@@ -48,17 +48,8 @@ export function aggregate(candles: Candle[], minutes: number, securityType: Secu
     if (minutes <= 1) return candles.map(c => ({ ...c }));
     const out: Candle[] = [];
     let cur: Candle | null = null;
-    const bucketSec = minutes * 60;
     for (const c of candles) {
-        const session = sessionWindowFor(securityType, c.time);
-        const bucket = minutes >= 1440
-            ? securityType === 'FUT' || securityType === 'OPT'
-                ? Math.floor((session.night ? session.end - 5 * 3600 : session.start) / 86400) * 86400
-                : Math.floor(c.time / 86400) * 86400
-            : Math.min(
-                session.end,
-                session.start + Math.max(1, Math.ceil((c.time - session.start) / bucketSec)) * bucketSec,
-            );
+        const bucket = sessionBarBucket(securityType, c.time, minutes);
         if (!cur || cur.time !== bucket) {
             if (cur) out.push(cur);
             cur = { ...c, time: bucket };

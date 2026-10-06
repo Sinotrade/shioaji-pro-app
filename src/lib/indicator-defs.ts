@@ -278,13 +278,13 @@ export const INDICATOR_DEFS: IndicatorDef[] = [
         type: 'v9macd',
         label: 'V9 MACD ×8',
         short: 'MACD×8',
-        desc: 'V9 研究版 MACD(45,117,21)，柱狀動能放大 8 倍以利觀察',
+        desc: 'V9 研究版 MACD(45,117,17)，柱狀動能放大 8 倍以利觀察',
         aliases: ['v9 macd', 'macd x8', 'macd×8', 'dif', 'dea'],
         category: 'pane',
         params: [
             { key: 'fast', label: '快線', def: 45, min: 1, max: 100 },
             { key: 'slow', label: '慢線', def: 117, min: 2, max: 200 },
-            { key: 'signal', label: '訊號線', def: 21, min: 1, max: 100 },
+            { key: 'signal', label: '訊號線', def: 17, min: 1, max: 100 },
             { key: 'histScale', label: '柱狀倍數', def: 8, min: 1, max: 20 },
         ],
         outputs: [

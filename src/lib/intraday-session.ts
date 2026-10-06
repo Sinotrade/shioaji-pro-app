@@ -37,6 +37,41 @@ export function sessionWindowFor(
     return { start: d0 + 9 * H, end: d0 + 13.5 * H, night: false };
 }
 
+/** Daily-label date shared by historical bars and live Tick observations.
+ * Futures night + following day share one date; weekends roll forward to
+ * Monday. Exchange holidays still require an authoritative calendar feed.
+ */
+export function tradingDayFor(secType: SecurityType, t: number): number {
+    if (secType === 'FUT' || secType === 'OPT') {
+        const win = sessionWindowFor(secType, t);
+        let day = Math.floor((win.night ? win.end - 5 * H : win.start) / DAY) * DAY;
+        const weekday = new Date(day * 1000).getUTCDay();
+        if (weekday === 6) day += 2 * DAY;
+        else if (weekday === 0) day += DAY;
+        return day;
+    }
+    return Math.floor(t / DAY) * DAY;
+}
+
+/** Bucket an already minute-END-labelled observation using session open as
+ * anchor, not a wall-clock hour. 60m futures day labels are 09:45, 10:45,
+ * ... 13:45, with the last shortened bucket kept at session close.
+ */
+export function sessionBarBucket(secType: SecurityType, time: number, minutes: number): number {
+    if (minutes >= 1440) return tradingDayFor(secType, time);
+    const win = sessionWindowFor(secType, time);
+    const seconds = Math.max(1, minutes) * 60;
+    return Math.min(win.end, win.start + Math.max(1, Math.ceil((time - win.start) / seconds)) * seconds);
+}
+
+/** A date-labelled daily candle is only known at that trading date's day
+ * close. The preceding night ends at 05:00 on this date, not one day later.
+ */
+export function dailyBarConfirmedAt(dayLabel: number, secType: SecurityType = 'STK'): number {
+    const day = Math.floor(dayLabel / DAY) * DAY;
+    return day + ((secType === 'FUT' || secType === 'OPT') ? 13.75 : 13.5) * H;
+}
+
 // every 1-minute bar-label time of a session, for whitespace axis fill
 export function sessionMinutes(win: SessionWindow): number[] {
     const out: number[] = [];

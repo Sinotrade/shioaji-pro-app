@@ -27,6 +27,20 @@ function minBars(from: string, to: string): Candle[] {
 }
 
 describe('aggregate close-label-right', () => {
+    it('combines Friday night and Monday day in one Monday daily candle', () => {
+        const rows = [
+            ...minBars('2026-09-25T15:00:00', '2026-09-25T15:02:00'),
+            ...minBars('2026-09-26T04:58:00', '2026-09-26T05:00:00'),
+            ...minBars('2026-09-28T08:45:00', '2026-09-28T08:47:00'),
+        ];
+        const result = aggregate(rows, 1440, 'FUT');
+        expect(result).toHaveLength(1);
+        expect(result[0]!.time).toBe(t('2026-09-28T00:00:00'));
+        expect(result[0]!.volume).toBe(60);
+        expect(result[0]!.open).toBe(rows[0]!.open);
+        expect(result[0]!.close).toBe(rows.at(-1)!.close);
+    });
+
     it('day-session open: labels 08:46-08:50 form the 08:50 bar', () => {
         const bars = aggregate(
             minBars('2026-08-12T08:45:00', '2026-08-12T08:55:00'),

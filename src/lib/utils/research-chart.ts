@@ -4,7 +4,7 @@
 import type { Candle } from '../types/market';
 import type { SecurityType } from '../types/contract';
 import { v8CompositeTrend, v9AtrDefense } from '../indicators';
-import { sessionWindowFor } from '../intraday-session';
+import { dailyBarConfirmedAt, sessionWindowFor } from '../intraday-session';
 import { aggregate } from './kbars';
 import { researchOpening } from '../research-visuals';
 
@@ -48,43 +48,70 @@ function sessionKey(time: number, securityType: SecurityType): string {
 }
 
 /**
- * Stable research reference levels: prior-day H/L/C plus today's open and
- * opening-range H/L.  These are levels, not trading recommendations.
+ * Stable research reference levels: prior-session H/L/C plus today's open
+ * and a completed opening-range H/L. Input is raw, minute-END-labelled OHLCV,
+ * not the selected display timeframe. These are levels, not ORB signals.
+ * Without an explicit clock the newest valid source bar is the as-of time.
  */
 export function researchLevels(
     rawBars: Candle[],
     openingRangeMinutes = 5,
     securityType: SecurityType = 'STK',
+    now?: number,
 ): ResearchLevel[] {
-    if (rawBars.length === 0) return [];
-    const latestSession = sessionKey(rawBars[rawBars.length - 1]!.time, securityType);
-    const current = rawBars.filter((bar) => sessionKey(bar.time, securityType) === latestSession);
+    // Last valid revision wins; never mutate the source or synthesize a missing
+    // minute. Zero volume with real OHLC may be supplied by the source, but
+    // cannot on its own establish the opening trade (researchOpening below).
+    const byTime = new Map<number, Candle>();
+    for (const bar of rawBars) {
+        if (!(bar.time <= (now ?? Infinity)) || bar.time % 60 !== 0
+            || ![bar.time, bar.open, bar.high, bar.low, bar.close, bar.volume].every(Number.isFinite)
+            || [bar.open, bar.high, bar.low, bar.close].some(price => price <= 0)
+            || bar.volume < 0 || bar.high < Math.max(bar.open, bar.close)
+            || bar.low > Math.min(bar.open, bar.close)) continue;
+        byTime.set(bar.time, bar);
+    }
+    const bars = [...byTime.values()].sort((a, b) => a.time - b.time);
+    const tail = bars.at(-1);
+    if (!tail) return [];
+    const latestSession = sessionKey(tail.time, securityType);
+    const current = bars.filter((bar) => sessionKey(bar.time, securityType) === latestSession);
     if (current.length === 0) return [];
-    const previous = rawBars.filter((bar) => sessionKey(bar.time, securityType) !== latestSession);
+    const previous = bars.filter((bar) => sessionKey(bar.time, securityType) !== latestSession);
     const previousSession = previous.length > 0
         ? sessionKey(previous[previous.length - 1]!.time, securityType)
         : undefined;
     const priorSession = previousSession
         ? previous.filter((bar) => sessionKey(bar.time, securityType) === previousSession)
         : [];
-    const opening = researchOpening(rawBars, securityType);
+    const opening = researchOpening(bars, securityType);
     const openingEnd = (opening?.start ?? 0) + openingRangeMinutes * 60;
-    const range = current.filter((bar) => opening && bar.time >= opening.start && bar.time <= openingEnd);
-    const levels: ResearchLevel[] = opening && range.length ? [
+    const levels: ResearchLevel[] = opening ? [
         { id: 'open', title: '開盤', price: opening.price, kind: 'open' },
-        {
+    ] : [];
+    if (opening && Number.isSafeInteger(openingRangeMinutes) && openingRangeMinutes > 0
+        && openingEnd <= opening.end && openingEnd <= (now ?? tail.time)) {
+        const range: Candle[] = [];
+        // Raw labels are (start, end]: include 09:05, not an auction label at
+        // 09:00 or the 09:06 bar. Sparse/no-trade minutes do not prove a data
+        // outage, but without a supplied bar we cannot certify the full range.
+        for (let time = opening.start + 60; time <= openingEnd; time += 60) {
+            const minute = byTime.get(time);
+            if (!minute) break;
+            range.push(minute);
+        }
+        if (range.length === openingRangeMinutes) levels.push({
             id: 'or-high',
             title: `開盤${openingRangeMinutes}分高`,
             price: Math.max(...range.map((bar) => bar.high)),
             kind: 'opening-range',
-        },
-        {
+        }, {
             id: 'or-low',
             title: `開盤${openingRangeMinutes}分低`,
             price: Math.min(...range.map((bar) => bar.low)),
             kind: 'opening-range',
-        },
-    ] : [];
+        });
+    }
     if (priorSession.length > 0) {
         levels.push(
             {
@@ -147,7 +174,7 @@ export function v9Resonance(
     dailyCandles?: Candle[],
 ): V9Resonance {
     const valid = rawBars.filter(bar =>
-        [bar.time, bar.open, bar.high, bar.low, bar.close].every(Number.isFinite),
+        bar.time <= now && [bar.time, bar.open, bar.high, bar.low, bar.close].every(Number.isFinite),
     ).sort((a, b) => a.time - b.time);
     const closedDaily = (bars: Candle[]): Candle[] =>
         bars
@@ -157,11 +184,7 @@ export function v9Resonance(
                 ),
             )
             .sort((a, b) => a.time - b.time)
-            .filter(bar => {
-                if (securityType === 'FUT' || securityType === 'OPT')
-                    return bar.time + 86400 + 5 * 3600 <= now;
-                return bar.time + 13.5 * 3600 <= now;
-            });
+            .filter(bar => dailyBarConfirmedAt(bar.time, securityType) <= now);
     const frames = V9_RESOLUTION.map(({ minutes, label }): V9ResonanceFrame => {
         // Daily frame is fed from the cached daily-candles feed (~180 calendar
         // days); the radar's 60-day 1-min window can only build ~40 daily bars.
@@ -170,9 +193,7 @@ export function v9Resonance(
                 ? closedDaily(dailyCandles)
                 : aggregate(valid, minutes, securityType).filter(bar => {
                       if (minutes < 1440) return bar.time <= now;
-                      if (securityType === 'FUT' || securityType === 'OPT')
-                          return bar.time + 86400 + 5 * 3600 <= now;
-                      return bar.time + 13.5 * 3600 <= now;
+                      return dailyBarConfirmedAt(bar.time, securityType) <= now;
                   });
         if (bars.length < V9_RESONANCE_REQUIRED_BARS) {
             return { minutes, label, side: 'insufficient', bars: bars.length, requiredBars: V9_RESONANCE_REQUIRED_BARS };

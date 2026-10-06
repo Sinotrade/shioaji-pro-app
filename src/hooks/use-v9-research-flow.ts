@@ -6,8 +6,8 @@ import { V9FlowTracker } from '../lib/utils/v9-chart-markers';
 
 /** Observes the existing shared stream only. It never logs in, subscribes to
  * extra instruments, requests history, or changes the recorder. */
-export function useV9ResearchFlow(code: string, securityType: SecurityType, minutes: number, enabled: boolean) {
-    const tracker = useMemo(() => new V9FlowTracker(securityType), [code, securityType, enabled]);
+export function useV9ResearchFlow(code: string, securityType: SecurityType, minutes: number, enabled: boolean, sourceScope = code) {
+    const tracker = useMemo(() => new V9FlowTracker(securityType), [code, securityType, enabled, sourceScope]);
     const [version, setVersion] = useState(0);
     useEffect(() => {
         if (!enabled) return;

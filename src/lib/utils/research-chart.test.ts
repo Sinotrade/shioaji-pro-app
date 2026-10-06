@@ -1,12 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import type { Candle } from '../types/market';
 import { researchLevels, toHeikinAshi, v9Resonance, v9TrendTint } from './research-chart';
+import { wallClockToUtc } from './kbars';
 
 const bar = (time: number, open: number, high: number, low: number, close: number): Candle => ({
     time, open, high, low, close, volume: 1,
 });
 
 describe('research chart helpers', () => {
+    it('confirms cached futures daily candles at same-date 13:45 and never at the preceding 05:00', () => {
+        const t = wallClockToUtc;
+        const daily = [
+            bar(t('2026-09-30T00:00:00'), 100, 102, 99, 101),
+            bar(t('2026-10-01T00:00:00'), 101, 103, 100, 102),
+        ];
+        const count = (at: string) => v9Resonance([], 'FUT', t(at), daily).frames.find(frame => frame.minutes === 1440)!.bars;
+        expect(count('2026-10-01T05:00:00')).toBe(1);
+        expect(count('2026-10-01T13:44:59')).toBe(1);
+        expect(count('2026-10-01T13:45:00')).toBe(2);
+    });
+
     it('converts raw bars to average candles without mutating the source', () => {
         const raw = [bar(1, 10, 14, 8, 12), bar(2, 12, 16, 11, 15)];
         expect(toHeikinAshi(raw)).toMatchObject([
@@ -24,6 +37,9 @@ describe('research chart helpers', () => {
             bar(d1 + 60, 11, 13, 10, 12),
             bar(d2, 20, 21, 19, 20),
             bar(d2 + 60, 20, 23, 18, 22),
+            bar(d2 + 120, 22, 23, 20, 21),
+            bar(d2 + 180, 21, 22, 19, 20),
+            bar(d2 + 240, 20, 21, 19, 20),
         ]);
         expect(levels).toEqual(expect.arrayContaining([
             { id: 'open', title: '開盤', price: 20, kind: 'open' },
@@ -39,17 +55,122 @@ describe('research chart helpers', () => {
         const daySession = Date.UTC(2026, 8, 17, 8, 46) / 1000;
         const nightStart = Date.UTC(2026, 8, 17, 15, 1) / 1000;
         const afterMidnight = Date.UTC(2026, 8, 18, 1, 1) / 1000;
-        const levels = researchLevels([
+        const raw = [
             bar(daySession, 100, 104, 98, 102),
             bar(nightStart, 105, 108, 103, 106),
+            ...Array.from({ length: 4 }, (_, i) => bar(nightStart + (i + 1) * 60, 106, 107, 104, 106)),
             bar(afterMidnight, 106, 110, 104, 109),
-        ], 5, 'FUT');
+        ];
+        const levels = researchLevels(raw, 5, 'FUT');
         expect(levels).toEqual(expect.arrayContaining([
             { id: 'open', title: '開盤', price: 105, kind: 'open' },
             { id: 'or-high', title: '開盤5分高', price: 108, kind: 'opening-range' },
+            { id: 'or-low', title: '開盤5分低', price: 103, kind: 'opening-range' },
             { id: 'prev-high', title: '昨高', price: 104, kind: 'previous' },
             { id: 'prev-low', title: '昨低', price: 98, kind: 'previous' },
         ]));
+        expect(researchLevels(raw, 5, 'FUT', nightStart + 239).map(level => level.id))
+            .toEqual(['open', 'prev-high', 'prev-low', 'prev-close']);
+        expect(researchLevels(raw.filter(minute => minute.time !== nightStart + 120), 5, 'FUT')
+            .some(level => level.kind === 'opening-range')).toBe(false);
+    });
+
+    it('shows the open early but does not call a forming two-minute range opening5m', () => {
+        const start = wallClockToUtc('2026-10-01T09:00:00');
+        const levels = researchLevels([
+            bar(start + 60, 20, 21, 19, 20),
+            bar(start + 120, 20, 23, 18, 22),
+        ]);
+        expect(levels).toEqual([{ id: 'open', title: '開盤', price: 20, kind: 'open' }]);
+    });
+
+    it('includes the fifth minute and excludes the auction and sixth-minute extremes', () => {
+        const start = wallClockToUtc('2026-10-01T09:00:00');
+        const raw = [
+            bar(start, 20, 999, 1, 20),
+            ...Array.from({ length: 4 }, (_, i) => bar(start + (i + 1) * 60, 21, 22, 19, 21)),
+            bar(start + 300, 21, 28, 17, 25),
+            bar(start + 360, 25, 100, 2, 26),
+        ];
+        expect(researchLevels(raw)).toEqual([
+            { id: 'open', title: '開盤', price: 20, kind: 'open' },
+            { id: 'or-high', title: '開盤5分高', price: 28, kind: 'opening-range' },
+            { id: 'or-low', title: '開盤5分低', price: 17, kind: 'opening-range' },
+        ]);
+        expect(researchLevels(raw, 5, 'STK', start)).toEqual([
+            { id: 'open', title: '開盤', price: 20, kind: 'open' },
+        ]);
+    });
+
+    it('does not certify a missing minute even when later bars and the clock are present', () => {
+        const start = wallClockToUtc('2026-10-01T09:00:00');
+        const raw = [1, 2, 4, 5, 6].map(minute => bar(start + minute * 60, 20, 22, 19, 21));
+        expect(researchLevels(raw, 5, 'STK', start + 600)).toEqual([
+            { id: 'open', title: '開盤', price: 20, kind: 'open' },
+        ]);
+        // No fill is added for a no-trade/missing 09:03; this is not a diagnosis
+        // of disconnection, merely insufficient evidence for a complete range.
+        expect(raw).toHaveLength(5);
+    });
+
+    it('filters future bars before selecting a session or completing the opening range', () => {
+        const start = wallClockToUtc('2026-10-01T09:00:00');
+        const raw = [
+            ...Array.from({ length: 5 }, (_, i) => bar(start + (i + 1) * 60, 20, 22 + i, 19, 21)),
+            bar(start + 86400 + 60, 100, 101, 99, 100),
+        ];
+        const beforeClose = researchLevels(raw, 5, 'STK', start + 299);
+        expect(beforeClose).toEqual([{ id: 'open', title: '開盤', price: 20, kind: 'open' }]);
+        expect(researchLevels(raw, 5, 'STK', start + 300)).toEqual([
+            { id: 'open', title: '開盤', price: 20, kind: 'open' },
+            { id: 'or-high', title: '開盤5分高', price: 26, kind: 'opening-range' },
+            { id: 'or-low', title: '開盤5分低', price: 19, kind: 'opening-range' },
+        ]);
+    });
+
+    it('does not invent an opening from a partial page that begins after the first minute', () => {
+        const start = wallClockToUtc('2026-10-01T09:00:00');
+        const raw = [2, 3, 4, 5, 6].map(minute => bar(start + minute * 60, 20, 22, 19, 21));
+        expect(researchLevels(raw)).toEqual([]);
+    });
+
+    it('rejects a zero-volume opening but accepts an explicitly supplied later zero-volume minute', () => {
+        const start = wallClockToUtc('2026-10-01T09:00:00');
+        const raw = Array.from({ length: 5 }, (_, i) => bar(start + (i + 1) * 60, 20, 22, 19, 21));
+        expect(researchLevels([
+            { ...bar(start, 20, 21, 19, 20), volume: 0 },
+            ...raw.map((minute, i) => i === 0 ? { ...minute, volume: 0 } : minute),
+        ])).toEqual([]);
+        const withObservedZero = raw.map((minute, i) => i === 2 ? { ...minute, volume: 0 } : minute);
+        expect(researchLevels(withObservedZero).map(level => level.id)).toEqual(['open', 'or-high', 'or-low']);
+    });
+
+    it('cleans, sorts and deduplicates raw minutes without mutating them or counting invalid revisions', () => {
+        const start = wallClockToUtc('2026-10-01T09:00:00');
+        const raw = [
+            ...Array.from({ length: 5 }, (_, i) => bar(start + (5 - i) * 60, 20, 22, 19, 21)),
+            bar(start + 180, 20, 26, 18, 21),
+            { ...bar(start + 180, 20, 99, 1, 21), volume: NaN },
+            bar(start + 86400 + 60, 100, 99, 98, 100),
+            { ...bar(start + 86400 + 120, 100, 101, 99, 100), volume: -1 },
+            bar(start + 86400 + 180, 0, 0, 0, 0),
+            bar(start + 86400 + 181, 100, 101, 99, 100),
+            bar(NaN, 100, 101, 99, 100),
+        ];
+        const before = raw.map(minute => ({ ...minute }));
+        expect(researchLevels(raw)).toEqual([
+            { id: 'open', title: '開盤', price: 20, kind: 'open' },
+            { id: 'or-high', title: '開盤5分高', price: 26, kind: 'opening-range' },
+            { id: 'or-low', title: '開盤5分低', price: 18, kind: 'opening-range' },
+        ]);
+        expect(raw).toEqual(before);
+    });
+
+    it('uses futures day minute-END labels 08:46 through 08:50 for the completed5m range', () => {
+        const start = wallClockToUtc('2026-10-01T08:45:00');
+        const raw = Array.from({ length: 5 }, (_, i) => bar(start + (i + 1) * 60, 100, 102, 99, 101));
+        expect(researchLevels(raw, 5, 'FUT', start + 299).map(level => level.id)).toEqual(['open']);
+        expect(researchLevels(raw, 5, 'FUT', start + 300).map(level => level.id)).toEqual(['open', 'or-high', 'or-low']);
     });
 
     it('labels incomplete multi-timeframe sources instead of inventing V9 resonance', () => {

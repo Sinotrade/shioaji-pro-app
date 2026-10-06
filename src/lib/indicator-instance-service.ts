@@ -13,7 +13,7 @@ export class IndicatorControlError extends Error {
 }
 const copy = <T,>(value: T): T => structuredClone(value);
 const EMPTY: IndicatorPanelState = { revision: '', instances: [] };
-const V9_RESEARCH_PRESET = 'v9-research-v4';
+const V9_RESEARCH_PRESET = 'v9-research-v5-macd17';
 
 function researchEma(period: number, color: string): IndicatorInstance {
     const instance = newInstance('ema');
@@ -91,9 +91,14 @@ export function initializeIndicatorPanels(workspace: Workspace): Workspace {
         if (shouldSeedV9) {
             // v2 already seeded the other research layers. Add only EMA3 so
             // intentionally removed indicators and tuned settings stay untouched.
-            instances = old?.presetVersion === 'v9-research-v3' ? instances
+            instances = old?.presetVersion === 'v9-research-v3' || old?.presetVersion === 'v9-research-v4' ? instances
                 : old?.presetVersion === 'v9-research-v2' ? addV9Ema3(instances)
                     : mergeV9ResearchInstances(instances);
+            // User explicitly requested 45/117/17. Migrate only the previous
+            // 45/117/21 research preset; preserve other custom parameters.
+            instances = instances.map(instance => (instance.type === 'v9macd' || instance.type === 'macd')
+                && hasParams(instance, { fast: 45, slow: 117, signal: 21 })
+                ? { ...instance, params: { ...instance.params, signal: 17 } } : instance);
             instances = instances.map(instance => instance.type === 'atrdefense' ? {
                 ...instance, styles: { ...instance.styles,
                     up: { ...instance.styles?.up, color: '#fb7185', width: 3, plot: 'step' },

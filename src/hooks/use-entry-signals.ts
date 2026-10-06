@@ -9,15 +9,31 @@ import {
     type EntrySignal,
     type ShortSignal,
 } from '../lib/stock-picker';
-import type { ContractBase } from '../lib/types/contract';
+import type { ContractBase, SecurityType } from '../lib/types/contract';
+import type { Candle } from '../lib/types/market';
+import { completedResearchBars } from '../lib/utils/v9-chart-markers';
+import { nowWallClockUtc } from '../lib/utils/kbars';
 
 export interface EntrySignalsSet {
     long: EntrySignal[];
     short: ShortSignal[];
 }
 
+const EMPTY_ENTRY_SIGNALS: EntrySignalsSet = { long: [], short: [] };
+
+/** Freeze the eligible daily set at load time. A morning partial candle must
+ * not be promoted to 'confirmed' merely because the local clock reaches
+ * 13:30/13:45; a subsequent explicit load must first supply the closed data.
+ * The scoring formulas and automatic-fetch cadence remain unchanged.
+ */
+export function confirmedDailySignals(daily: Candle[], securityType: SecurityType, now: number): EntrySignalsSet {
+    const completed = completedResearchBars(daily, 1440, now, securityType);
+    return { long: collectEntrySignals(completed), short: collectShortSignals(completed) };
+}
+
 export function useEntrySignals(contract: ContractBase): EntrySignalsSet {
-    const [signals, setSignals] = useState<EntrySignalsSet>({
+    const [signals, setSignals] = useState<EntrySignalsSet & { key: string }>({
+        key: '',
         long: [],
         short: [],
     });
@@ -25,13 +41,13 @@ export function useEntrySignals(contract: ContractBase): EntrySignalsSet {
 
     useEffect(() => {
         let cancelled = false;
-        setSignals({ long: [], short: [] });
-        getDailyCandles(contract)
+        setSignals({ key, long: [], short: [] });
+        getDailyCandles(contract, { completedOnly: true })
             .then((daily) => {
                 if (!cancelled)
                     setSignals({
-                        long: collectEntrySignals(daily),
-                        short: collectShortSignals(daily),
+                        key,
+                        ...confirmedDailySignals(daily, contract.security_type, nowWallClockUtc()),
                     });
             })
             .catch(() => undefined);
@@ -40,5 +56,5 @@ export function useEntrySignals(contract: ContractBase): EntrySignalsSet {
         };
     }, [key, contract]);
 
-    return signals;
+    return signals.key === key ? signals : EMPTY_ENTRY_SIGNALS;
 }

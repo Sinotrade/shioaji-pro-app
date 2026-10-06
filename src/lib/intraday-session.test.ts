@@ -6,10 +6,42 @@ import {
     sessionMinutes,
     sessionWindowFor,
     tickBucket,
+    tradingDayFor,
+    sessionBarBucket,
+    dailyBarConfirmedAt,
 } from './intraday-session';
 import { wallClockToUtc } from './utils/kbars';
 
 const t = (s: string) => wallClockToUtc(s);
+
+describe('shared research session labels', () => {
+    it('keeps night, midnight and following day in one futures daily label', () => {
+        for (const time of ['2026-10-01T15:01:00', '2026-10-02T00:01:00', '2026-10-02T05:00:00', '2026-10-02T08:46:00']) {
+            expect(tradingDayFor('FUT', t(time))).toBe(t('2026-10-02T00:00:00'));
+        }
+        expect(tradingDayFor('STK', t('2026-10-01T09:01:00'))).toBe(t('2026-10-01T00:00:00'));
+    });
+
+    it('rolls Friday night and Saturday tail forward to Monday without reading future bars', () => {
+        for (const time of ['2026-09-25T15:01:00', '2026-09-26T04:59:00', '2026-09-28T08:46:00']) {
+            expect(tradingDayFor('FUT', t(time))).toBe(t('2026-09-28T00:00:00'));
+            expect(tradingDayFor('OPT', t(time))).toBe(t('2026-09-28T00:00:00'));
+        }
+    });
+
+    it('anchors futures hourly buckets at 08:45 and keeps exact close boundaries', () => {
+        expect(sessionBarBucket('FUT', t('2026-10-01T08:46:00'), 60)).toBe(t('2026-10-01T09:45:00'));
+        expect(sessionBarBucket('FUT', t('2026-10-01T09:45:00'), 60)).toBe(t('2026-10-01T09:45:00'));
+        expect(sessionBarBucket('FUT', t('2026-10-01T09:46:00'), 60)).toBe(t('2026-10-01T10:45:00'));
+        expect(sessionBarBucket('FUT', t('2026-10-02T05:00:00'), 60)).toBe(t('2026-10-02T05:00:00'));
+    });
+
+    it('confirms the daily label at its own day close, not next-day 05:00', () => {
+        const label = t('2026-10-02T00:00:00');
+        expect(dailyBarConfirmedAt(label, 'FUT')).toBe(t('2026-10-02T13:45:00'));
+        expect(dailyBarConfirmedAt(label, 'STK')).toBe(t('2026-10-02T13:30:00'));
+    });
+});
 
 describe('sessionWindowFor', () => {
     it('stock bars map to the 09:00–13:30 window of their day', () => {
