@@ -69,7 +69,7 @@ export function useMarketReplay(contract: ContractBase): MarketReplay {
     // Load kbars (warm-up + replay day) and the day's aggressor ticks.
     useEffect(() => {
         if (!enabled) return;
-        const key = `${contract.code}|${date}`;
+        const key = JSON.stringify([contract.security_type, contract.exchange, contract.code, contract.target_code, date]);
         loadedKeyRef.current = key;
         let cancelled = false;
         setStatus('loading');
@@ -156,7 +156,8 @@ export function useMarketReplay(contract: ContractBase): MarketReplay {
     return {
         enabled, date, playing, speed, visibleTime, status, error,
         rawCandles, trades, dayStart, dayEnd,
-        hasData: status === 'ready',
+        hasData: status === 'ready' && loadedKeyRef.current === JSON.stringify([
+            contract.security_type, contract.exchange, contract.code, contract.target_code, date]),
         enable, disable, togglePlay, setSpeed, seek, setDate, prevDay, nextDay,
     };
 }

@@ -134,6 +134,7 @@ export function useRadar(contracts: ContractInfo[]) {
                 try {
                     const daily = await getDailyCandles(contract, {
                         calendarDays: DAILY_LOOKBACK,
+                        completedOnly: true,
                     });
                     setDailyByCode((prev) => ({
                         ...prev,

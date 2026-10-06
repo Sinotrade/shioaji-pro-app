@@ -400,11 +400,24 @@ function v9Rsi(values: number[], period = 9): number[] {
         if (index <= period) {
             gain += up;
             loss += down;
+            // Wilder's first smoothed values are averages, not accumulated
+            // sums. The seed ratio is unchanged, but later updates must not
+            // give the initial window an accidental period-times weight.
+            if (index === period) {
+                gain /= period;
+                loss /= period;
+            }
         } else {
             gain = (gain * (period - 1) + up) / period;
             loss = (loss * (period - 1) + down) / period;
         }
-        if (index >= period) out[index] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
+        if (index >= period) {
+            // No gain AND no loss carries no directional information. Keep
+            // it neutral rather than feeding RSI=100 into the V8 35% leg.
+            // Genuine one-sided rises/falls still return 100/0 respectively.
+            out[index] = gain === 0 && loss === 0 ? 50
+                : loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
+        }
     }
     return out;
 }
