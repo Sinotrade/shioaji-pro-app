@@ -1,0 +1,37 @@
+import { style, styleVariants } from '@vanilla-extract/css';
+import { vars } from '../theme.css';
+
+export const candleUp = vars.color.up;
+export const candleDown = vars.color.down;
+
+export const root = style({ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden', color: vars.color.foreground, fontFamily: vars.font.body, fontSize: '0.72rem' });
+export const body = style({ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' });
+export const toolbar = style({ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '8px 9px', borderBottom: `1px solid ${vars.color.border}`, flexShrink: 0 });
+export const title = style({ fontSize: '0.8rem', fontWeight: 700 });
+export const badge = style({ color: vars.color.accent, border: `1px solid ${vars.color.border}`, background: vars.color.inset, borderRadius: vars.radius.sm, padding: '2px 5px', fontSize: '0.64rem' });
+export const controls = style({ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '7px 9px', background: vars.color.inset });
+export const label = style({ display: 'flex', alignItems: 'center', gap: 5, color: vars.color.mutedForeground, fontSize: '0.66rem' });
+export const control = style({ maxWidth: '100%', height: 28, padding: '0 5px', borderRadius: vars.radius.sm, background: vars.color.background, color: vars.color.foreground, border: `1px solid ${vars.color.border}`, fontSize: '0.7rem' });
+export const note = style({ margin: 0, padding: '6px 9px', color: vars.color.mutedForeground, fontSize: '0.64rem', lineHeight: 1.6, overflowWrap: 'anywhere' });
+export const warning = style([note, { color: '#fbbf24', background: 'rgba(251,191,36,0.07)' }]);
+export const heading = style({ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 4, fontSize: '0.72rem', fontWeight: 600, margin: 0, padding: '8px 9px 5px', borderTop: `1px solid ${vars.color.border}`, background: vars.color.inset });
+export const subtitle = style({ fontSize: '0.62rem', fontWeight: 400, color: vars.color.mutedForeground });
+export const empty = style({ padding: '12px 9px', lineHeight: 1.6, color: vars.color.mutedForeground, fontSize: '0.7rem' });
+const rowBase = style({ width: '100%', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 7, textAlign: 'left', padding: '7px 9px', border: 0, borderBottom: `1px solid ${vars.color.border}`, background: 'transparent', color: vars.color.foreground, cursor: 'pointer', ':hover': { background: vars.color.muted }, ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: -2 } });
+export const row = styleVariants({ normal: [rowBase], selected: [rowBase, { background: vars.color.accentDim, boxShadow: `inset 2px 0 ${vars.color.accent}` }] });
+export const identity = style({ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 });
+export const name = style({ fontSize: '0.75rem', fontWeight: 600, overflowWrap: 'anywhere' });
+export const info = style({ color: vars.color.mutedForeground, fontSize: '0.63rem', lineHeight: 1.5, overflowWrap: 'anywhere' });
+export const numbers = style({ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, maxWidth: 110, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: vars.font.mono });
+export const status = styleVariants({ 'warming-up': { color: vars.color.mutedForeground }, waiting: { color: vars.color.mutedForeground }, excluded: { color: '#fbbf24' }, start: { color: '#fbbf24' }, tracking: { color: vars.color.accent }, exit: { color: '#22d3ee' }, error: { color: '#fca5a5' } });
+export const metrics = style({ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(110px,1fr))', gap: 4, padding: '7px 9px' });
+export const metric = style({ display: 'flex', flexDirection: 'column', gap: 3, padding: 6, background: vars.color.inset, borderRadius: vars.radius.sm, minWidth: 0 });
+export const metricValue = style({ fontVariantNumeric: 'tabular-nums', fontFamily: vars.font.mono, fontSize: '0.76rem' });
+export const chartScroll = style({ width: '100%', overflowX: 'auto', paddingBottom: 3 });
+export const chart = style({ display: 'block', width: '100%', minWidth: 540, height: 'auto', color: vars.color.mutedForeground, fontFamily: vars.font.mono });
+export const legend = style({ display: 'flex', flexWrap: 'wrap', gap: '4px 10px', padding: '4px 9px', fontSize: '0.63rem' });
+export const trendLegend = style({ color: '#60a5fa' });
+export const startLegend = style({ color: '#fbbf24' });
+export const exitLegend = style({ color: '#22d3ee' });
+export const event = style({ padding: '7px 9px', borderBottom: `1px solid ${vars.color.border}`, lineHeight: 1.6, fontSize: '0.65rem', overflowWrap: 'anywhere' });
+export const eventTitle = style({ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 5, fontWeight: 600 });

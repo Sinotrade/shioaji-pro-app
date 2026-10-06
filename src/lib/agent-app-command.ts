@@ -13,6 +13,7 @@ import type { ContractInfo } from './types/contract';
 import {
     BLOCK_META,
     GRID_LEGACY_SCALE,
+    isPanelAvailable,
     type Block,
     type BlockType,
     type Profile,
@@ -266,6 +267,9 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
         }
         case 'add_panel': {
             const { type } = args as AgentAppCommandMap['add_panel']['args'];
+            if (!isPanelAvailable(type)) {
+                throw new AgentAppCommandError('unsupported', 'This panel is available only in V9 research mode');
+            }
             const workspace = context.getWorkspace();
             const meta = BLOCK_META[type];
             const existing = meta.singleton

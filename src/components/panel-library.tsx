@@ -54,6 +54,7 @@ import {
     BLOCK_META,
     type BlockType,
     PANEL_CATEGORIES,
+    isPanelAvailable,
 } from '../lib/workspace';
 import {
     canLivePreview,
@@ -70,6 +71,7 @@ const RECENTS_LIMIT = 6;
 
 const PANEL_ICONS: Record<BlockType, LucideIcon> = {
     watchlist: Star,
+    industrywatch: Eye,
     movers: TrendingUp,
     dock: Briefcase,
     chart: LineChart,
@@ -102,7 +104,7 @@ const PANEL_ICONS: Record<BlockType, LucideIcon> = {
     assistant: Bot,
 };
 
-const ALL_TYPES = Object.keys(BLOCK_META) as BlockType[];
+const ALL_TYPES = (Object.keys(BLOCK_META) as BlockType[]).filter(type => isPanelAvailable(type));
 
 function loadRecents(): BlockType[] {
     try {
@@ -112,7 +114,7 @@ function loadRecents(): BlockType[] {
         if (!Array.isArray(parsed)) return [];
         return parsed.filter(
             (value): value is BlockType =>
-                typeof value === 'string' && value in BLOCK_META,
+                typeof value === 'string' && value in BLOCK_META && isPanelAvailable(value as BlockType),
         );
     } catch {
         return [];

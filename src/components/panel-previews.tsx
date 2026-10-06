@@ -86,6 +86,7 @@ const candles = (
 
 export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
     watchlist: <Frame>{rowList([up, down, up, up, down])}</Frame>,
+    industrywatch: <Frame><Ln x={8} y={7} w={45} color={accent} />{rowList([up, down, muted, up], 8, 20, 13)}</Frame>,
     movers: (
         <Frame>
             {[52, 44, 37, 30, 24].map((w, i) => (

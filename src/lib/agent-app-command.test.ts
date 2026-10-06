@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentAppCommand, AgentAppCommandResponse } from './agent-contract';
 import {
@@ -160,6 +160,33 @@ function fixture(options: {
         profileWorkspace,
     };
 }
+
+describe('research-only panel command boundary', () => {
+    afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
+    it('rejects industry observation in standard mode before reading or mutating workspace', async () => {
+        vi.stubEnv('VITE_V9_RESEARCH_MODE', 'false'); vi.resetModules();
+        const { executeAgentAppCommand: execute } = await import('./agent-app-command');
+        const { context, workspace, resolveContract } = fixture();
+        const before = structuredClone(workspace());
+        const read = vi.spyOn(context, 'getWorkspace');
+        const update = vi.spyOn(context, 'updateWorkspace');
+        const create = vi.spyOn(context, 'createPanelId');
+        await expect(execute({ name: 'add_panel', args: { type: 'industrywatch' } }, context)).rejects.toMatchObject({ code: 'unsupported' });
+        expect(read).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled(); expect(create).not.toHaveBeenCalled(); expect(resolveContract).not.toHaveBeenCalled();
+        expect(workspace()).toEqual(before);
+        await expect(execute({ name: 'add_panel', args: { type: 'depth' } }, context)).resolves.toMatchObject({ created: true, panel: { type: 'depth' } });
+    });
+    it('allows the optional industry observation panel in research mode without altering existing panels', async () => {
+        vi.stubEnv('VITE_V9_RESEARCH_MODE', 'true'); vi.resetModules();
+        const { executeAgentAppCommand: execute } = await import('./agent-app-command');
+        const { context, workspace, resolveContract } = fixture();
+        const original = structuredClone(workspace().blocks);
+        await expect(execute({ name: 'add_panel', args: { type: 'industrywatch' } }, context)).resolves.toMatchObject({ created: true, panel: { id: 'industrywatch-1', type: 'industrywatch', pin: null } });
+        expect(workspace().blocks.slice(0, original.length)).toEqual(original); expect(resolveContract).not.toHaveBeenCalled();
+        await expect(execute({ name: 'add_panel', args: { type: 'industrywatch' } }, context)).resolves.toMatchObject({ created: false });
+        expect(workspace().blocks.filter(block => block.type === 'industrywatch')).toHaveLength(1);
+    });
+});
 
 describe('agent app command validation', () => {
     it('accepts a typed request and normalizes strings', () => {

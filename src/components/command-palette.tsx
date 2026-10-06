@@ -6,10 +6,10 @@ import {
     searchProducts,
     type ProductSuggestion,
 } from '../lib/product-search';
-import { BLOCK_META, type BlockType } from '../lib/workspace';
+import { BLOCK_META, isPanelAvailable, type BlockType } from '../lib/workspace';
 import * as styles from './command-palette.css';
 
-const PANEL_TYPES = Object.keys(BLOCK_META) as BlockType[];
+const PANEL_TYPES = (Object.keys(BLOCK_META) as BlockType[]).filter(type => isPanelAvailable(type));
 const PANEL_MATCH_LIMIT = 4;
 
 export function CommandPalette({

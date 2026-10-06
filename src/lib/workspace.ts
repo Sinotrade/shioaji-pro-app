@@ -43,6 +43,7 @@ export function toRenderGeom(
 
 export type BlockType =
     | 'watchlist'
+    | 'industrywatch'
     | 'movers'
     | 'dock'
     | 'chart'
@@ -134,6 +135,7 @@ export const BLOCK_META: Record<
         category: PanelCategory;
         pinnable: boolean;
         singleton: boolean;
+        researchOnly?: boolean;
         defaultSize: { w: number; h: number; minW: number; minH: number };
     }
 > = {
@@ -143,6 +145,15 @@ export const BLOCK_META: Record<
         category: 'market',
         pinnable: false,
         singleton: true,
+        defaultSize: { w: 4, h: 14, minW: 3, minH: 6 },
+    },
+    industrywatch: {
+        label: '產業觀察',
+        description: '截圖 17 產業 49 股，僅讀已載入行情、單股聯動研究圖表',
+        category: 'market',
+        pinnable: false,
+        singleton: true,
+        researchOnly: true,
         defaultSize: { w: 4, h: 14, minW: 3, minH: 6 },
     },
     movers: {
@@ -454,6 +465,9 @@ export const V9_RESEARCH_WORKSPACE: Workspace = upscaleLegacyWorkspace(
 // 此旗標只在本機研究啟動腳本啟用；正式 Pro 仍使用原本預設與儲存空間。
 export const V9_RESEARCH_MODE =
     import.meta.env.VITE_V9_RESEARCH_MODE === 'true';
+export function isPanelAvailable(type: BlockType, researchMode = V9_RESEARCH_MODE): boolean {
+    return !BLOCK_META[type].researchOnly || researchMode;
+}
 export const ACTIVE_DEFAULT_WORKSPACE = V9_RESEARCH_MODE
     ? V9_RESEARCH_WORKSPACE
     : DEFAULT_WORKSPACE;

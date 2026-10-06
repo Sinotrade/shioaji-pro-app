@@ -54,6 +54,7 @@ import { TrayPanel } from './components/tray-panel';
 import { VolProfile } from './components/vol-profile';
 import { WarrantPanel } from './components/warrant-panel';
 import { Watchlist } from './components/watchlist';
+import { ResearchIndustryWatchlist } from './components/research-industry-watchlist';
 import * as grid from './grid.css';
 import { useHotkeys } from './hooks/use-hotkeys';
 import { useWatchlist } from './hooks/use-watchlist';
@@ -188,6 +189,8 @@ function BlockBody({
     switch (block.type) {
         case 'watchlist':
             return <Watchlist {...watchlistProps} />;
+        case 'industrywatch':
+            return V9_RESEARCH_MODE ? <ResearchIndustryWatchlist onPick={onSelectCode} selectedCode={contract?.code} /> : null;
         case 'movers':
             return <ScannerPanel onPick={onSelectCode} />;
         case 'dock':
@@ -881,6 +884,7 @@ function MainApp() {
     const addBlock = useCallback(
         (type: BlockType) => {
             const meta = BLOCK_META[type];
+            if (meta.researchOnly && !V9_RESEARCH_MODE) return;
             if (
                 meta.singleton &&
                 workspace.blocks.some((b) => b.type === type)

@@ -38,7 +38,7 @@ import {
     X,
 } from 'lucide-react';
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { useQuote } from '../hooks/use-stream';
+import { useQuote, useStreamStatus } from '../hooks/use-stream';
 import { useV9ResearchFlow } from '../hooks/use-v9-research-flow';
 import { ResearchMarkerControls } from './research-marker-controls';
 import { ResearchFibonacci } from './research-fibonacci';
@@ -93,7 +93,7 @@ import {
 import { researchLevels, toHeikinAshi, v9Resonance } from '../lib/utils/research-chart';
 import {
     v9KbarMarkers, completedResearchBars, researchTickBucket, selectResearchMarkers,
-    DEFAULT_MARKER_OPTIONS, researchMarkerGap, mergeResearchMarkerLabels,
+    DEFAULT_MARKER_OPTIONS, EMPTY_FLOW, researchMarkerGap, mergeResearchMarkerLabels,
     supertrendTradeMarkers, supertrendShortTradeMarkers,
     entrySignalsToMarkers,
     shortSignalsToMarkers,
@@ -102,6 +102,12 @@ import { roundToTick } from '../lib/utils/ticksize';
 import { V9_RESEARCH_MODE } from '../lib/workspace';
 import { useMarketReplay } from '../hooks/use-market-replay';
 import { useEntrySignals } from '../hooks/use-entry-signals';
+import { useResearchBackground } from '../hooks/use-research-background';
+import { researchBackgroundKey, researchBackgroundStore } from '../lib/research-background';
+import type { ResearchEntryContext } from '../lib/research-entry';
+import { researchSessionVwap, projectResearchVwap } from '../lib/research-vwap';
+import { researchSetups } from '../lib/research-setups';
+import { chartScopeKey, quoteChangePercent, researchDataStatus, scopedResearchSource } from '../lib/research-chart-state';
 
 import { buildOrderFlow } from '../lib/order-flow';
 import { ReplayControls } from './replay-controls';
@@ -177,17 +183,24 @@ export function CandleChart({
     // throw inside the effect, which unmounts the whole app (issue #1)
     const loadedKeyRef = useRef('');
     const quote = useQuote(contract.code);
+    const streamStatus = useStreamStatus();
     const tf = TIMEFRAMES[tfIdx] ?? TIMEFRAMES[1];
-    const flow = useV9ResearchFlow(contract.code, contract.security_type, tf.minutes, V9_RESEARCH_MODE);
+    const chartScope = chartScopeKey(contract, tf.minutes);
+    const flow = useV9ResearchFlow(contract.code, contract.security_type, tf.minutes, V9_RESEARCH_MODE, chartScopeKey(contract, 0));
     const [markerOptions, setMarkerOptions] = useState(DEFAULT_MARKER_OPTIONS);
     const [markerGap, setMarkerGap] = useState(5);
     // Local clock only: finish the last bar even if no further tick arrives.
     const replay = useMarketReplay(contract);
     const { long: longEntrySignals, short: shortEntrySignals } = useEntrySignals(contract);
     const [researchMinute, setResearchMinute] = useState(() => Math.floor(nowWallClockUtc() / 60));
+    const [researchClock, setResearchClock] = useState(nowWallClockUtc);
     useEffect(() => {
         if (!V9_RESEARCH_MODE) return;
-        const timer = setInterval(() => setResearchMinute(Math.floor(nowWallClockUtc() / 60)), 5000);
+        const timer = setInterval(() => {
+            const now = nowWallClockUtc();
+            setResearchMinute(Math.floor(now / 60));
+            setResearchClock(now);
+        }, 5000);
         return () => clearInterval(timer);
     }, []);
     const themeSettings = useThemeSettings();
@@ -258,6 +271,8 @@ export function CandleChart({
     // raw 1-min candles backing the current view — history pages merge here
     // and re-aggregate so buckets spanning a page seam stay correct
     const rawRef = useRef<Candle[]>([]);
+    const liveMinuteChangesRef = useRef(new Map<number, { bar: Candle; revision: number }>());
+    const background = useResearchBackground(contract, V9_RESEARCH_MODE);
     const loadMoreRef = useRef<(() => void) | null>(null);
     const indSeriesRef = useRef<ISeriesApi<'Line' | 'Histogram'>[]>([]);
     const triggers = useTriggers().filter((t) => t.code === contract.code);
@@ -583,7 +598,7 @@ export function CandleChart({
     // pulled on demand by the visible-range subscription (loadMoreRef)
     useEffect(() => {
         let cancelled = false;
-        const loadKey = `${contract.code}|${tf.minutes}`;
+        const loadKey = chartScope;
         loadedKeyRef.current = ''; // freeze tick updates while loading
         v9MarkersRef.current?.setMarkers([]);
         v9VolumeMarkersRef.current?.setMarkers([]);
@@ -591,7 +606,7 @@ export function CandleChart({
         loadMoreRef.current = null;
         setEmpty(false);
         setLoading(true);
-        const clearSeries = () => {
+        const clearSeries = (allowLive = true) => {
             // the series must never keep a stale timeframe's data — a later
             // tick bucketed for the new timeframe would be "older" than the
             // stale tail and crash the chart library
@@ -600,26 +615,21 @@ export function CandleChart({
             barsRef.current = [];
             displayBarsRef.current = [];
             rawRef.current = [];
+            liveMinuteChangesRef.current.clear();
+            lastPriceRef.current = null;
+            legendMetaRef.current = new Map();
+            setLegendValues({});
+            setPaneTops({});
+            v9TintRef.current?.setData([]);
+            for (const series of indSeriesRef.current) series.setData([]);
             setDataVersion((v) => v + 1);
-            loadedKeyRef.current = loadKey; // live bars may build from here
+            loadedKeyRef.current = allowLive ? loadKey : ''; // no old-symbol values while loading
         };
+        clearSeries(false);
         const applyBars = (bars: Candle[]) => {
-            candleSeriesRef.current?.setData(
-                bars.map((b) => ({
-                    time: b.time as UTCTimestamp,
-                    open: b.open,
-                    high: b.high,
-                    low: b.low,
-                    close: b.close,
-                })),
-            );
-            volSeriesRef.current?.setData(
-                bars.map((b) => ({
-                    time: b.time as UTCTimestamp,
-                    value: b.volume,
-                    color: b.close >= b.open ? colors.upVol : colors.downVol,
-                })),
-            );
+            // History only populates the live cache. Drawing belongs to the
+            // display effects below so a late response cannot reveal future
+            // bars while a historical replay is paused.
             barsRef.current = bars;
             // Paging rebuilds independent candles: live updates must mutate
             // the newly installed tail rather than an orphan from the old page.
@@ -721,11 +731,12 @@ export function CandleChart({
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [contract, tf, historySeq]);
+    }, [contract, tf, historySeq, chartScope]);
 
     // 平均 K 只轉換圖形。所有指標與研究水平線仍使用原始 OHLC，確保
     // VWAP、MACD、KDJ 與盤後覆盤不會因為顯示方式而改變。
     useEffect(() => {
+        if (V9_RESEARCH_MODE && replay.enabled) return;
         const raw = barsRef.current;
         const display = candleStyle === 'heikinAshi' ? toHeikinAshi(raw) : raw;
         displayBarsRef.current = display;
@@ -738,21 +749,25 @@ export function CandleChart({
                 close: bar.close,
             })),
         );
-    }, [dataVersion, candleStyle]);
+        volSeriesRef.current?.setData(raw.map(bar => ({
+            time: bar.time as UTCTimestamp, value: bar.volume,
+            color: bar.close >= bar.open ? colors.upVol : colors.downVol,
+        })));
+    }, [dataVersion, candleStyle, replay.enabled, colors.upVol, colors.downVol]);
 
     // Cache K-bar calculations independently of 4 Hz live Tick batches.
     // Scope guards prevent old-symbol/timeframe markers reappearing during load.
     // Market Replay: official kbars (warm-up + day) aggregated to the chart tf,
     // cut to the replay virtual time; trades drive aggressor order flow.
-    const replayAggBars = useMemo(() => replay.enabled
+    const replayAggBars = useMemo(() => replay.enabled && replay.hasData
         ? aggregate(replay.rawCandles, tf.minutes, contract.security_type) : [],
-    [replay.enabled, replay.rawCandles, tf.minutes, contract.security_type]);
-    const replayReadyBars = useMemo(() => replay.enabled && replay.status === 'ready'
+    [replay.enabled, replay.hasData, replay.rawCandles, tf.minutes, contract.security_type]);
+    const replayReadyBars = useMemo(() => replay.enabled && replay.hasData
         ? completedResearchBars(replayAggBars, tf.minutes, replay.visibleTime, contract.security_type) : [],
-    [replay.enabled, replay.status, replayAggBars, replay.visibleTime, tf.minutes, contract.security_type]);
-    const replayFlow = useMemo(() => replay.enabled && replay.status === 'ready'
+    [replay.enabled, replay.hasData, replayAggBars, replay.visibleTime, tf.minutes, contract.security_type]);
+    const replayFlow = useMemo(() => replay.enabled && replay.hasData
         ? buildOrderFlow(replay.trades, replayAggBars, replay.visibleTime) : [],
-    [replay.enabled, replay.status, replay.trades, replayAggBars, replay.visibleTime]);
+    [replay.enabled, replay.hasData, replay.trades, replayAggBars, replay.visibleTime]);
     // Display bars = replay day only; warm-up bars stay out of the visible chart,
     // while computeBars keep the warm-up so indicators stay continuous.
     const replayDayBars = useMemo(() => replay.enabled
@@ -762,23 +777,60 @@ export function CandleChart({
     const researchBars = useMemo(() => {
         if (!V9_RESEARCH_MODE) return [];
         if (replay.enabled) return replayDayBars;
-        if (loadedKeyRef.current !== `${contract.code}|${tf.minutes}`) return [];
+        if (loadedKeyRef.current !== chartScope || loading) return [];
         return completedResearchBars(barsRef.current, tf.minutes, researchMinute * 60, contract.security_type);
-    }, [dataVersion, contract.code, tf.minutes, researchMinute, loading, replay.enabled, replayDayBars]);
+    }, [dataVersion, chartScope, tf.minutes, researchMinute, loading, replay.enabled, replayDayBars]);
     const computeBars = replay.enabled ? replayReadyBars : researchBars;
     // This is a snapshot of bars already loaded for the active chart. It is
     // intentionally not a four-timeframe history downloader.
     const researchSource = useMemo(() => replay.enabled
-        ? replay.rawCandles.slice() : rawRef.current.slice(),
-    [dataVersion, contract.code, tf.minutes, researchMinute, loading, replay.enabled, replay.rawCandles]);
+        ? replay.hasData ? replay.rawCandles.filter(bar => bar.time <= replay.visibleTime) : []
+        : scopedResearchSource(rawRef.current, loadedKeyRef.current, chartScope, loading),
+    [dataVersion, chartScope, researchMinute, loading, replay.enabled, replay.hasData, replay.rawCandles, replay.visibleTime]);
+    // Reuse the full same-contract background, not the selected chart window.
+    // Replay minutes stay isolated; proven daily history is cut at virtual time.
+    const resonanceSource = replay.enabled ? researchSource : background.minutes;
+    useEffect(() => {
+        if (!V9_RESEARCH_MODE || replay.enabled || loading || loadedKeyRef.current !== chartScope) return;
+        // Publish ONLY minutes genuinely touched by live Tick, using their
+        // original update revision. Re-loading an old history Promise must
+        // not relabel its stale tail as fresh and overwrite the shared cache.
+        for (const [time, update] of liveMinuteChangesRef.current) {
+            if (time > effectiveTime) continue;
+            researchBackgroundStore.mergeMinutes(researchBackgroundKey(contract), [update.bar], update.revision);
+            liveMinuteChangesRef.current.delete(time);
+        }
+    }, [researchMinute, dataVersion, chartScope, loading, replay.enabled, effectiveTime]);
+    const backgroundLoading = replay.enabled ? !replay.hasData : loading && !background.minutes.length;
+    const dataStatus = useMemo(() => researchDataStatus(resonanceSource, contract.security_type,
+        replay.enabled ? replay.visibleTime : researchClock,
+        backgroundLoading,
+        replay.enabled ? undefined : streamStatus),
+    [resonanceSource, contract.security_type, backgroundLoading, researchClock, replay.enabled, replay.visibleTime, streamStatus]);
     const resonance = useMemo(() => V9_RESEARCH_MODE
-        ? v9Resonance(researchSource, contract.security_type, effectiveTime)
+        ? v9Resonance(resonanceSource, contract.security_type, effectiveTime, background.daily)
         : null,
-    [researchSource, contract.security_type, effectiveTime]);
+    [resonanceSource, contract.security_type, effectiveTime, background.daily]);
+    const entryContext = useMemo<ResearchEntryContext>(() => ({
+        closedFiveMinuteBars: completedResearchBars(aggregate(resonanceSource.filter(bar => bar.time <= effectiveTime),
+            5, contract.security_type), 5, effectiveTime, contract.security_type),
+        securityType: contract.security_type,
+        now: effectiveTime,
+    }), [resonanceSource, contract.security_type, effectiveTime]);
+    // Phase 1: one raw-minute session anchor shared by every chart timeframe.
+    // These setups are shadow research, never part of researchEntry or orders.
+    const vwapEvaluation = useMemo(() => researchSessionVwap(resonanceSource, contract.security_type, effectiveTime),
+        [resonanceSource, contract.security_type, effectiveTime]);
+    const setupEvaluation = useMemo(() => researchSetups(resonanceSource, contract.security_type, effectiveTime),
+        [resonanceSource, contract.security_type, effectiveTime]);
+    const researchVwapPoints = useMemo(() => tf.minutes >= 1440 ? []
+        : projectResearchVwap(vwapEvaluation.points, computeBars, contract.security_type),
+    [vwapEvaluation, computeBars, tf.minutes, contract.security_type]);
     const structureLevels = useMemo(() => V9_RESEARCH_MODE
-        ? researchLevels(researchSource, 5, contract.security_type) : [],
-    [researchSource, contract.security_type]);
-    const opening = useMemo(() => researchOpening(researchSource, contract.security_type), [researchSource, contract.security_type]);
+        ? researchLevels(resonanceSource, 5, contract.security_type, effectiveTime) : [],
+    [resonanceSource, contract.security_type, effectiveTime]);
+    const opening = useMemo(() => researchOpening(resonanceSource.filter(bar => bar.time <= effectiveTime), contract.security_type),
+        [resonanceSource, contract.security_type, effectiveTime]);
     const atrInstance = instances.find(instance => instance.type === 'atrdefense' && !instance.hidden
         && (!instance.visibleTf || instance.visibleTf.includes(tf.minutes)));
     const defense = useMemo(() => V9_RESEARCH_MODE && atrInstance
@@ -795,19 +847,19 @@ export function CandleChart({
     const trendMarkers = useMemo(() => supertrendTradeMarkers(researchBars), [researchBars]);
     const shortTrendMarkers = useMemo(() => supertrendShortTradeMarkers(researchBars), [researchBars]);
     const entryMarkers = useMemo(
-        () => entrySignalsToMarkers(longEntrySignals, researchBars, tf.minutes),
-        [longEntrySignals, researchBars, tf.minutes]);
+        () => entrySignalsToMarkers(longEntrySignals, researchBars, tf.minutes, contract.security_type, effectiveTime),
+        [longEntrySignals, researchBars, tf.minutes, contract.security_type, effectiveTime]);
     const shortEntryMarkers = useMemo(
-        () => shortSignalsToMarkers(shortEntrySignals, researchBars, tf.minutes),
-        [shortEntrySignals, researchBars, tf.minutes]);
+        () => shortSignalsToMarkers(shortEntrySignals, researchBars, tf.minutes, contract.security_type, effectiveTime),
+        [shortEntrySignals, researchBars, tf.minutes, contract.security_type, effectiveTime]);
     const researchMarkers = useMemo(() => {
         if (!V9_RESEARCH_MODE) return [];
-        if (!replay.enabled && loadedKeyRef.current !== `${contract.code}|${tf.minutes}`) return [];
-        return selectResearchMarkers([...kbarMarkers, ...trendMarkers, ...shortTrendMarkers, ...entryMarkers, ...shortEntryMarkers, ...flow.markers],
+        if (!replay.enabled && loadedKeyRef.current !== chartScope) return [];
+        return selectResearchMarkers([...kbarMarkers, ...trendMarkers, ...shortTrendMarkers, ...entryMarkers, ...shortEntryMarkers, ...(replay.enabled ? [] : flow.markers)],
             (replay.enabled ? replayDayBars : barsRef.current).map(bar => bar.time), markerOptions, markerGap);
     }, [kbarMarkers, trendMarkers, shortTrendMarkers, entryMarkers, shortEntryMarkers, flow, markerOptions, markerGap, dataVersion, contract.code, tf.minutes, loading, replay.enabled, replayDayBars]);
     useEffect(() => {
-        const ready = V9_RESEARCH_MODE && loadedKeyRef.current === `${contract.code}|${tf.minutes}`;
+        const ready = V9_RESEARCH_MODE && (replay.enabled ? replay.hasData : loadedKeyRef.current === chartScope && !loading);
         const markers = ready ? researchMarkers : [];
         v9MarkersRef.current?.setMarkers(mergeResearchMarkerLabels(markers.filter(marker => marker.group !== 'volume'))
                 .map(marker => ({
@@ -822,7 +874,7 @@ export function CandleChart({
                     // below the chart; arrow shape still conveys attack direction.
                     position: 'aboveBar' as const, size: 0.8,
                 })));
-    }, [researchMarkers, contract.code, tf.minutes]);
+    }, [researchMarkers, chartScope, tf.minutes, loading, replay.enabled, replay.hasData]);
 
     // Live trade/index quote -> update the current bar. Index products use
     // quote_idx rather than the regular tick stream in Shioaji 1.7.
@@ -838,7 +890,7 @@ export function CandleChart({
         // Y 軸尺度撐爆（issue #5），一律排除
         if ('simtrade' in liveQuote && liveQuote.simtrade) return;
         // history for this (symbol, timeframe) not in place yet
-        if (loadedKeyRef.current !== `${contract.code}|${tf.minutes}`) return;
+        if (loadedKeyRef.current !== chartScope) return;
         const series = candleSeriesRef.current;
         if (!series) return;
         const price = Number(liveQuote.close);
@@ -850,6 +902,7 @@ export function CandleChart({
         // selected timeframe. Higher-timeframe cards then rebuild only from
         // this raw OHLCV stream plus the historical page cache.
         const minuteBucket = researchTickBucket(tickTime, 1, contract.security_type);
+        if (!Number.isFinite(minuteBucket)) return;
         const minuteVolume = quote?.tick?.volume ?? 0;
         const rawTail = rawRef.current[rawRef.current.length - 1];
         if (!rawTail || minuteBucket > rawTail.time) {
@@ -862,6 +915,11 @@ export function CandleChart({
             rawTail.low = Math.min(rawTail.low, Number(liveQuote.close));
             rawTail.close = Number(liveQuote.close);
             rawTail.volume += minuteVolume;
+        }
+        const updatedMinute = rawRef.current.at(-1);
+        if (updatedMinute?.time === minuteBucket && V9_RESEARCH_MODE) {
+            liveMinuteChangesRef.current.set(minuteBucket, { bar: { ...updatedMinute },
+                revision: researchBackgroundStore.nextRevision() });
         }
         const bucketSec = tf.minutes * 60;
         // close-label-right（與 aggregate/1 分 K 歷史同慣例）：成交 τ 屬
@@ -946,7 +1004,7 @@ export function CandleChart({
         setEmpty(false);
     // Style-only switches are handled by the display-bar effect above. Replaying
     // the same quote here would add its volume again whenever 平均K is toggled.
-    }, [liveQuote, quote?.tick?.volume, contract.code, tf.minutes]);
+    }, [liveQuote, quote?.tick?.volume, chartScope, tf.minutes, replay.enabled]);
 
     // 自訂指標增刪改 → 重算指標 effect；被刪掉的型別把殘留實例一併清掉
     const [customVer, setCustomVer] = useState(0);
@@ -1008,6 +1066,7 @@ export function CandleChart({
             // 讀值也要清 — 序列移除了但 legend 讀 legendMetaRef，不清
             // 會殘留上一檔商品的指標數值（無 K 線資料卻顯示 MA 值）
             legendMetaRef.current = new Map();
+            setLegendValues({});
             setPaneTops({});
             return;
         }
@@ -1035,8 +1094,9 @@ export function CandleChart({
             }
             let out: Record<string, IndicatorPoint[]>;
             try {
-                out = def.compute(V9_RESEARCH_MODE ? computeBars : bars,
-                    params, contract.security_type, tf.minutes);
+                out = V9_RESEARCH_MODE && inst.type === 'vwap' ? { line: researchVwapPoints }
+                    : def.compute(V9_RESEARCH_MODE ? computeBars : bars,
+                        params, contract.security_type, tf.minutes);
             } catch {
                 continue; // a bad param combination must not kill the chart
             }
@@ -1078,11 +1138,11 @@ export function CandleChart({
                 const st = outputStyle(inst, def, o.key);
                 if (!st.visible) continue;
                 const color = colorWithOpacity(st.color, st.opacity);
-                if (inst.type === 'atrdefense') {
+                if (inst.type === 'atrdefense' || V9_RESEARCH_MODE && inst.type === 'vwap') {
                     let latest: ISeriesApi<'Line'> | undefined;
                     for (const segment of defenseSegments(pts)) {
                         const rail = chart.addSeries(LineSeries, { color, lineWidth: st.width,
-                            lineType: LineType.WithSteps, crosshairMarkerVisible: false,
+                            lineType: inst.type === 'atrdefense' ? LineType.WithSteps : LineType.Simple, crosshairMarkerVisible: false,
                             pointMarkersVisible: segment.length === 1, pointMarkersRadius: 2,
                             ...labelOpts, lastValueVisible: false, ...priceFormatOpt }, pane);
                         rail.setData(toLineData(segment));
@@ -1168,7 +1228,7 @@ export function CandleChart({
                     label: o.label,
                     color: st.color,
                     series: s as ISeriesApi<'Line' | 'Histogram'>,
-                    last: lastVal(pts),
+                    last: V9_RESEARCH_MODE && inst.type === 'vwap' ? pts.at(-1)?.value : lastVal(pts),
                     precision: inst.precision,
                 });
             }
@@ -1253,7 +1313,7 @@ export function CandleChart({
             paneRoRef.current = null;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [dataVersion, instancesKey, themeKey, tf.minutes, customVer, researchBars]);
+    }, [dataVersion, instancesKey, themeKey, tf.minutes, customVer, researchBars, researchVwapPoints]);
 
     const commitInstances = (list: IndicatorInstance[]) => {
         if (panelService && panelId && panelState) {
@@ -1578,6 +1638,7 @@ export function CandleChart({
         if (!candles) return;
         const base = replayDayBars;
         const display = candleStyle === 'heikinAshi' ? toHeikinAshi(base) : base;
+        displayBarsRef.current = display;
         candles.setData(display.map((bar) => ({
             time: bar.time as UTCTimestamp, open: bar.open, high: bar.high,
             low: bar.low, close: bar.close,
@@ -1593,7 +1654,7 @@ export function CandleChart({
                 to: n + 5,
             }));
         }
-    }, [replay.enabled, replay.status, replay.playing, replay.visibleTime, tf.minutes, candleStyle, colors.upVol, colors.downVol]);
+    }, [replay.enabled, replay.hasData, replay.playing, replayDayBars, dataVersion, candleStyle, colors.upVol, colors.downVol]);
     // V9 多空底色：方向與 ATR 防守線同源（v9AtrDefense 的 V8 確認 side），只染
     // 已收棒；多頭淡紅、空頭淡綠、中性／暖機不染。切商品／時框或關閉時清空。
     useEffect(() => {
@@ -1622,7 +1683,7 @@ export function CandleChart({
                 time: event.time, text: event.text, color: event.color })) : [];
         let openLine: ISeriesApi<'Line'> | undefined;
         if (markerOptions.opening && opening && tf.minutes < 1440) {
-            const sessionBars = barsRef.current.filter(bar => bar.time > opening.start && bar.time <= opening.end);
+            const sessionBars = (replay.enabled ? replayDayBars : researchBars).filter(bar => bar.time > opening.start && bar.time <= opening.end);
             if (sessionBars.length) {
                 openLine = chart.addSeries(LineSeries, { color: RESEARCH_COLORS.open,
                     lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false,
@@ -1634,14 +1695,15 @@ export function CandleChart({
         const primitive = new ResearchTransitionPrimitive(verticals.sort((a, b) => a.time - b.time));
         candles.attachPrimitive(primitive);
         return () => { candles.detachPrimitive(primitive); if (openLine) chart.removeSeries(openLine); };
-    }, [opening, defenseChanges, markerOptions.opening, markerOptions.transitions, dataVersion, contract.code, tf.minutes]);
+    }, [opening, defenseChanges, markerOptions.opening, markerOptions.transitions, dataVersion, contract.code, tf.minutes, replay.enabled, replayDayBars, researchBars]);
 
     // 單列 legend（主圖堆疊與各副圖 pane 共用同一套列與控制）
     const renderLegendRow = (inst: IndicatorInstance) => {
         const def = DEF_BY_TYPE.get(inst.type);
         if (!def) return null;
         const idx = instances.findIndex((i) => i.id === inst.id);
-        const vals = legendValues[inst.id] ?? [];
+        const legendReady = replay.enabled ? replay.hasData : loadedKeyRef.current === chartScope && !loading;
+        const vals = legendReady ? legendValues[inst.id] ?? [] : [];
         const offTf =
             !!inst.visibleTf && !inst.visibleTf.includes(tf.minutes);
         const dimmed = inst.hidden || offTf;
@@ -1874,22 +1936,18 @@ export function CandleChart({
             paneHeightsRef.current.set(id, pane.getHeight());
         });
     };
-    const regimePrice = Number.isFinite(Number(liveQuote?.close))
+    const regimePrice = replay.enabled ? researchSource.at(-1)?.close : Number.isFinite(Number(liveQuote?.close))
         ? Number(liveQuote?.close)
         : researchSource.at(-1)?.close;
-    const regimeTick = quote?.tick;
-    const regimeIndex = quote?.index;
-    const regimeReferencePrice = regimeIndex
-        ? Number(regimeIndex.reference)
-        : structureLevels.find(level => level.id === 'prev-close')?.price;
+    const regimeTick = replay.enabled ? undefined : quote?.tick;
+    const regimeIndex = replay.enabled ? undefined : quote?.index;
     const regimeChg = regimeTick && 'price_chg' in regimeTick && regimeTick.price_chg !== undefined && regimeTick.price_chg !== null
         ? Number(regimeTick.price_chg)
         : regimeIndex
           ? Number(regimeIndex.close) - Number(regimeIndex.reference)
           : undefined;
-    const regimePct = regimeChg !== undefined && regimeReferencePrice
-        ? (regimeChg / regimeReferencePrice) * 100
-        : undefined;
+    const regimePct = quoteChangePercent(regimePrice, regimeChg, regimeIndex ? Number(regimeIndex.reference) : undefined);
+    const displayedMacd = instances.find(instance => instance.type === 'v9macd' || instance.type === 'macd');
     const regimeReference = [
         opening
             ? { key: 'open', label: `開 ${fmtPrice(opening.price)}`, color: RESEARCH_COLORS.open }
@@ -1978,11 +2036,15 @@ export function CandleChart({
             onFocusCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}>
             {V9_RESEARCH_MODE
                 ? <ResearchMarkerControls options={markerOptions}
-                    onChange={setMarkerOptions} flow={flow} markers={researchMarkers}
+                    onChange={setMarkerOptions} flow={replay.enabled ? EMPTY_FLOW : flow} markers={researchMarkers}
                     barCount={researchBars.filter(bar => bar.volume > 0).length} loading={loading}
                     resonance={resonance} levels={structureLevels}
                     currentPrice={regimePrice}
                     priceChange={regimeChg} pricePct={regimePct}
+                    dataStatus={dataStatus} macdParams={displayedMacd ? [displayedMacd.params.fast ?? 45,
+                        displayedMacd.params.slow ?? 117, displayedMacd.params.signal ?? 17] : undefined}
+                    directionLoading={backgroundLoading} entryContext={entryContext}
+                    setupEvaluation={setupEvaluation} vwapEvaluation={vwapEvaluation}
                     reference={regimeReference}
                     openingPrice={opening?.price}
                     fibOpen={fibOpen} onToggleFib={() => setFibOpen(value => !value)}
