@@ -363,6 +363,47 @@ describe('#244 cancel of an order placed outside this sidecar (iLeader)', () => 
         await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
         expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/cancel_order')).toHaveLength(1);
     });
+    it('does not resend when the reconciled id now names a different order', async () => {
+        m.post.mockImplementation(async (path: string, body: Record<string, unknown>) => {
+            if (path === '/api/v1/order/cancel_order') throw unsignable();
+            if (path === '/api/v1/order/trades') return body.refresh === true
+                ? [{ ...brokerRow('P123'), order: { ...brokerRow('P123').order, seqno: 'other', ordno: 'other' } }] : m.readback!(body);
+            return { state: 'Healthy', reasons: [] };
+        });
+        await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
+        expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/cancel_order')).toHaveLength(1);
+    });
+    it('reports a second local refusal as not sent', async () => {
+        m.post.mockImplementation(async (path: string, body: Record<string, unknown>) => {
+            if (path === '/api/v1/order/cancel_order') throw unsignable();
+            if (path === '/api/v1/order/trades') return body.refresh === true ? [brokerRow('P123')] : m.readback!(body);
+            return { state: 'Healthy', reasons: [] };
+        });
+        await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
+        expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/cancel_order')).toHaveLength(2);
+    });
+    it('shares one update_status across a batch of external orders on the same account', async () => {
+        const second = (): AccountedTrade => ({ ...row(), order: { ...row().order, id: 'fixture-2', seqno: 'seq2', ordno: 'ord2' },
+            status: { ...row().status, id: 'fixture-2' } } as AccountedTrade);
+        m.rows = [row(), second()];
+        const sent = new Map<string, number>();
+        m.post.mockImplementation(async (path: string, body: Record<string, unknown>) => {
+            if (path === '/api/v1/order/cancel_order') {
+                const id = String(body.trade_id); const n = sent.get(id) ?? 0; sent.set(id, n + 1);
+                if (n === 0) throw unsignable();
+                return id === 'fixture' ? row() : second();
+            }
+            if (path === '/api/v1/order/trades') {
+                const rows = [brokerRow('P123'), { ...second(), account: undefined, order: { ...second().order, account: { ...account, person_id: 'P123' } } }];
+                return body.refresh === true ? rows
+                    : rows.map(r => ({ ...r, status: { ...r.status, status: 'Cancelled', cancel_quantity: 3, order_quantity: 0 } }));
+            }
+            return { state: 'Healthy', reasons: [] };
+        });
+        const results = await cancelOrders(['fixture', 'fixture-2']);
+        expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled']);
+        expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/trades' && c[1].refresh === true)).toHaveLength(1);
+    });
     it('does not resend other cancel errors', async () => {
         m.post.mockImplementation(async (path: string) => {
             if (path === '/api/v1/order/cancel_order') throw Object.assign(new Error('400 Trade fixture not found in cache'), { status: 400 });
@@ -371,4 +412,16 @@ describe('#244 cancel of an order placed outside this sidecar (iLeader)', () => 
         await expect(cancelOrder('fixture')).rejects.toThrow('not found in cache');
         expect(m.post.mock.calls.map(c => c[0])).toEqual(['/api/v1/order/cancel_order']);
     });
+});
+it('#244 does not resend after the server mode changed while the first cancel was refused', async () => {
+    const mode = (simulation: boolean) => observeServerInfo(beginServerInfoRequest(), { simulation } as import('./shioaji').ServerInfo);
+    mode(false);
+    m.post.mockImplementation(async (path: string, body: Record<string, unknown>) => {
+        if (path === '/api/v1/order/cancel_order') { mode(true); throw Object.assign(new Error('400 CA not activated for:'), { status: 400 }); }
+        if (path === '/api/v1/order/trades') return body.refresh === true
+            ? [{ ...row(), account: undefined, order: { ...row().order, account: { ...account, person_id: 'P123' } } }] : [];
+        return { state: 'Healthy', reasons: [] };
+    });
+    await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
+    expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/cancel_order')).toHaveLength(1);
 });

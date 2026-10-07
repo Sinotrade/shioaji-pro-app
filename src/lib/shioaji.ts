@@ -1001,23 +1001,39 @@ function isUnsignableReportTrade(error: unknown): boolean {
 /** One authoritative update_status for the order's account: the sidecar
  *  rebuilds the row from the broker and fills the account from its login
  *  accounts, so the cancel can be signed. The first request never reached the
- *  broker; if the row is still unsignable, nothing more is sent. */
-async function hydrateReportTrade(base: string, tradeId: string, account: Account) {
+ *  broker. The read is shared by every cancel of the same account whose
+ *  `mark` precedes it (a whole flash 全刪 costs one update_status), and the
+ *  resend only goes out when the read still names the same order — same
+ *  trade_id, account, seqno/ordno, product and action, still working — on the
+ *  same server and mode as the first request. */
+async function hydrateReportTrade(base: string, tradeId: string, local: Trade, account: Account,
+    query: ReturnType<typeof createAccountQuery>, mark: number) {
     const notStarted = (message: string) => Object.assign(new Error(message), { mutationNotStarted: true as const });
     const type = account.account_type as 'S' | 'F';
-    const query = createAccountQuery();
     let rows: Trade[];
     try {
+        query.assertCurrent();
         rows = await query.read(type, account, current => sharedAuthoritativeTrades(`${base}|mode:${query.version}`, current,
-            readMark(), () => fetchTrades(type, current, { refresh: true })));
+            mark, () => fetchTrades(type, current, { refresh: true })));
+        query.assertCurrent();
     } catch (error) {
         throw notStarted(`此委託來自其他下單軟體，伺服器需先同步委託才能刪單，但同步失敗（${error instanceof Error ? error.message : String(error)}）；未送出刪單`);
     }
     if (base !== getApiBase()) throw notStarted('對帳期間伺服器已切換，未送出刪單');
-    query.assertCurrent();
-    const row = rows.filter(r => r.order.id === tradeId && (!r.order.account
+    const code = (t: Trade) => t.contract.target_code || t.contract.code;
+    const seqno = local.order.seqno?.trim();
+    const ordno = local.order.ordno?.trim();
+    const rowsForId = rows.filter(r => r.order.id === tradeId && (!r.order.account
         || (r.order.account.broker_id === account.broker_id && r.order.account.account_id === account.account_id)));
-    if (row.length !== 1 || !row[0]!.order.account?.person_id) {
+    const found = rowsForId.length === 1 ? rowsForId[0]! : null;
+    const sameOrder = !!found && (!!seqno || !!ordno)
+        && (!seqno || !found.order.seqno || found.order.seqno === seqno)
+        && (!ordno || !found.order.ordno || found.order.ordno === ordno)
+        && ((!!seqno && found.order.seqno === seqno) || (!!ordno && found.order.ordno === ordno))
+        && found.order.action === local.order.action && code(found) === code(local)
+        && remainingWorkingOrderQuantity(found) > 0;
+    if (!sameOrder) throw notStarted('此委託來自其他下單軟體，伺服器同步後找不到可操作的同筆委託；未送出刪單');
+    if (!found!.order.account?.person_id) {
         throw notStarted('此委託來自其他下單軟體，伺服器同步後仍缺少簽章所需的帳戶資料；未送出刪單，請改在原下單軟體刪單');
     }
 }
@@ -1033,24 +1049,39 @@ function observeCancel(
         const { account } = target;
         const { cancelCacheTrusted, locallyCancelled } = target.tradingState;
         if (target.base !== getApiBase()) throw Object.assign(new Error('伺服器已切換，未送出改刪單'), { mutationNotStarted: true });
-        const send = () => sendOrderMutation<Trade>(
+        const send = (sameEnvironment?: () => void) => sendOrderMutation<Trade>(
             '/api/v1/order/cancel_order',
             { trade_id: target.tradeId },
             account,
             { ...opts, beforeDispatch: () => {
                 try {
+                    sameEnvironment?.();
                     beforeSend?.();
                 } catch (e) {
                     throw Object.assign(e instanceof Error ? e : new Error(String(e)), { mutationNotStarted: true });
                 }
             } },
         );
+        // Taken before the first request: the mode it was sent under, and the
+        // point after which a shared update_status may serve this cancel (#244).
+        const sentUnder = createAccountQuery();
+        const mark = readMark();
         try {
             await send();
         } catch (error) {
             if (!isUnsignableReportTrade(error)) throw error;
-            await hydrateReportTrade(target.base, target.tradeId, account);
-            await send();
+            await hydrateReportTrade(target.base, target.tradeId, target.trade, account, sentUnder, mark);
+            // The resend goes out only on the server and mode of the first request.
+            try {
+                await send(() => {
+                    if (target.base !== getApiBase()) throw new Error('伺服器已切換，未送出刪單');
+                    sentUnder.assertCurrent();
+                });
+            } catch (retry) {
+                // Still refused by the sidecar before reaching the broker: nothing was cancelled.
+                if (isUnsignableReportTrade(retry)) throw Object.assign(new Error('此委託來自其他下單軟體，伺服器仍無法簽章刪單；未送出刪單，請改在原下單軟體刪單'), { mutationNotStarted: true });
+                throw retry;
+            }
         }
         // Quantities come from the local order at the start; the id is the one
         // the current sidecar knows (re-resolved when there was no baseline).
