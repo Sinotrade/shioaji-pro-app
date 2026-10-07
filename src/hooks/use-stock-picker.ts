@@ -44,18 +44,20 @@ export interface MarketRegime {
 
 type ScanEntry = [Parameters<typeof fetchScanner>[0], number, boolean];
 
-// 多方：量／漲幅（降冪）／額；空方：量／跌幅（升冪、ascending=true）／額
+// Shioaji ascending=true 實際為大到小；研究模式修正量／額／漲跌排行。
+// 非研究模式保留原請求參數，避免擴大到正式版；評分公式不變。
 function scansFor(side: PickerSide): ScanEntry[] {
+    const largestFirst = V9_RESEARCH_MODE;
     return side === 'long'
         ? [
-              ['VolumeRank', 25, false],
-              ['ChangePercentRank', 20, false],
-              ['AmountRank', 20, false],
+              ['VolumeRank', 25, largestFirst],
+              ['ChangePercentRank', 20, largestFirst],
+              ['AmountRank', 20, largestFirst],
           ]
         : [
-              ['VolumeRank', 25, false],
-              ['ChangePercentRank', 20, true],
-              ['AmountRank', 20, false],
+              ['VolumeRank', 25, largestFirst],
+              ['ChangePercentRank', 20, !largestFirst],
+              ['AmountRank', 20, largestFirst],
           ];
 }
 
@@ -108,7 +110,7 @@ function deriveRegime(daily: Parameters<typeof scoreStock>[0]): MarketRegime | n
     };
 }
 
-export function useStockPicker(side: PickerSide = 'long') {
+export function useStockPicker(side: PickerSide = 'long', enabled = true) {
     const w = useWatchlist();
     const watchlist = useMemo(
         () => w.items.map((i) => i.contract),
@@ -128,6 +130,7 @@ export function useStockPicker(side: PickerSide = 'long') {
     const refresh = useCallback(() => setTick((x) => x + 1), []);
 
     useEffect(() => {
+        if (!enabled) return;
         let cancelled = false;
         setLoading(true);
         void (async () => {
@@ -208,13 +211,14 @@ export function useStockPicker(side: PickerSide = 'long') {
         return () => {
             cancelled = true;
         };
-    }, [watchKey, tick, watchlist, side]);
+    }, [watchKey, tick, watchlist, side, enabled]);
 
     // 盤中定時重算（日 K 為增量、負擔小）
     useEffect(() => {
+        if (!enabled) return;
         const id = window.setInterval(() => setTick((x) => x + 1), POLL_MS);
         return () => window.clearInterval(id);
-    }, []);
+    }, [enabled]);
 
     return { rows, dailyRows, regime, loading, error, lastUpdated, refresh };
 }

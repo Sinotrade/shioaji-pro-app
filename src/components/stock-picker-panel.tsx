@@ -12,6 +12,9 @@ import {
 import { fmtPrice } from '../lib/utils/format';
 import { V9_RESEARCH_MODE } from '../lib/workspace';
 import { ResearchDailyBreakoutPanel } from './research-daily-breakout-panel';
+import { DaytradePickerPanel } from './daytrade-picker-panel';
+import { useDaytradePicker } from '../hooks/use-daytrade-picker';
+import { StrategyLabPanel } from './strategy-lab-panel';
 import * as s from './stock-picker-panel.css';
 
 function fmtClock(ts: number) {
@@ -22,9 +25,13 @@ function fmtClock(ts: number) {
 
 export function StockPickerPanel({ onPick }: { onPick: (code: string) => void }) {
     const [side, setSide] = useState<PickerSide>('long');
-    const [view, setView] = useState<'classic' | 'daily'>('classic');
+    const [view, setView] = useState<'classic' | 'daily' | 'daytrade' | 'lab'>('classic');
+    const daytradeActive = V9_RESEARCH_MODE && view === 'daytrade';
+    const labActive = V9_RESEARCH_MODE && view === 'lab';
+    const researchScanActive = daytradeActive || labActive;
     const { rows, dailyRows, regime, loading, error, lastUpdated, refresh } =
-        useStockPicker(side);
+        useStockPicker(side, !researchScanActive);
+    const daytrade = useDaytradePicker(researchScanActive);
 
     const regimeCls = regime
         ? regime.side === 'bull'
@@ -40,12 +47,16 @@ export function StockPickerPanel({ onPick }: { onPick: (code: string) => void })
         <div className={s.wrap}>
             <div className={s.toolbar} style={V9_RESEARCH_MODE ? { flexWrap: 'wrap' } : undefined}>
                 <span className={s.title}>短線選股</span>
-                <span className={s.poolCount}>{view === 'daily' ? dailyRows.length : rows.length} 檔</span>
+                <span className={s.poolCount}>{researchScanActive ? daytrade.poolSize : view === 'daily' ? dailyRows.length : rows.length} 檔</span>
                 {V9_RESEARCH_MODE && <span className={s.segWrap}>
                     <button className={`${s.seg} ${view === 'classic' ? s.segActiveLong : ''}`}
                         onClick={() => setView('classic')}>原選股</button>
                     <button className={`${s.seg} ${view === 'daily' ? s.segActiveLong : ''}`}
                         onClick={() => { setSide('long'); setView('daily'); }}>日K波段</button>
+                    <button className={`${s.seg} ${view === 'daytrade' ? s.segActiveLong : ''}`}
+                        onClick={() => setView('daytrade')}>當沖多空10</button>
+                    <button className={`${s.seg} ${view === 'lab' ? s.segActiveLong : ''}`}
+                        onClick={() => setView('lab')}>策略實驗室</button>
                 </span>}
                 {view === 'classic' && <>
                 <span className={s.segWrap}>
@@ -70,13 +81,21 @@ export function StockPickerPanel({ onPick }: { onPick: (code: string) => void })
                     className={s.iconBtn}
                     style={V9_RESEARCH_MODE ? { flexShrink: 0 } : undefined}
                     title="重新整理"
-                    onClick={refresh}
+                    onClick={researchScanActive ? daytrade.refresh : refresh}
+                    disabled={researchScanActive && daytrade.loading}
                 >
-                    <RefreshCw size={13} className={loading ? s.spinning : ''} />
+                    <RefreshCw size={13} className={(researchScanActive ? daytrade.loading : loading) ? s.spinning : ''} />
                 </button>
             </div>
 
-            {view === 'daily' && V9_RESEARCH_MODE ? <ResearchDailyBreakoutPanel
+            {researchScanActive && <div className={s.updatedAt} role={daytrade.recordingError ? 'alert' : 'status'}>
+                {daytrade.recordingError ?? (daytrade.recording ? '策略日誌保存中…' : daytrade.lastRecordedAt
+                    ? `策略日誌已保存 ${fmtClock(daytrade.lastRecordedAt)} · 本頁開啟期間每次完成掃描均記錄`
+                    : '策略日誌等待首次掃描完成 · 儲存在本機瀏覽器，請定期匯出備份')}
+            </div>}
+            {labActive ? <StrategyLabPanel recording={daytrade.loading || daytrade.recording}
+                recordingError={daytrade.recordingError} onRecordNow={daytrade.refresh} onPick={onPick} />
+                : daytradeActive ? <DaytradePickerPanel {...daytrade} onRefresh={daytrade.refresh} onPick={onPick} /> : view === 'daily' && V9_RESEARCH_MODE ? <ResearchDailyBreakoutPanel
                 rows={dailyRows} loading={loading} error={error} onPick={onPick} /> : <>
             {lastUpdated && (
                 <div className={s.updatedAt}>

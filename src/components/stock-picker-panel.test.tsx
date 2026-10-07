@@ -4,9 +4,14 @@ import type { PickerRow } from '../hooks/use-stock-picker';
 import type { ResearchDailyBreakoutPanelProps } from './research-daily-breakout-panel';
 import { StockPickerPanel } from './stock-picker-panel';
 
-const mocks = vi.hoisted(() => ({ researchMode: true, usePicker: vi.fn(), daily: vi.fn(), refresh: vi.fn() }));
+const mocks = vi.hoisted(() => ({ researchMode: true, usePicker: vi.fn(), daily: vi.fn(), refresh: vi.fn(),
+    useDaytrade: vi.fn(), daytrade: vi.fn(), dayRefresh: vi.fn() }));
 vi.mock('../lib/workspace', () => ({ get V9_RESEARCH_MODE() { return mocks.researchMode; } }));
 vi.mock('../hooks/use-stock-picker', () => ({ useStockPicker: mocks.usePicker }));
+vi.mock('../hooks/use-daytrade-picker', () => ({ useDaytradePicker: mocks.useDaytrade }));
+vi.mock('./daytrade-picker-panel', () => ({ DaytradePickerPanel: (props: {onPick:(code:string)=>void}) => {
+    mocks.daytrade(props); return <div>模擬當沖多空10<button onClick={() => props.onPick('2317')}>模擬當沖選取</button></div>;
+} }));
 vi.mock('./research-daily-breakout-panel', () => ({ ResearchDailyBreakoutPanel: (props: ResearchDailyBreakoutPanelProps) => {
     mocks.daily(props);
     return <div data-daily-study><span>模擬日K波段研究</span><button onClick={() => props.onPick(props.rows[0]!.contract.code)}>模擬選取日K股票</button></div>;
@@ -37,12 +42,13 @@ const mount = async (pick = vi.fn()) => {
 beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); mocks.researchMode = true; vi.clearAllMocks();
     mocks.usePicker.mockReturnValue(payload());
+    mocks.useDaytrade.mockReturnValue({ result: {}, poolSize: 40, loading: false, error: null, lastUpdated: null, refresh: mocks.dayRefresh });
 });
 afterEach(async () => { if (renderer) await act(async () => renderer!.unmount()); renderer = undefined; vi.unstubAllGlobals(); });
 
 it('opens daily research from the existing picker hook and forwards completed daily rows and picks', async () => {
     const pick = await mount();
-    expect(mocks.usePicker).toHaveBeenCalledTimes(1); expect(mocks.usePicker).toHaveBeenLastCalledWith('long');
+    expect(mocks.usePicker).toHaveBeenCalledTimes(1); expect(mocks.usePicker).toHaveBeenLastCalledWith('long', true);
     expect(mocks.daily).not.toHaveBeenCalled(); expect(text()).toContain('原選股型態');
     await press('日K波段');
     // One hook evaluation per parent render; opening this child creates no
@@ -74,11 +80,25 @@ it('does not expose or mount daily research in the normal non-research mode', as
 });
 
 it('uses long daily data after short selection while retaining the original short-side feature', async () => {
-    await mount(); await press('空方'); expect(mocks.usePicker).toHaveBeenLastCalledWith('short');
-    await press('日K波段'); expect(mocks.usePicker).toHaveBeenLastCalledWith('long');
+    await mount(); await press('空方'); expect(mocks.usePicker).toHaveBeenLastCalledWith('short', true);
+    await press('日K波段'); expect(mocks.usePicker).toHaveBeenLastCalledWith('long', true);
     expect(renderer!.root.findAllByType('button').some(button => button.children.includes('空方'))).toBe(false);
-    await press('原選股'); await press('空方'); expect(mocks.usePicker).toHaveBeenLastCalledWith('short');
+    await press('原選股'); await press('空方'); expect(mocks.usePicker).toHaveBeenLastCalledWith('short', true);
     expect(text()).toContain('原選股型態');
+});
+
+it('activates only the intraday scan in its research tab, routes refresh and selection, then restores the original scan', async () => {
+    const pick = await mount();
+    expect(mocks.useDaytrade).toHaveBeenLastCalledWith(false);
+    await press('當沖多空10');
+    expect(mocks.usePicker).toHaveBeenLastCalledWith('long', false);
+    expect(mocks.useDaytrade).toHaveBeenLastCalledWith(true);
+    expect(text()).toContain('模擬當沖多空10'); expect(text()).not.toContain('原選股型態');
+    await press('模擬當沖選取'); expect(pick).toHaveBeenCalledExactlyOnceWith('2317');
+    await act(async () => renderer!.root.findAllByType('button').find(node => node.props.title === '重新整理')!.props.onClick());
+    expect(mocks.dayRefresh).toHaveBeenCalledTimes(1); expect(mocks.refresh).not.toHaveBeenCalled();
+    await press('原選股');
+    expect(mocks.useDaytrade).toHaveBeenLastCalledWith(false); expect(mocks.usePicker).toHaveBeenLastCalledWith('long', true);
 });
 
 it('forwards loading and errors to daily research without duplicating the original-view state display', async () => {

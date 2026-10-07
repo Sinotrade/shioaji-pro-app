@@ -2,7 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Candle } from '../lib/types/market';
-import { useStockPicker } from './use-stock-picker';
+import { useStockPicker, type PickerSide } from './use-stock-picker';
 
 const mocks = vi.hoisted(() => ({ research: true, items: [] as {contract: ContractInfo}[],
     daily: vi.fn(), cached: vi.fn(), scanner: vi.fn(), snapshots: vi.fn(), resolve: vi.fn(),
@@ -21,7 +21,9 @@ const bar = (day: string): Candle => ({ time: Date.parse(`${day}T00:00:00Z`) / 1
     open: 100, high: 102, low: 99, close: 101, volume: 100 });
 let renderer: ReactTestRenderer | undefined;
 let result: ReturnType<typeof useStockPicker>;
-function Probe() { result = useStockPicker(); return null; }
+function Probe({ side = 'long', enabled = true }: { side?: PickerSide; enabled?: boolean }) {
+    result = useStockPicker(side, enabled); return null;
+}
 beforeEach(() => {
     vi.clearAllMocks(); mocks.research = true; mocks.items = [{ contract: contract('2330') }];
     mocks.daily.mockResolvedValue([bar('2026-10-01'), bar('2026-10-02')]);
@@ -63,12 +65,37 @@ describe('reuse the original stock scan for independent daily research', () => {
         expect(result.dailyRows).toEqual([{ contract: mocks.items[0]!.contract, daily: [] }]);
         expect(mocks.cached).not.toHaveBeenCalled();
     });
-    it('shares the 40-contract limit and keeps the three existing scanner requests unchanged', async () => {
+    it('shares the 40-contract limit and keeps the three existing scanner request counts unchanged', async () => {
         mocks.items = Array.from({ length: 45 }, (_, i) => ({ contract: contract(String(2000 + i)) }));
         await act(async () => { renderer = create(<Probe />); });
         expect(result.dailyRows).toHaveLength(40); expect(mocks.cached).toHaveBeenCalledTimes(40);
         expect(mocks.daily).toHaveBeenCalledTimes(41); // one existing index request
         expect(mocks.scanner).toHaveBeenCalledTimes(3);
         expect(new Set(result.dailyRows.map(row => row.contract.code)).size).toBe(40);
+    });
+    it.each([
+        { research: true, side: 'long' as const, flags: [true, true, true] },
+        { research: true, side: 'short' as const, flags: [true, false, true] },
+        { research: false, side: 'long' as const, flags: [false, false, false] },
+        { research: false, side: 'short' as const, flags: [false, true, false] },
+    ])('uses verified scanner direction only in research=$research side=$side, preserving formal behavior', async ({ research, side, flags }) => {
+        mocks.research = research;
+        await act(async () => { renderer = create(<Probe side={side} />); });
+        expect(mocks.scanner.mock.calls).toEqual([
+            ['VolumeRank', 25, flags[0]],
+            ['ChangePercentRank', 20, flags[1]],
+            ['AmountRank', 20, flags[2]],
+        ]);
+        expect(mocks.daily).toHaveBeenCalledTimes(2);
+        expect(mocks.snapshots).toHaveBeenCalledTimes(1);
+    });
+    it('does not start the legacy scan while its view is disabled, in either research or formal mode', async () => {
+        for (const research of [true, false]) {
+            mocks.research = research;
+            await act(async () => { renderer = create(<Probe enabled={false} />); });
+            expect(mocks.scanner).not.toHaveBeenCalled(); expect(mocks.daily).not.toHaveBeenCalled();
+            expect(mocks.snapshots).not.toHaveBeenCalled(); expect(mocks.cached).not.toHaveBeenCalled();
+            await act(async () => renderer!.unmount()); renderer = undefined;
+        }
     });
 });

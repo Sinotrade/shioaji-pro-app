@@ -43,6 +43,16 @@ export interface ContractInfo extends Contract {
     category: string;
     margin_trading_balance: number;
     short_selling_balance: number;
+    // Broker stock metadata; absence is unknown, never an affirmative
+    // permission to trade. Credit balances are not current borrow inventory.
+    unit?: number;
+    trading_suspended?: boolean;
+    disposition_level?: number;
+    attention_flag?: boolean;
+    settlement_type?: string;
+    below_ref_shortable?: boolean;
+    margin_shortable?: boolean;
+    sbl_shortable?: boolean;
     // futures/options: contract multiplier from the API (e.g. TXF 200,
     // stock futures 2000); options carry strike/right for payoff math
     multiplier?: number;
