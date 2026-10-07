@@ -1067,6 +1067,7 @@ function observeCancel(
         const sentUnder = createAccountQuery();
         const mark = batch?.startMark ?? readMark();
         const lostMark = target.tradingState.ordersBaselineLostMark();
+        const hadBaseline = target.tradingState.hasOrdersBaseline();
         try {
             await send();
         } catch (error) {
@@ -1078,7 +1079,8 @@ function observeCancel(
                     if (target.base !== getApiBase()) throw new Error('伺服器已切換，未送出刪單');
                     sentUnder.assertCurrent();
                     // A sidecar restart noticed since the first request: its trade_id may name another order.
-                    if (target.tradingState.ordersBaselineLostMark() !== lostMark) throw new Error('伺服器委託基準已重建，未送出刪單');
+                    if (target.tradingState.ordersBaselineLostMark() !== lostMark
+                        || (hadBaseline && !target.tradingState.hasOrdersBaseline())) throw new Error('伺服器委託基準已重建，未送出刪單');
                 });
             } catch (retry) {
                 // Still refused by the sidecar before reaching the broker: nothing was cancelled.

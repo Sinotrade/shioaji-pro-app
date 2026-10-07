@@ -467,3 +467,16 @@ it('#244 a staggered batch joins the reconciliation already in flight', async ()
     expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled']);
     expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/trades' && c[1].refresh === true)).toHaveLength(1);
 });
+it('#244 does not resend when the orders baseline was lost during reconciliation without a new mark', async () => {
+    let dispatched = 0;
+    m.post.mockImplementation(async (path: string, body: Record<string, unknown>, opts?: { beforeDispatch?: () => void }) => {
+        if (path === '/api/v1/order/cancel_order') { opts?.beforeDispatch?.(); dispatched++; throw Object.assign(new Error('400 CA not activated for:'), { status: 400 }); }
+        if (path === '/api/v1/order/trades') {
+            if (body.refresh === true) m.baseline = false;
+            return body.refresh === true ? [{ ...row(), account: undefined, order: { ...row().order, account: { ...account, person_id: 'P123' } } }] : [];
+        }
+        return { state: 'Healthy', reasons: [] };
+    });
+    await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
+    expect(dispatched).toBe(1);
+});
