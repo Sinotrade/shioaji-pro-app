@@ -425,3 +425,45 @@ it('#244 does not resend after the server mode changed while the first cancel wa
     await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
     expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/cancel_order')).toHaveLength(1);
 });
+it('#244 does not resend when the orders baseline was rebuilt (sidecar restart) during reconciliation', async () => {
+    let dispatched = 0;
+    m.post.mockImplementation(async (path: string, body: Record<string, unknown>, opts?: { beforeDispatch?: () => void }) => {
+        if (path === '/api/v1/order/cancel_order') { opts?.beforeDispatch?.(); dispatched++; throw Object.assign(new Error('400 CA not activated for:'), { status: 400 }); }
+        if (path === '/api/v1/order/trades') {
+            if (body.refresh === true) m.lostMark += 1;
+            return body.refresh === true ? [{ ...row(), account: undefined, order: { ...row().order, account: { ...account, person_id: 'P123' } } }] : [];
+        }
+        return { state: 'Healthy', reasons: [] };
+    });
+    await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
+    expect(dispatched).toBe(1);
+});
+it('#244 a staggered batch joins the reconciliation already in flight', async () => {
+    const second = (): AccountedTrade => ({ ...row(), order: { ...row().order, id: 'fixture-2', seqno: 'seq2', ordno: 'ord2' },
+        status: { ...row().status, id: 'fixture-2' } } as AccountedTrade);
+    m.rows = [row(), second()];
+    const signable = [row(), second()].map(r => ({ ...r, account: undefined, order: { ...r.order, account: { ...account, person_id: 'P123' } } }));
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const sent = new Map<string, number>();
+    m.post.mockImplementation(async (path: string, body: Record<string, unknown>) => {
+        if (path === '/api/v1/order/cancel_order') {
+            const id = String(body.trade_id); const n = sent.get(id) ?? 0; sent.set(id, n + 1);
+            if (n === 0) throw Object.assign(new Error('400 CA not activated for:'), { status: 400 });
+            return id === 'fixture' ? row() : second();
+        }
+        if (path === '/api/v1/order/trades') {
+            if (body.refresh === true) { setTimeout(release, 20); await gate; return signable; }
+            return signable.map(r => ({ ...r, status: { ...r.status, status: 'Cancelled', cancel_quantity: 3, order_quantity: 0 } }));
+        }
+        return { state: 'Healthy', reasons: [] };
+    });
+    // The second order gets its local mutation lock only after the first one's reconciliation started.
+    vi.stubGlobal('navigator', { locks: { request: async (name: string, _o: unknown, cb: (v: object) => unknown) => {
+        if (name.includes('fixture-2')) await new Promise(resolve => setTimeout(resolve, 10));
+        return cb({});
+    } } });
+    const results = await cancelOrders(['fixture', 'fixture-2']);
+    expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled']);
+    expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/trades' && c[1].refresh === true)).toHaveLength(1);
+});
