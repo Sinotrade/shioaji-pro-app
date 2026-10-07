@@ -211,10 +211,13 @@ export function sharedAuthoritativeTrades(
  *  before sending. The confirmation refresh:true of any member starts only
  *  after all arrived, so one read per account (shared) serves the whole batch
  *  even when the Web Lock or the sidecar serialises the sends. */
-export interface CancelBatchMember { arrive(): void; allSent: Promise<void> }
+export interface CancelBatchMember { arrive(): void; allSent: Promise<void>;
+    /** readMark() when the batch started: a read started after it may serve any member's pre-send reconciliation (#244). */
+    startMark?: number }
 export const CANCEL_BATCH_MAX_WAIT_MS = 15_000;
 export function createCancelBatch(size: number): { member(): CancelBatchMember } {
     let remaining = Math.max(0, size);
+    const startMark = readMark();
     let release!: () => void;
     const allSent = new Promise<void>(resolve => { release = resolve; });
     if (remaining === 0) release();
@@ -223,6 +226,7 @@ export function createCancelBatch(size: number): { member(): CancelBatchMember }
             let arrived = false;
             return {
                 allSent,
+                startMark,
                 arrive() { if (arrived) return; arrived = true; remaining -= 1; if (remaining <= 0) release(); },
             };
         },

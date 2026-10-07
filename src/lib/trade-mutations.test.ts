@@ -79,7 +79,7 @@ it('summarises confirmed, sent-but-unconfirmed, not-sent and unknown cancellatio
     const mixed = summary([{ status: 'fulfilled', value: trade('Cancelled') }, { status: 'rejected', reason: unconfirmed },
         { status: 'rejected', reason: notSent }, { status: 'rejected', reason: new Error('timeout') }]);
     expect(mixed.kind).toBe('err');
-    expect(mixed.body).toBe('已確認取消 1 筆；已送出未確認 1 筆；未送出 1 筆；失敗或結果未知 1 筆。未確認項目請手動更新委託核對，勿自動重送。');
+    expect(mixed.body).toBe('已確認取消 1 筆；已送出未確認 1 筆；未送出 1 筆（委託或帳戶歸屬不明）；失敗或結果未知 1 筆（timeout）。未確認項目請手動更新委託核對，勿自動重送。');
     expect(summary([{ status: 'rejected', reason: notSent }]).kind).toBe('err');
     expect(summary([{ status: 'fulfilled', value: trade('Filled') }])).toEqual({ kind: 'info', body: '已確認取消 0 筆；已全部成交、無可取消 1 筆。' });
 });

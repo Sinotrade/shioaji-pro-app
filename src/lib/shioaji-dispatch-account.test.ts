@@ -5,7 +5,7 @@ import type { ContractBase } from './types/contract';
 
 const m = vi.hoisted(() => ({ accounts: [] as Account[], trades: [] as Trade[], baseline: vi.fn() }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts }), accountFor: () => m.accounts[0] }));
-vi.mock('./trading-state', () => ({ getTradingState: () => ({ trades: m.trades }), hasOrdersBaseline: m.baseline, cancelCacheTrusted: vi.fn(), locallyCancelled: vi.fn() }));
+vi.mock('./trading-state', () => ({ getTradingState: () => ({ trades: m.trades }), hasOrdersBaseline: m.baseline, cancelCacheTrusted: vi.fn(), locallyCancelled: vi.fn(), ordersBaselineLostMark: () => 0 }));
 import { cancelComboOrder, cancelOrder, cancelVerifiedOrder, placeComboOrder, placeFuturesOrder, placeStockOrder, updateOrderPrice, updateOrderQty, type ServerInfo } from './shioaji';
 import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from './server-info-store';
 

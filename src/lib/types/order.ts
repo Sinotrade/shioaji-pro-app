@@ -72,7 +72,8 @@ export interface OrderResult {
     order_lot?: string;
     octype?: string;
     custom_field?: string;
-    account?: { broker_id: string; account_id: string; account_type: string };
+    /** person_id is empty on a sidecar row built only from an active report (#244). */
+    account?: { broker_id: string; account_id: string; account_type: string; person_id?: string };
 }
 
 export interface OrderStatusInfo {
