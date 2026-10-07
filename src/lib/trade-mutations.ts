@@ -19,6 +19,9 @@ const flag = (reason: unknown, key: 'mutationNotStarted' | 'mutationOutcomeUnkno
 export function cancellationSummary(results: PromiseSettledResult<Trade>[]) {
     let confirmed = 0, filled = 0, unconfirmed = 0, notSent = 0, unknown = 0;
     const notes = new Map<string, number>();
+    // The first reason of each failure kind is shown (#244: a refused cancel only said "失敗或結果未知").
+    let notSentReason = '', unknownReason = '';
+    const reasonOf = (reason: unknown) => reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : '';
     for (const result of results) {
         if (result.status === 'fulfilled') {
             const outcome = cancellationOutcome(result.value);
@@ -28,16 +31,17 @@ export function cancellationSummary(results: PromiseSettledResult<Trade>[]) {
                 if (note) notes.set(note, (notes.get(note) ?? 0) + 1);
             } else if (outcome === 'filled') filled++;
             else if (outcome === 'pending') unconfirmed++; else unknown++;
-        } else if (flag(result.reason, 'mutationNotStarted')) notSent++;
+        } else if (flag(result.reason, 'mutationNotStarted')) { notSent++; notSentReason ||= reasonOf(result.reason); }
         else if (flag(result.reason, 'mutationOutcomeUnknown')) unconfirmed++;
-        else unknown++;
+        else { unknown++; unknownReason ||= reasonOf(result.reason); }
     }
     const detail = [...notes].map(([note, n]) => `（${n} 筆${note}）`).join('');
     const parts = [`已確認取消 ${confirmed} 筆${detail}`];
     if (filled) parts.push(`已全部成交、無可取消 ${filled} 筆`);
     if (unconfirmed) parts.push(`已送出未確認 ${unconfirmed} 筆`);
-    if (notSent) parts.push(`未送出 ${notSent} 筆`);
-    if (unknown) parts.push(`失敗或結果未知 ${unknown} 筆`);
+    const why = (reason: string) => reason ? `（${reason}）` : '';
+    if (notSent) parts.push(`未送出 ${notSent} 筆${why(notSentReason)}`);
+    if (unknown) parts.push(`失敗或結果未知 ${unknown} 筆${why(unknownReason)}`);
     const unresolved = unconfirmed + unknown;
     // Anything not cancelled as asked (not sent, unconfirmed, unknown) is an
     // error tone: a cancel-all that left orders working must not look fine.

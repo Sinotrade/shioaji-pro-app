@@ -336,3 +336,39 @@ it('cancelVerifiedOrder: beforeSend refusal sends nothing', async () => {
         .rejects.toMatchObject({ mutationNotStarted: true, message: '環境已切換' });
     expect(dispatch).not.toHaveBeenCalled();
 });
+
+describe('#244 cancel of an order placed outside this sidecar (iLeader)', () => {
+    const unsignable = () => Object.assign(new Error('400 CA not activated for:'), { status: 400 });
+    const brokerRow = (personId: string) => ({ ...row(), account: undefined,
+        order: { ...row().order, account: { ...account, person_id: personId } } });
+    it('reconciles the account once and resends after the sidecar refused to sign the report-only row', async () => {
+        let cancels = 0;
+        m.post.mockImplementation(async (path: string, body: Record<string, unknown>) => {
+            if (path === '/api/v1/order/cancel_order') { if (cancels++ === 0) throw unsignable(); return row(); }
+            if (path === '/api/v1/order/trades') return body.refresh === true ? [brokerRow('P123')] : m.readback!(body);
+            return { state: 'Healthy', reasons: [] };
+        });
+        await expect(cancelOrder('fixture')).resolves.toMatchObject({ status: { status: 'Cancelled' } });
+        const calls = m.post.mock.calls.map(c => [c[0], c[1].refresh]);
+        expect(calls.slice(0, 3)).toEqual([['/api/v1/order/cancel_order', undefined],
+            ['/api/v1/order/trades', true], ['/api/v1/order/cancel_order', undefined]]);
+        expect(cancels).toBe(2);
+    });
+    it('sends nothing more when the reconciled row still cannot be signed', async () => {
+        m.post.mockImplementation(async (path: string, body: Record<string, unknown>) => {
+            if (path === '/api/v1/order/cancel_order') throw unsignable();
+            if (path === '/api/v1/order/trades') return body.refresh === true ? [brokerRow('')] : m.readback!(body);
+            return { state: 'Healthy', reasons: [] };
+        });
+        await expect(cancelOrder('fixture')).rejects.toMatchObject({ mutationNotStarted: true });
+        expect(m.post.mock.calls.filter(c => c[0] === '/api/v1/order/cancel_order')).toHaveLength(1);
+    });
+    it('does not resend other cancel errors', async () => {
+        m.post.mockImplementation(async (path: string) => {
+            if (path === '/api/v1/order/cancel_order') throw Object.assign(new Error('400 Trade fixture not found in cache'), { status: 400 });
+            return [];
+        });
+        await expect(cancelOrder('fixture')).rejects.toThrow('not found in cache');
+        expect(m.post.mock.calls.map(c => c[0])).toEqual(['/api/v1/order/cancel_order']);
+    });
+});
