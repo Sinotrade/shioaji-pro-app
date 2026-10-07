@@ -196,7 +196,8 @@
             "orderId": "zz",
             "status": "working",
             "qty": 1,
-            "deals": []
+            "deals": [],
+            "seqno": "test-other"
           }
         ],
         "complete": true

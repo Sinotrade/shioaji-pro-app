@@ -15,6 +15,7 @@ const m = vi.hoisted(() => ({
     request: vi.fn(),
     dismiss: vi.fn(),
     focus: vi.fn(),
+    reconcile: vi.fn(), ackUnknown: vi.fn(), stopUnknown: vi.fn(),
     priv: false,
     contracts: {} as Record<string, { name: string; delivery_month?: string }>,
 }));
@@ -27,8 +28,9 @@ vi.mock('../lib/trigger-engine', () => ({
     requestPendingPrices: m.request,
     isPendingUnpast: (t: TriggerOrder, price: number) => t.condition === 'below' ? price > t.price : price < t.price,
     priceKeyOf: (t: TriggerOrder) => (t.kind !== 'alert' && t.orderLot === 'IntradayOdd' ? `${t.code}#odd` : t.code),
-    RESTORE_REASON_TEXT: { restart: 'R-restart', disconnect: 'R-disconnect', env: 'R-env' },
+    RESTORE_REASON_TEXT: { restart: 'R-restart', disconnect: 'R-disconnect', env: 'R-env', unknownNotSent: 'R-unknownNotSent' },
 }));
+vi.mock('../lib/execution/native',()=>({reconcileNativeProgram:m.reconcile,acknowledgeNativeUnknown:m.ackUnknown,removeNativeProgram:m.stopUnknown}));
 vi.mock('../lib/window-role', () => ({ focusMainWindow: m.focus }));
 vi.mock('../lib/bracket', () => ({ dismissBracket: m.dismiss }));
 vi.mock('../lib/privacy', () => ({
@@ -78,7 +80,7 @@ beforeEach(() => {
     m.env = SIM;
     m.priv = false;
     m.contracts = { TXFR1: { name: '臺股期貨', delivery_month: '202610' } };
-    for (const f of [m.resolve, m.request, m.dismiss, m.focus]) { f.mockReset(); f.mockResolvedValue(true); }
+    for (const f of [m.resolve, m.request, m.dismiss, m.focus,m.reconcile,m.ackUnknown,m.stopUnknown]) { f.mockReset(); f.mockResolvedValue(true); }
 });
 
 it('renders nothing without pending triggers', () => {
@@ -97,6 +99,32 @@ it('send needs two clicks; the armed label follows the latest price', async () =
     expect(text(button(r, '再按一次'))).toContain('目前 47,850'); // still armed
     await click(button(r, '再按一次'));
     expect(m.resolve).toHaveBeenCalledWith('tg-1', 'send', { allowUnpast: false });
+});
+
+it('native unknownNotSent: warns the original may still exist and needs one more confirmation', async () => {
+    m.triggers = [stop({ pending: { price: 47900, at: Date.now(), reason: 'unknownNotSent' } })];
+    const r = render();
+    expect(text(r.root)).toContain('原委託可能仍在券商');
+    await click(button(r, '送出'));
+    await click(button(r, '再按一次'));
+    expect(m.resolve).not.toHaveBeenCalled();
+    expect(text(button(r, '原委託可能仍存在'))).toContain('再按一次仍重新送出');
+    // a double-click never passes it
+    await click(button(r, '原委託可能仍存在'), true);
+    expect(m.resolve).not.toHaveBeenCalled();
+    await click(button(r, '原委託可能仍存在'));
+    expect(m.resolve).toHaveBeenCalledWith('tg-1', 'send', { allowUnpast: false });
+});
+
+it('native unknownNotSent while unpast: the extra step covers both and allows unpast', async () => {
+    m.triggers = [stop({ pending: { price: 47900, at: Date.now(), reason: 'unknownNotSent' } })];
+    m.prices = { TXFR1: 48100 };
+    const r = render();
+    await click(button(r, '送出'));
+    await click(button(r, '再按一次'));
+    expect(text(button(r, '原委託可能仍存在'))).toContain('已未穿價');
+    await click(button(r, '原委託可能仍存在'));
+    expect(m.resolve).toHaveBeenCalledWith('tg-1', 'send', { allowUnpast: true });
 });
 
 it('cancel needs two clicks; keep is a single click', async () => {
@@ -246,4 +274,23 @@ it('whole-lot / futures exits keep the market-order wording', () => {
     const r = render();
     expect(text(r.root)).toContain('立刻以市價成交');
     expect(String(button(r, '立即送出').props.title)).toContain('市價單');
+});
+
+it('r36 persistent unknown has scoped reconcile/Stop/explicit ACK, never send or keep, and guards a double click',async()=>{
+    const native={programId:'P',levelId:'L',version:2,leg:'entry'};
+    m.triggers=[stop({pending:undefined,unresolved:{detail:'ambiguous order, no resend',at:1},...{native}})];
+    const r=render();expect(JSON.stringify(r.toJSON())).toContain('委託結果待確認');
+    expect(buttons(r).some(b=>text(b).includes('立即送出')||text(b).includes('等再次穿價'))).toBe(false);
+    await click(button(r,'更新對帳'));expect(m.reconcile).toHaveBeenCalledWith('P');expect(m.resolve).not.toHaveBeenCalled();
+    await click(button(r,'停止追蹤'));expect(m.stopUnknown).toHaveBeenCalledWith('P');
+    await click(button(r,'已人工核對'));expect(m.ackUnknown).not.toHaveBeenCalled();
+    await click(button(r,'再按一次'),true);expect(m.ackUnknown).not.toHaveBeenCalled();
+    await click(button(r,'再按一次'));expect(m.ackUnknown).toHaveBeenCalledWith('P','L');
+    expect(m.resolve).not.toHaveBeenCalled();act(()=>r.unmount());
+});
+
+it('r36 native standalone pending does not advertise manual send admission; protective/window controls keep their existing send action',()=>{
+    m.triggers=[{...stop(),native:{programId:'P',levelId:'L',version:1,leg:'entry'}}];
+    const r=render();expect(button(r,'手動送出暫不支援').props.disabled).toBe(true);
+    expect(button(r,'保留')).toBeDefined();expect(button(r,'取消這筆')).toBeDefined();act(()=>r.unmount());
 });

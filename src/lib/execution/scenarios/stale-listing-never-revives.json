@@ -1,0 +1,294 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "stale-listing-never-revives",
+  "description": "#201 wiring review round 7: a listing row marked stale (a report of the order was applied after the listing was requested) only adds information; it never revives an order a newer report ended, nor lowers a cumulative value.",
+  "covers": [
+    "#201",
+    "reconcile",
+    "cancelQty"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1001,
+        "id": "c1001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "t1",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Sell",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 100,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Auto"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "tick",
+        "ts": 1002,
+        "code": "TXFR1",
+        "price": 100
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/t1/L1/entry/0/0"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "intentResult",
+        "ts": 1003,
+        "key": "simulation/local-a/t1/L1/entry/0/0",
+        "outcome": "accepted",
+        "orderId": "o1",
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1004,
+        "id": "c1004",
+        "command": {
+          "op": "stop",
+          "programId": "t1",
+          "version": 1
+        }
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "cancel",
+            "key": "simulation/local-a/t1/L1/entry/0/0/cancel/1",
+            "orderId": "o1"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "env": "simulation",
+        "serverId": "local-a",
+        "type": "intentResult",
+        "ts": 1005,
+        "key": "simulation/local-a/t1/L1/entry/0/0/cancel/1",
+        "outcome": "accepted"
+      }
+    },
+    {
+      "note": "the cancel report ends the order",
+      "event": {
+        "type": "order",
+        "ts": 1006,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "o1",
+        "op": "Cancel",
+        "failed": false,
+        "cancelQty": 1,
+        "reportId": "r1",
+        "exchTs": 1.006,
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "securityType": "FUT"
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "status": "stopped",
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "ended"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "note": "a listing requested BEFORE that report (stale row) still shows it working: it never revives it",
+      "event": {
+        "type": "reconcile",
+        "ts": 1007,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "complete": false,
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/t1/L1/entry/0/0",
+            "orderId": "o1",
+            "status": "working",
+            "qty": 1,
+            "deals": [],
+            "cancelled": 0,
+            "stale": true,
+            "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
+          }
+        ]
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "status": "stopped",
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "ended",
+                    "cancelled": 1
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "note": "a newer listing agrees (cancelled): nothing changes",
+      "event": {
+        "type": "reconcile",
+        "ts": 1008,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "complete": false,
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/t1/L1/entry/0/0",
+            "orderId": "o1",
+            "status": "ended",
+            "qty": 1,
+            "deals": [],
+            "cancelled": 1,
+            "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
+          }
+        ]
+      },
+      "expect": {
+        "programs": {
+          "t1": {
+            "status": "stopped",
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "status": "ended",
+                    "cancelled": 1
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -68,6 +68,9 @@ async function boot(opts: { keepStore?: boolean } = {}) {
         const r = cb(m.lockGranted ? {} : null); return Promise.resolve(r instanceof Promise ? undefined : r); } } });
     m.tick = null; m.heartbeat = null; m.envChanged = []; m.statusChanged = []; m.queued = null;
     engine = await import('./trigger-engine');
+    // This unit harness supplies a bracket owner; the production runtime
+    // performs its actual retirement/identity fence in the integrated suite.
+    engine.setBracketMutationGuard(() => () => undefined);
     engine.startTriggerEngine();
     await flush();
 }

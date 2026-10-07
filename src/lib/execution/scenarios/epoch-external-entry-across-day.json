@@ -1,0 +1,337 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "epoch-external-entry-across-day",
+  "description": "#201 round 22: an external (bracket) entry carries no tag of ours: within an epoch its id identifies it; still open across an epoch boundary it waits for the user to confirm how much filled (never inferred) before the exit counts on it.",
+  "covers": [
+    "#201",
+    "trade-id-epoch"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1790730000000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790730000001,
+        "id": "c1790730000001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "b1",
+            "kind": "bracket",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Buy",
+                "qty": 2,
+                "entry": {
+                  "type": "external",
+                  "orderId": "o-entry"
+                },
+                "exit": {
+                  "type": "oco",
+                  "stop": {
+                    "price": 95,
+                    "condition": "below"
+                  },
+                  "take": {
+                    "price": 110,
+                    "condition": "above"
+                  },
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Cover"
+                  }
+                },
+                "phase": "working",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [
+                  {
+                    "key": "simulation/local-a/b1/L1/entry/0/ext",
+                    "role": "entry",
+                    "leg": "entry",
+                    "cycle": 0,
+                    "qty": 2,
+                    "status": "working",
+                    "orderId": "o-entry",
+                    "filled": 0,
+                    "fills": {},
+                    "fillTs": {},
+                    "detail": null,
+                    "acknowledged": false
+                  }
+                ],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1790730000001,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/b1/L1/entry/0/ext",
+            "orderId": "o-entry",
+            "status": "working",
+            "qty": 2,
+            "deals": [],
+            "seqno": "test-simulation/local-a/b1/L1/entry/0/ext"
+          }
+        ],
+        "complete": false
+      }
+    },
+    {
+      "event": {
+        "type": "epoch",
+        "ts": 1790730000002,
+        "env": "simulation",
+        "serverId": "local-a"
+      },
+      "note": "a reconnect within the same epoch keeps the external entry's id",
+      "expect": {
+        "programs": {
+          "b1": {
+            "levels": {
+              "L1": {
+                "phase": "working",
+                "orders": [
+                  {
+                    "orderId": "o-entry"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "epoch",
+        "ts": 1790751600000,
+        "env": "simulation",
+        "serverId": "local-a"
+      },
+      "expect": {
+        "notices": [
+          "needsConfirm"
+        ],
+        "programs": {
+          "b1": {
+            "levels": {
+              "L1": {
+                "phase": "needsConfirm",
+                "entryPending": {
+                  "reason": "unknownEntryAcrossDay"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790751600001,
+        "id": "c1790751600001",
+        "command": {
+          "op": "resolvePending",
+          "programId": "b1",
+          "version": 1,
+          "levelId": "L1",
+          "choice": "send"
+        }
+      },
+      "expect": {
+        "notices": [
+          "rejected.confirmEntry"
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "deal",
+        "ts": 1790751600002,
+        "env": "simulation",
+        "serverId": "local-a",
+        "orderId": "o-entry",
+        "eventId": null,
+        "seq": "000001",
+        "account": {
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "code": "TXFJ6",
+        "action": "Buy",
+        "qty": 1,
+        "price": 100,
+        "fillTs": 1790751600.002,
+        "seqno": "test-simulation/local-a/b1/L1/entry/0/ext",
+        "securityType": "FUT"
+      },
+      "note": "its old id identifies nothing now",
+      "expect": {
+        "programs": {
+          "b1": {
+            "levels": {
+              "L1": {
+                "entryFilled": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790751600003,
+        "id": "c1790751600003",
+        "command": {
+          "op": "confirmEntry",
+          "programId": "b1",
+          "version": 1,
+          "levelId": "L1",
+          "filled": 3,
+          "noRemainder": true
+        }
+      },
+      "expect": {
+        "notices": [
+          "rejected.invalidQty"
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790751600003,
+        "id": "c-noremainder",
+        "command": {
+          "op": "confirmEntry",
+          "programId": "b1",
+          "version": 1,
+          "levelId": "L1",
+          "filled": 1
+        }
+      },
+      "note": "without the user's confirmation that nothing of the entry still works: refused (later fills would have no exit)",
+      "expect": {
+        "notices": [
+          "rejected.remainderNotConfirmed"
+        ],
+        "programs": {
+          "b1": {
+            "levels": {
+              "L1": {
+                "phase": "needsConfirm"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790751600004,
+        "id": "c1790751600004",
+        "command": {
+          "op": "confirmEntry",
+          "programId": "b1",
+          "version": 1,
+          "levelId": "L1",
+          "filled": 1,
+          "noRemainder": true
+        }
+      },
+      "note": "the user's quantity: the position is protected from now on",
+      "expect": {
+        "programs": {
+          "b1": {
+            "levels": {
+              "L1": {
+                "entryFilled": 1,
+                "position": 1,
+                "phase": "holding",
+                "pending": null
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

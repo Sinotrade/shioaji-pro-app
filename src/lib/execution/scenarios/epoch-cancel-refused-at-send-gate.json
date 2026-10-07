@@ -1,0 +1,279 @@
+{
+  "schema": "execution-conformance-v1",
+  "name": "epoch-cancel-refused-at-send-gate",
+  "description": "#201 round 24: a cancel created before an epoch boundary and refused by the send-time gate after it (detail epochChanged) never goes to the old id and is not a failed attempt: it returns to its slot and goes out to the id this epoch's listing rebinds by tag.",
+  "covers": [
+    "#201",
+    "trade-id-epoch",
+    "send-gate"
+  ],
+  "steps": [
+    {
+      "event": {
+        "type": "connection",
+        "ts": 1790730000000,
+        "live": true,
+        "env": "simulation",
+        "serverId": "local-a"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790730000001,
+        "id": "c1790730000001",
+        "command": {
+          "op": "create",
+          "program": {
+            "id": "t1",
+            "kind": "trigger",
+            "binding": {
+              "env": "simulation",
+              "serverId": "local-a",
+              "account": {
+                "accountType": "F",
+                "brokerId": "F002000",
+                "accountId": "1234567"
+              },
+              "contract": {
+                "market": "futures",
+                "quoteCode": "TXFR1",
+                "orderCode": "TXFJ6",
+                "securityType": "FUT"
+              }
+            },
+            "version": 1,
+            "status": "running",
+            "pauseReason": null,
+            "hold": null,
+            "ocoLevels": false,
+            "levels": [
+              {
+                "id": "L1",
+                "side": "Sell",
+                "qty": 1,
+                "entry": {
+                  "type": "touch",
+                  "condition": "below",
+                  "price": 100,
+                  "order": {
+                    "priceType": "MKT",
+                    "timeInForce": "IOC",
+                    "octype": "Auto"
+                  }
+                },
+                "exit": null,
+                "phase": "idle",
+                "check": null,
+                "recross": [],
+                "pending": null,
+                "orders": [],
+                "position": 0,
+                "entryFilled": 0,
+                "unprotected": 0,
+                "cycles": 0,
+                "detail": null
+              }
+            ],
+            "generator": null,
+            "cycle": {
+              "rearmAfterExit": false,
+              "maxCycles": null,
+              "partialFill": "immediate"
+            },
+            "bounds": {
+              "upper": null,
+              "lower": null,
+              "onBreakUpper": "none",
+              "onBreakLower": "none"
+            },
+            "session": {
+              "resumeRule": "confirm",
+              "longDisconnectMs": 60000,
+              "silentStallMs": 90000
+            },
+            "risk": {
+              "maxWorkingEntries": null
+            },
+            "hooks": [],
+            "intentSeq": 0,
+            "issues": [],
+            "createdAt": 0,
+            "updatedAt": 0
+          }
+        }
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790730000002,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 105
+      }
+    },
+    {
+      "event": {
+        "type": "tick",
+        "ts": 1790730000003,
+        "env": "simulation",
+        "serverId": "local-a",
+        "code": "TXFR1",
+        "price": 99
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "place",
+            "key": "simulation/local-a/t1/L1/entry/0/0"
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "intentResult",
+        "ts": 1790730000004,
+        "env": "simulation",
+        "serverId": "local-a",
+        "key": "simulation/local-a/t1/L1/entry/0/0",
+        "outcome": "accepted",
+        "orderId": "T1",
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
+      }
+    },
+    {
+      "event": {
+        "type": "command",
+        "ts": 1790751599000,
+        "id": "c1790751599000",
+        "command": {
+          "op": "stop",
+          "programId": "t1",
+          "version": 1
+        }
+      },
+      "expect": {
+        "intents": [
+          {
+            "kind": "cancel",
+            "key": "simulation/local-a/t1/L1/entry/0/0/cancel/1",
+            "orderId": "T1"
+          }
+        ],
+        "programs": {
+          "t1": {
+            "status": "stopping"
+          }
+        }
+      },
+      "note": "the stop is applied just before the boundary: its cancel to T1 is created in the old epoch"
+    },
+    {
+      "event": {
+        "type": "epoch",
+        "ts": 1790751600000,
+        "env": "simulation",
+        "serverId": "local-a"
+      },
+      "note": "the boundary passes while the cancel waits (fsync / async send): the send-time gate refuses it"
+    },
+    {
+      "event": {
+        "type": "intentResult",
+        "ts": 1790751600001,
+        "env": "simulation",
+        "serverId": "local-a",
+        "key": "simulation/local-a/t1/L1/entry/0/0/cancel/1",
+        "outcome": "notSent",
+        "detail": "epochChanged"
+      },
+      "note": "refused at the send-time gate: never sent, not a failed attempt — back on its slot, waiting for this epoch's listing",
+      "expect": {
+        "programs": {
+          "t1": {
+            "status": "stopping",
+            "issues": [],
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "orderId": "T1",
+                    "unconfirmed": true,
+                    "cancel": {
+                      "status": "failed",
+                      "detail": "epochChanged",
+                      "attempts": 1,
+                      "outstanding": []
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "absentNotices": [
+          "cancelFailed"
+        ]
+      }
+    },
+    {
+      "event": {
+        "type": "heartbeat",
+        "ts": 1790751640000,
+        "env": "simulation",
+        "serverId": "local-a"
+      },
+      "note": "no cancel (nor retry) to the old id"
+    },
+    {
+      "event": {
+        "type": "reconcile",
+        "ts": 1790751640001,
+        "account": {
+          "accountType": "F",
+          "brokerId": "F002000",
+          "accountId": "1234567"
+        },
+        "env": "simulation",
+        "serverId": "local-a",
+        "complete": false,
+        "orders": [
+          {
+            "intentKey": "simulation/local-a/t1/L1/entry/0/0",
+            "orderId": "T9",
+            "status": "working",
+            "qty": 1,
+            "deals": [],
+            "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
+          }
+        ]
+      },
+      "note": "this epoch's listing rebinds the slot by its tag (T9): the returned cancel goes there at once",
+      "expect": {
+        "intents": [
+          {
+            "kind": "cancel",
+            "key": "simulation/local-a/t1/L1/entry/0/0/cancel/2",
+            "orderId": "T9"
+          }
+        ],
+        "programs": {
+          "t1": {
+            "levels": {
+              "L1": {
+                "orders": [
+                  {
+                    "orderId": "T9"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

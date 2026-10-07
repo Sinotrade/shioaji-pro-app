@@ -60,6 +60,7 @@ vi.mock('./shioaji', () => ({
     fetchTrades: (_type: string, account: unknown, opts: { refresh: boolean }) => opts.refresh ? m.refreshed(account) : m.cached(account),
     fetchTradeCacheHealth: (_type: string, account: unknown) => m.health(account),
     cancelOrder: m.cancel,
+    cancelVerifiedOrder: (row: Trade, _account: unknown, opts: {beforeSend?:()=>void}) => { opts.beforeSend?.(); return m.cancel(row.order.id); },
 }));
 vi.mock('./boot', () => ({ subscribeTradeReports: m.subscribe }));
 vi.mock('./protection-env', () => {
@@ -110,7 +111,7 @@ let bracket: Bracket;
 async function boot(opts: { keepStore?: boolean; noHeartbeat?: boolean } = {}) {
     vi.resetModules();
     if (!opts.keepStore) store = new Map();
-    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); }, key: (i: number) => [...store.keys()][i] ?? null, get length() { return store.size; } });
     vi.stubGlobal('location', { search: m.search });
     m.order = null; m.tick = null; m.heartbeat = null; m.statusChanged = []; m.envChanged = [];
     m.queued = null;
@@ -149,7 +150,8 @@ beforeEach(() => {
     // like placeQuickOrder: beforeSend runs right before sending and may refuse
     m.place.mockImplementation(async (...args: unknown[]) => {
         (args[4] as { beforeSend?: () => void } | undefined)?.beforeSend?.();
-        return { order: { id: `exit-${++n}` }, status: { status: 'PendingSubmit' } };
+        const id = `exit-${++n}`;
+        return { contract: TXF, order: { id, seqno: id, ordno: 'o' }, status: { status: 'PendingSubmit' } };
     });
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -202,8 +204,8 @@ describe('bracket registration and partial-fill accumulation', () => {
         const b = await bracket.registerBracket(spec(F2, 'fixture-f9'));
         await flush();
         await emit(fDeal1!);
-        await emit(edit(fDeal1!, { trade_id: 'fixture-f9', account_id: 'fixture-account-F2', event_id: 'v1:FD:FIXTURESTREAMFD:FIXTURERESET:5' }));
-        await emit(edit(fDeal2!, { trade_id: 'fixture-f9', account_id: 'fixture-account-F2', event_id: 'v1:FD:FIXTURESTREAMFD:FIXTURERESET:6' }));
+        await emit(edit(fDeal1!, { trade_id: 'fixture-f9', seqno: 'fixture-f9', account_id: 'fixture-account-F2', event_id: 'v1:FD:FIXTURESTREAMFD:FIXTURERESET:5' }));
+        await emit(edit(fDeal2!, { trade_id: 'fixture-f9', seqno: 'fixture-f9', account_id: 'fixture-account-F2', event_id: 'v1:FD:FIXTURESTREAMFD:FIXTURERESET:6' }));
         expect(planOf(a.id).filled).toBe(1);
         expect(planOf(b.id).filled).toBe(2);
         expect(triggersOf(a.id).every(t => t.account?.account_id === 'fixture-account-F')).toBe(true);
@@ -433,7 +435,9 @@ describe('trigger execution (main window only)', () => {
         expect(m.notify.mock.calls.some(([n]) => n.title === '觸價單移除未確認')).toBe(true);
         await bracket.dismissBracket(plan.id);
         expect(triggersOf(plan.id)).toHaveLength(0);
-        expect(bracket.getBrackets()).toHaveLength(0);
+        expect(bracket.getBrackets()).toHaveLength(1);
+        expect(bracket.getBrackets()[0]).toMatchObject({ observationOnly: true });
+        expect((await import('./bracket-core')).protectionQuantity(bracket.getBrackets()[0]!)).toBe(0);
     });
 
     function exitRow(status: string, deals: { seq: string; quantity: number; ts?: number }[], cancel = 0) {
@@ -449,7 +453,7 @@ describe('trigger execution (main window only)', () => {
     it('IOC exit PartFilled: settles only when a second read is unchanged (2 cache-only reads, never resent)', async () => {
         const plan = await armed();
         await tick(47000);
-        await emit(edit(fCoverDeal1!, { trade_id: 'exit-1' })); // 1 of 2 filled, then silence
+        await emit(edit(fCoverDeal1!, { trade_id: 'exit-1', seqno: 'exit-1', ordno: 'o' })); // 1 of 2 filled, then silence
         m.cached.mockClear();
         m.cached.mockResolvedValue([exitRow('PartFilled', [{ seq: '000001', quantity: 1, ts: fCoverDeal1!.ts }], 1)]);
         await vi.advanceTimersByTimeAsync(engine.IOC_CHECK_MS); await flush();
@@ -473,7 +477,7 @@ describe('trigger execution (main window only)', () => {
         m.cached.mockResolvedValue([exitRow('Cancelled', [{ seq: '000001', quantity: 1 }], 1)]); // final status
         await vi.advanceTimersByTimeAsync(engine.IOC_CHECK_MS); await flush();
         expect(planOf(plan.id).exit?.status).toBe('incomplete');
-        await emit(edit(fCoverDeal2!, { trade_id: 'exit-1' })); // multi-level exit: a late second deal
+        await emit(edit(fCoverDeal2!, { trade_id: 'exit-1', seqno: 'exit-1', ordno: 'o' })); // multi-level exit: a late second deal
         const { unprotectedQuantity } = await import('./bracket-core');
         expect(planOf(plan.id).exit).toMatchObject({ filled: 2, status: 'filled' });
         expect(unprotectedQuantity(planOf(plan.id))).toBe(0);
@@ -532,7 +536,7 @@ describe('trigger execution (main window only)', () => {
         await expect(bracket.cancelRemainingEntry(planOf(plan.id))).resolves.toBe('unconfirmed');
         expect(planOf(plan.id).entryClosed).toBe(false);
         const other = await (async () => { await boot(); const p = await bracket.registerBracket(spec(F2, 'fixture-f9')); await flush(); return p; })();
-        await emit(edit(fDeal1!, { trade_id: 'fixture-f9', account_id: 'fixture-account-F2', event_id: 'v1:FD:Z:R:1' }));
+        await emit(edit(fDeal1!, { trade_id: 'fixture-f9', seqno: 'fixture-f9', account_id: 'fixture-account-F2', event_id: 'v1:FD:Z:R:1' }));
         await tick(47000);
         const confirmed = cacheTrade('fixture-f9', F2, [{ seq: '000001', quantity: 1 }]);
         confirmed.status = { ...confirmed.status, status: 'Cancelled', cancel_quantity: 1 };
@@ -552,7 +556,8 @@ describe('trigger execution (main window only)', () => {
         const reloaded = planOf(plan.id);
         expect(reloaded.entryCancel).toBe('unconfirmed');
         const { isLive, bracketPhase } = await import('./bracket-core');
-        expect(bracketPhase(reloaded)).toBe('exiting'); // exit still working here
+        expect(bracketPhase(reloaded)).toBe('done'); // unresolved exit identity stays unknown and live
+        expect(reloaded.exit?.status).toBe('unknown');
         expect(isLive(reloaded)).toBe(true);
         // exit completes → plan is done, entry cancel unconfirmed → still live for 對帳
         const exitRow = { ...cacheTrade('exit-1', F1, [{ seq: '000001', quantity: 1 }]),
@@ -637,9 +642,9 @@ describe('trigger execution (main window only)', () => {
         let resolve!: (v: unknown) => void;
         m.place.mockImplementationOnce(() => new Promise(r => { resolve = r; }));
         await tick(47000);
-        await emit(edit(fCoverDeal1!, { trade_id: 'x-exit' }));
-        await emit(edit(fCoverDeal2!, { trade_id: 'x-exit' }));
-        resolve({ order: { id: 'x-exit' }, status: { status: 'PendingSubmit' } });
+        await emit(edit(fCoverDeal1!, { trade_id: 'x-exit', seqno: 'x-exit', ordno: 'o' }));
+        await emit(edit(fCoverDeal2!, { trade_id: 'x-exit', seqno: 'x-exit', ordno: 'o' }));
+        resolve({ contract: TXF, order: { id: 'x-exit', seqno: 'x-exit', ordno: 'o' }, status: { status: 'PendingSubmit' } });
         await flush();
         expect(planOf(plan.id).exit).toMatchObject({ status: 'filled', filled: 2, orderId: 'x-exit' });
         expect(engine.reservedQuantity(`${m.env}|F:fixture-broker-F:fixture-account-F|TXFJ6|Sell`)).toBe(0);
@@ -765,7 +770,7 @@ describe('restore confirmation for bracket exits armed after a restart (#144)', 
         expect(triggersOf(plan.id).find(t => t.kind === 'stop')!.pending?.price).toBe(47000);
     });
 
-    it('entry fill arriving before the server mode is known arms exits that wait for their first tick', async () => {
+    it('entry fill before mode is known needs a strict current listing before restore arming', async () => {
         await boot();
         const plan = await bracket.registerBracket(spec(F1));
         await flush();
@@ -773,6 +778,8 @@ describe('restore confirmation for bracket exits armed after a restart (#144)', 
         await boot({ keepStore: true });
         await emit(fDeal1!);
         expect(triggersOf(plan.id)).toHaveLength(0); // mode unknown: nothing armed
+        expect(planOf(plan.id).filled).toBe(0);
+        m.cached.mockResolvedValue([cacheTrade('fixture-f1', F1, [{seq:'000001',quantity:1}])]);
         m.env = 'http://sim.invalid|simulation';
         m.envChanged.forEach(cb => cb()); await flush();
         expect(triggersOf(plan.id)).toHaveLength(2);
@@ -862,4 +869,413 @@ describe('pre-order bracket validation (entry is not sent when invalid)', () => 
         expect(validateBracketRequest({ ...base, isFutures: false, orderCond: 'MarginTrading' })).toMatch('僅支援現股');
         expect(validateBracketRequest({ ...base, isFutures: false, orderLot: 'Common', orderCond: 'Cash' })).toBeNull();
     });
+});
+
+it('r33 mirror admission is invalidated by a main-window generation change, retaining any sent entry', async () => {
+    let currentHost = 'fixture-host-1';
+    let bracketChannel: FakeChannel | null = null;
+    class FakeChannel {
+        listener: ((event: { data: unknown }) => void) | null = null;
+        constructor(public name: string) { if (name.startsWith('sj-brackets:')) bracketChannel = this; }
+        addEventListener(_name: string, cb: (event: { data: unknown }) => void) { this.listener = cb; }
+        close() { this.listener = null; }
+        state() { this.listener?.({ data: { kind: 'state', state: { hostId: currentHost, plans: [] } } }); }
+        postMessage(value: { kind: string; id?: string; cmd?: { op: string; hostId?: string } }) {
+            if (!this.name.startsWith('sj-brackets:')) return;
+            queueMicrotask(() => {
+                this.state();
+                if (value.kind === 'cmd') this.listener?.({ data: { kind: 'ack', id: value.id,
+                    ok: value.cmd?.op !== 'register' || value.cmd.hostId === currentHost,
+                    result: value.cmd?.op === 'ping' ? currentHost : undefined,
+                    error: '主視窗已重新載入，保護登記待確認' } });
+            });
+        }
+    }
+    m.search = '?popout=flash';vi.stubGlobal('BroadcastChannel', FakeChannel);
+    await boot();
+    const admission = await bracket.ensureBracketHost();
+    expect(() => bracket.assertBracketAdmission(admission)).not.toThrow();
+    currentHost = 'fixture-host-2';(bracketChannel as FakeChannel | null)?.state();
+    expect(() => bracket.assertBracketAdmission(admission)).toThrow('保護執行環境已變更');
+    await expect(bracket.registerBracket({ env: m.env!, account: { account_type: 'F', broker_id: F1.broker_id, account_id: F1.account_id }, orderId: 'fixture-late-entry', seqno: 'fixture-late-seq', quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT', exchange: 'TAIFEX', action: 'Buy', quantity: 1, stopPrice: 95, takePrice: 110 }, admission)).rejects.toThrow('主視窗已重新載入');
+    expect(bracket.getDisplayBrackets()).toMatchObject([{ orderId: 'fixture-late-entry', registrationPending: { owner: 'window' } }]);
+    expect(m.place).not.toHaveBeenCalled();
+});
+
+// r34 public runtime seam: only fake reports/listing, no broker transport.
+it('r34 new stable entry reusing raw ID has its own acknowledged bracket', async () => {
+ await boot();
+ const old = await bracket.registerBracket(spec(F1, 'R', {seqno:'S1',ordno:'O1'}));
+ m.status='disconnected';m.statusChanged.forEach(cb=>cb());
+ m.status='live';m.statusChanged.forEach(cb=>cb());
+ const admission=await bracket.ensureBracketHost();
+ const fresh=await bracket.registerBracket(spec(F1,'R',{seqno:'S2',ordno:'O2'}),admission);
+ expect(fresh.id).not.toBe(old.id);expect(fresh.seqno).toBe('S2');
+ expect(bracket.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(0);
+});
+it('r34 conflicting report and listing never fill or close prior raw ID',async()=>{
+ await boot();const old=await bracket.registerBracket(spec(F1,'R',{seqno:'S1',ordno:'O1'}));
+ await emit(edit(fDeal1!,{trade_id:'R',seqno:'S2',ordno:'O2',exchange_seq:'F2'}));
+ expect(planOf(old.id).filled).toBe(0);expect(triggersOf(old.id)).toHaveLength(0);
+ const foreign=cacheTrade('R',F1,[{seq:'F2',quantity:1}]);foreign.order.seqno='S2';foreign.order.ordno='O2';foreign.status.status='Filled';
+ m.refreshed.mockResolvedValue([foreign]);await bracket.reconcileBracket(old.id);
+ expect(planOf(old.id).filled).toBe(0);expect(planOf(old.id).entryClosed).toBe(false);
+});
+it('r34 positive current stable identity admits and deduplicates a fill',async()=>{
+ await boot();const p=await bracket.registerBracket(spec(F1));await emit(fDeal1!);await emit(fDeal1!);
+ expect(planOf(p.id).filled).toBe(1);expect(triggersOf(p.id)).toHaveLength(2);
+});
+
+const r34Lots = ['Common', 'IntradayOdd'] as const;
+function r34Spec(lot: typeof r34Lots[number], seqno: string, ordno: string, orderId = 'r34-raw') {
+ return lot === 'Common' ? spec(F1,orderId,{seqno,ordno}) : {...spec(S1,orderId,{seqno,ordno}),
+  account:{account_type:'S' as const,broker_id:S1.broker_id,account_id:S1.account_id},quoteCode:'2330',orderCode:'2330',securityType:'STK' as const,exchange:'TSE',orderLot:'IntradayOdd' as const};
+}
+function r34Deal(lot: typeof r34Lots[number], seqno: string, ordno: string, fill='1', orderId='r34-raw') {
+ if(lot==='Common') return edit(fDeal1!,{trade_id:orderId,seqno,ordno,exchange_seq:fill,event_id:`v1:FD:r34:${seqno}:${fill}`});
+ return normalizeOrderEvent({state:'StockDeal',data:{StockDeal:{trade_id:orderId,seqno,ordno,exchange_seq:fill,
+  event_id:`v1:SD:r34:${seqno}:${fill}`,broker_id:S1.broker_id,account_id:S1.account_id,code:'2330',security_type:'STK',
+  order_lot:'IntradayOdd',action:'Buy',quantity:1,ts:1}}})!;
+}
+function r34Trade(lot: typeof r34Lots[number], seqno: string, ordno: string, filled=0, orderId='r34-raw'): Trade {
+ const row=cacheTrade(orderId,lot==='Common'?F1:S1,filled?[{seq:'1',quantity:filled}]:[]);
+ row.order.seqno=seqno;row.order.ordno=ordno;
+ if(lot==='IntradayOdd') {row.contract={...row.contract,code:'2330',security_type:'STK',exchange:'TSE'};
+ row.order.account={...row.order.account!,account_type:'S'};row.order.order_lot='IntradayOdd';}
+ return row;
+}
+it.each(r34Lots)('r34 %s preserves old risk while the new same-raw-ID identity gets its own protection',async(lot)=>{
+ await boot();m.cached.mockResolvedValue([]);
+ const old=await bracket.registerBracket(r34Spec(lot,'S1','O1'));await emit(r34Deal(lot,'S1','O1'));
+ expect(planOf(old.id).filled).toBe(1);
+ m.status='down';m.statusChanged.forEach(cb=>cb());await flush();
+ m.status='live';m.statusChanged.forEach(cb=>cb());await flush();
+ const fresh=await bracket.registerBracket(r34Spec(lot,'S2','O2'),await bracket.ensureBracketHost({orderLot:lot}));
+ expect(fresh.id).not.toBe(old.id);
+ await emit(r34Deal(lot,'S1','O1','2')); // prior entry, current context unconfirmed
+ expect(planOf(old.id).filled).toBe(1);expect(planOf(fresh.id).filled).toBe(0);
+ await emit(r34Deal(lot,'S2','O2'));
+ expect(planOf(fresh.id).filled).toBe(1);expect(planOf(old.id).filled).toBe(1);
+ expect(bracket.getDisplayBrackets().map(p=>p.seqno)).toEqual(['S1','S2']);expect(m.place).not.toHaveBeenCalled();
+});
+it.each(r34Lots)('r34 %s same stable order can change raw ID without another bracket or fill',async(lot)=>{
+ await boot();m.cached.mockResolvedValue([]);
+ const old=await bracket.registerBracket(r34Spec(lot,'S1','O1'));
+ const same=await bracket.registerBracket(r34Spec(lot,'S1','O1','new-raw'));expect(same.id).toBe(old.id);
+ await emit(r34Deal(lot,'S1','O1','1','new-raw'));expect(planOf(old.id).filled).toBe(1);
+ m.refreshed.mockResolvedValue([r34Trade(lot,'S1','O1',1,'listed-raw')]);await bracket.reconcileBracket(old.id);
+ expect(planOf(old.id).filled).toBe(1);expect(planOf(old.id).currentOrderId).toBe('listed-raw');expect(m.place).not.toHaveBeenCalled();
+});
+it.each(r34Lots)('r34 %s foreign or ambiguous listing cannot fill or terminate old entry',async(lot)=>{
+ await boot();m.cached.mockResolvedValue([]);const old=await bracket.registerBracket(r34Spec(lot,'S1','O1'));
+ const foreign=r34Trade(lot,'S2','O2',1);foreign.status.status='Filled';m.refreshed.mockResolvedValue([foreign]);
+ await bracket.reconcileBracket(old.id);expect(planOf(old.id).filled).toBe(0);expect(planOf(old.id).entryClosed).toBe(false);
+ m.refreshed.mockResolvedValue([r34Trade(lot,'S1','O1',1),r34Trade(lot,'S1','O1',1,'other-raw')]);
+ await bracket.reconcileBracket(old.id);expect(planOf(old.id).filled).toBe(0);expect(planOf(old.id).issues.some(i=>i.code==='lookup-failed')).toBe(true);
+});
+it.each(r34Lots)('r34 %s buffered report needs matching identity and current context',async(lot)=>{
+ await boot();m.cached.mockResolvedValue([]);await emit(r34Deal(lot,'S1','O1'));await emit(r34Deal(lot,'S2','O2'));
+ const p=await bracket.registerBracket(r34Spec(lot,'S2','O2'));expect(p.filled).toBe(1);
+ m.status='down';m.statusChanged.forEach(cb=>cb());await flush();m.status='live';m.statusChanged.forEach(cb=>cb());await flush();
+ await expect(bracket.registerBracket(r34Spec(lot,'S2','O2'),await bracket.ensureBracketHost({orderLot:lot}))).rejects.toThrow('連線代次');
+ expect(bracket.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(1);
+ await emit(r34Deal(lot,'S2','O2','2'));expect(planOf(p.id).filled).toBe(1);expect(m.place).not.toHaveBeenCalled();
+});
+it.each(r34Lots)('r34 %s reload cannot bind old stable identity to foreign raw-ID listing or late report',async(lot)=>{
+ await boot();m.cached.mockResolvedValue([]);const old=await bracket.registerBracket(r34Spec(lot,'S1','O1'));await flush();
+ m.cached.mockResolvedValue([r34Trade(lot,'S2','O2',1)]);await boot({keepStore:true});
+ await emit(r34Deal(lot,'S1','O1'));expect(planOf(old.id).filled).toBe(0);
+ m.refreshed.mockResolvedValue([r34Trade(lot,'S1','O1',1,'rebound')]);await bracket.reconcileBracket(old.id);
+ expect(planOf(old.id).filled).toBe(1);expect(planOf(old.id).currentOrderId).toBe('rebound');
+ await emit(r34Deal(lot,'S2','O2','2'));expect(planOf(old.id).filled).toBe(1);expect(m.place).not.toHaveBeenCalled();
+});
+it.each(r34Lots)('r34 %s initial missing stable identity stays durable pending without creating a bracket',async(lot)=>{
+ await boot();const admission=await bracket.ensureBracketHost({orderLot:lot});
+ await expect(bracket.registerBracket(r34Spec(lot,'',''),admission)).rejects.toThrow('身分');
+ expect(bracket.getBrackets()).toHaveLength(0);expect(bracket.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(1);
+ await boot({keepStore:true});expect(bracket.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(1);expect(m.place).not.toHaveBeenCalled();
+});
+it('r34 wrong stable cancel/order terminal never closes an entry',async()=>{
+ await boot();m.cached.mockResolvedValue([]);const p=await bracket.registerBracket(spec(F1));
+ const raw=fNew1!.raw as {state:string;data:Record<string,Record<string,unknown>>};const body=raw.data[raw.state]!;
+ const report=normalizeOrderEvent({...raw,data:{[raw.state]:{...body,order:{...(body.order as object),seqno:'foreign'},operation:{op_type:'Cancel',op_code:'00'}}}})!;
+ await emit(report);expect(planOf(p.id).entryClosed).toBe(false);
+});
+it('r34 foreign listing blocks cancel before any mock dispatch',async()=>{
+ await boot();m.cached.mockResolvedValue([]);const p=await bracket.registerBracket(r34Spec('Common','S1','O1'));
+ await emit(r34Deal('Common','S1','O1'));await tick(47000);m.cached.mockResolvedValue([r34Trade('Common','S2','O2',1)]);
+ await expect(bracket.cancelRemainingEntry(planOf(p.id))).rejects.toThrow('未送出刪單');expect(m.cancel).not.toHaveBeenCalled();
+ expect(planOf(p.id).entryCancel).toBeUndefined();expect(planOf(p.id).filled).toBe(1);
+});
+
+it('r34 a foreign stable exit report with reused raw ID cannot clear bracket risk',async()=>{
+    await boot();const plan=await bracket.registerBracket(spec(F1));await emit(fDeal1!);await emit(fDeal2!);await tick(47000);
+    await emit(edit(fCoverDeal1!,{trade_id:'exit-1',seqno:'FOREIGN-EXIT',ordno:'FOREIGN-ORD'}));
+    expect(planOf(plan.id).exit?.filled).toBe(0);
+});
+
+it('r34 foreign exit listing cannot clear risk but a unique current stable listing rebinds without resend',async()=>{
+ await boot();const p=await bracket.registerBracket(spec(F1));await emit(fDeal1!);await emit(fDeal2!);await tick(47000);
+ const foreign=cacheTrade('exit-1',F1,[{seq:'E1',quantity:2}]);foreign.order.action='Sell';foreign.order.seqno='FOREIGN';foreign.status.status='Filled';
+ m.refreshed.mockResolvedValue([foreign]);await bracket.reconcileBracket(p.id);expect(planOf(p.id).exit?.filled).toBe(0);
+ const own={...foreign,order:{...foreign.order,id:'changed-exit',seqno:'exit-1',ordno:'o'}};
+ m.refreshed.mockResolvedValue([own, {...own,order:{...own.order,id:'ambiguous'}}]);await bracket.reconcileBracket(p.id);
+ expect(planOf(p.id).exit?.filled).toBe(0);
+ m.refreshed.mockResolvedValue([own]);await bracket.reconcileBracket(p.id);expect(planOf(p.id).exit).toMatchObject({filled:2,status:'filled'});
+ expect(m.place).toHaveBeenCalledTimes(1);
+});
+it('r34 both real window modules acknowledge fixed TS owner despite different local context tokens',async()=>{
+ const channels: Channel[]=[];
+ class Channel {
+  handlers: ((e:{data:unknown})=>void)[]=[];
+  constructor(public name:string){channels.push(this);}
+  addEventListener(_name:string,cb:(e:{data:unknown})=>void){this.handlers.push(cb);}
+  removeEventListener(_name:string,cb:(e:{data:unknown})=>void){this.handlers=this.handlers.filter(x=>x!==cb);}
+  close(){this.handlers=[];}
+  postMessage(data:unknown){queueMicrotask(()=>channels.filter(c=>c!==this&&c.name===this.name).forEach(c=>c.handlers.forEach(cb=>cb({data}))));}
+ }
+ vi.stubGlobal('BroadcastChannel',Channel);await boot();const mainBracket=bracket;
+ vi.resetModules();vi.stubGlobal('location',{search:'?popout=chart'});
+ const popout=await import('./bracket');await flush();const admission=await popout.ensureBracketHost();
+ const result=await popout.registerBracket(spec(F1),admission);await flush();
+ expect(result.seqno).toBe('fixture-f1');expect(mainBracket.getBrackets()).toHaveLength(1);
+ expect(popout.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(0);expect(m.place).not.toHaveBeenCalled();
+});
+it('r34 legacy bracket exit without stable identity survives reload as unknown and is never resent',async()=>{
+ await boot();const p=await bracket.registerBracket(spec(F1));await emit(fDeal1!);await tick(47000);
+ const rows=JSON.parse(store.get('sj-pro-trigger-exits')!);delete rows[0].seqno;delete rows[0].ordno;delete rows[0].reportContext;
+ store.set('sj-pro-trigger-exits',JSON.stringify(rows));m.cached.mockResolvedValue([]);await boot({keepStore:true});
+ await emit(edit(fCoverDeal1!,{trade_id:'exit-1',seqno:'FOREIGN',ordno:'OTHER'}));
+ expect(engine.getExits()[0]).toMatchObject({status:'unknown',filled:0});expect(planOf(p.id).exit?.status).toBe('unknown');
+ await tick(47000);expect(m.place).toHaveBeenCalledTimes(1);
+});
+
+it.each(['quantity','action','orderLot'] as const)('r34 same stable identity with contradictory %s is pending instead of a second bracket',async(field)=>{
+ await boot();m.cached.mockResolvedValue([]);const entry=r34Spec('Common','S1','O1');await bracket.registerBracket(entry);
+ const changed: import('./bracket').BracketSpec = {...entry,...(field==='quantity'?{quantity:1}:field==='action'?{action:'Sell' as const}:{orderLot:'IntradayOdd' as const})};
+ await expect(bracket.registerBracket(changed,await bracket.ensureBracketHost({orderLot:changed.orderLot}))).rejects.toThrow();
+ expect(bracket.getBrackets()).toHaveLength(1);expect(bracket.getDisplayBrackets().filter(p=>p.registrationPending)).toHaveLength(1);expect(m.place).not.toHaveBeenCalled();
+});
+it.each(r34Lots)('r34 %s stable buffered fill survives a raw ID change before entry HTTP returns',async(lot)=>{
+ await boot();m.cached.mockResolvedValue([]);await emit(r34Deal(lot,'S1','O1','1','report-raw'));
+ const p=await bracket.registerBracket(r34Spec(lot,'S1','O1','response-raw'));expect(p.filled).toBe(1);expect(m.place).not.toHaveBeenCalled();
+});
+
+it('r36 scopes entry deduplication to the fixed env/server partition',async()=>{
+    await boot();const old=await bracket.registerBracket(spec(F1,'same-id',{seqno:'same-stable'}));
+    m.env='http://other.invalid|production';m.base='http://other.invalid';m.envChanged.forEach(cb=>cb());
+    const fresh=await bracket.registerBracket(spec(F1,'same-id',{seqno:'same-stable'}));
+    expect(fresh.id).not.toBe(old.id);expect(fresh.env).toBe(m.env);expect(bracket.getBrackets()).toHaveLength(2);
+});
+
+// r37: terminal entry reports do not end observation of strictly identified late fills.
+function r37Terminal(id: string, op = 'Cancel', failed = false): OrderEventReport {
+    const raw = fNew1!.raw as {state:string;data:Record<string,Record<string,unknown>>};
+    const body=raw.data[raw.state]!;
+    return normalizeOrderEvent({...raw,data:{[raw.state]:{...body,
+        order:{...(body.order as object),id,seqno:'S37',ordno:'O37',quantity:2},
+        operation:{op_type:op,op_code:failed?'99':'00'},
+        status:{order_quantity:0,cancel_quantity:1},event_id:`v1:FO:r37:${op}:${id}`}}})!;
+}
+it.each(['deal-first','cancel-first'])('r37 rebound partial entry stays protected with %s',async(order)=>{
+    await boot();m.cached.mockResolvedValue([]);
+    const p=await bracket.registerBracket(spec(F1,'old37',{seqno:'S37',ordno:'O37'}));
+    m.status='down';m.statusChanged.forEach(cb=>cb());await flush();
+    const rebound=cacheTrade('new37',F1,[]);rebound.order.seqno='S37';rebound.order.ordno='O37';m.cached.mockResolvedValue([rebound]);
+    m.status='live';m.statusChanged.forEach(cb=>cb());await flush();
+    expect(planOf(p.id).currentOrderId).toBe('new37');
+    const deal=edit(fDeal1!,{trade_id:'new37',seqno:'S37',ordno:'O37',exchange_seq:'37'});
+    const cancel=r37Terminal('new37');
+    if(order==='deal-first'){await emit(deal);await emit(cancel);}else{await emit(cancel);await emit(deal);}
+    expect(planOf(p.id)).toMatchObject({filled:1,entryClosed:true,currentOrderId:'new37'});
+    expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    await emit(deal);expect(planOf(p.id).filled).toBe(1);
+    expect(m.place).not.toHaveBeenCalled();
+});
+
+type R37Market = 'FUT' | 'STK' | 'IntradayOdd';
+const r37Markets: R37Market[] = ['FUT','STK','IntradayOdd'];
+function r37Spec(market:R37Market) {
+    return market==='FUT'?spec(F1,'old37',{seqno:'S37',ordno:'O37'}):{...spec(S1,'old37',{seqno:'S37',ordno:'O37'}),
+        account:{account_type:'S' as const,broker_id:S1.broker_id,account_id:S1.account_id},quoteCode:'2330',orderCode:'2330',
+        securityType:'STK' as const,exchange:'TSE',orderLot:market==='IntradayOdd'?'IntradayOdd' as const:'Common' as const};
+}
+function r37Trade(market:R37Market,filled=0,id='new37'):Trade {
+    const t=cacheTrade(id,market==='FUT'?F1:S1,filled?[{seq:'37',quantity:filled}]:[]);t.order.seqno='S37';t.order.ordno='O37';
+    if(market!=='FUT'){t.contract={...t.contract,code:'2330',security_type:'STK',exchange:'TSE'};
+        t.order.account={...t.order.account!,account_type:'S'};t.order.order_lot=market==='IntradayOdd'?'IntradayOdd':'Common';}
+    return t;
+}
+function r37Deal(market:R37Market,patch:Record<string,unknown>={}) {
+    const a=market==='FUT'?F1:S1;const name=market==='FUT'?'FuturesDeal':'StockDeal';
+    return normalizeOrderEvent({state:name,data:{[name]:{trade_id:'new37',seqno:'S37',ordno:'O37',exchange_seq:'37',
+        event_id:`v1:${market==='FUT'?'FD':'SD'}:r37:deal`,broker_id:a.broker_id,account_id:a.account_id,
+        code:market==='FUT'?'TXFJ6':'2330',full_code:market==='FUT'?'TXFJ6':undefined,security_type:market==='FUT'?'FUT':'STK',
+        exchange:market==='FUT'?'TAIFEX':'TSE',order_lot:market==='IntradayOdd'?'IntradayOdd':'Common',action:'Buy',quantity:1,ts:1,...patch}}})!;
+}
+function r37Order(market:R37Market,op:string,failed=false,patch:Record<string,unknown>={}) {
+    const t=r37Trade(market);const name=market==='FUT'?'FuturesOrder':'StockOrder';
+    return normalizeOrderEvent({state:name,data:{[name]:{order:t.order,contract:t.contract,
+        operation:{op_type:op,op_code:failed?'99':'00'},status:{order_quantity:0,cancel_quantity:1},
+        event_id:`v1:${market==='FUT'?'FO':'SO'}:r37:${op}`, ...patch}}})!;
+}
+async function r37Rebound(market:R37Market) {
+    await boot();m.cached.mockResolvedValue([]);const p=await bracket.registerBracket(r37Spec(market));await flush();
+    m.status='down';m.statusChanged.forEach(cb=>cb());await flush();
+    m.cached.mockResolvedValue([r37Trade(market)]);m.status='live';m.statusChanged.forEach(cb=>cb());await flush();
+    expect(planOf(p.id).currentOrderId).toBe('new37');return p;
+}
+it.each(r37Markets.flatMap(market=>['Cancel','New','UpdateQty'].flatMap(op=>['report-first','deal-first'].map(order=>({market,op,order})))))
+('r37 terminal evidence $market $op $order protects only its observed filled quantity',async({market,op,order})=>{
+    const p=await r37Rebound(market);const terminal=r37Order(market,op,op==='New');const deal=r37Deal(market);
+    if(order==='report-first'){await emit(terminal);await emit(deal);}else{await emit(deal);await emit(terminal);}
+    expect(planOf(p.id).filled).toBe(1);expect(planOf(p.id).entryClosed).toBe(op!=='UpdateQty');
+    expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    await emit(deal);await emit(terminal);expect(planOf(p.id).filled).toBe(1);
+    expect(m.place).not.toHaveBeenCalled();expect(m.cancel).not.toHaveBeenCalled();
+});
+const r37Foreign=['seqno','ordno','missing-stable','account','broker','missing-account','code','action','security','exchange','lot','zero','fraction','negative','market'] as const;
+it.each(r37Markets.flatMap(market=>r37Foreign.map(mismatch=>({market,mismatch}))))
+('r37 terminal $market rejects $mismatch evidence with reused current raw ID',async({market,mismatch})=>{
+    const p=await r37Rebound(market);await emit(r37Order(market,'Cancel'));
+    const patch:Record<string,unknown>=mismatch==='seqno'?{seqno:'foreign'}:mismatch==='ordno'?{ordno:'foreign'}:
+        mismatch==='missing-stable'?{seqno:'',ordno:''}:mismatch==='account'?{account_id:'foreign'}:
+        mismatch==='broker'?{broker_id:'foreign'}:mismatch==='missing-account'?{account_id:''}:
+        mismatch==='code'?{code:'foreign',full_code:'foreign'}:mismatch==='action'?{action:'Sell'}:
+        mismatch==='security'?{security_type:market==='FUT'?'OPT':'FUT'}:mismatch==='exchange'?{exchange:'foreign'}:
+        mismatch==='lot'?{order_lot:market==='IntradayOdd'?'Common':'IntradayOdd'}:mismatch==='zero'?{quantity:0}:
+        mismatch==='fraction'?{quantity:1.5}:mismatch==='negative'?{quantity:-1}:{};
+    let bad=r37Deal(market,patch);
+    if(mismatch==='market')bad={...bad,market:market==='FUT'?'stock':'futures'};
+    await emit(bad);expect(planOf(p.id).filled).toBe(0);expect(triggersOf(p.id)).toHaveLength(0);
+    await emit(r37Deal(market));expect(planOf(p.id).filled).toBe(1);expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    expect(m.place).not.toHaveBeenCalled();expect(m.cancel).not.toHaveBeenCalled();
+});
+it.each(r37Markets)('r37 $market terminal reload requires a unique strict listing before late report admission',async market=>{
+    const p=await r37Rebound(market);await emit(r37Order(market,'Cancel'));
+    const foreign=r37Trade(market);foreign.order.seqno='foreign';m.cached.mockResolvedValue([foreign]);
+    await boot({keepStore:true});await emit(r37Deal(market));expect(planOf(p.id).filled).toBe(0);
+    m.refreshed.mockResolvedValue([r37Trade(market,1),r37Trade(market,1,'ambiguous')]);
+    await bracket.reconcileBracket(p.id);expect(planOf(p.id).filled).toBe(0);
+    const missing=r37Trade(market,1);missing.order.seqno='';missing.order.ordno='';m.refreshed.mockResolvedValue([missing]);
+    await bracket.reconcileBracket(p.id);expect(planOf(p.id).filled).toBe(0);
+    m.refreshed.mockResolvedValue([r37Trade(market,1)]);await bracket.reconcileBracket(p.id);
+    expect(planOf(p.id)).toMatchObject({filled:1,entryClosed:true,currentOrderId:'new37'});
+    await emit(r37Deal(market));expect(planOf(p.id).filled).toBe(1);
+    expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);expect(m.place).not.toHaveBeenCalled();
+});
+it.each(r37Markets)('r37 $market terminal listing can precede Deal and conservatively retain empty/missing listing evidence',async market=>{
+    const p=await r37Rebound(market);const terminal=r37Trade(market);terminal.status.status='Cancelled';terminal.status.cancel_quantity=1;
+    m.refreshed.mockResolvedValue([terminal]);await bracket.reconcileBracket(p.id);expect(planOf(p.id)).toMatchObject({entryClosed:true,filled:0});
+    m.refreshed.mockResolvedValue([]);await bracket.reconcileBracket(p.id);expect(planOf(p.id).filled).toBe(0);
+    await emit(r37Deal(market));expect(planOf(p.id).filled).toBe(1);
+    const filled=r37Trade(market,1);filled.status.status='Cancelled';m.refreshed.mockResolvedValue([filled]);
+    await bracket.reconcileBracket(p.id);expect(planOf(p.id).filled).toBe(1);expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    expect(m.place).not.toHaveBeenCalled();
+});
+it('r37 terminal buffered Cancel before Deal remains protected without replaying an older report generation',async()=>{
+    await boot();m.cached.mockResolvedValue([]);await emit(r37Order('FUT','Cancel'));await emit(r37Deal('FUT'));
+    const p=await bracket.registerBracket(r37Spec('FUT'));expect(planOf(p.id).filled).toBe(1);
+    expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    m.status='down';m.statusChanged.forEach(cb=>cb());await flush();m.status='live';m.statusChanged.forEach(cb=>cb());await flush();
+    await emit(r37Deal('FUT',{exchange_seq:'late-generation'}));expect(planOf(p.id).filled).toBe(1);
+    expect(m.place).not.toHaveBeenCalled();
+});
+it('r37 terminal evidence cannot cross env/server context away-and-back without strict listing',async()=>{
+    const p=await r37Rebound('FUT');await emit(r37Order('FUT','Cancel'));
+    m.env='http://other.invalid|production';m.base='http://other.invalid';m.envChanged.forEach(cb=>cb());await flush();
+    await emit(r37Deal('FUT'));expect(planOf(p.id).filled).toBe(0);
+    m.env='http://sim.invalid|simulation';m.base='http://sim.invalid';m.cached.mockResolvedValue([]);m.envChanged.forEach(cb=>cb());await flush();
+    await emit(r37Deal('FUT',{exchange_seq:'away-back'}));expect(planOf(p.id).filled).toBe(0);expect(triggersOf(p.id)).toHaveLength(0);
+    m.refreshed.mockResolvedValue([r37Trade('FUT',1)]);await bracket.reconcileBracket(p.id);expect(planOf(p.id).filled).toBe(1);
+    expect(m.place).not.toHaveBeenCalled();
+});
+it('r37 finished exit late entry fill stays visible and durable beyond terminal retention, never enlarges/resends protection',async()=>{
+    await boot();const p=await bracket.registerBracket(spec(F1));await emit(fDeal1!);await tick(47000);
+    await emit(edit(fCoverDeal1!,{trade_id:'exit-1',seqno:'exit-1',ordno:'o'}));
+    const raw=fNew1!.raw as {state:string;data:Record<string,Record<string,unknown>>};const body=raw.data[raw.state]!;
+    await emit(normalizeOrderEvent({...raw,data:{[raw.state]:{...body,operation:{op_type:'Cancel',op_code:'00'},status:{order_quantity:0,cancel_quantity:1}}}})!);
+    expect(planOf(p.id).exit?.status).toBe('filled');expect(planOf(p.id).entryClosed).toBe(true);
+    await emit(fDeal2!);expect(planOf(p.id).filled).toBe(2);expect(planOf(p.id).exit?.quantity).toBe(1);
+    expect(triggersOf(p.id)).toHaveLength(0);expect(m.place).toHaveBeenCalledTimes(1);
+    const core=await import('./bracket-core');expect(core.unprotectedQuantity(planOf(p.id))).toBe(1);
+    await emit(fDeal2!);expect(planOf(p.id).filled).toBe(2);
+    vi.setSystemTime(Date.now()+25*60*60*1000);m.envChanged.forEach(cb=>cb());await flush();
+    expect(bracket.getDisplayBrackets().some(x=>x.id===p.id)).toBe(true);
+    m.cached.mockResolvedValue([]);await boot({keepStore:true});expect(core.unprotectedQuantity(planOf(p.id))).toBe(1);
+    expect(m.place).toHaveBeenCalledTimes(1);
+});
+
+it.each(r37Markets)('r37 $market unchanged raw ID terminal Cancel still observes its own late Deal',async market=>{
+    await boot();m.cached.mockResolvedValue([]);const p=await bracket.registerBracket(r37Spec(market));await flush();
+    const row=r37Trade(market,0,'old37');await emit(r37Order(market,'Cancel',false,{order:row.order}));
+    await emit(r37Deal(market,{trade_id:'old37'}));expect(planOf(p.id)).toMatchObject({filled:1,entryClosed:true});
+    expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);expect(m.place).not.toHaveBeenCalled();
+});
+it.each(r37Markets.flatMap(market=>['quantity','action','identity'].map(mismatch=>({market,mismatch}))))
+('r37 $market mismatching $mismatch terminal order cannot terminate or gain dispatch permission',async({market,mismatch})=>{
+    const p=await r37Rebound(market);const row=r37Trade(market);
+    if(mismatch==='quantity')row.order.quantity=1;else if(mismatch==='action')row.order.action='Sell';else row.order.seqno='foreign';
+    await emit(r37Order(market,'Cancel',false,{order:row.order}));expect(planOf(p.id)).toMatchObject({filled:0,entryClosed:false});
+    await emit(r37Deal(market));expect(planOf(p.id).filled).toBe(1);expect(triggersOf(p.id).map(t=>t.quantity)).toEqual([1,1]);
+    expect(m.place).not.toHaveBeenCalled();expect(m.cancel).not.toHaveBeenCalled();
+});
+
+it.each(['cancel-first','deal-first'])('r37 ordinary protective dispatch remains one controlled Cover after %s',async order=>{
+    const p=await r37Rebound('FUT');const cancel=r37Order('FUT','Cancel'),deal=r37Deal('FUT');
+    if(order==='cancel-first'){await emit(cancel);await emit(deal);}else{await emit(deal);await emit(cancel);}
+    await tick(47000);expect(m.place).toHaveBeenCalledTimes(1);
+    const [,action,price,qty,opts]=m.place.mock.calls[0]!;
+    expect([action,price,qty,opts.ocType,opts.account.account_id]).toEqual(['Sell',null,1,'Cover',F1.account_id]);
+    expect(planOf(p.id).exit).toMatchObject({quantity:1,status:'working'});
+    await emit(deal);await tick(47000);expect(m.place).toHaveBeenCalledTimes(1);expect(m.cancel).not.toHaveBeenCalled();
+});
+
+// r40 production register API + new reader, not a rewritten storage oracle.
+it('r40 a possibly sent entry remains visible to a cold reader if registration storage fails', async () => {
+    await boot();
+    const sent = spec(F1, 'r40-sent', { seqno: 'R40-S1', quantity: 1 });
+    const { orderId: _id, seqno: _seq, ...request } = sent;
+    const admission = await bracket.ensureBracketHost({ entry: { ...request, entryOrder: { action: 'Buy', quantity: 1, price_type: 'MKT', price: 0, order_type: 'IOC', octype: 'New' } } });
+    // This boundary is after an entry reply; deny the real pending store's first write.
+    const storage = globalThis.localStorage;
+    const original = storage.setItem;
+    storage.setItem = (key, value) => { if (key.startsWith('sj-pro-bracket-registrations:operation:')) throw new Error('fixture quota'); original(key, value); };
+    m.env = null; // owner registration cannot acknowledge the sent entry.
+    await expect(bracket.registerBracket(sent, admission)).rejects.toThrow();
+    expect(bracket.getDisplayBrackets().filter(p => p.registrationPending)).toHaveLength(1);
+    await boot({ keepStore: true });
+    expect(bracket.getDisplayBrackets().filter(p => p.registrationPending)).toHaveLength(1);
+    expect(m.place).not.toHaveBeenCalled();
+});
+
+it.each(r37Markets)('r40 $market Close retains own late risk with no restored protection authority', async market => {
+    const p = await r37Rebound(market);
+    await emit(r37Order(market, 'Cancel'));
+    expect(planOf(p.id)).toMatchObject({ filled: 0, entryClosed: true });
+    await bracket.dismissBracket(p.id);
+    await emit(edit(r37Deal(market), { seqno: 'foreign-stable' }));
+    expect(bracket.getDisplayBrackets().find(x => x.id === p.id)?.filled).toBe(0);
+    await emit(r37Deal(market));
+    await emit(r37Deal(market));
+    expect(bracket.getDisplayBrackets().find(x => x.id === p.id)).toMatchObject({ filled: 1, observationOnly: true });
+    const core = await import('./bracket-core');
+    expect(core.protectionQuantity(planOf(p.id))).toBe(0);
+    expect(core.unprotectedQuantity(planOf(p.id))).toBe(1);
+    await tick(47000);
+    expect(triggersOf(p.id)).toHaveLength(0);
+    expect(m.place).not.toHaveBeenCalled();
+    m.cached.mockResolvedValue([]);
+    await boot({ keepStore: true });
+    expect(core.unprotectedQuantity(planOf(p.id))).toBe(1);
+    expect(triggersOf(p.id)).toHaveLength(0);
+});
+
+it('r40 Close storage failure never revokes current protection or fakes retirement ACK',async()=>{
+    const p=await r37Rebound(r37Markets[0]!);
+    await emit(r37Deal(r37Markets[0]!));expect(triggersOf(p.id).length).toBeGreaterThan(0);
+    const write=globalThis.localStorage.setItem.bind(globalThis.localStorage);
+    vi.spyOn(globalThis.localStorage,'setItem').mockImplementation((key,value)=>{if(key==='sj-pro-brackets')throw new Error('fixture denied retirement');write(key,value);});
+    await expect(bracket.dismissBracket(p.id)).rejects.toThrow('fixture denied retirement');
+    expect(planOf(p.id).observationOnly).toBeUndefined();expect(triggersOf(p.id).length).toBeGreaterThan(0);
 });

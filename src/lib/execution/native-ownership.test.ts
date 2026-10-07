@@ -1,0 +1,595 @@
+// Native execution engine toggle / ownership / UI mapping (#201 wiring).
+// The Tauri host is replaced by an in-memory fake of the execution_* commands;
+// broker I/O is mocked: nothing is sent anywhere.
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Account } from '../types/portfolio';
+import type { OrderProgram, UserCommand } from './model';
+
+const acct = (type: 'S' | 'F', id: string): Account => ({ account_type: type, broker_id: `fixture-broker-${type}`,
+    account_id: id, person_id: '', signed: true, username: '' });
+const F1 = acct('F', 'fixture-account-F');
+const TXF = { code: 'TXFR1', target_code: 'TXFJ6', security_type: 'FUT', exchange: 'TAIFEX' };
+
+const m = vi.hoisted(() => ({
+    status: 'live' as string,
+    tick: null as ((t: { code: string; close: number; simtrade?: boolean }) => void) | null,
+    heartbeat: null as (() => void) | null,
+    statusChanged: [] as (() => void)[],
+    envChanged: [] as (() => void)[],
+    accounts: [] as Account[],
+    place: vi.fn(),
+    notify: vi.fn(),
+    ensure: vi.fn(),
+    env: 'http://sim.invalid|simulation' as string | null,
+    queued: null as ((lock: object | null) => unknown) | null,
+}));
+
+vi.mock('../runtime', () => ({ getApiBase: () => 'http://sim.invalid' }));
+vi.mock('../stream', () => ({
+    getStreamStatus: () => m.status,
+    subscribeStatusStore: (cb: () => void) => { m.statusChanged.push(cb); return () => undefined; },
+    onOrderEvent: () => () => undefined,
+    onAnyTick: (cb: typeof m.tick) => { m.tick = cb; return () => undefined; },
+    onOddLotTick: () => () => undefined,
+    onStreamEvent: (name: string, cb: () => void) => { if (name === 'heartbeat') m.heartbeat = cb; return () => undefined; },
+}));
+vi.mock('../account-store', () => ({ getAccountState: () => ({ accounts: m.accounts,
+    selectedFutures: m.accounts.find(a => a.account_type === 'F') ?? null, selectedStock: null }) }));
+vi.mock('../trade', () => ({ notify: m.notify, placeQuickOrder: m.place }));
+vi.mock('../contracts-cache', () => ({ ensureContract: m.ensure, getCachedContract: () => undefined }));
+vi.mock('../quote-ownership', () => ({ retainQuote: () => () => undefined }));
+vi.mock('../trading-state', () => ({ tradeCacheContinuous: () => true, checkTradeCacheHealth: vi.fn(),
+    getTradingState: () => ({ positions: [], queries: { positions: { updatedAt: null, needsReconcile: false, error: null } } }) }));
+vi.mock('../shioaji', () => ({ fetchTrades: async () => [], fetchTradeCacheHealth: async () => ({ state: 'Healthy', reasons: [] }),
+    cancelOrder: vi.fn() }));
+vi.mock('../boot', () => ({ subscribeTradeReports: vi.fn() }));
+vi.mock('../protection-env', () => {
+    const envBase = (env: string) => env.slice(0, env.lastIndexOf('|'));
+    return {
+        currentProtectionEnv: () => m.env,
+        protectionEnvLabel: () => '',
+        refreshProtectionEnv: async () => undefined,
+        onProtectionEnvChange: (cb: () => void) => { m.envChanged.push(cb); return () => undefined; },
+        envBase,
+        reportEnvMatches: (env: string, base: string) => envBase(env) === base,
+        watchProtectionEnv: () => undefined,
+    };
+});
+
+/** In-memory stand-in for the Rust host's execution_* commands. */
+function fakeHost(opts: { live?: boolean } = {}) {
+    const programs: OrderProgram[] = [];
+    const commands: UserCommand[] = [];
+    let revision = 1;
+    const health = () => ({ enabled: true, state: opts.live === false ? 'down' : 'live', env: 'simulation',
+        serverId: 'http://sim.invalid', lastError: null, partitionErrors: [], programs: programs.length, revision });
+    const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
+        if (cmd === 'execution_programs') return { revision, programs: structuredClone(programs), lastPrices: { TXFR1: 48123 } };
+        if (cmd === 'execution_status' || cmd === 'execution_set_enabled') return health();
+        if (cmd !== 'execution_command') throw new Error(`unexpected ${cmd}`);
+        const envelope = args!.envelope as { schema: string; command: UserCommand };
+        expect(envelope.schema).toBe('execution-v1');
+        const c = envelope.command;
+        commands.push(c);
+        revision++;
+        if (c.op === 'create') {
+            programs.push({ ...structuredClone(c.program), version: 1, status: 'running' });
+            return { accepted: true, notices: [{ code: 'created', programId: c.program.id, levelId: null, detail: '' }], revision };
+        }
+        const p = programs.find(x => x.id === c.programId);
+        if (!p || p.version !== c.version) return { accepted: false, notices: [{ code: 'rejected.staleVersion', programId: null, levelId: null, detail: '' }], revision };
+        if (c.op === 'stop') { p.status = 'stopped'; p.version++; }
+        else if (c.op === 'remove') programs.splice(programs.indexOf(p), 1);
+        else p.version++;
+        return { accepted: true, notices: [], revision };
+    });
+    return { invoke, programs, commands, bump: () => { revision++; } };
+}
+
+let store = new Map<string, string>();
+let engine: typeof import('../trigger-engine');
+let bracket: typeof import('../bracket');
+let native: typeof import('./native');
+let host: ReturnType<typeof fakeHost>;
+
+async function flush() { for (let i = 0; i < 8; i++) await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); }
+
+async function boot(opts: { enabled?: boolean; desktop?: boolean; live?: boolean; keepStore?: boolean } = {}) {
+    vi.resetModules();
+    if (!opts.keepStore) store = new Map();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); }, key: (i: number) => [...store.keys()][i] ?? null, get length() { return store.size; } });
+    vi.stubGlobal('location', { search: '' });
+    vi.stubGlobal('navigator', { locks: { request: (_n: string, a: unknown, b?: (lock: object | null) => unknown) => {
+        const cb = (typeof a === 'function' ? a : b) as (lock: object | null) => unknown;
+        if (typeof a === 'function' || !(a as { ifAvailable?: boolean }).ifAvailable) { m.queued = cb; return new Promise(() => undefined); }
+        const r = cb({}); return Promise.resolve(r instanceof Promise ? undefined : r); } } });
+    m.tick = null; m.heartbeat = null; m.statusChanged = []; m.envChanged = [];
+    host = fakeHost({ live: opts.live });
+    native = await import('./native');
+    native.__setNativeInvokeForTest(host.invoke as never, { desktop: opts.desktop ?? true, enabled: opts.enabled ?? false });
+    engine = await import('../trigger-engine');
+    bracket = await import('../bracket');
+    engine.startTriggerEngine();
+    bracket.startBracketRuntime();
+    await flush();
+    (m.heartbeat as (() => void) | null)?.();
+    await native.refreshNative();
+    await flush();
+}
+
+const addStop = (over: Record<string, unknown> = {}) => engine.addTrigger(
+    { code: 'TXFR1', condition: 'below', price: 48000, action: 'Sell', quantity: 1, kind: 'stop', ...over }, TXF as never);
+const tick = async (close: number) => { m.tick!({ code: 'TXFR1', close }); await flush(); };
+const creates = () => host.commands.filter(c => c.op === 'create');
+
+beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal('BroadcastChannel', undefined);
+    m.status = 'live'; m.accounts = [F1]; m.env = 'http://sim.invalid|simulation';
+    for (const f of [m.place, m.notify, m.ensure]) f.mockReset();
+    m.ensure.mockResolvedValue(TXF);
+    m.place.mockImplementation(async () => ({ order: { id: 'T1' }, status: { status: 'Submitted' } }));
+});
+
+describe('toggle 原生執行引擎（實驗）', () => {
+    it('is off by default: new triggers stay in the TS runtime', async () => {
+        await boot();
+        expect(native.getNativeExecutionEnabled()).toBe(false);
+        await addStop();
+        expect(engine.getTriggers()).toHaveLength(1);
+        expect(creates()).toHaveLength(0);
+    });
+
+    it('never turns on in the web build', async () => {
+        await boot({ desktop: false });
+        native.setNativeExecutionEnabled(true);
+        expect(native.getNativeExecutionEnabled()).toBe(false);
+        expect(native.nativeOwnsNew()).toBe(false);
+        await addStop();
+        expect(engine.getTriggers()).toHaveLength(1);
+        expect(host.invoke).not.toHaveBeenCalled();
+    });
+
+    it('persists and tells the host from the main window', async () => {
+        await boot();
+        native.setNativeExecutionEnabled(true);
+        await flush();
+        expect(store.get(native.NATIVE_TOGGLE_KEY)).toBe('1');
+        expect(host.invoke).toHaveBeenCalledWith('execution_set_enabled', expect.objectContaining({ enabled: true, desiredReceipt: expect.any(String) }));
+    });
+});
+
+describe('ownership: one executor per trigger / bracket', () => {
+    it('on: a new stop becomes a native program only — the TS executor never holds or fires it', async () => {
+        await boot({ enabled: true });
+        const t = await addStop();
+        expect(t?.id.startsWith('native:')).toBe(true);
+        expect(engine.getTriggers()).toHaveLength(0);
+        const [create] = creates();
+        expect(create?.op).toBe('create');
+        const program = (create as Extract<UserCommand, { op: 'create' }>).program;
+        expect(program.kind).toBe('trigger');
+        expect(program.binding).toEqual({ env: 'simulation', serverId: 'http://sim.invalid',
+            account: { accountType: 'F', brokerId: F1.broker_id, accountId: F1.account_id },
+            contract: { market: 'futures', quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT' } });
+        expect(program.levels[0]!.entry).toMatchObject({ type: 'touch', condition: 'below', price: 48000,
+            order: { priceType: 'MKT', timeInForce: 'IOC' } });
+        // shown like any trigger, marked native
+        const rows = engine.getDisplayTriggers();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ kind: 'stop', price: 48000, action: 'Sell', quantity: 1, code: 'TXFR1',
+            native: { programId: program.id, leg: 'entry' } });
+        // a crossing tick in the webview never sends it: the native engine does
+        await tick(47000);
+        expect(m.place).not.toHaveBeenCalled();
+    });
+
+    it('a TS trigger created before the toggle keeps running in TS (no double execution)', async () => {
+        await boot();
+        await addStop();
+        await tick(48300);
+        native.setNativeExecutionEnabled(true);
+        await flush();
+        await tick(47900);
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(creates()).toHaveLength(0);
+    });
+
+    it('turning the toggle off keeps native programs listed (they run to completion natively)', async () => {
+        await boot({ enabled: true });
+        await addStop();
+        native.setNativeExecutionEnabled(false);
+        await flush();
+        expect(engine.getDisplayTriggers().filter(r => r.id.startsWith('native:'))).toHaveLength(1);
+        await addStop({ price: 47000 });
+        expect(engine.getTriggers()).toHaveLength(1); // the new one is TS again
+        expect(creates()).toHaveLength(1);
+    });
+
+    it('odd-lot triggers and brackets stay in TS (not expressible in execution-v1 yet)', async () => {
+        await boot({ enabled: true });
+        expect(engine.nativeHandles({ kind: 'stop', orderLot: 'IntradayOdd' })).toBe(false);
+        expect(engine.nativeHandles({ kind: 'stop', orderLot: 'Common', securityType:'FUT', account:{...F1,account_type:'F' as const} })).toBe(true);
+        expect(engine.nativeHandles({ kind: 'stop' })).toBe(false);
+        // no native host check for an odd-lot bracket: it registers in TS
+        await bracket.ensureBracketHost({ orderLot: 'IntradayOdd' });
+        const plan = await bracket.registerBracket({ env: m.env!, account: { account_type: 'S', broker_id: 'b', account_id: 'a' },
+            orderId: 'S1', seqno: 'S1', quoteCode: '2330', orderCode: '2330', securityType: 'STK', exchange: 'TSE',
+            action: 'Buy', quantity: 500, orderLot: 'IntradayOdd', stopPrice: 900, takePrice: 1100 });
+        expect(creates()).toHaveLength(0);
+        expect(bracket.isNativeBracket(plan)).toBe(false);
+        expect(bracket.getBrackets()).toHaveLength(1);
+    });
+
+    it('price alerts never become native programs', async () => {
+        await boot({ enabled: true });
+        await engine.addTrigger({ code: 'TXFR1', condition: 'above', price: 49000, action: 'Sell', quantity: 0, kind: 'alert' });
+        expect(creates()).toHaveLength(0);
+        expect(engine.getTriggers()).toHaveLength(1);
+    });
+
+    it('commands for a native row go to the native engine, TS rows to the TS bus', async () => {
+        await boot({ enabled: true });
+        const t = await addStop();
+        await engine.removeTrigger(t!.id);
+        expect(host.commands.map(c => c.op)).toEqual(['create', 'stop', 'remove']);
+        expect(engine.getDisplayTriggers()).toHaveLength(0);
+
+        native.setNativeExecutionEnabled(false);
+        await flush();
+        const ts = await addStop();
+        const before = host.commands.length;
+        await engine.removeTrigger(ts!.id);
+        expect(host.commands.length).toBe(before);
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
+    it('a native 待確認 is resolved by a versioned native command', async () => {
+        await boot({ enabled: true });
+        await addStop();
+        const p = host.programs[0]!;
+        p.levels[0]!.phase = 'needsConfirm';
+        p.levels[0]!.pending = { leg: 'entry', price: 47950, ts: 1_700_000_000_000, reason: 'restart' };
+        host.bump();
+        await native.refreshNative();
+        const row = engine.getDisplayTriggers()[0]!;
+        expect(row.pending).toEqual({ price: 47950, at: 1_700_000_000_000, reason: 'restart' });
+        await engine.resolvePendingTrigger(row.id, 'keep');
+        const last = host.commands[host.commands.length - 1]!;
+        expect(last).toEqual({ op: 'resolvePending', programId: p.id, version: 1, levelId: p.levels[0]!.id, choice: 'keep' });
+    });
+
+    it('on: a bracket registers as a native program tracking the ticket\'s entry order; TS plans stay empty', async () => {
+        await boot({ enabled: true });
+        await bracket.ensureBracketHost();
+        const plan = await bracket.registerBracket({ env: m.env!, account: { account_type: 'F', broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'fixture-f1', seqno: 'fixture-f1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT', exchange: 'TAIFEX', action: 'Buy', quantity: 2, stopPrice: 48000, takePrice: 48600 });
+        expect(bracket.getBrackets()).toHaveLength(0);
+        const program = (creates()[0] as Extract<UserCommand, { op: 'create' }>).program;
+        expect(program.kind).toBe('bracket');
+        expect(program.levels[0]!.entry).toEqual({ type: 'external', orderId: 'fixture-f1', seqno: 'fixture-f1' });
+        expect(program.levels[0]!.exit).toMatchObject({ type: 'oco', stop: { price: 48000, condition: 'below' },
+            take: { price: 48600, condition: 'above' }, order: { priceType: 'MKT', octype: 'Cover' } });
+        expect(plan.id).toBe(program.id);
+        expect(bracket.getDisplayBrackets().map(p => bracket.isNativeBracket(p))).toEqual([true]);
+        // no OCO pair is armed in the TS trigger engine
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
+    it('registering the same entry again returns its bracket: one program per entry order', async () => {
+        await boot({ enabled: true });
+        await bracket.ensureBracketHost();
+        const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'fixture-f1', seqno: 'fixture-f1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
+        const a = await bracket.registerBracket(spec);
+        const b = await bracket.registerBracket(spec);
+        expect(b.id).toBe(a.id);
+        expect(creates()).toHaveLength(1);
+        expect(host.programs).toHaveLength(1);
+        // A reconnect changes the trade id, not the broker's order identity.
+        host.programs[0]!.levels[0]!.orders[0]!.orderId = 'rebound-f1';
+        host.bump();
+        await native.refreshNative();
+        expect(bracket.getDisplayBrackets()[0]!.orderId).toBe('rebound-f1');
+        const rebound = await bracket.registerBracket({ ...spec, orderId: 'rebound-f1' });
+        expect(rebound.id).toBe(a.id);
+        expect(creates()).toHaveLength(1);
+        // another entry order is another bracket
+        const c = await bracket.registerBracket({ ...spec, orderId: 'fixture-f2', seqno: 'fixture-f2' });
+        expect(c.id).not.toBe(a.id);
+        expect(creates()).toHaveLength(2);
+    });
+
+    it('a reused trade id with contradictory broker identity creates a distinct protected bracket', async () => {
+        await boot({ enabled: true });
+        const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'reused-id', seqno: 'S1', ordno: 'O1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
+        const old = await bracket.registerBracket(spec);
+        host.programs[0]!.levels[0]!.orders[0]!.unconfirmed = true;
+        host.bump(); await native.refreshNative();
+        const fresh = await bracket.registerBracket({ ...spec, seqno: 'S2', ordno: 'O2' });
+        expect(fresh.id).not.toBe(old.id);
+        expect(creates()).toHaveLength(2);
+        const partial = await bracket.registerBracket({ ...spec, seqno: '', ordno: 'O3' });
+        expect(partial.id).not.toBe(old.id);
+        expect(creates()).toHaveLength(3);
+    });
+
+    it('registration uses broker identifiers learned by the current slot', async () => {
+        await boot({ enabled: true });
+        const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'same-id', seqno: 'S1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
+        const old = await bracket.registerBracket(spec);
+        host.programs[0]!.levels[0]!.orders[0]!.seqno = 'S1';
+        host.programs[0]!.levels[0]!.orders[0]!.ordno = 'O1';
+        host.bump(); await native.refreshNative();
+        expect(bracket.getDisplayBrackets()[0]).toMatchObject({ seqno: 'S1', ordno: 'O1' });
+        const fresh = await bracket.registerBracket({ ...spec, ordno: 'O2' });
+        expect(fresh.id).not.toBe(old.id);
+        expect(creates()).toHaveLength(2);
+    });
+
+    it('an unconfirmed legacy collision refuses registration instead of reporting the old bracket as success', async () => {
+        await boot({ enabled: true });
+        const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'legacy-id', seqno: '', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
+        await expect(bracket.registerBracket(spec)).rejects.toThrow('身分');
+        expect(bracket.getDisplayBrackets().some(p => p.registrationPending)).toBe(true);
+        host.programs[0]!.levels[0]!.orders[0]!.unconfirmed = true;
+        host.bump(); await native.refreshNative();
+        await expect(bracket.registerBracket(spec)).rejects.toThrow('進場單身分尚未確認');
+        expect(creates()).toHaveLength(1);
+    });
+
+    it.each([['S1', ''], ['', 'S1'], ['', '']])('missing broker identity (%s / %s) with a changed id refuses a duplicate bracket', async (oldSeq, newSeq) => {
+        await boot({ enabled: true });
+        const spec = { env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'old-id', seqno: oldSeq, quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 };
+        if (oldSeq) await bracket.registerBracket(spec);
+        else await expect(bracket.registerBracket(spec)).rejects.toThrow('身分');
+        await expect(bracket.registerBracket({ ...spec, orderId: 'new-id', seqno: newSeq })).rejects.toThrow('進場單身分尚未確認');
+        expect(creates()).toHaveLength(1);
+    });
+
+    it('independent entry confirmation keeps the existing exit decision visible and operable', async () => {
+        await boot({ enabled: true });
+        await bracket.registerBracket({ env: m.env!, account: { account_type: 'F', broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'fixture-f1', seqno: 'S1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT', exchange: 'TAIFEX', action: 'Buy', quantity: 2, stopPrice: 48000, takePrice: 48600 });
+        const lv = host.programs[0]!.levels[0]!;
+        lv.position = 1; lv.entryFilled = 1; lv.orders[0]!.filled = 1; lv.phase = 'needsConfirm';
+        lv.pending = { leg: 'stop', price: 47900, ts: 9, reason: 'disconnect' };
+        lv.entryPending = { leg: 'entry', price: null, ts: 10, reason: 'unknownEntryAfterReconnect' };
+        host.bump(); await native.refreshNative();
+        const plan = bracket.getDisplayBrackets()[0]!;
+        expect(bracket.isNativeBracket(plan) && plan.native.entryAcrossDay).toEqual({ known: 1 });
+        expect(engine.getDisplayTriggers().find(t => t.kind === 'stop')?.pending?.reason).toBe('disconnect');
+        await bracket.confirmBracketEntry(plan.id, 1, true);
+        expect(host.commands.at(-1)?.op).toBe('confirmEntry');
+    });
+
+    it('an entry open across a trade-id epoch is settled only by the user\'s fill quantity', async () => {
+        await boot({ enabled: true });
+        await bracket.ensureBracketHost();
+        await bracket.registerBracket({ env: m.env!, account: { account_type: 'F', broker_id: F1.broker_id,
+            account_id: F1.account_id }, orderId: 'fixture-f1', seqno: 'fixture-f1', quoteCode: 'TXFR1', orderCode: 'TXFJ6',
+            securityType: 'FUT', exchange: 'TAIFEX', action: 'Buy', quantity: 2, stopPrice: 48000, takePrice: 48600 });
+        const p = host.programs[0]!;
+        const lv = p.levels[0]!;
+        lv.orders[0]!.filled = 1;
+        lv.orders[0]!.unconfirmed = true;
+        lv.phase = 'holding';
+        lv.pending = { leg: 'entry', price: null, ts: 9, reason: 'unknownEntryAcrossDay' };
+        host.bump();
+        await native.refreshNative();
+        const [plan] = bracket.getDisplayBrackets();
+        expect(bracket.isNativeBracket(plan!) && plan.native.entryAcrossDay).toEqual({ known: 1 });
+        await bracket.confirmBracketEntry(plan!.id, 2, true);
+        expect(host.commands[host.commands.length - 1]).toEqual({ op: 'confirmEntry', programId: p.id, version: 1,
+            levelId: lv.id, filled: 2, noRemainder: true });
+        expect(m.place).not.toHaveBeenCalled();
+        lv.pending = null;
+        host.bump();
+        await native.refreshNative();
+        const [after] = bracket.getDisplayBrackets();
+        expect(bracket.isNativeBracket(after!) && after.native.entryAcrossDay).toBeNull();
+    });
+
+    it('a native bracket is refused BEFORE the entry is sent when the engine is not live', async () => {
+        await boot({ enabled: true, live: false });
+        await expect(bracket.ensureBracketHost()).rejects.toThrow('執行引擎尚未連上伺服器');
+        m.env = 'http://sim.invalid|production';
+        await boot({ enabled: true });
+        await expect(bracket.ensureBracketHost()).rejects.toThrow('模式與目前不同');
+    });
+});
+
+describe('native programs in the UI shape', () => {
+    it('a holding bracket shows its OCO legs as bracket trigger rows; finished triggers are dropped', async () => {
+        const view = await import('./native-view');
+        const program = view.programForNewBracket({ env: 'http://s|simulation', account: { account_type: 'F', broker_id: 'b', account_id: 'a' },
+            orderId: 'E1', seqno: '', quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT', exchange: 'TAIFEX',
+            action: 'Buy', quantity: 2, stopPrice: 100, takePrice: 120 }, 'nb-1', 5)!;
+        const lv = program.levels[0]!;
+        expect(view.triggerRowsFromPrograms([program])).toHaveLength(0); // nothing filled yet
+        lv.position = 1; lv.entryFilled = 1; lv.phase = 'holding';
+        lv.orders[0]!.filled = 1;
+        const rows = view.triggerRowsFromPrograms([program]);
+        expect(rows.map(r => [r.kind, r.condition, r.price, r.action, r.quantity, r.bracketId])).toEqual([
+            ['stop', 'below', 100, 'Sell', 1, 'brk:nb-1'], ['take', 'above', 120, 'Sell', 1, 'brk:nb-1']]);
+        const [plan] = view.bracketPlansFromPrograms([program]);
+        expect(plan).toMatchObject({ id: 'brk:nb-1', orderId: 'E1', filled: 1, quantity: 2, stopPrice: 100, takePrice: 120,
+            entryClosed: false, exit: null, env: 'http://s|simulation' });
+        expect(view.programFinished(program)).toBe(false);
+        const trig = view.programForNewTrigger({ id: 't', code: 'TXFR1', condition: 'above', price: 50, action: 'Sell',
+            quantity: 1, kind: 'take', env: 'http://s|simulation', securityType:'FUT', account: { account_type: 'F', broker_id: 'b', account_id: 'a' },
+            orderCode: 'TXFJ6' })!;
+        expect(view.triggerRowsFromPrograms([trig])[0]!.kind).toBe('take');
+        trig.levels[0]!.phase = 'needsConfirm';
+        trig.levels[0]!.pending = { leg: 'entry', price: 51, ts: 9, reason: 'unknownNotSent' };
+        expect(view.triggerRowsFromPrograms([trig])[0]!.pending).toEqual({ price: 51, at: 9, reason: 'unknownNotSent' });
+        trig.levels[0]!.pending = null;
+        trig.levels[0]!.phase = 'done';
+        expect(view.programFinished(trig)).toBe(true);
+        expect(view.triggerRowsFromPrograms([trig])).toHaveLength(0);
+    });
+});
+
+const r33Entry = () => ({ env: m.env!, account: { account_type: 'F' as const, broker_id: F1.broker_id, account_id: F1.account_id }, orderId: 'fixture-r33-entry', seqno: 'fixture-r33-seq', quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT' as const, exchange: 'TAIFEX', action: 'Buy' as const, quantity: 2, stopPrice: 48000, takePrice: 48600 });
+describe('r33 fixed bracket admission', () => {
+    it('rejects a changed owner at send-time, including toggle away and back', async () => {
+        await boot({ enabled: false });
+        const admission = await bracket.ensureBracketHost();
+        native.setNativeExecutionEnabled(true);
+        native.setNativeExecutionEnabled(false);
+        expect(() => bracket.assertBracketAdmission(admission)).toThrow('保護執行環境已變更');
+        expect(m.place).not.toHaveBeenCalled();
+    });
+    it('keeps the preflight TS owner after entry when the toggle changes', async () => {
+        await boot({ enabled: false, live: false });
+        const admission = await bracket.ensureBracketHost();
+        native.setNativeExecutionEnabled(true);
+        await flush();
+        await bracket.registerBracket(r33Entry(), admission);
+        expect(bracket.getBrackets()).toHaveLength(1);
+        expect(host.programs).toHaveLength(0);
+        expect(bracket.getDisplayBrackets().filter(p => p.registrationPending)).toHaveLength(0);
+    });
+    it('requires native enabled to have actually taken effect before entry', async () => {
+        await boot({ enabled: true });
+        native.__setNativeInvokeForTest(async <T>(cmd: string, args?: Record<string, unknown>) => {
+            if (cmd === 'execution_status') return { enabled: false, state: 'live', env: 'simulation', serverId: 'http://sim.invalid', revision: 1, programs: 0 } as T;
+            return await host.invoke(cmd, args) as T;
+        }, { desktop: true, enabled: true });
+        await native.refreshNative();
+        await expect(bracket.ensureBracketHost()).rejects.toThrow('尚未啟用完成');
+        expect(m.place).not.toHaveBeenCalled();
+    });
+    it('retains a sent entry on native disable without switching to TS or resending, across reload', async () => {
+        await boot({ enabled: true });
+        const admission = await bracket.ensureBracketHost();
+        native.setNativeExecutionEnabled(false);
+        native.__setNativeInvokeForTest(async <T>(cmd: string, args?: Record<string, unknown>) => {
+            if (cmd === 'execution_status') return { enabled: false, state: 'live', env: 'simulation', serverId: 'http://sim.invalid', revision: 1, programs: 0 } as T;
+            return await host.invoke(cmd, args) as T;
+        }, { desktop: true, enabled: false });
+        await native.refreshNative();
+        await expect(bracket.registerBracket(r33Entry(), admission)).rejects.toThrow('尚未啟用完成');
+        expect(bracket.getBrackets()).toHaveLength(0);
+        expect(host.programs).toHaveLength(0);
+        expect(bracket.getDisplayBrackets()).toMatchObject([{ orderId: 'fixture-r33-entry', seqno: 'fixture-r33-seq', registrationPending: { owner: 'native' } }]);
+        await boot({ enabled: false, keepStore: true });
+        expect(bracket.getDisplayBrackets()).toMatchObject([{ orderId: 'fixture-r33-entry', registrationPending: { owner: 'native' } }]);
+        expect(m.place).not.toHaveBeenCalled();
+    });
+    it('retains the old environment entry when HTTP answers after an environment change', async () => {
+        await boot({ enabled: false });
+        const admission = await bracket.ensureBracketHost();
+        const spec = r33Entry();
+        m.env = 'http://sim.invalid|production';
+        m.envChanged.forEach(cb => cb());
+        await expect(bracket.registerBracket(spec, admission)).rejects.toThrow('環境已變更');
+        expect(bracket.getDisplayBrackets()).toMatchObject([{ env: spec.env, orderId: spec.orderId, registrationPending: { owner: 'window' } }]);
+        expect(bracket.getBrackets()).toHaveLength(0);
+        expect(m.place).not.toHaveBeenCalled();
+    });
+    it('the partial-entry cancel UI callsite changes Stop version without dismissing an open position', async () => {
+        await boot({ enabled: true });
+        await bracket.registerBracket(r33Entry());
+        const p = host.programs[0]!;
+        const lv = p.levels[0]!;
+        lv.position = 1; lv.entryFilled = 1; lv.phase = 'exiting'; lv.orders[0]!.filled = 1;
+        await native.refreshNative();
+        const plan = bracket.getDisplayBrackets()[0]!;
+        await bracket.cancelRemainingEntry(plan);
+        expect(host.commands.at(-1)).toMatchObject({ op: 'stop', programId: p.id, version: 1 });
+        expect(bracket.getDisplayBrackets()[0]!.dismissed).toBe(false);
+        expect(m.place).not.toHaveBeenCalled();
+    });
+});
+
+it('r33 direct registration cannot migrate an existing protected entry into the other owner', async () => {
+    await boot({ enabled: true });
+    await bracket.registerBracket(r33Entry());
+    native.setNativeExecutionEnabled(false);
+    await expect(bracket.registerBracket(r33Entry())).rejects.toThrow('其他執行器追蹤');
+    expect(host.programs).toHaveLength(1);expect(bracket.getBrackets()).toHaveLength(0);
+    expect(m.place).not.toHaveBeenCalled();
+});
+
+describe('r34 current-generation enable ACK', () => {
+ it('rejects admission and actual dispatch while the new ACK is pending, then admits exactly the successful generation',async()=>{
+  await boot({enabled:true});const old=await bracket.ensureBracketHost();
+  const base=host.invoke.getMockImplementation()!;
+  const replies: ((value:unknown)=>void)[]=[];
+  host.invoke.mockImplementation((cmd,args)=>cmd==='execution_set_enabled'?new Promise(r=>replies.push(r)):base(cmd,args));
+  native.setNativeExecutionEnabled(false);native.setNativeExecutionEnabled(true);
+  await expect(bracket.ensureBracketHost()).rejects.toThrow('尚未啟用完成');
+  expect(()=>bracket.assertBracketAdmission({...old,ownerGeneration:native.getNativeOwnerGeneration()})).toThrow('尚未啟用完成');
+  await native.refreshNative();await expect(bracket.ensureBracketHost()).rejects.toThrow('尚未啟用完成');
+  replies[0]!({enabled:true,state:'live',env:'simulation',serverId:'http://sim.invalid'});await flush();
+  await expect(bracket.ensureBracketHost()).rejects.toThrow('尚未啟用完成');
+  replies[1]!({enabled:true,state:'live',env:'simulation',serverId:'http://sim.invalid'});await flush();
+  const now=await bracket.ensureBracketHost();expect(()=>bracket.assertBracketAdmission(now)).not.toThrow();
+  expect(()=>bracket.assertBracketAdmission(old)).toThrow('已變更');expect(m.place).not.toHaveBeenCalled();
+ });
+ it('a rejected enable is not repaired by a cached status and a stale late reply cannot overwrite the latest ACK',async()=>{
+  await boot({enabled:true});const base=host.invoke.getMockImplementation()!;
+  const pending: {resolve:(v:unknown)=>void;reject:(e:Error)=>void}[]=[];
+  host.invoke.mockImplementation((cmd,args)=>cmd==='execution_set_enabled'?new Promise((resolve,reject)=>pending.push({resolve,reject})):base(cmd,args));
+  native.setNativeExecutionEnabled(false);native.setNativeExecutionEnabled(true);
+  pending[1]!.reject(new Error('mock rejected enable'));await flush();await native.refreshNative();
+  await expect(bracket.ensureBracketHost()).rejects.toThrow('尚未啟用完成');
+  native.setNativeExecutionEnabled(true);pending[2]!.resolve({enabled:true,state:'live',env:'simulation',serverId:'http://sim.invalid'});await flush();
+  expect(()=>native.ensureNativeHost(m.env)).not.toThrow();
+  pending[0]!.resolve({enabled:false,state:'down',env:null,serverId:null});await flush();
+  expect(()=>native.ensureNativeHost(m.env)).not.toThrow();expect(native.getNativeHealth()?.enabled).toBe(true);expect(m.place).not.toHaveBeenCalled();
+ });
+});
+
+it('r36 keeps all new stock protection in the shared holdings/reservation window owner', async()=>{
+    await boot({enabled:true});
+    expect(engine.nativeHandles({kind:'stop',securityType:'STK',account:{account_type:'S',broker_id:'S',account_id:'S'}})).toBe(false);
+    expect((await bracket.ensureBracketHost({securityType:'STK'})).owner).toBe('window');
+    expect((await bracket.ensureBracketHost({securityType:'OPT'})).owner).toBe('native');
+});
+it('r36 standalone native manual send is fail-closed without a host-current risk ACK, while keep is retained',async()=>{
+    await boot({enabled:true});await addStop(); const p=host.programs[0]!;
+    const lv=p.levels[0]!;lv.phase='needsConfirm';lv.pending={leg:'entry',price:47900,ts:1,reason:'restart'};host.bump();await native.refreshNative();
+    await expect(native.resolveNativePending(p.id,lv.id,'send')).rejects.toThrow('當代風控');
+    expect(host.commands.filter(c=>c.op==='resolvePending')).toHaveLength(0);
+    await native.resolveNativePending(p.id,lv.id,'keep');expect(host.commands.at(-1)).toMatchObject({op:'resolvePending',choice:'keep'});
+});
+it('r36 unknown standalone records remain visible/actionable after reload and Stop, never as resend choices',async()=>{
+    await boot({enabled:true});await addStop();const p=host.programs[0]!;
+    const lv=p.levels[0]!;lv.phase='unknown';lv.orders=[{key:'unknown-key',role:'entry',leg:'entry',qty:1,filled:0,fills:{},fillTs:{},status:'unknown',orderId:null,cycle:0,acknowledged:false,tagAmbiguous:true,detail:'timeout',cancel:null}];
+    p.status='stopping';host.bump();await native.refreshNative();
+    const rows=engine.getDisplayTriggers();expect(rows).toHaveLength(1);expect(rows[0]!.unresolved?.detail).toBe('timeout');expect(rows[0]!.pending).toBeUndefined();
+    native.__setNativeInvokeForTest(host.invoke as never,{desktop:true,enabled:true});await native.refreshNative();
+    expect(engine.getDisplayTriggers()[0]!.unresolved).toBeDefined();
+    await expect(engine.resolvePendingTrigger(rows[0]!.id,'send')).rejects.toThrow('結果未知');
+    await native.acknowledgeNativeUnknown(p.id,lv.id);expect(host.commands.at(-1)).toMatchObject({op:'ackUnknown'});
+});
+
+it('r36 chart OPT capture and fixed-context OPT keep their actual type; missing legacy type stays in window owner',async()=>{
+    await boot({enabled:true});const opt={...TXF,code:'OPT-SYN',target_code:'OPT-ORDER',security_type:'OPT'};
+    await engine.addTrigger({code:opt.code,condition:'below',price:100,action:'Sell',quantity:1,kind:'stop'},opt as never);
+    expect(host.programs[0]!.binding.contract.securityType).toBe('OPT');
+    await engine.addTrigger({code:opt.code,env:m.env!,account:{...F1,account_type:'F' as const},orderCode:opt.target_code,condition:'below',price:100,action:'Sell',quantity:1,kind:'stop'},opt as never);
+    expect(host.programs[1]!.binding.contract.securityType).toBe('OPT');
+    expect(engine.nativeHandles({kind:'stop',account:{...F1,account_type:'F' as const}})).toBe(false);
+});
+
+it.each([false,true])('r40 finished native upkeep respects observation retirement=%s',async retired=>{
+    await boot({enabled:true});await addStop();const p=host.programs[0]!;
+    p.status='stopped';p.levels[0]!.phase='done';p.observationOnly=retired;
+    host.bump();await native.refreshNative();await flush();
+    expect(host.commands.filter(c=>c.op==='remove')).toHaveLength(retired?0:1);
+    if(retired){expect(host.programs).toHaveLength(1);host.bump();await native.refreshNative();await flush();expect(host.commands.filter(c=>c.op==='remove')).toHaveLength(0);}
+});

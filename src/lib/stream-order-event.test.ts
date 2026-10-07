@@ -64,3 +64,13 @@ it('does not treat the same event_id from another environment as a duplicate', a
     source.emit('order_event', frame);
     expect(seen).toHaveLength(3);
 });
+
+it('r34 retired SSE callbacks cannot enter the new session or disturb its live status', async () => {
+    const stream=await import('./stream');const seen: OrderEventReport[]=[];
+    stream.onOrderEvent(r=>seen.push(r));stream.ensureStream();const old=FakeEventSource.last!;
+    old.onopen!();old.onerror!();await vi.advanceTimersByTimeAsync(5000);
+    const current=FakeEventSource.last!;expect(current).not.toBe(old);current.onopen!();
+    old.emit('order_event',captured.events[0]!);expect(seen).toHaveLength(0);
+    old.onerror!();old.onopen!();expect(stream.getStreamStatus()).toBe('live');
+    current.emit('order_event',captured.events[0]!);expect(seen).toHaveLength(1);
+});

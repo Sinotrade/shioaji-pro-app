@@ -76,7 +76,7 @@ export type EntryRule =
     | { type: 'limit'; price: number; order: OrderSpec }
     /** Entry order placed outside the program (bracket entry sent by the
      * order ticket); the program only tracks its reports. */
-    | { type: 'external'; orderId: string };
+    | { type: 'external'; orderId: string; seqno?: string; ordno?: string };
 
 /** A touch leg of an exit (stop or take). Fires a market-style order. */
 export interface TouchLeg {
@@ -125,6 +125,11 @@ export type SlotStatus =
 
 /** One order the program asked for (or tracks). */
 export interface OrderSlot {
+    /** Immutable emission generation; absent only in legacy/external slots. */
+    submitVersion?: number;
+    /** The broker listing reuses this raw id for multiple stable orders. */
+    cancelAmbiguous?: boolean;
+    seqno?: string; ordno?: string;
     /** Idempotency key; the only identity reconciliation may use. */
     key: string;
     role: 'entry' | 'exit';
@@ -141,9 +146,34 @@ export interface OrderSlot {
     detail: string | null;
     acknowledged: boolean;
     cancel: CancelState | null;
+    /** Quantity the broker cancelled (UpdateQty reductions + Cancel):
+     * max(listing's cumulative, sum of report deltas) — never their sum (a
+     * report may already be in the listing). The order still works
+     * `qty - filled - cancelled`. */
+    cancelled?: number;
+    /** report id → quantity it cancelled (dedupe). */
+    cancels?: Record<string, number>;
+    /** Cumulative cancelled quantity of the latest listing (authoritative
+     * floor); `cancelled = max(listedCancelled, sum(cancels))`. */
+    listedCancelled?: number;
+    /** A listing had rows with this slot's tag that could not be bound to it
+     * (duplicate / mismatching): the order may exist. Set by the reconcile
+     * that saw it; never concluded never-accepted. */
+    tagAmbiguous?: boolean;
+    /** The trade id is from an earlier epoch (another connection / trading
+     * day): it no longer identifies the order. Nothing matches it (reports,
+     * listings, cancels) until a listing of the current epoch rebinds the
+     * slot by its tag (an ended slot never is). */
+    unconfirmed?: boolean;
+    /** Trading epoch of the last strictly verified listing. Terminal fill evidence
+     * may extend this ledger after reconnect, never across a trading-day boundary. */
+    evidenceEpoch?: number;
 }
 
-export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'resume' | 'unknownNotSent';
+export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'resume' | 'unknownNotSent'
+    /** An external (bracket) entry still open across an epoch boundary: the
+     * user confirms how much it filled before any exit counts on it. */
+    | 'unknownEntryAcrossDay' | 'unknownEntryAfterReconnect';
 
 export type LevelPhase =
     | 'idle' // waiting to enter (touch watching / limit not yet submitted)
@@ -176,6 +206,8 @@ export interface Level {
      * non-trigger side and crosses again. */
     recross: LegName[];
     pending: PendingConfirm | null;
+    /** External entry identity/remainder confirmation, independent of an exit decision. */
+    entryPending?: PendingConfirm | null;
     orders: OrderSlot[];
     /** Entry filled minus exit filled in the current cycle. */
     position: number;
@@ -274,6 +306,8 @@ export interface OrderProgram {
      * were issued against and are refused when stale. */
     version: number;
     status: ProgramStatus;
+    /** Removed ledger retains strict evidence, with no active authority. */
+    observationOnly?: boolean;
     pauseReason: string | null;
     hold: ProgramHold;
     /** First leg that fires cancels every other level's legs (OCO across
@@ -304,6 +338,9 @@ export interface ConnectionState {
     /** Environment last evaluated (a different one on resume = 'env' restore). */
     lastEvalEnv: Env | null;
     lastEvalServerId: string | null;
+    /** Accounts whose first listing of the current trade-id epoch has not been
+     * applied yet: reports are taken, nothing is placed or cancelled. */
+    awaitingEpochListing?: AccountKey[];
 }
 
 export interface BufferedDeal {
@@ -328,6 +365,12 @@ export interface EngineState {
     /** Order reports (e.g. New failed) whose order id is not yet known. */
     orphanOrders: BufferedOrder[];
     programs: OrderProgram[];
+    /** Trade-id epoch (see core.ts epochMark) of the last `epoch` event. */
+    epochMark?: number;
+    /** Number of `epoch` events: the current epoch. An input stamped with
+     * another one (a late place response, a listing requested before the
+     * boundary) never confirms an id. */
+    epochSeq?: number;
 }
 
 // ---- events in ----
@@ -337,15 +380,30 @@ export interface EngineState {
  * is connected now" — so a late simulation tick can never drive production. */
 export interface Source { env: Env; serverId: string }
 
-export interface TickEvent extends Source { type: 'tick'; ts: number; code: string; price: number; simtrade?: boolean }
+/** `price` is the latest trade. A coalesced tick (the native engine merges
+ * ticks that arrived while it was busy) also carries `low` / `high`: the
+ * range of real (non-simtrade) trade prices since the previous tick, so a
+ * crossing inside the burst is never lost. Absent = just `price`. */
+export interface TickEvent extends Source {
+    type: 'tick'; ts: number; code: string; price: number; simtrade?: boolean;
+    low?: number; high?: number;
+}
 export interface HeartbeatEvent extends Source { type: 'heartbeat'; ts: number }
 export interface ConnectionEvent { type: 'connection'; ts: number; live: boolean; env: Env | null; serverId: string | null }
 export interface IntentResultEvent extends Source {
+    seqno?: string; ordno?: string;
     type: 'intentResult'; ts: number; key: string;
     outcome: 'accepted' | 'notSent' | 'unknown';
     orderId?: string; detail?: string;
+    /** Epoch the request was sent in (`EngineState.epochSeq`). */
+    epoch?: number;
 }
 export interface OrderEvent extends Source {
+    /** Original order facts, separate from the operation's cancelled delta.
+     * Required for external entries; older engine-owned reports may omit them. */
+    action?: Side;
+    originalQty?: number;
+    seqno?: string; ordno?: string;
     type: 'order'; ts: number; orderId: string;
     op: 'New' | 'Cancel' | 'UpdatePrice' | 'UpdateQty';
     failed: boolean; detail?: string;
@@ -354,21 +412,51 @@ export interface OrderEvent extends Source {
      * that is the only outstanding one; otherwise the cancel becomes
      * `unknown` (retried after the timeout unless settled). */
     cancelKey?: string;
+    /** Quantity THIS report cancelled (Cancel, UpdateQty — the broker
+     * reports it per operation, e.g. reduce 1 then cancel the last 1 = two
+     * reports of 1). Summed into the slot's `cancelled`; the order ends once
+     * `filled + cancelled >= qty`. A successful Cancel that leaves quantity
+     * working did not end the order (the cancel is retried after the timeout). */
+    cancelQty?: number;
+    /** Report identity (event id) so a repeated report is counted once. */
+    reportId?: string;
+    /** The order's account and contract as reported: an id is only an
+     * identity within (account, contract) — stock and futures sequences are
+     * independent and can produce the same id. */
+    account?: { brokerId: string; accountId: string } | null;
+    code?: string;
+    securityType?: string;
+    /** Exchange time of the operation (epoch seconds, `status.exchange_ts`):
+     * which trade-id epoch the report belongs to. */
+    exchTs?: number;
 }
 export interface DealEvent extends Source {
+    seqno?: string; ordno?: string;
     type: 'deal'; ts: number; orderId: string;
     eventId: string | null; seq: string | null;
     account: { brokerId: string; accountId: string } | null;
     code: string; action: Side; qty: number; price: number;
+    /** The order's security type as reported (stock and futures ids repeat). */
+    securityType?: string;
     /** Exchange fill time (epoch s) used to pair event-only fills. */
     fillTs?: number;
 }
 export interface ReconciledOrder {
+    cancelAmbiguous?: boolean;
+    seqno?: string; ordno?: string;
     intentKey: string | null;
     orderId: string;
     status: 'working' | 'filled' | 'ended';
     qty: number;
     deals: { seq: string; qty: number; price: number; ts?: number }[];
+    /** Cumulative cancelled quantity of the order at the broker. */
+    cancelled?: number;
+    /** A report of this order was applied after the listing was requested:
+     * the row may only add (fills, cumulative cancels, a final status), it
+     * never revives the order nor downgrades anything. */
+    stale?: boolean;
+    /** The row's security type (scopes its id: stock and futures repeat). */
+    securityType?: string;
 }
 export interface ReconcileEvent {
     type: 'reconcile'; ts: number;
@@ -377,9 +465,22 @@ export interface ReconcileEvent {
     /** The listing covers every order of the account today: an unknown
      * intent whose key is absent was never accepted. */
     complete: boolean;
+    /** Unknown submits (by key) the evidence shows were never accepted;
+     * concluded even when `complete` is false (per-slot decision: a slot that
+     * became unknown after the listing was requested is never concluded). */
+    notSent?: string[];
+    /** Slots (by key) whose tag rows are duplicated / mismatching in this
+     * listing: flagged `tagAmbiguous` for good. */
+    ambiguous?: string[];
+    /** Epoch the listing was requested in: from another epoch it is
+     * ignored (its ids may name other orders now). */
+    epoch?: number;
 }
 /** The executor (re)started from persisted state. */
 export interface RestoreEvent { type: 'restore'; ts: number }
+/** A new trade-id epoch on a connection: ids bound before no longer
+ * identify orders. */
+export interface EpochEvent extends Source { type: 'epoch'; ts: number }
 
 export type UserCommand =
     | { op: 'create'; program: OrderProgram }
@@ -389,13 +490,19 @@ export type UserCommand =
     | { op: 'remove'; programId: string; version: number }
     | { op: 'resolvePending'; programId: string; version: number; levelId: string;
         choice: 'send' | 'cancel' | 'keep'; allowUnpast?: boolean }
-    | { op: 'ackUnknown'; programId: string; version: number; levelId: string };
+    | { op: 'ackUnknown'; programId: string; version: number; levelId: string }
+    /** The user's answer for an external entry open across an epoch
+     * (`unknownEntryAcrossDay`): how much of it filled in total. */
+    | { op: 'confirmEntry'; programId: string; version: number; levelId: string; filled: number;
+        /** The user confirms nothing of the entry still works (all filled or
+         * the rest cancelled): required to end it. */
+        noRemainder: boolean };
 
 export interface CommandEvent { type: 'command'; ts: number; id: string; command: UserCommand }
 
 export type ExecEvent =
     | TickEvent | HeartbeatEvent | ConnectionEvent | IntentResultEvent | OrderEvent
-    | DealEvent | ReconcileEvent | RestoreEvent | CommandEvent;
+    | DealEvent | ReconcileEvent | RestoreEvent | EpochEvent | CommandEvent;
 
 // ---- intents out ----
 

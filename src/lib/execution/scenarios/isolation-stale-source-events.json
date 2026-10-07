@@ -136,7 +136,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/t1/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "x"
+        "orderId": "x",
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
       },
       "expect": {
         "programs": {
@@ -163,7 +164,8 @@
         "serverId": "local-a",
         "key": "simulation/local-a/t1/L1/entry/0/0",
         "outcome": "accepted",
-        "orderId": "o1"
+        "orderId": "o1",
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0"
       },
       "expect": {
         "programs": {
@@ -365,7 +367,10 @@
         "code": "TXFJ6",
         "action": "Sell",
         "qty": 1,
-        "price": 99
+        "price": 99,
+        "fillTs": 2.005,
+        "seqno": "test-simulation/local-a/t1/L1/entry/0/0",
+        "securityType": "FUT"
       },
       "expect": {
         "programs": {

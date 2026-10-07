@@ -10,6 +10,7 @@ import { agentModule } from './features';
 import { describeOrderReport } from './order-report';
 import {
     EXPECTED_SERVER_VERSION,
+    getApiBase,
     isTauri,
     setApiPort,
     setApiScheme,
@@ -489,6 +490,21 @@ async function serverVersionOk(): Promise<boolean> {
 let tradeSubscriptionInFlight: Promise<void> | null = null;
 let stopTradeSubscriptionMode: (() => void) | undefined;
 let tradeSubscriptionModeQueued = false;
+
+/** Desktop: the native host owns trade-report subscription (health first,
+ * subscribe only on NotSubscribed, one check at a time per account, shared
+ * with the native execution engine — sw#183). False when the sidecar is not
+ * the App-owned one: the caller keeps the direct path below. */
+async function nativeEnsureTradeReports(account: { account_type: string; broker_id: string; account_id: string }): Promise<boolean> {
+    if (!isTauri) return false;
+    const { invoke } = await import('@tauri-apps/api/core');
+    const outcome = await invoke<string>('execution_ensure_trade_reports', {
+        origin: getApiBase(),
+        account: { accountType: account.account_type, brokerId: account.broker_id, accountId: account.account_id },
+    });
+    return outcome === 'ok';
+}
+
 export function subscribeTradeReports(): Promise<void> {
     // Install only once subscriptions are actually used (main window).
     // A new known version must recover even after same-mode reconnects;
@@ -511,6 +527,11 @@ export function subscribeTradeReports(): Promise<void> {
             const accounts = await loadAccountsShared();
             const query = createAccountQuery();
             for (const account of accounts.filter(a => canTrade(a))) {
+                query.assertCurrent();
+                if (await nativeEnsureTradeReports(query.account(account.account_type as 'S' | 'F', account))) {
+                    query.assertCurrent();
+                    continue;
+                }
                 let subscribed = false;
                 try {
                     const health = await query.read(account.account_type as 'S' | 'F', account,

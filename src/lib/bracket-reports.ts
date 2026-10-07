@@ -10,6 +10,8 @@
 // reaches the main window, and flags reports whose event_id cannot be
 // tracked (empty / unsupported, e.g. pre-1.7.6 servers).
 
+import { externalIdentity } from './broker-identity';
+import { currentReportContext } from './protection-context';
 import type { OrderEventReport } from './order-report';
 import { parseEventId } from './report-ledger';
 import { getApiBase } from './runtime';
@@ -18,12 +20,13 @@ import { onOrderEvent } from './stream';
 export interface TrackedReportInfo {
     /** No supported v1 event_id: sequence continuity cannot be judged. */
     untrackable: boolean;
+    context: string | null;
 }
 
 export type TrackedListener = (report: OrderEventReport, info: TrackedReportInfo, base: string) => void;
 
 const listeners = new Set<TrackedListener>();
-const recent = new Map<string, { at: number; reports: OrderEventReport[] }>();
+const recent = new Map<string, { at: number; reports: { report: OrderEventReport; context: string | null }[] }>();
 const RECENT_ORDERS = 2000;
 const RECENT_MS = 30 * 60 * 1000;
 let stop: (() => void) | null = null;
@@ -38,7 +41,7 @@ function remember(base: string, report: OrderEventReport, now: number) {
     const key = `${base}\u0000${id}`;
     const entry = recent.get(key) ?? { at: now, reports: [] };
     entry.at = now;
-    if (entry.reports.length < 200) entry.reports.push(report);
+    if (entry.reports.length < 200) entry.reports.push({ report, context: currentReportContext() });
     recent.delete(key);
     recent.set(key, entry);
     while (recent.size > RECENT_ORDERS) {
@@ -49,17 +52,22 @@ function remember(base: string, report: OrderEventReport, now: number) {
 }
 
 /** Reports already received for an order on this API base (oldest first). */
-export function recentReportsFor(base: string, orderId: string, now = Date.now()): OrderEventReport[] {
-    const entry = recent.get(`${base}\u0000${orderId}`);
-    if (!entry || now - entry.at > RECENT_MS) return [];
-    return entry.reports.slice();
+export function recentReportsFor(base: string, orderId: string, now = Date.now(),
+    identity?: { orderId: string; seqno?: string; ordno?: string }): OrderEventReport[] {
+    const context = currentReportContext();
+    if (!context) return [];
+    const entries = identity ? [...recent.entries()].filter(([key]) => key.startsWith(`${base}\u0000`)).map(([,entry]) => entry)
+        : [recent.get(`${base}\u0000${orderId}`)];
+    return entries.flatMap(entry => !entry || now - entry.at > RECENT_MS ? []
+        : entry.reports.filter(r => r.context === context && (!identity || externalIdentity({ ...identity, confirmed: false },
+            { orderId: orderIdOf(r.report), seqno: r.report.seqno, ordno: r.report.ordno, confirmed: false }) === 'same')).map(r => r.report));
 }
 
 /** Reports reaching here were already de-duplicated by stream.ts. */
 export function ingestReport(report: OrderEventReport, now = Date.now()) {
     const base = getApiBase();
     remember(base, report, now);
-    const info = { untrackable: !parseEventId(report.eventId) };
+    const info = { untrackable: !parseEventId(report.eventId), context: currentReportContext() };
     for (const listener of listeners) {
         try { listener(report, info, base); } catch { /* one consumer cannot break another */ }
     }

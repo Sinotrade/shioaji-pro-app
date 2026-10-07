@@ -65,7 +65,8 @@ export function observeServerInfo(request: ServerInfoRequest, info: ServerInfo |
     const { base } = request;
     if (base !== syncBase()) return;
     if ((applied.get(base) ?? 0) > request.sequence) return;
-    if (infos.get(base)?.simulation !== info?.simulation) modeVersion += 1;
+    if (infos.get(base)?.simulation !== info?.simulation
+        || infos.get(base)?.instance_id !== info?.instance_id) modeVersion += 1;
     applied.set(base, request.sequence);
     if (info) infos.set(base, info);
     else infos.delete(base);
