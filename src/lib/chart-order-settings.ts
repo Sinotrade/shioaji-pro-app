@@ -145,7 +145,7 @@ export function chartOrderSummary(s: ChartOrderSettings, market: ChartOrderMarke
     const what = sellOnly
         ? `點價賣以 ${eff.orderType} 限價${tag}賣出 ${lotText(s, market)}（點價買停用：${tag}只能賣出）`
         : eff.credit.daytradeShort
-            ? `點價買以 ${eff.orderType} 限價現股買進、點價賣以現沖賣出 ${lotText(s, market)}`
+            ? `點價買以 ${eff.orderType} 限價現股買進、點價賣以 ${eff.orderType} 限價現沖賣出 ${lotText(s, market)}`
             : `點價買／賣以 ${eff.orderType} 限價送出 ${lotText(s, market)}${oc ? `（${oc}）` : tag ? `（${tag}）` : ''}`;
     return `${what}，帳號 ${accountLabel}；`
         + `停損停利${chartExitText(s, market)}${odd ? '。零股只能現股、ROD 限價' : ''}。`;

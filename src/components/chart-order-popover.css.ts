@@ -246,3 +246,10 @@ export const creditNote = styleVariants({
     ok: [creditNoteBase],
     bad: [creditNoteBase, { color: vars.color.danger }],
 });
+
+// 信用條件五個選項：依字數分配寬度、不換行（「借券豁免」不折成兩行）
+export const segFit = style({
+    flex: '1 0 auto',
+    padding: '3px 5px',
+    whiteSpace: 'nowrap',
+});

@@ -133,6 +133,7 @@ describe('chart order credit and day-trade conditions', () => {
         const dt = normalizeChartOrder({ credit: { cond: 'Cash', daytradeShort: true } }, 'S');
         expect(chartModeHint('sell', dt, 'S')).toBe('點擊價位 → 現沖限價賣出 1 張');
         expect(chartModeHint('buy', dt, 'S')).toBe('點擊價位 → 限價買進 1 張');
+        expect(chartOrderSummary(normalizeChartOrder({ ...dt, orderType: 'IOC' }, 'S'), 'S', '••••21')).toMatch(/^點價買以 IOC 限價現股買進、點價賣以 IOC 限價現沖賣出 1 張/);
         const short = normalizeChartOrder({ credit: { cond: 'ShortSelling', daytradeShort: false } }, 'S');
         expect(chartOrderSummary(short, 'S', '••••21')).toContain('點價買停用');
         expect(chartOrderSummary(normalizeChartOrder({ octype: 'DayTrade' }, 'F'), 'F', '••••07')).toContain('（當沖）');

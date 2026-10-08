@@ -413,7 +413,7 @@ function CreditRows({ credit, view, onChange }: {
                     {CREDIT_ITEMS.map(([cond, text, sub]) => {
                         const on = !off && credit.cond === cond;
                         return (
-                            <button key={cond} type='button' className={styles.segBtn[on ? 'on' : 'off']} aria-pressed={on}
+                            <button key={cond} type='button' className={`${styles.segBtn[on ? 'on' : 'off']} ${styles.segFit}`} aria-pressed={on}
                                 disabled={off} title={off ? view.suspended! : sub}
                                 onClick={() => { if (!off && credit.cond !== cond) onChange({ cond, daytradeShort: false }); }}>
                                 {text}
