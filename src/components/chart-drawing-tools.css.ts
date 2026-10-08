@@ -208,10 +208,11 @@ export const starBtn = styleVariants({
     },
 });
 
-// 工具列按鈕的提示（portal 到 body，fixed 定位在按鈕旁、垂直置中）
+// 工具列按鈕的提示（portal 到 body，fixed 定位在按鈕旁、垂直置中）。
+// 層級低於彈出層（色盤、線寬、工具組 1000）與設定視窗：提示不蓋住已開啟的面板
 export const tip = style({
     position: 'fixed',
-    zIndex: 1001,
+    zIndex: 999,
     transform: 'translateY(-50%)',
     pointerEvents: 'none',
     padding: '3px 8px',
