@@ -18,8 +18,6 @@ export interface PopoverFit {
 
 const MARGIN = 6;
 const GAP = 4;
-// 下方只剩一點點時至少留這麼高（工具列在 K 線面板頂端，實務上不會發生）
-const MIN_HEIGHT = 48;
 
 export function fitPopover(
     anchor: { left: number; bottom: number },
@@ -34,7 +32,7 @@ export function fitPopover(
     const out: PopoverFit = { left: x - anchor.left };
     if (width < pop.width) out.maxWidth = width;
     const availH = clip.bottom - MARGIN - (anchor.bottom + GAP);
-    if (pop.height > availH) out.maxHeight = Math.max(MIN_HEIGHT, availH);
+    if (pop.height > availH) out.maxHeight = Math.max(0, availH);
     return out;
 }
 
