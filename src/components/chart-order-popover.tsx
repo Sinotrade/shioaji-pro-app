@@ -21,7 +21,7 @@ import {
 } from '../lib/chart-order-settings';
 import { flashAccountKey } from '../lib/flash-account';
 import { ODD_LOT_MAX_SHARES } from '../lib/odd-lot';
-import { fitPopover, visibleClipRect, type PopoverFit } from '../lib/popover-fit';
+import { clipAncestors, fitPopover, visibleClipRect, type PopoverFit } from '../lib/popover-fit';
 import type { Account } from '../lib/types/portfolio';
 import * as styles from './chart-order-popover.css';
 
@@ -118,7 +118,8 @@ export function OrderSettingsButton({
     if (openRef) openRef.current = (top) => { if (top !== undefined) setPanelTop(top); setOpen(true); };
     // 掛在按鈕下方的面板（K 線工具列）：窄面板裡從按鈕往右長會被面板右緣
     // 裁掉 — 依可見範圍往左收、必要時縮寬／限高捲動。開啟時先以原尺寸
-    // 量一次（fit 為 null），視窗縮放或內容變了再依原寬重算
+    // 量一次（fit 為 null）；之後彈出層內容高度（縮寬後換行）、按鈕位置、
+    // 面板大小、視窗縮放或捲動變了都依原寬重算（結果相同就不重繪）
     const popRef = useRef<HTMLDivElement>(null);
     const naturalWidth = useRef(0);
     const [fit, setFit] = useState<PopoverFit | null>(null);
@@ -144,8 +145,16 @@ export function OrderSettingsButton({
         };
         place();
         win.addEventListener('resize', place);
-        return () => win.removeEventListener('resize', place);
-    }, [open, align, settings]);
+        win.addEventListener('scroll', place, true);
+        const RO = (win as typeof window).ResizeObserver;
+        const ro = RO ? new RO(place) : null;
+        if (ro) for (const el of [pop, anchorEl, ...clipAncestors(anchorEl)]) ro.observe(el);
+        return () => {
+            win.removeEventListener('resize', place);
+            win.removeEventListener('scroll', place, true);
+            ro?.disconnect();
+        };
+    }, [open, align]);
     // Esc closes the popover and nothing else (a panel's own Esc hotkey must
     // not also fire); nothing is listened to while closed
     useEffect(() => {

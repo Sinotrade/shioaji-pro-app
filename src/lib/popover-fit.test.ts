@@ -23,10 +23,12 @@ describe('彈出面板留在可見範圍內（面板邊界與視窗）', () => {
         expect(400 + r.left).toBe(272 + 6);
     });
 
-    it('下方空間不夠時限高（面板內捲動），至少留 120px', () => {
+    it('下方空間不夠時限高到剩下的高度（面板內捲動），至少留 48px', () => {
         const r = fitPopover({ left: 300, bottom: 700 }, { width: 304, height: 400 }, clip);
         expect(r.maxHeight).toBe(906 - 6 - (700 + 4));
+        const short = fitPopover({ left: 300, bottom: 820 }, { width: 304, height: 400 }, clip);
+        expect(short.maxHeight).toBe(906 - 6 - 824);
         const tiny = fitPopover({ left: 300, bottom: 880 }, { width: 304, height: 400 }, clip);
-        expect(tiny.maxHeight).toBe(120);
+        expect(tiny.maxHeight).toBe(48);
     });
 });
