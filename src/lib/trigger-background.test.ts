@@ -194,10 +194,21 @@ describe('setting on (#201 ①-3)', () => {
         expect(engine.getTriggers()).toHaveLength(0);
     });
 
+    it('an unconfirmed create is never reported as not created', async () => {
+        m.enabled = true;
+        await boot();
+        m.invoke.mockImplementationOnce(async () => { throw new Error('ipc closed'); });
+        expect(await engine.addTrigger(stop(), TXF as never)).toBeNull();
+        const titles = m.notify.mock.calls.map(([n]) => (n as { title: string }).title);
+        expect(titles).toContain('觸價單建立結果未確認');
+        expect(titles).not.toContain('觸價單未建立');
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
     it('a refused create is reported and nothing is created anywhere', async () => {
         m.enabled = true;
         await boot();
-        m.invoke.mockImplementationOnce(async () => { throw new Error('背景執行只支援期貨與選擇權，未建立'); });
+        m.invoke.mockImplementationOnce(async () => ({ accepted: false, notices: [{ code: 'rejected.duplicateProgram', programId: null, levelId: null, detail: '' }], revision: 1 }));
         expect(await engine.addTrigger(stop(), TXF as never)).toBeNull();
         expect(engine.getTriggers()).toHaveLength(0);
         expect(m.notify.mock.calls.some(([n]) => (n as { title: string }).title === '觸價單未建立')).toBe(true);

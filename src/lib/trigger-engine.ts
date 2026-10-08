@@ -403,11 +403,15 @@ async function addBackgroundTrigger(prepared: NewTrigger, contract: ContractBase
     const t: TriggerOrder = { ...prepared, id: newId(), createdAt: Date.now() };
     delete t.requestId;
     const program = programForNewTrigger(t, contract);
-    try {
-        if (!program) throw new Error('觸價單缺少帳戶或伺服器資訊');
-        await createBackgroundTrigger(program);
-    } catch (e) {
-        notify({ kind: 'err', title: '觸價單未建立', body: `背景執行：${e instanceof Error ? e.message : String(e)}` });
+    if (!program) {
+        notify({ kind: 'err', title: '觸價單未建立', body: '背景執行：觸價單缺少帳戶或伺服器資訊' });
+        return null;
+    }
+    const result = await createBackgroundTrigger(program);
+    if (result !== 'created') {
+        if ('refused' in result) notify({ kind: 'err', title: '觸價單未建立', body: `背景執行：${result.refused}` });
+        // never "not created": a retry could make a second trigger that also sends
+        else notify({ kind: 'err', title: '觸價單建立結果未確認', body: `背景執行：${result.unconfirmed}；請先看觸價單清單是否已有這張，不要直接重掛` });
         return null;
     }
     notify({ kind: 'info', title: `${kindLabel(t)}（背景執行）`, body: describe(t) });

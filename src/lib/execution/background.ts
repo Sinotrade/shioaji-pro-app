@@ -168,6 +168,9 @@ const REJECT_TEXT: Record<string, string> = {
     'partition.failed': '背景執行資料無法寫入，這個環境已停止，請重新啟動 App',
 };
 
+/** The App answered and refused: nothing was created / changed. */
+export class BackgroundRefusal extends Error {}
+
 function rejection(reply: CommandReply): string {
     const bad = reply.notices.find(n => n.code.startsWith('rejected.') || n.code === 'partition.failed');
     return bad ? (REJECT_TEXT[bad.code] ?? `背景執行未接受（${bad.code}）`) : '背景執行未接受';
@@ -177,18 +180,21 @@ async function command(cmd: string, args: Record<string, unknown>): Promise<Comm
     if (!isTauri) throw new Error('背景持續執行僅限桌面版');
     const reply = await invoke<CommandReply>(cmd, args);
     await refreshBackground();
-    if (!reply.accepted) throw new Error(rejection(reply));
+    if (!reply.accepted) throw new BackgroundRefusal(rejection(reply));
     return reply;
 }
 
-export async function createBackgroundTrigger(program: OrderProgram): Promise<void> {
+/** `created` / `refused` (definitely not created) / `unconfirmed` (the
+ * answer was lost: the App may hold it — the user must check, not retry). */
+export async function createBackgroundTrigger(program: OrderProgram): Promise<'created' | { refused: string } | { unconfirmed: string }> {
     try {
         await command('execution_create', { program });
+        return 'created';
     } catch (e) {
-        // a lost answer is not a refusal: the App may have kept it
+        const why = e instanceof Error ? e.message : String(e);
+        if (e instanceof BackgroundRefusal) return { refused: why };
         await settled();
-        if (programs.some(p => p.id === program.id)) return;
-        throw e;
+        return programs.some(p => p.id === program.id) ? 'created' : { unconfirmed: why };
     }
 }
 
@@ -219,7 +225,8 @@ function housekeeping() {
     for (const p of programs) {
         if (p.kind !== 'trigger' || !programFinished(p) || removing.has(p.id) || swept.get(p.id) === p.version) continue;
         swept.set(p.id, p.version);
-        void invoke<CommandReply>('execution_remove', { programId: p.id }).catch(() => undefined);
+        // a failed request is tried again on the next refresh
+        void invoke<CommandReply>('execution_remove', { programId: p.id }).catch(() => { swept.delete(p.id); });
     }
 }
 
