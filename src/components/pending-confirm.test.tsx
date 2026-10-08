@@ -205,5 +205,12 @@ it('a broken change listener stays visible even with an empty list', () => {
     m.state = { snapshot: mockPendingConfirmSnapshot({ items: [] }), error: null, subscriptionError: '待確認清單不會自動更新', loading: false, generation: 1 };
     expect(text(render().root)).toContain('不會自動更新');
     const badge = render({ compact: true });
-    expect(text(badge.root)).toContain('委託待確認 0 筆');
+    expect(text(badge.root)).toContain('不會自動更新');
+});
+
+it('a popout never shows "0 筆" when the list could not be read', () => {
+    m.state = { snapshot: null, error: '待確認清單讀取失敗：x', subscriptionError: null, loading: false, generation: 1 };
+    const badge = text(render({ compact: true }).root);
+    expect(badge).toContain('無法取得');
+    expect(badge).not.toContain('0 筆');
 });

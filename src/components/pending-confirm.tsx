@@ -209,8 +209,10 @@ export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) 
                 <button type='button' className={styles.badge} title='在主視窗處理待確認委託'
                     onClick={() => void focusMainWindow().catch(() => undefined)}>
                     <TriangleAlert size={12} aria-hidden />
-                    {confirm.length === 0 && expired.length > 0 && !error && !subscriptionError
-                        ? `委託已失效 ${expired.length} 筆` : `委託待確認 ${confirm.length} 筆`} · 請在主視窗處理
+                    {!snapshot || error ? '委託待確認狀態無法取得'
+                        : confirm.length === 0 && expired.length > 0 ? `委託已失效 ${expired.length} 筆`
+                            : `委託待確認 ${confirm.length} 筆`}
+                    {subscriptionError ? '（不會自動更新）' : ''} · 請在主視窗處理
                 </button>
             </div>
         );
