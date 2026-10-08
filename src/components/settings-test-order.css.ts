@@ -3,7 +3,7 @@
 import { createContainer, createVar, globalStyle, style } from '@vanilla-extract/css';
 import { themeClasses, vars } from '../theme.css';
 
-// 恢復半透明材質；淡染跟隨主題 accent，不改卡片與欄位的排版。
+// 半透明材質與淡染跟隨主題 accent。
 const tint = (pct: number) => `color-mix(in srgb, ${vars.color.accent} ${pct}%, transparent)`;
 const cardSurface = createVar();
 const cardHighlight = createVar();
@@ -18,12 +18,18 @@ const COMPACT_ORDER = `${orderBox} (max-width: 18rem)`;
 const NO_CONTAINER_SUPPORT = 'not (container-type: inline-size)';
 const NARROW_VIEWPORT = '(max-width: 50rem)';
 const COMPACT_VIEWPORT = '(max-width: 24rem)';
-const COLUMNS = 'minmax(0, 1fr) 10rem 8em';
-const LABEL_FONT_SIZE = '0.7rem';
-const LABEL_LINE_HEIGHT = 1.5;
-const FIELD_GAP = '6px';
-// 三欄標籤共用高度；放大字級時仍容納驗證徽章的行高與上下 padding。
-const LABEL_MIN_HEIGHT = 'max(22px, calc(0.64rem * 1.5 + 4px))';
+// 狀態欄預留三個字、圖示和內距，縮小字級時也不讓徽章超出欄位。
+const VERIFICATION_WIDTH = 'calc(1.92rem + 32px)';
+const COLUMNS = `2.5em ${VERIFICATION_WIDTH} minmax(0, 1fr) 9.5rem 4.5em`;
+const AREAS = '"market verification product price action"';
+const NARROW_LAYOUT = {
+    gridTemplateColumns: `minmax(0, 1fr) ${VERIFICATION_WIDTH}`,
+    gridTemplateAreas: '"market verification" "product product" "price action"',
+};
+const COMPACT_LAYOUT = {
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gridTemplateAreas: '"market" "verification" "product" "price" "action"',
+};
 export const card = style({
     containerName: orderBox,
     containerType: 'inline-size',
@@ -101,57 +107,60 @@ export const refreshMessage = style([description, {
     selectors: { '&:empty': { position: 'absolute', width: 0, height: 0, margin: 0, overflow: 'hidden' } },
 }]);
 export const grid = style({ display: 'flex', flexDirection: 'column', marginTop: '12px' });
-export const row = style({
-    display: 'grid', gridTemplateColumns: COLUMNS, columnGap: '12px', rowGap: '6px',
-    alignItems: 'start', padding: '10px 0',
-    selectors: { '& + &': { borderTop: `1px solid ${vars.color.border}` } },
+// 欄名與資料列共用欄寬和換行位置，正常寬度保持一列。
+const columns = style({
+    display: 'grid', gridTemplateColumns: COLUMNS, gridTemplateAreas: AREAS, columnGap: '8px',
     '@container': {
-        [NARROW_ORDER]: { gridTemplateColumns: 'minmax(0, 1fr) 8em' },
-        [COMPACT_ORDER]: { gridTemplateColumns: 'minmax(0, 1fr)' },
+        [NARROW_ORDER]: NARROW_LAYOUT,
+        [COMPACT_ORDER]: COMPACT_LAYOUT,
     },
     '@supports': {
         [NO_CONTAINER_SUPPORT]: {
             '@media': {
-                [NARROW_VIEWPORT]: { gridTemplateColumns: 'minmax(0, 1fr) 8em' },
-                [COMPACT_VIEWPORT]: { gridTemplateColumns: 'minmax(0, 1fr)' },
+                [NARROW_VIEWPORT]: NARROW_LAYOUT,
+                [COMPACT_VIEWPORT]: COMPACT_LAYOUT,
             },
         },
     },
 });
+export const columnHeaders = style([columns, {
+    alignItems: 'center', rowGap: '4px', paddingBottom: '4px',
+    '@container': { [NARROW_ORDER]: { display: 'none' } },
+    '@supports': {
+        [NO_CONTAINER_SUPPORT]: {
+            '@media': { [NARROW_VIEWPORT]: { display: 'none' } },
+        },
+    },
+}]);
+export const columnHeader = style({ minWidth: 0, fontSize: '0.68rem', color: vars.color.mutedForeground, whiteSpace: 'nowrap' });
+export const columnHeaderMarket = style({ gridArea: 'market' });
+export const columnHeaderStatus = style({ gridArea: 'verification' });
+export const columnHeaderProduct = style({ gridArea: 'product', paddingLeft: '8px' });
+export const columnHeaderPrice = style({ gridArea: 'price', paddingLeft: '8px' });
+export const columnHeaderAction = style({ gridArea: 'action', textAlign: 'center' });
+export const row = style([columns, {
+    alignItems: 'center', rowGap: '6px', padding: '8px 0',
+    selectors: { '& + &': { borderTop: `1px solid ${vars.color.border}` } },
+}]);
 
-const field = style({ display: 'flex', flexDirection: 'column', gap: FIELD_GAP, minWidth: 0 });
-export const productField = style([field, {
-    '@container': { [NARROW_ORDER]: { gridColumn: '1 / -1' } },
+const field = style({ minWidth: 0 });
+export const productField = style([field, { gridArea: 'product' }]);
+export const priceField = style([field, { gridArea: 'price' }]);
+export const narrowPriceLabel = style({
+    display: 'none', fontSize: '0.68rem', lineHeight: 1.5, marginBottom: '4px', color: vars.color.mutedForeground,
+    '@container': { [NARROW_ORDER]: { display: 'block' } },
     '@supports': {
         [NO_CONTAINER_SUPPORT]: {
-            '@media': { [NARROW_VIEWPORT]: { gridColumn: '1 / -1' } },
+            '@media': { [NARROW_VIEWPORT]: { display: 'block' } },
         },
     },
-}]);
-export const priceField = style([field, {
-    '@container': { [NARROW_ORDER]: { gridColumn: '1' } },
-    '@supports': {
-        [NO_CONTAINER_SUPPORT]: {
-            '@media': { [NARROW_VIEWPORT]: { gridColumn: '1' } },
-        },
-    },
-}]);
-export const fieldLabel = style({
-    display: 'flex', alignItems: 'center', minHeight: LABEL_MIN_HEIGHT,
-    fontSize: LABEL_FONT_SIZE, lineHeight: LABEL_LINE_HEIGHT, color: vars.color.mutedForeground,
 });
 export const actionCell = style({
-    display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: FIELD_GAP, minWidth: 0,
-    '@container': {
-        [NARROW_ORDER]: { gridColumn: '2' },
-        [COMPACT_ORDER]: { gridColumn: '1' },
-    },
+    gridArea: 'action', display: 'flex', alignItems: 'center', minWidth: 0,
+    '@container': { [NARROW_ORDER]: { alignSelf: 'end' } },
     '@supports': {
         [NO_CONTAINER_SUPPORT]: {
-            '@media': {
-                [NARROW_VIEWPORT]: { gridColumn: '2' },
-                [COMPACT_VIEWPORT]: { gridColumn: '1' },
-            },
+            '@media': { [NARROW_VIEWPORT]: { alignSelf: 'end' } },
         },
     },
 });
@@ -163,7 +172,7 @@ export const cell = style({
 });
 
 export const productCell = style({ minWidth: 0, fontSize: '0.72rem' });
-export const priceCell = style({ minWidth: 0 });
+export const priceCell = style({ minWidth: 0, alignItems: 'center', gap: '4px' });
 
 // 與 hud.saveInput 組合使用；統一三個控制項高度
 export const control = style({
@@ -206,55 +215,47 @@ export const priceInput = style({
     selectors: { '&[data-stale]': { color: vars.color.mutedForeground } },
 });
 
-// 左側有「成交價」標示或恢復鈕時讓出空間
-export const priceTagged = style({ paddingLeft: '64px' });
-
-export const priceSource = style({
-    position: 'absolute',
-    left: '9px',
-    top: '50%',
-    transform: 'translateY(-50%)',
-    pointerEvents: 'none',
-    fontSize: '0.64rem',
-    color: vars.color.mutedForeground,
-});
-
 // accent 混一點 foreground：淺色主題純 accent 在 inset 上只有 4.41:1，
 // 混過後在 inset／muted／hover 底上都 ≥ 4.5:1；深色與自訂主題跟著 token 走
 const accentText = `color-mix(in srgb, ${vars.color.accent} 80%, ${vars.color.foreground})`;
 
-// 24px 高：web view 適用 WCAG 2.5.8 的 24×24 CSS px；價位框 32px，上下各留 4px
+// 與價位框同高；永久顯示於右側，手動編輯後也能回到現價。
 export const priceReset = style({
-    position: 'absolute',
-    left: '4px',
-    top: '50%',
-    transform: 'translateY(-50%)',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
     gap: '3px',
-    height: '24px',
-    padding: '0 5px',
-    border: 'none',
+    height: '32px',
+    minWidth: '3.75em',
+    boxSizing: 'border-box',
+    padding: '0 6px',
+    border: `1px solid ${vars.color.borderBright}`,
     borderRadius: vars.radius.sm,
-    background: 'transparent',
+    background: vars.color.muted,
     cursor: 'pointer',
     fontFamily: vars.font.body,
     fontSize: '0.64rem',
     color: vars.color.accent,
     '@supports': { '(background: color-mix(in srgb, red, blue))': { color: accentText } },
     ':hover': { background: vars.color.accentDim },
-    ':disabled': { cursor: 'default', background: 'transparent', color: vars.color.mutedForeground },
+    ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: '2px' },
+    ':disabled': { cursor: 'default', background: vars.color.muted, color: vars.color.mutedForeground },
 });
 
 // 與 hud.updateBtn 組合使用：中性、微凸的按鈕面，與凹陷的 inset 輸入框分開；
 // hover／disabled 仍由 updateBtn 決定
 export const sendBtn = style([control, {
-    padding: '0 10px',
-    // 保留完整操作文字，兩列使用相同寬度。
-    minWidth: '8em',
+    padding: '4px 6px',
+    width: '100%',
+    minWidth: 0,
+    height: 'auto',
+    minHeight: '32px',
     fontSize: '0.76rem',
+    lineHeight: 1.3,
     marginLeft: 0,
-    whiteSpace: 'nowrap',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
     background: vars.color.muted,
     borderColor: vars.color.borderBright,
     color: vars.color.accent,
@@ -395,14 +396,10 @@ export const emptyOption = style({
 
 
 export const market = style({
-    display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', minHeight: LABEL_MIN_HEIGHT,
+    gridArea: 'market', display: 'flex', alignItems: 'center', minWidth: 0,
     color: vars.color.foreground,
 });
 export const marketName = style({ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600, whiteSpace: 'nowrap' });
-export const quantity = style({
-    display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: LABEL_MIN_HEIGHT,
-    fontSize: LABEL_FONT_SIZE, lineHeight: LABEL_LINE_HEIGHT, color: vars.color.mutedForeground, textAlign: 'center', whiteSpace: 'nowrap',
-});
 export const srOnly = style({ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', whiteSpace: 'nowrap', border: 0 });
 export const acknowledge = style({
     fontFamily: vars.font.body, fontSize: '0.7rem', minHeight: '24px', padding: '2px 6px',
@@ -413,6 +410,7 @@ export const acknowledge = style({
 
 
 export const verification = style({
+    gridArea: 'verification', justifySelf: 'start',
     display: 'inline-flex', alignItems: 'center', flexShrink: 0, gap: '4px',
     padding: '2px 6px', borderRadius: vars.radius.sm,
     fontSize: '0.64rem', fontWeight: 500, color: vars.color.foreground, whiteSpace: 'nowrap',

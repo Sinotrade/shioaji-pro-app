@@ -7,7 +7,7 @@
 // 字時不准送出；Tab／失焦保留文字，只有明確選取或 Esc 才解除搜尋。
 
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
-import { CircleCheck, CircleX, RefreshCw, RotateCcw, Search, ShieldAlert, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { CircleCheck, CircleX, RefreshCw, Search, ShieldAlert, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { isImeKey } from './chart-drawing-tools';
 import { Orb } from './orb';
 import { ExternalLink } from './external-link';
@@ -351,7 +351,7 @@ function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean
             } catch (e) {
                 if (e instanceof Error && e.name === 'OrderConfirmCancelled') setState(IDLE);
                 else if ((e as { mutationNotStarted?: boolean })?.mutationNotStarted) fail(target, `未成立：${errorMessage(e)}`, '測試單未成立');
-                else fail(target, `${target.label} ${target.code}：結果未知：${errorMessage(e)}。請到「委託」核對是否已成立，確認前不要再按「測試（買進）」`, '測試單結果未知', 'unknown');
+                else fail(target, `${target.label} ${target.code}：結果未知：${errorMessage(e)}。請到「委託」核對是否已成立，確認前不要再按「測試」`, '測試單結果未知', 'unknown');
             }
         } finally {
             setSending(false);
@@ -362,23 +362,26 @@ function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean
         setEdited(v);
         clearError();
     };
-    const tagged = edited !== null || last !== undefined;
     const unit = unitOf(selected.security_type);
-    const resetLabel = last !== undefined ? `跟價：恢復帶入成交價（目前 ${last}）` : '跟價：恢復帶入成交價';
+    const currentPriceUnavailable = busy || query !== null || last === undefined;
+    const currentPriceLabel = last !== undefined
+        ? `現價：帶入${useTick ? '成交價' : '快照價'}（目前 ${last}）`
+        : '現價：尚無可用報價';
+    const verificationLabel = account
+        ? `${marketLabel}帳戶${account.signed === true ? '已通過' : '尚未通過'}驗證`
+        : `${marketLabel}無帳戶`;
 
     return (
         <div className={s.row}>
             {query !== null && <SearchEscClose cancel={() => { setQuery(null); setComposing(false); inputRef.current?.focus(); }} />}
+            <span className={s.market}><span className={s.marketName}>{marketLabel}</span></span>
+            <span className={s.verification} data-verified={account?.signed === true || undefined} aria-label={verificationLabel} title={verificationLabel}>
+                {account?.signed === true
+                    ? <ShieldCheck size={12} aria-hidden className={s.okIcon} />
+                    : <ShieldAlert size={12} aria-hidden />}
+                {account ? account.signed === true ? '通過' : '未通過' : '無帳戶'}
+            </span>
             <div className={s.productField}>
-                <span className={s.market}>
-                    <span className={s.marketName}>{marketLabel}</span>
-                    {account && <span className={s.verification} data-verified={account.signed === true || undefined} aria-label={`${marketLabel}帳戶${account.signed === true ? '已通過' : '尚未通過'}驗證`} title={`${marketLabel}帳戶${account.signed === true ? '已通過' : '尚未通過'}驗證`}>
-                        {account.signed === true
-                            ? <ShieldCheck size={12} aria-hidden className={s.okIcon} />
-                            : <ShieldAlert size={12} aria-hidden />}
-                        {account.signed === true ? '帳戶已驗證' : '帳戶未驗證'}
-                    </span>}
-                </span>
                 <div className={`${s.cell} ${s.productCell}`}>
                     {/* 常駐 live region：臨時掛上的提示 VoiceOver 不一定唸 */}
                     <div role='status'>
@@ -452,12 +455,12 @@ function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean
                 </div>
             </div>
             <div className={s.priceField}>
-                <label htmlFor={priceInputId} className={s.fieldLabel}>委託價</label>
+                <label htmlFor={priceInputId} className={s.narrowPriceLabel}>委託價格</label>
                 <div className={`${s.cell} ${s.priceCell}`}>
                     <input
                         id={priceInputId}
                         ref={priceRef}
-                        className={`${hud.saveInput} ${s.control} ${s.priceInput} ${tagged ? s.priceTagged : ''}`}
+                        className={`${hud.saveInput} ${s.control} ${s.priceInput}`}
                         aria-label={`${selected.label} 價位`}
                         aria-describedby={`${srcId} ${statusId}`}
                         inputMode='decimal'
@@ -477,34 +480,29 @@ function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean
                             if (/^\d*\.?\d*$/.test(v)) setPrice(v === '' ? null : v);
                         }}
                     />
-                    {/* 跟價中標來源：即時 tick「成交價」、收盤後快照「快照價」（不會跳動）；
-                        改過就固定，換成動詞「↺ 跟價」按鈕。名稱以可見文字開頭（WCAG 2.5.3） */}
-                    {edited === null
-                        ? last !== undefined && <span id={srcId} className={s.priceSource}>{useTick ? '成交價' : '快照價'}</span>
-                        : (
-                            <button
-                                type='button'
-                                className={s.priceReset}
-                                aria-label={resetLabel}
-                                title={resetLabel}
-                                disabled={busy}
-                                onClick={() => {
-                                    setPrice(null);
-                                    priceRef.current?.focus();
-                                }}
-                            >
-                                <RotateCcw size={11} aria-hidden />
-                                跟價
-                            </button>
-                        )}
+                    <span id={srcId} className={s.srOnly}>{edited !== null ? '固定委託價' : last !== undefined ? useTick ? '成交價' : '快照價' : '尚無可用報價'}</span>
+                    {/* 只帶入點擊當下的既有報價；不新增查詢，也不隨後續行情改動委託價。 */}
+                    <button
+                        type='button'
+                        className={s.priceReset}
+                        aria-label={currentPriceLabel}
+                        title={currentPriceLabel}
+                        disabled={currentPriceUnavailable}
+                        onClick={() => {
+                            if (currentPriceUnavailable || last === undefined) return;
+                            setPrice(String(last));
+                            priceRef.current?.focus();
+                        }}
+                    >現價</button>
                 </div>
             </div>
             <div className={s.actionCell}>
-                <span className={s.quantity}>買進 1 {unit}</span>
+                <span className={s.srOnly}>買進 1 {unit}</span>
                 <button
                     type='button'
                     className={`${hud.updateBtn} ${s.sendBtn}`}
                     aria-label={reason ?? `測試（買進）：${selected.label} ${selected.code} 1 ${unit}`}
+                    title={`買進 1 ${unit}，限價 ROD`}
                     aria-describedby={statusId}
                     aria-disabled={!!reason}
                     // 原因直接顯示於按鈕，aria-disabled 保留鍵盤焦點。
@@ -515,7 +513,7 @@ function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean
                     }}
                     onClick={send}
                 >
-                    {reason ?? '測試（買進）'}
+                    {reason ?? '測試'}
                 </button>
             </div>
             {!signed && available && <span className={s.status}>尚未完成 API 簽署或模擬測試。若是先登入才完成簽署，請登出後重新登入，簽署才會生效。</span>}
@@ -586,6 +584,13 @@ export function SimTestOrderSection() {
             </div>
             <p className={s.testSchedule}>資格驗證時段：開盤日 08:00–20:00（台北時間）</p>
             <div className={s.grid}>
+                <div className={s.columnHeaders} aria-hidden='true'>
+                    <span className={`${s.columnHeader} ${s.columnHeaderMarket}`}>種類</span>
+                    <span className={`${s.columnHeader} ${s.columnHeaderStatus}`}>狀態</span>
+                    <span className={`${s.columnHeader} ${s.columnHeaderProduct}`}>商品代號</span>
+                    <span className={`${s.columnHeader} ${s.columnHeaderPrice}`}>委託價格</span>
+                    <span className={`${s.columnHeader} ${s.columnHeaderAction}`}>操作</span>
+                </div>
                 {DEFAULTS.map((p) => (
                     <TestOrderRow key={p.code} initial={p} busy={busy} live={live} />
                 ))}
@@ -594,7 +599,7 @@ export function SimTestOrderSection() {
             {!live && <p className={s.sectionNotice}>⚠ 行情或交易狀態未連線，暫停送出測試單</p>}
             {busy && <p className={s.sectionNotice}>有一筆測試單傳送中，完成前暫停送出</p>}
             <div className={s.guidance}>
-                <p className={s.description}>按下即送出限價 ROD 買單，可能立即成交。</p>
+                <p className={s.description}>按下即買進 1 張／1 口限價 ROD，可能立即成交。</p>
             </div>
             <details className={s.help}>
                 <summary className={s.helpToggle}>測試規則與簽署</summary>

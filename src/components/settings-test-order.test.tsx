@@ -134,9 +134,9 @@ afterEach(async () => {
 const text = () => JSON.stringify(view!.toJSON());
 const textOf = (n: ReactTestInstance | string): string => (typeof n === 'string' ? n : n.children.map(textOf).join(''));
 const render = async () => { await act(async () => { view = create(createElement(SimTestOrderSection)); }); };
-// 只抓送出鈕（改過價的列會多一顆「↺ 跟價」）
+// 現價與送出是不同操作，依可見名稱找現價按鈕。
 const buttons = () => view!.root.findAll((n) => n.type === 'button' && String(n.props.className).includes(css.sendBtn));
-const resets = () => view!.root.findAll((n) => n.type === 'button' && n.props.className === css.priceReset);
+const currentPrices = () => view!.root.findAll((n) => n.type === 'button' && textOf(n) === '現價');
 const icons = (n: ReactTestInstance) => n.findAll((x) => x.type === 'svg').map((x) => String(x.props.className));
 const products = () => view!.root.findAll((n) => n.type === 'input' && n.props.role === 'combobox');
 const prices = () => view!.root.findAll((n) => n.type === 'input' && n.props.inputMode === 'decimal');
@@ -168,10 +168,6 @@ it('labels product fields by market and verification, with live prices and no se
     // 只看畫面文字（text() 含 aria-label 等 props，永遠含「商品」「價位」）
     const visible = textOf(view!.root);
     expect(visible).toContain('委託價');
-    expect(view!.root.findAllByProps({ className: css.market }).map(textOf)).toEqual(['證券帳戶已驗證', '期貨帳戶已驗證']);
-    for (const input of prices()) {
-        expect(textOf(view!.root.findByProps({ htmlFor: input.props.id }))).toBe('委託價');
-    }
     // 別名背後的實際送單代碼不用 hover 就看得到
     expect(visible).toContain('2890');
     expect(visible).toContain('TXFR1');
@@ -182,13 +178,15 @@ it('labels product fields by market and verification, with live prices and no se
     expect(products().every((i) => i.props['aria-controls'] === undefined)).toBe(true);
     // 兩列控制項的名稱聽得出是哪個商品
     expect(prices().map((i) => i.props['aria-label'])).toEqual(['永豐金 價位', '台指近 價位']);
-    // 方向與數量也要聽得到（按鈕文字維持使用者指定的「測試（買進）」）
-    expect(buttons().map((b) => b.props['aria-label'])).toEqual(['測試（買進）：永豐金 2890 1 張', '測試（買進）：台指近 TXFR1 1 口']);
-    expect(buttons().map((b) => textOf(b))).toEqual(['測試（買進）', '測試（買進）']);
-    for (const b of buttons()) expect(b.props['aria-label'].startsWith(`${textOf(b)}：`)).toBe(true);
-    // 跟價中標「成交價」，沒有恢復鈕
-    expect(view!.root.findAll((n) => n.type === 'span' && textOf(n) === '成交價')).toHaveLength(2);
-    expect(resets()).toHaveLength(0);
+    // 簡短的可見操作仍要帶出商品、方向與數量。
+    for (const [i, product] of ['永豐金 2890', '台指近 TXFR1'].entries()) {
+        expect(buttons()[i]!.props['aria-label']).toContain(product);
+        expect(buttons()[i]!.props['aria-label']).toContain('買進');
+        expect(buttons()[i]!.props['aria-label']).toContain(i === 0 ? '1 張' : '1 口');
+    }
+    expect(buttons().map((b) => textOf(b))).toEqual(['測試', '測試']);
+    for (const b of buttons()) expect(b.props['aria-label'].startsWith(textOf(b))).toBe(true);
+    expect(currentPrices()).toHaveLength(2);
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(mocks.search).not.toHaveBeenCalled();
 });
@@ -412,7 +410,7 @@ it.each(['風控封鎖', '委託被拒絕（Failed）'])('reports a flagged refu
     await click(0);
     expect(textOf(rowStatus(0))).toBe(`未成立：${message}`);
     expect(rowStatus(0).props.className).toContain(css.statusError);
-    expect(textOf(buttons()[0]!)).toBe('測試（買進）');
+    expect(textOf(buttons()[0]!)).toBe('測試');
     expect(mocks.notify).not.toHaveBeenCalled();
 });
 
@@ -420,7 +418,7 @@ it('reports any other failure as 結果未知, and keeps it through later edits'
     mocks.place.mockRejectedValue(new Error('timeout'));
     await render();
     await click(0);
-    expect(textOf(rowStatus(0))).toContain('結果未知：timeout。請到「委託」核對是否已成立，確認前不要再按「測試（買進）」');
+    expect(textOf(rowStatus(0))).toContain('結果未知：timeout。請到「委託」核對是否已成立，確認前不要再按「測試」');
     // 外觀和可修正重試的錯誤不同：不同 class、不同圖示
     expect(rowStatus(0).props.className).toContain(css.statusUnknown);
     expect(rowStatus(0).props.className).not.toContain(css.statusError);
@@ -446,12 +444,16 @@ it('disables both rows, including the product inputs, while one is sending', asy
     let resolve!: (v: unknown) => void;
     mocks.place.mockReturnValue(new Promise((r) => { resolve = r; }));
     await render();
+    await setPrice(1, '49000');
     let pending!: Promise<void>;
     await act(async () => { pending = buttons()[0]!.props.onClick(); });
     expect(buttons().map((b) => b.props['aria-disabled'])).toEqual([true, true]);
     expect(products().map((i) => i.props.disabled)).toEqual([true, true]);
     // 價位也鎖住：畫面上的價格就是送出／確認中的那個
     expect(prices().map((i) => i.props.disabled)).toEqual([true, true]);
+    expect(currentPrices().map(b => b.props.disabled)).toEqual([true, true]);
+    await act(async () => currentPrices()[1]!.props.onClick());
+    expect(prices()[1]!.props.value).toBe('49,000');
     expect(text()).toContain('傳送中…');
     // 另一列為什麼停用，要有看得到的原因
     expect(textOf(view!.root)).toContain('有一筆測試單傳送中，完成前暫停送出');
@@ -462,6 +464,7 @@ it('disables both rows, including the product inputs, while one is sending', asy
     expect(buttons().map((b) => b.props['aria-disabled'])).toEqual([false, false]);
     expect(products().map((i) => i.props.disabled)).toEqual([false, false]);
     expect(prices().map((i) => i.props.disabled)).toEqual([false, false]);
+    expect(currentPrices().map(b => b.props.disabled)).toEqual([false, false]);
     expect(textOf(view!.root)).not.toContain('暫停送出');
 });
 
@@ -493,8 +496,10 @@ it('falls back to the snapshot close of each product, looked up by key', async (
     };
     await render();
     expect(prices().map((i) => i.props.value)).toEqual(['2,450', '50,000']);
-    // 快照收盤不會跳動，標示和即時成交價不同
-    expect(view!.root.findAll((n) => n.type === 'span' && n.props.className === css.priceSource).map(textOf)).toEqual(['快照價', '成交價']);
+    // 來源仍能由價位框的輔助說明區分。
+    expect(prices().map(input => textOf(view!.root.findByProps({
+        id: input.props['aria-describedby'].split(' ')[0],
+    })))).toEqual(['快照價', '成交價']);
     await click(0);
     expect(mocks.place.mock.calls[0]![2]).toBe(2450);
     await type(0, '鴻海');
@@ -558,9 +563,8 @@ it('disables the send buttons while trading is not LIVE and says why in visible 
     mocks.live = false;
     await render();
     expect(buttons().map((b) => b.props['aria-disabled'])).toEqual([true, true]);
-    // 停用的按鈕不能聚焦：原因要是看得到的文字，不只放 title
+    // 停用原因要是看得到的文字，不只放在 title。
     expect(textOf(view!.root)).toContain('行情或交易狀態未連線，暫停送出測試單');
-    expect(buttons()[0]!.props.title).toBeUndefined();
     mocks.live = true;
     mocks.simulation = true;
     mocks.list = [stockAccount, futuresAccount];
@@ -597,18 +601,80 @@ it('keeps an edited price when the next tick arrives; clearing it follows the li
     expect(prices()[0]!.props.value).toBe('2,460');
 });
 
-it('shows a fixed price with a reset button that follows the live price again', async () => {
+it('keeps quote source descriptions available when a current quote becomes a fixed price', async () => {
+    await render();
+    expect(currentPrices()).toHaveLength(2);
+    const description = () => prices()[0]!.props['aria-describedby'].split(' ')
+        .map((id: string) => textOf(view!.root.findByProps({ id }))).join(' ');
+    expect(description()).toContain('成交價');
+    expect(currentPrices()[0]!.props['aria-label']).toBe('現價：帶入成交價（目前 2455）');
+    await act(async () => currentPrices()[0]!.props.onClick());
+    expect(description()).toContain('固定委託價');
+    mocks.ticks = { ...mocks.ticks, '2890': '2460' };
+    await act(async () => view!.update(createElement(SimTestOrderSection)));
+    expect(prices()[0]!.props.value).toBe('2,455');
+    expect(currentPrices()[0]!.props['aria-label']).toBe('現價：帶入成交價（目前 2460）');
+    expect(description()).toContain('固定委託價');
+});
+
+it('copies the current quote once, keeps that price through later ticks, and permits a manual override', async () => {
+    await render();
+    expect(currentPrices()).toHaveLength(2);
+    expect(currentPrices().map(b => b.props.disabled)).toEqual([false, false]);
+    await act(async () => currentPrices()[0]!.props.onClick());
+    expect(prices()[0]!.props.value).toBe('2,455');
+    mocks.ticks['2890'] = '2460';
+    await act(async () => view!.update(createElement(SimTestOrderSection)));
+    expect(prices()[0]!.props.value).toBe('2,455');
+    await act(async () => currentPrices()[0]!.props.onClick());
+    expect(prices()[0]!.props.value).toBe('2,460');
+    await setPrice(0, '2400');
+    mocks.ticks['2890'] = '2470';
+    await act(async () => view!.update(createElement(SimTestOrderSection)));
+    expect(prices()[0]!.props.value).toBe('2,400');
+    expect(currentPrices()).toHaveLength(2);
+    expect(mocks.ensure).not.toHaveBeenCalled();
+    expect(mocks.snapshots).not.toHaveBeenCalled();
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    await click(0);
+    expect(mocks.place.mock.calls[0]![2]).toBe(2400);
+});
+
+it.each([undefined, '0'])('keeps the current-price action unavailable without a positive quote: %s', async close => {
+    mocks.ticks['2890'] = close;
+    await render();
+    expect(currentPrices()).toHaveLength(2);
+    expect(currentPrices().map(b => b.props.disabled)).toEqual([true, false]);
+    expect(currentPrices()[0]!.props['aria-label']).toBe('現價：尚無可用報價');
+    // 手動價仍可送出，現價按鈕不能以無效報價覆蓋它。
+    await setPrice(0, '2455');
+    expect(currentPrices()[0]!.props.disabled).toBe(true);
+    await act(async () => currentPrices()[0]!.props.onClick());
+    expect(prices()[0]!.props.value).toBe('2,455');
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(mocks.snapshots).not.toHaveBeenCalled();
+    await click(0);
+    expect(mocks.place.mock.calls[0]![2]).toBe(2455);
+});
+
+it('keeps current-price selection disabled until the searched product is explicitly accepted', async () => {
     await render();
     await setPrice(0, '2400');
-    expect(resets()).toHaveLength(1);
-    // 動詞「跟價」，不是名詞「成交價」（不然會讀成「成交價 2400」）；名稱以可見文字開頭，並帶出目前市價
-    expect(textOf(resets()[0]!)).toBe('跟價');
-    expect(resets()[0]!.props['aria-label']).toBe('跟價：恢復帶入成交價（目前 2455）');
-    expect(view!.root.findAll((n) => n.type === 'span' && textOf(n) === '成交價')).toHaveLength(1);
-    mocks.ticks = { ...mocks.ticks, '2890': '2460' };
-    await act(async () => { resets()[0]!.props.onClick(); });
-    expect(prices()[0]!.props.value).toBe('2,460');
-    expect(resets()).toHaveLength(0);
+    await type(0, '鴻海');
+    expect(currentPrices().map(b => b.props.disabled)).toEqual([true, false]);
+    await act(async () => currentPrices()[0]!.props.onClick());
+    expect(prices()[0]!.props.value).toBe('2,400');
+    expect(products()[0]!.props.value).toBe('鴻海');
+    await pickOption(0);
+    expect(currentPrices()[0]!.props.disabled).toBe(false);
+    await act(async () => currentPrices()[0]!.props.onClick());
+    expect(prices()[0]!.props.value).toBe('220');
+    mocks.ticks['2317'] = '225';
+    await act(async () => view!.update(createElement(SimTestOrderSection)));
+    expect(prices()[0]!.props.value).toBe('220');
+    await click(0);
+    expect(mocks.place.mock.calls[0]![0].code).toBe('2317');
+    expect(mocks.place.mock.calls[0]![2]).toBe(220);
 });
 
 it('binds each row to its market and only resolves aliases in futures', async () => {
@@ -891,7 +957,7 @@ it('locks an unknown row through retries, product changes and remount until ackn
     expect(mocks.place).toHaveBeenCalledTimes(1);
     expect(textOf(rowStatus(0))).not.toContain('回應');
     await act(async () => view!.root.findAllByType('button').find(b => textOf(b) === '我已核對委託')!.props.onClick());
-    expect(textOf(buttons()[0]!)).toBe('測試（買進）');
+    expect(textOf(buttons()[0]!)).toBe('測試');
 });
 
 it.each([
@@ -927,6 +993,27 @@ it('uses a newer snapshot rather than an old tick and then follows a newer tick'
     mocks.tickTime = '2026-10-08T13:31:00';
     await act(async () => view!.update(createElement(SimTestOrderSection)));
     expect(prices()[0]!.props.value).toBe('2,455');
+});
+
+it('copies the freshest snapshot or tick while later source changes leave the fixed price intact', async () => {
+    mocks.tickTime = '2026-10-08T09:00:00';
+    mocks.snapTime = '2026-10-08T13:30:00';
+    mocks.snaps = { 'settings-test-order-snap:2890': 2500 };
+    await render();
+    await setPrice(0, '2400');
+    expect(currentPrices()[0]!.props['aria-label']).toBe('現價：帶入快照價（目前 2500）');
+    await act(async () => currentPrices()[0]!.props.onClick());
+    expect(prices()[0]!.props.value).toBe('2,500');
+    mocks.tickTime = '2026-10-08T13:31:00';
+    await act(async () => view!.update(createElement(SimTestOrderSection)));
+    expect(prices()[0]!.props.value).toBe('2,500');
+    expect(currentPrices()[0]!.props['aria-label']).toBe('現價：帶入成交價（目前 2455）');
+    await act(async () => currentPrices()[0]!.props.onClick());
+    expect(prices()[0]!.props.value).toBe('2,455');
+    expect(mocks.snapshots).not.toHaveBeenCalled();
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    await click(0);
+    expect(mocks.place.mock.calls[0]![2]).toBe(2455);
 });
 
 it('times only beforeSend to resolve, excluding the confirmation wait, and shows the duration inline', async () => {
@@ -981,7 +1068,13 @@ it('sends the default 2890 stock as one lot at 21.5 and reports the order and re
     contracts['2890'] = { code: '2890', name: '永豐金', security_type: 'STK', limit_up: 23.65, limit_down: 19.35, tick: 0.05 };
     mocks.ticks['2890'] = '21.5';
     try {
-        await render(); await click(0);
+        await render();
+        await setPrice(0, '21.4');
+        await act(async () => currentPrices()[0]!.props.onClick());
+        await focusPrice(0);
+        expect(prices()[0]!.props.value).toBe('21.5');
+        await blurPrice(0);
+        await click(0);
         expect(mocks.place.mock.calls[0]!.slice(0, 4)).toEqual([contracts['2890'], 'Buy', 21.5, 1]);
         expect(textOf(rowStatus(0).findByProps({ className: css.resultHeading }))).toMatch(/^已送出 · 回應 \d+ ms$/);
         expect(textOf(rowStatus(0).findByProps({ className: css.resultDetails }))).toBe('買進 1 張 · 送出委託價 21.5 · 委託 000123');
@@ -1016,20 +1109,15 @@ it('keeps the order effect visible while collapsing supplementary help', async (
     expect(textOf(schedule)).toBe('資格驗證時段：開盤日 08:00–20:00（台北時間）');
     expect(help.findAll(n => n === schedule)).toHaveLength(0);
     const guidance = view!.root.findByProps({ className: css.guidance });
-    expect(textOf(guidance)).toContain('按下即送出限價 ROD 買單，可能立即成交');
+    expect(textOf(guidance)).toContain('按下即買進 1 張／1 口限價 ROD，可能立即成交');
     expect(help.findAll(n => n === guidance)).toHaveLength(0);
     expect(help.findAllByType('li')).toHaveLength(6);
     const footer = help.findByProps({ className: css.helpFooter });
     expect(textOf(footer)).toContain('未成交的請到「委託」刪單');
     expect(textOf(footer)).toContain('已成交的請到「持倉」平倉');
-    expect(view!.root.findAllByProps({ className: css.quantity }).map(textOf)).toEqual(['買進 1 張', '買進 1 口']);
-    for (const [i, quantity] of view!.root.findAllByProps({ className: css.quantity }).entries()) {
-        const action = quantity.parent!;
-        expect(action.props.className).toBe(css.actionCell);
-        expect(buttons()[i]!.parent).toBe(action);
-        expect(action.children.indexOf(quantity)).toBeLessThan(action.children.indexOf(buttons()[i]!));
-    }
-    expect(buttons().map(b => textOf(b))).toEqual(['測試（買進）', '測試（買進）']);
+    expect(buttons()[0]!.props.title).toContain('買進 1 張');
+    expect(buttons()[1]!.props.title).toContain('買進 1 口');
+    expect(buttons().map(b => textOf(b))).toEqual(['測試', '測試']);
 });
 
 it('provides the correct market signing links and qualification prerequisites in expandable rules', async () => {
@@ -1058,21 +1146,20 @@ it('shows verification for the selected account and follows refreshed selections
     mocks.accounts.F = { ...futuresAccount, signed: false };
     await render();
     const badge = (market: string, status: string) => view!.root.findByProps({ 'aria-label': `${market}帳戶${status}驗證` });
-    expect(textOf(badge('證券', '已通過'))).toBe('帳戶已驗證');
+    expect(textOf(badge('證券', '已通過'))).toBe('通過');
     expect(icons(badge('證券', '已通過'))[0]).toContain('lucide-shield-check');
-    expect(textOf(badge('期貨', '尚未通過'))).toBe('帳戶未驗證');
+    expect(textOf(badge('期貨', '尚未通過'))).toBe('未通過');
     expect(icons(badge('期貨', '尚未通過'))[0]).toContain('lucide-shield-alert');
     expect(badge('證券', '已通過').props.title).toBe('證券帳戶已通過驗證');
     expect(badge('期貨', '尚未通過').props.title).toBe('期貨帳戶尚未通過驗證');
-    expect(textOf(badge('證券', '已通過').parent!)).toContain('證券');
     mocks.accounts.S = { ...stockAccount, signed: undefined } as unknown as Account;
     mocks.accounts.F = { ...futuresAccount, signed: true };
     await act(async () => view!.update(createElement(SimTestOrderSection)));
-    expect(textOf(badge('證券', '尚未通過'))).toBe('帳戶未驗證');
-    expect(textOf(badge('期貨', '已通過'))).toBe('帳戶已驗證');
+    expect(textOf(badge('證券', '尚未通過'))).toBe('未通過');
+    expect(textOf(badge('期貨', '已通過'))).toBe('通過');
     mocks.accounts.S = undefined; mocks.list = [futuresAccount];
     await act(async () => view!.update(createElement(SimTestOrderSection)));
-    expect(view!.root.findAll(n => n.type === 'span' && String(n.props['aria-label']).startsWith('證券帳戶'))).toHaveLength(0);
+    expect(textOf(view!.root.findByProps({ 'aria-label': '證券無帳戶' }))).toBe('無帳戶');
 });
 
 const refreshStatus = () => view!.root.findByProps({ title: '重新取得帳戶驗證狀態' });
@@ -1101,7 +1188,7 @@ it('refreshes verification once, shows progress, and preserves the current order
         await request;
     });
     expect(refreshStatus().props.disabled).toBe(false);
-    expect(textOf(view!.root.findByProps({ 'aria-label': '期貨帳戶已通過驗證' }))).toBe('帳戶已驗證');
+    expect(textOf(view!.root.findByProps({ 'aria-label': '期貨帳戶已通過驗證' }))).toBe('通過');
     const completed = view!.root.findByProps({ 'aria-label': '驗證狀態已更新' });
     expect(completed.props.role).toBe('status');
     expect(textOf(completed)).toBe('已更新 13:06:07');
@@ -1123,7 +1210,7 @@ it.each(['store error', 'rejection'])('reports a failed verification refresh and
     expect(textOf(view!.root)).toContain('更新失敗，保留上次狀態。請稍後再試。');
     expect(view!.root.findAllByProps({ 'aria-label': '驗證狀態已更新' })).toHaveLength(0);
     expect(refreshStatus().props.disabled).toBe(false);
-    expect(textOf(view!.root.findByProps({ 'aria-label': '證券帳戶已通過驗證' }))).toBe('帳戶已驗證');
+    expect(textOf(view!.root.findByProps({ 'aria-label': '證券帳戶已通過驗證' }))).toBe('通過');
     mocks.refreshAccounts.mockImplementation(async () => { mocks.accountLoadError = false; });
     await act(async () => { await refreshStatus().props.onClick(); });
     expect(view!.root.findByProps({ 'aria-label': '驗證狀態已更新' }).props.role).toBe('status');
@@ -1131,7 +1218,7 @@ it.each(['store error', 'rejection'])('reports a failed verification refresh and
     expect(mocks.place).not.toHaveBeenCalled();
 });
 
-it('keeps an unresolved order locked through verification refresh, new quotes and price focus or blur', async () => {
+it('keeps an unresolved order locked through verification refresh, new quotes, current-price selection and price focus or blur', async () => {
     mocks.place.mockRejectedValueOnce(new Error('network response lost'));
     await render();
     await click(0);
@@ -1145,6 +1232,10 @@ it('keeps an unresolved order locked through verification refresh, new quotes an
     await focusPrice(0);
     expect(prices()[0]!.props.value).toBe('2460');
     await blurPrice(0);
+    expect(prices()[0]!.props.value).toBe('2,460');
+    await act(async () => currentPrices()[0]!.props.onClick());
+    mocks.ticks['2890'] = '2465';
+    await act(async () => view!.update(createElement(SimTestOrderSection)));
     expect(prices()[0]!.props.value).toBe('2,460');
     expect(textOf(buttons()[0]!)).toBe('待核對');
     expect(textOf(rowStatus(0))).toContain('結果未知');
@@ -1186,5 +1277,5 @@ it.each(['success', 'refused', 'unknown', 'contract failure'])('notifies an unmo
         expect(textOf(buttons()[0]!)).toBe('待核對');
         expect(textOf(rowStatus(0))).toContain('結果未知');
         await click(0); expect(mocks.place).toHaveBeenCalledTimes(1);
-    } else expect(textOf(buttons()[0]!)).toBe('測試（買進）');
+    } else expect(textOf(buttons()[0]!)).toBe('測試');
 });
