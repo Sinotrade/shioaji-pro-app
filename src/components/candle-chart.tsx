@@ -728,8 +728,12 @@ export function CandleChart({
         ro.observe(host);
         return () => ro.disconnect();
     }, []);
+    // 讀值小數位依跳動價位；指數沒有跳動價位，固定兩位（與價格軸一致）
     const ohlcDecimals = useMemo(
-        () => (price: number) => tickDecimals(tickSizeFor(contract, price)),
+        () => (price: number) =>
+            contract.security_type === 'IND'
+                ? 2
+                : tickDecimals(tickSizeFor(contract, price)),
         [contract],
     );
 

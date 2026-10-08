@@ -145,6 +145,14 @@ describe('CandleChart K 棒讀值（#240）', () => {
         expect(text(field(r, 'close'))).toBe('收1,085');
     });
 
+    it('指數固定兩位小數', async () => {
+        setNow('2026-10-08T09:16:00');
+        fetchMock.mockResolvedValue(kbars([['2026-10-08T09:00:00', '2026-10-08T09:05:00', () => 49313.44]]));
+        const r = mount({ contract: { code: '001', security_type: 'IND', exchange: 'TSE', target_code: null } });
+        await flush();
+        expect(text(field(r, 'close'))).toBe('收49,313.44');
+    });
+
     it('面板設定：開關呼叫 onShowOhlcChange，受控關閉時不顯示', async () => {
         setNow('2026-10-08T09:16:00');
         fetchMock.mockResolvedValue(DATA);
