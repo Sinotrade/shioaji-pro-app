@@ -268,7 +268,7 @@ section.alt { background: var(--bg-2); border-block: 1px solid var(--line); }
 .demo.ready .demo-ctrl { display: inline-flex; }
 .pop { opacity: 0; pointer-events: none; transition: opacity 0.25s; }
 .pop.show { opacity: 1; }
-.demo.paused *, .demo.paused *::before, .demo.paused *::after { animation-play-state: paused !important; }
+.demo.paused *, .demo.paused *::before, .demo.paused *::after, .demo.offscreen *, .demo.offscreen *::before, .demo.offscreen *::after { animation-play-state: paused !important; }
 
 .win {
   container-type: inline-size;
@@ -427,6 +427,7 @@ section.alt { background: var(--bg-2); border-block: 1px solid var(--line); }
 .tk-seg span { flex: 1; text-align: center; padding: 0.9cqw 0; color: var(--app-muted); transition: all 0.25s; white-space: nowrap; }
 .tk-seg span + span { border-left: 1px solid var(--app-border-2); }
 .tk-seg span.on { background: var(--app-accent-dim); color: var(--app-accent); font-weight: 600; }
+.ticket.odd .tk-seg span.odd-off { opacity: 0.35; text-decoration: line-through; }
 .tk-seg.side span.on.b { background: var(--up-solid); color: #fff; }
 .tk-input { display: flex; align-items: center; border: 1px solid var(--app-border-2); border-radius: 1cqw; overflow: hidden; background: var(--app-inset); }
 .tk-input em { font-style: normal; width: 4.4cqw; text-align: center; color: var(--app-muted); padding: 0.8cqw 0; }
@@ -495,9 +496,12 @@ section.alt { background: var(--bg-2); border-block: 1px solid var(--line); }
 .acct-top .who { color: var(--app-muted); font-size: 1.85cqw; }
 .eye { display: inline-flex; align-items: center; gap: 0.8cqw; padding: 0.6cqw 1.2cqw; border-radius: 1cqw; border: 1px solid var(--app-border-2); color: var(--app-muted); font-size: 1.8cqw; transition: all 0.3s; }
 .eye .i { width: 2.2cqw; height: 2.2cqw; }
-.eye .off, .priv .eye .on { display: none; }
-.priv .eye .off { display: block; }
-.priv .eye { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-dim); }
+.eye .off, .privacc .eye .on { display: none; }
+.privacc .eye .off { display: block; }
+.privacc #wa-eye, .priv .eye.money { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-dim); }
+.toggles { display: flex; gap: 0.8cqw; }
+.acct-id .masked, .privacc .acct-id .plain { display: none; }
+.privacc .acct-id .masked { display: inline; }
 .kpi { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2cqw; }
 .kpi div { background: var(--app-raised); border: 1px solid var(--app-border); border-radius: 1.2cqw; padding: 1.2cqw 1.5cqw; }
 .kpi small { display: block; color: var(--app-muted); font-size: 1.7cqw; }
@@ -546,7 +550,7 @@ section.alt { background: var(--bg-2); border-block: 1px solid var(--line); }
 .ag-tabs { display: flex; gap: 2.6cqw; padding: 1.2cqw 2.4cqw 0; font-size: 1.9cqw; color: var(--app-muted); border-bottom: 1px solid var(--app-border); }
 .ag-tabs span { padding-bottom: 1cqw; }
 .ag-tabs span.on { color: var(--app-fg); border-bottom: 2px solid var(--app-accent); font-weight: 600; }
-.ag-log { flex: 1; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 1.5cqw; padding: 2cqw 2.4cqw; }
+.ag-log { -webkit-mask-image: linear-gradient(transparent, #000 9%); mask-image: linear-gradient(transparent, #000 9%); flex: 1; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 1.5cqw; padding: 2cqw 2.4cqw; }
 .ag-log > * { display: flex; flex-shrink: 0; }
 .msg-u { justify-content: flex-end; }
 .msg-u p { max-width: 80%; background: var(--app-raised); border: 1px solid var(--app-border-2); border-radius: 1.4cqw; padding: 1.2cqw 1.6cqw; }
@@ -616,6 +620,8 @@ section.alt { background: var(--bg-2); border-block: 1px solid var(--line); }
 .files div { display: flex; align-items: center; gap: 0.8cqw; padding: 0.6cqw 1cqw; border-radius: 0.8cqw; background: var(--app-panel); border: 1px solid var(--app-border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .files .add { color: var(--down); font-weight: 600; }
 .files .mod { color: var(--app-amber); font-weight: 600; }
+.built { display: flex; align-items: center; gap: 0.8cqw; font-size: 1.6cqw; color: var(--down); }
+.built .i { width: 2cqw; height: 2cqw; }
 .deploy { margin-top: auto; font-size: 1.7cqw; color: var(--app-muted); display: flex; align-items: center; gap: 1cqw; }
 .deploy b { color: var(--app-fg); font-family: var(--mono); font-weight: 500; }
 .cp-right { position: relative; background: var(--app-bg); }

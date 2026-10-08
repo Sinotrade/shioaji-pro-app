@@ -27,7 +27,8 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap"></noscript>
 <link rel="stylesheet" href="landing-v2.css">
 <script src="landing-v2.js" defer></script>
 </head>
@@ -76,7 +77,7 @@
 <div id="top" class="hero">
   <div class="wrap">
     <h1><span>看盤、下單、跑回測，</span><span>在同一個視窗做完。</span></h1>
-    <p class="lead">Shioaji Pro 是用永豐金證券 Shioaji API 做的桌面交易軟體，免費下載，介面程式碼公開。第一次開啟連的是模擬環境，可以放心試。</p>
+    <p class="lead">Shioaji Pro 是用永豐金證券 Shioaji API 做的桌面交易軟體，免費下載。介面程式碼全部公開，也是學 Shioaji API 的範例。第一次開啟連的是模擬環境。</p>
     <div class="cta">
       <a class="btn primary" id="cta-dl" href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest"><svg class="i"><use href="#i-download"/></svg><span id="cta-label">下載 Shioaji Pro</span></a>
       <a class="btn ghost" href="https://github.com/Sinotrade/shioaji-pro-app"><svg class="i"><use href="#i-github"/></svg>在 GitHub 看原始碼</a>
@@ -111,7 +112,7 @@
               <div class="fname mono">Shioaji Pro.dmg</div>
             </div>
           </div></div>
-          <div><h3>下載安裝</h3><p>macOS 版有 Apple 簽章與公證，打開就能用。Windows、Linux 也有安裝檔。</p></div>
+          <div><h3>下載安裝</h3><p>macOS、Windows、Linux 都有安裝檔，選對應的平台下載。</p></div>
         </li>
         <li class="step" data-cap="2">
           <div class="win" aria-hidden="true"><div class="stage">
@@ -122,7 +123,7 @@
               <div class="status" data-in="3">已連線・模擬環境</div>
             </div>
           </div></div>
-          <div><h3>登入</h3><p>到永豐金證券 <a href="https://www.sinotrade.com.tw/newweb/PythonAPIKey/" rel="noopener">API 管理頁</a>申請 API Key，貼進 App。先用模擬環境，委託不會送到交易所；要正式交易時再匯入憑證，切到正式。</p></div>
+          <div><h3>登入</h3><p>到永豐金證券 <a href="https://www.sinotrade.com.tw/newweb/PythonAPIKey/" rel="noopener">API 管理頁</a>建立 API Key 和 Secret，填進 App。先連模擬環境，委託不會送到交易所；要正式交易時，完成開通並匯入憑證再切換。</p></div>
         </li>
         <li class="step" data-cap="3">
           <div class="win" aria-hidden="true"><div class="stage">
@@ -146,19 +147,19 @@
     <div class="sec-head">
       <span class="num">02</span>
       <h2 id="trade-h">下單</h2>
-      <p>現股、零股、K 線上掛單，帳務在旁邊即時更新。</p>
+      <p>現股、零股、在 K 線上掛單，自選、持倉和委託放在旁邊。</p>
     </div>
 
     <div class="feature">
       <div class="f-text">
         <h3>點價格就下單</h3>
-        <p>價格梯跟著成交價移動。點左邊買、點右邊賣，掛單直接標在那一格；再點一下就刪單。剛開啟時是鎖住的，要先按「啟用」才會送單。</p>
+        <p>價格梯標出目前成交價，開啟「跟隨」會自動置中。點左邊買單欄掛買單、點右邊賣單欄掛賣單，委託直接標在那一格；點自己的委託標記就刪單。剛開啟時是鎖住的，要先按「啟用」才會送單。</p>
         <ol class="caps" data-for="flash">
           <li>按「啟用閃電下單」解除鎖定</li>
-          <li>價格梯跟著成交價上下移動</li>
+          <li>成交價上下跳動，藍色列標出目前價位</li>
           <li>點左邊買單欄，在 2,545 掛一張買單</li>
-          <li>成交後，持倉和均價顯示在下方</li>
-          <li>在右邊掛一張賣單，再點一下就刪掉</li>
+          <li>成交後委託標記消失，持倉和均價顯示在下方</li>
+          <li>在右邊掛一張賣單，點那個標記就刪單</li>
         </ol>
       </div>
       <figure class="demo" data-demo="flash" aria-label="閃電下單示範動畫，步驟如左側說明">
@@ -181,7 +182,7 @@
 <div class="fl-row" data-p="2560"><span class="bc"></span><span class="bv"></span><span class="p num">2,560</span><span class="av"><i style="--w:48%"></i><b class="num">193</b></span><span class="sc"><span class="chip sell gone" id="fl-sell"><b>1</b></span></span></div>
 <div class="fl-row" data-p="2555"><span class="bc"></span><span class="bv"></span><span class="p num">2,555</span><span class="av"><i style="--w:77%"></i><b class="num">310</b></span><span class="sc"></span></div>
 <div class="fl-row" data-p="2550"><span class="bc"></span><span class="bv"></span><span class="p num">2,550</span><span class="av"><i style="--w:35%"></i><b class="num">143</b></span><span class="sc"></span></div>
-<div class="fl-row" data-p="2545"><span class="bc"><span class="chip buy filled" id="fl-buy"><b>1</b></span></span><span class="bv"><i style="--w:17%"></i><b class="num">69</b></span><span class="p num">2,545</span><span class="av"></span><span class="sc"></span></div>
+<div class="fl-row" data-p="2545"><span class="bc"><span class="chip buy gone" id="fl-buy"><b>1</b></span></span><span class="bv"><i style="--w:17%"></i><b class="num">69</b></span><span class="p num">2,545</span><span class="av"></span><span class="sc"></span></div>
 <div class="fl-row" data-p="2540"><span class="bc"></span><span class="bv"><i style="--w:100%"></i><b class="num">402</b></span><span class="p num">2,540</span><span class="av"></span><span class="sc"></span></div>
 <div class="fl-row" data-p="2535"><span class="bc"></span><span class="bv"><i style="--w:71%"></i><b class="num">288</b></span><span class="p num">2,535</span><span class="av"></span><span class="sc"></span></div>
 <div class="fl-row" data-p="2530"><span class="bc"></span><span class="bv"><i style="--w:53%"></i><b class="num">215</b></span><span class="p num">2,530</span><span class="av"></span><span class="sc"></span></div>
@@ -198,11 +199,11 @@
     <div class="feature flip">
       <div class="f-text">
         <h3>整股、零股，同一個面板切換</h3>
-        <p>切到零股，數量單位從「張」變成「股」，五檔換成零股行情。零股每筆最多 999 股，每檔股票會記住你上次選哪一種。</p>
+        <p>切到零股，數量單位從「張」變成「股」，五檔換成零股行情。零股用現股限價、當日有效送出，每筆最多 999 股，可以減量或刪單，不能改價。每檔股票會記住你上次選哪一種。</p>
         <ol class="caps" data-for="odd">
           <li>單位切到「盤中零股」</li>
           <li>數量直接輸入股數，例如 35 股</li>
-          <li>五檔換成零股行情，送出前再看一次</li>
+          <li>五檔換成零股行情，只能用 ROD，送出前再看一次</li>
         </ol>
       </div>
       <figure class="demo" data-demo="odd" aria-label="零股下單示範動畫，步驟如右側說明">
@@ -215,7 +216,7 @@
               <div class="tk-row"><span>單位</span><div class="tk-seg" id="tk-unit"><span>整股</span><span class="on">盤中零股</span><span>盤後零股</span></div></div>
               <div class="tk-row"><span>價格</span><div class="tk-input"><em>−</em><span class="num">2,545</span><em>＋</em></div></div>
               <div class="tk-row"><span>數量</span><div class="tk-input" id="tk-qty"><em>−</em><span class="num" id="tk-q">35</span><span class="unit" id="tk-u">股</span><em>＋</em></div></div>
-              <div class="tk-row"><span>效期</span><div class="tk-seg"><span class="on">ROD</span><span>IOC</span><span>FOK</span></div></div>
+              <div class="tk-row"><span>效期</span><div class="tk-seg"><span class="on">ROD</span><span class="odd-off" aria-disabled="true">IOC</span><span class="odd-off" aria-disabled="true">FOK</span></div></div>
               <p class="tk-note swap-b">零股：現股限價、當日有效，每筆最多 999 股</p>
               <div class="tk-send" id="tk-send">買進 <span id="tk-s">35 股</span></div>
             </div>
@@ -241,18 +242,18 @@
     <div class="feature">
       <div class="f-text">
         <h3>在 K 線上掛單、拖線改價</h3>
-        <p>在圖上點一個價位就是一張限價單。委託會畫成一條線，拖到新價位放開就是改價。停損、停利、到價提醒也能掛在圖上。</p>
+        <p>先選「點價買」或「點價賣」，再點圖上的價位，照設定的數量掛限價單。委託會畫成一條線，整股委託拖到新價位放開就是改價。停損、停利也能掛在圖上，由 App 盯價，觸價時送單，所以 App 要保持開著。</p>
         <ol class="caps" data-for="chart">
-          <li>K 線隨成交即時更新</li>
+          <li>選「點價買」</li>
           <li>點圖上的 2,525，掛一張限價買單</li>
           <li>把委託線拖到 2,530，放開就改價</li>
-          <li>停損也掛在圖上，觸價時送出</li>
+          <li>選「停損」點 2,510，App 盯價、觸價時送單</li>
         </ol>
       </div>
       <figure class="demo" data-demo="chart" aria-label="K 線下單示範動畫，步驟如左側說明">
         <button class="demo-ctrl" type="button" aria-pressed="false"><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button>
         <div class="win chart" aria-hidden="true">
-          <div class="win-bar"><span class="bar"></span><b>K 線圖</b><span>2330 台積電・5 分</span><span class="sp pill">點價買</span><span class="pill">停損</span><span class="pill">停利</span></div>
+          <div class="win-bar"><span class="bar"></span><b>K 線圖</b><span>2330 台積電・5 分</span><span class="sp pill on" id="ch-mode">點價買</span><span class="pill" id="ch-stopbtn">停損</span><span class="pill">停利</span></div>
           <div class="stage">
             <svg class="ch" viewBox="0 0 600 330" preserveAspectRatio="none">
               <g class="grid"><line x1="0" x2="520" y1="45" y2="45"/><line x1="0" x2="520" y1="120" y2="120"/><line x1="0" x2="520" y1="195" y2="195"/><line x1="0" x2="520" y1="270" y2="270"/><line x1="520" x2="520" y1="0" y2="300"/></g>
@@ -273,16 +274,16 @@
     <div class="feature flip">
       <div class="f-text">
         <h3>自選和帳務放在旁邊</h3>
-        <p>自選清單有迷你走勢，成交時會閃一下。持倉、委託、損益即時更新。要截圖或直播前按一下隱私模式，帳號和金額都會遮起來。</p>
+        <p>自選清單有迷你走勢，成交時會閃一下。持倉損益跟著行情更新。要截圖或直播前，打開「隱私」遮住帳號，再打開「遮金額」把金額和持倉數量藏起來。</p>
         <ol class="caps" data-for="acct">
           <li>自選股有成交時，那一列會閃一下</li>
           <li>持倉損益跟著行情更新</li>
-          <li>按「隱私模式」，金額和帳號全部遮起來</li>
+          <li>打開「隱私」和「遮金額」，帳號只留末兩碼，金額全部遮起來</li>
         </ol>
       </div>
       <figure class="demo" data-demo="acct" aria-label="自選與帳務示範動畫，步驟如右側說明">
         <button class="demo-ctrl" type="button" aria-pressed="false"><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button>
-        <div class="win wa priv" id="wa-win" aria-hidden="true">
+        <div class="win wa priv privacc" id="wa-win" aria-hidden="true">
           <div class="win-bar"><span class="bar"></span><b>自選清單</b><span>示範清單</span><span class="sp pill sim">模擬環境</span></div>
           <div class="stage">
             <div class="wl"><div class="wl-row" data-i="0"><span class="nm num">2330<small>台積電</small></span><svg viewBox="0 0 60 18" preserveAspectRatio="none"><polyline points="0.0,9.4 2.6,8.6 5.2,8.0 7.8,9.0 10.4,9.3 13.0,9.7 15.6,9.4 18.2,8.8 20.8,10.3 23.4,12.1 26.0,11.2 28.6,11.7 31.2,11.1 33.8,13.0 36.4,13.4 39.0,12.9 41.6,14.1 44.2,12.9 46.8,11.8 49.4,13.6 52.0,15.4 54.6,15.5 57.2,14.3 59.8,15.0" stroke="var(--down)" vector-effect="non-scaling-stroke"/></svg><span class="px num down"><span class="v">2,550</span><small>−35.00 −1.35%</small></span></div>
@@ -292,15 +293,15 @@
 <div class="wl-row" data-i="4"><span class="nm num">2382<small>廣達</small></span><svg viewBox="0 0 60 18" preserveAspectRatio="none"><polyline points="0.0,7.4 2.6,6.4 5.2,5.3 7.8,3.7 10.4,2.7 13.0,2.0 15.6,3.3 18.2,3.2 20.8,2.0 23.4,2.0 26.0,2.0 28.6,3.0 31.2,2.9 33.8,3.5 36.4,3.2 39.0,2.8 41.6,4.1 44.2,4.8 46.8,5.3 49.4,3.8 52.0,2.8 54.6,3.6 57.2,2.5 59.8,3.5" stroke="var(--down)" vector-effect="non-scaling-stroke"/></svg><span class="px num down"><span class="v">325.50</span><small>−9.50 −2.84%</small></span></div>
 <div class="wl-row" data-i="5"><span class="nm num">3711<small>日月光投控</small></span><svg viewBox="0 0 60 18" preserveAspectRatio="none"><polyline points="0.0,8.6 2.6,8.2 5.2,8.4 7.8,7.8 10.4,7.1 13.0,8.3 15.6,9.6 18.2,8.2 20.8,8.8 23.4,9.4 26.0,7.5 28.6,7.4 31.2,6.0 33.8,5.9 36.4,5.2 39.0,6.0 41.6,5.4 44.2,3.9 46.8,3.6 49.4,2.6 52.0,2.0 54.6,3.1 57.2,2.1 59.8,2.0" stroke="var(--up)" vector-effect="non-scaling-stroke"/></svg><span class="px num up"><span class="v">744</span><small>+12.00 +1.64%</small></span></div></div>
             <div class="acct">
-              <div class="acct-top"><span class="who">帳號 <span class="amt num">示範-A01</span></span><span class="eye" id="wa-eye"><svg class="i on"><use href="#i-eye"/></svg><svg class="i off"><use href="#i-eye-off"/></svg>隱私模式</span></div>
+              <div class="acct-top"><span class="who">帳號 <span class="num acct-id"><span class="plain">1234501</span><span class="masked">•••••01</span></span></span><span class="toggles"><span class="eye" id="wa-eye"><svg class="i on"><use href="#i-eye"/></svg><svg class="i off"><use href="#i-eye-off"/></svg>隱私</span><span class="eye money" id="wa-money">遮金額</span></span></div>
               <div class="kpi">
-                <div><small>未實現損益</small><span class="num up amt" id="wa-pl">+1,500</span></div>
+                <div><small>未實現損益</small><span class="num up amt" id="wa-pl">+1,470</span></div>
                 <div><small>可用餘額</small><span class="num amt">382,600</span></div>
               </div>
               <div class="pos">
                 <div class="h"><span>持倉</span><span>數量</span><span>均價</span><span>損益</span></div>
-                <div><span>2330 台積電</span><span class="num">1 張</span><span class="num">2,545</span><span class="num up amt" id="wa-p1">+1,500</span></div>
-                <div><span>0050 元大台灣50</span><span class="num">120 股</span><span class="num">115.20</span><span class="num down amt">−30</span></div>
+                <div><span>2330 台積電</span><span class="num amt">1 張</span><span class="num amt">2,545</span><span class="num up amt" id="wa-p1">+1,500</span></div>
+                <div><span>0050 元大台灣50</span><span class="num amt">120 股</span><span class="num amt">115.20</span><span class="num down amt">−30</span></div>
               </div>
             </div>
           </div>
@@ -317,7 +318,7 @@
       <div class="f-text">
         <span class="num mono" style="font-size:14px;color:var(--muted)">03</span>
         <h2 id="layout-h" style="font-size:clamp(1.7rem,3.2vw,2.4rem);margin-top:8px">版面自己排</h2>
-        <p>每個面板都能拖、能縮放、能多開。一張 K 線看大盤，一張看個股，閃電下單放右邊，存成「盤中」版面，明天打開還是一樣。多螢幕的話，把面板彈出成獨立視窗就好。</p>
+        <p>面板可以拖曳、調整大小，也能多開。一張 K 線看大盤，一張看個股，閃電下單放右邊，存成「盤中」版面，下次直接載入。多螢幕的話，把面板彈出成獨立視窗。</p>
         <p>面板可以跟著自選切換商品，也可以鎖定在一檔。</p>
         <ol class="caps" data-for="ws">
           <li>從「新增面板」挑要的面板</li>
@@ -352,19 +353,19 @@
   <div class="wrap">
     <div class="sec-head">
       <span class="num">04</span>
-      <h2 id="agent-h">用講的，讓 Agent 幫你做</h2>
-      <p>桌面版內建 AI Agent，可以接 Claude 或 Codex（用 ChatGPT 訂閱登入，不用另外申請 API Key）。它看得到行情、持倉和你的版面，能幫你查資料、寫策略、跑回測。</p>
+      <h2 id="agent-h">交代一句話，讓 Agent 幫你做</h2>
+      <p>桌面版內建 AI Agent，可以接 Claude，或是用 ChatGPT 訂閱登入的 Codex。它看得到行情、持倉和你的版面，能幫你查資料、寫策略、跑回測。AI 服務的費用依你用的方案計算。</p>
     </div>
     <div class="feature">
       <div class="f-text">
-        <h3>下單前一定先問你</h3>
-        <p>Agent 要下單時，只會先送出預覽，你按確認才會送出。權限分三段：只能看、逐筆確認、自動。金鑰只存在你的電腦。</p>
+        <h3>交易權限由你決定</h3>
+        <p>交易權限分三種：唯讀、逐筆確認、受控自動。逐筆確認時，Agent 只會送出預覽，你按確認才送單；受控自動要你先授權，而且一樣受 App 的風控限制。Shioaji 的 API 金鑰存在你的電腦。</p>
         <p>常做的流程可以存成技能，下次輸入「/名稱」就跑。也可以排程，例如每天開盤前檢查一次持倉。</p>
         <ol class="caps" data-for="agent">
           <li>用一句話說你要什麼</li>
           <li>Agent 用 App 的工具讀 K 線、存策略、跑回測</li>
           <li>回測結果直接開在 App 裡</li>
-          <li>要下單時，它只送預覽，等你按確認</li>
+          <li>逐筆確認模式下，它只送預覽，等你按確認</li>
         </ol>
       </div>
       <figure class="demo" data-demo="agent" aria-label="AI Agent 示範動畫，步驟如左側說明">
@@ -407,11 +408,11 @@
       <div class="f-text">
         <span class="num mono" style="font-size:14px;color:var(--muted)">05</span>
         <h2 id="research-h" style="font-size:clamp(1.7rem,3.2vw,2.4rem);margin-top:8px">寫策略、回測、找參數<span class="tag">桌面版</span></h2>
-        <p>策略用 JavaScript 寫，和自訂指標用同一套 ta 函式庫。回測會算進手續費、交易稅和滑價；訊號在收盤成立，下一根開盤成交，不會用到未來的資料。</p>
+        <p>策略用 JavaScript 寫，和自訂指標用同一套 ta 函式庫。回測依你的設定算進手續費、交易稅和滑價；訊號在收盤確認，符合成交條件時最快在下一根開盤成交。策略如果讀到未來的資料，引擎會擋下來。</p>
         <p>一次可以跑整個自選清單，看每一檔的結果。參數最佳化支援格點和隨機搜尋，訓練期和測試期的成績分開列，比較容易看出是不是只對過去有效。</p>
         <ol class="caps" data-for="quant">
           <li>寫策略：快慢均線交叉進出場</li>
-          <li>回測，成本照實計算</li>
+          <li>回測，算進手續費、稅和滑價</li>
           <li>格點搜尋參數，每一格是一組回測</li>
           <li>訓練期和測試期分開比較</li>
         </ol>
@@ -428,8 +429,8 @@
               <div class="costs" data-in="2"><span>手續費</span><span>證交稅</span><span>滑價</span><span>次根開盤成交</span></div>
             </div>
             <div class="q-bot">
-              <div><h5>參數最佳化（格點）</h5><div class="hm"><i style="--v:0.05;--d:1.26s"></i><i style="--v:0.24;--d:0.85s"></i><i style="--v:0.35;--d:1.03s"></i><i style="--v:0.49;--d:0.54s"></i><i style="--v:0.49;--d:0.04s"></i><i style="--v:0.25;--d:0.77s"></i><i style="--v:0.05;--d:0.27s"></i><i style="--v:0.44;--d:0.09s"></i><i style="--v:0.50;--d:1.44s"></i><i style="--v:0.64;--d:0.00s"></i><i style="--v:0.80;--d:1.21s"></i><i style="--v:0.52;--d:1.40s"></i><i style="--v:0.27;--d:0.81s"></i><i style="--v:0.42;--d:0.67s"></i><i style="--v:0.70;--d:1.12s"></i><i style="--v:0.81;--d:0.40s"></i><i style="--v:0.88;--d:1.17s" class="best"></i><i style="--v:0.70;--d:1.48s"></i><i style="--v:0.17;--d:0.18s"></i><i style="--v:0.46;--d:1.08s"></i><i style="--v:0.66;--d:0.45s"></i><i style="--v:0.68;--d:1.30s"></i><i style="--v:0.82;--d:0.32s"></i><i style="--v:0.60;--d:1.53s"></i><i style="--v:0.05;--d:0.90s"></i><i style="--v:0.17;--d:0.72s"></i><i style="--v:0.54;--d:0.58s"></i><i style="--v:0.55;--d:1.35s"></i><i style="--v:0.60;--d:0.49s"></i><i style="--v:0.52;--d:1.57s"></i><i style="--v:0.05;--d:0.99s"></i><i style="--v:0.22;--d:0.14s"></i><i style="--v:0.23;--d:0.36s"></i><i style="--v:0.40;--d:0.94s"></i><i style="--v:0.30;--d:0.63s"></i><i style="--v:0.34;--d:0.22s"></i></div><div class="hm-ax"><span>fast 5</span><span>30</span></div></div>
-              <div class="tt"><h5 style="margin:0">最佳參數的成績</h5><div>訓練期 <b>+24.1%</b><span class="bar" style="--w:100%;display:block;margin-top:.5cqw"></span></div><div>測試期 <b>+6.3%</b><span class="bar test" style="--w:26%;display:block;margin-top:.5cqw"></span></div></div>
+              <div><h5>參數最佳化（格點）</h5><div class="hm"><i style="--v:0.05;--d:1.26s"></i><i style="--v:0.24;--d:0.85s"></i><i style="--v:0.35;--d:1.03s"></i><i style="--v:0.49;--d:0.54s"></i><i style="--v:0.49;--d:0.04s"></i><i style="--v:0.25;--d:0.77s"></i><i style="--v:0.05;--d:0.27s"></i><i style="--v:0.44;--d:0.09s"></i><i style="--v:0.50;--d:1.44s"></i><i style="--v:0.64;--d:0.00s"></i><i style="--v:0.80;--d:1.21s"></i><i style="--v:0.52;--d:1.40s"></i><i style="--v:0.27;--d:0.81s"></i><i style="--v:0.42;--d:0.67s"></i><i style="--v:0.70;--d:1.12s"></i><i style="--v:0.81;--d:0.40s"></i><i style="--v:0.88;--d:1.17s" class="best"></i><i style="--v:0.70;--d:1.48s"></i><i style="--v:0.17;--d:0.18s"></i><i style="--v:0.46;--d:1.08s"></i><i style="--v:0.66;--d:0.45s"></i><i style="--v:0.68;--d:1.30s"></i><i style="--v:0.82;--d:0.32s"></i><i style="--v:0.60;--d:1.53s"></i><i style="--v:0.05;--d:0.90s"></i><i style="--v:0.17;--d:0.72s"></i><i style="--v:0.54;--d:0.58s"></i><i style="--v:0.55;--d:1.35s"></i><i style="--v:0.60;--d:0.49s"></i><i style="--v:0.52;--d:1.57s"></i><i style="--v:0.05;--d:0.99s"></i><i style="--v:0.22;--d:0.14s"></i><i style="--v:0.23;--d:0.36s"></i><i style="--v:0.40;--d:0.94s"></i><i style="--v:0.30;--d:0.63s"></i><i style="--v:0.34;--d:0.22s"></i></div><div class="hm-ax"><span>fast 5 → 30</span><span>slow 20 ↓ 120</span></div></div>
+              <div class="tt"><h5 style="margin:0">最佳參數的成績</h5><div>訓練期 2022–2024 <b>+24.1%</b><span class="bar" style="--w:100%;display:block;margin-top:.5cqw"></span></div><div>測試期 2025 <b>+6.3%</b><span class="bar test" style="--w:26%;display:block;margin-top:.5cqw"></span></div></div>
             </div>
           </div>
         </div>
@@ -445,13 +446,13 @@
       <div class="f-text">
         <span class="num mono" style="font-size:14px;color:var(--muted)">06</span>
         <h2 id="build-h" style="font-size:clamp(1.7rem,3.2vw,2.4rem);margin-top:8px">缺什麼面板，自己做一個</h2>
-        <p>介面的程式碼全部公開（AGPL-3.0）。fork 下來，跟 Claude Code 或 Codex 說你要什麼，例如「一個列出自選股今天爆量的面板」，它會照現有面板的寫法做出來，和其他面板一起拖拉排版。</p>
-        <p>改好的介面可以在瀏覽器跑，也可以上傳到 shioaji server，變成你自己的 App。只想加一條線的話，用 App 內的自訂指標就夠了。</p>
+        <p>介面的程式碼全部公開（AGPL-3.0）。fork 下來，跟 Claude Code 或 Codex 說你要什麼，例如「一個列出自選股今天爆量的面板」，它會參照現有面板的寫法加上去。你檢查、建置過後，新面板就能和其他面板一起拖拉排版。</p>
+        <p>改好的介面可以在瀏覽器跑，也可以建置後上傳到 shioaji server，變成你自己的 App（目前 server 重啟後要重新上傳）。只想加一條線的話，用 App 內的自訂指標就夠了。</p>
         <ol class="caps" data-for="custom">
           <li>告訴 coding agent 你要的面板</li>
-          <li>它照現有面板的寫法新增、登記檔案</li>
+          <li>它參照現有面板新增、登記檔案，你檢查後建置</li>
           <li>新面板出現在版面裡，可以拖拉、存檔</li>
-          <li>上傳到 shioaji server，當成自己的 App</li>
+          <li>建置好的介面上傳到 shioaji server，當成自己的 App</li>
         </ol>
       </div>
       <figure class="demo" data-demo="custom" aria-label="自訂面板示範動畫，步驟如左側說明">
@@ -467,6 +468,7 @@
                 <div data-in="2" style="--d:.35s"><span class="add">＋</span>src/components/volume-spike.css.ts</div>
                 <div data-in="2" style="--d:.7s"><span class="mod">～</span>src/lib/workspace.ts　登記面板</div>
                 <div data-in="2" style="--d:1.05s"><span class="mod">～</span>src/App.tsx　接上面板</div>
+                <div class="built" data-in="3"><svg class="i"><use href="#i-check"/></svg>型別檢查、建置完成</div>
               </div>
               <div class="deploy" data-in="4"><svg class="i" style="width:2.2cqw;height:2.2cqw"><use href="#i-upload"/></svg>上傳到 <b>/apps/my-shioaji-pro/</b></div>
             </div>
@@ -493,7 +495,7 @@
     <div class="sec-head">
       <span class="num">07</span>
       <h2 id="source-h">這個專案就是 Shioaji API 的範例</h2>
-      <p>想知道 Shioaji 怎麼接即時行情、送單、查帳務？這個 repo 裡每一段都是真的在跑的程式，可以直接照著寫。</p>
+      <p>想知道怎麼用 Shioaji 接即時行情、送單、查帳務、處理斷線重連？這個 repo 就是透過 Shioaji server 的 HTTP API 與 SSE 寫成的完整介面，下表是可以直接參考的地方。AI Agent 和回測引擎在桌面版的私有模組，不在這個 repo。</p>
     </div>
     <div class="map-wrap">
       <table class="map">
@@ -524,7 +526,7 @@ codex plugin add shioaji@sinotrade</pre>
       </div>
       <div class="card">
         <h3>Shioaji Pro skill</h3>
-        <p>讓 agent 透過 App 的工具看行情、調整版面、寫指標和策略、跑回測與最佳化。下單一樣先預覽，由你確認。</p>
+        <p>讓 agent 透過 App 的工具看行情、調整版面、寫指標和策略、跑回測與最佳化。交易一樣照 App 的權限設定：逐筆確認時先預覽，由你確認。</p>
         <p>放在 repo 的 <a href="https://github.com/Sinotrade/shioaji-pro-app/tree/main/plugins/shioaji-pro"><code>plugins/shioaji-pro</code></a>，同時有 Claude Code 與 Codex 的 plugin 設定。</p>
       </div>
     </div>
@@ -540,7 +542,8 @@ codex plugin add shioaji@sinotrade</pre>
       <details><summary>需要永豐金證券帳戶嗎？</summary><p>需要。登入用的是永豐金證券的 API Key。</p></details>
       <details><summary>模擬環境會用到真的錢嗎？</summary><p>不會。模擬環境的委託不會送到交易所。</p></details>
       <details><summary>期貨、選擇權也能交易嗎？</summary><p>可以。閃電下單、組合單、T 字報價和損益圖都有，這頁先介紹證券。</p></details>
-      <details><summary>桌面版和 Web 版差在哪？</summary><p>看盤和下單介面兩邊一樣。AI Agent、策略回測、系統匣和自動更新只在桌面版。</p></details>
+      <details><summary>桌面版和 Web 版差在哪？</summary><p>看盤和下單介面兩邊一樣。桌面版內建 shioaji server，另外有 AI Agent、策略回測、系統匣和自動更新；Web 版要自己啟動 shioaji server。</p></details>
+      <details><summary>AI Agent 要另外付費嗎？</summary><p>App 不收費。AI 服務的費用依你用的 Claude 或 ChatGPT 方案計算。</p></details>
     </div>
   </div>
 </section>
@@ -548,7 +551,7 @@ codex plugin add shioaji@sinotrade</pre>
 <!-- 09 下載 -->
 <section class="alt" id="download" aria-labelledby="download-h">
   <div class="wrap">
-    <div class="sec-head"><span class="num">09</span><h2 id="download-h">下載 <span class="mono" id="dl-ver" style="font-size:.6em;color:var(--muted)"></span></h2><p>安裝檔由 GitHub Actions 建置與簽章。裝好之後，新版本會自動更新。</p></div>
+    <div class="sec-head"><span class="num">09</span><h2 id="download-h">下載 <span class="mono" id="dl-ver" style="font-size:.6em;color:var(--muted)"></span></h2><p>安裝檔由 GitHub Actions 建置。桌面版啟動時會檢查更新，驗證簽章後安裝並重新啟動。</p></div>
     <div class="dl">
       <div class="card"><h3>macOS <small>13.3 以上</small></h3><div class="dl-links" id="dl-mac"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Apple Silicon<span>.dmg</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Intel<span>.dmg</span></a></div></div>
       <div class="card"><h3>Windows <small>10／11 x64</small></h3><div class="dl-links" id="dl-win"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">安裝程式<span>.msi</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Setup<span>.exe</span></a></div></div>

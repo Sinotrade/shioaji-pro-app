@@ -62,7 +62,7 @@
       setLinks('dl-win', [/\.msi$/, /setup\.exe$/i]);
       setLinks('dl-linux', [/\.AppImage$/, /\.deb$/, /\.rpm$/]);
       var ua = navigator.userAgent, url = null, label = null;
-      if (/Macintosh/.test(ua)) { url = asset(/aarch64\.dmg$/); label = '下載 macOS 版'; }
+      if (/Macintosh/.test(ua)) { url = asset(/aarch64\.dmg$/); label = '下載 macOS 版（Apple Silicon）'; }
       else if (/Windows/.test(ua)) { url = asset(/\.msi$/); label = '下載 Windows 版'; }
       else if (/Linux/.test(ua) && !/Android/.test(ua)) { url = asset(/\.AppImage$/); label = '下載 Linux 版'; }
       if (url) {
@@ -116,7 +116,9 @@
         if (gen !== self.gen) { reject(STOP); return; }
         if (!self.paused && self.visible && !document.hidden) left -= now - last;
         last = now;
-        if (left <= 0) resolve(); else requestAnimationFrame(tick);
+        if (left <= 0) resolve();
+        else if (self.paused || !self.visible || document.hidden) setTimeout(function () { tick(performance.now()); }, 250);
+        else requestAnimationFrame(tick);
       }
       requestAnimationFrame(tick);
     });
@@ -241,7 +243,8 @@
         .then(function () { return d.click(); })
         .then(function () { buy.classList.remove('gone'); d.toast('委託・買 2,545・1 張'); return d.wait(1300); })
         .then(function () { d.step(4); row(6); return d.wait(350); })
-        .then(function () { buy.classList.add('filled'); d.toast('成交・買 2,545・1 張', 'fill'); return d.wait(1700); })
+        .then(function () { buy.classList.add('filled'); d.toast('成交・買 2,545・1 張', 'fill'); return d.wait(700); })
+        .then(function () { buy.classList.add('gone'); return d.wait(1100); })
         .then(function () { d.step(5); row(5); return d.move(rowOf(d, 2560).querySelector('.sc'), 0.45, 0.5); })
         .then(function () { return d.click(); })
         .then(function () { sell.classList.remove('gone'); d.toast('委託・賣 2,560・1 張'); return d.wait(1200); })
@@ -279,9 +282,14 @@
     chart: [function (d) {
       var xh = d.$('#ch-xh'), order = d.$('#ch-order'), pop = d.$('#ch-pop'), ot = d.$('#ch-otext'), oax = d.$('#ch-oax');
       order.style.transform = 'translateY(195px)';
+      var mode = d.$('#ch-mode');
       ot.textContent = '買 1 張 2,525'; oax.textContent = '2,525';
-      d.step(1);
-      return d.wait(1900)
+      mode.classList.remove('on');
+      d.gate(1);
+      return d.wait(1500)
+        .then(function () { d.cap(1); return d.move(mode); })
+        .then(function () { return d.click(); })
+        .then(function () { mode.classList.add('on'); return d.wait(600); })
         .then(function () { d.cap(2); return d.moveXY(0.42, 195 / 330); })
         .then(function () { xh.classList.add('show'); return d.wait(500); })
         .then(function () { return d.click(); })
@@ -297,13 +305,17 @@
           return d.moveXY(0.62, 180 / 330, 650);
         })
         .then(function () { d.cursor.classList.remove('drag'); d.toast('改價・2,530'); return d.wait(1300); })
-        .then(function () { d.step(4); d.toast('停損・2,510・1 張'); return d.moveXY(0.86, 0.92, 900); })
+        .then(function () { d.cap(4); mode.classList.remove('on'); return d.move('#ch-stopbtn'); })
+        .then(function () { return d.click(); })
+        .then(function () { d.$('#ch-stopbtn').classList.add('on'); return d.moveXY(0.42, 240 / 330); })
+        .then(function () { return d.click(); })
+        .then(function () { d.gate(4); d.$('#ch-stopbtn').classList.remove('on'); d.toast('停損・2,510・1 張'); return d.moveXY(0.86, 0.92, 900); })
         .then(function () { return d.wait(900); });
     }, { cursor: true }],
 
     acct: [function (d) {
       var win = d.$('#wa-win'), pl = d.$('#wa-pl'), p1 = d.$('#wa-p1');
-      win.classList.remove('priv');
+      win.classList.remove('priv'); win.classList.remove('privacc');
       var rows = d.el.querySelectorAll('.wl-row');
       function flash(i) { var r = rows[i]; r.classList.remove('tick'); void r.offsetWidth; r.classList.add('tick'); }
       var seq = [2, 0, 5, 3, 1, 4];
@@ -312,10 +324,13 @@
       seq.forEach(function (i) { p = p.then(function () { flash(i); return d.wait(430); }); });
       return p
         .then(function () { d.step(2); return d.wait(300); })
-        .then(function () { flash(0); pl.textContent = '+2,000'; p1.textContent = '+2,000'; return d.wait(700); })
-        .then(function () { flash(0); pl.textContent = '+1,000'; p1.textContent = '+1,000'; return d.wait(700); })
-        .then(function () { flash(0); pl.textContent = '+1,500'; p1.textContent = '+1,500'; return d.wait(800); })
+        .then(function () { flash(0); pl.textContent = '+1,970'; p1.textContent = '+2,000'; return d.wait(700); })
+        .then(function () { flash(0); pl.textContent = '+970'; p1.textContent = '+1,000'; return d.wait(700); })
+        .then(function () { flash(0); pl.textContent = '+1,470'; p1.textContent = '+1,500'; return d.wait(800); })
         .then(function () { d.step(3); return d.move('#wa-eye'); })
+        .then(function () { return d.click(); })
+        .then(function () { win.classList.add('privacc'); return d.wait(700); })
+        .then(function () { return d.move('#wa-money'); })
         .then(function () { return d.click(); })
         .then(function () { win.classList.add('priv'); return d.wait(1600); })
         .then(function () { return d.moveXY(0.86, 0.92, 800); });
@@ -405,6 +420,7 @@
         var d = demos.filter(function (x) { return x.el === e.target; })[0];
         if (!d) return;
         d.visible = e.isIntersecting;
+        d.el.classList.toggle('offscreen', !d.visible);
         if (d.visible && !d.running && !d.userStopped && autoplayAllowed()) d.start();
       });
     }, { threshold: 0.35 });
