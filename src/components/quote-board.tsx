@@ -2,6 +2,7 @@
 
 import { useDisplayBook } from '../hooks/use-display-book';
 import type { ContractInfo } from '../lib/types/contract';
+import { limitStateOf } from '../lib/limit-state';
 import type { Snapshot } from '../lib/types/market';
 import { fmtInt, fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as panel from './panel.css';
@@ -61,14 +62,8 @@ export function QuoteBoard({
 
     const dir =
         chg === undefined || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';
-    const atLimit =
-        !isIndex && close !== undefined && contract.limit_up > 0
-            ? close >= contract.limit_up
-                ? 'up'
-                : contract.limit_down > 0 && close <= contract.limit_down
-                  ? 'down'
-                  : null
-            : null;
+    // 共用判斷（指數、興櫃不亮；跳動價位精度比較）
+    const atLimit = limitStateOf(contract, close);
 
     return (
         <div className={`${styles.board} drag-handle`}>

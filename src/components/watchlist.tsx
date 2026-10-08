@@ -24,6 +24,8 @@ import {
     useRef,
     useState,
 } from 'react';
+import { limitStateOf } from '../lib/limit-state';
+import { useLimitStyle } from '../lib/limit-style-prefs';
 import { neighborCode } from '../lib/list-move';
 import { useQuote } from '../hooks/use-stream';
 import type { WatchItem } from '../hooks/use-watchlist';
@@ -119,6 +121,30 @@ const WatchRow = memo(function WatchRow({
             : item.snapshot?.change_rate;
 
     const dir = chg === undefined || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';
+    // 漲跌停亮燈（與報價看板／走勢共用 limitStateOf：指數、興櫃不亮）
+    // 無即時 tick 時退回快照收盤：快照隱含的參考價（close − change_price）
+    // 須等於合約今天的參考價，才確定是同一交易日；昨日快照（例如開盤前）
+    // 只顯示價格、不亮燈
+    const snap = item.snapshot;
+    const limitPx =
+        tick || index
+            ? close
+            : snap &&
+                Number.isFinite(snap.change_price) &&
+                Number(
+                    (snap.close - snap.change_price).toFixed(4),
+                ) === Number(Number(item.contract.reference).toFixed(4))
+              ? snap.close
+              : undefined;
+    const atLimit = limitStateOf(item.contract, limitPx);
+    const limitLabel = atLimit === 'up' ? '漲停' : atLimit === 'down' ? '跌停' : '';
+    // 亮燈樣式（設定 → 外觀，全域）；「不標示」時 lit 為 null
+    const limitStyle = useLimitStyle();
+    const lit = limitStyle === 'none' ? null : atLimit;
+    // 小線圖模式＋數字區色塊：等寬色塊放不下小線圖，停板列收起小線圖
+    //（鎖停板的走勢本來就是一條平線），色塊延伸到小線圖欄、位置與其他
+    // 停板列一致
+    const blockWide = spark && lit !== null && limitStyle === 'block';
     // the flash overlay is re-keyed by flashSeq so the animation replays on
     // every real deal — the row itself stays mounted (hover state survives)
     const flashDir = !quote?.flashSeq
@@ -129,7 +155,11 @@ const WatchRow = memo(function WatchRow({
 
     return (
         <div
+            data-code={item.contract.code}
+            data-limit={atLimit ?? undefined}
             className={`${styles.row[selected ? 'selected' : 'normal']} ${
+                lit && limitStyle === 'tint' ? styles.limitTint[lit] : ''
+            } ${lit && limitStyle === 'solid' ? styles.limitSolid[lit] : ''} ${
                 spark ? styles.rowSparkCols : ''
             } ${dropTarget ? styles.dropTarget : ''} ${
                 arrange ? styles.rowArrange : ''
@@ -170,8 +200,10 @@ const WatchRow = memo(function WatchRow({
                     <GripVertical size={12} />
                 </span>
             )}
-            <span className={styles.code}>{item.contract.code}</span>
-            {spark && (
+            <span className={`${styles.code} ${styles.firstCol}`}>
+                {item.contract.code}
+            </span>
+            {spark && !blockWide && (
                 <span className={styles.sparkCell}>
                     <Sparkline
                         contract={item.contract}
@@ -182,15 +214,27 @@ const WatchRow = memo(function WatchRow({
                     />
                 </span>
             )}
-            <span className={`${styles.price} ${panel.dirText[dir]}`}>
-                {tick?.simtrade ? (
-                    <span className={styles.simBadge}>試搓</span>
-                ) : null}
-                {fmtPrice(close)}
+            <span
+                className={`${styles.numCell} ${
+                    lit && limitStyle === 'block' ? styles.limitBlock[lit] : ''
+                } ${blockWide ? styles.numCellWide : ''}`}
+                title={lit ? `${limitLabel} ${fmtPrice(close)}` : undefined}
+            >
+                <span className={`${styles.price} ${panel.dirText[dir]}`}>
+                    {lit ? (
+                        <span className={styles.srOnly}>{limitLabel} </span>
+                    ) : null}
+                    {tick?.simtrade ? (
+                        <span className={styles.simBadge}>試搓</span>
+                    ) : null}
+                    {fmtPrice(close)}
+                </span>
+                <span className={`${styles.change} ${panel.dirText[dir]}`}>
+                    {fmtSigned(chg)} {fmtPct(pct)}
+                </span>
             </span>
-            <span className={styles.name}>{item.contract.name}</span>
-            <span className={`${styles.change} ${panel.dirText[dir]}`}>
-                {fmtSigned(chg)} {fmtPct(pct)}
+            <span className={`${styles.name} ${styles.firstCol}`}>
+                {item.contract.name}
             </span>
             {arrange ? (
                 <span className={styles.moveCol}>

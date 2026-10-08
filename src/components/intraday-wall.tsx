@@ -25,6 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { ensureContract } from '../lib/contracts-cache';
 import { colorWithOpacity } from '../lib/indicator-defs';
+import { limitStateOf } from '../lib/limit-state';
 import {
     CLOSE_GRACE,
     sessionMinutes,
@@ -830,14 +831,7 @@ function CellHead({
             : null;
     const dir =
         chgPct === null || chgPct === 0 ? 'flat' : chgPct > 0 ? 'up' : 'down';
-    const locked =
-        hasPx && contract.limit_up > contract.limit_down && contract.limit_down > 0
-            ? price >= contract.limit_up
-                ? ('up' as const)
-                : price <= contract.limit_down
-                  ? ('down' as const)
-                  : null
-            : null;
+    const locked = hasPx ? limitStateOf(contract, price) : null;
     const isSim = !!quote?.tick?.simtrade;
     return (
         <div className={styles.cellHead}>
