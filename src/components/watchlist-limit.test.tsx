@@ -163,9 +163,31 @@ describe('watchlist 漲跌停亮燈', () => {
 
     it('無即時 tick 時用快照收盤價判斷', () => {
         const root = render([
-            { contract: contract({}), snapshot: { close: 900, change_rate: -10 } as any },
+            {
+                contract: contract({}),
+                snapshot: { close: 900, change_price: -100, change_rate: -10 } as any,
+            },
         ]);
         expect(rowOf(root, '2330').props['data-limit']).toBe('down');
+    });
+
+    it('昨日快照（隱含參考價和今天不同）不亮燈', () => {
+        // 昨日 1000 → 1100 漲停；今天參考價 1100、漲停 1210，尚未成交
+        const root = render([
+            {
+                contract: contract({ reference: 1100, limit_up: 1210, limit_down: 990 }),
+                snapshot: { close: 1100, change_price: 100, change_rate: 10 } as any,
+            },
+        ]);
+        expect(rowOf(root, '2330').props['data-limit']).toBeUndefined();
+        // 用今天的漲停價也一樣：快照屬於昨天就不亮
+        const root2 = render([
+            {
+                contract: contract({ code: '2317', reference: 1000, limit_up: 1100 }),
+                snapshot: { close: 1100, change_price: 110, change_rate: 11 } as any,
+            },
+        ]);
+        expect(rowOf(root2, '2317').props['data-limit']).toBeUndefined();
     });
 
     it('選取列也維持亮燈（不被選取底色蓋掉）', () => {

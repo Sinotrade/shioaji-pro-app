@@ -1,6 +1,6 @@
 // src/components/watchlist.css.ts
 
-import { style, styleVariants } from '@vanilla-extract/css';
+import { globalStyle, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const list = style({
@@ -66,6 +66,8 @@ export const simBadge = style({
 });
 
 export const price = style({
+    // 漲跌停小標以絕對定位掛在價格左側，不參與欄寬計算
+    position: 'relative',
     fontFamily: vars.font.mono,
     fontSize: '0.82rem',
     fontWeight: 600,
@@ -100,9 +102,13 @@ export const limitPrice = styleVariants({
 });
 
 // 價格前的小標「漲停／跌停」— 外框樣式，和價格的實心底分出層次；
-// 放第一行（代碼列通常有空間），不擠第二行的漲跌幅。清單很窄時收起，
-// 只留價格底色
+// 放第一行（代碼列通常有空間），絕對定位不撐寬價格欄，亮燈進出時版面
+// 不動。清單很窄或開小線圖（中間欄會被蓋到）時收起，只留價格底色
 const limitTagBase = style({
+    position: 'absolute',
+    right: '100%',
+    top: '50%',
+    transform: 'translateY(-50%)',
     display: 'inline-flex',
     alignItems: 'center',
     gap: '1px',
@@ -115,7 +121,7 @@ const limitTagBase = style({
     borderRadius: vars.radius.sm,
     border: '1px solid currentColor',
     whiteSpace: 'nowrap',
-    verticalAlign: '2px',
+    pointerEvents: 'none',
     '@container': {
         '(max-width: 240px)': { display: 'none' },
     },
@@ -125,6 +131,7 @@ export const limitTag = styleVariants({
     up: [limitTagBase, { color: limitTone.up }],
     down: [limitTagBase, { color: limitTone.down }],
 });
+
 
 export const change = style({
     fontFamily: vars.font.mono,
@@ -202,6 +209,10 @@ export const moveBtn = style({
 export const rowSparkCols = style({
     gridTemplateColumns: 'minmax(0, 1fr) minmax(48px, 1.1fr) auto',
 });
+
+// 小線圖模式中間欄會被絕對定位的小標蓋到 — 收起，只留價格底色
+globalStyle(`${rowSparkCols} ${limitTagBase}`, { display: 'none' });
+
 
 export const sparkCell = style({
     gridColumn: 2,

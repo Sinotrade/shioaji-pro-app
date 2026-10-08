@@ -123,7 +123,21 @@ const WatchRow = memo(function WatchRow({
 
     const dir = chg === undefined || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';
     // 漲跌停亮燈（與報價看板／走勢共用 limitStateOf：指數、興櫃不亮）
-    const atLimit = limitStateOf(item.contract, close);
+    // 無即時 tick 時退回快照收盤：快照隱含的參考價（close − change_price）
+    // 須等於合約今天的參考價，才確定是同一交易日；昨日快照（例如開盤前）
+    // 只顯示價格、不亮燈
+    const snap = item.snapshot;
+    const limitPx =
+        tick || index
+            ? close
+            : snap &&
+                Number.isFinite(snap.change_price) &&
+                Number(
+                    (snap.close - snap.change_price).toFixed(4),
+                ) === Number(Number(item.contract.reference).toFixed(4))
+              ? snap.close
+              : undefined;
+    const atLimit = limitStateOf(item.contract, limitPx);
     const limitLabel = atLimit === 'up' ? '漲停' : atLimit === 'down' ? '跌停' : '';
     // the flash overlay is re-keyed by flashSeq so the animation replays on
     // every real deal — the row itself stays mounted (hover state survives)
