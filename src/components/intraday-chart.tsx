@@ -26,6 +26,7 @@ import { Settings2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useQuote } from '../hooks/use-stream';
 import { colorWithOpacity } from '../lib/indicator-defs';
+import { limitStateOf } from '../lib/limit-state';
 import {
     CLOSE_GRACE,
     followsSession,
@@ -1373,18 +1374,10 @@ export function IntradayChart({
               ).padStart(2, '0')}`
             : null;
     // 鎖漲停/跌停 → 現價亮燈（停板色底）
-    const hasLimits =
-        !pastRef.current &&
-        contract.limit_up > contract.limit_down &&
-        contract.limit_down > 0;
-    const locked =
-        shownPrice !== undefined && hasLimits
-            ? shownPrice >= contract.limit_up
-                ? ('up' as const)
-                : shownPrice <= contract.limit_down
-                  ? ('down' as const)
-                  : null
-            : null;
+    // 歷史日不亮（合約的漲跌停價是今天的）
+    const locked = pastRef.current
+        ? null
+        : limitStateOf(contract, shownPrice);
 
     return (
         <div className={styles.wrap}>

@@ -71,6 +71,51 @@ export const price = style({
     fontVariantNumeric: 'tabular-nums',
 });
 
+// 漲跌停亮燈 — 台股看盤慣例：成交價到漲停 → 價格漲色底白字、跌停 →
+// 跌色底白字。顏色取主題的漲跌 token，國際配色（綠漲紅跌）自動反轉；
+// 實心底不受選取列的淡色底影響
+export const limitTone = {
+    up: vars.color.up,
+    down: vars.color.down,
+} as const;
+
+const limitPriceBase = style({
+    justifySelf: 'end',
+    color: '#fff',
+    borderRadius: vars.radius.sm,
+    padding: '0 4px',
+    // 原本價格欄沒有底，padding 用負 margin 抵銷，避免亮燈時欄寬跳動
+    marginRight: '-4px',
+    position: 'relative',
+});
+
+export const limitPrice = styleVariants({
+    up: [limitPriceBase, { background: limitTone.up }],
+    down: [limitPriceBase, { background: limitTone.down }],
+});
+
+// 第二行漲跌幅前的小標「漲停／跌停」— 外框樣式，和價格的實心底分出層次
+const limitTagBase = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '1px',
+    fontFamily: vars.font.body,
+    fontSize: '0.58rem',
+    fontWeight: 700,
+    lineHeight: 1.25,
+    padding: '0 3px 0 2px',
+    marginRight: 4,
+    borderRadius: vars.radius.sm,
+    border: '1px solid currentColor',
+    whiteSpace: 'nowrap',
+    verticalAlign: '1px',
+});
+
+export const limitTag = styleVariants({
+    up: [limitTagBase, { color: limitTone.up }],
+    down: [limitTagBase, { color: limitTone.down }],
+});
+
 export const change = style({
     fontFamily: vars.font.mono,
     fontSize: '0.68rem',

@@ -4,8 +4,10 @@
 
 import {
     ArrowDown,
+    ArrowDownToLine,
     ArrowDownUp,
     ArrowUp,
+    ArrowUpToLine,
     Check,
     ChevronDown,
     ChevronUp,
@@ -24,6 +26,7 @@ import {
     useRef,
     useState,
 } from 'react';
+import { limitStateOf } from '../lib/limit-state';
 import { neighborCode } from '../lib/list-move';
 import { useQuote } from '../hooks/use-stream';
 import type { WatchItem } from '../hooks/use-watchlist';
@@ -119,6 +122,9 @@ const WatchRow = memo(function WatchRow({
             : item.snapshot?.change_rate;
 
     const dir = chg === undefined || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';
+    // 漲跌停亮燈（與報價看板／走勢共用 limitStateOf：指數、興櫃不亮）
+    const atLimit = limitStateOf(item.contract, close);
+    const limitLabel = atLimit === 'up' ? '漲停' : atLimit === 'down' ? '跌停' : '';
     // the flash overlay is re-keyed by flashSeq so the animation replays on
     // every real deal — the row itself stays mounted (hover state survives)
     const flashDir = !quote?.flashSeq
@@ -129,6 +135,8 @@ const WatchRow = memo(function WatchRow({
 
     return (
         <div
+            data-code={item.contract.code}
+            data-limit={atLimit ?? undefined}
             className={`${styles.row[selected ? 'selected' : 'normal']} ${
                 spark ? styles.rowSparkCols : ''
             } ${dropTarget ? styles.dropTarget : ''} ${
@@ -182,7 +190,12 @@ const WatchRow = memo(function WatchRow({
                     />
                 </span>
             )}
-            <span className={`${styles.price} ${panel.dirText[dir]}`}>
+            <span
+                className={`${styles.price} ${
+                    atLimit ? styles.limitPrice[atLimit] : panel.dirText[dir]
+                }`}
+                title={atLimit ? `${limitLabel} ${fmtPrice(close)}` : undefined}
+            >
                 {tick?.simtrade ? (
                     <span className={styles.simBadge}>試搓</span>
                 ) : null}
@@ -190,6 +203,16 @@ const WatchRow = memo(function WatchRow({
             </span>
             <span className={styles.name}>{item.contract.name}</span>
             <span className={`${styles.change} ${panel.dirText[dir]}`}>
+                {atLimit && (
+                    <span className={styles.limitTag[atLimit]}>
+                        {atLimit === 'up' ? (
+                            <ArrowUpToLine size={9} strokeWidth={2.5} />
+                        ) : (
+                            <ArrowDownToLine size={9} strokeWidth={2.5} />
+                        )}
+                        {limitLabel}
+                    </span>
+                )}
                 {fmtSigned(chg)} {fmtPct(pct)}
             </span>
             {arrange ? (
