@@ -8,14 +8,15 @@
 // commands exist; dev builds can install the mock (see main.tsx).
 
 import { useSyncExternalStore } from 'react';
-import { isMainWindow } from '../main-window-commands';
 import { notify } from '../trade';
+import { isChildWindow } from '../window-role';
 import {
     PENDING_CONFIRM_CHANGED_EVENT,
     PENDING_CONFIRM_COMMAND,
     parsePendingConfirmSnapshot,
     parseResolvePendingResult,
     resolutionAllowed,
+    UNIT_LABEL,
     type PendingConfirmItem,
     type PendingConfirmSnapshot,
     type PendingResolution,
@@ -28,22 +29,27 @@ import {
 export interface PendingConfirmBackend {
     list(): Promise<unknown>;
     resolve(request: ResolvePendingRequest): Promise<unknown>;
-    /** Calls back when the engine's list changed; returns an unsubscribe. */
-    subscribe?(onChanged: () => void): () => void;
+    /** Calls back when the engine's list changed (and once when listening
+     * starts); `onError` when listening failed. Returns an unsubscribe. */
+    subscribe?(onChanged: () => void, onError?: (e: unknown) => void): () => void;
 }
 
 export interface PendingConfirmState {
     snapshot: PendingConfirmSnapshot | null; // last valid list
     error: string | null; // last read failed (the old list stays visible)
     loading: boolean;
+    /** bumps per installed backend: decisions never carry across transports */
+    generation: number;
 }
 
-const EMPTY: PendingConfirmState = { snapshot: null, error: null, loading: false };
-let state: PendingConfirmState = EMPTY;
+let generation = 0;
+const empty = (): PendingConfirmState => ({ snapshot: null, error: null, loading: false, generation });
+let state: PendingConfirmState = empty();
 let backend: PendingConfirmBackend | null = null;
 let unsubscribe: (() => void) | null = null;
-let seq = 0; // newest request wins; a slow older read never overwrites it
-const seen = new Set<string>(); // `${id}:${state}` already notified
+let adoptions = 0; // bumps on every adopted snapshot
+const retiredRuns = new Set<string>(); // engine runs a newer run replaced
+const seen = new Set<string>(); // `${id}:${state}` already notified (per backend)
 const listeners = new Set<() => void>();
 
 function set(next: Partial<PendingConfirmState>) {
@@ -51,10 +57,15 @@ function set(next: Partial<PendingConfirmState>) {
     listeners.forEach(l => l());
 }
 
-const side = (i: PendingConfirmItem) => `${i.order.action === 'Buy' ? '買進' : '賣出'} ${i.order.quantity} 口`;
+/** Only the main window resolves and announces; popouts mirror. Uses the
+ * native window label too, not only `?popout`. */
+const isMain = () => !isChildWindow();
+
+const side = (i: PendingConfirmItem) =>
+    `${i.order.action === 'Buy' ? '買進' : '賣出'} ${i.order.quantity} ${UNIT_LABEL[i.order.quantityUnit]}`;
 
 function announce(snapshot: PendingConfirmSnapshot) {
-    if (!isMainWindow()) return; // popouts only mirror; the main window speaks once
+    if (!isMain()) return; // popouts only mirror; the main window speaks once
     for (const item of snapshot.items) {
         const key = `${item.id}:${item.state}`;
         if (seen.has(key)) continue;
@@ -67,9 +78,17 @@ function announce(snapshot: PendingConfirmSnapshot) {
     }
 }
 
-function adopt(snapshot: PendingConfirmSnapshot) {
+/** Adopts `snapshot` unless it is older than what is shown: same engine run
+ * with a lower sequence, or a run that a newer run already replaced. */
+function adopt(snapshot: PendingConfirmSnapshot): boolean {
+    const cur = state.snapshot;
+    if (retiredRuns.has(snapshot.runId)) return false;
+    if (cur && cur.runId === snapshot.runId && snapshot.sequence < cur.sequence) return false;
+    if (cur && cur.runId !== snapshot.runId) retiredRuns.add(cur.runId);
+    adoptions += 1;
     announce(snapshot);
     set({ snapshot, error: null, loading: false });
+    return true;
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -77,15 +96,17 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export async function refreshPendingConfirm(): Promise<void> {
     const b = backend;
     if (!b) return;
-    const mine = ++seq;
+    const since = adoptions;
     set({ loading: true });
     try {
         const snapshot = parsePendingConfirmSnapshot(await b.list());
-        if (mine === seq && b === backend) adopt(snapshot);
+        if (b !== backend) return;
+        if (!adopt(snapshot)) set({ loading: false });
     } catch (e) {
-        if (mine !== seq || b !== backend) return;
+        // a newer list already arrived, or the transport changed: stale error
+        if (b !== backend || adoptions !== since) return;
         const error = `待確認清單讀取失敗：${message(e)}`;
-        if (state.error !== error && isMainWindow()) notify({ kind: 'err', title: '委託待確認', body: error });
+        if (state.error !== error && isMain()) notify({ kind: 'err', title: '委託待確認', body: error });
         set({ error, loading: false });
     }
 }
@@ -100,11 +121,13 @@ const REFUSAL_TEXT: Record<ResolvePendingRefusal, string> = {
 /** Records the user's decision. Throws (with a user-facing message) when it
  * was not applied; the card then stays. */
 export async function resolvePendingConfirm(item: PendingConfirmItem, resolution: PendingResolution): Promise<void> {
-    if (!isMainWindow()) throw new Error(REFUSAL_TEXT.windowNotAllowed);
+    if (!isMain()) throw new Error(REFUSAL_TEXT.windowNotAllowed);
     if (!resolutionAllowed(item.state, resolution)) throw new Error(REFUSAL_TEXT.invalidForState);
+    // only the item as currently shown (same transport, same list) may be
+    // decided; anything else is a stale card
+    if (!state.snapshot?.items.includes(item)) throw new Error(REFUSAL_TEXT.stale);
     const b = backend;
     if (!b) throw new Error('背景執行尚未啟用，無法處理待確認委託');
-    const mine = ++seq;
     let result: ResolvePendingResult;
     try {
         result = parseResolvePendingResult(await b.resolve({ id: item.id, revision: item.revision, resolution }));
@@ -113,7 +136,12 @@ export async function resolvePendingConfirm(item: PendingConfirmItem, resolution
         void refreshPendingConfirm();
         throw new Error(`處理結果未確認：${message(e)}`);
     }
-    if (mine === seq && b === backend) adopt(result.snapshot);
+    if (b !== backend) {
+        // the transport was replaced meanwhile: do not report success
+        void refreshPendingConfirm();
+        throw new Error('處理結果未確認：背景執行已重新連線，請重新核對');
+    }
+    adopt(result.snapshot);
     if (!result.ok) throw new Error(REFUSAL_TEXT[result.reason]);
 }
 
@@ -122,17 +150,25 @@ export function installPendingConfirmBackend(next: PendingConfirmBackend): () =>
     unsubscribe?.();
     unsubscribe = null;
     backend = next;
-    seq++;
-    set(EMPTY);
-    unsubscribe = next.subscribe?.(() => void refreshPendingConfirm()) ?? null;
+    generation += 1;
+    seen.clear();
+    retiredRuns.clear();
+    set(empty());
+    unsubscribe = next.subscribe?.(
+        () => void refreshPendingConfirm(),
+        e => {
+            if (backend !== next) return;
+            set({ error: `待確認通知訂閱失敗：${message(e)}；清單不會自動更新，請按重新整理` });
+        },
+    ) ?? null;
     void refreshPendingConfirm();
     return () => {
         if (backend !== next) return;
         unsubscribe?.();
         unsubscribe = null;
         backend = null;
-        seq++;
-        set(EMPTY);
+        generation += 1;
+        set(empty());
     };
 }
 
@@ -153,9 +189,10 @@ export function resetPendingConfirmForTest() {
     unsubscribe?.();
     unsubscribe = null;
     backend = null;
-    seq++;
     seen.clear();
-    state = EMPTY;
+    retiredRuns.clear();
+    generation += 1;
+    state = empty();
 }
 
 // ---- backends ----
@@ -171,13 +208,19 @@ export function createTauriPendingConfirmBackend(): PendingConfirmBackend {
             const { invoke } = await import('@tauri-apps/api/core');
             return invoke(PENDING_CONFIRM_COMMAND.resolve, { request });
         },
-        subscribe(onChanged) {
+        subscribe(onChanged, onError) {
             let stop: (() => void) | null = null;
             let closed = false;
             void import('@tauri-apps/api/event')
                 .then(({ listen }) => listen(PENDING_CONFIRM_CHANGED_EVENT, () => onChanged()))
-                .then(un => { if (closed) un(); else stop = un; })
-                .catch(() => undefined);
+                .then(un => {
+                    if (closed) { un(); return; }
+                    stop = un;
+                    // changes between the first list and the listener being
+                    // ready would be missed: re-list once it is listening
+                    onChanged();
+                })
+                .catch(e => { if (!closed) onError?.(e); });
             return () => { closed = true; stop?.(); };
         },
     };

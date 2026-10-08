@@ -19,6 +19,9 @@
 // Commands (Tauri `invoke`):
 //   execution_list_pending_confirm()            -> PendingConfirmSnapshot
 //       Read-only. Allowed from the main window and popouts.
+//       Every snapshot carries `runId` (new per engine process) and a
+//       `sequence` that increases with every change within that run; the App
+//       never adopts an older snapshot over a newer one of the same run.
 //   execution_resolve_pending({ request })      -> ResolvePendingResult
 //       Main window only (backend rejects others with `windowNotAllowed`).
 //       `request.revision` must equal the item's current revision, otherwise
@@ -27,6 +30,20 @@
 //       resolution ever places, resends or cancels a broker order; it only
 //       records the user's decision and ends the engine's tracking.
 //       Every result carries the fresh snapshot.
+//       Effects per owner:
+//         trigger  + confirmedSent     -> the trigger is finished (fired,
+//                                         sent per the user); fills are not
+//                                         tracked (there is no trade_id).
+//         trigger  + confirmedNotSent  -> the trigger is cancelled.
+//         bracket leg (②): confirmedSent -> the bracket is treated as exiting
+//                                         with an unknown fill (the other leg
+//                                         stays cancelled, no re-arm);
+//                          confirmedNotSent -> the leg is not re-armed; the
+//                                         bracket shows as unprotected so the
+//                                         user protects the position by hand.
+//         acknowledgeExpired          -> the record is removed.
+//       Where the listing never showed the tag, "not found" is not proof of
+//       "not sent": the user confirms against orders, deals and positions.
 // Event (Tauri `listen`):
 //   execution://pending-confirm-changed         (payload ignored; re-list)
 
@@ -55,12 +72,15 @@ export interface PendingOrderSpec {
     code: string; // order contract code
     name: string | null; // display name when the engine knows it
     action: 'Buy' | 'Sell';
-    quantity: number; // positive integer
+    quantity: number; // positive integer, in `quantityUnit`
+    quantityUnit: 'contract' | 'lot' | 'share'; // 口 (futures/options) / 張 / 股 (odd lot)
     priceType: 'LMT' | 'MKT';
     price: number | null; // required for LMT, null for MKT
     orderType: 'ROD' | 'IOC' | 'FOK';
     triggerPrice: number | null; // the trigger level that fired, if any
 }
+
+export const UNIT_LABEL: Record<PendingOrderSpec['quantityUnit'], string> = { contract: '口', lot: '張', share: '股' };
 
 export interface PendingConfirmItem {
     id: string; // engine idempotency key; stable for the item's life
@@ -80,6 +100,8 @@ export interface PendingConfirmItem {
 
 export interface PendingConfirmSnapshot {
     version: typeof PENDING_CONFIRM_CONTRACT_VERSION;
+    runId: string; // new for every engine process
+    sequence: number; // increases on every change within `runId`
     /** The previous App run did not shut down cleanly. */
     uncleanShutdown: boolean;
     items: PendingConfirmItem[];
@@ -140,6 +162,21 @@ const nonNegInt = (v: unknown, path: string): number => {
 };
 const nullable = <T>(v: unknown, path: string, f: (v: unknown, path: string) => T): T | null =>
     v === null ? null : f(v, path);
+/** ms epoch the UI can render: integer, after 2000-01-01, before 2100. */
+const epochMs = (v: unknown, path: string): number => {
+    const n = num(v, path);
+    if (!Number.isSafeInteger(n) || n < 946_684_800_000 || n > 4_102_444_800_000) throw new ContractError(path, 'not a ms epoch');
+    return n;
+};
+const calendarDay = (v: unknown, path: string): string => {
+    const s = str(v, path);
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    const d = m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : null;
+    if (!m || !d || d.getUTCFullYear() !== Number(m[1]) || d.getUTCMonth() !== Number(m[2]) - 1 || d.getUTCDate() !== Number(m[3])) {
+        throw new ContractError(path, 'not a calendar day YYYY-MM-DD');
+    }
+    return s;
+};
 const bool = (v: unknown, path: string): boolean => {
     if (typeof v !== 'boolean') throw new ContractError(path, 'not a boolean');
     return v;
@@ -155,11 +192,11 @@ function parseItem(raw: unknown, path: string): PendingConfirmItem {
     if (quantity === 0) throw new ContractError(`${path}.order.quantity`, 'must be positive');
     const priceType = oneOf(order.priceType, ['LMT', 'MKT'] as const, `${path}.order.priceType`);
     const price = nullable(order.price, `${path}.order.price`, num);
-    if (priceType === 'LMT' && price === null) throw new ContractError(`${path}.order.price`, 'required for LMT');
-    const tradingDay = str(session.tradingDay, `${path}.session.tradingDay`);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(tradingDay)) throw new ContractError(`${path}.session.tradingDay`, 'not YYYY-MM-DD');
+    if (priceType === 'LMT' && (price === null || price <= 0)) throw new ContractError(`${path}.order.price`, 'LMT needs a positive price');
+    if (priceType === 'MKT' && price !== null) throw new ContractError(`${path}.order.price`, 'MKT must not carry a price');
+    const tradingDay = calendarDay(session.tradingDay, `${path}.session.tradingDay`);
     const state = oneOf(o.state, ['needsConfirm', 'expired'] as const, `${path}.state`);
-    const expiredAt = nullable(o.expiredAt, `${path}.expiredAt`, num);
+    const expiredAt = nullable(o.expiredAt, `${path}.expiredAt`, epochMs);
     if (state === 'expired' && expiredAt === null) throw new ContractError(`${path}.expiredAt`, 'required when expired');
     return {
         id: str(o.id, `${path}.id`),
@@ -175,8 +212,9 @@ function parseItem(raw: unknown, path: string): PendingConfirmItem {
             name: nullable(order.name, `${path}.order.name`, str),
             action: oneOf(order.action, ['Buy', 'Sell'] as const, `${path}.order.action`),
             quantity,
+            quantityUnit: oneOf(order.quantityUnit, ['contract', 'lot', 'share'] as const, `${path}.order.quantityUnit`),
             priceType,
-            price: priceType === 'MKT' ? null : price,
+            price,
             orderType: oneOf(order.orderType, ['ROD', 'IOC', 'FOK'] as const, `${path}.order.orderType`),
             triggerPrice: nullable(order.triggerPrice, `${path}.order.triggerPrice`, num),
         },
@@ -186,10 +224,10 @@ function parseItem(raw: unknown, path: string): PendingConfirmItem {
         },
         env: str(o.env, `${path}.env`),
         tag: str(o.tag, `${path}.tag`),
-        submittedAt: num(o.submittedAt, `${path}.submittedAt`),
+        submittedAt: epochMs(o.submittedAt, `${path}.submittedAt`),
         session: { tradingDay, period: oneOf(session.period, ['day', 'night'] as const, `${path}.session.period`) },
         listingChecks: nonNegInt(o.listingChecks, `${path}.listingChecks`),
-        lastCheckedAt: nullable(o.lastCheckedAt, `${path}.lastCheckedAt`, num),
+        lastCheckedAt: nullable(o.lastCheckedAt, `${path}.lastCheckedAt`, epochMs),
         expiredAt,
     };
 }
@@ -206,7 +244,13 @@ export function parsePendingConfirmSnapshot(raw: unknown): PendingConfirmSnapsho
         if (ids.has(it.id)) throw new ContractError('snapshot.items', `duplicate id ${it.id}`);
         ids.add(it.id);
     }
-    return { version: PENDING_CONFIRM_CONTRACT_VERSION, uncleanShutdown: bool(o.uncleanShutdown, 'snapshot.uncleanShutdown'), items };
+    return {
+        version: PENDING_CONFIRM_CONTRACT_VERSION,
+        runId: str(o.runId, 'snapshot.runId'),
+        sequence: nonNegInt(o.sequence, 'snapshot.sequence'),
+        uncleanShutdown: bool(o.uncleanShutdown, 'snapshot.uncleanShutdown'),
+        items,
+    };
 }
 
 export function parseResolvePendingResult(raw: unknown): ResolvePendingResult {

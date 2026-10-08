@@ -216,11 +216,14 @@ export const note = styleVariants({
     err: { color: vars.color.danger, lineHeight: 1.5 },
 });
 
-export const badge = style({
+export const badgeWrap = style({
     position: 'fixed',
     right: vars.space.sm,
     bottom: '34px',
     zIndex: 1001,
+});
+
+export const badge = style({
     display: 'inline-flex',
     alignItems: 'center',
     gap: '4px',

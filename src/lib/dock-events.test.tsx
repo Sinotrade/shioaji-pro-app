@@ -14,9 +14,9 @@ it('a request opens the orders tab while mounted, and not after', () => {
     function Probe() { useOpenOrdersTabRequest(onOpen); return null; }
     let view!: ReturnType<typeof create>;
     act(() => { view = create(createElement(Probe)); });
-    requestOpenOrdersTab();
+    expect(requestOpenOrdersTab()).toBe(true);
     expect(onOpen).toHaveBeenCalledTimes(1);
     act(() => view.unmount());
-    requestOpenOrdersTab();
+    expect(requestOpenOrdersTab()).toBe(false); // no dock answered
     expect(onOpen).toHaveBeenCalledTimes(1);
 });

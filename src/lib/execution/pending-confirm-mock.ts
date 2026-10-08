@@ -11,7 +11,7 @@ export function mockPendingConfirmItem(over: Partial<PendingConfirmItem> = {}): 
         state: 'needsConfirm',
         owner: { kind: 'trigger', id: 'trigger-1', leg: 'stop' },
         order: {
-            code: 'TXFK6', name: '台指期 11', action: 'Sell', quantity: 1,
+            code: 'TXFK6', name: '台指期 11', action: 'Sell', quantity: 1, quantityUnit: 'contract',
             priceType: 'MKT', price: null, orderType: 'IOC', triggerPrice: 17860,
         },
         account: { accountType: 'F', accountId: '0000001' },
@@ -27,7 +27,7 @@ export function mockPendingConfirmItem(over: Partial<PendingConfirmItem> = {}): 
 }
 
 export function mockPendingConfirmSnapshot(over: Partial<PendingConfirmSnapshot> = {}): PendingConfirmSnapshot {
-    return { version: 1, uncleanShutdown: false, items: [], ...over };
+    return { version: 1, runId: 'mock-run', sequence: 1, uncleanShutdown: false, items: [], ...over };
 }
 
 /** A varied fake set: trigger stop (MKT), bracket take (LMT), an option
@@ -41,15 +41,16 @@ export function mockPendingConfirmDemo(env: string): PendingConfirmSnapshot {
             mockPendingConfirmItem({
                 id: 'demo-2', env, tag: 'D4E5F6', submittedAt: now - 3 * 60_000,
                 owner: { kind: 'bracket', id: 'bracket-7', leg: 'take' },
-                order: { code: 'MXFK6', name: '小台指 11', action: 'Buy', quantity: 2, priceType: 'LMT', price: 17650, orderType: 'ROD', triggerPrice: 17655 },
+                order: { code: 'MXFK6', name: '小台指 11', action: 'Buy', quantity: 2, quantityUnit: 'contract', priceType: 'LMT', price: 17650, orderType: 'ROD', triggerPrice: 17655 },
                 account: { accountType: 'F', accountId: '0000002' },
             }),
             mockPendingConfirmItem({
-                id: 'demo-3', env, tag: 'G7H8J9', submittedAt: now - 9 * 60 * 60_000,
-                state: 'expired', expiredAt: now - 2 * 60 * 60_000,
-                session: { tradingDay: '2026-10-07', period: 'night' },
+                id: 'demo-3', env, tag: 'G7H8J9',
+                submittedAt: new Date(2026, 9, 7, 10, 32, 5).getTime(),
+                state: 'expired', expiredAt: new Date(2026, 9, 7, 13, 45).getTime(),
+                session: { tradingDay: '2026-10-07', period: 'day' },
                 owner: { kind: 'trigger', id: 'trigger-3', leg: 'take' },
-                order: { code: 'TXO17800K6', name: '臺指選 11 月 17800 買權', action: 'Sell', quantity: 1, priceType: 'LMT', price: 128, orderType: 'ROD', triggerPrice: 130 },
+                order: { code: 'TXO17800K6', name: '臺指選 11 月 17800 買權', action: 'Sell', quantity: 1, quantityUnit: 'contract', priceType: 'LMT', price: 128, orderType: 'ROD', triggerPrice: 130 },
             }),
         ],
     });

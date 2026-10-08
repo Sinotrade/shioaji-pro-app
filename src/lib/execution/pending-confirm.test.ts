@@ -12,7 +12,7 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock('../trade', () => ({ notify: m.notify }));
-vi.mock('../main-window-commands', () => ({ isMainWindow: () => m.main }));
+vi.mock('../window-role', () => ({ isChildWindow: () => !m.main }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: m.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: m.listen }));
 
@@ -34,13 +34,13 @@ afterEach(() => store.resetPendingConfirmForTest());
 describe('pending confirm store', () => {
     it('stays empty with no backend installed (current paths unchanged)', async () => {
         await store.refreshPendingConfirm();
-        expect(store.getPendingConfirmState()).toEqual({ snapshot: null, error: null, loading: false });
+        expect(store.getPendingConfirmState()).toMatchObject({ snapshot: null, error: null, loading: false });
     });
 
     it('loads the snapshot and notifies once per new item', async () => {
         const backend = store.createMockPendingConfirmBackend(mockPendingConfirmSnapshot({
             uncleanShutdown: true,
-            items: [mockPendingConfirmItem({ id: 'a' }), mockPendingConfirmItem({ id: 'b', state: 'expired', expiredAt: 2 })],
+            items: [mockPendingConfirmItem({ id: 'a' }), mockPendingConfirmItem({ id: 'b', state: 'expired', expiredAt: Date.now() })],
         }));
         store.installPendingConfirmBackend(backend);
         await flush();
@@ -127,6 +127,121 @@ describe('pending confirm store', () => {
     });
 });
 
+describe('ordering and transport changes', () => {
+    const deferred = <T,>() => {
+        let resolve!: (v: T) => void;
+        const promise = new Promise<T>(r => { resolve = r; });
+        return { promise, resolve };
+    };
+
+    it('a slow older read never overwrites a newer resolve result', async () => {
+        const item = mockPendingConfirmItem({ id: 'a' });
+        const reads: ReturnType<typeof deferred<unknown>>[] = [];
+        const backend = {
+            list: () => { const d = deferred<unknown>(); reads.push(d); return d.promise; },
+            resolve: async () => ({ ok: true, snapshot: mockPendingConfirmSnapshot({ sequence: 3, items: [] }) }),
+        };
+        store.installPendingConfirmBackend(backend);
+        reads[0]!.resolve(mockPendingConfirmSnapshot({ sequence: 1, items: [item] }));
+        await flush();
+        const slow = store.refreshPendingConfirm(); // starts before the resolve
+        await store.resolvePendingConfirm(store.getPendingConfirmState().snapshot!.items[0]!, 'confirmedSent');
+        expect(store.getPendingConfirmState().snapshot?.items).toEqual([]);
+        reads[1]!.resolve(mockPendingConfirmSnapshot({ sequence: 2, items: [item] }));
+        await slow;
+        expect(store.getPendingConfirmState().snapshot?.items).toEqual([]);
+        expect(store.getPendingConfirmState().snapshot?.sequence).toBe(3);
+    });
+
+    it('a new engine run replaces the old one, and the old run cannot come back', async () => {
+        const reads: ReturnType<typeof deferred<unknown>>[] = [];
+        store.installPendingConfirmBackend({
+            list: () => { const d = deferred<unknown>(); reads.push(d); return d.promise; },
+            resolve: async () => null,
+        });
+        reads[0]!.resolve(mockPendingConfirmSnapshot({ runId: 'old', sequence: 9, items: [mockPendingConfirmItem({ id: 'a' })] }));
+        await flush();
+        void store.refreshPendingConfirm();
+        void store.refreshPendingConfirm();
+        reads[1]!.resolve(mockPendingConfirmSnapshot({ runId: 'new', sequence: 1, items: [] }));
+        await flush();
+        reads[2]!.resolve(mockPendingConfirmSnapshot({ runId: 'old', sequence: 10, items: [mockPendingConfirmItem({ id: 'a' })] }));
+        await flush();
+        expect(store.getPendingConfirmState().snapshot).toMatchObject({ runId: 'new', items: [] });
+    });
+
+    it('a resolve whose backend was replaced meanwhile is reported as unconfirmed', async () => {
+        const item = mockPendingConfirmItem({ id: 'a' });
+        const pending = deferred<unknown>();
+        store.installPendingConfirmBackend({
+            list: async () => mockPendingConfirmSnapshot({ items: [item] }),
+            resolve: () => pending.promise,
+        });
+        await flush();
+        const done = store.resolvePendingConfirm(store.getPendingConfirmState().snapshot!.items[0]!, 'confirmedNotSent');
+        store.installPendingConfirmBackend(store.createMockPendingConfirmBackend(mockPendingConfirmSnapshot({ items: [item] })));
+        pending.resolve({ ok: true, snapshot: mockPendingConfirmSnapshot({ sequence: 5, items: [] }) });
+        await expect(done).rejects.toThrow(/未確認/);
+        await flush();
+        expect(store.getPendingConfirmState().snapshot?.items).toHaveLength(1);
+    });
+
+    it('a card from a replaced transport cannot be decided against the new one', async () => {
+        const snap = mockPendingConfirmSnapshot({ items: [mockPendingConfirmItem({ id: 'a' })] });
+        store.installPendingConfirmBackend(store.createMockPendingConfirmBackend(snap));
+        await flush();
+        const old = store.getPendingConfirmState().snapshot!.items[0]!;
+        const gen = store.getPendingConfirmState().generation;
+        const next = store.createMockPendingConfirmBackend(snap);
+        const resolve = vi.spyOn(next, 'resolve');
+        store.installPendingConfirmBackend(next);
+        await flush();
+        expect(store.getPendingConfirmState().generation).not.toBe(gen);
+        await expect(store.resolvePendingConfirm(old, 'confirmedNotSent')).rejects.toThrow(/重新核對/);
+        expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it('a failed subscription is visible', async () => {
+        store.installPendingConfirmBackend({
+            list: async () => mockPendingConfirmSnapshot(),
+            resolve: async () => null,
+            subscribe: (_changed, onError) => { onError?.(new Error('no ipc')); return () => undefined; },
+        });
+        expect(store.getPendingConfirmState().error).toMatch(/訂閱失敗/);
+    });
+
+    it('a reinstalled backend notifies again for the same ids', async () => {
+        const snap = mockPendingConfirmSnapshot({ items: [mockPendingConfirmItem({ id: 'a' })] });
+        store.installPendingConfirmBackend(store.createMockPendingConfirmBackend(snap));
+        await flush();
+        store.installPendingConfirmBackend(store.createMockPendingConfirmBackend(snap));
+        await flush();
+        expect(m.notify).toHaveBeenCalledTimes(2);
+    });
+
+    it('a read error after a newer list arrived is ignored', async () => {
+        const reads: ReturnType<typeof deferred<unknown>>[] = [];
+        store.installPendingConfirmBackend({
+            list: () => { const d = deferred<unknown>(); reads.push(d); return d.promise; },
+            resolve: async () => null,
+        });
+        const failing = store.refreshPendingConfirm();
+        reads[0]!.resolve(mockPendingConfirmSnapshot({ items: [] }));
+        await flush();
+        reads[1]!.resolve(Promise.reject(new Error('late')) as never);
+        await failing;
+        expect(store.getPendingConfirmState().error).toBeNull();
+    });
+
+    it('notifications use the order unit (口／張／股)', async () => {
+        store.installPendingConfirmBackend(store.createMockPendingConfirmBackend(mockPendingConfirmSnapshot({
+            items: [mockPendingConfirmItem({ id: 's', order: { ...mockPendingConfirmItem().order, code: '2330', quantity: 30, quantityUnit: 'share' } })],
+        })));
+        await flush();
+        expect(m.notify.mock.calls[0]![0].body).toContain('30 股');
+    });
+});
+
 describe('mock backend', () => {
     it('never exposes a resend resolution', async () => {
         const backend = store.createMockPendingConfirmBackend(mockPendingConfirmSnapshot({
@@ -139,7 +254,7 @@ describe('mock backend', () => {
 
 describe('tauri backend adapter', () => {
     it('calls the contract command names and event', async () => {
-        m.invoke.mockResolvedValue({ version: 1, uncleanShutdown: false, items: [] });
+        m.invoke.mockResolvedValue({ version: 1, runId: 'r', sequence: 1, uncleanShutdown: false, items: [] });
         m.listen.mockResolvedValue(m.unlisten);
         const backend = store.createTauriPendingConfirmBackend();
         await backend.list();
@@ -152,6 +267,10 @@ describe('tauri backend adapter', () => {
         const stop = backend.subscribe!(cb);
         await flush();
         expect(m.listen).toHaveBeenCalledWith(PENDING_CONFIRM_CHANGED_EVENT, expect.any(Function));
+        // once listening, it re-lists so nothing between list and listen is lost
+        expect(cb).toHaveBeenCalledTimes(1);
+        m.listen.mock.calls[0]![1]();
+        expect(cb).toHaveBeenCalledTimes(2);
         stop();
         await flush();
         expect(m.unlisten).toHaveBeenCalled();

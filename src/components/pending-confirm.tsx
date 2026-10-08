@@ -11,7 +11,7 @@ import { CalendarX2, ChevronDown, ChevronUp, CircleHelp, ListChecks, RefreshCw, 
 import { useState } from 'react';
 import { requestOpenOrdersTab } from '../lib/dock-events';
 import { refreshPendingConfirm, resolvePendingConfirm, usePendingConfirm } from '../lib/execution/pending-confirm';
-import type { PendingConfirmItem, PendingResolution } from '../lib/execution/pending-confirm-contract';
+import { UNIT_LABEL, type PendingConfirmItem, type PendingResolution } from '../lib/execution/pending-confirm-contract';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
 import { useServerInfo } from '../lib/server-info-store';
@@ -53,7 +53,7 @@ function Facts({ item }: { item: PendingConfirmItem }) {
             </div>
             <div className={styles.chips}>
                 <span className={order.action === 'Buy' ? styles.chipBuy : styles.chipSell}>
-                    {order.action === 'Buy' ? '買進' : '賣出'} {order.quantity} 口
+                    {order.action === 'Buy' ? '買進' : '賣出'} {order.quantity} {UNIT_LABEL[order.quantityUnit]}
                 </span>
                 <span className={styles.chip}>{priceLabel(item)} · {order.orderType}</span>
                 <span className={styles.chip}>送出 {sentAtLabel(item.submittedAt)}</span>
@@ -65,6 +65,22 @@ function Facts({ item }: { item: PendingConfirmItem }) {
                 {item.account.accountType === 'F' ? '期貨' : '證券'}帳戶 {maskAccountId(item.account.accountId, priv)}
                 {' · '}{protectionEnvLabel(item.env)}環境 · {sessionLabel(item)}
             </div>
+        </>
+    );
+}
+
+/** 開啟委託查詢 + a note when this layout has no orders dock. */
+function OpenOrdersButton() {
+    const [missing, setMissing] = useState(false);
+    return (
+        <>
+            <button type='button' className={styles.button} onClick={() => setMissing(!requestOpenOrdersTab())}
+                title='切到下方「委託」分頁（全部狀態、全部帳戶）並更新一次'>
+                <ListChecks size={12} aria-hidden />開啟委託查詢
+            </button>
+            {missing && (
+                <span className={styles.note.warn}>目前版面沒有委託區，請從面板庫加入下方 Dock 後再核對</span>
+            )}
         </>
     );
 }
@@ -108,18 +124,15 @@ function ConfirmCard({ item, envNow }: { item: PendingConfirmItem; envNow: strin
             </div>
             {why && (
                 <div className={styles.note.muted}>
-                    背景執行送出這筆委託後沒有收到券商回應，也沒有委託編號；之後完整查詢委託清單
-                    {item.listingChecks} 次都沒有找到它（自訂欄位 {item.tag}）。它可能已送達券商，
-                    也可能沒有。為了避免重複下單，系統不會自動重送，請核對後選擇。
+                    {`背景執行送出這筆委託後沒有收到券商回應，也沒有委託編號；之後完整查詢委託清單 ${item.listingChecks} 次都沒有找到它（自訂欄位 ${item.tag}）。`}
+                    查不到不代表沒有送出：它可能已送達券商甚至已成交。為了避免重複下單，系統不會自動重送；
+                    請一併核對委託、成交與持倉後再選擇。
                 </div>
             )}
             <Facts item={item} />
             <div className={styles.stepRow}>
-                <span className={styles.stepLabel}>① 到委託清單核對</span>
-                <button type='button' className={styles.button} onClick={() => requestOpenOrdersTab()}
-                    title='切到下方「委託」分頁；對照商品、方向、數量與送出時間'>
-                    <ListChecks size={12} aria-hidden />開啟委託查詢
-                </button>
+                <span className={styles.stepLabel}>① 核對委託、成交與持倉</span>
+                <OpenOrdersButton />
             </div>
             <div className={styles.stepRow}>
                 <span className={styles.stepLabel}>② 核對結果</span>
@@ -128,12 +141,12 @@ function ConfirmCard({ item, envNow }: { item: PendingConfirmItem; envNow: strin
                 <label className={styles.choice}>
                     <input type='radio' name={`pc-${item.id}`} checked={choice === 'confirmedSent'} disabled={locked}
                         onChange={() => setChoice('confirmedSent')} />
-                    <span>委託清單有這筆：已送出或已成交</span>
+                    <span>已確認已送出或已成交<span className={styles.note.muted}>（委託、成交或持倉找得到）</span></span>
                 </label>
                 <label className={styles.choice}>
                     <input type='radio' name={`pc-${item.id}`} checked={choice === 'confirmedNotSent'} disabled={locked}
                         onChange={() => setChoice('confirmedNotSent')} />
-                    <span>委託清單沒有這筆：確認沒有送出，取消這筆</span>
+                    <span>確認沒有送出，取消這筆<span className={styles.note.muted}>（委託、成交與持倉都沒有）</span></span>
                 </label>
             </div>
             {!here && (
@@ -168,14 +181,11 @@ function ExpiredCard({ item }: { item: PendingConfirmItem }) {
             </div>
             <Facts item={item} />
             <div className={styles.note.muted}>
-                {sessionLabel(item)}結束時仍查不到這筆的結果。委託不跨盤別，已自動失效，不會再成交，系統也不會重送。
-                若失效前可能已成交，請到成交查詢與持倉核對。
+                {`${sessionLabel(item)}結束時仍查不到這筆的結果。委託不跨盤別，已自動失效，不會再成交，系統也不會重送。若失效前可能已成交，請到成交查詢與持倉核對。`}
             </div>
             {error && <div className={styles.note.err}>{error}</div>}
             <div className={styles.stepRow}>
-                <button type='button' className={styles.button} onClick={() => requestOpenOrdersTab()}>
-                    <ListChecks size={12} aria-hidden />開啟委託查詢
-                </button>
+                <OpenOrdersButton />
                 <button type='button' className={styles.button} disabled={busy}
                     onClick={() => void run(() => resolvePendingConfirm(item, 'acknowledgeExpired'))}>
                     {busy ? '處理中…' : '知道了，移除'}
@@ -186,7 +196,7 @@ function ExpiredCard({ item }: { item: PendingConfirmItem }) {
 }
 
 export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) {
-    const { snapshot, error } = usePendingConfirm();
+    const { snapshot, error, generation } = usePendingConfirm();
     const [open, setOpen] = useState(true);
     useServerInfo(); // re-render when the server mode becomes known / changes
     const items = snapshot?.items ?? [];
@@ -195,11 +205,13 @@ export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) 
     if (items.length === 0 && !error) return null;
     if (compact) {
         return (
-            <button className={styles.badge} role='alert' title='在主視窗處理待確認委託'
-                onClick={() => void focusMainWindow().catch(() => undefined)}>
-                <TriangleAlert size={12} aria-hidden />
-                {confirm.length > 0 || error ? `委託待確認 ${confirm.length} 筆` : `委託已失效 ${expired.length} 筆`} · 請在主視窗處理
-            </button>
+            <div className={styles.badgeWrap} role='status'>
+                <button type='button' className={styles.badge} title='在主視窗處理待確認委託'
+                    onClick={() => void focusMainWindow().catch(() => undefined)}>
+                    <TriangleAlert size={12} aria-hidden />
+                    {confirm.length > 0 || error ? `委託待確認 ${confirm.length} 筆` : `委託已失效 ${expired.length} 筆`} · 請在主視窗處理
+                </button>
+            </div>
         );
     }
     const envNow = currentProtectionEnv();
@@ -207,10 +219,10 @@ export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) 
     const counts = [confirm.length > 0 && `待確認 ${confirm.length} 筆`, expired.length > 0 && `已失效 ${expired.length} 筆`]
         .filter(Boolean).join(' · ');
     return (
-        <div className={!open ? styles.panelCollapsed : quiet ? styles.panelQuiet : styles.panel} role='alert'>
+        <div className={!open ? styles.panelCollapsed : quiet ? styles.panelQuiet : styles.panel} role='region' aria-label='委託待確認'>
             <div className={styles.header}>
-                <span className={quiet ? styles.titleQuiet : styles.title}>
-                    <TriangleAlert size={14} aria-hidden />委託待確認
+                <span className={quiet ? styles.titleQuiet : styles.title} role={quiet ? 'status' : 'alert'}>
+                    <TriangleAlert size={14} aria-hidden />{quiet ? '委託已失效' : '委託待確認'}
                     {counts && <span className={styles.count}>{counts}</span>}
                 </span>
                 <button type='button' className={styles.button} onClick={() => setOpen(o => !o)} aria-expanded={open}>
@@ -234,8 +246,8 @@ export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) 
                             </button>
                         </div>
                     )}
-                    {confirm.map(i => <ConfirmCard key={`${i.id}:${i.revision}`} item={i} envNow={envNow} />)}
-                    {expired.map(i => <ExpiredCard key={`${i.id}:${i.revision}`} item={i} />)}
+                    {confirm.map(i => <ConfirmCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i} envNow={envNow} />)}
+                    {expired.map(i => <ExpiredCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i} />)}
                 </>
             )}
         </div>

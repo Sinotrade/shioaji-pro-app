@@ -72,7 +72,7 @@ it('renders nothing when nothing needs confirmation', () => {
 it('shows what was sent: product, side, quantity, price, time, owner', () => {
     show([mockPendingConfirmItem({
         id: 'a', env: SIM,
-        order: { code: 'TXFK6', name: '台指期 11', action: 'Sell', quantity: 2, priceType: 'LMT', price: 17850, orderType: 'ROD', triggerPrice: 17860 },
+        order: { code: 'TXFK6', name: '台指期 11', action: 'Sell', quantity: 2, quantityUnit: 'contract', priceType: 'LMT', price: 17850, orderType: 'ROD', triggerPrice: 17860 },
         owner: { kind: 'trigger', id: 't', leg: 'stop' },
         submittedAt: new Date(2026, 9, 8, 13, 41, 7).getTime(),
     })]);
@@ -118,10 +118,28 @@ it('a failed resolution is shown and the card stays', async () => {
     expect(text(r.root)).toContain('待確認狀態已更新');
 });
 
-it('opens the order list to check', async () => {
+it('opens the order list to check; says so when the layout has no orders dock', async () => {
+    m.openOrders.mockReturnValue(true);
     const r = render();
     await click(button(r, '開啟委託'));
     expect(m.openOrders).toHaveBeenCalled();
+    expect(text(r.root)).not.toContain('目前版面沒有委託區');
+    m.openOrders.mockReturnValue(false);
+    await click(button(r, '開啟委託'));
+    expect(text(r.root)).toContain('目前版面沒有委託區');
+});
+
+it('the choices say that "not found" alone is not "not sent"', async () => {
+    const r = render();
+    const all = text(r.root);
+    expect(all).toContain('委託、成交與持倉都沒有');
+    await click(buttons(r).find(b => b.props['aria-label'] === '為什麼要確認')!);
+    expect(text(r.root)).toContain('查不到不代表沒有送出');
+});
+
+it('shows stock units (張／股), not 口', () => {
+    show([mockPendingConfirmItem({ id: 'a', env: SIM, order: { ...mockPendingConfirmItem().order, code: '2330', name: '台積電', quantity: 30, quantityUnit: 'share' } })]);
+    expect(text(render().root)).toContain('賣出 30 股');
 });
 
 it('an expired order (session changed) shows 已失效 without confirm choices', async () => {
