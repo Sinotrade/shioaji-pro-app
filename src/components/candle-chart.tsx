@@ -133,6 +133,7 @@ import { ChartDrawingOverlays, ChartDrawingTools, ChartObjectList } from './char
 import { toolDef } from '../lib/chart-drawings';
 import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
+import { ChartEstPlanner } from './chart-est-planner';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
 // payload (a year of TXF ≈ 280k bars / 18MB) — keep the range tight enough
@@ -1966,6 +1967,14 @@ export function CandleChart({
                         contractLabel={`${contract.code}${(contract as { name?: string }).name ? ` ${(contract as { name?: string }).name}` : ''}`}
                     />
                 )}
+                <ChartEstPlanner
+                    contract={contract}
+                    lastPrice={lastPriceRef.current}
+                    account={orderAccountView.active ?? null}
+                    chartHostRef={hostRef}
+                    candleSeriesRef={candleSeriesRef}
+                    onOrdersChanged={onOrdersChanged}
+                />
                 <button
                     className={
                         styles.indicatorBtn[
