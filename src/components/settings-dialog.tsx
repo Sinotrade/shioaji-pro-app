@@ -77,6 +77,7 @@ import {
 } from '../lib/tauri';
 import { CUSTOM_BASES } from '../lib/custom-theme';
 import { CustomThemeEditor } from './custom-theme-editor';
+import { BackgroundExecutionSetting } from './background-execution-setting';
 import { ExternalLink } from './external-link';
 import { Orb } from './orb';
 import * as hud from './hud-header.css';
@@ -517,6 +518,7 @@ function RiskSection() {
                 圖表點價、平倉與鋪單都會先跳委託確認；停損/停利等
                 自動觸發單與 Agent 下單不經過此確認。
             </span>
+            {isTauri && <BackgroundExecutionSetting />}
             <span className={hud.settingLabel}>圖表帶價 Chart Price</span>
             <div className={hud.switchRow}>
                 <span
