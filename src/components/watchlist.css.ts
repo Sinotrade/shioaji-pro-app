@@ -165,6 +165,9 @@ export const rowArrange = style({
     cursor: 'grab',
 });
 
+// 排序模式左右 padding 加大，長代碼可能被小標蓋到 — 收起，只留價格底色
+globalStyle(`${rowArrange} ${limitTagBase}`, { display: 'none' });
+
 export const gripHandle = style({
     position: 'absolute',
     left: '4px',
