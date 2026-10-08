@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiPost } from './api';
+import { CREDIT_TEXT } from './odd-lot';
 import { getApiBase } from './runtime';
 import type { ContractBase } from './types/contract';
 
@@ -115,4 +116,93 @@ export function useCreditEnquire(contract: ContractKey, enabled: boolean): Credi
     // an answer for another stock, server or day never applies
     if (state.key !== key) return { key, loading: true, failed: false };
     return state;
+}
+
+// ---- 閃電與圖表下單共用：信用條件每一邊的停用原因、點下去時的檢查 ----
+
+/** 面板（閃電、K 線圖）的信用條件；現股＋不當沖為預設 */
+export interface PanelCredit { cond: string; daytradeShort: boolean }
+export type CreditCheck = CreditStatus | 'loading';
+
+const SELL_ONLY_CONDS: ReadonlySet<string> = new Set(['ShortSelling', 'SBLShort', 'SBLShortPriceExempt']);
+
+/** 面板要查 credit_enquire 的條件：只有融資／融券；借券類由券源決定，不查 */
+export function creditEnquireCond(credit: PanelCredit): CreditCond | null {
+    return credit.cond === 'MarginTrading' || credit.cond === 'ShortSelling' ? credit.cond : null;
+}
+
+/** 只有會「新增」信用部位的那一邊要看可否融資券：融資買進、融券賣出 */
+export function creditOpensFor(action: 'Buy' | 'Sell', credit: PanelCredit): CreditCond | null {
+    if (credit.cond === 'MarginTrading' && action === 'Buy') return 'MarginTrading';
+    if (credit.cond === 'ShortSelling' && action === 'Sell') return 'ShortSelling';
+    return null;
+}
+
+export const creditRefusedText = (code: string, cond: CreditCond) => `${code} 目前不能${cond === 'MarginTrading' ? '融資買進' : '融券賣出'}，已停止送單`;
+
+/**
+ * 每一邊不能送的原因（null＝可送）。信用了結不受暫停限制（證交所）：可否融資
+ * 只擋「融資買進」，可否融券只擋「融券賣出」；融資賣出償還照常。查詢中或
+ * 無法確認一律不擋（由券商端決定）。
+ */
+export function creditSideBlocks(contract: { code: string; day_trade?: string }, credit: PanelCredit, check: CreditCheck) {
+    const sellOnly = SELL_ONLY_CONDS.has(credit.cond);
+    const creditBlocked = check === 'blocked' && creditEnquireCond(credit)
+        ? (credit.cond === 'MarginTrading'
+            ? `${contract.code} 目前不能融資買進，已停止融資買進；融資賣出（償還）照常`
+            : `${contract.code} 目前不能融券賣出，已停止送單；改回現股或換股票`)
+        : null;
+    const dayTradeBlocked = credit.daytradeShort && contract.day_trade !== 'Yes'
+        ? (contract.day_trade === 'OnlyBuy' ? '此股票只能先買後賣，不能現沖先賣；點賣已停用' : '此股票不可當沖，不能現沖先賣；點賣已停用')
+        : null;
+    return {
+        sellOnly,
+        creditBlocked,
+        dayTradeBlocked,
+        buy: (credit.cond === 'MarginTrading' ? creditBlocked : null) ?? (sellOnly ? CREDIT_TEXT.shortBuy : null),
+        sell: (credit.cond === 'ShortSelling' ? creditBlocked : null) ?? dayTradeBlocked,
+        /** 送單時的固定規則（不含可能過時的可否融資券結果，那個送出前重查） */
+        rule: { Buy: sellOnly ? CREDIT_TEXT.shortBuy : null, Sell: dayTradeBlocked } as Record<'Buy' | 'Sell', string | null>,
+    };
+}
+
+/**
+ * 點下去時的信用檢查（閃電與 K 線圖共用）：
+ * - 融資買進／融券賣出：先看 credit_enquire（當日快取；快取是 0 再重查一次，
+ *   額度可能已恢復）；確定不可就丟錯，查詢失敗不擋。查詢期間換了伺服器位址
+ *   也不送。回傳 afterConfirm：確認之後不用快取重查，確認期間變成 0 就不送。
+ * - check()：送出前（beforeSend）呼叫 — 確認視窗開著跨過台北午夜或換了伺服器，
+ *   可否融資券／可否當沖要重新確認，這筆不送。
+ */
+export async function prepareCreditOrder(
+    contract: ContractKey,
+    action: 'Buy' | 'Sell',
+    credit: PanelCredit,
+): Promise<{ afterConfirm?: () => Promise<void>; check: () => void }> {
+    const clickDay = taipeiDay();
+    const dayBound = action === 'Sell' && credit.cond === 'Cash' && credit.daytradeShort;
+    const cond = creditOpensFor(action, credit);
+    let enquiryKey: string | null = null;
+    if (cond) {
+        enquiryKey = creditEnquireKey(contract);
+        const clickBase = getApiBase();
+        let row = await loadCreditEnquire(contract).catch(() => undefined);
+        if (creditStatus(row, cond) === 'blocked') row = await loadCreditEnquire(contract, { fresh: true }).catch(() => undefined);
+        // 模式的比對交給 placeQuickOrder（點擊當下固定的閘門，在確認之後檢查）
+        if (getApiBase() !== clickBase) throw new Error('確認可否融資券期間伺服器已切換，這筆沒有送出');
+        if (creditStatus(row, cond) === 'blocked') throw new Error(creditRefusedText(contract.code, cond));
+    }
+    const key = enquiryKey;
+    return {
+        ...(cond ? {
+            afterConfirm: async () => {
+                const fresh = await loadCreditEnquire(contract, { fresh: true }).catch(() => undefined);
+                if (creditStatus(fresh, cond) === 'blocked') throw new Error(creditRefusedText(contract.code, cond));
+            },
+        } : {}),
+        check: () => {
+            if (key !== null && creditEnquireKey(contract) !== key) throw new Error('確認期間已跨日或伺服器已切換，可否融資券需重新確認，這筆沒有送出');
+            if (dayBound && taipeiDay() !== clickDay) throw new Error('確認期間已跨日，可否當沖需重新確認，這筆沒有送出');
+        },
+    };
 }

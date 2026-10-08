@@ -71,6 +71,9 @@ export interface OrderResult {
     price_type?: string;
     order_lot?: string;
     octype?: string;
+    /** 股票信用條件（Cash／MarginTrading／…）與現股當沖先賣 */
+    order_cond?: string;
+    daytrade_short?: boolean;
     custom_field?: string;
     account?: { broker_id: string; account_id: string; account_type: string };
 }

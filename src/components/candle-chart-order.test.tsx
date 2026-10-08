@@ -14,7 +14,7 @@ vi.hoisted(() => {
     (globalThis as any).document = { addEventListener() {}, removeEventListener() {}, createElement: () => ({ style: {}, getContext: () => null }), body: {} };
 });
 const m = vi.hoisted(() => ({
-    place: vi.fn(), addTrigger: vi.fn(), notify: vi.fn(),
+    place: vi.fn(), addTrigger: vi.fn(), notify: vi.fn(), creditPost: vi.fn(),
     click: [] as ((p: unknown) => void)[],
     accounts: [] as Account[],
     roundClose: 100 as number | null,
@@ -37,6 +37,7 @@ vi.mock('../hooks/use-chart-drawings', async (importOriginal) => {
     } };
 });
 vi.mock('../lib/trade', () => ({ notify: m.notify, placeQuickOrder: m.place }));
+vi.mock('../lib/api', async (importOriginal) => ({ ...await importOriginal<typeof import('../lib/api')>(), apiPost: m.creditPost }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: async () => {}, updateOrderPrice: m.updatePrice }));
 vi.mock('../lib/trigger-engine', () => ({ addTrigger: m.addTrigger, removeTrigger: vi.fn(), useTriggers: () => [] }));
 vi.mock('../lib/account-store', () => ({ ensureAccounts: () => undefined,
@@ -80,6 +81,7 @@ import { __resetDrawingsForTest, addDrawing, DEFAULT_DRAWING_STYLE, DRAWING_TOOL
 import type { ChartDrawingsApi } from '../hooks/use-chart-drawings';
 import { loadOrderLotPreference, saveOrderLotPreference, QUICK_ORDER_LOTS } from '../lib/order-lot-preference';
 import type { ChartOrderPanelState } from '../lib/chart-order-settings';
+import { resetCreditEnquireCache } from '../lib/credit-eligibility';
 
 const S1 = { account_type: 'S', broker_id: 'B', account_id: '1111121', signed: true, person_id: '', username: '' } as Account;
 const S2 = { ...S1, account_id: '2222207' } as Account;
@@ -126,6 +128,8 @@ beforeEach(() => {
     m.place.mockReset().mockResolvedValue({ status: { status: 'PendingSubmit' } });
     m.addTrigger.mockReset().mockResolvedValue(null);
     m.notify.mockReset();
+    m.creditPost.mockReset().mockResolvedValue([{ stock_id: '2330', system: 'ALL', update_time: '', margin_unit: 100, short_unit: 50, margin_loan_ratio: 60, short_margin_ratio: 90 }]);
+    resetCreditEnquireCache();
     m.click.length = 0;
     m.accounts = [S1, S2, F1];
     m.roundClose = 100; m.oddClose = 100;
@@ -560,7 +564,7 @@ describe('chart order settings button', () => {
         expect(text(chip())).toBe('1 張');
         await act(async () => view.update(createElement(CandleChart, { contract: fut })));
         await flush();
-        expect(text(chip())).toBe('5 口');
+        expect(text(chip())).toBe('5 口·平倉');
         await act(async () => button(view.root, '點價買').props.onClick());
         await clickChart();
         expect(m.place.mock.calls.at(-1)![3]).toBe(5);
@@ -622,8 +626,11 @@ describe('chart order settings button', () => {
         expect(state).toEqual({ S: { qty: 500, lot: 'IntradayOdd', orderType: 'ROD', octype: 'Auto', accountKey: 'S:B:2222207' } });
         const t = text(pop()!);
         expect(t).not.toContain('IOC');
-        expect(t).not.toContain('當沖');
         expect(t).not.toContain('開平倉');
+        // 零股：信用條件列停用並說明（不是隱藏）
+        expect(button(pop()!, '融資').props.disabled).toBe(true);
+        expect(button(pop()!, '現股當沖先賣').props.disabled).toBe(true);
+        expect(t).toContain('零股只能以現股買賣');
         expect(text(view.root.findAll(n => n.props['data-testid'] === 'order-settings-summary')[0]!)).toMatch(/^點價買／賣以 ROD 限價送出 500 股盤中零股，帳號 .*2207；停損停利觸發後以漲跌停價送零股限價 ROD/);
         expect(text(chip())).toBe('500 股');
         await act(async () => { button(pop()!, '完成').props.onClick(); });
@@ -774,5 +781,199 @@ describe('chart order settings button', () => {
         const futChip = futChart.root.findAll(n => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith('圖表下單設定'))[0]!;
         expect(text(futChip)).toBe('1 張');
         await act(async () => futChart.unmount());
+    });
+});
+
+// 圖表下單的信用條件、現股當沖先賣與期貨當沖倉別（同下單面板與閃電 #255、#256）
+describe('chart order credit conditions', () => {
+    const stkDT = { ...stk, day_trade: 'Yes' };
+    const summary = () => text(view.root.findAll(n => n.props['data-testid'] === 'order-settings-summary')[0]!);
+    const modeBtn = (label: string) => button(view.root, label);
+    const pick = async (label: string) => { await act(async () => { button(pop()!, label).props.onClick(); }); await flush(); };
+    const openPop = async () => { if (!pop()) await act(async () => { chip().props.onClick(); }); };
+    const closePop = async () => { if (pop()) await act(async () => { button(pop()!, '完成').props.onClick(); }); };
+
+    it('融資: the chip says 1 張·融資, the hint, summary and order carry 融資 both ways', async () => {
+        await mount({ contract: stkDT });
+        await openPop();
+        await pick('融資');
+        expect(text(chip())).toBe('1 張·融資');
+        expect(summary()).toContain('融資');
+        await closePop();
+        await act(async () => { modeBtn('點價買').props.onClick(); });
+        expect(text(view.root)).toContain('點擊價位 → 融資限價買進 1 張');
+        await clickChart();
+        expect(m.place).toHaveBeenCalledOnce();
+        expect(m.place.mock.calls[0]![4]).toMatchObject({ orderCond: 'MarginTrading', afterConfirm: expect.any(Function) });
+        expect(m.notify.mock.calls.at(-1)![0].title).toContain('融資買進已送出');
+        await act(async () => { modeBtn('點價賣').props.onClick(); });
+        await clickChart();
+        // 融資賣出（償還）不查可否融資
+        expect(m.place.mock.calls[1]![4]).toMatchObject({ orderCond: 'MarginTrading' });
+        expect(m.place.mock.calls[1]![4].afterConfirm).toBeUndefined();
+    });
+
+    it('融券／借券 only sell: 點價買 is disabled and says why; sell sends the condition', async () => {
+        await mount({ contract: stkDT });
+        await openPop();
+        await pick('借券豁免');
+        expect(text(chip())).toBe('1 張·借豁');
+        await closePop();
+        expect(modeBtn('點價買').props.disabled).toBe(true);
+        expect(modeBtn('點價買').props.title).toMatch(/只能賣出/);
+        await act(async () => { modeBtn('點價賣').props.onClick(); });
+        await clickChart();
+        expect(m.place.mock.calls[0]![4]).toMatchObject({ orderCond: 'SBLShortPriceExempt' });
+        expect(m.creditPost).not.toHaveBeenCalled();
+        await openPop();
+        await pick('融券');
+        await closePop();
+        await act(async () => { modeBtn('點價賣').props.onClick(); });
+        await clickChart();
+        expect(m.place.mock.calls[1]![4]).toMatchObject({ orderCond: 'ShortSelling', afterConfirm: expect.any(Function) });
+    });
+
+    it('現股當沖先賣: sell is a 現沖 sell, buy stays cash; a stock that cannot day-trade disables 點價賣', async () => {
+        await mount({ contract: stkDT });
+        await openPop();
+        await pick('現股當沖先賣');
+        expect(text(chip())).toBe('1 張·現沖');
+        await closePop();
+        await act(async () => { modeBtn('點價賣').props.onClick(); });
+        expect(text(view.root)).toContain('點擊價位 → 現沖限價賣出 1 張');
+        await clickChart();
+        expect(m.place.mock.calls[0]![4]).toMatchObject({ daytradeShort: true });
+        expect(m.place.mock.calls[0]![4].orderCond).toBeUndefined();
+        await act(async () => { view.update(createElement(CandleChart, { contract: { ...stk, day_trade: 'OnlyBuy' } })); });
+        await flush();
+        expect(modeBtn('點價賣').props.disabled).toBe(true);
+        expect(modeBtn('點價賣').props.title).toMatch(/只能先買後賣/);
+        expect(modeBtn('點價買').props.disabled).toBeFalsy();
+    });
+
+    it('a stock whose margin ratio is 0 disables only 融資買進; 融資賣出 (repaying) still goes out', async () => {
+        m.creditPost.mockResolvedValue([{ stock_id: '2330', system: 'ALL', update_time: '', margin_unit: 100, short_unit: 50, margin_loan_ratio: 0, short_margin_ratio: 90 }]);
+        await mount({ contract: stkDT, orderSettings: { S: { qty: 1, lot: 'Common', orderType: 'ROD', octype: 'Auto', credit: { cond: 'MarginTrading', daytradeShort: false } } }, onOrderSettingsChange: vi.fn() });
+        await flush();
+        expect(modeBtn('點價買').props.disabled).toBe(true);
+        expect(modeBtn('點價買').props.title).toMatch(/不能融資買進/);
+        await act(async () => { modeBtn('點價賣').props.onClick(); });
+        await clickChart();
+        expect(m.place).toHaveBeenCalledOnce();
+        expect(m.place.mock.calls[0]![0]).toBeDefined();
+        expect(m.place.mock.calls[0]![1]).toBe('Sell');
+    });
+
+    it('the post-confirmation re-check refuses a 融資買進 that became 0 meanwhile', async () => {
+        m.place.mockImplementation(async (_c, _a, _p, _q, opts) => { await opts.afterConfirm(); opts.beforeSend(); return { status: { status: 'Submitted' } }; });
+        await mount({ contract: stkDT, orderSettings: { S: { qty: 1, lot: 'Common', orderType: 'ROD', octype: 'Auto', credit: { cond: 'MarginTrading', daytradeShort: false } } }, onOrderSettingsChange: vi.fn() });
+        await act(async () => { modeBtn('點價買').props.onClick(); });
+        // 面板已查到可以（快取）；確認之後的重查才變成 0
+        await flush();
+        expect(m.creditPost).toHaveBeenCalledOnce();
+        m.creditPost.mockResolvedValue([{ stock_id: '2330', system: 'ALL', update_time: '', margin_unit: 0, short_unit: 50, margin_loan_ratio: 60, short_margin_ratio: 90 }]);
+        await clickChart();
+        expect(m.place).toHaveBeenCalledOnce();
+        expect(m.notify.mock.calls.at(-1)![0]).toMatchObject({ title: '圖表下單失敗', body: expect.stringContaining('不能融資買進') });
+    });
+
+    it('odd lot suspends credit (orders are cash) and back to 張 restores 融資', async () => {
+        await mount({ contract: stkDT });
+        await openPop();
+        await pick('融資');
+        await pick('盤中零股（股）');
+        expect(text(chip())).toBe('1 股');
+        await closePop();
+        await act(async () => { modeBtn('點價買').props.onClick(); });
+        await clickChart();
+        expect(m.place.mock.calls[0]![4].orderCond).toBeUndefined();
+        expect(m.place.mock.calls[0]![4]).toMatchObject({ orderLot: 'IntradayOdd' });
+        await openPop();
+        await pick('整股（張）');
+        expect(text(chip())).toBe('1 張·融資');
+    });
+
+    it('keeps the condition when the chart moves to another stock and to futures and back', async () => {
+        let state: ChartOrderPanelState = {};
+        const onOrderSettingsChange = vi.fn((v: ChartOrderPanelState) => { state = v; });
+        const render = (contract: unknown) => act(async () => view.update(createElement(CandleChart, { contract, orderSettings: state, onOrderSettingsChange } as any)));
+        await mount({ contract: stkDT, orderSettings: state, onOrderSettingsChange });
+        await openPop();
+        await pick('融券');
+        await render(stkDT);
+        await closePop();
+        await render({ ...stkDT, code: '2317' });
+        await flush();
+        expect(text(chip())).toBe('1 張·融券');
+        await render(fut);
+        expect(text(chip())).toBe('1 口');
+        await render(stkDT);
+        expect(text(chip())).toBe('1 張·融券');
+    });
+
+    it('futures: 當沖 倉別 is offered and sent with point orders; no credit row', async () => {
+        await mount({ contract: fut });
+        await openPop();
+        expect(text(pop()!)).not.toContain('融資');
+        await pick('當沖');
+        expect(text(chip())).toBe('1 口·當沖');
+        await closePop();
+        await act(async () => { modeBtn('點價賣').props.onClick(); });
+        await clickChart();
+        expect(m.place.mock.calls[0]![4]).toMatchObject({ ocType: 'DayTrade' });
+        expect(m.place.mock.calls[0]![4].orderCond).toBeUndefined();
+    });
+
+    it('stop／take are disabled while a credit condition applies (triggers only send cash)', async () => {
+        await mount({ contract: stkDT, orderSettings: { S: { qty: 1, lot: 'Common', orderType: 'ROD', octype: 'Auto', credit: { cond: 'MarginTrading', daytradeShort: false } } }, onOrderSettingsChange: vi.fn() });
+        expect(modeBtn('停損').props.disabled).toBe(true);
+        expect(modeBtn('停利').props.title).toMatch(/現股/);
+    });
+
+    it('changing any condition disarms 點價 in the same render — also when the owner changes it', async () => {
+        await mount({ contract: stkDT });
+        await act(async () => { modeBtn('點價買').props.onClick(); });
+        expect(text(view.root)).toContain('點擊價位 →');
+        await openPop();
+        await pick('融資');
+        expect(text(view.root)).not.toContain('點擊價位 →');
+        await clickChart();
+        expect(m.place).not.toHaveBeenCalled();
+        // owner-driven change
+        let state: ChartOrderPanelState = { S: { qty: 1, lot: 'Common', orderType: 'ROD', octype: 'Auto' } };
+        await act(async () => view.update(createElement(CandleChart, { contract: stkDT, orderSettings: state, onOrderSettingsChange: vi.fn() } as any)));
+        await closePop();
+        await act(async () => { modeBtn('點價賣').props.onClick(); });
+        state = { S: { ...state.S!, orderType: 'IOC' } };
+        await act(async () => view.update(createElement(CandleChart, { contract: stkDT, orderSettings: state, onOrderSettingsChange: vi.fn() } as any)));
+        expect(text(view.root)).not.toContain('點擊價位 →');
+        await clickChart();
+        expect(m.place).not.toHaveBeenCalled();
+    });
+
+    it('a pending (confirming) order is refused at dispatch once the condition changes, even back again', async () => {
+        let release!: () => void;
+        const wait = new Promise<void>(r => { release = r; });
+        const dispatched = vi.fn();
+        m.place.mockImplementation(async (_c, _a, _p, _q, opts) => { await wait; opts.beforeSend(); dispatched(); return { status: { status: 'Submitted' } }; });
+        await mount({ contract: stkDT });
+        await act(async () => { modeBtn('點價賣').props.onClick(); });
+        await clickChart();
+        expect(m.place).toHaveBeenCalledOnce();
+        await openPop();
+        await pick('融資');
+        await pick('現股');
+        await act(async () => { release(); });
+        await flush();
+        expect(dispatched).not.toHaveBeenCalled();
+        expect(m.notify.mock.calls.at(-1)![0]).toMatchObject({ title: '圖表下單失敗' });
+    });
+
+    it('working order lines name a non-cash condition', async () => {
+        const trade = { contract: stkDT, order: { id: 'o1', seqno: '', ordno: '', action: 'Buy', price: 99, quantity: 2, order_cond: 'MarginTrading' },
+            status: { id: 'o1', status: 'Submitted', status_code: '', order_quantity: 2, deal_quantity: 0, cancel_quantity: 0, modified_price: 0, msg: '', deals: [] } };
+        m.dragEvents = true;
+        await mount({ contract: stkDT, trades: [trade] });
+        expect(m.lines.map(l => (l.options() as { title?: string }).title)).toContain('融資買2 ⠿');
     });
 });

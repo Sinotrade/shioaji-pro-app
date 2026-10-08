@@ -130,7 +130,10 @@ const segBase = style({
     border: 'none',
     borderRight: `1px solid ${vars.color.border}`,
     color: vars.color.mutedForeground,
-    selectors: { '&:last-child': { borderRight: 'none' } },
+    selectors: {
+        '&:last-child': { borderRight: 'none' },
+        '&:disabled': { opacity: 0.45, cursor: 'not-allowed' },
+    },
     ':hover': { color: vars.color.foreground },
 });
 
@@ -230,4 +233,29 @@ const footBase = style({
 export const footBtn = styleVariants({
     normal: [footBase],
     primary: [footBase, { borderColor: vars.color.accent, background: vars.color.muted, fontWeight: 600 }],
+});
+
+// 信用條件列下的一句話：零股停用說明、可否融資券狀態
+const creditNoteBase = style({
+    fontSize: '0.62rem',
+    lineHeight: 1.4,
+    paddingLeft: 'calc(3.6rem + 6px)',
+    color: vars.color.mutedForeground,
+});
+
+export const creditNote = styleVariants({
+    ok: [creditNoteBase],
+    bad: [creditNoteBase, { color: vars.color.danger }],
+});
+
+// 信用條件五個選項：依字數分配寬度、不換行（「借券豁免」不折成兩行）
+export const segFit = style({
+    flex: '1 0 auto',
+    padding: '3px 4px',
+    whiteSpace: 'nowrap',
+});
+
+// 窄面板（彈出層被 popover-fit 縮寬）放不下時整顆換到下一行，不被裁掉
+export const segWrap = style({
+    flexWrap: 'wrap',
 });
