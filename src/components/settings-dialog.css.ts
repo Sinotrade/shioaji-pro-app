@@ -2,10 +2,17 @@
 // 欄＋右內容；窄視窗時分類欄轉為頂部橫向 chips。視覺語彙沿用 server
 // manager 的 srvDialog 家族（hud-header.css.ts）。
 
-import { style, styleVariants } from '@vanilla-extract/css';
+import { createContainer, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
+// dialog 一縮窄就轉 chips：dialog 滿寬 38rem 時 content box 是 36rem − 2px（padding 1rem＋border 1px）。
+// container query 的 rem 跟 root 字級（fontScale）走；media query 的 rem 固定 16px，
+// 字級 1.15／1.3 時 dialog 早在 640px 前就縮了，分類欄還佔著寬度，價位框會截掉末位數字。
+// 舊 WebView（Safari < 16）不認 @container：保留 640px media query 當退路
 const NARROW = 'screen and (max-width: 640px)';
+const dialogBox = createContainer();
+const NARROW_BOX = `${dialogBox} (max-width: 35.8rem)`;
+const NARROW_ACCOUNTS_BOX = `${dialogBox} (max-width: 43.8rem)`;
 
 export const backdrop = style({
     position: 'fixed',
@@ -31,15 +38,33 @@ export const dialog = style({
     background: vars.color.panelRaised,
     boxShadow: '0 18px 48px rgba(0, 0, 0, 0.45)',
     padding: vars.space.md,
+    containerName: dialogBox,
+    containerType: 'inline-size',
 });
+
+// 帳號頁的測試單需要同列容納市場、商品、價格與操作。
+export const accountsDialog = style({ width: 'min(46rem, calc(100vw - 32px))' });
+
+const narrowBody = { flexDirection: 'column', gap: vars.space.sm } as const;
+const narrowNav = {
+    flexDirection: 'row',
+    width: '100%',
+    borderRight: 'none',
+    borderBottom: `1px solid ${vars.color.border}`,
+    paddingRight: 0,
+    paddingBottom: vars.space.sm,
+    overflowX: 'auto',
+} as const;
 
 export const body = style({
     display: 'flex',
     gap: vars.space.md,
     flex: 1,
     minHeight: 0,
-    '@media': {
-        [NARROW]: { flexDirection: 'column', gap: vars.space.sm },
+    '@media': { [NARROW]: narrowBody },
+    '@container': {
+        [NARROW_BOX]: narrowBody,
+        [NARROW_ACCOUNTS_BOX]: { selectors: { [`${accountsDialog} &`]: narrowBody } },
     },
 });
 
@@ -51,16 +76,10 @@ export const nav = style({
     flexShrink: 0,
     borderRight: `1px solid ${vars.color.border}`,
     paddingRight: vars.space.sm,
-    '@media': {
-        [NARROW]: {
-            flexDirection: 'row',
-            width: '100%',
-            borderRight: 'none',
-            borderBottom: `1px solid ${vars.color.border}`,
-            paddingRight: 0,
-            paddingBottom: vars.space.sm,
-            overflowX: 'auto',
-        },
+    '@media': { [NARROW]: narrowNav },
+    '@container': {
+        [NARROW_BOX]: narrowNav,
+        [NARROW_ACCOUNTS_BOX]: { selectors: { [`${accountsDialog} &`]: narrowNav } },
     },
 });
 

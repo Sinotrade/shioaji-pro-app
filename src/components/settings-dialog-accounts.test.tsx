@@ -1,4 +1,4 @@
-import { createElement } from 'react';
+import { createElement, useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -12,6 +12,8 @@ const fixture = vi.hoisted(() => {
     return {
         tauri: { value: false },
         open: vi.fn(async () => undefined),
+        cancelAll: vi.fn(async () => undefined),
+        notify: vi.fn(),
         accounts: [
             { account_type: 'S', broker_id: '9A95', account_id: '1234567', signed: true, person_id: '', username: '測試甲' },
             { account_type: 'F', broker_id: 'F002000', account_id: '7654321', signed: false, person_id: '', username: '測試乙' },
@@ -29,16 +31,24 @@ vi.mock('../lib/runtime', async (orig) => ({
     ...(await orig<typeof import('../lib/runtime')>()),
     get isTauri() { return fixture.tauri.value; },
 }));
-vi.mock('../lib/risk', () => ({ getDailyPnl: () => 0, setRiskSettings: vi.fn(), useRiskSettings: () => ({}) }));
+vi.mock('../lib/risk', () => ({ getDailyPnl: () => 0, setRiskSettings: vi.fn(), useRiskSettings: () => ({}), getRiskSettings: () => ({ escCancelAll: true }) }));
 vi.mock('../lib/tauri', () => ({
     openExternalUrl: fixture.open,
     isAgentHarnessEnabled: () => false,
     setAgentHarnessEnabled: vi.fn(),
 }));
+// 所有資料與交易邊界皆 stub，掛載真實測試單與全域熱鍵不發請求。
+vi.mock('../hooks/use-stream', async orig => ({ ...(await orig<object>()), useQuote: () => ({ tick: { close: '21.5' } }), useTradingLive: () => true }));
+vi.mock('../hooks/use-query', () => ({ useQuery: () => ({ data: undefined, error: null, refresh: vi.fn() }) }));
+vi.mock('../lib/product-search', () => ({ searchProducts: vi.fn(async () => []) }));
+vi.mock('../lib/trade', () => ({ cancelAllOrders: fixture.cancelAll, notify: fixture.notify, placeQuickOrder: vi.fn() }));
 
 import { setPrivacyMode } from '../lib/privacy';
-import { AccountsSection } from './settings-dialog';
+import { AccountsSection, SettingsDialog } from './settings-dialog';
+import { useEscClose } from '../hooks/use-esc-close';
 import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from '../lib/server-info-store';
+import { useHotkeys } from '../hooks/use-hotkeys';
+import { resetEscCancelArm } from '../lib/esc-cancel-arm';
 import { getApiBase } from '../lib/runtime';
 
 let view: ReactTestRenderer | undefined;
@@ -134,4 +144,76 @@ it('masks account ids and holder names in privacy mode', async () => {
     expect(text()).not.toContain('測試乙');
     expect(text()).toContain('•••••67');
     expect(text()).toContain('•••');
+});
+
+it('shows the test-order block only once the server reports simulation mode', async () => {
+    await render();
+    expect(text()).not.toContain('測試（買進）');
+    await act(async () => {
+        observeServerInfo(beginServerInfoRequest(), { simulation: true } as import('../lib/shioaji').ServerInfo);
+    });
+    expect(text()).toContain('測試（買進）');
+    await act(async () => {
+        observeServerInfo(beginServerInfoRequest(), { simulation: false } as import('../lib/shioaji').ServerInfo);
+    });
+    expect(text()).not.toContain('測試（買進）');
+});
+
+it('real hotkeys ignore search cancellation, confirmation overlays and the Esc closing settings', async () => {
+    const listeners: { fn: (e: KeyboardEvent) => void; capture: boolean }[] = [];
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    fixture.cancelAll.mockClear(); fixture.notify.mockClear(); resetEscCancelArm();
+    vi.stubGlobal('window', {
+        addEventListener: (type: string, fn: (e: KeyboardEvent) => void, capture = false) => { if (type === 'keydown') listeners.push({ fn, capture }); },
+        removeEventListener: (_type: string, fn: (e: KeyboardEvent) => void, capture = false) => {
+            const i = listeners.findIndex(l => l.fn === fn && l.capture === capture); if (i >= 0) listeners.splice(i, 1);
+        },
+    });
+    let active: unknown = null;
+    vi.stubGlobal('document', { get activeElement() { return active; } });
+    const esc = () => {
+        const e = { key: 'Escape', repeat: false, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+        // 真正 DOM 的事件順序：先 capture，再 bubble。
+        for (const l of [...listeners].sort((a, b) => Number(b.capture) - Number(a.capture))) l.fn(e as unknown as KeyboardEvent);
+        return e;
+    };
+    const closed = vi.fn(); const confirmed = vi.fn();
+    function Confirmation() { useEscClose(confirmed); return null; }
+    function Harness({ confirmation = false }: { confirmation?: boolean }) {
+        useHotkeys({ onOpenPalette: () => undefined, onAfterCancelAll: () => undefined });
+        const [open, setOpen] = useState(true);
+        return createElement('div', null,
+            createElement(SettingsDialog, { open, onClose: () => { closed(); setOpen(false); }, onResetWorkspace: vi.fn(), onOpenLayoutLibrary: vi.fn() }),
+            confirmation && createElement(Confirmation));
+    }
+    try {
+        await act(async () => { observeServerInfo(beginServerInfoRequest(), { simulation: true } as import('../lib/shioaji').ServerInfo); });
+        await act(async () => { view = create(createElement(Harness), { createNodeMock: el => el.type === 'input' ? { focus() { active = this; }, select() {}, tagName: 'INPUT' } : null }); });
+        const label = (n: import('react-test-renderer').ReactTestInstance): string => n.children.map(c => typeof c === 'string' ? c : label(c)).join('');
+        await act(async () => view!.root.findAllByType('button').find(b => label(b) === '帳號')!.props.onClick());
+        const product = () => view!.root.findByProps({ 'aria-label': '證券商品' });
+        await act(async () => product().props.onChange({ target: { value: '搜尋中' } }));
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+        // 確認疊層用真正 useEscClose，搜尋仍在其下。
+        await act(async () => view!.update(createElement(Harness, { confirmation: true })));
+        expect(esc().defaultPrevented).toBe(true);
+        expect(confirmed).toHaveBeenCalledTimes(1); expect(closed).not.toHaveBeenCalled();
+        expect(product().props.value).toBe('搜尋中');
+        await act(async () => view!.update(createElement(Harness, { confirmation: false })));
+        await act(async () => { expect(esc().defaultPrevented).toBe(true); });
+        expect(product().props.value).toBe('永豐金'); expect(closed).not.toHaveBeenCalled();
+        active = null;
+        await act(async () => { expect(esc().defaultPrevented).toBe(true); });
+        expect(closed).toHaveBeenCalledTimes(1);
+        // 關設定的 Esc 後立刻再按一下，不能湊成 Esc×2 刪單。
+        expect(esc().defaultPrevented).toBe(false);
+        expect(fixture.cancelAll).not.toHaveBeenCalled();
+        expect(fixture.notify).toHaveBeenCalledTimes(1);
+        // 正向對照：兩下真正未被介面用掉的 Esc 會到交易 stub，證明熱鍵確實掛載。
+        await act(async () => { esc(); await Promise.resolve(); });
+        expect(fixture.cancelAll).toHaveBeenCalledTimes(1);
+    } finally {
+        await act(async () => view?.unmount()); view = undefined;
+        resetEscCancelArm(); vi.useRealTimers(); vi.unstubAllGlobals();
+    }
 });

@@ -74,6 +74,8 @@ import { CUSTOM_BASES } from '../lib/custom-theme';
 import { CustomThemeEditor } from './custom-theme-editor';
 import { ExternalLink } from './external-link';
 import { Orb } from './orb';
+import { SimTestOrderSection } from './settings-test-order';
+import { useEscClose } from '../hooks/use-esc-close';
 import * as hud from './hud-header.css';
 import * as panel from './panel.css';
 import * as styles from './settings-dialog.css';
@@ -392,6 +394,7 @@ export function AccountsSection() {
                 )}
                 {refreshing ? '重新整理中…' : '重新整理帳號'}
             </button>
+            {simulation && <SimTestOrderSection />}
         </>
     );
 }
@@ -650,6 +653,14 @@ function LayoutSection({
     );
 }
 
+// 開啟時才入 modal stack（SettingsDialog 常駐掛載，不能在頂層 useEscClose，
+// 否則關著也會吃掉 Esc）。上面疊委託確認視窗時，Esc 只關最上層；
+// useEscClose 一律 preventDefault，不會算進 Esc×2 全部刪單。
+function SettingsEscClose({ onClose }: { onClose: () => void }) {
+    useEscClose(onClose);
+    return null;
+}
+
 export function SettingsDialog({
     open,
     onClose,
@@ -660,26 +671,13 @@ export function SettingsDialog({
 }) {
     const [tab, setTab] = useState<SettingsTab>('appearance');
 
-    useEffect(() => {
-        if (!open) return;
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                // capture + preventDefault so the global Esc-Esc cancel-all
-                // hotkey ignores the press that closes this dialog
-                e.preventDefault();
-                onClose();
-            }
-        };
-        window.addEventListener('keydown', onKey, true);
-        return () => window.removeEventListener('keydown', onKey, true);
-    }, [open, onClose]);
-
     if (!open) return null;
 
     return (
         <>
+            <SettingsEscClose onClose={onClose} />
             <div className={styles.backdrop} onClick={onClose} />
-            <div className={styles.dialog}>
+            <div className={`${styles.dialog} ${tab === 'accounts' ? styles.accountsDialog : ''}`}>
                 <div className={hud.srvDialogTitle}>
                     設定
                     <button

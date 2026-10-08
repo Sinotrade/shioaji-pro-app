@@ -63,7 +63,14 @@ beforeEach(async () => {
     mode(true);
     m.nativeFetch.mockImplementation(async () => new Response('{}'));
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+    release();
+    if (vi.isFakeTimers()) {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    }
+    vi.unstubAllGlobals();
+});
 
 it.each(['production', 'unknown', 'roundtrip', 'removed', 'unsigned'] as const)(
     'rejects a trade subscription after %s during native module loading', async change => {
@@ -159,6 +166,7 @@ it.each(paths.slice(1))('sends account-independent %s even if the mode changes d
 });
 
 it.each([true, false])('keeps a restored protection trigger Tick subscribed as unknown mode becomes %s', async simulation => {
+    vi.useFakeTimers();
     const contract = { code: 'TXFR1', target_code: 'TXFJ6', security_type: 'FUT', exchange: 'TAIFEX' };
     m.accounts[0]!.signed = true;
     const rows = new Map([['sj-pro-triggers', JSON.stringify([{
@@ -190,6 +198,16 @@ it.each([true, false])('keeps a restored protection trigger Tick subscribed as u
     m.tick!({ code: contract.code, close: 47900 });
     await vi.waitFor(() => expect(m.place).toHaveBeenCalledOnce());
     expect(m.place.mock.calls[0]![0]).toMatchObject(contract);
+
+    // Firing releases the last Tick hold. Complete its grace-period teardown
+    // before resetModules installs the next case's native import mock.
+    const { RELEASE_GRACE_MS } = await import('./quote-ownership');
+    await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS);
+    await vi.waitFor(() => expect(m.nativeFetch).toHaveBeenCalledTimes(2));
+    expect(m.nativeFetch.mock.calls.map(call => call[0])).toEqual([
+        '/api/v1/stream/subscribe', '/api/v1/stream/unsubscribe',
+    ]);
+    expect(m.loading).toHaveBeenCalledOnce();
 });
 
 it.each(['Tick', 'BidAsk', 'Quote'] as const)('subscribes and registers %s after mode discovery during native loading', async quoteType => {

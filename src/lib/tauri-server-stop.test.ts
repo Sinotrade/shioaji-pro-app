@@ -19,6 +19,9 @@ describe('real desktop serverStop orchestration', () => {
         native.fetch.mockImplementation(async (url: string) => new Response(JSON.stringify(
             url.endsWith('/info') ? { version: '1.7.5', simulation: false } : { status: 'ok' }
         ), { status: serverRunning && url.includes(':21322/') ? 200 : 503 }));
+        // Local HTTP probes use the webview fetch before plugin-http. Both
+        // transports must share the fixture instead of reaching a running App.
+        vi.stubGlobal('fetch', native.fetch);
         native.execute.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
         native.invoke.mockImplementation(async (command: string) => {
             if (command === 'agent_runtime_list') return [{ runtimeId: 'idle-codex', status: agentRunning ? 'running' : 'stopped' }];
@@ -40,6 +43,16 @@ describe('real desktop serverStop orchestration', () => {
         expect(serverRunning).toBe(false);
         expect(native.execute).not.toHaveBeenCalled();
     }, 10000);
+
+    it('stops through native probes when the webview transport is unavailable', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('webview unavailable'); }));
+        const result = await serverStop({ stopAgents: true });
+        expect(result.ok).toBe(true);
+        expect(serverRunning).toBe(false);
+        expect(native.fetch).toHaveBeenCalled();
+        expect(native.invoke.mock.calls.map(call => call[0])).toContain('kill_shioaji');
+        expect(native.execute).not.toHaveBeenCalled();
+    });
 
     it('leaves the server untouched when stopping an Agent fails', async () => {
         const implementation = native.invoke.getMockImplementation()!;
