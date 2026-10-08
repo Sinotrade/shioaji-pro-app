@@ -5,7 +5,7 @@
 // 「500 股」＝盤中零股、「1 張」＝整股、「2 口」＝期貨）。
 
 import { Ban, Settings2 } from 'lucide-react';
-import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MutableRefObject, type ReactNode, type RefObject } from 'react';
 import {
     chartOrderChipLabel,
     chartOrderRows,
@@ -21,6 +21,7 @@ import {
 } from '../lib/chart-order-settings';
 import { CASH_CREDIT, flashAccountKey, type FlashCond } from '../lib/flash-account';
 import { ODD_LOT_MAX_SHARES } from '../lib/odd-lot';
+import { clipAncestors, fitPopover, visibleClipRect, type PopoverFit } from '../lib/popover-fit';
 import type { Account } from '../lib/types/portfolio';
 import * as styles from './chart-order-popover.css';
 
@@ -124,6 +125,45 @@ export function OrderSettingsButton({
         return value;
     });
     if (openRef) openRef.current = (top) => { if (top !== undefined) setPanelTop(top); setOpen(true); };
+    // 掛在按鈕下方的面板（K 線工具列）：窄面板裡從按鈕往右長會被面板右緣
+    // 裁掉 — 依可見範圍往左收、必要時縮寬／限高捲動。開啟時先以原尺寸
+    // 量一次（fit 為 null）；之後彈出層內容高度（縮寬後換行）、按鈕位置、
+    // 面板大小、視窗縮放或捲動變了都依原寬重算（結果相同就不重繪）
+    const popRef = useRef<HTMLDivElement>(null);
+    const naturalWidth = useRef(0);
+    const [fit, setFit] = useState<PopoverFit | null>(null);
+    useLayoutEffect(() => {
+        if (!open || align !== 'start') {
+            setFit(null);
+            naturalWidth.current = 0;
+            return;
+        }
+        const pop = popRef.current;
+        const anchorEl = buttonRef.current?.parentElement;
+        const win = anchorEl?.ownerDocument?.defaultView;
+        if (!pop || !anchorEl || !win || typeof anchorEl.getBoundingClientRect !== 'function') return;
+        const place = () => {
+            if (!naturalWidth.current) naturalWidth.current = pop.offsetWidth;
+            const a = anchorEl.getBoundingClientRect();
+            const next = fitPopover(
+                { left: a.left, bottom: a.bottom },
+                { width: naturalWidth.current, height: pop.scrollHeight },
+                visibleClipRect(anchorEl),
+            );
+            setFit(prev => (prev && prev.left === next.left && prev.maxWidth === next.maxWidth && prev.maxHeight === next.maxHeight ? prev : next));
+        };
+        place();
+        win.addEventListener('resize', place);
+        win.addEventListener('scroll', place, true);
+        const RO = (win as typeof window).ResizeObserver;
+        const ro = RO ? new RO(place) : null;
+        if (ro) for (const el of [pop, anchorEl, ...clipAncestors(anchorEl)]) ro.observe(el);
+        return () => {
+            win.removeEventListener('resize', place);
+            win.removeEventListener('scroll', place, true);
+            ro?.disconnect();
+        };
+    }, [open, align]);
     // Esc closes the popover and nothing else (a panel's own Esc hotkey must
     // not also fire); nothing is listened to while closed
     useEffect(() => {
@@ -167,6 +207,8 @@ export function OrderSettingsButton({
                         onClose={() => setOpen(false)}
                         align={align}
                         top={panelTop}
+                        popRef={popRef}
+                        fit={fit}
                         layout={layout}
                         contractLabel={contractLabel}
                         summary={summary}
@@ -225,6 +267,15 @@ export function ChartOrderButton({
     );
 }
 
+function fitStyle(fit: PopoverFit | null | undefined): CSSProperties | undefined {
+    if (!fit) return undefined;
+    return {
+        left: fit.left,
+        ...(fit.maxWidth !== undefined ? { width: fit.maxWidth } : {}),
+        ...(fit.maxHeight !== undefined ? { maxHeight: fit.maxHeight, overflowY: 'auto' } : {}),
+    };
+}
+
 export function OrderSettingsPanel({
     market,
     settings,
@@ -236,6 +287,8 @@ export function OrderSettingsPanel({
     summary,
     align = 'start',
     top,
+    popRef,
+    fit,
 }: {
     market: ChartOrderMarket;
     settings: ChartOrderSettings;
@@ -244,6 +297,9 @@ export function OrderSettingsPanel({
     onClose: () => void;
     align?: 'start' | 'panel';
     top?: number;
+    popRef?: RefObject<HTMLDivElement | null>;
+    /** button-anchored popover kept inside the visible area (see fitPopover) */
+    fit?: PopoverFit | null;
     layout: OrderSettingsLayout;
     contractLabel: string;
     summary: string;
@@ -256,8 +312,8 @@ export function OrderSettingsPanel({
     const max = odd ? ODD_LOT_MAX_SHARES : 9999;
     const account = layout.account;
     return (
-        <div className={align === 'panel' ? `${styles.pop} ${styles.popPanel}` : styles.pop}
-            style={align === 'panel' && top !== undefined ? { top } : undefined}
+        <div ref={popRef} className={align === 'panel' ? `${styles.pop} ${styles.popPanel}` : styles.pop}
+            style={align === 'panel' ? (top !== undefined ? { top } : undefined) : fitStyle(fit)}
             role='dialog' aria-label={layout.title}>
             <div className={styles.head}>
                 <span className={styles.headTitle}>{layout.title}</span>

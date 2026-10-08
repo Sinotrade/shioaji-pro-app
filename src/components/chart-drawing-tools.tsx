@@ -251,8 +251,13 @@ export function Popover({
 }
 
 // 工具列按鈕的提示 — 立即顯示、畫在 body 上（直排工具列會捲動，絕對
-// 定位的提示會被它裁掉）；原生 title 在桌面版 WebView 裡要停很久才出現
+// 定位的提示會被它裁掉）；原生 title 在桌面版 WebView 裡要停很久才出現。
+// 提示掛在 body 上、狀態在父元件，按鈕卸載時（刪除／隱藏物件、按 Delete、
+// 進入畫圖讓浮動工具列收起）不會有 mouseleave — 所以每個按鈕帶一個依
+// 提示 key 固定的 ref，按鈕卸載就收掉自己的提示；按下按鈕也收掉（按下後
+// 內容多半會變，例如鎖定→解鎖，舊提示不該留著）
 interface Tip {
+    key: string;
     text: string;
     x: number;
     y: number;
@@ -261,24 +266,50 @@ interface Tip {
 function useTips() {
     const [tip, setTip] = useState<Tip | null>(null);
     const docRef = useRef<Document | null>(null);
-    const tipProps = (text: string, aria?: string) => ({
-        'aria-label': aria ?? text.split(' — ')[0]!.split('（')[0]!,
-        onMouseEnter: (e: ReactMouseEvent<HTMLElement>) => {
-            const r = e.currentTarget.getBoundingClientRect();
-            docRef.current = e.currentTarget.ownerDocument;
-            setTip({ text, x: r.right + 6, y: r.top + r.height / 2 });
-        },
-        onMouseLeave: () => setTip(null),
-    });
-    const node =
-        tip && docRef.current?.body
-            ? createPortal(
-                  <span role='tooltip' className={styles.tip} style={{ left: tip.x, top: tip.y }}>
-                      {tip.text}
-                  </span>,
-                  docRef.current.body,
-              )
-            : null;
+    // 每個 key 一個固定的 ref callback：React 只在按鈕真的卸載（或換了
+    // key）時才以 null 呼叫，一般重繪不會誤收提示
+    const refs = useRef(new Map<string, (el: HTMLElement | null) => void>());
+    const refFor = (key: string) => {
+        let fn = refs.current.get(key);
+        if (!fn) {
+            fn = (el) => {
+                if (!el) setTip((t) => (t?.key === key ? null : t));
+            };
+            refs.current.set(key, fn);
+        }
+        return fn;
+    };
+    const tipProps = (text: string, aria?: string) => {
+        const key = aria ?? text.split(' — ')[0]!.split('（')[0]!;
+        return {
+            'aria-label': key,
+            ref: refFor(key),
+            onMouseEnter: (e: ReactMouseEvent<HTMLElement>) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                docRef.current = e.currentTarget.ownerDocument;
+                setTip({ key, text, x: r.right + 6, y: r.top + r.height / 2 });
+            },
+            onMouseLeave: () => setTip(null),
+            onPointerDown: () => setTip(null),
+        };
+    };
+    // 點任何地方（開啟彈出面板、選單…）都先收掉提示，提示不會蓋在彈出層上
+    const tipShown = tip !== null;
+    useEffect(() => {
+        const doc = docRef.current;
+        if (!tipShown || !doc?.addEventListener) return;
+        const hide = () => setTip(null);
+        doc.addEventListener('pointerdown', hide, true);
+        return () => doc.removeEventListener('pointerdown', hide, true);
+    }, [tipShown]);
+    const span = tip ? (
+        <span role='tooltip' className={styles.tip} style={{ left: tip.x, top: tip.y }}>
+            {tip.text}
+        </span>
+    ) : null;
+    // 測試（無 DOM）時就地渲染；瀏覽器中 portal 到按鈕所在文件的 body
+    const host = docRef.current?.body;
+    const node = span && host ? createPortal(span, host) : span;
     return { tipProps, tipNode: node, hideTip: () => setTip(null) };
 }
 
