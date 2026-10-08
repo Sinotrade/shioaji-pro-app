@@ -7,7 +7,8 @@
 // 字時不准送出；Tab／失焦保留文字，只有明確選取或 Esc 才解除搜尋。
 
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
-import { CircleCheck, CircleX, RefreshCw, Search, ShieldAlert, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { CircleCheck, CircleX, RefreshCw, Search, TriangleAlert } from 'lucide-react';
+import { MARKETS, VerificationIcon, VerificationLegend, VerificationRules, verificationStatus, type Market } from './settings-account-verification';
 import { isImeKey } from './chart-drawing-tools';
 import { Orb } from './orb';
 import { ExternalLink } from './external-link';
@@ -54,7 +55,6 @@ const shortName = (x: { code: string; name: string }) => {
 };
 
 type Product = { code: string; label: string; name: string; security_type: SecurityType };
-type Market = 'S' | 'F';
 const inMarket = (x: { security_type: SecurityType; combo?: unknown }, market: Market) =>
     tradable(x) && accountTypeOf(x.security_type) === market;
 const DEFAULTS: Product[] = [
@@ -367,20 +367,22 @@ function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean
     const currentPriceLabel = last !== undefined
         ? `現價：帶入${useTick ? '成交價' : '快照價'}（目前 ${last}）`
         : '現價：尚無可用報價';
-    const verificationLabel = account
-        ? `${marketLabel}帳戶${account.signed === true ? '已通過' : '尚未通過'}驗證`
-        : `${marketLabel}無帳戶`;
+    const status = verificationStatus(market, accounts);
+    const sentence = status === 'ok' ? `${marketLabel}帳戶已通過簽署與模擬測試`
+        : status === 'fail' ? `${marketLabel}帳戶尚未通過簽署與模擬測試`
+        : `無${marketLabel}帳戶`;
 
     return (
         <div className={s.row}>
             {query !== null && <SearchEscClose cancel={() => { setQuery(null); setComposing(false); inputRef.current?.focus(); }} />}
             <span className={s.market}><span className={s.marketName}>{marketLabel}</span></span>
-            <span className={s.verification} data-verified={account?.signed === true || undefined} aria-label={verificationLabel} title={verificationLabel}>
-                {account?.signed === true
-                    ? <ShieldCheck size={12} aria-hidden className={s.okIcon} />
-                    : <ShieldAlert size={12} aria-hidden />}
-                {account ? account.signed === true ? '通過' : '未通過' : '無帳戶'}
-            </span>
+            {status && (
+                <span className={s.verification} data-status={status} title={sentence}>
+                    <VerificationIcon status={status} />
+                    <span className={s.srOnly}>{sentence}</span>
+                    <span aria-hidden='true'>{status === 'ok' ? '通過' : status === 'fail' ? '未通過' : '無帳戶'}</span>
+                </span>
+            )}
             <div className={s.productField}>
                 <div className={`${s.cell} ${s.productCell}`}>
                     {/* 常駐 live region：臨時掛上的提示 VoiceOver 不一定唸 */}
@@ -461,7 +463,7 @@ function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean
                         id={priceInputId}
                         ref={priceRef}
                         className={`${hud.saveInput} ${s.control} ${s.priceInput}`}
-                        aria-label={`${selected.label} 價位`}
+                        aria-label={`委託價格（${selected.label}）`}
                         aria-describedby={`${srcId} ${statusId}`}
                         inputMode='decimal'
                         value={editingPrice ? price : displayPrice(price)}
@@ -501,7 +503,7 @@ function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean
                 <button
                     type='button'
                     className={`${hud.updateBtn} ${s.sendBtn}`}
-                    aria-label={reason ?? `測試（買進）：${selected.label} ${selected.code} 1 ${unit}`}
+                    aria-label={reason ? `${reason}（${marketLabel}）` : `測試（買進）：${selected.label} ${selected.code} 1 ${unit}`}
                     title={`買進 1 ${unit}，限價 ROD`}
                     aria-describedby={statusId}
                     aria-disabled={!!reason}
@@ -516,7 +518,6 @@ function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean
                     {reason ?? '測試'}
                 </button>
             </div>
-            {!signed && available && <span className={s.status}>尚未完成 API 簽署或模擬測試。若是先登入才完成簽署，請登出後重新登入，簽署才會生效。</span>}
             {/* 常駐 live region（成功也要唸）；不用 AsyncStatus，免得 role 巢狀重複報讀 */}
             {/* 三種結果用圖示形狀區分，不只靠顏色：結果未知最該停下來核對 */}
             <span role='status' id={statusId} className={`${hud.emptyHint} ${s.status} ${STATUS_CLASS[state.phase] ?? ''}`}>
@@ -542,6 +543,11 @@ function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean
 export function SimTestOrderSection() {
     const busy = useSyncExternalStore(subscribeSending, getSending);
     const live = useTradingLive();
+    const accounts = useAccounts();
+    const showRules = MARKETS.some(market => {
+        const status = verificationStatus(market, accounts);
+        return status === 'fail' || status === 'none';
+    });
     const headId = useId();
     const [refreshState, setRefreshState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
     const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -582,7 +588,7 @@ export function SimTestOrderSection() {
                     </button>
                 </div>
             </div>
-            <p className={s.testSchedule}>資格驗證時段：開盤日 08:00–20:00（台北時間）</p>
+            <VerificationLegend />
             <div className={s.grid}>
                 <div className={s.columnHeaders} aria-hidden='true'>
                     <span className={`${s.columnHeader} ${s.columnHeaderMarket}`}>種類</span>
@@ -601,14 +607,13 @@ export function SimTestOrderSection() {
             <div className={s.guidance}>
                 <p className={s.description}>按下即買進 1 張／1 口限價 ROD，可能立即成交。</p>
             </div>
+            {showRules && <VerificationRules />}
             <details className={s.help}>
-                <summary className={s.helpToggle}>測試規則與簽署</summary>
+                <summary className={s.helpToggle}>簽署與使用說明</summary>
                 <ul className={s.instructions}>
-                    <li>測試前，先完成 API 電子交易風險預告書暨使用同意書；證券與期貨須分別簽署。<span className={s.signingLinks}><ExternalLink className={s.ruleLink} href={SIGNING_URLS.S.url}>證券簽署</ExternalLink><ExternalLink className={s.ruleLink} href={SIGNING_URLS.F.url}>期貨簽署</ExternalLink></span></li>
-                    <li>以模擬環境登入，API 金鑰須有「交易」權限；Shioaji 版本須為 1.2 以上。</li>
-                    <li>資格測試於開盤日 08:00–20:00 受理（台北時間）；08:00–18:00 不限制 IP 地區，18:00–20:00 僅限台灣 IP。</li>
-                    <li>證券與期貨須各自完成下單測試；兩次測試請間隔至少 1 秒。</li>
-                    <li>測試通過後，數小時內會開通。按「更新狀態」查詢目前選取的帳戶；若仍未更新，可重新登入後再查詢。</li>
+                    <li>簽署 API 約定書（API 電子交易風險預告書暨使用同意書）：<span className={s.signingLinks}><ExternalLink className={s.ruleLink} href={SIGNING_URLS.S.url}>證券簽署</ExternalLink><ExternalLink className={s.ruleLink} href={SIGNING_URLS.F.url}>期貨簽署</ExternalLink></span></li>
+                    <li>API 金鑰須有「交易」權限；Shioaji 版本須為 1.2 以上。</li>
+                    <li>按「更新狀態」可重新取得目前選取帳戶的驗證結果。</li>
                     <li>證券可輸入股票名稱或代碼；期貨也可輸入簡稱（台指、小台、微台）。</li>
                 </ul>
                 <p className={s.helpFooter}>未成交的請到「委託」刪單，已成交的請到「持倉」平倉。</p>

@@ -13,7 +13,7 @@ import {
     Volume2,
     X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { AsyncStatus } from './async-status';
 import {
     ensureAccounts,
@@ -74,6 +74,7 @@ import { CUSTOM_BASES } from '../lib/custom-theme';
 import { CustomThemeEditor } from './custom-theme-editor';
 import { ExternalLink } from './external-link';
 import { Orb } from './orb';
+import { ProdAccountStatusSection } from './settings-account-status';
 import { SimTestOrderSection } from './settings-test-order';
 import { useEscClose } from '../hooks/use-esc-close';
 import * as hud from './hud-header.css';
@@ -272,7 +273,8 @@ function SoundPrivacySection() {
 
 export function AccountsSection() {
     const { accounts, selectedStock, selectedFutures, loaded, loadError } = useAccounts();
-    const simulation = useServerInfo()?.simulation === true;
+    const mode = useServerInfo()?.simulation;
+    const simulation = mode === true;
     const priv = usePrivacyMode();
     const [refreshing, setRefreshing] = useState(false);
     useEffect(ensureAccounts, []);
@@ -394,7 +396,8 @@ export function AccountsSection() {
                 )}
                 {refreshing ? '重新整理中…' : '重新整理帳號'}
             </button>
-            {simulation && <SimTestOrderSection />}
+            {mode === true && <SimTestOrderSection />}
+            {mode === false && <ProdAccountStatusSection />}
         </>
     );
 }
@@ -670,6 +673,30 @@ export function SettingsDialog({
     onClose: () => void;
 }) {
     const [tab, setTab] = useState<SettingsTab>('appearance');
+    const titleId = useId();
+    const dialogRef = useRef<HTMLDivElement>(null);
+    // 焦點圈限：開啟時把焦點移進視窗、Tab 在視窗內繞圈、關閉時還原。
+    // listener 掛在視窗節點上，疊在上面的委託確認（portal 到 body）不受影響；
+    // Esc 不在這裡處理，一律走 SettingsEscClose（useEscClose）。
+    useEffect(() => {
+        const node = dialogRef.current;
+        if (!open || !node) return;
+        const previous = document.activeElement as HTMLElement | null;
+        node.focus();
+        const keydown = (event: KeyboardEvent) => {
+            if (event.key !== 'Tab') return;
+            const nodes = Array.from(node.querySelectorAll<HTMLElement>(
+                'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], summary, [tabindex="0"]',
+            )).filter(el => el.getClientRects().length);
+            const first = nodes[0], last = nodes[nodes.length - 1]; // 不用 .at()：Safari 13 target
+            const active = document.activeElement;
+            if (!first || !last) { event.preventDefault(); node.focus(); return; }
+            if (event.shiftKey && (active === first || active === node)) { event.preventDefault(); last.focus(); }
+            else if (!event.shiftKey && (active === last || active === node)) { event.preventDefault(); first.focus(); }
+        };
+        node.addEventListener('keydown', keydown);
+        return () => { node.removeEventListener('keydown', keydown); if (previous?.isConnected) previous.focus(); };
+    }, [open]);
 
     if (!open) return null;
 
@@ -677,9 +704,16 @@ export function SettingsDialog({
         <>
             <SettingsEscClose onClose={onClose} />
             <div className={styles.backdrop} onClick={onClose} />
-            <div className={`${styles.dialog} ${tab === 'accounts' ? styles.accountsDialog : ''}`}>
+            <div
+                ref={dialogRef}
+                role='dialog'
+                aria-modal='true'
+                aria-labelledby={titleId}
+                tabIndex={-1}
+                className={`${styles.dialog} ${tab === 'accounts' ? styles.accountsDialog : ''}`}
+            >
                 <div className={hud.srvDialogTitle}>
-                    設定
+                    <span id={titleId}>設定</span>
                     <button
                         className={hud.profileDelete}
                         title='關閉（Esc）'

@@ -1,5 +1,5 @@
 import { createElement, useState } from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => {
@@ -50,9 +50,16 @@ import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from '../
 import { useHotkeys } from '../hooks/use-hotkeys';
 import { resetEscCancelArm } from '../lib/esc-cancel-arm';
 import { getApiBase } from '../lib/runtime';
+import { placeQuickOrder } from '../lib/trade';
+import { PROD_SWITCH_HINT } from './settings-account-verification';
+import * as testOrderStyles from './settings-test-order.css';
 
 let view: ReactTestRenderer | undefined;
-beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); forgetServerInfo(getApiBase()); });
+beforeEach(() => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    forgetServerInfo(getApiBase());
+    vi.mocked(placeQuickOrder).mockClear();
+});
 afterEach(async () => {
     await act(async () => view?.unmount());
     view = undefined;
@@ -63,6 +70,12 @@ afterEach(async () => {
 
 const text = () => JSON.stringify(view!.toJSON());
 const render = async () => { await act(async () => { view = create(createElement(AccountsSection)); }); };
+const textOf = (node: ReactTestInstance | string): string => typeof node === 'string' ? node : node.children.map(textOf).join('');
+const cards = (title: string) => view!.root.findAll(node =>
+    node.type === 'section' && typeof node.props['aria-labelledby'] === 'string' &&
+    node.findAll(child => child.props.id === node.props['aria-labelledby'] && textOf(child) === title).length === 1);
+const sendButtons = () => view!.root.findAll(node =>
+    node.type === 'button' && String(node.props.className).includes(testOrderStyles.sendBtn));
 
 it('labels signed=false as 未簽署或未測試 with a consistent tooltip', async () => {
     await render();
@@ -146,17 +159,49 @@ it('masks account ids and holder names in privacy mode', async () => {
     expect(text()).toContain('•••');
 });
 
-it('shows the test-order block only once the server reports simulation mode', async () => {
+it('shows neither card while the server mode is unknown', async () => {
     await render();
-    expect(text()).not.toContain('測試（買進）');
+    expect(cards('測試單')).toHaveLength(0);
+    expect(cards('帳戶狀態')).toHaveLength(0);
+});
+
+it('switches between the test-order card and the account-status card by server mode', async () => {
+    await render();
     await act(async () => {
         observeServerInfo(beginServerInfoRequest(), { simulation: true } as import('../lib/shioaji').ServerInfo);
     });
-    expect(text()).toContain('測試（買進）');
+    expect(cards('測試單')).toHaveLength(1);
+    expect(cards('帳戶狀態')).toHaveLength(0);
     await act(async () => {
         observeServerInfo(beginServerInfoRequest(), { simulation: false } as import('../lib/shioaji').ServerInfo);
     });
-    expect(text()).not.toContain('測試（買進）');
+    expect(cards('測試單')).toHaveLength(0);
+    expect(cards('帳戶狀態')).toHaveLength(1);
+    await act(async () => { forgetServerInfo(getApiBase()); });
+    expect(cards('測試單')).toHaveLength(0);
+    expect(cards('帳戶狀態')).toHaveLength(0);
+});
+
+it('production mode shows the status card without any button that could send an order', async () => {
+    await act(async () => {
+        observeServerInfo(beginServerInfoRequest(), { simulation: false } as import('../lib/shioaji').ServerInfo);
+    });
+    await render();
+    expect(cards('測試單')).toHaveLength(0);
+    expect(cards('帳戶狀態')).toHaveLength(1);
+    const statusCard = cards('帳戶狀態')[0]!;
+    expect(statusCard.findAllByType('button')).toHaveLength(0);
+    expect(sendButtons()).toHaveLength(0);
+    expect(textOf(statusCard)).toContain('已通過，可正式下單');
+    expect(textOf(statusCard)).toContain('未通過：');
+    expect(textOf(statusCard)).toContain('如何通過驗證');
+    expect(textOf(statusCard)).toContain(PROD_SWITCH_HINT);
+    expect(textOf(statusCard)).toContain('1234567');
+    await act(async () => { setPrivacyMode(true); });
+    expect(textOf(statusCard)).not.toContain('1234567');
+    expect(textOf(statusCard)).not.toContain('7654321');
+    expect(textOf(statusCard)).toContain('•••••67');
+    expect(vi.mocked(placeQuickOrder)).not.toHaveBeenCalled();
 });
 
 it('real hotkeys ignore search cancellation, confirmation overlays and the Esc closing settings', async () => {
@@ -215,5 +260,55 @@ it('real hotkeys ignore search cancellation, confirmation overlays and the Esc c
     } finally {
         await act(async () => view?.unmount()); view = undefined;
         resetEscCancelArm(); vi.useRealTimers(); vi.unstubAllGlobals();
+    }
+});
+
+const dialogProps = { onClose: () => undefined, onResetWorkspace: vi.fn(), onOpenLayoutLibrary: vi.fn() };
+
+it('exposes settings as a modal dialog named by its title only', async () => {
+    await act(async () => { view = create(createElement(SettingsDialog, { open: true, ...dialogProps })); });
+    const dialog = view!.root.findByProps({ role: 'dialog' });
+    expect(dialog.props['aria-modal']).toBe('true');
+    expect(dialog.props.tabIndex).toBe(-1);
+    // 名稱只取「設定」，不含關閉鈕的 title
+    expect(textOf(view!.root.findByProps({ id: dialog.props['aria-labelledby'] }))).toBe('設定');
+});
+
+it('keeps Tab focus inside settings, leaves Esc to useEscClose and restores focus on close', async () => {
+    let active: unknown = null;
+    const focusable = (rects = 1) => ({ focus() { active = this; }, getClientRects: () => Array.from({ length: rects }) });
+    const first = focusable(), middle = focusable(), last = focusable(), hidden = focusable(0);
+    const opener = { ...focusable(), isConnected: true };
+    let keydown: ((e: KeyboardEvent) => void) | undefined;
+    const dialogNode = {
+        focus() { active = dialogNode; },
+        querySelectorAll: () => [first, middle, last, hidden],
+        addEventListener: (type: string, fn: (e: KeyboardEvent) => void) => { if (type === 'keydown') keydown = fn; },
+        removeEventListener: (_type: string, fn: (e: KeyboardEvent) => void) => { if (fn === keydown) keydown = undefined; },
+    };
+    vi.stubGlobal('document', { get activeElement() { return active; } });
+    const press = (shiftKey = false, key = 'Tab') => {
+        const e = { key, shiftKey, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+        keydown!(e as unknown as KeyboardEvent);
+        return e.defaultPrevented;
+    };
+    active = opener;
+    try {
+        await act(async () => {
+            view = create(createElement(SettingsDialog, { open: true, ...dialogProps }), { createNodeMock: el => (el.props as { role?: string }).role === 'dialog' ? dialogNode : null });
+        });
+        expect(active).toBe(dialogNode);
+        expect(press()).toBe(true); expect(active).toBe(first);
+        active = middle; expect(press()).toBe(false);
+        active = last; expect(press()).toBe(true); expect(active).toBe(first);
+        // 不可見的項目不算；Shift+Tab 從第一個繞到最後一個可見項
+        expect(press(true)).toBe(true); expect(active).toBe(last);
+        expect(press(false, 'Escape')).toBe(false);
+        await act(async () => view!.update(createElement(SettingsDialog, { open: false, ...dialogProps })));
+        expect(keydown).toBeUndefined();
+        expect(active).toBe(opener);
+    } finally {
+        await act(async () => view?.unmount()); view = undefined;
+        vi.unstubAllGlobals();
     }
 });

@@ -95,7 +95,6 @@ export const heading = style({ display: 'flex', alignItems: 'baseline', gap: '8p
 export const title = style({ display: 'inline-flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap', fontSize: '0.88rem', fontWeight: 600, color: vars.color.foreground });
 export const environment = style({ fontSize: '0.68rem', color: vars.color.mutedForeground });
 export const description = style({ margin: 0, fontSize: '0.7rem', lineHeight: 1.6, color: vars.color.mutedForeground });
-export const testSchedule = style([description]);
 export const sectionNotice = style([description, { margin: '0 0 12px' }]);
 export const headerActions = style({
     display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: '6px 10px',
@@ -415,7 +414,14 @@ export const verification = style({
     padding: '2px 6px', borderRadius: vars.radius.sm,
     fontSize: '0.64rem', fontWeight: 500, color: vars.color.foreground, whiteSpace: 'nowrap',
     background: vars.color.muted,
-    selectors: { '&[data-verified]': { background: `color-mix(in srgb, ${vars.color.success} 10%, ${vars.color.panel})` } },
+    '@supports': {
+        '(background: color-mix(in srgb, red, blue))': {
+            selectors: {
+                '&[data-status="ok"]': { background: `color-mix(in srgb, ${vars.color.success} 10%, ${vars.color.panel})` },
+                '&[data-status="fail"], &[data-status="none"]': { background: `color-mix(in srgb, ${vars.color.danger} 10%, ${vars.color.panel})` },
+            },
+        },
+    },
 });
 export const guidance = style({ paddingTop: '12px', borderTop: `1px solid ${vars.color.border}` });
 export const help = style({ marginTop: '8px', color: vars.color.mutedForeground });

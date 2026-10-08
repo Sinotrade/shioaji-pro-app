@@ -64,6 +64,7 @@ vi.mock('../lib/server-info-store', () => ({ useServerInfo: () => ({ simulation:
 vi.mock('../lib/account-tradable', () => ({ canTrade: () => mocks.tradeable }));
 
 import { SimTestOrderSection } from './settings-test-order';
+import { PROD_SWITCH_HINT, VERIFY_LEGEND, VERIFY_RULES } from './settings-account-verification';
 import * as css from './settings-test-order.css';
 
 const stockAccount: Account = { account_type: 'S', broker_id: '9A95', account_id: '1234567', signed: true, person_id: '', username: '甲' };
@@ -133,6 +134,8 @@ afterEach(async () => {
 
 const text = () => JSON.stringify(view!.toJSON());
 const textOf = (n: ReactTestInstance | string): string => (typeof n === 'string' ? n : n.children.map(textOf).join(''));
+const childIndex = (parent: ReactTestInstance, target: ReactTestInstance) => parent.children.findIndex(n =>
+    typeof n !== 'string' && (n === target || n.findAll(child => child === target).length > 0));
 const render = async () => { await act(async () => { view = create(createElement(SimTestOrderSection)); }); };
 // 現價與送出是不同操作，依可見名稱找現價按鈕。
 const buttons = () => view!.root.findAll((n) => n.type === 'button' && String(n.props.className).includes(css.sendBtn));
@@ -176,8 +179,8 @@ it('labels product fields by market and verification, with live prices and no se
     expect(products().every((i) => i.props['aria-expanded'] === false)).toBe(true);
     // 清單收起時 aria-controls 不指向不存在的元素
     expect(products().every((i) => i.props['aria-controls'] === undefined)).toBe(true);
-    // 兩列控制項的名稱聽得出是哪個商品
-    expect(prices().map((i) => i.props['aria-label'])).toEqual(['永豐金 價位', '台指近 價位']);
+    // 兩列控制項的名稱聽得出是哪個商品，且以可見標籤「委託價格」開頭（WCAG 2.5.3）
+    expect(prices().map((i) => i.props['aria-label'])).toEqual(['委託價格（永豐金）', '委託價格（台指近）']);
     // 簡短的可見操作仍要帶出商品、方向與數量。
     for (const [i, product] of ['永豐金 2890', '台指近 TXFR1'].entries()) {
         expect(buttons()[i]!.props['aria-label']).toContain(product);
@@ -979,10 +982,12 @@ it.each([
     if (condition === 'price invalid') await setPrice(0, '0');
     const b = buttons()[row]!;
     expect(textOf(b)).toBe(reason);
+    // 兩列同一個原因時仍聽得出是哪個市場；名稱以可見原因開頭
+    expect(b.props['aria-label']).toBe(`${reason}（${row === 0 ? '證券' : '期貨'}）`);
     expect(b.props['aria-disabled']).toBe(true);
     expect(b.props.disabled).toBeUndefined();
     await click(row); expect(mocks.place).not.toHaveBeenCalled();
-    if (condition === 'unsigned') expect(textOf(view!.root)).toContain('尚未完成 API 簽署或模擬測試。若是先登入才完成簽署，請登出後重新登入，簽署才會生效。');
+    if (condition === 'unsigned') expect(textOf(view!.root)).not.toContain('簽署才會生效');
 });
 
 it('uses a newer snapshot rather than an old tick and then follows a newer tick', async () => {
@@ -1102,16 +1107,20 @@ it('keeps the order effect visible while collapsing supplementary help', async (
     await render();
     const help = view!.root.findByType('details');
     expect(help.props.open).toBeUndefined();
-    expect(textOf(help.findByType('summary'))).toBe('測試規則與簽署');
+    expect(textOf(help.findByType('summary'))).toBe('簽署與使用說明');
     expect(help.findAllByType('button')).toHaveLength(0);
     expect(help.findAllByType('input')).toHaveLength(0);
-    const schedule = view!.root.findByProps({ className: css.testSchedule });
-    expect(textOf(schedule)).toBe('資格驗證時段：開盤日 08:00–20:00（台北時間）');
-    expect(help.findAll(n => n === schedule)).toHaveLength(0);
+    const legend = view!.root.findAllByType('p').find(n => textOf(n) === VERIFY_LEGEND);
+    expect(legend).toBeDefined();
+    expect(help.findAll(n => n === legend)).toHaveLength(0);
+    const card = view!.root.findByProps({ className: css.card });
+    expect(childIndex(card, legend!)).toBeGreaterThan(childIndex(card, card.findByProps({ className: css.header })));
+    expect(childIndex(card, legend!)).toBeLessThan(childIndex(card, card.findByProps({ className: css.grid })));
+    expect(textOf(view!.root)).not.toContain('如何通過驗證');
     const guidance = view!.root.findByProps({ className: css.guidance });
     expect(textOf(guidance)).toContain('按下即買進 1 張／1 口限價 ROD，可能立即成交');
     expect(help.findAll(n => n === guidance)).toHaveLength(0);
-    expect(help.findAllByType('li')).toHaveLength(6);
+    expect(help.findAllByType('li')).toHaveLength(4);
     const footer = help.findByProps({ className: css.helpFooter });
     expect(textOf(footer)).toContain('未成交的請到「委託」刪單');
     expect(textOf(footer)).toContain('已成交的請到「持倉」平倉');
@@ -1129,40 +1138,100 @@ it('provides the correct market signing links and qualification prerequisites in
         ['官方測試規則', 'https://sinotrade.github.io/zh/tutor/prepare/terms/'],
     ]);
     const rules = textOf(help);
-    expect(rules).toContain('測試前，先完成 API 電子交易風險預告書暨使用同意書');
-    expect(rules).toContain('以模擬環境登入');
-    expect(rules).toContain('API 金鑰須有「交易」權限');
-    expect(rules).toContain('Shioaji 版本須為 1.2 以上');
-    expect(rules).toContain('08:00–18:00 不限制 IP 地區');
-    expect(rules).toContain('18:00–20:00 僅限台灣 IP');
-    expect(rules).toContain('證券與期貨須各自完成下單測試');
-    expect(rules).toContain('兩次測試請間隔至少 1 秒');
-    expect(rules).toContain('數小時內會開通');
-    expect(rules).toContain('重新登入後再查詢');
+    expect(help.findAllByType('li').map(textOf)).toEqual([
+        '簽署 API 約定書（API 電子交易風險預告書暨使用同意書）：證券簽署期貨簽署',
+        'API 金鑰須有「交易」權限；Shioaji 版本須為 1.2 以上。',
+        '按「更新狀態」可重新取得目前選取帳戶的驗證結果。',
+        '證券可輸入股票名稱或代碼；期貨也可輸入簡稱（台指、小台、微台）。',
+    ]);
+    expect(rules).not.toMatch(/以模擬環境登入|08:00|僅限台灣 IP|各自完成下單測試|間隔|數小時內會開通|重新登入|5 分鐘/);
     expect(mocks.place).not.toHaveBeenCalled();
 });
 
 it('shows verification for the selected account and follows refreshed selections', async () => {
     mocks.accounts.F = { ...futuresAccount, signed: false };
     await render();
-    const badge = (market: string, status: string) => view!.root.findByProps({ 'aria-label': `${market}帳戶${status}驗證` });
-    expect(textOf(badge('證券', '已通過'))).toBe('通過');
-    expect(icons(badge('證券', '已通過'))[0]).toContain('lucide-shield-check');
-    expect(textOf(badge('期貨', '尚未通過'))).toBe('未通過');
-    expect(icons(badge('期貨', '尚未通過'))[0]).toContain('lucide-shield-alert');
-    expect(badge('證券', '已通過').props.title).toBe('證券帳戶已通過驗證');
-    expect(badge('期貨', '尚未通過').props.title).toBe('期貨帳戶尚未通過驗證');
+    const shortText = (n: ReactTestInstance) => textOf(n.findByProps({ 'aria-hidden': 'true' }));
+    const checkBadge = (market: string, state: 'ok' | 'fail') => {
+        const sentence = `${market}帳戶${state === 'ok' ? '已通過' : '尚未通過'}簽署與模擬測試`;
+        const n = view!.root.findByProps({ title: sentence });
+        expect(n.props['data-status']).toBe(state);
+        expect(n.props['aria-label']).toBeUndefined();
+        expect(n.props.role).toBeUndefined();
+        expect(textOf(n.findByProps({ className: css.srOnly }))).toBe(sentence);
+        expect(shortText(n)).toBe(state === 'ok' ? '通過' : '未通過');
+        expect(icons(n)[0]).toContain(state === 'ok' ? 'lucide-circle-check' : 'lucide-circle-x');
+    };
+    checkBadge('證券', 'ok');
+    checkBadge('期貨', 'fail');
     mocks.accounts.S = { ...stockAccount, signed: undefined } as unknown as Account;
     mocks.accounts.F = { ...futuresAccount, signed: true };
     await act(async () => view!.update(createElement(SimTestOrderSection)));
-    expect(textOf(badge('證券', '尚未通過'))).toBe('未通過');
-    expect(textOf(badge('期貨', '已通過'))).toBe('通過');
+    checkBadge('證券', 'fail');
+    checkBadge('期貨', 'ok');
     mocks.accounts.S = undefined; mocks.list = [futuresAccount];
     await act(async () => view!.update(createElement(SimTestOrderSection)));
-    expect(textOf(view!.root.findByProps({ 'aria-label': '證券無帳戶' }))).toBe('無帳戶');
+    const missing = view!.root.findByProps({ title: '無證券帳戶' });
+    expect(missing.props['data-status']).toBe('none');
+    expect(missing.props['aria-label']).toBeUndefined();
+    expect(missing.props.role).toBeUndefined();
+    expect(textOf(missing.findByProps({ className: css.srOnly }))).toBe('無證券帳戶');
+    expect(shortText(missing)).toBe('無帳戶');
+    expect(icons(missing)[0]).toContain('lucide-circle-x');
 });
 
 const refreshStatus = () => view!.root.findByProps({ title: '重新取得帳戶驗證狀態' });
+
+it('shows the how-to-verify rules only while a row is ✕, outside the collapsed help', async () => {
+    mocks.accounts.F = { ...futuresAccount, signed: false };
+    await render();
+    const rules = () => view!.root.findByProps({ role: 'region' });
+    expect(textOf(rules().findByProps({ id: rules().props['aria-labelledby'] }))).toBe('如何通過驗證');
+    expect(rules().findByType('ul').props.role).toBe('list');
+    expect(rules().findAllByType('li').map(textOf)).toEqual(VERIFY_RULES);
+    const card = view!.root.findByProps({ className: css.card });
+    const help = view!.root.findByType('details');
+    expect(childIndex(card, rules())).toBeGreaterThan(childIndex(card, card.findByProps({ className: css.guidance })));
+    expect(childIndex(card, rules())).toBeLessThan(childIndex(card, help));
+    expect(help.findAll(n => n === rules())).toHaveLength(0);
+    expect(textOf(view!.root).split('18:00–20:00 僅限台灣 IP')).toHaveLength(2);
+    expect(textOf(view!.root)).not.toContain(PROD_SWITCH_HINT);
+    expect(textOf(view!.root)).not.toMatch(/5 分鐘|數小時內會開通|資格驗證時段/);
+    mocks.list = [stockAccount]; mocks.accounts.F = undefined;
+    await act(async () => view!.update(createElement(SimTestOrderSection)));
+    expect(textOf(rules())).toContain('如何通過驗證');
+    mocks.list = [stockAccount, futuresAccount]; mocks.accounts.F = futuresAccount;
+    await act(async () => view!.update(createElement(SimTestOrderSection)));
+    expect(view!.root.findAllByProps({ role: 'region' })).toHaveLength(0);
+    expect(textOf(view!.root)).not.toContain('如何通過驗證');
+    expect(mocks.place).not.toHaveBeenCalled();
+});
+
+it.each(['ok', 'fail', 'none'] as const)('never renders a shield or plain circle verification icon: %s', async status => {
+    if (status === 'fail') mocks.accounts.F = { ...futuresAccount, signed: false };
+    if (status === 'none') { mocks.list = [stockAccount]; mocks.accounts.F = undefined; }
+    await render();
+    const badges = view!.root.findAllByProps({ className: css.verification });
+    expect(badges).toHaveLength(2);
+    for (const badge of badges) {
+        expect(icons(badge)).toHaveLength(1);
+        expect(icons(badge)[0]).toMatch(/lucide-circle-(check|x)\b/);
+        expect(icons(badge)[0]).not.toMatch(/lucide-shield|lucide-circle(\s|$)/);
+        expect(badge.findByType('svg').props['aria-hidden']).toBe(true);
+        expect(badge.props['aria-label']).toBeUndefined();
+        expect(badge.props.role).toBeUndefined();
+    }
+    expect(mocks.place).not.toHaveBeenCalled();
+});
+
+it('hides verification badges and rules while the accounts are unknown', async () => {
+    mocks.list = [];
+    await render();
+    expect(view!.root.findAllByProps({ className: css.verification })).toHaveLength(0);
+    expect(view!.root.findAllByProps({ role: 'region' })).toHaveLength(0);
+    expect(textOf(view!.root)).not.toContain('如何通過驗證');
+    expect(mocks.place).not.toHaveBeenCalled();
+});
 
 it('refreshes verification once, shows progress, and preserves the current order inputs', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
@@ -1188,7 +1257,7 @@ it('refreshes verification once, shows progress, and preserves the current order
         await request;
     });
     expect(refreshStatus().props.disabled).toBe(false);
-    expect(textOf(view!.root.findByProps({ 'aria-label': '期貨帳戶已通過驗證' }))).toBe('通過');
+    expect(textOf(view!.root.findByProps({ title: '期貨帳戶已通過簽署與模擬測試' }).findByProps({ 'aria-hidden': 'true' }))).toBe('通過');
     const completed = view!.root.findByProps({ 'aria-label': '驗證狀態已更新' });
     expect(completed.props.role).toBe('status');
     expect(textOf(completed)).toBe('已更新 13:06:07');
@@ -1210,7 +1279,7 @@ it.each(['store error', 'rejection'])('reports a failed verification refresh and
     expect(textOf(view!.root)).toContain('更新失敗，保留上次狀態。請稍後再試。');
     expect(view!.root.findAllByProps({ 'aria-label': '驗證狀態已更新' })).toHaveLength(0);
     expect(refreshStatus().props.disabled).toBe(false);
-    expect(textOf(view!.root.findByProps({ 'aria-label': '證券帳戶已通過驗證' }))).toBe('通過');
+    expect(textOf(view!.root.findByProps({ title: '證券帳戶已通過簽署與模擬測試' }).findByProps({ 'aria-hidden': 'true' }))).toBe('通過');
     mocks.refreshAccounts.mockImplementation(async () => { mocks.accountLoadError = false; });
     await act(async () => { await refreshStatus().props.onClick(); });
     expect(view!.root.findByProps({ 'aria-label': '驗證狀態已更新' }).props.role).toBe('status');
