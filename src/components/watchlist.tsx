@@ -214,8 +214,8 @@ const WatchRow = memo(function WatchRow({
                     <span
                         className={styles.limitPrice[atLimit]}
                         title={`${limitLabel} ${fmtPrice(close)}`}
-                        aria-label={`${limitLabel} ${fmtPrice(close)}`}
                     >
+                        <span className={styles.srOnly}>{limitLabel} </span>
                         {fmtPrice(close)}
                     </span>
                 ) : (

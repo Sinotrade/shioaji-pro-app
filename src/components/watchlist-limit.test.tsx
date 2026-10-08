@@ -93,12 +93,27 @@ function hasClass(node: any, cls: string) {
     return cls.split(/\s+/).every((c) => have.includes(c));
 }
 
+// 畫面上可見的文字（略過只給螢幕閱讀器的 srOnly）
 function texts(node: any): string {
     return node
-        .findAll(() => true)
+        .findAll((n: any) => !hasAncestorSr(n, node))
         .flatMap((n: any) =>
             (n.children ?? []).filter((c: unknown) => typeof c === 'string'),
         )
+        .join('|');
+}
+
+function hasAncestorSr(n: any, stop: any): boolean {
+    for (let p = n; p && p !== stop.parent; p = p.parent) {
+        if (typeof p.type === 'string' && hasClass(p, styles.srOnly)) return true;
+    }
+    return false;
+}
+
+function srText(node: any): string {
+    return node
+        .findAll((n: any) => typeof n.type === 'string' && hasClass(n, styles.srOnly))
+        .map((n: any) => n.children.join(''))
         .join('|');
 }
 
@@ -111,7 +126,7 @@ describe('watchlist 漲跌停亮燈', () => {
         const price = row.find((n: any) => hasClass(n, styles.price));
         const pill = price.find((n: any) => hasClass(n, styles.limitPrice.up));
         expect(texts(pill)).toBe('1,100');
-        expect(pill.props['aria-label']).toBe('漲停 1,100');
+        expect(srText(pill).trim()).toBe('漲停');
         // 只用底色亮燈 — 不再渲染「漲停／跌停」小標
         expect(texts(row)).not.toMatch(/漲停|跌停/);
     });
@@ -124,7 +139,7 @@ describe('watchlist 漲跌停亮燈', () => {
         const price = row.find((n: any) => hasClass(n, styles.price));
         const pill = price.find((n: any) => hasClass(n, styles.limitPrice.down));
         expect(texts(pill)).toBe('900');
-        expect(pill.props['aria-label']).toBe('跌停 900');
+        expect(srText(pill).trim()).toBe('跌停');
         expect(texts(row)).not.toMatch(/漲停|跌停/);
     });
 

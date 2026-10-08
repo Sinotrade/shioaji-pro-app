@@ -90,9 +90,23 @@ const limitPriceBase = style({
     padding: '0 5px',
     marginRight: '-5px',
     textAlign: 'right',
+    whiteSpace: 'nowrap',
     verticalAlign: 'middle',
     color: '#fff',
     borderRadius: vars.radius.sm,
+});
+
+// 只給輔助科技讀的「漲停／跌停」（畫面上只用底色表示）
+export const srOnly = style({
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    padding: 0,
+    margin: -1,
+    overflow: 'hidden',
+    clip: 'rect(0 0 0 0)',
+    whiteSpace: 'nowrap',
+    border: 0,
 });
 
 // 實心底把漲跌色壓暗 25%：白字對比在深色綠底也有約 4.5:1（純漲跌色
