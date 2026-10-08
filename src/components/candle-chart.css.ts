@@ -53,6 +53,12 @@ export const iconBtn = style([
     },
 ]);
 
+// 圖上顯示類開關（K 棒讀值）：開＝前景色，關＝淡灰
+export const iconBtnToggle = styleVariants({
+    on: [iconBtn, { color: vars.color.foreground }],
+    off: [iconBtn, { opacity: 0.55 }],
+});
+
 export const toolbarDivider = style({
     width: '1px',
     alignSelf: 'stretch',
@@ -340,4 +346,39 @@ export const emptyMsg = style({
     color: vars.color.mutedForeground,
     fontFamily: vars.font.display,
     fontSize: '0.78rem',
+});
+
+// ---- K 棒讀值列（開高低收，issue #240）— 左上角堆疊第一列 ----
+// 整列不吃滑鼠：游標經過讀值列時圖表照樣收到移動／點擊（畫圖、點價不受影響）
+export const ohlcRow = style({
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    columnGap: '8px',
+    rowGap: '1px',
+    padding: '1px 6px',
+    // 最大寬度由元件依圖表寬度給（讓開右側價格軸）；真的放不下才換行
+    width: 'fit-content',
+    background: 'color-mix(in srgb, ' + vars.color.panel + ' 72%, transparent)',
+    borderRadius: vars.radius.sm,
+    fontFamily: vars.font.mono,
+    fontSize: '0.64rem',
+    fontVariantNumeric: 'tabular-nums',
+    color: vars.color.foreground,
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
+    userSelect: 'none',
+});
+
+export const ohlcItem = style({
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    gap: '3px',
+    fontWeight: 500,
+});
+
+export const ohlcLabel = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.6rem',
+    color: vars.color.mutedForeground,
 });
