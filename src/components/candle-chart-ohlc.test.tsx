@@ -125,6 +125,43 @@ describe('CandleChart K 棒讀值（#240）', () => {
         expect(text(field(r, 'close'))).toBe(`收${last.close.toLocaleString('en-US')}`);
     });
 
+    it('同一個 frame 內多次游標事件以最後一次為準', async () => {
+        setNow('2026-10-08T09:16:00');
+        fetchMock.mockResolvedValue(DATA);
+        const r = mount({ contract: fut });
+        await flush();
+        const [first, second] = created.filter((c) => c.kind === 'Candlestick').at(-1)!.last as any[];
+        for (const h of crosshairHandlers) {
+            h({ point: { x: 1, y: 1 }, time: first.time, seriesData: new Map() });
+            h({ point: { x: 2, y: 1 }, time: second.time, seriesData: new Map() });
+        }
+        await frame();
+        expect(text(field(r, 'close'))).toBe(`收${second.close.toLocaleString('en-US')}`);
+        for (const h of crosshairHandlers) {
+            h({ point: { x: 1, y: 1 }, time: first.time, seriesData: new Map() });
+            h({ point: undefined, time: undefined, seriesData: new Map() });
+        }
+        await frame();
+        expect(r.root.findByProps({ 'data-ohlc': 'row' }).props['data-hovering']).toBe(false);
+    });
+
+    it('窄面板（圖表寬度由 ResizeObserver 回報）只留高低收，並讓開價格軸', async () => {
+        vi.stubGlobal('ResizeObserver', class {
+            constructor(private cb: (e: any[]) => void) {}
+            observe() { this.cb([{ contentRect: { width: 300 } }]); }
+            disconnect() {}
+            unobserve() {}
+        });
+        setNow('2026-10-08T09:16:00');
+        fetchMock.mockResolvedValue(DATA);
+        const r = mount({ contract: fut });
+        await flush();
+        expect(field(r, 'open')).toBeUndefined();
+        expect(field(r, 'volume')).toBeUndefined();
+        expect(field(r, 'close')).toBeDefined();
+        expect(r.root.findByProps({ 'data-ohlc': 'row' }).props.style).toEqual({ maxWidth: 220 });
+    });
+
     it('tick 更新最新一根的收盤與高低', async () => {
         setNow('2026-10-08T09:14:00');
         fetchMock.mockResolvedValue(DATA);
