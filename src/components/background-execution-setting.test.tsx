@@ -7,11 +7,13 @@ import { expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
     health: null as null | { enabled: boolean; state: string; env: string | null; lastError: string | null },
+    saved: null as boolean | null,
     set: vi.fn(async () => undefined),
 }));
 
 vi.mock('../lib/execution/background', () => ({
     useBackgroundHealth: () => m.health,
+    useBackgroundSetting: () => m.saved,
     useBackgroundPrograms: () => [],
     refreshBackground: async () => undefined,
     setBackgroundEnabled: m.set,
@@ -29,6 +31,7 @@ const toggle = (r: ReactTestRenderer) => r.root.findByProps({ 'aria-label': '背
 
 it('is off until the App says on, and says so without jargon', () => {
     m.health = null;
+    m.saved = false;
     const r = render();
     expect(toggle(r).props['aria-pressed']).toBe(false);
     expect(toggle(r).props.disabled).toBe(true); // no status: cannot change it
@@ -36,8 +39,19 @@ it('is off until the App says on, and says so without jargon', () => {
     expect(text(r)).not.toContain('原生');
 });
 
+it('can be turned off even when the engine is not running', async () => {
+    m.health = null;
+    m.saved = true;
+    const r = render();
+    expect(toggle(r).props.disabled).toBe(false);
+    expect(text(r)).toContain('背景執行目前無法使用');
+    await act(async () => { toggle(r).props.onClick(); });
+    expect(m.set).toHaveBeenLastCalledWith(false);
+});
+
 it('turning it on asks the App', async () => {
     m.health = { enabled: false, state: 'idle', env: null, lastError: null };
+    m.saved = false;
     const r = render();
     await act(async () => { toggle(r).props.onClick(); });
     expect(m.set).toHaveBeenCalledWith(true);

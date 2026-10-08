@@ -9,6 +9,7 @@ import {
     refreshBackground,
     setBackgroundEnabled,
     useBackgroundHealth,
+    useBackgroundSetting,
     useBackgroundPrograms,
 } from '../lib/execution/background';
 import * as hud from './hud-header.css';
@@ -22,14 +23,15 @@ const STATE: Record<string, string> = {
 
 export function BackgroundExecutionSetting() {
     const health = useBackgroundHealth();
+    const saved = useBackgroundSetting();
     const running = useBackgroundPrograms().filter(p => p.status !== 'stopped').length;
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     useEffect(() => { void refreshBackground(); }, []);
-    const on = health?.enabled === true;
-    const state = health
-        ? `${STATE[health.state] ?? health.state}${health.env ? `（${health.env === 'simulation' ? '模擬' : '正式'}）` : ''}`
-        : '無法取得狀態';
+    const on = saved === true;
+    const state = saved === null ? '開關狀態不明'
+        : health ? `${STATE[health.state] ?? health.state}${health.env ? `（${health.env === 'simulation' ? '模擬' : '正式'}）` : ''}`
+            : on ? '背景執行目前無法使用（新的觸價單不會建立，可關閉改用本視窗）' : '背景執行未啟動';
     const toggle = () => {
         setBusy(true);
         setError(null);
@@ -48,7 +50,8 @@ export function BackgroundExecutionSetting() {
                     className={hud.switchTrack[on ? 'on' : 'off']}
                     aria-label='背景持續執行（實驗）'
                     aria-pressed={on}
-                    disabled={busy || !health}
+                    // turning it off always works; on needs a running engine
+                    disabled={busy || (!on && !health)}
                     title={on ? '關閉：之後新建的觸價單回到原本的方式' : '開啟：之後新建的期貨與選擇權觸價單在背景執行'}
                     onClick={toggle}
                 />

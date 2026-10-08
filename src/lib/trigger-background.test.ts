@@ -20,6 +20,8 @@ const m = vi.hoisted(() => ({
     ensure: vi.fn(),
     invoke: vi.fn(),
     enabled: false,
+    engineDown: false,
+    settingUnreadable: false,
     programs: [] as unknown[],
 }));
 
@@ -101,7 +103,14 @@ beforeEach(() => {
     for (const f of [m.place, m.notify, m.ensure, m.invoke]) f.mockReset();
     m.ensure.mockImplementation(async (code: string) => code === '2330' ? STK : code === TXO.code ? TXO : TXF);
     m.place.mockImplementation(async () => ({ order: { id: 'exit-1' }, status: { status: 'PendingSubmit' } }));
+    m.engineDown = false;
+    m.settingUnreadable = false;
     m.invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'execution_get_enabled') {
+            if (m.settingUnreadable) throw new Error('背景持續執行的設定無法讀取');
+            return m.enabled;
+        }
+        if (m.engineDown && cmd.startsWith('execution_')) throw new Error('背景執行尚未啟動');
         if (cmd === 'execution_status') return { enabled: m.enabled, state: 'live', env: 'simulation', serverId: 'http://sim.invalid',
             lastError: null, partitionErrors: [], programs: m.programs.length, activePrograms: m.programs.length, revision: 1 };
         if (cmd === 'execution_programs') return { revision: m.programs.length + 1, programs: m.programs };
@@ -122,6 +131,16 @@ describe('setting off: this window runs every trigger exactly as before', () => 
         await tick('TXFR1', 19900);
         expect(m.place).toHaveBeenCalledTimes(1);
         expect(calls('execution_create')).toHaveLength(0);
+    });
+
+    it('is not affected when the background engine cannot be reached', async () => {
+        m.engineDown = true;
+        await boot();
+        await engine.addTrigger(stop(), TXF as never);
+        expect(engine.getTriggers()).toHaveLength(1);
+        await tick('TXFR1', 19900);
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(m.notify.mock.calls.some(([n]) => (n as { title: string }).title === '觸價單未建立')).toBe(false);
     });
 
     it('the web build never asks the App', async () => {
@@ -150,6 +169,30 @@ describe('setting on (#201 ①-3)', () => {
         expect(created[1]!.binding.contract.securityType).toBe('OPT');
         await tick('TXFR1', 19000);
         expect(m.place).not.toHaveBeenCalled();
+    });
+
+    it('the engine cannot be reached: refused with a clear message, never silently run here', async () => {
+        m.enabled = true;
+        m.engineDown = true;
+        await boot();
+        expect(await engine.addTrigger(stop(), TXF as never)).toBeNull();
+        expect(engine.getTriggers()).toHaveLength(0);
+        expect(calls('execution_create')).toHaveLength(0);
+        const bodies = m.notify.mock.calls.map(([n]) => (n as { body: string }).body);
+        expect(bodies).toContain('背景執行目前無法使用，請稍後再試或關閉背景持續執行改用本視窗');
+        // a stock trigger is not the engine's: unaffected
+        await engine.addTrigger({ ...stop(), code: '2330', price: 900 }, STK as never);
+        expect(engine.getTriggers()).toHaveLength(1);
+    });
+
+    it('the setting cannot be read: unknown, refused, never taken as off', async () => {
+        m.settingUnreadable = true;
+        await boot();
+        expect(await engine.addTrigger(stop(), TXF as never)).toBeNull();
+        expect(engine.getTriggers()).toHaveLength(0);
+        expect(calls('execution_create')).toHaveLength(0);
+        const bodies = m.notify.mock.calls.map(([n]) => (n as { body: string }).body);
+        expect(bodies.some(b => b.includes('開關狀態不明'))).toBe(true);
     });
 
     it('stocks, alerts and OCO groups stay in this window', async () => {

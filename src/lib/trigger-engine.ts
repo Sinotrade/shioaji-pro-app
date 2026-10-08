@@ -58,10 +58,9 @@ import {
     watchProtectionEnv,
 } from './protection-env';
 import {
+    backgroundOwnerForNew,
     backgroundSupported,
     createBackgroundTrigger,
-    ensureBackgroundStatus,
-    getBackgroundEnabled,
     getBackgroundPrices,
     getBackgroundPrograms,
     refreshBackground,
@@ -387,8 +386,13 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase, opts?: 
     // #201: with 「背景持續執行」 on, a new futures / options stop or take
     // runs in the background engine and never enters this engine (one owner)
     if (backgroundSupported() && backgroundEligible(prepared, contract)) {
-        await ensureBackgroundStatus();
-        if (getBackgroundEnabled()) return addBackgroundTrigger(prepared, contract!);
+        const owner = await backgroundOwnerForNew();
+        if (owner === 'background') return addBackgroundTrigger(prepared, contract!);
+        if (owner !== 'window') {
+            // on (or unknown) but unusable: never a silent switch to this window
+            notify({ kind: 'err', title: '觸價單未建立', body: owner.refused });
+            return null;
+        }
     }
     const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : newId();
     try {

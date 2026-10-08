@@ -62,6 +62,8 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 let isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 let health: BackgroundHealth | null = null;
+/** The saved setting as the App last said; null: not read yet / unreadable. */
+let setting: boolean | null = null;
 let programs: OrderProgram[] = [];
 let revision = -1;
 const listeners = new Set<() => void>();
@@ -71,9 +73,43 @@ export function backgroundSupported(): boolean {
     return isTauri;
 }
 
-/** New futures / options stop and take triggers run in the background. */
-export function getBackgroundEnabled(): boolean {
-    return isTauri && health?.enabled === true;
+/** The saved 「背景持續執行（實驗）」 setting; null while unknown. */
+export function getBackgroundSetting(): boolean | null {
+    return isTauri ? setting : false;
+}
+
+export function useBackgroundSetting(): boolean | null {
+    return useSyncExternalStore(subscribeBackground, getBackgroundSetting);
+}
+
+export const BACKGROUND_UNAVAILABLE = '背景執行目前無法使用，請稍後再試或關閉背景持續執行改用本視窗';
+export const BACKGROUND_SETTING_UNKNOWN = '背景持續執行的開關狀態不明，請稍後再試或到設定確認開關';
+
+async function readSetting(): Promise<boolean | null> {
+    try {
+        const on = await invoke<boolean>('execution_get_enabled');
+        if (typeof on !== 'boolean') throw new Error('bad setting');
+        return on;
+    } catch {
+        return null;
+    }
+}
+
+/** Who runs a new futures / options stop or take: off → this window
+ * (exactly as before, the engine's state does not matter); on → the
+ * background engine, or a refusal while it cannot be reached; unknown
+ * setting → a refusal (never a silent guess either way). */
+export async function backgroundOwnerForNew(): Promise<'window' | 'background' | { refused: string }> {
+    if (!isTauri) return 'window';
+    if (setting === null) {
+        const read = await readSetting();
+        if (read !== null && setting === null) { setting = read; emit(); }
+    }
+    if (setting === null) return { refused: BACKGROUND_SETTING_UNKNOWN };
+    if (!setting) return 'window';
+    if (!health) await settled();
+    if (!health) return { refused: BACKGROUND_UNAVAILABLE };
+    return 'background';
 }
 
 export function getBackgroundHealth(): BackgroundHealth | null {
@@ -106,6 +142,9 @@ export function refreshBackground(): Promise<void> {
     if (refreshing) { refreshAgain = true; return refreshing; }
     const started = epoch;
     refreshing = (async () => {
+        // the setting is read on its own: it is known even when the engine is not
+        const saved = await readSetting();
+        if (started === epoch && saved !== null && saved !== setting) { setting = saved; emit(); }
         try {
             const [view, h] = await Promise.all([
                 invoke<ProgramsView>('execution_programs'),
@@ -137,11 +176,6 @@ async function settled(): Promise<void> {
     while (refreshing) await refreshing;
 }
 
-/** Status known (read once if not yet): the setting decides who owns a new trigger. */
-export async function ensureBackgroundStatus(): Promise<void> {
-    if (isTauri && !health) await settled();
-}
-
 // ---- setting ----
 
 /** Main window only (the App refuses other windows). */
@@ -149,6 +183,7 @@ export async function setBackgroundEnabled(on: boolean): Promise<void> {
     if (!isTauri) throw new Error('背景持續執行僅限桌面版');
     epoch += 1;
     health = await invoke<BackgroundHealth>('execution_set_enabled', { enabled: on });
+    setting = on;
     epoch += 1;
     emit();
     await settled();
@@ -319,6 +354,7 @@ export function __setBackgroundInvokeForTest(fn: Invoke | null, opts: { desktop?
     invokeImpl = fn;
     if (opts.desktop !== undefined) isTauri = opts.desktop;
     health = null;
+    setting = null;
     programs = [];
     revision = -1;
     prices = {};
