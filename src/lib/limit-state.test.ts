@@ -87,4 +87,22 @@ describe('limitStateOf', () => {
         expect(limitStateOf(k, 24199)).toBeNull();
         expect(limitStateOf(k, 19800)).toBe('down');
     });
+
+    it('期權級距表未載入（tick 退回參考價級距 0.05）時，跌停前一檔 9.91 不誤判', () => {
+        const k = c({
+            code: 'CDFJ6',
+            exchange: 'TAIFEX',
+            security_type: 'FUT',
+            limit_up: 12.1,
+            limit_down: 9.9,
+            reference: 11,
+            tick: 0.05,
+            tick_rule: 'qa_unloaded_rule',
+            underlying_kind: 'S',
+        });
+        expect(limitStateOf(k, 9.91)).toBeNull();
+        expect(limitStateOf(k, 9.9)).toBe('down');
+        expect(limitStateOf(k, 12.05)).toBeNull();
+        expect(limitStateOf(k, 12.1)).toBe('up');
+    });
 });

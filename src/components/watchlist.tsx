@@ -192,27 +192,35 @@ const WatchRow = memo(function WatchRow({
             )}
             <span
                 className={`${styles.price} ${
-                    atLimit ? styles.limitPrice[atLimit] : panel.dirText[dir]
+                    atLimit ? '' : panel.dirText[dir]
                 }`}
-                title={atLimit ? `${limitLabel} ${fmtPrice(close)}` : undefined}
             >
                 {tick?.simtrade ? (
                     <span className={styles.simBadge}>試搓</span>
                 ) : null}
-                {fmtPrice(close)}
+                {atLimit ? (
+                    <>
+                        <span className={styles.limitTag[atLimit]}>
+                            {atLimit === 'up' ? (
+                                <ArrowUpToLine size={9} strokeWidth={2.5} />
+                            ) : (
+                                <ArrowDownToLine size={9} strokeWidth={2.5} />
+                            )}
+                            {limitLabel}
+                        </span>
+                        <span
+                            className={styles.limitPrice[atLimit]}
+                            title={`${limitLabel} ${fmtPrice(close)}`}
+                        >
+                            {fmtPrice(close)}
+                        </span>
+                    </>
+                ) : (
+                    fmtPrice(close)
+                )}
             </span>
             <span className={styles.name}>{item.contract.name}</span>
             <span className={`${styles.change} ${panel.dirText[dir]}`}>
-                {atLimit && (
-                    <span className={styles.limitTag[atLimit]}>
-                        {atLimit === 'up' ? (
-                            <ArrowUpToLine size={9} strokeWidth={2.5} />
-                        ) : (
-                            <ArrowDownToLine size={9} strokeWidth={2.5} />
-                        )}
-                        {limitLabel}
-                    </span>
-                )}
                 {fmtSigned(chg)} {fmtPct(pct)}
             </span>
             {arrange ? (

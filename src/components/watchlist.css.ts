@@ -6,6 +6,8 @@ import { vars } from '../theme.css';
 export const list = style({
     display: 'flex',
     flexDirection: 'column',
+    // 讓列內元素依清單寬度調整（窄寬度收起「漲停／跌停」小標）
+    containerType: 'inline-size',
 });
 
 const rowBase = style({
@@ -80,21 +82,26 @@ export const limitTone = {
 } as const;
 
 const limitPriceBase = style({
-    justifySelf: 'end',
+    display: 'inline-block',
     color: '#fff',
     borderRadius: vars.radius.sm,
     padding: '0 4px',
-    // 原本價格欄沒有底，padding 用負 margin 抵銷，避免亮燈時欄寬跳動
+    // 原本價格沒有底，padding 用負 margin 抵銷，亮燈時數字位置不跳
     marginRight: '-4px',
-    position: 'relative',
 });
+
+// 實心底把漲跌色壓暗 25%：白字對比在深色綠底也有約 4.5:1（純漲跌色
+// 只有 2.7:1），色相仍跟主題走、國際配色照樣反轉
+const limitFill = (tone: string) => `color-mix(in srgb, ${tone} 75%, black)`;
 
 export const limitPrice = styleVariants({
-    up: [limitPriceBase, { background: limitTone.up }],
-    down: [limitPriceBase, { background: limitTone.down }],
+    up: [limitPriceBase, { background: limitFill(limitTone.up) }],
+    down: [limitPriceBase, { background: limitFill(limitTone.down) }],
 });
 
-// 第二行漲跌幅前的小標「漲停／跌停」— 外框樣式，和價格的實心底分出層次
+// 價格前的小標「漲停／跌停」— 外框樣式，和價格的實心底分出層次；
+// 放第一行（代碼列通常有空間），不擠第二行的漲跌幅。清單很窄時收起，
+// 只留價格底色
 const limitTagBase = style({
     display: 'inline-flex',
     alignItems: 'center',
@@ -104,11 +111,14 @@ const limitTagBase = style({
     fontWeight: 700,
     lineHeight: 1.25,
     padding: '0 3px 0 2px',
-    marginRight: 4,
+    marginRight: 5,
     borderRadius: vars.radius.sm,
     border: '1px solid currentColor',
     whiteSpace: 'nowrap',
-    verticalAlign: '1px',
+    verticalAlign: '2px',
+    '@container': {
+        '(max-width: 240px)': { display: 'none' },
+    },
 });
 
 export const limitTag = styleVariants({

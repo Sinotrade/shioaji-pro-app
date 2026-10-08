@@ -109,8 +109,9 @@ describe('watchlist 漲跌停亮燈', () => {
         const row = rowOf(root, '2330');
         expect(row.props['data-limit']).toBe('up');
         const price = row.find((n: any) => hasClass(n, styles.price));
-        expect(hasClass(price, styles.limitPrice.up)).toBe(true);
-        expect(texts(row)).toContain('漲停');
+        const pill = price.find((n: any) => hasClass(n, styles.limitPrice.up));
+        expect(texts(pill)).toBe('1,100');
+        expect(texts(price)).toContain('漲停');
         expect(texts(row)).not.toContain('跌停');
     });
 
@@ -120,8 +121,9 @@ describe('watchlist 漲跌停亮燈', () => {
         const row = rowOf(root, '2330');
         expect(row.props['data-limit']).toBe('down');
         const price = row.find((n: any) => hasClass(n, styles.price));
-        expect(hasClass(price, styles.limitPrice.down)).toBe(true);
-        expect(texts(row)).toContain('跌停');
+        const pill = price.find((n: any) => hasClass(n, styles.limitPrice.down));
+        expect(texts(pill)).toBe('900');
+        expect(texts(price)).toContain('跌停');
     });
 
     it('未到漲跌停：不亮燈', () => {
@@ -170,8 +172,9 @@ describe('watchlist 漲跌停亮燈', () => {
         tick('2330', 1100, 1000);
         const root = render([{ contract: contract({}) }], '2330');
         const row = rowOf(root, '2330');
-        const price = row.find((n: any) => hasClass(n, styles.price));
-        expect(hasClass(price, styles.limitPrice.up)).toBe(true);
+        expect(
+            row.findAll((n: any) => hasClass(n, styles.limitPrice.up)).length,
+        ).toBe(1);
     });
 
     it('國際配色：亮燈色取自主題的漲跌 token（intl 自動反轉為綠漲紅跌）', () => {

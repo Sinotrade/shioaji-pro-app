@@ -3,12 +3,13 @@
 // 規則：
 // - 指數（IND）與興櫃（OES）沒有漲跌停 → 永遠 null
 // - 漲跌停價缺席或不合理（limit_up <= limit_down、limit_down <= 0）→ null
-// - 以跳動價位的半檔為容差比較，避免 0.1 級距累加的浮點誤差；漲停用
-//   「漲停價下方那一檔」的級距（如漲停 10 元時下方級距 0.01），避免把
-//   漲停前一檔誤判為漲停
+// - 以跳動價位的精度（小數位數，至少 2 位）四捨五入後再比較，消掉 0.1
+//   級距累加的浮點誤差。不用「半檔容差」：期權級距表尚未載入時
+//   tickSizeFor 會退回參考價所在級距，半檔可能大於停板附近的真實級距，
+//   把停板前一檔誤判成停板
 
 import type { ContractInfo } from './types/contract';
-import { tickSizeFor } from './utils/ticksize';
+import { tickDecimals, tickSizeFor } from './utils/ticksize';
 
 export type LimitState = 'up' | 'down' | null;
 
@@ -33,9 +34,14 @@ export function limitStateOf(
     if (!Number.isFinite(lu) || !Number.isFinite(ld) || ld <= 0 || lu <= ld) {
         return null;
     }
-    const upTick = tickSizeFor(contract, lu * (1 - 1e-9));
-    const downTick = tickSizeFor(contract, ld);
-    if (price >= lu - upTick / 2) return 'up';
-    if (price <= ld + downTick / 2) return 'down';
+    const decimals = Math.max(
+        2,
+        tickDecimals(tickSizeFor(contract, lu)),
+        tickDecimals(tickSizeFor(contract, ld)),
+    );
+    const round = (v: number) => Number(v.toFixed(decimals));
+    const px = round(price);
+    if (px >= round(lu)) return 'up';
+    if (px <= round(ld)) return 'down';
     return null;
 }
