@@ -4,7 +4,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 const m = vi.hoisted(() => ({ post: vi.fn(), base: 'http://a' }));
 vi.mock('./api', () => ({ apiPost: m.post }));
 vi.mock('./runtime', () => ({ getApiBase: () => m.base }));
-import { creditStatus, loadCreditEnquire, resetCreditEnquireCache, type CreditEnquire } from './credit-eligibility';
+import { creditSideBlocks, creditStatus, loadCreditEnquire, prepareCreditOrder, resetCreditEnquireCache, type CreditEnquire } from './credit-eligibility';
 
 const row = (patch: Partial<CreditEnquire> = {}): CreditEnquire => ({
     stock_id: '2330', system: 'ALL', update_time: '', margin_unit: 100, short_unit: 50, margin_loan_ratio: 60, short_margin_ratio: 90, ...patch,
@@ -76,4 +76,65 @@ it('a fresh load bypasses the cached answer and replaces it', async () => {
     await expect(loadCreditEnquire(stk, { fresh: true })).resolves.toMatchObject({ margin_unit: 0 });
     await expect(loadCreditEnquire(stk)).resolves.toMatchObject({ margin_unit: 0 });
     expect(m.post).toHaveBeenCalledTimes(2);
+});
+
+// 閃電與圖表下單共用：每一邊的停用原因、點下去時的可否融資券檢查
+const cash = { cond: 'Cash', daytradeShort: false } as const;
+const margin = { cond: 'MarginTrading', daytradeShort: false } as const;
+const short = { cond: 'ShortSelling', daytradeShort: false } as const;
+
+it('side blocks: 融券／借券 never buy, 融資 0 stops only 融資買進, 現沖 needs a day-tradable stock', () => {
+    const c = { code: '2330', day_trade: 'Yes' };
+    expect(creditSideBlocks(c, cash, 'ok')).toMatchObject({ buy: null, sell: null });
+    expect(creditSideBlocks(c, short, 'ok').buy).toMatch(/只能賣出/);
+    expect(creditSideBlocks(c, { cond: 'SBLShort', daytradeShort: false }, 'ok')).toMatchObject({ sell: null, sellOnly: true });
+    const m0 = creditSideBlocks(c, margin, 'blocked');
+    expect(m0.buy).toMatch(/不能融資買進/);
+    expect(m0.sell).toBeNull();
+    expect(creditSideBlocks(c, short, 'blocked').sell).toMatch(/不能融券賣出/);
+    expect(creditSideBlocks({ code: '2330', day_trade: 'OnlyBuy' }, { cond: 'Cash', daytradeShort: true }, 'ok'))
+        .toMatchObject({ buy: null, sell: expect.stringMatching(/只能先買後賣/) });
+    expect(creditSideBlocks({ code: '2330', day_trade: 'No' }, { cond: 'Cash', daytradeShort: true }, 'ok').sell).toMatch(/不可當沖/);
+    // unknown / loading never block
+    expect(creditSideBlocks(c, margin, 'unknown')).toMatchObject({ buy: null, sell: null });
+});
+
+it('prepareCreditOrder checks eligibility only for 融資買進／融券賣出 and re-checks after the confirmation', async () => {
+    expect(await prepareCreditOrder(stk, 'Sell', margin)).toEqual({ check: expect.any(Function) });
+    expect(m.post).not.toHaveBeenCalled();
+    m.post.mockResolvedValue([row()]);
+    const gate = await prepareCreditOrder(stk, 'Buy', margin);
+    expect(gate.afterConfirm).toBeTypeOf('function');
+    m.post.mockResolvedValue([row({ margin_unit: 0 })]);
+    await expect(gate.afterConfirm!()).rejects.toThrow('2330 目前不能融資買進，已停止送單');
+    // a cached 0 is re-queried once at the click; still 0 refuses
+    await expect(prepareCreditOrder(stk, 'Buy', margin)).rejects.toThrow('不能融資買進');
+    // failures never block (the broker decides)
+    m.post.mockRejectedValue(new Error('down'));
+    resetCreditEnquireCache();
+    await expect(prepareCreditOrder(stk, 'Sell', short)).resolves.toMatchObject({ afterConfirm: expect.any(Function) });
+});
+
+it('prepareCreditOrder: a server switch during the check refuses; the dispatch check catches a new day or server', async () => {
+    let release!: (v: unknown) => void;
+    m.post.mockImplementation(() => new Promise(r => { release = r; }));
+    const p = prepareCreditOrder(stk, 'Buy', margin);
+    m.base = 'http://b';
+    release([row()]);
+    await expect(p).rejects.toThrow('伺服器已切換');
+    m.base = 'http://a';
+    m.post.mockResolvedValue([row()]);
+    const gate = await prepareCreditOrder(stk, 'Buy', margin);
+    expect(() => gate.check()).not.toThrow();
+    m.base = 'http://c';
+    expect(() => gate.check()).toThrow('可否融資券需重新確認');
+});
+
+it('prepareCreditOrder: a 現沖 sell confirmation left open past Taipei midnight is refused at dispatch', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-08T23:59:50+08:00'));
+    const gate = await prepareCreditOrder(stk, 'Sell', { cond: 'Cash', daytradeShort: true });
+    expect(() => gate.check()).not.toThrow();
+    vi.setSystemTime(new Date('2026-10-09T00:00:10+08:00'));
+    expect(() => gate.check()).toThrow('可否當沖需重新確認');
 });

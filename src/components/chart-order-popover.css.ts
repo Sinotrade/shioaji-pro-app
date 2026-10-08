@@ -129,7 +129,10 @@ const segBase = style({
     border: 'none',
     borderRight: `1px solid ${vars.color.border}`,
     color: vars.color.mutedForeground,
-    selectors: { '&:last-child': { borderRight: 'none' } },
+    selectors: {
+        '&:last-child': { borderRight: 'none' },
+        '&:disabled': { opacity: 0.45, cursor: 'not-allowed' },
+    },
     ':hover': { color: vars.color.foreground },
 });
 
@@ -229,4 +232,17 @@ const footBase = style({
 export const footBtn = styleVariants({
     normal: [footBase],
     primary: [footBase, { borderColor: vars.color.accent, background: vars.color.muted, fontWeight: 600 }],
+});
+
+// 信用條件列下的一句話：零股停用說明、可否融資券狀態
+const creditNoteBase = style({
+    fontSize: '0.62rem',
+    lineHeight: 1.4,
+    paddingLeft: 'calc(3.6rem + 6px)',
+    color: vars.color.mutedForeground,
+});
+
+export const creditNote = styleVariants({
+    ok: [creditNoteBase],
+    bad: [creditNoteBase, { color: vars.color.danger }],
 });
