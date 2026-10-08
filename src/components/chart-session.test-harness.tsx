@@ -12,6 +12,8 @@ export interface FakeSeries {
 }
 
 export const created: FakeSeries[] = [];
+// 圖表訂閱的 crosshair 回呼（測試用來模擬游標移動／離開）
+export const crosshairHandlers: ((param: any) => void)[] = [];
 
 function chain(): any {
     const f: any = function () {
@@ -69,6 +71,10 @@ export function makeChart(): any {
             get: (_t, p) => {
                 if (p === 'addSeries')
                     return (type: { kind: string }) => makeSeries(type.kind);
+                if (p === 'subscribeCrosshairMove')
+                    return (fn: (param: any) => void) => {
+                        crosshairHandlers.push(fn);
+                    };
                 if (p === 'then') return undefined;
                 return chain();
             },

@@ -24,6 +24,7 @@ import {
     ArrowDown,
     ArrowUp,
     Bell,
+    ChartCandlestick,
     Copy,
     Crosshair,
     Eye,
@@ -132,7 +133,9 @@ import {
     kbarsToCandles,
     wallClockToUtc
 } from '../lib/utils/kbars';
-import { roundToTick } from '../lib/utils/ticksize';
+import { roundToTick, tickDecimals, tickSizeFor } from '../lib/utils/ticksize';
+import { createOhlcStore } from '../lib/ohlc-legend';
+import { OhlcLegend } from './ohlc-legend';
 import * as styles from './candle-chart.css';
 import { ChartDrawingOverlays, ChartDrawingTools, ChartObjectList } from './chart-drawing-tools';
 import { toolDef } from '../lib/chart-drawings';
@@ -177,6 +180,8 @@ export function CandleChart({
     onSessionModeChange,
     orderSettings: orderSettingsProp,
     onOrderSettingsChange,
+    showOhlc: showOhlcProp,
+    onShowOhlcChange,
 }: {
     panelId?: string;
     contract: ContractBase;
@@ -191,6 +196,10 @@ export function CandleChart({
     // 一起存；沒有時（彈出視窗）只在元件內
     orderSettings?: ChartOrderPanelState;
     onOrderSettingsChange?: (next: ChartOrderPanelState) => void;
+    // K 棒讀值列（開高低收，#240）：有 onShowOhlcChange（主視窗 block）時
+    // 跟版面一起存；沒有時（彈出視窗）只在元件內。缺省 = 顯示
+    showOhlc?: boolean;
+    onShowOhlcChange?: (show: boolean) => void;
 }) {
     const hostRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -213,6 +222,15 @@ export function CandleChart({
         setLocalSessionMode(m);
         onSessionModeChange?.(m);
     };
+    const [localShowOhlc, setLocalShowOhlc] = useState(showOhlcProp ?? true);
+    const showOhlc = onShowOhlcChange ? showOhlcProp !== false : localShowOhlc;
+    const toggleOhlc = () => {
+        setLocalShowOhlc(!showOhlc);
+        onShowOhlcChange?.(!showOhlc);
+    };
+    // 讀值列自己訂閱這個 store：讀值變動只重繪讀值列
+    const ohlcStore = useMemo(createOhlcStore, []);
+    const [hostWidth, setHostWidth] = useState(0);
     const [empty, setEmpty] = useState(false);
     const [loading, setLoading] = useState(false);
     const [historyError, setHistoryError] = useState(false);
@@ -424,6 +442,9 @@ export function CandleChart({
         >(),
     );
     const legendRafRef = useRef(false);
+    // 同一個 frame 內多次 crosshair 事件只處理最後一次（游標停下時讀值
+    // 對準游標最後所在的 K 棒）
+    const crosshairParamRef = useRef<MouseEventParams | null>(null);
     // sub-pane layout memory: instId -> pane index（上次重建的配置）與
     // instId -> 高度 px（使用者拖出來的上下圖比例，重建時還原）
     const paneAssignRef = useRef(new Map<string, number>());
@@ -523,7 +544,12 @@ export function CandleChart({
                 };
             });
         });
-        setLegendValues(out);
+        // 沒有指標時游標移動不必重繪整張圖表元件
+        setLegendValues((prev) =>
+            legendMetaRef.current.size === 0 && Object.keys(prev).length === 0
+                ? prev
+                : out,
+        );
     };
     const updateLegendRef = useRef(updateLegend);
     updateLegendRef.current = updateLegend;
@@ -678,12 +704,19 @@ export function CandleChart({
 
         chart.subscribeCrosshairMove((param) => {
             // legend value readout follows the crosshair（rAF-throttled）
+            crosshairParamRef.current = param;
             if (!legendRafRef.current) {
                 legendRafRef.current = true;
                 requestAnimationFrame(() => {
                     legendRafRef.current = false;
-                    updateLegendRef.current(
-                        param.point ? param : undefined,
+                    const p = crosshairParamRef.current;
+                    const hovering = p?.point ? p : undefined;
+                    updateLegendRef.current(hovering);
+                    // K 棒讀值：游標所在 K 棒；離開圖表／不在 K 棒上 → 最新一根
+                    ohlcStore.hover(
+                        hovering && typeof hovering.time === 'number'
+                            ? hovering.time
+                            : null,
                     );
                 });
             }
@@ -758,6 +791,31 @@ export function CandleChart({
             })),
         );
     }, [themeKey]);
+
+    // K 棒讀值：歷史載入／換商品／換週期後重算
+    useEffect(() => {
+        ohlcStore.bump();
+    }, [dataVersion, ohlcStore]);
+
+    // 圖表寬度 → 讀值列完整／縮短（窄面板不讓讀值擋住 K 棒）
+    useEffect(() => {
+        const host = hostRef.current;
+        if (!host || typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver((entries) => {
+            const w = Math.round(entries[0]?.contentRect.width ?? 0);
+            setHostWidth((prev) => (prev === w ? prev : w));
+        });
+        ro.observe(host);
+        return () => ro.disconnect();
+    }, []);
+    // 讀值小數位依跳動價位；指數沒有跳動價位，固定兩位（與價格軸一致）
+    const ohlcDecimals = useMemo(
+        () => (price: number) =>
+            contract.security_type === 'IND'
+                ? 2
+                : tickDecimals(tickSizeFor(contract, price)),
+        [contract],
+    );
 
     // load kbars on symbol/timeframe change; pages of older history are
     // pulled on demand by the visible-range subscription (loadMoreRef)
@@ -1003,6 +1061,7 @@ export function CandleChart({
             // a rejected update (e.g. timestamp older than the series tail)
             // must never take the app down — history reload will resync
         }
+        ohlcStore.bump(); // K 棒讀值跟著最新成交
         // 歷史載入失敗後 live bar 已開始堆 — 圖上有東西就不該再掛
         // 「無 K 線資料」（同值 setState React 會 bail out）
         setEmpty(false);
@@ -1902,6 +1961,8 @@ export function CandleChart({
             paneTops[inst.id] === undefined
         );
     });
+    // 交易／畫圖模式提示往下讓出 K 棒讀值那一列，兩者都看得到
+    const hintStyle = showOhlc ? { top: 30 } : undefined;
     return (
         <div className={styles.wrap}
             onPointerDownCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}
@@ -1939,6 +2000,15 @@ export function CandleChart({
                     aria-label='重設視圖'
                 >
                     <Maximize2 size={12} />
+                </button>
+                <button
+                    className={styles.iconBtnToggle[showOhlc ? 'on' : 'off']}
+                    onClick={toggleOhlc}
+                    title={showOhlc ? 'K 棒讀值（開高低收）：顯示中 — 點擊隱藏' : 'K 棒讀值（開高低收）：已隱藏 — 點擊顯示'}
+                    aria-label='K 棒讀值'
+                    aria-pressed={showOhlc}
+                >
+                    <ChartCandlestick size={12} />
                 </button>
                 <span className={styles.toolbarDivider} />
                 {TRADE_MODES.filter(
@@ -2040,19 +2110,29 @@ export function CandleChart({
                     </div>
                 )}
                 {shownMode !== 'observe' && (
-                    <div className={styles.modeHint}>
+                    <div className={styles.modeHint} style={hintStyle}>
                         交易模式 · {chartModeHint(shownMode, orderSettings, orderMarket ?? 'S')}
                     </div>
                 )}
                 {mode === 'observe' && drawings.tool && (
-                    <div className={styles.drawHint}>
+                    <div className={styles.drawHint} style={hintStyle}>
                         畫圖模式 · {toolDef(drawings.tool).label}：{DRAW_HINT[drawings.tool]}（Esc 取消）
                     </div>
                 )}
-                {(workingOrders.length > 0 ||
+                {(showOhlc ||
+                    workingOrders.length > 0 ||
                     triggers.length > 0 ||
                     instances.length > 0) && (
                     <div className={styles.triggerList}>
+                        {showOhlc && (
+                            <OhlcLegend
+                                store={ohlcStore}
+                                getBars={() => barsRef.current}
+                                decimalsFor={ohlcDecimals}
+                                width={hostWidth}
+                                colors={colors}
+                            />
+                        )}
                         {mainLegendInsts.map((inst) =>
                             renderLegendRow(inst),
                         )}

@@ -292,6 +292,10 @@ function BlockBody({
                         onOrderSettingsChange={(chartOrder) =>
                             onSessionConfigChange(block.id, { chartOrder })
                         }
+                        showOhlc={block.chartOhlc !== false}
+                        onShowOhlcChange={(show) =>
+                            onSessionConfigChange(block.id, { chartOhlc: show ? undefined : false })
+                        }
                     />
                 </>
             ) : (
