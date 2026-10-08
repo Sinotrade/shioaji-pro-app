@@ -146,7 +146,7 @@ function ConfirmCard({ item, envNow }: { item: PendingConfirmItem; envNow: strin
                 <label className={styles.choice}>
                     <input type='radio' name={`pc-${item.id}`} checked={choice === 'confirmedNotSent'} disabled={locked}
                         onChange={() => setChoice('confirmedNotSent')} />
-                    <span>確認沒有送出，取消這筆<span className={styles.note.muted}>（委託、成交與持倉都沒有）</span></span>
+                    <span>確認沒有送出，取消這筆<span className={styles.note.muted}>（已確定券商沒有收到；無法確定就先不要選）</span></span>
                 </label>
             </div>
             {!here && (
@@ -155,7 +155,7 @@ function ConfirmCard({ item, envNow }: { item: PendingConfirmItem; envNow: strin
                         : '伺服器模式尚未確認，暫時不能確認'}
                 </div>
             )}
-            {error && <div className={styles.note.err}>{error}</div>}
+            {error && <div className={styles.note.err} role='alert'>{error}</div>}
             <button
                 type='button'
                 className={styles.primary}
@@ -183,7 +183,7 @@ function ExpiredCard({ item }: { item: PendingConfirmItem }) {
             <div className={styles.note.muted}>
                 {`${sessionLabel(item)}結束時仍查不到這筆的結果。委託不跨盤別，已自動失效，不會再成交，系統也不會重送。若失效前可能已成交，請到成交查詢與持倉核對。`}
             </div>
-            {error && <div className={styles.note.err}>{error}</div>}
+            {error && <div className={styles.note.err} role='alert'>{error}</div>}
             <div className={styles.stepRow}>
                 <OpenOrdersButton />
                 <button type='button' className={styles.button} disabled={busy}
@@ -196,26 +196,27 @@ function ExpiredCard({ item }: { item: PendingConfirmItem }) {
 }
 
 export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) {
-    const { snapshot, error, generation } = usePendingConfirm();
+    const { snapshot, error, subscriptionError, generation } = usePendingConfirm();
     const [open, setOpen] = useState(true);
     useServerInfo(); // re-render when the server mode becomes known / changes
     const items = snapshot?.items ?? [];
     const confirm = items.filter(i => i.state === 'needsConfirm');
     const expired = items.filter(i => i.state === 'expired');
-    if (items.length === 0 && !error) return null;
+    if (items.length === 0 && !error && !subscriptionError) return null;
     if (compact) {
         return (
             <div className={styles.badgeWrap} role='status'>
                 <button type='button' className={styles.badge} title='在主視窗處理待確認委託'
                     onClick={() => void focusMainWindow().catch(() => undefined)}>
                     <TriangleAlert size={12} aria-hidden />
-                    {confirm.length > 0 || error ? `委託待確認 ${confirm.length} 筆` : `委託已失效 ${expired.length} 筆`} · 請在主視窗處理
+                    {confirm.length === 0 && expired.length > 0 && !error && !subscriptionError
+                        ? `委託已失效 ${expired.length} 筆` : `委託待確認 ${confirm.length} 筆`} · 請在主視窗處理
                 </button>
             </div>
         );
     }
     const envNow = currentProtectionEnv();
-    const quiet = confirm.length === 0 && !error;
+    const quiet = confirm.length === 0 && !error && !subscriptionError;
     const counts = [confirm.length > 0 && `待確認 ${confirm.length} 筆`, expired.length > 0 && `已失效 ${expired.length} 筆`]
         .filter(Boolean).join(' · ');
     return (
@@ -238,9 +239,11 @@ export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) 
                             <span>上次 App 沒有正常關閉，以下委託的送出結果需要你確認。系統不會自動重送。</span>
                         </div>
                     )}
-                    {error && (
+                    {(error || subscriptionError) && (
                         <div className={styles.stepRow}>
-                            <span className={`${styles.note.err} ${styles.grow}`}>{error}</span>
+                            <span className={`${styles.note.err} ${styles.grow}`} role='alert'>
+                                {[error, subscriptionError].filter(Boolean).join('；')}
+                            </span>
                             <button type='button' className={styles.button} onClick={() => void refreshPendingConfirm()}>
                                 <RefreshCw size={12} aria-hidden />重新整理
                             </button>

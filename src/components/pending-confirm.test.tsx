@@ -10,7 +10,7 @@ import { mockPendingConfirmItem, mockPendingConfirmSnapshot } from '../lib/execu
 
 const SIM = 'http://127.0.0.1:1|simulation';
 const m = vi.hoisted(() => ({
-    state: { snapshot: null as PendingConfirmSnapshot | null, error: null as string | null, loading: false },
+    state: { snapshot: null as PendingConfirmSnapshot | null, error: null as string | null, subscriptionError: null as string | null, loading: false, generation: 1 },
     resolve: vi.fn(),
     refresh: vi.fn(),
     focus: vi.fn(),
@@ -51,7 +51,7 @@ const radios = (r: ReactTestRenderer) => r.root.findAll(n => n.type === 'input' 
 const click = async (b: ReactTestInstance) => { await act(async () => { b.props.onClick(); }); };
 const choose = (r: ReactTestRenderer, i: number) => act(() => { radios(r)[i]!.props.onChange({ target: { checked: true } }); });
 const show = (items: PendingConfirmItem[], over: Partial<PendingConfirmSnapshot> = {}) => {
-    m.state = { snapshot: mockPendingConfirmSnapshot({ items, ...over }), error: null, loading: false };
+    m.state = { snapshot: mockPendingConfirmSnapshot({ items, ...over }), error: null, subscriptionError: null, loading: false, generation: 1 };
 };
 
 beforeEach(() => {
@@ -65,7 +65,7 @@ afterEach(() => { vi.unstubAllGlobals(); });
 it('renders nothing when nothing needs confirmation', () => {
     show([]);
     expect(render().toJSON()).toBeNull();
-    m.state = { snapshot: null, error: null, loading: false };
+    m.state = { snapshot: null, error: null, subscriptionError: null, loading: false, generation: 1 };
     expect(render().toJSON()).toBeNull();
 });
 
@@ -132,7 +132,7 @@ it('opens the order list to check; says so when the layout has no orders dock', 
 it('the choices say that "not found" alone is not "not sent"', async () => {
     const r = render();
     const all = text(r.root);
-    expect(all).toContain('委託、成交與持倉都沒有');
+    expect(all).toContain('無法確定就先不要選');
     await click(buttons(r).find(b => b.props['aria-label'] === '為什麼要確認')!);
     expect(text(r.root)).toContain('查不到不代表沒有送出');
 });
@@ -194,9 +194,16 @@ it('popouts show a badge that focuses the main window', async () => {
 });
 
 it('a broken list is visible with a retry', async () => {
-    m.state = { snapshot: null, error: '待確認清單讀取失敗：x', loading: false };
+    m.state = { snapshot: null, error: '待確認清單讀取失敗：x', subscriptionError: null, loading: false, generation: 1 };
     const r = render();
     expect(text(r.root)).toContain('待確認清單讀取失敗');
     await click(button(r, '重新整理'));
     expect(m.refresh).toHaveBeenCalled();
+});
+
+it('a broken change listener stays visible even with an empty list', () => {
+    m.state = { snapshot: mockPendingConfirmSnapshot({ items: [] }), error: null, subscriptionError: '待確認清單不會自動更新', loading: false, generation: 1 };
+    expect(text(render().root)).toContain('不會自動更新');
+    const badge = render({ compact: true });
+    expect(text(badge.root)).toContain('委託待確認 0 筆');
 });

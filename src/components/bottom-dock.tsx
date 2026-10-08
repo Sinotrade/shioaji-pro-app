@@ -115,7 +115,7 @@ export function BottomDock({
         setMarket('all');
         setScope('');
         setShowAllOrders(n => n + 1);
-        onTradesChanged();
+        void refreshTradingState('orders'); // same as the dock's own 更新委託
     });
     const tradable = accounts.filter(
         (a) =>

@@ -207,7 +207,71 @@ describe('ordering and transport changes', () => {
             resolve: async () => null,
             subscribe: (_changed, onError) => { onError?.(new Error('no ipc')); return () => undefined; },
         });
-        expect(store.getPendingConfirmState().error).toMatch(/訂閱失敗/);
+        expect(store.getPendingConfirmState().subscriptionError).toMatch(/不會自動更新/);
+    });
+
+    it('with nothing shown yet, a late answer from an older request cannot bring an old run back', async () => {
+        const reads: ReturnType<typeof deferred<unknown>>[] = [];
+        store.installPendingConfirmBackend({
+            list: () => { const d = deferred<unknown>(); reads.push(d); return d.promise; },
+            resolve: async () => null,
+        });
+        void store.refreshPendingConfirm(); // e.g. the listener-ready re-list
+        reads[1]!.resolve(mockPendingConfirmSnapshot({ runId: 'new', sequence: 1, items: [mockPendingConfirmItem({ id: 'n' })] }));
+        await flush();
+        reads[0]!.resolve(mockPendingConfirmSnapshot({ runId: 'old', sequence: 50, items: [] }));
+        await flush();
+        expect(store.getPendingConfirmState().snapshot).toMatchObject({ runId: 'new' });
+        void store.refreshPendingConfirm();
+        reads[2]!.resolve(mockPendingConfirmSnapshot({ runId: 'new', sequence: 2, items: [] }));
+        await flush();
+        expect(store.getPendingConfirmState().snapshot).toMatchObject({ runId: 'new', sequence: 2 });
+    });
+
+    it('a listener failure survives later successful reads', async () => {
+        store.installPendingConfirmBackend({
+            list: async () => mockPendingConfirmSnapshot(),
+            resolve: async () => null,
+            subscribe: (_changed, onError) => { setTimeout(() => onError?.(new Error('no ipc')), 0); return () => undefined; },
+        });
+        await flush();
+        await store.refreshPendingConfirm();
+        expect(store.getPendingConfirmState().subscriptionError).toMatch(/不會自動更新/);
+        expect(store.getPendingConfirmState().error).toBeNull();
+    });
+
+    it('reinstalling the same backend object drops answers to the old install', async () => {
+        const reads: ReturnType<typeof deferred<unknown>>[] = [];
+        const same = {
+            list: () => { const d = deferred<unknown>(); reads.push(d); return d.promise; },
+            resolve: async () => null,
+        };
+        const uninstallFirst = store.installPendingConfirmBackend(same);
+        store.installPendingConfirmBackend(same);
+        reads[0]!.resolve(mockPendingConfirmSnapshot({ items: [mockPendingConfirmItem({ id: 'old' })] }));
+        await flush();
+        expect(store.getPendingConfirmState().snapshot).toBeNull();
+        uninstallFirst(); // the first install's cleanup must not tear down the second
+        reads[1]!.resolve(mockPendingConfirmSnapshot({ items: [] }));
+        await flush();
+        expect(store.getPendingConfirmState().snapshot).not.toBeNull();
+    });
+
+    it('a resolve answer older than the shown list is reported as unconfirmed', async () => {
+        const item = mockPendingConfirmItem({ id: 'a' });
+        const pending = deferred<unknown>();
+        const backend = store.createMockPendingConfirmBackend(mockPendingConfirmSnapshot({ sequence: 5, items: [item] }));
+        store.installPendingConfirmBackend({ ...backend, resolve: () => pending.promise });
+        await flush();
+        const done = store.resolvePendingConfirm(store.getPendingConfirmState().snapshot!.items[0]!, 'confirmedSent');
+        pending.resolve({ ok: true, snapshot: mockPendingConfirmSnapshot({ sequence: 4, items: [] }) });
+        await expect(done).rejects.toThrow(/未確認/);
+    });
+
+    it('the mock moves the sequence forward on resolve', async () => {
+        const backend = store.createMockPendingConfirmBackend(mockPendingConfirmSnapshot({ sequence: 3, items: [mockPendingConfirmItem({ id: 'a' })] }));
+        const result = await backend.resolve({ id: 'a', revision: 1, resolution: 'confirmedSent' }) as { snapshot: { sequence: number } };
+        expect(result.snapshot.sequence).toBe(4);
     });
 
     it('a reinstalled backend notifies again for the same ids', async () => {

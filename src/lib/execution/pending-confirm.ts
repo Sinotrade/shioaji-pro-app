@@ -37,17 +37,21 @@ export interface PendingConfirmBackend {
 export interface PendingConfirmState {
     snapshot: PendingConfirmSnapshot | null; // last valid list
     error: string | null; // last read failed (the old list stays visible)
+    /** listening for changes failed: the list will not update by itself */
+    subscriptionError: string | null;
     loading: boolean;
     /** bumps per installed backend: decisions never carry across transports */
     generation: number;
 }
 
 let generation = 0;
-const empty = (): PendingConfirmState => ({ snapshot: null, error: null, loading: false, generation });
+const empty = (): PendingConfirmState => ({ snapshot: null, error: null, subscriptionError: null, loading: false, generation });
 let state: PendingConfirmState = empty();
 let backend: PendingConfirmBackend | null = null;
 let unsubscribe: (() => void) | null = null;
 let adoptions = 0; // bumps on every adopted snapshot
+let tickets = 0; // request order: every list / resolve takes the next ticket
+let adoptedTicket = 0; // ticket of the request whose snapshot is shown
 const retiredRuns = new Set<string>(); // engine runs a newer run replaced
 const seen = new Set<string>(); // `${id}:${state}` already notified (per backend)
 const listeners = new Set<() => void>();
@@ -78,13 +82,20 @@ function announce(snapshot: PendingConfirmSnapshot) {
     }
 }
 
-/** Adopts `snapshot` unless it is older than what is shown: same engine run
- * with a lower sequence, or a run that a newer run already replaced. */
-function adopt(snapshot: PendingConfirmSnapshot): boolean {
+/** Adopts `snapshot` (answer to request `ticket`) unless it is older than
+ * what is shown. Same engine run: by sequence. Another run: only when the
+ * request started after the one that is shown (a late answer from an older
+ * request never brings an old run back), and never a run already replaced. */
+function adopt(snapshot: PendingConfirmSnapshot, ticket: number): boolean {
     const cur = state.snapshot;
     if (retiredRuns.has(snapshot.runId)) return false;
-    if (cur && cur.runId === snapshot.runId && snapshot.sequence < cur.sequence) return false;
+    if (cur && cur.runId === snapshot.runId) {
+        if (snapshot.sequence < cur.sequence) return false;
+    } else if (cur && ticket < adoptedTicket) {
+        return false;
+    }
     if (cur && cur.runId !== snapshot.runId) retiredRuns.add(cur.runId);
+    adoptedTicket = Math.max(adoptedTicket, ticket);
     adoptions += 1;
     announce(snapshot);
     set({ snapshot, error: null, loading: false });
@@ -96,15 +107,17 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export async function refreshPendingConfirm(): Promise<void> {
     const b = backend;
     if (!b) return;
+    const gen = generation;
+    const ticket = ++tickets;
     const since = adoptions;
     set({ loading: true });
     try {
         const snapshot = parsePendingConfirmSnapshot(await b.list());
-        if (b !== backend) return;
-        if (!adopt(snapshot)) set({ loading: false });
+        if (gen !== generation) return;
+        if (!adopt(snapshot, ticket)) set({ loading: false });
     } catch (e) {
         // a newer list already arrived, or the transport changed: stale error
-        if (b !== backend || adoptions !== since) return;
+        if (gen !== generation || adoptions !== since) return;
         const error = `待確認清單讀取失敗：${message(e)}`;
         if (state.error !== error && isMain()) notify({ kind: 'err', title: '委託待確認', body: error });
         set({ error, loading: false });
@@ -128,6 +141,8 @@ export async function resolvePendingConfirm(item: PendingConfirmItem, resolution
     if (!state.snapshot?.items.includes(item)) throw new Error(REFUSAL_TEXT.stale);
     const b = backend;
     if (!b) throw new Error('背景執行尚未啟用，無法處理待確認委託');
+    const gen = generation;
+    const ticket = ++tickets;
     let result: ResolvePendingResult;
     try {
         result = parseResolvePendingResult(await b.resolve({ id: item.id, revision: item.revision, resolution }));
@@ -136,12 +151,16 @@ export async function resolvePendingConfirm(item: PendingConfirmItem, resolution
         void refreshPendingConfirm();
         throw new Error(`處理結果未確認：${message(e)}`);
     }
-    if (b !== backend) {
+    if (gen !== generation) {
         // the transport was replaced meanwhile: do not report success
         void refreshPendingConfirm();
         throw new Error('處理結果未確認：背景執行已重新連線，請重新核對');
     }
-    adopt(result.snapshot);
+    if (!adopt(result.snapshot, ticket)) {
+        // the answer is older than what is shown: cannot tell it applied
+        void refreshPendingConfirm();
+        throw new Error('處理結果未確認：清單已更新，請重新核對');
+    }
     if (!result.ok) throw new Error(REFUSAL_TEXT[result.reason]);
 }
 
@@ -153,17 +172,19 @@ export function installPendingConfirmBackend(next: PendingConfirmBackend): () =>
     generation += 1;
     seen.clear();
     retiredRuns.clear();
+    adoptedTicket = 0;
     set(empty());
+    const gen = generation;
     unsubscribe = next.subscribe?.(
-        () => void refreshPendingConfirm(),
+        () => { if (gen === generation) void refreshPendingConfirm(); },
         e => {
-            if (backend !== next) return;
-            set({ error: `待確認通知訂閱失敗：${message(e)}；清單不會自動更新，請按重新整理` });
+            if (gen !== generation) return;
+            set({ subscriptionError: `待確認清單不會自動更新（監聽失敗：${message(e)}），請按重新整理或重新開啟 App` });
         },
     ) ?? null;
     void refreshPendingConfirm();
     return () => {
-        if (backend !== next) return;
+        if (gen !== generation) return;
         unsubscribe?.();
         unsubscribe = null;
         backend = null;
@@ -191,6 +212,7 @@ export function resetPendingConfirmForTest() {
     backend = null;
     seen.clear();
     retiredRuns.clear();
+    adoptedTicket = 0;
     generation += 1;
     state = empty();
 }
@@ -244,7 +266,7 @@ export function createMockPendingConfirmBackend(initial: PendingConfirmSnapshot)
             if (item.revision !== revision) return { ok: false, reason: 'stale', snapshot: copy() };
             if (!resolutionAllowed(item.state, resolution)) return { ok: false, reason: 'invalidForState', snapshot: copy() };
             // the result carries the fresh list; no change event needed
-            current = { ...current, items: current.items.filter(i => i.id !== id) };
+            current = { ...current, sequence: current.sequence + 1, items: current.items.filter(i => i.id !== id) };
             return { ok: true, snapshot: copy() };
         },
         subscribe(onChanged) {
@@ -252,7 +274,9 @@ export function createMockPendingConfirmBackend(initial: PendingConfirmSnapshot)
             return () => { changed.delete(onChanged); };
         },
         replace(snapshot) {
-            current = structuredClone(snapshot);
+            // keeps the contract: a replacement within the run moves forward
+            current = structuredClone(snapshot.runId === current.runId && snapshot.sequence <= current.sequence
+                ? { ...snapshot, sequence: current.sequence + 1 } : snapshot);
             changed.forEach(l => l());
         },
     };
