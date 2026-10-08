@@ -11,6 +11,7 @@ import { fetchInfo } from './shioaji';
 import { getAccountState } from './account-store';
 import { captureServerMode, currentServerInfoSequence, knownServerInfo, serverInfoFreshSince, SERVER_MODE_CHANGED_MESSAGE, subscribeServerInfo, type ServerModeGuard } from './server-info-store';
 import { getApiBase } from './runtime';
+import { getPrivacyMode, maskAccountId } from './privacy';
 import type { Action } from './types/order';
 import type { Account } from './types/portfolio';
 
@@ -105,10 +106,12 @@ function currentSimulation(): boolean | null {
     return typeof s === 'boolean' ? s : null;
 }
 
-// 確認視窗一律遮罩帳號（只露末四碼），不受隱私模式開關影響
+// 確認視窗一律遮罩帳號（只露末四碼）；隱私模式開啟時與底部 dock 同規則（只露末兩碼）
 export function accountConfirmLabel(account: Pick<Account, 'broker_id' | 'account_id'>): string {
     const id = account.account_id;
-    const masked = id.length > 4 ? `${'*'.repeat(id.length - 4)}${id.slice(-4)}` : id;
+    const masked = getPrivacyMode()
+        ? maskAccountId(id, true)
+        : id.length > 4 ? `${'*'.repeat(id.length - 4)}${id.slice(-4)}` : id;
     return `${account.broker_id}-${masked}`;
 }
 

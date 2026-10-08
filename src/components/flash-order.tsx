@@ -1405,7 +1405,7 @@ export function FlashOrder({
                         title={market === 'S' && !privMoney ? `${Math.abs(pos.net).toLocaleString()} 股（含零股）` : undefined}>
                         {pos.net > 0 ? '多' : '空'} {maskMoney(market === 'S' ? fmtStockLots(Math.abs(pos.net)) : String(Math.abs(pos.net)), privMoney)}
                     </span>
-                    <span>@ {fmtPrice(pos.avg)}</span>
+                    <span>@ {maskMoney(fmtPrice(pos.avg), privMoney)}</span>
                     {(pos.mixed || pos.twoWay || pos.stale) && (
                         <span className={styles.posMixed} title={posNote(pos)}>
                             {posLabel(pos)}
