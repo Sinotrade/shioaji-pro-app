@@ -1,11 +1,12 @@
 // src/components/ohlc-legend.tsx — K 棒讀值列（開高低收，issue #240）
 //
 // 圖表左上角一列，TradingView 式：游標所在 K 棒的開高低收、漲跌（幅）、
-// 量；游標離開讀最新一根。自己訂閱 OhlcStore — 游標移動與 tick 只重繪
-// 這一列。整列 pointer-events: none，不擋畫圖工具、點價與拖曳。
+// 量；游標離開讀最新一根。自己訂閱 OhlcStore — 讀值變動不必重繪整張
+// 圖表元件。整列 pointer-events: none，不擋畫圖工具、點價與拖曳。
 
 import { useSyncExternalStore } from 'react';
 import { ohlcLayout, ohlcReadout, type OhlcStore } from '../lib/ohlc-legend';
+import { useTickBandsVersion } from '../lib/tick-bands';
 import type { Candle } from '../lib/types/market';
 import * as styles from './candle-chart.css';
 
@@ -27,6 +28,8 @@ export function OhlcLegend({
     colors: { up: string; down: string };
 }) {
     const snap = useSyncExternalStore(store.subscribe, store.snapshot);
+    // 期權級距表非同步到貨後重算小數位（不必等下一筆 tick 或游標移動）
+    useTickBandsVersion();
     const r = ohlcReadout(getBars(), snap.hoverTime, decimalsFor);
     if (!r) return null;
     const layout = ohlcLayout(width);
@@ -44,7 +47,7 @@ export function OhlcLegend({
             data-ohlc='row'
             data-hovering={r.hovering}
             className={styles.ohlcRow}
-            style={width > 0 ? { maxWidth: Math.max(160, width - OHLC_PRICE_AXIS_GUTTER) } : undefined}
+            style={width > OHLC_PRICE_AXIS_GUTTER ? { maxWidth: width - OHLC_PRICE_AXIS_GUTTER } : undefined}
         >
             {layout.open && item('open', '開')}
             {item('high', '高')}

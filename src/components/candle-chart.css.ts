@@ -116,7 +116,8 @@ export const modeHint = style({
     top: '8px',
     left: '50%',
     transform: 'translateX(-50%)',
-    zIndex: 5,
+    // 交易／畫圖模式提示疊在左上角圖例與 K 棒讀值之上，不被遮住
+    zIndex: 6,
     fontFamily: vars.font.body,
     fontSize: '0.66rem',
     fontWeight: 600,
@@ -144,6 +145,9 @@ export const triggerList = style({
     top: '8px',
     left: '8px',
     zIndex: 5,
+    // 容器本身不吃滑鼠（K 棒讀值列底下的圖表要收得到移動／點擊／觸控）；
+    // 有按鈕的列（委託、觸價、指標圖例）各自恢復
+    pointerEvents: 'none',
     display: 'flex',
     flexDirection: 'column',
     gap: '2px',
@@ -153,6 +157,7 @@ export const triggerList = style({
 });
 
 export const triggerRow = style({
+    pointerEvents: 'auto',
     display: 'flex',
     alignItems: 'center',
     gap: '4px',

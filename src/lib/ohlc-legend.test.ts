@@ -58,6 +58,14 @@ describe('ohlcReadout', () => {
         expect(ohlcReadout(bars, 999, intDecimals)!.time).toBe(180);
     });
 
+    it('漲跌幅不到 0.005% 時仍保留漲跌符號', () => {
+        const r = ohlcReadout([bar(60, 48937, 48937, 48937, 48937), bar(120, 48938, 48938, 48938, 48938)], null, intDecimals)!;
+        expect(r.change).toBe('+1');
+        expect(r.changePct).toBe('+0.00%');
+        const d = ohlcReadout([bar(60, 48938, 48938, 48938, 48938), bar(120, 48937, 48937, 48937, 48937)], null, intDecimals)!;
+        expect(d.changePct).toBe('-0.00%');
+    });
+
     it('第一根沒有前一根收盤時不顯示漲跌', () => {
         const r = ohlcReadout(bars, 60, intDecimals)!;
         expect(r.change).toBeNull();
@@ -83,8 +91,19 @@ describe('ohlcReadout', () => {
                 return p < 50 ? 2 : 1;
             },
         )!;
-        expect(seen).toEqual([49.9]);
+        expect(seen).toEqual([49.9, 48]);
         expect(r).toMatchObject({ open: '49.95', high: '50.30', low: '49.90', close: '50.20', change: '+2.20', changePct: '+4.58%' });
+    });
+
+    it('相鄰兩根跨價格級距：漲跌保留前一根收盤的精度', () => {
+        const dec = (p: number) => (p < 50 ? 2 : p < 500 ? 1 : 0);
+        const a = ohlcReadout([bar(60, 49.95, 49.95, 49.95, 49.95), bar(120, 50, 50, 50, 50)], null, dec)!;
+        expect(a.change).toBe('+0.05');
+        expect(a.changePct).toBe('+0.10%');
+        expect(a.close).toBe('50.0');
+        const b = ohlcReadout([bar(60, 499.5, 499.5, 499.5, 499.5), bar(120, 500, 500, 500, 500)], null, dec)!;
+        expect(b.change).toBe('+0.5');
+        expect(b.changePct).toBe('+0.10%');
     });
 
     it('選擇權等小數價位', () => {

@@ -220,7 +220,7 @@ export function CandleChart({
         setLocalShowOhlc(!showOhlc);
         onShowOhlcChange?.(!showOhlc);
     };
-    // 讀值列自己訂閱這個 store：游標移動／tick 只重繪讀值列
+    // 讀值列自己訂閱這個 store：讀值變動只重繪讀值列
     const ohlcStore = useMemo(createOhlcStore, []);
     const [hostWidth, setHostWidth] = useState(0);
     const [empty, setEmpty] = useState(false);
@@ -456,7 +456,12 @@ export function CandleChart({
                 };
             });
         });
-        setLegendValues(out);
+        // 沒有指標時游標移動不必重繪整張圖表元件
+        setLegendValues((prev) =>
+            legendMetaRef.current.size === 0 && Object.keys(prev).length === 0
+                ? prev
+                : out,
+        );
     };
     const updateLegendRef = useRef(updateLegend);
     updateLegendRef.current = updateLegend;
@@ -1880,6 +1885,8 @@ export function CandleChart({
             paneTops[inst.id] === undefined
         );
     });
+    // 交易／畫圖模式提示往下讓出 K 棒讀值那一列，兩者都看得到
+    const hintStyle = showOhlc ? { top: 30 } : undefined;
     return (
         <div className={styles.wrap}
             onPointerDownCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}
@@ -2013,12 +2020,12 @@ export function CandleChart({
                     </div>
                 )}
                 {mode !== 'observe' && (
-                    <div className={styles.modeHint}>
+                    <div className={styles.modeHint} style={hintStyle}>
                         交易模式 · {chartModeHint(mode, orderSettings, orderMarket ?? 'S')}
                     </div>
                 )}
                 {mode === 'observe' && drawings.tool && (
-                    <div className={styles.drawHint}>
+                    <div className={styles.drawHint} style={hintStyle}>
                         畫圖模式 · {toolDef(drawings.tool).label}：{DRAW_HINT[drawings.tool]}（Esc 取消）
                     </div>
                 )}

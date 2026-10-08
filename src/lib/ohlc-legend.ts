@@ -65,13 +65,16 @@ export function ohlcReadout(
     let changePct: string | null = null;
     let changeDir: 1 | -1 | 0 = 0;
     if (prev && Number.isFinite(prev.close)) {
+        // 前一根可能在較細的級距（49.95 → 50.0）— 漲跌取兩者較多的小數位；
         // 先依小數位捨入再判斷方向，避免浮點誤差（1.4 - 1.3）
-        const diff = Number((b.close - prev.close).toFixed(d)) || 0;
+        const cd = Math.max(d, Math.max(0, Math.min(8, decimalsFor(prev.close))));
+        const diff = Number((b.close - prev.close).toFixed(cd)) || 0;
         changeDir = sign(diff);
-        change = `${changeDir > 0 ? '+' : ''}${fmtNum(diff, d)}`;
+        change = `${changeDir > 0 ? '+' : ''}${fmtNum(diff, cd)}`;
         if (prev.close !== 0) {
-            const pct = Number(((diff / prev.close) * 100).toFixed(2)) || 0;
-            changePct = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+            // 符號跟漲跌走：+1 點但幅度不到 0.005% 時顯示 +0.00%，不會變成無號
+            const pct = Math.abs((diff / prev.close) * 100).toFixed(2);
+            changePct = `${changeDir > 0 ? '+' : changeDir < 0 ? '-' : ''}${pct}%`;
         }
     }
     return {
