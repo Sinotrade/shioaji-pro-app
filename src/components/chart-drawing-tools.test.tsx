@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChartObjectList, DrawingSettingsDialog, isImeKey, parseLevels, placeFloatingToolbar, placeStylePopover, Popover, PriceInput, TextEditor } from './chart-drawing-tools';
+import { ChartDrawingOverlays, ChartDrawingTools, ChartObjectList, DrawingSettingsDialog, isImeKey, parseLevels, placeFloatingToolbar, placeStylePopover, Popover, PriceInput, TextEditor } from './chart-drawing-tools';
 import { escStackDepth } from '../hooks/use-esc-close';
 import { __resetDrawingsForTest, addDrawing, DEFAULT_DRAWING_STYLE, flushDrawingWrites, getDrawings, reloadDrawingsFromStorage, takeDrawingNotices } from '../lib/chart-drawings';
 import type { ChartDrawingsApi } from '../hooks/use-chart-drawings';
@@ -350,5 +350,100 @@ describe('輸入法組字中的 Enter／Esc 不算完成或取消', () => {
         expect(onCommit).not.toHaveBeenCalled();
         await act(async () => ta().props.onKeyDown(ev({ nativeEvent: { isComposing: false }, keyCode: 13 })));
         expect(onCommit).toHaveBeenCalledWith('月線');
+    });
+});
+
+describe('工具列提示：按鈕消失或按下後提示跟著消失（不殘留在圖上）', () => {
+    const drawing = (locked = false) => ({
+        id: 'b1', tool: 'box', anchors: [], style: DEFAULT_DRAWING_STYLE, locked, hidden: false, createdAt: 0, updatedAt: 0,
+    });
+    const overlaysApi = (selected: ReturnType<typeof drawing> | null, extra: Partial<ChartDrawingsApi> = {}) =>
+        ({
+            symbolKey: 'TXF', tool: null, editingTextId: null, drawings: selected ? [selected] : [],
+            selected, selectedList: selected ? [selected] : [], selectedIds: selected ? [selected.id] : [],
+            selectionBox: selected ? { left: 100, top: 100, right: 200, bottom: 200 } : null,
+            hostSize: { width: 800, height: 600 }, style: DEFAULT_DRAWING_STYLE,
+            onInteraction: vi.fn(), focusChart: vi.fn(), remove: vi.fn(), toggleLock: vi.fn(), toggleHidden: vi.fn(),
+            duplicate: vi.fn(), toggleBehind: vi.fn(), applyStyle: vi.fn(),
+            ...extra,
+        }) as unknown as ChartDrawingsApi;
+    const target = { getBoundingClientRect: () => ({ right: 10, top: 10, height: 20 }) };
+    const tooltips = () => view.root.findAll((n) => n.props.role === 'tooltip' && typeof n.type === 'string');
+    const btn = (label: string) => view.root.find((n) => n.type === 'button' && n.props['aria-label'] === label);
+    const hover = async (label: string) => {
+        await act(async () => btn(label).props.onMouseEnter({ currentTarget: target }));
+        expect(tooltips()).toHaveLength(1);
+    };
+    const render = async (api: ChartDrawingsApi) => {
+        await act(async () => {
+            if (view) view.update(createElement(ChartDrawingOverlays, { api }));
+        });
+    };
+    beforeEach(async () => {
+        await act(async () => { view = create(createElement(ChartDrawingOverlays, { api: overlaysApi(drawing()) })); });
+    });
+
+    it('hover 刪除鈕 → 點擊刪除（工具列隨選取消失）→ 提示不存在', async () => {
+        await hover('刪除');
+        expect(tooltips()[0]!.props.children).toBe('刪除（Delete／Backspace）');
+        await act(async () => btn('刪除').props.onPointerDown?.({ button: 0 }));
+        await act(async () => btn('刪除').props.onClick());
+        await render(overlaysApi(null));
+        expect(view.root.findAll((n) => n.props.role === 'toolbar')).toHaveLength(0);
+        expect(tooltips()).toHaveLength(0);
+    });
+
+    it('hover 刪除鈕時按 Delete／Backspace 刪除（沒有 mouseleave）→ 提示不存在', async () => {
+        await hover('刪除');
+        await render(overlaysApi(null));
+        expect(tooltips()).toHaveLength(0);
+    });
+
+    it.each(['隱藏', '複製', '設定', '顏色'])('hover %s → 工具列消失 → 提示不存在', async (label) => {
+        await hover(label);
+        await render(overlaysApi(null));
+        expect(tooltips()).toHaveLength(0);
+    });
+
+    it('hover 鎖定 → 點擊（按鈕變成「解鎖」）→ 舊提示「鎖定」不殘留', async () => {
+        await hover('鎖定');
+        await act(async () => btn('鎖定').props.onPointerDown?.({ button: 0 }));
+        await act(async () => btn('鎖定').props.onClick());
+        await render(overlaysApi(drawing(true)));
+        expect(btn('解鎖')).toBeTruthy();
+        expect(tooltips()).toHaveLength(0);
+    });
+
+    it('進入畫圖或文字編輯（工具列收起）→ 提示不存在', async () => {
+        await hover('複製');
+        await render(overlaysApi(drawing(), { tool: 'trend' } as Partial<ChartDrawingsApi>));
+        expect(tooltips()).toHaveLength(0);
+    });
+
+    it('左側工具列：hover 清除全部 → 點擊 → 提示不存在', async () => {
+        const toolsApi = {
+            tool: null, drawings: [drawing()], favorites: [], groupLast: {}, magnet: false, allLocked: false,
+            canUndo: false, canRedo: false, objectListOpen: false,
+            onInteraction: vi.fn(), focusChart: vi.fn(), clearAll: vi.fn(), setTool: vi.fn(),
+        } as unknown as ChartDrawingsApi;
+        await act(async () => { view.update(createElement(ChartDrawingTools, { api: toolsApi })); });
+        await hover('清除全部');
+        await act(async () => btn('清除全部').props.onPointerDown?.({ button: 0 }));
+        await act(async () => btn('清除全部').props.onClick());
+        await act(async () => { view.update(createElement(ChartDrawingTools, { api: { ...toolsApi, drawings: [] } })); });
+        expect(tooltips()).toHaveLength(0);
+    });
+
+    it('點任何地方（例如開啟圖表下單設定、指標等彈出面板）→ 殘留提示收掉', async () => {
+        const listeners = new Map<string, (e: unknown) => void>();
+        const doc = {
+            addEventListener: (t: string, fn: (e: unknown) => void) => listeners.set(t, fn),
+            removeEventListener: (t: string) => listeners.delete(t),
+        };
+        await act(async () => btn('複製').props.onMouseEnter({ currentTarget: { ...target, ownerDocument: doc } }));
+        expect(tooltips()).toHaveLength(1);
+        await act(async () => listeners.get('pointerdown')?.({ target: {} }));
+        expect(tooltips()).toHaveLength(0);
+        expect(listeners.has('pointerdown')).toBe(false);
     });
 });

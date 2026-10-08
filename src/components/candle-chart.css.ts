@@ -10,8 +10,11 @@ export const wrap = style({
     minHeight: 0,
 });
 
+// 窄面板放不下時換行（不把按鈕擠成直排字、右端按鈕不被裁掉）；不用
+// overflow 捲動 — 那會把掛在按鈕下的彈出面板一起裁掉
 export const toolbar = style({
     display: 'flex',
+    flexWrap: 'wrap',
     gap: '2px',
     padding: `4px ${vars.space.sm}`,
     borderBottom: `1px solid ${vars.color.border}`,
@@ -19,6 +22,7 @@ export const toolbar = style({
 });
 
 const tfBase = style({
+    whiteSpace: 'nowrap',
     fontFamily: vars.font.mono,
     fontSize: '0.7rem',
     fontWeight: 500,
@@ -61,6 +65,7 @@ export const toolbarDivider = style({
 });
 
 const modeBase = style({
+    whiteSpace: 'nowrap',
     fontFamily: vars.font.body,
     fontSize: '0.66rem',
     fontWeight: 500,

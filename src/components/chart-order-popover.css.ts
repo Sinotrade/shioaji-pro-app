@@ -11,6 +11,7 @@ export const anchor = style({
 
 const chipBase = style({
     display: 'inline-flex',
+    whiteSpace: 'nowrap',
     alignItems: 'center',
     gap: '5px',
     fontFamily: vars.font.body,
