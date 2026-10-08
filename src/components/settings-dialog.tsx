@@ -162,13 +162,20 @@ function AppearanceSection() {
                 <span className={panel.dirText.up}>▲ +1.25 上漲</span>
                 <span className={panel.dirText.down}>▼ -1.25 下跌</span>
             </div>
-            <span className={hud.settingLabel}>自選清單漲跌停 Limit Highlight</span>
-            <div className={hud.settingGroup}>
+            <span className={hud.settingLabel} id='limit-style-label'>
+                自選清單漲跌停 Limit Highlight
+            </span>
+            <div
+                className={hud.settingGroup}
+                role='group'
+                aria-labelledby='limit-style-label'
+            >
                 {LIMIT_STYLE_OPTIONS.map((o) => (
                     <button
                         key={o.key}
                         className={hud.opt[limitStyle === o.key ? 'on' : 'off']}
                         title={o.title}
+                        aria-pressed={limitStyle === o.key}
                         onClick={() => setLimitStyle(o.key)}
                     >
                         {o.label}
