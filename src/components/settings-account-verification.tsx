@@ -31,6 +31,14 @@ export function verificationStatus(market: Market, s: AccountsView): Verificatio
     return s.accounts.some((a) => a.account_type === market) ? 'fail' : 'none';
 }
 
+/** 任一市場為 ✕（未通過或無帳戶）才顯示「如何通過驗證」；未知（帳戶尚未載入）時兩邊都是 undefined，不顯示。 */
+export function needsVerificationRules(s: AccountsView): boolean {
+    return MARKETS.some((market) => {
+        const status = verificationStatus(market, s);
+        return status === 'fail' || status === 'none';
+    });
+}
+
 export function VerificationIcon({ status, size = 12 }: { status: VerificationStatus; size?: number }) {
     return status === 'ok'
         ? <CircleCheck size={size} aria-hidden className={t.okIcon} />

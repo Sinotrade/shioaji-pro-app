@@ -2,7 +2,7 @@ import { useId } from 'react';
 import { useAccounts } from '../lib/account-store';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import {
-    MARKETS, MARKET_LABEL, VerificationIcon, VerificationRules, verificationStatus,
+    MARKETS, MARKET_LABEL, VerificationIcon, VerificationRules, needsVerificationRules, verificationStatus,
     type Market, type VerificationStatus,
 } from './settings-account-verification';
 import * as t from './settings-test-order.css';
@@ -25,7 +25,7 @@ export function ProdAccountStatusSection() {
         return { market, status: verificationStatus(market, accounts), shown };
     });
     const unknown = rows.some(row => row.status === undefined);
-    const showRules = !unknown && rows.some(row => row.status === 'fail' || row.status === 'none');
+    const showRules = needsVerificationRules(accounts);
 
     return (
         <section aria-labelledby={headId} className={t.card}>

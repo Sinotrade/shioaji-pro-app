@@ -676,8 +676,9 @@ export function SettingsDialog({
     const titleId = useId();
     const dialogRef = useRef<HTMLDivElement>(null);
     // 焦點圈限：開啟時把焦點移進視窗、Tab 在視窗內繞圈、關閉時還原。
-    // listener 掛在視窗節點上，疊在上面的委託確認（portal 到 body）不受影響；
-    // Esc 不在這裡處理，一律走 SettingsEscClose（useEscClose）。
+    // keydown 掛在 document：疊在上面的委託確認（portal 到 body）關閉後焦點會掉到 body，
+    // 掛在視窗節點上就攔不到那一下 Tab。焦點在視窗外的其他元素（例如仍開著的確認視窗）時不處理，
+    // 由那個視窗自己管；Esc 不在這裡處理，一律走 SettingsEscClose（useEscClose）。
     useEffect(() => {
         const node = dialogRef.current;
         if (!open || !node) return;
@@ -685,17 +686,21 @@ export function SettingsDialog({
         node.focus();
         const keydown = (event: KeyboardEvent) => {
             if (event.key !== 'Tab') return;
+            const active = document.activeElement;
+            if (active && active !== document.body && !node.contains(active)) return;
+            // 收合的 <details> 內的連結 getClientRects 仍有值，要另外排除
             const nodes = Array.from(node.querySelectorAll<HTMLElement>(
                 'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], summary, [tabindex="0"]',
-            )).filter(el => el.getClientRects().length);
+            )).filter(el => el.getClientRects().length && !el.closest('details:not([open]) > :not(summary)'));
             const first = nodes[0], last = nodes[nodes.length - 1]; // 不用 .at()：Safari 13 target
-            const active = document.activeElement;
             if (!first || !last) { event.preventDefault(); node.focus(); return; }
+            // 焦點掉到 body（被聚焦的元素已卸載）：把它拉回視窗內
+            if (!active || !node.contains(active)) { event.preventDefault(); (event.shiftKey ? last : first).focus(); return; }
             if (event.shiftKey && (active === first || active === node)) { event.preventDefault(); last.focus(); }
             else if (!event.shiftKey && (active === last || active === node)) { event.preventDefault(); first.focus(); }
         };
-        node.addEventListener('keydown', keydown);
-        return () => { node.removeEventListener('keydown', keydown); if (previous?.isConnected) previous.focus(); };
+        document.addEventListener('keydown', keydown);
+        return () => { document.removeEventListener('keydown', keydown); if (previous?.isConnected) previous.focus(); };
     }, [open]);
 
     if (!open) return null;

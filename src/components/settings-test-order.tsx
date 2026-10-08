@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import { CircleCheck, CircleX, RefreshCw, Search, TriangleAlert } from 'lucide-react';
-import { MARKETS, VerificationIcon, VerificationLegend, VerificationRules, verificationStatus, type Market } from './settings-account-verification';
+import { MARKET_LABEL, VerificationIcon, VerificationLegend, VerificationRules, needsVerificationRules, verificationStatus, type Market } from './settings-account-verification';
 import { isImeKey } from './chart-drawing-tools';
 import { Orb } from './orb';
 import { ExternalLink } from './external-link';
@@ -150,7 +150,7 @@ const displayPrice = (value: string | number) => {
 
 function TestOrderRow({ initial, busy, live }: { initial: Product; busy: boolean; live: boolean }) {
     const market: Market = initial.security_type === 'STK' ? 'S' : 'F';
-    const marketLabel = market === 'S' ? '證券' : '期貨';
+    const marketLabel = MARKET_LABEL[market];
     const accounts = useAccounts();
     const mounted = useRef(false);
     useEffect(() => {
@@ -544,10 +544,7 @@ export function SimTestOrderSection() {
     const busy = useSyncExternalStore(subscribeSending, getSending);
     const live = useTradingLive();
     const accounts = useAccounts();
-    const showRules = MARKETS.some(market => {
-        const status = verificationStatus(market, accounts);
-        return status === 'fail' || status === 'none';
-    });
+    const showRules = needsVerificationRules(accounts);
     const headId = useId();
     const [refreshState, setRefreshState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
     const [updatedAt, setUpdatedAt] = useState<Date | null>(null);

@@ -276,17 +276,27 @@ it('exposes settings as a modal dialog named by its title only', async () => {
 
 it('keeps Tab focus inside settings, leaves Esc to useEscClose and restores focus on close', async () => {
     let active: unknown = null;
-    const focusable = (rects = 1) => ({ focus() { active = this; }, getClientRects: () => Array.from({ length: rects }) });
+    const body = { tagName: 'BODY' };
+    const focusable = (rects = 1, collapsed = false) => ({ focus() { active = this; }, getClientRects: () => Array.from({ length: rects }), closest: () => (collapsed ? {} : null) });
     const first = focusable(), middle = focusable(), last = focusable(), hidden = focusable(0);
+    // 收合的 <details> 內的連結：getClientRects 仍有值，要靠 closest 排除（Chromium 實測）
+    const inClosedDetails = focusable(1, true);
+    // 疊在上面的委託確認視窗（portal 到 body）的按鈕：不在設定視窗節點內
+    const outsider = focusable();
     const opener = { ...focusable(), isConnected: true };
+    const inside: unknown[] = [first, middle, last, hidden, inClosedDetails];
     let keydown: ((e: KeyboardEvent) => void) | undefined;
     const dialogNode = {
         focus() { active = dialogNode; },
-        querySelectorAll: () => [first, middle, last, hidden],
-        addEventListener: (type: string, fn: (e: KeyboardEvent) => void) => { if (type === 'keydown') keydown = fn; },
-        removeEventListener: (_type: string, fn: (e: KeyboardEvent) => void) => { if (fn === keydown) keydown = undefined; },
+        contains: (el: unknown) => el === dialogNode || inside.includes(el),
+        querySelectorAll: () => [first, middle, last, hidden, inClosedDetails],
     };
-    vi.stubGlobal('document', { get activeElement() { return active; } });
+    vi.stubGlobal('document', {
+        body,
+        get activeElement() { return active; },
+        addEventListener: (type: string, fn: (e: KeyboardEvent) => void) => { if (type === 'keydown') keydown = fn; },
+        removeEventListener: (type: string, fn: (e: KeyboardEvent) => void) => { if (type === 'keydown' && fn === keydown) keydown = undefined; },
+    });
     const press = (shiftKey = false, key = 'Tab') => {
         const e = { key, shiftKey, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
         keydown!(e as unknown as KeyboardEvent);
@@ -300,10 +310,16 @@ it('keeps Tab focus inside settings, leaves Esc to useEscClose and restores focu
         expect(active).toBe(dialogNode);
         expect(press()).toBe(true); expect(active).toBe(first);
         active = middle; expect(press()).toBe(false);
+        // 不可見的項目與收合 details 內的連結都不算：最後一個可聚焦項是 last，Tab 繞回第一個
         active = last; expect(press()).toBe(true); expect(active).toBe(first);
-        // 不可見的項目不算；Shift+Tab 從第一個繞到最後一個可見項
+        // Shift+Tab 從第一個繞到最後一個可聚焦項（不是 hidden、不是 details 內的連結）
         expect(press(true)).toBe(true); expect(active).toBe(last);
         expect(press(false, 'Escape')).toBe(false);
+        // 上層視窗（確認視窗）有焦點時不攔截，由它自己管
+        active = outsider; expect(press()).toBe(false); expect(active).toBe(outsider);
+        // 被聚焦的元素卸載、焦點掉到 body：Tab 拉回第一個，Shift+Tab 拉回最後一個
+        active = body; expect(press()).toBe(true); expect(active).toBe(first);
+        active = body; expect(press(true)).toBe(true); expect(active).toBe(last);
         await act(async () => view!.update(createElement(SettingsDialog, { open: false, ...dialogProps })));
         expect(keydown).toBeUndefined();
         expect(active).toBe(opener);

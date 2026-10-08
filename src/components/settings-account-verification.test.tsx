@@ -7,7 +7,7 @@ import type { getAccountState } from '../lib/account-store';
 import type { Account } from '../lib/types/portfolio';
 import {
     MARKETS, MARKET_LABEL, PROD_SWITCH_HINT, VERIFY_LEGEND, VERIFY_RULES, VERIFY_SEND_RULE, VERIFY_WAIT,
-    VerificationIcon, VerificationLegend, VerificationRules, verificationStatus,
+    VerificationIcon, VerificationLegend, VerificationRules, needsVerificationRules, verificationStatus,
     type Market, type VerificationStatus,
 } from './settings-account-verification';
 import * as t from './settings-test-order.css';
@@ -21,6 +21,14 @@ const selectionFor = (market: Market, selected: Account | null) => market === 'S
     : { selectedStock: stock, selectedFutures: selected };
 const state = (extra: Partial<ReturnType<typeof getAccountState>> = {}) => ({
     accounts: [stock, futures], selectedStock: stock, selectedFutures: futures, loaded: true, loadError: false, ...extra,
+});
+
+it('shows the rules only when some market is ✕ (fail or none), never while accounts are unknown', () => {
+    expect(needsVerificationRules(state())).toBe(false);
+    expect(needsVerificationRules(state(selectionFor('F', { ...futures, signed: false })))).toBe(true);
+    expect(needsVerificationRules(state({ accounts: [stock], selectedFutures: null }))).toBe(true);
+    expect(needsVerificationRules(state({ loaded: false }))).toBe(false);
+    expect(needsVerificationRules(state({ accounts: [], selectedStock: null, selectedFutures: null }))).toBe(false);
 });
 
 it.each(MARKETS)('returns ok only for the signed selected %s account', market => {

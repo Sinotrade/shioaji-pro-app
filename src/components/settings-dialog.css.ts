@@ -40,6 +40,8 @@ export const dialog = style({
     padding: vars.space.md,
     containerName: dialogBox,
     containerType: 'inline-size',
+    // 程式化 focus() 進視窗本體（tabIndex=-1）時不畫整個視窗的焦點框；內部控制項照常有焦點環
+    selectors: { '&:focus': { outline: 'none' } },
 });
 
 // 帳號頁的測試單需要同列容納市場、商品、價格與操作。
