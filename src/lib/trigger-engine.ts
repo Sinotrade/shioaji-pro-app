@@ -58,7 +58,9 @@ import {
     watchProtectionEnv,
 } from './protection-env';
 import {
+    backgroundSupported,
     createBackgroundTrigger,
+    ensureBackgroundStatus,
     getBackgroundEnabled,
     getBackgroundPrices,
     getBackgroundPrograms,
@@ -69,6 +71,7 @@ import {
 } from './execution/background';
 import {
     backgroundEligible,
+    backgroundRowId,
     isBackgroundId,
     programForNewTrigger,
     triggerRowsFromPrograms,
@@ -383,7 +386,10 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase, opts?: 
     }
     // #201: with 「背景持續執行」 on, a new futures / options stop or take
     // runs in the background engine and never enters this engine (one owner)
-    if (getBackgroundEnabled() && backgroundEligible(prepared, contract)) return addBackgroundTrigger(prepared, contract!);
+    if (backgroundSupported() && backgroundEligible(prepared, contract)) {
+        await ensureBackgroundStatus();
+        if (getBackgroundEnabled()) return addBackgroundTrigger(prepared, contract!);
+    }
     const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : newId();
     try {
         return await bus.send({ op: 'add', trigger: { ...prepared, requestId } }) as TriggerOrder;
@@ -405,7 +411,7 @@ async function addBackgroundTrigger(prepared: NewTrigger, contract: ContractBase
         return null;
     }
     notify({ kind: 'info', title: `${kindLabel(t)}（背景執行）`, body: describe(t) });
-    return backgroundRows().find(r => r.background.programId === program.id) ?? t;
+    return backgroundRows().find(r => r.background.programId === program.id) ?? { ...t, id: backgroundRowId(program.id, t.id) };
 }
 
 function backgroundRow(id: string): BackgroundTriggerOrder | undefined {

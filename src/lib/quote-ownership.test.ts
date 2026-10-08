@@ -35,6 +35,19 @@ describe('quote ownership shared consumers', () => {
         await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(2), { timeout: 4000 });
         expect(mocks.unsubscribe).toHaveBeenLastCalledWith(contract, 'Tick');
     });
+    it('a quote pinned for the background engine survives the page going away (#201)', async () => {
+        const handlers: Record<string, () => void> = {};
+        vi.stubGlobal('window', { addEventListener: (name: string, fn: () => void) => { handlers[name] = fn; } });
+        const { pinQuote, retainQuote } = await import('./quote-ownership');
+        pinQuote(contract, 'Tick');
+        retainQuote(contract, 'BidAsk');
+        await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledTimes(2));
+        handlers.pagehide!();
+        await vi.waitFor(() => expect(mocks.unsubscribe).toHaveBeenCalledTimes(1));
+        expect(mocks.unsubscribe).toHaveBeenCalledWith(contract, 'BidAsk');
+        await new Promise(r => setTimeout(r, 50));
+        expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
+    });
     it('subscribes once and releases only when the last local consumer leaves', async () => {
         const { retainQuote } = await import('./quote-ownership');
         const first = retainQuote(contract, 'Tick');

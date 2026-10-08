@@ -101,7 +101,8 @@ export function triggerRowsFromPrograms(programs: readonly OrderProgram[]): Back
 /** Safe to drop: nothing working, no unknown outcome, no position, and
  * stopped or every level done / disabled. */
 export function programFinished(p: OrderProgram): boolean {
-    const busy = p.levels.some(lv => lv.position > 0 || lv.unprotected > 0 || lv.orders.some(o =>
+    // an order of unknown outcome stays until the 委託待確認 card decides it
+    const busy = p.levels.some(lv => lv.position > 0 || lv.unprotected > 0 || lv.pending?.reason === 'unknownNotSent' || lv.orders.some(o =>
         o.status === 'pendingSubmit' || o.status === 'working' || (o.status === 'unknown' && !o.acknowledged)));
     if (busy) return false;
     return p.status === 'stopped' || p.levels.every(lv => lv.phase === 'done' || lv.phase === 'disabled');

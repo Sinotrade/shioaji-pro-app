@@ -172,6 +172,28 @@ describe('setting on (#201 ①-3)', () => {
         expect(calls('execution_create')).toHaveLength(0);
     });
 
+    it('decides with the App\'s setting even before the first status arrived', async () => {
+        m.enabled = true;
+        await boot();
+        bg.__setBackgroundInvokeForTest(m.invoke as never, { desktop: true }); // status not read yet
+        await engine.addTrigger(stop(), TXF as never);
+        expect(calls('execution_create')).toHaveLength(1);
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
+    it('a lost create answer is checked against the App before saying it was not created', async () => {
+        m.enabled = true;
+        await boot();
+        m.invoke.mockImplementationOnce(async (_cmd: string, a: { program: OrderProgram }) => {
+            m.programs = [a.program]; // the App kept it, the answer was lost
+            throw new Error('ipc closed');
+        });
+        const t = await engine.addTrigger(stop(), TXF as never);
+        expect(t?.id.startsWith('bg:')).toBe(true);
+        expect(m.notify.mock.calls.some(([n]) => (n as { title: string }).title === '觸價單未建立')).toBe(false);
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
     it('a refused create is reported and nothing is created anywhere', async () => {
         m.enabled = true;
         await boot();
@@ -207,6 +229,15 @@ describe('background rows', () => {
         // and the card reads the App's real list
         await flush();
         expect(calls('execution_list_pending_confirm').length).toBeGreaterThan(0);
+    });
+
+    it('a program whose order outcome is unknown is never dropped', async () => {
+        m.programs = [{ ...program({ phase: 'needsConfirm', pending: { leg: 'entry', price: 1, ts: 5, reason: 'unknownNotSent' } }),
+            status: 'stopped' }];
+        await boot();
+        await bg.refreshBackground();
+        await flush();
+        expect(calls('execution_remove')).toHaveLength(0);
     });
 
     it('finished background triggers are dropped by the main window', async () => {

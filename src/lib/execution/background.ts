@@ -20,8 +20,8 @@ import { useSyncExternalStore } from 'react';
 import { ensureContract } from '../contracts-cache';
 import { isMainWindow } from '../main-window-commands';
 import { currentProtectionEnv, onProtectionEnvChange } from '../protection-env';
-import { retainQuote } from '../quote-ownership';
-import { onAnyTick } from '../stream';
+import { pinQuote } from '../quote-ownership';
+import { getStreamStatus, onAnyTick, subscribeStatusStore } from '../stream';
 import { notify } from '../trade';
 import { envKeyOf } from './adapter';
 import { programFinished } from './background-view';
@@ -99,16 +99,19 @@ export function useBackgroundPrograms(): OrderProgram[] {
 
 let refreshing: Promise<void> | null = null;
 let refreshAgain = false;
+let epoch = 0; // bumps when the setting changes: older reads are not adopted
 /** Re-read status and programs (coalesced). */
 export function refreshBackground(): Promise<void> {
     if (!isTauri) return Promise.resolve();
     if (refreshing) { refreshAgain = true; return refreshing; }
+    const started = epoch;
     refreshing = (async () => {
         try {
             const [view, h] = await Promise.all([
                 invoke<ProgramsView>('execution_programs'),
                 invoke<BackgroundHealth>('execution_status'),
             ]);
+            if (started !== epoch) { refreshAgain = true; return; }
             const first = health === null;
             if (view.revision !== revision || JSON.stringify(h) !== JSON.stringify(health)) {
                 revision = view.revision;
@@ -128,14 +131,27 @@ export function refreshBackground(): Promise<void> {
     return refreshing;
 }
 
+/** Refreshed until no read is in flight (every read started after now). */
+async function settled(): Promise<void> {
+    await refreshBackground();
+    while (refreshing) await refreshing;
+}
+
+/** Status known (read once if not yet): the setting decides who owns a new trigger. */
+export async function ensureBackgroundStatus(): Promise<void> {
+    if (isTauri && !health) await settled();
+}
+
 // ---- setting ----
 
 /** Main window only (the App refuses other windows). */
 export async function setBackgroundEnabled(on: boolean): Promise<void> {
     if (!isTauri) throw new Error('背景持續執行僅限桌面版');
+    epoch += 1;
     health = await invoke<BackgroundHealth>('execution_set_enabled', { enabled: on });
+    epoch += 1;
     emit();
-    await refreshBackground();
+    await settled();
 }
 
 // ---- commands ----
@@ -166,7 +182,14 @@ async function command(cmd: string, args: Record<string, unknown>): Promise<Comm
 }
 
 export async function createBackgroundTrigger(program: OrderProgram): Promise<void> {
-    await command('execution_create', { program });
+    try {
+        await command('execution_create', { program });
+    } catch (e) {
+        // a lost answer is not a refusal: the App may have kept it
+        await settled();
+        if (programs.some(p => p.id === program.id)) return;
+        throw e;
+    }
 }
 
 /** Removes a background trigger (one with an order still working is
@@ -215,7 +238,7 @@ function syncQuotes() {
         const hold: { release?: () => void } = {};
         quoteHolds.set(code, hold);
         void ensureContract(code).then(contract => {
-            if (quoteHolds.get(code) === hold) hold.release = retainQuote(contract, 'Tick');
+            if (quoteHolds.get(code) === hold) hold.release = pinQuote(contract, 'Tick');
         }).catch(() => { if (quoteHolds.get(code) === hold) quoteHolds.delete(code); });
     }
 }
@@ -254,7 +277,9 @@ export function startBackgroundExecution(): void {
     started = true;
     const main = isMainWindow();
     void import('@tauri-apps/api/event').then(({ listen }) => {
-        void listen('execution://changed', () => void refreshBackground());
+        // a change between the first read and the listener being ready would
+        // be missed: read again once it listens
+        void listen('execution://changed', () => void refreshBackground()).then(() => refreshBackground());
         if (main) {
             void listen<Notice[]>('execution://notice', e => {
                 for (const n of e.payload ?? []) {
@@ -265,7 +290,10 @@ export function startBackgroundExecution(): void {
         }
     }).catch(() => undefined);
     if (main) {
-        onProtectionEnvChange(() => syncQuotes());
+        // window-feed prices belong to one environment and a live stream
+        const dropPrices = () => { if (Object.keys(prices).length) { prices = {}; emit(); } };
+        onProtectionEnvChange(() => { dropPrices(); syncQuotes(); });
+        subscribeStatusStore(() => { if (getStreamStatus() !== 'live') dropPrices(); });
         onAnyTick(tick => {
             if (tick.simtrade || !programs.some(p => p.binding.contract.quoteCode === tick.code
                 && p.levels.some(lv => lv.phase === 'needsConfirm'))) return;
@@ -289,4 +317,5 @@ export function __setBackgroundInvokeForTest(fn: Invoke | null, opts: { desktop?
     prices = {};
     pendingInstalled = false;
     swept.clear();
+    epoch = 0;
 }
