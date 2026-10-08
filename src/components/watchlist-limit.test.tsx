@@ -1,4 +1,4 @@
-// 自選清單漲跌停亮燈 — 成交價到漲停：價格紅底白字＋「漲停」標；跌停綠底
+// 自選清單漲跌停亮燈 — 成交價到漲停：價格漲色實心底白字；跌停跌色底（不另加小標）
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -103,7 +103,7 @@ function texts(node: any): string {
 }
 
 describe('watchlist 漲跌停亮燈', () => {
-    it('漲停：價格套用 limitPrice.up，並顯示「漲停」標', () => {
+    it('漲停：價格套用 limitPrice.up，不顯示小標文字', () => {
         tick('2330', 1100, 1000);
         const root = render([{ contract: contract({}) }]);
         const row = rowOf(root, '2330');
@@ -111,11 +111,12 @@ describe('watchlist 漲跌停亮燈', () => {
         const price = row.find((n: any) => hasClass(n, styles.price));
         const pill = price.find((n: any) => hasClass(n, styles.limitPrice.up));
         expect(texts(pill)).toBe('1,100');
-        expect(texts(price)).toContain('漲停');
-        expect(texts(row)).not.toContain('跌停');
+        expect(pill.props['aria-label']).toBe('漲停 1,100');
+        // 只用底色亮燈 — 不再渲染「漲停／跌停」小標
+        expect(texts(row)).not.toMatch(/漲停|跌停/);
     });
 
-    it('跌停：價格套用 limitPrice.down，並顯示「跌停」標', () => {
+    it('跌停：價格套用 limitPrice.down，不顯示小標文字', () => {
         tick('2330', 900, 1000);
         const root = render([{ contract: contract({}) }]);
         const row = rowOf(root, '2330');
@@ -123,7 +124,8 @@ describe('watchlist 漲跌停亮燈', () => {
         const price = row.find((n: any) => hasClass(n, styles.price));
         const pill = price.find((n: any) => hasClass(n, styles.limitPrice.down));
         expect(texts(pill)).toBe('900');
-        expect(texts(price)).toContain('跌停');
+        expect(pill.props['aria-label']).toBe('跌停 900');
+        expect(texts(row)).not.toMatch(/漲停|跌停/);
     });
 
     it('未到漲跌停：不亮燈', () => {
@@ -197,6 +199,19 @@ describe('watchlist 漲跌停亮燈', () => {
         expect(
             row.findAll((n: any) => hasClass(n, styles.limitPrice.up)).length,
         ).toBe(1);
+    });
+
+    it('底色框尺寸固定：每列同一份 class（不依價格位數變化）', () => {
+        tick('2424', 9.79, 8.9);
+        tick('2059', 10615, 11790);
+        const root = render([
+            { contract: contract({ code: '2424', limit_up: 9.79, limit_down: 8.01, reference: 8.9 }) },
+            { contract: contract({ code: '2059', limit_up: 12965, limit_down: 10615, reference: 11790 }) },
+        ]);
+        const a = rowOf(root, '2424').find((n: any) => hasClass(n, styles.limitPrice.up));
+        const b = rowOf(root, '2059').find((n: any) => hasClass(n, styles.limitPrice.down));
+        expect(a.props.style).toBeUndefined();
+        expect(b.props.style).toBeUndefined();
     });
 
     it('國際配色：亮燈色取自主題的漲跌 token（intl 自動反轉為綠漲紅跌）', () => {

@@ -4,10 +4,8 @@
 
 import {
     ArrowDown,
-    ArrowDownToLine,
     ArrowDownUp,
     ArrowUp,
-    ArrowUpToLine,
     Check,
     ChevronDown,
     ChevronUp,
@@ -213,22 +211,13 @@ const WatchRow = memo(function WatchRow({
                     <span className={styles.simBadge}>試搓</span>
                 ) : null}
                 {atLimit ? (
-                    <>
-                        <span className={styles.limitTag[atLimit]}>
-                            {atLimit === 'up' ? (
-                                <ArrowUpToLine size={9} strokeWidth={2.5} />
-                            ) : (
-                                <ArrowDownToLine size={9} strokeWidth={2.5} />
-                            )}
-                            {limitLabel}
-                        </span>
-                        <span
-                            className={styles.limitPrice[atLimit]}
-                            title={`${limitLabel} ${fmtPrice(close)}`}
-                        >
-                            {fmtPrice(close)}
-                        </span>
-                    </>
+                    <span
+                        className={styles.limitPrice[atLimit]}
+                        title={`${limitLabel} ${fmtPrice(close)}`}
+                        aria-label={`${limitLabel} ${fmtPrice(close)}`}
+                    >
+                        {fmtPrice(close)}
+                    </span>
                 ) : (
                     fmtPrice(close)
                 )}

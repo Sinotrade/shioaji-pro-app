@@ -1,13 +1,11 @@
 // src/components/watchlist.css.ts
 
-import { globalStyle, style, styleVariants } from '@vanilla-extract/css';
+import { style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const list = style({
     display: 'flex',
     flexDirection: 'column',
-    // 讓列內元素依清單寬度調整（窄寬度收起「漲停／跌停」小標）
-    containerType: 'inline-size',
 });
 
 const rowBase = style({
@@ -66,8 +64,6 @@ export const simBadge = style({
 });
 
 export const price = style({
-    // 漲跌停小標以絕對定位掛在價格左側，不參與欄寬計算
-    position: 'relative',
     fontFamily: vars.font.mono,
     fontSize: '0.82rem',
     fontWeight: 600,
@@ -83,13 +79,20 @@ export const limitTone = {
     down: vars.color.down,
 } as const;
 
+// 每列一致的底色框：固定高度／內距、最小寬度、文字靠右；右緣以負
+// margin 外推內距，讓框內數字和未亮燈列的數字右緣對齊
 const limitPriceBase = style({
     display: 'inline-block',
+    boxSizing: 'border-box',
+    minWidth: '8ch',
+    height: '1.4em',
+    lineHeight: '1.4em',
+    padding: '0 5px',
+    marginRight: '-5px',
+    textAlign: 'right',
+    verticalAlign: 'middle',
     color: '#fff',
     borderRadius: vars.radius.sm,
-    padding: '0 4px',
-    // 原本價格沒有底，padding 用負 margin 抵銷，亮燈時數字位置不跳
-    marginRight: '-4px',
 });
 
 // 實心底把漲跌色壓暗 25%：白字對比在深色綠底也有約 4.5:1（純漲跌色
@@ -100,38 +103,6 @@ export const limitPrice = styleVariants({
     up: [limitPriceBase, { background: limitFill(limitTone.up) }],
     down: [limitPriceBase, { background: limitFill(limitTone.down) }],
 });
-
-// 價格前的小標「漲停／跌停」— 外框樣式，和價格的實心底分出層次；
-// 放第一行（代碼列通常有空間），絕對定位不撐寬價格欄，亮燈進出時版面
-// 不動。清單很窄或開小線圖（中間欄會被蓋到）時收起，只留價格底色
-const limitTagBase = style({
-    position: 'absolute',
-    right: '100%',
-    top: '50%',
-    transform: 'translateY(-50%)',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '1px',
-    fontFamily: vars.font.body,
-    fontSize: '0.58rem',
-    fontWeight: 700,
-    lineHeight: 1.25,
-    padding: '0 3px 0 2px',
-    marginRight: 5,
-    borderRadius: vars.radius.sm,
-    border: '1px solid currentColor',
-    whiteSpace: 'nowrap',
-    pointerEvents: 'none',
-    '@container': {
-        '(max-width: 240px)': { display: 'none' },
-    },
-});
-
-export const limitTag = styleVariants({
-    up: [limitTagBase, { color: limitTone.up }],
-    down: [limitTagBase, { color: limitTone.down }],
-});
-
 
 export const change = style({
     fontFamily: vars.font.mono,
@@ -164,9 +135,6 @@ export const rowArrange = style({
     paddingRight: '46px',
     cursor: 'grab',
 });
-
-// 排序模式左右 padding 加大，長代碼可能被小標蓋到 — 收起，只留價格底色
-globalStyle(`${rowArrange} ${limitTagBase}`, { display: 'none' });
 
 export const gripHandle = style({
     position: 'absolute',
@@ -213,8 +181,6 @@ export const rowSparkCols = style({
     gridTemplateColumns: 'minmax(0, 1fr) minmax(48px, 1.1fr) auto',
 });
 
-// 小線圖模式中間欄會被絕對定位的小標蓋到 — 收起，只留價格底色
-globalStyle(`${rowSparkCols} ${limitTagBase}`, { display: 'none' });
 
 
 export const sparkCell = style({
