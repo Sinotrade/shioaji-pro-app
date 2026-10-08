@@ -264,7 +264,7 @@ export function TrayPanel() {
                                                 : fmtInt(p.quantity),
                                             privMoney,
                                         )}{' '}
-                                        @{fmtPrice(p.price)}
+                                        @{maskMoney(fmtPrice(p.price), privMoney)}
                                     </span>
                                     <span
                                         className={`${styles.num} ${panel.dirText[dir]}`}

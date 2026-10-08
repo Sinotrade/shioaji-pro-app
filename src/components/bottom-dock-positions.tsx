@@ -374,7 +374,7 @@ export function PositionsPane({
                             )}
                             {sz === 'wide' && (
                                 <td className={styles.td}>
-                                    {fmtPrice(p.price)}
+                                    {maskMoney(fmtPrice(p.price), privMoney)}
                                 </td>
                             )}
                             <td className={styles.td}>
@@ -518,7 +518,7 @@ export function PositionsPane({
                                     <span className={styles.priceStackLabel}>
                                         均
                                     </span>
-                                    {fmtPrice(p.price)}
+                                    {maskMoney(fmtPrice(p.price), privMoney)}
                                 </span>
                             </span>
                             <span className={styles.cardSpacer} />

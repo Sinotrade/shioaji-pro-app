@@ -6,7 +6,7 @@ vi.mock('./privacy', async (orig) => ({ ...(await orig<typeof import('./privacy'
 vi.mock('./runtime', () => ({ getApiBase: () => '' }));
 vi.mock('./shioaji', () => ({ fetchInfo: vi.fn() }));
 
-import { accountConfirmLabel } from './order-confirm';
+import { accountConfirmLabel, privacyAccountLabel } from './order-confirm';
 
 describe('accountConfirmLabel', () => {
     const account = { broker_id: '9A95', account_id: '9816502' };
@@ -18,5 +18,10 @@ describe('accountConfirmLabel', () => {
         p.on = true;
         expect(accountConfirmLabel(account)).toBe('9A95-•••••02');
         expect(accountConfirmLabel(account)).not.toContain('6502');
+    });
+    it('re-masks a label captured before privacy mode was turned on', () => {
+        expect(privacyAccountLabel('9A95-***6502', true)).toBe('9A95-•••••02');
+        expect(privacyAccountLabel('9A95-***6502', false)).toBe('9A95-***6502');
+        expect(privacyAccountLabel('9A95-•••••02', true)).toBe('9A95-•••••02');
     });
 });

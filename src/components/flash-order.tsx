@@ -1483,7 +1483,7 @@ export function FlashOrder({
                             mySell={mine?.sell ?? 0}
                             buyFill={fills?.buy ?? 0}
                             sellFill={fills?.sell ?? 0}
-                            avgMark={pos !== null && key === pos.avgKey}
+                            avgMark={pos !== null && !privMoney && key === pos.avgKey}
                             band={
                                 limitUp > 0 && key === keyOf(limitUp)
                                     ? 'up'

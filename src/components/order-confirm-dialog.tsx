@@ -9,10 +9,12 @@ import { createPortal } from 'react-dom';
 import { useEscClose } from '../hooks/use-esc-close';
 import {
     getPendingOrderConfirm,
+    privacyAccountLabel,
     resolveOrderConfirm,
     subscribeOrderConfirm,
     type OrderConfirmRequest,
 } from '../lib/order-confirm';
+import { usePrivacyMode } from '../lib/privacy';
 import { usePendingPrices } from '../lib/trigger-engine';
 import { fmtPrice } from '../lib/utils/format';
 import * as styles from './order-confirm-dialog.css';
@@ -21,6 +23,7 @@ function ConfirmModal({ request }: { request: OrderConfirmRequest }) {
     // Esc＝取消，走 modal stack（不誤武裝 Esc-Esc 全刪單）
     useEscClose(() => resolveOrderConfirm(false));
     const pendingPrices = usePendingPrices();
+    const priv = usePrivacyMode();
     const livePrice = request.livePriceCode ? pendingPrices[request.livePriceCode] : undefined;
     const dir = request.action === 'Buy' ? ('up' as const) : ('down' as const);
     // 信用條件寫進動作：融資買進／融券賣出／現沖賣出，不會看起來像現股
@@ -83,7 +86,7 @@ function ConfirmModal({ request }: { request: OrderConfirmRequest }) {
                         <div className={styles.detailRow}>
                             <span>帳戶</span>
                             <span className={styles.detailValue}>
-                                {request.accountLabel}
+                                {privacyAccountLabel(request.accountLabel, priv)}
                             </span>
                         </div>
                     )}
