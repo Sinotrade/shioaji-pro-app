@@ -64,7 +64,7 @@ export function BackgroundExecutionSetting() {
                 <br />
                 狀態：{state} · 背景觸價單 {running} 筆
                 {health?.lastError ? ` · ${health.lastError}` : ''}
-                {error ? ` · 未變更：${error}` : ''}
+                {error ? ` · 設定沒有確認儲存：${error}（以上為目前實際的設定）` : ''}
             </span>
         </>
     );

@@ -101,15 +101,31 @@ async function readSetting(): Promise<boolean | null> {
  * setting → a refusal (never a silent guess either way). */
 export async function backgroundOwnerForNew(): Promise<'window' | 'background' | { refused: string }> {
     if (!isTauri) return 'window';
-    if (setting === null) {
-        const read = await readSetting();
-        if (read !== null && setting === null) { setting = read; emit(); }
+    // read now, every time: a cached value never decides (another window may
+    // have changed it, or the file became unreadable)
+    const on = await readSetting();
+    adoptSetting(on);
+    if (on === null) return { refused: BACKGROUND_SETTING_UNKNOWN };
+    if (!on) return 'window';
+    let h: BackgroundHealth | null = null;
+    try {
+        h = await invoke<BackgroundHealth>('execution_status');
+    } catch {
+        h = null;
     }
-    if (setting === null) return { refused: BACKGROUND_SETTING_UNKNOWN };
-    if (!setting) return 'window';
-    if (!health) await settled();
-    if (!health) return { refused: BACKGROUND_UNAVAILABLE };
+    adoptHealth(h);
+    // the engine must be up and running with the setting on
+    if (!h || h.enabled !== true) return { refused: BACKGROUND_UNAVAILABLE };
     return 'background';
+}
+
+/** A read result replaces what is shown, failures included (unknown). */
+function adoptSetting(on: boolean | null) {
+    if (on !== setting) { setting = on; emit(); }
+}
+
+function adoptHealth(h: BackgroundHealth | null) {
+    if (h === null ? health !== null : JSON.stringify(h) !== JSON.stringify(health)) { health = h; emit(); }
 }
 
 export function getBackgroundHealth(): BackgroundHealth | null {
@@ -144,7 +160,7 @@ export function refreshBackground(): Promise<void> {
     refreshing = (async () => {
         // the setting is read on its own: it is known even when the engine is not
         const saved = await readSetting();
-        if (started === epoch && saved !== null && saved !== setting) { setting = saved; emit(); }
+        if (started === epoch) adoptSetting(saved);
         try {
             const [view, h] = await Promise.all([
                 invoke<ProgramsView>('execution_programs'),
@@ -161,7 +177,8 @@ export function refreshBackground(): Promise<void> {
             if (isMainWindow()) { housekeeping(); syncQuotes(); }
             if (first) onFirstStatus();
         } catch {
-            // the engine did not start: no background, the window's own engine only
+            // the engine cannot be reached: nothing shown as running
+            if (started === epoch) adoptHealth(null);
         }
     })().finally(() => {
         refreshing = null;
@@ -182,11 +199,16 @@ async function settled(): Promise<void> {
 export async function setBackgroundEnabled(on: boolean): Promise<void> {
     if (!isTauri) throw new Error('背景持續執行僅限桌面版');
     epoch += 1;
-    health = await invoke<BackgroundHealth>('execution_set_enabled', { enabled: on });
-    setting = on;
-    epoch += 1;
-    emit();
-    await settled();
+    try {
+        health = await invoke<BackgroundHealth>('execution_set_enabled', { enabled: on });
+        setting = on;
+    } finally {
+        // success or not, show what the App has now (a failed save may still
+        // have changed the file)
+        epoch += 1;
+        emit();
+        await settled();
+    }
 }
 
 // ---- commands ----

@@ -22,6 +22,7 @@ const m = vi.hoisted(() => ({
     enabled: false,
     engineDown: false,
     settingUnreadable: false,
+    create: null as null | ((a: { program: OrderProgram }) => Promise<unknown>),
     programs: [] as unknown[],
 }));
 
@@ -105,7 +106,9 @@ beforeEach(() => {
     m.place.mockImplementation(async () => ({ order: { id: 'exit-1' }, status: { status: 'PendingSubmit' } }));
     m.engineDown = false;
     m.settingUnreadable = false;
-    m.invoke.mockImplementation(async (cmd: string) => {
+    m.create = null;
+    m.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'execution_create' && m.create) { const f = m.create; m.create = null; return f(args as { program: OrderProgram }); }
         if (cmd === 'execution_get_enabled') {
             if (m.settingUnreadable) throw new Error('背景持續執行的設定無法讀取');
             return m.enabled;
@@ -195,6 +198,59 @@ describe('setting on (#201 ①-3)', () => {
         expect(bodies.some(b => b.includes('開關狀態不明'))).toBe(true);
     });
 
+    it('reads the setting fresh for every new trigger: a change made in another window counts at once', async () => {
+        await boot();
+        await bg.refreshBackground(); // this window has seen OFF
+        m.enabled = true; // turned on elsewhere; no event has reached this window yet
+        await engine.addTrigger(stop(), TXF as never);
+        expect(calls('execution_create')).toHaveLength(1);
+        expect(engine.getTriggers()).toHaveLength(0);
+        m.enabled = false; // and off again
+        await engine.addTrigger(stop(), TXF as never);
+        expect(engine.getTriggers()).toHaveLength(1);
+    });
+
+    it('a failed setting read is unknown even after OFF was seen, and the shown setting becomes unknown', async () => {
+        await boot();
+        await bg.refreshBackground();
+        expect(bg.getBackgroundSetting()).toBe(false);
+        m.settingUnreadable = true;
+        expect(await engine.addTrigger(stop(), TXF as never)).toBeNull();
+        expect(engine.getTriggers()).toHaveLength(0);
+        expect(bg.getBackgroundSetting()).toBeNull();
+        await bg.refreshBackground();
+        expect(bg.getBackgroundSetting()).toBeNull();
+    });
+
+    it('a failed status read refuses even after a good one, and the shown status is dropped', async () => {
+        m.enabled = true;
+        await boot();
+        await bg.refreshBackground();
+        expect(bg.getBackgroundHealth()).not.toBeNull();
+        m.engineDown = true;
+        expect(await engine.addTrigger(stop(), TXF as never)).toBeNull();
+        expect(calls('execution_create')).toHaveLength(0);
+        expect(bg.getBackgroundHealth()).toBeNull();
+    });
+
+    it('seen ON, engine down, but now OFF: runs here, not refused', async () => {
+        m.enabled = true;
+        await boot();
+        await bg.refreshBackground();
+        m.engineDown = true;
+        m.enabled = false;
+        await engine.addTrigger(stop(), TXF as never);
+        expect(engine.getTriggers()).toHaveLength(1);
+        expect(m.notify.mock.calls.some(([n]) => (n as { title: string }).title === '觸價單未建立')).toBe(false);
+    });
+
+    it('a failed save is re-read: the shown setting is what the file says', async () => {
+        await boot();
+        m.invoke.mockImplementationOnce(async () => { m.enabled = true; throw new Error('目錄同步失敗'); });
+        await expect(bg.setBackgroundEnabled(true)).rejects.toThrow('目錄同步失敗');
+        expect(bg.getBackgroundSetting()).toBe(true);
+    });
+
     it('stocks, alerts and OCO groups stay in this window', async () => {
         m.enabled = true;
         await boot();
@@ -227,10 +283,10 @@ describe('setting on (#201 ①-3)', () => {
     it('a lost create answer is checked against the App before saying it was not created', async () => {
         m.enabled = true;
         await boot();
-        m.invoke.mockImplementationOnce(async (_cmd: string, a: { program: OrderProgram }) => {
+        m.create = async (a: { program: OrderProgram }) => {
             m.programs = [a.program]; // the App kept it, the answer was lost
             throw new Error('ipc closed');
-        });
+        };
         const t = await engine.addTrigger(stop(), TXF as never);
         expect(t?.id.startsWith('bg:')).toBe(true);
         expect(m.notify.mock.calls.some(([n]) => (n as { title: string }).title === '觸價單未建立')).toBe(false);
@@ -240,7 +296,7 @@ describe('setting on (#201 ①-3)', () => {
     it('an unconfirmed create is never reported as not created', async () => {
         m.enabled = true;
         await boot();
-        m.invoke.mockImplementationOnce(async () => { throw new Error('ipc closed'); });
+        m.create = async () => { throw new Error('ipc closed'); };
         expect(await engine.addTrigger(stop(), TXF as never)).toBeNull();
         const titles = m.notify.mock.calls.map(([n]) => (n as { title: string }).title);
         expect(titles).toContain('觸價單建立結果未確認');
@@ -251,7 +307,7 @@ describe('setting on (#201 ①-3)', () => {
     it('a refused create is reported and nothing is created anywhere', async () => {
         m.enabled = true;
         await boot();
-        m.invoke.mockImplementationOnce(async () => ({ accepted: false, notices: [{ code: 'rejected.duplicateProgram', programId: null, levelId: null, detail: '' }], revision: 1 }));
+        m.create = async () => ({ accepted: false, notices: [{ code: 'rejected.duplicateProgram', programId: null, levelId: null, detail: '' }], revision: 1 });
         expect(await engine.addTrigger(stop(), TXF as never)).toBeNull();
         expect(engine.getTriggers()).toHaveLength(0);
         expect(m.notify.mock.calls.some(([n]) => (n as { title: string }).title === '觸價單未建立')).toBe(true);
