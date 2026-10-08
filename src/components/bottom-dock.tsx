@@ -53,6 +53,7 @@ import {
 } from './bottom-dock-shared';
 import * as styles from './bottom-dock.css';
 import * as panel from './panel.css';
+import { useOpenOrdersTabRequest } from '../lib/dock-events';
 
 type TabKey = 'positions' | 'orders' | 'account';
 
@@ -73,6 +74,8 @@ export function BottomDock({
 }) {
     const portfolio = useTradingState();
     const [tab, setTab] = useState<TabKey>('positions');
+    // 待確認卡「開啟委託查詢」(#201 ③)
+    useOpenOrdersTabRequest(() => setTab('orders'));
     const [accountRefresh, setAccountRefresh] = useState<AccountRefreshControls | null>(null);
     const queryStatus = portfolio.queries[tab];
     const positionsQuery = portfolio.queries.positions;
