@@ -1,6 +1,6 @@
 // src/components/watchlist.css.ts
 
-import { style, styleVariants } from '@vanilla-extract/css';
+import { globalStyle, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 export const list = style({
@@ -63,7 +63,28 @@ export const simBadge = style({
     whiteSpace: 'nowrap',
 });
 
+// 右側數字區（價格＋漲跌兩行）— 最後一欄、跨兩列；代碼／名稱固定第一欄
+export const numCell = style({
+    gridColumn: '-2 / -1',
+    gridRow: '1 / span 2',
+    alignSelf: 'center',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    minWidth: 0,
+});
+
+export const firstCol = style({ gridColumn: 1 });
+
+// 小線圖模式的停板色塊列：數字區跨小線圖欄＋數字欄，靠右
+export const numCellWide = style({
+    gridColumn: '2 / -1',
+    justifySelf: 'end',
+});
+
 export const price = style({
+    whiteSpace: 'nowrap',
     fontFamily: vars.font.mono,
     fontSize: '0.82rem',
     fontWeight: 600,
@@ -71,30 +92,12 @@ export const price = style({
     fontVariantNumeric: 'tabular-nums',
 });
 
-// 漲跌停亮燈 — 台股看盤慣例：成交價到漲停 → 價格漲色底白字、跌停 →
-// 跌色底白字。顏色取主題的漲跌 token，國際配色（綠漲紅跌）自動反轉；
-// 實心底不受選取列的淡色底影響
+// 漲跌停亮燈（設定可選四種，見 lib/limit-style-prefs）。顏色一律取
+// 主題的漲跌 token，國際配色（綠漲紅跌）自動反轉
 export const limitTone = {
     up: vars.color.up,
     down: vars.color.down,
 } as const;
-
-// 每列一致的底色框：固定高度／內距、最小寬度、文字靠右；右緣以負
-// margin 外推內距，讓框內數字和未亮燈列的數字右緣對齊
-const limitPriceBase = style({
-    display: 'inline-block',
-    boxSizing: 'border-box',
-    minWidth: '8ch',
-    height: '1.4em',
-    lineHeight: '1.4em',
-    padding: '0 5px',
-    marginRight: '-5px',
-    textAlign: 'right',
-    whiteSpace: 'nowrap',
-    verticalAlign: 'middle',
-    color: '#fff',
-    borderRadius: vars.radius.sm,
-});
 
 // 只給輔助科技讀的「漲停／跌停」（畫面上只用底色表示）
 export const srOnly = style({
@@ -109,16 +112,8 @@ export const srOnly = style({
     border: 0,
 });
 
-// 實心底把漲跌色壓暗 25%：白字對比在深色綠底也有約 4.5:1（純漲跌色
-// 只有 2.7:1），色相仍跟主題走、國際配色照樣反轉
-const limitFill = (tone: string) => `color-mix(in srgb, ${tone} 75%, black)`;
-
-export const limitPrice = styleVariants({
-    up: [limitPriceBase, { background: limitFill(limitTone.up) }],
-    down: [limitPriceBase, { background: limitFill(limitTone.down) }],
-});
-
 export const change = style({
+    whiteSpace: 'nowrap',
     fontFamily: vars.font.mono,
     fontSize: '0.68rem',
     textAlign: 'right',
@@ -146,7 +141,8 @@ export const dropTarget = style({
 // 靠加大的左右 padding 讓出空間，spark 欄版面不動
 export const rowArrange = style({
     paddingLeft: '24px',
-    paddingRight: '46px',
+    // 上移／下移鈕 20px 寬、距右 4px — 再留 6px 間距
+    paddingRight: '30px',
     cursor: 'grab',
 });
 
@@ -376,3 +372,88 @@ export const typeSelect = style({
     borderRadius: vars.radius.sm,
     outline: 'none',
 });
+
+// ---- 漲跌停亮燈樣式 ----
+const solidFill = (tone: string, pct: number) =>
+    `color-mix(in srgb, ${tone} ${pct}%, black)`;
+const tintFill = (tone: string) =>
+    `color-mix(in srgb, ${tone} 14%, ${vars.color.panel})`;
+const tintHover = (tone: string) =>
+    `color-mix(in srgb, ${tone} 20%, ${vars.color.panel})`;
+
+// A｜整塊數字區實心底：價格＋漲跌兩行包成圓角色塊（漲跌色壓暗 18%）、
+// 白字；固定寬度讓每列等寬、右緣切齊，負 margin 往列邊界外推但留少許空間
+const limitBlockBase = style({
+    boxSizing: 'border-box',
+    // 約容得下 16 字元的漲跌行（-1,175.00 -9.97%）；更長時才撐寬
+    minWidth: 'calc(7rem + 16px)',
+    margin: '-3px -8px -3px 0',
+    padding: '3px 8px',
+    borderRadius: vars.radius.md,
+});
+export const limitBlock = styleVariants({
+    up: [limitBlockBase, { background: solidFill(limitTone.up, 82) }],
+    down: [limitBlockBase, { background: solidFill(limitTone.down, 82) }],
+});
+globalStyle(`${limitBlockBase} span`, { color: '#fff' });
+// 排序模式左右各讓出把手與上移／下移鈕的空間 — 色塊不外推、內距收窄，
+// 改用較小但仍一致的固定寬度（約 16 字元漲跌行＋內距），每列仍等寬
+globalStyle(`${rowArrange} ${limitBlockBase}`, {
+    marginRight: 0,
+    padding: '3px 6px',
+    minWidth: 'calc(6.5rem + 12px)',
+});
+
+// B｜整列淡底＋右緣 4px 實色色條，字維持漲跌色
+const limitTintBase = style({
+    '::after': {
+        content: '""',
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 4,
+        pointerEvents: 'none',
+    },
+});
+export const limitTint = styleVariants({
+    up: [
+        limitTintBase,
+        {
+            background: tintFill(limitTone.up),
+            ':hover': { background: tintHover(limitTone.up) },
+            selectors: { '&::after': { background: limitTone.up } },
+        },
+    ],
+    down: [
+        limitTintBase,
+        {
+            background: tintFill(limitTone.down),
+            ':hover': { background: tintHover(limitTone.down) },
+            selectors: { '&::after': { background: limitTone.down } },
+        },
+    ],
+});
+
+// D｜整列實心（漲跌色壓暗 22%）、白字，名稱略淡
+const limitSolidBase = style({
+    borderBottomColor: 'rgba(0, 0, 0, 0.25)',
+});
+export const limitSolid = styleVariants({
+    up: [
+        limitSolidBase,
+        {
+            background: solidFill(limitTone.up, 78),
+            ':hover': { background: solidFill(limitTone.up, 70) },
+        },
+    ],
+    down: [
+        limitSolidBase,
+        {
+            background: solidFill(limitTone.down, 78),
+            ':hover': { background: solidFill(limitTone.down, 70) },
+        },
+    ],
+});
+globalStyle(`${limitSolidBase} span`, { color: '#fff' });
+globalStyle(`${limitSolidBase} ${name}`, { color: 'rgba(255, 255, 255, 0.85)' });

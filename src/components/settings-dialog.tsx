@@ -63,6 +63,11 @@ import {
     type ToastScale,
 } from '../lib/toast-prefs';
 import {
+    setLimitStyle,
+    useLimitStyle,
+    type LimitStyle,
+} from '../lib/limit-style-prefs';
+import {
     setChartHoverPricePick,
     useChartHoverPricePick,
 } from '../lib/chart-price-prefs';
@@ -89,6 +94,13 @@ const CONVENTION_OPTIONS: { key: Convention; label: string }[] = [
     { key: 'intl', label: '綠漲紅跌' },
 ];
 
+const LIMIT_STYLE_OPTIONS: { key: LimitStyle; label: string; title: string }[] = [
+    { key: 'block', label: '數字區色塊', title: '價格與漲跌兩行包成實心色塊、白字' },
+    { key: 'tint', label: '淡底＋色條', title: '整列淡淡的漲跌色底，右緣一條實色色條' },
+    { key: 'solid', label: '整列實心', title: '整列實心漲跌色、白字' },
+    { key: 'none', label: '不標示', title: '到漲跌停不加任何標示' },
+];
+
 type SettingsTab =
     | 'appearance'
     | 'soundPrivacy'
@@ -108,6 +120,7 @@ const TABS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
 
 function AppearanceSection() {
     const settings = useThemeSettings();
+    const limitStyle = useLimitStyle();
     const toastScale = useToastScale();
     const headerItems = useHeaderItems();
     return (
@@ -148,6 +161,19 @@ function AppearanceSection() {
             <div className={hud.convPreview}>
                 <span className={panel.dirText.up}>▲ +1.25 上漲</span>
                 <span className={panel.dirText.down}>▼ -1.25 下跌</span>
+            </div>
+            <span className={hud.settingLabel}>自選清單漲跌停 Limit Highlight</span>
+            <div className={hud.settingGroup}>
+                {LIMIT_STYLE_OPTIONS.map((o) => (
+                    <button
+                        key={o.key}
+                        className={hud.opt[limitStyle === o.key ? 'on' : 'off']}
+                        title={o.title}
+                        onClick={() => setLimitStyle(o.key)}
+                    >
+                        {o.label}
+                    </button>
+                ))}
             </div>
             <span className={hud.settingLabel}>字級 Font Size</span>
             <div className={hud.settingGroup}>

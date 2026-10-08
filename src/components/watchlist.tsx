@@ -25,6 +25,7 @@ import {
     useState,
 } from 'react';
 import { limitStateOf } from '../lib/limit-state';
+import { useLimitStyle } from '../lib/limit-style-prefs';
 import { neighborCode } from '../lib/list-move';
 import { useQuote } from '../hooks/use-stream';
 import type { WatchItem } from '../hooks/use-watchlist';
@@ -137,6 +138,13 @@ const WatchRow = memo(function WatchRow({
               : undefined;
     const atLimit = limitStateOf(item.contract, limitPx);
     const limitLabel = atLimit === 'up' ? '漲停' : atLimit === 'down' ? '跌停' : '';
+    // 亮燈樣式（設定 → 外觀，全域）；「不標示」時 lit 為 null
+    const limitStyle = useLimitStyle();
+    const lit = limitStyle === 'none' ? null : atLimit;
+    // 小線圖模式＋數字區色塊：等寬色塊放不下小線圖，停板列收起小線圖
+    //（鎖停板的走勢本來就是一條平線），色塊延伸到小線圖欄、位置與其他
+    // 停板列一致
+    const blockWide = spark && lit !== null && limitStyle === 'block';
     // the flash overlay is re-keyed by flashSeq so the animation replays on
     // every real deal — the row itself stays mounted (hover state survives)
     const flashDir = !quote?.flashSeq
@@ -150,6 +158,8 @@ const WatchRow = memo(function WatchRow({
             data-code={item.contract.code}
             data-limit={atLimit ?? undefined}
             className={`${styles.row[selected ? 'selected' : 'normal']} ${
+                lit && limitStyle === 'tint' ? styles.limitTint[lit] : ''
+            } ${lit && limitStyle === 'solid' ? styles.limitSolid[lit] : ''} ${
                 spark ? styles.rowSparkCols : ''
             } ${dropTarget ? styles.dropTarget : ''} ${
                 arrange ? styles.rowArrange : ''
@@ -190,8 +200,10 @@ const WatchRow = memo(function WatchRow({
                     <GripVertical size={12} />
                 </span>
             )}
-            <span className={styles.code}>{item.contract.code}</span>
-            {spark && (
+            <span className={`${styles.code} ${styles.firstCol}`}>
+                {item.contract.code}
+            </span>
+            {spark && !blockWide && (
                 <span className={styles.sparkCell}>
                     <Sparkline
                         contract={item.contract}
@@ -203,28 +215,26 @@ const WatchRow = memo(function WatchRow({
                 </span>
             )}
             <span
-                className={`${styles.price} ${
-                    atLimit ? '' : panel.dirText[dir]
-                }`}
+                className={`${styles.numCell} ${
+                    lit && limitStyle === 'block' ? styles.limitBlock[lit] : ''
+                } ${blockWide ? styles.numCellWide : ''}`}
+                title={lit ? `${limitLabel} ${fmtPrice(close)}` : undefined}
             >
-                {tick?.simtrade ? (
-                    <span className={styles.simBadge}>試搓</span>
-                ) : null}
-                {atLimit ? (
-                    <span
-                        className={styles.limitPrice[atLimit]}
-                        title={`${limitLabel} ${fmtPrice(close)}`}
-                    >
+                <span className={`${styles.price} ${panel.dirText[dir]}`}>
+                    {lit ? (
                         <span className={styles.srOnly}>{limitLabel} </span>
-                        {fmtPrice(close)}
-                    </span>
-                ) : (
-                    fmtPrice(close)
-                )}
+                    ) : null}
+                    {tick?.simtrade ? (
+                        <span className={styles.simBadge}>試搓</span>
+                    ) : null}
+                    {fmtPrice(close)}
+                </span>
+                <span className={`${styles.change} ${panel.dirText[dir]}`}>
+                    {fmtSigned(chg)} {fmtPct(pct)}
+                </span>
             </span>
-            <span className={styles.name}>{item.contract.name}</span>
-            <span className={`${styles.change} ${panel.dirText[dir]}`}>
-                {fmtSigned(chg)} {fmtPct(pct)}
+            <span className={`${styles.name} ${styles.firstCol}`}>
+                {item.contract.name}
             </span>
             {arrange ? (
                 <span className={styles.moveCol}>

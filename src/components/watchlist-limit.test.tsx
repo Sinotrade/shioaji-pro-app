@@ -1,4 +1,5 @@
-// 自選清單漲跌停亮燈 — 成交價到漲停：價格漲色實心底白字；跌停跌色底（不另加小標）
+// 自選清單漲跌停亮燈 — 四種樣式（設定可選）：block 數字區實心色塊（預設）、
+// tint 整列淡底＋右側色條、solid 整列實心、none 不標示
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +17,10 @@ vi.mock('../hooks/use-stream', () => ({
     useQuote: (code: string) => quotes[code],
 }));
 vi.mock('./sparkline', () => ({ Sparkline: () => null }));
+let limitStyle = 'block';
+vi.mock('../lib/limit-style-prefs', () => ({
+    useLimitStyle: () => limitStyle,
+}));
 
 import { vars } from '../theme.css';
 import { Watchlist } from './watchlist';
@@ -54,6 +59,7 @@ afterEach(() => {
     act(() => r?.unmount());
     r = null;
     for (const k of Object.keys(quotes)) delete quotes[k];
+    limitStyle = 'block';
 });
 
 function render(items: any[], selectedCode: string | null = null) {
@@ -118,29 +124,57 @@ function srText(node: any): string {
 }
 
 describe('watchlist 漲跌停亮燈', () => {
-    it('漲停：價格套用 limitPrice.up，不顯示小標文字', () => {
+    it('A 預設：漲停時價格與漲跌兩行一起包在數字區實心色塊內', () => {
         tick('2330', 1100, 1000);
         const root = render([{ contract: contract({}) }]);
         const row = rowOf(root, '2330');
         expect(row.props['data-limit']).toBe('up');
-        const price = row.find((n: any) => hasClass(n, styles.price));
-        const pill = price.find((n: any) => hasClass(n, styles.limitPrice.up));
-        expect(texts(pill)).toBe('1,100');
-        expect(srText(pill).trim()).toBe('漲停');
-        // 只用底色亮燈 — 不再渲染「漲停／跌停」小標
+        const block = row.find((n: any) => hasClass(n, styles.numCell));
+        expect(hasClass(block, styles.limitBlock.up)).toBe(true);
+        // 價格與漲跌（含漲跌幅）都在色塊內 — 不是只包價格
+        expect(block.find((n: any) => hasClass(n, styles.price))).toBeTruthy();
+        expect(block.find((n: any) => hasClass(n, styles.change))).toBeTruthy();
+        expect(texts(block)).toBe('1,100|+100.00| |+10.00%');
+        // 代碼／名稱不在色塊內
+        expect(texts(block)).not.toMatch(/2330|台積電/);
+        // 不顯示小標文字，只給螢幕閱讀器
         expect(texts(row)).not.toMatch(/漲停|跌停/);
+        expect(srText(row).trim()).toBe('漲停');
     });
 
-    it('跌停：價格套用 limitPrice.down，不顯示小標文字', () => {
+    it('A 預設：跌停用 limitBlock.down', () => {
         tick('2330', 900, 1000);
         const root = render([{ contract: contract({}) }]);
-        const row = rowOf(root, '2330');
-        expect(row.props['data-limit']).toBe('down');
-        const price = row.find((n: any) => hasClass(n, styles.price));
-        const pill = price.find((n: any) => hasClass(n, styles.limitPrice.down));
-        expect(texts(pill)).toBe('900');
-        expect(srText(pill).trim()).toBe('跌停');
-        expect(texts(row)).not.toMatch(/漲停|跌停/);
+        const block = rowOf(root, '2330').find((n: any) => hasClass(n, styles.numCell));
+        expect(hasClass(block, styles.limitBlock.down)).toBe(true);
+        expect(srText(rowOf(root, '2330')).trim()).toBe('跌停');
+    });
+
+    it('B：整列淡底＋右側色條（列套 limitTint），沒有數字區色塊', () => {
+        limitStyle = 'tint';
+        tick('2330', 1100, 1000);
+        const row = rowOf(render([{ contract: contract({}) }]), '2330');
+        expect(hasClass(row, styles.limitTint.up)).toBe(true);
+        const block = row.find((n: any) => hasClass(n, styles.numCell));
+        expect(hasClass(block, styles.limitBlock.up)).toBe(false);
+    });
+
+    it('D：整列實心（列套 limitSolid）', () => {
+        limitStyle = 'solid';
+        tick('2330', 900, 1000);
+        const row = rowOf(render([{ contract: contract({}) }]), '2330');
+        expect(hasClass(row, styles.limitSolid.down)).toBe(true);
+    });
+
+    it('不標示：到停板也不加任何亮燈樣式', () => {
+        limitStyle = 'none';
+        tick('2330', 1100, 1000);
+        const row = rowOf(render([{ contract: contract({}) }]), '2330');
+        const block = row.find((n: any) => hasClass(n, styles.numCell));
+        expect(hasClass(block, styles.limitBlock.up)).toBe(false);
+        expect(hasClass(row, styles.limitTint.up)).toBe(false);
+        expect(hasClass(row, styles.limitSolid.up)).toBe(false);
+        expect(srText(row)).toBe('');
     });
 
     it('未到漲跌停：不亮燈', () => {
@@ -207,26 +241,52 @@ describe('watchlist 漲跌停亮燈', () => {
         expect(rowOf(root2, '2317').props['data-limit']).toBeUndefined();
     });
 
-    it('選取列也維持亮燈（不被選取底色蓋掉）', () => {
-        tick('2330', 1100, 1000);
-        const root = render([{ contract: contract({}) }], '2330');
-        const row = rowOf(root, '2330');
-        expect(
-            row.findAll((n: any) => hasClass(n, styles.limitPrice.up)).length,
-        ).toBe(1);
+    it('選取列在每種樣式都保留 selected（藍色左條）且仍亮燈', () => {
+        for (const st of ['block', 'tint', 'solid'] as const) {
+            limitStyle = st;
+            tick('2330', 1100, 1000);
+            const row = rowOf(render([{ contract: contract({}) }], '2330'), '2330');
+            expect(hasClass(row, styles.row.selected)).toBe(true);
+            expect(row.props['data-limit']).toBe('up');
+            act(() => r?.unmount());
+            r = null;
+        }
     });
 
-    it('底色框尺寸固定：每列同一份 class（不依價格位數變化）', () => {
+    it('A：不同位數的停板價共用同一份固定寬度色塊 class', () => {
         tick('2424', 9.79, 8.9);
         tick('2059', 10615, 11790);
         const root = render([
             { contract: contract({ code: '2424', limit_up: 9.79, limit_down: 8.01, reference: 8.9 }) },
             { contract: contract({ code: '2059', limit_up: 12965, limit_down: 10615, reference: 11790 }) },
         ]);
-        const a = rowOf(root, '2424').find((n: any) => hasClass(n, styles.limitPrice.up));
-        const b = rowOf(root, '2059').find((n: any) => hasClass(n, styles.limitPrice.down));
-        expect(a.props.style).toBeUndefined();
-        expect(b.props.style).toBeUndefined();
+        const block = (code: string) =>
+            rowOf(root, code).find((n: any) => hasClass(n, styles.numCell));
+        expect(hasClass(block('2424'), styles.limitBlock.up)).toBe(true);
+        expect(hasClass(block('2059'), styles.limitBlock.down)).toBe(true);
+        // 寬度、內距、圓角在共用的 base class；漲／跌只差底色
+        const up = styles.limitBlock.up.split(' ');
+        const shared = styles.limitBlock.down.split(' ').filter((c) => up.includes(c));
+        expect(shared.length).toBe(1);
+        expect(block('2424').props.style).toBeUndefined();
+        expect(block('2059').props.style).toBeUndefined();
+    });
+
+    it('小線圖模式＋色塊：停板列收起小線圖，數字區跨到小線圖欄', () => {
+        store.set('sj-pro-watchlist-spark', '1');
+        tick('2330', 1100, 1000);
+        tick('2317', 105, 100);
+        const root = render([
+            { contract: contract({}) },
+            { contract: contract({ code: '2317', limit_up: 110, limit_down: 90, reference: 100 }) },
+        ]);
+        const lit = rowOf(root, '2330');
+        expect(lit.findAll((n: any) => typeof n.type === 'string' && hasClass(n, styles.sparkCell)).length).toBe(0);
+        expect(hasClass(lit.find((n: any) => hasClass(n, styles.numCell)), styles.numCellWide)).toBe(true);
+        // 未停板列照常顯示小線圖
+        const normal = rowOf(root, '2317');
+        expect(normal.findAll((n: any) => typeof n.type === 'string' && hasClass(n, styles.sparkCell)).length).toBe(1);
+        store.delete('sj-pro-watchlist-spark');
     });
 
     it('國際配色：亮燈色取自主題的漲跌 token（intl 自動反轉為綠漲紅跌）', () => {
