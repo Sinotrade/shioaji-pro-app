@@ -465,7 +465,7 @@ function CreditRows({ credit, view, onChange }: {
         <>
             <div className={styles.row}>
                 <span className={styles.label}>信用</span>
-                <div className={styles.seg} role='group' aria-label='信用條件'>
+                <div className={`${styles.seg} ${styles.segWrap}`} role='group' aria-label='信用條件'>
                     {CREDIT_ITEMS.map(([cond, text, sub]) => {
                         const on = !off && credit.cond === cond;
                         return (
