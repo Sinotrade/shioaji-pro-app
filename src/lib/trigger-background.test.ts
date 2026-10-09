@@ -367,3 +367,12 @@ describe('background rows', () => {
         expect(calls('execution_remove').map(([, a]) => a)).toEqual([{ programId: 'trg:p1' }]);
     });
 });
+
+describe('background notices', () => {
+    it('does not show trigger toasts for orders of live strategies (#253)', () => {
+        const notice = (programId: string | null) => ({ code: 'fired', programId, levelId: 'L1', detail: 'entry @1' });
+        expect(bg.backgroundNoticeTitle(notice('trg:t1'))).toBe('背景觸價單已觸發');
+        expect(bg.backgroundNoticeTitle(notice('strategy:live-1:1'))).toBeNull();
+        expect(bg.backgroundNoticeTitle({ ...notice(null), code: 'partition.failed' })).toBe('背景執行資料無法寫入，已停止');
+    });
+});
