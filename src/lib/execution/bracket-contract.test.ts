@@ -96,3 +96,21 @@ describe('background bracket request', () => {
         expect(newBracketId()).toMatch(/^bkt-[a-z0-9-]+$/);
     });
 });
+
+describe('v2: bracket settings', () => {
+    it('reads exactly three booleans and defaults all off', async () => {
+        const { parseBracketPolicy, DEFAULT_BRACKET_POLICY, BRACKET_POLICY_TEXT } = await import('./bracket-contract');
+        expect(DEFAULT_BRACKET_POLICY).toEqual({ autoRearm: false, autoProtectLateFill: false, pauseStopsExits: false });
+        expect(parseBracketPolicy({ autoRearm: true, autoProtectLateFill: false, pauseStopsExits: true }))
+            .toEqual({ autoRearm: true, autoProtectLateFill: false, pauseStopsExits: true });
+        expect(() => parseBracketPolicy({ autoRearm: 'yes' })).toThrow();
+        expect(() => parseBracketPolicy(null)).toThrow();
+        for (const t of Object.values(BRACKET_POLICY_TEXT)) expect(`${t.label}${t.help}`).not.toMatch(/原生/);
+    });
+
+    it('names where a protection came from', () => {
+        expect(one(program({}, { id: 'late:bkt-1:abc:1' })).origin).toBe('lateFill');
+        expect(one(program({}, { id: 'rearm:bkt-1:abc:1' })).origin).toBe('rearm');
+        expect(one(program({})).origin).toBe('entry');
+    });
+});
