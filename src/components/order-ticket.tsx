@@ -21,6 +21,9 @@ import {
     validateBracketRequest,
 } from '../lib/bracket';
 import { BracketStatusList } from './bracket-status';
+import { BackgroundBracketList } from './background-bracket-status';
+import { backgroundOwnerForNew, createBackgroundBracket } from '../lib/execution/background';
+import { backgroundBracketEligible, bracketRequestFor } from '../lib/execution/background-bracket';
 import { usePickedPrice } from '../lib/price-sync';
 import { maskAccountId, maskName, usePrivacyMode } from '../lib/privacy';
 import {
@@ -289,6 +292,9 @@ export function OrderTicket({
             const bracketTake = bracketOn && takePrice.trim() !== '' ? tp : null;
             let entryAccount: Account | undefined;
             let bracketEnv: string | null = null;
+            // who protects it, decided before the entry is sent (#201 ②):
+            // the setting off → this window, exactly as before
+            let bracketOwner: 'window' | 'background' = 'window';
             if (bracketOn) {
                 // 零股括號單以零股市場判斷方向：沒有零股行情時不能確認
                 if (intradayOdd && oddReference === null) {
@@ -316,7 +322,12 @@ export function OrderTicket({
                 if (!bracketEnv) {
                     throw new Error('伺服器模式（模擬／正式）尚未確認，括號單未送出');
                 }
-                await ensureBracketHost();
+                if (backgroundBracketEligible(isFutures, contract.security_type)) {
+                    const owner = await backgroundOwnerForNew({ liveOn: bracketEnv });
+                    if (typeof owner === 'object') throw new Error(`${owner.refused}；進場單未送出`);
+                    bracketOwner = owner;
+                }
+                if (bracketOwner === 'window') await ensureBracketHost();
             }
             // 送單帳戶在確認前固定（#139）：確認視窗開著時，本視窗其他面板
             // 仍可改選帳戶 — 送出時不再重新解析，改為比對後中止
@@ -337,7 +348,8 @@ export function OrderTicket({
                         !isFutures && orderCond !== 'Cash'
                             ? `・${orderCond === 'MarginTrading' ? '融資' : '融券'}`
                             : ''
-                    }${!isFutures && daytradeShort && action === 'Sell' ? '・現股當沖' : ''}`,
+                    }${!isFutures && daytradeShort && action === 'Sell' ? '・現股當沖' : ''}${
+                        bracketOwner === 'background' ? '・括號單由背景執行保護（成交後才盯停損停利，只平倉已成交口數）' : ''}`,
                     accountLabel: accountConfirmLabel(orderAccount),
                 }, { serverMode: sameServerMode });
                 if (!approved) throw new Error('已取消下單');
@@ -356,7 +368,16 @@ export function OrderTicket({
                 assertDayTradeStillAllowed();
                 if (!isSelectedAccountUnchanged(orderAccount)) throw Object.assign(new Error(ACCOUNT_CHANGED_MESSAGE), { tradingGateRejected: true });
             } };
+            if (bracketOwner === 'background') {
+                // still taken over right before the entry leaves (the setting
+                // or the connection may have changed while confirming)
+                const again = await backgroundOwnerForNew({ liveOn: bracketEnv ?? '' });
+                if (again !== 'background') {
+                    throw new Error(`${typeof again === 'object' ? again.refused : '背景持續執行已關閉'}；進場單未送出`);
+                }
+            }
             dispatch.beforeDispatch();
+            const entrySentAt = Date.now();
             const trade = isFutures
                 ? await placeFuturesOrder(contract, {
                       action,
@@ -386,7 +407,35 @@ export function OrderTicket({
                 kind: 'ok',
                 text: `▸ ${trade.status.status} #${trade.order.seqno || trade.order.id.slice(0, 8)}`,
             });
-            if (bracketOn && entryAccount && bracketEnv) {
+            if (bracketOn && entryAccount && bracketEnv && bracketOwner === 'background') {
+                const seq = trade.order.seqno || trade.order.id.slice(0, 8);
+                const request = bracketRequestFor({
+                    env: bracketEnv,
+                    account: { account_type: 'F', broker_id: entryAccount.broker_id, account_id: entryAccount.account_id },
+                    quoteCode: contract.code,
+                    orderCode: trade.contract?.target_code || trade.contract?.code || contract.target_code || contract.code,
+                    securityType: contract.security_type === 'OPT' ? 'OPT' : 'FUT',
+                    action,
+                    quantity: qty,
+                    stopPrice: bracketStop,
+                    takePrice: bracketTake,
+                    tradeId: trade.order.id,
+                    seqno: trade.order.seqno ?? null,
+                    ordno: trade.order.ordno ?? null,
+                    sentAt: entrySentAt,
+                });
+                const created = request ? await createBackgroundBracket(request)
+                    : { refused: '進場單沒有委託編號（送出結果可能尚未確認）' };
+                if (created !== 'created') {
+                    // 進場單已送出：保護未建立或結果未確認都明示；不自動重送，
+                    // 也不建議另掛停損（可能晚到生效 → 重複出場）
+                    const text = 'refused' in created
+                        ? `背景括號單未建立（${created.refused}）。請到委託／持倉確認後自行處理出場；系統不會自動補送`
+                        : `背景括號單建立結果未確認（${created.unconfirmed}）。請先查看括號單清單確認是否已建立；確認前不要另外設定停損或出場單`;
+                    setFeedback({ kind: 'err', text: `✕ 進場單已送出 #${seq}；${text}` });
+                    notify({ kind: 'err', title: '括號單保護未確認', body: `${contract.code} 進場單已送出；${text}` });
+                }
+            } else if (bracketOn && entryAccount && bracketEnv) {
                 try {
                     await registerBracket({
                         env: bracketEnv,
@@ -1108,6 +1157,7 @@ export function OrderTicket({
                     </div>
                 )}
                 <BracketStatusList code={contract.code} />
+                <BackgroundBracketList code={contract.code} />
 
                 {multi && (
                     <div className={styles.fieldRow}>

@@ -28,7 +28,7 @@ export function mockPendingConfirmItem(over: Partial<PendingConfirmItem> = {}): 
 }
 
 export function mockPendingConfirmSnapshot(over: Partial<PendingConfirmSnapshot> = {}): PendingConfirmSnapshot {
-    return { version: 2, runId: 'mock-run', sequence: 1, uncleanShutdown: false, items: [], ...over };
+    return { version: 3, runId: 'mock-run', sequence: 1, uncleanShutdown: false, items: [], ...over };
 }
 
 /** A varied fake set: trigger stop (MKT), bracket take (LMT), an option

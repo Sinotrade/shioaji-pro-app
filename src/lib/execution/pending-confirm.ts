@@ -143,6 +143,9 @@ export async function resolvePendingConfirm(item: PendingConfirmItem, resolution
     if (!resolutionAllowed(item.state, resolution)) throw new Error(REFUSAL_TEXT.invalidForState);
     const rearm = resolution === 'rearmInNewSession';
     if (rearm && (state.snapshot?.version ?? 1) < 2) throw new Error('背景執行版本不支援重新啟用，請更新 App');
+    if (resolution === 'handledByUser' && (state.snapshot?.version ?? 1) < 3) {
+        throw new Error('背景執行版本不支援「我已自行處理」，請更新 App');
+    }
     if (rearm && !(Number.isSafeInteger(opts.quantity) && opts.quantity! > 0)) throw new Error(REFUSAL_TEXT.invalidRequest);
     // only the item as currently shown (same transport, same list) may be
     // decided; anything else is a stale card
