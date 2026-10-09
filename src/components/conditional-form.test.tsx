@@ -17,7 +17,7 @@ vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => true, usePrivacyMoney: 
     maskAccountId: (id: string) => `•••••${id.slice(-2)}` }));
 vi.mock('../lib/stream', () => ({ getQuote: () => ({ tick: { close: 48212 } }), subscribeQuoteStore: () => () => undefined }));
 vi.mock('../hooks/use-esc-close', () => ({ useEscClose: () => undefined }));
-vi.mock('../lib/conditional/panel-bracket', () => ({ placePanelBracket: m.bracket }));
+vi.mock('../lib/conditional/panel-bracket', () => ({ placePanelBracket: m.bracket, derivedPriceProblem: () => null }));
 
 const { NewConditionalDialog } = await import('./conditional-form');
 

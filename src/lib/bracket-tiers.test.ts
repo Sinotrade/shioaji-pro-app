@@ -256,3 +256,47 @@ describe('panel brackets (#226)', () => {
         });
     });
 });
+
+describe('panel brackets — review fixes (#226)', () => {
+    it('a basis taken from the order price is replaced by the real fill price', async () => {
+        await boot();
+        const [spec] = bracket.tierSpecs({ env: m.env!, account: { account_type: 'F', broker_id: F1.broker_id, account_id: F1.account_id },
+            orderId: 'fixture-f1', seqno: 'fixture-f1', quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT', exchange: 'TAIFEX',
+            action: 'Buy', refPrice: 48200 }, PLAN({ tiers: [{ quantity: 2, takeTicks: 30 }], trail: null, breakeven: null }));
+        await bracket.registerBracket(spec!);
+        await flush();
+        await emit(edit(fDeal1!, { price: 0 })); // a fill report without a price
+        const id = bracket.getBrackets()[0]!.id;
+        expect(legsOf(id)).toEqual([['stop', 48160, 1], ['take', 48230, 1]]);
+        await emit(edit(fDeal2!, { price: 48150 }));
+        expect(legsOf(id)).toEqual([['stop', 48110, 2], ['take', 48180, 2]]);
+        expect(bracket.getBrackets()[0]!.baseProvisional).toBe(false);
+    });
+
+    it('保本 due before a tier had its prices applies once it is priced', async () => {
+        const [t0, t1] = await tiered({ tiers: [{ quantity: 1, takeTicks: 30 }, { quantity: 1, takeTicks: 80 }], trail: null,
+            breakeven: { afterTier: 1, offsetTicks: 0 } });
+        await emit(edit(fDeal1!, { price: 48150 }));
+        await tick(48180); // tier 1 takes profit before tier 2 is filled
+        const rec = engine.getExits().find(e => e.bracketId === t0!.id)!;
+        engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Filled', deal_quantity: 1, cancel_quantity: 0,
+            deals: [{ seq: 'x1', quantity: 1, price: 48180, ts: 1 }] } } as never);
+        await flush();
+        await emit(edit(fDeal2!, { price: 48170 }));
+        // basis: the average fill 48,160; 保本 puts the stop at cost (instead of −40 ticks)
+        expect(legsOf(t1!.id)).toEqual([['stop', 48160, 1], ['take', 48240, 1]]);
+    });
+
+    it('while trailing, an edit can only tighten the stop; the trail keeps its state', async () => {
+        await tiered({ tiers: [{ quantity: 2, takeTicks: null }], breakeven: null });
+        await emit(edit(fDeal1!, { price: 48000 }));
+        await emit(edit(fDeal2!, { price: 48000 }));
+        const plan = bracket.getBrackets()[0]!;
+        await tick(48050); // trail active: stop 48,035
+        await expect(bracket.modifyBracket(plan.id, 48005, null)).rejects.toThrow('只能收緊');
+        await bracket.modifyBracket(plan.id, 48040, null);
+        const stop = engine.getTriggers().find(t => t.bracketId === plan.id && t.kind === 'stop')!;
+        expect(stop.price).toBe(48040);
+        expect(stop.trail?.active).toBe(true);
+    });
+});

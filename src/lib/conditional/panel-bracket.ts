@@ -5,7 +5,19 @@
 // engine does not have these rules yet).
 
 import { ensureBracketHost, registerBracket, registrationFailureText } from '../bracket';
-import { tierSpecs } from './bracket-rules';
+import { bracketPlanProblem, tierSpecs } from './bracket-rules';
+import { stepPrice } from '../utils/ticksize';
+
+/** Stop / take prices at the reference price must be valid prices. */
+export function derivedPriceProblem(r: Pick<PanelBracketRequest, 'contract' | 'action' | 'plan' | 'refPrice'>): string | null {
+    const dir = r.action === 'Buy' ? 1 : -1;
+    const stop = stepPrice(r.contract, r.refPrice, -dir * r.plan.stopTicks);
+    if (!(stop > 0)) return `停損 ${r.plan.stopTicks} 檔會讓停損價小於等於 0，請改小`;
+    for (const t of r.plan.tiers) {
+        if (t.takeTicks !== null && !(stepPrice(r.contract, r.refPrice, dir * t.takeTicks) > 0)) return `停利 ${t.takeTicks} 檔會讓停利價小於等於 0，請改小`;
+    }
+    return null;
+}
 import { currentProtectionEnv } from '../protection-env';
 import { notify, placeQuickOrder } from '../trade';
 import { addTrigger, type BracketEntryPlan, type TriggerSend, type TriggerValidity } from '../trigger-engine';
@@ -32,6 +44,9 @@ export interface PanelBracketRequest {
 export async function placePanelBracket(r: PanelBracketRequest): Promise<'placed' | 'trigger' | { error: string }> {
     const futures = r.contract.security_type === 'FUT' || r.contract.security_type === 'OPT';
     if (!futures && r.contract.security_type !== 'STK') return { error: '此商品不支援括號單' };
+    // checked before anything is sent
+    const problem = bracketPlanProblem(r.plan) ?? derivedPriceProblem(r);
+    if (problem) return { error: problem };
     const qty = r.plan.tiers.reduce((s, t) => s + t.quantity, 0);
     if (r.entry.type === 'touch') {
         const made = await addTrigger({ code: r.contract.code, condition: r.entry.condition, price: r.entry.price, action: r.action, quantity: qty,
@@ -46,6 +61,8 @@ export async function placePanelBracket(r: PanelBracketRequest): Promise<'placed
     const trade = await placeQuickOrder(r.contract, r.action, r.entry.type === 'LMT' ? r.entry.price : null, qty, {
         source: 'manual', // 下單確認設定照常適用
         account: r.account,
+        // the protection is registered for this environment: never send in another
+        beforeSend: () => { if (currentProtectionEnv() !== env) throw new Error('伺服器或模擬／正式模式已切換，進場單未送出'); },
         ...(futures ? { ocType: 'Auto' as const } : {}),
         ...(r.entry.type === 'LMT' ? { orderType: 'ROD' as const } : {}),
     });

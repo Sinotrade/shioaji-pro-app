@@ -11,7 +11,7 @@ import { ensureContract, useContract } from '../lib/contracts-cache';
 import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import { addTrigger, addTriggerGroup, type BracketEntryPlan, type TriggerSend, type TriggerValidity } from '../lib/trigger-engine';
 import { bracketPlanProblem } from '../lib/conditional/bracket-rules';
-import { placePanelBracket, type PanelEntry } from '../lib/conditional/panel-bracket';
+import { derivedPriceProblem, placePanelBracket, type PanelEntry } from '../lib/conditional/panel-bracket';
 import { dateEnd, dayEnd, fmtNum, fmtUntil, sessionEnd, type SessionMarket } from '../lib/conditional/session';
 import { contractLabel } from '../lib/pending-trigger-view';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
@@ -500,6 +500,7 @@ function BracketForm({ target, onClose, defaults }: { target: Target; onClose: (
         ?? (!Number.isSafeInteger(total) || total <= 0 ? '進場數量必須是正整數' : null)
         ?? (entryType !== 'MKT' ? priceProblem(target, p, entryType === 'LMT' ? '限價' : '觸發價') : last === undefined ? '市價進場需要現價' : null)
         ?? bracketPlanProblem(plan)
+        ?? (c && ref !== null ? derivedPriceProblem({ contract: c, action, plan, refPrice: ref }) : null)
         ?? (tierSum !== total ? `各層數量合計 ${tierSum}，要等於進場 ${total} ${unit}` : null)
         ?? (entryType === 'touch' && typeof validityValue === 'string' ? validityValue : null);
     const setTier = (i: number, patch: Partial<TierRow>) => setTiers(ts => ts.map((t, j) => (j === i ? { ...t, ...patch } : t)));

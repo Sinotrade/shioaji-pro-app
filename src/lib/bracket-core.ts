@@ -105,6 +105,11 @@ export interface BracketPlan {
      * fixed prices; `base` is frozen at the first protected fill. */
     rules?: BracketRules;
     base?: number;
+    /** the basis came from the order / last price (no fill price yet): the
+     * first fill price replaces it */
+    baseProvisional?: boolean;
+    /** 保本 became due before this tier had its prices */
+    beArmed?: boolean;
     /** fill identity → price (entry fills), for the cost basis */
     fillPx?: Record<string, number>;
     /** a price for the cost basis when fills carry none (limit / last) */
@@ -167,6 +172,8 @@ export function isLive(p: BracketPlan): boolean {
 /** Quantity the OCO triggers should hold right now. */
 export function protectionQuantity(p: BracketPlan): number {
     if (p.exit) return 0;
+    // a rules bracket protects nothing until its prices exist
+    if (p.rules && p.base === undefined) return 0;
     return allocatedFill(p);
 }
 
@@ -308,7 +315,13 @@ export function mergeFill(fills: Record<string, number>, fillTs: Record<string, 
 export function applyEntryFill(p: BracketPlan, fill: FillEvidence, now: number): BracketPlan {
     if (fill.orderId !== p.orderId) return p;
     const merged = mergeFill(p.fills, p.fillTs, fill);
-    if (!merged) return p;
+    if (!merged) {
+        // the same fill seen again (e.g. the order listing) may bring its price
+        if (fill.price !== undefined && p.fills[fill.key] !== undefined && p.fillPx?.[fill.key] === undefined) {
+            return { ...p, fillPx: { ...(p.fillPx ?? {}), [fill.key]: fill.price }, updatedAt: now };
+        }
+        return p;
+    }
     let next: BracketPlan = { ...p, fills: merged.fills, fillTs: merged.fillTs, filled: p.filled + merged.added, updatedAt: now };
     if (fill.price !== undefined && merged.fills[fill.key] !== undefined) next.fillPx = { ...(p.fillPx ?? {}), [fill.key]: fill.price };
     if (merged.conflict) next = addIssue(next, 'report-mismatch', '成交回報與委託快取無法對應為同一筆（可能重複計算）；請對帳', now);
