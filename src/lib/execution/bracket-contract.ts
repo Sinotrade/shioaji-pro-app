@@ -91,7 +91,7 @@ export const BRACKET_POLICY_TEXT: Record<keyof BracketPolicy, { label: string; h
     },
     pauseStopsExits: {
         label: '暫停時連停損停利一起暫停',
-        help: '開啟後，暫停的括號單不會觸發停損停利，已排隊的平倉單也不送出；恢復後若已穿價，會先等你決定。關閉時暫停只停止新進場，停損停利照常盯價。',
+        help: '開啟後，暫停的括號單不再盯停損停利、不會觸發；暫停前已觸發、正在送出的平倉單照常送出。恢復後若已穿價，會先等你決定。關閉時暫停只停止新進場，停損停利照常盯價。',
     },
 };
 
