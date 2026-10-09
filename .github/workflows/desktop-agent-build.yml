@@ -226,6 +226,9 @@ jobs:
             Start-Process $out -Wait
             if (-not $bundled.WaitForExit(10000)) { throw 'bundled shioaji.exe is still running' }
             if ($foreign.HasExited) { throw 'a shioaji.exe outside the install dir was stopped' }
+            # nothing left to stop: the hook is a no-op and still leaves others alone
+            Start-Process $out -Wait
+            if ($foreign.HasExited) { throw 'second run stopped a shioaji.exe outside the install dir' }
           } finally {
             foreach ($p in @($bundled, $foreign)) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
           }
