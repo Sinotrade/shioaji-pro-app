@@ -191,3 +191,13 @@ it('an odd leg that fails after dispatch is reported as unknown, not as unsent',
     expect(String(err.message)).toContain('零股分單結果未知');
     expect(String(err.message)).not.toContain('零股分單未成立');
 });
+it('passes a custom_field tag on futures orders only when the caller gives one (#253)', async () => {
+    setSimulation(true);
+    const futures = { ...account, account_type: 'F' as const };
+    m.accounts = [futures]; m.selected = futures;
+    const product = { ...contract, security_type: 'FUT', exchange: 'TAIFEX' } as ContractBase;
+    await placeQuickOrder(product, 'Buy', null, 1, { source: 'auto', customField: 'ab12cd' });
+    await placeQuickOrder(product, 'Buy', null, 1, { source: 'auto' });
+    expect(m.future.mock.calls[0]![1]).toMatchObject({ custom_field: 'ab12cd', price_type: 'MKT', order_type: 'IOC' });
+    expect(m.future.mock.calls[1]![1]).not.toHaveProperty('custom_field');
+});
