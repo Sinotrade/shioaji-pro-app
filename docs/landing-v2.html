@@ -83,7 +83,7 @@
   <div class="hx-pin">
     <div class="hx-stage">
       <div class="wrap hx-copy">
-        <p class="hx-eyebrow"><span>開源</span><span>原生 macOS App</span><span>Shioaji Pro</span></p>
+        <p class="hx-eyebrow"><span>開源</span><span>Mac 優先・跨平台</span><span>Shioaji Pro</span></p>
         <h1 id="hero-h"><span class="hx-l"><span>AI Agent</span></span> <span class="hx-l"><span>交易新世代</span></span></h1>
         <p class="sub">AI Agent × Shioaji，開創你的交易 Pro 世代</p>
         <p class="lead">它幫你研究、幫你回測、幫你做出想要的畫面，還會從你每天的操作學會你的習慣。每一筆下單都需要你的核可。</p>
@@ -93,16 +93,16 @@
           <a class="btn ghost gh" href="https://github.com/Sinotrade/shioaji-pro-app"><svg class="i"><use href="#i-github"/></svg>看原始碼<span class="stars" data-stars hidden></span></a>
         </div>
         <ul class="hx-meta">
-          <li><b>原生 macOS App</b>Apple Silicon、Intel 都支援</li>
-          <li><b>也有 Windows、Linux 版</b></li>
+          <li><b>為 Mac 打造</b>Apple Silicon、Intel 都支援</li>
+          <li><b>跨平台</b>也支援 Windows、Linux</li>
           <li><b>開源</b>介面程式碼在 GitHub 公開（AGPL-3.0）</li>
           <li><b>先用模擬環境</b>第一次開啟預設連模擬環境</li>
         </ul>
       </div>
       <div class="hx-app">
         <figure class="hx-win">
-          <img class="hx-base" src="images/landing-v2-app-dark-2400.webp" srcset="images/landing-v2-app-dark-1200.webp 1200w, images/landing-v2-app-dark-2400.webp 2400w" sizes="(max-width: 1160px) 96vw, 1120px" width="2400" height="1440" alt="Shioaji Pro 的實際畫面：左邊 AI Agent 面板，中間台積電 K 線，右邊自選清單和閃電下單。模擬環境，帳號與金額已遮蔽。" fetchpriority="high">
-          <div class="hx-crops" aria-hidden="true"><div class="hx-crop" data-k="agent"><img data-src="images/landing-v2-app-dark-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="chart"><img data-src="images/landing-v2-app-dark-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="watch"><img data-src="images/landing-v2-app-dark-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="flash"><img data-src="images/landing-v2-app-dark-2400.webp" alt="" width="2400" height="1440" decoding="async"></div></div>
+          <picture><source media="(prefers-color-scheme: dark)" srcset="images/landing-v2-app-dark-1200.webp 1200w, images/landing-v2-app-dark-2400.webp 2400w" sizes="(max-width: 1160px) 96vw, 1120px"><img class="hx-base" src="images/landing-v2-app-light-2400.webp" srcset="images/landing-v2-app-light-1200.webp 1200w, images/landing-v2-app-light-2400.webp 2400w" sizes="(max-width: 1160px) 96vw, 1120px" width="2400" height="1440" alt="Shioaji Pro 的實際畫面：左邊 AI Agent 面板，中間台積電 K 線，右邊自選清單和閃電下單。模擬環境，帳號與金額已遮蔽。" fetchpriority="high"></picture>
+          <div class="hx-crops" aria-hidden="true"><div class="hx-crop" data-k="agent"><img data-src="images/landing-v2-app-THEME-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="chart"><img data-src="images/landing-v2-app-THEME-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="watch"><img data-src="images/landing-v2-app-THEME-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="flash"><img data-src="images/landing-v2-app-THEME-2400.webp" alt="" width="2400" height="1440" decoding="async"></div></div>
           <div class="hx-agent" aria-hidden="true">
             <div class="msg-u"><p><span class="typed" id="hx-q">在台積電的 K 線加一條 20 期均線。</span></p></div>
             <div class="tg-r solo" data-k="1"><span>›</span><b>儲存自訂指標</b><span class="muted">均線 20</span></div>
@@ -123,6 +123,7 @@
       <li><a href="#build"><b>你想要的功能，不必再等券商，它直接做給你。</b><span>版面、面板、指標，說出來它就排好、寫好。</span></a></li>
       <li><a href="#research"><b>從一個想法到一份回測，不用寫一行程式。</b><span>寫成策略、回測、找參數，再告訴你結果可不可信。</span></a></li>
     </ul>
+    <p class="hx-note">AI Agent 用的是你自己在 App 設定裡登入的 AI 服務，用量算在你的方案。</p>
   </div>
 </section>
 
@@ -396,7 +397,7 @@
       <figure class="safe-shot"><img src="images/release-0.1.49-approval-cancel.png" width="860" height="1280" alt="正式環境的「Agent 交易核可」獨立視窗：列出商品、原委託、刪除剩餘未成交、帳戶（遮罩）、發起的 Agent，倒數後自動拒絕，按鈕為拒絕與核准刪單。" loading="lazy"><figcaption>正式環境的「Agent 交易核可」視窗（App 實際畫面）</figcaption></figure>
       <ul class="safe-list">
         <li><b>交易權限三選一</b>僅分析：只查詢不下單。逐筆確認：每一筆下單都需要你的核可。Auto：你在正式環境先授權一次，只在這次連線、目前帳戶有效；切帳戶、停止 Agent 或重開 App 就失效。</li>
-        <li><b>正式環境有獨立核可視窗</b>由 App 原生開啟，Agent 無法代按。報價跳動或超過 15 秒沒核准，這筆退回，請它依最新報價重新提案。</li>
+        <li><b>正式環境有獨立核可視窗</b>由 App 另外開啟的獨立視窗，Agent 無法代按。報價跳動或超過 15 秒沒核准，這筆退回，請它依最新報價重新提案。</li>
         <li><b>模擬與正式分開</b>排程任務綁定環境，只在相符的環境執行。</li>
         <li><b>風控上限 Agent 也要遵守</b>單筆數量、單筆金額、限價偏離、單次下單筆數都有上限，市價單需要你的核可；Auto 也不例外。</li>
         <li><b>每一步都列出來</b>它查了什麼、存了什麼、送了什麼，都在對話裡逐列顯示。</li>
@@ -929,14 +930,14 @@ codex plugin add shioaji@sinotrade</pre>
 <!-- 09 下載 -->
 <section class="alt" id="download" aria-labelledby="download-h">
   <div class="wrap">
-    <div class="sec-head"><h2 id="download-h">下載 <span class="mono" id="dl-ver" style="font-size:.6em;color:var(--muted)"></span></h2><p>原生 macOS App，Apple Silicon 和 Intel 都有；也有 Windows、Linux 版。程式碼在 GitHub 公開，安裝檔由 GitHub Actions 建置，啟動時自動檢查更新。</p></div>
+    <div class="sec-head"><h2 id="download-h">下載 <span class="mono" id="dl-ver" style="font-size:.6em;color:var(--muted)"></span></h2><p>為 Mac 打造的跨平台看盤下單 App：Apple Silicon、Intel 都有，也支援 Windows、Linux。程式碼在 GitHub 公開，安裝檔由 GitHub Actions 建置，啟動時自動檢查更新。</p></div>
     <ol class="dl-steps">
       <li><b>下載</b><span>選你的平台；macOS 版有 Apple 簽章與公證。</span></li>
       <li><b>登入</b><span>填 API Key 和 Secret Key，先選模擬環境；正式環境要再匯入憑證。</span></li>
       <li><b>開始</b><span>預設版面已排好自選、K 線、五檔和下單面板；打開 AI Agent，選好 AI 服務就能開始用。</span></li>
     </ol>
     <div class="dl">
-      <div class="card mac"><span class="mac-tag">原生 Mac App</span><h3>macOS <small>13.3 以上</small></h3><div class="dl-links" id="dl-mac"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Apple Silicon<span>.dmg</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Intel<span>.dmg</span></a></div></div>
+      <div class="card mac"><span class="mac-tag">Mac 優先</span><h3>macOS <small>13.3 以上</small></h3><div class="dl-links" id="dl-mac"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Apple Silicon<span>.dmg</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Intel<span>.dmg</span></a></div></div>
       <div class="card"><h3>Windows <small>10／11 x64</small></h3><div class="dl-links" id="dl-win"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">安裝程式<span>.msi</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Setup<span>.exe</span></a></div></div>
       <div class="card"><h3>Linux <small>x86_64</small></h3><div class="dl-links" id="dl-linux"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">AppImage<span>.AppImage</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Debian／Ubuntu<span>.deb</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">RHEL／Fedora<span>.rpm</span></a></div></div>
     </div>
@@ -950,12 +951,12 @@ codex plugin add shioaji@sinotrade</pre>
   <div class="wrap">
     <div class="sec-head"><h2 id="faq-h">常見問題</h2></div>
     <div class="faq">
-      <details><summary>要付費嗎？</summary><p>App 免費下載。交易手續費依永豐金證券的一般規定。</p></details>
-      <details><summary>需要永豐金證券帳戶嗎？</summary><p>需要。登入用的是永豐金證券的 API Key。</p></details>
-      <details><summary>模擬環境會用到真的錢嗎？</summary><p>不會。模擬環境的委託不會送到交易所。</p></details>
-      <details><summary>期貨、選擇權也能交易嗎？</summary><p>可以。閃電下單、組合單、T 字報價和損益圖都有，這頁先介紹證券。</p></details>
-      <details><summary>桌面版和 Web 版差在哪？</summary><p>看盤和下單介面兩邊一樣。桌面版內建 shioaji server，另外有 AI Agent、策略回測、系統匣和自動更新；Web 版要自己啟動 shioaji server。</p></details>
-      <details><summary>AI Agent 要另外付費嗎？</summary><p>App 不收費。AI 服務的費用依你訂閱的方案計算。</p></details>
+      <details><summary>需要先開戶嗎？</summary><p>需要永豐金證券帳戶，登入用的是你在永豐金證券網站申請的 API Key。要交易期貨、選擇權，另外需要期貨帳戶。</p></details>
+      <details><summary>模擬環境和正式環境差在哪？</summary><p>模擬環境的委託不會送到交易所，不會動到真的錢，第一次開啟預設就是模擬。正式環境要匯入憑證，委託會動用真實資金。</p></details>
+      <details><summary>資料和金鑰存在哪裡？</summary><p>API Key、Secret Key 和憑證密碼存在你電腦的 App 資料夾，不會上傳。操作紀錄也只存在本機。</p></details>
+      <details><summary>AI Agent 會不會自己亂下單？</summary><p>不會。交易權限預設要逐筆核可，每一筆下單都需要你的核可；也可以設成只能分析、完全不下單。另外有單筆數量、金額等風控上限，Agent 也要遵守。</p></details>
+      <details><summary>支援哪些商品？</summary><p>台股上市、上櫃的現股與盤中零股，以及期貨、選擇權。這頁以股票為主介紹。</p></details>
+      <details><summary>Windows、Linux 能用嗎？</summary><p>可以。Shioaji Pro 是為 Mac 打造的跨平台 App，Windows 10／11 和 Linux 也有安裝檔，功能相同。</p></details>
     </div>
   </div>
 </section>

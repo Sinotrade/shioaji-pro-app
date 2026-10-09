@@ -25,7 +25,19 @@
       line: hx.querySelector('.hx-ma polyline'), q: hq, full: hq ? hq.textContent : '', top: 0, h: 1
     };
   }
-  if (hx && desk.matches) [].forEach.call(hx.querySelectorAll('.hx-crop img[data-src]'), function (im) { im.src = im.dataset.src; });
+  var darkMq = matchMedia('(prefers-color-scheme: dark)');
+  function theme() { return root.dataset.theme || (darkMq.matches ? 'dark' : 'light'); }
+  function syncCrops() {
+    if (!hx || !desk.matches) return;
+    var t = theme();
+    [].forEach.call(hx.querySelectorAll('.hx-crop img[data-src]'), function (im) {
+      var src = im.dataset.src.replace('THEME', t);
+      if (im.getAttribute('src') !== src) im.src = src;
+    });
+  }
+  syncCrops();
+  darkMq.addEventListener('change', syncCrops);
+  new MutationObserver(syncCrops).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
   function heroFrame() {
     if (!H || !desk.matches) return;
     var p = clamp((scrollY - H.top) / Math.max(1, H.h - vh), 0, 1);
