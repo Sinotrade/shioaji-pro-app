@@ -1,6 +1,7 @@
 // landing-v2-motion.js — 官網 v2 連續捲動動效（#156）
-// 只在 <html class="mo">（有 JS、沒有開「減少動態」）時啟用。位置只在 resize／圖片載入時量測，
-// 捲動時只寫 CSS 變數與少量 class，避免版面讀寫交錯。
+// 只在 <html class="mo">（有 JS、沒有開「減少動態」）時啟用。
+// 做法依 pm/design/landing-v2/motion-research.md：捲動值與畫面之間用時間校正的指數平滑追趕，
+// 靜止時停掉 rAF；變數寫在實際動的元素上（@property inherits:false）；打字用逐字 opacity，不改文字內容。
 (function () {
   'use strict';
   var root = document.documentElement;
@@ -12,80 +13,132 @@
   var desk = matchMedia('(min-width: 900px)');
   var vh = innerHeight;
   var absTop = function (el) { var r = el.getBoundingClientRect(); return r.top + scrollY; };
-  var setv = function (el, k, v) { el.style.setProperty(k, (Math.round(v * 1000) / 1000).toString()); };
+  var setv = function (el, k, v) {
+    v = Math.round(v * 1000) / 1000;
+    if (el['_' + k] !== v) { el['_' + k] = v; el.style.setProperty(k, String(v)); }
+  };
 
-  // ---------- 首屏 ----------
+  // ---------- 拆字：Intl.Segmenter、標點黏前字、詞不斷行、aria ----------
+  var segm = ('Segmenter' in Intl) ? new Intl.Segmenter('zh-Hant', { granularity: 'word' }) : null;
+  var PUNCT = /^[，。、；：？！」』）》〉,.;:?!)\]]+$/;
+  function words(text) { return segm ? Array.from(segm.segment(text), function (x) { return x.segment; }) : text.split(/(\s+)/); }
+  function split(el, mode, maskEach) {
+    var src = el.dataset.src || el.textContent; el.dataset.src = src;
+    if (!el.getAttribute('aria-label') && !el.closest('[aria-hidden="true"]') && !(el.parentElement && el.parentElement.closest('[aria-label]')) && !/^(SPAN)$/.test(el.tagName)) el.setAttribute('aria-label', src);
+    var out = [], ws = words(src);
+    for (var i = 0; i < ws.length; i++) { if (out.length && PUNCT.test(ws[i])) out[out.length - 1] += ws[i]; else out.push(ws[i]); }
+    el.textContent = '';
+    var ci = 0, units = [];
+    out.forEach(function (w) {
+      if (/^\s+$/.test(w)) { el.appendChild(document.createTextNode(' ')); return; }
+      var box = document.createElement('span'); box.className = 'word'; box.setAttribute('aria-hidden', 'true');
+      var latin = /[A-Za-z0-9]/.test(w);
+      var us = mode === 'word' ? [w] : (latin ? Array.from(w) : Array.from(w).reduce(function (a, c) {
+        if (a.length && PUNCT.test(c)) a[a.length - 1] += c; else a.push(c); return a; }, []));
+      us.forEach(function (c) {
+        var u = document.createElement('span'); u.className = 'u'; u.textContent = c; u.style.setProperty('--ci', ci++);
+        if (maskEach) { var m = document.createElement('span'); m.className = 'mask'; m.appendChild(u); box.appendChild(m); } else box.appendChild(u);
+        units.push(u);
+      });
+      el.appendChild(box);
+    });
+    return units;
+  }
+  // 打字：t ∈ [0,1] 依序點亮每個字
+  function typer(el) {
+    if (!el) return null;
+    var units = split(el, 'char', false);
+    return { units: units, last: -1, set: function (t) {
+      var n = units.length, k = Math.round(t * n);
+      if (k === this.last) return; this.last = k;
+      for (var i = 0; i < n; i++) units[i].style.setProperty('--o', i < k ? '1' : '0');
+    } };
+  }
+
+  // ---------- 首屏進場 ----------
   var hx = document.querySelector('.hx');
+  function heroIntro() {
+    if (!hx) return;
+    var h1 = hx.querySelector('h1'), lines = [].slice.call(h1.querySelectorAll('.ln')), byWord = !desk.matches, maxEnd = 0;
+    if (byWord) h1.classList.add('byword');
+    lines.forEach(function (ln, li) {
+      var us = split(ln, byWord ? 'word' : 'char', !byWord);
+      us.forEach(function (u) { u.style.setProperty('--li', li); });
+      var end = byWord ? li * 160 + (us.length - 1) * 70 + 60 + 900 : li * 140 + (us.length - 1) * 34 + 80 + 950;
+      maxEnd = Math.max(maxEnd, end);
+    });
+    h1.removeAttribute('aria-hidden');
+    hx.querySelector('.hx-copy').style.setProperty('--fd', Math.round(maxEnd * 0.55) + 'ms');
+    var go = function () { requestAnimationFrame(function () { requestAnimationFrame(function () { root.classList.add('go'); }); }); };
+    if (document.fonts && document.fonts.ready) Promise.race([document.fonts.ready, new Promise(function (r) { setTimeout(r, 400); })]).then(go); else go();
+  }
+
+  // ---------- 首屏捲動 ----------
   var H = null;
   if (hx) {
-    var hq = document.getElementById('hx-q');
     H = {
-      pin: hx.querySelector('.hx-pin'), stage: hx.querySelector('.hx-stage'),
-      agent: hx.querySelector('.hx-agent'), rows: hx.querySelectorAll('.hx-agent [data-k]'),
-      line: hx.querySelector('.hx-ma polyline'), q: hq, full: hq ? hq.textContent : '', top: 0, h: 1
+      pin: hx.querySelector('.hx-pin'), stage: hx.querySelector('.hx-stage'), copy: hx.querySelector('.hx-copy'),
+      app: hx.querySelector('.hx-app'), win: hx.querySelector('.hx-win'), base: hx.querySelector('.hx-base'),
+      crops: [].slice.call(hx.querySelectorAll('.hx-crop')), agent: hx.querySelector('.hx-agent'),
+      rows: [].slice.call(hx.querySelectorAll('.hx-agent [data-k]')), ma: hx.querySelector('.hx-ma'),
+      legend: hx.querySelector('.hx-legend'), q: null, ready: false, top: 0, h: 1
     };
   }
   var darkMq = matchMedia('(prefers-color-scheme: dark)');
   function theme() { return root.dataset.theme || (darkMq.matches ? 'dark' : 'light'); }
   function syncCrops() {
-    if (!hx || !desk.matches) return;
-    var t = theme();
-    [].forEach.call(hx.querySelectorAll('.hx-crop img[data-src]'), function (im) {
+    if (!H || !desk.matches) return;
+    var t = theme(), imgs = H.crops.map(function (c) { return c.querySelector('img'); }), pend = [];
+    H.ready = false;
+    imgs.forEach(function (im) {
       var src = im.dataset.src.replace('THEME', t);
       if (im.getAttribute('src') !== src) im.src = src;
+      if (im.decode) pend.push(im.decode().catch(function () {}));
     });
+    Promise.all(pend).then(function () { H.ready = true; kick(); });
   }
-  syncCrops();
-  darkMq.addEventListener('change', syncCrops);
-  new MutationObserver(syncCrops).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
-  function heroFrame() {
+  function heroWrite(p) {
     if (!H || !desk.matches) return;
-    var p = clamp((scrollY - H.top) / Math.max(1, H.h - vh), 0, 1);
-    var st = H.stage.style;
-    setv(H.stage, '--hc', seg(p, 0, 0.22));
-    setv(H.stage, '--hy', 1 - seg(p, 0, 0.3));
-    setv(H.stage, '--ht', 1 - seg(p, 0.02, 0.32));
-    setv(H.stage, '--ha', seg(p, 0.3, 0.35));
-    var n = Math.round(H.full.length * seg(p, 0.33, 0.45));
-    if (H.q && H.q.textContent.length !== n) H.q.textContent = H.full.slice(0, n);
-    H.rows[0] && H.rows[0].classList.toggle('on', p > 0.47);
-    H.rows[1] && H.rows[1].classList.toggle('on', p > 0.51);
-    H.rows[2] && H.rows[2].classList.toggle('on', p > 0.6);
-    setv(H.stage, '--hmm', seg(p, 0.5, 0.64));
-    setv(H.stage, '--hl', seg(p, 0.6, 0.64));
-    setv(H.stage, '--hs', seg(p, 0.64, 0.8));
-    setv(H.stage, '--hx', seg(p, 0.8, 0.83));
-    setv(H.stage, '--hx2', seg(p, 0.83, 1));
-    void st;
+    setv(H.copy, '--hc', seg(p, 0, 0.16));
+    setv(H.app, '--hy', 1 - seg(p, 0, 0.22));
+    setv(H.win, '--ht', 1 - seg(p, 0, 0.22));
+    setv(H.agent, '--ha', seg(p, 0.27, 0.36));
+    if (H.q) H.q.set(seg(p, 0.36, 0.52));
+    var spans = [[0.52, 0.57], [0.55, 0.6], [0.7, 0.76]];
+    H.rows.forEach(function (r, i) { var s = spans[i] || spans[2]; setv(r, '--r', seg(p, s[0], s[1])); });
+    setv(H.ma, '--hm', seg(p, 0.62, 0.74));
+    setv(H.stage, '--hs', seg(p, 0.8, 0.9));
+    var hxv = H.ready ? seg(p, 0.88, 0.9) : 0, hx2 = H.ready ? seg(p, 0.89, 1) : 0;
+    H.crops.forEach(function (c) { setv(c, '--hx', hxv); setv(c, '--hx2', hx2); });
+    setv(H.base, '--hx', hxv); setv(H.ma, '--hx', hxv);
+    setv(H.legend, '--hl', seg(p, 0.7, 0.76)); setv(H.legend, '--hx', hxv);
+    setv(H.agent, '--hx2', hx2);
+    H.app.classList.toggle('wc', p > 0.75);
   }
 
-  // ---------- Agent 場景（捲動敘事） ----------
+  // ---------- Agent 場景 ----------
   var sy = document.querySelector('.sy');
   var SY = null;
   if (sy) {
     var stage = sy.querySelector('.sy-stage');
-    var steps = [].slice.call(sy.querySelectorAll('.sy-step'));
-    SY = { stage: stage, steps: steps.map(function (s) {
+    SY = { steps: [].slice.call(sy.querySelectorAll('.sy-step')).map(function (s) {
       var fig = s.querySelector('.sy-fig');
       if (fig && desk.matches) stage.appendChild(fig);
       fig.classList.add('demo', 'run');
-      [].forEach.call(fig.querySelectorAll('.typed'), function (t) { t.dataset.full = t.dataset.full || t.textContent; });
+      var ty = {};
+      [].forEach.call(fig.querySelectorAll('.typed'), function (t) { if (t.id) ty[t.id] = typer(t); });
       [].forEach.call(fig.querySelectorAll('.kpi6 b'), function (b) { b.dataset.full = b.textContent; });
-      return { el: s, fig: fig, caps: s.querySelectorAll('.caps li'), kind: fig.dataset.demo, top: 0, h: 1, last: -1 };
-    }), active: -1 };
+      var h2 = s.querySelector('.h2s'); if (h2) split(h2, 'word', false);
+      return { el: s, fig: fig, ty: ty, caps: s.querySelectorAll('.caps li'), kind: fig.dataset.demo, top: 0, h: 1, last: -1 };
+    }), active: -1, z: 0.1 };
   }
   function gate(fig, n) { for (var i = 1; i <= 8; i++) fig.classList.toggle('s' + i, i <= n); }
   function caps(st, n) { [].forEach.call(st.caps, function (li, i) { li.classList.toggle('on', i === n - 1); }); }
-  function type(el, a, b, p) {
-    if (!el) return;
-    var full = el.dataset.full || '', n = Math.round(full.length * seg(p, a, b));
-    if (el.textContent.length !== n) el.textContent = full.slice(0, n);
-  }
-  function $(fig, s) { return fig.querySelector(s); }
+  function type(st, id, a, b, p) { var t = st.ty[id]; if (t) t.set(seg(p, a, b)); }
+  function $(fig, q) { return fig.querySelector(q); }
   var fmt = function (v, src) {
     var dec = (src.split('.')[1] || '').replace(/[^0-9]/g, '').length;
-    var s = v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
-    return src.replace(/[0-9][0-9,]*(\.[0-9]+)?/, s);
+    return src.replace(/[0-9][0-9,]*(\.[0-9]+)?/, v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec }));
   };
   var apply = {
     observe: function (st, p) {
@@ -93,7 +146,8 @@
       if (!state.dataset.full) state.dataset.full = state.textContent;
       var open = p > 0.2 && p < 0.5, done = p >= 0.5, learned = p >= 0.68;
       card.classList.toggle('show', open);
-      state.textContent = done ? '已開啟。每天 13:50 執行，僅分析，不會下單。' : state.dataset.full;
+      var txt = done ? '已開啟。每天 13:50 執行，僅分析，不會下單。' : state.dataset.full;
+      if (state.textContent !== txt) state.textContent = txt;
       $(f, '#ob-tasks').classList.toggle('hide', learned);
       $(f, '#ob-skills').classList.toggle('hide', !learned);
       $(f, '#ob-t1').classList.toggle('on', !learned);
@@ -104,44 +158,42 @@
     },
     build: function (st, p) {
       var f = st.fig;
-      type($(f, '#bd-q'), 0.04, 0.32, p);
+      type(st, 'bd-q', 0.04, 0.32, p);
       gate(f, p > 0.62 ? 3 : p > 0.4 ? 2 : 1);
       var line = $(f, '.ch .ind');
-      if (line) { line.style.strokeDasharray = '2000'; line.style.strokeDashoffset = String(2000 * (1 - seg(p, 0.62, 0.82))); }
+      if (line) { line.style.transition = 'none'; line.style.strokeDasharray = '2000'; line.style.strokeDashoffset = String(2000 * (1 - seg(p, 0.62, 0.82))); }
       caps(st, p > 0.62 ? 3 : p > 0.4 ? 2 : 1);
     },
     agent: function (st, p) {
-      var f = st.fig;
-      type($(f, '#ag-q1'), 0.04, 0.3, p);
-      gate(f, p > 0.6 ? 3 : p > 0.36 ? 2 : 1);
+      type(st, 'ag-q1', 0.04, 0.3, p);
+      gate(st.fig, p > 0.6 ? 3 : p > 0.36 ? 2 : 1);
       caps(st, p > 0.78 ? 4 : p > 0.6 ? 3 : p > 0.36 ? 2 : 1);
     },
     quant: function (st, p) {
       var f = st.fig;
       $(f, '#bt-dlg').classList.toggle('show', p < 0.22);
       gate(f, p > 0.68 ? 4 : p > 0.28 ? 3 : 2);
-      var k = seg(p, 0.3, 0.6);
-      var line = $(f, '.bt-res .eq-line');
+      var k = seg(p, 0.3, 0.6), line = $(f, '.bt-res .eq-line');
       if (line) { line.style.transition = 'none'; line.style.strokeDashoffset = String(1000 * (1 - k)); }
       [].forEach.call(f.querySelectorAll('.kpi6 b'), function (b) {
         var src = b.dataset.full, m = src.match(/[0-9][0-9,]*(\.[0-9]+)?/);
         if (!m || /\(/.test(src)) return;
-        b.textContent = fmt(parseFloat(m[0].replace(/,/g, '')) * k, src);
+        var t = fmt(parseFloat(m[0].replace(/,/g, '')) * k, src);
+        if (b.textContent !== t) b.textContent = t;
       });
       caps(st, p > 0.68 ? 4 : p > 0.3 ? 3 : p > 0.22 ? 2 : 1);
     },
     alloc: function (st, p) {
-      var f = st.fig;
-      type($(f, '#al-q'), 0.03, 0.22, p);
+      type(st, 'al-q', 0.03, 0.22, p);
       var n = p > 0.82 ? 5 : p > 0.64 ? 4 : p > 0.44 ? 3 : p > 0.28 ? 2 : 1;
-      gate(f, n);
-      var t = $(f, '.alloc-t'); if (t) setv(t, '--k', seg(p, 0.44, 0.6));
+      gate(st.fig, n);
+      var t = $(st.fig, '.alloc-t'); if (t) setv(t, '--k', seg(p, 0.44, 0.6));
       caps(st, n >= 5 ? 4 : n >= 4 ? 3 : n >= 2 ? 2 : 1);
     },
     brief: function (st, p) {
       var f = st.fig, logged = p >= 0.56;
-      type($(f, '#br-name'), 0.03, 0.1, p);
-      type($(f, '#br-ins'), 0.1, 0.36, p);
+      type(st, 'br-name', 0.03, 0.1, p);
+      type(st, 'br-ins', 0.1, 0.36, p);
       $(f, '#br-form').classList.toggle('hide', logged);
       $(f, '#br-log').classList.toggle('hide', !logged);
       $(f, '#br-t1').classList.toggle('on', !logged);
@@ -151,25 +203,29 @@
       caps(st, logged ? 3 : p > 0.4 ? 2 : 1);
     }
   };
-  function syFrame() {
+  // 捲動位置 → 連續的步驟座標 f（第 i 步內為 i..i+1）
+  function syTarget() {
+    if (!SY) return 0;
+    var line = scrollY + vh * (desk.matches ? 0.5 : 0.68), n = SY.steps.length;
+    if (line < SY.steps[0].top) return 0;
+    for (var i = 0; i < n; i++) { var s = SY.steps[i]; if (line < s.top + s.h) return i + clamp((line - s.top) / s.h, 0, 1); }
+    return n;
+  }
+  function syWrite(f) {
     if (!SY) return;
-    var line = scrollY + vh * (desk.matches ? 0.5 : 0.68), act = -1;
-    for (var i = 0; i < SY.steps.length; i++) {
-      var s = SY.steps[i];
-      if (line >= s.top && line < s.top + s.h) { act = i; break; }
-    }
-    if (act < 0) act = line < SY.steps[0].top ? 0 : SY.steps.length - 1;
+    var n = SY.steps.length, act = clamp(Math.floor(f), 0, n - 1), z = SY.z;
     if (act !== SY.active) {
-      SY.steps.forEach(function (s, i) {
-        s.el.classList.toggle('is-on', i === act);
-        s.fig.classList.toggle('is-on', i === act);
-        s.fig.classList.toggle('is-past', i < act);
-      });
+      SY.steps.forEach(function (s, i) { s.el.classList.toggle('is-on', i === act); s.fig.classList.toggle('is-on', i === act); });
       SY.active = act;
     }
-    var st = SY.steps[act];
-    var p = clamp((line - st.top) / st.h * 1.12, 0, 1);
-    if (Math.abs(p - st.last) > 0.002 && apply[st.kind]) { apply[st.kind](st, p); st.last = p; }
+    SY.steps.forEach(function (st, i) {
+      var inn = i === 0 ? 1 : seg(f, i - z, i + z), out = i === n - 1 ? 0 : seg(f, i + 1 - z, i + 1 + z);
+      if (desk.matches) { setv(st.fig, '--in', inn); setv(st.fig, '--out', out); }
+      var vis = desk.matches ? inn - out > 0.001 : i === act;
+      if (!vis) return;
+      var p = clamp((f - i) * 1.12, 0, 1);
+      if (Math.abs(p - st.last) > 0.002 && apply[st.kind]) { apply[st.kind](st, p); st.last = p; }
+    });
   }
 
   // ---------- 面板組成版面 ----------
@@ -183,58 +239,78 @@
       el.style.setProperty('--ax', s[0] + 'vw'); el.style.setProperty('--ay', s[1] + 'vh');
       el.style.setProperty('--az', s[2] + 'px'); el.style.setProperty('--ar', s[3] + 'deg');
     });
-    A = { el: asm, ps: ps, tag: asm.querySelector('.asm-stage'), top: 0, h: 1 };
+    A = { el: asm, ps: ps, tag: asm.querySelector('.asm-stage'), top: 0, h: 1, decoded: false };
   }
-  function asmFrame() {
+  function asmTarget() { return A ? clamp((scrollY + vh * 0.25 - A.top) / Math.max(1, A.h - vh * 0.6), 0, 1) : 0; }
+  function asmWrite(p) {
     if (!A) return;
-    var p = clamp((scrollY + vh * 0.25 - A.top) / Math.max(1, A.h - vh * 0.6), 0, 1);
+    if (!A.decoded && scrollY + vh * 2 > A.top) {
+      A.decoded = true;
+      A.ps.forEach(function (el) { var im = el.querySelector('img'); im.loading = 'eager'; if (im.decode) im.decode().catch(function () {}); });
+    }
     A.ps.forEach(function (el, i) { setv(el, '--q', sm((p * 1.3 - i * 0.08) / 0.5)); });
     setv(A.tag, '--tag', seg(p, 0.74, 0.86));
   }
 
-  // ---------- 通用捲動進場 ----------
-  var SX = [];
-  function collectSx() {
-    var sel = '.feature > figure.demo, .safe-shot, .map-wrap, .skills .card, .dl .card, .oss, .tu-player, .dl-steps li, .hero-points li';
-    [].forEach.call(document.querySelectorAll(sel), function (el) {
-      if (el.closest('.sy-stage')) return;
-      el.setAttribute('data-sx', '');
-      SX.push({ el: el, top: 0, kind: 'sx' });
+  // ---------- 平滑追趕迴圈 ----------
+  var tracks = [
+    { k: 9, get: function () { return H && desk.matches ? clamp((scrollY - H.top) / Math.max(1, H.h - vh), 0, 1) : 0; }, put: heroWrite },
+    { k: 10, get: syTarget, put: syWrite },
+    { k: 9, get: asmTarget, put: asmWrite }
+  ];
+  tracks.forEach(function (t) { t.cur = null; });
+  var running = false, last = 0;
+  function loop(now) {
+    var dt = Math.min(0.05, (now - last) / 1000 || 0.016); last = now;
+    var moving = false;
+    tracks.forEach(function (t) {
+      var target = t.get();
+      if (t.cur === null) t.cur = target;
+      var d = target - t.cur;
+      if (Math.abs(d) > 0.0005) { t.cur += d * (1 - Math.exp(-t.k * dt)); moving = true; } else t.cur = target;
+      t.put(t.cur);
     });
-    [].forEach.call(document.querySelectorAll('.safe-list li'), function (el) { SX.push({ el: el, top: 0, kind: 'sxi' }); });
+    if (moving) requestAnimationFrame(loop); else running = false;
   }
-  function sxFrame() {
-    for (var i = 0; i < SX.length; i++) {
-      var o = SX[i], t = o.top - scrollY;
-      if (t > vh * 1.2 || t < -vh) continue;
-      var v = sm((vh - t) / (vh * (o.kind === 'sxi' ? 0.42 : 0.55)));
-      if (o.v !== v) { setv(o.el, o.kind === 'sxi' ? '--sxi' : '--sx', v); o.v = v; }
-    }
+  function kick() { if (!running) { running = true; last = performance.now(); requestAnimationFrame(loop); } }
+
+  // ---------- 一般卡片：觸發一次；大型示範視窗：原生 view() 或退回觸發一次 ----------
+  function reveals() {
+    var sel = '.safe-list li, .skills .card, .dl .card, .oss, .dl-steps li, .hero-points li, .map-wrap, .tu-player, .safe-shot, .faq details';
+    var els = [].slice.call(document.querySelectorAll(sel));
+    if (!(window.CSS && CSS.supports('animation-timeline: view()'))) els = els.concat([].slice.call(document.querySelectorAll('.feature > figure.demo:not(.sy-fig)')));
+    if (!('IntersectionObserver' in window)) return;
+    els.forEach(function (el) {
+      var sib = el.parentElement ? [].indexOf.call(el.parentElement.children, el) : 0;
+      el.style.setProperty('--si', Math.min(sib, 6));
+      el.classList.add('rv');
+    });
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { rootMargin: '0px 0px -15% 0px' });
+    els.forEach(function (el) { io.observe(el); });
   }
 
-  // ---------- 量測與迴圈 ----------
+  // ---------- 量測與啟動 ----------
   function measure() {
     vh = innerHeight;
     if (H) { H.top = absTop(H.pin); H.h = H.pin.offsetHeight; }
     if (SY) SY.steps.forEach(function (s) { s.top = absTop(s.el); s.h = s.el.offsetHeight; s.last = -1; });
     if (A) { A.top = absTop(A.el); A.h = A.el.offsetHeight; }
-    SX.forEach(function (o) {
-      var prev = o.el.style.transform; o.el.style.transform = 'none';
-      o.top = absTop(o.el); o.el.style.transform = prev; o.v = -1;
-    });
   }
-  var ticking = false;
-  function frame() { ticking = false; heroFrame(); syFrame(); asmFrame(); sxFrame(); }
-  function req() { if (!ticking) { ticking = true; requestAnimationFrame(frame); } }
-
+  heroIntro();
+  if (H) H.q = typer(document.getElementById('hx-q'));
   function init() {
-    collectSx();
-    measure(); frame();
-    addEventListener('scroll', req, { passive: true });
-    addEventListener('resize', function () { measure(); req(); });
-    desk.addEventListener('change', function () { measure(); req(); });
-    addEventListener('load', function () { measure(); req(); });
-    if ('ResizeObserver' in window) { var t; new ResizeObserver(function () { clearTimeout(t); t = setTimeout(function () { measure(); req(); }, 120); }).observe(document.body); }
+    syncCrops();
+    darkMq.addEventListener('change', syncCrops);
+    new MutationObserver(syncCrops).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    reveals();
+    measure(); tracks.forEach(function (t) { t.cur = null; }); kick();
+    addEventListener('scroll', kick, { passive: true });
+    addEventListener('resize', function () { measure(); kick(); });
+    desk.addEventListener('change', function () { measure(); kick(); });
+    addEventListener('load', function () { measure(); kick(); });
+    if ('ResizeObserver' in window) { var t; new ResizeObserver(function () { clearTimeout(t); t = setTimeout(function () { measure(); kick(); }, 120); }).observe(document.body); }
     matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', function (e) { if (e.matches) location.reload(); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();

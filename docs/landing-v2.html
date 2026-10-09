@@ -19,7 +19,7 @@
 (function () {
   var root = document.documentElement;
   root.classList.remove('no-js');
-  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) root.classList.add('mo');
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) { root.classList.add('mo'); setTimeout(function () { root.classList.add('go'); }, 1400); }
   try {
     var saved = localStorage.getItem('shioaji-pro-appearance');
     if (saved === 'dark' || saved === 'light') root.dataset.theme = saved;
@@ -83,16 +83,16 @@
   <div class="hx-pin">
     <div class="hx-stage">
       <div class="wrap hx-copy">
-        <p class="hx-eyebrow"><span>開源</span><span>Mac 優先・跨平台</span><span>Shioaji Pro</span></p>
-        <h1 id="hero-h"><span class="hx-l"><span>AI Agent</span></span> <span class="hx-l"><span>交易新世代</span></span></h1>
-        <p class="sub">AI Agent × Shioaji，開創你的交易 Pro 世代</p>
-        <p class="lead">它幫你研究、幫你回測、幫你做出想要的畫面，還會從你每天的操作學會你的習慣。每一筆下單都需要你的核可。</p>
-        <div class="cta">
+        <p class="hx-eyebrow hx-f" style="--fi:0"><span>開源</span><span>Mac 優先・跨平台</span><span>Shioaji Pro</span></p>
+        <h1 id="hero-h" aria-label="AI Agent 交易新世代"><span class="ln">AI Agent</span> <span class="ln">交易新世代</span></h1>
+        <p class="sub hx-f" style="--fi:1">AI Agent × Shioaji，開創你的交易 Pro 世代</p>
+        <p class="lead hx-f" style="--fi:2">它幫你研究、幫你回測、幫你做出想要的畫面，還會從你每天的操作學會你的習慣。每一筆下單都需要你的核可。</p>
+        <div class="cta hx-f" style="--fi:3">
           <a class="btn primary" id="cta-dl" href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest"><svg class="i"><use href="#i-download"/></svg><span id="cta-label">下載 Shioaji Pro</span></a>
           <a class="btn ghost" href="#habit">看 Agent 怎麼協助你交易</a>
           <a class="btn ghost gh" href="https://github.com/Sinotrade/shioaji-pro-app"><svg class="i"><use href="#i-github"/></svg>看原始碼<span class="stars" data-stars hidden></span></a>
         </div>
-        <ul class="hx-meta">
+        <ul class="hx-meta hx-f" style="--fi:4">
           <li><b>為 Mac 打造</b>Apple Silicon、Intel 都支援</li>
           <li><b>跨平台</b>也支援 Windows、Linux</li>
           <li><b>開源</b>介面程式碼在 GitHub 公開（AGPL-3.0）</li>
@@ -102,9 +102,9 @@
       <div class="hx-app">
         <figure class="hx-win">
           <picture><source media="(prefers-color-scheme: dark)" srcset="images/landing-v2-app-dark-1200.webp 1200w, images/landing-v2-app-dark-2400.webp 2400w" sizes="(max-width: 1160px) 96vw, 1120px"><img class="hx-base" src="images/landing-v2-app-light-2400.webp" srcset="images/landing-v2-app-light-1200.webp 1200w, images/landing-v2-app-light-2400.webp 2400w" sizes="(max-width: 1160px) 96vw, 1120px" width="2400" height="1440" alt="Shioaji Pro 的實際畫面：左邊 AI Agent 面板，中間台積電 K 線，右邊自選清單和閃電下單。模擬環境，帳號與金額已遮蔽。" fetchpriority="high"></picture>
-          <div class="hx-crops" aria-hidden="true"><div class="hx-crop" data-k="agent"><img data-src="images/landing-v2-app-THEME-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="chart"><img data-src="images/landing-v2-app-THEME-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="watch"><img data-src="images/landing-v2-app-THEME-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="flash"><img data-src="images/landing-v2-app-THEME-2400.webp" alt="" width="2400" height="1440" decoding="async"></div></div>
+          <div class="hx-crops" aria-hidden="true"><div class="hx-crop" data-k="agent"><img data-src="images/landing-v2-app-THEME-1200.webp" alt="" width="1200" height="720" decoding="async"></div><div class="hx-crop" data-k="chart"><img data-src="images/landing-v2-app-THEME-1200.webp" alt="" width="1200" height="720" decoding="async"></div><div class="hx-crop" data-k="watch"><img data-src="images/landing-v2-app-THEME-1200.webp" alt="" width="1200" height="720" decoding="async"></div><div class="hx-crop" data-k="flash"><img data-src="images/landing-v2-app-THEME-1200.webp" alt="" width="1200" height="720" decoding="async"></div></div>
           <div class="hx-agent" aria-hidden="true">
-            <div class="msg-u"><p><span class="typed" id="hx-q">在台積電的 K 線加一條 20 期均線。</span></p></div>
+            <div class="msg-u"><p><span class="ty" id="hx-q">在台積電的 K 線加一條 20 期均線。</span></p></div>
             <div class="tg-r solo" data-k="1"><span>›</span><b>儲存自訂指標</b><span class="muted">均線 20</span></div>
             <div class="tg-r solo" data-k="2"><span>›</span><b>掛載圖表指標</b><span class="muted">K 線圖・2330</span></div>
             <div class="ans" data-k="3"><p>已加在台積電的 K 線上。</p></div>

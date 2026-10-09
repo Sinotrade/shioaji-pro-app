@@ -318,7 +318,7 @@ section.alt { background: var(--bg-2); border-block: 1px solid var(--line); }
 .demo.run [data-add] { display: none; }
 .demo.run.s1 [data-add="1"], .demo.run.s2 [data-add="2"], .demo.run.s3 [data-add="3"], .demo.run.s4 [data-add="4"],
 .demo.run.s5 [data-add="5"], .demo.run.s6 [data-add="6"], .demo.run.s7 [data-add="7"], .demo.run.s8 [data-add="8"] { display: flex; animation: addIn 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both; animation-delay: var(--d, 0s); }
-@keyframes addIn { from { opacity: 0; transform: translateY(1.2cqw); } to { opacity: 1; transform: none; } }
+@keyframes addIn { from { opacity: 0; transform: translateY(1.2cqw); } to { transform: none; } }
 /* [data-out=n] visible until sN */
 .demo:not(.run) [data-out] { display: none; }
 .demo.run [data-out] { transition: opacity 0.35s; }
@@ -1106,40 +1106,19 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
 .hx-first:hover { transform: translateY(-1px); }
 
 /* 載入進場（只在動效模式） */
-.mo .hx-l > span { animation: hxRise 1.05s var(--ease) both; }
-.mo .hx-l:nth-of-type(2) > span { animation-delay: .12s; }
-.mo .hx-eyebrow, .mo .hx .cta, .mo .hx-meta { animation: hxFade .9s var(--ease) both; }
-.mo .hx .sub { animation-delay: .25s; } .mo .hx .lead { animation-delay: .35s; } .mo .hx .cta { animation-delay: .45s; } .mo .hx-meta { animation-delay: .55s; }
-.mo .hx-win { animation: hxEmerge 1.6s var(--ease) .2s both; }
 @keyframes hxRise { from { transform: translateY(105%); } to { transform: none; } }
-@keyframes hxFade { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes hxFade { from { opacity: 0; transform: translateY(14px); } to { transform: none; } }
 @keyframes hxEmerge { from { opacity: 0; filter: blur(14px) brightness(.4); translate: 0 80px; } to { opacity: 1; filter: none; translate: 0 0; } }
 
 /* 桌面：釘住的首屏 */
 @media (min-width: 900px) {
-  .mo .hx-pin { height: 260vh; }
   .mo .hx-stage { position: sticky; top: 0; height: 100vh; padding: 0; display: grid; grid-template-rows: auto 1fr; align-content: start;
     clip-path: inset(calc(var(--hs, 0) * 3.2vh) calc(var(--hs, 0) * 3.2vw) round calc(var(--hs, 0) * 28px)); }
-  .mo .hx-copy { padding-top: 15vh; transform: translateY(calc(var(--hc, 0) * -12vh)); opacity: calc(1 - var(--hc, 0) * 1.4); }
-  .mo .hx-app { position: absolute; left: 50%; top: 0; margin: 0; width: min(1180px, 84vw);
-    transform: translate(-50%, calc(var(--hy, 1) * 62vh + 12vh)); }
-  .mo .hx-win { transform: rotateX(calc(var(--ht, 1) * 16deg)) scale(calc(.8 + (1 - var(--ht, 1)) * .2)); }
-  .mo .hx-crop { opacity: var(--hx, 0); }
-  .mo .hx-base { opacity: calc(1 - var(--hx, 0)); }
-  .mo .hx-crop[data-k="agent"] { transform: translate(calc(var(--hx2, 0) * 34%), calc(var(--hx2, 0) * 10%)) scale(calc(1 - var(--hx2, 0) * .06)); }
-  .mo .hx-crop[data-k="chart"] { transform: translate(calc(var(--hx2, 0) * -8%), calc(var(--hx2, 0) * -22%)) scale(calc(1 + var(--hx2, 0) * .04)); opacity: calc(var(--hx, 0) - var(--hx2, 0) * .9); }
-  .mo .hx-crop[data-k="watch"] { transform: translate(calc(var(--hx2, 0) * 12%), calc(var(--hx2, 0) * 26%)) rotate(calc(var(--hx2, 0) * 3deg)); opacity: calc(var(--hx, 0) - var(--hx2, 0) * .9); }
-  .mo .hx-crop[data-k="flash"] { transform: translate(calc(var(--hx2, 0) * 22%), calc(var(--hx2, 0) * -14%)) rotate(calc(var(--hx2, 0) * -4deg)); opacity: calc(var(--hx, 0) - var(--hx2, 0) * .9); }
   .mo .hx-win { background: transparent; }
-  .mo .hx-agent { opacity: calc(var(--ha, 0) * (1 - var(--hx2, 0) * 1.4)); transform: translate(calc(var(--hx2, 0) * 34%), calc(var(--hx2, 0) * 10%)); }
-  .mo .hx-ma { --hm: var(--hmm, 0); }
-  .mo .hx-ma, .mo .hx-legend { opacity: calc(1 - var(--hx, 0)); }
-  .mo .hx-legend { opacity: calc(var(--hl, 0) * (1 - var(--hx, 0))); }
 }
 @media (max-width: 899px) {
   .hx-stage { padding: 96px 0 40px; }
   .hx-agent, .hx-legend { display: none; }
-  .mo .hx-ma { animation: hxDraw 2.4s var(--ease) 1.4s both; }
   .hx-app { width: calc(100% - 32px); margin-top: 40px; }
 }
 @keyframes hxDraw { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
@@ -1158,15 +1137,7 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
   .mo .sy-wrap { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 56px; }
   .mo .sy-step { min-height: 128vh; display: flex; align-items: center; border: 0; padding: 0; }
   .mo .sy-step > .sy-fig { display: none; }
-  .mo .sy-text { transform: translateY(24px); transition: transform .8s var(--ease); }
-  .mo .sy-step:not(.is-on) .sy-text, .mo .sy-step:not(.is-on) .sy-text * { color: var(--muted) !important; }
-  .mo .sy-step:not(.is-on) .sy-text .caps li.on { background: transparent; box-shadow: none; }
-  .mo .sy-step.is-on .sy-text { transform: none; }
   .mo .sy-stage { display: block; position: sticky; top: 0; height: 100vh; }
-  .mo .sy-stage .sy-fig { position: absolute; left: 0; right: 0; top: 50%; margin: 0; transform: translateY(calc(-50% + 9%)) scale(.96); opacity: 0; filter: blur(6px);
-    transition: transform .9s var(--ease), opacity .55s cubic-bezier(.4,0,.2,1), filter .7s var(--ease); pointer-events: none; }
-  .mo .sy-stage .sy-fig.is-on { transform: translateY(-50%); opacity: 1; filter: none; pointer-events: auto; }
-  .mo .sy-stage .sy-fig.is-past { transform: translateY(calc(-50% - 6%)) scale(.92); opacity: 0; filter: blur(6px); }
 }
 @media (max-width: 899px) {
   .mo .sy-stage { display: none; }
@@ -1191,8 +1162,6 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
 @media (max-width: 899px) { .mo .asm { height: 160vh; } .mo .asm-pin { top: 22vh; } .asm-tag { font-size: 12px; right: 10px; bottom: 10px; } }
 
 /* ---------- 捲動進場（通用） ---------- */
-.mo [data-sx] { transform: perspective(1400px) translateY(calc((1 - var(--sx, 1)) * 64px)) rotateX(calc((1 - var(--sx, 1)) * 9deg)) scale(calc(.94 + var(--sx, 1) * .06)); opacity: calc(.2 + var(--sx, 1) * .8); transform-origin: 50% 100%; }
-.mo .safe-list li { opacity: calc(var(--sxi, 1)); transform: translateY(calc((1 - var(--sxi, 1)) * 28px)); }
 
 /* ---------- 下載：開源、Mac ---------- */
 .card.mac { position: relative; border-color: var(--line-2); box-shadow: var(--shadow); }
@@ -1229,7 +1198,7 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
 .tu-js .tu-step .tu-cap { display: none; }
 .tu-js .tu-cc { display: block; min-height: 112px; padding: 14px 6px 6px; }
 .tu-js .tu-ctrl { display: flex; align-items: center; gap: 8px; padding: 8px 4px 2px; }
-@keyframes tuIn { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+@keyframes tuIn { from { opacity: 0; transform: translateX(18px); } to { transform: none; } }
 .tu-b { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--line-2); background: transparent; color: var(--text); cursor: pointer; flex: none; }
 .tu-b.main { background: var(--btn-bg); color: var(--btn-fg); border-color: var(--btn-bg); }
 .tu-b .play { display: none; }
@@ -1353,8 +1322,102 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
 .tu-split.r2 { grid-template-columns: .75fr 1.25fr; }
 @media (max-width: 640px) { .tu-split.r2 { grid-template-columns: 1fr; } .tu-split.r2 .site2 { display: none; } }
 
-@media (max-width: 899px) { .mo .hx-win { animation-name: hxEmergeM; } }
 @keyframes hxEmergeM { from { opacity: .2; translate: 0 40px; } to { opacity: 1; translate: 0 0; } }
 .tu-segs button { min-width: 24px; }
 @media (max-width: 640px) { .tu-ctrl { flex-wrap: wrap; } .tu-segs { flex-basis: 100%; margin-left: 0; order: 9; } }
 .hx-note { margin-top: 14px; text-align: center; font-size: 14px; color: var(--muted); }
+
+/* ===================== v4：平滑追趕、逐字進場（依 motion-research.md） ===================== */
+@property --hc { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --hy { syntax: '<number>'; inherits: false; initial-value: 1; }
+@property --ht { syntax: '<number>'; inherits: false; initial-value: 1; }
+@property --ha { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --hm { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --hl { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --hs { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --hx { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --hx2 { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --r { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --q { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --tag { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --in { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --out { syntax: '<number>'; inherits: false; initial-value: 0; }
+:root { --expo: cubic-bezier(.16,1,.3,1); --quart: cubic-bezier(.25,1,.5,1); }
+
+/* 拆字單位 */
+.u { display: inline-block; white-space: pre; }
+.word { display: inline-block; white-space: nowrap; }
+.mask { display: inline-block; overflow: clip; overflow-clip-margin: .12em; padding-bottom: .08em; vertical-align: bottom; }
+.hx h1 .ln { display: inline-block; white-space: nowrap; }
+
+/* 首屏載入：大標逐字遮罩＋模糊，其他依序跟上 */
+.mo:not(.go) .hx-copy .hx-f:not(.lead), .mo:not(.go) .hx h1, .mo:not(.go) .hx-win { opacity: 0; }
+.mo.go .hx h1 .u { animation: riseBlur .95s var(--expo) both; animation-delay: calc(var(--li, 0) * 140ms + var(--ci, 0) * 34ms + 80ms); }
+.mo.go .hx h1.byword .u { animation-name: unblur; animation-duration: .9s; animation-timing-function: var(--quart); animation-delay: calc(var(--li, 0) * 160ms + var(--ci, 0) * 70ms + 60ms); }
+@keyframes riseBlur { from { transform: translateY(102%) rotate(4deg); filter: blur(6px); opacity: 0; } 40% { opacity: 1; } to { transform: none; filter: blur(0); opacity: 1; } }
+@keyframes unblur { from { transform: translateY(.28em) scale(1.02); filter: blur(10px); opacity: 0; } to { transform: none; filter: blur(0); opacity: 1; } }
+.mo.go .hx-copy .hx-f { animation: follow .8s var(--expo) both; animation-delay: calc(var(--fd, 600ms) + var(--fi, 0) * 70ms); }
+.mo.go .hx-copy .hx-meta { animation-name: followNoBlur; }
+@keyframes follow { from { opacity: 0; transform: translateY(16px); filter: blur(4px); } to { opacity: 1; transform: none; filter: blur(0); } }
+@keyframes followNoBlur { from { opacity: 0; transform: translateY(16px); } to { transform: none; } }
+.mo.go .hx-win { animation: winIn 1.4s var(--expo) .35s both; }
+@keyframes winIn { from { opacity: 0; translate: 0 80px; rotate: x 8deg; filter: blur(8px); } 64% { filter: blur(0); } to { opacity: 1; translate: 0 0; rotate: x 0deg; filter: none; } }
+.hx-win::after { content: ""; position: absolute; inset: 0; background: var(--st-bg); opacity: 0; pointer-events: none; z-index: 5; }
+.mo.go .hx-win::after { animation: veil 1.4s var(--expo) .35s both; }
+@keyframes veil { from { opacity: .6; } to { opacity: 0; } }
+.mo.go .hx-stage { animation: glowIn 1.4s var(--quart) both; }
+@keyframes glowIn { from { background-size: 104% 104%; } to { background-size: 100% 100%; } }
+
+/* 打字：逐字 opacity（不改文字內容） */
+.ty .u { opacity: var(--o, 1); }
+.mo .ty .u { transition: opacity .12s linear; }
+
+/* 首屏捲動段（桌面），變數寫在各自元素 */
+@media (min-width: 900px) {
+  .mo .hx-pin { height: 360vh; }
+  .mo .hx-stage { clip-path: inset(calc(var(--hs) * 3.2vh) calc(var(--hs) * 3.2vw) round calc(var(--hs) * 28px)); }
+  .mo .hx-copy { padding-top: 15vh; transform: translateY(calc(var(--hc) * -8vh)); opacity: calc(1 - var(--hc)); }
+  .mo .hx-app { position: absolute; left: 50%; top: 0; margin: 0; width: min(1180px, 84vw); transform: translate(-50%, calc(var(--hy) * 62vh + 12vh)); }
+  .mo .hx-win { transform: rotateX(calc(var(--ht) * 14deg)) scale(calc(.82 + (1 - var(--ht)) * .18)); }
+  .mo .hx-base { opacity: calc(1 - var(--hx)); }
+  .mo .hx-crop { opacity: var(--hx); }
+  .mo .hx-app.wc .hx-crop, .mo .hx-app.wc .hx-agent { will-change: transform, opacity; }
+  .mo .hx-crop[data-k="agent"] { transform: translate(calc(var(--hx2) * 34%), calc(var(--hx2) * 10%)) scale(calc(1 - var(--hx2) * .06)); }
+  .mo .hx-crop[data-k="chart"] { transform: translate(calc(var(--hx2) * -8%), calc(var(--hx2) * -22%)) scale(calc(1 + var(--hx2) * .04)); opacity: calc(var(--hx) - max(0, var(--hx2) - .7) * 3); }
+  .mo .hx-crop[data-k="watch"] { transform: translate(calc(var(--hx2) * 12%), calc(var(--hx2) * 26%)) rotate(calc(var(--hx2) * 3deg)); opacity: calc(var(--hx) - max(0, var(--hx2) - .7) * 3); }
+  .mo .hx-crop[data-k="flash"] { transform: translate(calc(var(--hx2) * 22%), calc(var(--hx2) * -14%)) rotate(calc(var(--hx2) * -4deg)); opacity: calc(var(--hx) - max(0, var(--hx2) - .7) * 3); }
+  .mo .hx-agent { opacity: calc(var(--ha) * (1 - var(--hx2) * 1.4)); transform: translate(calc(var(--hx2) * 34%), calc(var(--hx2) * 10% + (1 - var(--ha)) * 12px)); }
+  .mo .hx-agent [data-k] { opacity: var(--r); transform: translateY(calc((1 - var(--r)) * 8px)); transition: none; }
+  .mo .hx-ma { clip-path: inset(0 calc((1 - var(--hm)) * 100%) 0 0); opacity: calc(1 - var(--hx)); }
+  .mo .hx-legend { opacity: calc(var(--hl) * (1 - var(--hx))); }
+}
+@media (max-width: 899px) { .mo.go .hx-ma { animation: hxDraw 2s cubic-bezier(.65,0,.35,1) 1.4s both; } }
+
+/* 場景區：左文整塊 opacity、h2 逐詞模糊淡入；右側舞台依捲動交叉 */
+.mo .sy-text { transition: opacity .5s var(--quart); }
+.mo .sy-step:not(.is-on) .sy-text { opacity: .82; }
+.sy-text .kick { color: var(--text-2); }
+.mo .sy-step:not(.is-on) .sy-text .caps li.on { background: transparent; box-shadow: none; }
+.mo .sy-step.is-on .sy-text .h2s .u { animation: unblur .7s var(--quart) both; animation-delay: calc(var(--ci, 0) * 50ms); }
+.mo .sy-step.is-on .sy-text > p { animation: follow .7s var(--expo) both; }
+.mo .sy-step.is-on .sy-text > p:nth-of-type(1) { animation-delay: .12s; }
+.mo .sy-step.is-on .sy-text > p:nth-of-type(2) { animation-delay: .18s; }
+.mo .sy-step.is-on .sy-text > p:nth-of-type(n+3) { animation-delay: .24s; }
+@media (min-width: 900px) {
+  .mo .sy-stage .sy-fig { position: absolute; left: 0; right: 0; top: 50%; margin: 0; pointer-events: none; transition: none;
+    transform: translateY(calc(-50% + (1 - var(--in)) * 6% - var(--out) * 4%)) scale(calc(.97 + var(--in) * .03 - var(--out) * .06));
+    opacity: calc(var(--in) - var(--out)); filter: blur(calc(var(--out) * 4px)); }
+  .mo .sy-stage .sy-fig.is-on { pointer-events: auto; }
+}
+
+/* 一般卡片：觸發一次 */
+.mo .rv { opacity: 0; transform: translateY(28px); filter: blur(6px); }
+.mo .rv.in { opacity: 1; transform: none; filter: none; transition: opacity .7s var(--expo), transform .9s var(--expo), filter .7s var(--expo); transition-delay: calc(var(--si, 0) * 90ms); }
+/* 大型示範視窗：原生 view() 立起；不支援時由 JS 加 .rv */
+@supports (animation-timeline: view()) {
+  .mo .feature > figure.demo:not(.sy-fig) { animation: standUp linear both; animation-timeline: view(); animation-range: entry 0% cover 35%; transform-origin: 50% 100%; }
+}
+@keyframes standUp { from { transform: perspective(1400px) translateY(64px) rotateX(9deg) scale(.94); } to { transform: none; } }
+
+.mo.go .hx-copy .lead { animation-name: followSoft; }
+@keyframes followSoft { from { transform: translateY(16px); filter: blur(4px); } to { transform: none; filter: blur(0); } }
