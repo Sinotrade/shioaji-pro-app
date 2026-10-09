@@ -53,10 +53,16 @@ function sanitize(raw: unknown): ConditionalSettings {
     };
 }
 
+/** What is stored: pauseStopsExits is never persisted here — it mirrors the
+ * engine's policy once read (off until then). */
+function stored(s: ConditionalSettings): ConditionalSettings {
+    return { ...s, pauseStopsExits: false };
+}
+
 function load(): ConditionalSettings {
     try {
         const raw = globalThis.localStorage?.getItem(KEY);
-        return raw ? sanitize(JSON.parse(raw)) : DEFAULT_SETTINGS;
+        return raw ? stored(sanitize(JSON.parse(raw))) : DEFAULT_SETTINGS;
     } catch {
         return DEFAULT_SETTINGS;
     }
@@ -71,7 +77,7 @@ export function getConditionalSettings(): ConditionalSettings {
 
 export function setConditionalSettings(patch: Partial<ConditionalSettings>): void {
     settings = sanitize({ ...settings, ...patch });
-    try { globalThis.localStorage?.setItem(KEY, JSON.stringify(settings)); } catch { /* quota / private mode */ }
+    try { globalThis.localStorage?.setItem(KEY, JSON.stringify(stored(settings))); } catch { /* quota / private mode */ }
     listeners.forEach(l => l());
 }
 
@@ -83,7 +89,7 @@ export function useConditionalSettings(): ConditionalSettings {
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
     window.addEventListener('storage', e => {
         if (e.key !== KEY && e.key !== null) return;
-        settings = load();
+        settings = { ...load(), pauseStopsExits: settings.pauseStopsExits };
         listeners.forEach(l => l());
     });
 }

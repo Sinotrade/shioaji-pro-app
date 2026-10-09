@@ -26,7 +26,9 @@ export function useBracketPolicy(): PolicyState {
     const [busy, setBusy] = useState(false);
     const reachable = backgroundSupported() && health !== null;
     useEffect(() => {
-        if (!reachable) return;
+        // a new connection reads again; nothing saved from a stale copy meanwhile
+        setPolicy(null);
+        if (!reachable) { setConditionalSettings({ pauseStopsExits: false }); return; }
         let alive = true;
         getBracketPolicy().then(p => {
             if (!alive) return;

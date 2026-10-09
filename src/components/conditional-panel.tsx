@@ -50,6 +50,7 @@ import {
 import { accountTag, bgBracketRows, KIND_LABEL, rowsForTab, TABS, type CondRow, type CondTab } from '../lib/conditional/rows';
 import { useConditionalView, useStreamStatus, type ConditionalView } from '../lib/conditional/use-conditional';
 import { useConditionalSettings } from '../lib/conditional/settings';
+import { useBracketPolicy } from '../lib/conditional/bracket-policy';
 import { pauseAll, pauseAllEligible } from '../lib/conditional/runtime';
 import { useBackgroundPrograms } from '../lib/execution/background';
 import { bracketViews } from '../lib/execution/bracket-contract';
@@ -658,6 +659,7 @@ export function ConditionalPanel({ contract }: { contract?: ContractInfo | null 
     const [creating, setCreating] = useState(false);
     const [dialog, setDialog] = useState<'settings' | 'flatten' | null>(null);
     const settings = useConditionalSettings();
+    useBracketPolicy(); // keeps 全部暫停 in line with the engine's pauseStopsExits
     // the same rule as 全部暫停 itself
     const legsOf = (r: CondRow): TriggerOrder[] => r.source.type === 'trigger' ? [r.source.trigger] : r.source.type === 'oco' ? r.source.triggers : [];
     const eligible = view.rows.filter(r => r.source.type === 'bgBracket' ? r.actions.pause

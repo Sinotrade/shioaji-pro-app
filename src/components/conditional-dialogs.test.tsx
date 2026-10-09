@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const F = { account_type: 'F', broker_id: 'b', account_id: '9804567', person_id: '', signed: true, username: '' };
 const TXF = { code: 'TXFJ6', target_code: 'TXFJ6', security_type: 'FUT', exchange: 'TAIFEX' };
-const m = vi.hoisted(() => ({ run: vi.fn(), desktop: false, getPolicy: vi.fn(), setPolicy: vi.fn(), setLocal: vi.fn() }));
+const m = vi.hoisted(() => ({ run: vi.fn(), desktop: false, reachable: true, getPolicy: vi.fn(), setPolicy: vi.fn(), setLocal: vi.fn() }));
 
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [F], selectedFutures: F, selectedStock: null }) }));
 vi.mock('../lib/trading-state', () => ({ useTradingState: () => ({
@@ -16,7 +16,7 @@ vi.mock('../lib/trading-state', () => ({ useTradingState: () => ({
         status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, deals: [] } }],
 }) }));
 vi.mock('../lib/conditional/runtime', () => ({ runFlatten: m.run, flattenSummary: () => '完成摘要' }));
-vi.mock('../lib/execution/background', () => ({ backgroundSupported: () => m.desktop, useBackgroundHealth: () => (m.desktop ? {} : null),
+vi.mock('../lib/execution/background', () => ({ backgroundSupported: () => m.desktop, useBackgroundHealth: () => (m.desktop && m.reachable ? {} : null),
     getBracketPolicy: m.getPolicy, setBracketPolicy: m.setPolicy }));
 vi.mock('../lib/main-window-commands', () => ({ isMainWindow: () => true }));
 vi.mock('../lib/conditional/settings', () => ({ useConditionalSettings: () => ({ defaultValidity: 'today', defaultSend: 'MKP', ocoMode: 'trigger',
@@ -82,12 +82,20 @@ describe('ConditionalSettingsDialog — 括號單規則', () => {
         return r;
     }
 
-    it('not available (web, or the engine unreachable): the three switches are disabled and say why', () => {
+    const labels = ['換盤別後自動重新啟用保護', '保護結束後才成交的口數自動補上保護', '暫停時連停損停利一起暫停'];
+    it('not available (web, or the engine unreachable): all three switches are disabled and say why', () => {
         m.desktop = false;
-        const r = open();
-        expect(switchOf(r, '換盤別後自動重新啟用保護').props.disabled).toBe(true);
-        expect(switchOf(r, '暫停時連停損停利一起暫停').props.disabled).toBe(true);
+        let r = open();
+        for (const l of labels) expect(switchOf(r, l).props.disabled).toBe(true);
         expect(text(r.root)).toContain('只在桌面版提供');
+        act(() => r.unmount());
+        m.desktop = true;
+        m.reachable = false;
+        r = open();
+        for (const l of labels) expect(switchOf(r, l).props.disabled).toBe(true);
+        expect(text(r.root)).toContain('背景執行目前無法使用');
+        expect(m.getPolicy).not.toHaveBeenCalled();
+        m.reachable = true;
     });
 
     it('desktop: read from the engine, saved through it; pause-all follows the saved value', async () => {
