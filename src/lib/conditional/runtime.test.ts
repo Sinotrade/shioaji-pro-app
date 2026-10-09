@@ -10,10 +10,12 @@ const m = vi.hoisted(() => ({
     dismiss: vi.fn(async () => undefined),
     handled: vi.fn(async () => undefined),
     bgPause: vi.fn(async () => undefined),
+    group: vi.fn(async (_ids: string[], _a: string) => undefined),
     pauseStopsExits: false,
 }));
 vi.mock('../trigger-engine', () => ({
     getDisplayTriggers: () => m.triggers, setTriggerPaused: m.pause, removeTrigger: m.remove, onTimedFlatten: () => undefined,
+    setTriggerGroup: m.group,
 }));
 vi.mock('../bracket', () => ({ getBrackets: () => [], dismissBracket: m.dismiss }));
 vi.mock('../execution/background', () => ({ getBackgroundPrograms: () => [], markBackgroundHandled: m.handled,
@@ -59,5 +61,12 @@ describe('stopConditionalInScope', () => {
         const r = await stopConditionalInScope({ type: 'code', codes: ['TXFJ6'], account: null });
         expect(m.remove.mock.calls.map(c => c[0])).toEqual(['a']);
         expect(r.stopped).toBe(1);
+    });
+
+    it('a 二擇一 in scope is removed as one group', async () => {
+        m.triggers = [t({ id: 'u', group: 'g' }), t({ id: 'd', group: 'g' })];
+        await stopConditionalInScope({ type: 'all' });
+        expect(m.group.mock.calls).toEqual([[['u', 'd'], 'remove']]);
+        expect(m.remove).not.toHaveBeenCalled();
     });
 });

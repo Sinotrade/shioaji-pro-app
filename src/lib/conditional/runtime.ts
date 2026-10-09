@@ -8,7 +8,7 @@ import { isLive } from '../bracket-core';
 import { getBackgroundPrograms, markBackgroundHandled, pauseBackgroundProgram, resumeBackgroundProgram } from '../execution/background';
 import { bracketViews } from '../execution/bracket-contract';
 import { notify } from '../trade';
-import { getDisplayTriggers, onTimedFlatten, removeTrigger, setTriggerPaused, type TriggerOrder } from '../trigger-engine';
+import { getDisplayTriggers, onTimedFlatten, removeTrigger, setTriggerGroup, setTriggerPaused, type TriggerOrder } from '../trigger-engine';
 import { executeFlatten, inScope, type FlattenResult, type FlattenScope } from './flatten';
 import { getConditionalSettings } from './settings';
 
@@ -21,9 +21,15 @@ export async function stopConditionalInScope(scope: FlattenScope): Promise<{ sto
     const tryDo = async (what: string, fn: () => Promise<unknown>) => {
         try { await fn(); stopped += 1; } catch (e) { failed.push(`${what}：${e instanceof Error ? e.message : String(e)}`); }
     };
+    const groups = new Map<string, string[]>();
     for (const t of getDisplayTriggers()) {
         if (t.bracketId || !codesOf(t).some(c => inScope(scope, t.account, c))) continue;
+        // 二擇一: both legs in one step, so neither can fire in between
+        if (t.group) { groups.set(`${t.env}|${t.group}`, [...(groups.get(`${t.env}|${t.group}`) ?? []), t.id]); continue; }
         await tryDo(`${t.code} 觸價單`, () => removeTrigger(t.id));
+    }
+    for (const ids of groups.values()) {
+        try { await setTriggerGroup(ids, 'remove'); stopped += ids.length; } catch (e) { failed.push(`二擇一：${e instanceof Error ? e.message : String(e)}`); }
     }
     for (const p of getBrackets()) {
         if (p.dismissed || !isLive(p) || !(inScope(scope, p.account, p.orderCode) || inScope(scope, p.account, p.quoteCode))) continue;
