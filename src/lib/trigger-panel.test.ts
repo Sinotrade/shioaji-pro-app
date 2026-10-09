@@ -381,3 +381,49 @@ describe('二擇一 (#226)', () => {
         expect(engine.getTriggers()).toHaveLength(0);
     });
 });
+
+describe('時間條件 (#226)', () => {
+    it('指定時間送單: nothing before the time, one send at the time, never again', async () => {
+        await boot();
+        await engine.addTrigger({ code: 'TXFR1', condition: 'above', price: 0, action: 'Buy', quantity: 2, kind: 'stop', role: 'entry',
+            time: { kind: 'send', at: Date.now() + 5_000 } }, TXF as never);
+        await tick(48000); // prices never fire a time order
+        expect(m.place).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(6_000);
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(m.place.mock.calls[0]![3]).toBe(2);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
+    it('a time missed while the App was not running lapses instead of sending late', async () => {
+        await boot();
+        await engine.addTrigger({ code: 'TXFR1', condition: 'above', price: 0, action: 'Buy', quantity: 1, kind: 'stop', role: 'entry',
+            time: { kind: 'send', at: Date.now() + 1_000 } }, TXF as never);
+        m.status = 'down'; // cannot send at the time
+        await vi.advanceTimersByTimeAsync(70_000);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(engine.getTriggers()).toHaveLength(0);
+        expect(titles()).toContain('時間條件單沒有執行');
+    });
+
+    it('收盤前平倉 hands over to 全平並取消 at the time (no order from the engine itself)', async () => {
+        await boot();
+        const seen: string[] = [];
+        engine.onTimedFlatten(t => seen.push(t.code));
+        await engine.addTrigger({ code: 'TXFR1', condition: 'above', price: 0, action: 'Sell', quantity: 0, kind: 'stop',
+            time: { kind: 'flatten', at: Date.now() + 2_000, scope: 'code' } }, TXF as never);
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(seen).toEqual(['TXFR1']);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
+    it('a time already past is refused', async () => {
+        await boot();
+        const made = await engine.addTrigger({ code: 'TXFR1', condition: 'above', price: 0, action: 'Buy', quantity: 1, kind: 'stop',
+            time: { kind: 'send', at: Date.now() - 1 } }, TXF as never);
+        expect(made).toBeNull();
+    });
+});

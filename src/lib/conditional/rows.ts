@@ -189,7 +189,37 @@ function triggerActions(t: TriggerOrder): RowActions {
     };
 }
 
+function timeCondition(t: TriggerOrder): string {
+    const time = t.time!;
+    return time.kind === 'flatten'
+        ? `${fmtUntil(time.at)} 全平並取消（${time.scope === 'code' ? '此商品' : '此帳戶'}）`
+        : `${fmtUntil(time.at)} 送出`;
+}
+
 function triggerRow(t: TriggerOrder, s: Sources): CondRow {
+    if (t.time) {
+        const st = triggerStatus(t, s);
+        return {
+            id: t.id,
+            kind: 'time',
+            code: t.code,
+            orderCode: t.orderCode ?? null,
+            side: t.time.kind === 'flatten' ? { text: '平掉剩餘部位', dir: null } : triggerSide(t),
+            condition: timeCondition(t),
+            level: null,
+            status: st.tone === 'ok' ? { text: '等待時間到', tone: 'ok' } : st,
+            validity: `今日 ${fmtUntil(t.time.at, s.now)}`,
+            account: t.account ?? null,
+            env: t.env ?? null,
+            attention: false,
+            paused: !!t.paused,
+            actions: { ...NO_ACTIONS, pause: !t.paused, resume: !!t.paused, cancel: true },
+            source: { type: 'trigger', trigger: t },
+            history: t.history ?? [],
+            createdAt: t.createdAt ?? 0,
+            ended: false,
+        };
+    }
     return {
         id: t.id,
         kind: 'trigger',
@@ -458,11 +488,11 @@ function endedRow(e: EndedTrigger, exit: ExitRecord | null): CondRow {
     const exitText = exit ? ` · ${EXIT_TEXT[exit.status] ?? exit.status}${exit.status !== 'not-sent' ? ` ${exit.filled}/${exit.quantity}` : ''}` : '';
     return {
         id: `ended:${e.id}`,
-        kind: t.group ? 'oco' : 'trigger',
+        kind: t.time ? 'time' : t.group ? 'oco' : 'trigger',
         code: t.code,
         orderCode: t.orderCode ?? null,
-        side: triggerSide(t),
-        condition: conditionText(t),
+        side: t.time?.kind === 'flatten' ? { text: '平掉剩餘部位', dir: null } : triggerSide(t),
+        condition: t.time ? timeCondition(t) : conditionText(t),
         level: null,
         status: { text: `${ENDED_TEXT[e.reason]}${exitText}`, tone: e.reason === 'fired' ? (exit?.status === 'filled' ? 'ok' : exit && exit.status !== 'working' && exit.status !== 'sending' ? 'err' : 'ok') : 'muted' },
         validity: fmtUntil(e.at),

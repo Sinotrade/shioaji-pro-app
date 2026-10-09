@@ -12,7 +12,7 @@ import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../li
 import { addTrigger, addTriggerGroup, type BracketEntryPlan, type TriggerSend, type TriggerValidity } from '../lib/trigger-engine';
 import { bracketPlanProblem } from '../lib/conditional/bracket-rules';
 import { placePanelBracket, type PanelEntry } from '../lib/conditional/panel-bracket';
-import { dateEnd, dayEnd, fmtNum, fmtUntil, sessionEnd, type SessionMarket } from '../lib/conditional/session';
+import { dateEnd, dayEnd, fmtNum, fmtUntil, sessionEnd, taipeiInstant, taipeiParts, type SessionMarket } from '../lib/conditional/session';
 import { contractLabel } from '../lib/pending-trigger-view';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import type { ContractInfo } from '../lib/types/contract';
@@ -21,7 +21,7 @@ import { conditionalDemoActive, DEMO_ACCOUNTS, primeConditionalDemo } from '../l
 import { Dialog, useLastPrice } from './conditional-ui';
 import * as styles from './conditional-panel.css';
 
-export type CondFormType = 'trigger' | 'oco' | 'bracket';
+export type CondFormType = 'trigger' | 'oco' | 'bracket' | 'time';
 const QUICK_QTY = [1, 5, 10];
 
 export function isFuturesLike(c: Pick<ContractInfo, 'security_type'> | null | undefined): boolean {
@@ -204,12 +204,12 @@ export function ValidityControl({ value, onChange, market, allowNone }: {
     );
 }
 
-function QtyInput({ qty, setQty, unit }: { qty: string; setQty: (v: string) => void; unit: string }) {
+function QtyInput({ qty, setQty, unit, quick = QUICK_QTY }: { qty: string; setQty: (v: string) => void; unit: string; quick?: number[] }) {
     return (
         <>
             <input className={styles.inputNarrow} value={qty} inputMode='numeric' aria-label='數量' onChange={e => setQty(e.target.value)} />
             <span>{unit}</span>
-            {QUICK_QTY.map(n => (
+            {quick.map(n => (
                 <button key={n} type='button' className={styles.button.plain} onClick={() => setQty(String(n))}>{n}</button>
             ))}
         </>
@@ -340,7 +340,7 @@ function TriggerForm({ target, onClose, defaults }: { target: Target; onClose: (
                 <span className={styles.label}>動作</span>
                 <Seg label='買賣' value={action} onChange={setAction} tone={id => id === 'Buy' ? 'buy' : 'sell'}
                     options={[{ id: 'Buy', label: '買進' }, { id: 'Sell', label: '賣出' }]} />
-                <QtyInput qty={qty} setQty={setQty} unit={target.futures ? '口' : '張'} />
+                <QtyInput qty={qty} setQty={setQty} unit={target.futures ? '口' : '張'} quick={defaults.quickQty} />
             </div>
             <SendControl value={send} onChange={setSend} futures={target.futures} />
             <ValidityControl value={validity} onChange={setValidity} market={market} />
@@ -637,13 +637,121 @@ function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) =
     );
 }
 
+/** Taipei `HH:MM` today (or the next occurrence when `next`) as an instant. */
+export function taipeiTimeToday(hhmm: string, now = Date.now(), next = false): number | null {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+    if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
+    const p = taipeiParts(now);
+    let at = taipeiInstant(p.y, p.mo, p.d, Number(m[1]), Number(m[2]));
+    if (next && at <= now) at += 24 * 3600_000;
+    return at;
+}
+
+/** 時間: 指定時間送單, or 收盤前平倉. */
+function TimeForm({ target, onClose, defaults }: { target: Target; onClose: () => void; defaults: FormDefaults }) {
+    const [mode, setMode] = useState<'send' | 'flatten'>('flatten');
+    const [time, setTime] = useState('');
+    const [action, setAction] = useState<'Buy' | 'Sell'>('Sell');
+    const [qty, setQty] = useState('1');
+    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : 'MKT', ticks: '0' });
+    const [session, setSession] = useState<'day' | 'night'>('day');
+    const [lead, setLead] = useState(target.futures ? '5' : '10');
+    const [scope, setScope] = useState<'code' | 'account'>('code');
+    const { busy, error, submit } = useSubmit();
+    const unit = target.futures ? '口' : '張';
+    const closeAt = target.futures ? (session === 'day' ? taipeiTimeToday('13:45') : taipeiTimeToday('05:00', Date.now(), true)) : taipeiTimeToday('13:30');
+    const leadN = Number(lead);
+    const at = mode === 'send' ? taipeiTimeToday(time) : closeAt !== null && Number.isSafeInteger(leadN) && leadN >= 1 && leadN <= 60 ? closeAt - leadN * 60_000 : null;
+    const q = Number(qty);
+    const sendValue = sendOf(send.type === 'MKP' && !target.futures ? { ...send, type: 'MKT' } : send);
+    const code = target.contract?.target_code || target.contract?.code || '';
+    const problem = commonProblem(target)
+        ?? (mode === 'send' && at === null ? '請輸入時間（例：13:30）' : null)
+        ?? (mode === 'flatten' && at === null ? '提前分鐘數須為 1～60' : null)
+        ?? (at !== null && at <= Date.now() ? '時間已過；只能設定今天還沒到的時間' : null)
+        ?? (mode === 'send' && (!Number.isSafeInteger(q) || q <= 0) ? '數量必須是正整數' : null)
+        ?? (mode === 'send' && send.type === 'LMT' ? '指定時間送單沒有觸發價，請選市價或範圍市價' : null)
+        ?? (typeof sendValue === 'string' ? sendValue : null);
+    const create = () => void submit(async () => {
+        if (problem || !target.contract || !target.account || at === null || typeof sendValue === 'string') return false;
+        const made = await addTrigger({
+            code: target.contract.code, condition: 'above', price: 0, action: mode === 'send' ? action : 'Sell',
+            quantity: mode === 'send' ? q : 0, kind: 'stop',
+            time: mode === 'send' ? { kind: 'send', at } : { kind: 'flatten', at, scope },
+            ...(mode === 'send' ? { role: 'entry' as const } : {}),
+            ...(mode === 'send' && sendValue.type !== 'MKT' ? { send: sendValue } : {}),
+        }, target.contract, { account: target.account });
+        if (made) onClose();
+        return !!made;
+    });
+    const when = at === null ? '—' : fmtUntil(at);
+    return (
+        <>
+            <div className={styles.formRow}>
+                <span className={styles.label}>何時</span>
+                <Seg label='何時' value={mode} onChange={setMode} options={[{ id: 'send', label: '指定時間' }, { id: 'flatten', label: '收盤前平倉' }]} />
+            </div>
+            {mode === 'send' ? (
+                <>
+                    <div className={styles.formRow}>
+                        <span className={styles.label}>時間</span>
+                        <input className={styles.input} type='time' value={time} aria-label='送單時間' onChange={e => setTime(e.target.value)} />
+                        <span className={styles.muted}>今天（台北時間）</span>
+                    </div>
+                    <div className={styles.formRow}>
+                        <span className={styles.label}>動作</span>
+                        <Seg label='買賣' value={action} onChange={setAction} tone={id => id === 'Buy' ? 'buy' : 'sell'}
+                            options={[{ id: 'Buy', label: '買進' }, { id: 'Sell', label: '賣出' }]} />
+                        <QtyInput qty={qty} setQty={setQty} unit={unit} quick={defaults.quickQty} />
+                    </div>
+                    <SendControl value={send} onChange={setSend} futures={target.futures} label='送出方式' />
+                </>
+            ) : (
+                <>
+                    <div className={styles.formRow}>
+                        <span className={styles.label}>盤別</span>
+                        {target.futures ? (
+                            <Seg label='盤別' value={session} onChange={setSession}
+                                options={[{ id: 'day', label: '日盤 13:45' }, { id: 'night', label: '夜盤 05:00' }]} />
+                        ) : <span>收盤 13:30</span>}
+                        <span>提前</span>
+                        <input className={styles.inputNarrow} value={lead} inputMode='numeric' aria-label='提前分鐘' onChange={e => setLead(e.target.value)} />
+                        <span>分鐘</span>
+                    </div>
+                    <div className={styles.formRow}>
+                        <span className={styles.label}>範圍</span>
+                        <Seg label='範圍' value={scope} onChange={setScope}
+                            options={[{ id: 'code', label: '此商品' }, { id: 'account', label: `此帳戶全部${target.futures ? '期貨' : '股票'}` }]} />
+                    </div>
+                    <div className={styles.formRow}>
+                        <span className={styles.label}>做法</span>
+                        <span>先刪未成交委託與條件單，再以{target.futures ? '範圍市價' : '市價'}平掉剩餘部位</span>
+                    </div>
+                </>
+            )}
+            <Summary>
+                {mode === 'send' ? (
+                    <><b>{when}</b> 送出 <b className={action === 'Buy' ? styles.up : styles.down}>{orderWords(target, action, q, sendValue, null)}</b>（{code}）。
+                        時間已過（例如 App 當時沒開）就不補送。{APPROVAL}</>
+                ) : (
+                    <><b>{when}</b> 先刪除{scope === 'code' ? ` ${code} ` : '此帳戶'}未成交的委託與條件單，再以{target.futures ? '範圍市價' : '市價'}平掉
+                        {scope === 'code' ? ` ${code} ` : '此帳戶'}剩餘部位。只在當日有效；到時若無部位就不送單，不會反手開倉。{APPROVAL}</>
+                )}
+            </Summary>
+            {error && <div className={styles.message.err} role='alert'>{error}</div>}
+            <Footer busy={busy} problem={problem} onClose={onClose} onSubmit={create} />
+        </>
+    );
+}
+
 /** Form defaults (the panel's settings fill these in). */
 export interface FormDefaults {
     send: 'MKT' | 'MKP' | 'LMT';
     validity: ValidityState['type'];
     ocoMode: 'trigger' | 'fill';
+    quickQty: number[];
 }
-export const FORM_DEFAULTS: FormDefaults = { send: 'MKP', validity: 'session', ocoMode: 'trigger' };
+export const FORM_DEFAULTS: FormDefaults = { send: 'MKP', validity: 'session', ocoMode: 'trigger', quickQty: QUICK_QTY };
 
 export function NewConditionalDialog({ contract, onClose, defaults = FORM_DEFAULTS }: {
     contract: ContractInfo | null;
@@ -656,11 +764,12 @@ export function NewConditionalDialog({ contract, onClose, defaults = FORM_DEFAUL
         <Dialog title='新增條件單' icon={<Plus size={14} aria-hidden />} onClose={onClose}>
             <div className={styles.formRow}>
                 <span className={styles.label}>類型</span>
-                <Seg label='類型' value={type} onChange={setType} options={[{ id: 'trigger', label: '觸價單' }, { id: 'oco', label: '二擇一' }, { id: 'bracket', label: '括號單' }]} />
+                <Seg label='類型' value={type} onChange={setType} options={[{ id: 'trigger', label: '觸價單' }, { id: 'oco', label: '二擇一' }, { id: 'bracket', label: '括號單' }, { id: 'time', label: '時間' }]} />
             </div>
             <TargetRows target={target} />
             {type === 'trigger' && <TriggerForm key={`t:${target.resolved}`} target={target} onClose={onClose} defaults={defaults} />}
             {type === 'oco' && <OcoForm key={`o:${target.resolved}`} target={target} onClose={onClose} defaults={defaults} />}
+            {type === 'time' && <TimeForm key={`m:${target.resolved}`} target={target} onClose={onClose} defaults={defaults} />}
             {type === 'bracket' && <BracketForm key={`b:${target.resolved}`} target={target} onClose={onClose} defaults={defaults} />}
         </Dialog>
     );

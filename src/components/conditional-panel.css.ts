@@ -481,3 +481,25 @@ const switchBase = style({
 
 export const switchOff = style([switchBase]);
 export const switchOn = style([switchBase, { background: vars.color.accent, selectors: { '&::after': { left: '15px' } } }]);
+
+// ---- settings ----
+
+export const settings = style({ margin: '-12px' });
+
+export const setting = style({
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '12px',
+    padding: '10px 12px',
+    borderBottom: `1px solid ${vars.color.border}`,
+});
+export const settingLast = style([setting, { borderBottom: 'none' }]);
+export const settingName = style({ fontWeight: 600, marginBottom: '2px' });
+export const settingSection = style({
+    padding: '6px 12px',
+    background: vars.color.inset,
+    color: vars.color.mutedForeground,
+    fontSize: '0.68rem',
+    borderBottom: `1px solid ${vars.color.border}`,
+});
+export const settingEmbed = style({ padding: '0 12px 10px', borderBottom: `1px solid ${vars.color.border}` });
