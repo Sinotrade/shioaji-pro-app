@@ -15,7 +15,7 @@ import {
     type AccountRef,
     type BracketPlan,
 } from '../bracket-core';
-import { BRACKET_STATE_TEXT, type BracketView } from '../execution/bracket-contract';
+import { BRACKET_NOTICE_TEXT, BRACKET_STATE_TEXT, type BracketView } from '../execution/bracket-contract';
 import type { PendingConfirmItem } from '../execution/pending-confirm-contract';
 import { isOddLot } from '../odd-lot';
 
@@ -341,9 +341,12 @@ function bgBracketRow(v: BracketView, s: Sources): CondRow {
     let status: { text: string; tone: Tone } = { text: BRACKET_STATE_TEXT[v.state], tone: v.attention ? 'err' : ended ? 'muted' : 'ok' };
     if (v.state === 'protected' || v.state === 'exiting') status = { text: `${BRACKET_STATE_TEXT[v.state]} · 成交 ${Math.min(v.entryFilled, v.quantity)}/${v.quantity}`, tone: 'ok' };
     if (v.state === 'unprotected' && v.unprotected > 0) status = { text: `未受保護 ${v.unprotected} 口`, tone: 'err' };
-    if (!v.attention && !ended) {
+    // lots filled after the order was reported closed: data anomaly, never protected by itself
+    const anomaly = v.anomalous > 0 && !ended;
+    if (anomaly) status = { text: `異常成交 ${v.anomalous} 口：${BRACKET_NOTICE_TEXT['issue.fillAfterClose']}`, tone: 'err' };
+    if (!v.attention && !anomaly && !ended) {
         if (v.held) status = { text: v.held === 'envMismatch' ? '屬於其他伺服器或模式，目前不執行' : '未連線，暫停保護', tone: 'warn' };
-        else if (v.paused) status = { text: `${status.text}（已暫停進場；停損停利照常）`, tone: 'warn' };
+        else if (v.paused) status = { text: `${status.text}（已暫停）`, tone: 'warn' };
     }
     void s;
     return {
@@ -358,7 +361,7 @@ function bgBracketRow(v: BracketView, s: Sources): CondRow {
         validity: ended ? '—' : '本盤',
         account: { account_type: v.account.accountType, broker_id: v.account.brokerId, account_id: v.account.accountId },
         env: v.env,
-        attention: v.attention,
+        attention: v.attention || anomaly,
         paused: v.paused,
         actions: {
             ...NO_ACTIONS,
@@ -375,9 +378,10 @@ function bgBracketRow(v: BracketView, s: Sources): CondRow {
             { at: v.createdAt, text: `建立 · ${v.side === 'Buy' ? '買進' : '賣出'} ${v.quantity} 口成交後掛停損停利` },
             ...(v.updatedAt > v.createdAt ? [{ at: v.updatedAt, text: BRACKET_STATE_TEXT[v.state],
                 tone: (v.attention ? 'err' : undefined) as HistoryEntry['tone'] }] : []),
+            ...(v.anomalous > 0 ? [{ at: v.updatedAt, text: BRACKET_NOTICE_TEXT['issue.fillAfterClose']!, tone: 'err' as const }] : []),
         ],
         createdAt: v.createdAt,
-        ended: ended && !v.attention,
+        ended: ended && !v.attention && !anomaly,
     };
 }
 

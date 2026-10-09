@@ -193,6 +193,10 @@ export interface Level {
     unprotected: number;
     cycles: number;
     detail: string | null;
+    /** Background engine, of `unprotected`: entry lots filled after the
+     * order was reported closed — anomalies, notified only, never protected
+     * by itself. */
+    anomalous?: number;
 }
 
 // ---- generators & policies (parameters; levels are materialised) ----
