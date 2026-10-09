@@ -42,7 +42,7 @@ vi.mock('./contracts-cache', () => ({ ensureContract: m.ensure, getCachedContrac
 vi.mock('./quote-ownership', () => ({ retainQuote: () => () => undefined }));
 vi.mock('./trading-state', () => ({ getTradingState: () => ({ positions: [],
     queries: { positions: { updatedAt: null, needsReconcile: false, error: null } } }) }));
-vi.mock('./shioaji', () => ({ fetchTrades: async () => [] }));
+vi.mock('./shioaji', () => ({ fetchTrades: async () => (m as unknown as { trades?: unknown[] }).trades ?? [] }));
 vi.mock('./protection-env', () => {
     const envBase = (env: string) => env.slice(0, env.lastIndexOf('|'));
     return {
@@ -390,10 +390,12 @@ describe('二擇一 (#226)', () => {
         expect(m.place).toHaveBeenCalledTimes(1);
         // the IOC check finds the exit cancelled after 2 filled
         const rec = engine.getExits()[0]!;
-        engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled', deal_quantity: 2, cancel_quantity: 1,
-            deals: [{ seq: 's1', quantity: 2, price: 48400, ts: 1 }] } } as never);
+        const row = { order: { id: rec.orderId, account: null }, status: { status: 'Cancelled', deal_quantity: 2, cancel_quantity: 1,
+            deals: [{ seq: 's1', quantity: 2, price: 48400, ts: 1 }] } };
+        (m as unknown as { trades: unknown[] }).trades = [row];
+        engine.applyExitTrade(row as never);
         await flush();
-        expect(only().ocoLock).toBeTruthy(); // a cancel is trusted only after the settle time
+        expect(only().ocoLock).toBeTruthy(); // unlocked only after an authoritative read
         await vi.advanceTimersByTimeAsync(engine.OCO_SETTLE_MS + 10);
         expect(only().quantity).toBe(1);
         expect(only().ocoLock).toBeUndefined();
@@ -403,7 +405,7 @@ describe('二擇一 (#226)', () => {
         expect(m.place.mock.calls[1]![3]).toBe(1);
     });
 
-    it('成交後刪對應口數: a deal arriving after the Cancel (within the settle time) still counts', async () => {
+    it('成交後刪對應口數: a fill the reports had not shown when the Cancel came is counted (authoritative read)', async () => {
         await boot();
         await pair('fill');
         await tick(48200);
@@ -412,10 +414,10 @@ describe('二擇一 (#226)', () => {
         engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled', deal_quantity: 0, cancel_quantity: 3,
             deals: [] } } as never);
         await flush();
-        await vi.advanceTimersByTimeAsync(1000);
-        engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled', deal_quantity: 1, cancel_quantity: 2,
-            deals: [{ seq: 's1', quantity: 1, price: 48400, ts: 1 }] } } as never);
-        await vi.advanceTimersByTimeAsync(engine.OCO_SETTLE_MS);
+        // the authoritative read finds a fill no report had shown yet
+        (m as unknown as { trades: unknown[] }).trades = [{ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled',
+            deal_quantity: 1, cancel_quantity: 2, deals: [{ seq: 's1', quantity: 1, price: 48400, ts: 1 }] } }];
+        await vi.advanceTimersByTimeAsync(engine.OCO_SETTLE_MS + 10);
         expect(only().quantity).toBe(2);
         expect(only().ocoLock).toBeUndefined();
     });
@@ -488,5 +490,24 @@ describe('orderPlanFor (#226)', () => {
             .toEqual({ price: 50, orderType: 'ROD' });
         expect(engine.orderPlanFor({ ...t, group: 'g', ocoMode: 'fill', send: { type: 'LMT', ticks: 0 } }, { code: 'TXF', security_type: 'FUT' } as never))
             .toEqual({ price: 50, orderType: 'IOC' });
+    });
+});
+
+describe('二擇一 lock safety (#226)', () => {
+    it('stays locked while the order cannot be read back; never unlocks on a guess', async () => {
+        await boot();
+        await engine.addTriggerGroup([
+            { code: 'TXFR1', condition: 'above', price: 48400, action: 'Buy', quantity: 3, kind: 'stop', role: 'entry', group: 'g', ocoMode: 'fill' },
+            { code: 'TXFR1', condition: 'below', price: 47900, action: 'Sell', quantity: 3, kind: 'stop', role: 'entry', group: 'g', ocoMode: 'fill' },
+        ], TXF as never);
+        await tick(48200);
+        await tick(48400);
+        const rec = engine.getExits()[0]!;
+        (m as unknown as { trades: unknown[] }).trades = [];
+        engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled', deal_quantity: 0, cancel_quantity: 3, deals: [] } } as never);
+        await vi.advanceTimersByTimeAsync(40_000);
+        expect(only().ocoLock).toBeTruthy();
+        await tick(47800);
+        expect(m.place).toHaveBeenCalledTimes(1);
     });
 });

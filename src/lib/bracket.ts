@@ -71,7 +71,8 @@ import {
     type ExitRecord,
     type TriggerOrder,
 } from './trigger-engine';
-import { getCachedContract } from './contracts-cache';
+import { ensureContract, getCachedContract } from './contracts-cache';
+import type { TrailState } from './conditional/trailing';
 import { newTrail } from './conditional/trailing';
 import { tierSpecs } from './conditional/bracket-rules';
 import { stepPrice } from './utils/ticksize';
@@ -222,7 +223,7 @@ function restoringDo(on: boolean, fn: () => void) {
     try { fn(); } finally { restoring = prev; }
 }
 
-function arm(p: BracketPlan, edited = false) {
+function arm(p: BracketPlan, edited = false, keepTrail?: TrailState) {
     const qty = protectionQuantity(p);
     if (p.dismissed || qty <= 0 || p.env !== currentProtectionEnv()) return;
     armBracketGroup({
@@ -233,25 +234,41 @@ function arm(p: BracketPlan, edited = false) {
         orderLot: p.market === 'stock' && p.orderLot === 'IntradayOdd' ? 'IntradayOdd' : undefined,
         stopPrice: p.stopPrice, takePrice: p.takePrice, quantity: qty,
         ...(p.rules?.trail && p.base !== undefined
-            ? { trail: newTrail(p.base, p.rules.trail.activateTicks, p.rules.trail.distanceTicks, p.rules.trail.stepTicks) } : {}),
+            ? { trail: keepTrail ?? newTrail(p.base, p.rules.trail.activateTicks, p.rules.trail.distanceTicks, p.rules.trail.stepTicks) } : {}),
     });
 }
 
 /** #226: a rules-based plan gets its prices at the first protected fill,
  * from the actual fill price (frozen: later fills never loosen them). */
+const contractWaits = new Set<string>();
 function withRulePrices(p: BracketPlan): BracketPlan {
-    if (!p.rules || p.base !== undefined || allocatedFill(p) <= 0 || p.exit) return p;
+    if (!p.rules || allocatedFill(p) <= 0 || p.exit) return p;
+    const fillBase = averageFillPrice(p);
+    // set once; a basis taken from the order price is replaced by the real fill price
+    if (p.base !== undefined && !(p.baseProvisional && fillBase !== null)) return p;
     const now = Date.now();
-    const base = averageFillPrice(p) ?? p.refPrice;
+    const base = fillBase ?? p.refPrice;
     const contract = getCachedContract(p.quoteCode);
+    if (!contract && !contractWaits.has(p.id)) {
+        // load it and compute again: never left unprotected for lack of metadata
+        contractWaits.add(p.id);
+        void ensureContract(p.quoteCode).then(() => update(p.id, x => x)).catch(() => undefined).finally(() => contractWaits.delete(p.id));
+    }
     if (!base || !contract) {
-        return addIssue(p, 'lookup-failed', !base ? '成交回報沒有成交價，無法計算停損停利；請對帳後自行處理' : '商品資料未載入，無法計算停損停利；請對帳', now);
+        return addIssue(p, 'lookup-failed', !base ? '成交回報沒有成交價，無法計算停損停利；請對帳後自行處理' : '商品資料未載入，停損停利尚未建立（載入中）', now);
     }
     const dir = p.action === 'Buy' ? 1 : -1;
-    const stopPrice = stepPrice(contract, base, -dir * p.rules.stopTicks);
+    let stopPrice = stepPrice(contract, base, -dir * p.rules.stopTicks);
     const takePrice = p.rules.takeTicks === null ? null : stepPrice(contract, base, dir * p.rules.takeTicks);
-    return { ...p, base, stopPrice, takePrice, updatedAt: now,
-        edits: [...(p.edits ?? []), { at: now, text: `成交價 ${base} → 停損 ${stopPrice}${takePrice !== null ? `、停利 ${takePrice}` : ''}` }] };
+    if (p.beArmed && p.rules.breakeven) {
+        const be = stepPrice(contract, base, dir * p.rules.breakeven.offsetTicks);
+        stopPrice = dir > 0 ? Math.max(stopPrice, be) : Math.min(stopPrice, be);
+    }
+    if (!(stopPrice > 0) || (takePrice !== null && !(takePrice > 0))) {
+        return addIssue(p, 'lookup-failed', `依成交價 ${base} 算出的停損 ${stopPrice}${takePrice !== null ? `／停利 ${takePrice}` : ''} 無效，沒有掛保護；請自行處理`, now);
+    }
+    return { ...p, base, baseProvisional: fillBase === null, stopPrice, takePrice, updatedAt: now,
+        edits: [...(p.edits ?? []), { at: now, text: `${fillBase === null ? '委託價' : '成交價'} ${base} → 停損 ${stopPrice}${takePrice !== null ? `、停利 ${takePrice}` : ''}` }] };
 }
 
 /** #226 保本: once tier `afterTier` took its profit, the other tiers' stops
@@ -264,7 +281,9 @@ function applyBreakeven(done: BracketPlan) {
     const dir = done.action === 'Buy' ? 1 : -1;
     for (const sib of plans.slice()) {
         if (sib.id === done.id || sib.orderId !== done.orderId || sib.env !== done.env || !sib.tier || sib.exit || sib.dismissed) continue;
-        if (accountRefKey(sib.account) !== accountRefKey(done.account) || sib.base === undefined) continue;
+        if (accountRefKey(sib.account) !== accountRefKey(done.account)) continue;
+        // not priced yet: 保本 applies as soon as it is
+        if (sib.base === undefined) { update(sib.id, x => ({ ...x, beArmed: true })); continue; }
         const target = stepPrice(contract, sib.base, dir * rule.offsetTicks);
         if (sib.stopPrice !== null && (dir > 0 ? target <= sib.stopPrice : target >= sib.stopPrice)) continue;
         if (!tightenBracketStop(sib.env, sib.group, target, '保本')) continue;
@@ -299,6 +318,11 @@ function update(id: string, fn: (p: BracketPlan) => BracketPlan) {
     const after = withRulePrices(fn(before));
     if (after === before) return;
     plans = plans.map(p => p === before ? after : p);
+    if (before.base !== undefined && after.base !== before.base) {
+        // the real fill price replaced the order price: re-price the pair
+        disarmBracketGroup(before.env, before.group);
+        arm(after, true);
+    }
     syncProtection(before, after);
     commit();
 }
@@ -543,7 +567,11 @@ function modifyPlan(id: string, stopPrice: number | null, takePrice: number | nu
         throw new Error(`${long ? '買進' : '賣出'}的停損價必須${long ? '低於' : '高於'}停利價`);
     }
     // the armed stop may have moved (移動停損／保本) since the plan was made
-    const curStop = getTriggers().find(t => t.group === p.group && t.env === p.env && t.kind === 'stop')?.price ?? p.stopPrice;
+    const stopLeg = getTriggers().find(t => t.group === p.group && t.env === p.env && t.kind === 'stop');
+    const curStop = stopLeg?.price ?? p.stopPrice;
+    if (p.rules?.trail && curStop !== null && (stopPrice === null || (long ? stopPrice < curStop : stopPrice > curStop))) {
+        throw new Error(`移動停損中，停損只能收緊（目前 ${curStop}）`);
+    }
     if (stopPrice === curStop && takePrice === p.takePrice) return p;
     const at = Date.now();
     const changes = [
@@ -554,7 +582,7 @@ function modifyPlan(id: string, stopPrice: number | null, takePrice: number | nu
         edits: [...(p.edits ?? []), { at, text: `修改${changes}` }].slice(-20) };
     plans = plans.map(x => x.id === id ? next : x);
     disarmBracketGroup(p.env, p.group);
-    arm(next, true);
+    arm(next, true, stopLeg?.trail);
     commit();
     return next;
 }

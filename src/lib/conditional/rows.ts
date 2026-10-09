@@ -291,6 +291,9 @@ function bracketStatus(p: BracketPlan, legs: TriggerOrder[], s: Sources): { text
     const unit = unitOf(p.account, p.orderLot);
     const pendingLeg = legs.find(l => l.pending);
     if (pendingLeg) return { ...triggerStatus(pendingLeg, s), attention: true };
+    if (p.rules && p.base === undefined && !p.exit && Math.min(p.filled, p.tier?.entryQuantity ?? p.quantity) > (p.tier?.offset ?? 0)) {
+        return { text: `已成交，停損停利尚未建立${p.issues.length ? `（${p.issues[p.issues.length - 1]!.detail}）` : ''}`, tone: 'err', attention: true };
+    }
     if (p.exit?.status === 'unknown' && !p.exit.acknowledged) return { text: EXIT_TEXT.unknown!, tone: 'err', attention: true };
     if (unprotected > 0) return { text: `未受保護 ${unprotected} ${unit}，請對帳後處理`, tone: 'err', attention: true };
     if (workingEntryAfterExit(p) > 0) return { text: `已出場，進場單仍有 ${workingEntryAfterExit(p)} ${unit}未成交`, tone: 'err', attention: true };
