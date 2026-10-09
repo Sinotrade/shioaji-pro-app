@@ -15,6 +15,7 @@ import { getAccountState } from '../account-store';
 import type { AccountRef } from '../bracket-core';
 import { ensureContract } from '../contracts-cache';
 import { cancelOrders, fetchPositions, fetchTrades } from '../shioaji';
+import { captureServerMode, type ServerModeGuard } from '../server-info-store';
 import { placeQuickOrder } from '../trade';
 import type { AccountedPosition, Account } from '../types/portfolio';
 import type { Trade } from '../types/order';
@@ -128,6 +129,17 @@ export async function executeFlatten(scope: FlattenScope, hooks: FlattenHooks): 
         result.notSent.push('有條件單剛觸發、委託仍在送出中，未刪單也未平倉；請稍後再試');
         return result;
     }
+    if (hooks.waitInFlight) {
+        // an order that just went out may have armed new protection: stop again
+        const again = await hooks.stopConditional();
+        result.stopped += again.stopped;
+        if (again.failed.length) {
+            result.notSent.push(...again.failed, '條件單沒有全部停止，未刪單也未平倉；請處理後再試');
+            return result;
+        }
+    }
+    // holdings read in this environment are only closed in it
+    const sameServer = captureServerMode();
     const accounts = accountsFor(scope);
     const query = createAccountQuery();
     // 2. cancel working orders, per account, and wait for each answer
@@ -156,6 +168,10 @@ export async function executeFlatten(scope: FlattenScope, hooks: FlattenHooks): 
         });
     }
     // 3. read positions again and close exactly what is held
+    if (!sameServer()) {
+        result.notSent.push('伺服器或模擬／正式模式已切換，未平倉');
+        return result;
+    }
     for (const account of accounts) {
         const type = account.account_type as 'S' | 'F';
         if (blocked.has(`${type}:${account.account_id}:*`)) continue;
@@ -175,7 +191,7 @@ export async function executeFlatten(scope: FlattenScope, hooks: FlattenHooks): 
                 continue;
             }
             try {
-                await sendClose(o, account);
+                await sendClose(o, account, sameServer);
                 result.sent.push({ code: o.code, action: o.action, quantity: o.quantity, market: o.market });
             } catch (e) {
                 const notStarted = (e as { mutationNotStarted?: boolean })?.mutationNotStarted;
@@ -186,12 +202,12 @@ export async function executeFlatten(scope: FlattenScope, hooks: FlattenHooks): 
     return result;
 }
 
-async function sendClose(o: FlattenOrder, account: Account) {
+async function sendClose(o: FlattenOrder, account: Account, serverMode: ServerModeGuard) {
     const contract = await ensureContract(o.code) as Awaited<ReturnType<typeof ensureContract>> & { limit_up?: number; limit_down?: number };
     if (o.market === 'futures') {
         // 範圍市價 + 平倉: the broker refuses closing more than is open
         await placeQuickOrder(contract, o.action, null, o.quantity, {
-            source: 'auto', bypassRisk: true, account, ocType: 'Cover',
+            source: 'auto', bypassRisk: true, account, ocType: 'Cover', serverMode,
             ...(contract.security_type === 'FUT' || contract.security_type === 'OPT' ? { futuresPriceType: 'MKP' as const } : {}),
         });
         return;
@@ -200,10 +216,10 @@ async function sendClose(o: FlattenOrder, account: Account) {
     // IntradayOdd limit at the price limit (零股沒有市價)
     const lots = Math.floor(o.quantity / 1000);
     const odd = o.quantity % 1000;
-    if (lots > 0) await placeQuickOrder(contract, o.action, null, lots, { source: 'auto', bypassRisk: true, account });
+    if (lots > 0) await placeQuickOrder(contract, o.action, null, lots, { source: 'auto', bypassRisk: true, account, serverMode });
     if (odd > 0) {
         const limit = o.action === 'Sell' ? contract.limit_down : contract.limit_up;
         if (!limit || !(limit > 0)) throw Object.assign(new Error(`零股 ${odd} 股需要漲跌停價，未送出`), { mutationNotStarted: lots === 0 });
-        await placeQuickOrder(contract, o.action, limit, odd, { source: 'auto', bypassRisk: true, account, orderLot: 'IntradayOdd' });
+        await placeQuickOrder(contract, o.action, limit, odd, { source: 'auto', bypassRisk: true, account, orderLot: 'IntradayOdd', serverMode });
     }
 }

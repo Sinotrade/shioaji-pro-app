@@ -37,7 +37,11 @@ export async function stopConditionalInScope(scope: FlattenScope): Promise<{ sto
     }
     for (const v of bracketViews(getBackgroundPrograms())) {
         const account = { account_type: v.account.accountType, broker_id: v.account.brokerId, account_id: v.account.accountId };
-        if (!v.actions.markHandled || !(inScope(scope, account, v.orderCode) || inScope(scope, account, v.quoteCode))) continue;
+        if (!(inScope(scope, account, v.orderCode) || inScope(scope, account, v.quoteCode))) continue;
+        const ended = v.state === 'done' || v.state === 'handled' || v.state === 'rearmed';
+        if (ended) continue;
+        // still tracking but cannot be ended now (an order is leaving): not stopped
+        if (!v.actions.markHandled) { failed.push(`${v.quoteCode} 括號單正在送單，暫時無法停止`); continue; }
         await tryDo(`${v.quoteCode} 括號單`, () => markBackgroundHandled(v.programId, v.levelId));
     }
     return { stopped, failed };
@@ -56,7 +60,14 @@ export function flattenSummary(r: FlattenResult): string {
 export const IN_FLIGHT_WAIT_MS = 10_000;
 /** A conditional order that already fired is sending its order: wait for its answer. */
 export async function waitInFlight(scope: FlattenScope, maxMs = IN_FLIGHT_WAIT_MS): Promise<boolean> {
-    const busy = () => getExits().some(e => e.status === 'sending' && inScope(scope, e.account, e.orderCode));
+    const busy = () => getExits().some(e => e.status === 'sending' && inScope(scope, e.account, e.orderCode))
+        // background programs: an order still leaving
+        || getBackgroundPrograms().some(p => {
+            const a = p.binding.account;
+            const account = { account_type: a.accountType, broker_id: a.brokerId, account_id: a.accountId };
+            return (inScope(scope, account, p.binding.contract.orderCode) || inScope(scope, account, p.binding.contract.quoteCode))
+                && p.levels.some(lv => lv.orders.some(o => o.status === 'pendingSubmit'));
+        });
     const until = Date.now() + maxMs;
     while (busy()) {
         if (Date.now() >= until) return false;
@@ -66,16 +77,30 @@ export async function waitInFlight(scope: FlattenScope, maxMs = IN_FLIGHT_WAIT_M
 }
 
 let flattening = false;
-export async function runFlatten(scope: FlattenScope): Promise<FlattenResult> {
-    // one at a time: two runs could read the same holdings and both close them
-    if (flattening) throw new Error('全平並取消正在執行，請等它完成');
+const BUSY = '全平並取消正在執行（可能在其他視窗），請等它完成';
+/** One at a time across every window of this App (two runs could read the
+ * same holdings and both close them). */
+async function exclusively<T>(fn: () => Promise<T>): Promise<T> {
+    if (flattening) throw new Error(BUSY);
     flattening = true;
-    let r: FlattenResult;
     try {
-        r = await executeFlatten(scope, { stopConditional: () => stopConditionalInScope(scope), waitInFlight: () => waitInFlight(scope) });
+        const locks = typeof navigator !== 'undefined' ? (navigator as Navigator & { locks?: LockManager }).locks : undefined;
+        if (!locks?.request) return await fn();
+        let ran = false;
+        const out = await locks.request('sj-pro-flatten', { ifAvailable: true }, async lock => {
+            if (!lock) return undefined;
+            ran = true;
+            return await fn();
+        });
+        if (!ran) throw new Error(BUSY);
+        return out as T;
     } finally {
         flattening = false;
     }
+}
+
+export async function runFlatten(scope: FlattenScope): Promise<FlattenResult> {
+    const r = await exclusively(() => executeFlatten(scope, { stopConditional: () => stopConditionalInScope(scope), waitInFlight: () => waitInFlight(scope) }));
     const bad = r.cancelFailed.length + r.notSent.length + r.skipped.length > 0;
     notify({ kind: bad ? 'err' : 'ok', title: bad ? '全平並取消未完全完成' : '全平並取消已送出', body: flattenSummary(r) });
     return r;

@@ -13,6 +13,7 @@ const m = vi.hoisted(() => ({
     group: vi.fn(async (_ids: string[], _a: string) => undefined),
     pauseStopsExits: false,
     exits: [] as unknown[],
+    programs: [] as unknown[],
 }));
 vi.mock('../trigger-engine', () => ({
     getDisplayTriggers: () => m.triggers, setTriggerPaused: m.pause, removeTriggerStrict: m.remove, onTimedFlatten: () => undefined,
@@ -20,7 +21,7 @@ vi.mock('../trigger-engine', () => ({
     setTriggerGroup: m.group,
 }));
 vi.mock('../bracket', () => ({ getBrackets: () => [], dismissBracket: m.dismiss }));
-vi.mock('../execution/background', () => ({ getBackgroundPrograms: () => [], markBackgroundHandled: m.handled,
+vi.mock('../execution/background', () => ({ getBackgroundPrograms: () => m.programs, markBackgroundHandled: m.handled,
     pauseBackgroundProgram: m.bgPause, resumeBackgroundProgram: m.bgPause }));
 vi.mock('../trade', () => ({ notify: vi.fn() }));
 vi.mock('./settings', () => ({ getConditionalSettings: () => ({ pauseStopsExits: m.pauseStopsExits }) }));
@@ -89,6 +90,18 @@ describe('waitInFlight', () => {
         expect(await p).toBe(false);
         m.exits = [{ status: 'working', account: F, orderCode: 'TXFJ6' }];
         expect(await waitInFlight({ type: 'all' }, 1000)).toBe(true);
+        vi.useRealTimers();
+    });
+
+    it('a background program in scope whose order is still leaving keeps it waiting', async () => {
+        vi.useFakeTimers();
+        m.exits = [];
+        m.programs = [{ binding: { account: { accountType: 'F', brokerId: 'b', accountId: 'a' }, contract: { orderCode: 'TXFJ6', quoteCode: 'TXFR1' } },
+            levels: [{ orders: [{ status: 'pendingSubmit' }] }] }];
+        const p = waitInFlight({ type: 'all' }, 500);
+        await vi.advanceTimersByTimeAsync(700);
+        expect(await p).toBe(false);
+        m.programs = [];
         vi.useRealTimers();
     });
 });

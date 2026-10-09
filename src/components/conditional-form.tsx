@@ -665,7 +665,13 @@ function TimeForm({ target, onClose, defaults }: { target: Target; onClose: () =
     const [scope, setScope] = useState<'code' | 'account'>('code');
     const { busy, error, submit } = useSubmit();
     const unit = target.futures ? '口' : '張';
-    const closeAt = target.futures ? (session === 'day' ? taipeiTimeToday('13:45') : taipeiTimeToday('05:00', Date.now(), true)) : taipeiTimeToday('13:30');
+    // expiry day (last trading day): futures close at 13:30, no night session
+    const lastDay = (target.contract as { last_trading_date?: string } | undefined)?.last_trading_date;
+    const today = (() => { const p = taipeiParts(Date.now()); return `${p.y}-${String(p.mo).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`; })();
+    const expiryDay = !!lastDay && lastDay === today;
+    const closeAt = target.futures
+        ? (expiryDay ? taipeiTimeToday('13:30') : session === 'day' ? taipeiTimeToday('13:45') : taipeiTimeToday('05:00', Date.now(), true))
+        : taipeiTimeToday('13:30');
     const leadN = Number(lead);
     const at = mode === 'send' ? taipeiTimeToday(time) : closeAt !== null && Number.isSafeInteger(leadN) && leadN >= 1 && leadN <= 60 ? closeAt - leadN * 60_000 : null;
     const q = Number(qty);
@@ -716,10 +722,10 @@ function TimeForm({ target, onClose, defaults }: { target: Target; onClose: () =
                 <>
                     <div className={styles.formRow}>
                         <span className={styles.label}>盤別</span>
-                        {target.futures ? (
+                        {target.futures && !expiryDay ? (
                             <Seg label='盤別' value={session} onChange={setSession}
                                 options={[{ id: 'day', label: '日盤 13:45' }, { id: 'night', label: '夜盤 05:00' }]} />
-                        ) : <span>收盤 13:30</span>}
+                        ) : <span>{expiryDay ? '最後交易日收盤 13:30' : '收盤 13:30'}</span>}
                         <span>提前</span>
                         <input className={styles.inputNarrow} value={lead} inputMode='numeric' aria-label='提前分鐘' onChange={e => setLead(e.target.value)} />
                         <span>分鐘</span>

@@ -13,7 +13,9 @@ const m = vi.hoisted(() => ({
     cancel: vi.fn(),
     place: vi.fn(),
     order: [] as string[],
+    same: true,
 }));
+vi.mock('../server-info-store', () => ({ captureServerMode: () => () => m.same }));
 vi.mock('../account-store', () => ({ getAccountState: () => ({ accounts: [F, S] }) }));
 vi.mock('../account-tradable', () => ({ canTrade: () => true }));
 vi.mock('../account-query', () => ({ createAccountQuery: () => ({ read: (_t: string, a: Account, f: (a: Account) => unknown) => f(a) }) }));
@@ -34,6 +36,7 @@ const working = (id: string, code: string, account: Account) => ({ contract: { c
     status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, deals: [] } });
 
 beforeEach(() => {
+    m.same = true;
     m.order = [];
     for (const f of [m.trades, m.positions, m.cancel, m.place]) f.mockReset();
     m.trades.mockResolvedValue([]);
@@ -114,5 +117,22 @@ describe('executeFlatten', () => {
         expect(r2.notSent.join()).toContain('送出中');
         expect(m.cancel).not.toHaveBeenCalled();
         expect(m.place).not.toHaveBeenCalled();
+    });
+
+    it('after waiting for in-flight orders the conditional orders are stopped again; a server switch stops the close', async () => {
+        const stops = vi.fn(async () => ({ stopped: 1, failed: [] as string[] }));
+        m.positions.mockImplementation(async (a: Account) => a === F ? [{ id: 1, code: 'TXFJ6', direction: 'Buy', quantity: 2 }] : []);
+        m.trades.mockImplementation(async () => { m.same = false; return []; }); // the mode changes meanwhile
+        const r = await executeFlatten({ type: 'all' }, { stopConditional: stops, waitInFlight: async () => true });
+        expect(stops).toHaveBeenCalledTimes(2);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(r.notSent.join()).toContain('已切換');
+    });
+
+    it('every close carries the same server-mode guard', async () => {
+        m.positions.mockImplementation(async (a: Account) => a === F ? [{ id: 1, code: 'TXFJ6', direction: 'Sell', quantity: 1 }] : []);
+        await executeFlatten({ type: 'all' }, { stopConditional });
+        expect(typeof (m.place.mock.calls[0]![4] as { serverMode: unknown }).serverMode).toBe('function');
+        expect(m.place.mock.calls[0]![1]).toBe('Buy');
     });
 });
