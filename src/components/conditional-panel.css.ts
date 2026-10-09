@@ -481,3 +481,6 @@ const switchBase = style({
 
 export const switchOff = style([switchBase]);
 export const switchOn = style([switchBase, { background: vars.color.accent, selectors: { '&::after': { left: '15px' } } }]);
+
+/** a number with its words: never split across lines */
+export const group = style({ display: 'inline-flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' });
