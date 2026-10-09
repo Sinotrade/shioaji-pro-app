@@ -339,6 +339,11 @@ describe('background rows', () => {
         await expect(engine.modifyTrigger('bg:trg:p1:L1', { price: 20100 })).rejects.toThrow('已穿過目前價格');
         expect(calls('execution_pause')).toHaveLength(0);
         m.create = async ({ program: p }) => { m.programs = [...m.programs, p]; return { accepted: true, notices: [], revision: 10 }; };
+        const orig = m.invoke.getMockImplementation()!;
+        m.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+            if (cmd === 'execution_pause') m.programs = (m.programs as OrderProgram[]).map(p => ({ ...p, status: 'paused' as const }));
+            return orig(cmd, args);
+        });
         await engine.modifyTrigger('bg:trg:p1:L1', { price: 19700, quantity: 2 });
         expect(calls('execution_pause').map(([, a]) => a)).toEqual([{ programId: 'trg:p1' }]);
         const created = calls('execution_create')[0]![1] as { program: OrderProgram };
