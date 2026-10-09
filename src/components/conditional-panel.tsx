@@ -13,6 +13,8 @@ import {
     History,
     Info,
     ListChecks,
+    OctagonX,
+    Settings2,
     Pause,
     Pencil,
     Play,
@@ -47,13 +49,17 @@ import {
 } from '../lib/trigger-engine';
 import { accountTag, bgBracketRows, KIND_LABEL, rowsForTab, TABS, type CondRow, type CondTab } from '../lib/conditional/rows';
 import { useConditionalView, useStreamStatus, type ConditionalView } from '../lib/conditional/use-conditional';
+import { useConditionalSettings } from '../lib/conditional/settings';
+import { useBracketPolicy } from '../lib/conditional/bracket-policy';
+import { pauseAll, pauseAllEligible } from '../lib/conditional/runtime';
 import { useBackgroundPrograms } from '../lib/execution/background';
 import { bracketViews } from '../lib/execution/bracket-contract';
 import { fmtClock, fmtNum } from '../lib/conditional/session';
 import type { ContractInfo } from '../lib/types/contract';
 import { PendingConfirmItemCard } from './pending-confirm';
 import { BracketRearm } from './background-bracket-status';
-import { NewConditionalDialog, SendControl, sendOf, ValidityControl, validityOf, type SendState, type ValidityState } from './conditional-form';
+import { ConditionalSettingsDialog, FlattenDialog } from './conditional-dialogs';
+import { FORM_DEFAULTS, NewConditionalDialog, SendControl, sendOf, ValidityControl, validityOf, type SendState, type ValidityState } from './conditional-form';
 import { useLastPrice } from './conditional-ui';
 import * as styles from './conditional-panel.css';
 
@@ -259,7 +265,7 @@ function RowActions({ row, expanded, onToggle, compact }: {
             {a.rearm && (
                 <button type='button' className={styles.button.primary} onClick={onToggle} aria-expanded={expanded}
                     title='重新查詢持倉、確認口數後，在這個盤別重新開始盯停損停利；不會立即送單'>
-                    在新盤別重新啟用…
+                    重新啟用…
                 </button>
             )}
             {a.handled && (
@@ -543,12 +549,12 @@ function TableRow({ row, expanded, onToggle }: { row: CondRow; expanded: boolean
     return (
         <>
             <tr className={cls || undefined}>
-                <td><ProductCell row={row} /></td>
+                <td className={styles.nameCell} title={row.code}><ProductCell row={row} /></td>
                 <td>{KIND_LABEL[row.kind]}</td>
                 <td><SideText side={row.side} /></td>
                 <td className={styles.mono}>{row.condition}</td>
                 <td><PriceCell row={row} /></td>
-                <td className={styles.tone[row.status.tone]}>{row.status.text}</td>
+                <td className={`${styles.tone[row.status.tone]} ${styles.statusCell}`}>{row.status.text}</td>
                 <td className={styles.muted}>{row.validity}</td>
                 <td><AccountText row={row} /></td>
                 <td><RowActions row={row} expanded={expanded} onToggle={onToggle} /></td>
@@ -651,6 +657,17 @@ export function ConditionalPanel({ contract }: { contract?: ContractInfo | null 
     const [tab, setTab] = useState<CondTab>('all');
     const [expanded, setExpanded] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
+    const [dialog, setDialog] = useState<'settings' | 'flatten' | null>(null);
+    const settings = useConditionalSettings();
+    useBracketPolicy(); // keeps 全部暫停 in line with the engine's pauseStopsExits
+    // the same rule as 全部暫停 itself
+    const legsOf = (r: CondRow): TriggerOrder[] => r.source.type === 'trigger' ? [r.source.trigger] : r.source.type === 'oco' ? r.source.triggers : [];
+    const eligible = view.rows.filter(r => r.source.type === 'bgBracket' ? r.actions.pause
+        : legsOf(r).some(t => !t.paused && !t.pending && pauseAllEligible(t, settings.pauseStopsExits)));
+    const anyPaused = view.rows.some(r => r.paused || legsOf(r).some(t => t.paused) || (r.source.type === 'bgBracket' && r.actions.resume));
+    const anyRunning = eligible.length > 0;
+    const pausable = anyRunning || anyPaused ? [true] : [];
+    const pa = useRun();
     const rows = useMemo(() => rowsForTab(view, tab), [view, tab]);
     const toggle = (id: string) => setExpanded(e => e === id ? null : id);
     const status = runStatus(view);
@@ -662,6 +679,9 @@ export function ConditionalPanel({ contract }: { contract?: ContractInfo | null 
             <span className={styles.grow} />
             <button type='button' className={styles.iconButton.plain} title='新增條件單' aria-label='新增條件單' onClick={() => setCreating(true)}>
                 <Plus size={13} aria-hidden />
+            </button>
+            <button type='button' className={styles.iconButton.plain} title='設定' aria-label='設定' onClick={() => setDialog('settings')}>
+                <Settings2 size={13} aria-hidden />
             </button>
         </div>
     ) : (
@@ -677,6 +697,26 @@ export function ConditionalPanel({ contract }: { contract?: ContractInfo | null 
             <button type='button' className={styles.button.primary} onClick={() => setCreating(true)}>
                 <Plus size={13} aria-hidden />新增條件單
             </button>
+            {!nothing && (
+                <>
+                    <button type='button' className={styles.button.plain} onClick={() => setDialog('settings')}>
+                        <Settings2 size={13} aria-hidden />設定
+                    </button>
+                    <button type='button' className={styles.button.plain} disabled={pa.busy || pausable.length === 0}
+                        title={settings.pauseStopsExits ? '暫停全部條件單（含停損停利；暫停前已觸發、正在送出的平倉單照常送出）'
+                            : '暫停新進場的條件單；停損停利保護繼續執行（可在設定修改）'}
+                        onClick={() => void pa.run(async () => {
+                            const r = await pauseAll(anyRunning);
+                            if (r.failed.length) throw new Error(r.failed.join('；'));
+                        })}>
+                        {anyRunning ? <><Pause size={13} aria-hidden />全部暫停</> : <><Play size={13} aria-hidden />全部恢復</>}
+                    </button>
+                    <button type='button' className={styles.button.danger} onClick={() => setDialog('flatten')}>
+                        <OctagonX size={13} aria-hidden />全平並取消
+                    </button>
+                </>
+            )}
+            {pa.message && <span className={styles.message[pa.message.tone]}>{pa.message.text}</span>}
         </div>
     );
     return (
@@ -709,7 +749,10 @@ export function ConditionalPanel({ contract }: { contract?: ContractInfo | null 
                     </>
                 )}
             </div>
-            {creating && <NewConditionalDialog contract={contract ?? null} onClose={() => setCreating(false)} />}
+            {creating && <NewConditionalDialog contract={contract ?? null} onClose={() => setCreating(false)} defaults={{ ...FORM_DEFAULTS,
+                send: settings.defaultSend, validity: settings.defaultValidity, ocoMode: settings.ocoMode, quickQty: settings.quickQty }} />}
+            {dialog === 'settings' && <ConditionalSettingsDialog onClose={() => setDialog(null)} />}
+            {dialog === 'flatten' && <FlattenDialog contract={contract ?? null} rows={view.rows} onClose={() => setDialog(null)} />}
         </div>
     );
 }

@@ -16,6 +16,7 @@ const m = vi.hoisted(() => ({
     remove: vi.fn(async () => undefined),
     resolve: vi.fn(async () => undefined),
     modify: vi.fn(async () => undefined),
+    pauseAll: vi.fn(async () => ({ changed: 1, failed: [] as string[] })),
     group: vi.fn(async () => undefined),
     priv: true,
 }));
@@ -59,6 +60,11 @@ vi.mock('./conditional-form', async () => ({
     ...(await vi.importActual<typeof import('./conditional-form')>('./conditional-form')),
     NewConditionalDialog: () => createElement('div', { id: 'new-dialog' }),
 }));
+vi.mock('../lib/conditional/bracket-policy', () => ({ useBracketPolicy: () => null }));
+vi.mock('../lib/conditional/runtime', () => ({ pauseAll: m.pauseAll,
+    pauseAllEligible: (t: { role?: string; bracketId?: string }) => t.role === 'entry' && !t.bracketId }));
+vi.mock('./conditional-dialogs', () => ({ ConditionalSettingsDialog: () => createElement('div', { id: 'settings-dialog' }),
+    FlattenDialog: () => createElement('div', { id: 'flatten-dialog' }) }));
 vi.mock('../lib/conditional/panel-bracket', () => ({ placePanelBracket: vi.fn() }));
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [], selectedFutures: null, selectedStock: null }) }));
 
@@ -176,6 +182,17 @@ describe('ConditionalPanel', () => {
         await click(button(r, '現在送出'));
         await click(button(r, '再按一次確認送出'));
         expect(m.resolve).toHaveBeenCalledWith('d', 'send', { allowUnpast: false });
+    });
+
+    it('header: 設定 and 全平並取消 open their dialogs; 全部暫停 pauses (entries by default)', async () => {
+        m.sources = sources({ triggers: [trig({ role: 'entry' })] });
+        const r = render();
+        await click(button(r, '全部暫停'));
+        expect(m.pauseAll).toHaveBeenCalledWith(true);
+        await click(button(r, '設定'));
+        expect(r.root.findAll(n => n.props.id === 'settings-dialog')).toHaveLength(1);
+        await click(button(r, '全平並取消'));
+        expect(r.root.findAll(n => n.props.id === 'flatten-dialog')).toHaveLength(1);
     });
 
     it('a 二擇一 is paused / cancelled as one group (one command, no tick between legs)', async () => {

@@ -3,6 +3,7 @@
 
 import { X } from 'lucide-react';
 import { useSyncExternalStore, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useEscClose } from '../hooks/use-esc-close';
 import { getQuote, subscribeQuoteStore } from '../lib/stream';
 import { conditionalDemoActive, DEMO_PRICES } from '../lib/conditional/demo';
@@ -30,7 +31,8 @@ export function Dialog({ title, icon, onClose, children, footer, narrow, tone }:
     tone?: 'danger';
 }) {
     useEscClose(onClose);
-    return (
+    // a portal: grid panels are transformed, which would trap a fixed overlay inside the panel
+    const node = (
         <div className={styles.overlay} onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
             <div className={narrow ? styles.dialogNarrow : styles.dialog} role='dialog' aria-modal='true' aria-label={title}>
                 <div className={styles.header}>
@@ -43,4 +45,5 @@ export function Dialog({ title, icon, onClose, children, footer, narrow, tone }:
             </div>
         </div>
     );
+    return typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }
