@@ -484,7 +484,7 @@ export const switchOn = style([switchBase, { background: vars.color.accent, sele
 
 // ---- settings ----
 
-export const settings = style({ margin: '-12px' });
+export const settings = style({ margin: '-12px -12px 0' });
 
 export const setting = style({
     display: 'flex',
@@ -503,3 +503,7 @@ export const settingSection = style({
     borderBottom: `1px solid ${vars.color.border}`,
 });
 export const settingEmbed = style({ padding: '0 12px 10px', borderBottom: `1px solid ${vars.color.border}` });
+
+export const nameCell = style({ maxWidth: '190px', overflow: 'hidden', textOverflow: 'ellipsis' });
+export const statusCell = style({});
+globalStyle(`${table} td.${statusCell}`, { whiteSpace: 'normal', minWidth: '140px', maxWidth: '260px' });

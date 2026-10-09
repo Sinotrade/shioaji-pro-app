@@ -264,7 +264,7 @@ function RowActions({ row, expanded, onToggle, compact }: {
             {a.rearm && (
                 <button type='button' className={styles.button.primary} onClick={onToggle} aria-expanded={expanded}
                     title='重新查詢持倉、確認口數後，在這個盤別重新開始盯停損停利；不會立即送單'>
-                    在新盤別重新啟用…
+                    重新啟用…
                 </button>
             )}
             {a.handled && (
@@ -548,12 +548,12 @@ function TableRow({ row, expanded, onToggle }: { row: CondRow; expanded: boolean
     return (
         <>
             <tr className={cls || undefined}>
-                <td><ProductCell row={row} /></td>
+                <td className={styles.nameCell} title={row.code}><ProductCell row={row} /></td>
                 <td>{KIND_LABEL[row.kind]}</td>
                 <td><SideText side={row.side} /></td>
                 <td className={styles.mono}>{row.condition}</td>
                 <td><PriceCell row={row} /></td>
-                <td className={styles.tone[row.status.tone]}>{row.status.text}</td>
+                <td className={`${styles.tone[row.status.tone]} ${styles.statusCell}`}>{row.status.text}</td>
                 <td className={styles.muted}>{row.validity}</td>
                 <td><AccountText row={row} /></td>
                 <td><RowActions row={row} expanded={expanded} onToggle={onToggle} /></td>

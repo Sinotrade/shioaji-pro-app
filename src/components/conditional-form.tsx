@@ -654,7 +654,12 @@ function TimeForm({ target, onClose, defaults }: { target: Target; onClose: () =
     const [action, setAction] = useState<'Buy' | 'Sell'>('Sell');
     const [qty, setQty] = useState('1');
     const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : 'MKT', ticks: '0' });
-    const [session, setSession] = useState<'day' | 'night'>('day');
+    // the session still to come: after the day close (or before 05:00) it is the night one
+    const [session, setSession] = useState<'day' | 'night'>(() => {
+        const p = taipeiParts(Date.now());
+        const m = p.h * 60 + p.mi;
+        return m >= 13 * 60 + 45 || m < 5 * 60 ? 'night' : 'day';
+    });
     const [lead, setLead] = useState(target.futures ? '5' : '10');
     const [scope, setScope] = useState<'code' | 'account'>('code');
     const { busy, error, submit } = useSubmit();

@@ -10,7 +10,8 @@ import { accountTag, type CondRow } from '../lib/conditional/rows';
 import { planFlatten, workingInScope, inScope, type FlattenResult, type FlattenScope } from '../lib/conditional/flatten';
 import { flattenSummary, runFlatten } from '../lib/conditional/runtime';
 import { setConditionalSettings, useConditionalSettings } from '../lib/conditional/settings';
-import { conditionalDemoActive } from '../lib/conditional/demo';
+import { conditionalDemoActive, demoFlattenState } from '../lib/conditional/demo';
+import { getCachedContract } from '../lib/contracts-cache';
 import { backgroundSupported } from '../lib/execution/background';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { setRiskSettings, useRiskSettings } from '../lib/risk';
@@ -110,13 +111,17 @@ function scopeOf(kind: ScopeKind, contract: ContractInfo | null, account: Accoun
 
 const KIND_WORD: Record<string, string> = { trigger: '觸價', oco: '二擇一', bracket: '括號', time: '時間', grid: '蛛網' };
 
-export function FlattenDialog({ contract, rows, onClose }: { contract: ContractInfo | null; rows: CondRow[]; onClose: () => void }) {
+export function FlattenDialog({ contract: given, rows, onClose }: { contract: ContractInfo | null; rows: CondRow[]; onClose: () => void }) {
+    // dev-only sample (`?condDemo`): sample holdings, nothing is sent
+    const demo = conditionalDemoActive() ? demoFlattenState() : null;
+    const contract = given ?? (demo ? getCachedContract('TXFJ6') ?? null : null);
     const futures = contract?.security_type === 'FUT' || contract?.security_type === 'OPT';
     const accounts = useAccounts();
-    const trading = useTradingState();
+    const live = useTradingState();
+    const trading = demo ? { ...live, positions: demo.positions as never, trades: demo.trades as never } : live;
     const priv = usePrivacyMode();
     const selected = futures ? accounts.selectedFutures : accounts.selectedStock;
-    const account: AccountRef | null = selected && (selected.account_type === 'S' || selected.account_type === 'F')
+    const account: AccountRef | null = demo ? demo.account : selected && (selected.account_type === 'S' || selected.account_type === 'F')
         ? { account_type: selected.account_type, broker_id: selected.broker_id, account_id: selected.account_id } : null;
     const [kind, setKind] = useState<ScopeKind>(contract ? 'code' : 'account');
     const [armed, setArmed] = useState(false);
@@ -133,7 +138,7 @@ export function FlattenDialog({ contract, rows, onClose }: { contract: ContractI
     }, [armed]);
     const preview = useMemo(() => {
         if (!scope) return null;
-        const conditional = rows.filter(r => r.actions.cancel || r.actions.handled || r.kind === 'bracket')
+        const conditional = rows.filter(r => ['trigger', 'oco', 'bracket', 'bgBracket'].includes(r.source.type))
             .filter(r => [r.code, r.orderCode].some(c => inScope(scope, r.account, c)));
         const byKind = new Map<string, number>();
         for (const r of conditional) byKind.set(r.kind, (byKind.get(r.kind) ?? 0) + 1);
@@ -191,7 +196,8 @@ export function FlattenDialog({ contract, rows, onClose }: { contract: ContractI
                 </div>
             )}
             <div className={`${styles.formRow} ${styles.muted}`}>
-                <Info size={13} aria-hidden />漲跌停或無對手單時可能無法成交，剩餘部位會留在面板與持倉提醒；送出前會重新查詢委託與持倉
+                <Info size={13} aria-hidden style={{ flex: 'none' }} />
+                <span className={styles.grow}>漲跌停或無對手單時可能無法成交，剩餘部位會留在面板與持倉提醒；送出前會重新查詢委託與持倉</span>
             </div>
             {error && <div className={styles.message.err} role='alert'>{error}</div>}
         </Dialog>

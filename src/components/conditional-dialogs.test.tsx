@@ -27,7 +27,7 @@ vi.mock('./conditional-form', () => ({ Seg: ({ options, onChange }: { options: {
 const { FlattenDialog } = await import('./conditional-dialogs');
 
 const row = { id: 'r', kind: 'trigger', code: 'TXFJ6', orderCode: 'TXFJ6', account: { account_type: 'F', broker_id: 'b', account_id: '9804567' },
-    actions: { cancel: true }, attention: false } as never;
+    actions: { cancel: true }, attention: false, source: { type: 'trigger' } } as never;
 
 function render() {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);

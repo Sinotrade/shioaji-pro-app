@@ -121,3 +121,15 @@ function demoSources(now: number): Sources {
         executing: true, envNow: DEMO_ENV, streamLive: true, now,
     };
 }
+
+/** Demo holdings / working orders for the 全平並取消 preview (nothing is sent in the demo). */
+export function demoFlattenState() {
+    const account = DEMO_ACCOUNTS[0]!;
+    return {
+        account: { account_type: 'F' as const, broker_id: account.broker_id, account_id: account.account_id },
+        positions: [{ id: 1, code: 'TXFJ6', direction: 'Buy' as const, quantity: 2, price: 48150, last_price: 48212, pnl: 0, account }],
+        trades: [1, 2, 3, 4].map(i => ({ contract: { code: 'TXFJ6', target_code: 'TXFJ6', security_type: 'FUT', exchange: 'TAIFEX' },
+            order: { id: `demo-w${i}`, account, quantity: 1, action: 'Buy', price: 48000 - i * 50 },
+            status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, deals: [] } })),
+    };
+}
