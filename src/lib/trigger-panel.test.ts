@@ -32,6 +32,7 @@ vi.mock('./stream', () => ({
     onOrderEvent: () => () => undefined,
     onAnyTick: (cb: typeof m.tick) => { m.tick = cb; return () => undefined; },
     onOddLotTick: (cb: typeof m.tick) => { m.oddTick = cb; return () => undefined; },
+    onAnyBidAsk: (cb: (b: unknown) => void) => { (m as Record<string, unknown>).bidask = cb; return () => undefined; },
     onStreamEvent: (name: string, cb: () => void) => { if (name === 'heartbeat') m.heartbeat = cb; return () => undefined; },
 }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts,
@@ -245,5 +246,138 @@ describe('entries and the finished list (#226)', () => {
         await setStatus('live');
         const texts = only().history?.map(h => h.text) ?? [];
         expect(texts).toEqual(expect.arrayContaining(['連線中斷，暫停盯價', '重新連線，恢復盯價']));
+    });
+});
+
+const bidask = async (bid: number, ask: number) => {
+    (m as unknown as { bidask: (b: unknown) => void }).bidask({ code: 'TXFR1', bid_price: [String(bid)], ask_price: [String(ask)] });
+    await flush();
+};
+const placeOpts = (i = 0) => m.place.mock.calls[i]![4] as Record<string, unknown>;
+
+describe('condition kinds (#226)', () => {
+    it('下穿 fires only on a crossing: a first tick already below does not fire', async () => {
+        await boot();
+        await entry({ cross: true });
+        await tick(47900); // already below: no baseline yet
+        expect(m.place).not.toHaveBeenCalled();
+        await tick(48100); // seen above
+        await tick(48000); // crosses down (≤)
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
+    it('a crossing trigger after a reload needs a fresh crossing (never held as 待確認)', async () => {
+        await boot();
+        await entry({ cross: true });
+        await tick(48100);
+        await boot({ keepStore: true });
+        await tick(47900);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(only().pending).toBeUndefined();
+        await tick(48050);
+        await tick(47990);
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
+    it('對手價: a sell watches the best bid, not the last trade', async () => {
+        await boot();
+        await entry({ source: 'opposite' });
+        await tick(48300);
+        await tick(47900); // a trade below does not matter
+        expect(m.place).not.toHaveBeenCalled();
+        await bidask(48100, 48105);
+        expect(m.place).not.toHaveBeenCalled();
+        await bidask(47999, 48002);
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
+    it('觸價後限價: trigger price moved N ticks, ROD, no IOC settle; 範圍市價 goes as MKP', async () => {
+        await boot();
+        await entry({ send: { type: 'LMT', ticks: -2 } });
+        await entry({ price: 47000, send: { type: 'MKP' } });
+        await tick(48300);
+        await tick(47950);
+        expect(m.place.mock.calls[0]![2]).toBe(47998);
+        expect(placeOpts().orderType).toBe('ROD');
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(engine.getExits()[0]!.status).toBe('working'); // resting: waits for its reports
+        await tick(46990);
+        expect(m.place.mock.calls[1]![2]).toBeNull();
+        expect(placeOpts(1).futuresPriceType).toBe('MKP');
+    });
+
+    it('a limit outside the price band is refused, nothing sent', async () => {
+        m.ensure.mockResolvedValue({ ...TXF, limit_up: 49000, limit_down: 47999 });
+        await boot();
+        await entry({ send: { type: 'LMT', ticks: -5 } });
+        await tick(48300);
+        await tick(47990);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(engine.getExits()[0]!.status).toBe('not-sent');
+    });
+
+    it('有效期: lapses at its time without sending; a past validity is refused', async () => {
+        await boot();
+        await entry({ validity: { type: 'session', until: Date.now() + 60_000 } });
+        await tick(48300);
+        await vi.advanceTimersByTimeAsync(65_000);
+        expect(engine.getTriggers()).toHaveLength(0);
+        expect(titles()).toContain('條件單已到期');
+        await tick(47900);
+        expect(m.place).not.toHaveBeenCalled();
+        const made = await entry({ validity: { type: 'date', until: Date.now() - 1 } });
+        expect(made).toBeNull();
+    });
+});
+
+describe('二擇一 (#226)', () => {
+    const pair = (mode: 'trigger' | 'fill', qty = 3) => engine.addTriggerGroup([
+        { code: 'TXFR1', condition: 'above', price: 48400, action: 'Buy', quantity: qty, kind: 'stop', role: 'entry', group: 'g', ocoMode: mode },
+        { code: 'TXFR1', condition: 'below', price: 47900, action: 'Sell', quantity: qty, kind: 'stop', role: 'entry', group: 'g', ocoMode: mode },
+    ], TXF as never);
+
+    it('both legs are created together; 觸發就刪 removes the other side at once', async () => {
+        await boot();
+        await pair('trigger');
+        expect(engine.getTriggers()).toHaveLength(2);
+        await tick(48200);
+        await tick(48400);
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
+    it('成交後刪對應口數: the other side waits, then loses exactly what filled (2 of 3)', async () => {
+        await boot();
+        await pair('fill');
+        await tick(48200);
+        await tick(48400); // buy side fires for 3
+        expect(m.place).toHaveBeenCalledTimes(1);
+        const other = only();
+        expect(other.ocoLock).toBeTruthy();
+        await tick(47800); // locked: never fires meanwhile
+        expect(m.place).toHaveBeenCalledTimes(1);
+        // the IOC check finds the exit cancelled after 2 filled
+        const rec = engine.getExits()[0]!;
+        engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled', deal_quantity: 2, cancel_quantity: 1,
+            deals: [{ seq: 's1', quantity: 2, price: 48400, ts: 1 }] } } as never);
+        await flush();
+        expect(only().quantity).toBe(1);
+        expect(only().ocoLock).toBeUndefined();
+        await tick(48000); // first tick after unlocking decides (not past)
+        await tick(47900);
+        expect(m.place).toHaveBeenCalledTimes(2);
+        expect(m.place.mock.calls[1]![3]).toBe(1);
+    });
+
+    it('成交後刪對應口數: fully filled removes the other side', async () => {
+        await boot();
+        await pair('fill', 2);
+        await tick(48200);
+        await tick(48400);
+        const rec = engine.getExits()[0]!;
+        engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Filled', deal_quantity: 2, cancel_quantity: 0,
+            deals: [{ seq: 's1', quantity: 2, price: 48400, ts: 1 }] } } as never);
+        await flush();
+        expect(engine.getTriggers()).toHaveLength(0);
     });
 });

@@ -27,6 +27,8 @@ export const DEMO_PRICES: Record<string, number> = { TXFJ6: 48212, MXFJ6: 48212,
 
 const F = { account_type: 'F' as const, broker_id: 'DEMO-F', account_id: '9804567' };
 const S = { account_type: 'S' as const, broker_id: 'DEMO-S', account_id: '0418812' };
+/** Demo accounts for the new-order forms (nothing can be created in the demo). */
+export const DEMO_ACCOUNTS = [F, S].map(a => ({ ...a, person_id: '', signed: true, username: '' }));
 
 function contract(code: string, name: string, security_type: 'FUT' | 'STK', tick: number): ContractInfo {
     return { code, name, symbol: code, security_type, exchange: security_type === 'FUT' ? 'TAIFEX' : 'TSE', category: '',
@@ -47,6 +49,15 @@ function primeDemoContracts() {
 
 export function conditionalDemoSources(now: number): Sources {
     primeDemoContracts();
+    return demoSources(now);
+}
+
+/** Make the demo products resolvable (forms). */
+export function primeConditionalDemo(): void {
+    primeDemoContracts();
+}
+
+function demoSources(now: number): Sources {
     const t0 = now - 4 * 3600_000;
     const at = (min: number) => t0 + min * 60_000;
     const base = { env: DEMO_ENV, createdAt: at(0) };

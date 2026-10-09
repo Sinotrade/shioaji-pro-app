@@ -38,6 +38,9 @@ export function backgroundEligible(t: NewTrigger, contract: ContractBase | undef
     // #226 entries open positions: kill switch / loss limits run in the
     // window's order path, which the background engine does not have yet
     if (t.role === 'entry') return false;
+    // #226 options the background engine does not have yet
+    if (t.cross || t.source === 'opposite' || (t.send && t.send.type !== 'MKT') || t.ocoMode
+        || (t.validity && t.validity.type !== 'session')) return false;
     if (t.group || t.bracketId || (t.orderLot && t.orderLot !== 'Common')) return false;
     if (t.account?.account_type !== 'F' || !t.env || !t.orderCode) return false;
     return contract?.security_type === 'FUT' || contract?.security_type === 'OPT';
