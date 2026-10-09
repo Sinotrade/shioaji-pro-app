@@ -24,7 +24,7 @@ vi.mock('../contracts-cache', () => ({ ensureContract: async (code: string) => c
 vi.mock('../shioaji', () => ({
     fetchTrades: (t: string, a: Account) => { m.order.push(`trades:${a.account_id}`); return m.trades(a); },
     fetchPositions: (t: string, a: Account) => { m.order.push(`positions:${a.account_id}`); return m.positions(a); },
-    cancelOrders: (ids: string[]) => { m.order.push(`cancel:${ids.join(',')}`); return m.cancel(ids); },
+    cancelVerifiedOrder: (row: { order: { id: string } }) => { m.order.push(`cancel:${row.order.id}`); return m.cancel([row.order.id]).then((r: { status: string; value?: unknown; reason?: unknown }[]) => r[0]!.status === 'fulfilled' ? r[0]!.value : Promise.reject(r[0]!.reason)); },
 }));
 vi.mock('../trade', () => ({ placeQuickOrder: (...a: unknown[]) => { m.order.push(`place:${(a[0] as { code: string }).code}`); return m.place(...a); } }));
 
@@ -134,5 +134,14 @@ describe('executeFlatten', () => {
         await executeFlatten({ type: 'all' }, { stopConditional });
         expect(typeof (m.place.mock.calls[0]![4] as { serverMode: unknown }).serverMode).toBe('function');
         expect(m.place.mock.calls[0]![1]).toBe('Buy');
+    });
+
+    it('a switch while the conditional orders are being stopped: nothing is cancelled or closed', async () => {
+        m.trades.mockImplementation(async (a: Account) => a === F ? [working('w1', 'TXFJ6', F)] : []);
+        m.positions.mockImplementation(async (a: Account) => a === F ? [{ id: 1, code: 'TXFJ6', direction: 'Buy', quantity: 2 }] : []);
+        const r = await executeFlatten({ type: 'all' }, { stopConditional: async () => { m.same = false; return { stopped: 0, failed: [] }; } });
+        expect(m.cancel).not.toHaveBeenCalled();
+        expect(m.place).not.toHaveBeenCalled();
+        expect(r.notSent.join()).toContain('已切換');
     });
 });

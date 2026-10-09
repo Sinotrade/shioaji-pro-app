@@ -7,6 +7,7 @@ import { dismissBracket, getBrackets } from '../bracket';
 import { isLive } from '../bracket-core';
 import { getBackgroundPrograms, markBackgroundHandled, pauseBackgroundProgram, resumeBackgroundProgram } from '../execution/background';
 import { bracketViews } from '../execution/bracket-contract';
+import { currentProtectionEnv } from '../protection-env';
 import { notify } from '../trade';
 import { getDisplayTriggers, getExits, onTimedFlatten, removeTriggerStrict, setTriggerGroup, setTriggerPaused, type TriggerOrder } from '../trigger-engine';
 import { executeFlatten, inScope, type FlattenResult, type FlattenScope } from './flatten';
@@ -142,6 +143,11 @@ export async function pauseAll(pause: boolean): Promise<{ changed: number; faile
 export function startConditionalRuntime(): void {
     onTimedFlatten(t => {
         if (!t.account) return;
+        // only in the environment it was set up in
+        if (currentProtectionEnv() !== t.env) {
+            notify({ kind: 'err', title: '收盤前平倉沒有執行', body: '伺服器或模擬／正式模式與設定時不同，沒有刪單或平倉' });
+            return;
+        }
         const scope: FlattenScope = t.time?.kind === 'flatten' && t.time.scope === 'account'
             ? { type: 'account', account: t.account }
             : { type: 'code', codes: codesOf(t), account: t.account };

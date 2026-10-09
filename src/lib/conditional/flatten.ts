@@ -14,7 +14,7 @@ import { canTrade } from '../account-tradable';
 import { getAccountState } from '../account-store';
 import type { AccountRef } from '../bracket-core';
 import { ensureContract } from '../contracts-cache';
-import { cancelOrders, fetchPositions, fetchTrades } from '../shioaji';
+import { cancelVerifiedOrder, fetchPositions, fetchTrades } from '../shioaji';
 import { captureServerMode, type ServerModeGuard } from '../server-info-store';
 import { placeQuickOrder } from '../trade';
 import type { AccountedPosition, Account } from '../types/portfolio';
@@ -118,6 +118,12 @@ function accountsFor(scope: FlattenScope): Account[] {
  * is retried automatically. */
 export async function executeFlatten(scope: FlattenScope, hooks: FlattenHooks): Promise<FlattenResult> {
     const result: FlattenResult = { stopped: 0, cancelled: 0, cancelFailed: [], sent: [], notSent: [], skipped: [] };
+    // bound to the server / mode it started on: any switch stops it before the next request
+    const sameServer = captureServerMode();
+    const switched = () => {
+        result.notSent.push('伺服器或模擬／正式模式已切換，已停止（未再刪單或平倉）');
+        return result;
+    };
     const stop = await hooks.stopConditional();
     result.stopped = stop.stopped;
     if (stop.failed.length) {
@@ -138,8 +144,7 @@ export async function executeFlatten(scope: FlattenScope, hooks: FlattenHooks): 
             return result;
         }
     }
-    // holdings read in this environment are only closed in it
-    const sameServer = captureServerMode();
+    if (!sameServer()) return switched();
     const accounts = accountsFor(scope);
     const query = createAccountQuery();
     // 2. cancel working orders, per account, and wait for each answer
@@ -156,7 +161,11 @@ export async function executeFlatten(scope: FlattenScope, hooks: FlattenHooks): 
         }
         const working = workingInScope(trades.map(t => ({ ...t, order: { ...t.order, account: t.order.account ?? account } })), scope);
         if (!working.length) continue;
-        const answers = await cancelOrders(working.map(t => t.order.id));
+        if (!sameServer()) return switched();
+        // each cancel targets the row just read (verified, not resolved by id from older state)
+        const answers = await Promise.allSettled(working.map(t => cancelVerifiedOrder(t, account, {
+            beforeSend: () => { if (!sameServer()) throw new Error('伺服器或模擬／正式模式已切換，未刪單'); },
+        })));
         answers.forEach((r, i) => {
             const t = working[i]!;
             const code = t.contract.target_code || t.contract.code;
@@ -168,10 +177,7 @@ export async function executeFlatten(scope: FlattenScope, hooks: FlattenHooks): 
         });
     }
     // 3. read positions again and close exactly what is held
-    if (!sameServer()) {
-        result.notSent.push('伺服器或模擬／正式模式已切換，未平倉');
-        return result;
-    }
+    if (!sameServer()) return switched();
     for (const account of accounts) {
         const type = account.account_type as 'S' | 'F';
         if (blocked.has(`${type}:${account.account_id}:*`)) continue;
