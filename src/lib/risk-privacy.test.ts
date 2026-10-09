@@ -4,7 +4,7 @@ vi.stubGlobal('window', new EventTarget());
 const store = new Map<string, string>();
 vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) });
 const { setPrivacyMoney } = await import('./privacy');
-const { checkOrderAllowed, reportDailyPnl, setRiskSettings } = await import('./risk');
+const { checkOrderAllowed, reportDailyPnl, setRiskSettings, subscribeRiskSettings } = await import('./risk');
 
 afterEach(() => {
     setPrivacyMoney(false);
@@ -20,4 +20,14 @@ it('masks the daily-loss amounts in the block reason when 遮金額 is on', () =
     const reason = checkOrderAllowed(1)!;
     expect(reason).toContain('下單封鎖');
     expect(reason).not.toMatch(/3500|3000/);
+});
+
+it('tells subscribers about every change of the settings and the daily PnL', () => {
+    const seen = vi.fn();
+    const off = subscribeRiskSettings(seen);
+    setRiskSettings({ locked: true });
+    reportDailyPnl(-10);
+    off();
+    setRiskSettings({ locked: false });
+    expect(seen).toHaveBeenCalledTimes(2);
 });

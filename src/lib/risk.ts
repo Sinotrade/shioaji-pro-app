@@ -76,6 +76,12 @@ export function reportDailyPnl(pnl: number) {
     }
 }
 
+/** Every change of the settings or the daily PnL (also from other windows). */
+export function subscribeRiskSettings(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+}
+
 export function getRiskSettings(): RiskSettings {
     return settings;
 }
