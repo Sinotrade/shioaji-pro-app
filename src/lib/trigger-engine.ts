@@ -64,6 +64,7 @@ import {
     getBackgroundPrices,
     getBackgroundPrograms,
     pauseBackgroundProgram,
+    readBackgroundProgram,
     refreshBackground,
     resumeBackgroundProgram,
     removeBackgroundTrigger,
@@ -673,8 +674,14 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
     }
     // it may have fired while this was on its way: replace it only when it is
     // still an untouched, armed condition
-    await refreshBackground();
-    const now = getBackgroundPrograms().find(p => p.id === programId)?.levels.find(lv => lv.id === row.background.levelId);
+    let fresh: Awaited<ReturnType<typeof readBackgroundProgram>>;
+    try {
+        fresh = await readBackgroundProgram(programId);
+    } catch (e) {
+        // cannot be sure it did not fire: leave it paused for the user to check
+        throw new Error(`修改沒有完成：無法確認原本的單狀態（${e instanceof Error ? e.message : String(e)}）。原本的單已暫停，請確認後按恢復或取消`);
+    }
+    const now = fresh?.status === 'paused' ? fresh.levels.find(lv => lv.id === row.background.levelId) : undefined;
     if (!now || now.phase !== 'idle' || now.pending || now.orders.length > 0 || now.position > 0) {
         await resumeBackgroundProgram(programId).catch(() => undefined);
         throw new Error('這張觸價單在修改期間已觸發或狀態已變，沒有修改；請看清單與委託');
