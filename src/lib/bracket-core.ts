@@ -95,6 +95,8 @@ export interface BracketPlan {
     exit: BracketExit | null;
     issues: BracketIssue[];
     dismissed?: boolean;
+    /** #226: user edits of stop / take (history). */
+    edits?: { at: number; text: string }[];
     createdAt: number;
     updatedAt: number;
 }

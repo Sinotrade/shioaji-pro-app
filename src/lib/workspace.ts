@@ -67,6 +67,7 @@ export type BlockType =
     | 'notices'
     | 'debug'
     | 'grid'
+    | 'conditional'
     | 'heatmap'
     | 'pulse'
     | 'signals'
@@ -441,6 +442,14 @@ export const BLOCK_META: Record<
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 13, minW: 4, minH: 10 },
+    },
+    conditional: {
+        label: '條件單管理',
+        description: '觸價單、二擇一、括號單集中查看、修改、暫停與取消',
+        category: 'trading',
+        pinnable: false,
+        singleton: true,
+        defaultSize: { w: 14, h: 10, minW: 4, minH: 6 },
     },
     heatmap: {
         label: '產業全景',

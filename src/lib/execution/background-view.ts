@@ -35,6 +35,9 @@ export function backgroundRowId(programId: string, levelId: string): string {
  * group, no odd lot, no alert, no bracket leg), with the contract known. */
 export function backgroundEligible(t: NewTrigger, contract: ContractBase | undefined): boolean {
     if (t.kind !== 'stop' && t.kind !== 'take') return false;
+    // #226 entries open positions: kill switch / loss limits run in the
+    // window's order path, which the background engine does not have yet
+    if (t.role === 'entry') return false;
     if (t.group || t.bracketId || (t.orderLot && t.orderLot !== 'Common')) return false;
     if (t.account?.account_type !== 'F' || !t.env || !t.orderCode) return false;
     return contract?.security_type === 'FUT' || contract?.security_type === 'OPT';
@@ -52,7 +55,7 @@ export function programForNewTrigger(t: TriggerOrder, contract: ContractBase): O
 const restoreReason = (p: OrderProgram, r: string | undefined): TriggerRestoreReason =>
     r === 'disconnect' || r === 'env' ? r
         // a trigger turned back on in a new session (contract v2) starts with a resume check
-        : r === 'resume' ? (p.id.startsWith('rearm:') ? 'rearm' : 'disconnect') : 'restart';
+        : r === 'resume' ? (p.id.startsWith('rearm:') ? 'rearm' : 'resume') : 'restart';
 
 /** A stop sells below / buys above; a take the other way round. */
 const kindOf = (condition: 'below' | 'above', action: 'Buy' | 'Sell'): 'stop' | 'take' =>
@@ -81,6 +84,7 @@ function row(p: OrderProgram, lv: Level): BackgroundTriggerOrder | null {
         createdAt: p.createdAt,
         ...(pending ? { pending } : {}),
         ...(lv.recross.includes('entry') ? { awaitingRecross: true } : {}),
+        ...(p.status === 'paused' ? { paused: true } : {}),
         background: { programId: p.id, levelId: lv.id },
     };
 }

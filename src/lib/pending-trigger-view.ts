@@ -14,7 +14,8 @@ export function contractLabel(code: string, contract: Pick<ContractInfo, 'name' 
     return month && !contract.name.includes(month) ? `${contract.name} ${month}` : contract.name;
 }
 
-export function kindLabel(t: Pick<TriggerOrder, 'kind' | 'bracketId'>): string {
+export function kindLabel(t: Pick<TriggerOrder, 'kind' | 'bracketId' | 'role'>): string {
+    if (t.role === 'entry') return '觸價單';
     const base = t.kind === 'take' ? '停利' : '停損';
     return t.bracketId ? `括號單${base}` : base;
 }

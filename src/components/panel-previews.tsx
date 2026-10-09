@@ -542,6 +542,21 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             ))}
         </Frame>
     ),
+    conditional: (
+        <Frame>
+            <Ln x={8} y={9} w={40} color={accent} o={0.8} />
+            <rect x='8' y='18' width='104' height='11' rx='2' fill={down} fillOpacity='0.12' />
+            <Ln x={12} y={22} w={26} />
+            <Ln x={70} y={22} w={30} color={down} o={0.9} />
+            {[0, 1, 2].map((i) => (
+                <g key={i}>
+                    <Ln x={12} y={38 + i * 12} w={26} />
+                    <Ln x={46} y={38 + i * 12} w={20} o={0.35} />
+                    <Ln x={78} y={38 + i * 12} w={18} color={accent} o={0.7} />
+                </g>
+            ))}
+        </Frame>
+    ),
     notices: (
         <Frame>
             <path

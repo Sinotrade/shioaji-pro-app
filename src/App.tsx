@@ -21,6 +21,7 @@ import { DepthLadder } from './components/depth-ladder';
 import { DepthMap } from './components/depth-map';
 import { EventToasts } from './components/event-toasts';
 import { PendingTriggers } from './components/pending-triggers';
+import { ConditionalPanel } from './components/conditional-panel';
 import { PendingConfirmPanel } from './components/pending-confirm';
 import { FeatureGate } from './components/feature-gate';
 import { FlashOrder } from './components/flash-order';
@@ -456,6 +457,8 @@ function BlockBody({
             ) : (
                 <BlockPlaceholder phase={missingContractPhase} />
             );
+        case 'conditional':
+            return <ConditionalPanel contract={contract} />;
         case 'heatmap':
             return <SectorHeatmap onPick={onSelectCode} />;
         case 'pulse':

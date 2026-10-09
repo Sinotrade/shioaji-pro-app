@@ -266,6 +266,17 @@ export async function removeBackgroundTrigger(programId: string): Promise<void> 
     }
 }
 
+/** Pause / resume a background program (#226 panel). Pausing stops new
+ * entries; a resumed trigger's first tick decides (already past → 待確認).
+ * An App without these commands refuses: nothing changes then. */
+export async function pauseBackgroundProgram(programId: string): Promise<void> {
+    await command('execution_pause', { programId });
+}
+
+export async function resumeBackgroundProgram(programId: string): Promise<void> {
+    await command('execution_resume', { programId });
+}
+
 export async function resolveBackgroundTrigger(programId: string, levelId: string, choice: 'send' | 'cancel' | 'keep',
     allowUnpast = false): Promise<void> {
     await command('execution_resolve_trigger', { request: { programId, levelId, choice, allowUnpast } });
