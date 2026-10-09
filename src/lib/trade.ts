@@ -182,7 +182,7 @@ export async function placeQuickOrder(
         beforeSend?: () => void;
         // 待確認觸價單在人工確認視窗顯示持續更新的目前成交價。
         confirmLivePriceCode?: string;
-        // 股票委託的 custom_field 標記（整零價差用來對回自己送出的委託）
+        // 委託的 custom_field 標記（整零價差、即時策略用來從委託清單對回自己送出的委託）
         customField?: string;
         // 讀下單回應的標頭（X-Shioaji-Instance，SDK 1.7.8+）
         onResponse?: (res: Response) => void;
@@ -350,6 +350,7 @@ async function sendOrder(
               price_type: market ? (credit?.futuresPriceType ?? 'MKT') : 'LMT',
               order_type: market ? 'IOC' : orderType,
               octype: ocType,
+              ...(customField ? { custom_field: customField } : {}),
           }, account, { agentInitiated, ...agentContext, ...(beforeDispatch ? { beforeDispatch } : {}) })
         : await placeStockOrder(contract, {
               action,
