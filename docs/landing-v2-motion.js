@@ -276,7 +276,7 @@
 
   // ---------- 一般卡片：觸發一次；大型示範視窗：原生 view() 或退回觸發一次 ----------
   function reveals() {
-    var sel = '.safe-list li, .skills .card, .dl .card, .oss, .dl-steps li, .hero-points li, .map-wrap, .tu-player, .safe-shot, .faq details';
+    var sel = '.safe-list li, .skills .card, .dl .card, .rel, .oss, .dl-steps li, .hero-points li, .map-wrap, .tu-player, .safe-shot, .faq details';
     var els = [].slice.call(document.querySelectorAll(sel));
     if (!(window.CSS && CSS.supports('animation-timeline: view()'))) els = els.concat([].slice.call(document.querySelectorAll('.feature > figure.demo:not(.sy-fig)')));
     if (!('IntersectionObserver' in window)) return;

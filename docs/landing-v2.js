@@ -44,6 +44,7 @@
       var ver = rel.tag_name || '';
       var verEl = document.getElementById('ver');
       if (verEl && ver) verEl.textContent = ver;
+      renderRelease(rel);
       var dlVer = document.getElementById('dl-ver');
       if (dlVer) dlVer.textContent = ver;
       function asset(re) {
@@ -69,6 +70,35 @@
       }
     })
     .catch(function () { /* keep releases page links */ });
+
+  // ---------- 最新版本（GitHub API；失敗時保留頁面內建的 v0.1.52） ----------
+  function releaseHighlights(body, max) {
+    var seen = {}, out = [];
+    String(body || '').split(/\r?\n/).forEach(function (line) {
+      var m = /^###\s+(.+)$/.exec(line);
+      if (!m) return;
+      var t = m[1].replace(/[（(]#[\d、,#\s]+[）)]/g, '').replace(/[`*_~\[\]<>#]/g, '').replace(/\s+/g, ' ').trim();
+      if (!t || /驗證範圍/.test(t)) return;
+      var key = t.split(/[：:]/)[0];
+      if (seen[key]) return;
+      seen[key] = true; out.push(t);
+    });
+    return out.slice(0, max || 5);
+  }
+  function renderRelease(rel) {
+    var box = document.querySelector('[data-rel]');
+    if (!box || !rel || !rel.tag_name) return;
+    var hs = releaseHighlights(rel.body, 5);
+    if (!hs.length) return;
+    box.querySelector('[data-rel-ver]').textContent = rel.tag_name;
+    var d = (rel.published_at || '').slice(0, 10), te = box.querySelector('[data-rel-date]');
+    if (d) { te.textContent = d; te.setAttribute('datetime', d); }
+    var ul = box.querySelector('[data-rel-list]');
+    while (ul.firstChild) ul.removeChild(ul.firstChild);
+    hs.forEach(function (h) { var li = document.createElement('li'); li.textContent = h; ul.appendChild(li); });
+    if (/^https:\/\/github\.com\//.test(rel.html_url || '')) box.querySelector('[data-rel-url]').href = rel.html_url;
+  }
+  window.__releaseHighlights = releaseHighlights;
 
   // ---------- GitHub stars ----------
   fetch('https://api.github.com/repos/Sinotrade/shioaji-pro-app')

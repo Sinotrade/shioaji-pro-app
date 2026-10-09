@@ -1425,3 +1425,13 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
 .why-sum { margin: .6cqw 0 0; padding: 1.4cqw 1.8cqw; border-radius: 1.2cqw; background: #eef3ff; color: #1d3a8a; font-weight: 700; font-size: 2.1cqw; }
 @media (max-width: 640px) { .tu-card.why { width: 96cqw; font-size: 2.7cqw; } .why-sum { font-size: 2.8cqw; } }
 .s2-modal.wide:has(.tu-notes) { top: 50%; gap: 1cqw; } .tu-notes p { font-size: 1.55cqw; padding: .9cqw 1.2cqw; line-height: 1.5; }
+/* 最新版本 */
+.rel { max-width: 820px; }
+.rel-h { display: flex; align-items: baseline; gap: 14px; }
+.rel-ver { font-family: var(--mono); font-size: 1.5rem; color: var(--text); }
+.rel-date { font-size: 14px; color: var(--muted); }
+.rel-list { margin: 14px 0 0; padding-left: 1.2em; display: grid; gap: 6px; color: var(--text-2); }
+.rel-links { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 18px; }
+.rel-all { font-size: 14px; }
+.chg { display: grid; gap: 20px; max-width: 860px; }
+.chg .rel { max-width: none; }
