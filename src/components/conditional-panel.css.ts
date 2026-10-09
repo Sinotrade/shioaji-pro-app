@@ -507,3 +507,5 @@ export const settingEmbed = style({ padding: '0 12px 10px', borderBottom: `1px s
 export const nameCell = style({ maxWidth: '190px', overflow: 'hidden', textOverflow: 'ellipsis' });
 export const statusCell = style({});
 globalStyle(`${table} td.${statusCell}`, { whiteSpace: 'normal', minWidth: '140px', maxWidth: '260px' });
+/** a number with its words: never split across lines */
+export const group = style({ display: 'inline-flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' });

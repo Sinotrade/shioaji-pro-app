@@ -590,16 +590,25 @@ function BracketForm({ target, onClose, defaults }: { target: Target; onClose: (
             <div className={styles.formRow}>
                 <span className={styles.label}>移動停損</span>
                 <Switch on={trailOn} label='移動停損' onChange={setTrailOn} />
-                <span>獲利</span>
-                <input className={styles.inputNarrow} value={trail.activate} inputMode='numeric' aria-label='移動停損啟動檔數' placeholder='例：20'
-                    disabled={!trailOn} onChange={e => setTrail({ ...trail, activate: e.target.value })} />
-                <span>檔後啟動，距最{action === 'Buy' ? '高' : '低'}</span>
-                <input className={styles.inputNarrow} value={trail.distance} inputMode='numeric' aria-label='移動停損距離檔數' placeholder='例：15'
-                    disabled={!trailOn} onChange={e => setTrail({ ...trail, distance: e.target.value })} />
-                <span>檔，每</span>
-                <input className={styles.inputNarrow} value={trail.step} inputMode='numeric' aria-label='移動停損步長檔數' placeholder='例：5'
-                    disabled={!trailOn} onChange={e => setTrail({ ...trail, step: e.target.value })} />
-                <span>檔移動</span>
+                {/* groups keep each number with its unit when the row wraps */}
+                <span className={styles.group}>
+                    獲利
+                    <input className={styles.inputNarrow} value={trail.activate} inputMode='numeric' aria-label='移動停損啟動檔數' placeholder='例：20'
+                        disabled={!trailOn} onChange={e => setTrail({ ...trail, activate: e.target.value })} />
+                    檔後啟動，
+                </span>
+                <span className={styles.group}>
+                    距最{action === 'Buy' ? '高' : '低'}
+                    <input className={styles.inputNarrow} value={trail.distance} inputMode='numeric' aria-label='移動停損距離檔數' placeholder='例：15'
+                        disabled={!trailOn} onChange={e => setTrail({ ...trail, distance: e.target.value })} />
+                    檔，
+                </span>
+                <span className={styles.group}>
+                    每
+                    <input className={styles.inputNarrow} value={trail.step} inputMode='numeric' aria-label='移動停損步長檔數' placeholder='例：5'
+                        disabled={!trailOn} onChange={e => setTrail({ ...trail, step: e.target.value })} />
+                    檔移動
+                </span>
             </div>
             <div className={styles.formRow}>
                 <span className={styles.label}>保本</span>

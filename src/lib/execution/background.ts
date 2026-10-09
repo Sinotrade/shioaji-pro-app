@@ -28,6 +28,9 @@ import { programFinished } from './background-view';
 import {
     BRACKET_COMMAND,
     BRACKET_NOTICE_TEXT,
+    DEFAULT_BRACKET_POLICY,
+    parseBracketPolicy,
+    type BracketPolicy,
     REARM_REFUSAL_TEXT,
     type CreateBracketRequest,
     type RearmBracketResult,
@@ -330,6 +333,20 @@ export async function rearmBackgroundBracket(programId: string, levelId: string,
     return r.programId ?? '';
 }
 
+/** The saved bracket settings (v2); throws when unreadable. */
+export async function getBracketPolicy(): Promise<BracketPolicy> {
+    if (!isTauri) return { ...DEFAULT_BRACKET_POLICY };
+    return parseBracketPolicy(await invoke<unknown>(BRACKET_COMMAND.getPolicy));
+}
+
+/** Save the bracket settings (main window only); resolves with what holds. */
+export async function setBracketPolicy(policy: BracketPolicy): Promise<BracketPolicy> {
+    if (!isTauri) throw new Error('背景持續執行僅限桌面版');
+    const saved = parseBracketPolicy(await invoke<unknown>(BRACKET_COMMAND.setPolicy, { policy }));
+    await refreshBackground();
+    return saved;
+}
+
 /** Pause stops new entries only; stop / take keep watching. */
 export async function pauseBackgroundProgram(programId: string): Promise<void> {
     await command(BRACKET_COMMAND.pause, { programId });
@@ -404,7 +421,7 @@ const BRACKET_FIRED_TEXT: Record<string, string> = {
     unknown: '背景括號單出場送出結果不明（不會自動重送）',
 };
 
-const INFO_NOTICES = new Set(['fired', 'needsConfirm', 'handled', 'bracket.rearmed']);
+const INFO_NOTICES = new Set(['fired', 'needsConfirm', 'handled', 'bracket.rearmed', 'bracket.autoRearmed', 'protectedAgain']);
 
 let pendingInstalled = false;
 function onFirstStatus() {
@@ -430,7 +447,7 @@ export function startBackgroundExecution(): void {
             void listen<Notice[]>('execution://notice', e => {
                 for (const n of e.payload ?? []) {
                     const bracket = programs.find(p => p.id === n.programId)?.kind === 'bracket'
-                        || n.code === 'bracket.rearmed';
+                        || n.code.startsWith('bracket.') || n.code === 'protectedAgain';
                     const title = bracket ? (BRACKET_NOTICE_TEXT[n.code] ?? BRACKET_FIRED_TEXT[n.code]) : NOTICE_TEXT[n.code];
                     if (title) notify({ kind: INFO_NOTICES.has(n.code) ? 'info' : 'err', title, body: n.detail });
                 }
