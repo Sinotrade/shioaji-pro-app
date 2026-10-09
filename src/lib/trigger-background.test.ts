@@ -350,6 +350,20 @@ describe('background rows', () => {
         expect(m.place).not.toHaveBeenCalled();
     });
 
+    it('#226 modify: when the trigger fired while pausing, nothing is replaced and it is resumed as it was', async () => {
+        m.programs = [program()];
+        await boot();
+        await bg.refreshBackground();
+        const orig = m.invoke.getMockImplementation()!;
+        m.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+            if (cmd === 'execution_pause') m.programs = [program({ phase: 'working', orders: [{ key: 'k' } as never] }), { ...program(), id: 'trg:other' }];
+            return orig(cmd, args);
+        });
+        await expect(engine.modifyTrigger('bg:trg:p1:L1', { price: 19700 })).rejects.toThrow('已觸發');
+        expect(calls('execution_create')).toHaveLength(0);
+        expect(calls('execution_resume').map(([, a]) => a)).toEqual([{ programId: 'trg:p1' }]);
+    });
+
     it('a trigger turned back on in a new session that is already past says so', async () => {
         m.programs = [{ ...program({ phase: 'needsConfirm', pending: { leg: 'entry', price: 19790, ts: 5, reason: 'resume' } }),
             id: 'rearm:trg:p1:9' }];

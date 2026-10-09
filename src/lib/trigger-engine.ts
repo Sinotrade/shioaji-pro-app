@@ -88,6 +88,7 @@ import { notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
 import { fmtPrice } from './utils/format';
 import { stepPrice } from './utils/ticksize';
+import { bandTickFor, prefetchTickBands } from './tick-bands';
 import { isOddLot, ODD_LOT_MAX_SHARES, oddLotMarketablePrice, SHARES_PER_LOT, sharesToUnits, stockQtyUnit } from './odd-lot';
 import type { ContractBase } from './types/contract';
 import type { Account } from './types/portfolio';
@@ -319,7 +320,10 @@ type Command =
     | { op: 'pause'; id: string }
     | { op: 'resume'; id: string }
     | { op: 'modify'; id: string; patch: TriggerPatch }
-    | { op: 'add-group'; triggers: NewTrigger[] };
+    | { op: 'add-group'; triggers: NewTrigger[] }
+    // #226 二擇一: every leg in one executor step (no tick in between)
+    | { op: 'group'; action: 'pause' | 'resume' | 'remove'; ids: string[] }
+    | { op: 'modify-group'; patches: { id: string; patch: TriggerPatch }[] };
 
 let decideRole!: () => void;
 const roleDecided = new Promise<void>(resolve => { decideRole = resolve; });
@@ -462,9 +466,21 @@ export const EXPIRY_CHECK_MS = 5000;
 /** 'fill' OCO: once the exit a leg waits for is final, take what filled off
  * it (removed at zero) and let it watch again; later fills of that exit
  * keep being taken off. */
+/** A final exit is trusted for unlocking only after this long: a Cancel
+ * report can arrive before the last deal report of the same order. */
+export const OCO_SETTLE_MS = 3000;
+const ocoFinalSeen = new Map<string, number>();
 function settleOco(rec: ExitRecord) {
-    const final = rec.status === 'filled' || rec.status === 'incomplete' || rec.status === 'not-sent'
+    let final = rec.status === 'filled' || rec.status === 'incomplete' || rec.status === 'not-sent'
         || (rec.status === 'unknown' && !!rec.acknowledged);
+    if (final && rec.status !== 'filled' && rec.status !== 'not-sent' && triggers.some(t => t.ocoLock === rec.id)) {
+        const seen = ocoFinalSeen.get(rec.id);
+        if (seen === undefined) {
+            ocoFinalSeen.set(rec.id, Date.now());
+            setTimeout(() => { const cur = exits.find(e => e.id === rec.id); if (cur) settleOco(cur); }, OCO_SETTLE_MS);
+            final = false;
+        } else if (Date.now() - seen < OCO_SETTLE_MS) final = false;
+    }
     let changed = false;
     triggers = triggers.flatMap(t => {
         if (t.ocoLock === rec.id) {
@@ -538,6 +554,41 @@ function applyModify(id: string, patch: TriggerPatch): TriggerOrder {
     triggers = triggers.map(x => x.id === id ? done : x);
     commit();
     return done;
+}
+
+/** All legs or none: on any refusal the earlier legs are put back. */
+function applyGroup(cmd: Extract<Command, { op: 'group' } | { op: 'modify-group' }>): boolean {
+    const saved = triggers;
+    const savedEnded = ended;
+    try {
+        if (cmd.op === 'modify-group') {
+            for (const { id, patch } of cmd.patches) applyModify(id, patch);
+        } else if (cmd.action === 'remove') {
+            const gone = triggers.filter(t => cmd.ids.includes(t.id));
+            if (gone.some(t => t.bracketId)) throw new Error('括號單保護請在括號單列移除');
+            triggers = triggers.filter(t => !cmd.ids.includes(t.id));
+            for (const t of gone) recordEnded(t, 'cancelled');
+            commit();
+        } else {
+            for (const id of cmd.ids) pauseTrigger(id, cmd.action === 'pause');
+        }
+        return true;
+    } catch (e) {
+        triggers = saved;
+        ended = savedEnded;
+        commit();
+        throw e;
+    }
+}
+
+/** #226 二擇一: pause / resume / remove both legs together. */
+export async function setTriggerGroup(ids: string[], action: 'pause' | 'resume' | 'remove'): Promise<void> {
+    await bus.send({ op: 'group', action, ids });
+}
+
+/** #226 二擇一: change both legs together (all or none). */
+export async function modifyTriggerGroup(patches: { id: string; patch: TriggerPatch }[]): Promise<void> {
+    await bus.send({ op: 'modify-group', patches });
 }
 
 function pauseTrigger(id: string, on: boolean): TriggerOrder {
@@ -630,6 +681,7 @@ function handleCommand(cmd: Command): unknown {
     }
     if (cmd.op === 'pause' || cmd.op === 'resume') return pauseTrigger(cmd.id, cmd.op === 'pause');
     if (cmd.op === 'modify') return applyModify(cmd.id, cmd.patch);
+    if (cmd.op === 'group' || cmd.op === 'modify-group') return applyGroup(cmd);
     if (cmd.op === 'ack-exit') {
         exits = exits.map(e => e.id === cmd.id && e.status === 'unknown' ? { ...e, acknowledged: true, at: Date.now() } : e);
         const rec = exits.find(e => e.id === cmd.id);
@@ -801,6 +853,14 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
         await pauseBackgroundProgram(programId);
     } catch (e) {
         throw new Error(`背景執行中的單目前不能直接修改（${e instanceof Error ? e.message : String(e)}），請取消後重新建立`);
+    }
+    // it may have fired while this was on its way: replace it only when it is
+    // still an untouched, armed condition
+    await refreshBackground();
+    const now = getBackgroundPrograms().find(p => p.id === programId)?.levels.find(lv => lv.id === row.background.levelId);
+    if (!now || now.phase !== 'idle' || now.pending || now.orders.length > 0 || now.position > 0) {
+        await resumeBackgroundProgram(programId).catch(() => undefined);
+        throw new Error('這張觸價單在修改期間已觸發或狀態已變，沒有修改；請看清單與委託');
     }
     const result = await createBackgroundTrigger(program);
     if (result !== 'created') {
@@ -1162,7 +1222,13 @@ export function orderPlanFor(t: Pick<TriggerOrder, 'orderLot' | 'action' | 'pric
         if (contract.security_type !== 'FUT' && contract.security_type !== 'OPT') return '範圍市價只適用期貨選擇權，未送出';
         return { price: null, futuresPriceType: 'MKP' };
     }
-    // 觸價後限價: the trigger price moved `ticks` legal price steps
+    // 觸價後限價: the trigger price moved `ticks` legal price steps — on the
+    // exchange's band table when the product has one (never a guessed tick)
+    const rule = (contract as { tick_rule?: string }).tick_rule;
+    if (rule && send.ticks !== 0 && bandTickFor(rule, t.price) === undefined) {
+        if (contract.security_type === 'FUT' || contract.security_type === 'OPT') prefetchTickBands(rule, contract.security_type);
+        return '跳動點級距尚未載入，限價未送出';
+    }
     const price = send.ticks === 0 ? t.price : stepPrice(contract, t.price, send.ticks);
     if (!Number.isFinite(price) || price <= 0) return '限價計算結果無效，未送出';
     const up = Number(contract.limit_up);
@@ -1250,6 +1316,8 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
     if (typeof ctx === 'string') { notSentExit(t, rec, ctx); return; }
     const op = orderPlanFor(t, ctx.contract);
     if (typeof op === 'string') { notSentExit(t, rec, op); return; }
+    // the condition may have lapsed while the contract was being checked
+    if (t.validity && Date.now() >= t.validity.until) { notSentExit(t, rec, '有效期已過，未送出'); return; }
     try {
         const trade = await placeQuickOrder(ctx.contract, t.action, op.price, rec.quantity, {
             // protective exit — never blocked by kill switch; an entry is a
@@ -1321,6 +1389,7 @@ async function sendPending(id: string, allowUnpast: boolean) {
                 if (currentProtectionEnv() !== cur.env) throw new Error('伺服器或模擬／正式模式已切換，未送出');
                 if (cur.group && processedGroups[groupKey(cur.env, cur.group)]) throw new Error('此 OCO 群組已觸發，未送出');
                 if (cur.ocoLock) throw new Error('二擇一另一邊的委託還在處理，未送出');
+                if (cur.validity && Date.now() >= cur.validity.until) throw new Error('有效期已過，未送出');
                 const price = lastPrices.get(priceKeyOf(cur));
                 if (getStreamStatus() !== 'live' || price === undefined) throw new Error('行情中斷，未送出');
                 // The manual order dialog can stay open while the price crosses
@@ -1690,6 +1759,7 @@ function resolvePending(id: string, choice: PendingChoice, allowUnpast = false):
         return true;
     }
     if (choice !== 'send') throw new Error('未知選項');
+    if (t.validity && Date.now() >= t.validity.until) throw new Error('有效期已過，未送出');
     if (currentProtectionEnv() !== t.env) throw new Error('伺服器或模擬／正式模式與建立時不同，未送出');
     const account = t.account && getAccountState().accounts.find(a => canTrade(a) && a.account_type === t.account!.account_type
         && a.broker_id === t.account!.broker_id && a.account_id === t.account!.account_id);
@@ -1804,7 +1874,9 @@ function becomeExecutor() {
     });
     // #226 對手價 triggers: best bid / ask (a missing or zero side is skipped)
     onAnyBidAsk(ba => {
-        if (ba.simtrade || ba.intraday_odd) return;
+        if (ba.intraday_odd) return;
+        noteActivity(); // a stall / sleep is noticed before this update is evaluated
+        if (ba.simtrade) return;
         if (!triggers.some(t => t.code === ba.code && (feedOf(t) === 'bid' || feedOf(t) === 'ask'))) return;
         const bid = Number(ba.bid_price?.[0]);
         const ask = Number(ba.ask_price?.[0]);
