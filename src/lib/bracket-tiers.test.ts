@@ -269,7 +269,8 @@ describe('panel brackets — review fixes (#226)', () => {
         const id = bracket.getBrackets()[0]!.id;
         expect(legsOf(id)).toEqual([['stop', 48160, 1], ['take', 48230, 1]]);
         await emit(edit(fDeal2!, { price: 48150 }));
-        expect(legsOf(id)).toEqual([['stop', 48110, 2], ['take', 48180, 2]]);
+        // take follows the real fill; the stop is never loosened by the re-price (kept at the tighter 48,160)
+        expect(legsOf(id)).toEqual([['stop', 48160, 2], ['take', 48180, 2]]);
         expect(bracket.getBrackets()[0]!.baseProvisional).toBe(false);
     });
 
@@ -298,5 +299,21 @@ describe('panel brackets — review fixes (#226)', () => {
         const stop = engine.getTriggers().find(t => t.bracketId === plan.id && t.kind === 'stop')!;
         expect(stop.price).toBe(48040);
         expect(stop.trail?.active).toBe(true);
+    });
+});
+
+describe('panel brackets — tick ladder (#226)', () => {
+    it('no stop / take while the exchange band table is not loaded (never a guessed tick)', async () => {
+        (TXF_C as Record<string, unknown>).tick_rule = 'not-loaded-rule';
+        try {
+            const [t0] = await tiered({ tiers: [{ quantity: 2, takeTicks: 30 }], trail: null, breakeven: null });
+            await emit(edit(fDeal1!, { price: 48150 }));
+            expect(legsOf(t0!.id)).toEqual([]);
+            const plan = bracket.getBrackets()[0]!;
+            expect(plan.base).toBeUndefined();
+            expect(plan.issues.at(-1)?.detail).toContain('級距');
+        } finally {
+            delete (TXF_C as Record<string, unknown>).tick_rule;
+        }
     });
 });

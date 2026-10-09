@@ -1554,6 +1554,9 @@ export function applyExitTrade(trade: Trade, opts: { settle?: boolean } = {}) {
 function trailed(t: TriggerOrder, price: number): TriggerOrder | null {
     const contract = getCachedContract(t.code);
     if (!contract || !t.trail) return null;
+    // no move on a guessed tick: wait for the exchange band table
+    const rule = (contract as { tick_rule?: string }).tick_rule;
+    if (rule && bandTickFor(rule, price) === undefined) return null;
     const long = t.condition === 'below'; // a long position's stop sells below
     const r = trailStep(long, t.price, t.trail, price, (p, n) => stepPrice(contract, p, n));
     if (r.stop === t.price && JSON.stringify(r.state) === JSON.stringify(t.trail)) return null;
