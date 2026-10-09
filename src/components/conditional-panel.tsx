@@ -201,7 +201,8 @@ function RowActions({ row, expanded, onToggle, compact }: {
         });
     };
     const pendingId = src.type === 'trigger' && src.trigger.pending ? src.trigger.id
-        : src.type === 'bracket' ? src.legs.find(l => l.pending)?.id : undefined;
+        : src.type === 'bracket' ? src.legs.find(l => l.pending)?.id
+            : src.type === 'oco' ? src.triggers.find(l => l.pending)?.id : undefined;
     const bg = src.type === 'bgBracket' ? src.view : null;
     const send = (allowUnpast = false) => {
         if (bg) {
@@ -326,6 +327,14 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
 function parsePrice(v: string): number | null {
     const n = Number(v.replace(/,/g, '').trim());
     return v.trim() === '' || !Number.isFinite(n) ? null : n;
+}
+
+/** Blank = not set (null); anything else must be a positive number. */
+function optionalPrice(v: string, label: string): number | null {
+    if (v.trim() === '') return null;
+    const n = parsePrice(v);
+    if (n === null || n <= 0) throw new Error(`${label}必須是正數（不設請留空）`);
+    return n;
 }
 
 function Distance({ code, price }: { code: string; price: number | null }) {
@@ -458,7 +467,10 @@ function BracketEdit({ row, onDone }: { row: CondRow; onDone: () => void }) {
             {loosened && <div className={styles.message.warn}>停損放寬，風險會變大；確定再儲存</div>}
             <div className={styles.formRow}>
                 <button type='button' className={styles.button.primary} disabled={busy}
-                    onClick={() => void run(async () => { await modifyBracket(plan.id, s, t); onDone(); })}>
+                    onClick={() => void run(async () => {
+                        await modifyBracket(plan.id, optionalPrice(stop, '停損價'), optionalPrice(take, '停利價'));
+                        onDone();
+                    })}>
                     儲存修改
                 </button>
                 <button type='button' className={styles.button.plain} disabled={busy} onClick={onDone}>取消</button>

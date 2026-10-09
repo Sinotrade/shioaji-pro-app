@@ -4,7 +4,7 @@
 // condition is met it goes out without asking again.
 
 import { Info, Plus } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { canTrade } from '../lib/account-tradable';
 import { useAccounts } from '../lib/account-store';
 import { ensureContract, useContract } from '../lib/contracts-cache';
@@ -37,8 +37,11 @@ function useTarget(initial: ContractInfo | null) {
     const demo = conditionalDemoActive();
     if (demo) primeConditionalDemo();
     const first = initial?.code ?? (demo ? 'TXFJ6' : '');
-    const [code, setCode] = useState(first);
+    const [code, setCodeRaw] = useState(first);
     const [resolved, setResolved] = useState<string | null>(first || null);
+    const asked = useRef(first);
+    // a changed code unresolves at once: nothing can be created for the old one
+    const setCode = (v: string) => { setCodeRaw(v); if (v.trim().toUpperCase() !== resolved) setResolved(null); };
     const [lookupError, setLookupError] = useState<string | null>(null);
     const contract = useContract(resolved);
     const futures = isFuturesLike(contract);
@@ -51,8 +54,12 @@ function useTarget(initial: ContractInfo | null) {
     const resolve = (raw: string) => {
         const c = raw.trim().toUpperCase();
         if (!c || c === resolved) return;
+        asked.current = c;
         setLookupError(null);
-        void ensureContract(c).then(() => setResolved(c)).catch(() => setLookupError(`找不到商品 ${c}`));
+        setResolved(null);
+        // only the latest lookup counts
+        void ensureContract(c).then(() => { if (asked.current === c) setResolved(c); })
+            .catch(() => { if (asked.current === c) setLookupError(`找不到商品 ${c}`); });
     };
     return { code, setCode, resolve, resolved, contract, futures, accounts, account, setAccountId, lookupError };
 }
@@ -262,7 +269,7 @@ function useSubmit() {
 
 function commonProblem(target: Target): string | null {
     const c = target.contract;
-    if (!c) return '請先選擇商品';
+    if (!c || target.resolved !== target.code.trim().toUpperCase()) return '請先選擇商品（輸入代碼後按 Enter）';
     if (c.security_type !== 'STK' && !isFuturesLike(c)) return '此商品不支援條件單';
     if (!target.account) return `沒有可下單的${target.futures ? '期貨' : '證券'}帳戶`;
     return null;
