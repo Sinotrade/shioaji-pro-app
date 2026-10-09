@@ -237,6 +237,7 @@ function Rearm({ item, envNow }: { item: PendingConfirmItem; envNow: string | nu
             </label>
             <div className={styles.note.muted}>
                 不會立即送單：只在這個盤別重新開始盯價，價格穿過觸發價時才照一般流程送出。若現在價格已經穿過，會先列在「觸價單待確認」由你決定。
+                重新啟用為單次觸價；若要循環，請到觸價單設定另行開啟。
             </div>
             {error && <div className={styles.note.err} role='alert'>{error}</div>}
             <div className={styles.stepRow}>

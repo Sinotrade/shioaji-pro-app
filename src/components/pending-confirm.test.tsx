@@ -248,6 +248,7 @@ it('opening the rearm reads this account\'s positions; nothing is prefilled or c
     expect(all).toContain('觸發價 ≤ 17,860');
     expect(all).toContain('目前可平倉 2 口');
     expect(all).toContain('不會立即送單');
+    expect(all).toContain('重新啟用為單次觸價');
     expect(qtyInput(r).props.value).toBe('2');
     await click(button(r, '確認重新啟用'));
     expect(m.resolve).toHaveBeenCalledWith(expect.objectContaining({ id: 'x' }), 'rearmInNewSession', { quantity: 2 });
