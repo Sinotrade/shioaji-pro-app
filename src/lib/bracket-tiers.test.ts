@@ -317,3 +317,24 @@ describe('panel brackets — tick ladder (#226)', () => {
         }
     });
 });
+
+describe('panel brackets — trailing after a re-price (#226)', () => {
+    it('activation is measured from the real fill price once it arrives', async () => {
+        await boot();
+        const [spec] = bracket.tierSpecs({ env: m.env!, account: { account_type: 'F', broker_id: F1.broker_id, account_id: F1.account_id },
+            orderId: 'fixture-f1', seqno: 'fixture-f1', quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT', exchange: 'TAIFEX',
+            action: 'Buy', refPrice: 48000 }, PLAN({ tiers: [{ quantity: 2, takeTicks: null }], breakeven: null }));
+        await bracket.registerBracket(spec!);
+        await flush();
+        await emit(edit(fDeal1!, { price: 0 }));
+        await emit(edit(fDeal2!, { price: 48050 }));
+        const stop = () => engine.getTriggers().find(t => t.kind === 'stop')!;
+        expect(stop().trail?.base).toBe(48050);
+        const before = stop().price;
+        await tick(48060); // +10 from the real basis: not active yet (activation +20 = 48,070)
+        expect(stop().price).toBe(before);
+        expect(stop().trail?.active).toBe(false);
+        await tick(48070);
+        expect(stop().trail?.active).toBe(true);
+    });
+});

@@ -342,7 +342,8 @@ function update(id: string, fn: (p: BracketPlan) => BracketPlan) {
             }
         }
         disarmBracketGroup(before.env, before.group);
-        arm(after, true, leg?.trail);
+        // keep the trail's progress, measured from the real cost basis
+        arm(after, true, leg?.trail && after.base !== undefined ? { ...leg.trail, base: after.base } : leg?.trail);
     }
     syncProtection(before, after);
     commit();
