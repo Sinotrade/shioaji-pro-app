@@ -16,11 +16,11 @@ export interface ConditionalSettings {
     notify: boolean;
     /** 新增表單的快速口數 */
     quickQty: number[];
-    /** 括號單：新盤別自動重新啟用保護（目前固定關閉） */
+    /** unused: the bracket rules live in the background engine (bracket-policy.ts) */
     autoRearm: boolean;
-    /** 括號單：保護結束後才成交的口數自動補保護（目前固定關閉：標示未受保護並通知） */
+    /** unused: see bracket-policy.ts */
     autoProtectLateFill: boolean;
-    /** 全部暫停時停損停利也暫停（預設只停新進場） */
+    /** 全部暫停時停損停利也暫停（預設只停新進場）— mirrors the engine's BracketPolicy */
     pauseStopsExits: boolean;
 }
 

@@ -10,6 +10,8 @@ import { accountTag, type CondRow } from '../lib/conditional/rows';
 import { planFlatten, workingInScope, inScope, type FlattenResult, type FlattenScope } from '../lib/conditional/flatten';
 import { flattenSummary, runFlatten } from '../lib/conditional/runtime';
 import { setConditionalSettings, useConditionalSettings } from '../lib/conditional/settings';
+import { useBracketPolicy } from '../lib/conditional/bracket-policy';
+import { BRACKET_POLICY_TEXT, DEFAULT_BRACKET_POLICY } from '../lib/execution/bracket-contract';
 import { conditionalDemoActive, demoFlattenState } from '../lib/conditional/demo';
 import { getCachedContract } from '../lib/contracts-cache';
 import { backgroundSupported } from '../lib/execution/background';
@@ -44,6 +46,7 @@ function Row({ name, hint, children, last }: { name: string; hint: string; child
 export function ConditionalSettingsDialog({ onClose }: { onClose: () => void }) {
     const s = useConditionalSettings();
     const risk = useRiskSettings();
+    const bp = useBracketPolicy();
     const [qty, setQty] = useState(s.quickQty.join(', '));
     const saveQty = () => {
         const list = qty.split(/[,\s，]+/).map(Number).filter(n => Number.isSafeInteger(n) && n > 0);
@@ -85,16 +88,14 @@ export function ConditionalSettingsDialog({ onClose }: { onClose: () => void }) 
                 <Row name='Esc 連按兩下取消全部委託' hint='在任何畫面 0.6 秒內連按兩下 Esc，撤銷所有未成交委託'>
                     <Switch on={risk.escCancelAll} label='Esc 連按兩下取消全部委託' onChange={v => setRiskSettings({ escCancelAll: v })} />
                 </Row>
-                <div className={styles.settingSection}>括號單規則</div>
-                <Row name='新盤別自動重新啟用' hint='目前一律由你在新盤別確認口數後重新啟用（委託不跨盤別）'>
-                    <Switch on={false} label='新盤別自動重新啟用' disabled onChange={() => undefined} />
-                </Row>
-                <Row name='晚到成交自動補保護' hint='目前不自動補：保護結束後才成交的口數標示「未受保護」並通知'>
-                    <Switch on={false} label='晚到成交自動補保護' disabled onChange={() => undefined} />
-                </Row>
-                <Row name='全部暫停時停損停利也暫停' hint='預設只停新進場；開啟後全部暫停也會停下停損停利（括號單的保護不受影響）' last>
-                    <Switch on={s.pauseStopsExits} label='全部暫停時停損停利也暫停' onChange={v => setConditionalSettings({ pauseStopsExits: v })} />
-                </Row>
+                <div className={styles.settingSection}>括號單規則{bp.unavailable ? `（${bp.unavailable}）` : ''}</div>
+                {(['autoRearm', 'autoProtectLateFill', 'pauseStopsExits'] as const).map((k, i, all) => (
+                    <Row key={k} name={BRACKET_POLICY_TEXT[k].label} hint={BRACKET_POLICY_TEXT[k].help} last={i === all.length - 1}>
+                        <Switch on={bp.policy?.[k] ?? DEFAULT_BRACKET_POLICY[k]} label={BRACKET_POLICY_TEXT[k].label}
+                            disabled={!!bp.unavailable || bp.busy} onChange={v => bp.save({ [k]: v })} />
+                    </Row>
+                ))}
+                {bp.error && !bp.unavailable && <div className={styles.message.err} style={{ padding: '0 12px 10px' }} role='alert'>{bp.error}</div>}
             </div>
         </Dialog>
     );

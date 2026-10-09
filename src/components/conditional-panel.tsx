@@ -701,7 +701,7 @@ export function ConditionalPanel({ contract }: { contract?: ContractInfo | null 
                         <Settings2 size={13} aria-hidden />設定
                     </button>
                     <button type='button' className={styles.button.plain} disabled={pa.busy || pausable.length === 0}
-                        title={settings.pauseStopsExits ? '暫停全部條件單（含停損停利；括號單的保護不受影響）'
+                        title={settings.pauseStopsExits ? '暫停全部條件單（含停損停利；暫停前已觸發、正在送出的平倉單照常送出）'
                             : '暫停新進場的條件單；停損停利保護繼續執行（可在設定修改）'}
                         onClick={() => void pa.run(async () => {
                             const r = await pauseAll(anyRunning);
