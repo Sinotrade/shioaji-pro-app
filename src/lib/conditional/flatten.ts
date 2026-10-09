@@ -93,6 +93,8 @@ export function workingInScope(trades: readonly Trade[], scope: FlattenScope): T
 export interface FlattenHooks {
     /** step 1: stop the conditional orders in scope; returns how many */
     stopConditional(): Promise<{ stopped: number; failed: string[] }>;
+    /** wait until no conditional order in scope is still sending; false: still sending */
+    waitInFlight?(): Promise<boolean>;
 }
 
 export interface FlattenResult {
@@ -117,7 +119,15 @@ export async function executeFlatten(scope: FlattenScope, hooks: FlattenHooks): 
     const result: FlattenResult = { stopped: 0, cancelled: 0, cancelFailed: [], sent: [], notSent: [], skipped: [] };
     const stop = await hooks.stopConditional();
     result.stopped = stop.stopped;
-    result.notSent.push(...stop.failed);
+    if (stop.failed.length) {
+        // one still armed could fire after the close: stop here
+        result.notSent.push(...stop.failed, '條件單沒有全部停止，未刪單也未平倉；請處理後再試');
+        return result;
+    }
+    if (hooks.waitInFlight && !(await hooks.waitInFlight())) {
+        result.notSent.push('有條件單剛觸發、委託仍在送出中，未刪單也未平倉；請稍後再試');
+        return result;
+    }
     const accounts = accountsFor(scope);
     const query = createAccountQuery();
     // 2. cancel working orders, per account, and wait for each answer

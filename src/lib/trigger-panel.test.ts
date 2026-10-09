@@ -473,6 +473,18 @@ describe('時間條件 (#226)', () => {
         expect(engine.getTriggers()).toHaveLength(0);
     });
 
+    it('a time order due while the App was closed lapses on start, even within a minute', async () => {
+        await boot();
+        await engine.addTrigger({ code: 'TXFR1', condition: 'above', price: 0, action: 'Buy', quantity: 1, kind: 'stop', role: 'entry',
+            time: { kind: 'send', at: Date.now() + 1_000 } }, TXF as never);
+        vi.clearAllTimers(); // the App is closed (its timers are gone)
+        vi.setSystemTime(Date.now() + 20_000); // closed through the time, reopened 19 s later
+        await boot({ keepStore: true });
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+
     it('a time already past is refused', async () => {
         await boot();
         const made = await engine.addTrigger({ code: 'TXFR1', condition: 'above', price: 0, action: 'Buy', quantity: 1, kind: 'stop',

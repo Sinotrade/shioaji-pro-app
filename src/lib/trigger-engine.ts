@@ -488,7 +488,9 @@ function checkTimed(now = Date.now()) {
     for (const t of triggers.slice()) {
         if (!t.time || t.paused || t.suspended || t.time.at > now) continue;
         if (!triggers.some(x => x.id === t.id)) continue;
-        if (now - t.time.at > TIME_GRACE_MS) {
+        // missed: past the grace, or due before this window took over (the
+        // App was closed / reloaded at the time) — never sent late
+        if (now - t.time.at > TIME_GRACE_MS || t.time.at < executorSince) {
             triggers = triggers.filter(x => x.id !== t.id);
             recordEnded(t, 'expired', '時間已過（App 當時沒有執行或連線中斷），沒有送出');
             commit();
@@ -956,6 +958,16 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
             : `修改結果未確認：${result.unconfirmed}。原本的單已暫停；請先看清單是否已有新單，不要重複建立`);
     }
     await removeBackgroundTrigger(programId);
+}
+
+/** Remove a trigger and throw when that is not confirmed (全平並取消). */
+export async function removeTriggerStrict(id: string): Promise<void> {
+    if (isBackgroundId(id)) {
+        const row = backgroundRow(id);
+        if (row) await removeBackgroundTrigger(row.background.programId);
+        return;
+    }
+    await bus.send({ op: 'remove', id });
 }
 
 /** User confirms an unknown-outcome exit was reconciled by hand; releases
@@ -1950,7 +1962,9 @@ export function startTriggerEngine() {
     void claim.acquired.then(becomeExecutor);
 }
 
+let executorSince = Number.POSITIVE_INFINITY;
 function becomeExecutor() {
+    executorSince = Date.now();
     loadExecutorState();
     executing = true;
     decideRole();

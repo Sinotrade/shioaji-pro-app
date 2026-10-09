@@ -105,4 +105,14 @@ describe('executeFlatten', () => {
         expect(m.place.mock.calls.map(c => [c[1], c[2], c[3], (c[4] as { orderLot?: string }).orderLot])).toEqual([
             ['Sell', null, 2, undefined], ['Sell', 900, 300, 'IntradayOdd']]);
     });
+
+    it('a conditional order that could not be stopped, or one still sending, blocks everything', async () => {
+        m.positions.mockImplementation(async (a: Account) => a === F ? [{ id: 1, code: 'TXFJ6', direction: 'Buy', quantity: 2 }] : []);
+        const r1 = await executeFlatten({ type: 'all' }, { stopConditional: async () => ({ stopped: 0, failed: ['TXFJ6 觸價單：沒有回應'] }) });
+        expect(r1.notSent.join()).toContain('沒有全部停止');
+        const r2 = await executeFlatten({ type: 'all' }, { stopConditional, waitInFlight: async () => false });
+        expect(r2.notSent.join()).toContain('送出中');
+        expect(m.cancel).not.toHaveBeenCalled();
+        expect(m.place).not.toHaveBeenCalled();
+    });
 });

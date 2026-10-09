@@ -60,7 +60,8 @@ vi.mock('./conditional-form', async () => ({
     ...(await vi.importActual<typeof import('./conditional-form')>('./conditional-form')),
     NewConditionalDialog: () => createElement('div', { id: 'new-dialog' }),
 }));
-vi.mock('../lib/conditional/runtime', () => ({ pauseAll: m.pauseAll }));
+vi.mock('../lib/conditional/runtime', () => ({ pauseAll: m.pauseAll,
+    pauseAllEligible: (t: { role?: string; bracketId?: string }) => t.role === 'entry' && !t.bracketId }));
 vi.mock('./conditional-dialogs', () => ({ ConditionalSettingsDialog: () => createElement('div', { id: 'settings-dialog' }),
     FlattenDialog: () => createElement('div', { id: 'flatten-dialog' }) }));
 vi.mock('../lib/conditional/panel-bracket', () => ({ placePanelBracket: vi.fn() }));

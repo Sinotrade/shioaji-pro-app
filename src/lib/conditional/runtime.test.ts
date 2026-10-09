@@ -12,9 +12,11 @@ const m = vi.hoisted(() => ({
     bgPause: vi.fn(async () => undefined),
     group: vi.fn(async (_ids: string[], _a: string) => undefined),
     pauseStopsExits: false,
+    exits: [] as unknown[],
 }));
 vi.mock('../trigger-engine', () => ({
-    getDisplayTriggers: () => m.triggers, setTriggerPaused: m.pause, removeTrigger: m.remove, onTimedFlatten: () => undefined,
+    getDisplayTriggers: () => m.triggers, setTriggerPaused: m.pause, removeTriggerStrict: m.remove, onTimedFlatten: () => undefined,
+    getExits: () => m.exits,
     setTriggerGroup: m.group,
 }));
 vi.mock('../bracket', () => ({ getBrackets: () => [], dismissBracket: m.dismiss }));
@@ -23,7 +25,7 @@ vi.mock('../execution/background', () => ({ getBackgroundPrograms: () => [], mar
 vi.mock('../trade', () => ({ notify: vi.fn() }));
 vi.mock('./settings', () => ({ getConditionalSettings: () => ({ pauseStopsExits: m.pauseStopsExits }) }));
 
-const { pauseAll, stopConditionalInScope } = await import('./runtime');
+const { pauseAll, stopConditionalInScope, waitInFlight } = await import('./runtime');
 
 const t = (over: Partial<TriggerOrder>): TriggerOrder => ({ id: 'x', code: 'TXFR1', orderCode: 'TXFJ6', condition: 'below', price: 1,
     action: 'Sell', quantity: 1, kind: 'stop', env: 'e', account: F, ...over });
@@ -38,14 +40,21 @@ beforeEach(() => {
 describe('pauseAll', () => {
     it('pauses new entries only by default: stop / take, bracket legs, alerts and 待確認 stay', async () => {
         const r = await pauseAll(true);
-        expect(m.pause.mock.calls.map(c => c[0])).toEqual(['entry', 'time']);
-        expect(r.changed).toBe(2);
+        // the time order here is a 指定時間送單 without role → not an entry; 收盤前平倉 likewise keeps running
+        expect(m.pause.mock.calls.map(c => c[0])).toEqual(['entry']);
+        expect(r.changed).toBe(1);
     });
 
     it('with the setting on, protective stops pause too (bracket legs never)', async () => {
         m.pauseStopsExits = true;
         await pauseAll(true);
         expect(m.pause.mock.calls.map(c => c[0])).toEqual(['entry', 'stop', 'time']);
+    });
+
+    it('全部恢復 resumes every paused one, whatever the setting is now', async () => {
+        m.triggers = [t({ id: 'stop', paused: true }), t({ id: 'e', role: 'entry', paused: true })];
+        await pauseAll(false);
+        expect(m.pause.mock.calls).toEqual([['stop', false], ['e', false]]);
     });
 
     it('全部恢復 resumes only what is paused', async () => {
@@ -68,5 +77,18 @@ describe('stopConditionalInScope', () => {
         await stopConditionalInScope({ type: 'all' });
         expect(m.group.mock.calls).toEqual([[['u', 'd'], 'remove']]);
         expect(m.remove).not.toHaveBeenCalled();
+    });
+});
+
+describe('waitInFlight', () => {
+    it('waits while a conditional order in scope is still sending; gives up after the limit', async () => {
+        vi.useFakeTimers();
+        m.exits = [{ status: 'sending', account: F, orderCode: 'TXFJ6' }];
+        const p = waitInFlight({ type: 'all' }, 1000);
+        await vi.advanceTimersByTimeAsync(1200);
+        expect(await p).toBe(false);
+        m.exits = [{ status: 'working', account: F, orderCode: 'TXFJ6' }];
+        expect(await waitInFlight({ type: 'all' }, 1000)).toBe(true);
+        vi.useRealTimers();
     });
 });

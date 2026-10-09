@@ -50,7 +50,7 @@ import {
 import { accountTag, bgBracketRows, KIND_LABEL, rowsForTab, TABS, type CondRow, type CondTab } from '../lib/conditional/rows';
 import { useConditionalView, useStreamStatus, type ConditionalView } from '../lib/conditional/use-conditional';
 import { useConditionalSettings } from '../lib/conditional/settings';
-import { pauseAll } from '../lib/conditional/runtime';
+import { pauseAll, pauseAllEligible } from '../lib/conditional/runtime';
 import { useBackgroundPrograms } from '../lib/execution/background';
 import { bracketViews } from '../lib/execution/bracket-contract';
 import { fmtClock, fmtNum } from '../lib/conditional/session';
@@ -658,8 +658,13 @@ export function ConditionalPanel({ contract }: { contract?: ContractInfo | null 
     const [creating, setCreating] = useState(false);
     const [dialog, setDialog] = useState<'settings' | 'flatten' | null>(null);
     const settings = useConditionalSettings();
-    const pausable = view.rows.filter(r => r.actions.pause || r.actions.resume);
-    const anyRunning = pausable.some(r => r.actions.pause);
+    // the same rule as 全部暫停 itself
+    const legsOf = (r: CondRow): TriggerOrder[] => r.source.type === 'trigger' ? [r.source.trigger] : r.source.type === 'oco' ? r.source.triggers : [];
+    const eligible = view.rows.filter(r => r.source.type === 'bgBracket' ? r.actions.pause
+        : legsOf(r).some(t => !t.paused && !t.pending && pauseAllEligible(t, settings.pauseStopsExits)));
+    const anyPaused = view.rows.some(r => r.paused || legsOf(r).some(t => t.paused) || (r.source.type === 'bgBracket' && r.actions.resume));
+    const anyRunning = eligible.length > 0;
+    const pausable = anyRunning || anyPaused ? [true] : [];
     const pa = useRun();
     const rows = useMemo(() => rowsForTab(view, tab), [view, tab]);
     const toggle = (id: string) => setExpanded(e => e === id ? null : id);
