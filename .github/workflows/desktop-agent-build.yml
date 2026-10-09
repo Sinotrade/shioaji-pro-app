@@ -174,11 +174,11 @@ jobs:
 
       - name: Windows TCP owner E2E
         if: matrix.platform == 'windows-latest'
-        run: cargo test --manifest-path src-tauri/Cargo.toml --bin windows_tcp_owner_e2e
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test windows_tcp_owner_e2e
 
       - name: Windows agent Job Object E2E
         if: matrix.platform == 'windows-latest'
-        run: cargo run --manifest-path src-tauri/Cargo.toml --bin windows_agent_job_e2e
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test windows_agent_job_e2e
 
       - name: Rust lint
         if: matrix.platform == 'ubuntu-22.04'
