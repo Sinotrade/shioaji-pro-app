@@ -22,6 +22,7 @@ export function mockPendingConfirmItem(over: Partial<PendingConfirmItem> = {}): 
         listingChecks: 3,
         lastCheckedAt: Date.now() - 60_000,
         expiredAt: null,
+        rearmed: null,
         ...over,
     };
 }

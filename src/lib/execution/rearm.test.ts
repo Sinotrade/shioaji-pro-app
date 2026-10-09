@@ -4,9 +4,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mockPendingConfirmItem } from './pending-confirm-mock';
 
-vi.mock('../trading-state', () => ({ getTradingState: () => ({}), subscribeTradingState: () => () => undefined,
-    refreshTradingState: async () => undefined }));
-const { checkRearmQuantity, rearmPlan } = await import('./rearm');
+const q = vi.hoisted(() => ({ fetch: vi.fn(), read: vi.fn() }));
+vi.mock('../shioaji', () => ({ fetchPositions: q.fetch }));
+vi.mock('../account-query', () => ({ createAccountQuery: () => ({ read: q.read }) }));
+const { checkRearmQuantity, fetchAccountPositions, rearmPlan } = await import('./rearm');
 
 const item = mockPendingConfirmItem({ state: 'expired', expiredAt: Date.now(),
     account: { accountType: 'F', accountId: '0000001', brokerId: 'F002000' },
@@ -50,5 +51,19 @@ describe('checkRearmQuantity (right before sending the decision)', () => {
     it('no closable position or unknown: the typed quantity stands (shown as opening / unconfirmed)', () => {
         expect(checkRearmQuantity(item, 3, { known: true, positions: [] })).toBeNull();
         expect(checkRearmQuantity(item, 3, { known: false, positions: [] })).toBeNull();
+    });
+});
+
+describe('fetchAccountPositions', () => {
+    it('reads only this account (broker + account), on its own', async () => {
+        q.read.mockImplementation(async (type: string, sel: unknown, req: (a: unknown) => Promise<unknown>) => req({ account_type: type, ...(sel as object) }));
+        q.fetch.mockResolvedValue([{ code: 'TXFK6', direction: 'Buy', quantity: 2 }]);
+        const view = await fetchAccountPositions(item);
+        expect(q.read).toHaveBeenCalledWith('F', { broker_id: 'F002000', account_id: '0000001' }, expect.any(Function));
+        expect(q.fetch).toHaveBeenCalledWith('F', expect.objectContaining({ broker_id: 'F002000', account_id: '0000001' }));
+        expect(rearmPlan(item, view).quantity).toBe(2);
+    });
+    it('an item without its broker cannot be read', async () => {
+        await expect(fetchAccountPositions({ ...item, account: { accountType: 'F', accountId: '0000001', brokerId: null } })).rejects.toThrow();
     });
 });

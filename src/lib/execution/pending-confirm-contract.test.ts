@@ -98,6 +98,10 @@ describe('contract v2: rearm in the new session', () => {
             items: [wireItem({ account: { accountType: 'F', accountId: '0000001', brokerId: 'F002000' } })] });
         expect(withBroker.items[0]!.account.brokerId).toBe('F002000');
         expect(v2.items[0]!.account.brokerId).toBeNull();
+        expect(v2.items[0]!.rearmed).toBeNull();
+        const unfinished = parsePendingConfirmSnapshot({ version: 2, runId: 'r', sequence: 1, uncleanShutdown: false,
+            items: [wireItem({ rearmed: { programId: 'rearm:x:1', quantity: 2, working: true } })] });
+        expect(unfinished.items[0]!.rearmed).toEqual({ programId: 'rearm:x:1', quantity: 2, working: true });
         const v1 = parsePendingConfirmSnapshot({ version: 1, runId: 'r', sequence: 1, uncleanShutdown: false, items: [wireItem()] });
         expect(v1.version).toBe(1);
         expect(v1.items[0]!.order.triggerCondition).toBeNull();
@@ -110,7 +114,7 @@ describe('contract v2: rearm in the new session', () => {
         expect(resolutionAllowed('expired', 'rearmInNewSession')).toBe(true);
         expect(resolutionAllowed('needsConfirm', 'rearmInNewSession')).toBe(false);
         const snapshot = { version: 2, runId: 'r', sequence: 1, uncleanShutdown: false, items: [] };
-        for (const reason of ['notEnabled', 'invalidRequest', 'rearmFailed']) {
+        for (const reason of ['notEnabled', 'invalidRequest', 'rearmFailed', 'rearmInProgress']) {
             expect(parseResolvePendingResult({ ok: false, reason, snapshot })).toMatchObject({ ok: false, reason });
         }
     });

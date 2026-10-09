@@ -55,6 +55,8 @@
 //   then; its first tick decides (already past → 待確認). Main window only,
 //   setting 「背景持續執行」 on (`notEnabled` otherwise), quantity checked
 //   (`invalidRequest`), creation refused → `rearmFailed` (the item stays).
+//   `item.rearmed`: an unfinished earlier rearm; a retry replaces it with the
+//   new quantity while it has placed nothing, else `rearmInProgress`.
 //   Brackets: not yet (②).
 // - A v1 snapshot is still read (no condition, no rearm offered).
 // Event (Tauri `listen`):
@@ -113,6 +115,10 @@ export interface PendingConfirmItem {
     listingChecks: number; // complete listings that did not contain the tag
     lastCheckedAt: number | null; // ms epoch of the last complete listing
     expiredAt: number | null; // ms epoch; required when state = expired
+    /** v2: a rearm of this item that did not finish (the App stopped between
+     * creating the new trigger and ending this one). `working`: it already
+     * placed an order, so it cannot be redone here. */
+    rearmed: { programId: string; quantity: number; working: boolean } | null;
 }
 
 export interface PendingConfirmSnapshot {
@@ -132,8 +138,9 @@ export interface ResolvePendingRequest {
 }
 
 export type ResolvePendingRefusal = 'notFound' | 'stale' | 'invalidForState' | 'windowNotAllowed'
-    | 'notEnabled' | 'invalidRequest' | 'rearmFailed';
-const REFUSALS = ['notFound', 'stale', 'invalidForState', 'windowNotAllowed', 'notEnabled', 'invalidRequest', 'rearmFailed'] as const;
+    | 'notEnabled' | 'invalidRequest' | 'rearmFailed' | 'rearmInProgress';
+const REFUSALS = ['notFound', 'stale', 'invalidForState', 'windowNotAllowed', 'notEnabled', 'invalidRequest', 'rearmFailed',
+    'rearmInProgress'] as const;
 
 export type ResolvePendingResult =
     | { ok: true; snapshot: PendingConfirmSnapshot }
@@ -253,6 +260,11 @@ function parseItem(raw: unknown, path: string): PendingConfirmItem {
         listingChecks: nonNegInt(o.listingChecks, `${path}.listingChecks`),
         lastCheckedAt: nullable(o.lastCheckedAt, `${path}.lastCheckedAt`, epochMs),
         expiredAt,
+        rearmed: o.rearmed === undefined || o.rearmed === null ? null : (() => {
+            const r = obj(o.rearmed, `${path}.rearmed`);
+            const quantity = nonNegInt(r.quantity, `${path}.rearmed.quantity`);
+            return { programId: str(r.programId, `${path}.rearmed.programId`), quantity, working: bool(r.working, `${path}.rearmed.working`) };
+        })(),
     };
 }
 
@@ -292,6 +304,6 @@ export function parseResolvePendingResult(raw: unknown): ResolvePendingResult {
 /** The card may offer 「在新盤別重新啟用」: a v2 engine, an expired trigger
  * (brackets come with ②) whose trigger side and price are known. */
 export function canRearm(snapshot: Pick<PendingConfirmSnapshot, 'version'>, item: PendingConfirmItem): boolean {
-    return snapshot.version >= 2 && item.state === 'expired' && item.owner.kind === 'trigger'
+    return snapshot.version >= 2 && item.state === 'expired' && item.owner.kind === 'trigger' && !item.rearmed?.working
         && item.order.triggerCondition !== null && item.order.triggerPrice !== null;
 }

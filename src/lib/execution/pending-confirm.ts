@@ -132,6 +132,7 @@ const REFUSAL_TEXT: Record<ResolvePendingRefusal, string> = {
     notEnabled: '「背景持續執行」沒有開啟，無法重新啟用；請先在設定開啟',
     invalidRequest: '口數不正確，請重新輸入',
     rearmFailed: '背景執行沒有接受新的觸價單（可能尚未連線），這筆仍保留，請稍後再試',
+    rearmInProgress: '先前重新啟用的觸價單已經送出委託，不能再重新啟用；請到觸價單清單與委託查詢處理',
 };
 
 /** Records the user's decision. Throws (with a user-facing message) when it

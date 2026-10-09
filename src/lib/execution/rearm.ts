@@ -3,10 +3,10 @@
 // quantity by default, never an old position snapshot: the order may have
 // filled before it lapsed, or the position may have changed since. Positions
 // are read again when the confirmation opens and matched by the full
-// account (broker + account id).
+// account (broker + account id), from a read of that account alone.
 
-import { useSyncExternalStore } from 'react';
-import { getTradingState, refreshTradingState, subscribeTradingState } from '../trading-state';
+import { createAccountQuery } from '../account-query';
+import { fetchPositions } from '../shioaji';
 import type { PendingConfirmItem } from './pending-confirm-contract';
 
 export interface PositionView {
@@ -64,26 +64,15 @@ export function checkRearmQuantity(item: PendingConfirmItem, quantity: number, v
     return `目前可平倉只有 ${held} ${unitOf(item)}，不能超過；請改小數量或先核對持倉`;
 }
 
-function viewSince(since: number | null): PositionView {
-    const s = getTradingState();
-    const q = s.queries?.positions;
-    const known = since !== null && !!q && q.updatedAt !== null && q.updatedAt >= since && !q.needsReconcile && !q.error;
-    return { known, positions: s.positions as PositionView['positions'] };
-}
-
-/** Ask for a fresh positions read; answers older than the returned time do
- * not count. */
-export function requestFreshPositions(): number {
-    const at = Date.now();
-    void refreshTradingState('positions').catch(() => undefined);
-    return at;
-}
-
-export function checkRearmQuantityNow(item: PendingConfirmItem, quantity: number, since: number | null): string | null {
-    return checkRearmQuantity(item, quantity, viewSince(since));
-}
-
-export function useRearmPlan(item: PendingConfirmItem, since: number | null): RearmPlan {
-    useSyncExternalStore(subscribeTradingState, getTradingState); // re-plan when positions change
-    return rearmPlan(item, viewSince(since));
+/** This account's positions, read now on their own (not the shared
+ * positions view, its throttle or its other accounts): the only basis for
+ * the suggestion and the cap. */
+export async function fetchAccountPositions(item: PendingConfirmItem): Promise<PositionView> {
+    const brokerId = item.account.brokerId;
+    if (!brokerId) throw new Error('沒有券商代號，無法比對帳戶');
+    const type = item.account.accountType === 'F' ? 'F' : 'S';
+    const selector = { broker_id: brokerId, account_id: item.account.accountId };
+    const rows = await createAccountQuery().read(type, selector, current => fetchPositions(type, current));
+    const account = { account_type: type, broker_id: brokerId, account_id: item.account.accountId };
+    return { known: true, positions: rows.map(r => ({ code: r.code, direction: r.direction, quantity: r.quantity, account })) };
 }
