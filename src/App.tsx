@@ -21,6 +21,7 @@ import { DepthLadder } from './components/depth-ladder';
 import { DepthMap } from './components/depth-map';
 import { EventToasts } from './components/event-toasts';
 import { PendingTriggers } from './components/pending-triggers';
+import { PendingConfirmPanel } from './components/pending-confirm';
 import { FeatureGate } from './components/feature-gate';
 import { FlashOrder } from './components/flash-order';
 import { GridTicket } from './components/grid-ticket';
@@ -853,6 +854,7 @@ function PopoutView({
             <EventToasts />
             <OrderConfirmHost />
             <PendingTriggers compact />
+            <PendingConfirmPanel compact />
             <section className={panel.panel} style={{ flex: 1, margin: 6 }}>
                 <PanelChrome
                     title={meta.label}
@@ -1598,6 +1600,7 @@ function MainApp() {
 <EventToasts />
             <OrderConfirmHost />
             <PendingTriggers />
+            <PendingConfirmPanel />
             <CommandPalette
                 open={paletteOpen}
                 onClose={() => setPaletteOpen(false)}

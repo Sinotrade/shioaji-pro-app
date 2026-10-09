@@ -22,6 +22,11 @@ startBracketRuntime();
 // 整零價差兩腳送單：接回重新整理前的執行並追蹤成交（只在執行中的主視窗）
 startOddSpreadService();
 bootstrap();
+// #201 ③ dev only: `?mockPendingConfirm` shows fake 委託待確認 cards until the
+// background engine implements the contract. Never part of a release build.
+if (import.meta.env.DEV && new URLSearchParams(location.search).has('mockPendingConfirm')) {
+    void import('./lib/execution/pending-confirm-dev').then(m => m.installMockPendingConfirm());
+}
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

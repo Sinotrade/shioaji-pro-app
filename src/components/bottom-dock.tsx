@@ -53,6 +53,7 @@ import {
 } from './bottom-dock-shared';
 import * as styles from './bottom-dock.css';
 import * as panel from './panel.css';
+import { useOpenOrdersTabRequest } from '../lib/dock-events';
 
 type TabKey = 'positions' | 'orders' | 'account';
 
@@ -73,6 +74,8 @@ export function BottomDock({
 }) {
     const portfolio = useTradingState();
     const [tab, setTab] = useState<TabKey>('positions');
+    // 待確認卡「開啟委託查詢」(#201 ③)：委託分頁、全部狀態與帳戶、更新一次
+    const [showAllOrders, setShowAllOrders] = useState(0);
     const [accountRefresh, setAccountRefresh] = useState<AccountRefreshControls | null>(null);
     const queryStatus = portfolio.queries[tab];
     const positionsQuery = portfolio.queries.positions;
@@ -107,6 +110,13 @@ export function BottomDock({
     // scope 選項/持倉 fan-out 使用可交易帳戶；被擋的帳戶（issue #16）
     // 另外灰字列出。模擬模式允許未簽署帳戶。
     const [scope, setScope] = useState('');
+    useOpenOrdersTabRequest(() => {
+        setTab('orders');
+        setMarket('all');
+        setScope('');
+        setShowAllOrders(n => n + 1);
+        void refreshTradingState('orders'); // same as the dock's own 更新委託
+    });
     const tradable = accounts.filter(
         (a) =>
             canTrade(a) && (a.account_type === 'S' || a.account_type === 'F'),
@@ -363,6 +373,8 @@ export function BottomDock({
                         setMarket('all');
                         setScope('');
                     }}
+                    showAllRequest={showAllOrders}
+                    onShowAllRequestHandled={() => setShowAllOrders(0)}
                 />
             )}
             {tab === 'account' && (
