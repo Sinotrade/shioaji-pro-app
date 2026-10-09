@@ -23,6 +23,7 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { acknowledgeBracketExit, dismissBracket, modifyBracket, reconcileBracket } from '../lib/bracket';
 import { ensureContract, useContract } from '../lib/contracts-cache';
+import { isMainWindow } from '../lib/main-window-commands';
 import {
     markBackgroundHandled,
     pauseBackgroundProgram,
@@ -35,8 +36,10 @@ import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import {
     acknowledgeExit,
     modifyTrigger,
+    modifyTriggerGroup,
     removeTrigger,
     requestPendingPrices,
+    setTriggerGroup,
     resolvePendingTrigger,
     setTriggerPaused,
     type HistoryEntry,
@@ -171,8 +174,10 @@ function RowActions({ row, expanded, onToggle, compact }: {
 }) {
     const { busy, message, run } = useRun();
     const confirm = useConfirmStep<Step>();
-    const a = row.actions;
     const src = row.source;
+    // the App takes background bracket decisions from the main window only
+    const elsewhere = src.type === 'bgBracket' && !isMainWindow();
+    const a = elsewhere ? { ...row.actions, pause: false, resume: false, send: false, keep: false, rearm: false, handled: false } : row.actions;
     const triggers: TriggerOrder[] = src.type === 'trigger' ? [src.trigger] : src.type === 'oco' ? src.triggers : [];
 
     const pause = (on: boolean) => void run(async () => {
@@ -180,6 +185,7 @@ function RowActions({ row, expanded, onToggle, compact }: {
             await (on ? pauseBackgroundProgram(src.view.programId) : resumeBackgroundProgram(src.view.programId));
             return;
         }
+        if (src.type === 'oco') { await setTriggerGroup(triggers.map(t => t.id), on ? 'pause' : 'resume'); return; }
         for (const t of triggers) await setTriggerPaused(t.id, on);
     });
     const handled = () => {
@@ -197,6 +203,7 @@ function RowActions({ row, expanded, onToggle, compact }: {
             if (src.type === 'bracket') await dismissBracket(src.plan.id);
             else if (src.type === 'bgBracket') await removeBackgroundBracket(src.view.programId);
             else if (src.type === 'trigger' && src.trigger.pending) await resolvePendingTrigger(src.trigger.id, 'cancel');
+            else if (src.type === 'oco') await setTriggerGroup(triggers.map(t => t.id), 'remove');
             else for (const t of triggers) await removeTrigger(t.id);
         });
     };
@@ -225,6 +232,7 @@ function RowActions({ row, expanded, onToggle, compact }: {
     const cancelLabel = src.type === 'bracket' ? '再按一次：移除並撤銷保護' : src.type === 'bgBracket' ? '再按一次：移除' : '再按一次：取消';
     return (
         <div className={compact ? styles.cardActions : styles.actions}>
+            {elsewhere && (row.actions.send || row.actions.rearm || row.actions.handled) && <span className={styles.muted}>請在主視窗處理</span>}
             {message && <span className={styles.message[message.tone]} role='status'>{message.text}</span>}
             {message?.text.includes('未穿價') && pendingId && (
                 <button type='button' className={styles.button.danger} disabled={busy} onClick={() => send(true)}>仍要送出</button>
@@ -396,9 +404,8 @@ function OcoEdit({ legs, onDone }: { legs: TriggerOrder[]; onDone: () => void })
     const save = () => void run(async () => {
         const parsed = prices.map(parsePrice);
         if (parsed.some(v => v === null || v <= 0)) throw new Error('觸發價必須是正數');
-        for (let i = 0; i < legs.length; i++) {
-            if (parsed[i] !== legs[i]!.price) await modifyTrigger(legs[i]!.id, { price: parsed[i]! });
-        }
+        const patches = legs.map((l, i) => ({ id: l.id, patch: { price: parsed[i]! } })).filter((p, i) => p.patch.price !== legs[i]!.price);
+        if (patches.length) await modifyTriggerGroup(patches);
         onDone();
     });
     return (

@@ -206,6 +206,23 @@ describe('modify (#226)', () => {
     });
 });
 
+describe('二擇一 group commands (#226)', () => {
+    it('pause / remove both legs in one step; a refusal on one leg leaves both untouched', async () => {
+        await boot();
+        await addStop({ group: 'g1' });
+        await engine.addTrigger({ code: 'TXFR1', condition: 'above', price: 48600, action: 'Sell', quantity: 1, kind: 'take', group: 'g1' },
+            TXF as never);
+        const ids = engine.getTriggers().map(t => t.id);
+        await engine.setTriggerGroup(ids, 'pause');
+        expect(engine.getTriggers().every(t => t.paused)).toBe(true);
+        await engine.setTriggerGroup(ids, 'resume');
+        await expect(engine.modifyTriggerGroup([{ id: ids[0]!, patch: { price: 47950 } }, { id: ids[1]!, patch: { price: -1 } }])).rejects.toThrow();
+        expect(engine.getTriggers().map(t => t.price)).toEqual([48000, 48600]);
+        await engine.setTriggerGroup(ids, 'remove');
+        expect(engine.getTriggers()).toHaveLength(0);
+    });
+});
+
 describe('entries and the finished list (#226)', () => {
     it('an entry trigger fires through the risk checks (not bypassed); a protective stop bypasses them', async () => {
         await boot();

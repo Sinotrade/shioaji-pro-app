@@ -269,7 +269,10 @@ type Command =
     | { op: 'publish-prices' }
     | { op: 'pause'; id: string }
     | { op: 'resume'; id: string }
-    | { op: 'modify'; id: string; patch: TriggerPatch };
+    | { op: 'modify'; id: string; patch: TriggerPatch }
+    // #226 二擇一: every leg in one executor step (no tick in between)
+    | { op: 'group'; action: 'pause' | 'resume' | 'remove'; ids: string[] }
+    | { op: 'modify-group'; patches: { id: string; patch: TriggerPatch }[] };
 
 let decideRole!: () => void;
 const roleDecided = new Promise<void>(resolve => { decideRole = resolve; });
@@ -396,6 +399,41 @@ function applyModify(id: string, patch: TriggerPatch): TriggerOrder {
     return done;
 }
 
+/** All legs or none: on any refusal the earlier legs are put back. */
+function applyGroup(cmd: Extract<Command, { op: 'group' } | { op: 'modify-group' }>): boolean {
+    const saved = triggers;
+    const savedEnded = ended;
+    try {
+        if (cmd.op === 'modify-group') {
+            for (const { id, patch } of cmd.patches) applyModify(id, patch);
+        } else if (cmd.action === 'remove') {
+            const gone = triggers.filter(t => cmd.ids.includes(t.id));
+            if (gone.some(t => t.bracketId)) throw new Error('括號單保護請在括號單列移除');
+            triggers = triggers.filter(t => !cmd.ids.includes(t.id));
+            for (const t of gone) recordEnded(t, 'cancelled');
+            commit();
+        } else {
+            for (const id of cmd.ids) pauseTrigger(id, cmd.action === 'pause');
+        }
+        return true;
+    } catch (e) {
+        triggers = saved;
+        ended = savedEnded;
+        commit();
+        throw e;
+    }
+}
+
+/** #226 二擇一: pause / resume / remove both legs together. */
+export async function setTriggerGroup(ids: string[], action: 'pause' | 'resume' | 'remove'): Promise<void> {
+    await bus.send({ op: 'group', action, ids });
+}
+
+/** #226 二擇一: change both legs together (all or none). */
+export async function modifyTriggerGroup(patches: { id: string; patch: TriggerPatch }[]): Promise<void> {
+    await bus.send({ op: 'modify-group', patches });
+}
+
 function pauseTrigger(id: string, on: boolean): TriggerOrder {
     const t = triggers.find(x => x.id === id);
     if (!t) throw new Error('找不到這張觸價單（可能已觸發或已刪除）');
@@ -483,6 +521,7 @@ function handleCommand(cmd: Command): unknown {
     }
     if (cmd.op === 'pause' || cmd.op === 'resume') return pauseTrigger(cmd.id, cmd.op === 'pause');
     if (cmd.op === 'modify') return applyModify(cmd.id, cmd.patch);
+    if (cmd.op === 'group' || cmd.op === 'modify-group') return applyGroup(cmd);
     if (cmd.op === 'ack-exit') {
         exits = exits.map(e => e.id === cmd.id && e.status === 'unknown' ? { ...e, acknowledged: true, at: Date.now() } : e);
         const rec = exits.find(e => e.id === cmd.id);
@@ -631,6 +670,14 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
         await pauseBackgroundProgram(programId);
     } catch (e) {
         throw new Error(`背景執行中的單目前不能直接修改（${e instanceof Error ? e.message : String(e)}），請取消後重新建立`);
+    }
+    // it may have fired while this was on its way: replace it only when it is
+    // still an untouched, armed condition
+    await refreshBackground();
+    const now = getBackgroundPrograms().find(p => p.id === programId)?.levels.find(lv => lv.id === row.background.levelId);
+    if (!now || now.phase !== 'idle' || now.pending || now.orders.length > 0 || now.position > 0) {
+        await resumeBackgroundProgram(programId).catch(() => undefined);
+        throw new Error('這張觸價單在修改期間已觸發或狀態已變，沒有修改；請看清單與委託');
     }
     const result = await createBackgroundTrigger(program);
     if (result !== 'created') {

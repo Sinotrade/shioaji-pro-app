@@ -16,6 +16,7 @@ const m = vi.hoisted(() => ({
     remove: vi.fn(async () => undefined),
     resolve: vi.fn(async () => undefined),
     modify: vi.fn(async () => undefined),
+    group: vi.fn(async () => undefined),
     priv: true,
 }));
 
@@ -31,6 +32,8 @@ vi.mock('../lib/trigger-engine', () => ({
     removeTrigger: m.remove,
     resolvePendingTrigger: m.resolve,
     modifyTrigger: m.modify,
+    setTriggerGroup: m.group,
+    modifyTriggerGroup: m.modify,
     acknowledgeExit: vi.fn(),
     requestPendingPrices: vi.fn(async () => undefined),
     addTrigger: vi.fn(),
@@ -38,6 +41,7 @@ vi.mock('../lib/trigger-engine', () => ({
 vi.mock('../lib/bracket', () => ({
     acknowledgeBracketExit: vi.fn(), dismissBracket: vi.fn(), modifyBracket: vi.fn(), reconcileBracket: vi.fn(),
 }));
+vi.mock('../lib/main-window-commands', () => ({ isMainWindow: () => true }));
 vi.mock('../lib/privacy', () => ({
     usePrivacyMode: () => m.priv,
     maskAccountId: (id: string, priv: boolean) => priv ? `•••••${id.slice(-2)}` : id,
@@ -167,5 +171,16 @@ describe('ConditionalPanel', () => {
         await click(button(r, '現在送出'));
         await click(button(r, '再按一次確認送出'));
         expect(m.resolve).toHaveBeenCalledWith('d', 'send', { allowUnpast: false });
+    });
+
+    it('a 二擇一 is paused / cancelled as one group (one command, no tick between legs)', async () => {
+        m.sources = sources({ triggers: [trig({ id: 'u', group: 'g', condition: 'above', price: 48400, action: 'Buy' }), trig({ id: 'd', group: 'g' })] });
+        const r = render();
+        await click(byLabel(r, '暫停')[0]!);
+        expect(m.group).toHaveBeenCalledWith(['u', 'd'], 'pause');
+        await click(byLabel(r, '取消')[0]!);
+        await click(button(r, '再按一次：取消'));
+        expect(m.group).toHaveBeenCalledWith(['u', 'd'], 'remove');
+        expect(m.remove).not.toHaveBeenCalled();
     });
 });
