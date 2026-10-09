@@ -971,8 +971,9 @@ function MainApp() {
             0,
         );
         const settle = marginState.data?.future_settle_profitloss ?? 0;
-        reportDailyPnl(unrealized + settle);
-    }, [positionsState.data, marginState.data]);
+        // known only once positions and margin were actually read (before that it is a starting zero)
+        reportDailyPnl(unrealized + settle, trading.queries.positions.updatedAt !== null && marginState.data !== undefined);
+    }, [positionsState.data, marginState.data, trading.queries.positions.updatedAt]);
 
     // select & link a symbol WITHOUT adding it to the watchlist
     const selectByCode = useCallback(

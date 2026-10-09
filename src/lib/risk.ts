@@ -47,6 +47,7 @@ function load(): RiskSettings {
 
 let settings = load();
 let dailyPnl = 0; // fed by App from position/margin polling
+let dailyPnlKnown = false; // the App has read positions and margin at least once
 const listeners = new Set<() => void>();
 
 // cross-window sync — popouts share localStorage but not module state;
@@ -69,11 +70,17 @@ export function setRiskSettings(next: Partial<RiskSettings>) {
     emit();
 }
 
-export function reportDailyPnl(pnl: number) {
-    if (pnl !== dailyPnl) {
+/** `known`: computed from positions and margin the App has actually read (0 before that is not a PnL). */
+export function reportDailyPnl(pnl: number, known = true) {
+    if (pnl !== dailyPnl || known !== dailyPnlKnown) {
         dailyPnl = pnl;
+        dailyPnlKnown = known;
         emit();
     }
+}
+
+export function getDailyPnlKnown(): boolean {
+    return dailyPnlKnown;
 }
 
 /** Every change of the settings or the daily PnL (also from other windows). */

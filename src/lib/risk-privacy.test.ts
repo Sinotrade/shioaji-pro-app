@@ -4,7 +4,7 @@ vi.stubGlobal('window', new EventTarget());
 const store = new Map<string, string>();
 vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) });
 const { setPrivacyMoney } = await import('./privacy');
-const { checkOrderAllowed, reportDailyPnl, setRiskSettings, subscribeRiskSettings } = await import('./risk');
+const { checkOrderAllowed, getDailyPnlKnown, reportDailyPnl, setRiskSettings, subscribeRiskSettings } = await import('./risk');
 
 afterEach(() => {
     setPrivacyMoney(false);
@@ -30,4 +30,11 @@ it('tells subscribers about every change of the settings and the daily PnL', () 
     off();
     setRiskSettings({ locked: false });
     expect(seen).toHaveBeenCalledTimes(2);
+});
+
+it('knows whether the daily PnL was read or is only the starting zero', () => {
+    reportDailyPnl(0, false);
+    expect(getDailyPnlKnown()).toBe(false);
+    reportDailyPnl(0);
+    expect(getDailyPnlKnown()).toBe(true);
 });
