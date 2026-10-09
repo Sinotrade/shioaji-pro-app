@@ -9,6 +9,13 @@ import { createAccountQuery } from '../account-query';
 import { fetchPositions } from '../shioaji';
 import type { PendingConfirmItem } from './pending-confirm-contract';
 
+/** What a rearm protects: a 委託待確認 item, or a lapsed background bracket
+ * (its exit: action closes the held position). */
+export interface RearmSubject {
+    order: Pick<PendingConfirmItem['order'], 'code' | 'action' | 'quantity' | 'quantityUnit'>;
+    account: PendingConfirmItem['account'];
+}
+
 export interface PositionView {
     /** A confirmed positions answer read after the confirmation opened. */
     known: boolean;
@@ -24,11 +31,11 @@ export interface RearmPlan {
     notes: string[];
 }
 
-const unitOf = (item: PendingConfirmItem) =>
+const unitOf = (item: RearmSubject) =>
     item.order.quantityUnit === 'contract' ? '口' : item.order.quantityUnit === 'lot' ? '張' : '股';
 
 /** Closable position of the item's full account, or null when not known. */
-function closableOf(item: PendingConfirmItem, view: PositionView): number | null {
+function closableOf(item: RearmSubject, view: PositionView): number | null {
     if (!view.known || !item.account.brokerId) return null;
     const closes = item.order.action === 'Sell' ? 'Buy' : 'Sell';
     return view.positions
@@ -40,7 +47,7 @@ function closableOf(item: PendingConfirmItem, view: PositionView): number | null
 /** The order closes a position in the opposite direction: suggest
  * min(original, that position). No such position: it would open one — the
  * user decides. Position unknown: the user decides. */
-export function rearmPlan(item: PendingConfirmItem, view: PositionView): RearmPlan {
+export function rearmPlan(item: RearmSubject, view: PositionView): RearmPlan {
     const unit = unitOf(item);
     const held = closableOf(item, view);
     if (held === null) return { quantity: null, closable: null, notes: ['持倉未確認（重新查詢中或無法比對帳戶），請到持倉核對後自行輸入數量'] };
@@ -58,7 +65,7 @@ export function rearmPlan(item: PendingConfirmItem, view: PositionView): RearmPl
 /** Right before the decision is sent: more than the closable position is
  * refused (null = fine). Without a closable position the typed quantity
  * stands — the confirmation already says it opens / is unconfirmed. */
-export function checkRearmQuantity(item: PendingConfirmItem, quantity: number, view: PositionView): string | null {
+export function checkRearmQuantity(item: RearmSubject, quantity: number, view: PositionView): string | null {
     const held = closableOf(item, view);
     if (held === null || held <= 0 || quantity <= held) return null;
     return `目前可平倉只有 ${held} ${unitOf(item)}，不能超過；請改小數量或先核對持倉`;
@@ -67,7 +74,7 @@ export function checkRearmQuantity(item: PendingConfirmItem, quantity: number, v
 /** This account's positions, read now on their own (not the shared
  * positions view, its throttle or its other accounts): the only basis for
  * the suggestion and the cap. */
-export async function fetchAccountPositions(item: PendingConfirmItem): Promise<PositionView> {
+export async function fetchAccountPositions(item: RearmSubject): Promise<PositionView> {
     const brokerId = item.account.brokerId;
     if (!brokerId) throw new Error('沒有券商代號，無法比對帳戶');
     const type = item.account.accountType === 'F' ? 'F' : 'S';

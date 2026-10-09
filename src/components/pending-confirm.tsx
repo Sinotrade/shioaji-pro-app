@@ -7,12 +7,12 @@
 // whose trading session already changed are shown as 已失效 only.
 // The main window shows the cards; popouts only a badge.
 
-import { CalendarX2, ChevronDown, ChevronUp, CircleHelp, ListChecks, RefreshCw, RotateCcw, TriangleAlert } from 'lucide-react';
+import { CalendarX2, ChevronDown, ChevronUp, CircleHelp, ListChecks, RefreshCw, RotateCcw, TriangleAlert, UserCheck } from 'lucide-react';
 import { useState } from 'react';
 import { requestOpenOrdersTab } from '../lib/dock-events';
 import { refreshPendingConfirm, resolvePendingConfirm, usePendingConfirm } from '../lib/execution/pending-confirm';
 import { useBackgroundSetting } from '../lib/execution/background';
-import { canRearm, UNIT_LABEL, type PendingConfirmItem, type PendingResolution } from '../lib/execution/pending-confirm-contract';
+import { canMarkHandled, canRearm, UNIT_LABEL, type PendingConfirmItem, type PendingResolution } from '../lib/execution/pending-confirm-contract';
 import { checkRearmQuantity, fetchAccountPositions, rearmPlan, type PositionView, type RearmPlan } from '../lib/execution/rearm';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
@@ -106,7 +106,39 @@ function useRun() {
 
 type Choice = Extract<PendingResolution, 'confirmedSent' | 'confirmedNotSent'>;
 
-function ConfirmCard({ item, envNow }: { item: PendingConfirmItem; envNow: string | null }) {
+/** 「我已自行處理」 (v3): always available; asks once before it records. */
+function HandledButton({ item, envNow }: { item: PendingConfirmItem; envNow: string | null }) {
+    const [asking, setAsking] = useState(false);
+    const { busy, error, run } = useRun();
+    const here = item.env === envNow;
+    if (!asking) {
+        return (
+            <button type='button' className={styles.button} disabled={busy || !here}
+                title={here ? '你已自行到委託查詢處理這筆' : '切回原環境才能處理'} onClick={() => setAsking(true)}>
+                <UserCheck size={12} aria-hidden />我已自行處理
+            </button>
+        );
+    }
+    return (
+        <div className={styles.cardConfirm} role='group' aria-label='確認已自行處理'>
+            <div className={styles.note.muted}>
+                {item.owner.kind === 'bracket'
+                    ? '背景執行會停止追蹤這張括號單（包含它的部位與保護），不會送出或刪除任何委託；仍在委託中的單、持有的部位請你自行處理。'
+                    : '背景執行會停止追蹤這筆委託，不會送出或刪除任何委託；請你自行到委託查詢處理。'}
+            </div>
+            {error && <div className={styles.note.err} role='alert'>{error}</div>}
+            <div className={styles.stepRow}>
+                <button type='button' className={styles.button} disabled={busy} onClick={() => setAsking(false)}>返回</button>
+                <button type='button' className={styles.primary} disabled={busy || !here}
+                    onClick={() => void run(() => resolvePendingConfirm(item, 'handledByUser'))}>
+                    {busy ? '處理中…' : '確認我已自行處理'}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function ConfirmCard({ item, envNow, handled }: { item: PendingConfirmItem; envNow: string | null; handled: boolean }) {
     const [why, setWhy] = useState(false);
     const [choice, setChoice] = useState<Choice | null>(null);
     const { busy, error, run } = useRun();
@@ -168,6 +200,7 @@ function ConfirmCard({ item, envNow }: { item: PendingConfirmItem; envNow: strin
                 {busy ? '處理中…' : primaryLabel}
             </button>
             <div className={styles.note.muted}>這張卡不會送出任何委託，也不會自動重送。若要重新下單，請到下單面板自行下單。</div>
+            {handled && <HandledButton item={item} envNow={envNow} />}
         </div>
     );
 }
@@ -256,7 +289,8 @@ function Rearm({ item, envNow }: { item: PendingConfirmItem; envNow: string | nu
     );
 }
 
-function ExpiredCard({ item, rearm, envNow }: { item: PendingConfirmItem; rearm: boolean; envNow: string | null }) {
+function ExpiredCard({ item, rearm, envNow, handled }: { item: PendingConfirmItem; rearm: boolean; envNow: string | null;
+    handled: boolean }) {
     const { busy, error, run } = useRun();
     return (
         <div className={styles.cardExpired} role='group' aria-label={`${item.order.code} 委託已失效`}>
@@ -269,6 +303,7 @@ function ExpiredCard({ item, rearm, envNow }: { item: PendingConfirmItem; rearm:
             <div className={styles.note.muted}>
                 {`${sessionLabel(item)}結束時仍查不到這筆的結果。委託不跨盤別，已自動失效，不會再成交，系統也不會重送。若失效前可能已成交，請到成交查詢與持倉核對。`}
                 {rearm ? '觸價單不會自動延續到新盤別；需要的話可以在新盤別重新啟用。' : ''}
+                {item.owner.kind === 'bracket' ? '括號單的保護不會延續到新盤別；按「知道了」後，可以在括號單清單重新啟用。' : ''}
             </div>
             {error && <div className={styles.note.err} role='alert'>{error}</div>}
             <div className={styles.stepRow}>
@@ -277,6 +312,7 @@ function ExpiredCard({ item, rearm, envNow }: { item: PendingConfirmItem; rearm:
                     onClick={() => void run(() => resolvePendingConfirm(item, 'acknowledgeExpired'))}>
                     {busy ? '處理中…' : '知道了，移除'}
                 </button>
+                {handled && <HandledButton item={item} envNow={envNow} />}
             </div>
             {item.rearmed && (
                 <div className={item.rearmed.working ? styles.note.warn : styles.note.muted}>
@@ -346,9 +382,10 @@ export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) 
                             </button>
                         </div>
                     )}
-                    {confirm.map(i => <ConfirmCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i} envNow={envNow} />)}
+                    {confirm.map(i => <ConfirmCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i} envNow={envNow}
+                        handled={!!snapshot && canMarkHandled(snapshot)} />)}
                     {expired.map(i => <ExpiredCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i}
-                        rearm={!!snapshot && canRearm(snapshot, i)} envNow={envNow} />)}
+                        rearm={!!snapshot && canRearm(snapshot, i)} envNow={envNow} handled={!!snapshot && canMarkHandled(snapshot)} />)}
                 </>
             )}
         </div>

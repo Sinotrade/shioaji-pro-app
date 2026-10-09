@@ -302,3 +302,17 @@ it('no rearm when the setting is off, for a v1 engine, or for a bracket (not yet
     r = render();
     expect(buttons(r).some(b => text(b).includes('在新盤別重新啟用'))).toBe(false);
 });
+
+it('我已自行處理 is offered on every card of a v3 engine and records only that decision', async () => {
+    show([mockPendingConfirmItem({ id: 'a', env: SIM }),
+        mockPendingConfirmItem({ id: 'b', env: SIM, state: 'expired', expiredAt: 1_791_000_000_000,
+            owner: { kind: 'bracket', id: 'bkt-1', leg: 'stop' } })]);
+    const r = render();
+    expect(buttons(r).filter(b => text(b).includes('我已自行處理'))).toHaveLength(2);
+    await click(buttons(r).filter(b => text(b).includes('我已自行處理'))[1]!);
+    expect(text(r.root)).toContain('停止追蹤這張括號單');
+    await click(button(r, '確認我已自行處理'));
+    expect(m.resolve).toHaveBeenCalledWith(expect.objectContaining({ id: 'b' }), 'handledByUser');
+    show([mockPendingConfirmItem({ id: 'a', env: SIM })], { version: 2 });
+    expect(buttons(render()).some(b => text(b).includes('我已自行處理'))).toBe(false);
+});
