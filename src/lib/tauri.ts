@@ -1,10 +1,7 @@
 // src/lib/tauri.ts — desktop bridge: sidecar server management, popout
 // windows, auto-updates. Every entry point is a no-op in the browser.
 
-import type {
-    DownloadEvent,
-    Update,
-} from '@tauri-apps/plugin-updater';
+import type { DownloadEvent } from '@tauri-apps/plugin-updater';
 import {
     type ApiScheme,
     DEFAULT_PORT,
@@ -1678,7 +1675,9 @@ const APP_RELEASE_URL =
 
 let appUpdateState: AppUpdateState = { phase: 'idle' };
 const appUpdateListeners = new Set<() => void>();
-let pendingUpdate: Update | null = null;
+// The App downloads and installs updates itself, so it can stop the local
+// server and Agents before the installer runs. Only the version is kept here.
+let pendingUpdate: string | null = null;
 let updateInFlight = false;
 
 export function getAppUpdateState(): AppUpdateState {
@@ -1768,7 +1767,7 @@ export async function checkForUpdates(silent: boolean) {
             return;
         }
         setAppUpdateState({ phase: 'available', version: update.version });
-        const { invoke } = await import('@tauri-apps/api/core');
+        const { Channel, invoke } = await import('@tauri-apps/api/core');
         const canInstall = await invoke<boolean>(
             'supports_in_app_update',
         ).catch(() => !/Linux/i.test(navigator.userAgent));
@@ -1785,21 +1784,29 @@ export async function checkForUpdates(silent: boolean) {
             });
             return;
         }
-        pendingUpdate = update;
+        await update.close().catch(() => undefined);
         setAppUpdateState({
             phase: 'downloading',
             version: update.version,
             downloadedBytes: 0,
         });
-        await update.download(updateDownloadProgress);
-        setAppUpdateState({ phase: 'ready', version: update.version });
+        const onEvent = new Channel<DownloadEvent>();
+        onEvent.onmessage = updateDownloadProgress;
+        const version = await invoke<string | null>('app_update_download', {
+            onEvent,
+        });
+        if (!version) {
+            setAppUpdateState({ phase: 'idle' });
+            return;
+        }
+        pendingUpdate = version;
+        setAppUpdateState({ phase: 'ready', version });
         notify({
             kind: 'info',
-            title: `更新 v${update.version} 已下載`,
+            title: `更新 v${version} 已下載`,
             body: '可在方便時重新啟動並完成更新',
         });
     } catch (e) {
-        await pendingUpdate?.close().catch(() => undefined);
         pendingUpdate = null;
         const message = e instanceof Error ? e.message : String(e);
         setAppUpdateState({ phase: 'error', error: message });
@@ -1825,20 +1832,34 @@ export async function restartAndInstallUpdate() {
         return;
     }
     updateInFlight = true;
-    const update = pendingUpdate;
-    setAppUpdateState({ phase: 'installing', version: update.version });
+    const version = pendingUpdate;
+    setAppUpdateState({ phase: 'installing', version });
     try {
-        await update.install();
+        // On Windows the App stops the local server and Agents first and
+        // refuses to install if they do not stop; on success it does not
+        // return (the installer takes over and restarts the App).
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('app_update_install');
         pendingUpdate = null;
         const { relaunch } = await import('@tauri-apps/plugin-process');
         await relaunch();
     } catch (e) {
-        await update.close().catch(() => undefined);
+        const failure = updateInstallFailure(e);
+        if (failure.keepDownload) {
+            // nothing was installed and the download is still there
+            setAppUpdateState({ phase: 'ready', version });
+            notify({
+                kind: 'err',
+                title: '無法開始更新',
+                body: failure.message,
+            });
+            return;
+        }
         pendingUpdate = null;
-        const message = e instanceof Error ? e.message : String(e);
+        const message = failure.message;
         setAppUpdateState({
             phase: 'error',
-            version: update.version,
+            version,
             error: message,
         });
         notify({
@@ -1849,6 +1870,23 @@ export async function restartAndInstallUpdate() {
     } finally {
         updateInFlight = false;
     }
+}
+
+function updateInstallFailure(e: unknown): {
+    keepDownload: boolean;
+    message: string;
+} {
+    if (e && typeof e === 'object' && 'kind' in e && 'message' in e) {
+        const { kind, message } = e as { kind: unknown; message: unknown };
+        return {
+            keepDownload: kind === 'stopFailed',
+            message: String(message),
+        };
+    }
+    return {
+        keepDownload: false,
+        message: e instanceof Error ? e.message : String(e),
+    };
 }
 
 // 以系統預設瀏覽器開啟外部網址（WebView 內不導航）。
