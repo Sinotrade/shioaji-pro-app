@@ -13,12 +13,10 @@
     return root.dataset.theme || (darkMq.matches ? 'dark' : 'light');
   }
   function syncShot() {
-    var img = document.getElementById('hero-shot');
-    if (!img) return;
-    var source = img.parentElement.querySelector('source');
-    if (!source) return;
-    if (!root.dataset.theme) source.media = '(prefers-color-scheme: dark)';
-    else source.media = root.dataset.theme === 'dark' ? 'all' : 'not all';
+    Array.prototype.forEach.call(document.querySelectorAll('picture > source[media]'), function (source) {
+      if (!root.dataset.theme) source.media = '(prefers-color-scheme: dark)';
+      else source.media = root.dataset.theme === 'dark' ? 'all' : 'not all';
+    });
   }
   function syncThemeBtn() {
     var btn = document.getElementById('theme-btn');
@@ -127,10 +125,12 @@
     var self = this;
     this.wins.forEach(function (w, i) { w.innerHTML = self.saved[i]; });
     for (var n = 1; n <= 8; n++) this.el.classList.remove('s' + n);
+    this.el.className = this.el.className.replace(/\bqs-on-\d\b/g, '').trim();
     this.cap(0);
     this.cursor = null;
     if (this.opts.cursor) {
-      var stage = this.wins[0].querySelector('.stage');
+      Array.prototype.forEach.call(this.el.querySelectorAll('.cursor'), function (c) { c.remove(); });
+      var stage = this.el.querySelector('.duo') || this.wins[0].querySelector('.stage');
       var c = document.createElement('div');
       c.className = 'cursor';
       c.innerHTML = '<svg aria-hidden="true"><use href="#i-cursor"/></svg>';
@@ -210,198 +210,328 @@
     var self = this;
     this.wins.forEach(function (w, i) { w.innerHTML = self.saved[i]; });
     for (var n = 1; n <= 8; n++) this.el.classList.remove('s' + n);
+    this.el.className = this.el.className.replace(/\bqs-on-\d\b/g, '').trim();
     this.cap(0);
     this.label();
   };
 
   function rowOf(d, price) { return d.$('.fl-row[data-p="' + price + '"]'); }
+  function seq(d, steps) {
+    var p = Promise.resolve();
+    steps.forEach(function (fn) { p = p.then(fn); });
+    return p;
+  }
 
   var scenes = {
-    setup: [function (d) {
-      d.cap(1); d.gate(1);
-      return d.wait(2100)
-        .then(function () { d.cap(2); d.gate(2); return d.wait(2300); })
-        .then(function () { d.gate(3); return d.wait(1100); })
-        .then(function () { d.cap(3); d.gate(4); return d.wait(2000); });
+    // 申請 API Key → 正式下單（步驟依官方文件）
+    qs: [function (d) {
+      var el = d.el;
+      function scene(n) {
+        for (var i = 1; i <= 6; i++) el.classList.remove('qs-on-' + i);
+        el.classList.add('qs-on-' + n);
+        d.step(n);
+      }
+      return seq(d, [
+        function () { scene(1); return d.wait(2200); },
+        function () { scene(2); return d.wait(2600); },
+        function () { scene(3); return d.wait(3800); },
+        function () { scene(4); return d.wait(2600); },
+        function () { scene(5); return d.wait(3200); },
+        function () { scene(6); return d.wait(3400); }
+      ]);
     }, {}],
 
     flash: [function (d) {
-      var arm = d.$('#fl-arm'), hl = d.$('.fl-hl'), buy = d.$('#fl-buy'), sell = d.$('#fl-sell');
-      arm.classList.remove('armed');
-      hl.style.setProperty('--row', 5);
-      buy.classList.add('gone'); buy.classList.remove('filled');
+      var arm = d.$('#fl-arm'), hl = d.$('.fl-hl'), buy = d.$('#fl-buy'), sell = d.$('#fl-sell'), hint = d.$('#fl-hint');
       function row(n) { hl.style.setProperty('--row', n); }
+      arm.classList.remove('armed');
+      row(5);
+      buy.classList.add('gone'); buy.classList.remove('filled');
       d.cap(1);
-      return d.move(arm, 0.5, 0.5)
-        .then(function () { return d.click(); })
-        .then(function () { arm.classList.add('armed'); d.gate(1); return d.wait(900); })
-        .then(function () { d.step(2); row(4); return d.wait(650); })
-        .then(function () { row(5); return d.wait(650); })
-        .then(function () { row(4); return d.wait(650); })
-        .then(function () { row(5); return d.wait(500); })
-        .then(function () { d.step(3); return d.move(rowOf(d, 2545).querySelector('.bc'), 0.55, 0.5); })
-        .then(function () { return d.click(); })
-        .then(function () { buy.classList.remove('gone'); d.toast('委託・買 2,545・1 張'); return d.wait(1300); })
-        .then(function () { d.step(4); row(6); return d.wait(350); })
-        .then(function () { buy.classList.add('filled'); d.toast('成交・買 2,545・1 張', 'fill'); return d.wait(700); })
-        .then(function () { buy.classList.add('gone'); return d.wait(1100); })
-        .then(function () { d.step(5); row(5); return d.move(rowOf(d, 2560).querySelector('.sc'), 0.45, 0.5); })
-        .then(function () { return d.click(); })
-        .then(function () { sell.classList.remove('gone'); d.toast('委託・賣 2,560・1 張'); return d.wait(1200); })
-        .then(function () { return d.click(); })
-        .then(function () { sell.classList.add('gone'); d.toast('已刪單・賣 2,560'); return d.wait(700); })
-        .then(function () { row(6); return d.moveXY(0.86, 0.92, 900); });
+      return seq(d, [
+        function () { return d.move(arm, 0.5, 0.5); },
+        function () { return d.click(); },
+        function () { arm.classList.add('armed'); hint.classList.add('hide'); d.gate(1); return d.wait(800); },
+        function () { row(4); return d.wait(500); },
+        function () { row(5); return d.wait(500); },
+        function () { d.step(2); return d.move(rowOf(d, 2545).querySelector('.bc'), 0.55, 0.5); },
+        function () { return d.click(); },
+        function () { buy.classList.remove('gone'); d.toast('委託・買 2,545・1 張'); return d.wait(1300); },
+        function () { row(6); return d.wait(300); },
+        function () { d.step(3); buy.classList.add('filled'); d.toast('成交・買 2,545・1 張', 'fill'); return d.wait(1900); },
+        function () { d.step(4); row(5); return d.move(rowOf(d, 2560).querySelector('.sc'), 0.45, 0.5); },
+        function () { return d.click(); },
+        function () { sell.classList.remove('gone'); d.toast('委託・賣 2,560・1 張'); return d.wait(1200); },
+        function () { return d.click(); },
+        function () { sell.classList.add('gone'); d.toast('刪單・賣 2,560'); return d.wait(700); },
+        function () { row(6); return d.moveXY(0.86, 0.95, 900); }
+      ]);
     }, { cursor: true }],
 
     odd: [function (d) {
-      var win = d.$('#tk-win'), segs = d.$('#tk-unit').children, q = d.$('#tk-q'), u = d.$('#tk-u'), s = d.$('#tk-s');
-      win.classList.remove('odd');
-      segs[1].classList.remove('on'); segs[0].classList.add('on');
-      q.textContent = '1'; u.textContent = '張'; s.textContent = '1 張';
+      var tk = d.$('#tk-win'), segs = d.$('#tk-unit').children, q = d.$('#tk-q'), ql = d.$('#tk-ql');
+      var fo = d.$('#fo-win'), foLot = d.$('#fo-lot'), foOdd = d.$('#fo-odd');
+      tk.classList.remove('odd'); segs[1].classList.remove('on'); segs[0].classList.add('on');
+      q.textContent = '1'; ql.textContent = '數量張';
+      fo.classList.remove('odd'); foOdd.classList.remove('on'); foLot.classList.add('on');
       d.cap(1);
-      return d.move(segs[1])
-        .then(function () { return d.click(); })
-        .then(function () {
-          segs[0].classList.remove('on'); segs[1].classList.add('on');
-          win.classList.add('odd'); u.textContent = '股'; s.textContent = '1 股';
-          d.gate(1);
+      return seq(d, [
+        function () { return d.move(segs[1]); },
+        function () { return d.click(); },
+        function () {
+          segs[0].classList.remove('on'); segs[1].classList.add('on'); tk.classList.add('odd'); ql.textContent = '數量股';
           var box = d.$('#tk-qty'); box.classList.remove('flash'); void box.offsetWidth; box.classList.add('flash');
-          return d.wait(1300);
-        })
-        .then(function () { d.step(2); return d.move(q, 0.7, 0.5); })
-        .then(function () { return d.click(); })
-        .then(function () { q.textContent = ''; return d.wait(250); })
-        .then(function () { q.textContent = '3'; return d.wait(240); })
-        .then(function () { q.textContent = '35'; s.textContent = '35 股'; return d.wait(1100); })
-        .then(function () { d.step(3); return d.move('.book', 0.5, 0.45); })
-        .then(function () { return d.wait(1100); })
-        .then(function () { return d.move('#tk-send', 0.5, 0.5); })
-        .then(function () { return d.wait(1300); });
+          d.gate(1); return d.wait(1200);
+        },
+        function () { d.step(2); return d.move(q, 0.6, 0.5); },
+        function () { return d.click(); },
+        function () { q.textContent = '3'; return d.wait(260); },
+        function () { q.textContent = '35'; return d.wait(1400); },
+        function () { d.step(3); return d.move(foOdd); },
+        function () { return d.click(); },
+        function () { foLot.classList.remove('on'); foOdd.classList.add('on'); fo.classList.add('odd'); return d.wait(2200); },
+        function () { return d.moveXY(0.9, 0.96, 800); }
+      ]);
     }, { cursor: true }],
 
     chart: [function (d) {
-      var xh = d.$('#ch-xh'), order = d.$('#ch-order'), pop = d.$('#ch-pop'), ot = d.$('#ch-otext'), oax = d.$('#ch-oax');
+      var xh = d.$('#ch-xh'), order = d.$('#ch-order'), ot = d.$('#ch-otext'), oax = d.$('#ch-oax');
+      var mode = d.$('#ch-mode'), stopBtn = d.$('#ch-stopbtn'), toolbarStage = d.el.querySelector('.win');
       order.style.transform = 'translateY(195px)';
-      var mode = d.$('#ch-mode');
       ot.textContent = '買 1 張 2,525'; oax.textContent = '2,525';
-      mode.classList.remove('on');
       d.gate(1);
-      return d.wait(1500)
-        .then(function () { d.cap(1); return d.move(mode); })
-        .then(function () { return d.click(); })
-        .then(function () { mode.classList.add('on'); return d.wait(600); })
-        .then(function () { d.cap(2); return d.moveXY(0.42, 195 / 330); })
-        .then(function () { xh.classList.add('show'); return d.wait(500); })
-        .then(function () { return d.click(); })
-        .then(function () { pop.classList.add('show'); return d.wait(700); })
-        .then(function () { return d.move(pop.querySelector('.go')); })
-        .then(function () { return d.click(); })
-        .then(function () { pop.classList.remove('show'); xh.classList.remove('show'); d.gate(2); d.toast('委託・買 2,525・1 張'); return d.wait(1300); })
-        .then(function () { d.cap(3); return d.moveXY(0.62, 195 / 330); })
-        .then(function () { d.cursor.classList.add('drag'); return d.wait(300); })
-        .then(function () {
-          order.style.transform = 'translateY(180px)';
-          ot.textContent = '買 1 張 2,530'; oax.textContent = '2,530';
-          return d.moveXY(0.62, 180 / 330, 650);
-        })
-        .then(function () { d.cursor.classList.remove('drag'); d.toast('改價・2,530'); return d.wait(1300); })
-        .then(function () { d.cap(4); mode.classList.remove('on'); return d.move('#ch-stopbtn'); })
-        .then(function () { return d.click(); })
-        .then(function () { d.$('#ch-stopbtn').classList.add('on'); return d.moveXY(0.42, 240 / 330); })
-        .then(function () { return d.click(); })
-        .then(function () { d.gate(4); d.$('#ch-stopbtn').classList.remove('on'); d.toast('停損・2,510・1 張'); return d.moveXY(0.86, 0.92, 900); })
-        .then(function () { return d.wait(900); });
+      // 游標以 .win 為座標：讓工具列也點得到
+      d.stage = toolbarStage;
+      toolbarStage.appendChild(d.cursor);
+      var svgTop = function (y) {
+        var w = toolbarStage.getBoundingClientRect(), s = d.el.querySelector('.ch').getBoundingClientRect();
+        return (s.top - w.top + s.height * (y / 330)) / w.height;
+      };
+      return seq(d, [
+        function () { return d.wait(1300); },
+        function () { d.cap(1); return d.move(mode); },
+        function () { return d.click(); },
+        function () { mode.classList.add('on'); return d.wait(600); },
+        function () { d.cap(2); return d.moveXY(0.42, svgTop(195)); },
+        function () { xh.classList.add('show'); return d.wait(500); },
+        function () { return d.click(); },
+        function () { xh.classList.remove('show'); mode.classList.remove('on'); d.gate(2); d.toast('委託・買 2,525・1 張'); return d.wait(1300); },
+        function () { d.cap(3); return d.moveXY(0.62, svgTop(195)); },
+        function () { d.cursor.classList.add('drag'); return d.wait(300); },
+        function () {
+          order.style.transform = 'translateY(180px)'; ot.textContent = '買 1 張 2,530'; oax.textContent = '2,530';
+          return d.moveXY(0.62, svgTop(180), 650);
+        },
+        function () { d.cursor.classList.remove('drag'); d.toast('改價・2,530'); return d.wait(1200); },
+        function () { d.cap(4); return d.move(stopBtn); },
+        function () { return d.click(); },
+        function () { stopBtn.classList.add('on'); return d.moveXY(0.42, svgTop(240)); },
+        function () { return d.click(); },
+        function () { d.gate(4); stopBtn.classList.remove('on'); d.toast('停損・2,510・1 張'); return d.moveXY(0.86, 0.94, 900); },
+        function () { return d.wait(900); }
+      ]);
     }, { cursor: true }],
 
     acct: [function (d) {
-      var win = d.$('#wa-win'), pl = d.$('#wa-pl'), p1 = d.$('#wa-p1');
+      var win = d.$('#wa-win'), pl = d.$('#wa-pl'), p1 = d.$('#wa-p1'), dlg = d.$('#wa-set');
       win.classList.remove('priv'); win.classList.remove('privacc');
       var rows = d.el.querySelectorAll('.wl-row');
       function flash(i) { var r = rows[i]; r.classList.remove('tick'); void r.offsetWidth; r.classList.add('tick'); }
-      var seq = [2, 0, 5, 3, 1, 4];
       d.step(1);
       var p = Promise.resolve();
-      seq.forEach(function (i) { p = p.then(function () { flash(i); return d.wait(430); }); });
-      return p
-        .then(function () { d.step(2); return d.wait(300); })
-        .then(function () { flash(0); pl.textContent = '+1,970'; p1.textContent = '+2,000'; return d.wait(700); })
-        .then(function () { flash(0); pl.textContent = '+970'; p1.textContent = '+1,000'; return d.wait(700); })
-        .then(function () { flash(0); pl.textContent = '+1,470'; p1.textContent = '+1,500'; return d.wait(800); })
-        .then(function () { d.step(3); return d.move('#wa-eye'); })
-        .then(function () { return d.click(); })
-        .then(function () { win.classList.add('privacc'); return d.wait(700); })
-        .then(function () { return d.move('#wa-money'); })
-        .then(function () { return d.click(); })
-        .then(function () { win.classList.add('priv'); return d.wait(1600); })
-        .then(function () { return d.moveXY(0.86, 0.92, 800); });
+      [2, 0, 5, 3, 1, 4].forEach(function (i) { p = p.then(function () { flash(i); return d.wait(420); }); });
+      return p.then(function () {
+        return seq(d, [
+          function () { d.step(2); flash(0); p1.textContent = '+10,000'; pl.textContent = '+9,970'; return d.wait(700); },
+          function () { flash(0); p1.textContent = '+0'; pl.textContent = '−30'; return d.wait(700); },
+          function () { flash(0); p1.textContent = '+5,000'; pl.textContent = '+4,970'; return d.wait(900); },
+          function () { d.step(3); dlg.classList.add('show'); return d.wait(700); },
+          function () { return d.move('#sw-acc'); },
+          function () { return d.click(); },
+          function () { win.classList.add('privacc'); return d.wait(600); },
+          function () { return d.move('#sw-money'); },
+          function () { return d.click(); },
+          function () { win.classList.add('priv'); return d.wait(1000); },
+          function () { dlg.classList.remove('show'); return d.moveXY(0.86, 0.94, 800); },
+          function () { return d.wait(800); }
+        ]);
+      });
     }, { cursor: true }],
 
     ws: [function (d) {
-      var ca = d.$('#pn-ca'), fl = d.$('#pn-fl'), menu = d.$('#ws-menu'), save = d.$('#ws-save'), name = d.$('#ws-name');
-      ca.style.setProperty('--h', 100); ca.style.setProperty('--w', 56);
-      fl.style.setProperty('--x', 78); fl.style.setProperty('--w', 22);
-      name.textContent = '未命名';
-      var items = menu.children;
+      var ca = d.$('#pn-ca'), dk = d.$('#pn-dk'), fl = d.$('#pn-fl'), dlg = d.$('#ws-dlg'), lib = d.$('#ws-libdlg');
+      var q = d.$('#ws-q'), name = d.$('#ws-name'), saved = d.$('#ws-saved'), pick = d.$('#ws-pick');
+      ca.style.setProperty('--w', 78); dk.style.setProperty('--w', 78);
+      q.textContent = ''; name.textContent = '';
       d.cap(1);
-      return d.move('#ws-add')
-        .then(function () { return d.click(); })
-        .then(function () { menu.classList.add('show'); return d.wait(350); })
-        .then(function () { items[0].classList.add('hl'); return d.wait(320); })
-        .then(function () { items[1].classList.add('hl'); return d.wait(320); })
-        .then(function () { items[2].classList.add('hl'); return d.wait(500); })
-        .then(function () { menu.classList.remove('show'); d.step(2); return d.moveXY(0.5, 0.6, 1300); })
-        .then(function () { d.step(3); return d.move(ca, 0.985, 0.6); })
-        .then(function () { ca.classList.add('resizing'); d.cursor.classList.add('drag'); return d.wait(300); })
-        .then(function () {
-          ca.style.setProperty('--w', 50); fl.style.setProperty('--x', 72); fl.style.setProperty('--w', 28);
+      return seq(d, [
+        function () { return d.move('#ws-add'); },
+        function () { return d.click(); },
+        function () { dlg.classList.add('show'); return d.wait(400); },
+        function () { return d.type(q, '閃電', 6); },
+        function () { pick.classList.add('hl'); return d.move(pick); },
+        function () { return d.click(); },
+        function () {
+          dlg.classList.remove('show'); d.step(2);
+          ca.style.setProperty('--w', 50); dk.style.setProperty('--w', 50);
+          return d.wait(1100);
+        },
+        function () { return d.move(ca, 0.985, 0.5); },
+        function () { ca.classList.add('resizing'); d.cursor.classList.add('drag'); return d.wait(250); },
+        function () {
+          ca.style.setProperty('--w', 54); dk.style.setProperty('--w', 54); fl.style.setProperty('--x', 76); fl.style.setProperty('--w', 24);
           var a = d.$('#ws-area').getBoundingClientRect(), r = d.stage.getBoundingClientRect();
-          return d.moveXY((a.left - r.left + a.width * 0.715) / r.width, 0.6, 650);
-        })
-        .then(function () { ca.classList.remove('resizing'); d.cursor.classList.remove('drag'); return d.wait(700); })
-        .then(function () { d.step(4); ca.style.setProperty('--h', 50); return d.wait(1500); })
-        .then(function () { d.step(5); return d.move('#ws-name', 0.5, 0.5); })
-        .then(function () { return d.click(); })
-        .then(function () { save.classList.add('show'); return d.wait(900); })
-        .then(function () { return d.move(save.querySelector('.ok')); })
-        .then(function () { return d.click(); })
-        .then(function () { save.classList.remove('show'); name.textContent = '盤中'; return d.wait(1200); })
-        .then(function () { return d.moveXY(0.86, 0.92, 800); });
+          return d.moveXY((a.left - r.left + a.width * 0.755) / r.width, 0.5, 650);
+        },
+        function () { ca.classList.remove('resizing'); d.cursor.classList.remove('drag'); return d.wait(600); },
+        function () { d.step(3); return d.move('#ws-lib'); },
+        function () { return d.click(); },
+        function () { lib.classList.add('show'); return d.wait(500); },
+        function () { return d.type(name, '盤中', 6); },
+        function () { return d.move('#ws-save'); },
+        function () { return d.click(); },
+        function () { saved.classList.add('show'); return d.wait(1500); },
+        function () { lib.classList.remove('show'); return d.moveXY(0.86, 0.94, 800); }
+      ]);
     }, { cursor: true }],
 
     agent: [function (d) {
       var q = d.$('#ag-q1'), text = q.textContent;
       q.textContent = '';
       d.step(1);
-      return d.wait(250)
-        .then(function () { return d.type(q, text, 26); })
-        .then(function () { return d.wait(500); })
-        .then(function () { d.step(2); return d.wait(2000); })
-        .then(function () { d.step(3); return d.wait(2600); })
-        .then(function () { d.step(4); return d.wait(900); })
-        .then(function () { return d.move('.preview .go', 0.5, 0.6); })
-        .then(function () { return d.wait(2000); });
+      return seq(d, [
+        function () { return d.wait(250); },
+        function () { return d.type(q, text, 28); },
+        function () { return d.wait(500); },
+        function () { d.step(2); return d.wait(3000); },
+        function () { d.step(3); return d.wait(3200); },
+        function () { d.cap(4); return d.wait(1600); }
+      ]);
+    }, {}],
+
+    build: [function (d) {
+      var q = d.$('#bd-q'), text = q.textContent;
+      q.textContent = '';
+      d.step(1);
+      return seq(d, [
+        function () { return d.wait(200); },
+        function () { return d.type(q, text, 26); },
+        function () { return d.wait(400); },
+        function () { d.step(2); return d.wait(2200); },
+        function () { d.step(3); return d.wait(2800); }
+      ]);
+    }, {}],
+
+    alloc: [function (d) {
+      var q = d.$('#al-q'), text = q.textContent;
+      q.textContent = '';
+      d.step(1);
+      return seq(d, [
+        function () { return d.wait(200); },
+        function () { return d.type(q, text, 26); },
+        function () { return d.wait(400); },
+        function () { d.step(2); return d.wait(1600); },
+        function () { d.cap(2); d.gate(3); return d.wait(2600); },
+        function () { d.step(4); d.cap(3); return d.wait(2600); },
+        function () { d.gate(5); d.cap(4); return d.wait(1800); }
+      ]);
+    }, {}],
+
+    brief: [function (d) {
+      var form = d.$('#br-form'), log = d.$('#br-log'), t1 = d.$('#br-t1'), t2 = d.$('#br-t2');
+      var name = d.$('#br-name'), ins = d.$('#br-ins'), n0 = name.textContent, i0 = ins.textContent;
+      name.textContent = ''; ins.textContent = '';
+      d.cap(1);
+      return seq(d, [
+        function () { return d.type(name, n0, 10); },
+        function () { return d.type(ins, i0, 30); },
+        function () { d.cap(2); return d.move('#br-time'); },
+        function () { return d.click(); },
+        function () { return d.wait(800); },
+        function () { return d.move('#br-save'); },
+        function () { return d.click(); },
+        function () { return d.wait(600); },
+        function () {
+          d.cap(3); d.toast('盤前簡報：已完成，結論在「紀錄」');
+          form.classList.add('hide'); log.classList.remove('hide'); t1.classList.remove('on'); t2.classList.add('on');
+          return d.wait(3200);
+        },
+        function () { return d.moveXY(0.86, 0.94, 600); }
+      ]);
+    }, { cursor: true }],
+
+    observe: [function (d) {
+      var card = d.$('#ob-card'), row = d.$('#ob-row'), state = d.$('#ob-state'), tasks = d.$('#ob-tasks'), skills = d.$('#ob-skills');
+      var t1 = d.$('#ob-t1'), t2 = d.$('#ob-t2');
+      card.classList.remove('show');
+      var orig = state.textContent;
+      d.cap(1);
+      return seq(d, [
+        function () { return d.move('#ob-open'); },
+        function () { return d.click(); },
+        function () { card.classList.add('show'); d.cap(2); return d.wait(1600); },
+        function () { return d.move('#ob-go'); },
+        function () { return d.click(); },
+        function () { card.classList.remove('show'); state.textContent = '已開啟。每天 13:50 執行，僅分析，不會下單。'; return d.wait(1500); },
+        function () {
+          d.cap(3); d.toast('學到新技能：早盤例行檢查');
+          tasks.classList.add('hide'); skills.classList.remove('hide'); t1.classList.remove('on'); t2.classList.add('on');
+          return d.wait(2600);
+        },
+        function () { state.textContent = orig; return d.moveXY(0.86, 0.94, 600); }
+      ]);
     }, { cursor: true }],
 
     quant: [function (d) {
-      d.step(1);
-      return d.wait(2100)
-        .then(function () { d.step(2); return d.wait(2200); })
-        .then(function () { d.step(3); return d.wait(2500); })
-        .then(function () { d.step(4); return d.wait(2000); });
-    }, {}],
+      var dlg = d.$('#bt-dlg'), run = d.$('#bt-run');
+      d.cap(1);
+      return seq(d, [
+        function () { dlg.classList.add('show'); return d.wait(2000); },
+        function () { return d.move('#bt-save'); },
+        function () { return d.click(); },
+        function () { dlg.classList.remove('show'); d.cap(2); return d.move(run); },
+        function () { return d.click(); },
+        function () { run.classList.add('busy'); run.textContent = '回測中…'; return d.wait(1300); },
+        function () { run.classList.remove('busy'); run.textContent = '▷ 執行回測'; d.step(3); return d.wait(2600); },
+        function () { d.step(4); return d.wait(2400); },
+        function () { return d.moveXY(0.86, 0.94, 700); }
+      ]);
+    }, { cursor: true }],
 
     custom: [function (d) {
       var q = d.$('#cp-q'), text = q.textContent;
       q.textContent = '';
       d.step(1);
-      return d.wait(200)
-        .then(function () { return d.type(q, text, 26); })
-        .then(function () { return d.wait(500); })
-        .then(function () { d.step(2); return d.wait(2000); })
-        .then(function () { d.step(3); return d.wait(1800); })
-        .then(function () { d.step(4); return d.wait(1800); });
+      return seq(d, [
+        function () { return d.wait(200); },
+        function () { return d.type(q, text, 24); },
+        function () { return d.wait(500); },
+        function () { d.step(2); return d.wait(1500); },
+        function () { d.step(3); return d.wait(2600); }
+      ]);
     }, {}]
   };
+
+  // ---------- gallery tabs ----------
+  Array.prototype.forEach.call(document.querySelectorAll('[data-gal]'), function (gal) {
+    var tabs = gal.querySelectorAll('[role="tab"]'), panes = gal.querySelectorAll('.gal-pane');
+    function select(i, focus) {
+      Array.prototype.forEach.call(tabs, function (t, k) {
+        t.setAttribute('aria-selected', String(k === i));
+        t.tabIndex = k === i ? 0 : -1;
+        panes[k].hidden = k !== i;
+      });
+      if (focus) tabs[i].focus();
+    }
+    Array.prototype.forEach.call(tabs, function (t, i) {
+      t.addEventListener('click', function () { select(i); });
+      t.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowRight') select((i + 1) % tabs.length, true);
+        if (e.key === 'ArrowLeft') select((i - 1 + tabs.length) % tabs.length, true);
+      });
+    });
+    select(0);
+  });
 
   var demos = [];
   Array.prototype.forEach.call(document.querySelectorAll('.demo[data-demo]'), function (el) {
