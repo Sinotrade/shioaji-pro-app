@@ -13,7 +13,7 @@ import { requestOpenOrdersTab } from '../lib/dock-events';
 import { refreshPendingConfirm, resolvePendingConfirm, usePendingConfirm } from '../lib/execution/pending-confirm';
 import { useBackgroundSetting } from '../lib/execution/background';
 import { canRearm, UNIT_LABEL, type PendingConfirmItem, type PendingResolution } from '../lib/execution/pending-confirm-contract';
-import { useRearmPlan } from '../lib/execution/rearm';
+import { checkRearmQuantityNow, requestFreshPositions, useRearmPlan } from '../lib/execution/rearm';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
 import { useServerInfo } from '../lib/server-info-store';
@@ -177,7 +177,8 @@ function ConfirmCard({ item, envNow }: { item: PendingConfirmItem; envNow: strin
  * will be created; nothing is sent then. */
 function Rearm({ item, envNow }: { item: PendingConfirmItem; envNow: string | null }) {
     const on = useBackgroundSetting();
-    const plan = useRearmPlan(item);
+    const [since, setSince] = useState<number | null>(null); // positions read after opening count
+    const plan = useRearmPlan(item, since);
     const [open, setOpen] = useState(false);
     const [qty, setQty] = useState<string | null>(null);
     const { busy, error, run } = useRun();
@@ -193,7 +194,7 @@ function Rearm({ item, envNow }: { item: PendingConfirmItem; envNow: string | nu
         return (
             <>
                 <button type='button' className={styles.button} disabled={busy || !!blocked} title={blocked ?? undefined}
-                    onClick={() => setOpen(true)}>
+                    onClick={() => { setSince(requestFreshPositions()); setOpen(true); }}>
                     <RotateCcw size={12} aria-hidden /> 在新盤別重新啟用
                 </button>
                 {blocked && <div className={styles.note.muted}>{blocked}</div>}
@@ -207,6 +208,9 @@ function Rearm({ item, envNow }: { item: PendingConfirmItem; envNow: string | nu
                 {`${item.order.code} · 觸發價 ${item.order.triggerCondition === 'below' ? '≤' : '≥'} ${fmtPrice(item.order.triggerPrice ?? 0)} · 觸發後${item.order.priceType === 'MKT' ? '市價' : '限價'}${act}`}
             </div>
             {plan.notes.map(t => <div key={t} className={styles.note.warn}>{t}</div>)}
+            {qty !== null && plan.quantity !== null && qty !== String(plan.quantity) && (
+                <div className={styles.note.warn}>{`建議 ${plan.quantity} ${unit}，目前輸入 ${qty || '?'} ${unit}`}</div>
+            )}
             <label className={styles.stepRow}>
                 <span className={styles.stepLabel}>數量（{unit}）</span>
                 <input aria-label='重新啟用口數' inputMode='numeric' value={value} disabled={busy}
@@ -217,9 +221,14 @@ function Rearm({ item, envNow }: { item: PendingConfirmItem; envNow: string | nu
             </div>
             {error && <div className={styles.note.err} role='alert'>{error}</div>}
             <div className={styles.stepRow}>
-                <button type='button' className={styles.button} disabled={busy} onClick={() => { setOpen(false); setQty(null); }}>返回</button>
+                <button type='button' className={styles.button} disabled={busy} onClick={() => { setOpen(false); setQty(null); setSince(null); }}>返回</button>
                 <button type='button' className={styles.primary} disabled={busy || !valid || !!blocked}
-                    onClick={() => void run(() => resolvePendingConfirm(item, 'rearmInNewSession', { quantity: n }))}>
+                    onClick={() => void run(async () => {
+                        // checked again right now against the fresh position
+                        const over = checkRearmQuantityNow(item, n, since);
+                        if (over) throw new Error(over);
+                        await resolvePendingConfirm(item, 'rearmInNewSession', { quantity: n });
+                    })}>
                     {busy ? '處理中…' : `確認重新啟用（${act} ${valid ? n : '?'} ${unit}）`}
                 </button>
             </div>

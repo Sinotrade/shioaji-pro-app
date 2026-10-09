@@ -47,7 +47,7 @@
 //
 // v2 (2026-10-09, user decision: protection does not carry across sessions
 // by itself, but can be turned back on):
-// - `order.triggerCondition` ('below' | 'above' | null).
+// - `order.triggerCondition` ('below' | 'above' | null), `account.brokerId`.
 // - resolution `rearmInNewSession` for an `expired` trigger item, with
 //   `request.quantity` (a positive integer the user confirmed against the
 //   current position): the backend ends the old tracking and creates a new
@@ -104,7 +104,8 @@ export interface PendingConfirmItem {
     state: PendingConfirmState;
     owner: PendingOwner;
     order: PendingOrderSpec;
-    account: { accountType: 'F' | 'S' | 'H'; accountId: string };
+    /** brokerId: v2 (null in v1); positions are matched by broker + account. */
+    account: { accountType: 'F' | 'S' | 'H'; accountId: string; brokerId: string | null };
     env: string; // `${apiBase}|simulation|production` (same as protection env)
     tag: string; // custom_field tag the engine searched the listing for
     submittedAt: number; // ms epoch: the place request was written / sent
@@ -242,6 +243,8 @@ function parseItem(raw: unknown, path: string): PendingConfirmItem {
         account: {
             accountType: oneOf(account.accountType, ['F', 'S', 'H'] as const, `${path}.account.accountType`),
             accountId: str(account.accountId, `${path}.account.accountId`),
+            brokerId: account.brokerId === undefined || account.brokerId === null ? null
+                : str(account.brokerId, `${path}.account.brokerId`),
         },
         env: str(o.env, `${path}.env`),
         tag: str(o.tag, `${path}.tag`),

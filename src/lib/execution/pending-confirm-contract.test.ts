@@ -94,6 +94,10 @@ describe('contract v2: rearm in the new session', () => {
         const v2 = parsePendingConfirmSnapshot({ version: 2, runId: 'r', sequence: 1, uncleanShutdown: false,
             items: [wireItem({ order: { ...wireItem().order, triggerCondition: 'below' } })] });
         expect(v2.items[0]!.order.triggerCondition).toBe('below');
+        const withBroker = parsePendingConfirmSnapshot({ version: 2, runId: 'r', sequence: 1, uncleanShutdown: false,
+            items: [wireItem({ account: { accountType: 'F', accountId: '0000001', brokerId: 'F002000' } })] });
+        expect(withBroker.items[0]!.account.brokerId).toBe('F002000');
+        expect(v2.items[0]!.account.brokerId).toBeNull();
         const v1 = parsePendingConfirmSnapshot({ version: 1, runId: 'r', sequence: 1, uncleanShutdown: false, items: [wireItem()] });
         expect(v1.version).toBe(1);
         expect(v1.items[0]!.order.triggerCondition).toBeNull();

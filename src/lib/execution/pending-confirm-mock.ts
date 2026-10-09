@@ -14,7 +14,7 @@ export function mockPendingConfirmItem(over: Partial<PendingConfirmItem> = {}): 
             code: 'TXFK6', name: '台指期 11', action: 'Sell', quantity: 1, quantityUnit: 'contract',
             priceType: 'MKT', price: null, orderType: 'IOC', triggerPrice: 17860, triggerCondition: null,
         },
-        account: { accountType: 'F', accountId: '0000001' },
+        account: { accountType: 'F', accountId: '0000001', brokerId: 'F002000' },
         env: 'http://127.0.0.1:21323|simulation',
         tag: 'A1B2C3',
         submittedAt: Date.now() - 5 * 60_000,
@@ -42,7 +42,7 @@ export function mockPendingConfirmDemo(env: string): PendingConfirmSnapshot {
                 id: 'demo-2', env, tag: 'D4E5F6', submittedAt: now - 3 * 60_000,
                 owner: { kind: 'bracket', id: 'bracket-7', leg: 'take' },
                 order: { code: 'MXFK6', name: '小台指 11', action: 'Buy', quantity: 2, quantityUnit: 'contract', priceType: 'LMT', price: 17650, orderType: 'ROD', triggerPrice: 17655, triggerCondition: 'below' },
-                account: { accountType: 'F', accountId: '0000002' },
+                account: { accountType: 'F', accountId: '0000002', brokerId: 'F002000' },
             }),
             mockPendingConfirmItem({
                 id: 'demo-3', env, tag: 'G7H8J9',

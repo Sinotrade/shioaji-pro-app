@@ -18,10 +18,13 @@ const m = vi.hoisted(() => ({
     env: 'http://127.0.0.1:1|simulation' as string | null,
     priv: false,
     bgOn: true as boolean | null,
-    plan: { quantity: 1 as number | null, notes: [] as string[] },
+    plan: { quantity: 1 as number | null, closable: null as number | null, notes: [] as string[] },
+    fresh: vi.fn(() => 1000),
+    check: vi.fn((): string | null => null),
 }));
 vi.mock('../lib/execution/background', () => ({ useBackgroundSetting: () => m.bgOn }));
-vi.mock('../lib/execution/rearm', () => ({ useRearmPlan: () => m.plan }));
+vi.mock('../lib/execution/rearm', () => ({ useRearmPlan: () => m.plan, requestFreshPositions: m.fresh,
+    checkRearmQuantityNow: m.check }));
 
 vi.mock('../lib/execution/pending-confirm', () => ({
     usePendingConfirm: () => m.state,
@@ -60,7 +63,10 @@ const show = (items: PendingConfirmItem[], over: Partial<PendingConfirmSnapshot>
 
 beforeEach(() => {
     m.bgOn = true;
-    m.plan = { quantity: 1, notes: [] };
+    m.plan = { quantity: 1, closable: null, notes: [] };
+    m.fresh.mockClear();
+    m.check.mockReset();
+    m.check.mockReturnValue(null);
     m.env = SIM;
     m.priv = false;
     show([mockPendingConfirmItem({ id: 'a', env: SIM })]);
@@ -184,7 +190,7 @@ it('another environment: choices are disabled until switching back', () => {
 
 it('privacy mode masks the account', () => {
     m.priv = true;
-    show([mockPendingConfirmItem({ id: 'a', env: SIM, account: { accountType: 'F', accountId: '0000123' } })]);
+    show([mockPendingConfirmItem({ id: 'a', env: SIM, account: { accountType: 'F', accountId: '0000123', brokerId: 'F002000' } })]);
     const all = text(render().root);
     expect(all).toContain('••23');
     expect(all).not.toContain('0000123');
@@ -227,9 +233,10 @@ const expiredTrigger = (over = {}) => mockPendingConfirmItem({ id: 'x', env: SIM
 
 it('an expired trigger can be rearmed in the new session after a second confirmation with the shown content', async () => {
     show([expiredTrigger()], { version: 2 });
-    m.plan = { quantity: 2, notes: ['目前可平倉 2 口，已改為 2 口'] };
+    m.plan = { quantity: 2, closable: 2, notes: ['目前可平倉 2 口，已改為 2 口'] };
     const r = render();
     await click(button(r, '在新盤別重新啟用'));
+    expect(m.fresh).toHaveBeenCalledTimes(1); // positions are read again on opening
     expect(m.resolve).not.toHaveBeenCalled();
     const all = text(r.root);
     expect(all).toContain('觸發價 ≤ 17,860');
@@ -245,7 +252,7 @@ it('an expired trigger can be rearmed in the new session after a second confirma
 
 it('rearming needs a quantity when the position is unknown or would open one', async () => {
     show([expiredTrigger()], { version: 2 });
-    m.plan = { quantity: null, notes: ['持倉未確認，請自行輸入口數'] };
+    m.plan = { quantity: null, closable: null, notes: ['持倉未確認，請自行輸入口數'] };
     const r = render();
     await click(button(r, '在新盤別重新啟用'));
     expect(button(r, '確認重新啟用').props.disabled).toBe(true);
@@ -268,4 +275,18 @@ it('no rearm when the setting is off, for a v1 engine, or for a bracket (not yet
     show([expiredTrigger({ owner: { kind: 'bracket', id: 'b', leg: 'stop' } })], { version: 2 });
     r = render();
     expect(buttons(r).some(b => text(b).includes('在新盤別重新啟用'))).toBe(false);
+});
+
+it('a quantity over the closable position is refused right before deciding', async () => {
+    show([expiredTrigger()], { version: 2 });
+    m.plan = { quantity: 2, closable: 2, notes: [] };
+    m.check.mockReturnValue('目前可平倉只有 2 口，不能超過');
+    const r = render();
+    await click(button(r, '在新盤別重新啟用'));
+    const qty = r.root.find(n => n.type === 'input' && n.props['aria-label'] === '重新啟用口數');
+    act(() => { qty.props.onChange({ target: { value: '3' } }); });
+    expect(text(r.root)).toContain('建議 2 口，目前輸入 3 口');
+    await click(button(r, '確認重新啟用'));
+    expect(m.resolve).not.toHaveBeenCalled();
+    expect(text(r.root)).toContain('不能超過');
 });
