@@ -160,6 +160,7 @@ export const BRACKET_NOTICE_TEXT: Record<string, string> = {
     'bracket.autoRearmed': '括號單已自動在新盤別重新啟用（若已穿價會先等你決定）',
     protectedAgain: '晚到成交的口數已自動補上保護（若已穿價會先等你決定）',
     'bracket.autoSkipped': '括號單沒有自動補上保護，請自行處理',
+    'issue.fillAfterClose': '委託已回報刪單成功後仍收到成交（資料異常），已記為未受保護，不會自動補保護；請到委託與持倉核對',
 };
 
 /** Where a bracket stands, one value for the UI to key on. */
@@ -199,6 +200,9 @@ export interface BracketView {
     /** Lots the engine holds for this bracket (what a rearm may protect). */
     position: number;
     unprotected: number;
+    /** Of `unprotected`: lots filled after the order was reported closed
+     * (anomalies: notified only, never protected by itself). */
+    anomalous: number;
     /** The exit currently out (or last), if any. */
     exit: { leg: 'stop' | 'take'; status: OrderSlot['status']; qty: number; filled: number } | null;
     /** The leg waiting for the user's decision (`needsConfirm`). */
@@ -282,6 +286,7 @@ export function bracketViews(programs: readonly OrderProgram[]): BracketView[] {
                 entryFilled: lv.entryFilled,
                 position: Math.max(0, lv.position),
                 unprotected: lv.unprotected,
+                anomalous: lv.anomalous ?? 0,
                 exit: last && (last.leg === 'stop' || last.leg === 'take')
                     ? { leg: last.leg, status: last.status, qty: last.qty, filled: last.filled } : null,
                 pendingLeg: lv.phase === 'needsConfirm' && (lv.pending?.leg === 'stop' || lv.pending?.leg === 'take')
