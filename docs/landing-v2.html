@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shioaji Pro｜台股看盤下單 App</title>
-<meta name="description" content="Shioaji Pro 是用永豐金證券 Shioaji API 做的看盤下單 App。內建 AI Agent，會上網查資料、整理研究、寫策略跑回測、做出你想要的畫面、記住你的操作習慣；下單前一定先問你。免費下載，預設連線模擬環境。">
+<meta name="description" content="Shioaji Pro 是用永豐金證券 Shioaji API 做的看盤下單 App。內建 AI Agent，會上網查資料、整理研究、寫策略跑回測、做出你想要的畫面、記住你的操作習慣；每筆下單都需要你的核可。免費下載，預設連線模擬環境。">
 <meta property="og:title" content="Shioaji Pro｜台股看盤下單 App">
-<meta property="og:description" content="內建 AI Agent 的台股看盤下單 App：查資料、做研究、跑回測、排畫面、記住你的習慣，下單前一定先問你。">
+<meta property="og:description" content="內建 AI Agent 的台股看盤下單 App：查資料、做研究、跑回測、排畫面、記住你的習慣；每筆下單都需要你的核可。">
 <meta property="og:image" content="https://sinotrade.github.io/shioaji-pro-app/og-shioaji-pro.png">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#F6F3EC" media="(prefers-color-scheme: light)">
@@ -290,11 +290,11 @@
         <span class="kick">Agent 能做的事・4</span>
         <h2 id="alloc-h" class="h2s">你的資產配置管家</h2>
         <p>你先定好目標比例，例如股票 60%、債券 ETF 30%、現金 10%。Agent 讀你的持倉和帳戶餘額，算出現在偏離多少，列出要買賣哪幾檔、各多少、預估成本。也可以建立排程任務定時檢查，例如每天開盤後看一次，偏離超過 5% 才通知你。</p>
-        <p class="safe-line"><svg class="i"><use href="#i-shield"/></svg>比例和規則都由你決定，Agent 不推薦標的。要調整時，它一筆一筆送出下單提案，你按「確認下單」才送；正式環境改用獨立的核可視窗。</p>
+        <p class="safe-line"><svg class="i"><use href="#i-shield"/></svg>比例和規則都由你決定，Agent 不推薦標的。要調整時，它一筆一筆送出下單提案，每筆下單都需要你的核可；正式環境改用獨立的核可視窗。</p>
         <ol class="caps" data-for="alloc">
           <li>說出你的目標比例</li>
           <li>Agent 讀持倉、帳戶與報價，算出偏離</li>
-          <li>列出調整清單，送出下單提案等你確認</li>
+          <li>列出調整清單，送出下單提案，每筆都需要你的核可</li>
           <li>建立定時檢查的排程任務</li>
         </ol>
       </div>
@@ -386,17 +386,17 @@
   <div class="wrap">
     <div class="sec-head">
       <h2 id="safe-h">為什麼可以放心交給它</h2>
-      <p>它能做的事很多，但會動到錢的事，一定先問你。</p>
+      <p>它能做的事很多，但每筆下單都需要你的核可。</p>
     </div>
     <div class="safe-grid">
       <figure class="safe-shot"><img src="images/release-0.1.49-approval-cancel.png" width="860" height="1280" alt="正式環境的「Agent 交易核可」獨立視窗：列出商品、原委託、刪除剩餘未成交、帳戶（遮罩）、發起的 Agent，倒數後自動拒絕，按鈕為拒絕與核准刪單。" loading="lazy"><figcaption>正式環境的「Agent 交易核可」視窗（App 實際畫面）</figcaption></figure>
       <ul class="safe-list">
-        <li><b>交易權限三選一</b>僅分析：只查詢不下單。逐筆確認：每筆都要你按。Auto：你在正式環境先授權一次，只在這次連線、目前帳戶有效；切帳戶、停止 Agent 或重開 App 就失效。</li>
+        <li><b>交易權限三選一</b>僅分析：只查詢不下單。逐筆確認：每筆下單都需要你的核可。Auto：你在正式環境先授權一次，只在這次連線、目前帳戶有效；切帳戶、停止 Agent 或重開 App 就失效。</li>
         <li><b>正式環境有獨立核可視窗</b>由 App 原生開啟，Agent 無法代按。報價跳動或超過 15 秒沒核准，這筆退回，請它依最新報價重新提案。</li>
         <li><b>模擬與正式分開</b>排程任務綁定環境，只在相符的環境執行。</li>
-        <li><b>風控上限 Agent 也要遵守</b>單筆數量、單筆金額、限價偏離、單次下單筆數都有上限，市價單要你確認；Auto 也不例外。</li>
+        <li><b>風控上限 Agent 也要遵守</b>單筆數量、單筆金額、限價偏離、單次下單筆數都有上限，市價單需要你的核可；Auto 也不例外。</li>
         <li><b>每一步都列出來</b>它查了什麼、存了什麼、送了什麼，都在對話裡逐列顯示。</li>
-        <li><b>不會重複送單</b>每筆委託只送一次；結果不明時列為「交易結果待核對」，等你確認，不會自動重送。</li>
+        <li><b>不會重複送單</b>每筆委託只送一次；結果不明時列為「交易結果待核對」，由你核對後結案，不會自動重送。</li>
       </ul>
     </div>
   </div>
@@ -783,7 +783,7 @@ codex plugin add shioaji@sinotrade</pre>
       </div>
       <div class="card">
         <h3>Shioaji Pro skill</h3>
-        <p>讓 agent 透過 App 的工具看行情、調整版面、寫指標和策略、跑回測與最佳化。交易一樣照 App 的權限設定：逐筆確認時先預覽，由你確認。</p>
+        <p>讓 agent 透過 App 的工具看行情、調整版面、寫指標和策略、跑回測與最佳化。交易一樣照 App 的權限設定：逐筆確認時，每筆下單都需要你的核可。</p>
         <p>放在 repo 的 <a href="https://github.com/Sinotrade/shioaji-pro-app/tree/main/plugins/shioaji-pro"><code>plugins/shioaji-pro</code></a>，可以裝進常用的 AI 寫程式工具。</p>
       </div>
     </div>
