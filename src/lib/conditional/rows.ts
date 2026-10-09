@@ -15,6 +15,7 @@ import {
     type AccountRef,
     type BracketPlan,
 } from '../bracket-core';
+import { BRACKET_STATE_TEXT, type BracketView } from '../execution/bracket-contract';
 import type { PendingConfirmItem } from '../execution/pending-confirm-contract';
 import { isOddLot } from '../odd-lot';
 
@@ -59,17 +60,22 @@ export interface RowActions {
     acknowledge: boolean;
     /** 委託待確認 card */
     confirm: boolean;
+    /** background bracket: 「我已自行處理」 ends the tracking */
+    handled: boolean;
+    /** background bracket: 在新盤別重新啟用 */
+    rearm: boolean;
 }
 
 const NO_ACTIONS: RowActions = {
     modify: false, pause: false, resume: false, cancel: false, send: false, keep: false,
-    reconcile: false, acknowledge: false, confirm: false,
+    reconcile: false, acknowledge: false, confirm: false, handled: false, rearm: false,
 };
 
 export type RowSource =
     | { type: 'trigger'; trigger: TriggerOrder }
     | { type: 'oco'; triggers: TriggerOrder[] }
     | { type: 'bracket'; plan: BracketPlan; legs: TriggerOrder[] }
+    | { type: 'bgBracket'; view: BracketView }
     | { type: 'exit'; exit: ExitRecord; trigger: TriggerOrder | null }
     | { type: 'pendingConfirm'; item: PendingConfirmItem }
     | { type: 'ended'; ended: EndedTrigger; exit: ExitRecord | null };
@@ -105,6 +111,8 @@ export interface Sources {
     exits: readonly ExitRecord[];
     ended: readonly EndedTrigger[];
     pendingConfirm: readonly PendingConfirmItem[];
+    /** brackets run by the background engine (bracket-contract views) */
+    bgBrackets?: readonly BracketView[];
     feedMissing: readonly string[];
     /** this window (or the window it mirrors) is the executor */
     executing: boolean;
@@ -310,6 +318,59 @@ function bracketRow(p: BracketPlan, legs: TriggerOrder[], s: Sources): CondRow {
     };
 }
 
+function bgBracketRow(v: BracketView, s: Sources): CondRow {
+    const parts = [v.stop !== null ? `停損 ${fmtNum(v.stop)}` : null, v.take !== null ? `停利 ${fmtNum(v.take)}` : null];
+    const ended = v.state === 'done' || v.state === 'handled' || v.state === 'rearmed';
+    let status: { text: string; tone: Tone } = { text: BRACKET_STATE_TEXT[v.state], tone: v.attention ? 'err' : ended ? 'muted' : 'ok' };
+    if (v.state === 'protected' || v.state === 'exiting') status = { text: `${BRACKET_STATE_TEXT[v.state]} · 成交 ${Math.min(v.entryFilled, v.quantity)}/${v.quantity}`, tone: 'ok' };
+    if (v.state === 'unprotected' && v.unprotected > 0) status = { text: `未受保護 ${v.unprotected} 口`, tone: 'err' };
+    if (!v.attention && !ended) {
+        if (v.held) status = { text: v.held === 'envMismatch' ? '屬於其他伺服器或模式，目前不執行' : '未連線，暫停保護', tone: 'warn' };
+        else if (v.paused) status = { text: `${status.text}（已暫停進場；停損停利照常）`, tone: 'warn' };
+    }
+    void s;
+    return {
+        id: `bgb:${v.programId}:${v.levelId}`,
+        kind: 'bracket',
+        code: v.quoteCode,
+        orderCode: v.orderCode,
+        side: { text: sideText(v.side, v.quantity, '口'), dir: v.side },
+        condition: parts.filter(Boolean).join(' · '),
+        level: null,
+        status,
+        validity: ended ? '—' : '本盤',
+        account: { account_type: v.account.accountType, broker_id: v.account.brokerId, account_id: v.account.accountId },
+        env: v.env,
+        attention: v.attention,
+        paused: v.paused,
+        actions: {
+            ...NO_ACTIONS,
+            pause: v.actions.pause,
+            resume: v.actions.resume,
+            send: v.actions.decide,
+            keep: v.actions.decide,
+            handled: v.actions.markHandled,
+            rearm: v.actions.rearm,
+            cancel: v.actions.remove,
+        },
+        source: { type: 'bgBracket', view: v },
+        history: [
+            { at: v.createdAt, text: `建立 · ${v.side === 'Buy' ? '買進' : '賣出'} ${v.quantity} 口成交後掛停損停利` },
+            ...(v.updatedAt > v.createdAt ? [{ at: v.updatedAt, text: BRACKET_STATE_TEXT[v.state],
+                tone: (v.attention ? 'err' : undefined) as HistoryEntry['tone'] }] : []),
+        ],
+        createdAt: v.createdAt,
+        ended: ended && !v.attention,
+    };
+}
+
+/** Background bracket rows alone (the order ticket's list). */
+export function bgBracketRows(views: readonly BracketView[], streamLive: boolean): CondRow[] {
+    const s = { triggers: [], brackets: [], exits: [], ended: [], pendingConfirm: [], feedMissing: [], executing: true,
+        envNow: null, streamLive, now: Date.now() } as Sources;
+    return views.map(v => bgBracketRow(v, s));
+}
+
 function exitAttentionRow(e: ExitRecord, trigger: TriggerOrder | null): CondRow {
     const unit = e.market === 'stock' ? (isOddLot(e.orderLot) ? '股' : '張') : '口';
     return {
@@ -430,6 +491,10 @@ export function projectRows(s: Sources): Projection {
         if (p.dismissed) continue;
         const row = bracketRow(p, bracketLegs.get(p.id) ?? [], s);
         (row.ended && !row.attention ? ended : rows).push(row);
+    }
+    for (const v of s.bgBrackets ?? []) {
+        const row = bgBracketRow(v, s);
+        (row.ended ? ended : rows).push(row);
     }
     const byTrigger = new Map(s.triggers.map(t => [t.id, t]));
     const endedById = new Map(s.ended.map(e => [e.id, e]));

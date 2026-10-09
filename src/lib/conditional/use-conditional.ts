@@ -3,6 +3,8 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useBrackets } from '../bracket';
+import { useBackgroundPrograms } from '../execution/background';
+import { bracketViews } from '../execution/bracket-contract';
 import { usePendingConfirm } from '../execution/pending-confirm';
 import { currentProtectionEnv } from '../protection-env';
 import { useServerInfo } from '../server-info-store';
@@ -39,15 +41,17 @@ export function useConditionalView(): ConditionalView {
     const feed = useTriggerFeed();
     const pending = usePendingConfirm();
     const stream = useStreamStatus();
+    const programs = useBackgroundPrograms();
+    const bgBrackets = useMemo(() => bracketViews(programs), [programs]);
     useServerInfo(); // re-render when the server mode becomes known / changes
     const envNow = currentProtectionEnv();
     const now = useClock();
     const items = pending.snapshot?.items;
     const demo = conditionalDemoActive();
     const projection = useMemo(() => projectRows(demo ? conditionalDemoSources(now) : {
-        triggers, brackets, exits, ended, pendingConfirm: items ?? [], feedMissing: feed.feedMissing,
+        triggers, brackets, exits, ended, pendingConfirm: items ?? [], bgBrackets, feedMissing: feed.feedMissing,
         executing: feed.executing, envNow, streamLive: stream === 'live', now,
-    }), [demo, triggers, brackets, exits, ended, items, feed.feedMissing, feed.executing, envNow, stream, now]);
+    }), [demo, bgBrackets, triggers, brackets, exits, ended, items, feed.feedMissing, feed.executing, envNow, stream, now]);
     if (demo) return { ...projection, stream: 'live', envNow: DEMO_ENV, executing: true };
     return { ...projection, stream, envNow, executing: feed.executing };
 }

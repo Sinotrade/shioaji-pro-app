@@ -6,6 +6,7 @@
 
 import type { BracketPlan } from '../bracket-core';
 import { primeContract } from '../contracts-cache';
+import type { BracketView } from '../execution/bracket-contract';
 import type { PendingConfirmItem } from '../execution/pending-confirm-contract';
 import type { EndedTrigger, ExitRecord, TriggerOrder } from '../trigger-engine';
 import type { ContractInfo } from '../types/contract';
@@ -93,12 +94,19 @@ export function conditionalDemoSources(now: number): Sources {
         { id: 'demo-e2', trigger: { ...firedTrigger, id: 'demo-e2', code: '2330', orderCode: '2330', account: S, condition: 'above', price: 1100,
             action: 'Buy', kind: 'stop', role: 'entry' }, reason: 'cancelled', at: at(60) },
     ];
+    const lapsed: BracketView = {
+        programId: 'bkt-demo', levelId: 'l0', rearm: false, env: DEMO_ENV, account: { accountType: 'F', brokerId: F.broker_id, accountId: F.account_id },
+        quoteCode: 'MXFJ6', orderCode: 'MXFJ6', side: 'Buy', quantity: 2, stop: 47950, take: 48500, state: 'lapsed', paused: false, held: null,
+        entryFilled: 2, position: 2, unprotected: 0, exit: null, pendingLeg: null, attention: true,
+        actions: { markHandled: true, rearm: true, decide: false, pause: false, resume: false, remove: false },
+        detail: 'sessionEnded', createdAt: at(-60), updatedAt: at(-1),
+    };
     if (conditionalDemoEmpty()) {
         return { triggers: [], brackets: [], exits: [], ended: [], pendingConfirm: [], feedMissing: [], executing: true,
             envNow: DEMO_ENV, streamLive: true, now };
     }
     return {
-        triggers: [...triggers, ...legs], brackets: [bracket], exits, ended, pendingConfirm: [confirm], feedMissing: [],
+        triggers: [...triggers, ...legs], brackets: [bracket], exits, ended, pendingConfirm: [confirm], bgBrackets: [lapsed], feedMissing: [],
         executing: true, envNow: DEMO_ENV, streamLive: true, now,
     };
 }

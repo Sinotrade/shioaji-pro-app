@@ -23,6 +23,7 @@ vi.mock('../lib/conditional/use-conditional', async () => {
     const { projectRows } = await import('../lib/conditional/rows');
     return {
         useConditionalView: () => ({ ...projectRows(m.sources), stream: 'live', envNow: ENV, executing: true }),
+        useStreamStatus: () => 'live',
     };
 });
 vi.mock('../lib/trigger-engine', () => ({
@@ -42,7 +43,13 @@ vi.mock('../lib/privacy', () => ({
     maskAccountId: (id: string, priv: boolean) => priv ? `•••••${id.slice(-2)}` : id,
 }));
 vi.mock('../lib/contracts-cache', () => ({ useContract: () => undefined, ensureContract: async () => undefined }));
-vi.mock('../lib/stream', () => ({ getQuote: () => ({ tick: { close: 48212 } }), subscribeQuoteStore: () => () => undefined }));
+vi.mock('../lib/stream', () => ({ getQuote: () => ({ tick: { close: 48212 } }), subscribeQuoteStore: () => () => undefined,
+    subscribeStatusStore: () => () => undefined, getStreamStatus: () => 'live' }));
+vi.mock('../lib/execution/background', () => ({
+    useBackgroundPrograms: () => [], markBackgroundHandled: vi.fn(), pauseBackgroundProgram: vi.fn(), removeBackgroundBracket: vi.fn(),
+    resolveBackgroundTrigger: vi.fn(), resumeBackgroundProgram: vi.fn(),
+}));
+vi.mock('./background-bracket-status', () => ({ BracketRearm: () => null }));
 vi.mock('./pending-confirm', () => ({ PendingConfirmItemCard: () => null }));
 vi.mock('./conditional-form', () => ({ NewConditionalDialog: () => createElement('div', { id: 'new-dialog' }) }));
 

@@ -401,7 +401,8 @@ export function PendingConfirmItemCard({ id }: { id: string }) {
     if (!item) return null;
     const envNow = currentProtectionEnv();
     const key = `${generation}:${snapshot?.runId}:${item.id}:${item.revision}`;
+    const handled = !!snapshot && canMarkHandled(snapshot);
     return item.state === 'needsConfirm'
-        ? <ConfirmCard key={key} item={item} envNow={envNow} />
-        : <ExpiredCard key={key} item={item} rearm={!!snapshot && canRearm(snapshot, item)} envNow={envNow} />;
+        ? <ConfirmCard key={key} item={item} envNow={envNow} handled={handled} />
+        : <ExpiredCard key={key} item={item} rearm={!!snapshot && canRearm(snapshot, item)} envNow={envNow} handled={handled} />;
 }

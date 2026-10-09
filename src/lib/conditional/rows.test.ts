@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BracketPlan } from '../bracket-core';
 import type { BackgroundTriggerOrder } from '../execution/background-view';
+import type { BracketView } from '../execution/bracket-contract';
 import { mockPendingConfirmItem } from '../execution/pending-confirm-mock';
 import type { EndedTrigger, ExitRecord, TriggerOrder } from '../trigger-engine';
 import { conditionText, projectRows, rowsForTab, type Sources } from './rows';
@@ -115,5 +116,25 @@ describe('projectRows', () => {
         expect(p.ended.map(r => r.status.text)).toEqual(['已觸發 · 已出場 1/1', '已取消']);
         expect(p.counts.firedToday).toBe(1);
         expect(p.counts.byTab.ended).toBe(2);
+    });
+
+    it('background brackets: state words, 需要你處理 for lapsed, and only the contract\'s actions', () => {
+        const v = (over: Partial<BracketView> = {}): BracketView => ({
+            programId: 'bkt-1', levelId: 'l0', rearm: false, env: ENV, account: { accountType: 'F', brokerId: 'b', accountId: 'a1' },
+            quoteCode: 'TXFR1', orderCode: 'TXFJ6', side: 'Buy', quantity: 2, stop: 48000, take: 48600, state: 'protected', paused: false,
+            held: null, entryFilled: 2, position: 2, unprotected: 0, exit: null, pendingLeg: null, attention: false,
+            actions: { markHandled: true, rearm: false, decide: false, pause: true, resume: false, remove: false },
+            detail: null, createdAt: NOW - 100, updatedAt: NOW - 50, ...over,
+        });
+        const p = projectRows(sources({ bgBrackets: [v(), v({ programId: 'bkt-2', state: 'lapsed', attention: true,
+            actions: { markHandled: true, rearm: true, decide: false, pause: false, resume: false, remove: false } })] }));
+        expect(p.rows[0]).toMatchObject({ kind: 'bracket', attention: true, status: { text: '盤別已更換，保護未延續', tone: 'err' } });
+        expect(p.rows[0]!.actions).toMatchObject({ rearm: true, handled: true, cancel: false, modify: false });
+        expect(p.rows[1]!.status.text).toBe('保護中 · 成交 2/2');
+        expect(p.rows[1]!.actions).toMatchObject({ pause: true, handled: true, modify: false });
+        const done = projectRows(sources({ bgBrackets: [v({ state: 'handled',
+            actions: { markHandled: false, rearm: false, decide: false, pause: false, resume: false, remove: true } })] }));
+        expect(done.rows).toHaveLength(0);
+        expect(done.ended[0]!.status.text).toBe('已改由你自行處理');
     });
 });

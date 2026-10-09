@@ -23,6 +23,13 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { acknowledgeBracketExit, dismissBracket, modifyBracket, reconcileBracket } from '../lib/bracket';
 import { ensureContract, useContract } from '../lib/contracts-cache';
+import {
+    markBackgroundHandled,
+    pauseBackgroundProgram,
+    removeBackgroundBracket,
+    resolveBackgroundTrigger,
+    resumeBackgroundProgram,
+} from '../lib/execution/background';
 import { contractLabel } from '../lib/pending-trigger-view';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import {
@@ -35,11 +42,14 @@ import {
     type HistoryEntry,
     type TriggerOrder,
 } from '../lib/trigger-engine';
-import { accountTag, KIND_LABEL, rowsForTab, TABS, type CondRow, type CondTab } from '../lib/conditional/rows';
-import { useConditionalView, type ConditionalView } from '../lib/conditional/use-conditional';
+import { accountTag, bgBracketRows, KIND_LABEL, rowsForTab, TABS, type CondRow, type CondTab } from '../lib/conditional/rows';
+import { useConditionalView, useStreamStatus, type ConditionalView } from '../lib/conditional/use-conditional';
+import { useBackgroundPrograms } from '../lib/execution/background';
+import { bracketViews } from '../lib/execution/bracket-contract';
 import { fmtClock, fmtNum } from '../lib/conditional/session';
 import type { ContractInfo } from '../lib/types/contract';
 import { PendingConfirmItemCard } from './pending-confirm';
+import { BracketRearm } from './background-bracket-status';
 import { NewConditionalDialog } from './conditional-form';
 import { useLastPrice } from './conditional-ui';
 import * as styles from './conditional-panel.css';
@@ -151,7 +161,7 @@ function AccountText({ row }: { row: CondRow }) {
 
 // ---- actions ----
 
-type Step = 'cancel' | 'send';
+type Step = 'cancel' | 'send' | 'handled';
 
 function RowActions({ row, expanded, onToggle, compact }: {
     row: CondRow;
@@ -166,21 +176,41 @@ function RowActions({ row, expanded, onToggle, compact }: {
     const triggers: TriggerOrder[] = src.type === 'trigger' ? [src.trigger] : src.type === 'oco' ? src.triggers : [];
 
     const pause = (on: boolean) => void run(async () => {
+        if (src.type === 'bgBracket') {
+            await (on ? pauseBackgroundProgram(src.view.programId) : resumeBackgroundProgram(src.view.programId));
+            return;
+        }
         for (const t of triggers) await setTriggerPaused(t.id, on);
     });
+    const handled = () => {
+        if (src.type !== 'bgBracket') return;
+        if (confirm.step !== 'handled') { confirm.arm('handled'); return; }
+        if (!confirm.settled()) return;
+        confirm.arm(null);
+        void run(() => markBackgroundHandled(src.view.programId, src.view.levelId));
+    };
     const cancel = () => {
         if (confirm.step !== 'cancel') { confirm.arm('cancel'); return; }
         if (!confirm.settled()) return;
         confirm.arm(null);
         void run(async () => {
             if (src.type === 'bracket') await dismissBracket(src.plan.id);
+            else if (src.type === 'bgBracket') await removeBackgroundBracket(src.view.programId);
             else if (src.type === 'trigger' && src.trigger.pending) await resolvePendingTrigger(src.trigger.id, 'cancel');
             else for (const t of triggers) await removeTrigger(t.id);
         });
     };
     const pendingId = src.type === 'trigger' && src.trigger.pending ? src.trigger.id
         : src.type === 'bracket' ? src.legs.find(l => l.pending)?.id : undefined;
+    const bg = src.type === 'bgBracket' ? src.view : null;
     const send = (allowUnpast = false) => {
+        if (bg) {
+            if (confirm.step !== 'send') { confirm.arm('send'); return; }
+            if (!confirm.settled()) return;
+            confirm.arm(null);
+            void run(() => resolveBackgroundTrigger(bg.programId, bg.levelId, 'send'));
+            return;
+        }
         if (!pendingId) return;
         if (confirm.step !== 'send' && !allowUnpast) {
             confirm.arm('send');
@@ -191,7 +221,7 @@ function RowActions({ row, expanded, onToggle, compact }: {
         confirm.arm(null);
         void run(() => resolvePendingTrigger(pendingId, 'send', { allowUnpast }));
     };
-    const cancelLabel = src.type === 'bracket' ? '再按一次：移除並撤銷保護' : '再按一次：取消';
+    const cancelLabel = src.type === 'bracket' ? '再按一次：移除並撤銷保護' : src.type === 'bgBracket' ? '再按一次：移除' : '再按一次：取消';
     return (
         <div className={compact ? styles.cardActions : styles.actions}>
             {message && <span className={styles.message[message.tone]} role='status'>{message.text}</span>}
@@ -204,16 +234,30 @@ function RowActions({ row, expanded, onToggle, compact }: {
                     {confirm.step === 'send' ? '再按一次確認送出' : '現在送出'}
                 </button>
             )}
-            {a.keep && pendingId && (
+            {a.keep && (pendingId || bg) && (
                 <button type='button' className={styles.button.plain} disabled={busy}
                     title='先不送單；價格回到觸發價另一側、再次穿過時才會觸發'
-                    onClick={() => void run(() => resolvePendingTrigger(pendingId, 'keep'))}>
+                    onClick={() => void run(() => bg ? resolveBackgroundTrigger(bg.programId, bg.levelId, 'keep')
+                        : resolvePendingTrigger(pendingId!, 'keep'))}>
                     保留盯價
                 </button>
             )}
             {a.confirm && (
                 <button type='button' className={styles.button.primary} onClick={onToggle} aria-expanded={expanded}>
                     確認成交…
+                </button>
+            )}
+            {a.rearm && (
+                <button type='button' className={styles.button.primary} onClick={onToggle} aria-expanded={expanded}
+                    title='重新查詢持倉、確認口數後，在這個盤別重新開始盯停損停利；不會立即送單'>
+                    在新盤別重新啟用…
+                </button>
+            )}
+            {a.handled && (
+                <button type='button' className={confirm.step === 'handled' ? styles.button.danger : styles.button.plain} disabled={busy}
+                    title='停止追蹤這張括號單（包含部位與保護），不會送出或刪除任何委託；仍在委託中的單與部位請自行處理'
+                    onClick={handled}>
+                    {confirm.step === 'handled' ? '再按一次：確認我已自行處理' : '我已自行處理'}
                 </button>
             )}
             {a.reconcile && row.attention && src.type === 'bracket' && (
@@ -422,6 +466,7 @@ function editTitle(row: CondRow): string {
     if (row.source.type === 'oco') return `修改：${row.code} 二擇一`;
     if (row.source.type === 'bracket') return `修改：${row.code} 括號單`;
     if (row.source.type === 'pendingConfirm') return '確認委託結果';
+    if (row.source.type === 'bgBracket' && row.actions.rearm) return `在新盤別重新啟用：${row.code} 括號單`;
     return '詳細';
 }
 
@@ -432,6 +477,7 @@ function Expanded({ row, onClose }: { row: CondRow; onClose: () => void }) {
     else if (src.type === 'oco' && row.actions.modify) left = <OcoEdit legs={src.triggers} onDone={onClose} />;
     else if (src.type === 'bracket' && row.actions.modify) left = <BracketEdit row={row} onDone={onClose} />;
     else if (src.type === 'pendingConfirm') left = <PendingConfirmItemCard id={src.item.id} />;
+    else if (src.type === 'bgBracket' && row.actions.rearm) left = <BracketRearm v={src.view} onClose={onClose} />;
     else left = <div className={styles.muted}>{row.status.text}</div>;
     return (
         <div className={styles.expandGrid}>
@@ -625,6 +671,23 @@ export function ConditionalPanel({ contract }: { contract?: ContractInfo | null 
                 )}
             </div>
             {creating && <NewConditionalDialog contract={contract ?? null} onClose={() => setCreating(false)} />}
+        </div>
+    );
+}
+
+/** Background brackets of one product as panel cards (under the order
+ * ticket); the same rows and actions as the 條件單管理面板. */
+export function ConditionalBracketCards({ code }: { code: string }) {
+    const programs = useBackgroundPrograms();
+    const stream = useStreamStatus();
+    const [expanded, setExpanded] = useState<string | null>(null);
+    const rows = useMemo(() => bgBracketRows(bracketViews(programs), stream === 'live')
+        .filter(r => (r.code === code || r.orderCode === code) && (!r.ended || r.actions.cancel)), [programs, stream, code]);
+    if (rows.length === 0) return null;
+    return (
+        <div className={styles.cards} aria-label='括號單（條件單管理）'>
+            {rows.map(r => <Card key={r.id} row={r} expanded={expanded === r.id} onToggle={() => setExpanded(e => e === r.id ? null : r.id)} />)}
+            <div className={styles.muted} style={{ padding: '0 8px' }}>完整清單請開「條件單管理」面板</div>
         </div>
     );
 }
