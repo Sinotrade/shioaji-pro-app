@@ -116,7 +116,7 @@
     </div>
   </div>
   <div class="wrap hx-after">
-    <a class="hx-first" href="#start"><span>第一次用？</span>3 分鐘看懂怎麼申請 API Key<svg class="i"><use href="#i-next"/></svg></a>
+    <a class="hx-first" href="#start"><span>第一次用？</span>3 分鐘看懂為什麼用 API Key、怎麼申請<svg class="i"><use href="#i-next"/></svg></a>
     <p class="shot-cap">首屏是 App 實際畫面（模擬環境，帳號與金額已遮蔽）；Agent 對話與均線為示意。</p>
     <ul class="hero-points">
       <li><a href="#habit"><b>它看你操作，學會你的流程，下次替你做好。</b><span>工作流程觀察每天整理你的操作，重複的步驟存成技能。</span></a></li>
@@ -401,6 +401,7 @@
         <li><b>模擬與正式分開</b>排程任務綁定環境，只在相符的環境執行。</li>
         <li><b>風控上限 Agent 也要遵守</b>單筆數量、單筆金額、限價偏離、單次下單筆數都有上限，市價單需要你的核可；Auto 也不例外。</li>
         <li><b>每一步都列出來</b>它查了什麼、存了什麼、送了什麼，都在對話裡逐列顯示。</li>
+        <li><b>API Key 權限＋每筆核可，兩層控制</b>App 和 Agent 只能用你在 API Key 開放的權限；在權限內，每一筆下單還需要你的核可。</li>
         <li><b>不會重複送單</b>每筆委託只送一次；結果不明時列為「交易結果待核對」，由你核對後結案，不會自動重送。</li>
       </ul>
     </div>
@@ -659,13 +660,27 @@
 <section class="alt" id="start" aria-labelledby="start-h">
   <div class="wrap">
     <div class="sec-head">
-      <h2 id="start-h">第一次用？3 分鐘看懂怎麼申請 API Key</h2>
-      <p>從永豐金證券網站申請，到在 Shioaji Pro 正式下單，一共 12 步。每一步都標出要點哪裡、勾什麼、填什麼；可以暫停，也可以點上一步、下一步。網站畫面是依官方文件重建的示意，資料都是假的；App 畫面是實際截圖。</p>
+      <h2 id="start-h">第一次用？3 分鐘看懂為什麼用 API Key、怎麼申請</h2>
+      <p>從永豐金證券網站申請，到在 Shioaji Pro 正式下單，一共 13 步，第一步先說明為什麼用 API Key。每一步都標出要點哪裡、勾什麼、填什麼；可以暫停，也可以點上一步、下一步。網站畫面是依官方文件重建的示意，資料都是假的；App 畫面是實際截圖。</p>
     </div>
     <div class="tu" data-tu>
       <div class="tu-player">
-        <div class="tu-top"><span class="tu-count"><b data-tu-n>1</b> / 12</span><span class="tu-where" data-tu-where>準備</span></div>
+        <div class="tu-top"><span class="tu-count"><b data-tu-n>1</b> / 13</span><span class="tu-where" data-tu-where>為什麼</span></div>
         <ol class="tu-steps">
+
+          <li class="tu-step" data-where="為什麼" data-dur="10">
+            <div class="tu-scene">
+              <div class="tu-card why">
+                <b class="tu-in" data-t="0.2">為什麼用 API Key，而不是帳號密碼</b>
+                <div class="tu-chk tu-in" data-t="1.0"><i></i><span><b>不用把帳號密碼交給 App 或 Agent</b>App 用的是你在永豐金證券網站另外建立的 API Key。</span></div>
+                <div class="tu-chk tu-in" data-t="2.4"><i></i><span><b>權限可以分開開</b>行情、帳務、交易、正式環境各自勾選。只開行情，Agent 就只能看盤研究，不能下單。</span></div>
+                <div class="tu-chk tu-in" data-t="3.8"><i></i><span><b>可以綁定 IP、設到期時間</b>別台電腦拿到也用不了；到期就失效。</span></div>
+                <div class="tu-chk tu-in" data-t="5.2"><i></i><span><b>不用了可以刪掉，換一組新的</b>在 API 管理頁管理你建立的 API Key。</span></div>
+                <p class="why-sum tu-in" data-t="6.6">Agent 只能在你開放的權限內動作，而且每一筆下單都需要你的核可。</p>
+              </div>
+            </div>
+            <div class="tu-cap"><b>為什麼要用 API Key</b><p>API Key 是給程式用的鑰匙，和你的登入帳號密碼分開。權限可以分開開，也能綁定 IP、設到期時間；App 和 AI Agent 都只能在這組 API Key 的權限內動作，加上每一筆下單都需要你的核可，兩層控制。</p><p class="tu-tbd">待確認：官方文件沒寫 API Key 能否暫停；目前寫法是到 API 管理頁刪除後另建一組。</p></div>
+          </li>
 
           <li class="tu-step" data-where="準備" data-dur="6">
             <div class="tu-scene">
@@ -753,15 +768,15 @@
                     <span id="tu-p4" class="tu-tick" data-t="7.1"><i></i>正式環境</span>
                   </div>
                   <div class="tu-notes">
-                    <p class="tu-in" data-t="1.3"><b>行情／資料</b>看報價、五檔、K 線、排行。看盤一定要勾。</p>
-                    <p class="tu-in" data-t="3.3"><b>帳務</b>查持倉、委託、餘額與損益。</p>
-                    <p class="tu-in" data-t="5.3"><b>交易</b>下單、改單、刪單。模擬測試也需要這個權限。</p>
-                    <p class="tu-in" data-t="7.3"><b>正式環境</b>要用真實資金下單才需要。只想先用模擬環境，可以先不勾。</p>
+                    <p class="tu-in" data-t="1.3"><b>行情／資料</b>看報價、五檔、K 線、排行。Agent 能讀行情；不勾，App 和 Agent 都看不到行情。</p>
+                    <p class="tu-in" data-t="3.3"><b>帳務</b>查持倉、委託、餘額與損益。Agent 能讀你的帳務；不勾，它就查不到持倉和餘額。</p>
+                    <p class="tu-in" data-t="5.3"><b>交易</b>下單、改單、刪單，模擬測試也需要。不勾，App 和 Agent 都無法下單；勾了，Agent 下單仍需要你的核可。</p>
+                    <p class="tu-in" data-t="7.3"><b>正式環境</b>用真實資金下單才需要。不勾，這組 API Key 只能在模擬環境用。</p>
                   </div>
                 </div>
               </div>
             </div>
-            <div class="tu-cap"><b>勾選 API 權限</b><p>四個權限一個一個看：要看盤勾「行情／資料」，要看帳務勾「帳務」，要下單勾「交易」，要在正式環境用真實資金下單再勾「正式環境」。</p></div>
+            <div class="tu-cap"><b>勾選 API 權限，也就是決定 Agent 能做什麼</b><p>App 和 AI Agent 都用這組 API Key，勾哪些權限，就是 Agent 能動的上限：只想讓它看盤研究，只勾「行情／資料」；要它幫你看帳務再勾「帳務」；要下單才勾「交易」；要用真實資金再勾「正式環境」。就算勾了交易，Agent 的每一筆下單都需要你的核可。</p><p class="tu-tbd">待確認：各權限涵蓋的 API 範圍以官方文件為準；官方只寫「行情／資料、帳務、交易、正式環境」四項的名稱與用途。</p></div>
           </li>
 
           <li class="tu-step" data-where="新增 API KEY" data-dur="8" data-path="#tu-a1:1.0:c,#tu-a2:2.2:c,#tu-ipr:3.8:c,#tu-ok:6.6:c">

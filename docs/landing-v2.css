@@ -1421,3 +1421,7 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
 
 .mo.go .hx-copy .lead { animation-name: followSoft; }
 @keyframes followSoft { from { transform: translateY(16px); filter: blur(4px); } to { transform: none; filter: blur(0); } }
+.tu-card.why { width: 82cqw; gap: 1.4cqw; }
+.why-sum { margin: .6cqw 0 0; padding: 1.4cqw 1.8cqw; border-radius: 1.2cqw; background: #eef3ff; color: #1d3a8a; font-weight: 700; font-size: 2.1cqw; }
+@media (max-width: 640px) { .tu-card.why { width: 96cqw; font-size: 2.7cqw; } .why-sum { font-size: 2.8cqw; } }
+.s2-modal.wide:has(.tu-notes) { top: 50%; gap: 1cqw; } .tu-notes p { font-size: 1.55cqw; padding: .9cqw 1.2cqw; line-height: 1.5; }
