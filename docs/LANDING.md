@@ -6,6 +6,8 @@ GitHub Pages 從 main 的 docs 發布。一般訪客預設看到原版 index.htm
 - 正式首頁：https://sinotrade.github.io/shioaji-pro-app/
 - 新版預覽：https://sinotrade.github.io/shioaji-pro-app/?landing=new
 - 明確選擇原版：https://sinotrade.github.io/shioaji-pro-app/?landing=original
+- v2 方向稿（#156）：https://sinotrade.github.io/shioaji-pro-app/?landing=v2
+  （直接開 landing-v2.html 也可以）。只是預覽，不受 LANDING_NEXT_ENABLED 影響。
 
 網址選擇不寫入瀏覽器儲存；關掉預覽、重新進入正式首頁仍使用全站預設。
 這是展示版本開關，不是權限控管，新版內容可以公開存取。
@@ -19,3 +21,10 @@ LANDING_NEXT_ENABLED 從 false 改為 true，經 PR、CI 與 merge commit
 
 新版轉址保留其他 query 與 hash，預覽時也能直接連到功能區。
 若 JavaScript 無法載入，首頁繼續顯示原版。
+
+## v2 方向稿（#156）
+
+landing-v2.html／.css／.js 是重新設計的方向稿，等維護者確認方向後才做完整實作。
+首屏截圖由 scripts/capture-landing-v2-shots.py 對模擬環境拍攝（隱私模式、
+測試自選清單、擋掉所有下單與修改自選的請求）。之後若要讓 v2 成為正式首頁，
+再決定是取代 landing-next.html 還是另加旗標，一樣經 PR 確認。
