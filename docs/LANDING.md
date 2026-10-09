@@ -1,30 +1,23 @@
-# 官網版本開關
+# 官網版本
 
-GitHub Pages 從 main 的 docs 發布。一般訪客預設看到原版 index.html；
-新版獨立放在 landing-next.html，不載入到原版頁面。
+GitHub Pages 從 main 的 docs 發布。
 
-- 正式首頁：https://sinotrade.github.io/shioaji-pro-app/
-- 新版預覽：https://sinotrade.github.io/shioaji-pro-app/?landing=new
-- 明確選擇原版：https://sinotrade.github.io/shioaji-pro-app/?landing=original
-- v2 方向稿（#156）：https://sinotrade.github.io/shioaji-pro-app/?landing=v2
-  （直接開 landing-v2.html 也可以）。只是預覽，不受 LANDING_NEXT_ENABLED 影響。
+- 正式首頁（v2，#156）：https://sinotrade.github.io/shioaji-pro-app/ ，檔案是 index.html，
+  搭配 landing-v2.css、landing-v2.js、landing-v2-motion.js。
+- 更新紀錄：https://sinotrade.github.io/shioaji-pro-app/changelog.html
+- 舊版首頁（v1）：https://sinotrade.github.io/shioaji-pro-app/?landing=v1
+  （?landing=original 也可以；檔案是 landing-v1.html，不被搜尋收錄）。
+- 舊的 next 方向稿：https://sinotrade.github.io/shioaji-pro-app/?landing=new
+- 舊網址 landing-v2.html 會轉回首頁，保留 query 與 hash。
 
-網址選擇不寫入瀏覽器儲存；關掉預覽、重新進入正式首頁仍使用全站預設。
-這是展示版本開關，不是權限控管，新版內容可以公開存取。
+網址選擇不寫入瀏覽器儲存；轉址由 landing-flag.js 處理，JavaScript 無法載入時首頁仍顯示 v2。
 
-## 之後正式切換
+## 待確認的註記
 
-只有在使用者確認替換時，才將 landing-flag.js 的
-LANDING_NEXT_ENABLED 從 false 改為 true，經 PR、CI 與 merge commit
-合併後由 Pages 自動發布。不需要搬移新版檔案或發桌面版 tag。
-需要回復原版時將同一旗標改回 false。
+API Key 教學裡標 class="tu-tbd" 的段落是還沒查證的說明（API Key 能否暫停、到期時間範圍、
+期貨類簽署項目名稱、模擬測試審核時間），目前用 CSS 隱藏不對外顯示。查證後改寫內文並移除該段。
 
-新版轉址保留其他 query 與 hash，預覽時也能直接連到功能區。
-若 JavaScript 無法載入，首頁繼續顯示原版。
+## 截圖
 
-## v2 方向稿（#156）
-
-landing-v2.html／.css／.js 是重新設計的方向稿，等維護者確認方向後才做完整實作。
-首屏截圖由 scripts/capture-landing-v2-shots.py 對模擬環境拍攝（隱私模式、
-測試自選清單、擋掉所有下單與修改自選的請求）。之後若要讓 v2 成為正式首頁，
-再決定是取代 landing-next.html 還是另加旗標，一樣經 PR 確認。
+首屏與面板截圖由 scripts/capture-landing-v2-shots.py 對模擬環境拍攝（隱私模式、
+測試自選清單、擋掉所有下單與修改自選的請求）。
