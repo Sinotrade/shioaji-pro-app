@@ -1184,7 +1184,7 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
 .tu-scene.app { background: var(--app-bg); }
 .tu-cap b { display: block; font-family: var(--heading); font-size: 1.25rem; color: var(--text); }
 .tu-cap p { margin-top: 6px; color: var(--text-2); font-size: 15px; }
-.tu-cap .tu-tbd { display: none; } /* 待確認的註記：查證前不對外顯示 */
+.tu-tbd { display: none !important; } /* 待確認的註記：查證前不對外顯示 */
 .tu-cap .tu-tbd::before { content: "註："; }
 .tu-cc { display: none; }
 .tu-ctrl { display: none; }
