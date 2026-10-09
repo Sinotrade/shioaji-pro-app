@@ -532,7 +532,13 @@ async function reconcileOcoExit(id: string, attempt = 1) {
             current => fetchTrades(rec.account.account_type, current, { refresh: true }));
         const trade = rows.find(t => t.order.id === rec.orderId);
         if (!trade && rec.orderId) throw new Error('委託清單找不到這筆');
-        if (trade) applyExitTrade(trade, { settle: true });
+        if (trade) {
+            // complete evidence only: an ended order whose fill details cover what it says filled
+            const listed = (trade.status.deals ?? []).reduce((n, d) => n + (Number.isSafeInteger(d.quantity) ? d.quantity : 0), 0);
+            const ended = ['Cancelled', 'Failed', 'Inactive', 'Filled', 'PartFilled'].includes(trade.status.status);
+            if (!ended || listed < trade.status.deal_quantity) throw new Error('成交明細尚不完整');
+            applyExitTrade(trade, { settle: true });
+        }
         ocoReconciled.add(id);
         ocoReading.delete(id);
         const cur = exits.find(e => e.id === id);
@@ -1610,6 +1616,9 @@ export function applyExitTrade(trade: Trade, opts: { settle?: boolean } = {}) {
 function trailed(t: TriggerOrder, price: number): TriggerOrder | null {
     const contract = getCachedContract(t.code);
     if (!contract || !t.trail) return null;
+    // no move on a guessed tick: wait for the exchange band table
+    const rule = (contract as { tick_rule?: string }).tick_rule;
+    if (rule && bandTickFor(rule, price) === undefined) return null;
     const long = t.condition === 'below'; // a long position's stop sells below
     const r = trailStep(long, t.price, t.trail, price, (p, n) => stepPrice(contract, p, n));
     if (r.stop === t.price && JSON.stringify(r.state) === JSON.stringify(t.trail)) return null;

@@ -76,6 +76,7 @@ import type { TrailState } from './conditional/trailing';
 import { newTrail } from './conditional/trailing';
 import { tierSpecs } from './conditional/bracket-rules';
 import { stepPrice } from './utils/ticksize';
+import { bandTickFor, prefetchTickBands } from './tick-bands';
 import type { Trade } from './types/order';
 import type { Action, FuturesOCType, StockOrderCond, StockOrderLot, TradeCacheHealth } from './types/order';
 
@@ -257,6 +258,16 @@ function withRulePrices(p: BracketPlan): BracketPlan {
     if (!base || !contract) {
         return addIssue(p, 'lookup-failed', !base ? '成交回報沒有成交價，無法計算停損停利；請對帳後自行處理' : '商品資料未載入，停損停利尚未建立（載入中）', now);
     }
+    // a product with an exchange band table: never price on a guessed tick
+    const rule = (contract as { tick_rule?: string }).tick_rule;
+    if (rule && bandTickFor(rule, base) === undefined) {
+        if (contract.security_type === 'FUT' || contract.security_type === 'OPT') prefetchTickBands(rule, contract.security_type);
+        if (!contractWaits.has(`band:${p.id}`)) {
+            contractWaits.add(`band:${p.id}`);
+            setTimeout(() => { contractWaits.delete(`band:${p.id}`); update(p.id, x => x); }, 1000);
+        }
+        return addIssue(p, 'lookup-failed', '跳動點級距載入中，停損停利尚未建立', now);
+    }
     const dir = p.action === 'Buy' ? 1 : -1;
     let stopPrice = stepPrice(contract, base, -dir * p.rules.stopTicks);
     const takePrice = p.rules.takeTicks === null ? null : stepPrice(contract, base, dir * p.rules.takeTicks);
@@ -315,13 +326,23 @@ function syncProtection(before: BracketPlan | undefined, p: BracketPlan) {
 function update(id: string, fn: (p: BracketPlan) => BracketPlan) {
     const before = plans.find(p => p.id === id);
     if (!before) return;
-    const after = withRulePrices(fn(before));
+    let after = withRulePrices(fn(before));
     if (after === before) return;
     plans = plans.map(p => p === before ? after : p);
     if (before.base !== undefined && after.base !== before.base) {
-        // the real fill price replaced the order price: re-price the pair
+        // the real fill price replaced the order price: re-price the pair, but
+        // never loosen a stop that already moved (移動停損／保本); the trail keeps its state
+        const leg = getTriggers().find(t => t.group === before.group && t.env === before.env && t.kind === 'stop');
+        if (leg && after.stopPrice !== null) {
+            const long = after.action === 'Buy';
+            const tighter = long ? Math.max(after.stopPrice, leg.price) : Math.min(after.stopPrice, leg.price);
+            if (tighter !== after.stopPrice) {
+                after = { ...after, stopPrice: tighter };
+                plans = plans.map(p => p.id === after.id ? after : p);
+            }
+        }
         disarmBracketGroup(before.env, before.group);
-        arm(after, true);
+        arm(after, true, leg?.trail);
     }
     syncProtection(before, after);
     commit();
