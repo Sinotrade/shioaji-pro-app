@@ -25,6 +25,13 @@ import { getStreamStatus, onAnyTick, subscribeStatusStore } from '../stream';
 import { notify } from '../trade';
 import { envKeyOf } from './adapter';
 import { programFinished } from './background-view';
+import {
+    BRACKET_COMMAND,
+    BRACKET_NOTICE_TEXT,
+    REARM_REFUSAL_TEXT,
+    type CreateBracketRequest,
+    type RearmBracketResult,
+} from './bracket-contract';
 import type { Notice, OrderProgram } from './model';
 import { createTauriPendingConfirmBackend, installPendingConfirmBackend } from './pending-confirm';
 
@@ -83,6 +90,7 @@ export function useBackgroundSetting(): boolean | null {
 }
 
 export const BACKGROUND_UNAVAILABLE = '背景執行目前無法使用，請稍後再試或關閉背景持續執行改用本視窗';
+export const BACKGROUND_NOT_LIVE = '背景執行尚未連上目前的伺服器，請稍後再試或關閉背景持續執行改用本視窗';
 export const BACKGROUND_SETTING_UNKNOWN = '背景持續執行的開關狀態不明，請稍後再試或到設定確認開關';
 
 async function readSetting(): Promise<boolean | null> {
@@ -99,7 +107,7 @@ async function readSetting(): Promise<boolean | null> {
  * (exactly as before, the engine's state does not matter); on → the
  * background engine, or a refusal while it cannot be reached; unknown
  * setting → a refusal (never a silent guess either way). */
-export async function backgroundOwnerForNew(): Promise<'window' | 'background' | { refused: string }> {
+export async function backgroundOwnerForNew(opts: { liveOn?: string } = {}): Promise<'window' | 'background' | { refused: string }> {
     if (!isTauri) return 'window';
     // read now, every time: a cached value never decides (another window may
     // have changed it, or the file became unreadable)
@@ -116,6 +124,11 @@ export async function backgroundOwnerForNew(): Promise<'window' | 'background' |
     adoptHealth(h);
     // the engine must be up and running with the setting on
     if (!h || h.enabled !== true) return { refused: BACKGROUND_UNAVAILABLE };
+    // a bracket is taken over only by an engine live on its environment now
+    // (its entry is not sent otherwise)
+    if (opts.liveOn !== undefined && (h.state !== 'live' || `${h.serverId}|${h.env}` !== opts.liveOn)) {
+        return { refused: BACKGROUND_NOT_LIVE };
+    }
     return 'background';
 }
 
@@ -222,6 +235,9 @@ const REJECT_TEXT: Record<string, string> = {
     'rejected.unpast': '價格已回到觸發價另一側，需要再確認',
     'rejected.noPrice': '背景執行尚未收到即時成交價',
     'rejected.notPending': '這張單已不在待確認',
+    'rejected.inFlight': '委託送出中，請稍候再按',
+    'rejected.notRunning': '這張單目前不是執行中',
+    'rejected.notPaused': '這張單目前沒有暫停',
     'partition.failed': '背景執行資料無法寫入，這個環境已停止，請重新啟動 App',
 };
 
@@ -282,6 +298,54 @@ export async function resolveBackgroundTrigger(programId: string, levelId: strin
     await command('execution_resolve_trigger', { request: { programId, levelId, choice, allowUnpast } });
 }
 
+// ---- brackets (括號單, #201 ②; see bracket-contract.ts) ----
+
+/** Right after the entry order was accepted. Like a trigger: `created`,
+ * `refused` (definitely not created) or `unconfirmed` (answer lost). */
+export async function createBackgroundBracket(request: CreateBracketRequest): Promise<'created' | { refused: string } | { unconfirmed: string }> {
+    if (!isTauri) return { refused: '背景持續執行僅限桌面版' };
+    try {
+        const reply = await invoke<CommandReply>(BRACKET_COMMAND.create, { request });
+        await refreshBackground();
+        if (!reply.accepted) return { refused: rejection(reply) };
+        return 'created';
+    } catch (e) {
+        const why = e instanceof Error ? e.message : String(e);
+        await settled();
+        if (programs.some(p => p.id === request.id)) return 'created';
+        // the App answered with a refusal text (a string error): not created
+        return typeof e === 'string' ? { refused: why } : { unconfirmed: why };
+    }
+}
+
+/** 「我已自行處理」: the engine stops tracking; nothing is sent or cancelled. */
+export async function markBackgroundHandled(programId: string, levelId?: string): Promise<void> {
+    await command(BRACKET_COMMAND.markHandled, { programId, levelId: levelId ?? null });
+}
+
+/** 「在新盤別重新啟用」 (nothing is sent then). */
+export async function rearmBackgroundBracket(programId: string, levelId: string, quantity: number): Promise<string> {
+    if (!isTauri) throw new Error('背景持續執行僅限桌面版');
+    const r = await invoke<RearmBracketResult>(BRACKET_COMMAND.rearm, { request: { programId, levelId, quantity } });
+    await refreshBackground();
+    if (!r.ok) throw new BackgroundRefusal(REARM_REFUSAL_TEXT[r.reason ?? 'rearmFailed'] ?? '重新啟用沒有完成');
+    return r.programId ?? '';
+}
+
+/** Pause stops new entries only; stop / take keep watching. */
+export async function pauseBackgroundProgram(programId: string): Promise<void> {
+    await command(BRACKET_COMMAND.pause, { programId });
+}
+
+export async function resumeBackgroundProgram(programId: string): Promise<void> {
+    await command(BRACKET_COMMAND.resume, { programId });
+}
+
+/** A finished bracket leaves the list (the App refuses one still tracking). */
+export async function removeBackgroundBracket(programId: string): Promise<void> {
+    await command(BRACKET_COMMAND.remove, { programId });
+}
+
 // ---- main window upkeep ----
 
 const removing = new Set<string>();
@@ -335,6 +399,15 @@ const NOTICE_TEXT: Record<string, string> = {
     'partition.failed': '背景執行資料無法寫入，已停止',
 };
 
+const BRACKET_FIRED_TEXT: Record<string, string> = {
+    fired: '背景括號單出場已觸發',
+    needsConfirm: '背景括號單待確認：恢復盯價時已穿價，未自動送單',
+    notSent: '背景括號單出場未送出',
+    unknown: '背景括號單出場送出結果不明（不會自動重送）',
+};
+
+const INFO_NOTICES = new Set(['fired', 'needsConfirm', 'handled', 'bracket.rearmed']);
+
 let pendingInstalled = false;
 function onFirstStatus() {
     // the engine answered: its 委託待確認 list is the real one
@@ -358,8 +431,10 @@ export function startBackgroundExecution(): void {
         if (main) {
             void listen<Notice[]>('execution://notice', e => {
                 for (const n of e.payload ?? []) {
-                    const title = NOTICE_TEXT[n.code];
-                    if (title) notify({ kind: n.code === 'fired' || n.code === 'needsConfirm' ? 'info' : 'err', title, body: n.detail });
+                    const bracket = programs.find(p => p.id === n.programId)?.kind === 'bracket'
+                        || n.code === 'bracket.rearmed';
+                    const title = bracket ? (BRACKET_NOTICE_TEXT[n.code] ?? BRACKET_FIRED_TEXT[n.code]) : NOTICE_TEXT[n.code];
+                    if (title) notify({ kind: INFO_NOTICES.has(n.code) ? 'info' : 'err', title, body: n.detail });
                 }
             });
         }

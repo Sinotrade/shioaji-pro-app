@@ -38,7 +38,7 @@ describe('pending confirm contract', () => {
             resolve: 'execution_resolve_pending',
         });
         expect(PENDING_CONFIRM_CHANGED_EVENT).toBe('execution://pending-confirm-changed');
-        expect(PENDING_CONFIRM_CONTRACT_VERSION).toBe(2);
+        expect(PENDING_CONFIRM_CONTRACT_VERSION).toBe(3);
     });
 
     it('accepts a well-formed snapshot', () => {
@@ -49,7 +49,7 @@ describe('pending confirm contract', () => {
     });
 
     it.each([
-        ['wrong version', { version: 3, runId: 'r', sequence: 1, uncleanShutdown: false, items: [] }],
+        ['wrong version', { version: 4, runId: 'r', sequence: 1, uncleanShutdown: false, items: [] }],
         ['missing items', { version: 1, runId: 'r', sequence: 1, uncleanShutdown: false }],
         ['unknown state', { version: 1, runId: 'r', sequence: 1, uncleanShutdown: false, items: [wireItem({ state: 'retry' })] }],
         ['bad quantity', { version: 1, runId: 'r', sequence: 1, uncleanShutdown: false, items: [wireItem({ order: { ...wireItem().order, quantity: 0 } })] }],
@@ -90,7 +90,7 @@ describe('pending confirm contract', () => {
 
 describe('contract v2: rearm in the new session', () => {
     it('reads v2 snapshots with the trigger condition, and still reads v1', () => {
-        expect(PENDING_CONFIRM_CONTRACT_VERSION).toBe(2);
+        expect(PENDING_CONFIRM_CONTRACT_VERSION).toBe(3);
         const v2 = parsePendingConfirmSnapshot({ version: 2, runId: 'r', sequence: 1, uncleanShutdown: false,
             items: [wireItem({ order: { ...wireItem().order, triggerCondition: 'below' } })] });
         expect(v2.items[0]!.order.triggerCondition).toBe('below');
@@ -105,7 +105,7 @@ describe('contract v2: rearm in the new session', () => {
         const v1 = parsePendingConfirmSnapshot({ version: 1, runId: 'r', sequence: 1, uncleanShutdown: false, items: [wireItem()] });
         expect(v1.version).toBe(1);
         expect(v1.items[0]!.order.triggerCondition).toBeNull();
-        expect(() => parsePendingConfirmSnapshot({ version: 3, runId: 'r', sequence: 1, uncleanShutdown: false, items: [] })).toThrow();
+        expect(() => parsePendingConfirmSnapshot({ version: 4, runId: 'r', sequence: 1, uncleanShutdown: false, items: [] })).toThrow();
         expect(() => parsePendingConfirmSnapshot({ version: 2, runId: 'r', sequence: 1, uncleanShutdown: false,
             items: [wireItem({ order: { ...wireItem().order, triggerCondition: 'sideways' } })] })).toThrow();
     });
@@ -117,5 +117,15 @@ describe('contract v2: rearm in the new session', () => {
         for (const reason of ['notEnabled', 'invalidRequest', 'rearmFailed', 'rearmInProgress']) {
             expect(parseResolvePendingResult({ ok: false, reason, snapshot })).toMatchObject({ ok: false, reason });
         }
+    });
+});
+
+describe('v3: 我已自行處理', () => {
+    it('is allowed in every state of a v3 snapshot only', async () => {
+        const { canMarkHandled, resolutionAllowed } = await import('./pending-confirm-contract');
+        expect(resolutionAllowed('needsConfirm', 'handledByUser')).toBe(true);
+        expect(resolutionAllowed('expired', 'handledByUser')).toBe(true);
+        expect(canMarkHandled({ version: 3 })).toBe(true);
+        expect(canMarkHandled({ version: 2 })).toBe(false);
     });
 });

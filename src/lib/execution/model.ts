@@ -76,7 +76,11 @@ export type EntryRule =
     | { type: 'limit'; price: number; order: OrderSpec }
     /** Entry order placed outside the program (bracket entry sent by the
      * order ticket); the program only tracks its reports. */
-    | { type: 'external'; orderId: string };
+    | { type: 'external'; orderId: string }
+    /** A position already held when the program starts (a bracket turned
+     * back on in a new trading session, background engine only): no entry
+     * order; `session` is the session it protects in. */
+    | { type: 'position'; session?: string | null };
 
 /** A touch leg of an exit (stop or take). Fires a market-style order. */
 export interface TouchLeg {
@@ -291,6 +295,17 @@ export interface OrderProgram {
     issues: ProgramIssue[];
     createdAt: number;
     updatedAt: number;
+    /** Bracket behaviour (background engine); absent = the defaults (all off). */
+    policy?: BracketPolicy;
+}
+
+/** Bracket (括號單) options, background engine (#201 ②). All off by default:
+ * protection is turned back on by the user in a new session, a late entry
+ * fill after protection ended is shown 未受保護, pause stops new entries only. */
+export interface BracketPolicy {
+    autoRearm: boolean;
+    autoProtectLateFill: boolean;
+    pauseStopsExits: boolean;
 }
 
 // ---- engine-level state ----
@@ -389,7 +404,9 @@ export type UserCommand =
     | { op: 'remove'; programId: string; version: number }
     | { op: 'resolvePending'; programId: string; version: number; levelId: string;
         choice: 'send' | 'cancel' | 'keep'; allowUnpast?: boolean }
-    | { op: 'ackUnknown'; programId: string; version: number; levelId: string };
+    | { op: 'ackUnknown'; programId: string; version: number; levelId: string }
+    /** 「我已自行處理」 (background engine only): stop tracking, send nothing. */
+    | { op: 'markHandled'; programId: string; version: number; levelId?: string; note?: string };
 
 export interface CommandEvent { type: 'command'; ts: number; id: string; command: UserCommand }
 

@@ -59,11 +59,18 @@
 //   new quantity while it has placed nothing, else `rearmInProgress`.
 //   Brackets: not yet (②).
 // - A v1 snapshot is still read (no condition, no rearm offered).
+//
+// v3 (2026-10-09, #201 ②): resolution `handledByUser` (「我已自行處理」) is
+// allowed in every state: the user handled the order themselves; the engine
+// ends its tracking (a bracket: the whole level, its position released).
+// Nothing is sent or cancelled. Bracket protection that lapsed with its
+// session is turned back on from the bracket itself (bracket-contract.ts),
+// not from this card.
 // Event (Tauri `listen`):
 //   execution://pending-confirm-changed         (payload ignored; re-list)
 
-export const PENDING_CONFIRM_CONTRACT_VERSION = 2 as const;
-const READABLE_VERSIONS = [1, 2] as const;
+export const PENDING_CONFIRM_CONTRACT_VERSION = 3 as const;
+const READABLE_VERSIONS = [1, 2, 3] as const;
 export type PendingConfirmContractVersion = (typeof READABLE_VERSIONS)[number];
 
 export const PENDING_CONFIRM_COMMAND = {
@@ -77,7 +84,8 @@ export const PENDING_CONFIRM_CHANGED_EVENT = 'execution://pending-confirm-change
  * session ended, so it cannot be working any more (it may have filled). */
 export type PendingConfirmState = 'needsConfirm' | 'expired';
 
-export type PendingResolution = 'confirmedSent' | 'confirmedNotSent' | 'acknowledgeExpired' | 'rearmInNewSession';
+export type PendingResolution = 'confirmedSent' | 'confirmedNotSent' | 'acknowledgeExpired' | 'rearmInNewSession'
+    | 'handledByUser';
 
 export interface PendingOwner {
     kind: 'trigger' | 'bracket';
@@ -147,9 +155,14 @@ export type ResolvePendingResult =
     | { ok: false; reason: ResolvePendingRefusal; snapshot: PendingConfirmSnapshot };
 
 const RESOLUTIONS: Record<PendingConfirmState, readonly PendingResolution[]> = {
-    needsConfirm: ['confirmedSent', 'confirmedNotSent'],
-    expired: ['acknowledgeExpired', 'rearmInNewSession'],
+    needsConfirm: ['confirmedSent', 'confirmedNotSent', 'handledByUser'],
+    expired: ['acknowledgeExpired', 'rearmInNewSession', 'handledByUser'],
 };
+
+/** 「我已自行處理」 needs a v3 engine. */
+export function canMarkHandled(snapshot: Pick<PendingConfirmSnapshot, 'version'>): boolean {
+    return snapshot.version >= 3;
+}
 
 export function resolutionAllowed(state: PendingConfirmState, resolution: PendingResolution): boolean {
     return RESOLUTIONS[state].includes(resolution);
