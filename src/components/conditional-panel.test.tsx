@@ -159,4 +159,13 @@ describe('ConditionalPanel', () => {
         expect(text(r.root)).toContain('已取消');
         expect(byLabel(r, '取消')).toHaveLength(0);
     });
+
+    it('a 待確認 leg of a 二擇一 is decided from its row', async () => {
+        m.sources = sources({ triggers: [trig({ id: 'u', group: 'g', condition: 'above', price: 48400, action: 'Buy' }),
+            trig({ id: 'd', group: 'g', pending: { price: 47800, at: 1, reason: 'resume' } })] });
+        const r = render();
+        await click(button(r, '現在送出'));
+        await click(button(r, '再按一次確認送出'));
+        expect(m.resolve).toHaveBeenCalledWith('d', 'send', { allowUnpast: false });
+    });
 });

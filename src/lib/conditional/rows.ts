@@ -230,7 +230,7 @@ function ocoRow(legs: TriggerOrder[], s: Sources): CondRow {
         env: first.env ?? null,
         attention: !!pending,
         paused,
-        actions: pending ? { ...NO_ACTIONS, cancel: true } : {
+        actions: pending ? { ...NO_ACTIONS, send: true, keep: true, cancel: true } : {
             ...NO_ACTIONS, modify: true, pause: !paused, resume: paused, cancel: true,
         },
         source: { type: 'oco', triggers: legs },

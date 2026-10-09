@@ -611,12 +611,22 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
     if (!row) throw new Error('找不到這張觸價單');
     if (row.pending) throw new Error('待確認中的觸價單請先處理（送出、保留或取消）');
     const contract = await ensureContract(row.code);
+    const programId = row.background.programId;
+    const original = getBackgroundPrograms().find(p => p.id === programId);
+    const level = original?.levels.find(lv => lv.id === row.background.levelId);
+    if (!original || !level || level.entry.type !== 'touch') throw new Error('找不到這張觸價單');
     const next: TriggerOrder = { ...row, ...patch, id: newId(), createdAt: Date.now() };
     delete (next as Partial<BackgroundTriggerOrder>).background;
     delete next.awaitingRecross;
-    const program = programForNewTrigger(next, contract);
-    if (!program) throw new Error('背景執行：這張單無法修改，請取消後重新建立');
-    const programId = row.background.programId;
+    // never armed already crossed: refused here, and the new program's first
+    // tick decides like a restore (already past → 待確認)
+    const latest = getBackgroundPrices()[row.code] ?? lastPrices.get(row.code);
+    if (latest !== undefined && isPast(next, latest)) throw new Error(`新的觸發價已穿過目前價格（${latest}），沒有修改`);
+    const made = programForNewTrigger(next, contract);
+    if (!made) throw new Error('背景執行：這張單無法修改，請取消後重新建立');
+    // keep the original order (e.g. a closing-only Cover stays Cover)
+    const program = { ...made, levels: made.levels.map(lv => lv.entry.type === 'touch'
+        ? { ...lv, check: 'resume' as const, entry: { ...lv.entry, order: level.entry.type === 'touch' ? level.entry.order : lv.entry.order } } : lv) };
     try {
         await pauseBackgroundProgram(programId);
     } catch (e) {
