@@ -110,11 +110,11 @@ type Choice = Extract<PendingResolution, 'confirmedSent' | 'confirmedNotSent'>;
 function HandledButton({ item, envNow }: { item: PendingConfirmItem; envNow: string | null }) {
     const [asking, setAsking] = useState(false);
     const { busy, error, run } = useRun();
-    const here = item.env === envNow;
+    void envNow;
     if (!asking) {
         return (
-            <button type='button' className={styles.button} disabled={busy || !here}
-                title={here ? '你已自行到委託查詢處理這筆' : '切回原環境才能處理'} onClick={() => setAsking(true)}>
+            <button type='button' className={styles.button} disabled={busy}
+                title='你已自行到委託查詢處理這筆（不需連線，也不會送出或刪除委託）' onClick={() => setAsking(true)}>
                 <UserCheck size={12} aria-hidden />我已自行處理
             </button>
         );
@@ -129,7 +129,7 @@ function HandledButton({ item, envNow }: { item: PendingConfirmItem; envNow: str
             {error && <div className={styles.note.err} role='alert'>{error}</div>}
             <div className={styles.stepRow}>
                 <button type='button' className={styles.button} disabled={busy} onClick={() => setAsking(false)}>返回</button>
-                <button type='button' className={styles.primary} disabled={busy || !here}
+                <button type='button' className={styles.primary} disabled={busy}
                     onClick={() => void run(() => resolvePendingConfirm(item, 'handledByUser'))}>
                     {busy ? '處理中…' : '確認我已自行處理'}
                 </button>

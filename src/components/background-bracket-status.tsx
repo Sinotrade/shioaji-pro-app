@@ -5,11 +5,12 @@
 // (positions re-read, quantity capped), 「我已自行處理」 and 移除.
 // Nothing here sends an order by itself.
 
-import { CalendarClock, RotateCcw, ShieldAlert, ShieldCheck, Trash2, UserCheck } from 'lucide-react';
+import { CalendarClock, Eye, RotateCcw, Send, ShieldAlert, ShieldCheck, Trash2, UserCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { isMainWindow } from '../lib/main-window-commands';
 import {
     markBackgroundHandled,
+    resolveBackgroundTrigger,
     rearmBackgroundBracket,
     removeBackgroundBracket,
     useBackgroundPrograms,
@@ -65,10 +66,12 @@ function Rearm({ v, onClose }: { v: BracketView; onClose: () => void }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     const plan = pos.state === 'ok' ? rearmPlan(subject, pos.view)
-        : { quantity: null, notes: [pos.state === 'loading' ? '正在查詢這個帳戶的持倉…' : '無法確認持倉：請到持倉核對後自行輸入數量'] };
+        : { quantity: null, closable: null, notes: [pos.state === 'loading' ? '正在查詢這個帳戶的持倉…' : '無法確認持倉，暫時不能重新啟用'] };
+    // protection closes only what is held now: a known closable position is required
+    const cap = plan.closable !== null && plan.closable > 0 ? Math.min(plan.closable, v.position) : 0;
     const value = qty ?? (plan.quantity === null ? '' : String(plan.quantity));
     const n = Number(value);
-    const valid = value !== '' && Number.isSafeInteger(n) && n > 0 && n <= v.position;
+    const valid = value !== '' && Number.isSafeInteger(n) && n > 0 && n <= cap;
     return (
         <div className={styles.row.warn} role='group' aria-label='確認重新啟用的內容'>
             <div className={styles.note.muted}>
@@ -76,7 +79,10 @@ function Rearm({ v, onClose }: { v: BracketView; onClose: () => void }) {
                     v.take !== null ? `停利 ${fmtPrice(v.take)}` : ''} · 觸發後市價${v.side === 'Buy' ? '賣出' : '買進'}平倉`}
             </div>
             {plan.notes.map(t => <div key={t} className={styles.note.warn}>{t}</div>)}
-            <div className={styles.note.muted}>{`最多 ${v.position} 口（括號單原本持有的部位）`}</div>
+            <div className={styles.note.muted}>
+                {cap > 0 ? `最多 ${cap} 口（目前可平倉量與括號單原本持有部位的較小者）`
+                    : pos.state === 'ok' ? '目前沒有可平倉的部位，不需要重新啟用；若部位已自行處理，請按「我已自行處理」' : ''}
+            </div>
             <label className={styles.actions}>
                 <span>口數</span>
                 <input aria-label='重新啟用口數' inputMode='numeric' value={value} disabled={busy || pos.state === 'loading'}
@@ -106,6 +112,7 @@ function Row({ v, envNow, main }: { v: BracketView; envNow: string | null; main:
     const priv = usePrivacyMode();
     const [asking, setAsking] = useState(false);
     const [rearming, setRearming] = useState(false);
+    const [sending, setSending] = useState(false);
     const { busy, message, run } = useRun();
     const here = v.env === envNow;
     const tone = v.attention ? 'err' : v.held || v.paused ? 'warn' : 'ok';
@@ -135,6 +142,11 @@ function Row({ v, envNow, main }: { v: BracketView; envNow: string | null; main:
                     {`未受保護 ${v.unprotected} 口：保護結束後才成交，系統不會自動補掛；請到持倉核對後自行處理。`}
                 </div>
             )}
+            {v.state === 'needsConfirm' && (
+                <div className={styles.note.err}>
+                    {`恢復盯價時${v.pendingLeg === 'take' ? '停利' : '停損'}已穿價，沒有自動送單；請決定要立即平倉或繼續盯價。`}
+                </div>
+            )}
             {v.state === 'unknown' && (
                 <div className={styles.note.err}>出場委託送出結果不明，不會自動重送；請在「委託待確認」核對。</div>
             )}
@@ -157,6 +169,24 @@ function Row({ v, envNow, main }: { v: BracketView; envNow: string | null; main:
                             title={here ? undefined : '切回原環境才能重新啟用'} onClick={() => setRearming(true)}>
                             <RotateCcw size={12} aria-hidden /> 在新盤別重新啟用
                         </button>
+                    )}
+                    {v.actions.decide && (
+                        <>
+                            <button type='button' className={styles.button} disabled={busy || !here}
+                                title='恢復盯價時價格已穿過；立即以市價平倉這張括號單持有的口數'
+                                onClick={() => {
+                                    if (!sending) { setSending(true); return; }
+                                    setSending(false);
+                                    void run(() => resolveBackgroundTrigger(v.programId, v.levelId, 'send'));
+                                }}>
+                                <Send size={12} aria-hidden /> {sending ? `再按一次：市價平倉 ${v.position} 口` : '送出平倉單'}
+                            </button>
+                            <button type='button' className={styles.button} disabled={busy || !here}
+                                title='不送單；價格回到觸發價另一側後再次穿過才觸發'
+                                onClick={() => void run(() => resolveBackgroundTrigger(v.programId, v.levelId, 'keep'))}>
+                                <Eye size={12} aria-hidden /> 繼續盯價
+                            </button>
+                        </>
                     )}
                     {v.actions.markHandled && (
                         <button type='button' className={styles.button} disabled={busy}

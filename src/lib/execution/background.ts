@@ -90,6 +90,7 @@ export function useBackgroundSetting(): boolean | null {
 }
 
 export const BACKGROUND_UNAVAILABLE = '背景執行目前無法使用，請稍後再試或關閉背景持續執行改用本視窗';
+export const BACKGROUND_NOT_LIVE = '背景執行尚未連上目前的伺服器，請稍後再試或關閉背景持續執行改用本視窗';
 export const BACKGROUND_SETTING_UNKNOWN = '背景持續執行的開關狀態不明，請稍後再試或到設定確認開關';
 
 async function readSetting(): Promise<boolean | null> {
@@ -106,7 +107,7 @@ async function readSetting(): Promise<boolean | null> {
  * (exactly as before, the engine's state does not matter); on → the
  * background engine, or a refusal while it cannot be reached; unknown
  * setting → a refusal (never a silent guess either way). */
-export async function backgroundOwnerForNew(): Promise<'window' | 'background' | { refused: string }> {
+export async function backgroundOwnerForNew(opts: { liveOn?: string } = {}): Promise<'window' | 'background' | { refused: string }> {
     if (!isTauri) return 'window';
     // read now, every time: a cached value never decides (another window may
     // have changed it, or the file became unreadable)
@@ -123,6 +124,11 @@ export async function backgroundOwnerForNew(): Promise<'window' | 'background' |
     adoptHealth(h);
     // the engine must be up and running with the setting on
     if (!h || h.enabled !== true) return { refused: BACKGROUND_UNAVAILABLE };
+    // a bracket is taken over only by an engine live on its environment now
+    // (its entry is not sent otherwise)
+    if (opts.liveOn !== undefined && (h.state !== 'live' || `${h.serverId}|${h.env}` !== opts.liveOn)) {
+        return { refused: BACKGROUND_NOT_LIVE };
+    }
     return 'background';
 }
 

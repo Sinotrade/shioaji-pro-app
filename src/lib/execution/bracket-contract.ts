@@ -36,6 +36,9 @@
 //       is already protected by another bracket, or the request is invalid.
 //   execution_mark_handled({ programId, levelId? })            -> CommandReply
 //   execution_rearm_bracket({ request: RearmBracketRequest })   -> RearmBracketResult
+//   execution_resolve_trigger({ request: { programId, levelId, choice: 'send' | 'keep', allowUnpast } })
+//       -> CommandReply: a `needsConfirm` leg (send the exit now / keep
+//       watching until the price crosses again). Main window only.
 //   execution_pause({ programId }) / execution_resume({ programId }) -> CommandReply
 //   execution_remove({ programId })                             -> CommandReply
 //       Brackets: only a finished one (`actions.remove`); otherwise refused.
@@ -151,6 +154,8 @@ export interface BracketView {
     actions: {
         markHandled: boolean;
         rearm: boolean;
+        /** `needsConfirm`: send the exit now, or keep watching (re-cross). */
+        decide: boolean;
         pause: boolean;
         resume: boolean;
         remove: boolean;
@@ -229,6 +234,7 @@ export function bracketViews(programs: readonly OrderProgram[]): BracketView[] {
                 actions: {
                     markHandled: tracking && !leaving(lv),
                     rearm: state === 'lapsed',
+                    decide: state === 'needsConfirm' && p.status !== 'stopped',
                     pause: p.status === 'running' && tracking,
                     resume: p.status === 'paused',
                     remove: finished,

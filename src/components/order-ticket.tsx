@@ -323,7 +323,7 @@ export function OrderTicket({
                     throw new Error('伺服器模式（模擬／正式）尚未確認，括號單未送出');
                 }
                 if (backgroundBracketEligible(isFutures, contract.security_type)) {
-                    const owner = await backgroundOwnerForNew();
+                    const owner = await backgroundOwnerForNew({ liveOn: bracketEnv });
                     if (typeof owner === 'object') throw new Error(`${owner.refused}；進場單未送出`);
                     bracketOwner = owner;
                 }
@@ -414,7 +414,8 @@ export function OrderTicket({
                     seqno: trade.order.seqno ?? null,
                     ordno: trade.order.ordno ?? null,
                 });
-                const created = request ? await createBackgroundBracket(request) : { refused: '進場單缺少委託或帳戶識別' };
+                const created = request ? await createBackgroundBracket(request)
+                    : { refused: '進場單沒有委託編號（送出結果可能尚未確認）' };
                 if (created !== 'created') {
                     // 進場單已送出：保護未建立或結果未確認都明示；不自動重送，
                     // 也不建議另掛停損（可能晚到生效 → 重複出場）
