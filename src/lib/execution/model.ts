@@ -145,6 +145,10 @@ export interface OrderSlot {
     detail: string | null;
     acknowledged: boolean;
     cancel: CancelState | null;
+    /** Background engine: the broker said no fill can follow (a successful
+     * Cancel order report, or a final status in a refreshed listing) —
+     * never a cancel request's answer. A later fill is unexpected data. */
+    closed?: boolean;
 }
 
 export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'resume' | 'unknownNotSent';
