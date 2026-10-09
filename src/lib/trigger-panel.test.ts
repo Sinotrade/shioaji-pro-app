@@ -464,4 +464,25 @@ describe('二擇一 lock safety (#226)', () => {
         await tick(47800);
         expect(m.place).toHaveBeenCalledTimes(1);
     });
+
+    it('a read-back whose fill details do not yet cover its filled quantity keeps the lock', async () => {
+        await boot();
+        await engine.addTriggerGroup([
+            { code: 'TXFR1', condition: 'above', price: 48400, action: 'Buy', quantity: 3, kind: 'stop', role: 'entry', group: 'g', ocoMode: 'fill' },
+            { code: 'TXFR1', condition: 'below', price: 47900, action: 'Sell', quantity: 3, kind: 'stop', role: 'entry', group: 'g', ocoMode: 'fill' },
+        ], TXF as never);
+        await tick(48200);
+        await tick(48400);
+        const rec = engine.getExits()[0]!;
+        (m as unknown as { trades: unknown[] }).trades = [{ order: { id: rec.orderId, account: null },
+            status: { status: 'Cancelled', deal_quantity: 2, cancel_quantity: 1, deals: [{ seq: 's1', quantity: 1, price: 48400, ts: 1 }] } }];
+        engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled', deal_quantity: 0, cancel_quantity: 3, deals: [] } } as never);
+        await vi.advanceTimersByTimeAsync(engine.OCO_SETTLE_MS + 10);
+        expect(only().ocoLock).toBeTruthy();
+        (m as unknown as { trades: unknown[] }).trades = [{ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled',
+            deal_quantity: 2, cancel_quantity: 1, deals: [{ seq: 's1', quantity: 1, price: 48400, ts: 1 }, { seq: 's2', quantity: 1, price: 48400, ts: 2 }] } }];
+        await vi.advanceTimersByTimeAsync(engine.OCO_RECHECK_MS + 10);
+        expect(only().ocoLock).toBeUndefined();
+        expect(only().quantity).toBe(1);
+    });
 });

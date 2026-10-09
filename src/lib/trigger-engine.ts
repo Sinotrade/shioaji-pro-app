@@ -486,7 +486,13 @@ async function reconcileOcoExit(id: string, attempt = 1) {
             current => fetchTrades(rec.account.account_type, current, { refresh: true }));
         const trade = rows.find(t => t.order.id === rec.orderId);
         if (!trade && rec.orderId) throw new Error('委託清單找不到這筆');
-        if (trade) applyExitTrade(trade, { settle: true });
+        if (trade) {
+            // complete evidence only: an ended order whose fill details cover what it says filled
+            const listed = (trade.status.deals ?? []).reduce((n, d) => n + (Number.isSafeInteger(d.quantity) ? d.quantity : 0), 0);
+            const ended = ['Cancelled', 'Failed', 'Inactive', 'Filled', 'PartFilled'].includes(trade.status.status);
+            if (!ended || listed < trade.status.deal_quantity) throw new Error('成交明細尚不完整');
+            applyExitTrade(trade, { settle: true });
+        }
         ocoReconciled.add(id);
         ocoReading.delete(id);
         const cur = exits.find(e => e.id === id);
