@@ -1038,3 +1038,5 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
 .duo.wide > .win { display: flex; flex-direction: column; }
 .duo.wide > .win > .stage { flex: 1; min-height: 0; height: auto; }
 @media (max-width: 560px) { .duo.wide > .win > .stage { min-height: 60cqw; } }
+.cmd-d { margin-top: 12px; }
+.cmd-d summary { cursor: pointer; font-size: 14px; color: var(--text-2); }

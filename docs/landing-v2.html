@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shioaji Pro｜台股看盤下單 App</title>
-<meta name="description" content="Shioaji Pro 是用永豐金證券 Shioaji API 做的看盤下單 App。內建 AI Agent（Claude Code、Codex），會學你的操作習慣、幫你排版面做指標、把想法寫成策略並回測；每筆下單都要你核可。免費下載，預設連線模擬環境。">
+<meta name="description" content="Shioaji Pro 是用永豐金證券 Shioaji API 做的看盤下單 App。內建 AI Agent，會上網查資料、整理研究、寫策略跑回測、做出你想要的畫面、記住你的操作習慣；下單前一定先問你。免費下載，預設連線模擬環境。">
 <meta property="og:title" content="Shioaji Pro｜台股看盤下單 App">
-<meta property="og:description" content="交代一句話，Agent 幫你看盤、研究、下單。每筆下單都要你核可。">
+<meta property="og:description" content="內建 AI Agent 的台股看盤下單 App：查資料、做研究、跑回測、排畫面、記住你的習慣，下單前一定先問你。">
 <meta property="og:image" content="https://sinotrade.github.io/shioaji-pro-app/og-shioaji-pro.png">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#F6F3EC" media="(prefers-color-scheme: light)">
@@ -386,7 +386,7 @@
   <div class="wrap">
     <div class="sec-head">
       <h2 id="safe-h">為什麼可以放心交給它</h2>
-      <p>交代什麼都做得到，但會動到錢的事，一定經過你。</p>
+      <p>它能做的事很多，但會動到錢的事，一定先問你。</p>
     </div>
     <div class="safe-grid">
       <figure class="safe-shot"><img src="images/release-0.1.49-approval-cancel.png" width="860" height="1280" alt="正式環境的「Agent 交易核可」獨立視窗：列出商品、原委託、刪除剩餘未成交、帳戶（遮罩）、發起的 Agent，倒數後自動拒絕，按鈕為拒絕與核准刪單。" loading="lazy"><figcaption>正式環境的「Agent 交易核可」視窗（App 實際畫面）</figcaption></figure>
@@ -771,20 +771,20 @@
     <div class="skills" id="skills">
       <div class="card">
         <h3>Shioaji API skill</h3>
-        <p>讓 Claude Code、Codex 知道怎麼寫 Shioaji 程式，包括登入、下單、訂閱行情、查帳務。</p>
-        <div class="cmd">
-          <pre><span># Claude Code</span>
+        <p>讓你用的 AI 寫程式工具知道怎麼寫 Shioaji 程式，包括登入、下單、訂閱行情、查帳務。</p>
+        <details class="cmd-d"><summary>安裝指令</summary><div class="cmd">
+          <pre>
 claude plugin marketplace add Sinotrade/Shioaji
 claude plugin install shioaji</pre>
-          <pre><span># Codex</span>
+          <pre>
 codex plugin marketplace add Sinotrade/Shioaji
 codex plugin add shioaji@sinotrade</pre>
-        </div>
+        </div></details>
       </div>
       <div class="card">
         <h3>Shioaji Pro skill</h3>
         <p>讓 agent 透過 App 的工具看行情、調整版面、寫指標和策略、跑回測與最佳化。交易一樣照 App 的權限設定：逐筆確認時先預覽，由你確認。</p>
-        <p>放在 repo 的 <a href="https://github.com/Sinotrade/shioaji-pro-app/tree/main/plugins/shioaji-pro"><code>plugins/shioaji-pro</code></a>，同時有 Claude Code 與 Codex 的 plugin 設定。</p>
+        <p>放在 repo 的 <a href="https://github.com/Sinotrade/shioaji-pro-app/tree/main/plugins/shioaji-pro"><code>plugins/shioaji-pro</code></a>，可以裝進常用的 AI 寫程式工具。</p>
       </div>
     </div>
   </div>
@@ -798,7 +798,7 @@ codex plugin add shioaji@sinotrade</pre>
     <ol class="dl-steps">
       <li><b>下載</b><span>選你的平台，macOS 版有 Apple 簽章與公證。</span></li>
       <li><b>登入</b><span>填 API Key 和 Secret Key，先選模擬環境；正式環境要再匯入憑證。</span></li>
-      <li><b>開始</b><span>預設版面已排好自選、K 線、五檔和下單面板；打開 AI Agent 選好服務就能交代事情。</span></li>
+      <li><b>開始</b><span>預設版面已排好自選、K 線、五檔和下單面板；打開 AI Agent，選好 AI 服務就能開始用。</span></li>
     </ol>
     <div class="dl">
       <div class="card"><h3>macOS <small>13.3 以上</small></h3><div class="dl-links" id="dl-mac"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Apple Silicon<span>.dmg</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Intel<span>.dmg</span></a></div></div>
@@ -819,7 +819,7 @@ codex plugin add shioaji@sinotrade</pre>
       <details><summary>模擬環境會用到真的錢嗎？</summary><p>不會。模擬環境的委託不會送到交易所。</p></details>
       <details><summary>期貨、選擇權也能交易嗎？</summary><p>可以。閃電下單、組合單、T 字報價和損益圖都有，這頁先介紹證券。</p></details>
       <details><summary>桌面版和 Web 版差在哪？</summary><p>看盤和下單介面兩邊一樣。桌面版內建 shioaji server，另外有 AI Agent、策略回測、系統匣和自動更新；Web 版要自己啟動 shioaji server。</p></details>
-      <details><summary>AI Agent 要另外付費嗎？</summary><p>App 不收費。AI 服務的費用依你用的 Claude 或 ChatGPT 方案計算。</p></details>
+      <details><summary>AI Agent 要另外付費嗎？</summary><p>App 不收費。AI 服務的費用依你訂閱的方案計算。</p></details>
     </div>
   </div>
 </section>
