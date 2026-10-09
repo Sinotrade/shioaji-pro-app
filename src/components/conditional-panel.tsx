@@ -442,14 +442,16 @@ function OcoEdit({ legs, onDone }: { legs: TriggerOrder[]; onDone: () => void })
 
 function BracketEdit({ row, onDone }: { row: CondRow; onDone: () => void }) {
     const plan = row.source.type === 'bracket' ? row.source.plan : null;
-    const [stop, setStop] = useState(plan?.stopPrice === null || !plan ? '' : String(plan.stopPrice));
+    // the armed stop may have moved (移動停損／保本): edit from where it is now
+    const curStop = row.source.type === 'bracket' ? (row.source.legs.find(l => l.kind === 'stop')?.price ?? plan?.stopPrice ?? null) : null;
+    const [stop, setStop] = useState(curStop === null ? '' : String(curStop));
     const [take, setTake] = useState(plan?.takePrice === null || !plan ? '' : String(plan.takePrice));
     const { busy, message, run } = useRun();
     if (!plan) return null;
     const s = parsePrice(stop);
     const t = parsePrice(take);
     const long = plan.action === 'Buy';
-    const loosened = plan.stopPrice !== null && s !== null && (long ? s < plan.stopPrice : s > plan.stopPrice);
+    const loosened = curStop !== null && s !== null && (long ? s < curStop : s > curStop);
     return (
         <>
             <div className={styles.formRow}>

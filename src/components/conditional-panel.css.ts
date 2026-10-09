@@ -429,3 +429,55 @@ export const level = styleVariants({
     down: [levelBase, { borderColor: vars.color.down, color: vars.color.down }],
     muted: [levelBase, { borderColor: vars.color.mutedForeground, color: vars.color.mutedForeground }],
 });
+
+// ---- 括號單 form ----
+
+export const subhead = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    margin: '10px 0 4px',
+    paddingTop: '8px',
+    borderTop: `1px dashed ${vars.color.border}`,
+    fontWeight: 700,
+});
+
+export const tier = style({
+    display: 'grid',
+    gridTemplateColumns: '44px 110px 80px 1fr',
+    gap: '6px',
+    alignItems: 'center',
+    margin: '4px 0 4px 72px',
+});
+
+export const tierTail = style({ display: 'flex', alignItems: 'center', gap: '8px' });
+
+export const check = style({ display: 'inline-flex', alignItems: 'center', gap: '4px', color: vars.color.mutedForeground, cursor: 'pointer' });
+
+const switchBase = style({
+    width: '30px',
+    height: '17px',
+    flex: 'none',
+    padding: 0,
+    border: 'none',
+    borderRadius: '9px',
+    position: 'relative',
+    cursor: 'pointer',
+    background: vars.color.borderBright,
+    selectors: {
+        '&::after': {
+            content: '""',
+            position: 'absolute',
+            width: '13px',
+            height: '13px',
+            borderRadius: '50%',
+            background: '#fff',
+            top: '2px',
+            left: '2px',
+            transition: 'left 0.12s',
+        },
+    },
+});
+
+export const switchOff = style([switchBase]);
+export const switchOn = style([switchBase, { background: vars.color.accent, selectors: { '&::after': { left: '15px' } } }]);
