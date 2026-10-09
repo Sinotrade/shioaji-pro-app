@@ -1,21 +1,13 @@
-// Switch to true only after approval to replace the public homepage.
-const LANDING_NEXT_ENABLED = false;
-
+// Homepage is the v2 landing (#156). Older versions stay reachable by query:
+//   ?landing=v1 (or original) -> landing-v1.html
+//   ?landing=new              -> landing-next.html
 (() => {
   const url = new URL(window.location.href);
   const override = url.searchParams.get('landing');
-  // Direction preview for #156; never the default.
-  if (override === 'v2') {
-    const v2 = new URL('landing-v2.html', url);
-    v2.search = url.search;
-    v2.hash = url.hash;
-    window.location.replace(v2.href);
-    return;
-  }
-  const showNext = override === 'new' || (override !== 'original' && LANDING_NEXT_ENABLED);
-  if (!showNext) return;
-  const next = new URL('landing-next.html', url);
-  next.search = url.search;
-  next.hash = url.hash;
-  window.location.replace(next.href);
+  const target = { v1: 'landing-v1.html', original: 'landing-v1.html', new: 'landing-next.html' }[override];
+  if (!target) return;
+  const dest = new URL(target, url);
+  dest.search = url.search;
+  dest.hash = url.hash;
+  window.location.replace(dest.href);
 })();
