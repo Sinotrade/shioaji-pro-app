@@ -64,6 +64,7 @@ import {
     getBackgroundPrices,
     getBackgroundPrograms,
     pauseBackgroundProgram,
+    readBackgroundProgram,
     refreshBackground,
     resumeBackgroundProgram,
     removeBackgroundTrigger,
@@ -469,17 +470,46 @@ export const EXPIRY_CHECK_MS = 5000;
 /** A final exit is trusted for unlocking only after this long: a Cancel
  * report can arrive before the last deal report of the same order. */
 export const OCO_SETTLE_MS = 3000;
-const ocoFinalSeen = new Map<string, number>();
+export const OCO_RECHECK_MS = 10_000;
+// exits whose final fills were read back authoritatively (or decided by the user)
+const ocoReconciled = new Set<string>();
+const ocoReading = new Set<string>();
+/** An ended exit (Cancel / IOC remainder) unlocks the other side only after
+ * an authoritative read of that order (fills that arrive late are counted);
+ * a failed read keeps it locked and tries again. */
+async function reconcileOcoExit(id: string, attempt = 1) {
+    const rec = exits.find(e => e.id === id);
+    if (!rec || !executing || ocoReconciled.has(id)) { ocoReading.delete(id); return; }
+    try {
+        const query = createAccountQuery();
+        const rows = await query.read(rec.account.account_type, rec.account,
+            current => fetchTrades(rec.account.account_type, current, { refresh: true }));
+        const trade = rows.find(t => t.order.id === rec.orderId);
+        if (!trade && rec.orderId) throw new Error('委託清單找不到這筆');
+        if (trade) applyExitTrade(trade, { settle: true });
+        ocoReconciled.add(id);
+        ocoReading.delete(id);
+        const cur = exits.find(e => e.id === id);
+        if (cur) settleOco(cur);
+    } catch {
+        ocoReading.delete(id);
+        if (attempt === 3 && noteHistory(new Set(triggers.filter(t => t.ocoLock === id).map(t => t.id)),
+            '無法確認另一邊實際成交多少，仍暫停；請到委託核對後取消或保留', 'warn')) commit();
+        ocoReading.add(id);
+        setTimeout(() => void reconcileOcoExit(id, attempt + 1), OCO_RECHECK_MS);
+    }
+}
 function settleOco(rec: ExitRecord) {
     let final = rec.status === 'filled' || rec.status === 'incomplete' || rec.status === 'not-sent'
         || (rec.status === 'unknown' && !!rec.acknowledged);
-    if (final && rec.status !== 'filled' && rec.status !== 'not-sent' && triggers.some(t => t.ocoLock === rec.id)) {
-        const seen = ocoFinalSeen.get(rec.id);
-        if (seen === undefined) {
-            ocoFinalSeen.set(rec.id, Date.now());
-            setTimeout(() => { const cur = exits.find(e => e.id === rec.id); if (cur) settleOco(cur); }, OCO_SETTLE_MS);
-            final = false;
-        } else if (Date.now() - seen < OCO_SETTLE_MS) final = false;
+    const userDecided = rec.status === 'unknown' && !!rec.acknowledged;
+    if (final && rec.status !== 'filled' && rec.status !== 'not-sent' && !userDecided && !ocoReconciled.has(rec.id)
+        && triggers.some(t => t.ocoLock === rec.id)) {
+        if (!ocoReading.has(rec.id)) {
+            ocoReading.add(rec.id);
+            setTimeout(() => void reconcileOcoExit(rec.id), OCO_SETTLE_MS);
+        }
+        final = false;
     }
     let changed = false;
     triggers = triggers.flatMap(t => {
@@ -856,8 +886,14 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
     }
     // it may have fired while this was on its way: replace it only when it is
     // still an untouched, armed condition
-    await refreshBackground();
-    const now = getBackgroundPrograms().find(p => p.id === programId)?.levels.find(lv => lv.id === row.background.levelId);
+    let fresh: Awaited<ReturnType<typeof readBackgroundProgram>>;
+    try {
+        fresh = await readBackgroundProgram(programId);
+    } catch (e) {
+        // cannot be sure it did not fire: leave it paused for the user to check
+        throw new Error(`修改沒有完成：無法確認原本的單狀態（${e instanceof Error ? e.message : String(e)}）。原本的單已暫停，請確認後按恢復或取消`);
+    }
+    const now = fresh?.status === 'paused' ? fresh.levels.find(lv => lv.id === row.background.levelId) : undefined;
     if (!now || now.phase !== 'idle' || now.pending || now.orders.length > 0 || now.position > 0) {
         await resumeBackgroundProgram(programId).catch(() => undefined);
         throw new Error('這張觸價單在修改期間已觸發或狀態已變，沒有修改；請看清單與委託');
@@ -1329,6 +1365,9 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
             orderLot: isOddLot(t.orderLot) ? t.orderLot : undefined,
             ...(op.futuresPriceType ? { futuresPriceType: op.futuresPriceType } : {}),
             ...(op.orderType && op.price !== null ? { orderType: op.orderType } : {}),
+            beforeSend: () => {
+                if (t.validity && Date.now() >= t.validity.until) throw new Error('有效期已過，未送出');
+            },
         });
         exitSent(t, rec, trade, lastPrice, op);
     } catch (e) {
@@ -1417,6 +1456,12 @@ async function sendPending(id: string, allowUnpast: boolean) {
         // re-armed and re-evaluated against the latest price
         exits = exits.filter(x => x.id !== f.rec.id);
         if (f.gk) delete processedGroups[f.gk];
+        // a 'fill' OCO sibling locked on this (never sent) order watches again
+        triggers = triggers.map(x => {
+            if (x.ocoLock !== f.rec.id) return x;
+            if (!x.cross) restoreCheck.set(x.id, 'resume');
+            return { ...x, ocoLock: undefined, ...(x.cross ? { awaitingRecross: true } : {}) };
+        });
         const back = [{ ...f.t, pending: first.pending }, ...f.siblings].filter(x => !triggers.some(y => y.id === x.id));
         triggers = [...triggers, ...back];
         commit();
@@ -1859,6 +1904,14 @@ function becomeExecutor() {
     loadExecutorState();
     executing = true;
     decideRole();
+    // 'fill' OCO legs locked before a reload: settle them again (an exit that
+    // no longer exists sent nothing: the leg watches again, first tick decides)
+    triggers = triggers.map(t => {
+        if (!t.ocoLock || exits.some(e => e.id === t.ocoLock)) return t;
+        restoreCheck.set(t.id, 'resume');
+        return { ...t, ocoLock: undefined };
+    });
+    for (const rec of exits) if (triggers.some(t => t.ocoLock === rec.id)) setTimeout(() => settleOco(rec), 0);
     const suspended = triggers.filter(t => t.suspended === LEGACY_SUSPENDED).length;
     if (suspended) {
         notify({ kind: 'err', title: '舊版觸價單已暫停',
