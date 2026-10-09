@@ -23,7 +23,7 @@ export function conditionalDemoEmpty(): boolean {
     return conditionalDemoActive() && new URLSearchParams(location.search).get('condDemo') === 'empty';
 }
 
-export const DEMO_PRICES: Record<string, number> = { TXFJ6: 48212, MXFJ6: 48212, 2330: 1072, 2317: 203.5, 2454: 1498 };
+export const DEMO_PRICES: Record<string, number> = { TXFJ6: 48212, 2330: 1072, 2317: 203.5, 2454: 1498 };
 
 const F = { account_type: 'F' as const, broker_id: 'DEMO-F', account_id: '9804567' };
 const S = { account_type: 'S' as const, broker_id: 'DEMO-S', account_id: '0418812' };
@@ -41,7 +41,6 @@ function primeDemoContracts() {
     if (primed) return;
     primed = true;
     primeContract(contract('TXFJ6', '台指期 10月', 'FUT', 1));
-    primeContract(contract('MXFJ6', '小台 10月', 'FUT', 1));
     primeContract(contract('2330', '台積電', 'STK', 5));
     primeContract(contract('2317', '鴻海', 'STK', 0.5));
     primeContract(contract('2454', '聯發科', 'STK', 5));
@@ -106,18 +105,22 @@ function demoSources(now: number): Sources {
             action: 'Buy', kind: 'stop', role: 'entry' }, reason: 'cancelled', at: at(60) },
     ];
     const lapsed: BracketView = {
-        programId: 'bkt-demo', levelId: 'l0', rearm: false, env: DEMO_ENV, account: { accountType: 'F', brokerId: F.broker_id, accountId: F.account_id },
-        quoteCode: 'MXFJ6', orderCode: 'MXFJ6', side: 'Buy', quantity: 2, stop: 47950, take: 48500, state: 'lapsed', paused: false, held: null,
-        entryFilled: 2, position: 2, unprotected: 0, exit: null, pendingLeg: null, attention: true,
+        programId: 'bkt-demo', levelId: 'l0', rearm: false, origin: 'entry', env: DEMO_ENV, account: { accountType: 'F', brokerId: F.broker_id, accountId: F.account_id },
+        quoteCode: 'TXFJ6', orderCode: 'TXFJ6', side: 'Buy', quantity: 2, stop: 47950, take: 48500, state: 'lapsed', paused: false, held: null,
+        entryFilled: 2, position: 2, unprotected: 0, anomalous: 0, exit: null, pendingLeg: null, attention: true,
         actions: { markHandled: true, rearm: true, decide: false, pause: false, resume: false, remove: false },
         detail: 'sessionEnded', createdAt: at(-60), updatedAt: at(-1),
     };
+    // a lot filled after its order was reported cancelled (data anomaly)
+    const anomaly: BracketView = { ...lapsed, programId: 'bkt-demo2', quantity: 1, stop: 47900, take: 48450, state: 'unprotected',
+        entryFilled: 1, position: 1, unprotected: 1, anomalous: 1, detail: null, createdAt: at(30), updatedAt: at(210),
+        actions: { markHandled: true, rearm: false, decide: false, pause: false, resume: false, remove: false } };
     if (conditionalDemoEmpty()) {
         return { triggers: [], brackets: [], exits: [], ended: [], pendingConfirm: [], feedMissing: [], executing: true,
             envNow: DEMO_ENV, streamLive: true, now };
     }
     return {
-        triggers: [...triggers, ...legs], brackets: [bracket], exits, ended, pendingConfirm: [confirm], bgBrackets: [lapsed], feedMissing: [],
+        triggers: [...triggers, ...legs], brackets: [bracket], exits, ended, pendingConfirm: [confirm], bgBrackets: [lapsed, anomaly], feedMissing: [],
         executing: true, envNow: DEMO_ENV, streamLive: true, now,
     };
 }

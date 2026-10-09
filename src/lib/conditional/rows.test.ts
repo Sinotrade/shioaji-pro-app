@@ -120,7 +120,7 @@ describe('projectRows', () => {
 
     it('background brackets: state words, 需要你處理 for lapsed, and only the contract\'s actions', () => {
         const v = (over: Partial<BracketView> = {}): BracketView => ({
-            programId: 'bkt-1', levelId: 'l0', rearm: false, env: ENV, account: { accountType: 'F', brokerId: 'b', accountId: 'a1' },
+            programId: 'bkt-1', levelId: 'l0', rearm: false, origin: 'entry', anomalous: 0, env: ENV, account: { accountType: 'F', brokerId: 'b', accountId: 'a1' },
             quoteCode: 'TXFR1', orderCode: 'TXFJ6', side: 'Buy', quantity: 2, stop: 48000, take: 48600, state: 'protected', paused: false,
             held: null, entryFilled: 2, position: 2, unprotected: 0, exit: null, pendingLeg: null, attention: false,
             actions: { markHandled: true, rearm: false, decide: false, pause: true, resume: false, remove: false },
@@ -136,5 +136,8 @@ describe('projectRows', () => {
             actions: { markHandled: false, rearm: false, decide: false, pause: false, resume: false, remove: true } })] }));
         expect(done.rows).toHaveLength(0);
         expect(done.ended[0]!.status.text).toBe('已改由你自行處理');
+        const odd = projectRows(sources({ bgBrackets: [v({ state: 'unprotected', unprotected: 1, anomalous: 1 })] }));
+        expect(odd.rows[0]).toMatchObject({ attention: true, status: { tone: 'err' } });
+        expect(odd.rows[0]!.status.text).toContain('刪單成功後仍收到成交');
     });
 });

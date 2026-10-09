@@ -46,9 +46,13 @@
 // with `bracketViews`. Event `execution://changed` → re-read;
 // `execution://notice` → BracketNoticeCode notices.
 
-import type { AccountKey, Binding, Level, OrderProgram, OrderSlot } from './model';
+import type { AccountKey, Binding, BracketPolicy, Level, OrderProgram, OrderSlot } from './model';
 
-export const BRACKET_CONTRACT_VERSION = 1 as const;
+export type { BracketPolicy } from './model';
+
+/** v2: bracket settings (`BracketPolicy`) get / set, origin `lateFill`,
+ * notices of the automatic protection. */
+export const BRACKET_CONTRACT_VERSION = 2 as const;
 
 export const BRACKET_COMMAND = {
     create: 'execution_create_bracket',
@@ -57,7 +61,49 @@ export const BRACKET_COMMAND = {
     pause: 'execution_pause',
     resume: 'execution_resume',
     remove: 'execution_remove',
+    /** v2: () -> BracketPolicy (any window; an unreadable file is an error). */
+    getPolicy: 'execution_get_bracket_policy',
+    /** v2: ({ policy: BracketPolicy }) -> BracketPolicy (main window only).
+     * Saved durably first; then every tracked bracket and every new one runs
+     * with it (a failed save changes nothing). */
+    setPolicy: 'execution_set_bracket_policy',
 } as const;
+
+// ---- settings (v2) ----
+// All off by default. Every automatic action follows the same rules as the
+// user's one click: the account's positions are read again (a failed read
+// protects nothing), the quantity is capped by what is closable now and not
+// already protected by another bracket, the new protection is single shot
+// with new ids, and if a leg is already past on its first tick it waits for
+// the user (待確認) — nothing is sent by itself then.
+
+export const DEFAULT_BRACKET_POLICY: BracketPolicy = { autoRearm: false, autoProtectLateFill: false, pauseStopsExits: false };
+
+/** Labels and help for a settings UI (Traditional Chinese). */
+export const BRACKET_POLICY_TEXT: Record<keyof BracketPolicy, { label: string; help: string }> = {
+    autoRearm: {
+        label: '換盤別後自動重新啟用保護',
+        help: '盤別更換時，背景執行重新查詢該帳戶持倉，以可平倉量為上限自動在新盤別重新盯停損停利（單次）。若當下已穿價，會先等你決定，不會自動送單。關閉時需要你手動按「在新盤別重新啟用」。',
+    },
+    autoProtectLateFill: {
+        label: '保護結束後才成交的口數自動補上保護',
+        help: '進場單在保護結束後才成交的口數，背景執行重新查詢持倉後自動為它建立新的停損停利（單次，以未被其他括號單保護的可平倉量為上限）。關閉時標示「未受保護」並通知你。',
+    },
+    pauseStopsExits: {
+        label: '暫停時連停損停利一起暫停',
+        help: '開啟後，暫停的括號單不再盯停損停利、不會觸發；暫停前已觸發、正在送出的平倉單照常送出。恢復後若已穿價，會先等你決定。關閉時暫停只停止新進場，停損停利照常盯價。',
+    },
+};
+
+/** A settings answer from the App: exactly three booleans, else an error. */
+export function parseBracketPolicy(raw: unknown): BracketPolicy {
+    const o = raw as Record<string, unknown> | null;
+    if (typeof o !== 'object' || o === null) throw new Error('括號單設定格式不正確');
+    const keys = ['autoRearm', 'autoProtectLateFill', 'pauseStopsExits'] as const;
+    for (const k of keys) if (typeof o[k] !== 'boolean') throw new Error(`括號單設定格式不正確（${k}）`);
+    return { autoRearm: o.autoRearm as boolean, autoProtectLateFill: o.autoProtectLateFill as boolean,
+        pauseStopsExits: o.pauseStopsExits as boolean };
+}
 
 /** After the entry order was accepted by the order ticket. */
 export interface CreateBracketRequest {
@@ -111,6 +157,10 @@ export const BRACKET_NOTICE_TEXT: Record<string, string> = {
     handled: '括號單已改由你自行處理',
     handledFill: '已自行處理的括號單仍收到成交，請到持倉核對',
     'bracket.rearmed': '括號單已在新盤別重新啟用',
+    'bracket.autoRearmed': '括號單已自動在新盤別重新啟用（若已穿價會先等你決定）',
+    protectedAgain: '晚到成交的口數已自動補上保護（若已穿價會先等你決定）',
+    'bracket.autoSkipped': '括號單沒有自動補上保護，請自行處理',
+    'issue.fillAfterClose': '委託已回報刪單成功後仍收到成交（資料異常），已記為未受保護，不會自動補保護；請到委託與持倉核對',
 };
 
 /** Where a bracket stands, one value for the UI to key on. */
@@ -131,6 +181,8 @@ export interface BracketView {
     levelId: string;
     /** `rearm:…` programs: protection turned back on in a new session. */
     rearm: boolean;
+    /** v2: what it protects: the entry order, a rearm, or late lots. */
+    origin: 'entry' | 'rearm' | 'lateFill';
     env: string; // `${serverId}|simulation|production` (protection env key)
     account: AccountKey;
     quoteCode: string;
@@ -148,6 +200,9 @@ export interface BracketView {
     /** Lots the engine holds for this bracket (what a rearm may protect). */
     position: number;
     unprotected: number;
+    /** Of `unprotected`: lots filled after the order was reported closed
+     * (anomalies: notified only, never protected by itself). */
+    anomalous: number;
     /** The exit currently out (or last), if any. */
     exit: { leg: 'stop' | 'take'; status: OrderSlot['status']; qty: number; filled: number } | null;
     /** The leg waiting for the user's decision (`needsConfirm`). */
@@ -216,6 +271,7 @@ export function bracketViews(programs: readonly OrderProgram[]): BracketView[] {
                 programId: p.id,
                 levelId: lv.id,
                 rearm: p.id.startsWith('rearm:'),
+                origin: p.id.startsWith('rearm:') ? 'rearm' : p.id.startsWith('late:') ? 'lateFill' : 'entry',
                 env: envKey(p.binding),
                 account: p.binding.account,
                 quoteCode: p.binding.contract.quoteCode,
@@ -230,6 +286,7 @@ export function bracketViews(programs: readonly OrderProgram[]): BracketView[] {
                 entryFilled: lv.entryFilled,
                 position: Math.max(0, lv.position),
                 unprotected: lv.unprotected,
+                anomalous: lv.anomalous ?? 0,
                 exit: last && (last.leg === 'stop' || last.leg === 'take')
                     ? { leg: last.leg, status: last.status, qty: last.qty, filled: last.filled } : null,
                 pendingLeg: lv.phase === 'needsConfirm' && (lv.pending?.leg === 'stop' || lv.pending?.leg === 'take')
