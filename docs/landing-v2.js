@@ -70,6 +70,18 @@
     })
     .catch(function () { /* keep releases page links */ });
 
+  // ---------- GitHub stars ----------
+  fetch('https://api.github.com/repos/Sinotrade/shioaji-pro-app')
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (repo) {
+      if (!repo || typeof repo.stargazers_count !== 'number') return;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-stars]'), function (el) {
+        el.textContent = '★ ' + repo.stargazers_count.toLocaleString('en-US');
+        el.hidden = false;
+      });
+    })
+    .catch(function () { /* 星數只是附加資訊 */ });
+
   // ---------- demo engine ----------
   var reduce = matchMedia('(prefers-reduced-motion: reduce)');
   var STOP = {};
@@ -535,6 +547,8 @@
 
   var demos = [];
   Array.prototype.forEach.call(document.querySelectorAll('.demo[data-demo]'), function (el) {
+    // 動效模式下，Agent 場景改由捲動驅動（landing-v2-motion.js）
+    if (root.classList.contains('mo') && el.classList.contains('sy-fig')) return;
     var def = scenes[el.dataset.demo];
     if (!def) return;
     var d = new Demo(el, def[0], def[1]);

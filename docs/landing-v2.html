@@ -19,6 +19,7 @@
 (function () {
   var root = document.documentElement;
   root.classList.remove('no-js');
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) root.classList.add('mo');
   try {
     var saved = localStorage.getItem('shioaji-pro-appearance');
     if (saved === 'dark' || saved === 'light') root.dataset.theme = saved;
@@ -27,9 +28,10 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap"></noscript>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@700&family=IBM+Plex+Mono:wght@400;500&display=optional" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@700&family=IBM+Plex+Mono:wght@400;500&display=optional"></noscript>
 <link rel="stylesheet" href="landing-v2.css">
+<script src="landing-v2-motion.js" defer></script>
 <script src="landing-v2.js" defer></script>
 </head>
 <body>
@@ -49,6 +51,8 @@
   <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></symbol>
   <symbol id="i-ext" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/></symbol>
   <symbol id="i-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
   <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M4.5 2.5 19 11.2l-6.6 1.6-3.3 6.7z" fill="#fff" stroke="#1c2433" stroke-width="1.4" stroke-linejoin="round"/></symbol>
 </svg>
 
@@ -75,36 +79,59 @@
 </header>
 
 <main id="main">
-<div id="top" class="hero">
-  <div class="wrap">
-    <h1>AI Agent 交易新世代</h1>
-    <p class="sub">AI Agent × Shioaji，開創你的交易 Pro 世代</p>
-    <p class="lead">它幫你研究、幫你回測、幫你做出想要的畫面，還會從你每天的操作學會你的習慣。每一筆下單都需要你的核可。</p>
-    <div class="cta">
-      <a class="btn primary" id="cta-dl" href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest"><svg class="i"><use href="#i-download"/></svg><span id="cta-label">下載 Shioaji Pro</span></a>
-      <a class="btn ghost" href="#habit">看 Agent 怎麼幫你交易</a>
+<section class="hx" id="top" aria-labelledby="hero-h">
+  <div class="hx-pin">
+    <div class="hx-stage">
+      <div class="wrap hx-copy">
+        <p class="hx-eyebrow"><span>開源</span><span>原生 macOS App</span><span>Shioaji Pro</span></p>
+        <h1 id="hero-h"><span class="hx-l"><span>AI Agent</span></span> <span class="hx-l"><span>交易新世代</span></span></h1>
+        <p class="sub">AI Agent × Shioaji，開創你的交易 Pro 世代</p>
+        <p class="lead">它幫你研究、幫你回測、幫你做出想要的畫面，還會從你每天的操作學會你的習慣。每一筆下單都需要你的核可。</p>
+        <div class="cta">
+          <a class="btn primary" id="cta-dl" href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest"><svg class="i"><use href="#i-download"/></svg><span id="cta-label">下載 Shioaji Pro</span></a>
+          <a class="btn ghost" href="#habit">看 Agent 怎麼幫你交易</a>
+          <a class="btn ghost gh" href="https://github.com/Sinotrade/shioaji-pro-app"><svg class="i"><use href="#i-github"/></svg>看原始碼<span class="stars" data-stars hidden></span></a>
+        </div>
+        <ul class="hx-meta">
+          <li><b>原生 macOS App</b>Apple Silicon、Intel 都支援</li>
+          <li><b>也有 Windows、Linux 版</b></li>
+          <li><b>開源</b>介面程式碼在 GitHub 公開（AGPL-3.0）</li>
+          <li><b>先用模擬環境</b>第一次開啟預設連模擬環境</li>
+        </ul>
+      </div>
+      <div class="hx-app">
+        <figure class="hx-win">
+          <img class="hx-base" src="images/landing-v2-app-dark-2400.webp" srcset="images/landing-v2-app-dark-1200.webp 1200w, images/landing-v2-app-dark-2400.webp 2400w" sizes="(max-width: 1160px) 96vw, 1120px" width="2400" height="1440" alt="Shioaji Pro 的實際畫面：左邊 AI Agent 面板，中間台積電 K 線，右邊自選清單和閃電下單。模擬環境，帳號與金額已遮蔽。" fetchpriority="high">
+          <div class="hx-crops" aria-hidden="true"><div class="hx-crop" data-k="agent"><img data-src="images/landing-v2-app-dark-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="chart"><img data-src="images/landing-v2-app-dark-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="watch"><img data-src="images/landing-v2-app-dark-2400.webp" alt="" width="2400" height="1440" decoding="async"></div><div class="hx-crop" data-k="flash"><img data-src="images/landing-v2-app-dark-2400.webp" alt="" width="2400" height="1440" decoding="async"></div></div>
+          <div class="hx-agent" aria-hidden="true">
+            <div class="msg-u"><p><span class="typed" id="hx-q">在台積電的 K 線加一條 20 期均線。</span></p></div>
+            <div class="tg-r solo" data-k="1"><span>›</span><b>儲存自訂指標</b><span class="muted">均線 20</span></div>
+            <div class="tg-r solo" data-k="2"><span>›</span><b>掛載圖表指標</b><span class="muted">K 線圖・2330</span></div>
+            <div class="ans" data-k="3"><p>已加在台積電的 K 線上。</p></div>
+          </div>
+          <svg class="hx-ma" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points="34.38,64.39 34.79,64.57 35.21,64.71 35.62,64.83 36.46,64.93 36.88,62.62 37.29,63.70 37.71,64.01 38.12,60.67 38.54,59.13 39.38,57.86 40.21,59.81 40.62,58.42 41.04,60.26 41.46,61.77 42.29,66.00 43.12,68.87 43.54,71.23 43.96,72.57 44.79,73.66 45.21,73.95 45.62,73.01 46.04,68.23 46.46,66.62 46.88,67.59 47.29,69.57 47.71,70.01 48.54,71.56 48.96,72.83 49.38,72.68 49.79,73.75 50.62,74.63 51.46,74.16 51.88,73.77 52.29,74.64 52.71,75.36 53.12,74.75 53.54,74.26 54.37,75.04 55.21,75.69 55.62,76.23 56.04,77.25 56.46,78.10 57.29,78.20 57.71,78.88 58.13,79.43 58.54,79.88 58.96,80.25 59.38,79.97 59.79,80.33 60.21,80.62 60.62,80.27 61.04,80.57 61.88,80.82" pathLength="1000"/></svg>
+          <span class="hx-legend" aria-hidden="true"><i></i>均線 20</span>
+        </figure>
+      </div>
     </div>
-    <p class="meta"><span id="ver">最新版</span><span>免費</span><span>macOS・Windows・Linux</span><span>第一次開啟連模擬環境</span></p>
+  </div>
+  <div class="wrap hx-after">
+    <a class="hx-first" href="#start"><span>第一次用？</span>3 分鐘看懂怎麼申請 API Key<svg class="i"><use href="#i-next"/></svg></a>
+    <p class="shot-cap">首屏是 App 實際畫面（模擬環境，帳號與金額已遮蔽）；Agent 對話與均線為示意。</p>
     <ul class="hero-points">
       <li><a href="#habit"><b>它看你操作，學會你的流程，下次替你做好。</b><span>工作流程觀察每天整理你的操作，重複的步驟存成技能。</span></a></li>
       <li><a href="#build"><b>你想要的功能，不必再等券商，它直接做給你。</b><span>版面、面板、指標，說出來它就排好、寫好。</span></a></li>
       <li><a href="#research"><b>從一個想法到一份回測，不用寫一行程式。</b><span>寫成策略、回測、找參數，再告訴你結果可不可信。</span></a></li>
     </ul>
-    <figure class="shot" style="margin-bottom:0">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="images/landing-v2-app-dark-1200.webp 1200w, images/landing-v2-app-dark-2400.webp 2400w" sizes="(max-width: 1160px) 100vw, 1112px">
-        <img id="hero-shot" src="images/landing-v2-app-light-1200.webp" srcset="images/landing-v2-app-light-1200.webp 1200w, images/landing-v2-app-light-2400.webp 2400w" sizes="(max-width: 1160px) 100vw, 1112px" width="1200" height="720" alt="Shioaji Pro 的版面：左邊 AI Agent 面板列出常用提問與技能，中間台積電 K 線與自選清單，右邊閃電下單。" fetchpriority="high">
-      </picture>
-    </figure>
-    <p class="shot-cap">App 實際畫面，模擬環境，已開啟帳號與金額遮蔽。</p>
   </div>
-</div>
+</section>
 
-<!-- 場景 1：學會你的習慣 -->
-<section class="alt" id="habit" aria-labelledby="habit-h">
-  <div class="wrap">
-    <div class="feature flip">
-      <div class="f-text">
+<!-- Agent 五個場景（捲動敘事） -->
+<section class="sy" id="agent" aria-label="AI Agent 能做的事">
+  <div class="wrap sy-wrap">
+    <div class="sy-steps">
+      <article class="sy-step" id="habit">
+        <div class="sy-text">
         <span class="kick">Agent 能做的事・1</span>
         <h2 id="habit-h" class="h2s">它看你操作，學會你的流程，下次替你做好</h2>
         <p>App 在你的電腦記錄最近的操作：看了哪些商品、開關哪些面板、套用哪個版面、下了什麼單。紀錄只存在本機，不會上傳。</p>
@@ -115,8 +142,8 @@
           <li>核可卡列出排程、權限、環境與 AI 額度，按「開啟」</li>
           <li>學到新流程時，存成技能並通知你</li>
         </ol>
-      </div>
-      <figure class="demo" data-demo="observe" aria-label="工作流程觀察示範動畫，步驟如右側說明">
+        </div>
+        <figure class="demo sy-fig" data-demo="observe" aria-label="工作流程觀察示範動畫，步驟如右側說明">
         <button class="demo-ctrl" type="button" aria-pressed="false"><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button>
         <div class="win agent obs" aria-hidden="true">
           <div class="win-bar"><span class="bar"></span><b>AI AGENT</b><span class="sp pill sim">模擬環境</span></div>
@@ -140,15 +167,9 @@
           </div>
         </div>
       </figure>
-    </div>
-  </div>
-</section>
-
-<!-- 場景 2：講一句它就做 -->
-<section id="build" aria-labelledby="build-h">
-  <div class="wrap">
-    <div class="feature">
-      <div class="f-text">
+      </article>
+      <article class="sy-step" id="build">
+        <div class="sy-text">
         <span class="kick">Agent 能做的事・2</span>
         <h2 id="build-h" class="h2s">你想要的功能，不必再等券商，它直接做給你</h2>
         <p>不用等券商改版，也不用自己一個一個拖。跟 Agent 說你要怎麼看盤，它用 App 的工具套版面、加面板、把面板鎖在某一檔；要的指標沒有內建，它用 JavaScript 寫成自訂指標，掛到你指定的 K 線圖上，之後也能幫你調參數或拿掉。</p>
@@ -158,8 +179,8 @@
           <li>Agent 套版面、加閃電下單和五檔</li>
           <li>寫一條均量線，掛到台積電的 K 線圖</li>
         </ol>
-      </div>
-      <figure class="demo" data-demo="build" aria-label="請 Agent 排版面與做指標的示範動畫，步驟如左側說明">
+        </div>
+        <figure class="demo sy-fig" data-demo="build" aria-label="請 Agent 排版面與做指標的示範動畫，步驟如左側說明">
         <button class="demo-ctrl" type="button" aria-pressed="false"><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button>
         <div class="duo wide" aria-hidden="true">
           <div class="win agent slim">
@@ -188,21 +209,13 @@
           </div>
         </div>
       </figure>
-    </div>
-  </div>
-</section>
-
-<!-- 場景 3：想法到回測 -->
-<section class="alt" id="research" aria-labelledby="research-h">
-  <div class="wrap">
-    <div class="sec-head">
-      <span class="kick">Agent 能做的事・3</span>
+      </article>
+      <article class="sy-step" id="research">
+        <div class="sy-text">
+        <span class="kick">Agent 能做的事・3</span>
       <h2 id="research-h" class="h2s">從一個想法到一份回測，不用寫一行程式</h2>
       <p>貼一篇文章或講一個交易想法，Agent 把它寫成策略，用歷史 K 線回測，再用參數最佳化找最好的參數。它會把樣本內和樣本外的成績分開報告，告訴你這組參數是不是只對過去有效。回測依你的設定計入手續費、交易稅和滑價，訊號收盤成立、次根開盤成交，策略讀到未來資料會被擋下來。</p>
-    </div>
-    <div class="feature">
-      <div class="f-text">
-        <h3>在對話裡完成研究</h3>
+<h3>在對話裡完成研究</h3>
         <ol class="caps" data-for="agent">
           <li>用一句話說你的想法</li>
           <li>Agent 寫策略、回測、跑參數最佳化，每一步都列出來</li>
@@ -210,8 +223,8 @@
           <li>結果直接開在「策略回測」面板</li>
         </ol>
         <p class="safe-line"><svg class="i"><use href="#i-shield"/></svg>研究和回測只模擬成交，不會送出委託。</p>
-      </div>
-      <figure class="demo" data-demo="agent" aria-label="請 Agent 把想法寫成策略並回測的示範動畫，步驟如左側說明">
+        </div>
+        <figure class="demo sy-fig" data-demo="agent" aria-label="請 Agent 把想法寫成策略並回測的示範動畫，步驟如左側說明">
         <button class="demo-ctrl" type="button" aria-pressed="false"><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button>
         <div class="win agent" aria-hidden="true">
           <div class="win-bar"><span class="bar"></span><b>AI AGENT</b><span class="sp pill sim">模擬環境</span></div>
@@ -237,9 +250,9 @@
           </div>
         </div>
       </figure>
-    </div>
-    <div class="feature flip">
-      <div class="f-text">
+      </article>
+      <article class="sy-step" id="research-diy">
+        <div class="sy-text">
         <h3>自己動手也可以</h3>
         <p>「策略回測」面板可以直接寫策略（內建雙均線範例）、選商品與期間、執行回測，結果有權益曲線、報酬、回撤、勝率、獲利因子；展開「最佳化研究」設定參數範圍和樣本內外期間。可以單商品或多商品執行。</p>
         <ol class="caps" data-for="quant">
@@ -248,8 +261,8 @@
           <li>權益曲線、報酬、回撤、勝率一起出來</li>
           <li>展開「最佳化研究」，設定參數範圍與樣本內外期間</li>
         </ol>
-      </div>
-      <figure class="demo" data-demo="quant" aria-label="策略回測示範動畫，步驟如左側說明">
+        </div>
+        <figure class="demo sy-fig" data-demo="quant" aria-label="策略回測示範動畫，步驟如左側說明">
         <button class="demo-ctrl" type="button" aria-pressed="false"><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button>
         <div class="win quant" aria-hidden="true">
           <div class="win-bar"><span class="bar"></span><b>策略回測</b><span class="sp pill">模擬回測，不代表未來績效</span></div>
@@ -279,15 +292,9 @@
           </div>
         </div>
       </figure>
-    </div>
-  </div>
-</section>
-
-<!-- 場景 4：資產配置 -->
-<section id="allocation" aria-labelledby="alloc-h">
-  <div class="wrap">
-    <div class="feature flip">
-      <div class="f-text">
+      </article>
+      <article class="sy-step" id="allocation">
+        <div class="sy-text">
         <span class="kick">Agent 能做的事・4</span>
         <h2 id="alloc-h" class="h2s">你訂好比例，它替你看住資產配置</h2>
         <p>你先定好目標比例，例如股票 60%、債券 ETF 30%、現金 10%。Agent 讀你的持倉和帳戶餘額，算出現在偏離多少，列出要買賣哪幾檔、各多少、預估成本。也可以建立排程任務定時檢查，例如每天開盤後看一次，偏離超過 5% 才通知你。</p>
@@ -298,8 +305,8 @@
           <li>列出調整清單，送出下單提案，每筆都需要你的核可</li>
           <li>建立定時檢查的排程任務</li>
         </ol>
-      </div>
-      <figure class="demo" data-demo="alloc" aria-label="資產配置檢查的示範動畫，步驟如右側說明">
+        </div>
+        <figure class="demo sy-fig" data-demo="alloc" aria-label="資產配置檢查的示範動畫，步驟如右側說明">
         <button class="demo-ctrl" type="button" aria-pressed="false"><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button>
         <div class="win agent alloc" aria-hidden="true">
           <div class="win-bar"><span class="bar"></span><b>AI AGENT</b><span class="sp pill sim">模擬環境</span></div>
@@ -330,15 +337,9 @@
           </div>
         </div>
       </figure>
-    </div>
-  </div>
-</section>
-
-<!-- 場景 5：盤前簡報、盤後檢討 -->
-<section class="alt" id="briefing" aria-labelledby="brief-h">
-  <div class="wrap">
-    <div class="feature">
-      <div class="f-text">
+      </article>
+      <article class="sy-step" id="briefing">
+        <div class="sy-text">
         <span class="kick">Agent 能做的事・5</span>
         <h2 id="brief-h" class="h2s">開盤前和收盤後，它先替你整理好</h2>
         <p>建立一個排程任務，寫好要它做什麼：每天 08:30 整理持股與自選的夜盤、美股、重大公告和今天要注意的價位；收盤後整理今天的成交、損益來源，和你的計畫差在哪。做完它會通知你，結論留在「紀錄」頁。</p>
@@ -349,8 +350,8 @@
           <li>設定每天 08:30、交易權限「僅分析」</li>
           <li>時間到自動執行，做完通知你，結論留在紀錄頁</li>
         </ol>
-      </div>
-      <figure class="demo" data-demo="brief" aria-label="排程盤前簡報的示範動畫，步驟如左側說明">
+        </div>
+        <figure class="demo sy-fig" data-demo="brief" aria-label="排程盤前簡報的示範動畫，步驟如左側說明">
         <button class="demo-ctrl" type="button" aria-pressed="false"><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button>
         <div class="win agent brief" aria-hidden="true">
           <div class="win-bar"><span class="bar"></span><b>AI AGENT</b><span class="sp pill sim">模擬環境</span></div>
@@ -378,7 +379,9 @@
           </div>
         </div>
       </figure>
+      </article>
     </div>
+    <div class="sy-stage" aria-hidden="true"></div>
   </div>
 </section>
 
@@ -593,6 +596,11 @@
       <h2 id="panels-h">三十種面板，自己挑、自己排</h2>
       <p>以下都是 App 的實際畫面（模擬環境；含帳務的畫面已開啟帳號與金額遮蔽）。每一種都是一個面板，可以多開、拖拉、彈出成獨立視窗，排好存成自己的版面。</p>
     </div>
+    <div class="asm" data-asm>
+      <div class="asm-pin">
+        <div class="asm-stage" role="img" aria-label="自選清單、K 線圖、當日走勢、閃電下單、五檔、下單面板組成一個版面（App 實際畫面）"><div class="asm-p" style="--x:0;--y:0;--w:17;--h:100;--i:0"><picture><source media="(prefers-color-scheme: dark)" srcset="images/panels/panel-watchlist-dark.webp"><img src="images/panels/panel-watchlist-light.webp" alt="" loading="lazy" decoding="async"></picture></div><div class="asm-p" style="--x:17;--y:0;--w:45;--h:60;--i:1"><picture><source media="(prefers-color-scheme: dark)" srcset="images/panels/panel-chart-dark.webp"><img src="images/panels/panel-chart-light.webp" alt="" loading="lazy" decoding="async"></picture></div><div class="asm-p" style="--x:17;--y:60;--w:45;--h:40;--i:2"><picture><source media="(prefers-color-scheme: dark)" srcset="images/panels/panel-intraday-dark.webp"><img src="images/panels/panel-intraday-light.webp" alt="" loading="lazy" decoding="async"></picture></div><div class="asm-p" style="--x:62;--y:0;--w:19;--h:100;--i:3"><picture><source media="(prefers-color-scheme: dark)" srcset="images/panels/panel-flash-dark.webp"><img src="images/panels/panel-flash-light.webp" alt="" loading="lazy" decoding="async"></picture></div><div class="asm-p" style="--x:81;--y:0;--w:19;--h:36;--i:4"><picture><source media="(prefers-color-scheme: dark)" srcset="images/panels/panel-depth-dark.webp"><img src="images/panels/panel-depth-light.webp" alt="" loading="lazy" decoding="async"></picture></div><div class="asm-p" style="--x:81;--y:36;--w:19;--h:64;--i:5"><picture><source media="(prefers-color-scheme: dark)" srcset="images/panels/panel-ticket-dark.webp"><img src="images/panels/panel-ticket-light.webp" alt="" loading="lazy" decoding="async"></picture></div><span class="asm-tag">存成版面：盤中</span></div>
+      </div>
+    </div>
     <div class="gal" data-gal>
       <div class="gal-tabs" role="tablist" aria-label="面板分類">
         <button type="button" role="tab" id="gt-0" aria-controls="gp-0" aria-selected="true">盤勢與選股</button>
@@ -646,104 +654,230 @@
   </div>
 </section>
 
-<!-- 申請 API Key -->
+<!-- 申請 API Key 逐步教學 -->
 <section class="alt" id="start" aria-labelledby="start-h">
   <div class="wrap">
     <div class="sec-head">
-      <h2 id="start-h">從申請 API Key 到正式下單</h2>
-      <p>第一次用 Shioaji API，照這六步走。前四步在永豐金證券網站完成，後兩步在 App 裡做。只想先試試看，做到第五步就能用模擬環境；App 裡的 AI 助理也能一步步帶你申請。</p>
+      <h2 id="start-h">第一次用？3 分鐘看懂怎麼申請 API Key</h2>
+      <p>從永豐金證券網站申請，到在 Shioaji Pro 正式下單，一共 12 步。每一步都標出要點哪裡、勾什麼、填什麼；可以暫停，也可以點上一步、下一步。網站畫面是依官方文件重建的示意，資料都是假的；App 畫面是實際截圖。</p>
     </div>
-    <div class="qs demo" data-demo="qs" aria-label="申請 API Key 到正式下單的示範動畫，步驟如左側說明">
-      <ol class="qs-steps caps" data-for="qs">
-        <li><b>下載 App</b><span>macOS、Windows、Linux 都有安裝檔。</span></li>
-        <li><b>開戶</b><span>需要永豐金證券帳戶，交割帳戶是永豐銀行。要交易期貨、選擇權，另外開期貨帳戶。已經有帳戶就跳過。</span><a href="https://sinotrade.github.io/tutor/prepare/open_account/" rel="noopener">開戶說明</a></li>
-        <li><b>申請 API Key</b><span>到理財網「API 管理」新增 API Key：先做雙因子驗證，選適用帳戶，勾權限（行情／資料、帳務、交易，要正式下單再勾正式環境）。Secret Key 只在建立時顯示一次，要先存好。</span><a href="https://sinotrade.github.io/zh/tutor/prepare/token/" rel="noopener">官方教學</a></li>
-        <li><b>簽署 API 下單約定</b><span>到簽署中心簽署，證券和期貨分開簽。要先簽署，再做下一步的模擬測試。</span><a href="https://sinotrade.github.io/zh/tutor/prepare/terms/" rel="noopener">官方教學</a></li>
-        <li><b>在 App 填金鑰，完成模擬測試</b><span>把 API Key、Secret Key 填進 App，選模擬環境啟動，用想交易的商品各下一筆模擬單（證券、期貨分開）。測試報告服務在週一至五 08:00–20:00，審核約 5 分鐘。</span></li>
-        <li><b>匯入憑證，切到正式環境</b><span>在 API 管理頁下載憑證 Sinopac.pfx，回 App 的「伺服器設定」選正式環境、選憑證、填憑證密碼，儲存並重啟。簽署和測試都通過，就能正式下單。</span></li>
-      </ol>
-      <figure class="qs-stage">
-        <button class="demo-ctrl" type="button" aria-pressed="false"><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button>
-        <div class="win qs-win" aria-hidden="true">
-          <div class="stage">
-            <!-- 1 下載 -->
-            <div class="qs-scene" data-scene="1">
-              <div class="dl-card">
-                <div class="appicon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" aria-label="Shioaji"><defs><mask id="mk-sjk2" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><polygon points="21.60,18.20 12.00,14.30 2.40,18.20 7.68,20.35 16.32,20.35" fill="#fff"></polygon><polygon points="21.60,5.80 16.32,3.65 12.00,7.48 12.00,14.30 21.60,18.20" fill="#fff"></polygon><polygon points="7.68,3.65 2.40,5.80 2.40,18.20 12.00,14.30 12.00,7.48" fill="#fff"></polygon><polygon points="7.68,3.65 12.00,7.48 16.32,3.65" fill="#fff"></polygon><line x1="12.00" y1="7.48" x2="16.32" y2="3.65" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="7.68" y1="3.65" x2="16.32" y2="3.65" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="7.68" y1="20.35" x2="16.32" y2="20.35" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="2.40" y1="18.20" x2="7.68" y2="20.35" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="2.40" y1="5.80" x2="2.40" y2="18.20" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="16.32" y1="3.65" x2="21.60" y2="5.80" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="2.40" y1="18.20" x2="12.00" y2="14.30" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="21.60" y1="5.80" x2="21.60" y2="18.20" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="12.00" y1="7.48" x2="12.00" y2="14.30" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="12.00" y1="14.30" x2="21.60" y2="18.20" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="16.32" y1="20.35" x2="21.60" y2="18.20" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="2.40" y1="5.80" x2="7.68" y2="3.65" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line><line x1="7.68" y1="3.65" x2="12.00" y2="7.48" stroke="#000" stroke-width="0.9" stroke-linecap="round"></line></mask></defs><g mask="url(#mk-sjk2)"><polygon points="21.60,18.20 12.00,14.30 2.40,18.20 7.68,20.35 16.32,20.35" fill="#8C99B6"></polygon><polygon points="21.60,5.80 16.32,3.65 12.00,7.48 12.00,14.30 21.60,18.20" fill="#34436A"></polygon><polygon points="7.68,3.65 2.40,5.80 2.40,18.20 12.00,14.30 12.00,7.48" fill="#C9D1E0"></polygon><polygon points="7.68,3.65 12.00,7.48 16.32,3.65" fill="#CF3339"></polygon></g></svg></div>
-                <div class="progress"><i></i></div>
-                <div class="fname mono">.dmg・.msi・.AppImage</div>
+    <div class="tu" data-tu>
+      <div class="tu-player">
+        <div class="tu-top"><span class="tu-count"><b data-tu-n>1</b> / 12</span><span class="tu-where" data-tu-where>準備</span></div>
+        <ol class="tu-steps">
+
+          <li class="tu-step" data-where="準備" data-dur="6">
+            <div class="tu-scene">
+              <div class="tu-card">
+                <b class="tu-in" data-t="0.2">開始之前，先確認這兩件事</b>
+                <div class="tu-chk tu-in" data-t="0.8"><i></i><span><b>永豐金證券帳戶</b>交割帳戶是永豐銀行。要交易期貨、選擇權，另外需要期貨帳戶。</span></div>
+                <div class="tu-chk tu-in" data-t="1.6"><i></i><span><b>能收簡訊或 Email</b>建立 API Key 時要做身份驗證。</span></div>
+                <a class="tu-in tu-link" data-t="2.4" href="https://sinotrade.github.io/tutor/prepare/open_account/" rel="noopener">還沒有帳戶？看開戶說明</a>
               </div>
             </div>
-            <!-- 2 開戶 -->
-            <div class="qs-scene" data-scene="2">
-              <div class="site"><div class="url">sinotrade.com.tw／開戶</div>
-                <div class="site-b">
-                  <div class="chk" data-in="2"><i></i>證券帳戶</div>
-                  <div class="chk" data-in="2" style="--d:.35s"><i></i>交割帳戶：永豐銀行</div>
-                  <div class="chk opt" data-in="2" style="--d:.7s"><i></i>期貨帳戶<small>交易期貨、選擇權才需要</small></div>
-                </div>
-              </div>
-            </div>
-            <!-- 3 API Key -->
-            <div class="qs-scene" data-scene="3">
-              <div class="site"><div class="url">sinotrade.com.tw／API 管理</div>
-                <div class="site-b">
-                  <div class="row2"><span>雙因子驗證</span><span class="ok" data-in="3">已驗證</span></div>
-                  <div class="row2"><span>適用帳戶</span><span class="mono">證券、期貨</span></div>
-                  <div class="perm">
-                    <span>權限</span>
-                    <div class="chk" data-in="3" style="--d:.4s"><i></i>行情／資料</div>
-                    <div class="chk" data-in="3" style="--d:.7s"><i></i>帳務</div>
-                    <div class="chk" data-in="3" style="--d:1s"><i></i>交易</div>
-                    <div class="chk" data-in="3" style="--d:1.3s"><i></i>正式環境</div>
+            <div class="tu-cap"><b>先準備好帳戶</b><p>需要永豐金證券帳戶，交割帳戶是永豐銀行；要交易期貨、選擇權，另外開期貨帳戶。已經有帳戶就直接下一步。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="永豐金證券網站" data-dur="7" data-path="#tu-avatar:1.2:c,#tu-api:3.4:c">
+            <div class="tu-scene">
+              <div class="site2"><div class="s2-bar"><i></i><i></i><i></i><span class="s2-url">永豐金證券網站（示意）</span></div>
+                <div class="s2-body">
+                  <div class="s2-nav"><span>財富管理</span><span>客戶支援</span><span class="sp"></span><span>快速下單</span><span class="s2-av" id="tu-avatar">王</span><span>登出</span></div>
+                  <div class="s2-menu tu-in" data-t="1.5">
+                    <div><small>交易帳務</small><span>資產總覽</span><span>我的帳務</span><span>我的庫存</span></div>
+                    <div><small>個人服務</small><span>帳戶基本資料</span><span>簽署中心</span><span>密碼修改</span><span>電子對帳單</span><span class="s2-hl" id="tu-api">API管理</span></div>
                   </div>
-                  <div class="row2"><span>IP 限制</span><span class="muted">建議綁定固定 IP</span></div>
-                  <div class="keybox" data-in="3" style="--d:1.9s"><span>API Key <b class="mono">••••••••••••</b></span><span>Secret Key <b class="mono">••••••••••••</b></span><em>Secret Key 只在建立時顯示一次</em></div>
+                  <i class="tu-ring tu-in" data-t="2.6" data-for="#tu-api"></i>
                 </div>
               </div>
             </div>
-            <!-- 4 簽署 -->
-            <div class="qs-scene" data-scene="4">
-              <div class="site"><div class="url">sinotrade.com.tw／簽署中心</div>
-                <div class="site-b">
-                  <div class="sign"><span>證券 API 下單簽署</span><span class="st" data-in="4">已簽署</span></div>
-                  <div class="sign"><span>期貨 API 下單簽署</span><span class="st" data-in="4" style="--d:.6s">已簽署</span></div>
-                  <p class="note">簽署時間要早於模擬測試</p>
+            <div class="tu-cap"><b>登入網站，打開「API管理」</b><p>登入永豐金證券網站，點右上角的個人選單，在「個人服務」底下找到「API管理」。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="API 管理" data-dur="6" data-path="#tu-new:2.4:c">
+            <div class="tu-scene">
+              <div class="site2"><div class="s2-bar"><i></i><i></i><i></i><span class="s2-url">永豐金證券網站（示意）・API 管理</span></div>
+                <div class="s2-body">
+                  <b class="s2-h">API 管理</b>
+                  <ul class="s2-notes tu-in" data-t="0.4"><li>最多可建立 30 個 API Key</li><li>請勿將您的 API Key 透露給任何人</li><li>建議將您的 API Key 綁定 IP</li></ul>
+                  <div class="s2-actions"><span class="s2-btn ghost">下載憑證</span><span class="s2-btn" id="tu-new">新增 API Key</span></div>
+                  <div class="s2-table"><div class="h"><span>動作</span><span>名稱</span><span>建立時間</span><span>到期時間</span></div><div class="e">目前暫無資料</div></div>
+                  <i class="tu-ring tu-in" data-t="1.6" data-for="#tu-new"></i>
                 </div>
               </div>
             </div>
-            <!-- 5 App 模擬測試 -->
-            <div class="qs-scene" data-scene="5">
-              <div class="ob">
-                <b class="ob-logo">Shioaji Pro</b>
-                <span class="ob-sub">填入永豐 API 金鑰以啟動交易伺服器</span>
-                <span class="ob-l">API KEY</span><span class="ob-in mono">••••••••••••</span>
-                <span class="ob-l">SECRET KEY</span><span class="ob-in mono">••••••••••••</span>
-                <span class="ob-l">環境</span><span class="ob-seg"><i class="on">模擬環境</i><i>正式環境</i></span>
-                <span class="ob-go">啟動並開始使用</span>
-              </div>
-              <div class="ob-test" data-in="5" style="--d:.5s">
-                <span class="pill sim">模擬環境</span>
-                <span>證券：買進 1 張・限價 ROD</span><span class="ok">委託成功</span>
-                <span>期貨：買進 1 口・限價 ROD</span><span class="ok">委託成功</span>
+            <div class="tu-cap"><b>按「新增 API Key」</b><p>頁面上方有三點提醒：最多 30 組、不要給別人、建議綁定 IP。按「新增 API Key」開始建立。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="身份驗證" data-dur="7" data-path="#tu-code:1.6:c,#tu-verify:4.6:c">
+            <div class="tu-scene">
+              <div class="site2 dim"><div class="s2-bar"><i></i><i></i><i></i><span class="s2-url">永豐金證券網站（示意）・API 管理</span></div>
+                <div class="s2-modal">
+                  <b>身份驗證</b>
+                  <p>為落實安全防護機制，將以本人手機或 Email 信箱進行身份驗證。</p>
+                  <div class="s2-radio"><span class="on">手機</span><span>Email 信箱</span></div>
+                  <div class="s2-in">09••••••••<small>（示意）</small></div>
+                  <div class="s2-row"><span class="s2-in" id="tu-code"><span class="tu-type" data-t="2.0" data-text="123456"></span><small class="ph">請輸入驗證碼</small></span><span class="s2-in muted">4分58秒</span></div>
+                  <div class="s2-row"><span class="s2-btn ghost">取消</span><span class="s2-btn" id="tu-verify">確認驗證</span></div>
+                </div>
               </div>
             </div>
-            <!-- 6 憑證＋正式 -->
-            <div class="qs-scene" data-scene="6">
-              <div class="ob">
-                <b class="ob-logo">伺服器設定</b>
-                <span class="ob-l">下次啟動環境</span><span class="ob-seg"><i>模擬環境</i><i class="on prod">正式環境</i></span>
-                <span class="ob-warn">正式環境的委託會動用真實資金，請核對金鑰與憑證。</span>
-                <span class="ob-l">CA 憑證（Sinopac.pfx）</span><span class="ob-in mono" data-in="6">Sinopac.pfx</span>
-                <span class="ob-l">憑證密碼</span><span class="ob-in mono" data-in="6" style="--d:.4s">••••••••</span>
-                <span class="ob-go">儲存並重啟</span>
+            <div class="tu-cap"><b>雙因子驗證</b><p>選「手機」或「Email 信箱」收驗證碼，填入後按「確認驗證」。驗證碼有時間限制。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="新增 API KEY" data-dur="6" data-path="#tu-name:0.8:c,#tu-exp:3.4:c">
+            <div class="tu-scene">
+              <div class="site2 dim"><div class="s2-bar"><i></i><i></i><i></i><span class="s2-url">永豐金證券網站（示意）・API 管理</span></div>
+                <div class="s2-modal wide">
+                  <b>新增 API KEY</b>
+                  <div class="s2-grid2"><label>API Key 名稱<span class="s2-in" id="tu-name"><span class="tu-type" data-t="1.0" data-text="ShioajiPro"></span><small class="ph">最多輸入 15 個字元</small></span></label><label>到期時間<span class="s2-in" id="tu-exp"><span class="tu-type" data-t="3.6" data-text="2027/10/09"></span><small class="ph">選擇日期</small></span></label></div>
+                  <div class="s2-sub">API 權限</div>
+                  <div class="s2-perm"><span><i></i>行情／資料</span><span><i></i>帳務</span><span><i></i>交易</span><span><i></i>正式環境</span></div>
+                </div>
               </div>
-              <div class="ob-done" data-in="6" style="--d:1.2s"><span class="pill prod">正式環境</span>簽署、測試都通過，可以正式下單</div>
             </div>
-          </div>
+            <div class="tu-cap"><b>取名字、設到期時間</b><p>名稱自己認得就好，例如「ShioajiPro」。到期後要重新申請，可以設長一點。</p><p class="tu-tbd">待確認：到期時間可選的最長範圍，官方文件沒寫。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="新增 API KEY" data-dur="10" data-path="#tu-p1:1.0:c,#tu-p2:3.0:c,#tu-p3:5.0:c,#tu-p4:7.0:c">
+            <div class="tu-scene">
+              <div class="site2 dim"><div class="s2-bar"><i></i><i></i><i></i><span class="s2-url">永豐金證券網站（示意）・API 管理</span></div>
+                <div class="s2-modal wide">
+                  <b>新增 API KEY</b>
+                  <div class="s2-sub">API 權限</div>
+                  <div class="s2-perm big">
+                    <span id="tu-p1" class="tu-tick" data-t="1.1"><i></i>行情／資料</span>
+                    <span id="tu-p2" class="tu-tick" data-t="3.1"><i></i>帳務</span>
+                    <span id="tu-p3" class="tu-tick" data-t="5.1"><i></i>交易</span>
+                    <span id="tu-p4" class="tu-tick" data-t="7.1"><i></i>正式環境</span>
+                  </div>
+                  <div class="tu-notes">
+                    <p class="tu-in" data-t="1.3"><b>行情／資料</b>看報價、五檔、K 線、排行。看盤一定要勾。</p>
+                    <p class="tu-in" data-t="3.3"><b>帳務</b>查持倉、委託、餘額與損益。</p>
+                    <p class="tu-in" data-t="5.3"><b>交易</b>下單、改單、刪單。模擬測試也需要這個權限。</p>
+                    <p class="tu-in" data-t="7.3"><b>正式環境</b>要用真實資金下單才需要。只想先用模擬環境，可以先不勾。</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="tu-cap"><b>勾選 API 權限</b><p>四個權限一個一個看：要看盤勾「行情／資料」，要看帳務勾「帳務」，要下單勾「交易」，要在正式環境用真實資金下單再勾「正式環境」。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="新增 API KEY" data-dur="8" data-path="#tu-a1:1.0:c,#tu-a2:2.2:c,#tu-ipr:3.8:c,#tu-ok:6.6:c">
+            <div class="tu-scene">
+              <div class="site2 dim"><div class="s2-bar"><i></i><i></i><i></i><span class="s2-url">永豐金證券網站（示意）・API 管理</span></div>
+                <div class="s2-modal wide">
+                  <b>新增 API KEY</b>
+                  <div class="s2-sub">選擇帳戶</div>
+                  <div class="s2-perm"><span id="tu-a1" class="tu-tick" data-t="1.1"><i></i>證券・王**・••••01</span><span id="tu-a2" class="tu-tick" data-t="2.3"><i></i>期權・王**・••••21</span></div>
+                  <div class="s2-sub">IP 地址權限</div>
+                  <div class="s2-radio"><span class="on" id="tu-ipr">限制 IP（推薦）</span><span>無限制 IP</span></div>
+                  <div class="s2-in" id="tu-ip"><span class="tu-type" data-t="4.0" data-text="203.0.113.8"></span><small class="ph">請輸入 IP 位置</small></div>
+                  <small class="s2-hint tu-in" data-t="4.8">IP 是示意；請填你連網的固定 IP。網路的 IP 會變動的話，換了 IP 就連不上，要回來修改。</small>
+                  <div class="s2-row end"><span class="s2-btn ghost">取消</span><span class="s2-btn" id="tu-ok">確定</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="tu-cap"><b>選帳戶、綁定 IP，按「確定」</b><p>勾要讓這組 API Key 使用的帳戶（證券、期權）。官方建議選「限制 IP」並填入你的固定 IP；最後按「確定」。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="新增成功" data-dur="8" data-path="#tu-cp1:1.4:c,#tu-cp2:3.4:c,#tu-done:6.6:c">
+            <div class="tu-scene">
+              <div class="site2 dim"><div class="s2-bar"><i></i><i></i><i></i><span class="s2-url">永豐金證券網站（示意）・API 管理</span></div>
+                <div class="s2-modal wide">
+                  <b>新增成功</b>
+                  <div class="s2-sub">API Key</div>
+                  <div class="s2-row"><span class="s2-in mono">8nTE••••••••••••••••HMBG<small>（示意）</small></span><span class="s2-btn" id="tu-cp1">複製</span></div>
+                  <div class="s2-sub">Secret Key</div>
+                  <div class="s2-row"><span class="s2-in mono">4cSY••••••••••••••••CFrW<small>（示意）</small></span><span class="s2-btn" id="tu-cp2">複製</span></div>
+                  <p class="s2-warn tu-in" data-t="2.4">請確保已將此保存完成，您將不會再次得到此 Secret Key。</p>
+                  <div class="s2-row end"><span class="s2-btn" id="tu-done">確定</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="tu-cap"><b>複製並保存 API Key 和 Secret Key</b><p>Secret Key 只會出現這一次，關掉就看不到了。按「複製」存到密碼管理器或安全的地方，不要傳給任何人。存好再按「確定」。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="簽署中心" data-dur="8" data-path="#tu-stab:1.0:c,#tu-srow:3.2:c,#tu-ftab:5.8:c">
+            <div class="tu-scene">
+              <div class="site2"><div class="s2-bar"><i></i><i></i><i></i><span class="s2-url">永豐金證券網站（示意）・簽署中心</span></div>
+                <div class="s2-body">
+                  <div class="s2-tabs"><span class="on" id="tu-stab">證券類</span><span id="tu-ftab">期貨類</span><span>複委託類</span><span>共同類</span></div>
+                  <div class="s2-table"><div class="h"><span>項目</span><span>類別</span><span>狀態</span></div>
+                    <div><span>風險預告書（合併）</span><span>風險預告書</span><span class="st ok">已簽署</span></div>
+                    <div><span>現股當沖同意書</span><span>同意書</span><span class="st ok">已簽署</span></div>
+                    <div class="s2-hl2" id="tu-srow"><span>API 證券下單簽署</span><span>其他類</span><span class="st"><span class="tu-swap" data-t="3.6"><span>未簽署</span><span class="ok">已簽署</span></span></span></div>
+                  </div>
+                  <small class="s2-hint tu-in" data-t="5.0">期貨、選擇權要到「期貨類」分頁另外簽署。</small>
+                </div>
+              </div>
+            </div>
+            <div class="tu-cap"><b>簽署 API 下單約定</b><p>到「個人服務 › 簽署中心」，在「證券類」找到「API 證券下單簽署」完成簽署；交易期貨、選擇權的話，到「期貨類」分頁另外簽。一定要先簽署，再做下一步的模擬測試。</p><p class="tu-tbd">待確認：期貨類分頁裡的項目名稱，官方文件只附了截圖。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="Shioaji Pro" data-dur="8" data-path="#tu-k1:1.0:c,#tu-k2:2.6:c,#tu-sim:4.4:c,#tu-go:6.2:c">
+            <div class="tu-scene app">
+              <figure class="tu-shot">
+                <picture><source media="(prefers-color-scheme: dark)" srcset="images/tutorial/app-onboard-dark.webp"><img src="images/tutorial/app-onboard-light.webp" width="832" height="1024" alt="Shioaji Pro 第一次開啟的設定畫面：API KEY、SECRET KEY、環境（模擬環境／正式環境）、啟動並開始使用。" loading="lazy" decoding="async"></picture>
+                <i class="tu-hot" id="tu-k1" style="left:8%;top:37.6%;width:84%;height:6.6%"></i>
+                <i class="tu-hot" id="tu-k2" style="left:8%;top:51.6%;width:84%;height:6.8%"></i>
+                <i class="tu-hot" id="tu-sim" style="left:8%;top:65.8%;width:41%;height:6.8%"></i>
+                <i class="tu-hot" id="tu-go" style="left:8%;top:75.8%;width:84%;height:8.2%"></i>
+                <span class="tu-tag tu-in" data-t="1.2" style="left:60%;top:31%">貼上 API Key</span>
+                <span class="tu-tag tu-in" data-t="2.8" style="left:60%;top:45.2%">貼上 Secret Key</span>
+                <span class="tu-tag tu-in" data-t="4.6" style="left:52%;top:59.5%">先選模擬環境</span>
+              </figure>
+            </div>
+            <div class="tu-cap"><b>在 Shioaji Pro 填入金鑰</b><p>第一次開啟 App 會看到設定畫面：貼上 API Key、Secret Key，環境選「模擬環境」，按「啟動並開始使用」。也可以用「選擇 .env 檔案」匯入。金鑰只存在你的電腦。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="模擬測試" data-dur="9">
+            <div class="tu-scene">
+              <div class="tu-split">
+                <div class="tu-card">
+                  <b class="tu-in" data-t="0.3">在模擬環境各下一筆單</b>
+                  <div class="tu-chk tu-in" data-t="0.9"><i></i><span><b>證券、期貨分開測</b>用想交易的商品各下一筆，兩筆間隔 1 秒以上。</span></div>
+                  <div class="tu-chk tu-in" data-t="1.7"><i></i><span><b>測試時間</b>週一至五 08:00–20:00；18:00–20:00 只接受台灣 IP。</span></div>
+                  <div class="tu-chk tu-in" data-t="2.5"><i></i><span><b>審核約 5 分鐘</b>回簽署中心看測試狀態。</span></div>
+                </div>
+                <div class="site2 small tu-in" data-t="3.6"><div class="s2-bar"><i></i><i></i><i></i><span class="s2-url">簽署中心・測試狀態（示意）</span></div>
+                  <div class="s2-body"><div class="s2-table"><div class="h"><span>帳號</span><span>簽署與否</span><span>python 測試與否</span></div><div><span>••••01</span><span class="st ok">已簽署</span><span class="st"><span class="tu-swap" data-t="6.0"><span>未測試</span><span class="ok">已測試</span></span></span></div></div></div>
+                </div>
+              </div>
+            </div>
+            <div class="tu-cap"><b>完成模擬測試</b><p>在 Shioaji Pro 的模擬環境，用下單面板下一筆限價單；證券、期貨要分開測。模擬環境裡還沒完成簽署與測試的帳戶也能下單，就是為了讓你完成這一步。約 5 分鐘後，簽署中心的「python 測試與否」會變成「已測試」。</p><p class="tu-tbd">待確認：審核時間官網寫約 5 分鐘，Shioaji skill 寫約 1 分鐘。</p></div>
+          </li>
+
+          <li class="tu-step" data-where="切到正式環境" data-dur="10" data-path="#tu-dl:1.0:c,#tu-prod:4.2:c,#tu-pfx:5.6:c,#tu-pw:7.0:c,#tu-save:8.6:c">
+            <div class="tu-scene">
+              <div class="tu-split r2">
+                <div class="site2 small"><div class="s2-bar"><i></i><i></i><i></i><span class="s2-url">永豐金證券網站（示意）・API 管理</span></div>
+                  <div class="s2-body"><div class="s2-actions"><span class="s2-btn ghost" id="tu-dl">下載憑證</span><span class="s2-btn">新增 API Key</span></div>
+                    <div class="s2-modal mini tu-in" data-t="1.6"><b>系統訊息</b><p>憑證已下載，請至下載檔案查看。</p><span class="s2-btn">確定</span></div>
+                    <small class="s2-hint tu-in" data-t="2.4">下載的檔案是 Sinopac.pfx</small>
+                  </div>
+                </div>
+                <figure class="tu-shot wide tu-in" data-t="3.2">
+                  <picture><source media="(prefers-color-scheme: dark)" srcset="images/tutorial/app-server-ca-dark.webp"><img src="images/tutorial/app-server-ca-light.webp" width="704" height="468" alt="Shioaji Pro 的伺服器設定：下次啟動環境選正式環境、CA 憑證（Sinopac.pfx）、憑證密碼、儲存並重啟。" loading="lazy" decoding="async"></picture>
+                  <i class="tu-hot" id="tu-prod" style="left:16.6%;top:9.6%;width:13.6%;height:9.2%"></i>
+                  <i class="tu-hot" id="tu-pfx" style="left:2.6%;top:35%;width:16.6%;height:9%"></i>
+                  <i class="tu-hot" id="tu-pw" style="left:2.6%;top:51.8%;width:87.6%;height:9%"></i>
+                  <i class="tu-hot" id="tu-save" style="left:81.4%;top:74.8%;width:15.8%;height:9.4%"></i>
+                </figure>
+              </div>
+            </div>
+            <div class="tu-cap"><b>下載憑證，切到正式環境</b><p>回 API 管理頁按「下載憑證」，得到 Sinopac.pfx。在 App 右上角「伺服器」開「伺服器設定」：下次啟動環境選「正式環境」，選擇 Sinopac.pfx、填憑證密碼，按「儲存並重啟」。API Key 要有「正式環境」權限，簽署和測試都通過，就能正式下單。</p><p class="tu-tbd">待確認：憑證密碼在哪裡設定，官方文件沒寫清楚；App 的提示是「下載時設定」。</p></div>
+          </li>
+        </ol>
+        <div class="tu-cc" data-tu-cc aria-live="polite"></div>
+        <div class="tu-ctrl">
+          <button type="button" class="tu-b" data-tu-prev aria-label="上一步"><svg class="i"><use href="#i-prev"/></svg></button>
+          <button type="button" class="tu-b main" data-tu-play aria-label="暫停"><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg></button>
+          <button type="button" class="tu-b" data-tu-next aria-label="下一步"><svg class="i"><use href="#i-next"/></svg></button>
+          <div class="tu-segs" data-tu-segs></div>
         </div>
-        <p class="qs-src">步驟依 <a href="https://sinotrade.github.io/" rel="noopener">Shioaji 官方文件</a> 整理；畫面為示意，不是永豐金證券網站的實際頁面。</p>
-      </figure>
+      </div>
+      <p class="qs-src">步驟依 <a href="https://sinotrade.github.io/zh/tutor/prepare/token/" rel="noopener">Shioaji 官方文件：API Key</a> 與 <a href="https://sinotrade.github.io/zh/tutor/prepare/terms/" rel="noopener">簽署與測試</a> 整理（2026-10-09）。網站可能改版，以永豐金證券網站實際畫面為準。</p>
     </div>
   </div>
 </section>
@@ -795,17 +929,18 @@ codex plugin add shioaji@sinotrade</pre>
 <!-- 09 下載 -->
 <section class="alt" id="download" aria-labelledby="download-h">
   <div class="wrap">
-    <div class="sec-head"><h2 id="download-h">下載 <span class="mono" id="dl-ver" style="font-size:.6em;color:var(--muted)"></span></h2><p>三步開始。安裝檔由 GitHub Actions 建置；桌面版啟動時會檢查更新，驗證簽章後安裝並重新啟動。</p></div>
+    <div class="sec-head"><h2 id="download-h">下載 <span class="mono" id="dl-ver" style="font-size:.6em;color:var(--muted)"></span></h2><p>原生 macOS App，Apple Silicon 和 Intel 都有；也有 Windows、Linux 版。程式碼在 GitHub 公開，安裝檔由 GitHub Actions 建置，啟動時自動檢查更新。</p></div>
     <ol class="dl-steps">
-      <li><b>下載</b><span>選你的平台，macOS 版有 Apple 簽章與公證。</span></li>
+      <li><b>下載</b><span>選你的平台；macOS 版有 Apple 簽章與公證。</span></li>
       <li><b>登入</b><span>填 API Key 和 Secret Key，先選模擬環境；正式環境要再匯入憑證。</span></li>
       <li><b>開始</b><span>預設版面已排好自選、K 線、五檔和下單面板；打開 AI Agent，選好 AI 服務就能開始用。</span></li>
     </ol>
     <div class="dl">
-      <div class="card"><h3>macOS <small>13.3 以上</small></h3><div class="dl-links" id="dl-mac"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Apple Silicon<span>.dmg</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Intel<span>.dmg</span></a></div></div>
+      <div class="card mac"><span class="mac-tag">原生 Mac App</span><h3>macOS <small>13.3 以上</small></h3><div class="dl-links" id="dl-mac"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Apple Silicon<span>.dmg</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Intel<span>.dmg</span></a></div></div>
       <div class="card"><h3>Windows <small>10／11 x64</small></h3><div class="dl-links" id="dl-win"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">安裝程式<span>.msi</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Setup<span>.exe</span></a></div></div>
       <div class="card"><h3>Linux <small>x86_64</small></h3><div class="dl-links" id="dl-linux"><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">AppImage<span>.AppImage</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">Debian／Ubuntu<span>.deb</span></a><a href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest">RHEL／Fedora<span>.rpm</span></a></div></div>
     </div>
+    <a class="oss" href="https://github.com/Sinotrade/shioaji-pro-app"><svg class="i"><use href="#i-github"/></svg><span><b>開源</b>介面程式碼全部在 GitHub 公開（AGPL-3.0），可以 fork、修改、自己建置。</span><span class="stars" data-stars hidden></span><span class="go">看原始碼</span></a>
     <p class="dl-note">舊版本和更新紀錄在 <a href="https://github.com/Sinotrade/shioaji-pro-app/releases">GitHub Releases</a>。</p>
   </div>
 </section>
