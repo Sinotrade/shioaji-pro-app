@@ -65,7 +65,7 @@
       else if (/Linux/.test(ua) && !/Android/.test(ua)) { url = asset(/\.AppImage$/); label = '下載 Linux 版'; }
       if (url) {
         document.getElementById('cta-dl').href = url;
-        document.getElementById('cta-label').textContent = label;
+        document.getElementById('cta-dl').title = label;
       }
     })
     .catch(function () { /* keep releases page links */ });

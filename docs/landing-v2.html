@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shioaji Pro｜台股看盤下單 App</title>
-<meta name="description" content="Shioaji Pro 是用永豐金證券 Shioaji API 做的看盤下單 App。內建 AI Agent，會上網查資料、整理研究、寫策略跑回測、做出你想要的畫面、記住你的操作習慣；每筆下單都需要你的核可。免費下載，預設連線模擬環境。">
-<meta property="og:title" content="Shioaji Pro｜台股看盤下單 App">
-<meta property="og:description" content="內建 AI Agent 的台股看盤下單 App：查資料、做研究、跑回測、排畫面、記住你的習慣；每筆下單都需要你的核可。">
+<title>Shioaji Pro｜AI Agent 交易新世代</title>
+<meta name="description" content="Shioaji Pro 是用永豐金證券 Shioaji API 做的看盤下單 App。內建 AI Agent，會上網查資料、整理研究、寫策略跑回測、做出你想要的畫面、記住你的操作習慣；每一筆下單都需要你的核可。免費下載，預設連線模擬環境。">
+<meta property="og:title" content="Shioaji Pro｜AI Agent 交易新世代">
+<meta property="og:description" content="AI Agent 搭配 Shioaji API，開創你的 Pro 世代。每一筆下單都需要你的核可。">
 <meta property="og:image" content="https://sinotrade.github.io/shioaji-pro-app/og-shioaji-pro.png">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#F6F3EC" media="(prefers-color-scheme: light)">
@@ -77,17 +77,18 @@
 <main id="main">
 <div id="top" class="hero">
   <div class="wrap">
-    <h1><span>交代一句話，</span><span>Agent 幫你看盤、研究、下單。</span></h1>
-    <p class="lead">Shioaji Pro 是用永豐金證券 Shioaji API 做的看盤下單 App。裡面的 AI Agent 就是 Claude Code 或 Codex，接上 App 的行情、帳務、面板、回測與下單工具，也能開瀏覽器、讀寫檔案、跑程式、定時執行。你交代的事它去做；每一筆下單都要你核可。</p>
+    <h1>AI Agent 交易新世代</h1>
+    <p class="sub">AI Agent 搭配 Shioaji API，開創你的 Pro 世代。</p>
+    <p class="lead">它幫你研究、幫你回測、幫你做出想要的畫面，還會從你每天的操作學會你的習慣。每一筆下單都需要你的核可。</p>
     <div class="cta">
       <a class="btn primary" id="cta-dl" href="https://github.com/Sinotrade/shioaji-pro-app/releases/latest"><svg class="i"><use href="#i-download"/></svg><span id="cta-label">下載 Shioaji Pro</span></a>
-      <a class="btn ghost" href="#start">從申請 API Key 開始</a>
+      <a class="btn ghost" href="#habit">看 Agent 怎麼幫你交易</a>
     </div>
     <p class="meta"><span id="ver">最新版</span><span>免費</span><span>macOS・Windows・Linux</span><span>第一次開啟連模擬環境</span></p>
     <ul class="hero-points">
-      <li><a href="#habit"><b>它會自己學會你的習慣</b><span>每天看你的操作，重複的流程存成一句話就能叫出來的技能。</span></a></li>
-      <li><a href="#build"><b>你要什麼畫面，講一句它就做</b><span>加面板、排版面、寫指標，存成你的版面。</span></a></li>
-      <li><a href="#research"><b>一個想法到回測，只要一句話</b><span>寫成策略、回測、找參數，再告訴你是不是只是運氣好。</span></a></li>
+      <li><a href="#habit"><b>它看你操作，學會你的流程，下次替你做好。</b><span>工作流程觀察每天整理你的操作，重複的步驟存成技能。</span></a></li>
+      <li><a href="#build"><b>你想要的功能，不必再等券商，它直接做給你。</b><span>版面、面板、指標，說出來它就排好、寫好。</span></a></li>
+      <li><a href="#research"><b>從一個想法到一份回測，不用寫一行程式。</b><span>寫成策略、回測、找參數，再告訴你結果可不可信。</span></a></li>
     </ul>
     <figure class="shot" style="margin-bottom:0">
       <picture>
@@ -105,7 +106,7 @@
     <div class="feature flip">
       <div class="f-text">
         <span class="kick">Agent 能做的事・1</span>
-        <h2 id="habit-h" class="h2s">它會自己學會你的習慣</h2>
+        <h2 id="habit-h" class="h2s">它看你操作，學會你的流程，下次替你做好</h2>
         <p>App 在你的電腦記錄最近的操作：看了哪些商品、開關哪些面板、套用哪個版面、下了什麼單。紀錄只存在本機，不會上傳。</p>
         <p>開啟「工作流程觀察」後，常駐的 Agent 每天看一次這些紀錄。同樣的步驟重複出現兩三次以上，就存成技能並通知你，例如「早盤例行檢查」；下次輸入「/早盤例行檢查」，它就照做一遍。你自己改過的技能，它不會覆寫。</p>
         <p class="safe-line"><svg class="i"><use href="#i-shield"/></svg>這個任務只有分析權限，不會下單。開啟前會先跳出核可卡，寫清楚排程、環境，以及每次執行會用到你的 AI 額度。</p>
@@ -149,8 +150,8 @@
     <div class="feature">
       <div class="f-text">
         <span class="kick">Agent 能做的事・2</span>
-        <h2 id="build-h" class="h2s">你要什麼畫面，講一句它就做</h2>
-        <p>不用自己一個一個拖。跟 Agent 說你要怎麼看盤，它用 App 的工具套版面、加面板、把面板鎖在某一檔；要的指標沒有內建，它用 JavaScript 寫成自訂指標，掛到你指定的 K 線圖上，之後也能幫你調參數或拿掉。</p>
+        <h2 id="build-h" class="h2s">你想要的功能，不必再等券商，它直接做給你</h2>
+        <p>不用等券商改版，也不用自己一個一個拖。跟 Agent 說你要怎麼看盤，它用 App 的工具套版面、加面板、把面板鎖在某一檔；要的指標沒有內建，它用 JavaScript 寫成自訂指標，掛到你指定的 K 線圖上，之後也能幫你調參數或拿掉。</p>
         <p>需要券商沒有的表，例如持股的除息日和殖利率，它可以開瀏覽器查、寫程式整理成檔案或網頁。要做成 App 裡的面板，可以修改公開的介面程式碼，上傳到 shioaji server 當成自己的 App。</p>
         <ol class="caps" data-for="build">
           <li>用一句話說你要的版面</li>
@@ -196,7 +197,7 @@
   <div class="wrap">
     <div class="sec-head">
       <span class="kick">Agent 能做的事・3</span>
-      <h2 id="research-h" class="h2s">一個想法到回測，只要一句話</h2>
+      <h2 id="research-h" class="h2s">從一個想法到一份回測，不用寫一行程式</h2>
       <p>貼一篇文章或講一個交易想法，Agent 把它寫成策略，用歷史 K 線回測，再用參數最佳化找最好的參數。它會把樣本內和樣本外的成績分開報告，告訴你這組參數是不是只對過去有效。回測依你的設定計入手續費、交易稅和滑價，訊號收盤成立、次根開盤成交，策略讀到未來資料會被擋下來。</p>
     </div>
     <div class="feature">
@@ -288,9 +289,9 @@
     <div class="feature flip">
       <div class="f-text">
         <span class="kick">Agent 能做的事・4</span>
-        <h2 id="alloc-h" class="h2s">你的資產配置管家</h2>
+        <h2 id="alloc-h" class="h2s">你訂好比例，它替你看住資產配置</h2>
         <p>你先定好目標比例，例如股票 60%、債券 ETF 30%、現金 10%。Agent 讀你的持倉和帳戶餘額，算出現在偏離多少，列出要買賣哪幾檔、各多少、預估成本。也可以建立排程任務定時檢查，例如每天開盤後看一次，偏離超過 5% 才通知你。</p>
-        <p class="safe-line"><svg class="i"><use href="#i-shield"/></svg>比例和規則都由你決定，Agent 不推薦標的。要調整時，它一筆一筆送出下單提案，每筆下單都需要你的核可；正式環境改用獨立的核可視窗。</p>
+        <p class="safe-line"><svg class="i"><use href="#i-shield"/></svg>比例和規則都由你決定，Agent 不推薦標的。要調整時，它一筆一筆送出下單提案，每一筆下單都需要你的核可；正式環境改用獨立的核可視窗。</p>
         <ol class="caps" data-for="alloc">
           <li>說出你的目標比例</li>
           <li>Agent 讀持倉、帳戶與報價，算出偏離</li>
@@ -339,7 +340,7 @@
     <div class="feature">
       <div class="f-text">
         <span class="kick">Agent 能做的事・5</span>
-        <h2 id="brief-h" class="h2s">每天的盤前簡報與盤後檢討</h2>
+        <h2 id="brief-h" class="h2s">開盤前和收盤後，它先替你整理好</h2>
         <p>建立一個排程任務，寫好要它做什麼：每天 08:30 整理持股與自選的夜盤、美股、重大公告和今天要注意的價位；收盤後整理今天的成交、損益來源，和你的計畫差在哪。做完它會通知你，結論留在「紀錄」頁。</p>
         <p>任務可以每天定時、每 N 分鐘、到價觸發，或在委託／成交時觸發，每個任務有自己的交易權限和執行時間上限。</p>
         <p class="safe-line"><svg class="i"><use href="#i-shield"/></svg>任務綁定模擬或正式環境，只在相符的環境執行；模擬的任務不會跑到正式帳戶。每次執行都會用到你的 AI 額度，畫面上會寫清楚。</p>
@@ -386,12 +387,12 @@
   <div class="wrap">
     <div class="sec-head">
       <h2 id="safe-h">為什麼可以放心交給它</h2>
-      <p>它能做的事很多，但每筆下單都需要你的核可。</p>
+      <p>你負責判斷，它負責把事情做完。每一筆下單都需要你的核可。</p>
     </div>
     <div class="safe-grid">
       <figure class="safe-shot"><img src="images/release-0.1.49-approval-cancel.png" width="860" height="1280" alt="正式環境的「Agent 交易核可」獨立視窗：列出商品、原委託、刪除剩餘未成交、帳戶（遮罩）、發起的 Agent，倒數後自動拒絕，按鈕為拒絕與核准刪單。" loading="lazy"><figcaption>正式環境的「Agent 交易核可」視窗（App 實際畫面）</figcaption></figure>
       <ul class="safe-list">
-        <li><b>交易權限三選一</b>僅分析：只查詢不下單。逐筆確認：每筆下單都需要你的核可。Auto：你在正式環境先授權一次，只在這次連線、目前帳戶有效；切帳戶、停止 Agent 或重開 App 就失效。</li>
+        <li><b>交易權限三選一</b>僅分析：只查詢不下單。逐筆確認：每一筆下單都需要你的核可。Auto：你在正式環境先授權一次，只在這次連線、目前帳戶有效；切帳戶、停止 Agent 或重開 App 就失效。</li>
         <li><b>正式環境有獨立核可視窗</b>由 App 原生開啟，Agent 無法代按。報價跳動或超過 15 秒沒核准，這筆退回，請它依最新報價重新提案。</li>
         <li><b>模擬與正式分開</b>排程任務綁定環境，只在相符的環境執行。</li>
         <li><b>風控上限 Agent 也要遵守</b>單筆數量、單筆金額、限價偏離、單次下單筆數都有上限，市價單需要你的核可；Auto 也不例外。</li>
@@ -407,7 +408,7 @@
 <section class="alt" id="trade" aria-labelledby="trade-h">
   <div class="wrap">
     <div class="sec-head">
-      <h2 id="trade-h">看盤下單本身就好用</h2>
+      <h2 id="trade-h">看盤下單，本身就做得夠好</h2>
       <p>就算不用 Agent，Shioaji Pro 也是一個完整的台股看盤下單 App：現股、零股、在 K 線上掛單，自選、持倉、委託放在旁邊。</p>
     </div>
     <div class="feature">
@@ -783,7 +784,7 @@ codex plugin add shioaji@sinotrade</pre>
       </div>
       <div class="card">
         <h3>Shioaji Pro skill</h3>
-        <p>讓 agent 透過 App 的工具看行情、調整版面、寫指標和策略、跑回測與最佳化。交易一樣照 App 的權限設定：逐筆確認時，每筆下單都需要你的核可。</p>
+        <p>讓 agent 透過 App 的工具看行情、調整版面、寫指標和策略、跑回測與最佳化。交易一樣照 App 的權限設定：逐筆確認時，每一筆下單都需要你的核可。</p>
         <p>放在 repo 的 <a href="https://github.com/Sinotrade/shioaji-pro-app/tree/main/plugins/shioaji-pro"><code>plugins/shioaji-pro</code></a>，可以裝進常用的 AI 寫程式工具。</p>
       </div>
     </div>

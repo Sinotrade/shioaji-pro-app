@@ -1040,3 +1040,5 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
 @media (max-width: 560px) { .duo.wide > .win > .stage { min-height: 60cqw; } }
 .cmd-d { margin-top: 12px; }
 .cmd-d summary { cursor: pointer; font-size: 14px; color: var(--text-2); }
+.hero .sub { margin-top: 14px; font-family: var(--heading); font-size: clamp(1.15rem, 2.2vw, 1.5rem); color: var(--text); }
+.hero .sub + .lead { margin-top: 14px; }
