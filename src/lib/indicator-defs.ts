@@ -29,7 +29,7 @@ import {
 } from './indicators';
 import type { Candle } from './types/market';
 
-export type OutputKind = 'line' | 'dashed' | 'histogram' | 'points';
+export type OutputKind = 'line' | 'dashed' | 'histogram' | 'points' | 'band';
 
 export interface ParamDef {
     key: string;
@@ -48,6 +48,9 @@ export interface OutputDef {
     width?: 1 | 2;
     // histogram only: color positive/negative halves with up/down colors
     signed?: boolean;
+    // band only: 上下緣線型（預設 solid）。band 輸出的下緣序列放在
+    // compute 回傳的 `<key>_lo`，不另立 OutputDef。
+    border?: 'solid' | 'dashed';
 }
 
 export interface IndicatorDef {

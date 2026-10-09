@@ -8,9 +8,11 @@ import type { Ser } from './ta';
 
 export interface PlotHint {
     color?: string;
-    kind?: 'line' | 'dashed' | 'histogram' | 'points';
+    kind?: 'line' | 'dashed' | 'histogram' | 'points' | 'band';
     signed?: boolean;
     width?: 1 | 2;
+    // band only: 上下緣線型
+    border?: 'solid' | 'dashed';
 }
 
 export interface CustomRunResult {
@@ -37,7 +39,7 @@ const cache = new Map<string, Compiled>();
 
 // destructure the ctx so user code reads like Pine: close / p.len / ta.sma()
 const PREAMBLE =
-    'const {bars,time,open,high,low,close,volume,hl2,hlc3,ohlc4,p,ta,plot,hline}=ctx;';
+    'const {bars,time,open,high,low,close,volume,hl2,hlc3,ohlc4,p,ta,plot,hline,band}=ctx;';
 
 function compile(source: string): Compiled {
     let fn = cache.get(source);
@@ -80,6 +82,12 @@ export function runCustom(
         if (typeof name !== 'string' || name.trim() === '') {
             throw new Error('plot() 第一個參數要是輸出名稱字串');
         }
+        // 名稱以 _lo 結尾且基底已是 band() 輸出 → 會覆蓋該 band 的下緣
+        if (name.endsWith('_lo') && hints[name.slice(0, -3)]?.kind === 'band') {
+            throw new Error(
+                `plot('${name}') 會覆蓋 band('${name.slice(0, -3)}') 的下緣，請改名`,
+            );
+        }
         if (!Array.isArray(series)) {
             throw new Error(`plot('${name}') 第二個參數要是序列（陣列）`);
         }
@@ -107,6 +115,62 @@ export function runCustom(
         if (typeof v === 'number' && Number.isFinite(v)) levels.push(v);
     };
 
+    // band('名稱', 上緣序列或常數, 下緣序列或常數, opts) — 主圖價格帶。
+    // 常數自動展開成整條序列；下緣存到 `<name>_lo`（不進 order，
+    // 由 chart 的 band 分支一起取用）。
+    const band = (
+        name: unknown,
+        upper: unknown,
+        lower: unknown,
+        opts?: PlotHint,
+    ) => {
+        if (typeof name !== 'string' || name.trim() === '') {
+            throw new Error('band() 第一個參數要是輸出名稱字串');
+        }
+        // 下緣存在 `<name>_lo`：名稱本身不能以 _lo 結尾，也不能撞到使用者
+        // 已經 plot() 出來的同名輸出，否則兩者會互相覆蓋
+        if (name.endsWith('_lo')) {
+            throw new Error(`band('${name}') 名稱不能以 _lo 結尾（保留給下緣）`);
+        }
+        if (`${name}_lo` in outputs && !(name in outputs)) {
+            throw new Error(`band('${name}') 與已存在的輸出 '${name}_lo' 衝突`);
+        }
+        const toSer = (v: unknown, which: string): Ser => {
+            if (typeof v === 'number' && Number.isFinite(v)) {
+                return new Array<number | null>(n).fill(v);
+            }
+            if (!Array.isArray(v)) {
+                throw new Error(
+                    `band('${name}') ${which}要是序列（陣列）或數字`,
+                );
+            }
+            const ser: Ser = new Array(n).fill(null);
+            for (let i = 0; i < n; i++) {
+                const x = (v as unknown[])[i];
+                ser[i] =
+                    typeof x === 'number' && Number.isFinite(x) ? x : null;
+            }
+            return ser;
+        };
+        if (!(name in outputs)) order.push(name);
+        outputs[name] = toSer(upper, '上緣');
+        outputs[`${name}_lo`] = toSer(lower, '下緣');
+        // border / width 只收白名單值，不讓任意字串直接存進自訂指標
+        const border =
+            opts?.border === 'solid' || opts?.border === 'dashed'
+                ? opts.border
+                : undefined;
+        const width = opts?.width === 1 || opts?.width === 2 ? opts.width : undefined;
+        hints[name] = {
+            kind: 'band',
+            ...(opts && typeof opts.color === 'string'
+                ? { color: opts.color }
+                : {}),
+            ...(border ? { border } : {}),
+            ...(width ? { width } : {}),
+        };
+    };
+
     const ctx = {
         bars,
         time: bars.time,
@@ -122,6 +186,7 @@ export function runCustom(
         ta,
         plot,
         hline,
+        band,
     };
 
     try {
@@ -135,7 +200,7 @@ export function runCustom(
     if (order.length === 0) {
         return {
             ...EMPTY,
-            error: '程式碼沒有呼叫 plot() — 至少要輸出一條序列',
+            error: '程式碼沒有呼叫 plot() / band() — 至少要輸出一條序列',
         };
     }
     return { outputs, order, hints, levels };
