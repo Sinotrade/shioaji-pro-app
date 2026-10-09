@@ -7,11 +7,13 @@
 // whose trading session already changed are shown as 已失效 only.
 // The main window shows the cards; popouts only a badge.
 
-import { CalendarX2, ChevronDown, ChevronUp, CircleHelp, ListChecks, RefreshCw, TriangleAlert } from 'lucide-react';
+import { CalendarX2, ChevronDown, ChevronUp, CircleHelp, ListChecks, RefreshCw, RotateCcw, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { requestOpenOrdersTab } from '../lib/dock-events';
 import { refreshPendingConfirm, resolvePendingConfirm, usePendingConfirm } from '../lib/execution/pending-confirm';
-import { UNIT_LABEL, type PendingConfirmItem, type PendingResolution } from '../lib/execution/pending-confirm-contract';
+import { useBackgroundSetting } from '../lib/execution/background';
+import { canRearm, UNIT_LABEL, type PendingConfirmItem, type PendingResolution } from '../lib/execution/pending-confirm-contract';
+import { checkRearmQuantity, fetchAccountPositions, rearmPlan, type PositionView, type RearmPlan } from '../lib/execution/rearm';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
 import { useServerInfo } from '../lib/server-info-store';
@@ -170,7 +172,91 @@ function ConfirmCard({ item, envNow }: { item: PendingConfirmItem; envNow: strin
     );
 }
 
-function ExpiredCard({ item }: { item: PendingConfirmItem }) {
+type Positions = { state: 'loading' } | { state: 'ok'; view: PositionView } | { state: 'failed' };
+const UNKNOWN: PositionView = { known: false, positions: [] };
+
+function planOf(item: PendingConfirmItem, pos: Positions): RearmPlan {
+    if (pos.state === 'loading') return { quantity: null, closable: null, notes: ['正在查詢這個帳戶的持倉…'] };
+    if (pos.state === 'failed') return { quantity: null, closable: null, notes: ['無法確認持倉：請到持倉核對後自行輸入數量'] };
+    return rearmPlan(item, pos.view);
+}
+
+/** 在新盤別重新啟用: the same trigger, watched again in this session with a
+ * quantity checked against this account's positions, read when the
+ * confirmation opens (the only basis for the suggestion and the cap). The
+ * second step shows what will be created; nothing is sent then. */
+function Rearm({ item, envNow }: { item: PendingConfirmItem; envNow: string | null }) {
+    const on = useBackgroundSetting();
+    const [pos, setPos] = useState<Positions | null>(null);
+    const [qty, setQty] = useState<string | null>(null);
+    const { busy, error, run } = useRun();
+    const here = item.env === envNow;
+    const unit = UNIT_LABEL[item.order.quantityUnit];
+    const act = item.order.action === 'Buy' ? '買進' : '賣出';
+    const blocked = on !== true ? '要先在設定開啟「背景持續執行（實驗）」才能重新啟用'
+        : !here ? `切回${protectionEnvLabel(item.env)}環境才能重新啟用` : null;
+    const openIt = () => {
+        const mine: Positions = { state: 'loading' };
+        setPos(mine);
+        setQty(null);
+        fetchAccountPositions(item).then(
+            view => setPos(cur => (cur === mine ? { state: 'ok', view } : cur)),
+            () => setPos(cur => (cur === mine ? { state: 'failed' } : cur)),
+        );
+    };
+    if (!pos) {
+        return (
+            <>
+                <button type='button' className={styles.button} disabled={busy || !!blocked} title={blocked ?? undefined}
+                    onClick={openIt}>
+                    <RotateCcw size={12} aria-hidden /> 在新盤別重新啟用
+                </button>
+                {blocked && <div className={styles.note.muted}>{blocked}</div>}
+            </>
+        );
+    }
+    const plan = planOf(item, pos);
+    const loading = pos.state === 'loading';
+    const value = qty ?? (plan.quantity === null ? '' : String(plan.quantity));
+    const n = Number(value);
+    const valid = value !== '' && Number.isSafeInteger(n) && n > 0;
+    return (
+        <div className={styles.cardConfirm} role='group' aria-label='重新啟用內容'>
+            <div className={styles.cardTitle}><RotateCcw size={13} aria-hidden /><span className={styles.grow}>確認重新啟用的內容</span></div>
+            <div className={styles.note.muted}>
+                {`${item.order.code} · 觸發價 ${item.order.triggerCondition === 'below' ? '≤' : '≥'} ${fmtPrice(item.order.triggerPrice ?? 0)} · 觸發後${item.order.priceType === 'MKT' ? '市價' : '限價'}${act}`}
+            </div>
+            {plan.notes.map(t => <div key={t} className={styles.note.warn}>{t}</div>)}
+            {qty !== null && plan.quantity !== null && qty !== String(plan.quantity) && (
+                <div className={styles.note.warn}>{`建議 ${plan.quantity} ${unit}，目前輸入 ${qty || '?'} ${unit}`}</div>
+            )}
+            <label className={styles.stepRow}>
+                <span className={styles.stepLabel}>數量（{unit}）</span>
+                <input aria-label='重新啟用口數' inputMode='numeric' value={value} disabled={busy || loading}
+                    onChange={e => setQty(e.target.value.trim())} />
+            </label>
+            <div className={styles.note.muted}>
+                不會立即送單：只在這個盤別重新開始盯價，價格穿過觸發價時才照一般流程送出。若現在價格已經穿過，會先列在「觸價單待確認」由你決定。
+                重新啟用為單次觸價；若要循環，請到觸價單設定另行開啟。
+            </div>
+            {error && <div className={styles.note.err} role='alert'>{error}</div>}
+            <div className={styles.stepRow}>
+                <button type='button' className={styles.button} disabled={busy} onClick={() => { setPos(null); setQty(null); }}>返回</button>
+                <button type='button' className={styles.primary} disabled={busy || loading || !valid || !!blocked}
+                    onClick={() => void run(async () => {
+                        // the cap comes from the same read the suggestion did
+                        const over = checkRearmQuantity(item, n, pos.state === 'ok' ? pos.view : UNKNOWN);
+                        if (over) throw new Error(over);
+                        await resolvePendingConfirm(item, 'rearmInNewSession', { quantity: n });
+                    })}>
+                    {busy ? '處理中…' : `確認重新啟用（${act} ${valid ? n : '?'} ${unit}）`}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function ExpiredCard({ item, rearm, envNow }: { item: PendingConfirmItem; rearm: boolean; envNow: string | null }) {
     const { busy, error, run } = useRun();
     return (
         <div className={styles.cardExpired} role='group' aria-label={`${item.order.code} 委託已失效`}>
@@ -182,6 +268,7 @@ function ExpiredCard({ item }: { item: PendingConfirmItem }) {
             <Facts item={item} />
             <div className={styles.note.muted}>
                 {`${sessionLabel(item)}結束時仍查不到這筆的結果。委託不跨盤別，已自動失效，不會再成交，系統也不會重送。若失效前可能已成交，請到成交查詢與持倉核對。`}
+                {rearm ? '觸價單不會自動延續到新盤別；需要的話可以在新盤別重新啟用。' : ''}
             </div>
             {error && <div className={styles.note.err} role='alert'>{error}</div>}
             <div className={styles.stepRow}>
@@ -191,6 +278,14 @@ function ExpiredCard({ item }: { item: PendingConfirmItem }) {
                     {busy ? '處理中…' : '知道了，移除'}
                 </button>
             </div>
+            {item.rearmed && (
+                <div className={item.rearmed.working ? styles.note.warn : styles.note.muted}>
+                    {item.rearmed.working
+                        ? `先前重新啟用的觸價單（${item.rearmed.quantity} ${UNIT_LABEL[item.order.quantityUnit]}）已經送出委託，不能再重新啟用；請到觸價單清單與委託查詢處理`
+                        : `先前重新啟用沒有完成（已建立 ${item.rearmed.quantity} ${UNIT_LABEL[item.order.quantityUnit]} 的觸價單，尚未送單）；再確認一次會以這次的數量完成`}
+                </div>
+            )}
+            {rearm && <Rearm item={item} envNow={envNow} />}
         </div>
     );
 }
@@ -252,7 +347,8 @@ export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) 
                         </div>
                     )}
                     {confirm.map(i => <ConfirmCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i} envNow={envNow} />)}
-                    {expired.map(i => <ExpiredCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i} />)}
+                    {expired.map(i => <ExpiredCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i}
+                        rearm={!!snapshot && canRearm(snapshot, i)} envNow={envNow} />)}
                 </>
             )}
         </div>

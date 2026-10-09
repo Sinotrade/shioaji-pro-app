@@ -44,10 +44,27 @@
 //         acknowledgeExpired          -> the record is removed.
 //       Where the listing never showed the tag, "not found" is not proof of
 //       "not sent": the user confirms against orders, deals and positions.
+//
+// v2 (2026-10-09, user decision: protection does not carry across sessions
+// by itself, but can be turned back on):
+// - `order.triggerCondition` ('below' | 'above' | null), `account.brokerId`.
+// - resolution `rearmInNewSession` for an `expired` trigger item, with
+//   `request.quantity` (a positive integer the user confirmed against the
+//   current position): the backend ends the old tracking and creates a new
+//   trigger with the same settings in the current session. Nothing is sent
+//   then; its first tick decides (already past → 待確認). Main window only,
+//   setting 「背景持續執行」 on (`notEnabled` otherwise), quantity checked
+//   (`invalidRequest`), creation refused → `rearmFailed` (the item stays).
+//   `item.rearmed`: an unfinished earlier rearm; a retry replaces it with the
+//   new quantity while it has placed nothing, else `rearmInProgress`.
+//   Brackets: not yet (②).
+// - A v1 snapshot is still read (no condition, no rearm offered).
 // Event (Tauri `listen`):
 //   execution://pending-confirm-changed         (payload ignored; re-list)
 
-export const PENDING_CONFIRM_CONTRACT_VERSION = 1 as const;
+export const PENDING_CONFIRM_CONTRACT_VERSION = 2 as const;
+const READABLE_VERSIONS = [1, 2] as const;
+export type PendingConfirmContractVersion = (typeof READABLE_VERSIONS)[number];
 
 export const PENDING_CONFIRM_COMMAND = {
     list: 'execution_list_pending_confirm',
@@ -60,7 +77,7 @@ export const PENDING_CONFIRM_CHANGED_EVENT = 'execution://pending-confirm-change
  * session ended, so it cannot be working any more (it may have filled). */
 export type PendingConfirmState = 'needsConfirm' | 'expired';
 
-export type PendingResolution = 'confirmedSent' | 'confirmedNotSent' | 'acknowledgeExpired';
+export type PendingResolution = 'confirmedSent' | 'confirmedNotSent' | 'acknowledgeExpired' | 'rearmInNewSession';
 
 export interface PendingOwner {
     kind: 'trigger' | 'bracket';
@@ -78,6 +95,7 @@ export interface PendingOrderSpec {
     price: number | null; // required for LMT, null for MKT
     orderType: 'ROD' | 'IOC' | 'FOK';
     triggerPrice: number | null; // the trigger level that fired, if any
+    triggerCondition: 'below' | 'above' | null; // v2; null in v1 / unknown
 }
 
 export const UNIT_LABEL: Record<PendingOrderSpec['quantityUnit'], string> = { contract: '口', lot: '張', share: '股' };
@@ -88,7 +106,8 @@ export interface PendingConfirmItem {
     state: PendingConfirmState;
     owner: PendingOwner;
     order: PendingOrderSpec;
-    account: { accountType: 'F' | 'S' | 'H'; accountId: string };
+    /** brokerId: v2 (null in v1); positions are matched by broker + account. */
+    account: { accountType: 'F' | 'S' | 'H'; accountId: string; brokerId: string | null };
     env: string; // `${apiBase}|simulation|production` (same as protection env)
     tag: string; // custom_field tag the engine searched the listing for
     submittedAt: number; // ms epoch: the place request was written / sent
@@ -96,10 +115,14 @@ export interface PendingConfirmItem {
     listingChecks: number; // complete listings that did not contain the tag
     lastCheckedAt: number | null; // ms epoch of the last complete listing
     expiredAt: number | null; // ms epoch; required when state = expired
+    /** v2: a rearm of this item that did not finish (the App stopped between
+     * creating the new trigger and ending this one). `working`: it already
+     * placed an order, so it cannot be redone here. */
+    rearmed: { programId: string; quantity: number; working: boolean } | null;
 }
 
 export interface PendingConfirmSnapshot {
-    version: typeof PENDING_CONFIRM_CONTRACT_VERSION;
+    version: PendingConfirmContractVersion;
     runId: string; // new for every engine process
     sequence: number; // increases on every change within `runId`
     /** The previous App run did not shut down cleanly. */
@@ -111,9 +134,13 @@ export interface ResolvePendingRequest {
     id: string;
     revision: number;
     resolution: PendingResolution;
+    quantity?: number; // rearmInNewSession only
 }
 
-export type ResolvePendingRefusal = 'notFound' | 'stale' | 'invalidForState' | 'windowNotAllowed';
+export type ResolvePendingRefusal = 'notFound' | 'stale' | 'invalidForState' | 'windowNotAllowed'
+    | 'notEnabled' | 'invalidRequest' | 'rearmFailed' | 'rearmInProgress';
+const REFUSALS = ['notFound', 'stale', 'invalidForState', 'windowNotAllowed', 'notEnabled', 'invalidRequest', 'rearmFailed',
+    'rearmInProgress'] as const;
 
 export type ResolvePendingResult =
     | { ok: true; snapshot: PendingConfirmSnapshot }
@@ -121,7 +148,7 @@ export type ResolvePendingResult =
 
 const RESOLUTIONS: Record<PendingConfirmState, readonly PendingResolution[]> = {
     needsConfirm: ['confirmedSent', 'confirmedNotSent'],
-    expired: ['acknowledgeExpired'],
+    expired: ['acknowledgeExpired', 'rearmInNewSession'],
 };
 
 export function resolutionAllowed(state: PendingConfirmState, resolution: PendingResolution): boolean {
@@ -217,10 +244,14 @@ function parseItem(raw: unknown, path: string): PendingConfirmItem {
             price,
             orderType: oneOf(order.orderType, ['ROD', 'IOC', 'FOK'] as const, `${path}.order.orderType`),
             triggerPrice: nullable(order.triggerPrice, `${path}.order.triggerPrice`, num),
+            triggerCondition: order.triggerCondition === undefined || order.triggerCondition === null ? null
+                : oneOf(order.triggerCondition, ['below', 'above'] as const, `${path}.order.triggerCondition`),
         },
         account: {
             accountType: oneOf(account.accountType, ['F', 'S', 'H'] as const, `${path}.account.accountType`),
             accountId: str(account.accountId, `${path}.account.accountId`),
+            brokerId: account.brokerId === undefined || account.brokerId === null ? null
+                : str(account.brokerId, `${path}.account.brokerId`),
         },
         env: str(o.env, `${path}.env`),
         tag: str(o.tag, `${path}.tag`),
@@ -229,13 +260,18 @@ function parseItem(raw: unknown, path: string): PendingConfirmItem {
         listingChecks: nonNegInt(o.listingChecks, `${path}.listingChecks`),
         lastCheckedAt: nullable(o.lastCheckedAt, `${path}.lastCheckedAt`, epochMs),
         expiredAt,
+        rearmed: o.rearmed === undefined || o.rearmed === null ? null : (() => {
+            const r = obj(o.rearmed, `${path}.rearmed`);
+            const quantity = nonNegInt(r.quantity, `${path}.rearmed.quantity`);
+            return { programId: str(r.programId, `${path}.rearmed.programId`), quantity, working: bool(r.working, `${path}.rearmed.working`) };
+        })(),
     };
 }
 
 export function parsePendingConfirmSnapshot(raw: unknown): PendingConfirmSnapshot {
     const o = obj(raw, 'snapshot');
-    if (o.version !== PENDING_CONFIRM_CONTRACT_VERSION) {
-        throw new ContractError('snapshot.version', `expected ${PENDING_CONFIRM_CONTRACT_VERSION}`);
+    if (!READABLE_VERSIONS.includes(o.version as PendingConfirmContractVersion)) {
+        throw new ContractError('snapshot.version', `expected one of ${READABLE_VERSIONS.join('|')}`);
     }
     if (!Array.isArray(o.items)) throw new ContractError('snapshot.items', 'not an array');
     const items = o.items.map((it, i) => parseItem(it, `snapshot.items[${i}]`));
@@ -245,7 +281,7 @@ export function parsePendingConfirmSnapshot(raw: unknown): PendingConfirmSnapsho
         ids.add(it.id);
     }
     return {
-        version: PENDING_CONFIRM_CONTRACT_VERSION,
+        version: o.version as PendingConfirmContractVersion,
         runId: str(o.runId, 'snapshot.runId'),
         sequence: nonNegInt(o.sequence, 'snapshot.sequence'),
         uncleanShutdown: bool(o.uncleanShutdown, 'snapshot.uncleanShutdown'),
@@ -260,7 +296,14 @@ export function parseResolvePendingResult(raw: unknown): ResolvePendingResult {
     if (o.ok !== false) throw new ContractError('result.ok', 'not a boolean');
     return {
         ok: false,
-        reason: oneOf(o.reason, ['notFound', 'stale', 'invalidForState', 'windowNotAllowed'] as const, 'result.reason'),
+        reason: oneOf(o.reason, REFUSALS, 'result.reason'),
         snapshot,
     };
+}
+
+/** The card may offer 「在新盤別重新啟用」: a v2 engine, an expired trigger
+ * (brackets come with ②) whose trigger side and price are known. */
+export function canRearm(snapshot: Pick<PendingConfirmSnapshot, 'version'>, item: PendingConfirmItem): boolean {
+    return snapshot.version >= 2 && item.state === 'expired' && item.owner.kind === 'trigger' && !item.rearmed?.working
+        && item.order.triggerCondition !== null && item.order.triggerPrice !== null;
 }

@@ -26,9 +26,14 @@ const oddOpts = (d: Desired) => (d.odd ? [{ oddLot: true }] as const : [] as con
 // top of the registry replay. Releases therefore wait briefly and only
 // unsubscribe what is still unwanted.
 export const RELEASE_GRACE_MS = 1500;
+// #201: quotes the App's background engine watches. A page going away
+// (reload, closed main window) never unsubscribes them: the engine keeps
+// watching while no window is open.
+const pinned = new Map<string, { desired: Desired; refs: number }>();
 function desiredNow() {
     const desired = new Map<string, Desired>();
     for (const set of clients.values()) for (const [key, value] of set) desired.set(key, value);
+    for (const [key, value] of pinned) desired.set(key, value.desired);
     // #102: protection triggers hold their Tick feed explicitly through
     // retainQuote() in the main-window trigger engine (no localStorage peek).
     return desired;
@@ -86,6 +91,23 @@ export function retainQuote(contract: ContractBase, type: QuoteTypeName, options
         const current = local.get(key);
         if (current && current.refs > 1) current.refs--;
         else local.delete(key);
+        sync();
+    };
+}
+/** Like retainQuote, but kept when this page goes away (main window only;
+ * for the background engine's watched contracts). */
+export function pinQuote(contract: ContractBase, type: QuoteTypeName): () => void {
+    const desired: Desired = { contract, type };
+    const key = keyOf(desired);
+    pinned.set(key, { desired, refs: (pinned.get(key)?.refs ?? 0) + 1 });
+    sync();
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        const current = pinned.get(key);
+        if (current && current.refs > 1) current.refs--;
+        else pinned.delete(key);
         sync();
     };
 }

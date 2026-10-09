@@ -38,7 +38,7 @@ describe('pending confirm contract', () => {
             resolve: 'execution_resolve_pending',
         });
         expect(PENDING_CONFIRM_CHANGED_EVENT).toBe('execution://pending-confirm-changed');
-        expect(PENDING_CONFIRM_CONTRACT_VERSION).toBe(1);
+        expect(PENDING_CONFIRM_CONTRACT_VERSION).toBe(2);
     });
 
     it('accepts a well-formed snapshot', () => {
@@ -49,7 +49,7 @@ describe('pending confirm contract', () => {
     });
 
     it.each([
-        ['wrong version', { version: 2, runId: 'r', sequence: 1, uncleanShutdown: false, items: [] }],
+        ['wrong version', { version: 3, runId: 'r', sequence: 1, uncleanShutdown: false, items: [] }],
         ['missing items', { version: 1, runId: 'r', sequence: 1, uncleanShutdown: false }],
         ['unknown state', { version: 1, runId: 'r', sequence: 1, uncleanShutdown: false, items: [wireItem({ state: 'retry' })] }],
         ['bad quantity', { version: 1, runId: 'r', sequence: 1, uncleanShutdown: false, items: [wireItem({ order: { ...wireItem().order, quantity: 0 } })] }],
@@ -85,5 +85,37 @@ describe('pending confirm contract', () => {
         const refused = parseResolvePendingResult({ ok: false, reason: 'stale', snapshot });
         expect(refused).toMatchObject({ ok: false, reason: 'stale' });
         expect(() => parseResolvePendingResult({ ok: false, reason: 'resend', snapshot })).toThrow();
+    });
+});
+
+describe('contract v2: rearm in the new session', () => {
+    it('reads v2 snapshots with the trigger condition, and still reads v1', () => {
+        expect(PENDING_CONFIRM_CONTRACT_VERSION).toBe(2);
+        const v2 = parsePendingConfirmSnapshot({ version: 2, runId: 'r', sequence: 1, uncleanShutdown: false,
+            items: [wireItem({ order: { ...wireItem().order, triggerCondition: 'below' } })] });
+        expect(v2.items[0]!.order.triggerCondition).toBe('below');
+        const withBroker = parsePendingConfirmSnapshot({ version: 2, runId: 'r', sequence: 1, uncleanShutdown: false,
+            items: [wireItem({ account: { accountType: 'F', accountId: '0000001', brokerId: 'F002000' } })] });
+        expect(withBroker.items[0]!.account.brokerId).toBe('F002000');
+        expect(v2.items[0]!.account.brokerId).toBeNull();
+        expect(v2.items[0]!.rearmed).toBeNull();
+        const unfinished = parsePendingConfirmSnapshot({ version: 2, runId: 'r', sequence: 1, uncleanShutdown: false,
+            items: [wireItem({ rearmed: { programId: 'rearm:x:1', quantity: 2, working: true } })] });
+        expect(unfinished.items[0]!.rearmed).toEqual({ programId: 'rearm:x:1', quantity: 2, working: true });
+        const v1 = parsePendingConfirmSnapshot({ version: 1, runId: 'r', sequence: 1, uncleanShutdown: false, items: [wireItem()] });
+        expect(v1.version).toBe(1);
+        expect(v1.items[0]!.order.triggerCondition).toBeNull();
+        expect(() => parsePendingConfirmSnapshot({ version: 3, runId: 'r', sequence: 1, uncleanShutdown: false, items: [] })).toThrow();
+        expect(() => parsePendingConfirmSnapshot({ version: 2, runId: 'r', sequence: 1, uncleanShutdown: false,
+            items: [wireItem({ order: { ...wireItem().order, triggerCondition: 'sideways' } })] })).toThrow();
+    });
+
+    it('only an expired item can be rearmed, and new refusals are understood', () => {
+        expect(resolutionAllowed('expired', 'rearmInNewSession')).toBe(true);
+        expect(resolutionAllowed('needsConfirm', 'rearmInNewSession')).toBe(false);
+        const snapshot = { version: 2, runId: 'r', sequence: 1, uncleanShutdown: false, items: [] };
+        for (const reason of ['notEnabled', 'invalidRequest', 'rearmFailed', 'rearmInProgress']) {
+            expect(parseResolvePendingResult({ ok: false, reason, snapshot })).toMatchObject({ ok: false, reason });
+        }
     });
 });

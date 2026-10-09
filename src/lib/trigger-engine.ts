@@ -57,6 +57,25 @@ import {
     reportEnvMatches,
     watchProtectionEnv,
 } from './protection-env';
+import {
+    backgroundOwnerForNew,
+    backgroundSupported,
+    createBackgroundTrigger,
+    getBackgroundPrices,
+    getBackgroundPrograms,
+    refreshBackground,
+    removeBackgroundTrigger,
+    resolveBackgroundTrigger,
+    subscribeBackground,
+} from './execution/background';
+import {
+    backgroundEligible,
+    backgroundRowId,
+    isBackgroundId,
+    programForNewTrigger,
+    triggerRowsFromPrograms,
+    type BackgroundTriggerOrder,
+} from './execution/background-view';
 import { retainQuote } from './quote-ownership';
 import { getApiBase } from './runtime';
 import { fetchTrades } from './shioaji';
@@ -70,12 +89,14 @@ import type { Account } from './types/portfolio';
 import type { Action, FuturesOCType, StockOrderLot, Trade } from './types/order';
 
 /** Why protection resumed with a first-tick check (#144). */
-export type RestoreReason = 'restart' | 'disconnect' | 'env';
+/** `rearm`: a background trigger turned back on in a new session (#201). */
+export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'rearm';
 
 export const RESTORE_REASON_TEXT: Record<RestoreReason, string> = {
     restart: 'App 關閉、重新載入或切換主視窗期間已穿價',
     disconnect: '行情連線中斷（或伺服器模式未確認）超過 1 分鐘期間已穿價',
     env: '先前不在此伺服器環境執行，切回時已穿價',
+    rearm: '在新盤別重新啟用時價格已穿過觸發價',
 };
 
 export interface TriggerOrder {
@@ -364,6 +385,17 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase, opts?: 
         notify({ kind: 'err', title: '觸價單未建立', body: prepared });
         return null;
     }
+    // #201: with 「背景持續執行」 on, a new futures / options stop or take
+    // runs in the background engine and never enters this engine (one owner)
+    if (backgroundSupported() && backgroundEligible(prepared, contract)) {
+        const owner = await backgroundOwnerForNew();
+        if (owner === 'background') return addBackgroundTrigger(prepared, contract!);
+        if (owner !== 'window') {
+            // on (or unknown) but unusable: never a silent switch to this window
+            notify({ kind: 'err', title: '觸價單未建立', body: owner.refused });
+            return null;
+        }
+    }
     const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : newId();
     try {
         return await bus.send({ op: 'add', trigger: { ...prepared, requestId } }) as TriggerOrder;
@@ -373,7 +405,39 @@ export async function addTrigger(t: NewTrigger, contract?: ContractBase, opts?: 
     }
 }
 
+async function addBackgroundTrigger(prepared: NewTrigger, contract: ContractBase): Promise<TriggerOrder | null> {
+    const t: TriggerOrder = { ...prepared, id: newId(), createdAt: Date.now() };
+    delete t.requestId;
+    const program = programForNewTrigger(t, contract);
+    if (!program) {
+        notify({ kind: 'err', title: '觸價單未建立', body: '背景執行：觸價單缺少帳戶或伺服器資訊' });
+        return null;
+    }
+    const result = await createBackgroundTrigger(program);
+    if (result !== 'created') {
+        if ('refused' in result) notify({ kind: 'err', title: '觸價單未建立', body: `背景執行：${result.refused}` });
+        // never "not created": a retry could make a second trigger that also sends
+        else notify({ kind: 'err', title: '觸價單建立結果未確認', body: `背景執行：${result.unconfirmed}；請先看觸價單清單是否已有這張，不要直接重掛` });
+        return null;
+    }
+    notify({ kind: 'info', title: `${kindLabel(t)}（背景執行）`, body: describe(t) });
+    return backgroundRows().find(r => r.background.programId === program.id) ?? { ...t, id: backgroundRowId(program.id, t.id) };
+}
+
+function backgroundRow(id: string): BackgroundTriggerOrder | undefined {
+    return backgroundRows().find(r => r.id === id);
+}
+
 export async function removeTrigger(id: string): Promise<void> {
+    if (isBackgroundId(id)) {
+        try {
+            const row = backgroundRow(id);
+            if (row) await removeBackgroundTrigger(row.background.programId);
+        } catch (e) {
+            notify({ kind: 'err', title: '觸價單移除未確認', body: e instanceof Error ? e.message : String(e) });
+        }
+        return;
+    }
     try {
         await bus.send({ op: 'remove', id });
     } catch (e) {
@@ -392,6 +456,11 @@ export function acknowledgeExit(id: string): Promise<unknown> {
  * last (re)connect. `cancel` removes it (bracket protection is removed from
  * its bracket status instead). `keep` re-arms it for a fresh crossing only. */
 export function resolvePendingTrigger(id: string, choice: PendingChoice, opts: { allowUnpast?: boolean } = {}): Promise<unknown> {
+    if (isBackgroundId(id)) {
+        const row = backgroundRow(id);
+        if (!row) return Promise.reject(new Error('找不到這張觸價單'));
+        return resolveBackgroundTrigger(row.background.programId, row.background.levelId, choice, !!opts.allowUnpast);
+    }
     return bus.send({ op: 'resolve-pending', id, choice, allowUnpast: opts.allowUnpast });
 }
 
@@ -402,6 +471,7 @@ export function isPendingUnpast(t: Pick<TriggerOrder, 'condition' | 'price'>, pr
 
 /** Ask the executor to publish the latest prices of 待確認 codes now. */
 export function requestPendingPrices(): Promise<unknown> {
+    void refreshBackground();
     return bus.send({ op: 'publish-prices' });
 }
 
@@ -418,8 +488,34 @@ function subscribe(l: () => void) {
     return () => { listeners.delete(l); };
 }
 
+// ---- background triggers as rows (#201) ----
+// Display and commands only: this engine never sees them (they are not in
+// `triggers`) and never evaluates or sends them.
+
+let bgCache: { programs: unknown; rows: BackgroundTriggerOrder[] } = { programs: null, rows: [] };
+function backgroundRows(): BackgroundTriggerOrder[] {
+    const programs = getBackgroundPrograms();
+    if (bgCache.programs !== programs) bgCache = { programs, rows: triggerRowsFromPrograms(programs) };
+    return bgCache.rows;
+}
+
+let mergedCache: { ts: TriggerOrder[]; bg: BackgroundTriggerOrder[]; all: TriggerOrder[] } = { ts: [], bg: [], all: [] };
+/** This engine's triggers, then the background ones (none: the same array). */
+export function getDisplayTriggers(): TriggerOrder[] {
+    const ts = snapshot.triggers;
+    const bg = backgroundRows();
+    if (mergedCache.ts !== ts || mergedCache.bg !== bg) mergedCache = { ts, bg, all: bg.length ? [...ts, ...bg] : ts };
+    return mergedCache.all;
+}
+
+function subscribeAll(l: () => void) {
+    const a = subscribe(l);
+    const b = subscribeBackground(l);
+    return () => { a(); b(); };
+}
+
 export function useTriggers(): TriggerOrder[] {
-    return useSyncExternalStore(subscribe, () => snapshot.triggers);
+    return useSyncExternalStore(subscribeAll, getDisplayTriggers);
 }
 
 const NO_SENDING: string[] = [];
@@ -430,8 +526,20 @@ export function useSendingTriggers(): string[] {
 
 const NO_PRICES: Record<string, number> = {};
 /** Latest tick price of every code that has a 待確認 trigger. */
+let pricesCache: { ts: unknown; bg: unknown; rows: unknown; all: Record<string, number> } = { ts: null, bg: null, rows: null, all: NO_PRICES };
+function pendingPricesNow(): Record<string, number> {
+    const ts = snapshot.prices ?? NO_PRICES;
+    const bg = getBackgroundPrices();
+    const rows = backgroundRows();
+    if (pricesCache.ts !== ts || pricesCache.bg !== bg || pricesCache.rows !== rows) {
+        const extra: Record<string, number> = {};
+        for (const r of rows) if (r.pending && bg[r.code] !== undefined) extra[r.code] = bg[r.code]!;
+        pricesCache = { ts, bg, rows, all: Object.keys(extra).length ? { ...ts, ...extra } : ts };
+    }
+    return pricesCache.all;
+}
 export function usePendingPrices(): Record<string, number> {
-    return useSyncExternalStore(subscribe, () => snapshot.prices ?? NO_PRICES);
+    return useSyncExternalStore(subscribeAll, pendingPricesNow);
 }
 
 export function useTriggerExits(): ExitRecord[] {
