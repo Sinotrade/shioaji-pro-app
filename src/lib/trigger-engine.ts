@@ -87,6 +87,7 @@ import { notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
 import { fmtPrice } from './utils/format';
 import { stepPrice } from './utils/ticksize';
+import { bandTickFor, prefetchTickBands } from './tick-bands';
 import { isOddLot, ODD_LOT_MAX_SHARES, oddLotMarketablePrice, SHARES_PER_LOT, sharesToUnits, stockQtyUnit } from './odd-lot';
 import type { ContractBase } from './types/contract';
 import type { Account } from './types/portfolio';
@@ -451,9 +452,21 @@ export const EXPIRY_CHECK_MS = 5000;
 /** 'fill' OCO: once the exit a leg waits for is final, take what filled off
  * it (removed at zero) and let it watch again; later fills of that exit
  * keep being taken off. */
+/** A final exit is trusted for unlocking only after this long: a Cancel
+ * report can arrive before the last deal report of the same order. */
+export const OCO_SETTLE_MS = 3000;
+const ocoFinalSeen = new Map<string, number>();
 function settleOco(rec: ExitRecord) {
-    const final = rec.status === 'filled' || rec.status === 'incomplete' || rec.status === 'not-sent'
+    let final = rec.status === 'filled' || rec.status === 'incomplete' || rec.status === 'not-sent'
         || (rec.status === 'unknown' && !!rec.acknowledged);
+    if (final && rec.status !== 'filled' && rec.status !== 'not-sent' && triggers.some(t => t.ocoLock === rec.id)) {
+        const seen = ocoFinalSeen.get(rec.id);
+        if (seen === undefined) {
+            ocoFinalSeen.set(rec.id, Date.now());
+            setTimeout(() => { const cur = exits.find(e => e.id === rec.id); if (cur) settleOco(cur); }, OCO_SETTLE_MS);
+            final = false;
+        } else if (Date.now() - seen < OCO_SETTLE_MS) final = false;
+    }
     let changed = false;
     triggers = triggers.flatMap(t => {
         if (t.ocoLock === rec.id) {
@@ -1193,7 +1206,13 @@ export function orderPlanFor(t: Pick<TriggerOrder, 'orderLot' | 'action' | 'pric
         if (contract.security_type !== 'FUT' && contract.security_type !== 'OPT') return '範圍市價只適用期貨選擇權，未送出';
         return { price: null, futuresPriceType: 'MKP' };
     }
-    // 觸價後限價: the trigger price moved `ticks` legal price steps
+    // 觸價後限價: the trigger price moved `ticks` legal price steps — on the
+    // exchange's band table when the product has one (never a guessed tick)
+    const rule = (contract as { tick_rule?: string }).tick_rule;
+    if (rule && send.ticks !== 0 && bandTickFor(rule, t.price) === undefined) {
+        if (contract.security_type === 'FUT' || contract.security_type === 'OPT') prefetchTickBands(rule, contract.security_type);
+        return '跳動點級距尚未載入，限價未送出';
+    }
     const price = send.ticks === 0 ? t.price : stepPrice(contract, t.price, send.ticks);
     if (!Number.isFinite(price) || price <= 0) return '限價計算結果無效，未送出';
     const up = Number(contract.limit_up);
@@ -1276,6 +1295,8 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
     if (typeof ctx === 'string') { notSentExit(t, rec, ctx); return; }
     const op = orderPlanFor(t, ctx.contract);
     if (typeof op === 'string') { notSentExit(t, rec, op); return; }
+    // the condition may have lapsed while the contract was being checked
+    if (t.validity && Date.now() >= t.validity.until) { notSentExit(t, rec, '有效期已過，未送出'); return; }
     try {
         const trade = await placeQuickOrder(ctx.contract, t.action, op.price, rec.quantity, {
             // protective exit — never blocked by kill switch; an entry is a
@@ -1347,6 +1368,7 @@ async function sendPending(id: string, allowUnpast: boolean) {
                 if (currentProtectionEnv() !== cur.env) throw new Error('伺服器或模擬／正式模式已切換，未送出');
                 if (cur.group && processedGroups[groupKey(cur.env, cur.group)]) throw new Error('此 OCO 群組已觸發，未送出');
                 if (cur.ocoLock) throw new Error('二擇一另一邊的委託還在處理，未送出');
+                if (cur.validity && Date.now() >= cur.validity.until) throw new Error('有效期已過，未送出');
                 const price = lastPrices.get(priceKeyOf(cur));
                 if (getStreamStatus() !== 'live' || price === undefined) throw new Error('行情中斷，未送出');
                 // The manual order dialog can stay open while the price crosses
@@ -1666,6 +1688,7 @@ function resolvePending(id: string, choice: PendingChoice, allowUnpast = false):
         return true;
     }
     if (choice !== 'send') throw new Error('未知選項');
+    if (t.validity && Date.now() >= t.validity.until) throw new Error('有效期已過，未送出');
     if (currentProtectionEnv() !== t.env) throw new Error('伺服器或模擬／正式模式與建立時不同，未送出');
     const account = t.account && getAccountState().accounts.find(a => canTrade(a) && a.account_type === t.account!.account_type
         && a.broker_id === t.account!.broker_id && a.account_id === t.account!.account_id);
@@ -1780,7 +1803,9 @@ function becomeExecutor() {
     });
     // #226 對手價 triggers: best bid / ask (a missing or zero side is skipped)
     onAnyBidAsk(ba => {
-        if (ba.simtrade || ba.intraday_odd) return;
+        if (ba.intraday_odd) return;
+        noteActivity(); // a stall / sleep is noticed before this update is evaluated
+        if (ba.simtrade) return;
         if (!triggers.some(t => t.code === ba.code && (feedOf(t) === 'bid' || feedOf(t) === 'ask'))) return;
         const bid = Number(ba.bid_price?.[0]);
         const ask = Number(ba.ask_price?.[0]);

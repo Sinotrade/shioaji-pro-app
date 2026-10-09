@@ -273,6 +273,21 @@ const bidask = async (bid: number, ask: number) => {
 const placeOpts = (i = 0) => m.place.mock.calls[i]![4] as Record<string, unknown>;
 
 describe('condition kinds (#226)', () => {
+    it('an order that fires after its validity ended is not sent', async () => {
+        await boot();
+        let release!: () => void;
+        m.ensure.mockImplementationOnce(() => new Promise(r => { release = () => r(TXF); }));
+        await entry({ validity: { type: 'session', until: Date.now() + 1_000 } });
+        m.ensure.mockImplementationOnce(() => new Promise(r => { release = () => r(TXF); }));
+        await tick(48300);
+        await tick(47900); // fires; the contract check is still on its way
+        vi.setSystemTime(Date.now() + 2_000);
+        release();
+        await flush();
+        expect(m.place).not.toHaveBeenCalled();
+        expect(engine.getExits()[0]!.status).toBe('not-sent');
+    });
+
     it('下穿 fires only on a crossing: a first tick already below does not fire', async () => {
         await boot();
         await entry({ cross: true });
@@ -378,12 +393,31 @@ describe('二擇一 (#226)', () => {
         engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled', deal_quantity: 2, cancel_quantity: 1,
             deals: [{ seq: 's1', quantity: 2, price: 48400, ts: 1 }] } } as never);
         await flush();
+        expect(only().ocoLock).toBeTruthy(); // a cancel is trusted only after the settle time
+        await vi.advanceTimersByTimeAsync(engine.OCO_SETTLE_MS + 10);
         expect(only().quantity).toBe(1);
         expect(only().ocoLock).toBeUndefined();
         await tick(48000); // first tick after unlocking decides (not past)
         await tick(47900);
         expect(m.place).toHaveBeenCalledTimes(2);
         expect(m.place.mock.calls[1]![3]).toBe(1);
+    });
+
+    it('成交後刪對應口數: a deal arriving after the Cancel (within the settle time) still counts', async () => {
+        await boot();
+        await pair('fill');
+        await tick(48200);
+        await tick(48400);
+        const rec = engine.getExits()[0]!;
+        engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled', deal_quantity: 0, cancel_quantity: 3,
+            deals: [] } } as never);
+        await flush();
+        await vi.advanceTimersByTimeAsync(1000);
+        engine.applyExitTrade({ order: { id: rec.orderId, account: null }, status: { status: 'Cancelled', deal_quantity: 1, cancel_quantity: 2,
+            deals: [{ seq: 's1', quantity: 1, price: 48400, ts: 1 }] } } as never);
+        await vi.advanceTimersByTimeAsync(engine.OCO_SETTLE_MS);
+        expect(only().quantity).toBe(2);
+        expect(only().ocoLock).toBeUndefined();
     });
 
     it('成交後刪對應口數: fully filled removes the other side', async () => {
@@ -396,5 +430,17 @@ describe('二擇一 (#226)', () => {
             deals: [{ seq: 's1', quantity: 2, price: 48400, ts: 1 }] } } as never);
         await flush();
         expect(engine.getTriggers()).toHaveLength(0);
+    });
+});
+
+describe('orderPlanFor (#226)', () => {
+    it('a limit on a banded product waits for the exchange band table (never a guessed tick)', async () => {
+        await boot();
+        const t = { orderLot: undefined, action: 'Buy' as const, price: 50, send: { type: 'LMT' as const, ticks: 2 } };
+        expect(engine.orderPlanFor(t, { code: 'TXO', security_type: 'OPT', tick_rule: 'unknown-rule', tick: 10 } as never)).toContain('跳動點級距尚未載入');
+        expect(engine.orderPlanFor({ ...t, send: { type: 'LMT', ticks: 0 } }, { code: 'TXO', security_type: 'OPT', tick_rule: 'unknown-rule' } as never))
+            .toEqual({ price: 50, orderType: 'ROD' });
+        expect(engine.orderPlanFor({ ...t, group: 'g', ocoMode: 'fill', send: { type: 'LMT', ticks: 0 } }, { code: 'TXF', security_type: 'FUT' } as never))
+            .toEqual({ price: 50, orderType: 'IOC' });
     });
 });

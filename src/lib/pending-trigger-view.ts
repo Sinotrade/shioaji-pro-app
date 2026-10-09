@@ -37,8 +37,10 @@ export function exitStyleLabel(t: Pick<TriggerOrder, 'orderLot'> & { send?: Trig
 
 /** 送出後會怎樣：整股／期貨是市價單會立即成交；零股是漲跌停價限價 ROD，
  * 要等下一次零股撮合（約每 5 秒），不保證立即成交（#204） */
-export function sendOutcomeText(t: Pick<TriggerOrder, 'orderLot'> & { send?: TriggerOrder['send'] }): string {
-    if (!isOddLot(t.orderLot) && t.send?.type === 'LMT') return '會以限價送出，未成交的部分會留在委託中';
+export function sendOutcomeText(t: Pick<TriggerOrder, 'orderLot'> & Partial<Pick<TriggerOrder, 'send' | 'group' | 'ocoMode'>>): string {
+    if (!isOddLot(t.orderLot) && t.send?.type === 'LMT') {
+        return t.group && t.ocoMode === 'fill' ? '會以限價 IOC 送出，未成交的部分會取消' : '會以限價送出，未成交的部分會留在委託中';
+    }
     if (!isOddLot(t.orderLot) && t.send?.type === 'MKP') return '會以範圍市價送出，可能只成交一部分';
     return isOddLot(t.orderLot)
         ? '會以漲跌停價送出零股限價 ROD，等下一次零股撮合（約每 5 秒）成交，不保證立即成交'
