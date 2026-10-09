@@ -71,7 +71,10 @@ export interface CreateBracketRequest {
     take: number | null;
     /** The entry order: trade id (`order.id`), seqno / ordno when known
      * (ordno may come later with the New report). */
-    entry: { tradeId: string; seqno: string | null; ordno: string | null };
+    entry: { tradeId: string; seqno: string | null; ordno: string | null;
+        /** ms epoch the entry was sent: an entry of another trading session
+         * than now is refused (orders do not cross sessions). */
+        sentAt: number };
 }
 
 export interface RearmBracketRequest {
@@ -177,11 +180,12 @@ export function lapsedLevel(lv: Level): boolean {
 
 function stateOf(p: OrderProgram, lv: Level): BracketState {
     if (lv.phase === 'done' && lv.detail === 'handledByUser') return 'handled';
-    if (lv.phase === 'done' && lv.detail === 'rearmed') return 'rearmed';
     if (unknownOpen(lv) || lv.phase === 'unknown' || lv.pending?.reason === 'unknownNotSent') return 'unknown';
     if (lapsedLevel(lv)) return 'lapsed';
     if (lv.phase === 'needsConfirm') return 'needsConfirm';
+    // a rearmed bracket still shows lots it knew unprotected
     if (lv.unprotected > 0 || lv.phase === 'disabled') return 'unprotected';
+    if (lv.phase === 'done' && lv.detail === 'rearmed') return 'rearmed';
     if (lv.phase === 'exiting') return 'exiting';
     if (lv.phase === 'holding') return 'protected';
     if (lv.phase === 'working' || (lv.phase === 'idle' && p.status !== 'stopped')) return 'waitingEntry';

@@ -25,6 +25,8 @@ export interface BackgroundBracketSpec {
     tradeId: string;
     seqno: string | null;
     ordno: string | null;
+    /** ms epoch the entry was sent. */
+    sentAt: number;
 }
 
 /** Futures / options only (the engine refuses the rest). */
@@ -58,6 +60,6 @@ export function bracketRequestFor(spec: BackgroundBracketSpec, id = newBracketId
         qty: spec.quantity,
         stop: spec.stopPrice,
         take: spec.takePrice,
-        entry: { tradeId: spec.tradeId, seqno: blank(spec.seqno), ordno: blank(spec.ordno) },
+        entry: { tradeId: spec.tradeId, seqno: blank(spec.seqno), ordno: blank(spec.ordno), sentAt: spec.sentAt },
     };
 }

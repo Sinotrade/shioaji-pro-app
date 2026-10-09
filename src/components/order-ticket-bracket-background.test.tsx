@@ -74,7 +74,7 @@ it('setting on: the background engine protects it with the entry trade id', asyn
     expect(m.register).not.toHaveBeenCalled();
     const req = m.create.mock.calls[0]![0];
     expect(req).toMatchObject({ side: 'Buy', stop: 95, take: null,
-        entry: { tradeId: 'T-entry', seqno: 'S1', ordno: null },
+        entry: { tradeId: 'T-entry', seqno: 'S1', ordno: null, sentAt: expect.any(Number) },
         binding: { env: 'simulation', serverId: 'http://127.0.0.1:1',
             account: { accountType: 'F', brokerId: 'F002000', accountId: '1234567' },
             contract: { quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT' } } });
@@ -84,6 +84,14 @@ it('setting on: the background engine protects it with the entry trade id', asyn
 it('the background unavailable: no entry is sent', async () => {
     m.owner.mockResolvedValue({ refused: '背景執行目前無法使用' });
     await sendBracket();
+    expect(m.future).not.toHaveBeenCalled();
+    expect(feedback()).toContain('進場單未送出');
+});
+
+it('the background going away while confirming: no entry is sent', async () => {
+    m.owner.mockResolvedValueOnce('background').mockResolvedValueOnce({ refused: '背景執行尚未連上目前的伺服器' });
+    await sendBracket();
+    expect(m.owner.mock.calls[1]![0]).toEqual({ liveOn: 'http://127.0.0.1:1|simulation' });
     expect(m.future).not.toHaveBeenCalled();
     expect(feedback()).toContain('進場單未送出');
 });

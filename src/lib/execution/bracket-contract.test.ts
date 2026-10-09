@@ -60,6 +60,9 @@ describe('bracket views', () => {
         expect(bracketFinished(handled)).toBe(true);
         expect(one(handled)).toMatchObject({ state: 'handled', actions: { remove: true, markHandled: false } });
         expect(one(program({ phase: 'done', detail: 'rearmed', orders: [slot({ status: 'ended' })] })).state).toBe('rearmed');
+        // lots it knew unprotected stay shown after a rearm
+        expect(one(program({ phase: 'done', detail: 'rearmed', unprotected: 1, orders: [slot({ status: 'ended' })] })).state)
+            .toBe('unprotected');
     });
 
     it('only brackets are listed', () => {
@@ -70,14 +73,14 @@ describe('bracket views', () => {
 describe('background bracket request', () => {
     const spec = { env: 'http://127.0.0.1:1|simulation', account: { account_type: 'F' as const, broker_id: 'B', account_id: 'A' },
         quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT' as const, action: 'Sell' as const, quantity: 3,
-        stopPrice: 105, takePrice: 90, tradeId: 'T1', seqno: 'S1', ordno: '' };
+        stopPrice: 105, takePrice: 90, tradeId: 'T1', seqno: 'S1', ordno: '', sentAt: 7 };
 
     it('names the environment, account, contract and the accepted entry', () => {
         const r = bracketRequestFor(spec, 'bkt-x')!;
         expect(r).toEqual({ id: 'bkt-x', side: 'Sell', qty: 3, stop: 105, take: 90,
             binding: { env: 'simulation', serverId: 'http://127.0.0.1:1', account: { accountType: 'F', brokerId: 'B', accountId: 'A' },
                 contract: { market: 'futures', quoteCode: 'TXFR1', orderCode: 'TXFJ6', securityType: 'FUT' } },
-            entry: { tradeId: 'T1', seqno: 'S1', ordno: null } });
+            entry: { tradeId: 'T1', seqno: 'S1', ordno: null, sentAt: 7 } });
     });
 
     it('refuses what it cannot describe', () => {

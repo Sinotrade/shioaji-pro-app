@@ -368,7 +368,16 @@ export function OrderTicket({
                 assertDayTradeStillAllowed();
                 if (!isSelectedAccountUnchanged(orderAccount)) throw Object.assign(new Error(ACCOUNT_CHANGED_MESSAGE), { tradingGateRejected: true });
             } };
+            if (bracketOwner === 'background') {
+                // still taken over right before the entry leaves (the setting
+                // or the connection may have changed while confirming)
+                const again = await backgroundOwnerForNew({ liveOn: bracketEnv ?? '' });
+                if (again !== 'background') {
+                    throw new Error(`${typeof again === 'object' ? again.refused : '背景持續執行已關閉'}；進場單未送出`);
+                }
+            }
             dispatch.beforeDispatch();
+            const entrySentAt = Date.now();
             const trade = isFutures
                 ? await placeFuturesOrder(contract, {
                       action,
@@ -413,6 +422,7 @@ export function OrderTicket({
                     tradeId: trade.order.id,
                     seqno: trade.order.seqno ?? null,
                     ordno: trade.order.ordno ?? null,
+                    sentAt: entrySentAt,
                 });
                 const created = request ? await createBackgroundBracket(request)
                     : { refused: '進場單沒有委託編號（送出結果可能尚未確認）' };
