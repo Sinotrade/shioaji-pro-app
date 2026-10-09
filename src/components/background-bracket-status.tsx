@@ -130,7 +130,7 @@ function Row({ v, envNow, main }: { v: BracketView; envNow: string | null; main:
                 {v.stop !== null ? ` 停損 ${fmtPrice(v.stop)}` : ''}
                 {v.take !== null ? ` 停利 ${fmtPrice(v.take)}` : ''}
                 {v.state === 'protected' || v.state === 'exiting' ? ` · 保護 ${v.position} 口` : ''}
-                {v.rearm ? ' · 新盤別重新啟用' : ''}
+                {v.origin === 'rearm' ? ' · 新盤別重新啟用' : v.origin === 'lateFill' ? ' · 晚到成交補保護' : ''}
             </div>
             {v.state === 'lapsed' && (
                 <div className={styles.note.err}>
