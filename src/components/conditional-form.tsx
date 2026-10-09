@@ -595,8 +595,11 @@ function BracketForm({ target, onClose, defaults }: { target: Target; onClose: (
                     獲利
                     <input className={styles.inputNarrow} value={trail.activate} inputMode='numeric' aria-label='移動停損啟動檔數' placeholder='例：20'
                         disabled={!trailOn} onChange={e => setTrail({ ...trail, activate: e.target.value })} />
-                    檔後啟動，
+                    檔後啟動
                 </span>
+            </div>
+            <div className={styles.formRow}>
+                <span className={styles.label} />
                 <span className={styles.group}>
                     距最{action === 'Buy' ? '高' : '低'}
                     <input className={styles.inputNarrow} value={trail.distance} inputMode='numeric' aria-label='移動停損距離檔數' placeholder='例：15'
