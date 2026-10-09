@@ -261,6 +261,9 @@ function bracketStatus(p: BracketPlan, legs: TriggerOrder[], s: Sources): { text
     const unit = unitOf(p.account, p.orderLot);
     const pendingLeg = legs.find(l => l.pending);
     if (pendingLeg) return { ...triggerStatus(pendingLeg, s), attention: true };
+    if (p.rules && p.base === undefined && !p.exit && Math.min(p.filled, p.tier?.entryQuantity ?? p.quantity) > (p.tier?.offset ?? 0)) {
+        return { text: `已成交，停損停利尚未建立${p.issues.length ? `（${p.issues[p.issues.length - 1]!.detail}）` : ''}`, tone: 'err', attention: true };
+    }
     if (p.exit?.status === 'unknown' && !p.exit.acknowledged) return { text: EXIT_TEXT.unknown!, tone: 'err', attention: true };
     if (unprotected > 0) return { text: `未受保護 ${unprotected} ${unit}，請對帳後處理`, tone: 'err', attention: true };
     if (workingEntryAfterExit(p) > 0) return { text: `已出場，進場單仍有 ${workingEntryAfterExit(p)} ${unit}未成交`, tone: 'err', attention: true };
@@ -291,14 +294,22 @@ function bracketRow(p: BracketPlan, legs: TriggerOrder[], s: Sources): CondRow {
     const st = bracketStatus(p, legs, s);
     const live = isLive(p);
     const unit = unitOf(p.account, p.orderLot);
-    const parts = [p.stopPrice !== null ? `停損 ${fmtNum(p.stopPrice)}` : null, p.takePrice !== null ? `停利 ${fmtNum(p.takePrice)}` : null];
+    // the armed stop may have moved (移動停損／保本)
+    const stopLeg = legs.find(l => l.kind === 'stop');
+    const stop = stopLeg?.price ?? p.stopPrice;
+    const waitingRules = p.rules && p.base === undefined;
+    const parts = waitingRules
+        ? [`停損 成交價${p.action === 'Buy' ? '−' : '+'}${p.rules!.stopTicks} 檔`,
+            p.rules!.takeTicks !== null ? `停利 ${p.action === 'Buy' ? '+' : '−'}${p.rules!.takeTicks} 檔` : null]
+        : [stop !== null ? `停損 ${fmtNum(stop)}${stopLeg?.trail?.active ? '（移動中）' : ''}` : null, p.takePrice !== null ? `停利 ${fmtNum(p.takePrice)}` : null];
+    if (p.rules?.trail && !parts.some(x => x?.includes('移動'))) parts.push('移動停損');
     const pendingLeg = legs.find(l => l.pending);
     return {
         id: `bracket:${p.id}`,
         kind: 'bracket',
         code: p.quoteCode,
         orderCode: p.orderCode,
-        side: { text: sideText(p.action, p.quantity, unit), dir: p.action },
+        side: { text: `${sideText(p.action, p.quantity, unit)}${p.tier && p.tier.count > 1 ? `（第 ${p.tier.index + 1}/${p.tier.count} 層）` : ''}`, dir: p.action },
         condition: parts.filter(Boolean).join(' · '),
         level: null,
         status: { text: st.text, tone: st.tone },
@@ -309,7 +320,8 @@ function bracketRow(p: BracketPlan, legs: TriggerOrder[], s: Sources): CondRow {
         paused: false,
         actions: {
             ...NO_ACTIONS,
-            modify: live && !p.exit && !pendingLeg,
+            // a rules bracket gets its prices at the first fill: nothing to edit before
+            modify: live && !p.exit && !pendingLeg && !waitingRules,
             cancel: true,
             send: !!pendingLeg,
             keep: !!pendingLeg,

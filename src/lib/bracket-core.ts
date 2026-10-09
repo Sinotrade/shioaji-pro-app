@@ -97,8 +97,55 @@ export interface BracketPlan {
     dismissed?: boolean;
     /** #226: user edits of stop / take (history). */
     edits?: { at: number; text: string }[];
+    /** #226 分批停利: this plan is tier `index` (0-based) of `count` on one
+     * entry order; it protects the entry's fills after `offset` lots, up to
+     * its `quantity`. `entryQuantity` is the whole entry order. */
+    tier?: { index: number; count: number; offset: number; entryQuantity: number };
+    /** #226 stop / take set from the actual fill price (ticks) instead of
+     * fixed prices; `base` is frozen at the first protected fill. */
+    rules?: BracketRules;
+    base?: number;
+    /** the basis came from the order / last price (no fill price yet): the
+     * first fill price replaces it */
+    baseProvisional?: boolean;
+    /** 保本 became due before this tier had its prices */
+    beArmed?: boolean;
+    /** fill identity → price (entry fills), for the cost basis */
+    fillPx?: Record<string, number>;
+    /** a price for the cost basis when fills carry none (limit / last) */
+    refPrice?: number;
     createdAt: number;
     updatedAt: number;
+}
+
+/** #226 rules of a 括號單 made in the management panel. */
+export interface BracketRules {
+    stopTicks: number;
+    /** null: no fixed take (this tier leaves by 移動停損 / stop) */
+    takeTicks: number | null;
+    trail: { activateTicks: number; distanceTicks: number; stepTicks: number } | null;
+    /** 保本: after tier `afterTier` (1-based) has taken profit, the stop
+     * moves to cost + offset ticks */
+    breakeven: { afterTier: number; offsetTicks: number } | null;
+}
+
+/** Entry fills this plan protects (a tier: its share, in order). */
+export function allocatedFill(p: Pick<BracketPlan, 'filled' | 'quantity' | 'tier'>): number {
+    if (!p.tier) return Math.min(p.filled, p.quantity);
+    return Math.max(0, Math.min(Math.min(p.filled, p.tier.entryQuantity) - p.tier.offset, p.quantity));
+}
+
+/** Volume-weighted entry fill price (null when no fill carries a price). */
+export function averageFillPrice(p: Pick<BracketPlan, 'fills' | 'fillPx'>): number | null {
+    let q = 0;
+    let v = 0;
+    for (const [key, qty] of Object.entries(p.fills)) {
+        const px = p.fillPx?.[key];
+        if (px === undefined || !(px > 0)) continue;
+        q += qty;
+        v += qty * px;
+    }
+    return q > 0 ? v / q : null;
 }
 
 export type BracketPhase = 'waiting' | 'protected' | 'exiting' | 'done' | 'closed';
@@ -108,7 +155,7 @@ export function bracketPhase(p: BracketPlan): BracketPhase {
         if (p.exit.status === 'sending' || p.exit.status === 'working') return 'exiting';
         return 'done';
     }
-    if (p.filled > 0) return 'protected';
+    if (allocatedFill(p) > 0) return 'protected';
     return p.entryClosed ? 'closed' : 'waiting';
 }
 
@@ -125,7 +172,9 @@ export function isLive(p: BracketPlan): boolean {
 /** Quantity the OCO triggers should hold right now. */
 export function protectionQuantity(p: BracketPlan): number {
     if (p.exit) return 0;
-    return Math.min(p.filled, p.quantity);
+    // a rules bracket protects nothing until its prices exist
+    if (p.rules && p.base === undefined) return 0;
+    return allocatedFill(p);
 }
 
 /** Filled entry quantity no longer covered: late fills after an exit was
@@ -135,7 +184,7 @@ export function unprotectedQuantity(p: BracketPlan): number {
     if (!p.exit) return 0;
     const counted = p.exit.status === 'not-sent' ? 0
         : p.exit.status === 'incomplete' ? p.exit.filled : p.exit.quantity;
-    return Math.max(0, Math.min(p.filled, p.quantity) - counted);
+    return Math.max(0, allocatedFill(p) - counted);
 }
 
 /** Entry quantity still working after the exit fired: any later fill of it
@@ -143,7 +192,7 @@ export function unprotectedQuantity(p: BracketPlan): number {
 export function workingEntryAfterExit(p: BracketPlan): number {
     // counts until the entry is confirmed closed (a pending cancel is not enough)
     if (!p.exit || p.entryClosed) return 0;
-    return Math.max(0, p.quantity - p.filled);
+    return Math.max(0, p.quantity - allocatedFill(p));
 }
 
 export function needsAttention(p: BracketPlan): boolean {
@@ -163,6 +212,7 @@ export interface FillEvidence {
     quantity: number;
     ts?: number; // exchange fill time (epoch s): pairs an event-only fill with its cache row
     flagged?: BracketIssueCode; // counted but could not be fully verified
+    price?: number; // #226 fill price (cost basis of panel brackets)
 }
 
 const text = (v: unknown) => typeof v === 'string' ? v : '';
@@ -206,9 +256,10 @@ export function matchDeal(report: OrderEventReport, orderId: string, account: Ac
     if (report.action !== action) return { kind: 'mismatch', detail: '成交回報買賣別與委託不符，未計入' };
     if (!Number.isSafeInteger(report.quantity) || report.quantity <= 0) return { kind: 'mismatch', detail: '成交回報數量無效，未計入' };
     const seq = text(reportBody(report)?.exchange_seq);
-    if (seq) return { kind: 'fill', fill: { orderId, key: `${orderId}:${seq}`, quantity: report.quantity, ts: report.ts } };
+    const price = report.price > 0 ? { price: report.price } : {};
+    if (seq) return { kind: 'fill', fill: { orderId, key: `${orderId}:${seq}`, quantity: report.quantity, ts: report.ts, ...price } };
     if (report.eventId) {
-        return { kind: 'fill', fill: { orderId, key: `event:${report.eventId}`, quantity: report.quantity, ts: report.ts, flagged: 'report-mismatch' } };
+        return { kind: 'fill', fill: { orderId, key: `event:${report.eventId}`, quantity: report.quantity, ts: report.ts, flagged: 'report-mismatch', ...price } };
     }
     return { kind: 'mismatch', detail: '成交回報沒有成交序號與事件 ID，無法去重，未計入' };
 }
@@ -218,7 +269,8 @@ export function fillsFromTrade(trade: Trade): FillEvidence[] {
     return (trade.status.deals ?? [])
         .filter(d => typeof d.seq === 'string' && d.seq && Number.isSafeInteger(d.quantity) && d.quantity > 0)
         .map(d => ({ orderId: trade.order.id, key: `${trade.order.id}:${d.seq}`, quantity: d.quantity,
-            ts: typeof d.ts === 'number' && Number.isFinite(d.ts) ? d.ts : undefined }));
+            ts: typeof d.ts === 'number' && Number.isFinite(d.ts) ? d.ts : undefined,
+            ...(typeof d.price === 'number' && d.price > 0 ? { price: d.price } : {}) }));
 }
 
 export function tradeMatchesPlan(trade: Trade, p: Pick<BracketPlan, 'account' | 'orderId' | 'orderCode' | 'action'>): boolean {
@@ -263,11 +315,19 @@ export function mergeFill(fills: Record<string, number>, fillTs: Record<string, 
 export function applyEntryFill(p: BracketPlan, fill: FillEvidence, now: number): BracketPlan {
     if (fill.orderId !== p.orderId) return p;
     const merged = mergeFill(p.fills, p.fillTs, fill);
-    if (!merged) return p;
+    if (!merged) {
+        // the same fill seen again (e.g. the order listing) may bring its price
+        if (fill.price !== undefined && p.fills[fill.key] !== undefined && p.fillPx?.[fill.key] === undefined) {
+            return { ...p, fillPx: { ...(p.fillPx ?? {}), [fill.key]: fill.price }, updatedAt: now };
+        }
+        return p;
+    }
     let next: BracketPlan = { ...p, fills: merged.fills, fillTs: merged.fillTs, filled: p.filled + merged.added, updatedAt: now };
+    if (fill.price !== undefined && merged.fills[fill.key] !== undefined) next.fillPx = { ...(p.fillPx ?? {}), [fill.key]: fill.price };
     if (merged.conflict) next = addIssue(next, 'report-mismatch', '成交回報與委託快取無法對應為同一筆（可能重複計算）；請對帳', now);
     if (fill.flagged) next = addIssue(next, fill.flagged, '成交回報缺少成交序號，僅以事件 ID 去重；請對帳確認', now);
-    if (next.filled > next.quantity) next = addIssue(next, 'overfill', `成交累計 ${next.filled} 超過委託量 ${next.quantity}，保護量以委託量為上限`, now);
+    const cap = next.tier?.entryQuantity ?? next.quantity;
+    if (next.filled > cap) next = addIssue(next, 'overfill', `成交累計 ${next.filled} 超過委託量 ${cap}，保護量以委託量為上限`, now);
     // Protection is only extended while no exit has started; after that a
     // late fill shows up in unprotectedQuantity().
     return next;

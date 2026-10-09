@@ -81,6 +81,7 @@ import {
 } from './execution/background-view';
 import { retainQuote } from './quote-ownership';
 import { sameTradingDay } from './conditional/session';
+import { trailStep, type TrailState } from './conditional/trailing';
 import { getApiBase } from './runtime';
 import { fetchTrades } from './shioaji';
 import { getStreamStatus, onAnyBidAsk, onAnyTick, onOddLotTick, onStreamEvent, subscribeStatusStore } from './stream';
@@ -106,6 +107,14 @@ export const RESTORE_REASON_TEXT: Record<RestoreReason, string> = {
     rearm: '在新盤別重新啟用時價格已穿過觸發價',
     resume: '暫停期間價格已穿過觸發價',
 };
+
+/** #226 括號單 placed by a trigger: tiers and rules for its protection. */
+export interface BracketEntryPlan {
+    tiers: { quantity: number; takeTicks: number | null }[];
+    stopTicks: number;
+    trail: { activateTicks: number; distanceTicks: number; stepTicks: number } | null;
+    breakeven: { afterTier: number; offsetTicks: number } | null;
+}
 
 /** #226 send style: 市價, 範圍市價 (futures), or 觸價後限價 at the trigger
  * price moved `ticks` price steps (signed; a sell usually − to fill). */
@@ -179,6 +188,11 @@ export interface TriggerOrder {
     ocoLock?: string;
     /** 'fill' OCO: fills of that exit already taken off this leg. */
     ocoApplied?: { exit: string; filled: number };
+    /** #226 移動停損 on a bracket stop: moves the price favourably only. */
+    trail?: TrailState;
+    /** #226 括號單 entry by trigger: the protection registered once the
+     * entry order is accepted (see onEntryPlaced). */
+    bracketPlan?: BracketEntryPlan;
     history?: HistoryEntry[]; // #226: newest last, capped at HISTORY_LIMIT
 }
 
@@ -1041,6 +1055,8 @@ export interface BracketArm {
     /** #226: the user changed the prices — the first tick decides (already
      * past → 待確認), like a restore. */
     edited?: boolean;
+    /** #226 移動停損 for the stop leg (state kept across resizes). */
+    trail?: TrailState;
 }
 
 /** Create or resize the OCO pair of a bracket. Returns false when the group
@@ -1062,7 +1078,7 @@ export function armBracketGroup(arm: BracketArm): boolean {
     const added: TriggerOrder[] = [];
     if (arm.stopPrice !== null) {
         added.push({ ...base, id: newId(), kind: 'stop', price: arm.stopPrice,
-            condition: arm.entryAction === 'Buy' ? 'below' : 'above' });
+            condition: arm.entryAction === 'Buy' ? 'below' : 'above', ...(arm.trail ? { trail: arm.trail } : {}) });
     }
     if (arm.takePrice !== null) {
         added.push({ ...base, id: newId(), kind: 'take', price: arm.takePrice,
@@ -1320,6 +1336,11 @@ function exitSent(t: TriggerOrder, rec: ExitRecord, trade: Trade, lastPrice: num
     for (const report of recentReportsFor(envBase(rec.env), orderId)) applyExitReport(report, envBase(rec.env));
     // a resting 觸價後限價 (ROD) settles by its reports / 對帳, not the IOC check
     if (!odd && !resting) scheduleIocCheck(rec.id);
+    if (t.bracketPlan) {
+        try { entryPlaced?.(t, trade); } catch (e) {
+            notify({ kind: 'err', title: '括號單保護未登記', body: `${t.code} 進場單已送出；${e instanceof Error ? e.message : String(e)}。請到委託／持倉確認後自行處理出場` });
+        }
+    }
     notify({ kind: 'ok', title: `${roleWord(t)}觸發`,
         body: `${t.code} @${lastPrice} → ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t, rec.quantity)} (${trade.status.status})` });
 }
@@ -1527,6 +1548,49 @@ export function applyExitTrade(trade: Trade, opts: { settle?: boolean } = {}) {
     }
 }
 
+/** A stop with 移動停損 after one price: the moved trigger, or null when
+ * nothing changed. The state (extreme / anchor) is kept even when the stop
+ * does not move. */
+function trailed(t: TriggerOrder, price: number): TriggerOrder | null {
+    const contract = getCachedContract(t.code);
+    if (!contract || !t.trail) return null;
+    // no move on a guessed tick: wait for the exchange band table
+    const rule = (contract as { tick_rule?: string }).tick_rule;
+    if (rule && bandTickFor(rule, price) === undefined) return null;
+    const long = t.condition === 'below'; // a long position's stop sells below
+    const r = trailStep(long, t.price, t.trail, price, (p, n) => stepPrice(contract, p, n));
+    if (r.stop === t.price && JSON.stringify(r.state) === JSON.stringify(t.trail)) return null;
+    const next: TriggerOrder = { ...t, trail: r.state };
+    if (r.stop === t.price) return next;
+    // never against the position
+    if (long ? r.stop < t.price : r.stop > t.price) return next;
+    next.price = r.stop;
+    return withHistory(next, `移動停損${long ? '上移' : '下移'}至 ${fmtPrice(r.stop)}${!t.trail.active ? '（已啟動）' : ''}`, 'ok');
+}
+
+/** 保本 and other one-way moves of a bracket's stop (main window only):
+ * applied only when it is in the position's favour. */
+export function tightenBracketStop(env: string, group: string, price: number, why: string): boolean {
+    if (!main || !Number.isFinite(price) || price <= 0) return false;
+    const stop = triggers.find(t => t.group === group && t.env === env && t.kind === 'stop' && t.bracketId);
+    if (!stop) return false;
+    const long = stop.condition === 'below';
+    if (long ? price <= stop.price : price >= stop.price) return false;
+    const next = withHistory({ ...stop, price }, `${why}：停損 ${fmtPrice(stop.price)} → ${fmtPrice(price)}`, 'ok');
+    triggers = triggers.map(t => t.id === stop.id ? next : t);
+    // the new stop may already be crossed: the first tick decides
+    restoreCheck.set(stop.id, 'resume');
+    commit();
+    return true;
+}
+
+// #226: a trigger-placed 括號單 entry registers its protection here
+type EntryPlaced = (t: TriggerOrder, trade: Trade) => void;
+let entryPlaced: EntryPlaced | null = null;
+export function onEntryPlaced(handler: EntryPlaced): void {
+    entryPlaced = handler;
+}
+
 const isPast = (t: Pick<TriggerOrder, 'condition' | 'price'>, price: number) =>
     (t.condition === 'below' && price <= t.price) || (t.condition === 'above' && price >= t.price);
 
@@ -1564,7 +1628,17 @@ export function evaluateFeed(code: string, price: number, feed: Feed) {
             held.push({ t, reason });
             continue;
         }
-        if (!past) continue;
+        if (!past) {
+            // 移動停損: only after the existing stop was checked; then the new
+            // stop is checked against the same price (at most one send)
+            const moved = t.trail ? trailed(t, price) : null;
+            if (!moved) continue;
+            triggers = triggers.map(x => x.id === t.id ? moved : x);
+            rearmed = true;
+            if (!isPast(moved, price)) continue;
+            fire(moved, price);
+            continue;
+        }
         // an earlier trigger on this tick may have removed it (OCO)
         if (!triggers.some(x => x.id === t.id)) continue;
         fire(t, price);

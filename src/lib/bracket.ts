@@ -36,6 +36,9 @@ import {
     workingEntryAfterExit,
     type AccountRef,
     type BracketPlan,
+    type BracketRules,
+    allocatedFill,
+    averageFillPrice,
 } from './bracket-core';
 import { onTrackedReport, recentReportsFor, type TrackedReportInfo } from './bracket-reports';
 import { claimExecutor, CommandNotAcknowledged, createCommandBus, isExecutor, isMainWindow } from './main-window-commands';
@@ -59,10 +62,22 @@ import {
     resumeWasRestore,
     EXECUTOR_LOCK,
     getExits,
+    getTriggers,
     onBecomeExecutor,
     onExitUpdate,
+    onEntryPlaced,
+    tightenBracketStop,
+    type BracketEntryPlan,
     type ExitRecord,
+    type TriggerOrder,
 } from './trigger-engine';
+import { ensureContract, getCachedContract } from './contracts-cache';
+import type { TrailState } from './conditional/trailing';
+import { newTrail } from './conditional/trailing';
+import { tierSpecs } from './conditional/bracket-rules';
+import { stepPrice } from './utils/ticksize';
+import { bandTickFor, prefetchTickBands } from './tick-bands';
+import type { Trade } from './types/order';
 import type { Action, FuturesOCType, StockOrderCond, StockOrderLot, TradeCacheHealth } from './types/order';
 
 export type { BracketPlan } from './bracket-core';
@@ -81,7 +96,13 @@ export interface BracketSpec {
     orderLot?: StockOrderLot; // stocks: Common (default) or IntradayOdd (#204)
     stopPrice: number | null;
     takePrice: number | null;
+    /** #226 分批停利 tier and tick rules (panel brackets) */
+    tier?: BracketPlan['tier'];
+    rules?: BracketRules;
+    refPrice?: number;
 }
+
+export { bracketPlanProblem, tierSpecs } from './conditional/bracket-rules';
 
 // ---- pre-order validation (runs BEFORE the entry order is sent) ----
 
@@ -203,7 +224,7 @@ function restoringDo(on: boolean, fn: () => void) {
     try { fn(); } finally { restoring = prev; }
 }
 
-function arm(p: BracketPlan, edited = false) {
+function arm(p: BracketPlan, edited = false, keepTrail?: TrailState) {
     const qty = protectionQuantity(p);
     if (p.dismissed || qty <= 0 || p.env !== currentProtectionEnv()) return;
     armBracketGroup({
@@ -213,7 +234,73 @@ function arm(p: BracketPlan, edited = false) {
         orderCode: p.orderCode, entryAction: p.action, octype: p.market === 'futures' ? 'Cover' : undefined,
         orderLot: p.market === 'stock' && p.orderLot === 'IntradayOdd' ? 'IntradayOdd' : undefined,
         stopPrice: p.stopPrice, takePrice: p.takePrice, quantity: qty,
+        ...(p.rules?.trail && p.base !== undefined
+            ? { trail: keepTrail ?? newTrail(p.base, p.rules.trail.activateTicks, p.rules.trail.distanceTicks, p.rules.trail.stepTicks) } : {}),
     });
+}
+
+/** #226: a rules-based plan gets its prices at the first protected fill,
+ * from the actual fill price (frozen: later fills never loosen them). */
+const contractWaits = new Set<string>();
+function withRulePrices(p: BracketPlan): BracketPlan {
+    if (!p.rules || allocatedFill(p) <= 0 || p.exit) return p;
+    const fillBase = averageFillPrice(p);
+    // set once; a basis taken from the order price is replaced by the real fill price
+    if (p.base !== undefined && !(p.baseProvisional && fillBase !== null)) return p;
+    const now = Date.now();
+    const base = fillBase ?? p.refPrice;
+    const contract = getCachedContract(p.quoteCode);
+    if (!contract && !contractWaits.has(p.id)) {
+        // load it and compute again: never left unprotected for lack of metadata
+        contractWaits.add(p.id);
+        void ensureContract(p.quoteCode).then(() => update(p.id, x => x)).catch(() => undefined).finally(() => contractWaits.delete(p.id));
+    }
+    if (!base || !contract) {
+        return addIssue(p, 'lookup-failed', !base ? '成交回報沒有成交價，無法計算停損停利；請對帳後自行處理' : '商品資料未載入，停損停利尚未建立（載入中）', now);
+    }
+    // a product with an exchange band table: never price on a guessed tick
+    const rule = (contract as { tick_rule?: string }).tick_rule;
+    if (rule && bandTickFor(rule, base) === undefined) {
+        if (contract.security_type === 'FUT' || contract.security_type === 'OPT') prefetchTickBands(rule, contract.security_type);
+        if (!contractWaits.has(`band:${p.id}`)) {
+            contractWaits.add(`band:${p.id}`);
+            setTimeout(() => { contractWaits.delete(`band:${p.id}`); update(p.id, x => x); }, 1000);
+        }
+        return addIssue(p, 'lookup-failed', '跳動點級距載入中，停損停利尚未建立', now);
+    }
+    const dir = p.action === 'Buy' ? 1 : -1;
+    let stopPrice = stepPrice(contract, base, -dir * p.rules.stopTicks);
+    const takePrice = p.rules.takeTicks === null ? null : stepPrice(contract, base, dir * p.rules.takeTicks);
+    if (p.beArmed && p.rules.breakeven) {
+        const be = stepPrice(contract, base, dir * p.rules.breakeven.offsetTicks);
+        stopPrice = dir > 0 ? Math.max(stopPrice, be) : Math.min(stopPrice, be);
+    }
+    if (!(stopPrice > 0) || (takePrice !== null && !(takePrice > 0))) {
+        return addIssue(p, 'lookup-failed', `依成交價 ${base} 算出的停損 ${stopPrice}${takePrice !== null ? `／停利 ${takePrice}` : ''} 無效，沒有掛保護；請自行處理`, now);
+    }
+    return { ...p, base, baseProvisional: fillBase === null, stopPrice, takePrice, updatedAt: now,
+        edits: [...(p.edits ?? []), { at: now, text: `${fillBase === null ? '委託價' : '成交價'} ${base} → 停損 ${stopPrice}${takePrice !== null ? `、停利 ${takePrice}` : ''}` }] };
+}
+
+/** #226 保本: once tier `afterTier` took its profit, the other tiers' stops
+ * move to their cost + N ticks (only in the position's favour). */
+function applyBreakeven(done: BracketPlan) {
+    const rule = done.rules?.breakeven;
+    if (!rule || !done.tier || done.tier.index !== rule.afterTier - 1) return;
+    const contract = getCachedContract(done.quoteCode);
+    if (!contract) return;
+    const dir = done.action === 'Buy' ? 1 : -1;
+    for (const sib of plans.slice()) {
+        if (sib.id === done.id || sib.orderId !== done.orderId || sib.env !== done.env || !sib.tier || sib.exit || sib.dismissed) continue;
+        if (accountRefKey(sib.account) !== accountRefKey(done.account)) continue;
+        // not priced yet: 保本 applies as soon as it is
+        if (sib.base === undefined) { update(sib.id, x => ({ ...x, beArmed: true })); continue; }
+        const target = stepPrice(contract, sib.base, dir * rule.offsetTicks);
+        if (sib.stopPrice !== null && (dir > 0 ? target <= sib.stopPrice : target >= sib.stopPrice)) continue;
+        if (!tightenBracketStop(sib.env, sib.group, target, '保本')) continue;
+        update(sib.id, x => ({ ...x, stopPrice: target, updatedAt: Date.now(),
+            edits: [...(x.edits ?? []), { at: Date.now(), text: `第 ${rule.afterTier} 層停利成交，停損移到成本 ${target}` }] }));
+    }
 }
 
 /** Arm/resize protection for the filled quantity; notify once per change. */
@@ -239,9 +326,25 @@ function syncProtection(before: BracketPlan | undefined, p: BracketPlan) {
 function update(id: string, fn: (p: BracketPlan) => BracketPlan) {
     const before = plans.find(p => p.id === id);
     if (!before) return;
-    const after = fn(before);
+    let after = withRulePrices(fn(before));
     if (after === before) return;
     plans = plans.map(p => p === before ? after : p);
+    if (before.base !== undefined && after.base !== before.base) {
+        // the real fill price replaced the order price: re-price the pair, but
+        // never loosen a stop that already moved (移動停損／保本); the trail keeps its state
+        const leg = getTriggers().find(t => t.group === before.group && t.env === before.env && t.kind === 'stop');
+        if (leg && after.stopPrice !== null) {
+            const long = after.action === 'Buy';
+            const tighter = long ? Math.max(after.stopPrice, leg.price) : Math.min(after.stopPrice, leg.price);
+            if (tighter !== after.stopPrice) {
+                after = { ...after, stopPrice: tighter };
+                plans = plans.map(p => p.id === after.id ? after : p);
+            }
+        }
+        disarmBracketGroup(before.env, before.group);
+        // keep the trail's progress, measured from the real cost basis
+        arm(after, true, leg?.trail && after.base !== undefined ? { ...leg.trail, base: after.base } : leg?.trail);
+    }
     syncProtection(before, after);
     commit();
 }
@@ -280,6 +383,8 @@ function onExit(rec: ExitRecord) {
             ? addIssue(next, 'report-mismatch', '出場成交回報與委託快取無法對應為同一筆（可能重複計算）；請對帳', Date.now())
             : next;
     });
+    const plan = plans.find(p => p.id === rec.bracketId);
+    if (plan && rec.kind === 'take' && rec.status === 'filled') applyBreakeven(plan);
 }
 
 // ---- cache-only lookups / health (no polling) ----
@@ -424,21 +529,22 @@ function register(spec: BracketSpec): BracketPlan {
     if (spec.orderLot && spec.orderLot !== 'Common' && (spec.account.account_type !== 'S' || spec.orderLot !== 'IntradayOdd')) {
         throw new Error('括號單僅支援整股與盤中零股，未登記');
     }
-    const id = planId(spec.env, spec.account, spec.orderId);
+    const id = planId(spec.env, spec.account, spec.orderId) + (spec.tier ? `#t${spec.tier.index}` : '');
     const existing = plans.find(p => p.id === id);
     if (existing) return existing; // idempotent
     const now = Date.now();
     let plan: BracketPlan = {
         ...spec, id, market: spec.account.account_type === 'S' ? 'stock' : 'futures',
-        group: `bracket:${spec.orderId}:${now.toString(36)}`, fills: {}, filled: 0,
+        group: `bracket:${spec.orderId}:${now.toString(36)}${spec.tier ? `:t${spec.tier.index}` : ''}`, fills: {}, filled: 0,
         entryClosed: false, exit: null, issues: [], createdAt: now, updatedAt: now,
     };
     if (getStreamStatus() !== 'live') plan = addIssue(plan, 'disconnect', '登記時行情／回報串流未連線', now);
     // Reports that reached this window before the registration command.
     for (const report of recentReportsFor(envBase(spec.env), spec.orderId)) plan = applyReport(plan, report, now);
+    plan = withRulePrices(plan);
     plans = [...plans, plan];
     notify({ kind: 'info', title: '括號單待命',
-        body: `${plan.quoteCode} 成交後依成交量自動掛${describeProtection(plan)}` });
+        body: `${plan.quoteCode} 成交後依成交量自動掛${plan.rules ? `停損停利（依成交價計算${plan.tier ? `，第 ${plan.tier.index + 1}/${plan.tier.count} 層` : ''}）` : describeProtection(plan)}` });
     syncProtection(undefined, plan);
     commit();
     void lookup(plan.account, plan.env);
@@ -482,19 +588,36 @@ function modifyPlan(id: string, stopPrice: number | null, takePrice: number | nu
     if (stopPrice !== null && takePrice !== null && (long ? stopPrice >= takePrice : stopPrice <= takePrice)) {
         throw new Error(`${long ? '買進' : '賣出'}的停損價必須${long ? '低於' : '高於'}停利價`);
     }
-    if (stopPrice === p.stopPrice && takePrice === p.takePrice) return p;
+    // the armed stop may have moved (移動停損／保本) since the plan was made
+    const stopLeg = getTriggers().find(t => t.group === p.group && t.env === p.env && t.kind === 'stop');
+    const curStop = stopLeg?.price ?? p.stopPrice;
+    if (p.rules?.trail && curStop !== null && (stopPrice === null || (long ? stopPrice < curStop : stopPrice > curStop))) {
+        throw new Error(`移動停損中，停損只能收緊（目前 ${curStop}）`);
+    }
+    if (stopPrice === curStop && takePrice === p.takePrice) return p;
     const at = Date.now();
     const changes = [
-        stopPrice !== p.stopPrice ? `停損 ${p.stopPrice ?? '無'} → ${stopPrice ?? '無'}` : null,
+        stopPrice !== curStop ? `停損 ${curStop ?? '無'} → ${stopPrice ?? '無'}` : null,
         takePrice !== p.takePrice ? `停利 ${p.takePrice ?? '無'} → ${takePrice ?? '無'}` : null,
     ].filter(Boolean).join('、');
     const next: BracketPlan = { ...p, stopPrice, takePrice, updatedAt: at,
         edits: [...(p.edits ?? []), { at, text: `修改${changes}` }].slice(-20) };
     plans = plans.map(x => x.id === id ? next : x);
     disarmBracketGroup(p.env, p.group);
-    arm(next, true);
+    arm(next, true, stopLeg?.trail);
     commit();
     return next;
+}
+
+/** #226: a 觸價 entry with protection fired and its order was accepted
+ * (main window): register its tiers here, at once. */
+function registerTriggeredEntry(t: TriggerOrder, trade: Trade) {
+    if (!t.bracketPlan || !t.env || !t.account || !t.orderCode) return;
+    const securityType = t.account.account_type === 'F' ? (getCachedContract(t.code)?.security_type === 'OPT' ? 'OPT' : 'FUT') : 'STK';
+    const specs = tierSpecs({ env: t.env, account: t.account, orderId: trade.order.id, seqno: trade.order.seqno, quoteCode: t.code,
+        orderCode: trade.contract?.target_code || trade.contract?.code || t.orderCode, securityType, exchange: trade.contract?.exchange ?? '',
+        action: t.action, refPrice: t.price }, t.bracketPlan);
+    for (const spec of specs) register(spec);
 }
 
 // ---- public API (any window) ----
@@ -621,6 +744,7 @@ function run() {
         : addIssue(p, 'reload', 'App 重新載入，期間的回報可能未收到', now));
     commit();
     onTrackedReport(onReport);
+    onEntryPlaced(registerTriggeredEntry);
     reportLedger.onGap(base => onGap(base));
     onExitUpdate(onExit);
     for (const rec of getExits()) if (rec.bracketId) onExit(rec);

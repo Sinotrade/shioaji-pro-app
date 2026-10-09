@@ -59,6 +59,7 @@ vi.mock('./conditional-form', async () => ({
     ...(await vi.importActual<typeof import('./conditional-form')>('./conditional-form')),
     NewConditionalDialog: () => createElement('div', { id: 'new-dialog' }),
 }));
+vi.mock('../lib/conditional/panel-bracket', () => ({ placePanelBracket: vi.fn() }));
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [], selectedFutures: null, selectedStock: null }) }));
 
 const { ConditionalPanel } = await import('./conditional-panel');

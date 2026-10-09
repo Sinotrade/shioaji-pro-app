@@ -6,16 +6,18 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const F = { account_type: 'F', broker_id: 'b', account_id: '9804567', person_id: '', signed: true, username: '' };
-const TXF = { code: 'TXFJ6', name: '臺股期貨', security_type: 'FUT', exchange: 'TAIFEX', tick: 1, target_code: 'TXFJ6' };
+const TXF = { code: 'TXFJ6', name: '臺股期貨', security_type: 'FUT', exchange: 'TAIFEX', tick: 1, target_code: 'TXFJ6', multiplier: 200 };
 
-const m = vi.hoisted(() => ({ add: vi.fn(), group: vi.fn() }));
+const m = vi.hoisted(() => ({ add: vi.fn(), group: vi.fn(), bracket: vi.fn() }));
 vi.mock('../lib/trigger-engine', () => ({ addTrigger: m.add, addTriggerGroup: m.group }));
 vi.mock('../lib/contracts-cache', () => ({ useContract: (c: string | null) => c ? TXF : undefined, ensureContract: async () => TXF }));
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [F], selectedFutures: F, selectedStock: null }) }));
 vi.mock('../lib/account-tradable', () => ({ canTrade: () => true }));
-vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => true, maskAccountId: (id: string) => `•••••${id.slice(-2)}` }));
+vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => true, usePrivacyMoney: () => false, maskMoney: (t: string) => t,
+    maskAccountId: (id: string) => `•••••${id.slice(-2)}` }));
 vi.mock('../lib/stream', () => ({ getQuote: () => ({ tick: { close: 48212 } }), subscribeQuoteStore: () => () => undefined }));
 vi.mock('../hooks/use-esc-close', () => ({ useEscClose: () => undefined }));
+vi.mock('../lib/conditional/panel-bracket', () => ({ placePanelBracket: m.bracket, derivedPriceProblem: () => null }));
 
 const { NewConditionalDialog } = await import('./conditional-form');
 
@@ -36,6 +38,7 @@ const click = async (r: ReactTestRenderer, label: string) => { await act(async (
 beforeEach(() => {
     m.add.mockReset().mockResolvedValue({ id: 'x' });
     m.group.mockReset().mockResolvedValue([{ id: 'a' }, { id: 'b' }]);
+    m.bracket.mockReset().mockResolvedValue('placed');
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -81,5 +84,33 @@ describe('NewConditionalDialog', () => {
         expect(legs.map(l => [l.condition, l.price, l.action, l.ocoMode])).toEqual([['above', 48400, 'Buy', 'fill'], ['below', 47900, 'Sell', 'fill']]);
         expect(legs[0]!.group).toBe(legs[1]!.group);
         expect(legs[0]!.send).toEqual({ type: 'MKP' });
+    });
+
+    it('括號單: tiers must add up; stop / tiers / 移動停損 / 保本 go out as one plan', async () => {
+        const r = render();
+        await click(r, '括號單');
+        await type(r, '進場限價', '48150');
+        await type(r, '停損檔數', '40');
+        expect(text(r.root)).toContain('≈ 48,110');
+        expect(text(r.root)).toContain('每口風險');
+        await type(r, '第 1 層停利檔數', '30');
+        await type(r, '第 1 層數量', '1');
+        expect(text(r.root)).toContain('各層數量合計 1，要等於進場 3 口');
+        await click(r, '加一層');
+        await type(r, '第 2 層停利檔數', '80');
+        await click(r, '加一層');
+        await type(r, '第 3 層數量', '1');
+        await act(async () => { r.root.findAll(n => n.type === 'input' && n.props.type === 'checkbox')[2]!.props.onChange({ target: { checked: true } }); });
+        expect(text(r.root)).toContain('移動停損的啟動、距離與移動檔數要填正整數'); // never pre-filled
+        await type(r, '移動停損啟動檔數', '20');
+        await type(r, '移動停損距離檔數', '15');
+        await type(r, '移動停損步長檔數', '5');
+        await act(async () => { r.root.findAll(n => n.props.role === 'switch' && n.props['aria-label'] === '保本')[0]!.props.onClick(); });
+        await click(r, '建立');
+        expect(m.bracket).toHaveBeenCalledTimes(1);
+        const req = m.bracket.mock.calls[0]![0];
+        expect(req).toMatchObject({ action: 'Buy', entry: { type: 'LMT', price: 48150 }, refPrice: 48150, plan: {
+            stopTicks: 40, tiers: [{ quantity: 1, takeTicks: 30 }, { quantity: 1, takeTicks: 80 }, { quantity: 1, takeTicks: null }],
+            trail: { activateTicks: 20, distanceTicks: 15, stepTicks: 5 }, breakeven: { afterTier: 1, offsetTicks: 0 } } });
     });
 });
