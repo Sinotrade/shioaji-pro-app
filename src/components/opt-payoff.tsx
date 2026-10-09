@@ -9,6 +9,7 @@ import { useQuote } from '../hooks/use-stream';
 import { ensureContract } from '../lib/contracts-cache';
 import { getChartColors, useThemeSettings } from '../lib/theme-store';
 import type { Position } from '../lib/types/portfolio';
+import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { fmtPrice } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as ticket from './order-ticket.css';
@@ -20,6 +21,8 @@ import { queryDisplayState } from '../lib/query-display-state';
 interface Leg {
     id: string;
     label: string;
+    /** 遮金額時顯示（實際持倉不露口數） */
+    maskedLabel?: string;
     right: 'C' | 'P' | 'F'; // F = futures leg
     strike: number; // unused for F
     qty: number; // signed: + long, − short
@@ -55,6 +58,7 @@ export function OptPayoff({ positions = [] }: { positions?: Position[] }) {
     const [simStrike, setSimStrike] = useState('');
     const [simQty, setSimQty] = useState('1');
     const [simPrice, setSimPrice] = useState('');
+    const privMoney = usePrivacyMoney();
     const theme = useThemeSettings();
     const colors = getChartColors(theme);
     const txf = useQuote('TXFR1');
@@ -76,6 +80,7 @@ export function OptPayoff({ positions = [] }: { positions?: Position[] }) {
                     out.push({
                         id: `pos-${p.code}-${p.id}`,
                         label: `${p.code}（${p.direction === 'Buy' ? '買' : '賣'}${p.quantity}）`,
+                        maskedLabel: `${p.code}（${p.direction === 'Buy' ? '買' : '賣'}${maskMoney('', true)}）`,
                         right: c.option_right?.toUpperCase().startsWith('C')
                             ? 'C'
                             : 'P',
@@ -246,9 +251,9 @@ export function OptPayoff({ positions = [] }: { positions?: Position[] }) {
         ctx.textAlign = 'right';
         ctx.fillText(fmtPrice(hi, 0), W - 4, H - 4);
         ctx.textAlign = 'left';
-        ctx.fillText(`max ${fmtPrice(maxP, 0)}`, 4, 12);
-        ctx.fillText(`min ${fmtPrice(minP, 0)}`, 4, 24);
-    }, [active, anchor, colors]);
+        ctx.fillText(`max ${maskMoney(fmtPrice(maxP, 0), privMoney)}`, 4, 12);
+        ctx.fillText(`min ${maskMoney(fmtPrice(minP, 0), privMoney)}`, 4, 24);
+    }, [active, anchor, colors, privMoney]);
 
     return (
         <div className={styles.wrap}>
@@ -304,7 +309,7 @@ export function OptPayoff({ positions = [] }: { positions?: Position[] }) {
                             {l.simulated && (
                                 <FlaskConical size={10} style={{ verticalAlign: '-1px' }} />
                             )}{' '}
-                            {l.label}
+                            {privMoney && !l.simulated && l.maskedLabel ? l.maskedLabel : l.label}
                         </span>
                         {l.simulated && (
                             <button

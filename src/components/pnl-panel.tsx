@@ -8,6 +8,7 @@ import { useAccounts } from '../lib/account-store';
 import { apiPost } from '../lib/api';
 import { createAccountQuery } from '../lib/account-query';
 import type { Account } from '../lib/types/portfolio';
+import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { dateStrOffset } from '../lib/utils/kbars';
 import * as dock from './bottom-dock.css';
@@ -81,6 +82,7 @@ function EquityCurve({ rows }: { rows: PnlRow[] }) {
 
 export function PnlPanel() {
     const { accounts } = useAccounts();
+    const privMoney = usePrivacyMoney();
     const tradable = accounts.filter(a => canTrade(a) && ['S', 'F'].includes(a.account_type));
     const key = tradable.map(a => `${a.account_type}:${a.broker_id}:${a.account_id}`).join(',');
     const { data, error, loading, refresh } = useQuery<PnlRow[]>(
@@ -124,7 +126,7 @@ export function PnlPanel() {
                     <span
                         className={`${styles.bigValue} ${panel.dirText[dir]}`}
                     >
-                        {fmtSigned(total, 0)}
+                        {maskMoney(fmtSigned(total, 0), privMoney)}
                     </span>
                 </div>
                 <EquityCurve rows={rows} />
@@ -141,7 +143,7 @@ export function PnlPanel() {
                     <span
                         className={`${dock.statCardValue} ${panel.dirText.up}`}
                     >
-                        {fmtMoney(Math.round(avgWin))}
+                        {maskMoney(fmtMoney(Math.round(avgWin)), privMoney)}
                     </span>
                 </div>
                 <div className={dock.statCard}>
@@ -149,7 +151,7 @@ export function PnlPanel() {
                     <span
                         className={`${dock.statCardValue} ${panel.dirText.down}`}
                     >
-                        {fmtMoney(Math.round(avgLoss))}
+                        {maskMoney(fmtMoney(Math.round(avgLoss)), privMoney)}
                     </span>
                 </div>
                 <div className={dock.statCard}>
