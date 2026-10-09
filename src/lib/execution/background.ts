@@ -324,6 +324,13 @@ const NOTICE_TEXT: Record<string, string> = {
     'partition.failed': '背景執行資料無法寫入，已停止',
 };
 
+/** The toast title of an engine notice; null when it is not shown. Orders of
+ * live strategies (#253, `strategy:` programs) report in their own card. */
+export function backgroundNoticeTitle(n: Notice): string | null {
+    if (n.programId?.startsWith('strategy:')) return null;
+    return NOTICE_TEXT[n.code] ?? null;
+}
+
 let pendingInstalled = false;
 function onFirstStatus() {
     // the engine answered: its 委託待確認 list is the real one
@@ -347,7 +354,7 @@ export function startBackgroundExecution(): void {
         if (main) {
             void listen<Notice[]>('execution://notice', e => {
                 for (const n of e.payload ?? []) {
-                    const title = NOTICE_TEXT[n.code];
+                    const title = backgroundNoticeTitle(n);
                     if (title) notify({ kind: n.code === 'fired' || n.code === 'needsConfirm' ? 'info' : 'err', title, body: n.detail });
                 }
             });
