@@ -26,21 +26,30 @@ export function actionLabel(t: Pick<TriggerOrder, 'action' | 'quantity' | 'accou
     return `${t.action === 'Buy' ? '買進' : '賣出'} ${t.quantity} ${unit}`;
 }
 
-/** 送單方式：整股／期貨市價；零股沒有市價，以漲跌停價限價送出（#204） */
-export function exitStyleLabel(t: Pick<TriggerOrder, 'orderLot'>): string {
-    return isOddLot(t.orderLot) ? '零股漲跌停限價' : '市價';
+/** 送單方式：整股／期貨市價；零股沒有市價，以漲跌停價限價送出（#204）；
+ * #226 範圍市價、觸價後限價（觸發價 ± N 檔） */
+export function exitStyleLabel(t: Pick<TriggerOrder, 'orderLot'> & { send?: TriggerOrder['send'] }): string {
+    if (isOddLot(t.orderLot)) return '零股漲跌停限價';
+    if (t.send?.type === 'MKP') return '範圍市價';
+    if (t.send?.type === 'LMT') return t.send.ticks === 0 ? '觸發價限價' : `觸發價${t.send.ticks > 0 ? '+' : '−'}${Math.abs(t.send.ticks)}檔限價`;
+    return '市價';
 }
 
 /** 送出後會怎樣：整股／期貨是市價單會立即成交；零股是漲跌停價限價 ROD，
  * 要等下一次零股撮合（約每 5 秒），不保證立即成交（#204） */
-export function sendOutcomeText(t: Pick<TriggerOrder, 'orderLot'>): string {
+export function sendOutcomeText(t: Pick<TriggerOrder, 'orderLot'> & Partial<Pick<TriggerOrder, 'send' | 'group' | 'ocoMode'>>): string {
+    if (!isOddLot(t.orderLot) && t.send?.type === 'LMT') {
+        return t.group && t.ocoMode === 'fill' ? '會以限價 IOC 送出，未成交的部分會取消' : '會以限價送出，未成交的部分會留在委託中';
+    }
+    if (!isOddLot(t.orderLot) && t.send?.type === 'MKP') return '會以範圍市價送出，可能只成交一部分';
     return isOddLot(t.orderLot)
         ? '會以漲跌停價送出零股限價 ROD，等下一次零股撮合（約每 5 秒）成交，不保證立即成交'
         : '會立刻以市價成交';
 }
 
 /** 送出按鈕的提示 */
-export function sendButtonTitle(t: Pick<TriggerOrder, 'orderLot'>): string {
+export function sendButtonTitle(t: Pick<TriggerOrder, 'orderLot'> & { send?: TriggerOrder['send'] }): string {
+    if (!isOddLot(t.orderLot) && t.send && t.send.type !== 'MKT') return `重新檢查行情連線、環境與帳戶後，以原設定（${exitStyleLabel(t)}）立即送出`;
     return isOddLot(t.orderLot)
         ? '重新檢查行情連線、環境與帳戶後，以原設定立即送出零股限價單（漲跌停價、ROD，等零股撮合）'
         : '重新檢查行情連線、環境與帳戶後，以原設定立即送出市價單';

@@ -53,7 +53,7 @@ import { fmtClock, fmtNum } from '../lib/conditional/session';
 import type { ContractInfo } from '../lib/types/contract';
 import { PendingConfirmItemCard } from './pending-confirm';
 import { BracketRearm } from './background-bracket-status';
-import { NewConditionalDialog } from './conditional-form';
+import { NewConditionalDialog, SendControl, sendOf, ValidityControl, validityOf, type SendState, type ValidityState } from './conditional-form';
 import { useLastPrice } from './conditional-ui';
 import * as styles from './conditional-panel.css';
 
@@ -361,14 +361,30 @@ function Distance({ code, price }: { code: string; price: number | null }) {
 function TriggerEdit({ trigger, onDone }: { trigger: TriggerOrder; onDone: () => void }) {
     const [price, setPrice] = useState(String(trigger.price));
     const [qty, setQty] = useState(String(trigger.quantity));
+    const t0 = trigger.send ?? { type: 'MKT' as const };
+    const [send, setSend] = useState<SendState>({ type: t0.type, ticks: t0.type === 'LMT' ? String(t0.ticks) : '0' });
+    const [validity, setValidity] = useState<ValidityState>({ type: trigger.validity?.type ?? 'none',
+        date: trigger.validity?.type === 'date' ? new Date(trigger.validity.until + 8 * 3600_000).toISOString().slice(0, 10) : '' });
     const { busy, message, run } = useRun();
     const p = parsePrice(price);
     const q = Number(qty);
     const alert = trigger.kind === 'alert';
+    const full = !alert && !('background' in trigger) && trigger.orderLot !== 'IntradayOdd';
+    const market = trigger.account?.account_type === 'S' ? 'stock' as const : 'futures' as const;
     const save = () => void run(async () => {
         if (p === null || p <= 0) throw new Error('觸發價必須是正數');
         if (!alert && (!Number.isSafeInteger(q) || q <= 0)) throw new Error('數量必須是正整數');
-        await modifyTrigger(trigger.id, alert ? { price: p } : { price: p, quantity: q });
+        if (!full) {
+            await modifyTrigger(trigger.id, alert ? { price: p } : { price: p, quantity: q });
+            onDone();
+            return;
+        }
+        const s = sendOf(send);
+        if (typeof s === 'string') throw new Error(s);
+        const keepValidity = validity.type === (trigger.validity?.type ?? 'none') && validity.type !== 'date';
+        const v = keepValidity ? (trigger.validity ?? null) : validityOf(validity, market);
+        if (typeof v === 'string') throw new Error(v);
+        await modifyTrigger(trigger.id, { price: p, quantity: q, send: s, validity: v });
         onDone();
     });
     const unit = trigger.account?.account_type === 'S' ? (trigger.orderLot === 'IntradayOdd' ? '股' : '張') : '口';
@@ -388,6 +404,8 @@ function TriggerEdit({ trigger, onDone }: { trigger: TriggerOrder; onDone: () =>
                     <span>{unit}</span>
                 </div>
             )}
+            {full && <SendControl value={send} onChange={setSend} futures={market === 'futures'} label='送出方式' />}
+            {full && <ValidityControl value={validity} onChange={setValidity} market={market} allowNone={!trigger.validity} />}
             <div className={styles.formRow}>
                 <button type='button' className={styles.button.primary} disabled={busy} onClick={save}>儲存修改</button>
                 <button type='button' className={styles.button.plain} disabled={busy} onClick={onDone}>取消</button>

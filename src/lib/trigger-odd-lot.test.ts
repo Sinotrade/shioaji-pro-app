@@ -29,6 +29,7 @@ vi.mock('./stream', () => ({
     onOrderEvent: () => () => undefined,
     onAnyTick: (cb: typeof m.tick) => { m.tick = cb; return () => undefined; },
     onOddLotTick: (cb: typeof m.tick) => { m.oddTick = cb; return () => undefined; },
+    onAnyBidAsk: (cb: (b: unknown) => void) => { (m as Record<string, unknown>).bidask = cb; return () => undefined; },
     onStreamEvent: () => () => undefined,
 }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts,

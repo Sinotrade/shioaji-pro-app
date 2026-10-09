@@ -77,6 +77,7 @@ const oddQuoteListeners = new Map<string, Set<Listener>>();
 const statusListeners = new Set<Listener>();
 const orderEventListeners = new Set<(ev: OrderEventReport) => void>();
 const tickTapeListeners = new Set<(tick: SseTick) => void>();
+const bidAskListeners = new Set<(bidask: SseBidAsk) => void>();
 const oddTickListeners = new Set<(tick: SseTick) => void>();
 const contractEventListeners = new Set<
     (event: ContractChangeEvent) => void
@@ -238,6 +239,7 @@ function handleBidAsk(raw: string) {
 function ingestBidAsk(bidask: SseBidAsk) {
     quotes.set(bidask.code, nextBidAskState(quotes.get(bidask.code), bidask));
     emitQuote(bidask.code);
+    bidAskListeners.forEach((l) => l(bidask));
 }
 
 const INDEX_UPSTREAM_ALIASES: Record<string, string> = {
@@ -893,6 +895,14 @@ export function onAnyTick(listener: (tick: SseTick) => void) {
     tickTapeListeners.add(listener);
     return () => {
         tickTapeListeners.delete(listener);
+    };
+}
+
+/** Every regular-lot best bid / ask update (#226 對手價 triggers). */
+export function onAnyBidAsk(listener: (bidask: SseBidAsk) => void) {
+    bidAskListeners.add(listener);
+    return () => {
+        bidAskListeners.delete(listener);
     };
 }
 

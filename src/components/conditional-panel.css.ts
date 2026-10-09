@@ -401,3 +401,31 @@ export const dialogFoot = style({
 export const closeButton = style([iconButtonBase, { border: 'none' }]);
 
 export const container = style({ containerType: 'inline-size', containerName: 'condpanel', height: '100%' });
+
+// ---- 二擇一 levels (design v4 mini chart) ----
+
+export const ladder = style({
+    position: 'relative',
+    height: '90px',
+    marginTop: '8px',
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.md,
+    background: vars.color.background,
+    overflow: 'hidden',
+});
+
+const levelBase = style({
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    borderTop: '1px dashed',
+    fontSize: '0.64rem',
+    paddingLeft: '4px',
+    lineHeight: 1.4,
+});
+
+export const level = styleVariants({
+    up: [levelBase, { borderColor: vars.color.up, color: vars.color.up }],
+    down: [levelBase, { borderColor: vars.color.down, color: vars.color.down }],
+    muted: [levelBase, { borderColor: vars.color.mutedForeground, color: vars.color.mutedForeground }],
+});

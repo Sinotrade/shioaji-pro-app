@@ -55,7 +55,11 @@ vi.mock('../lib/execution/background', () => ({
 }));
 vi.mock('./background-bracket-status', () => ({ BracketRearm: () => null }));
 vi.mock('./pending-confirm', () => ({ PendingConfirmItemCard: () => null }));
-vi.mock('./conditional-form', () => ({ NewConditionalDialog: () => createElement('div', { id: 'new-dialog' }) }));
+vi.mock('./conditional-form', async () => ({
+    ...(await vi.importActual<typeof import('./conditional-form')>('./conditional-form')),
+    NewConditionalDialog: () => createElement('div', { id: 'new-dialog' }),
+}));
+vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [], selectedFutures: null, selectedStock: null }) }));
 
 const { ConditionalPanel } = await import('./conditional-panel');
 
@@ -153,7 +157,7 @@ describe('ConditionalPanel', () => {
         const input = r.root.findAll(n => n.type === 'input' && n.props['aria-label'] === '觸發價')[0]!;
         await act(async () => { input.props.onChange({ target: { value: '47,850' } }); });
         await click(button(r, '儲存修改'));
-        expect(m.modify).toHaveBeenCalledWith('tg-1', { price: 47850, quantity: 1 });
+        expect(m.modify).toHaveBeenCalledWith('tg-1', { price: 47850, quantity: 1, send: { type: 'MKT' }, validity: null });
     });
 
     it('已結束（今日） tab lists finished ones without actions', async () => {

@@ -47,6 +47,7 @@ vi.mock('./stream', () => ({
     onOrderEvent: (cb: (r: OrderEventReport) => void) => { m.order = cb; return () => undefined; },
     onAnyTick: (cb: typeof m.tick) => { m.tick = cb; return () => undefined; },
     onOddLotTick: (cb: typeof m.tick) => { m.oddTick = cb; return () => undefined; },
+    onAnyBidAsk: (cb: (b: unknown) => void) => { (m as Record<string, unknown>).bidask = cb; return () => undefined; },
     onStreamEvent: (name: string, cb: () => void) => { if (name === 'heartbeat') m.heartbeat = cb; return () => undefined; },
 }));
 vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accounts, selectedFutures: m.accounts.find(a => a.account_type === 'F') ?? null,

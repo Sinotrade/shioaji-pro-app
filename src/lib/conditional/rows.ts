@@ -135,9 +135,12 @@ export function levelWord(condition: 'below' | 'above', action: 'Buy' | 'Sell', 
     return action === 'Buy' ? '突破' : '停利';
 }
 
-export function conditionText(t: Pick<TriggerOrder, 'condition' | 'price' | 'action' | 'kind'>): string {
-    return `${t.condition === 'below' ? '≤' : '≥'} ${fmtNum(t.price)} ${levelWord(t.condition, t.action, t.kind)}`;
+export function conditionText(t: Pick<TriggerOrder, 'condition' | 'price' | 'action' | 'kind'> & Partial<Pick<TriggerOrder, 'cross' | 'source'>>): string {
+    const op = t.cross ? (t.condition === 'below' ? '下穿' : '上穿') : t.condition === 'below' ? '≤' : '≥';
+    return `${t.source === 'opposite' ? '對手價 ' : ''}${op} ${fmtNum(t.price)} ${levelWord(t.condition, t.action, t.kind)}`;
 }
+
+const VALIDITY_WORD: Record<'session' | 'today' | 'date', string> = { session: '本盤', today: '今日', date: '至' };
 
 function triggerSide(t: TriggerOrder): CondRow['side'] {
     if (t.kind === 'alert') return { text: '只通知', dir: null };
@@ -145,8 +148,8 @@ function triggerSide(t: TriggerOrder): CondRow['side'] {
 }
 
 function triggerValidity(t: TriggerOrder, now: number): string {
+    if (t.validity) return `${VALIDITY_WORD[t.validity.type]} ${fmtUntil(t.validity.until, now)}`;
     if ('background' in t) return '本盤';
-    void now;
     return '直到取消';
 }
 
@@ -169,12 +172,14 @@ function triggerStatus(t: TriggerOrder, s: Sources): { text: string; tone: Tone 
     if (!s.streamLive) return { text: '連線中斷，暫停盯價', tone: 'warn' };
     if (!('background' in t) && !s.executing) return { text: '主視窗未執行，暫停盯價', tone: 'warn' };
     if (s.feedMissing.includes(t.code)) return { text: '行情未訂閱，自動重試中', tone: 'warn' };
-    if (t.awaitingRecross) return { text: '等待價格回到另一側再穿過', tone: 'ok' };
+    if (t.ocoLock) return { text: '另一邊已觸發，等成交後扣掉對應口數', tone: 'warn' };
+    if (t.awaitingRecross) return { text: t.cross ? '盯價中（等待穿越）' : '等待價格回到另一側再穿過', tone: 'ok' };
     return { text: t.kind === 'alert' ? '盯價中（只通知）' : '盯價中', tone: 'ok' };
 }
 
 function triggerActions(t: TriggerOrder): RowActions {
     if (t.pending) return { ...NO_ACTIONS, send: true, keep: true, cancel: true };
+    if (t.ocoLock) return { ...NO_ACTIONS, cancel: true };
     return {
         ...NO_ACTIONS,
         modify: !t.suspended,
