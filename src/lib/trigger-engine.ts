@@ -89,12 +89,14 @@ import type { Account } from './types/portfolio';
 import type { Action, FuturesOCType, StockOrderLot, Trade } from './types/order';
 
 /** Why protection resumed with a first-tick check (#144). */
-export type RestoreReason = 'restart' | 'disconnect' | 'env';
+/** `rearm`: a background trigger turned back on in a new session (#201). */
+export type RestoreReason = 'restart' | 'disconnect' | 'env' | 'rearm';
 
 export const RESTORE_REASON_TEXT: Record<RestoreReason, string> = {
     restart: 'App 關閉、重新載入或切換主視窗期間已穿價',
     disconnect: '行情連線中斷（或伺服器模式未確認）超過 1 分鐘期間已穿價',
     env: '先前不在此伺服器環境執行，切回時已穿價',
+    rearm: '在新盤別重新啟用時價格已穿過觸發價',
 };
 
 export interface TriggerOrder {

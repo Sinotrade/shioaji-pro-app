@@ -49,8 +49,10 @@ export function programForNewTrigger(t: TriggerOrder, contract: ContractBase): O
         createdAt: at, updatedAt: at };
 }
 
-const restoreReason = (r: string | undefined): TriggerRestoreReason =>
-    r === 'disconnect' || r === 'env' ? r : r === 'resume' ? 'disconnect' : 'restart';
+const restoreReason = (p: OrderProgram, r: string | undefined): TriggerRestoreReason =>
+    r === 'disconnect' || r === 'env' ? r
+        // a trigger turned back on in a new session (contract v2) starts with a resume check
+        : r === 'resume' ? (p.id.startsWith('rearm:') ? 'rearm' : 'disconnect') : 'restart';
 
 /** A stop sells below / buys above; a take the other way round. */
 const kindOf = (condition: 'below' | 'above', action: 'Buy' | 'Sell'): 'stop' | 'take' =>
@@ -62,7 +64,7 @@ function row(p: OrderProgram, lv: Level): BackgroundTriggerOrder | null {
     const b = p.binding;
     // an order whose outcome is unknown is decided on the 委託待確認 card
     const pending = lv.phase === 'needsConfirm' && lv.pending && lv.pending.reason !== 'unknownNotSent'
-        ? { price: lv.pending.price ?? e.price, at: lv.pending.ts, reason: restoreReason(lv.pending.reason) }
+        ? { price: lv.pending.price ?? e.price, at: lv.pending.ts, reason: restoreReason(p, lv.pending.reason) }
         : undefined;
     if (lv.phase !== 'idle' && !pending) return null;
     return {

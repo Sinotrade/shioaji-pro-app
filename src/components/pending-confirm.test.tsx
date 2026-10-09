@@ -17,7 +17,11 @@ const m = vi.hoisted(() => ({
     openOrders: vi.fn(),
     env: 'http://127.0.0.1:1|simulation' as string | null,
     priv: false,
+    bgOn: true as boolean | null,
+    plan: { quantity: 1 as number | null, notes: [] as string[] },
 }));
+vi.mock('../lib/execution/background', () => ({ useBackgroundSetting: () => m.bgOn }));
+vi.mock('../lib/execution/rearm', () => ({ useRearmPlan: () => m.plan }));
 
 vi.mock('../lib/execution/pending-confirm', () => ({
     usePendingConfirm: () => m.state,
@@ -55,6 +59,8 @@ const show = (items: PendingConfirmItem[], over: Partial<PendingConfirmSnapshot>
 };
 
 beforeEach(() => {
+    m.bgOn = true;
+    m.plan = { quantity: 1, notes: [] };
     m.env = SIM;
     m.priv = false;
     show([mockPendingConfirmItem({ id: 'a', env: SIM })]);
@@ -72,7 +78,7 @@ it('renders nothing when nothing needs confirmation', () => {
 it('shows what was sent: product, side, quantity, price, time, owner', () => {
     show([mockPendingConfirmItem({
         id: 'a', env: SIM,
-        order: { code: 'TXFK6', name: '台指期 11', action: 'Sell', quantity: 2, quantityUnit: 'contract', priceType: 'LMT', price: 17850, orderType: 'ROD', triggerPrice: 17860 },
+        order: { code: 'TXFK6', name: '台指期 11', action: 'Sell', quantity: 2, quantityUnit: 'contract', priceType: 'LMT', price: 17850, orderType: 'ROD', triggerPrice: 17860, triggerCondition: 'above' },
         owner: { kind: 'trigger', id: 't', leg: 'stop' },
         submittedAt: new Date(2026, 9, 8, 13, 41, 7).getTime(),
     })]);
@@ -213,4 +219,53 @@ it('a popout never shows "0 筆" when the list could not be read', () => {
     const badge = text(render({ compact: true }).root);
     expect(badge).toContain('無法取得');
     expect(badge).not.toContain('0 筆');
+});
+
+const expiredTrigger = (over = {}) => mockPendingConfirmItem({ id: 'x', env: SIM, state: 'expired', expiredAt: Date.now(),
+    owner: { kind: 'trigger', id: 't', leg: null },
+    order: { ...mockPendingConfirmItem().order, quantity: 3, triggerPrice: 17860, triggerCondition: 'below' }, ...over });
+
+it('an expired trigger can be rearmed in the new session after a second confirmation with the shown content', async () => {
+    show([expiredTrigger()], { version: 2 });
+    m.plan = { quantity: 2, notes: ['目前可平倉 2 口，已改為 2 口'] };
+    const r = render();
+    await click(button(r, '在新盤別重新啟用'));
+    expect(m.resolve).not.toHaveBeenCalled();
+    const all = text(r.root);
+    expect(all).toContain('觸發價 ≤ 17,860');
+    expect(all).toContain('目前可平倉 2 口');
+    expect(all).toContain('不會立即送單');
+    const qty = r.root.find(n => n.type === 'input' && n.props['aria-label'] === '重新啟用口數');
+    expect(qty.props.value).toBe('2');
+    await click(button(r, '確認重新啟用'));
+    expect(m.resolve).toHaveBeenCalledWith(expect.objectContaining({ id: 'x' }), 'rearmInNewSession', { quantity: 2 });
+    // 「知道了，移除」 stays offered
+    expect(buttons(r).some(b => text(b).includes('知道了'))).toBe(true);
+});
+
+it('rearming needs a quantity when the position is unknown or would open one', async () => {
+    show([expiredTrigger()], { version: 2 });
+    m.plan = { quantity: null, notes: ['持倉未確認，請自行輸入口數'] };
+    const r = render();
+    await click(button(r, '在新盤別重新啟用'));
+    expect(button(r, '確認重新啟用').props.disabled).toBe(true);
+    const qty = r.root.find(n => n.type === 'input' && n.props['aria-label'] === '重新啟用口數');
+    act(() => { qty.props.onChange({ target: { value: '1' } }); });
+    await click(button(r, '確認重新啟用'));
+    expect(m.resolve).toHaveBeenCalledWith(expect.anything(), 'rearmInNewSession', { quantity: 1 });
+});
+
+it('no rearm when the setting is off, for a v1 engine, or for a bracket (not yet)', () => {
+    m.bgOn = false;
+    show([expiredTrigger()], { version: 2 });
+    let r = render();
+    expect(button(r, '在新盤別重新啟用').props.disabled).toBe(true);
+    expect(text(r.root)).toContain('背景持續執行');
+    m.bgOn = true;
+    show([expiredTrigger()], { version: 1 });
+    r = render();
+    expect(buttons(r).some(b => text(b).includes('在新盤別重新啟用'))).toBe(false);
+    show([expiredTrigger({ owner: { kind: 'bracket', id: 'b', leg: 'stop' } })], { version: 2 });
+    r = render();
+    expect(buttons(r).some(b => text(b).includes('在新盤別重新啟用'))).toBe(false);
 });

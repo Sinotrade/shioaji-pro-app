@@ -7,11 +7,13 @@
 // whose trading session already changed are shown as 已失效 only.
 // The main window shows the cards; popouts only a badge.
 
-import { CalendarX2, ChevronDown, ChevronUp, CircleHelp, ListChecks, RefreshCw, TriangleAlert } from 'lucide-react';
+import { CalendarX2, ChevronDown, ChevronUp, CircleHelp, ListChecks, RefreshCw, RotateCcw, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { requestOpenOrdersTab } from '../lib/dock-events';
 import { refreshPendingConfirm, resolvePendingConfirm, usePendingConfirm } from '../lib/execution/pending-confirm';
-import { UNIT_LABEL, type PendingConfirmItem, type PendingResolution } from '../lib/execution/pending-confirm-contract';
+import { useBackgroundSetting } from '../lib/execution/background';
+import { canRearm, UNIT_LABEL, type PendingConfirmItem, type PendingResolution } from '../lib/execution/pending-confirm-contract';
+import { useRearmPlan } from '../lib/execution/rearm';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
 import { useServerInfo } from '../lib/server-info-store';
@@ -170,7 +172,62 @@ function ConfirmCard({ item, envNow }: { item: PendingConfirmItem; envNow: strin
     );
 }
 
-function ExpiredCard({ item }: { item: PendingConfirmItem }) {
+/** 在新盤別重新啟用: the same trigger, watched again in this session with a
+ * quantity checked against the current position. Second step shows what
+ * will be created; nothing is sent then. */
+function Rearm({ item, envNow }: { item: PendingConfirmItem; envNow: string | null }) {
+    const on = useBackgroundSetting();
+    const plan = useRearmPlan(item);
+    const [open, setOpen] = useState(false);
+    const [qty, setQty] = useState<string | null>(null);
+    const { busy, error, run } = useRun();
+    const here = item.env === envNow;
+    const value = qty ?? (plan.quantity === null ? '' : String(plan.quantity));
+    const n = Number(value);
+    const valid = value !== '' && Number.isSafeInteger(n) && n > 0;
+    const unit = UNIT_LABEL[item.order.quantityUnit];
+    const act = item.order.action === 'Buy' ? '買進' : '賣出';
+    const blocked = on !== true ? '要先在設定開啟「背景持續執行（實驗）」才能重新啟用'
+        : !here ? `切回${protectionEnvLabel(item.env)}環境才能重新啟用` : null;
+    if (!open) {
+        return (
+            <>
+                <button type='button' className={styles.button} disabled={busy || !!blocked} title={blocked ?? undefined}
+                    onClick={() => setOpen(true)}>
+                    <RotateCcw size={12} aria-hidden /> 在新盤別重新啟用
+                </button>
+                {blocked && <div className={styles.note.muted}>{blocked}</div>}
+            </>
+        );
+    }
+    return (
+        <div className={styles.cardConfirm} role='group' aria-label='重新啟用內容'>
+            <div className={styles.cardTitle}><RotateCcw size={13} aria-hidden /><span className={styles.grow}>確認重新啟用的內容</span></div>
+            <div className={styles.note.muted}>
+                {`${item.order.code} · 觸發價 ${item.order.triggerCondition === 'below' ? '≤' : '≥'} ${fmtPrice(item.order.triggerPrice ?? 0)} · 觸發後${item.order.priceType === 'MKT' ? '市價' : '限價'}${act}`}
+            </div>
+            {plan.notes.map(t => <div key={t} className={styles.note.warn}>{t}</div>)}
+            <label className={styles.stepRow}>
+                <span className={styles.stepLabel}>數量（{unit}）</span>
+                <input aria-label='重新啟用口數' inputMode='numeric' value={value} disabled={busy}
+                    onChange={e => setQty(e.target.value.trim())} />
+            </label>
+            <div className={styles.note.muted}>
+                不會立即送單：只在這個盤別重新開始盯價，價格穿過觸發價時才照一般流程送出。若現在價格已經穿過，會先列在「觸價單待確認」由你決定。
+            </div>
+            {error && <div className={styles.note.err} role='alert'>{error}</div>}
+            <div className={styles.stepRow}>
+                <button type='button' className={styles.button} disabled={busy} onClick={() => { setOpen(false); setQty(null); }}>返回</button>
+                <button type='button' className={styles.primary} disabled={busy || !valid || !!blocked}
+                    onClick={() => void run(() => resolvePendingConfirm(item, 'rearmInNewSession', { quantity: n }))}>
+                    {busy ? '處理中…' : `確認重新啟用（${act} ${valid ? n : '?'} ${unit}）`}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function ExpiredCard({ item, rearm, envNow }: { item: PendingConfirmItem; rearm: boolean; envNow: string | null }) {
     const { busy, error, run } = useRun();
     return (
         <div className={styles.cardExpired} role='group' aria-label={`${item.order.code} 委託已失效`}>
@@ -182,6 +239,7 @@ function ExpiredCard({ item }: { item: PendingConfirmItem }) {
             <Facts item={item} />
             <div className={styles.note.muted}>
                 {`${sessionLabel(item)}結束時仍查不到這筆的結果。委託不跨盤別，已自動失效，不會再成交，系統也不會重送。若失效前可能已成交，請到成交查詢與持倉核對。`}
+                {rearm ? '觸價單不會自動延續到新盤別；需要的話可以在新盤別重新啟用。' : ''}
             </div>
             {error && <div className={styles.note.err} role='alert'>{error}</div>}
             <div className={styles.stepRow}>
@@ -191,6 +249,7 @@ function ExpiredCard({ item }: { item: PendingConfirmItem }) {
                     {busy ? '處理中…' : '知道了，移除'}
                 </button>
             </div>
+            {rearm && <Rearm item={item} envNow={envNow} />}
         </div>
     );
 }
@@ -252,7 +311,8 @@ export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) 
                         </div>
                     )}
                     {confirm.map(i => <ConfirmCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i} envNow={envNow} />)}
-                    {expired.map(i => <ExpiredCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i} />)}
+                    {expired.map(i => <ExpiredCard key={`${generation}:${snapshot?.runId}:${i.id}:${i.revision}`} item={i}
+                        rearm={!!snapshot && canRearm(snapshot, i)} envNow={envNow} />)}
                 </>
             )}
         </div>

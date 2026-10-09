@@ -129,13 +129,20 @@ const REFUSAL_TEXT: Record<ResolvePendingRefusal, string> = {
     stale: '待確認狀態已更新，請重新核對後再確認',
     invalidForState: '這筆目前不能這樣處理，請重新核對',
     windowNotAllowed: '只能在主視窗處理待確認委託',
+    notEnabled: '「背景持續執行」沒有開啟，無法重新啟用；請先在設定開啟',
+    invalidRequest: '口數不正確，請重新輸入',
+    rearmFailed: '背景執行沒有接受新的觸價單（可能尚未連線），這筆仍保留，請稍後再試',
 };
 
 /** Records the user's decision. Throws (with a user-facing message) when it
  * was not applied; the card then stays. */
-export async function resolvePendingConfirm(item: PendingConfirmItem, resolution: PendingResolution): Promise<void> {
+export async function resolvePendingConfirm(item: PendingConfirmItem, resolution: PendingResolution,
+    opts: { quantity?: number } = {}): Promise<void> {
     if (!isMain()) throw new Error(REFUSAL_TEXT.windowNotAllowed);
     if (!resolutionAllowed(item.state, resolution)) throw new Error(REFUSAL_TEXT.invalidForState);
+    const rearm = resolution === 'rearmInNewSession';
+    if (rearm && (state.snapshot?.version ?? 1) < 2) throw new Error('背景執行版本不支援重新啟用，請更新 App');
+    if (rearm && !(Number.isSafeInteger(opts.quantity) && opts.quantity! > 0)) throw new Error(REFUSAL_TEXT.invalidRequest);
     // only the item as currently shown (same transport, same list) may be
     // decided; anything else is a stale card
     if (!state.snapshot?.items.includes(item)) throw new Error(REFUSAL_TEXT.stale);
@@ -145,7 +152,8 @@ export async function resolvePendingConfirm(item: PendingConfirmItem, resolution
     const ticket = ++tickets;
     let result: ResolvePendingResult;
     try {
-        result = parseResolvePendingResult(await b.resolve({ id: item.id, revision: item.revision, resolution }));
+        result = parseResolvePendingResult(await b.resolve({ id: item.id, revision: item.revision, resolution,
+            ...(rearm ? { quantity: opts.quantity } : {}) }));
     } catch (e) {
         // outcome unknown: re-read so the card shows what the engine has
         void refreshPendingConfirm();

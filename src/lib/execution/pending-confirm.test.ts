@@ -339,4 +339,22 @@ describe('tauri backend adapter', () => {
         await flush();
         expect(m.unlisten).toHaveBeenCalled();
     });
+
+    it('rearm sends the confirmed quantity, and is refused by a v1 engine', async () => {
+        const item = mockPendingConfirmItem({ id: 'x', state: 'expired', expiredAt: Date.now(),
+            order: { ...mockPendingConfirmItem().order, triggerCondition: 'below' } });
+        const backend = store.createMockPendingConfirmBackend(mockPendingConfirmSnapshot({ version: 2, items: [item] }));
+        const resolve = vi.spyOn(backend, 'resolve');
+        store.installPendingConfirmBackend(backend);
+        await vi.waitFor(() => expect(store.getPendingConfirmState().snapshot?.items).toHaveLength(1));
+        await store.resolvePendingConfirm(store.getPendingConfirmState().snapshot!.items[0]!, 'rearmInNewSession', { quantity: 2 });
+        expect(resolve).toHaveBeenCalledWith({ id: 'x', revision: 1, resolution: 'rearmInNewSession', quantity: 2 });
+        const old = store.createMockPendingConfirmBackend(mockPendingConfirmSnapshot({ version: 1, items: [item] }));
+        store.installPendingConfirmBackend(old);
+        await vi.waitFor(() => expect(store.getPendingConfirmState().snapshot?.items).toHaveLength(1));
+        await expect(store.resolvePendingConfirm(store.getPendingConfirmState().snapshot!.items[0]!, 'rearmInNewSession', { quantity: 2 }))
+            .rejects.toThrow(/不支援/);
+        await expect(store.resolvePendingConfirm(store.getPendingConfirmState().snapshot!.items[0]!, 'rearmInNewSession'))
+            .rejects.toThrow();
+    });
 });

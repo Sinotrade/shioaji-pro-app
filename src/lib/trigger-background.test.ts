@@ -331,6 +331,15 @@ describe('background rows', () => {
         expect(m.place).not.toHaveBeenCalled();
     });
 
+    it('a trigger turned back on in a new session that is already past says so', async () => {
+        m.programs = [{ ...program({ phase: 'needsConfirm', pending: { leg: 'entry', price: 19790, ts: 5, reason: 'resume' } }),
+            id: 'rearm:trg:p1:9' }];
+        await boot();
+        await bg.refreshBackground();
+        expect(engine.getDisplayTriggers()[0]?.pending?.reason).toBe('rearm');
+        expect(engine.RESTORE_REASON_TEXT.rearm).toContain('重新啟用');
+    });
+
     it('an order with an unknown outcome is not a trigger row (the 委託待確認 card decides it)', async () => {
         m.programs = [program({ phase: 'needsConfirm', pending: { leg: 'entry', price: 1, ts: 5, reason: 'unknownNotSent' } })];
         await boot();
