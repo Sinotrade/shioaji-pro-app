@@ -180,6 +180,59 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: cargo run --manifest-path src-tauri/Cargo.toml --bin windows_agent_job_e2e
 
+      # The installer hook must stop a running bundled server
+      # ($INSTDIR\shioaji.exe) and leave a same-named program elsewhere alone.
+      # Builds the hook into a tiny installer with the runner's NSIS and runs it
+      # against two copies of ping.exe named shioaji.exe.
+      - name: Windows installer hook E2E
+        if: matrix.platform == 'windows-latest' && hashFiles('src-tauri/windows/hooks.nsh') != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            choco install nsis -y --no-progress | Out-Null
+          }
+          if (-not (Test-Path $makensis)) { throw "makensis not found" }
+          $base = Join-Path $env:RUNNER_TEMP "nsis hook's test"
+          $inst = Join-Path $base 'inst'
+          $other = Join-Path $base 'other'
+          New-Item -ItemType Directory -Force $inst, $other | Out-Null
+          Copy-Item "$env:SystemRoot\System32\PING.EXE" (Join-Path $inst 'shioaji.exe')
+          Copy-Item "$env:SystemRoot\System32\PING.EXE" (Join-Path $other 'shioaji.exe')
+          $script = Join-Path $base 'check.nsi'
+          @(
+            'Unicode true'
+            '!include LogicLib.nsh'
+            '!include x64.nsh'
+            '!include "${HOOKS}"'
+            'Name "hook-check"'
+            'OutFile "${OUT}"'
+            'RequestExecutionLevel user'
+            'SilentInstall silent'
+            'Section'
+            '  StrCpy $INSTDIR "${TARGET}"'
+            '  !insertmacro NSIS_HOOK_PREINSTALL'
+            'SectionEnd'
+          ) | Set-Content -Encoding utf8 $script
+          $hooks = (Resolve-Path src-tauri/windows/hooks.nsh).Path
+          $out = Join-Path $base 'check.exe'
+          & $makensis /V2 "/DHOOKS=$hooks" "/DOUT=$out" "/DTARGET=$inst" $script
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed: $LASTEXITCODE" }
+          $bundled = Start-Process (Join-Path $inst 'shioaji.exe') -ArgumentList '-n', '120', '127.0.0.1' -PassThru -WindowStyle Hidden
+          $foreign = Start-Process (Join-Path $other 'shioaji.exe') -ArgumentList '-n', '120', '127.0.0.1' -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 1
+          try {
+            Start-Process $out -Wait
+            if (-not $bundled.WaitForExit(10000)) { throw 'bundled shioaji.exe is still running' }
+            if ($foreign.HasExited) { throw 'a shioaji.exe outside the install dir was stopped' }
+            # nothing left to stop: the hook is a no-op and still leaves others alone
+            Start-Process $out -Wait
+            if ($foreign.HasExited) { throw 'second run stopped a shioaji.exe outside the install dir' }
+          } finally {
+            foreach ($p in @($bundled, $foreign)) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+          }
+
       - name: Rust lint
         if: matrix.platform == 'ubuntu-22.04'
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
