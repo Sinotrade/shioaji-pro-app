@@ -23,7 +23,7 @@ vi.mock('../lib/trade', () => ({ notify: m.notify }));
 vi.mock('../lib/bracket', () => ({ ensureBracketHost: m.host, registerBracket: m.register, registrationFailureText: String,
     validateBracketRequest: () => null }));
 vi.mock('./bracket-status', () => ({ BracketStatusList: () => null }));
-vi.mock('./background-bracket-status', () => ({ BackgroundBracketList: () => null }));
+vi.mock('./conditional-panel', () => ({ ConditionalBracketCards: () => null }));
 vi.mock('../lib/execution/background', () => ({ backgroundOwnerForNew: m.owner, createBackgroundBracket: m.create }));
 vi.mock('../lib/protection-env', () => ({ currentProtectionEnv: () => 'http://127.0.0.1:1|simulation' }));
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => ({ tick: { close: '100' } }), useTradingLive: () => true }));

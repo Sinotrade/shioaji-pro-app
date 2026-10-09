@@ -160,7 +160,8 @@ type Command =
     | { op: 'reconcile'; id: string }
     | { op: 'dismiss'; id: string }
     | { op: 'ack-exit'; id: string }
-    | { op: 'cancel-entry'; id: string };
+    | { op: 'cancel-entry'; id: string }
+    | { op: 'modify'; id: string; stopPrice: number | null; takePrice: number | null };
 
 const bus = createCommandBus<Command, BracketPlan[]>({
     channel: typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-brackets:${getApiBase()}`) : null,
@@ -202,11 +203,12 @@ function restoringDo(on: boolean, fn: () => void) {
     try { fn(); } finally { restoring = prev; }
 }
 
-function arm(p: BracketPlan) {
+function arm(p: BracketPlan, edited = false) {
     const qty = protectionQuantity(p);
     if (p.dismissed || qty <= 0 || p.env !== currentProtectionEnv()) return;
     armBracketGroup({
         restore: restoring,
+        edited,
         group: p.group, bracketId: p.id, env: p.env, account: p.account, code: p.quoteCode,
         orderCode: p.orderCode, entryAction: p.action, octype: p.market === 'futures' ? 'Cover' : undefined,
         orderLot: p.market === 'stock' && p.orderLot === 'IntradayOdd' ? 'IntradayOdd' : undefined,
@@ -456,6 +458,7 @@ function handle(cmd: Command): unknown {
             return true;
         }
         case 'cancel-entry': return cancelEntry(cmd.id);
+        case 'modify': return modifyPlan(cmd.id, cmd.stopPrice, cmd.takePrice);
         case 'ack-exit': {
             const exitId = exitIds.get(cmd.id) ?? getExits().find(e => e.bracketId === cmd.id)?.id;
             if (!exitId) throw new Error('找不到此括號單的出場紀錄');
@@ -463,6 +466,35 @@ function handle(cmd: Command): unknown {
         }
     }
     throw new Error('未知指令');
+}
+
+/** #226: change a bracket's stop / take. The armed pair is replaced at once
+ * (no tick in between); a leg already crossed at the new price waits for the
+ * user (待確認) instead of firing. Not while an exit is out. */
+function modifyPlan(id: string, stopPrice: number | null, takePrice: number | null): BracketPlan {
+    const p = plans.find(x => x.id === id);
+    if (!p) throw new Error('找不到此括號單');
+    if (!isLive(p) || p.exit) throw new Error('括號單已出場或結束，不能修改');
+    if (p.env !== currentProtectionEnv()) throw new Error('此括號單屬於其他伺服器或模式，請切回原環境後修改');
+    if (stopPrice === null && takePrice === null) throw new Error('括號單需要停損價或停利價');
+    for (const v of [stopPrice, takePrice]) if (v !== null && (!Number.isFinite(v) || v <= 0)) throw new Error('停損／停利價必須是正數');
+    const long = p.action === 'Buy';
+    if (stopPrice !== null && takePrice !== null && (long ? stopPrice >= takePrice : stopPrice <= takePrice)) {
+        throw new Error(`${long ? '買進' : '賣出'}的停損價必須${long ? '低於' : '高於'}停利價`);
+    }
+    if (stopPrice === p.stopPrice && takePrice === p.takePrice) return p;
+    const at = Date.now();
+    const changes = [
+        stopPrice !== p.stopPrice ? `停損 ${p.stopPrice ?? '無'} → ${stopPrice ?? '無'}` : null,
+        takePrice !== p.takePrice ? `停利 ${p.takePrice ?? '無'} → ${takePrice ?? '無'}` : null,
+    ].filter(Boolean).join('、');
+    const next: BracketPlan = { ...p, stopPrice, takePrice, updatedAt: at,
+        edits: [...(p.edits ?? []), { at, text: `修改${changes}` }].slice(-20) };
+    plans = plans.map(x => x.id === id ? next : x);
+    disarmBracketGroup(p.env, p.group);
+    arm(next, true);
+    commit();
+    return next;
 }
 
 // ---- public API (any window) ----
@@ -498,6 +530,10 @@ export function reconcileBracket(id: string) {
 
 export function dismissBracket(id: string) {
     return bus.send({ op: 'dismiss', id });
+}
+
+export function modifyBracket(id: string, stopPrice: number | null, takePrice: number | null) {
+    return bus.send({ op: 'modify', id, stopPrice, takePrice });
 }
 
 export function acknowledgeBracketExit(id: string) {

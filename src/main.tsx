@@ -32,6 +32,12 @@ if (import.meta.env.DEV && new URLSearchParams(location.search).has('mockPending
     void import('./lib/execution/pending-confirm-dev').then(m => m.installMockPendingConfirm());
 }
 
+// #226 dev only: `?condDemo` fills the 條件單管理面板 with sample rows (no
+// trigger, order or server state behind them). Never part of a release build.
+if (import.meta.env.DEV && new URLSearchParams(location.search).has('condDemo')) {
+    void import('./lib/conditional/demo-install').then(m => m.installConditionalDemo());
+}
+
 const rootElement = document.getElementById('root');
 if (!rootElement) {
     throw new Error('Root element #root not found');

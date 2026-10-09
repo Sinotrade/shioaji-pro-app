@@ -426,6 +426,24 @@ describe('trigger execution (main window only)', () => {
         expect(planOf(plan.id).exit).toMatchObject({ status: 'filled', filled: 2 });
     });
 
+    it('#226 modify: re-prices the armed pair at once; a crossed new stop waits for the user; refuses inverted prices', async () => {
+        const plan = await armed();
+        const before = triggersOf(plan.id);
+        const stop0 = before.find(t => t.kind === 'stop')!.price;
+        const take0 = before.find(t => t.kind === 'take')!.price;
+        await tick(stop0 + 100);
+        await expect(bracket.modifyBracket(plan.id, take0 + 10, take0)).rejects.toThrow('停損價必須低於停利價');
+        await bracket.modifyBracket(plan.id, stop0 + 50, take0);
+        const after = triggersOf(plan.id);
+        expect(after.map(t => [t.kind, t.price, t.quantity])).toEqual([['stop', stop0 + 50, 2], ['take', take0, 2]]);
+        expect(planOf(plan.id).edits?.at(-1)?.text).toContain(`停損 ${stop0} → ${stop0 + 50}`);
+        // the new stop is above the last price: the first tick decides → 待確認, nothing sent
+        await bracket.modifyBracket(plan.id, stop0 + 200, take0);
+        await tick(stop0 + 100);
+        expect(m.place).not.toHaveBeenCalled();
+        expect(triggersOf(plan.id).find(t => t.kind === 'stop')!.pending?.reason).toBe('resume');
+    });
+
     it('a bracket trigger cannot be removed on its own (only via the plan)', async () => {
         const plan = await armed();
         await engine.removeTrigger(triggersOf(plan.id)[0]!.id);

@@ -331,6 +331,43 @@ describe('background rows', () => {
         expect(m.place).not.toHaveBeenCalled();
     });
 
+    it('#226 modify: paused, re-created with the same order (Cover kept, first tick decides), then removed; a crossed price is refused', async () => {
+        m.programs = [program({ entry: { type: 'touch', condition: 'below', price: 19800, order: { priceType: 'MKT', timeInForce: 'IOC', octype: 'Cover' } } })];
+        await boot();
+        await bg.refreshBackground();
+        await expect(engine.modifyTrigger('bg:trg:p1:L1', { price: 20100 })).rejects.toThrow('已穿過目前價格');
+        expect(calls('execution_pause')).toHaveLength(0);
+        m.create = async ({ program: p }) => { m.programs = [...m.programs, p]; return { accepted: true, notices: [], revision: 10 }; };
+        const orig = m.invoke.getMockImplementation()!;
+        m.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+            if (cmd === 'execution_pause') m.programs = (m.programs as OrderProgram[]).map(p => ({ ...p, status: 'paused' as const }));
+            return orig(cmd, args);
+        });
+        await engine.modifyTrigger('bg:trg:p1:L1', { price: 19700, quantity: 2 });
+        expect(calls('execution_pause').map(([, a]) => a)).toEqual([{ programId: 'trg:p1' }]);
+        const created = calls('execution_create')[0]![1] as { program: OrderProgram };
+        const lv = created.program.levels[0]!;
+        expect(lv.check).toBe('resume');
+        expect(lv.qty).toBe(2);
+        expect(lv.entry).toMatchObject({ type: 'touch', price: 19700, order: { octype: 'Cover' } });
+        expect(calls('execution_remove').map(([, a]) => a)).toEqual([{ programId: 'trg:p1' }]);
+        expect(m.place).not.toHaveBeenCalled();
+    });
+
+    it('#226 modify: when the trigger fired while pausing, nothing is replaced and it is resumed as it was', async () => {
+        m.programs = [program()];
+        await boot();
+        await bg.refreshBackground();
+        const orig = m.invoke.getMockImplementation()!;
+        m.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+            if (cmd === 'execution_pause') m.programs = [program({ phase: 'working', orders: [{ key: 'k' } as never] }), { ...program(), id: 'trg:other' }];
+            return orig(cmd, args);
+        });
+        await expect(engine.modifyTrigger('bg:trg:p1:L1', { price: 19700 })).rejects.toThrow('已觸發');
+        expect(calls('execution_create')).toHaveLength(0);
+        expect(calls('execution_resume').map(([, a]) => a)).toEqual([{ programId: 'trg:p1' }]);
+    });
+
     it('a trigger turned back on in a new session that is already past says so', async () => {
         m.programs = [{ ...program({ phase: 'needsConfirm', pending: { leg: 'entry', price: 19790, ts: 5, reason: 'resume' } }),
             id: 'rearm:trg:p1:9' }];

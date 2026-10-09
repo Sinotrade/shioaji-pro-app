@@ -51,7 +51,8 @@ function useRun() {
 
 type Positions = { state: 'loading' } | { state: 'ok'; view: PositionView } | { state: 'failed' };
 
-function Rearm({ v, onClose }: { v: BracketView; onClose: () => void }) {
+/** Exported for the 條件單管理面板 (#226). */
+export function BracketRearm({ v, onClose }: { v: BracketView; onClose: () => void }) {
     const [pos, setPos] = useState<Positions>({ state: 'loading' });
     const [qty, setQty] = useState<string | null>(null);
     const { busy, message, run } = useRun();
@@ -161,7 +162,7 @@ function Row({ v, envNow, main }: { v: BracketView; envNow: string | null; main:
                     背景執行會停止追蹤這張括號單（包含部位與保護），不會送出或刪除任何委託；仍在委託中的單與持有的部位請你自行處理。
                 </div>
             )}
-            {rearming && <Rearm v={v} onClose={() => setRearming(false)} />}
+            {rearming && <BracketRearm v={v} onClose={() => setRearming(false)} />}
             {main && !rearming && (
                 <div className={styles.actions}>
                     {v.actions.rearm && (

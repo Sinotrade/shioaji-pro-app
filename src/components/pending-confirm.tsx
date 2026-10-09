@@ -391,3 +391,18 @@ export function PendingConfirmPanel({ compact = false }: { compact?: boolean }) 
         </div>
     );
 }
+
+/** One 委託待確認 item (#226 management panel's 確認成交… dialog). The same
+ * cards and resolutions as the list above; null once the item is gone. */
+export function PendingConfirmItemCard({ id }: { id: string }) {
+    const { snapshot, generation } = usePendingConfirm();
+    useServerInfo();
+    const item = snapshot?.items.find(i => i.id === id);
+    if (!item) return null;
+    const envNow = currentProtectionEnv();
+    const key = `${generation}:${snapshot?.runId}:${item.id}:${item.revision}`;
+    const handled = !!snapshot && canMarkHandled(snapshot);
+    return item.state === 'needsConfirm'
+        ? <ConfirmCard key={key} item={item} envNow={envNow} handled={handled} />
+        : <ExpiredCard key={key} item={item} rearm={!!snapshot && canRearm(snapshot, item)} envNow={envNow} handled={handled} />;
+}

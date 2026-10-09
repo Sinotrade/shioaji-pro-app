@@ -21,7 +21,7 @@ import {
     validateBracketRequest,
 } from '../lib/bracket';
 import { BracketStatusList } from './bracket-status';
-import { BackgroundBracketList } from './background-bracket-status';
+import { ConditionalBracketCards } from './conditional-panel';
 import { backgroundOwnerForNew, createBackgroundBracket } from '../lib/execution/background';
 import { backgroundBracketEligible, bracketRequestFor } from '../lib/execution/background-bracket';
 import { usePickedPrice } from '../lib/price-sync';
@@ -1157,7 +1157,7 @@ export function OrderTicket({
                     </div>
                 )}
                 <BracketStatusList code={contract.code} />
-                <BackgroundBracketList code={contract.code} />
+                <ConditionalBracketCards code={contract.code} />
 
                 {multi && (
                     <div className={styles.fieldRow}>

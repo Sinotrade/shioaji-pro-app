@@ -203,6 +203,15 @@ export function refreshBackground(): Promise<void> {
     return refreshing;
 }
 
+/** One program read from the App now (not the cached mirror); throws when
+ * the App cannot be read — a caller that must be sure never guesses. */
+export async function readBackgroundProgram(programId: string): Promise<OrderProgram | null> {
+    if (!isTauri) throw new Error('背景持續執行僅限桌面版');
+    const view = await invoke<ProgramsView>('execution_programs');
+    if (!view || !Array.isArray(view.programs)) throw new Error('背景執行清單無法讀取');
+    return view.programs.find(p => p.id === programId) ?? null;
+}
+
 /** Refreshed until no read is in flight (every read started after now). */
 async function settled(): Promise<void> {
     await refreshBackground();
