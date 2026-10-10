@@ -13,7 +13,7 @@ import {
     Volume2,
     X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { AsyncStatus } from './async-status';
 import {
     ensureAccounts,
@@ -79,6 +79,9 @@ import { CUSTOM_BASES } from '../lib/custom-theme';
 import { CustomThemeEditor } from './custom-theme-editor';
 import { ExternalLink } from './external-link';
 import { Orb } from './orb';
+import { ProdAccountStatusSection } from './settings-account-status';
+import { SimTestOrderSection } from './settings-test-order';
+import { useEscClose } from '../hooks/use-esc-close';
 import * as hud from './hud-header.css';
 import * as panel from './panel.css';
 import * as styles from './settings-dialog.css';
@@ -303,7 +306,8 @@ function SoundPrivacySection() {
 
 export function AccountsSection() {
     const { accounts, selectedStock, selectedFutures, loaded, loadError } = useAccounts();
-    const simulation = useServerInfo()?.simulation === true;
+    const mode = useServerInfo()?.simulation;
+    const simulation = mode === true;
     const priv = usePrivacyMode();
     const [refreshing, setRefreshing] = useState(false);
     useEffect(ensureAccounts, []);
@@ -425,6 +429,8 @@ export function AccountsSection() {
                 )}
                 {refreshing ? '重新整理中…' : '重新整理帳號'}
             </button>
+            {mode === true && <SimTestOrderSection />}
+            {mode === false && <ProdAccountStatusSection />}
         </>
     );
 }
@@ -683,6 +689,14 @@ function LayoutSection({
     );
 }
 
+// 開啟時才入 modal stack（SettingsDialog 常駐掛載，不能在頂層 useEscClose，
+// 否則關著也會吃掉 Esc）。上面疊委託確認視窗時，Esc 只關最上層；
+// useEscClose 一律 preventDefault，不會算進 Esc×2 全部刪單。
+function SettingsEscClose({ onClose }: { onClose: () => void }) {
+    useEscClose(onClose);
+    return null;
+}
+
 export function SettingsDialog({
     open,
     onClose,
@@ -692,29 +706,52 @@ export function SettingsDialog({
     onClose: () => void;
 }) {
     const [tab, setTab] = useState<SettingsTab>('appearance');
-
+    const titleId = useId();
+    const dialogRef = useRef<HTMLDivElement>(null);
+    // 焦點圈限：開啟時把焦點移進視窗、Tab 在視窗內繞圈、關閉時還原。
+    // keydown 掛在 document：疊在上面的委託確認（portal 到 body）關閉後焦點會掉到 body，
+    // 掛在視窗節點上就攔不到那一下 Tab。焦點在視窗外的其他元素（例如仍開著的確認視窗）時不處理，
+    // 由那個視窗自己管；Esc 不在這裡處理，一律走 SettingsEscClose（useEscClose）。
     useEffect(() => {
-        if (!open) return;
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                // capture + preventDefault so the global Esc-Esc cancel-all
-                // hotkey ignores the press that closes this dialog
-                e.preventDefault();
-                onClose();
-            }
+        const node = dialogRef.current;
+        if (!open || !node) return;
+        const previous = document.activeElement as HTMLElement | null;
+        node.focus();
+        const keydown = (event: KeyboardEvent) => {
+            if (event.key !== 'Tab') return;
+            const active = document.activeElement;
+            if (active && active !== document.body && !node.contains(active)) return;
+            // 收合的 <details> 內的連結 getClientRects 仍有值，要另外排除
+            const nodes = Array.from(node.querySelectorAll<HTMLElement>(
+                'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], summary, [tabindex="0"]',
+            )).filter(el => el.getClientRects().length && !el.closest('details:not([open]) > :not(summary)'));
+            const first = nodes[0], last = nodes[nodes.length - 1]; // 不用 .at()：Safari 13 target
+            if (!first || !last) { event.preventDefault(); node.focus(); return; }
+            // 焦點掉到 body（被聚焦的元素已卸載）：把它拉回視窗內
+            if (!active || !node.contains(active)) { event.preventDefault(); (event.shiftKey ? last : first).focus(); return; }
+            if (event.shiftKey && (active === first || active === node)) { event.preventDefault(); last.focus(); }
+            else if (!event.shiftKey && (active === last || active === node)) { event.preventDefault(); first.focus(); }
         };
-        window.addEventListener('keydown', onKey, true);
-        return () => window.removeEventListener('keydown', onKey, true);
-    }, [open, onClose]);
+        document.addEventListener('keydown', keydown);
+        return () => { document.removeEventListener('keydown', keydown); if (previous?.isConnected) previous.focus(); };
+    }, [open]);
 
     if (!open) return null;
 
     return (
         <>
+            <SettingsEscClose onClose={onClose} />
             <div className={styles.backdrop} onClick={onClose} />
-            <div className={styles.dialog}>
+            <div
+                ref={dialogRef}
+                role='dialog'
+                aria-modal='true'
+                aria-labelledby={titleId}
+                tabIndex={-1}
+                className={`${styles.dialog} ${tab === 'accounts' ? styles.accountsDialog : ''}`}
+            >
                 <div className={hud.srvDialogTitle}>
-                    設定
+                    <span id={titleId}>設定</span>
                     <button
                         className={hud.profileDelete}
                         title='關閉（Esc）'

@@ -1,5 +1,5 @@
-import { createElement } from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { createElement, useState } from 'react';
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => {
@@ -12,6 +12,8 @@ const fixture = vi.hoisted(() => {
     return {
         tauri: { value: false },
         open: vi.fn(async () => undefined),
+        cancelAll: vi.fn(async () => undefined),
+        notify: vi.fn(),
         accounts: [
             { account_type: 'S', broker_id: '9A95', account_id: '1234567', signed: true, person_id: '', username: '測試甲' },
             { account_type: 'F', broker_id: 'F002000', account_id: '7654321', signed: false, person_id: '', username: '測試乙' },
@@ -29,20 +31,35 @@ vi.mock('../lib/runtime', async (orig) => ({
     ...(await orig<typeof import('../lib/runtime')>()),
     get isTauri() { return fixture.tauri.value; },
 }));
-vi.mock('../lib/risk', () => ({ getDailyPnl: () => 0, setRiskSettings: vi.fn(), useRiskSettings: () => ({}) }));
+vi.mock('../lib/risk', () => ({ getDailyPnl: () => 0, setRiskSettings: vi.fn(), useRiskSettings: () => ({}), getRiskSettings: () => ({ escCancelAll: true }) }));
 vi.mock('../lib/tauri', () => ({
     openExternalUrl: fixture.open,
     isAgentHarnessEnabled: () => false,
     setAgentHarnessEnabled: vi.fn(),
 }));
+// 所有資料與交易邊界皆 stub，掛載真實測試單與全域熱鍵不發請求。
+vi.mock('../hooks/use-stream', async orig => ({ ...(await orig<object>()), useQuote: () => ({ tick: { close: '21.5' } }), useTradingLive: () => true }));
+vi.mock('../hooks/use-query', () => ({ useQuery: () => ({ data: undefined, error: null, refresh: vi.fn() }) }));
+vi.mock('../lib/product-search', () => ({ searchProducts: vi.fn(async () => []) }));
+vi.mock('../lib/trade', () => ({ cancelAllOrders: fixture.cancelAll, notify: fixture.notify, placeQuickOrder: vi.fn() }));
 
 import { setPrivacyMode } from '../lib/privacy';
-import { AccountsSection } from './settings-dialog';
+import { AccountsSection, SettingsDialog } from './settings-dialog';
+import { useEscClose } from '../hooks/use-esc-close';
 import { beginServerInfoRequest, forgetServerInfo, observeServerInfo } from '../lib/server-info-store';
+import { useHotkeys } from '../hooks/use-hotkeys';
+import { resetEscCancelArm } from '../lib/esc-cancel-arm';
 import { getApiBase } from '../lib/runtime';
+import { placeQuickOrder } from '../lib/trade';
+import { PROD_SWITCH_HINT } from './settings-account-verification';
+import * as testOrderStyles from './settings-test-order.css';
 
 let view: ReactTestRenderer | undefined;
-beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); forgetServerInfo(getApiBase()); });
+beforeEach(() => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    forgetServerInfo(getApiBase());
+    vi.mocked(placeQuickOrder).mockClear();
+});
 afterEach(async () => {
     await act(async () => view?.unmount());
     view = undefined;
@@ -53,6 +70,12 @@ afterEach(async () => {
 
 const text = () => JSON.stringify(view!.toJSON());
 const render = async () => { await act(async () => { view = create(createElement(AccountsSection)); }); };
+const textOf = (node: ReactTestInstance | string): string => typeof node === 'string' ? node : node.children.map(textOf).join('');
+const cards = (title: string) => view!.root.findAll(node =>
+    node.type === 'section' && typeof node.props['aria-labelledby'] === 'string' &&
+    node.findAll(child => child.props.id === node.props['aria-labelledby'] && textOf(child) === title).length === 1);
+const sendButtons = () => view!.root.findAll(node =>
+    node.type === 'button' && String(node.props.className).includes(testOrderStyles.sendBtn));
 
 it('labels signed=false as 未簽署或未測試 with a consistent tooltip', async () => {
     await render();
@@ -134,4 +157,174 @@ it('masks account ids and holder names in privacy mode', async () => {
     expect(text()).not.toContain('測試乙');
     expect(text()).toContain('•••••67');
     expect(text()).toContain('•••');
+});
+
+it('shows neither card while the server mode is unknown', async () => {
+    await render();
+    expect(cards('測試單')).toHaveLength(0);
+    expect(cards('帳戶狀態')).toHaveLength(0);
+});
+
+it('switches between the test-order card and the account-status card by server mode', async () => {
+    await render();
+    await act(async () => {
+        observeServerInfo(beginServerInfoRequest(), { simulation: true } as import('../lib/shioaji').ServerInfo);
+    });
+    expect(cards('測試單')).toHaveLength(1);
+    expect(cards('帳戶狀態')).toHaveLength(0);
+    await act(async () => {
+        observeServerInfo(beginServerInfoRequest(), { simulation: false } as import('../lib/shioaji').ServerInfo);
+    });
+    expect(cards('測試單')).toHaveLength(0);
+    expect(cards('帳戶狀態')).toHaveLength(1);
+    await act(async () => { forgetServerInfo(getApiBase()); });
+    expect(cards('測試單')).toHaveLength(0);
+    expect(cards('帳戶狀態')).toHaveLength(0);
+});
+
+it('production mode shows the status card without any button that could send an order', async () => {
+    await act(async () => {
+        observeServerInfo(beginServerInfoRequest(), { simulation: false } as import('../lib/shioaji').ServerInfo);
+    });
+    await render();
+    expect(cards('測試單')).toHaveLength(0);
+    expect(cards('帳戶狀態')).toHaveLength(1);
+    const statusCard = cards('帳戶狀態')[0]!;
+    expect(statusCard.findAllByType('button')).toHaveLength(0);
+    expect(sendButtons()).toHaveLength(0);
+    expect(textOf(statusCard)).toContain('已通過，可正式下單');
+    expect(textOf(statusCard)).toContain('未通過：');
+    expect(textOf(statusCard)).toContain('如何通過驗證');
+    expect(textOf(statusCard)).toContain(PROD_SWITCH_HINT);
+    expect(textOf(statusCard)).toContain('1234567');
+    await act(async () => { setPrivacyMode(true); });
+    expect(textOf(statusCard)).not.toContain('1234567');
+    expect(textOf(statusCard)).not.toContain('7654321');
+    expect(textOf(statusCard)).toContain('•••••67');
+    expect(vi.mocked(placeQuickOrder)).not.toHaveBeenCalled();
+});
+
+it('real hotkeys ignore search cancellation, confirmation overlays and the Esc closing settings', async () => {
+    const listeners: { fn: (e: KeyboardEvent) => void; capture: boolean }[] = [];
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    fixture.cancelAll.mockClear(); fixture.notify.mockClear(); resetEscCancelArm();
+    vi.stubGlobal('window', {
+        addEventListener: (type: string, fn: (e: KeyboardEvent) => void, capture = false) => { if (type === 'keydown') listeners.push({ fn, capture }); },
+        removeEventListener: (_type: string, fn: (e: KeyboardEvent) => void, capture = false) => {
+            const i = listeners.findIndex(l => l.fn === fn && l.capture === capture); if (i >= 0) listeners.splice(i, 1);
+        },
+    });
+    let active: unknown = null;
+    vi.stubGlobal('document', { get activeElement() { return active; } });
+    const esc = () => {
+        const e = { key: 'Escape', repeat: false, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+        // 真正 DOM 的事件順序：先 capture，再 bubble。
+        for (const l of [...listeners].sort((a, b) => Number(b.capture) - Number(a.capture))) l.fn(e as unknown as KeyboardEvent);
+        return e;
+    };
+    const closed = vi.fn(); const confirmed = vi.fn();
+    function Confirmation() { useEscClose(confirmed); return null; }
+    function Harness({ confirmation = false }: { confirmation?: boolean }) {
+        useHotkeys({ onOpenPalette: () => undefined, onAfterCancelAll: () => undefined });
+        const [open, setOpen] = useState(true);
+        return createElement('div', null,
+            createElement(SettingsDialog, { open, onClose: () => { closed(); setOpen(false); }, onResetWorkspace: vi.fn(), onOpenLayoutLibrary: vi.fn() }),
+            confirmation && createElement(Confirmation));
+    }
+    try {
+        await act(async () => { observeServerInfo(beginServerInfoRequest(), { simulation: true } as import('../lib/shioaji').ServerInfo); });
+        await act(async () => { view = create(createElement(Harness), { createNodeMock: el => el.type === 'input' ? { focus() { active = this; }, select() {}, tagName: 'INPUT' } : null }); });
+        const label = (n: import('react-test-renderer').ReactTestInstance): string => n.children.map(c => typeof c === 'string' ? c : label(c)).join('');
+        await act(async () => view!.root.findAllByType('button').find(b => label(b) === '帳號')!.props.onClick());
+        const product = () => view!.root.findByProps({ 'aria-label': '證券商品' });
+        await act(async () => product().props.onChange({ target: { value: '搜尋中' } }));
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+        // 確認疊層用真正 useEscClose，搜尋仍在其下。
+        await act(async () => view!.update(createElement(Harness, { confirmation: true })));
+        expect(esc().defaultPrevented).toBe(true);
+        expect(confirmed).toHaveBeenCalledTimes(1); expect(closed).not.toHaveBeenCalled();
+        expect(product().props.value).toBe('搜尋中');
+        await act(async () => view!.update(createElement(Harness, { confirmation: false })));
+        await act(async () => { expect(esc().defaultPrevented).toBe(true); });
+        expect(product().props.value).toBe('永豐金'); expect(closed).not.toHaveBeenCalled();
+        active = null;
+        await act(async () => { expect(esc().defaultPrevented).toBe(true); });
+        expect(closed).toHaveBeenCalledTimes(1);
+        // 關設定的 Esc 後立刻再按一下，不能湊成 Esc×2 刪單。
+        expect(esc().defaultPrevented).toBe(false);
+        expect(fixture.cancelAll).not.toHaveBeenCalled();
+        expect(fixture.notify).toHaveBeenCalledTimes(1);
+        // 正向對照：兩下真正未被介面用掉的 Esc 會到交易 stub，證明熱鍵確實掛載。
+        await act(async () => { esc(); await Promise.resolve(); });
+        expect(fixture.cancelAll).toHaveBeenCalledTimes(1);
+    } finally {
+        await act(async () => view?.unmount()); view = undefined;
+        resetEscCancelArm(); vi.useRealTimers(); vi.unstubAllGlobals();
+    }
+});
+
+const dialogProps = { onClose: () => undefined, onResetWorkspace: vi.fn(), onOpenLayoutLibrary: vi.fn() };
+
+it('exposes settings as a modal dialog named by its title only', async () => {
+    await act(async () => { view = create(createElement(SettingsDialog, { open: true, ...dialogProps })); });
+    const dialog = view!.root.findByProps({ role: 'dialog' });
+    expect(dialog.props['aria-modal']).toBe('true');
+    expect(dialog.props.tabIndex).toBe(-1);
+    // 名稱只取「設定」，不含關閉鈕的 title
+    expect(textOf(view!.root.findByProps({ id: dialog.props['aria-labelledby'] }))).toBe('設定');
+});
+
+it('keeps Tab focus inside settings, leaves Esc to useEscClose and restores focus on close', async () => {
+    let active: unknown = null;
+    const body = { tagName: 'BODY' };
+    const focusable = (rects = 1, collapsed = false) => ({ focus() { active = this; }, getClientRects: () => Array.from({ length: rects }), closest: () => (collapsed ? {} : null) });
+    const first = focusable(), middle = focusable(), last = focusable(), hidden = focusable(0);
+    // 收合的 <details> 內的連結：getClientRects 仍有值，要靠 closest 排除（Chromium 實測）
+    const inClosedDetails = focusable(1, true);
+    // 疊在上面的委託確認視窗（portal 到 body）的按鈕：不在設定視窗節點內
+    const outsider = focusable();
+    const opener = { ...focusable(), isConnected: true };
+    const inside: unknown[] = [first, middle, last, hidden, inClosedDetails];
+    let keydown: ((e: KeyboardEvent) => void) | undefined;
+    const dialogNode = {
+        focus() { active = dialogNode; },
+        contains: (el: unknown) => el === dialogNode || inside.includes(el),
+        querySelectorAll: () => [first, middle, last, hidden, inClosedDetails],
+    };
+    vi.stubGlobal('document', {
+        body,
+        get activeElement() { return active; },
+        addEventListener: (type: string, fn: (e: KeyboardEvent) => void) => { if (type === 'keydown') keydown = fn; },
+        removeEventListener: (type: string, fn: (e: KeyboardEvent) => void) => { if (type === 'keydown' && fn === keydown) keydown = undefined; },
+    });
+    const press = (shiftKey = false, key = 'Tab') => {
+        const e = { key, shiftKey, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+        keydown!(e as unknown as KeyboardEvent);
+        return e.defaultPrevented;
+    };
+    active = opener;
+    try {
+        await act(async () => {
+            view = create(createElement(SettingsDialog, { open: true, ...dialogProps }), { createNodeMock: el => (el.props as { role?: string }).role === 'dialog' ? dialogNode : null });
+        });
+        expect(active).toBe(dialogNode);
+        expect(press()).toBe(true); expect(active).toBe(first);
+        active = middle; expect(press()).toBe(false);
+        // 不可見的項目與收合 details 內的連結都不算：最後一個可聚焦項是 last，Tab 繞回第一個
+        active = last; expect(press()).toBe(true); expect(active).toBe(first);
+        // Shift+Tab 從第一個繞到最後一個可聚焦項（不是 hidden、不是 details 內的連結）
+        expect(press(true)).toBe(true); expect(active).toBe(last);
+        expect(press(false, 'Escape')).toBe(false);
+        // 上層視窗（確認視窗）有焦點時不攔截，由它自己管
+        active = outsider; expect(press()).toBe(false); expect(active).toBe(outsider);
+        // 被聚焦的元素卸載、焦點掉到 body：Tab 拉回第一個，Shift+Tab 拉回最後一個
+        active = body; expect(press()).toBe(true); expect(active).toBe(first);
+        active = body; expect(press(true)).toBe(true); expect(active).toBe(last);
+        await act(async () => view!.update(createElement(SettingsDialog, { open: false, ...dialogProps })));
+        expect(keydown).toBeUndefined();
+        expect(active).toBe(opener);
+    } finally {
+        await act(async () => view?.unmount()); view = undefined;
+        vi.unstubAllGlobals();
+    }
 });
