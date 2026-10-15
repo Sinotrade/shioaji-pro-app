@@ -265,8 +265,8 @@ export function DepthMap({ contract, snapshot }: { contract: ContractBase; snaps
                 {hover && (
                     <div className={styles.hover} style={{ left: hover.x, top: hover.y }} role="status">
                         <div>{formatTime(hover.sample.timeMs)} · {hover.sample.source === 'snapshot' ? '第一檔快照' : '即時五檔'}</div>
-                        <div>買盤：{hover.sample.bids.map(x => `${formatPrice(x.price)} × ${x.vol}`).join(' / ') || '無'}</div>
-                        <div>賣盤：{hover.sample.asks.map(x => `${formatPrice(x.price)} × ${x.vol}`).join(' / ') || '無'}</div>
+                        <div>買方 {hover.sample.bids.reduce((sum, level) => sum + level.vol, 0)} 口 · 買一 {hover.sample.bids[0] ? `${formatPrice(hover.sample.bids[0].price)} × ${hover.sample.bids[0].vol}` : '無'}</div>
+                        <div>賣方 {hover.sample.asks.reduce((sum, level) => sum + level.vol, 0)} 口 · 賣一 {hover.sample.asks[0] ? `${formatPrice(hover.sample.asks[0].price)} × ${hover.sample.asks[0].vol}` : '無'}</div>
                     </div>
                 )}
             </div>
