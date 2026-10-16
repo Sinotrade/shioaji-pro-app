@@ -48,25 +48,26 @@ describe('ratioSnapshotStale', () => {
 });
 
 describe('volumeRatioTitle', () => {
-    const formula = '量比 = 今日成交量 ÷ 昨日成交量';
+    const formula = '量比 = 今日累計成交量 ÷ 前一交易日全日成交量';
 
     it('寫出算法與代入的數字', () => {
         expect(volumeRatioTitle(33389, 48032)).toBe(`${formula}
-33,389 ÷ 48,032 = 0.70`);
+33,389 ÷ 48,032 = 0.70
+1.00 代表已達前一交易日全日量`);
     });
 
     it('昨日量拿不到時說明原因', () => {
         expect(volumeRatioTitle(33389, undefined)).toBe(`${formula}
-昨日成交量尚未取得`);
+前一交易日成交量尚未取得`);
     });
 
     it('昨日量是 0 時寫「為 0，無法計算」，不寫成還沒取得（資料其實到了）', () => {
         expect(volumeRatioTitle(33389, 0)).toBe(`${formula}
-昨日成交量為 0，無法計算`);
+前一交易日成交量為 0，無法計算`);
     });
 
     it('快照過期時寫「待更新」，不代入過期的數字', () => {
         expect(volumeRatioTitle(33389, 48032, true)).toBe(`${formula}
-昨日成交量待更新`);
+前一交易日成交量待更新`);
     });
 });

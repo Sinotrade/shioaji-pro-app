@@ -143,9 +143,9 @@ describe('railTitle', () => {
 
     it('第一行開高低與平盤價（數字列收起時的退路），第二行看板上沒有的資訊與尺度，第三行說明粗細兩段', () => {
         expect(railTitle(TXF, 1, fmt)).toBe(
-            '開 47,269｜高 47,380｜低 47,214｜平盤 47,284\n' +
+            '開 47,269｜高 47,380（+0.20%）｜低 47,214（-0.15%）｜平盤 47,284（幅度對平盤）\n' +
                 '較開盤 +0.04%（陽線）｜距漲停 +9.99%｜距跌停 -10.01%｜刻度 ±1%，每格 0.5%\n' +
-                '粗段：開盤到現價｜細段：今日最低到最高',
+                '粗：開到現價｜細：最低到最高',
         );
     });
 
@@ -157,6 +157,13 @@ describe('railTitle', () => {
     it('現價低於開盤是陰線，等於開盤是十字線', () => {
         expect(railTitle({ ...TXF, close: 47200 }, 1, fmt)).toContain('（陰線）');
         expect(railTitle({ ...TXF, close: 47269 }, 1, fmt)).toContain('較開盤 0.00%（十字線）');
+    });
+
+    it('指數期提示補足窄版收起的距低、距高點數；刻度到停板時維持停板幅度', () => {
+        const title = railTitle(TXF, 2.5, fmt, 'distance', value => value.toFixed(1));
+        expect(title).toContain('距低 75.0 點｜距高 91.0 點');
+        expect(title).not.toContain('距漲停');
+        expect(railTitle(TXF, null, fmt, 'distance')).toContain('距漲停');
     });
 });
 

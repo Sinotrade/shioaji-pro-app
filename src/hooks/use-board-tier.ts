@@ -10,6 +10,7 @@ import {
     nextBoardMode,
     parseBoardMode,
     pickBoardTier,
+    pickExpandedTier,
     type BoardMode,
     type BoardTier,
 } from '../lib/board-tier';
@@ -80,13 +81,11 @@ function writeMode(key: string, mode: BoardMode) {
     store.listeners.forEach((listener) => listener());
 }
 
-// contentKey：顯示文字長度的摘要。數字變長（例如資料剛到、家數跨過百位）時看板外框不一定變，
-// ResizeObserver 收不到，要靠它觸發重新判斷；只比長度，不會每跳一次報價就重量。
+// 逐文字節點比較長度：同一統計群的欄位不能一增一減互相抵銷，數字旁有單位元素也不能漏判。
+// 讀屏補充不參與排版；同長度跳價不重新量測。
 // tiers：這塊看板的階梯（個股有日內區間軌時用 RAIL_TIERS），請傳模組常數，換階梯時從頭判斷
 export function useBoardTier(
     boardRef: RefObject<HTMLElement | null>,
-    enabled: boolean,
-    contentKey: string,
     modeKey: string,
     tiers: readonly BoardTier[] = BOARD_TIERS,
 ) {
@@ -95,14 +94,21 @@ export function useBoardTier(
     const [autoTier, setAutoTier] = useState<BoardTier>('wide');
     const [expandedTier, setExpandedTier] = useState<BoardTier>('wide');
     const refit = useRef<(() => void) | null>(null);
+    const lastSignature = useRef<string | undefined>(undefined);
+    const signature = (board: HTMLElement) => [board, ...board.querySelectorAll('*')]
+        .filter(element => !element.closest('[data-board-details]'))
+        .flatMap(element => [...element.childNodes].filter(node => node.nodeType === 3)
+            .map(node => node.textContent?.length ?? 0)).join(',');
 
     useLayoutEffect(() => {
         const board = boardRef.current;
         const panel = board?.parentElement;
-        if (!enabled || !board || !panel || typeof ResizeObserver === 'undefined') return;
+        if (!board || !panel || typeof ResizeObserver === 'undefined') return;
         let current: BoardTier | undefined;
         let currentExpanded: BoardTier | undefined;
+        let disposed = false;
         const fit = () => {
+            if (disposed) return;
             const panelHeight = panel.clientHeight;
             if (panelHeight <= 0) return; // 尚未排版
             let above = 0;
@@ -138,14 +144,12 @@ export function useBoardTier(
             // 放不下才用 wide。railMid 不當候選：它會收起漲跌停價，展開反而比 wide 少數字。
             // 不然在矮面板（自動是 railLow）按展開，軌道反而被數字欄取代
             // 目前是 wide 時，要 rail 多放得下一段緩衝才升回去，價格在位數邊界跳動時才不會整塊來回換版
-            const expanded =
-                tiers.includes('rail') && Number.isFinite(measure('rail', currentExpanded === 'wide'))
-                    ? 'rail'
-                    : 'wide';
+            const expanded = pickExpandedTier(measure, tiers, currentExpanded);
             currentExpanded = expanded;
             board.dataset.tier = effectiveTier(mode, auto, expanded);
             setAutoTier(auto);
             setExpandedTier(expanded);
+            lastSignature.current = signature(board);
         };
         fit();
         refit.current = fit;
@@ -153,6 +157,7 @@ export function useBoardTier(
         // 延到下一個影格再量：回呼裡直接改被觀察元素的尺寸會觸發瀏覽器的 ResizeObserver loop 警告
         let frame = 0;
         const schedule = () => {
+            if (disposed) return;
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(fit);
         };
@@ -164,21 +169,25 @@ export function useBoardTier(
         fonts?.ready.then(schedule).catch(() => undefined);
         fonts?.addEventListener('loadingdone', schedule);
         return () => {
+            disposed = true;
             cancelAnimationFrame(frame);
             observer.disconnect();
             fonts?.removeEventListener('loadingdone', schedule);
             refit.current = null;
+            lastSignature.current = undefined;
             // 同一個看板元素換商品時會沿用，階梯屬性與量測用的留白都要清掉
             delete board.dataset.tier;
             board.style.paddingRight = '';
         };
         // modeKey 代表看板種類（指數／個股）、tiers 代表有沒有軌道：換了就重新從頭判斷，
         // 不沿用上一種的階梯與緩衝狀態
-    }, [boardRef, enabled, mode, modeKey, tiers]);
+    }, [boardRef, mode, modeKey, tiers]);
 
     useLayoutEffect(() => {
-        refit.current?.();
-    }, [contentKey]);
+        if (!refit.current) return;
+        const board = boardRef.current;
+        if (board && signature(board) !== lastSignature.current) refit.current();
+    });
 
     const toggle = useCallback(
         () => writeMode(modeKey, nextBoardMode(mode, autoTier)),

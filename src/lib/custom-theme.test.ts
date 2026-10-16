@@ -2,6 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { CUSTOM_BASES, CUSTOM_PRESETS, customTokens, isCustomTheme, mix } from './custom-theme';
 
 describe('custom theme', () => {
+    it('內建基底與 preset 的引線色對面板對比至少 3:1', () => {
+        // 只守 JS 推算與內建色票，不假裝驗證任意自訂色或另一份 CSS 公式。
+        const luminance = (hex: string) => {
+            const linear = [1, 3, 5].map(start => {
+                const s = parseInt(hex.slice(start, start + 2), 16) / 255;
+                return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+            });
+            return linear[0]! * 0.2126 + linear[1]! * 0.7152 + linear[2]! * 0.0722;
+        };
+        for (const theme of [...Object.values(CUSTOM_BASES), ...CUSTOM_PRESETS.map(preset => preset.theme)]) {
+            for (const convention of ['tw', 'intl'] as const) {
+                const tokens = customTokens(theme, convention);
+                for (const key of ['wickUp', 'wickDown']) {
+                    const values = [luminance(tokens[key]!), luminance(tokens.panel!)].sort((a, b) => a - b);
+                    expect((values[1]! + 0.05) / (values[0]! + 0.05), `${theme.panel}/${convention}/${key}`).toBeGreaterThanOrEqual(3);
+                }
+            }
+        }
+    });
+
     it('mixes colors and validates saved themes', () => {
         expect(mix('#000000', '#ffffff', 0.5)).toBe('#808080');
         expect(isCustomTheme(CUSTOM_BASES.light)).toBe(true);

@@ -2,7 +2,7 @@
 // 兩端格子（跌停／漲停或距低／距高）由 CSS 在 railMid、railLow 收起
 import { createElement } from 'react';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { INDEX_FUTURE_SCALES, STOCK_SCALES, type DayRange } from '../lib/day-range';
 import { DayRangeRail } from './day-range-rail';
 import * as panel from './panel.css';
@@ -50,8 +50,27 @@ const hasClass = (cls: string) => (n: ReactTestInstance) =>
 const rects = (root: ReactTestInstance, cls: string) => root.findAll((n) => n.type === 'rect' && hasClass(cls)(n));
 const isCap = (r: ReactTestInstance) => r.props.width === 4 && r.props.height === 12;
 const svgTexts = (root: ReactTestInstance) => root.findAll((n) => n.type === 'text').map(texts).flat();
+afterEach(() => vi.unstubAllGlobals());
 
 describe('DayRangeRail', () => {
+    it('dpr 1.5 下軌道與引線的起點、寬度對齊實體像素', () => {
+        vi.stubGlobal('window', { devicePixelRatio: 1.5 });
+        const root = render({ range: { ...TXF, close: 47289.16, high: 47380.37, low: 47214.28 } }, 483);
+        for (const rect of [...rects(root, styles.railTrack), ...rects(root, styles.railWick.up)]) {
+            for (const value of [rect.props.x, rect.props.width]) expect(value * 1.5).toBeCloseTo(Math.round(value * 1.5));
+        }
+    });
+
+    it('根字級放大時兩端幅度字與數字列保留的左側空間同步放大', () => {
+        vi.stubGlobal('document', { documentElement: {} });
+        let rootPx = 16;
+        vi.stubGlobal('getComputedStyle', () => ({ fontSize: `${rootPx}px` }));
+        const left = () => render({}).find(hasClass(styles.railNumbers)).props.style.paddingLeft;
+        const standard = left();
+        rootPx = 18.4;
+        expect(left()).toBeGreaterThan(standard);
+    });
+
     it('數字一行由小到大：跌停、低、開、高、漲停（軌道左低右高同方向）', () => {
         const row = render({}).find(hasClass(styles.railNumbers));
         expect(texts(row)).toEqual(['跌停', '42,556', '低', '47,214', '開', '47,269', '高', '47,380', '漲停', '52,012']);
@@ -115,10 +134,10 @@ describe('DayRangeRail', () => {
 
     it('圖的名稱寫現價與尺幅，提示（同時是描述）寫開高低與平盤價，不重複念兩次', () => {
         const img = render({}).find((n) => typeof n.type === 'string' && n.props.role === 'img');
-        expect(img.props['aria-label']).toBe('今日區間圖：現價 47,289，尺 ±1%');
+        expect(img.props['aria-label']).toBe('今日區間圖：現價 47,289，刻度 ±1%');
         // 數字列變窄時開高低會收起，提示裡一定要有
         expect(img.props.title).toMatch(
-            /^開 47,269｜高 47,380｜低 47,214｜平盤 47,284\n較開盤 \+0\.04%（陽線）｜.*｜刻度 ±1%，每格 0\.5%\n粗段：開盤到現價｜細段：今日最低到最高$/,
+            /^開 47,269｜高 47,380（\+0\.20%）｜低 47,214（-0\.15%）｜平盤 47,284（幅度對平盤）\n較開盤 \+0\.04%（陽線）｜.*｜刻度 ±1%，每格 0\.5%\n粗：開到現價｜細：最低到最高$/,
         );
     });
 

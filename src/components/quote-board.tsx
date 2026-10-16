@@ -2,7 +2,8 @@
 
 import { useRef, type ReactNode } from 'react';
 import { useBoardTier } from '../hooks/use-board-tier';
-import { useDisplayBook } from '../hooks/use-display-book';
+import { useSnapshotBaseline } from '../hooks/use-display-book';
+import { useQuote } from '../hooks/use-stream';
 import { useQuery } from '../hooks/use-query';
 import { BOARD_TIERS, isRichTier, RAIL_TIERS, STOCK_TIERS } from '../lib/board-tier';
 import { dayRangeOf, dirVsOpen, INDEX_FUTURE_SCALES, STOCK_SCALES } from '../lib/day-range';
@@ -104,7 +105,8 @@ export function QuoteBoard({
     contract: ContractInfo;
     snapshot?: Snapshot;
 }) {
-    const { quote, snapshot } = useDisplayBook(contract.code, suppliedSnapshot, contract);
+    const quote = useQuote(contract.code, { narrow: true });
+    const { snapshot } = useSnapshotBaseline(contract.code, suppliedSnapshot, contract);
     const tick = quote?.tick;
     const index = quote?.index;
     const isIndex = contract.security_type === 'IND';
@@ -158,7 +160,7 @@ export function QuoteBoard({
     // 基準日用報價所屬交易日（不是電腦時鐘）：跨午夜或整個週末開著時，才不會變成同一天自己比自己
     // shortcut: 往回看 PREVIOUS_SESSION_LOOKBACK_DAYS（21）天，超過就不顯示比較，要補再放寬
     const session = sessionDateOf(index?.date, todayStr());
-    const previous = useQuery(
+    const previousQuery = useQuery(
         () =>
             retryAfter(
                 () =>
@@ -173,7 +175,8 @@ export function QuoteBoard({
             ).then((k) => previousSessionAmount(k, session)),
         `index-prev-amount:${contract.code}:${session}`,
         isIndex,
-    ).data;
+    );
+    const previous = previousQuery.data;
     const volumeChange = volumeChangeOf(estimate, previous);
     const progress = amountProgress(amount, estimate);
     // 成交金額、已成交比例、前一交易日、更新時間：版面收起這些格子時，改放在滑過提示裡
@@ -183,6 +186,11 @@ export function QuoteBoard({
         progress === undefined ? undefined : `已成交預估的 ${(progress * 100).toFixed(0)}%`,
         // 沒有預估量時看板不會出現較昨日，這時成交金額可能就是前一交易日的快照，不列「前一交易日」免得同一個數字出現兩次
         previous === undefined || estimate === undefined ? undefined : `前一交易日 ${fmtCompactInt(previous)}`,
+        previous === undefined && estimate !== undefined
+            ? previousQuery.loading ? '前一交易日金額取得中，失敗會自動重試'
+                : previousQuery.error ? '前一交易日金額取得失敗，本交易日不再重試' : undefined
+            : undefined,
+        index ? undefined : '本次連線尚未收到 quote_idx',
         index?.time ? `更新 ${index.time.slice(0, 8)}` : undefined,
     ]
         .filter(Boolean)
@@ -194,8 +202,12 @@ export function QuoteBoard({
     const boardPrice = (v: number | string | undefined) => {
         const n = Number(v);
         if (isIndex) return fmtPrice(v, 2);
-        return fmtPrice(v, Number.isFinite(n) && Math.abs(n) >= 500 ? tickDecimals(tickSizeFor(contract, n)) : undefined);
+        const decimals = tickDecimals(tickSizeFor(contract, n));
+        return fmtPrice(v, Number.isFinite(n) && Math.abs(n) >= 500 ? decimals
+            : contract.security_type === 'FUT' || contract.security_type === 'OPT' ? Math.max(2, decimals) : undefined);
     };
+    const changeDigits = contract.security_type === 'FUT' || contract.security_type === 'OPT'
+        ? Math.max(2, tickDecimals(tickSizeFor(contract, close ?? 1))) : 2;
     const priceText = boardPrice(close);
     // 量比：今日累計成交量（即時）÷ 昨日全日成交量（快照），算法放在滑過提示。
     // 只給個股（含 ETF）：期貨、選擇權夜盤開始後今日量只算夜盤，拿去比昨日全日量會失真
@@ -223,7 +235,7 @@ export function QuoteBoard({
     );
     const volumeRatio = ratioStale ? undefined : volumeRatioOf(vol, snapshot?.yesterday_volume);
     const ratioTitle = volumeRatioTitle(vol, snapshot?.yesterday_volume, ratioStale);
-    // 共用判斷（指數、興櫃不亮；跳動價位精度比較）；徽章會占寬度，列入 contentKey
+    // 共用判斷（指數、興櫃不亮；跳動價位精度比較）；徽章文字由 hook 自動納入量測簽章。
     const atLimit = limitStateOf(contract, close);
     // 日內區間軌：有漲跌停、開高低收都到齊才畫（rail、railMid、railLow 三級取代右側數字），否則照原本的數字欄。
     // 選擇權不畫：跌停墊在最小跳動、漲停是權利金加標的 10%，兩側差數十倍，+50% 會畫得比 -5% 還小
@@ -253,41 +265,26 @@ export function QuoteBoard({
             ? SECTOR_LABELS[contract.category.padStart(2, '0')]
             : undefined;
     const sector = sectorName === '其他' ? undefined : sectorName;
-    const contentKey = [
-        priceText,
-        fmtSigned(chg),
-        fmtPct(pct),
-        fmtCompactInt(amount),
-        fmtCompactInt(estimate),
-        volumeChange?.text,
-        breadth.up,
-        breadth.flat,
-        breadth.down,
-        index?.limit_up_count,
-        index?.limit_down_count,
-        boardPrice(high),
-        boardPrice(low),
-        boardPrice(open),
-        fmtInt(vol),
-        fmtVolumeRatio(volumeRatio),
-        atLimit,
-        sector,
-        range && isIndexFuture ? fmtPoints(range.close - range.low) : undefined,
-        range && isIndexFuture ? fmtPoints(range.high - range.close) : undefined,
-    ]
-        .map((v) => String(v ?? '').length)
-        .join(',');
+    const sim = tick?.simtrade === true;
+    const snapOnly = !isIndex && !tick && !!snapshot;
     // 指數與個股各自記收合偏好
     const { tier, toggle } = useBoardTier(
         boardRef,
-        true,
-        contentKey,
         isIndex ? 'sj-index-board-mode' : 'sj-stock-board-mode',
         isIndex ? BOARD_TIERS : range ? RAIL_TIERS : STOCK_TIERS,
     );
     const richBoard = isRichTier(tier);
     // 參考價、更新時間收進漲跌與現價的滑過提示
     const timeText = (isIndex ? index?.time : tick?.time)?.slice(0, 8);
+    const priceTitle = [
+        sim ? '試撮揭示價，非成交價' : snapOnly ? `快照 ${snapshot?.datetime ?? '時間未提供'}，尚未收到即時成交` : undefined,
+        timeText ? `更新 ${timeText}` : undefined,
+    ].filter(Boolean).join('\n') || undefined;
+    const details = [
+        ref ? `參考 ${boardPrice(ref)}` : undefined,
+        isIndex ? volumeTitle : priceTitle,
+        isIndex ? breadthTitle(breadth) : showRatio ? ratioTitle : undefined,
+    ].filter(Boolean).join('，').replace(/[\n｜]+/g, '，');
 
     const dir =
         chg === undefined || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';
@@ -299,11 +296,12 @@ export function QuoteBoard({
         >
             {/* 代號與名稱面板標題列已經有，看板不重複 */}
             <span
-                className={timeText ? `${styles.bigPrice[dir]} ${styles.tipCell}` : styles.bigPrice[dir]}
-                title={timeText ? `更新 ${timeText}` : undefined}
+                className={priceTitle ? `${styles.bigPrice[dir]} ${styles.tipCell}` : styles.bigPrice[dir]}
+                title={priceTitle}
             >
                 {priceText}
             </span>
+            {(sim || snapOnly) && <span className={styles.statusBadge}>{sim ? '試撮' : '快照'}</span>}
             {atLimit && (
                 <span className={styles.limitBadge[atLimit]}>
                     {atLimit === 'up' ? '漲停' : '跌停'}
@@ -316,8 +314,9 @@ export function QuoteBoard({
                 }
                 title={ref ? `參考 ${boardPrice(ref)}` : undefined}
             >
-                <span>{fmtSigned(chg)}</span>
+                <span>{fmtSigned(chg, changeDigits)}</span>
                 <span className={ref ? styles.tipLabel : undefined}>{fmtPct(pct)}</span>
+                <span className={styles.srOnly} data-board-details>{details}</span>
             </div>
 
             {isIndex ? (
@@ -329,7 +328,7 @@ export function QuoteBoard({
                     )}
                     {breadth.total > 0 && <BreadthBar className={styles.breadthMini} breadth={breadth} />}
                     <div className={styles.indexStats}>
-                        <div className={styles.indexGroup.breadth} title={breadthTitle(breadth) || undefined}>
+                        <div className={styles.indexGroup.breadth} title={index ? breadthTitle(breadth) || undefined : '本次連線尚未收到 quote_idx'}>
                             <Stat
                                 label="漲停"
                                 className={styles.secondary}
@@ -488,7 +487,7 @@ export function QuoteBoard({
                 className={styles.boardToggle}
                 onClick={toggle}
                 aria-expanded={richBoard}
-                aria-label={richBoard ? '收合統計' : '展開統計'}
+                aria-label="報價統計"
                 title={richBoard ? '收合統計' : '展開統計'}
             >
                 <svg viewBox="0 0 10 10" width="12" height="12" aria-hidden="true">
