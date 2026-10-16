@@ -16,11 +16,39 @@ const storage = vi.hoisted(() => {
 
 let display: any = {};
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => display }));
+// 包住真的 useBoardTier，記下看板傳進去的階梯（有軌道時應該是 RAIL_TIERS）
+const tierCalls = vi.hoisted(() => [] as unknown[][]);
+vi.mock('../hooks/use-board-tier', async (importOriginal) => {
+    const real = await importOriginal<typeof import('../hooks/use-board-tier')>();
+    return {
+        ...real,
+        useBoardTier: (...args: Parameters<typeof real.useBoardTier>) => {
+            tierCalls.push(args);
+            return real.useBoardTier(...args);
+        },
+    };
+});
+// 記下每次 useQuery 的 fetcher、key 與 enabled，驗證什麼情況下才會重抓快照、重抓什麼
+const queryCalls = vi.hoisted(
+    () => [] as { fetcher: () => Promise<unknown>; key: string; enabled: boolean | undefined }[],
+);
 vi.mock('../hooks/use-query', () => ({
-    useQuery: () => ({ data: undefined, error: null, loading: false, updatedAt: null, refresh: async () => {} }),
+    useQuery: (fetcher: () => Promise<unknown>, key: string, enabled?: boolean) => {
+        queryCalls.push({ fetcher, key, enabled });
+        return { data: undefined, error: null, loading: false, updatedAt: null, refresh: async () => {} };
+    },
 }));
-vi.mock('../lib/shioaji', () => ({ fetchKbars: async () => ({ datetime: [], Amount: [] }) }));
+const fetchSnapshots = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => []));
+vi.mock('../lib/shioaji', () => ({
+    fetchKbars: async () => ({ datetime: [], Amount: [] }),
+    fetchSnapshots,
+}));
+// 重抓後以 store 裡的快照判斷是否已翻日
+const getMarketSnapshot = vi.hoisted(() => vi.fn((..._args: unknown[]): { datetime: string } | undefined => undefined));
+vi.mock('../lib/market-snapshot-store', () => ({ getMarketSnapshot }));
 
+import { BOARD_TIERS, RAIL_TIERS, STOCK_TIERS } from '../lib/board-tier';
+import * as panel from './panel.css';
 import { QuoteBoard } from './quote-board';
 import * as styles from './quote-board.css';
 
@@ -43,16 +71,26 @@ const tick = {
     high: '2445',
     low: '2415',
     total_volume: 33257,
+    volume: 12,
     time: '13:29:15.123',
 };
 const book = { source: 'stream', time: '13:29:15', bids: [{ price: 2420, vol: 508 }], asks: [{ price: 2425, vol: 698 }] };
 
-function render(contract: any) {
+// width：給軌道一個量得到的寬度，讓 SVG 真的畫出來（預設不給，跟隱藏時一樣只留數字）
+function render(contract: any, width?: number) {
     let root!: ReturnType<typeof create>;
     act(() => {
-        root = create(createElement(QuoteBoard, { contract }));
+        root = create(
+            createElement(QuoteBoard, { contract }),
+            width === undefined ? undefined : { createNodeMock: () => ({ clientWidth: width }) },
+        );
     });
     return root;
+}
+
+// 元素底下所有文字串起來（子節點有字串也有元素時用，texts 只收子節點全是字串的葉節點）
+function allText(node: ReactTestInstance): string {
+    return node.children.map((c) => (typeof c === 'string' ? c : allText(c))).join('');
 }
 
 // 依 DOM 順序收集葉節點文字
@@ -75,6 +113,8 @@ const hasClass = (cls: string) => (n: ReactTestInstance) => {
 
 afterEach(() => {
     storage.clear();
+    fetchSnapshots.mockClear();
+    getMarketSnapshot.mockReset();
 });
 
 describe('個股看板（成對兩行）', () => {
@@ -154,6 +194,198 @@ describe('個股看板（成對兩行）', () => {
     });
 });
 
+describe('日內區間軌（有漲跌停且開高低收到齊的商品）', () => {
+    const rails = (node: ReactTestInstance) =>
+        node.findAll((n) => typeof n.type === 'string' && n.props.role === 'img');
+
+    it('個股有軌道：數字一行由小到大，圖的提示只寫看板上沒有的資訊', () => {
+        display = { quote: { tick }, snapshot: undefined, book };
+        const root = render(STOCK).root;
+        const [rail, ...rest] = rails(root);
+        expect(rest).toHaveLength(0);
+        // 最低 2,415 是 -1.02%，超過 ±1% 尺的 92%，換成 ±2%
+        expect(rail!.props.title).toBe(
+            '開 2,430｜高 2,445｜低 2,415｜平盤 2,440\n' +
+                '較開盤 -0.41%（陰線）｜距漲停 +10.74%｜距跌停 -9.09%｜刻度 ±2%，每格 1%\n' +
+                '粗段：開盤到現價｜細段：今日最低到最高',
+        );
+        expect(texts(root.find(hasClass(styles.railNumbers)))).toEqual([
+            '跌停', '2,200', '低', '2,415', '開', '2,430', '高', '2,445', '漲停', '2,680',
+        ]);
+    });
+
+    it('軌道只是多一塊：右側的高低、開量、停板數字照樣在（窄面板的階梯要用）', () => {
+        display = { quote: { tick }, snapshot: undefined, book };
+        const root = render(STOCK).root;
+        expect(root.findAll(hasClass(styles.pairGroup))).toHaveLength(2);
+        expect(root.findAll(hasClass(styles.volGroup))).toHaveLength(1);
+    });
+
+    it('興櫃、權證 0／0、指數，以及還沒有成交資料時不畫軌道', () => {
+        display = { quote: { tick }, snapshot: undefined, book };
+        expect(rails(render({ ...STOCK, exchange: 'OES', limit_up: undefined, limit_down: undefined }).root)).toHaveLength(0);
+        expect(rails(render({ ...STOCK, security_type: 'WRT', limit_up: 0, limit_down: 0 }).root)).toHaveLength(0);
+        display = { quote: undefined, snapshot: undefined, book };
+        expect(rails(render(STOCK).root)).toHaveLength(0);
+        display = { quote: { index: { code: 'IX0001', close: '47111.9', open: '1', high: '1', low: '1' } }, snapshot: undefined, book: undefined };
+        expect(rails(render({ code: 'IX0001', name: '加權', exchange: 'TSE', security_type: 'IND', target_code: null }).root)).toHaveLength(0);
+    });
+
+    it('產業分類：個股依類別顯示（一位數代碼補零），「其他」與期貨不顯示', () => {
+        display = { quote: { tick }, snapshot: undefined, book };
+        expect(texts(render({ ...STOCK, category: '24' }).root)).toContain('半導體');
+        expect(texts(render({ ...STOCK, category: '1' }).root)).toContain('水泥');
+        expect(texts(render({ ...STOCK, category: '20' }).root)).not.toContain('其他');
+        const futures = texts(render({ ...STOCK, code: 'TXFR1', security_type: 'FUT', category: '24' }).root);
+        expect(futures).not.toContain('半導體');
+    });
+
+    it('指數期（台指期）：數字列兩端換成距低、距高點數；個股期照個股寫漲跌停', () => {
+        const fut = { ...STOCK, code: 'TXFR1', security_type: 'FUT', exchange: 'TAIFEX', reference: 2440, tick: 1 };
+        display = { quote: { tick }, snapshot: undefined, book };
+        const idx = texts(render({ ...fut, underlying_kind: 'I' }).root.find(hasClass(styles.railNumbers)));
+        expect(idx).toEqual(['距低', '5', '低', '2,415', '開', '2,430', '高', '2,445', '距高', '25']);
+        const stk = texts(render({ ...fut, code: 'CDFR1', underlying_kind: 'S' }).root.find(hasClass(styles.railNumbers)));
+        expect(stk[0]).toBe('跌停');
+    });
+
+    it('數字欄的高、低也跟開盤價比上色：最高等於開盤時不上紅', () => {
+        display = { quote: { tick: { ...tick, high: '2430' } }, snapshot: undefined, book };
+        const group = render(STOCK).root.findAll(hasClass(styles.pairGroup))[0]!;
+        const high = group.find((n) => typeof n.type === 'string' && n.children[0] === '2,430');
+        expect(String(high.props.className).split(' ')).not.toContain(panel.dirText.up);
+        const low = group.find((n) => typeof n.type === 'string' && n.children[0] === '2,415');
+        expect(String(low.props.className).split(' ')).toContain(panel.dirText.down);
+    });
+
+    it('選擇權不畫軌道（漲跌停兩側差數十倍，比例會誤導），維持原本的數字欄', () => {
+        display = { quote: { tick: { ...tick, close: '150', open: '100', high: '160', low: '95' } }, snapshot: undefined, book };
+        const opt = { ...STOCK, code: 'TXO47000K6', security_type: 'OPT', reference: 100, limit_up: 4828, limit_down: 0.1 };
+        expect(rails(render(opt).root)).toHaveLength(0);
+    });
+
+    it('有軌道時用 RAIL_TIERS，沒有軌道的個股用 STOCK_TIERS，指數維持原本的 BOARD_TIERS', () => {
+        display = { quote: { tick }, snapshot: undefined, book };
+        tierCalls.length = 0;
+        render(STOCK);
+        expect(tierCalls.at(-1)![4]).toBe(RAIL_TIERS);
+        render({ ...STOCK, exchange: 'OES', limit_up: undefined, limit_down: undefined });
+        expect(tierCalls.at(-1)![4]).toBe(STOCK_TIERS);
+        display = { quote: { index: { code: 'IX0001', close: '47111.9' } }, snapshot: undefined, book: undefined };
+        render({ code: 'IX0001', name: '加權', exchange: 'TSE', security_type: 'IND', target_code: null });
+        expect(tierCalls.at(-1)![4]).toBe(BOARD_TIERS);
+    });
+
+    it('價格旁的量標籤（compact 顯示）是「量 33,257」加獨立的量比 span（tight 的 CSS 靠它收起量比、只留量）', () => {
+        display = { quote: { tick }, snapshot: { yesterday_volume: 48000 }, book };
+        const tag = render(STOCK).root.find(hasClass(styles.stockVolTag));
+        expect(allText(tag)).toBe('量 33,257量比 0.69');
+        expect(texts(tag.find(hasClass(styles.stockVolTagRatio)))).toEqual(['量比 0.69']);
+    });
+
+    describe('量比的分母（快照的昨日成交量）過期時不算', () => {
+        // 快照在週五抓的（昨日量是週四的），週一的即時成交拿它除會除到錯的那一天
+        const snapshotFriday = { yesterday_volume: 48000, datetime: '2026-10-16T14:30:00' };
+        const monday = { ...tick, date: '2026/10/19', simtrade: false };
+        const ratioTitles = (root: ReactTestInstance) => titles(root).filter((t) => t.startsWith('量比 ='));
+
+        it('日期對不上：量比顯示空值、提示寫待更新；數字欄與軌道照常', () => {
+            display = { quote: { tick: monday }, snapshot: snapshotFriday, book };
+            const root = render(STOCK).root;
+            expect(texts(root.find(hasClass(styles.volGroup)))).toEqual(['開', '2,430', '量', '33,257', '量比', '—']);
+            expect(new Set(ratioTitles(root))).toEqual(new Set(['量比 = 今日成交量 ÷ 昨日成交量\n昨日成交量待更新']));
+            expect(allText(root.find(hasClass(styles.stockVolTag)))).toBe('量 33,257量比 —');
+        });
+
+        it('日期相同或沒有即時成交日期：照常計算', () => {
+            display = { quote: { tick: { ...monday, date: '2026/10/16' } }, snapshot: snapshotFriday, book };
+            expect(texts(render(STOCK).root.find(hasClass(styles.volGroup)))).toContain('0.69');
+            display = { quote: { tick }, snapshot: snapshotFriday, book };
+            expect(texts(render(STOCK).root.find(hasClass(styles.volGroup)))).toContain('0.69');
+        });
+
+        it('當天第一筆真成交之後才重抓一次快照；試撮、日期相同、期貨都不抓', () => {
+            display = { quote: { tick: monday }, snapshot: snapshotFriday, book };
+            queryCalls.length = 0;
+            render(STOCK);
+            expect(
+                queryCalls.filter((c) => c.key.startsWith('ratio-snapshot:')).map(({ key, enabled }) => ({ key, enabled })),
+            ).toEqual([{ key: 'ratio-snapshot:2330:2026-10-19', enabled: true }]);
+            const enabledFor = (quote: object, snapshot: object, contract: object = STOCK) => {
+                display = { quote, snapshot, book };
+                queryCalls.length = 0;
+                render(contract);
+                return queryCalls.find((c) => c.key.startsWith('ratio-snapshot:'))?.enabled;
+            };
+            expect(enabledFor({ tick: { ...monday, simtrade: true } }, snapshotFriday)).toBe(false);
+            // 非試撮但量為 0 不算真成交（stream 的定義是 !simtrade 且 volume > 0）
+            expect(enabledFor({ tick: { ...monday, volume: 0 } }, snapshotFriday)).toBe(false);
+            expect(enabledFor({ tick: { ...monday, date: '2026/10/16' } }, snapshotFriday)).toBe(false);
+            expect(enabledFor({ tick: monday }, snapshotFriday, { ...STOCK, code: 'TXFR1', security_type: 'FUT' })).toBe(false);
+        });
+    });
+
+    describe('重抓快照的抓取函式', () => {
+        const snapshotFriday = { yesterday_volume: 48000, datetime: '2026-10-16T14:30:00' };
+        const monday = { ...tick, date: '2026/10/19', simtrade: false };
+        const ratioFetcher = () => {
+            display = { quote: { tick: monday }, snapshot: snapshotFriday, book };
+            queryCalls.length = 0;
+            render(STOCK);
+            return queryCalls.find((c) => c.key.startsWith('ratio-snapshot:'))!.fetcher;
+        };
+
+        it('抓這個合約的快照；store 裡已是當天的快照就結束，只抓一次', async () => {
+            const fetcher = ratioFetcher();
+            getMarketSnapshot.mockReturnValue({ datetime: '2026-10-19T09:00:05' });
+            await fetcher();
+            expect(fetchSnapshots).toHaveBeenCalledTimes(1);
+            expect(fetchSnapshots).toHaveBeenCalledWith([STOCK]);
+        });
+
+        it('回來的快照還是上一個交易日就等一下再抓，抓到當天的快照才算完成', async () => {
+            vi.useFakeTimers();
+            try {
+                const fetcher = ratioFetcher();
+                getMarketSnapshot
+                    .mockReturnValueOnce({ datetime: '2026-10-16T14:30:00' })
+                    .mockReturnValue({ datetime: '2026-10-19T09:00:05' });
+                const done = fetcher();
+                await vi.advanceTimersByTimeAsync(3_000);
+                await expect(done).resolves.toBeUndefined();
+                expect(fetchSnapshots).toHaveBeenCalledTimes(2);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('一直沒翻日：重試有上限（每天最多 5 次），最後丟出錯誤，不無限重抓', async () => {
+            vi.useFakeTimers();
+            try {
+                const fetcher = ratioFetcher();
+                getMarketSnapshot.mockReturnValue({ datetime: '2026-10-16T14:30:00' });
+                const done = fetcher();
+                const settled = expect(done).rejects.toThrow('snapshot not rolled');
+                await vi.advanceTimersByTimeAsync(3_000 + 10_000 + 30_000 + 60_000);
+                await settled;
+                expect(fetchSnapshots).toHaveBeenCalledTimes(5);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
+
+    it('今天碰過漲停（最高等於漲停）又打開：漲停端畫成實心，現價直針照畫', () => {
+        display = { quote: { tick: { ...tick, high: '2680' } }, snapshot: undefined, book };
+        const root = render(STOCK, 480).root;
+        const cap = root.findAll(
+            (n) => n.type === 'rect' && hasClass(styles.railBody.up)(n) && n.props.width === 4 && n.props.height === 12,
+        );
+        expect(cap).toHaveLength(1);
+        expect(root.findAll((n) => n.type === 'rect' && hasClass(styles.railNeedle)(n))).toHaveLength(1);
+    });
+});
+
 describe('指數看板', () => {
     const INDEX = { code: 'IX0001', name: '發行量加權股價指數', exchange: 'TSE', security_type: 'IND', target_code: null };
 
@@ -205,5 +437,24 @@ describe('收合偏好：指數與個股各自一份', () => {
         expect(button().props['aria-expanded']).toBe(false);
         act(() => button().props.onClick());
         expect(storage.has('sj-stock-board-mode')).toBe(false);
+    });
+
+    it('兩種看板同時開著：按個股的收合，指數看板不跟著收；按指數的，個股也不受影響', () => {
+        display = { quote: { tick }, snapshot: undefined, book };
+        const INDEX = { code: 'IX0001', name: '發行量加權股價指數', exchange: 'TSE', security_type: 'IND', target_code: null };
+        const stock = render(STOCK).root;
+        const index = render(INDEX).root;
+        const expanded = (root: ReactTestInstance) => root.find((n) => n.type === 'button').props['aria-expanded'];
+        const click = (root: ReactTestInstance) => act(() => root.find((n) => n.type === 'button').props.onClick());
+        click(stock);
+        expect([expanded(stock), expanded(index)]).toEqual([false, true]);
+        click(index);
+        expect([expanded(stock), expanded(index)]).toEqual([false, false]);
+        click(stock);
+        expect([expanded(stock), expanded(index)]).toEqual([true, false]);
+        // 還原，免得模組層的偏好留到後面的測試
+        click(index);
+        expect([expanded(stock), expanded(index)]).toEqual([true, true]);
+        expect(storage.has('sj-stock-board-mode') || storage.has('sj-index-board-mode')).toBe(false);
     });
 });

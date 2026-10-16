@@ -4,7 +4,8 @@ import { useRef, type ReactNode } from 'react';
 import { useBoardTier } from '../hooks/use-board-tier';
 import { useDisplayBook } from '../hooks/use-display-book';
 import { useQuery } from '../hooks/use-query';
-import { isRichTier } from '../lib/board-tier';
+import { BOARD_TIERS, isRichTier, RAIL_TIERS, STOCK_TIERS } from '../lib/board-tier';
+import { dayRangeOf, dirVsOpen, INDEX_FUTURE_SCALES, STOCK_SCALES } from '../lib/day-range';
 import type { ContractInfo } from '../lib/types/contract';
 import { amountProgress, breadthOf, breadthTitle, type Breadth } from '../lib/index-breadth';
 import {
@@ -15,15 +16,25 @@ import {
     retryAfter,
     sessionDateOf,
     shiftDate,
+    tradingDate,
     volumeChangeOf,
 } from '../lib/index-volume';
 import { hasPriceLimits, limitStateOf } from '../lib/limit-state';
-import { fetchKbars } from '../lib/shioaji';
-import { fmtVolumeRatio, volumeRatioOf, volumeRatioTitle } from '../lib/volume-ratio';
+import { getMarketSnapshot } from '../lib/market-snapshot-store';
+import { fetchKbars, fetchSnapshots } from '../lib/shioaji';
+import { SECTOR_LABELS } from '../lib/stock-index';
+import {
+    fmtVolumeRatio,
+    RATIO_SNAPSHOT_RETRY_MS,
+    ratioSnapshotStale,
+    volumeRatioOf,
+    volumeRatioTitle,
+} from '../lib/volume-ratio';
 import type { Snapshot } from '../lib/types/market';
 import { todayStr } from '../lib/utils/date';
 import { fmtCompactInt, fmtInt, fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { tickDecimals, tickSizeFor } from '../lib/utils/ticksize';
+import { DayRangeRail } from './day-range-rail';
 import * as panel from './panel.css';
 import * as styles from './quote-board.css';
 
@@ -97,7 +108,7 @@ export function QuoteBoard({
     const tick = quote?.tick;
     const index = quote?.index;
     const isIndex = contract.security_type === 'IND';
-    // 指數看板依面板大小自動降級（標題列加看板不超過面板高度 1/5），非指數不啟用
+    // 指數與個股看板都依面板大小自動降級（標題列加看板不超過面板高度 1/5）
 
     const close = tick
         ? Number(tick.close)
@@ -189,10 +200,59 @@ export function QuoteBoard({
     // 量比：今日累計成交量（即時）÷ 昨日全日成交量（快照），算法放在滑過提示。
     // 只給個股（含 ETF）：期貨、選擇權夜盤開始後今日量只算夜盤，拿去比昨日全日量會失真
     const showRatio = contract.security_type === 'STK';
-    const volumeRatio = volumeRatioOf(vol, snapshot?.yesterday_volume);
-    const ratioTitle = volumeRatioTitle(vol, snapshot?.yesterday_volume);
+    // 快照裡的昨日成交量不會自己更新：跨日開著、週末後盤前才開 App 時快照還是上一個交易日的，
+    // 即時成交的日期和快照對不上就不算量比（寧可留空也不除到錯的那一天），並在當天第一筆真成交後重抓快照。
+    // 不在試撮時抓：盤前伺服器可能還回前一天的快照，太早抓會把當天唯一一次機會用掉。
+    // 抓完以 store 裡的快照為準：回來的還是上一個交易日（伺服器還沒翻日）就當失敗，退避後再抓
+    const ratioStale = showRatio && ratioSnapshotStale(tick?.date, snapshot?.datetime);
+    useQuery(
+        () =>
+            retryAfter(
+                async () => {
+                    await fetchSnapshots([contract]);
+                    if (ratioSnapshotStale(tick?.date, getMarketSnapshot(contract)?.datetime)) {
+                        throw new Error('snapshot not rolled');
+                    }
+                },
+                RATIO_SNAPSHOT_RETRY_MS,
+                undefined,
+                isTransientError,
+            ),
+        `ratio-snapshot:${contract.code}:${tradingDate(tick?.date)}`,
+        ratioStale && !!tick && !tick.simtrade && Number(tick.volume) > 0,
+    );
+    const volumeRatio = ratioStale ? undefined : volumeRatioOf(vol, snapshot?.yesterday_volume);
+    const ratioTitle = volumeRatioTitle(vol, snapshot?.yesterday_volume, ratioStale);
     // 共用判斷（指數、興櫃不亮；跳動價位精度比較）；徽章會占寬度，列入 contentKey
     const atLimit = limitStateOf(contract, close);
+    // 日內區間軌：有漲跌停、開高低收都到齊才畫（rail、railMid、railLow 三級取代右側數字），否則照原本的數字欄。
+    // 選擇權不畫：跌停墊在最小跳動、漲停是權利金加標的 10%，兩側差數十倍，+50% 會畫得比 -5% 還小
+    const range =
+        isIndex || contract.security_type === 'OPT' || !hasPriceLimits(contract)
+            ? undefined
+            : dayRangeOf({
+                  reference: ref,
+                  limitUp: Number(contract.limit_up),
+                  limitDown: Number(contract.limit_down),
+                  open,
+                  high,
+                  low,
+                  close,
+              });
+    // 指數期（台指期等）：尺從 ±2.5% 起跳，數字列兩端放距低、距高點數；個股期照個股
+    const isIndexFuture = contract.security_type === 'FUT' && contract.underlying_kind === 'I';
+    const fmtPoints = (v: number) => fmtPrice(v, tickDecimals(tickSizeFor(contract, close ?? v)));
+    // 高、低跟開盤價比上色（使用者指定）：軌道數字列和數字欄同一套，縮窄切換時顏色不會變
+    const vsOpen = (v: number | undefined) => {
+        const d = dirVsOpen(v, open);
+        return d ? `${styles.pairValue} ${panel.dirText[d]}` : styles.pairValue;
+    };
+    // 產業分類只有上市櫃個股有；「其他」與查不到的不顯示
+    const sectorName =
+        contract.security_type === 'STK' && contract.category
+            ? SECTOR_LABELS[contract.category.padStart(2, '0')]
+            : undefined;
+    const sector = sectorName === '其他' ? undefined : sectorName;
     const contentKey = [
         priceText,
         fmtSigned(chg),
@@ -211,6 +271,9 @@ export function QuoteBoard({
         fmtInt(vol),
         fmtVolumeRatio(volumeRatio),
         atLimit,
+        sector,
+        range && isIndexFuture ? fmtPoints(range.close - range.low) : undefined,
+        range && isIndexFuture ? fmtPoints(range.high - range.close) : undefined,
     ]
         .map((v) => String(v ?? '').length)
         .join(',');
@@ -220,6 +283,7 @@ export function QuoteBoard({
         true,
         contentKey,
         isIndex ? 'sj-index-board-mode' : 'sj-stock-board-mode',
+        isIndex ? BOARD_TIERS : range ? RAIL_TIERS : STOCK_TIERS,
     );
     const richBoard = isRichTier(tier);
     // 參考價、更新時間收進漲跌與現價的滑過提示
@@ -345,20 +409,41 @@ export function QuoteBoard({
                 </>
             ) : (
                 <>
+                    {/* 軌道在 rail、railMid、railLow 顯示、產業分類只在 rail 顯示（CSS 依 data-tier 切換）；
+                        平常也留在畫面上，階梯量測時才量得到它們需要的寬度 */}
+                    {range && (
+                        <DayRangeRail
+                            className={styles.railSlot}
+                            range={range}
+                            fmt={boardPrice}
+                            fmtPoints={fmtPoints}
+                            scales={isIndexFuture ? INDEX_FUTURE_SCALES : STOCK_SCALES}
+                            edges={isIndexFuture ? 'distance' : 'limits'}
+                            locked={atLimit}
+                            touched={{
+                                up: limitStateOf(contract, high) === 'up',
+                                down: limitStateOf(contract, low) === 'down',
+                            }}
+                        />
+                    )}
+                    {range && sector && <span className={styles.sectorTag}>{sector}</span>}
                     {vol !== undefined && (
                         <span
                             className={showRatio ? `${styles.stockVolTag} ${styles.tipCell}` : styles.stockVolTag}
                             title={showRatio ? ratioTitle : undefined}
                         >
                             量 {fmtInt(vol)}
+                            {showRatio && (
+                                <span className={styles.stockVolTagRatio}>量比 {fmtVolumeRatio(volumeRatio)}</span>
+                            )}
                         </span>
                     )}
                     <div className={styles.stockStats}>
                         <div className={styles.pairGroup}>
                             <span className={styles.pairLabel}>高</span>
-                            <span className={`${styles.pairValue} ${panel.dirText.up}`}>{boardPrice(high)}</span>
+                            <span className={vsOpen(high)}>{boardPrice(high)}</span>
                             <span className={styles.pairLabel}>低</span>
-                            <span className={`${styles.pairValue} ${panel.dirText.down}`}>{boardPrice(low)}</span>
+                            <span className={vsOpen(low)}>{boardPrice(low)}</span>
                         </div>
                         <div className={styles.volGroup}>
                             <span className={`${styles.pairLabel} ${styles.stockOpen}`}>開</span>

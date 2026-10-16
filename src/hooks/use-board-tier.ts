@@ -4,6 +4,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import {
+    BOARD_TIERS,
     boardBudget,
     effectiveTier,
     nextBoardMode,
@@ -80,16 +81,19 @@ function writeMode(key: string, mode: BoardMode) {
 }
 
 // contentKey：顯示文字長度的摘要。數字變長（例如資料剛到、家數跨過百位）時看板外框不一定變，
-// ResizeObserver 收不到，要靠它觸發重新判斷；只比長度，不會每跳一次報價就重量
+// ResizeObserver 收不到，要靠它觸發重新判斷；只比長度，不會每跳一次報價就重量。
+// tiers：這塊看板的階梯（個股有日內區間軌時用 RAIL_TIERS），請傳模組常數，換階梯時從頭判斷
 export function useBoardTier(
     boardRef: RefObject<HTMLElement | null>,
     enabled: boolean,
     contentKey: string,
     modeKey: string,
+    tiers: readonly BoardTier[] = BOARD_TIERS,
 ) {
     const store = modeStore(modeKey);
     const mode = useSyncExternalStore(store.subscribe, store.read, () => 'auto' as const);
     const [autoTier, setAutoTier] = useState<BoardTier>('wide');
+    const [expandedTier, setExpandedTier] = useState<BoardTier>('wide');
     const refit = useRef<(() => void) | null>(null);
 
     useLayoutEffect(() => {
@@ -97,6 +101,7 @@ export function useBoardTier(
         const panel = board?.parentElement;
         if (!enabled || !board || !panel || typeof ResizeObserver === 'undefined') return;
         let current: BoardTier | undefined;
+        let currentExpanded: BoardTier | undefined;
         const fit = () => {
             const panelHeight = panel.clientHeight;
             if (panelHeight <= 0) return; // 尚未排版
@@ -110,10 +115,16 @@ export function useBoardTier(
             const widthSlack = (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16) * 0.9;
             const measure = (t: BoardTier, upgrading: boolean) => {
                 board.dataset.tier = t;
-                // 升級時暫時把右側留白加寬，等於要求內容多留一個字寬才算放得下
+                // 升級時暫時把右側留白加寬，等於要求內容多留幾個字寬才算放得下
                 // （放得下時 scrollWidth 等於 clientWidth，不能直接拿來加緩衝比較）
                 if (upgrading) {
-                    board.style.paddingRight = `${parseFloat(getComputedStyle(board).paddingRight) + widthSlack}px`;
+                    // 個股價格跨位數（999 到 1,000 多兩位、99.95 到 100.00 多一位）內容寬度會跳兩個價格字寬，
+                    // 緩衝要不小於這個跳動才擋得住來回換版；價格字寬依該階梯實際字級量，第一個子元素就是現價
+                    const price = board.firstElementChild;
+                    const priceChars = Math.max(1, price?.textContent?.length ?? 1);
+                    const priceSlack = price ? (2 * price.getBoundingClientRect().width) / priceChars : 0;
+                    const slack = Math.max(widthSlack, priceSlack);
+                    board.style.paddingRight = `${parseFloat(getComputedStyle(board).paddingRight) + slack}px`;
                 }
                 // 單行階梯不換行：看板或其中任一區塊橫向放不下（被裁切、擠出）就算放不下
                 const fits = !overflows(board) && ![...board.children].some(overflows);
@@ -121,10 +132,20 @@ export function useBoardTier(
                 board.style.paddingRight = '';
                 return fits ? height : Infinity;
             };
-            const auto = pickBoardTier(measure, boardBudget(panelHeight, above), current);
+            const auto = pickBoardTier(measure, boardBudget(panelHeight, above), current, tiers);
             current = auto;
-            board.dataset.tier = effectiveTier(mode, auto);
+            // 使用者按展開時用的階梯：有軌道的個股，rail（五格數字加產業分類都在，高度和 wide 一樣）橫向放得下就用，
+            // 放不下才用 wide。railMid 不當候選：它會收起漲跌停價，展開反而比 wide 少數字。
+            // 不然在矮面板（自動是 railLow）按展開，軌道反而被數字欄取代
+            // 目前是 wide 時，要 rail 多放得下一段緩衝才升回去，價格在位數邊界跳動時才不會整塊來回換版
+            const expanded =
+                tiers.includes('rail') && Number.isFinite(measure('rail', currentExpanded === 'wide'))
+                    ? 'rail'
+                    : 'wide';
+            currentExpanded = expanded;
+            board.dataset.tier = effectiveTier(mode, auto, expanded);
             setAutoTier(auto);
+            setExpandedTier(expanded);
         };
         fit();
         refit.current = fit;
@@ -151,8 +172,9 @@ export function useBoardTier(
             delete board.dataset.tier;
             board.style.paddingRight = '';
         };
-        // modeKey 代表看板種類（指數／個股）：換種類時重新從頭判斷，不沿用上一種的階梯與緩衝狀態
-    }, [boardRef, enabled, mode, modeKey]);
+        // modeKey 代表看板種類（指數／個股）、tiers 代表有沒有軌道：換了就重新從頭判斷，
+        // 不沿用上一種的階梯與緩衝狀態
+    }, [boardRef, enabled, mode, modeKey, tiers]);
 
     useLayoutEffect(() => {
         refit.current?.();
@@ -164,5 +186,5 @@ export function useBoardTier(
     );
 
     // 目前階梯由模式與自動結果算出，不另存一份狀態（模式一改，按鈕標示立即跟著變）
-    return { tier: effectiveTier(mode, autoTier), toggle };
+    return { tier: effectiveTier(mode, autoTier, expandedTier), toggle };
 }

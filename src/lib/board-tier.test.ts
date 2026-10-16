@@ -1,19 +1,34 @@
-// src/lib/board-tier.test.ts：指數看板階梯，標題加看板不超過面板 1/5，strip 保底
+// src/lib/board-tier.test.ts：報價看板階梯，標題加看板不超過面板 1/5，strip 保底
 
 import { describe, expect, it } from 'vitest';
 import {
+    BOARD_TIERS,
     boardBudget,
     effectiveTier,
     isRichTier,
     nextBoardMode,
     parseBoardMode,
     pickBoardTier,
+    RAIL_TIERS,
+    STOCK_TIERS,
     UPGRADE_SLACK_PX,
     type BoardTier,
 } from './board-tier';
 
-// 各階梯排版後的看板高度（px），取自 dev 實測：寬 69、mid 67、單行階梯 45、strip 29
-const HEIGHT: Record<BoardTier, number> = { wide: 69, mid: 67, inline: 45, lean: 45, compact: 45, strip: 29 };
+// 各階梯排版後的看板高度（px），取自 dev 實測：寬 69、mid 67、單行階梯 45、strip 29；
+// 個股軌道各級的高度（實機約 60 與 45，和上面指數的實測值不同源）
+const HEIGHT: Record<BoardTier, number> = {
+    rail: 60,
+    railMid: 60,
+    railLow: 45,
+    wide: 69,
+    mid: 67,
+    inline: 45,
+    lean: 45,
+    compact: 45,
+    tight: 45,
+    strip: 29,
+};
 const measure = (tier: BoardTier) => HEIGHT[tier];
 
 // 模擬寬度：各階梯需要的寬度（px），超過可用寬度就算放不下；升級時要多留一個數字寬
@@ -85,6 +100,51 @@ describe('pickBoardTier', () => {
         expect(pickBoardTier(measure, 67 + UPGRADE_SLACK_PX, 'inline')).toBe('mid');
     });
 
+    it('個股收起順序：漲跌停價 → 開 → 高低 → 量比 → 量（使用者指定）', () => {
+        expect(STOCK_TIERS).toEqual(['wide', 'mid', 'inline', 'lean', 'compact', 'tight', 'strip']);
+        // 有軌道時：軌道兩級之後直接接 mid，不會再回到帶漲跌停價的 wide
+        expect(RAIL_TIERS).toEqual(['rail', 'railMid', 'mid', 'railLow', 'inline', 'lean', 'compact', 'tight', 'strip']);
+        const need = { wide: 600, mid: 500, inline: 460, lean: 420, compact: 330, tight: 260 };
+        const pick = (width: number) => pickBoardTier(measureWithin(width, need), 81, undefined, STOCK_TIERS);
+        expect(pick(340)).toBe('compact');
+        expect(pick(300)).toBe('tight');
+        expect(pick(250)).toBe('strip');
+    });
+
+    it('有軌道的個股先試 rail、railMid，放不下時接原本的 mid 起，切換點不變', () => {
+        const need = { rail: 700, railMid: 620, railLow: 600, wide: 600, mid: 500, inline: 460, lean: 420, compact: 330, tight: 260 };
+        const pick = (width: number) => pickBoardTier(measureWithin(width, need), 81, undefined, RAIL_TIERS);
+        expect(pick(1000)).toBe('rail');
+        expect(pick(650)).toBe('railMid');
+        // wide 放得下但 railMid 放不下：不回到帶漲跌停價的 wide，直接用 mid
+        expect(pick(610)).toBe('mid');
+        for (const width of [510, 470, 430, 340, 300, 250]) {
+            expect(pick(width)).toBe(pickBoardTier(measureWithin(width, need), 81, undefined, STOCK_TIERS));
+        }
+    });
+
+    it('面板矮、mid 的高度放不下時改用 railLow（單行高度的軌道），不會直接掉到沒有軌道的 inline', () => {
+        const need = { rail: 700, railMid: 620, railLow: 600, mid: 500, inline: 460 };
+        // 預算 50：rail、railMid、mid（60 到 67）都太高，railLow（45）放得下
+        expect(pickBoardTier(measureWithin(1000, need), 50, undefined, RAIL_TIERS)).toBe('railLow');
+        // 寬度不夠放軌道時照舊用 inline
+        expect(pickBoardTier(measureWithin(550, need), 50, undefined, RAIL_TIERS)).toBe('inline');
+        // railLow 不算豐富階梯：按鈕標示「展開」
+        expect(isRichTier('railLow')).toBe(false);
+    });
+
+    it('軌道階梯也有升級緩衝：從 railMid 回 rail 要多留一個字寬', () => {
+        const need = { rail: 600, railMid: 520 };
+        let tier = pickBoardTier(measureWithin(600, need), 81, undefined, RAIL_TIERS);
+        expect(tier).toBe('rail');
+        tier = pickBoardTier(measureWithin(599, need), 81, tier, RAIL_TIERS);
+        expect(tier).toBe('railMid');
+        tier = pickBoardTier(measureWithin(600, need), 81, tier, RAIL_TIERS);
+        expect(tier).toBe('railMid');
+        tier = pickBoardTier(measureWithin(600 + DIGIT_PX, need), 81, tier, RAIL_TIERS);
+        expect(tier).toBe('rail');
+    });
+
     it('同一階梯內預算小幅上下抖動不會切換', () => {
         let tier = pickBoardTier(measure, 50);
         const seen = new Set<BoardTier>();
@@ -129,7 +189,8 @@ describe('手動模式', () => {
     });
 
     it('任何狀態下按一下，完整／精簡都會翻轉', () => {
-        const tiers: BoardTier[] = ['wide', 'mid', 'inline', 'lean', 'compact', 'strip'];
+        // 所有階梯（指數、個股、個股有軌道）各試一遍
+        const tiers = [...new Set<BoardTier>([...BOARD_TIERS, ...STOCK_TIERS, ...RAIL_TIERS])];
         for (const mode of ['auto', 'collapsed', 'expanded'] as const) {
             for (const auto of tiers) {
                 const before = isRichTier(effectiveTier(mode, auto));
@@ -139,10 +200,27 @@ describe('手動模式', () => {
         }
     });
 
-    it('豐富階梯只有 wide 與 mid', () => {
-        expect(isRichTier('wide')).toBe(true);
-        expect(isRichTier('mid')).toBe(true);
-        for (const t of ['inline', 'lean', 'compact', 'strip'] as const) expect(isRichTier(t)).toBe(false);
+    it('豐富階梯是 rail、railMid、wide 與 mid；railLow（面板矮的軌道）、tight 等單行階梯都是精簡的', () => {
+        for (const t of ['rail', 'railMid', 'wide', 'mid'] as const) expect(isRichTier(t)).toBe(true);
+        for (const t of ['railLow', 'inline', 'lean', 'compact', 'tight', 'strip'] as const) {
+            expect(isRichTier(t)).toBe(false);
+        }
+    });
+
+    it('展開用量測端挑的階梯（軌道放得下就是 rail，否則 wide），不看自動結果；按鈕一樣每按一下翻轉', () => {
+        // 矮面板自動是 railLow，展開仍保留軌道（不變成沒有軌道的數字欄）
+        expect(effectiveTier('expanded', 'railLow', 'rail')).toBe('rail');
+        expect(effectiveTier('expanded', 'railMid', 'rail')).toBe('rail');
+        expect(effectiveTier('expanded', 'compact')).toBe('wide');
+        expect(effectiveTier('collapsed', 'rail', 'rail')).toBe('strip');
+        expect(effectiveTier('auto', 'railLow', 'rail')).toBe('railLow');
+        for (const mode of ['auto', 'collapsed', 'expanded'] as const) {
+            for (const auto of RAIL_TIERS) {
+                const before = isRichTier(effectiveTier(mode, auto));
+                const after = isRichTier(effectiveTier(nextBoardMode(mode, auto), auto));
+                expect(after).toBe(!before);
+            }
+        }
     });
 
     it('讀回瀏覽器存的值：不認得的一律當 auto', () => {
