@@ -7,6 +7,7 @@ import {
     type ProductSuggestion,
 } from '../lib/product-search';
 import { BLOCK_META, type BlockType } from '../lib/workspace';
+import type { SecurityType } from '../lib/types/contract';
 import * as styles from './command-palette.css';
 import { AsyncStatus } from './async-status';
 
@@ -21,12 +22,15 @@ export function CommandPalette({
 }: {
     open: boolean;
     onClose: () => void;
-    onJump: (code: string) => Promise<unknown>;
+    onJump: (code: string, securityType?: SecurityType) => Promise<unknown>;
     onAddPanel?: (type: BlockType) => void;
 }) {
     const [value, setValue] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(false);
+    const [searchError, setSearchError] = useState(false);
+    const [searching, setSearching] = useState(false);
+    const [searchRetry, setSearchRetry] = useState(0);
     const [suggestions, setSuggestions] = useState<ProductSuggestion[]>([]);
     const [activeIndex, setActiveIndex] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -44,26 +48,35 @@ export function CommandPalette({
     useEffect(() => {
         if (!open || !value.trim()) {
             setSuggestions([]);
+            setSearchError(false);
+            setSearching(false);
             return;
         }
         let active = true;
+        setSearchError(false);
+        setSearching(true);
         const timer = setTimeout(() => {
-            void searchProducts(value, 8)
+            void searchProducts(value, 8, { includeWarrants: true })
                 .then((items) => {
                     if (active) {
                         setSuggestions(items);
                         setActiveIndex(0);
+                        setSearching(false);
                     }
                 })
                 .catch(() => {
-                    if (active) setSuggestions([]);
+                    if (active) {
+                        setSuggestions([]);
+                        setSearchError(true);
+                        setSearching(false);
+                    }
                 });
         }, 120);
         return () => {
             active = false;
             clearTimeout(timer);
         };
-    }, [open, value]);
+    }, [open, value, searchRetry]);
 
     useEffect(() => {
         setActiveIndex(0);
@@ -102,11 +115,13 @@ export function CommandPalette({
         const item = picked ?? suggestions[activeIndex];
         const code = item?.code ?? value.trim().toUpperCase();
         if (!code || busy) return;
+        // 名稱查詢待決時不可把上一輪結果當成本輪選取；直接代碼仍可送查詢。
+        if (!item && searching && !/^[A-Z0-9]+$/.test(code)) return;
         setBusy(true);
         setError(false);
         try {
             if (item?.contract) primeContract(item.contract);
-            await onJump(code);
+            await onJump(code, item?.security_type);
             onClose();
         } catch {
             setError(true);
@@ -125,6 +140,10 @@ export function CommandPalette({
                     value={value}
                     onChange={(e) => {
                         setValue(e.target.value);
+                        setSuggestions([]);
+                        setActiveIndex(0);
+                        setSearchError(false);
+                        setSearching(!!e.target.value.trim());
                         setError(false);
                     }}
                     onKeyDown={(e) => {
@@ -196,9 +215,10 @@ export function CommandPalette({
                     </div>
                 )}
                 <div className={styles.hint}>
-                    <AsyncStatus phase={busy ? 'loading' : error ? 'error' : 'idle'}
-                        text={busy ? '查詢商品中…' : error ? '找不到此商品代碼' : 'Enter 跳轉 · Esc 關閉'}
-                        className={error ? styles.err : ''} />
+                    <AsyncStatus phase={busy ? 'loading' : error || searchError ? 'error' : searching ? 'loading' : 'idle'}
+                        text={busy ? '查詢商品中…' : error ? '找不到此商品代碼' : searchError ? '搜尋失敗，可重試' : searching ? '搜尋中…' : 'Enter 跳轉 · Esc 關閉'}
+                        action={searchError ? <button type='button' onClick={() => setSearchRetry((retry) => retry + 1)}>重試</button> : undefined}
+                        className={error || searchError ? styles.err : ''} />
                     <span>⌘K</span>
                 </div>
             </div>

@@ -322,27 +322,41 @@ export function Watchlist({
     const [busy, setBusy] = useState(false);
     const [creating, setCreating] = useState(false);
     const [suggestions, setSuggestions] = useState<ProductSuggestion[]>([]);
+    const [searchError, setSearchError] = useState(false);
+    const [searching, setSearching] = useState(false);
+    const [searchRetry, setSearchRetry] = useState(0);
     useEffect(() => {
         const query = input.trim();
         if (!query) {
             setSuggestions([]);
+            setSearchError(false);
+            setSearching(false);
             return;
         }
         let active = true;
+        setSearchError(false);
+        setSearching(true);
         const timer = setTimeout(() => {
-            void searchProducts(query, 10)
+            void searchProducts(query, 10, { includeWarrants: true })
                 .then((results) => {
-                    if (active) setSuggestions(results);
+                    if (active) {
+                        setSuggestions(results);
+                        setSearching(false);
+                    }
                 })
                 .catch(() => {
-                    if (active) setSuggestions([]);
+                    if (active) {
+                        setSuggestions([]);
+                        setSearchError(true);
+                        setSearching(false);
+                    }
                 });
         }, 150);
         return () => {
             active = false;
             clearTimeout(timer);
         };
-    }, [input]);
+    }, [input, searchRetry]);
     const [newName, setNewName] = useState('');
     const [confirmDelete, setConfirmDelete] = useState(false);
     // inline rename (issue #9) — WKWebView has no working window.prompt,
@@ -445,6 +459,7 @@ export function Watchlist({
     const submit = async () => {
         const code = input.trim().toUpperCase();
         if (!code || busy || loading || !activeListId) return;
+        if (searching && !/^[A-Z0-9]+$/.test(code)) return;
         setBusy(true);
         try {
             await onAdd(code);
@@ -694,11 +709,18 @@ export function Watchlist({
                 </div>
             </div>
             <div className={styles.addRow}>
+                {(searchError || searching) && (
+                    <div className={styles.suggestBox}>
+                        <AsyncStatus phase={searchError ? 'error' : 'loading'} text={searchError ? '搜尋失敗，可重試' : '搜尋中…'}
+                            className={styles.loadingHint}
+                            action={searchError ? <button type='button' onClick={() => setSearchRetry((retry) => retry + 1)}>重試</button> : undefined} />
+                    </div>
+                )}
                 {suggestions.length > 0 && (
                     <div className={styles.suggestBox}>
                         {suggestions.map((s) => (
                             <button
-                                key={s.code}
+                                key={`${s.security_type}:${s.code}`}
                                 className={styles.suggestRow}
                                 disabled={loading}
                                 onClick={async () => {
@@ -736,6 +758,9 @@ export function Watchlist({
                     value={input}
                     onChange={(e) => {
                         setInput(e.target.value);
+                        setSuggestions([]);
+                        setSearchError(false);
+                        setSearching(!!e.target.value.trim());
                     }}
                     onKeyDown={(e) => {
                         if (e.key === 'Enter') {

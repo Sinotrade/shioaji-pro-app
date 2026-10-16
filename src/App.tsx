@@ -89,9 +89,10 @@ import {
 import { isTauri, openPopout } from './lib/tauri';
 import { notify } from './lib/trade';
 import { tradingActionObserved, useTradingState } from './lib/trading-state';
+import { quickOrderBlockMessage } from './lib/quick-order-support';
 import { ensureStream } from './lib/stream';
 import { ensureAccounts } from './lib/account-store';
-import type { ContractInfo } from './lib/types/contract';
+import type { ContractInfo, SecurityType } from './lib/types/contract';
 import {
     BLOCK_META,
     DEFAULT_WORKSPACE,
@@ -262,6 +263,10 @@ function BlockBody({
 }) {
     if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
         return <IndexBlockUnavailable type={block.type} />;
+    }
+    const quickOrderMessage = quickOrderBlockMessage(contract?.security_type, block.type);
+    if (quickOrderMessage) {
+        return <div className={styles.blockPlaceholder}>{quickOrderMessage}</div>;
     }
     if (contract?.combo && comboBlockMessage(block.type)) {
         return (
@@ -723,6 +728,7 @@ function PopoutView({
         return () => clearInterval(t);
     }, [type]);
     const meta = BLOCK_META[type];
+    const quickOrderMessage = quickOrderBlockMessage(contract?.security_type, type);
 
     let body: React.ReactNode = <BlockPlaceholder />;
     if (type === 'pnl') body = <PnlPanel />;
@@ -743,6 +749,8 @@ function PopoutView({
         indexBlockMessage(type)
     ) {
         body = <IndexBlockUnavailable type={type} />;
+    } else if (quickOrderMessage) {
+        body = <div className={styles.blockPlaceholder}>{quickOrderMessage}</div>;
     } else if (contract?.combo && comboBlockMessage(type)) {
         body = (
             <div className={styles.blockPlaceholder}>
@@ -1565,13 +1573,14 @@ function MainApp() {
     });
 
     const jumpToCode = useCallback(
-        async (code: string) => {
-            const existing = items.find((i) => i.contract.code === code);
+        async (code: string, securityType?: SecurityType) => {
+            const existing = items.find((i) => i.contract.code === code &&
+                (!securityType || i.contract.security_type === securityType));
             if (existing) {
                 setSelected(existing.contract);
                 return;
             }
-            const c = await ensureContract(code);
+            const c = await ensureContract(code, securityType);
             setSelected(c);
         },
         [items],

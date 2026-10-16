@@ -110,16 +110,18 @@ export function searchStocks(
     query: string,
     limit = 8,
 ): StockMeta[] {
-    const q = query.trim().toUpperCase();
+    const normalize = (value: string) => value.trim().replace(/臺/g, '台').toUpperCase();
+    const q = normalize(query);
     if (!q) return [];
     const scored: { s: StockMeta; score: number }[] = [];
     for (const s of index) {
-        const name = s.name.toUpperCase();
-        const codeHit = s.code.startsWith(q);
+        const name = normalize(s.name);
+        const code = normalize(s.code);
+        const codeHit = code.startsWith(q);
         const nameHit = name.includes(q);
         if (!codeHit && !nameHit) continue;
         let score = 0;
-        if (s.code === q || name === q) score -= 100; // exact
+        if (code === q || name === q) score -= 100; // exact
         if (codeHit) score -= 10;
         else if (name.startsWith(q)) score -= 5;
         // plain 4-digit equities rank above warrants/ETNs (6-char codes)
