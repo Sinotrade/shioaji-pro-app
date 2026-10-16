@@ -15,6 +15,7 @@ describe('real desktop serverStop orchestration', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.stubGlobal('window', { setTimeout, clearTimeout });
+        vi.stubGlobal('fetch', native.fetch);
         // this App started the server on 21322 (pid 4242, still alive)
         storage.clear();
         storage.set('sj-pro-server-port', '21322');
