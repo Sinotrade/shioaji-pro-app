@@ -4,7 +4,7 @@ import { useDisplayBook } from '../hooks/use-display-book';
 import type { ContractInfo } from '../lib/types/contract';
 import { limitStateOf } from '../lib/limit-state';
 import type { Snapshot } from '../lib/types/market';
-import { fmtInt, fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
+import { fmtCompactInt, fmtInt, fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as panel from './panel.css';
 import * as styles from './quote-board.css';
 
@@ -57,6 +57,10 @@ export function QuoteBoard({
         index?.vol_sum ??
         index?.volume ??
         snapshot?.total_volume;
+    // 指數看板看成交金額（元，換算成億）；amount_sum 為空字串時退回快照
+    const amount = index?.amount_sum
+        ? Number(index.amount_sum)
+        : snapshot?.total_amount;
     const bid1 = book?.bids[0];
     const ask1 = book?.asks[0];
 
@@ -90,7 +94,7 @@ export function QuoteBoard({
                         <span className={styles.statLabel}>開</span>
                         <span className={styles.statLabel}>高</span>
                         <span className={styles.statLabel}>低</span>
-                        <span className={styles.statLabel}>量</span>
+                        <span className={styles.statLabel}>金額</span>
                         <span className={styles.statValue}>{fmtPrice(open)}</span>
                         <span className={`${styles.statValue} ${panel.dirText.up}`}>
                             {fmtPrice(high)}
@@ -98,7 +102,7 @@ export function QuoteBoard({
                         <span className={`${styles.statValue} ${panel.dirText.down}`}>
                             {fmtPrice(low)}
                         </span>
-                        <span className={styles.statValue}>{fmtInt(vol)}</span>
+                        <span className={styles.statValue}>{fmtCompactInt(amount)}</span>
                         <span className={styles.statLabel}>參考</span>
                         <span className={styles.statLabel}>上漲</span>
                         <span className={styles.statLabel}>平盤</span>
