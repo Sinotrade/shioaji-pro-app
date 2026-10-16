@@ -13,26 +13,6 @@ export const board = style({
     overflow: 'hidden',
 });
 
-export const symbolBlock = style({
-    display: 'flex',
-    flexDirection: 'column',
-    minWidth: '7rem',
-});
-
-export const symbolCode = style({
-    fontFamily: vars.font.display,
-    fontSize: '1.15rem',
-    fontWeight: 700,
-    letterSpacing: '0.01em',
-    color: vars.color.foreground,
-});
-
-export const symbolName = style({
-    fontSize: '0.72rem',
-    color: vars.color.mutedForeground,
-    whiteSpace: 'nowrap',
-});
-
 const bigPriceBase = style({
     fontFamily: vars.font.mono,
     fontSize: '1.9rem',
@@ -52,17 +32,6 @@ export const changeBlock = style({
     flexDirection: 'column',
     fontFamily: vars.font.mono,
     fontSize: '0.82rem',
-    fontVariantNumeric: 'tabular-nums',
-});
-
-export const statGrid = style({
-    display: 'grid',
-    gridTemplateColumns: 'repeat(4, auto)',
-    columnGap: vars.space.lg,
-    rowGap: '2px',
-    marginLeft: 'auto',
-    fontFamily: vars.font.mono,
-    fontSize: '0.72rem',
     fontVariantNumeric: 'tabular-nums',
 });
 
@@ -93,13 +62,13 @@ export const limitBadge = styleVariants({
     down: [limitBadgeBase, { background: vars.color.down }],
 });
 
-// 指數看板：data-tier 由 useBoardTier 依面板大小設定（目標是標題列加看板不超過面板高度 1/5，
-// strip 保底），各階梯的內容取捨寫在檔尾；未設定（首次繪製前）等同 wide。
-// 整列對齊「最後一行」的文字基線：價格、漲跌的百分比、統計的數值列、量增縮標籤落在同一條線上
+// 有階梯的看板（指數、個股共用）：data-tier 由 useBoardTier 依面板大小設定（目標是標題列加看板
+// 不超過面板高度 1/5，strip 保底），各階梯的內容取捨寫在檔尾；未設定（首次繪製前）等同 wide。
+// 整列對齊「最後一行」的文字基線：價格、漲跌的百分比、統計的數值列落在同一條線上
 // 右側多留 TOGGLE_RESERVE 給絕對定位的展開／收合按鈕，按鈕不參與排版、不會自己換到新的一列
 const TOGGLE_RESERVE = `calc(${vars.space.md} + 1.4rem)`;
 
-export const boardIndex = style({
+export const boardTiered = style({
     position: 'relative',
     flexWrap: 'wrap',
     rowGap: vars.space.sm,
@@ -129,6 +98,9 @@ export const boardIndex = style({
 
 // 指數統計區：兩組（漲跌家數／成交量能）橫向排開。wide 時寬面板一排、放不下的組換行，
 // basis 取兩組完整並排的實測寬度（約 26rem）；其餘階梯單行、依內容寬度
+// 指數看板的標記（內容取捨規則掛在它底下）
+export const boardIndex = style({});
+
 export const indexStats = style({
     display: 'flex',
     flexWrap: 'wrap',
@@ -299,7 +271,7 @@ export const boardToggle = style({
     },
 });
 
-globalStyle(`${boardIndex}:hover ${boardToggle}`, { opacity: 1 });
+globalStyle(`${boardTiered}:hover ${boardToggle}`, { opacity: 1 });
 
 // 已展開（aria-expanded）時箭頭朝上
 globalStyle(`${boardToggle}[aria-expanded="true"] svg`, { transform: 'rotate(180deg)' });
@@ -307,8 +279,11 @@ globalStyle(`${boardToggle}[aria-expanded="true"] svg`, { transform: 'rotate(180
 globalStyle(`${indexStats} > :first-child`, { marginLeft: 'auto' });
 
 // ---- 各階梯的內容取捨（wide 為完整版，不需另外寫規則） ----
-const tier = (name: string) => `${boardIndex}[data-tier="${name}"]`;
-const tiers = (names: string[], child: string) => names.map((n) => `${tier(n)} ${child}`).join(', ');
+const tierOf = (base: string) => (name: string) => `${base}[data-tier="${name}"]`;
+const tiersOf = (base: string) => (names: string[], child: string) =>
+    names.map((n) => `${tierOf(base)(n)} ${child}`).join(', ');
+const tier = tierOf(boardIndex);
+const tiers = tiersOf(boardIndex);
 const SINGLE_ROW = ['mid', 'inline', 'lean'];
 
 // mid、inline、lean：成交金額、時間收進預估量的滑過提示；統計單行、依內容寬度，兩組整組靠右
@@ -327,10 +302,83 @@ globalStyle(tiers(['compact', 'strip'], indexStats), { display: 'none' });
 globalStyle(tier('compact') + ' ' + leadTag, { display: 'inline-block' });
 globalStyle(tier('compact') + ' ' + breadthMini, { display: 'flex' });
 
-globalStyle(tiers(['inline', 'lean', 'compact'], bigPriceBase), { fontSize: '1.5rem' });
-globalStyle(tiers(['inline', 'lean', 'compact'], changeBlock), { lineHeight: 1.05 });
+// ---- 通用（指數、個股）：單行階梯縮小價格、收緊漲跌兩行 ----
+const gTier = tierOf(boardTiered);
+const gTiers = tiersOf(boardTiered);
+globalStyle(gTiers(['inline', 'lean', 'compact'], bigPriceBase), { fontSize: '1.5rem' });
+globalStyle(gTiers(['inline', 'lean', 'compact'], changeBlock), { lineHeight: 1.05 });
 
 // strip（保底）：現價與漲跌幅一行，拿掉漲跌點數，確保比其他階梯都窄
-globalStyle(tier('strip') + ' ' + bigPriceBase, { fontSize: '1.1rem' });
-globalStyle(tier('strip') + ' ' + changeBlock, { flexDirection: 'row', fontSize: '0.75rem' });
-globalStyle(`${tier('strip')} ${changeBlock} > :first-child`, { display: 'none' });
+globalStyle(gTier('strip') + ' ' + bigPriceBase, { fontSize: '1.1rem' });
+globalStyle(gTier('strip') + ' ' + changeBlock, { flexDirection: 'row', fontSize: '0.75rem' });
+globalStyle(`${gTier('strip')} ${changeBlock} > :first-child`, { display: 'none' });
+
+// ---- 個股、期貨、選擇權（非指數）看板：成對兩行 ----
+// 上排放「上方」的值（高、漲停），下排放「下方」的值（低、跌停），跟價格軸方向一致。
+// 代號名稱交給標題列；參考價、時間收進漲跌與現價的滑過提示；最佳一檔交給五檔面板，看板不重複
+export const boardStock = style({});
+
+export const stockStats = style({
+    display: 'flex',
+    alignItems: 'last baseline',
+    flexWrap: 'nowrap',
+    columnGap: vars.space.lg,
+    marginLeft: 'auto',
+    minWidth: 0,
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+});
+
+const pairBase = style({
+    display: 'grid',
+    columnGap: '0.5rem',
+    rowGap: '2px',
+    alignItems: 'baseline',
+});
+
+// 標籤＋數值（高／低、開／量、漲停／跌停）
+export const pairGroup = style([pairBase, { gridTemplateColumns: 'auto auto' }]);
+// 開／量組多一欄量比：上排開，下排量與量比
+export const volGroup = style([pairBase, { gridTemplateColumns: 'auto auto auto auto' }]);
+
+export const pairLabel = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.62rem',
+    color: vars.color.mutedForeground,
+});
+
+export const pairValue = style({ textAlign: 'right' });
+
+// 停板組：mid 起收起（到停板時價格旁的漲停／跌停徽章照樣會亮）
+export const stockLimit = style({});
+// 開／量組固定上排開、下排量；lean 只收起開，量留在下排（優先序：量 > 高低 > 開 > 停板）
+export const stockOpen = style({ gridRow: 1 });
+export const stockVol = style({ gridRow: 2 });
+// 量比（今日成交量 ÷ 昨日成交量），算法放在滑過提示
+export const stockRatio = style({ gridRow: 2 });
+
+// compact：統計收起時，價格旁留成交量
+export const stockVolTag = style({
+    display: 'none',
+    flexShrink: 0,
+    fontFamily: vars.font.mono,
+    fontSize: '0.72rem',
+    fontWeight: 600,
+    color: vars.color.foreground,
+    whiteSpace: 'nowrap',
+});
+
+const sTier = tierOf(boardStock);
+const sTiers = tiersOf(boardStock);
+
+globalStyle(sTiers(['mid', 'inline', 'lean'], stockLimit), { display: 'none' });
+// inline、lean：兩行行高收緊
+globalStyle(sTiers(['inline', 'lean'], pairGroup), { lineHeight: 1.2 });
+globalStyle(sTiers(['inline', 'lean'], volGroup), { lineHeight: 1.2 });
+globalStyle(sTiers(['inline', 'lean'], stockStats), { columnGap: '0.9rem' });
+globalStyle(sTier('lean') + ' ' + stockOpen, { display: 'none' });
+// compact、strip：統計收起
+globalStyle(sTiers(['compact', 'strip'], stockStats), { display: 'none' });
+globalStyle(sTier('compact') + ' ' + stockVolTag, { display: 'inline-block' });

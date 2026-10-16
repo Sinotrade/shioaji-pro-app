@@ -17,11 +17,13 @@ import {
     shiftDate,
     volumeChangeOf,
 } from '../lib/index-volume';
-import { limitStateOf } from '../lib/limit-state';
+import { hasPriceLimits, limitStateOf } from '../lib/limit-state';
 import { fetchKbars } from '../lib/shioaji';
+import { fmtVolumeRatio, volumeRatioOf, volumeRatioTitle } from '../lib/volume-ratio';
 import type { Snapshot } from '../lib/types/market';
 import { todayStr } from '../lib/utils/date';
 import { fmtCompactInt, fmtInt, fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
+import { tickDecimals, tickSizeFor } from '../lib/utils/ticksize';
 import * as panel from './panel.css';
 import * as styles from './quote-board.css';
 
@@ -91,7 +93,7 @@ export function QuoteBoard({
     contract: ContractInfo;
     snapshot?: Snapshot;
 }) {
-    const { quote, snapshot, book } = useDisplayBook(contract.code, suppliedSnapshot, contract);
+    const { quote, snapshot } = useDisplayBook(contract.code, suppliedSnapshot, contract);
     const tick = quote?.tick;
     const index = quote?.index;
     const isIndex = contract.security_type === 'IND';
@@ -176,8 +178,21 @@ export function QuoteBoard({
         .join('\n');
     const breadth = breadthOf(index?.raise_count, index?.flat_count, index?.fall_count);
     const boardRef = useRef<HTMLDivElement>(null);
-    // 指數現價固定兩位小數：尾數 0 被省略時寬度會差一個字，造成階梯來回切換
-    const priceText = fmtPrice(close, isIndex ? 2 : undefined);
+    // 價格固定小數位：尾數 0 被省略時寬度會差一到三個字，造成階梯來回切換。
+    // 指數固定兩位；其他商品 500 以上依跳動級距（電子期 0.05 → 2,345.10），500 以下沿用原本的兩位
+    const boardPrice = (v: number | string | undefined) => {
+        const n = Number(v);
+        if (isIndex) return fmtPrice(v, 2);
+        return fmtPrice(v, Number.isFinite(n) && Math.abs(n) >= 500 ? tickDecimals(tickSizeFor(contract, n)) : undefined);
+    };
+    const priceText = boardPrice(close);
+    // 量比：今日累計成交量（即時）÷ 昨日全日成交量（快照），算法放在滑過提示。
+    // 只給個股（含 ETF）：期貨、選擇權夜盤開始後今日量只算夜盤，拿去比昨日全日量會失真
+    const showRatio = contract.security_type === 'STK';
+    const volumeRatio = volumeRatioOf(vol, snapshot?.yesterday_volume);
+    const ratioTitle = volumeRatioTitle(vol, snapshot?.yesterday_volume);
+    // 共用判斷（指數、興櫃不亮；跳動價位精度比較）；徽章會占寬度，列入 contentKey
+    const atLimit = limitStateOf(contract, close);
     const contentKey = [
         priceText,
         fmtSigned(chg),
@@ -190,42 +205,55 @@ export function QuoteBoard({
         breadth.down,
         index?.limit_up_count,
         index?.limit_down_count,
+        boardPrice(high),
+        boardPrice(low),
+        boardPrice(open),
+        fmtInt(vol),
+        fmtVolumeRatio(volumeRatio),
+        atLimit,
     ]
         .map((v) => String(v ?? '').length)
         .join(',');
-    const { tier, toggle } = useBoardTier(boardRef, isIndex, contentKey);
+    // 指數與個股各自記收合偏好
+    const { tier, toggle } = useBoardTier(
+        boardRef,
+        true,
+        contentKey,
+        isIndex ? 'sj-index-board-mode' : 'sj-stock-board-mode',
+    );
     const richBoard = isRichTier(tier);
-    const bid1 = book?.bids[0];
-    const ask1 = book?.asks[0];
+    // 參考價、更新時間收進漲跌與現價的滑過提示
+    const timeText = (isIndex ? index?.time : tick?.time)?.slice(0, 8);
 
     const dir =
         chg === undefined || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';
-    // 共用判斷（指數、興櫃不亮；跳動價位精度比較）
-    const atLimit = limitStateOf(contract, close);
 
     return (
         <div
             ref={boardRef}
-            className={`${styles.board}${isIndex ? ` ${styles.boardIndex}` : ''} drag-handle`}
+            className={`${styles.board} ${styles.boardTiered} ${isIndex ? styles.boardIndex : styles.boardStock} drag-handle`}
         >
-            {/* 指數的代號與名稱面板標題列已經有，看板不重複 */}
-            {!isIndex && (
-                <div className={styles.symbolBlock}>
-                    <span className={styles.symbolCode}>{contract.code}</span>
-                    <span className={styles.symbolName}>{contract.name}</span>
-                </div>
-            )}
-
-            <span className={styles.bigPrice[dir]}>{priceText}</span>
+            {/* 代號與名稱面板標題列已經有，看板不重複 */}
+            <span
+                className={timeText ? `${styles.bigPrice[dir]} ${styles.tipCell}` : styles.bigPrice[dir]}
+                title={timeText ? `更新 ${timeText}` : undefined}
+            >
+                {priceText}
+            </span>
             {atLimit && (
                 <span className={styles.limitBadge[atLimit]}>
                     {atLimit === 'up' ? '漲停' : '跌停'}
                 </span>
             )}
 
-            <div className={`${styles.changeBlock} ${panel.dirText[dir]}`}>
+            <div
+                className={
+                    ref ? `${styles.changeBlock} ${panel.dirText[dir]} ${styles.tipCell}` : `${styles.changeBlock} ${panel.dirText[dir]}`
+                }
+                title={ref ? `參考 ${boardPrice(ref)}` : undefined}
+            >
                 <span>{fmtSigned(chg)}</span>
-                <span>{fmtPct(pct)}</span>
+                <span className={ref ? styles.tipLabel : undefined}>{fmtPct(pct)}</span>
             </div>
 
             {isIndex ? (
@@ -314,74 +342,81 @@ export function QuoteBoard({
                             </Stat>
                         </div>
                     </div>
-                    <button
-                        type="button"
-                        className={styles.boardToggle}
-                        onClick={toggle}
-                        aria-expanded={richBoard}
-                        aria-label={richBoard ? '收合統計' : '展開統計'}
-                        title={richBoard ? '收合統計' : '展開統計'}
-                    >
-                        <svg viewBox="0 0 10 10" width="12" height="12" aria-hidden="true">
-                            <polyline
-                                points="2,4 5,7 8,4"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.6"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                            />
-                        </svg>
-                    </button>
                 </>
             ) : (
-                <div className={styles.statGrid}>
-                    <>
-                        <span className={styles.statLabel}>開</span>
-                        <span className={styles.statLabel}>高</span>
-                        <span className={styles.statLabel}>低</span>
-                        <span className={styles.statLabel}>量</span>
-                        <span className={styles.statValue}>{fmtPrice(open)}</span>
-                        <span className={`${styles.statValue} ${panel.dirText.up}`}>
-                            {fmtPrice(high)}
+                <>
+                    {vol !== undefined && (
+                        <span
+                            className={showRatio ? `${styles.stockVolTag} ${styles.tipCell}` : styles.stockVolTag}
+                            title={showRatio ? ratioTitle : undefined}
+                        >
+                            量 {fmtInt(vol)}
                         </span>
-                        <span className={`${styles.statValue} ${panel.dirText.down}`}>
-                            {fmtPrice(low)}
-                        </span>
-                        <span className={styles.statValue}>{fmtInt(vol)}</span>
-                        <span className={styles.statLabel}>參考</span>
-                        <span className={styles.statLabel}>漲停</span>
-                        <span className={styles.statLabel}>跌停</span>
-                        <span className={styles.statLabel}>時間</span>
-                        <span className={styles.statValue}>{fmtPrice(ref)}</span>
-                        <span className={`${styles.statValue} ${panel.dirText.up}`}>
-                            {fmtPrice(contract.limit_up)}
-                        </span>
-                        <span className={`${styles.statValue} ${panel.dirText.down}`}>
-                            {fmtPrice(contract.limit_down)}
-                        </span>
-                        <span className={styles.statValue}>
-                            {tick?.time?.slice(0, 8) ?? '—'}
-                        </span>
-                        <span className={styles.statLabel} title={book?.time}>委買{book?.source === 'snapshot' && '（快照）'}</span>
-                        <span className={styles.statLabel}>買量</span>
-                        <span className={styles.statLabel}>委賣</span>
-                        <span className={styles.statLabel}>賣量</span>
-                        <span className={`${styles.statValue} ${panel.dirText.up}`}>
-                            {fmtPrice(bid1?.price)}
-                        </span>
-                        <span className={styles.statValue}>
-                            {fmtInt(bid1?.vol)}
-                        </span>
-                        <span className={`${styles.statValue} ${panel.dirText.down}`}>
-                            {fmtPrice(ask1?.price)}
-                        </span>
-                        <span className={styles.statValue}>
-                            {fmtInt(ask1?.vol)}
-                        </span>
-                    </>
-                </div>
+                    )}
+                    <div className={styles.stockStats}>
+                        <div className={styles.pairGroup}>
+                            <span className={styles.pairLabel}>高</span>
+                            <span className={`${styles.pairValue} ${panel.dirText.up}`}>{boardPrice(high)}</span>
+                            <span className={styles.pairLabel}>低</span>
+                            <span className={`${styles.pairValue} ${panel.dirText.down}`}>{boardPrice(low)}</span>
+                        </div>
+                        <div className={styles.volGroup}>
+                            <span className={`${styles.pairLabel} ${styles.stockOpen}`}>開</span>
+                            <span className={`${styles.pairValue} ${styles.stockOpen}`}>{boardPrice(open)}</span>
+                            <span className={`${styles.pairLabel} ${styles.stockVol}`}>量</span>
+                            <span className={`${styles.pairValue} ${styles.stockVol}`}>{fmtInt(vol)}</span>
+                            {showRatio && (
+                                <>
+                                    <span
+                                        className={`${styles.pairLabel} ${styles.stockRatio} ${styles.tipLabel} ${styles.tipCell}`}
+                                        title={ratioTitle}
+                                    >
+                                        量比
+                                    </span>
+                                    <span
+                                        className={`${styles.pairValue} ${styles.stockRatio} ${styles.tipCell}`}
+                                        title={ratioTitle}
+                                    >
+                                        {fmtVolumeRatio(volumeRatio)}
+                                    </span>
+                                </>
+                            )}
+                        </div>
+                        {/* 興櫃、權證、組合商品等沒有有效漲跌停的商品不顯示停板組 */}
+                        {hasPriceLimits(contract) && (
+                            <div className={`${styles.pairGroup} ${styles.stockLimit}`}>
+                                <span className={styles.pairLabel}>漲停</span>
+                                <span className={`${styles.pairValue} ${panel.dirText.up}`}>
+                                    {boardPrice(contract.limit_up)}
+                                </span>
+                                <span className={styles.pairLabel}>跌停</span>
+                                <span className={`${styles.pairValue} ${panel.dirText.down}`}>
+                                    {boardPrice(contract.limit_down)}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                </>
             )}
+            <button
+                type="button"
+                className={styles.boardToggle}
+                onClick={toggle}
+                aria-expanded={richBoard}
+                aria-label={richBoard ? '收合統計' : '展開統計'}
+                title={richBoard ? '收合統計' : '展開統計'}
+            >
+                <svg viewBox="0 0 10 10" width="12" height="12" aria-hidden="true">
+                    <polyline
+                        points="2,4 5,7 8,4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                    />
+                </svg>
+            </button>
         </div>
     );
 }

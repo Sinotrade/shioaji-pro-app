@@ -1,4 +1,4 @@
-// src/hooks/use-board-tier.ts：指數看板的階梯，量面板大小，挑「標題加看板不超過 1/5」內最豐富的一級。
+// src/hooks/use-board-tier.ts：報價看板的階梯（指數、個股共用），量面板大小，挑「標題加看板不超過 1/5」內最豐富的一級。
 // 做法：由豐富到精簡逐級把 data-tier 設到看板上、讀實際排版高度與是否橫向溢出，放得下就停
 // （不寫死各級尺寸，字級縮放或內容寬度變動都自動跟上）。樣式由 quote-board.css 依 data-tier 切換。
 
@@ -13,54 +13,70 @@ import {
     type BoardTier,
 } from '../lib/board-tier';
 
-const MODE_KEY = 'sj-index-board-mode';
+// 收合／展開是使用者的全域偏好，指數與個股各自一個 key（sj-index-board-mode、sj-stock-board-mode）：
+// 同一種看板（含彈出視窗）共用並即時同步。比照 limit-style-prefs：模組層讀一次、
+// 常駐監聽其他視窗的變更（含整個清空時 key 為 null）
+interface ModeStore {
+    current: BoardMode;
+    listeners: Set<() => void>;
+    subscribe: (listener: () => void) => () => void;
+    read: () => BoardMode;
+}
 
-// 收合／展開是使用者的全域偏好：所有指數看板（含彈出視窗）共用並即時同步。
-// 比照 limit-style-prefs：模組層讀一次、常駐監聽其他視窗的變更（含整個清空時 key 為 null）
-function readStored(): BoardMode {
+function readStored(key: string): BoardMode {
     try {
-        return parseBoardMode(localStorage.getItem(MODE_KEY));
+        return parseBoardMode(localStorage.getItem(key));
     } catch {
         return 'auto';
     }
 }
 
-let currentMode: BoardMode = readStored();
-const modeListeners = new Set<() => void>();
+const modeStores = new Map<string, ModeStore>();
+
+function modeStore(key: string): ModeStore {
+    let store = modeStores.get(key);
+    if (!store) {
+        const created: ModeStore = {
+            current: readStored(key),
+            listeners: new Set(),
+            subscribe: (listener) => {
+                created.listeners.add(listener);
+                return () => {
+                    created.listeners.delete(listener);
+                };
+            },
+            read: () => created.current,
+        };
+        modeStores.set(key, created);
+        store = created;
+    }
+    return store;
+}
 
 try {
     window.addEventListener('storage', (e) => {
-        if (e.key !== MODE_KEY && e.key !== null) return;
-        const next = readStored();
-        if (next !== currentMode) {
-            currentMode = next;
-            modeListeners.forEach((listener) => listener());
+        for (const [key, store] of modeStores) {
+            if (e.key !== key && e.key !== null) continue;
+            const next = readStored(key);
+            if (next === store.current) continue;
+            store.current = next;
+            store.listeners.forEach((listener) => listener());
         }
     });
 } catch {
     // 非瀏覽器環境
 }
 
-function readMode(): BoardMode {
-    return currentMode;
-}
-
-function writeMode(mode: BoardMode) {
-    currentMode = mode;
+function writeMode(key: string, mode: BoardMode) {
+    const store = modeStore(key);
+    store.current = mode;
     try {
-        if (mode === 'auto') localStorage.removeItem(MODE_KEY);
-        else localStorage.setItem(MODE_KEY, mode);
+        if (mode === 'auto') localStorage.removeItem(key);
+        else localStorage.setItem(key, mode);
     } catch {
         // 私密視窗或被封鎖時只在本次連線生效
     }
-    modeListeners.forEach((listener) => listener());
-}
-
-function subscribeMode(listener: () => void) {
-    modeListeners.add(listener);
-    return () => {
-        modeListeners.delete(listener);
-    };
+    store.listeners.forEach((listener) => listener());
 }
 
 // contentKey：顯示文字長度的摘要。數字變長（例如資料剛到、家數跨過百位）時看板外框不一定變，
@@ -69,10 +85,11 @@ export function useBoardTier(
     boardRef: RefObject<HTMLElement | null>,
     enabled: boolean,
     contentKey: string,
+    modeKey: string,
 ) {
-    const mode = useSyncExternalStore(subscribeMode, readMode, () => 'auto' as const);
+    const store = modeStore(modeKey);
+    const mode = useSyncExternalStore(store.subscribe, store.read, () => 'auto' as const);
     const [autoTier, setAutoTier] = useState<BoardTier>('wide');
-    const [tier, setTier] = useState<BoardTier>('wide');
     const refit = useRef<(() => void) | null>(null);
 
     useLayoutEffect(() => {
@@ -106,10 +123,8 @@ export function useBoardTier(
             };
             const auto = pickBoardTier(measure, boardBudget(panelHeight, above), current);
             current = auto;
-            const effective = effectiveTier(mode, auto);
-            board.dataset.tier = effective;
+            board.dataset.tier = effectiveTier(mode, auto);
             setAutoTier(auto);
-            setTier(effective);
         };
         fit();
         refit.current = fit;
@@ -132,17 +147,22 @@ export function useBoardTier(
             observer.disconnect();
             fonts?.removeEventListener('loadingdone', schedule);
             refit.current = null;
-            // 同一個看板元素切到非指數商品時會沿用，階梯屬性與量測用的留白都要清掉
+            // 同一個看板元素換商品時會沿用，階梯屬性與量測用的留白都要清掉
             delete board.dataset.tier;
             board.style.paddingRight = '';
         };
-    }, [boardRef, enabled, mode]);
+        // modeKey 代表看板種類（指數／個股）：換種類時重新從頭判斷，不沿用上一種的階梯與緩衝狀態
+    }, [boardRef, enabled, mode, modeKey]);
 
     useLayoutEffect(() => {
         refit.current?.();
     }, [contentKey]);
 
-    const toggle = useCallback(() => writeMode(nextBoardMode(mode, autoTier)), [mode, autoTier]);
+    const toggle = useCallback(
+        () => writeMode(modeKey, nextBoardMode(mode, autoTier)),
+        [modeKey, mode, autoTier],
+    );
 
-    return { tier, toggle };
+    // 目前階梯由模式與自動結果算出，不另存一份狀態（模式一改，按鈕標示立即跟著變）
+    return { tier: effectiveTier(mode, autoTier), toggle };
 }
