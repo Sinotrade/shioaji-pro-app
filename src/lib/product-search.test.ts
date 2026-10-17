@@ -142,8 +142,8 @@ describe('futures month and size priority', () => {
         const rows = await search('台積');
         expect(rows.slice(0, 5).map(row => row.code)).toEqual(['2330', 'CDFR1', 'QFFR1', 'CDFR2', 'QFFR2']);
         expect(rows.slice(5).every(row => row.security_type === 'WRT')).toBe(true);
-        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: '2330' });
-        expect(mocks.warrants).toHaveBeenCalledWith('2330', { expiryFrom: mocks.day });
+        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: '2330' }, { signal: expect.any(AbortSignal) });
+        expect(mocks.warrants).toHaveBeenCalledWith('2330', { expiryFrom: mocks.day }, { signal: expect.any(AbortSignal) });
     });
 
     it('does not promote an ambiguous prefix or a unique non-prefix substring', async () => {
@@ -175,7 +175,7 @@ describe('futures month and size priority', () => {
         }));
         mocks.futures.mockResolvedValue([...rows].reverse());
         expect((await search(query, false)).filter(row => row.security_type === 'FUT').map(row => row.code)).toEqual(codes);
-        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: 'IX0001' });
+        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: 'IX0001' }, { signal: expect.any(AbortSignal) });
         expect(mocks.futureRoots).not.toHaveBeenCalled();
         expect(mocks.warrants).not.toHaveBeenCalled();
     });
@@ -216,7 +216,7 @@ describe('product search sources and related products', () => {
         const rows = await search('元大美債20年');
         expect(rows[0]).toMatchObject({ code: '00679B', exchange: 'OTC', security_type: 'STK', detail: 'ETF' });
         expect(rows.some(row => row.code === 'RZFR1')).toBe(true);
-        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: '00679B' });
+        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: '00679B' }, { signal: expect.any(AbortSignal) });
         expect(rows.some(row => row.code.startsWith('W'))).toBe(false);
     });
 
@@ -228,7 +228,7 @@ describe('product search sources and related products', () => {
         mocks.warrants.mockResolvedValue([]);
         expect((await search(officialName))[0]).toMatchObject({ code: fund.code, detail: 'ETF', security_type: 'STK' });
         expect(mocks.futureRoots).not.toHaveBeenCalled();
-        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: fund.code });
+        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: fund.code }, { signal: expect.any(AbortSignal) });
     });
 
     it('labels a direct ETF code without requiring the stock catalog', async () => {
@@ -268,8 +268,8 @@ describe('product search sources and related products', () => {
             expect.objectContaining({ code: 'QFFR1' }),
             expect.objectContaining({ security_type: 'WRT' }),
         ]));
-        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: '2330' });
-        expect(mocks.warrants).toHaveBeenCalledWith('2330', { expiryFrom: '2026-10-17' });
+        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: '2330' }, { signal: expect.any(AbortSignal) });
+        expect(mocks.warrants).toHaveBeenCalledWith('2330', { expiryFrom: '2026-10-17' }, { signal: expect.any(AbortSignal) });
         expect(mocks.options).not.toHaveBeenCalled();
     });
 

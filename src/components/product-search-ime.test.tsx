@@ -19,6 +19,7 @@ const suggestion: ProductSuggestion = {
     code: '2330', name: '台積電', security_type: 'STK', exchange: 'TSE', detail: '股票',
 };
 let view: ReactTestRenderer | undefined;
+const searchOptions = expect.objectContaining({ includeWarrants: true, signal: expect.any(AbortSignal), onUpdate: expect.any(Function) });
 
 beforeEach(() => {
     vi.useFakeTimers();
@@ -82,7 +83,7 @@ describe.each([
         expect(submit).not.toHaveBeenCalled();
         act(() => input().props.onCompositionEnd({ currentTarget: { value: '台積電' } }));
         await act(async () => { await vi.advanceTimersByTimeAsync(debounce); });
-        expect(mocks.search).toHaveBeenCalledExactlyOnceWith('台積電', kind === 'palette' ? 8 : 10, { includeWarrants: true });
+        expect(mocks.search).toHaveBeenCalledExactlyOnceWith('台積電', kind === 'palette' ? 8 : 10, searchOptions);
     });
 
     it('組字開始取消先前在途查詢，其結果不得回填或被選取', async () => {
@@ -100,7 +101,7 @@ describe.each([
         expect(submit).not.toHaveBeenCalled();
         act(() => input().props.onCompositionEnd({ currentTarget: { value: '新商品' } }));
         await act(async () => { await vi.advanceTimersByTimeAsync(debounce); });
-        expect(mocks.search).toHaveBeenLastCalledWith('新商品', kind === 'palette' ? 8 : 10, { includeWarrants: true });
+        expect(mocks.search).toHaveBeenLastCalledWith('新商品', kind === 'palette' ? 8 : 10, searchOptions);
     });
 
     it('卸載取消尚未發出的 debounce', async () => {

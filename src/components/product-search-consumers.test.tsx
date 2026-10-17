@@ -32,6 +32,7 @@ const warrantSuggestion: ProductSuggestion = {
 };
 
 let view: ReactTestRenderer | undefined;
+const searchOptions = expect.objectContaining({ includeWarrants: true, signal: expect.any(AbortSignal), onUpdate: expect.any(Function) });
 
 function text(node: ReactTestInstance | string): string {
     return typeof node === 'string' ? node : node.children.map(text).join('');
@@ -83,7 +84,7 @@ describe('命令面板商品搜尋', () => {
         mocks.search.mockResolvedValue([otcIndex]);
         const { onJump, onClose } = renderPalette();
         await query('櫃買', 120);
-        expect(mocks.search).toHaveBeenCalledWith('櫃買', 8, { includeWarrants: true });
+        expect(mocks.search).toHaveBeenCalledWith('櫃買', 8, searchOptions);
         await act(async () => { await button('IX0043').props.onClick(); });
         expect(onJump).toHaveBeenCalledWith('IX0043', 'IND');
         expect(onClose).toHaveBeenCalledOnce();
@@ -109,7 +110,7 @@ describe('命令面板商品搜尋', () => {
         act(() => button('重試').props.onClick());
         await act(async () => { await vi.advanceTimersByTimeAsync(120); });
         expect(mocks.search).toHaveBeenCalledTimes(2);
-        expect(mocks.search).toHaveBeenLastCalledWith('櫃買', 8, { includeWarrants: true });
+        expect(mocks.search).toHaveBeenLastCalledWith('櫃買', 8, searchOptions);
         expect(text(view!.root)).not.toContain('搜尋失敗');
         expect(view!.root.findAll((node) => node.props.role === 'alert')).toHaveLength(0);
     });
@@ -175,7 +176,7 @@ describe('自選清單商品搜尋', () => {
         mocks.search.mockResolvedValue([otcIndex]);
         const { onAdd } = renderWatchlist();
         await query('櫃買', 150);
-        expect(mocks.search).toHaveBeenCalledWith('櫃買', 10, { includeWarrants: true });
+        expect(mocks.search).toHaveBeenCalledWith('櫃買', 10, searchOptions);
         await act(async () => { await button('IX0043').props.onClick(); });
         expect(onAdd).toHaveBeenCalledWith('IX0043', 'IND', undefined);
     });

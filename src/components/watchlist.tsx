@@ -327,6 +327,13 @@ export function Watchlist({
     const [searchRetry, setSearchRetry] = useState(0);
     const composing = useRef(false);
     const queryVersion = useRef(0);
+    const searchController = useRef<AbortController | null>(null);
+    const cancelSearch = () => {
+        queryVersion.current += 1;
+        searchController.current?.abort();
+        searchController.current = null;
+        setSearching(false);
+    };
     useEffect(() => {
         const query = input.trim();
         if (!query || composing.current) {
@@ -336,28 +343,39 @@ export function Watchlist({
             return;
         }
         let active = true;
+        let completed = false;
+        const controller = new AbortController();
+        searchController.current = controller;
         const requestVersion = queryVersion.current;
-        const isCurrent = () => active && requestVersion === queryVersion.current && !composing.current;
+        const isCurrent = () => active && !controller.signal.aborted && requestVersion === queryVersion.current && !composing.current;
         setSearchError(false);
         setSearching(true);
         const timer = setTimeout(() => {
-            void searchProducts(query, 10, { includeWarrants: true })
+            void searchProducts(query, 10, {
+                includeWarrants: true,
+                signal: controller.signal,
+                onUpdate: (results) => { if (isCurrent() && !completed) setSuggestions(results); },
+            })
                 .then((results) => {
+                    completed = true;
                     if (isCurrent()) {
                         setSuggestions(results);
                         setSearching(false);
                     }
                 })
                 .catch(() => {
+                    completed = true;
                     if (isCurrent()) {
-                        setSuggestions([]);
                         setSearchError(true);
                         setSearching(false);
                     }
                 });
         }, 150);
+        controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
         return () => {
             active = false;
+            controller.abort();
+            if (searchController.current === controller) searchController.current = null;
             clearTimeout(timer);
         };
     }, [input, searchRetry]);
@@ -465,10 +483,14 @@ export function Watchlist({
         const code = input.trim().toUpperCase();
         if (!code || busy || loading || !activeListId) return;
         if (searching && !/^[A-Z0-9]+$/.test(code)) return;
+        cancelSearch();
+        const submitVersion = queryVersion.current;
+        setSuggestions([]);
+        setSearchError(false);
         setBusy(true);
         try {
             await onAdd(code);
-            setInput('');
+            if (submitVersion === queryVersion.current) setInput('');
         } catch {
             // keep input so user can fix typo
         } finally {
@@ -714,23 +736,18 @@ export function Watchlist({
                 </div>
             </div>
             <div className={styles.addRow}>
-                {(searchError || searching) && (
-                    <div className={styles.suggestBox}>
-                        <AsyncStatus phase={searchError ? 'error' : 'loading'} text={searchError ? '搜尋失敗，可重試' : '搜尋中…'}
-                            className={styles.loadingHint}
-                            action={searchError ? <button type='button' onClick={() => setSearchRetry((retry) => retry + 1)}>重試</button> : undefined} />
-                    </div>
-                )}
-                {suggestions.length > 0 && (
+                {(suggestions.length > 0 || searchError || searching) && (
                     <div className={styles.suggestBox}>
                         {suggestions.map((s) => (
                             <button
-                                key={`${s.security_type}:${s.code}`}
+                                key={`${s.security_type}:${s.exchange}:${s.code}`}
                                 className={styles.suggestRow}
                                 disabled={loading}
                                 onClick={async () => {
                                     if (composing.current) return;
+                                    cancelSearch();
                                     setSuggestions([]);
+                                    setSearchError(false);
                                     setInput('');
                                     setBusy(true);
                                     try {
@@ -755,6 +772,10 @@ export function Watchlist({
                                 </span>
                             </button>
                         ))}
+                        {(searchError || searching) && <AsyncStatus phase={searchError ? 'error' : 'loading'}
+                            text={searchError ? '搜尋失敗，可重試' : suggestions.length ? '正在補齊關聯商品…' : '搜尋中…'}
+                            className={styles.loadingHint}
+                            action={searchError ? <button type='button' onClick={() => setSearchRetry((retry) => retry + 1)}>重試</button> : undefined} />}
                     </div>
                 )}
                 <input
@@ -764,18 +785,18 @@ export function Watchlist({
                     value={input}
                     onCompositionStart={() => {
                         composing.current = true;
-                        queryVersion.current += 1;
+                        cancelSearch();
                         setSuggestions([]);
                         setSearchRetry((retry) => retry + 1);
                     }}
                     onCompositionEnd={(e) => {
                         composing.current = false;
-                        queryVersion.current += 1;
+                        cancelSearch();
                         setInput(e.currentTarget.value);
                         setSearchRetry((retry) => retry + 1);
                     }}
                     onChange={(e) => {
-                        queryVersion.current += 1;
+                        cancelSearch();
                         setInput(e.target.value);
                         setSuggestions([]);
                         setSearchError(false);
@@ -787,7 +808,11 @@ export function Watchlist({
                             setSuggestions([]);
                             submit();
                         }
-                        if (e.key === 'Escape') setSuggestions([]);
+                        if (e.key === 'Escape') {
+                            cancelSearch();
+                            setSuggestions([]);
+                            setSearchError(false);
+                        }
                     }}
                 />
                 <button className={panel.btn} onClick={submit} disabled={busy || loading || !activeListId}>

@@ -76,7 +76,13 @@
 
 ## 自動化與獨立驗收
 
-`tsc -b`、Vitest、Vite build、`git diff --check` 均通過。期貨分組修正後 Vitest：3604 通過、0 失敗、2 項既有跳過；產生器 Node test 6 項全過。跳過項目保留原狀；建置保留既有 BigInt 相容性、chunk 大小及 import 警告，不宣稱零警告。
+2026-10-17（Asia/Taipei）分段搜尋與取消完成後，正式 Vitest 3695 個測試通過、0 失敗、2 個既有跳過，整體 `success=true`、`numFailedTestSuites=0`；產生器 Node test 6 項全過。較最佳化前的 3604 項新增 91 項。`pnpm build` 的 `tsc -b` 與 Vite build 通過。建置保留既有 BigInt 相容性、chunk 大小及 import 警告，不宣稱零警告。
+
+本輪更正先前的整體成功判定：舊 `work/gemini-exam/futures-grouped-vitest.json` 及 `final-vitest.json` 雖然沒有失敗斷言，整體 `success=false`，因為 Vitest 誤收使用 `node:test` 的 ETF 產生器測試，回報 `No test suite found`。補正方式是只在 Vitest 排除該檔，並讓 `pnpm test` 使用 `&&` 接續 Node test，兩者任一失敗都不通過；沒有刪測試或放寬斷言。舊報告原樣保留，不能再引用為整套全綠。
+
+`pnpm test` 執行完整兩套；需加 Vitest 篩選或 JSON reporter 參數時，使用 `pnpm exec vitest run ...`，不要把專屬參數附在整體測試入口後面。本輪 JSON 為 `work/search-efficiency/optimized-vitest.json`，不是只看通過斷言數。原 `verified-vitest.json` 保留為最佳化前已修測試入口的 3604 項歷史證據。
+
+完整差異的 `git diff --check` 有 1 項格式例外：`docs/qa/gemini-product-search-answer-3.json:6` 的原始答案行尾空白，保留原文不改。排除此檔後的完整差異與本輪修改通過；不是全差異零警告。
 
 期貨排序回歸涵蓋反向代碼、不同字長的根商品、近次月三規格、缺 delivery_month、單一規格、唯一名稱前綴與歧義、代碼替代值誤判、週別排除、實體去重及權證分組。相關 4 檔共 84 項通過。台指改按標的查詢後，根商品逾時案例改用通用合成商品，保留原斷言，並另補台指新路徑的逾時重試。沒有改報價訂閱或送出訂單，也未把前一輪 Gemini 作答冒稱成對本次改動的審查。
 
@@ -85,6 +91,49 @@
 獨立 reviewer 新增 7 項 acceptance 測試。OTC 新增後的重掛載使用 typed IND Info；WRT 新增當下保留完整合約，重載失敗後重試仍保留 WRT 身分，沒有覆寫或重建伺服器清單。這些使用 mock，不能當作真實伺服器寫入的證據。
 
 本機全測最初遇到 3 項既有隔離問題：兩個 Tauri 測試只模擬 native fetch，卻讓全域 fetch 讀到真服務；另一個測試漏清理引擎計時器。只補測試環境隔離，63 項相關測試通過，沒有刪除測試或放寬斷言。
+
+## 搜尋效率複核
+
+以 `d934eed1c198542129115c43bd56ebb73906a92b` 為修改前基線。本輪已實作主商品、期貨、權證分段顯示，以及直查 pending 共用、每位讀者獨立取消與搜尋專用四路 FIFO；沒有增加完成 Info 的 TTL 或無條件並行目錄查詢。合併目錄／normalized 欄位的記憶化仍未實作。
+
+| 驗收 | 本輪結果 |
+| --- | --- |
+| 精確完整指數名稱 | 「櫃買指數」零來源呼叫，保留 `IX0043/IND/OTC` |
+| 名稱／代號一致 | 正式回歸與獨立 QA 確認台積／台積電／2330、ETF 名稱／代號使用同 underlying、保留完整型別／交易所／target_code；歧義不任選標的 |
+| 分段與排序 | 假時計的目錄 20 ms、期貨再 40 ms、權證再 1000 ms：改前 1020 ms 才有清單；改後 20 ms 主商品、60 ms 期貨、1020 ms 完整結果，權證快回也不超車 |
+| 直查共用 | 3 個同時 `2330` 只解析一次，完成後再次搜尋仍重新讀 Info；失敗／404／逾時不保留 |
+| 取消隔離 | 取消第一位讀者不讓共享 source 捕捉其失效 signal；最後一人退出才 abort。換字、組字、關閉、選取、卸載及排隊取消都阻止後續分支 |
+| 來源早敗 | Base 先失敗時，composite 在 finally 釋放自己的名稱 reader，不殘留至 1000 ms。共享者不連坐 |
+| 有界調度 | 跨搜尋 source 共四個未取消的有效 slot；排隊計入來源截止。roots／衍生結果的成功 LRU 各 16 項，pending 不為容量中止有效讀者，依 deadline／取消回收 |
+| 選取與 IME | 商品身分使用型別＋交易所＋代碼，面板命令亦固定身分；只保留明確 keyboard／hover 選取。初始面板不能搶走後來的第一個商品 |
+
+獨立 QA 新增 19 項驗收，共享 helper 24 項，分段消費端 31 項。另有真實 Node fetch 對 ephemeral loopback metadata fixture 的 3 項測試：最後 reader 取消使回應在傳送前關閉、一人取消不切斷共享連線、Base 503 必須等名稱 HTTP 已建立才發出，隨後驗證殘留連線在 500 ms 內關閉，不能靠 1000 ms 自然逾時通過。這不是 Tauri 原生傳輸或 daemon 計算中止的證據。
+
+4 個新增記憶體 mutation（退出不清 reader、不共用 direct、共享 source 錯用第一人 signal、把預設 panel 當明確選取）全由斷言抓到；原始碼未被改寫，baseline 45 項通過。包含撤回清理修正後 HTTP 早退測試失敗的對照。證據為 `optimized-mutation-summary.json`。
+
+### 真實 metadata 前後對照
+
+以 Node client 唯讀呼叫隔離 21323，只允許 GET `/api/v1/data/contracts*`；同一 instance `8f729a15f272`、1.7.8、simulation=true。舊 `d934eed` 僅在 Vite 測試記憶體中替換 `product-search.ts`，其他依賴相同，沒有改 dev 或服務。兩輪各重置 client 模組快取，daemon／作業系統快取不重置。
+
+| 固定情境 | 修改前 | 本輪 |
+| --- | --- | --- |
+| 台積，client 冷快取 | 首次／完整約 47.00 ms，4 GET | 首次 callback 16.63 ms、完整 45.18 ms，4 GET |
+| 2330，關聯快取已暖 | 首次／完整 6.07 ms，2 GET | 首次 callback 3.74 ms、完整 6.50 ms，2 GET |
+| 3 個同時 2330 | 6 GET、完整 13.83 ms | 2 GET、完整 9.54 ms |
+| 00679B | 首次／完整 12.45 ms，4 GET | 首次 callback 1.40 ms、完整 12.54 ms，4 GET |
+| ETF 名稱，已暖快取 | 0 GET | 0 GET，與代號結果一致 |
+| 台指，已暖目錄 | 1 GET | 1 GET，六個月別／規格順序正確 |
+| 整輪 GET 總數 | 17 | 13 |
+
+這是單次本機查詢序列，不含 UI 的 120／150 ms debounce、React 渲染、原生傳輸或行情延遲；不推論 P95 或 SLA。完整返回並非每例都更快，主要改善是提早可選與減少重複。目錄仍重建及正規化；先前 3155 筆合成資料、500 次 `searchStocks` 比對的 P95 為 0.75 ms，暫不優先重寫。
+
+實際 IAB dev 另驗台積與 2330 同一組 8 筆結果、00679B 與元大美債20年同組、台指六序、自選 `2330` 可看到相關產品，未送新增或下單。自動輸入中文一度受原生 IME 攔截，改以選取全欄後貼上並同輪核對欄位值；不把未完成注音當商品查無。畫面為本機 `outputs/product-search-2330-progressive.png`。
+
+15:38:50 至 15:39:25（Asia/Taipei）的同源 SSE 35 秒觀測有 2 次新心跳、0 Tick／BidAsk；確認相同隔離 instance，週六不當新盤中行情驗收。原 App PID 5820 與原 sidecar PID 31748、隔離 PID 10072 仍存在，未重啟交易服務。
+
+本機證據在 `work/search-efficiency/`：`live-baseline-results.json`、`live-probe-results.json`、`optimized-vitest.json`、`optimized-mutation-summary.json` 及 `current-sse.json`。可用 `node work/search-efficiency/run-live-probe.mjs --baseline`、移除旗標跑新版；此診斷只在已授權隔離服務上執行，不納 CI。正式 91 項回歸在 `src/`，不用 work 才能重現。
+
+指定 Claude Opus 5.5 ultracode 審查仍因 OAuth 過期待重新登入；不是改用其他模型代替。[審查狀態與標準](claude-product-search-review.md)。
 
 ## 尚未驗證與後續方案
 

@@ -10,6 +10,7 @@ import {
 import { getApiBase } from './runtime';
 import { todayStr } from './utils/date';
 import { etfNameFor } from './etf-catalog';
+import { SearchRequestCache } from './search-request';
 
 export interface StockMeta {
     code: string;
@@ -21,11 +22,11 @@ export interface StockMeta {
     aliases?: string[];
 }
 
-interface CatalogSource<T> { request: Promise<T>; expiresAt: number }
-const baseCache = new Map<string, CatalogSource<Awaited<ReturnType<typeof fetchContracts>>>>();
-const namesCache = new Map<string, CatalogSource<Awaited<ReturnType<typeof fetchWarrantUnderlyings>>>>();
 const CATALOG_TTL_MS = 60_000;
 const CATALOG_DEADLINE_MS = 1000;
+const sourceOptions = { ttlMs: CATALOG_TTL_MS, limit: 2, deadlineMs: CATALOG_DEADLINE_MS };
+const baseCache = new SearchRequestCache<Awaited<ReturnType<typeof fetchContracts>>>(sourceOptions);
+const namesCache = new SearchRequestCache<Awaited<ReturnType<typeof fetchWarrantUnderlyings>>>(sourceOptions);
 let activeSourceScope = '';
 let catalogGeneration = 0;
 let detailsCache: StockMeta[] | null = null;
@@ -48,37 +49,31 @@ function ensureSourceScope() {
     return scope;
 }
 
-function loadSource<T>(cache: Map<string, CatalogSource<T>>, scope: string, load: () => Promise<T>): Promise<T> {
-    const cached = cache.get(scope);
-    if (cached && cached.expiresAt > Date.now()) return cached.request;
-    let timer: ReturnType<typeof setTimeout>;
-    const deadline = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error('股票目錄來源回應逾時')), CATALOG_DEADLINE_MS);
-    });
-    const entry: CatalogSource<T> = { request: Promise.resolve().then(load), expiresAt: Infinity };
-    entry.request = Promise.race([entry.request, deadline]).then(value => {
-        if (catalogScope() !== scope || cache.get(scope) !== entry) throw new Error('股票目錄載入期間伺服器已切換');
-        entry.expiresAt = Date.now() + CATALOG_TTL_MS;
-        return value;
-    }).catch(error => {
-        if (cache.get(scope) === entry) cache.delete(scope);
-        throw error;
-    }).finally(() => clearTimeout(timer));
-    cache.set(scope, entry);
-    while (cache.size > 2) cache.delete(cache.keys().next().value!);
-    return entry.request;
-}
-
-export async function loadStockCatalog(): Promise<StockMeta[]> {
+export async function loadStockCatalog(opts?: { signal?: AbortSignal }): Promise<StockMeta[]> {
     const scope = ensureSourceScope();
     const generation = catalogGeneration;
+    const assertScope = () => {
+        if (catalogScope() !== scope || catalogGeneration !== generation) throw new Error('股票目錄載入期間伺服器已切換');
+    };
     const [res, underlyings] = await Promise.all([
-        loadSource(baseCache, scope, () => fetchContracts('STK')),
+        baseCache.read(scope, signal => {
+            assertScope();
+            return fetchContracts('STK', undefined, undefined, { signal });
+        }, opts?.signal),
         // Optional names may fail without hiding supported Base identities.
         // Failure is not cached: the next search retries names, not Base.
-        loadSource(namesCache, scope, fetchWarrantUnderlyings).catch(() => []),
-    ]);
-    if (catalogScope() !== scope || catalogGeneration !== generation) throw new Error('股票目錄載入期間伺服器已切換');
+        namesCache.read(scope, signal => {
+            assertScope();
+            return fetchWarrantUnderlyings({ signal });
+        }, opts?.signal).catch(error => {
+            if (opts?.signal?.aborted) throw error;
+            return [];
+        }),
+    ]).catch(error => {
+        assertScope();
+        throw error;
+    });
+    assertScope();
     const names = new Map(underlyings.filter(row => row.name).map(row => [row.underlying_code, row.name!]));
     return res.contracts.filter(c => c.code).map(c => {
         const exchange = c.exchange ?? '';
