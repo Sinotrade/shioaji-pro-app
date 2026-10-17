@@ -90,9 +90,17 @@ function stockSuggestion(stock: StockMeta): ProductSuggestion {
 }
 
 function derivativeSort(a: ContractInfo, b: ContractInfo) {
-    const aliasA = /R[12]$/.test(a.code) ? 0 : 1;
-    const aliasB = /R[12]$/.test(b.code) ? 0 : 1;
-    return aliasA - aliasB ||
+    // Explicit priority, independent of root letters or missing month metadata:
+    // regular near → small near → regular next → small next.
+    const rank = (row: ContractInfo) => {
+        const month = row.code.endsWith('R1') ? 0 : row.code.endsWith('R2') ? 1 : -1;
+        if (month < 0) return 6;
+        const name = normalizeSearchText(row.name);
+        // Other sizes do not displace the four requested continuous contracts.
+        if (name.includes('微型')) return 4 + month;
+        return month * 2 + (name.includes('小型') ? 1 : 0);
+    };
+    return rank(a) - rank(b) ||
         (a.delivery_month ?? '').localeCompare(b.delivery_month ?? '') ||
         a.code.localeCompare(b.code);
 }
@@ -210,8 +218,9 @@ export async function searchProducts(
                 .filter((row) => row.underlying_code === exactStock.code).sort(derivativeSort).slice(0, 6);
         }
         const matches = matchingRoots(await roots('futures'), lookup, raw);
-        return interleave(await Promise.all(matches.map(async (root) =>
-            (await contracts(`future-root:${root.root}`, () => fetchFutures({ root: root.root }))).sort(derivativeSort).slice(0, 6))), 6);
+        const groups = await Promise.all(matches.map(async (root) =>
+            (await contracts(`future-root:${root.root}`, () => fetchFutures({ root: root.root }))).sort(derivativeSort).slice(0, 6)));
+        return groups.flat().sort(derivativeSort).slice(0, 6);
     };
     const loadOptions = async () => {
         if (!wantsOptions) return [];

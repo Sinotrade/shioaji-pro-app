@@ -74,6 +74,70 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+describe('futures month and size priority', () => {
+    // Synthetic names/codes deliberately make the small root sort first by
+    // code and root-name length, so passing cannot rely on CDF/QFF letters.
+    const ordered = [
+        contract('ZZZR1', 'FUT', { root: 'ZZZ', name: '測試一般期貨 近月', underlying_code: '2330', delivery_month: '202610', target_code: 'ZZZJ6' }),
+        contract('AAAR1', 'FUT', { root: 'AAA', name: '小型測試期貨 近月', underlying_code: '2330', delivery_month: '202610', target_code: 'AAAJ6' }),
+        contract('ZZZR2', 'FUT', { root: 'ZZZ', name: '測試一般期貨 次月', underlying_code: '2330', delivery_month: '202611', target_code: 'ZZZK6' }),
+        contract('AAAR2', 'FUT', { root: 'AAA', name: '小型測試期貨 次月', underlying_code: '2330', delivery_month: '202611', target_code: 'AAAK6' }),
+    ];
+
+    it.each(['台積電', '台積電期貨'])('orders regular near, small near, regular next, small next for %s', async query => {
+        mocks.futures.mockResolvedValue([ordered[3], ordered[1], ordered[2], ordered[0]]);
+        const rows = (await search(query, false)).filter(row => row.security_type === 'FUT');
+        expect(rows.map(row => row.code)).toEqual(ordered.map(row => row.code));
+        expect(rows.map(row => row.contract)).toEqual(ordered);
+    });
+
+    it('globally sorts multiple roots instead of inheriting the first matching root', async () => {
+        mocks.catalog.mockResolvedValue([]);
+        mocks.futureRoots.mockResolvedValue([
+            { root: 'AAA', name: '小型測試期貨' },
+            { root: 'ZZZ', name: '測試一般期貨' },
+        ]);
+        mocks.futures.mockImplementation(async ({ root }) => ordered.filter(row => row.root === root).reverse());
+        const rows = (await search('測試期貨', false)).filter(row => row.security_type === 'FUT');
+        expect(rows.map(row => row.code)).toEqual(ordered.map(row => row.code));
+        expect(mocks.futures).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses R1/R2 identities even when delivery-month metadata is missing', async () => {
+        mocks.futures.mockResolvedValue([...ordered].reverse().map(row => ({ ...row, delivery_month: undefined })));
+        expect((await search('台積電', false)).filter(row => row.security_type === 'FUT').map(row => row.code))
+            .toEqual(ordered.map(row => row.code));
+    });
+
+    it.each(['ZZZ', 'AAA'])('keeps near before next when only root %s is available', async root => {
+        mocks.futures.mockResolvedValue(ordered.filter(row => row.root === root).reverse());
+        expect((await search('台積電', false)).filter(row => row.security_type === 'FUT').map(row => row.code))
+            .toEqual([`${root}R1`, `${root}R2`]);
+    });
+
+    it('keeps dated and micro contracts behind the four requested priorities without mutating identities', async () => {
+        const dated = contract('ZZZJ6', 'FUT', { name: '測試一般期貨 202610', underlying_code: '2330', delivery_month: '202610' });
+        const micro = contract('MMMR1', 'FUT', { name: '微型測試期貨 近月', underlying_code: '2330', delivery_month: '202610', target_code: 'MMMJ6' });
+        const source = [dated, micro, ...ordered].reverse();
+        const before = structuredClone(source);
+        mocks.futures.mockResolvedValue(source);
+        const rows = (await search('台積電', false, 10)).filter(row => row.security_type === 'FUT');
+        expect(rows.slice(0, 4).map(row => row.code)).toEqual(ordered.map(row => row.code));
+        expect(source).toEqual(before);
+        expect(rows.find(row => row.code === 'MMMR1')?.contract?.target_code).toBe('MMMJ6');
+    });
+
+    it('preserves the relative futures order when mixed with stocks and warrants at a limited size', async () => {
+        mocks.futures.mockResolvedValue([...ordered].reverse());
+        const rows = await search('台積電', true, 8);
+        expect(rows[0]?.code).toBe('2330');
+        const futureCodes = rows.filter(row => row.security_type === 'FUT').map(row => row.code);
+        expect(futureCodes).toEqual(ordered.slice(0, futureCodes.length).map(row => row.code));
+        expect(rows.some(row => row.security_type === 'WRT')).toBe(true);
+        expect(rows).toHaveLength(8);
+    });
+});
+
 describe('product search sources and related products', () => {
     it('labels a supported ETF name and keeps its actual underlying-related products', async () => {
         mocks.catalog.mockResolvedValue([{ code: '00679B', name: '元大美債20年', exchange: 'OTC', category: '', kind: 'ETF' }]);
