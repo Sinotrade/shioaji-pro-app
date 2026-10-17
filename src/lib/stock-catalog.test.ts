@@ -206,4 +206,12 @@ describe('official ETF name snapshot joined only to supported contracts', () => 
         expect(searchStocks(catalog, 'Ｓ＆Ｐ５００')[0]?.code).toBe('00646');
         expect(JSON.stringify(snapshot.entries)).not.toMatch(/&(?:amp|#\d+);/);
     });
+    it('finds 0053 under both its daily current name and the prior official fund name', async () => {
+        m.baseRows.mockResolvedValue({ contracts: [base('0053')] });
+        m.names.mockResolvedValue([]);
+        const { loadStockCatalog, searchStocks } = await import('./stock-index');
+        const catalog = await loadStockCatalog();
+        expect(searchStocks(catalog, '元大科技市值')[0]).toMatchObject({ code: '0053', name: '元大科技市值', kind: 'ETF' });
+        expect(searchStocks(catalog, '元大電子')[0]?.code).toBe('0053');
+    });
 });

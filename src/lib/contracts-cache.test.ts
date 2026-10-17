@@ -31,6 +31,31 @@ afterEach(() => {
 });
 
 describe('商品快取型別隔離', () => {
+    it('Gemini F02 複核：同碼混合刷新部分失敗保留有效值，重試只更新正確型別', async () => {
+        const api = await import('./contracts-cache');
+        const stock = contract('SHARED', 'STK');
+        const index = contract('SHARED', 'IND');
+        const newStock = contract('SHARED', 'STK', { reference: 120 });
+        const newIndex = contract('SHARED', 'IND', { reference: 200 });
+        api.primeContract(stock);
+        api.primeContract(index);
+        mocks.resolve.mockImplementation(async (_code: string, type: SecurityType) => {
+            if (type === 'STK') throw new Error('Synthetic 503 stock');
+            return newIndex;
+        });
+        await api.refreshCachedContracts();
+        expect(api.getCachedContract('SHARED')).toBe(newIndex);
+        expect(await api.ensureContract('SHARED', 'STK')).toBe(stock);
+        expect(await api.ensureContract('SHARED', 'IND')).toBe(newIndex);
+        expect(mocks.resolve).toHaveBeenCalledTimes(2);
+        mocks.resolve.mockResolvedValue(newStock);
+        await api.refreshCachedContracts('STK');
+        expect(await api.ensureContract('SHARED', 'STK')).toBe(newStock);
+        expect(await api.ensureContract('SHARED', 'IND')).toBe(newIndex);
+        expect(api.getCachedContract('SHARED')).toBe(newIndex);
+        expect(mocks.resolve).toHaveBeenCalledTimes(3);
+    });
+
     it('同碼不同型別不誤命中，typed 命中也不切換 code-only 顯示身分', async () => {
         const api = await import('./contracts-cache');
         const stock = contract('SHARED', 'STK');

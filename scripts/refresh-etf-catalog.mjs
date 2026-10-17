@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 export const ETF_SOURCES = {
     TSE: 'https://openapi.twse.com.tw/v1/opendata/t187ap47_L',
     OTC: 'https://info.tpex.org.tw/api/etfFilter',
+    TSE_NAMES: 'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL',
 };
 
 const codePattern = /^[A-Z0-9]{4,6}$/;
@@ -25,14 +26,14 @@ function plainText(value) {
     }).trim();
 }
 
-export function buildEtfCatalog(tseRows, otcResponse, retrievedAt) {
+export function buildEtfCatalog(tseRows, otcResponse, retrievedAt, dailyRows) {
     if (!Array.isArray(tseRows) || !tseRows.length || otcResponse?.status !== 'success' ||
-        !Array.isArray(otcResponse.data) || !otcResponse.data.length) {
-        throw new Error('ETF sources must both contain a non-empty successful response');
+        !Array.isArray(otcResponse.data) || !otcResponse.data.length || !Array.isArray(dailyRows) || !dailyRows.length) {
+        throw new Error('ETF sources must all contain a non-empty successful response');
     }
     const entries = [];
     const seen = new Set();
-    const add = (code, name, exchange, fullName) => {
+    const add = (code, name, exchange, aliasNames = []) => {
         if (typeof code !== 'string' || !codePattern.test(code) || typeof name !== 'string' || !name.trim()) {
             throw new Error(`Invalid ETF identity in ${exchange}`);
         }
@@ -41,18 +42,33 @@ export function buildEtfCatalog(tseRows, otcResponse, retrievedAt) {
         seen.add(key);
         const display = plainText(name);
         if (!display) throw new Error(`Invalid ETF name in ${exchange}`);
-        const full = typeof fullName === 'string' ? plainText(fullName) : '';
-        const aliases = full && full !== display ? [full] : [];
+        const aliases = [...new Set(aliasNames.filter(value => typeof value === 'string').map(plainText))]
+            .filter(alias => alias && alias !== display);
         entries.push({ code, name: display, exchange, ...(aliases.length ? { aliases } : {}) });
     };
-    for (const row of tseRows) add(row['基金代號'], row['基金簡稱'], 'TSE', row['基金中文名稱']);
+    const dailyNames = new Map();
+    for (const row of dailyRows) {
+        if (typeof row.Code !== 'string' || !codePattern.test(row.Code) || typeof row.Name !== 'string' || !row.Name.trim()) throw new Error('Invalid TWSE daily identity');
+        if (dailyNames.has(row.Code)) throw new Error(`Duplicate TWSE daily identity: ${row.Code}`);
+        dailyNames.set(row.Code, row.Name);
+    }
+    for (const row of tseRows) {
+        if (typeof row['基金簡稱'] !== 'string' || !row['基金簡稱'].trim()) throw new Error('Invalid TWSE fund name');
+        add(row['基金代號'], dailyNames.get(row['基金代號']) ?? row['基金簡稱'], 'TSE', [row['基金簡稱'], row['基金中文名稱']]);
+    }
     for (const row of otcResponse.data) add(row.stockNo, row.stockName, 'OTC');
-    const dates = [...new Set(tseRows.map(row => row['出表日期']))];
-    if (dates.length !== 1 || !/^\d{7}$/.test(dates[0])) throw new Error('TWSE source date is missing or inconsistent');
-    const raw = dates[0];
-    const twseDate = `${Number(raw.slice(0, 3)) + 1911}-${raw.slice(3, 5)}-${raw.slice(5, 7)}`;
-    if (!Number.isFinite(Date.parse(`${twseDate}T00:00:00Z`)) ||
-        new Date(`${twseDate}T00:00:00Z`).toISOString().slice(0, 10) !== twseDate) throw new Error('Invalid TWSE source date');
+    const sourceDate = (values) => {
+        const dates = [...new Set(values)];
+        if (dates.length !== 1 || !/^\d{7}$/.test(dates[0])) throw new Error('TWSE source date is missing or inconsistent');
+        const raw = dates[0];
+        const day = `${Number(raw.slice(0, 3)) + 1911}-${raw.slice(3, 5)}-${raw.slice(5, 7)}`;
+        if (!Number.isFinite(Date.parse(`${day}T00:00:00Z`)) ||
+            new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day) throw new Error('Invalid TWSE source date');
+        return day;
+    };
+    const twseDate = sourceDate(tseRows.map(row => row['出表日期']));
+    const namesDate = sourceDate(dailyRows.map(row => row.Date));
+    if (namesDate < twseDate) throw new Error('TWSE daily names are older than the fund source');
     if (!Number.isFinite(Date.parse(retrievedAt))) throw new Error('Invalid retrieval timestamp');
     entries.sort((a, b) => a.exchange.localeCompare(b.exchange) || a.code.localeCompare(b.code));
     return {
@@ -62,6 +78,7 @@ export function buildEtfCatalog(tseRows, otcResponse, retrievedAt) {
             { exchange: 'TSE', url: ETF_SOURCES.TSE, dataDate: twseDate, count: tseRows.length },
             // TPEx's response supplies no as-of date; retrieval time is not a market-data date.
             { exchange: 'OTC', url: ETF_SOURCES.OTC, dataDate: null, count: otcResponse.data.length },
+            { exchange: 'TSE', url: ETF_SOURCES.TSE_NAMES, dataDate: namesDate, count: dailyRows.length },
         ],
         entries,
     };
@@ -74,24 +91,24 @@ async function getJson(url, method = 'GET') {
 }
 
 async function main() {
-    const [tseRows, otcResponse] = await Promise.all([
-        getJson(ETF_SOURCES.TSE), getJson(ETF_SOURCES.OTC, 'POST'),
+    const [tseRows, otcResponse, dailyRows] = await Promise.all([
+        getJson(ETF_SOURCES.TSE), getJson(ETF_SOURCES.OTC, 'POST'), getJson(ETF_SOURCES.TSE_NAMES),
     ]);
-    const snapshot = buildEtfCatalog(tseRows, otcResponse, new Date().toISOString());
+    const snapshot = buildEtfCatalog(tseRows, otcResponse, new Date().toISOString(), dailyRows);
     const output = new URL('../src/lib/data/etf-catalog.json', import.meta.url);
     let previous;
     try { previous = JSON.parse(await readFile(output, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (previous) {
         for (const source of snapshot.sources) {
-            const prior = previous.sources.find(row => row.exchange === source.exchange);
+            const prior = previous.sources.find(row => row.url === source.url);
             if (prior && (source.count < prior.count * 0.8 ||
                 source.dataDate && prior.dataDate && source.dataDate < prior.dataDate)) {
                 throw new Error(`${source.exchange} source shrank by over 20% or became older; preserve the previous snapshot and investigate`);
             }
         }
     }
-    const summary = snapshot.sources.map(row => `${row.exchange}=${row.count}`).join(', ');
+    const summary = snapshot.sources.map(row => `${row.exchange}=${row.count} (${row.url.split('/').at(-1)})`).join(', ');
     if (!process.argv.includes('--write')) {
         process.stdout.write(`Validated ${snapshot.entries.length} ETF names (${summary}). Use --write to update the reviewed snapshot.\n`);
         return;
