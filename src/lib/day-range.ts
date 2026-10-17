@@ -91,14 +91,20 @@ export function railTicks(r: DayRange, scale: number | null): number[] {
 }
 
 // 滑過提示：開高低與平盤價（軌道變窄時數字列會收起，這裡一定看得到）、看板上沒有的資訊，以及粗細兩段怎麼看
-export function railTitle(r: DayRange, scale: number | null, fmt: (v: number) => string): string {
+export function railTitle(r: DayRange, scale: number | null, fmt: (v: number) => string,
+    edges: 'limits' | 'distance' = 'limits', fmtPoints: (v: number) => string = fmt): string {
     const pct = (to: number, from: number) => fmtPct(((to - from) / from) * 100);
     const kind = r.close > r.open ? '陽線' : r.close < r.open ? '陰線' : '十字線';
     const ruler = scale === null ? '刻度到漲跌停' : `刻度 ±${scale}%，每格 ${tickStep(scale)}%`;
+    const toLimits = `距漲停 ${pct(r.limitUp, r.close)}｜距跌停 ${pct(r.limitDown, r.close)}`;
+    // 指數期的數字列兩端是距低、距高點數（railMid 以下被收起，提示是唯一來源），尺到漲跌停時也要寫
+    const distances = edges === 'distance'
+        ? `距低 ${fmtPoints(r.close - r.low)} 點｜距高 ${fmtPoints(r.high - r.close)} 點${scale === null ? `｜${toLimits}` : ''}`
+        : toLimits;
     return (
-        `開 ${fmt(r.open)}｜高 ${fmt(r.high)}｜低 ${fmt(r.low)}｜平盤 ${fmt(r.reference)}\n` +
-        `較開盤 ${pct(r.close, r.open)}（${kind}）｜距漲停 ${pct(r.limitUp, r.close)}｜距跌停 ${pct(r.limitDown, r.close)}｜${ruler}\n` +
-        '粗段：開盤到現價｜細段：今日最低到最高'
+        `開 ${fmt(r.open)}｜高 ${fmt(r.high)}（${pct(r.high, r.reference)}）｜低 ${fmt(r.low)}（${pct(r.low, r.reference)}）｜平盤 ${fmt(r.reference)}（幅度對平盤）\n` +
+        `較開盤 ${pct(r.close, r.open)}（${kind}）｜${distances}｜${ruler}\n` +
+        '粗：開到現價｜細：最低到最高'
     );
 }
 
@@ -109,6 +115,10 @@ export function railTitle(r: DayRange, scale: number | null, fmt: (v: number) =>
 // 連動 quote-board.css.ts：標籤字級在 pairLabel、右距在 railNumLabel、數值字級在 railNumbers、格距在 railCells，
 // 改任何一個都要一起改這裡
 export const RAIL_CHARS: readonly number[] = [3, 4, 5, 6, 7, 8, 9, 10];
+export const RAIL_METRICS = {
+    tagRem: 0.6, labelRem: 0.62, labelGapRem: 0.3, numberRem: 0.72,
+    charEm: 0.6, cellGapRem: 0.9, padRem: 0.25,
+} as const;
 
 export function railChars(values: readonly string[]): number {
     const n = Math.max(...values.map((v) => v.length));
@@ -116,5 +126,6 @@ export function railChars(values: readonly string[]): number {
 }
 
 export function railCellsRem(cells: number, chars: number): number {
-    return cells * (0.62 + 0.3 + chars * 0.72 * 0.6) + (cells - 1) * 0.9 + 0.25;
+    const m = RAIL_METRICS;
+    return cells * (m.labelRem + m.labelGapRem + chars * m.numberRem * m.charEm) + (cells - 1) * m.cellGapRem + m.padRem;
 }

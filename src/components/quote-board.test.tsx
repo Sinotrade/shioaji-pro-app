@@ -15,7 +15,8 @@ const storage = vi.hoisted(() => {
 });
 
 let display: any = {};
-vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => display }));
+vi.mock('../hooks/use-display-book', () => ({ useSnapshotBaseline: () => ({ snapshot: display.snapshot }) }));
+vi.mock('../hooks/use-stream', () => ({ useQuote: () => display.quote }));
 // 包住真的 useBoardTier，記下看板傳進去的階梯（有軌道時應該是 RAIL_TIERS）
 const tierCalls = vi.hoisted(() => [] as unknown[][]);
 vi.mock('../hooks/use-board-tier', async (importOriginal) => {
@@ -118,6 +119,68 @@ afterEach(() => {
 });
 
 describe('個股看板（成對兩行）', () => {
+    it('試撮與純快照有狀態標籤及提示，真成交後不留舊狀態', () => {
+        display = { quote: { tick: { ...tick, simtrade: true } } };
+        const simulated = render(STOCK).root;
+        expect(allText(simulated.find(hasClass(styles.statusBadge)))).toBe('試撮');
+        expect(titles(simulated)).toContain('試撮揭示價，非成交價\n更新 13:29:15');
+        display = { snapshot: { code: '2330', close: 2420, datetime: '2026-10-16 13:30:00' } };
+        const snapshot = render(STOCK).root;
+        expect(allText(snapshot.find(hasClass(styles.statusBadge)))).toBe('快照');
+        expect(titles(snapshot)).toContain('快照 2026-10-16 13:30:00，尚未收到即時成交');
+        expect(hasClass(styles.tipCell)(snapshot.find(hasClass(styles.board)).children[0] as ReactTestInstance)).toBe(true);
+        // 伺服器可能回 ISO 格式（帶 T 與小數秒），提示只留到秒
+        display = { snapshot: { code: '2330', close: 2420, datetime: '2026-10-16T14:30:00.123456' } };
+        expect(titles(render(STOCK).root)).toContain('快照 2026-10-16 14:30:00，尚未收到即時成交');
+        display = { quote: { tick: { ...tick, simtrade: false } } };
+        expect(render(STOCK).root.findAll(hasClass(styles.statusBadge))).toHaveLength(0);
+    });
+
+    it('小跳動匯率期貨保留價格與漲跌的四位小數', () => {
+        display = { quote: { tick: { ...tick, close: '1.0856', price_chg: '0.0035', open: '1.0821', high: '1.09', low: '1.08' } } };
+        const root = render({ ...STOCK, code: 'XEFR1', security_type: 'FUT', tick: 0.0001, reference: 1.0821 }).root;
+        expect(texts(root)).toContain('1.0856');
+        expect(texts(root)).toContain('+0.0035');
+    });
+
+    it('隱藏事實放在漲跌區內，不干擾直屬節點量測與現價字寬', () => {
+        display = { quote: { tick }, snapshot: { yesterday_volume: 48000 }, book };
+        const root = render(STOCK).root;
+        const board = root.find(hasClass(styles.board));
+        expect(board.children.some(c => typeof c !== 'string' && hasClass(styles.srOnly)(c))).toBe(false);
+        expect(allText(board.children[0] as ReactTestInstance)).toBe('2,420');
+        // useBoardTier 靠這個屬性把讀屏補充排除在量測簽章外，兩邊各寫一次字串，這裡守住元件這一側
+        expect(root.find(hasClass(styles.srOnly)).props['data-board-details']).toBeTruthy();
+        const detail = allText(root.find(hasClass(styles.srOnly)));
+        expect(detail).toContain('更新 13:29:15');
+        expect(detail).toContain('參考 2,440');
+        expect(detail).toContain('量比 = 今日累計成交量 ÷ 前一交易日全日成交量');
+        expect(detail).not.toContain('粗段');
+        expect(detail).not.toContain('粗：');
+    });
+
+    // 元件的實際文字會自動成為 hook 的逐子節點簽章；重測行為另由 hook 測試守住。
+    it('價格位數、停板徽章與產業分類都納入重新量測簽章', () => {
+        const key = (contract = STOCK) => render(contract).root.find(hasClass(styles.board)).children
+            .map(child => typeof child === 'string' ? child.length : allText(child).length).join(',');
+        display = { quote: { tick }, snapshot: undefined, book };
+        const original = key();
+        expect(key({ ...STOCK, category: '24' })).not.toBe(original);
+        display = { quote: { tick: { ...tick, close: '2680' } }, snapshot: undefined, book };
+        expect(key()).not.toBe(original);
+        display = { quote: { tick: { ...tick, close: '999' } }, snapshot: undefined, book };
+        expect(key()).not.toBe(original);
+    });
+
+    it('指數家數跨位數時更新重新量測簽章', () => {
+        const contract = { ...STOCK, code: 'IX0001', security_type: 'IND' };
+        display = { quote: { index: { raise_count: 99 } } };
+        render(contract);
+        const before = allText(render(contract).root.find(hasClass(styles.indexStats)));
+        display = { quote: { index: { raise_count: 100 } } };
+        render(contract);
+        expect(allText(render(contract).root.find(hasClass(styles.indexStats)))).not.toBe(before);
+    });
     it('三組依序為高／低、開／量（含量比）、漲停／跌停，上排是上方的值、下排是下方的值', () => {
         display = { quote: { tick }, snapshot: { yesterday_volume: 48000 }, book };
         const root = render(STOCK).root;
@@ -131,11 +194,11 @@ describe('個股看板（成對兩行）', () => {
 
     it('量比的滑過提示寫出算法與代入數字；昨日量拿不到時顯示空值並說明', () => {
         display = { quote: { tick }, snapshot: { yesterday_volume: 48000 }, book };
-        expect(titles(render(STOCK).root)).toContain('量比 = 今日成交量 ÷ 昨日成交量\n33,257 ÷ 48,000 = 0.69');
+        expect(titles(render(STOCK).root)).toContain('量比 = 今日累計成交量 ÷ 前一交易日全日成交量\n33,257 ÷ 48,000 = 0.69\n1.00 代表已達前一交易日全日量');
         display = { quote: { tick }, snapshot: undefined, book };
         const root = render(STOCK).root;
         expect(texts(root.find(hasClass(styles.volGroup)))).toContain('—');
-        expect(titles(root)).toContain('量比 = 今日成交量 ÷ 昨日成交量\n昨日成交量尚未取得');
+        expect(titles(root)).toContain('量比 = 今日累計成交量 ÷ 前一交易日全日成交量\n前一交易日成交量尚未取得');
     });
 
     it('不顯示委買委賣、代號名稱、參考與時間的格子', () => {
@@ -205,9 +268,9 @@ describe('日內區間軌（有漲跌停且開高低收到齊的商品）', () =
         expect(rest).toHaveLength(0);
         // 最低 2,415 是 -1.02%，超過 ±1% 尺的 92%，換成 ±2%
         expect(rail!.props.title).toBe(
-            '開 2,430｜高 2,445｜低 2,415｜平盤 2,440\n' +
+            '開 2,430｜高 2,445（+0.20%）｜低 2,415（-1.02%）｜平盤 2,440（幅度對平盤）\n' +
                 '較開盤 -0.41%（陰線）｜距漲停 +10.74%｜距跌停 -9.09%｜刻度 ±2%，每格 1%\n' +
-                '粗段：開盤到現價｜細段：今日最低到最高',
+                '粗：開到現價｜細：最低到最高',
         );
         expect(texts(root.find(hasClass(styles.railNumbers)))).toEqual([
             '跌停', '2,200', '低', '2,415', '開', '2,430', '高', '2,445', '漲停', '2,680',
@@ -268,12 +331,12 @@ describe('日內區間軌（有漲跌停且開高低收到齊的商品）', () =
         display = { quote: { tick }, snapshot: undefined, book };
         tierCalls.length = 0;
         render(STOCK);
-        expect(tierCalls.at(-1)![4]).toBe(RAIL_TIERS);
+        expect(tierCalls.at(-1)![2]).toBe(RAIL_TIERS);
         render({ ...STOCK, exchange: 'OES', limit_up: undefined, limit_down: undefined });
-        expect(tierCalls.at(-1)![4]).toBe(STOCK_TIERS);
+        expect(tierCalls.at(-1)![2]).toBe(STOCK_TIERS);
         display = { quote: { index: { code: 'IX0001', close: '47111.9' } }, snapshot: undefined, book: undefined };
         render({ code: 'IX0001', name: '加權', exchange: 'TSE', security_type: 'IND', target_code: null });
-        expect(tierCalls.at(-1)![4]).toBe(BOARD_TIERS);
+        expect(tierCalls.at(-1)![2]).toBe(BOARD_TIERS);
     });
 
     it('價格旁的量標籤（compact 顯示）是「量 33,257」加獨立的量比 span（tight 的 CSS 靠它收起量比、只留量）', () => {
@@ -293,7 +356,7 @@ describe('日內區間軌（有漲跌停且開高低收到齊的商品）', () =
             display = { quote: { tick: monday }, snapshot: snapshotFriday, book };
             const root = render(STOCK).root;
             expect(texts(root.find(hasClass(styles.volGroup)))).toEqual(['開', '2,430', '量', '33,257', '量比', '—']);
-            expect(new Set(ratioTitles(root))).toEqual(new Set(['量比 = 今日成交量 ÷ 昨日成交量\n昨日成交量待更新']));
+            expect(new Set(ratioTitles(root))).toEqual(new Set(['量比 = 今日累計成交量 ÷ 前一交易日全日成交量\n前一交易日成交量待更新']));
             expect(allText(root.find(hasClass(styles.stockVolTag)))).toBe('量 33,257量比 —');
         });
 
@@ -430,11 +493,13 @@ describe('收合偏好：指數與個股各自一份', () => {
         display = { quote: { tick }, snapshot: undefined, book };
         const root = render(STOCK).root;
         const button = () => root.find((n) => n.type === 'button');
+        expect(button().props['aria-label']).toBe('報價統計');
         expect(button().props['aria-expanded']).toBe(true);
         act(() => button().props.onClick());
         expect(storage.get('sj-stock-board-mode')).toBe('collapsed');
         expect(storage.get('sj-index-board-mode')).toBeUndefined();
         expect(button().props['aria-expanded']).toBe(false);
+        expect(button().props['aria-label']).toBe('報價統計');
         act(() => button().props.onClick());
         expect(storage.has('sj-stock-board-mode')).toBe(false);
     });

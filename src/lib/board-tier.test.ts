@@ -1,6 +1,6 @@
 // src/lib/board-tier.test.ts：報價看板階梯，標題加看板不超過面板 1/5，strip 保底
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     BOARD_TIERS,
     boardBudget,
@@ -9,6 +9,7 @@ import {
     nextBoardMode,
     parseBoardMode,
     pickBoardTier,
+    pickExpandedTier,
     RAIL_TIERS,
     STOCK_TIERS,
     UPGRADE_SLACK_PX,
@@ -30,6 +31,27 @@ const HEIGHT: Record<BoardTier, number> = {
     strip: 29,
 };
 const measure = (tier: BoardTier) => HEIGHT[tier];
+
+describe('pickExpandedTier', () => {
+    it('沒有軌道時不量測，直接用 wide', () => {
+        const measure = vi.fn(() => 50);
+        expect(pickExpandedTier(measure, BOARD_TIERS)).toBe('wide');
+        expect(measure).not.toHaveBeenCalled();
+    });
+    it('完整 rail 放得下時保留軌道', () => {
+        expect(pickExpandedTier(() => 50, RAIL_TIERS)).toBe('rail');
+    });
+    it('只有從 wide 升回 rail 時要求升級緩衝', () => {
+        for (const current of [undefined, 'wide', 'rail', 'railMid'] as const) {
+            const measure = vi.fn(() => 50);
+            pickExpandedTier(measure, RAIL_TIERS, current);
+            expect(measure).toHaveBeenCalledWith('rail', current === 'wide');
+        }
+    });
+    it('rail 放不下時回 wide，永遠不以 railMid 取代完整統計', () => {
+        expect(pickExpandedTier(() => Infinity, RAIL_TIERS)).toBe('wide');
+    });
+});
 
 // 模擬寬度：各階梯需要的寬度（px），超過可用寬度就算放不下；升級時要多留一個數字寬
 // （1.5rem 等寬字約 17px，對應量測端依字級換算的寬度緩衝）

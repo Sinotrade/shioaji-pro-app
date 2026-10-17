@@ -13,6 +13,7 @@ import {
     railScale,
     railTicks,
     railTitle,
+    RAIL_METRICS,
     type DayRange,
 } from '../lib/day-range';
 import type { LimitState } from '../lib/limit-state';
@@ -33,9 +34,6 @@ interface RailProps {
     // 今天碰過漲停／跌停（停板端畫成實心）
     touched: { up: boolean; down: boolean };
 }
-
-// 兩端幅度字的字級（rem），和 railTag 樣式一致
-const TAG_REM = 0.6;
 
 export function DayRangeRail({ className, ...props }: RailProps & { className?: string }) {
     const { range: r, fmt, fmtPoints, scales, edges } = props;
@@ -65,10 +63,10 @@ export function DayRangeRail({ className, ...props }: RailProps & { className?: 
     const [leftPct, rightPct] = railEndPcts(r, scale);
     const tags = [`-${leftPct}%`, `+${rightPct}%`] as const;
     // 兩端字的寬度：等寬字每字 0.6em，再留 8px；數字列也從同一個位置開始，和軌道起點對齊
-    const tagPx = TAG_REM * box.rootPx;
-    const inset = Math.ceil(Math.max(...tags.map((t) => t.length * 0.6 * tagPx))) + 8;
-    const title = railTitle(r, scale, fmt);
-    const scaleText = scale === null ? '尺到漲跌停' : `尺 ±${scale}%`;
+    const tagPx = RAIL_METRICS.tagRem * box.rootPx;
+    const inset = Math.ceil(Math.max(...tags.map((t) => t.length * RAIL_METRICS.charEm * tagPx))) + 8;
+    const title = railTitle(r, scale, fmt, edges, fmtPoints);
+    const scaleText = scale === null ? '刻度到漲跌停' : `刻度 ±${scale}%`;
     const dirClass = (v: number) => {
         const d = dirVsOpen(v, r.open);
         return d ? panel.dirText[d] : undefined;

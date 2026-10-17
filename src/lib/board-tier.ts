@@ -74,6 +74,15 @@ export function isRichTier(tier: BoardTier): boolean {
     return tier === 'rail' || tier === 'railMid' || tier === 'wide' || tier === 'mid';
 }
 
+// 手動展開只選完整軌道或完整數字欄，不選會收起停板價的 railMid。
+export function pickExpandedTier(
+    measure: (tier: BoardTier, upgrading: boolean) => number,
+    tiers: readonly BoardTier[],
+    current?: BoardTier,
+): BoardTier {
+    return tiers.includes('rail') && Number.isFinite(measure('rail', current === 'wide')) ? 'rail' : 'wide';
+}
+
 // 手動模式優先於自動結果。展開要看到最完整的版面：expandedTier 由量測端依「橫向放不放得下」挑
 // （有軌道的個股，rail 放得下就用，否則用 wide；不看高度預算，因為使用者明確要求展開）
 export function effectiveTier(mode: BoardMode, auto: BoardTier, expandedTier: BoardTier = 'wide'): BoardTier {

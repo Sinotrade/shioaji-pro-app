@@ -1,6 +1,6 @@
 // src/hooks/use-stream.ts — bind components to the SSE quote store
 
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { ensureContract } from '../lib/contracts-cache';
 import { retainContractQuotes } from '../lib/quote-ownership';
 import { getTradingMirrorFresh, subscribeTradingMirror } from '../lib/trading-mirror-lease';
@@ -30,10 +30,16 @@ export function useTradingLive(): boolean {
 export interface UseQuoteOptions {
     /** 盤中零股行情（intraday_odd）：獨立訂閱與 store，量以股計（#204） */
     oddLot?: boolean;
+    /** 只讀成交與指數；BidAsk 變動維持相同視圖參照，不喚醒價格看板。 */
+    narrow?: boolean;
 }
 
-export function useQuote(code: string | null, options?: UseQuoteOptions): QuoteState | undefined {
+export type PriceQuoteState = Pick<QuoteState, 'tick' | 'index'>;
+export function useQuote(code: string | null, options: UseQuoteOptions & { narrow: true }): PriceQuoteState | undefined;
+export function useQuote(code: string | null, options?: UseQuoteOptions & { narrow?: false }): QuoteState | undefined;
+export function useQuote(code: string | null, options?: UseQuoteOptions): PriceQuoteState | QuoteState | undefined {
     const oddLot = options?.oddLot === true;
+    const cached = useRef<{ code: string; oddLot: boolean; view: PriceQuoteState } | null>(null);
     useEffect(() => {
         ensureStream();
         let active = true;
@@ -44,6 +50,15 @@ export function useQuote(code: string | null, options?: UseQuoteOptions): QuoteS
     return useSyncExternalStore(
         (listener) =>
             code ? subscribeQuoteStore(code, listener, oddLot) : () => undefined,
-        () => (code ? getQuote(code, oddLot) : undefined),
+        () => {
+            const quote = code ? getQuote(code, oddLot) : undefined;
+            if (!options?.narrow || !quote || !code) return quote;
+            const previous = cached.current;
+            if (previous?.code === code && previous.oddLot === oddLot &&
+                previous.view.tick === quote.tick && previous.view.index === quote.index) return previous.view;
+            const view = { tick: quote.tick, index: quote.index };
+            cached.current = { code, oddLot, view };
+            return view;
+        },
     );
 }

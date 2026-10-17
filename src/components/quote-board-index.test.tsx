@@ -16,16 +16,18 @@ const storage = vi.hoisted(() => {
 let display: any = {};
 // 前一交易日金額由 useQuery 抓，測試直接指定它回傳什麼
 let previous: number | undefined;
-vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => display }));
+let previousState: { loading: boolean; error: string | null } = { loading: false, error: null };
+vi.mock('../hooks/use-display-book', () => ({ useSnapshotBaseline: () => ({ snapshot: display.snapshot }) }));
+vi.mock('../hooks/use-stream', () => ({ useQuote: () => display.quote }));
 // 記下每次 useQuery 的抓取函式、key、enabled，接線（只有指數才抓、key 帶交易日、回看視窗）才有測試守著
 const queryCalls = vi.hoisted(
     () => [] as { fetcher: () => Promise<unknown>; key: string; enabled?: boolean }[],
 );
-const fetchKbars = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ datetime: [], Amount: [] })));
+const fetchKbars = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ datetime: [] as string[], Amount: [] as number[] })));
 vi.mock('../hooks/use-query', () => ({
     useQuery: (fetcher: () => Promise<unknown>, key: string, enabled?: boolean) => {
         queryCalls.push({ fetcher, key, enabled });
-        return { data: previous, error: null, loading: false, updatedAt: null, refresh: async () => {} };
+        return { data: previous, ...previousState, updatedAt: null, refresh: async () => {} };
     },
 }));
 vi.mock('../lib/shioaji', () => ({ fetchKbars }));
@@ -91,11 +93,22 @@ function leanVolumeLabels(root: ReactTestInstance): string[] {
 afterEach(() => {
     storage.clear();
     previous = undefined;
+    previousState = { loading: false, error: null };
     queryCalls.length = 0;
     fetchKbars.mockClear();
 });
 
 describe('指數看板', () => {
+    it('前一交易日金額的載入、失敗與未收到 quote_idx 各有明確說明', () => {
+        display = { quote: { index: idx } };
+        previousState = { loading: true, error: null };
+        expect(titles(render()).join('\n')).toContain('前一交易日金額取得中，失敗會自動重試');
+        previousState = { loading: false, error: 'unavailable' };
+        expect(titles(render()).join('\n')).toContain('前一交易日金額取得失敗，本交易日不再重試');
+        display = {};
+        expect(titles(render())).toContain('本次連線尚未收到 quote_idx');
+    });
+
     it('顯示漲跌家數與量能，現價固定兩位小數，不重複標題列的代號與名稱', () => {
         display = { quote: { index: idx }, snapshot: undefined, book: undefined };
         previous = 1_000_000_000_000;
@@ -175,6 +188,33 @@ describe('前一交易日金額的抓取接線', () => {
         display = { quote: undefined, snapshot: undefined, book: undefined };
         render({ code: '2330', name: '台積電', exchange: 'TSE', security_type: 'STK', target_code: null } as any);
         expect(prevAmountCall().enabled).toBe(false);
+    });
+
+    it('503 依接線等待完整 30 秒才重試，成功後採用前一交易日金額', async () => {
+        vi.useFakeTimers();
+        try {
+            display = { quote: { index: idx } };
+            fetchKbars.mockRejectedValueOnce({ status: 503 }).mockResolvedValueOnce({
+                datetime: ['2026-10-15 09:00:00', '2026-10-15 09:01:00'], Amount: [400, 600],
+            });
+            render();
+            const pending = prevAmountCall().fetcher();
+            await vi.advanceTimersByTimeAsync(29_999);
+            expect(fetchKbars).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(1);
+            await expect(pending).resolves.toBe(1000);
+            expect(fetchKbars).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('422 立即失敗，不啟動延遲重試', async () => {
+        display = { quote: { index: idx } };
+        fetchKbars.mockRejectedValueOnce({ status: 422 });
+        render();
+        await expect(prevAmountCall().fetcher()).rejects.toMatchObject({ status: 422 });
+        expect(fetchKbars).toHaveBeenCalledTimes(1);
     });
 });
 
