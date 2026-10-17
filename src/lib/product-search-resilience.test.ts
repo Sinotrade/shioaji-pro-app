@@ -104,13 +104,25 @@ describe('商品搜尋來源分流與有界等待', () => {
     it('root 逾時不快取失敗空值，下一次可恢復', async () => {
         mocks.catalog.mockResolvedValue([]);
         mocks.roots.mockReturnValueOnce(new Promise(() => undefined));
+        const rejected = expect(search('測試指數期貨')).rejects.toThrow('商品搜尋暫時無法完成');
+        await vi.advanceTimersByTimeAsync(1200);
+        await rejected;
+        mocks.roots.mockResolvedValue([{ root: 'TXF', name: '測試指數期貨' }]);
+        mocks.futures.mockResolvedValue([contract('TXFR1', 'FUT', { target_code: 'TXFJ6' })]);
+        expect((await search('測試指數期貨'))[0]).toMatchObject({ code: 'TXFR1' });
+        expect(mocks.roots).toHaveBeenCalledTimes(2);
+    });
+
+    it('台指同標的來源逾時後可重試，不依賴根商品名稱', async () => {
+        mocks.catalog.mockResolvedValue([]);
+        mocks.futures.mockReturnValueOnce(new Promise(() => undefined));
         const rejected = expect(search('台指期貨')).rejects.toThrow('商品搜尋暫時無法完成');
         await vi.advanceTimersByTimeAsync(1200);
         await rejected;
-        mocks.roots.mockResolvedValue([{ root: 'TXF', name: '台指期貨' }]);
-        mocks.futures.mockResolvedValue([contract('TXFR1', 'FUT', { target_code: 'TXFJ6' })]);
+        mocks.futures.mockResolvedValue([contract('TXFR1', 'FUT', { underlying_code: 'IX0001', target_code: 'TXFJ6' })]);
         expect((await search('台指期貨'))[0]).toMatchObject({ code: 'TXFR1' });
-        expect(mocks.roots).toHaveBeenCalledTimes(2);
+        expect(mocks.futures).toHaveBeenCalledTimes(2);
+        expect(mocks.roots).not.toHaveBeenCalled();
     });
 
     it('相關權證逾時保留現股及期貨，晚回不可污染下一次成功重試的快取', async () => {

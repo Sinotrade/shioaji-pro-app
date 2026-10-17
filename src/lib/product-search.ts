@@ -91,18 +91,30 @@ function stockSuggestion(stock: StockMeta): ProductSuggestion {
 
 function derivativeSort(a: ContractInfo, b: ContractInfo) {
     // Explicit priority, independent of root letters or missing month metadata:
-    // regular near → small near → regular next → small next.
+    // near: regular → small → micro; then the same sizes in the next month.
     const rank = (row: ContractInfo) => {
         const month = row.code.endsWith('R1') ? 0 : row.code.endsWith('R2') ? 1 : -1;
-        if (month < 0) return 6;
+        if (month < 0) return 12;
         const name = normalizeSearchText(row.name);
-        // Other sizes do not displace the four requested continuous contracts.
-        if (name.includes('微型')) return 4 + month;
-        return month * 2 + (name.includes('小型') ? 1 : 0);
+        // Weekly mini futures share the same underlying, but must not evict
+        // the six regular/small/micro monthly continuous identities.
+        const weekly = !!row.week_of_month || /(?:^|\s)W\d+(?:\s|$)/.test(name);
+        return (weekly ? 6 : 0) + month * 3 + (name.includes('微型') ? 2 : name.includes('小型') ? 1 : 0);
     };
     return rank(a) - rank(b) ||
         (a.delivery_month ?? '').localeCompare(b.delivery_month ?? '') ||
         a.code.localeCompare(b.code);
+}
+
+const isContinuousFuture = (row: { code: string }) => /R[12]$/.test(row.code);
+
+function orderedFutures(rows: ContractInfo[]) {
+    const covered = new Set(rows.filter(isContinuousFuture).filter(row => row.target_code)
+        .map(row => `${row.exchange}:${row.target_code}`));
+    // Keep the continuous identity and its full target metadata, not a second
+    // dated row for the same contract. Never sort the shared source in place.
+    return rows.filter(row => isContinuousFuture(row) || !covered.has(`${row.exchange}:${row.code}`))
+        .sort(derivativeSort).slice(0, 6);
 }
 
 function normalizeSearchText(value: string) {
@@ -198,8 +210,13 @@ export async function searchProducts(
         wantsOptions = false;
     }
     const stockMatches = searchStocks(catalog, lookup, limit);
+    // These are verified names for the IX0001 family, not stock-name guesses.
+    const indexFutureUnderlying = lookup === '台指' || lookup === '台股' ? 'IX0001' : undefined;
+    const prefixMatches = indexFutureUnderlying ? [] : catalog.filter(stock =>
+        normalizeSearchText(stock.name) !== normalizeSearchText(stock.code) && normalizeSearchText(stock.name).startsWith(lookup));
     const exactStock = catalog.find((stock) => normalizeSearchText(stock.code) === lookup || normalizeSearchText(stock.name) === lookup || stock.aliases?.some(alias => normalizeSearchText(alias) === lookup)) ??
-        (direct?.security_type === 'STK' ? { ...direct, category: direct.category ?? '', exchange: direct.exchange ?? '' } : undefined);
+        (direct?.security_type === 'STK' ? { ...direct, category: direct.category ?? '', exchange: direct.exchange ?? '' } : undefined) ??
+        (prefixMatches.length === 1 ? prefixMatches[0] : undefined);
     const inScope = async <T,>(request: () => Promise<T>) => {
         if (getApiBase() !== base) throw new Error('商品搜尋期間伺服器已切換，請重新搜尋');
         const result = await request();
@@ -213,14 +230,15 @@ export async function searchProducts(
 
     const loadFutures = async () => {
         if (wantsOptions || wantsWarrants || (direct && direct.security_type !== 'STK')) return [];
-        if (exactStock) {
-            return (await contracts(`future-underlying:${exactStock.code}`, () => fetchFutures({ underlyingCode: exactStock.code })))
-                .filter((row) => row.underlying_code === exactStock.code).sort(derivativeSort).slice(0, 6);
+        const underlying = exactStock?.code ?? indexFutureUnderlying;
+        if (underlying) {
+            return orderedFutures((await contracts(`future-underlying:${underlying}`, () => fetchFutures({ underlyingCode: underlying })))
+                .filter((row) => row.underlying_code === underlying));
         }
         const matches = matchingRoots(await roots('futures'), lookup, raw);
         const groups = await Promise.all(matches.map(async (root) =>
-            (await contracts(`future-root:${root.root}`, () => fetchFutures({ root: root.root }))).sort(derivativeSort).slice(0, 6)));
-        return groups.flat().sort(derivativeSort).slice(0, 6);
+            orderedFutures(await contracts(`future-root:${root.root}`, () => fetchFutures({ root: root.root })))));
+        return orderedFutures(groups.flat());
     };
     const loadOptions = async () => {
         if (!wantsOptions) return [];
@@ -253,11 +271,20 @@ export async function searchProducts(
         priority.push(asSuggestion(direct, `${etf ? 'ETF · ' : ''}直接代碼${direct.security_type === 'WRT' ? warrantDateWarning(direct) : ''}`));
     }
     if (exactStock) priority.push(stockSuggestion(exactStock));
+    const continuous = futureSuggestions.filter(isContinuousFuture);
+    const primaryFutures = continuous.length ? continuous : futureSuggestions;
+    const additionalFutures = continuous.length ? futureSuggestions.filter(row => !isContinuousFuture(row)) : [];
+    const futuresFirst = !!exactStock || wantsFutures || !!indexFutureUnderlying;
     const groups = wantsOptions ? [optionSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)] : wantsWarrants
         ? [warrantSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)]
         : [futureSuggestions, warrantSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)];
     const seen = new Set<string>();
-    const result = [...priority, ...interleave(groups, limit * groups.length)].filter((row) => {
+    const remainder = wantsOptions || wantsWarrants ? interleave(groups, limit * groups.length) : [
+        ...(futuresFirst ? [] : stockMatches.map(stockSuggestion)),
+        ...primaryFutures, ...warrantSuggestions, ...indexSuggestions,
+        ...(futuresFirst ? stockMatches.map(stockSuggestion) : []), ...additionalFutures,
+    ];
+    const result = [...priority, ...remainder].filter((row) => {
         const key = `${row.security_type}:${row.exchange}:${row.code}`;
         if (seen.has(key)) return false;
         seen.add(key);
