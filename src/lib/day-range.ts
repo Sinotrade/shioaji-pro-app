@@ -96,9 +96,11 @@ export function railTitle(r: DayRange, scale: number | null, fmt: (v: number) =>
     const pct = (to: number, from: number) => fmtPct(((to - from) / from) * 100);
     const kind = r.close > r.open ? '陽線' : r.close < r.open ? '陰線' : '十字線';
     const ruler = scale === null ? '刻度到漲跌停' : `刻度 ±${scale}%，每格 ${tickStep(scale)}%`;
-    const distances = edges === 'distance' && scale !== null
-        ? `距低 ${fmtPoints(r.close - r.low)} 點｜距高 ${fmtPoints(r.high - r.close)} 點`
-        : `距漲停 ${pct(r.limitUp, r.close)}｜距跌停 ${pct(r.limitDown, r.close)}`;
+    const toLimits = `距漲停 ${pct(r.limitUp, r.close)}｜距跌停 ${pct(r.limitDown, r.close)}`;
+    // 指數期的數字列兩端是距低、距高點數（railMid 以下被收起，提示是唯一來源），尺到漲跌停時也要寫
+    const distances = edges === 'distance'
+        ? `距低 ${fmtPoints(r.close - r.low)} 點｜距高 ${fmtPoints(r.high - r.close)} 點${scale === null ? `｜${toLimits}` : ''}`
+        : toLimits;
     return (
         `開 ${fmt(r.open)}｜高 ${fmt(r.high)}（${pct(r.high, r.reference)}）｜低 ${fmt(r.low)}（${pct(r.low, r.reference)}）｜平盤 ${fmt(r.reference)}（幅度對平盤）\n` +
         `較開盤 ${pct(r.close, r.open)}（${kind}）｜${distances}｜${ruler}\n` +

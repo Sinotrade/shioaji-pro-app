@@ -170,6 +170,16 @@ describe('useBoardTier 的瀏覽器接線與量測', () => {
         expect(result.tier).toBe('mid');
     });
 
+    it('試撮徽章換成同字數的漲停徽章，簽章含 class 所以仍重測', async () => {
+        const badge = { ...statistics, className: 'statusBadge', textContent: '試撮', get childNodes(): FakeLeaf['childNodes'] { return [{ nodeType: 3, textContent: this.textContent }]; } };
+        leaves = [price, badge];
+        await mount();
+        needs.wide = 700;
+        badge.className = 'limitBadge'; badge.textContent = '漲停';
+        act(() => root!.update(createElement(Probe, { signature: 'badge swap' })));
+        expect(result.tier).toBe('mid');
+    });
+
     it('數字文字與單位元素混排時，預估量跨位數仍重新量測', async () => {
         const amount = { nodeType: 3, textContent: '9999.9' };
         const unit = { ...statistics, textContent: '億' };

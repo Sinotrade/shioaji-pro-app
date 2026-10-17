@@ -129,6 +129,9 @@ describe('個股看板（成對兩行）', () => {
         expect(allText(snapshot.find(hasClass(styles.statusBadge)))).toBe('快照');
         expect(titles(snapshot)).toContain('快照 2026-10-16 13:30:00，尚未收到即時成交');
         expect(hasClass(styles.tipCell)(snapshot.find(hasClass(styles.board)).children[0] as ReactTestInstance)).toBe(true);
+        // 伺服器可能回 ISO 格式（帶 T 與小數秒），提示只留到秒
+        display = { snapshot: { code: '2330', close: 2420, datetime: '2026-10-16T14:30:00.123456' } };
+        expect(titles(render(STOCK).root)).toContain('快照 2026-10-16 14:30:00，尚未收到即時成交');
         display = { quote: { tick: { ...tick, simtrade: false } } };
         expect(render(STOCK).root.findAll(hasClass(styles.statusBadge))).toHaveLength(0);
     });
@@ -146,6 +149,8 @@ describe('個股看板（成對兩行）', () => {
         const board = root.find(hasClass(styles.board));
         expect(board.children.some(c => typeof c !== 'string' && hasClass(styles.srOnly)(c))).toBe(false);
         expect(allText(board.children[0] as ReactTestInstance)).toBe('2,420');
+        // useBoardTier 靠這個屬性把讀屏補充排除在量測簽章外，兩邊各寫一次字串，這裡守住元件這一側
+        expect(root.find(hasClass(styles.srOnly)).props['data-board-details']).toBeTruthy();
         const detail = allText(root.find(hasClass(styles.srOnly)));
         expect(detail).toContain('更新 13:29:15');
         expect(detail).toContain('參考 2,440');

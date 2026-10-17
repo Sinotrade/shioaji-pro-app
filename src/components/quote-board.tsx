@@ -277,7 +277,7 @@ export function QuoteBoard({
     // 參考價、更新時間收進漲跌與現價的滑過提示
     const timeText = (isIndex ? index?.time : tick?.time)?.slice(0, 8);
     const priceTitle = [
-        sim ? '試撮揭示價，非成交價' : snapOnly ? `快照 ${snapshot?.datetime ?? '時間未提供'}，尚未收到即時成交` : undefined,
+        sim ? '試撮揭示價，非成交價' : snapOnly ? `快照 ${snapshot?.datetime?.replace('T', ' ').slice(0, 19) ?? '時間未提供'}，尚未收到即時成交` : undefined,
         timeText ? `更新 ${timeText}` : undefined,
     ].filter(Boolean).join('\n') || undefined;
     const details = [

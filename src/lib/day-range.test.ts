@@ -164,6 +164,7 @@ describe('railTitle', () => {
         expect(title).toContain('距低 75.0 點｜距高 91.0 點');
         expect(title).not.toContain('距漲停');
         expect(railTitle(TXF, null, fmt, 'distance')).toContain('距漲停');
+        expect(railTitle(TXF, null, fmt, 'distance')).toContain('距低');
     });
 });
 

@@ -98,7 +98,8 @@ export function useBoardTier(
     const signature = (board: HTMLElement) => [board, ...board.querySelectorAll('*')]
         .filter(element => !element.closest('[data-board-details]'))
         .flatMap(element => [...element.childNodes].filter(node => node.nodeType === 3)
-            .map(node => node.textContent?.length ?? 0)).join(',');
+            // 帶上 class：試撮徽章換成同字數的漲停徽章時，寬度不同但文字長度一樣
+            .map(node => `${typeof element.className === 'string' ? element.className : ''}:${node.textContent?.length ?? 0}`)).join(',');
 
     useLayoutEffect(() => {
         const board = boardRef.current;
