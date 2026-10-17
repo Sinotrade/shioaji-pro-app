@@ -325,27 +325,31 @@ export function Watchlist({
     const [searchError, setSearchError] = useState(false);
     const [searching, setSearching] = useState(false);
     const [searchRetry, setSearchRetry] = useState(0);
+    const composing = useRef(false);
+    const queryVersion = useRef(0);
     useEffect(() => {
         const query = input.trim();
-        if (!query) {
+        if (!query || composing.current) {
             setSuggestions([]);
             setSearchError(false);
-            setSearching(false);
+            setSearching(composing.current && !!query);
             return;
         }
         let active = true;
+        const requestVersion = queryVersion.current;
+        const isCurrent = () => active && requestVersion === queryVersion.current && !composing.current;
         setSearchError(false);
         setSearching(true);
         const timer = setTimeout(() => {
             void searchProducts(query, 10, { includeWarrants: true })
                 .then((results) => {
-                    if (active) {
+                    if (isCurrent()) {
                         setSuggestions(results);
                         setSearching(false);
                     }
                 })
                 .catch(() => {
-                    if (active) {
+                    if (isCurrent()) {
                         setSuggestions([]);
                         setSearchError(true);
                         setSearching(false);
@@ -457,6 +461,7 @@ export function Watchlist({
     );
 
     const submit = async () => {
+        if (composing.current) return;
         const code = input.trim().toUpperCase();
         if (!code || busy || loading || !activeListId) return;
         if (searching && !/^[A-Z0-9]+$/.test(code)) return;
@@ -724,6 +729,7 @@ export function Watchlist({
                                 className={styles.suggestRow}
                                 disabled={loading}
                                 onClick={async () => {
+                                    if (composing.current) return;
                                     setSuggestions([]);
                                     setInput('');
                                     setBusy(true);
@@ -756,13 +762,27 @@ export function Watchlist({
                     placeholder='股票、期貨或指數（如 台積電期）'
                     disabled={loading || !activeListId}
                     value={input}
+                    onCompositionStart={() => {
+                        composing.current = true;
+                        queryVersion.current += 1;
+                        setSuggestions([]);
+                        setSearchRetry((retry) => retry + 1);
+                    }}
+                    onCompositionEnd={(e) => {
+                        composing.current = false;
+                        queryVersion.current += 1;
+                        setInput(e.currentTarget.value);
+                        setSearchRetry((retry) => retry + 1);
+                    }}
                     onChange={(e) => {
+                        queryVersion.current += 1;
                         setInput(e.target.value);
                         setSuggestions([]);
                         setSearchError(false);
                         setSearching(!!e.target.value.trim());
                     }}
                     onKeyDown={(e) => {
+                        if (composing.current || e.nativeEvent?.isComposing || e.keyCode === 229) return;
                         if (e.key === 'Enter') {
                             setSuggestions([]);
                             submit();

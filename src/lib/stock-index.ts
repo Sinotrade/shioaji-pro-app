@@ -7,6 +7,9 @@ import {
     fetchContracts,
     fetchWarrantUnderlyings,
 } from './shioaji';
+import { getApiBase } from './runtime';
+import { todayStr } from './utils/date';
+import { etfNameFor } from './etf-catalog';
 
 export interface StockMeta {
     code: string;
@@ -14,46 +17,97 @@ export interface StockMeta {
     category: string;
     exchange: string;
     day_trade?: string;
+    kind?: 'ETF';
+    aliases?: string[];
 }
 
-let catalogCache: StockMeta[] | null = null;
-let catalogLoading: Promise<StockMeta[]> | null = null;
+interface CatalogSource<T> { request: Promise<T>; expiresAt: number }
+const baseCache = new Map<string, CatalogSource<Awaited<ReturnType<typeof fetchContracts>>>>();
+const namesCache = new Map<string, CatalogSource<Awaited<ReturnType<typeof fetchWarrantUnderlyings>>>>();
+const CATALOG_TTL_MS = 60_000;
+const CATALOG_DEADLINE_MS = 1000;
+let activeSourceScope = '';
+let catalogGeneration = 0;
 let detailsCache: StockMeta[] | null = null;
 let detailsLoading: Promise<StockMeta[]> | null = null;
+let detailsScope = '';
 const detailByCode = new Map<string, StockMeta>();
 const detailLoadingByCode = new Map<string, Promise<StockMeta | null>>();
 
-export function loadStockCatalog(): Promise<StockMeta[]> {
-    if (catalogCache) return Promise.resolve(catalogCache);
-    if (catalogLoading) return catalogLoading;
-    catalogLoading = Promise.all([
-        fetchContracts('STK'),
-        fetchWarrantUnderlyings().catch(() => []),
-    ])
-        .then(([res, underlyings]) => {
-            const names = new Map(
-                underlyings
-                    .filter((row) => row.name)
-                    .map((row) => [row.underlying_code, row.name!]),
-            );
-            catalogCache = res.contracts
-                .filter((c) => c.code)
-                .map((c) => ({
-                    code: c.code,
-                    name: names.get(c.code) ?? c.code,
-                    category: '',
-                    exchange: c.exchange ?? '',
-                }));
-            return catalogCache;
-        })
-        .catch((e) => {
-            catalogLoading = null;
-            throw e;
-        });
-    return catalogLoading;
+const catalogScope = () => JSON.stringify([getApiBase(), todayStr()]);
+const detailContext = () => JSON.stringify([catalogScope(), catalogGeneration]);
+
+function ensureSourceScope() {
+    const scope = catalogScope();
+    if (scope !== activeSourceScope) {
+        activeSourceScope = scope;
+        catalogGeneration += 1;
+        baseCache.clear();
+        namesCache.clear();
+    }
+    return scope;
+}
+
+function loadSource<T>(cache: Map<string, CatalogSource<T>>, scope: string, load: () => Promise<T>): Promise<T> {
+    const cached = cache.get(scope);
+    if (cached && cached.expiresAt > Date.now()) return cached.request;
+    let timer: ReturnType<typeof setTimeout>;
+    const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('股票目錄來源回應逾時')), CATALOG_DEADLINE_MS);
+    });
+    const entry: CatalogSource<T> = { request: Promise.resolve().then(load), expiresAt: Infinity };
+    entry.request = Promise.race([entry.request, deadline]).then(value => {
+        if (catalogScope() !== scope || cache.get(scope) !== entry) throw new Error('股票目錄載入期間伺服器已切換');
+        entry.expiresAt = Date.now() + CATALOG_TTL_MS;
+        return value;
+    }).catch(error => {
+        if (cache.get(scope) === entry) cache.delete(scope);
+        throw error;
+    }).finally(() => clearTimeout(timer));
+    cache.set(scope, entry);
+    while (cache.size > 2) cache.delete(cache.keys().next().value!);
+    return entry.request;
+}
+
+export async function loadStockCatalog(): Promise<StockMeta[]> {
+    const scope = ensureSourceScope();
+    const generation = catalogGeneration;
+    const [res, underlyings] = await Promise.all([
+        loadSource(baseCache, scope, () => fetchContracts('STK')),
+        // Optional names may fail without hiding supported Base identities.
+        // Failure is not cached: the next search retries names, not Base.
+        loadSource(namesCache, scope, fetchWarrantUnderlyings).catch(() => []),
+    ]);
+    if (catalogScope() !== scope || catalogGeneration !== generation) throw new Error('股票目錄載入期間伺服器已切換');
+    const names = new Map(underlyings.filter(row => row.name).map(row => [row.underlying_code, row.name!]));
+    return res.contracts.filter(c => c.code).map(c => {
+        const exchange = c.exchange ?? '';
+        const etf = etfNameFor(c.code, exchange);
+        return {
+            code: c.code,
+            name: names.get(c.code) ?? etf?.name ?? c.code,
+            category: '',
+            exchange,
+            ...(etf ? { kind: 'ETF' as const, aliases: [...new Set([etf.name, ...(etf.aliases ?? [])])] } : {}),
+        };
+    });
+}
+
+function ensureDetailsScope() {
+    ensureSourceScope();
+    const scope = detailContext();
+    if (scope !== detailsScope) {
+        detailsScope = scope;
+        detailsCache = null;
+        detailsLoading = null;
+        detailByCode.clear();
+        detailLoadingByCode.clear();
+    }
+    return scope;
 }
 
 export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
+    const scope = ensureDetailsScope();
     const unique = [...new Set(codes.filter(Boolean))];
     const load = (code: string) => {
         const cached = detailByCode.get(code);
@@ -62,6 +116,7 @@ export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
         if (pending) return pending;
         const request = fetchContractInfo(code, 'STK')
             .then((info) => {
+                if (detailContext() !== scope) return null;
                 const detail: StockMeta = {
                     code: info.code,
                     name: info.name,
@@ -73,7 +128,9 @@ export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
                 return detail;
             })
             .catch(() => null)
-            .finally(() => detailLoadingByCode.delete(code));
+            .finally(() => {
+                if (detailLoadingByCode.get(code) === request) detailLoadingByCode.delete(code);
+            });
         detailLoadingByCode.set(code, request);
         return request;
     };
@@ -84,23 +141,22 @@ export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
 }
 
 export function loadStockIndex(): Promise<StockMeta[]> {
+    const scope = ensureDetailsScope();
     if (detailsCache) return Promise.resolve(detailsCache);
     if (detailsLoading) return detailsLoading;
-    detailsLoading = loadStockCatalog()
+    const request = loadStockCatalog()
         .then(async (catalog) => {
+            if (detailContext() !== scope) throw new Error('股票目錄載入期間伺服器已切換');
             const details = await loadStockDetails(catalog.map((stock) => stock.code));
-            // a partial index (some reads failed, e.g. the server was still
-            // starting) is returned but never kept: the next call retries
-            // the missing ones (per-code successes stay cached)
+            if (detailContext() !== scope) throw new Error('股票目錄載入期間伺服器已切換');
+            // Partial metadata is returned but retried next time.
             if (details.length >= new Set(catalog.map((stock) => stock.code).filter(Boolean)).size) detailsCache = details;
-            else detailsLoading = null;
             return details;
-        })
-        .catch((error) => {
-            detailsLoading = null;
-            throw error;
+        }).finally(() => {
+            if (detailsLoading === request) detailsLoading = null;
         });
-    return detailsLoading;
+    detailsLoading = request;
+    return request;
 }
 
 // substring match on name, prefix match on code — ranked so the actual
@@ -110,22 +166,23 @@ export function searchStocks(
     query: string,
     limit = 8,
 ): StockMeta[] {
-    const normalize = (value: string) => value.trim().replace(/臺/g, '台').toUpperCase();
+    const normalize = (value: string) => value.trim().normalize('NFKC').replace(/臺/g, '台').toUpperCase();
     const q = normalize(query);
     if (!q) return [];
     const scored: { s: StockMeta; score: number }[] = [];
     for (const s of index) {
         const name = normalize(s.name);
+        const aliases = (s.aliases ?? []).map(normalize);
         const code = normalize(s.code);
         const codeHit = code.startsWith(q);
-        const nameHit = name.includes(q);
+        const nameHit = name.includes(q) || aliases.some(alias => alias.includes(q));
         if (!codeHit && !nameHit) continue;
         let score = 0;
-        if (code === q || name === q) score -= 100; // exact
+        if (code === q || name === q || aliases.includes(q)) score -= 100; // exact
         if (codeHit) score -= 10;
         else if (name.startsWith(q)) score -= 5;
         // plain 4-digit equities rank above warrants/ETNs (6-char codes)
-        score += s.code.length === 4 ? 0 : 50;
+        score += s.code.length === 4 || s.kind === 'ETF' ? 0 : 50;
         score += s.name.length; // shorter names first
         scored.push({ s, score });
     }

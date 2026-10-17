@@ -34,38 +34,45 @@ export function CommandPalette({
     const [suggestions, setSuggestions] = useState<ProductSuggestion[]>([]);
     const [activeIndex, setActiveIndex] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
+    const composing = useRef(false);
+    const queryVersion = useRef(0);
 
     useEffect(() => {
         if (open) {
+            composing.current = false;
+            queryVersion.current += 1;
             setValue('');
             setError(false);
             setSuggestions([]);
             setActiveIndex(0);
-            setTimeout(() => inputRef.current?.focus(), 0);
+            const focusTimer = setTimeout(() => inputRef.current?.focus(), 0);
+            return () => clearTimeout(focusTimer);
         }
     }, [open]);
 
     useEffect(() => {
-        if (!open || !value.trim()) {
+        if (!open || !value.trim() || composing.current) {
             setSuggestions([]);
             setSearchError(false);
-            setSearching(false);
+            setSearching(open && composing.current && !!value.trim());
             return;
         }
         let active = true;
+        const requestVersion = queryVersion.current;
+        const isCurrent = () => active && requestVersion === queryVersion.current && !composing.current;
         setSearchError(false);
         setSearching(true);
         const timer = setTimeout(() => {
             void searchProducts(value, 8, { includeWarrants: true })
                 .then((items) => {
-                    if (active) {
+                    if (isCurrent()) {
                         setSuggestions(items);
                         setActiveIndex(0);
                         setSearching(false);
                     }
                 })
                 .catch(() => {
-                    if (active) {
+                    if (isCurrent()) {
                         setSuggestions([]);
                         setSearchError(true);
                         setSearching(false);
@@ -107,6 +114,7 @@ export function CommandPalette({
     };
 
     const submit = async (picked?: ProductSuggestion) => {
+        if (composing.current) return;
         // active row past the product suggestions → it's a panel command
         if (!picked && activeIndex >= suggestions.length && rowCount > 0) {
             addPanelAt(activeIndex - suggestions.length);
@@ -138,7 +146,21 @@ export function CommandPalette({
                     className={styles.input}
                     placeholder='輸入代碼跳轉商品（2330、TXFR1…）'
                     value={value}
+                    onCompositionStart={() => {
+                        composing.current = true;
+                        queryVersion.current += 1;
+                        setSuggestions([]);
+                        setActiveIndex(0);
+                        setSearchRetry((retry) => retry + 1);
+                    }}
+                    onCompositionEnd={(e) => {
+                        composing.current = false;
+                        queryVersion.current += 1;
+                        setValue(e.currentTarget.value);
+                        setSearchRetry((retry) => retry + 1);
+                    }}
                     onChange={(e) => {
+                        queryVersion.current += 1;
                         setValue(e.target.value);
                         setSuggestions([]);
                         setActiveIndex(0);
@@ -147,6 +169,7 @@ export function CommandPalette({
                         setError(false);
                     }}
                     onKeyDown={(e) => {
+                        if (composing.current || e.nativeEvent?.isComposing || e.keyCode === 229) return;
                         if (e.key === 'ArrowDown' && rowCount > 0) {
                             e.preventDefault();
                             setActiveIndex((index) => (index + 1) % rowCount);

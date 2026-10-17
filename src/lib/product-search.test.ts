@@ -1,5 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { ContractInfo } from './types/contract';
+import etfSnapshot from './data/etf-catalog.json';
 
 const mocks = vi.hoisted(() => ({
     base: 'http://127.0.0.1:21323',
@@ -74,6 +75,35 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('product search sources and related products', () => {
+    it('labels a supported ETF name and keeps its actual underlying-related products', async () => {
+        mocks.catalog.mockResolvedValue([{ code: '00679B', name: '元大美債20年', exchange: 'OTC', category: '', kind: 'ETF' }]);
+        mocks.futures.mockResolvedValue([contract('RZFR1', 'FUT', { name: '元大美債20年ETF期貨 近月', underlying_code: '00679B' })]);
+        const rows = await search('元大美債20年');
+        expect(rows[0]).toMatchObject({ code: '00679B', exchange: 'OTC', security_type: 'STK', detail: 'ETF' });
+        expect(rows.some(row => row.code === 'RZFR1')).toBe(true);
+        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: '00679B' });
+        expect(rows.some(row => row.code.startsWith('W'))).toBe(false);
+    });
+
+    it('does not strip 期貨 out of an exact official ETF full name', async () => {
+        const fund = etfSnapshot.entries.find(row => row.aliases?.some(alias => alias.includes('期貨')))!;
+        const officialName = fund.aliases!.find(alias => alias.includes('期貨'))!;
+        mocks.catalog.mockResolvedValue([{ ...fund, category: '', kind: 'ETF' }]);
+        mocks.futures.mockResolvedValue([]);
+        mocks.warrants.mockResolvedValue([]);
+        expect((await search(officialName))[0]).toMatchObject({ code: fund.code, detail: 'ETF', security_type: 'STK' });
+        expect(mocks.futureRoots).not.toHaveBeenCalled();
+        expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: fund.code });
+    });
+
+    it('labels a direct ETF code without requiring the stock catalog', async () => {
+        mocks.resolve.mockResolvedValue(contract('00679B', 'STK', { name: '元大美債20年', exchange: 'OTC' }));
+        mocks.futures.mockResolvedValue([]);
+        mocks.warrants.mockResolvedValue([]);
+        expect((await search('00679B'))[0]).toMatchObject({ code: '00679B', detail: 'ETF · 直接代碼', exchange: 'OTC' });
+        expect(mocks.catalog).not.toHaveBeenCalled();
+    });
+
     it('finds the OTC index even if stock and derivative catalogs fail', async () => {
         mocks.catalog.mockRejectedValue(new Error('503 stock'));
         mocks.futureRoots.mockRejectedValue(new Error('503 futures'));

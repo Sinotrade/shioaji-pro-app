@@ -13,6 +13,7 @@ import { indexSearchSuggestions } from './index-search';
 import { getApiBase } from './runtime';
 import { todayStr } from './utils/date';
 import type { ContractInfo, SecurityType } from './types/contract';
+import { etfNameFor } from './etf-catalog';
 
 export interface ProductSuggestion {
     code: string;
@@ -29,8 +30,20 @@ interface CachedRequest<T> {
 }
 const CACHE_TTL_MS = 60_000;
 const CACHE_LIMIT = 16;
+const SOURCE_DEADLINE_MS = 1200;
 const rootsCache = new Map<string, CachedRequest<ContractRoot[]>>();
 const contractsCache = new Map<string, CachedRequest<ContractInfo[]>>();
+
+// Bound the search's wait, not the daemon's HTTP work. Late results cannot
+// re-enter a timed-out cache entry, and rejected sources remain retryable.
+function withDeadline<T>(request: () => Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('商品資料來源回應逾時，請重試')), SOURCE_DEADLINE_MS);
+    });
+    return Promise.race([Promise.resolve().then(request), timeout])
+        .finally(() => clearTimeout(timer));
+}
 
 // A search often revisits the same underlying via its name, code and type
 // suffix. Share pending requests, cache successes briefly and retry failures.
@@ -73,7 +86,7 @@ function asSuggestion(contract: ContractInfo, detail?: string): ProductSuggestio
 }
 
 function stockSuggestion(stock: StockMeta): ProductSuggestion {
-    return { ...stock, security_type: 'STK', detail: stock.category ? `股票 · ${stock.category}` : '股票' };
+    return { ...stock, security_type: 'STK', detail: stock.kind === 'ETF' ? 'ETF' : stock.category ? `股票 · ${stock.category}` : '股票' };
 }
 
 function derivativeSort(a: ContractInfo, b: ContractInfo) {
@@ -85,7 +98,7 @@ function derivativeSort(a: ContractInfo, b: ContractInfo) {
 }
 
 function normalizeSearchText(value: string) {
-    return value.trim().replace(/臺/g, '台').toUpperCase();
+    return value.trim().normalize('NFKC').replace(/臺/g, '台').toUpperCase();
 }
 
 function matchingRoots(roots: ContractRoot[], lookup: string, raw: string) {
@@ -110,7 +123,9 @@ function interleave<T>(groups: T[][], limit: number): T[] {
 }
 
 function dateField(value?: string): string | undefined {
-    return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : undefined;
 }
 
 function currentWarrant(row: ContractInfo, day: string) {
@@ -136,11 +151,14 @@ export async function searchProducts(
     // as 臺指選擇權波動率指數 is not an option-contract query.
     const indexSuggestions = indexSearchSuggestions(raw);
     const exactIndex = indexSuggestions.find((row) => normalizeSearchText(row.name) === raw || row.code === normalizeContractCode(raw, 'IND'));
-    const wantsWarrants = !exactIndex && /(?:權證|warrant)/i.test(raw);
+    // Static identities are already sufficient for typed selection; the
+    // consumer obtains fresh Info on selection rather than waiting for STK.
+    if (exactIndex) return [exactIndex, ...indexSuggestions.filter(row => row.code !== exactIndex.code)].slice(0, limit);
+    const wantsWarrants = /(?:權證|warrant)/i.test(raw);
     if (wantsWarrants && !options.includeWarrants) return [];
-    const wantsFutures = !exactIndex && (/(?:期貨|個股期|future)/i.test(raw) || /期$/.test(raw));
-    const wantsOptions = !exactIndex && /(?:選擇權|option)/i.test(raw);
-    const lookup = exactIndex ? raw : raw.replace(/(?:權證|warrant|期貨|個股期|future|選擇權|option)/gi, '').replace(/期$/, '').trim() || raw;
+    let wantsFutures = /(?:期貨|個股期|future)/i.test(raw) || /期$/.test(raw);
+    let wantsOptions = /(?:選擇權|option)/i.test(raw);
+    let lookup = raw.replace(/(?:權證|warrant|期貨|個股期|future|選擇權|option)/gi, '').replace(/期$/, '').trim() || raw;
     const day = todayStr();
     const base = getApiBase();
     const scope = JSON.stringify([base, day]);
@@ -153,17 +171,26 @@ export async function searchProducts(
             return fallback;
         }
     };
-    const [catalog, direct] = await Promise.all([
-        read(loadStockCatalog, [] as StockMeta[]),
-        /^[A-Z0-9]+$/.test(raw)
-            ? read(() => {
-                const code = normalizeContractCode(raw, 'IND');
-                return resolveContract(code, code !== raw ? 'IND' : undefined);
-            }, null as ContractInfo | null, true)
-            : Promise.resolve(null),
-    ]);
+    const direct = /^[A-Z0-9]+$/.test(raw)
+        ? await read(() => withDeadline(() => {
+            const code = normalizeContractCode(raw, 'IND');
+            return resolveContract(code, code !== raw ? 'IND' : undefined);
+        }), null as ContractInfo | null, true)
+        : null;
+    // A successful direct lookup is its own authoritative identity/name.
+    // Unrelated stock-catalog loading must not delay it or its related search.
+    const catalog = direct ? [] : await read(() => withDeadline(loadStockCatalog), [] as StockMeta[]);
+    // Official fund names can themselves contain 「期貨」. An exact ETF
+    // identity is not a request to strip that word and search futures roots.
+    const exactEtfName = catalog.find(stock => stock.kind === 'ETF' &&
+        (normalizeSearchText(stock.name) === raw || stock.aliases?.some(alias => normalizeSearchText(alias) === raw)));
+    if (exactEtfName) {
+        lookup = raw;
+        wantsFutures = false;
+        wantsOptions = false;
+    }
     const stockMatches = searchStocks(catalog, lookup, limit);
-    const exactStock = catalog.find((stock) => normalizeSearchText(stock.code) === lookup || normalizeSearchText(stock.name) === lookup) ??
+    const exactStock = catalog.find((stock) => normalizeSearchText(stock.code) === lookup || normalizeSearchText(stock.name) === lookup || stock.aliases?.some(alias => normalizeSearchText(alias) === lookup)) ??
         (direct?.security_type === 'STK' ? { ...direct, category: direct.category ?? '', exchange: direct.exchange ?? '' } : undefined);
     const inScope = async <T,>(request: () => Promise<T>) => {
         if (getApiBase() !== base) throw new Error('商品搜尋期間伺服器已切換，請重新搜尋');
@@ -172,12 +199,12 @@ export async function searchProducts(
         return result;
     };
     const roots = (kind: 'futures' | 'options') => read(() => cached(rootsCache, scope, kind,
-        () => inScope(kind === 'futures' ? fetchFuturesRoots : fetchOptionRoots)), [] as ContractRoot[]);
+        () => inScope(() => withDeadline(kind === 'futures' ? fetchFuturesRoots : fetchOptionRoots))), [] as ContractRoot[]);
     const contracts = (key: string, request: () => Promise<ContractInfo[]>) =>
-        read(() => cached(contractsCache, scope, key, () => inScope(request)), [] as ContractInfo[]);
+        read(() => cached(contractsCache, scope, key, () => inScope(() => withDeadline(request))), [] as ContractInfo[]);
 
     const loadFutures = async () => {
-        if (exactIndex || wantsOptions || wantsWarrants) return [];
+        if (wantsOptions || wantsWarrants || (direct && direct.security_type !== 'STK')) return [];
         if (exactStock) {
             return (await contracts(`future-underlying:${exactStock.code}`, () => fetchFutures({ underlyingCode: exactStock.code })))
                 .filter((row) => row.underlying_code === exactStock.code).sort(derivativeSort).slice(0, 6);
@@ -213,9 +240,9 @@ export async function searchProducts(
         `${row.call_put === 'P' ? '認售' : row.call_put === 'C' ? '認購' : '權證'} · ${row.expiry_date ?? ''}${warrantDateWarning(row)}`));
     const priority: ProductSuggestion[] = [];
     if (direct && (direct.security_type !== 'WRT' || options.includeWarrants && currentWarrant(direct, day))) {
-        priority.push(asSuggestion(direct, `直接代碼${direct.security_type === 'WRT' ? warrantDateWarning(direct) : ''}`));
+        const etf = direct.security_type === 'STK' && etfNameFor(direct.code, direct.exchange ?? '');
+        priority.push(asSuggestion(direct, `${etf ? 'ETF · ' : ''}直接代碼${direct.security_type === 'WRT' ? warrantDateWarning(direct) : ''}`));
     }
-    if (exactIndex) priority.push(exactIndex);
     if (exactStock) priority.push(stockSuggestion(exactStock));
     const groups = wantsOptions ? [optionSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)] : wantsWarrants
         ? [warrantSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)]
