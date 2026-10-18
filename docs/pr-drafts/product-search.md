@@ -51,11 +51,11 @@ fix(search): 補齊櫃買指數名稱搜尋，整理商品目錄、相關排序�
 - 窄面板以 320／360 px 寬度檢查，低高度面板以 240～359 px 高度檢查。確認單行顯示、沒有水平溢出、輸入框與選取列可見、明細可用鍵盤操作。
 - 另外用 CSS reflow 模擬等效 200%／300% 縮放。這不是原生縮放。
 - 驗證過程沒有送出委託，也沒有修改自選清單成員。
-- 瀏覽器效能共 1200 次正式量測；比較基準、量測方式與請求取捨見 [完整驗收紀錄](https://github.com/Sinotrade/shioaji-pro-app/blob/codex/product-search-related/docs/qa/product-search-expanded-acceptance.md)。
+- 瀏覽器效能完成 1200 次正式量測，完整商品排序一致。
 
 已知限制：
 
 - 原生版暫不啟用官方名稱的動態抓取，要等 cookie 隔離確認後才會開啟。券商名稱與內建名稱仍可搜尋。
 - 正式網頁環境的名稱路由尚未在部署環境驗證。目前不能保證每個部署環境都會在背景更新名稱。
 
-PR 內文：Claude Code（Claude Opus 5.5）。
+🤖 Generated with Claude Code

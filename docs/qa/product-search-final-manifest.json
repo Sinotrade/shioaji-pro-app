@@ -2242,14 +2242,16 @@
       "metadataSha256": "437e13a1a9f60f3ccdf6e722c142b3999957c671d4575e998abeb085cb5e4229",
       "rawEvidenceLocalOnly": true,
       "file": "../pr-drafts/product-search.md",
-      "currentFileSha256": "4d8d32c802935a1c84da44ae14b0a2848b5f8658ca50753bce22b057164ce2c2",
+      "currentFileSha256": "a66791285f79da6bd0957d81cfe31dbecbd55ee89db7f7a7762399135c0b0e23",
       "scope": "Actual Claude wrote the public PR from current sanitized facts and user-selected recent public project Before/After/How examples; writing only, no new code review/tests/browser/deployment",
       "exactNormalizedTrimmedTextMatch": false,
       "rootEditorialAdjustments": [
         "Normalized line endings and trailing newline",
         "Replaced performance explanation with the two exact sentences supplied by the user; detailed methods and request tradeoffs remain in the linked QA document",
         "Added the verified 1200-sample QA link and the user-requested Claude Code credit",
-        "Formatting, Taiwan-Chinese terminology and spacing; clarified rapid typing and OTC-index query scope; updated test wording to the publication-preflight rerun"
+        "Formatting, Taiwan-Chinese terminology and spacing; clarified rapid typing and OTC-index query scope; updated test wording to the publication-preflight rerun",
+        "Replaced the closing credit with the exact user-supplied line: 🤖 Generated with Claude Code",
+        "Removed the full acceptance-record link from the public PR per the user; retained only the 1200-sample verification result"
       ],
       "priorWriter": {
         "model": "claude-opus-5-5",
