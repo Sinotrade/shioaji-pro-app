@@ -1,5 +1,7 @@
 # 商品搜尋驗收與交接
 
+> 本頁保留較早實作、瀏覽器及夜盤證據，程序、instance 與測試數不代表本輪現況。目前修正、動態 ETF 名稱、效能與 PM 驗收以 [本輪修正驗收](product-search-remediation.md) 為準；舊夜盤結果不能替代新版本的即時行情驗證。
+
 本次修正從官方 `main` 獨立開發，完成搜尋、消費端與交易入口防護。驗收分為真實商品資料、實際瀏覽器畫面及 mock 故障測試；三者證明的範圍不同。
 
 2026-10-17 下午補充驗證發現的中文組字 Enter、目錄恢復與快取邊界均已修補；同時完成 ETF 名稱補齊。該輪受測版為 `4449807439a121d057eb101e5ddb150c144f9b66`，後續期貨排序另依下節規則修正與驗收。基線全綠不等於完整驗證通過，完整證據與保留限制見 [補充驗證](gemini-product-search-results.md) 及 [ETF 名稱交接](etf-search-catalog.md)。
@@ -133,7 +135,7 @@
 
 本機證據在 `work/search-efficiency/`：`live-baseline-results.json`、`live-probe-results.json`、`optimized-vitest.json`、`optimized-mutation-summary.json` 及 `current-sse.json`。可用 `node work/search-efficiency/run-live-probe.mjs --baseline`、移除旗標跑新版；此診斷只在已授權隔離服務上執行，不納 CI。正式 91 項回歸在 `src/`，不用 work 才能重現。
 
-指定 Claude Opus 5.5 ultracode 審查仍因 OAuth 過期待重新登入；不是改用其他模型代替。[審查狀態與標準](claude-product-search-review.md)。
+重新登入後，指定 Claude Opus 5.5 ultracode 已完成一般正確性、程式寫法／效能與 PR 寫法三輪回覆，本機另完成逐項複核。既有 3695 項回歸仍通過，但新診斷有 6 個預期正確行為斷言失敗，涵蓋取消、catalog 佇列隔離、Enter 與服務切換／分支清理，尚未修改正式程式。另以合成 50 列的測試記憶體原型確認，穩定三個 callback 可讓每階段額外列 render 由 50 次降為 0；這不是瀏覽器耗時或真實報價驗收。原始答案、反例與限制見 [審查與複核](claude-product-search-review.md)。
 
 ## 尚未驗證與後續方案
 

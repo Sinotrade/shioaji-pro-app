@@ -1,4 +1,6 @@
 const SEARCH_CONCURRENCY = 4;
+// Both search inputs coalesce typing at the same cadence before using the shared queue.
+export const PRODUCT_SEARCH_DEBOUNCE_MS = 100;
 
 interface ScheduledRequest {
     start: (release: () => void) => void;
@@ -46,6 +48,7 @@ interface RequestReader<T> {
     resolve: (value: T) => void;
     reject: (error: unknown) => void;
     detach: () => void;
+    signal?: AbortSignal;
 }
 
 interface PendingRequest<T> {
@@ -77,14 +80,19 @@ function timeoutError(): Error {
 /**
  * Same-key readers share one metadata request but keep independent cancellation.
  * `limit` bounds successful LRU entries; pending readers are never evicted by it.
- * Deadlines include queue time. Releasing an aborted slot does not guarantee that
- * an underlying transport/server which ignores AbortSignal has stopped working.
+ * The default search queue has four slots and deadlines include queue time.
+ * Shared catalogs used outside search may opt out of that queue, keeping the
+ * same cancellation/deadline/cache semantics without being starved by searches.
+ * Releasing an aborted slot does not guarantee that an underlying transport or
+ * server which ignores AbortSignal has stopped working.
  */
 export class SearchRequestCache<T> {
     private readonly pending = new Map<string, PendingRequest<T>>();
     private readonly completed = new Map<string, CachedResult<T>>();
 
-    constructor(private readonly options: { ttlMs: number; limit: number; deadlineMs: number }) {
+    constructor(private readonly options: {
+        ttlMs: number; limit: number; deadlineMs: number; queue?: 'search' | 'none';
+    }) {
         if (!Number.isFinite(options.ttlMs) || options.ttlMs < 0
             || !Number.isInteger(options.limit) || options.limit < 1
             || !Number.isFinite(options.deadlineMs) || options.deadlineMs <= 0) {
@@ -127,7 +135,7 @@ export class SearchRequestCache<T> {
                 if (request.readers.size === 0) this.settle(request, { ok: false, error });
             };
             const reader: RequestReader<T> = {
-                resolve, reject,
+                resolve, reject, signal,
                 detach: () => signal?.removeEventListener('abort', onAbort),
             };
             request.readers.add(reader);
@@ -136,10 +144,23 @@ export class SearchRequestCache<T> {
         });
 
         if (isNew && !request.closed) {
-            request.cancelQueued = scheduleRequest(release => {
+            const start: ScheduledRequest['start'] = release => {
                 request.release = release;
                 if (request.closed || this.pending.get(key) !== request) {
                     release();
+                    return;
+                }
+                // A shared signal's earlier abort listener can release a slot
+                // before its queued readers receive their own abort callbacks.
+                // Inspect their state now rather than dispatching cancelled work.
+                for (const reader of request.readers) {
+                    if (!reader.signal?.aborted) continue;
+                    request.readers.delete(reader);
+                    reader.detach();
+                    reader.reject(abortError());
+                }
+                if (request.readers.size === 0) {
+                    this.settle(request, { ok: false, error: abortError() });
                     return;
                 }
                 // A preceding timeout can release a slot before this entry's
@@ -149,7 +170,9 @@ export class SearchRequestCache<T> {
                     return;
                 }
                 void this.run(request, load);
-            });
+            };
+            if (this.options.queue === 'none') start(() => undefined);
+            else request.cancelQueued = scheduleRequest(start);
         }
         return result;
     }

@@ -1,0 +1,19 @@
+**判定：接受 LOCAL DRAFT/DEV，無 must-fix。**
+
+**依據（僅據提供文字）**
+- 兩處窄容器規則只刪除 `order:-1`：`watchlist.css.ts` 的 `suggestName`，以及 `command-palette.css.ts` 的 `resultName`。
+- flex、字重與 360px seam 都未變。
+- 視覺順序回到 DOM 的 code/name/meta，也消除了視覺順序與閱讀順序不一致的問題。
+- `product-search-progressive.test.tsx:874–875` 拒絕 code/name 出現任何 order。
+- 修改前兩個案例先失敗（RED2），修改後 136 PASS。
+- 瀏覽器樣本顯示 codeX 小於 nameX，computed order 為 0。
+
+**非阻擋觀察**
+- 第 874 行的正則攔不到 `'order':` 寫法或父層 `row-reverse`；瀏覽器樣本已間接涵蓋。
+- watchlist 只取樣 320px，未見 360px。
+- 摘錄只見一則 CSS 案例，palette 案例依 QA 報告。
+
+**限制**：不核准 production、native、IME、報價或實際瀏覽器延遲。
+
+**PR bullet（取代原名稱在前的說明）**
+- 商品搜尋結果在所有容器寬度都依 DOM 順序顯示「代號在前、名稱在後」；窄面板（≤360px）不再用 CSS order 重排，只調整 flex 與字重，並以視覺裁切保留 metadata。

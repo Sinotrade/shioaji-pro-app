@@ -1,0 +1,54 @@
+# M1–M5 文件化收斂審查（僅依本次封包文字）
+
+## 結論
+
+- **已關閉**：M1、M2、M4。
+- **M3**：PR 與 conclusion 已關閉，但 plan 區塊仍有殘留（見 R3）。
+- **M5 有條件未關**：見 R1。
+- R1–R3 修正後，可作受控本機 LOCAL DRAFT/DEV 非退化證據。
+- 行情、市場負載、IME、原生仍為 UNVERIFIED。
+
+## 殘餘必修
+
+**R1（M5）index.html 未證明在 automation 之前已還原**
+- **位置**：automation.sourceBefore、headAndIndexUnchanged；cleanup 沒有時間戳。
+- **依據**：
+  - 各 phase 的 indexSha256 都不等於還原值 fcee…，但 other86FrozenSourcesUnchanged 仍為 true。由此推得 index.html 不在 87 檔凍結集內。
+  - F 狀態的 sourceTree 本身就是 6666…，所以 sourceTree 相符無法證明 index.html 已還原。
+- **反例**：18:44:45 時 index.html 若仍是 F4 注入版（eb36…），freeze 與 tsc 照樣通過，但 vite build 會打包 loader。現有欄位無法區分這兩種情況。
+- **修正**：
+  - 附上 automation 開始時 index.html 的 sha256，或早於 18:44:45 的還原時間戳。
+  - 將 headAndIndexUnchanged 改名，明確指 git HEAD／git index。
+
+**R2　PR 未限定 B 的範圍**
+- **位置**：PR 第一點的「各版本」。
+- **反例**：讀者會理解成整個 PR 對 upstream 的比較。但依 limits 第 2 點，B 只是把 f577 的 searchStocks 替換進 final 程式碼。
+- **修正**：補上「B 僅替換 searchStocks，非整個 PR 比較；單一本機 Chromium、Vite dev 模式」。
+
+**R3　proof 擷取時點未定義**
+- **位置**：phases[].proof.recordedAt。
+- **依據**：F3 與 B1 只相隔 1.36 秒，B1→B2、B2→F4 則各約 4 分 04 秒。推測 F3 在結束時擷取，其餘在開始時擷取（假設）。
+- **修正**：
+  - 註明各 proof 的擷取時點，宣稱降為「phase 邊界 hash」。
+  - plan.scope 仍寫「actual trusted keyboard input」，應加註「已由 inputPipelineScope 取代」。
+
+## 已核對（僅文字層）
+
+- 六組 p95、−6.6／+1.3 ms 及對應百分比正確。
+- 每組合併 p95 都落在兩個 phase 的 p95 之間。
+- 表格與 phaseStats 的 24 格一致。
+- 5760、4320、1200、240 等總數一致。
+- B 的重建 hash 與 B1、B2 相符，足以支持 M2。
+- 同版本 phase 間 p95 差距可達 4.4 ms（palette／00981，B1 對 B2），大於多數組別的版本差，支持「未建立加速」。
+
+## 處置
+
+- **PM**：R1–R3 修正後，採用這兩點 PR 文字。
+- **架構**：不需修改 source；observer 未進入 production 仍屬陳述。
+- **驗收**：瀏覽器非退化為有條件 PASS（受控本機）；其餘維持 UNVERIFIED。
+
+## 限制
+
+- 未看到 raw、proof 檔或截圖，也未執行任何測試。
+- automation 六項命令在 18.2 秒內完成，其合理性未驗證（tsc -b 可能是增量建置）。
+- 依系統指示未使用任何工具，也未建立計畫檔。

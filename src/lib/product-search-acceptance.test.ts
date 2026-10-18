@@ -6,9 +6,9 @@ import type { ContractInfo } from './types/contract';
 const mocks = vi.hoisted(() => ({
     catalog: vi.fn(), futures: vi.fn(), futureRoots: vi.fn(), options: vi.fn(), optionRoots: vi.fn(),
     warrants: vi.fn(), resolve: vi.fn(), info: vi.fn(), prime: vi.fn(), fetchLists: vi.fn(),
-    add: vi.fn(), remove: vi.fn(), sync: vi.fn(), createList: vi.fn(), rename: vi.fn(),
+    add: vi.fn(), remove: vi.fn(), sync: vi.fn(), createList: vi.fn(), rename: vi.fn(), bases: vi.fn(),
 }));
-vi.mock('./runtime', () => ({ getApiBase: () => 'http://127.0.0.1:21323' }));
+vi.mock('./runtime', () => ({ getApiBase: () => 'http://127.0.0.1:21323', isTauri: false }));
 vi.mock('./utils/date', () => ({ todayStr: () => '2026-10-17' }));
 vi.mock('./shioaji', async (original) => ({
     ...await original<object>(),
@@ -18,6 +18,7 @@ vi.mock('./shioaji', async (original) => ({
     fetchWatchlists: mocks.fetchLists, addWatchlistContracts: mocks.add, removeWatchlistContracts: mocks.remove,
     syncWatchlist: mocks.sync, createWatchlist: mocks.createList, renameWatchlist: mocks.rename,
     fetchSnapshots: async () => [],
+    fetchContracts: mocks.bases,
 }));
 vi.mock('./stock-index', async (original) => ({ ...await original<object>(), loadStockCatalog: mocks.catalog }));
 vi.mock('./contracts-cache', () => ({
@@ -56,6 +57,10 @@ async function mountWatchlist() {
 }
 
 beforeEach(() => {
+    mocks.bases.mockResolvedValue({ region: 'TW', contracts: [
+        { code: 'IX0043', security_type: 'IND', exchange: 'OTC' },
+        { code: 'TAIWANVIX', security_type: 'IND', exchange: 'TAIFEX' },
+    ] });
     vi.useFakeTimers();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', {

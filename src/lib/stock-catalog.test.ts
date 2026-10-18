@@ -29,9 +29,9 @@ describe('stock catalog identity, source recovery and scope', () => {
     it('shares concurrent source reads and briefly caches successes', async () => {
         const { loadStockCatalog } = await import('./stock-index');
         const [a, b] = await Promise.all([loadStockCatalog(), loadStockCatalog()]);
-        expect(a).toEqual(b);
+        expect(a).toBe(b);
         expect(a[0]?.name).toBe('台積電');
-        await loadStockCatalog();
+        expect(await loadStockCatalog()).toBe(a);
         expect(m.baseRows).toHaveBeenCalledTimes(1);
         expect(m.names).toHaveBeenCalledTimes(1);
     });
@@ -142,6 +142,105 @@ describe('stock catalog identity, source recovery and scope', () => {
         old.resolve({ contracts: [base('2330')] });
         await rejected;
         expect((await loadStockCatalog())[0]?.code).toBe('3481');
+    });
+    it.each([
+        { action: 'ADD', base_changed: true, info_changed: false },
+        { action: 'UPDATE', base_changed: false, info_changed: true },
+        { action: 'RECONNECT', base_changed: true, info_changed: true },
+        { action: 'MAINTENANCE', base_changed: true, info_changed: true },
+    ])('refreshes Base, names and typed details after a same-service $action event', async change => {
+        const { loadStockCatalog, loadStockDetails } = await import('./stock-index');
+        const { invalidateProductCatalog } = await import('./product-catalog-version');
+        const before = await loadStockCatalog();
+        await loadStockDetails(['2330']);
+        m.baseRows.mockResolvedValue({ contracts: [base('3481')] });
+        m.names.mockResolvedValue([{ underlying_code: '3481', name: '群創' }]);
+        m.info.mockResolvedValue({ code: '2330', name: 'Synthetic fresh Info', category: '24', exchange: 'TSE' });
+
+        invalidateProductCatalog({ region: 'TW', ...change });
+
+        const after = await loadStockCatalog();
+        expect(after).not.toBe(before);
+        expect(after[0]).toMatchObject({ code: '3481', name: '群創' });
+        expect((await loadStockDetails(['2330']))[0]?.name).toBe('Synthetic fresh Info');
+        expect(m.baseRows).toHaveBeenCalledTimes(2);
+        expect(m.names).toHaveBeenCalledTimes(2);
+        expect(m.info).toHaveBeenCalledTimes(2);
+    });
+    it('keeps the catalog and details cached after foreign or unchanged events', async () => {
+        const { loadStockCatalog, loadStockDetails } = await import('./stock-index');
+        const { invalidateProductCatalog } = await import('./product-catalog-version');
+        const before = await loadStockCatalog();
+        await loadStockDetails(['2330']);
+        invalidateProductCatalog({ region: 'US', base_changed: true, info_changed: true });
+        invalidateProductCatalog({ region: 'TW', base_changed: false, info_changed: false });
+        expect(await loadStockCatalog()).toBe(before);
+        await loadStockDetails(['2330']);
+        expect(m.baseRows).toHaveBeenCalledTimes(1);
+        expect(m.names).toHaveBeenCalledTimes(1);
+        expect(m.info).toHaveBeenCalledTimes(1);
+    });
+    it('rejects old pending sources and ignores old Info after a same-service refresh', async () => {
+        const oldBase = deferred<{ contracts: ReturnType<typeof base>[] }>();
+        const oldInfo = deferred<{ code: string; name: string; category: string; exchange: string }>();
+        m.baseRows.mockReturnValueOnce(oldBase.promise);
+        m.info.mockReturnValueOnce(oldInfo.promise);
+        const { loadStockCatalog, loadStockDetails } = await import('./stock-index');
+        const { invalidateProductCatalog } = await import('./product-catalog-version');
+        const oldCatalog = loadStockCatalog();
+        const rejected = expect(oldCatalog).rejects.toThrow('伺服器已切換');
+        const oldDetails = loadStockDetails(['2330']);
+        invalidateProductCatalog({ region: 'TW', base_changed: true, info_changed: true });
+        await rejected;
+        m.baseRows.mockResolvedValue({ contracts: [base('3481')] });
+        m.info.mockResolvedValue({ code: '2330', name: 'Synthetic current', category: '24', exchange: 'TSE' });
+        expect((await loadStockCatalog())[0]?.code).toBe('3481');
+        expect((await loadStockDetails(['2330']))[0]?.name).toBe('Synthetic current');
+        oldBase.resolve({ contracts: [base('2330')] });
+        oldInfo.resolve({ code: '2330', name: 'Synthetic stale', category: '24', exchange: 'TSE' });
+        expect(await oldDetails).toEqual([]);
+        expect((await loadStockCatalog())[0]?.code).toBe('3481');
+        expect((await loadStockDetails(['2330']))[0]?.name).toBe('Synthetic current');
+    });
+    it('refreshes individual typed details and the assembled full index after the short TTL', async () => {
+        const { loadStockDetails, loadStockIndex } = await import('./stock-index');
+        expect((await loadStockDetails(['2330']))[0]?.name).toBe('2330');
+        await loadStockIndex();
+        expect(m.info).toHaveBeenCalledTimes(1);
+        m.info.mockResolvedValue({ code: '2330', name: 'Synthetic new name', category: '24', exchange: 'TSE' });
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect((await loadStockIndex())[0]?.name).toBe('Synthetic new name');
+        expect((await loadStockDetails(['2330']))[0]?.name).toBe('Synthetic new name');
+        expect(m.info).toHaveBeenCalledTimes(2);
+        expect(m.baseRows).toHaveBeenCalledTimes(2);
+    });
+    it('retries failed typed details instead of caching a permanent missing name', async () => {
+        m.info.mockRejectedValueOnce(new Error('Synthetic Info outage'));
+        const { loadStockDetails } = await import('./stock-index');
+        expect(await loadStockDetails(['2330'])).toEqual([]);
+        expect((await loadStockDetails(['2330']))[0]?.code).toBe('2330');
+        expect(m.info).toHaveBeenCalledTimes(2);
+    });
+    it('does not extend an older Info TTL when the complete index is assembled later', async () => {
+        const { loadStockDetails, loadStockIndex } = await import('./stock-index');
+        await loadStockDetails(['2330']);
+        await vi.advanceTimersByTimeAsync(59_000);
+        await loadStockIndex();
+        m.info.mockResolvedValue({ code: '2330', name: 'Synthetic after expiry', category: '24', exchange: 'TSE' });
+        await vi.advanceTimersByTimeAsync(1000);
+        expect((await loadStockIndex())[0]?.name).toBe('Synthetic after expiry');
+        expect(m.info).toHaveBeenCalledTimes(2);
+    });
+    it('does not extend an older Base TTL when complete Info is loaded later', async () => {
+        const { loadStockCatalog, loadStockIndex } = await import('./stock-index');
+        await loadStockCatalog();
+        await vi.advanceTimersByTimeAsync(59_000);
+        await loadStockIndex();
+        m.baseRows.mockResolvedValue({ contracts: [base('3481')] });
+        m.names.mockResolvedValue([{ underlying_code: '3481', name: '群創' }]);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect((await loadStockIndex())[0]?.code).toBe('3481');
+        expect(m.baseRows).toHaveBeenCalledTimes(2);
     });
 });
 

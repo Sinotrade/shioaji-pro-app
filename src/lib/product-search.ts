@@ -1,4 +1,5 @@
 import {
+    fetchContractInfo,
     fetchFutures,
     fetchFuturesRoots,
     fetchOptionRoots,
@@ -8,13 +9,15 @@ import {
     resolveContract,
     type ContractRoot,
 } from './shioaji';
-import { loadStockCatalog, searchStocks, type StockMeta } from './stock-index';
+import { loadStockCatalog, searchStocks, stockDisplayMeta, type StockMeta } from './stock-index';
 import { indexSearchSuggestions } from './index-search';
 import { getApiBase } from './runtime';
 import { todayStr } from './utils/date';
 import type { ContractInfo, SecurityType } from './types/contract';
-import { etfNameFor } from './etf-catalog';
+import { etfNameForLive, getEtfNamesVersion } from './etf-runtime-catalog';
 import { SearchRequestCache } from './search-request';
+import { getProductCatalogVersion, subscribeProductCatalog } from './product-catalog-version';
+import { loadIndexSuggestions } from './index-catalog';
 
 export interface ProductSuggestion {
     code: string;
@@ -22,6 +25,7 @@ export interface ProductSuggestion {
     security_type: Exclude<SecurityType, null>;
     exchange: string;
     detail: string;
+    kind?: 'ETF';
     contract?: ContractInfo;
 }
 
@@ -31,9 +35,26 @@ const SOURCE_DEADLINE_MS = 1200;
 const cacheOptions = { ttlMs: CACHE_TTL_MS, limit: CACHE_LIMIT, deadlineMs: SOURCE_DEADLINE_MS };
 const rootsCache = new SearchRequestCache<ContractRoot[]>(cacheOptions);
 const contractsCache = new SearchRequestCache<ContractInfo[]>(cacheOptions);
+// Only a validated name is retained here; quotes and catalog identities stay
+// with their existing sources. This fallback never enriches the stock catalog.
+const stockNamesCache = new SearchRequestCache<string>(cacheOptions);
 // Direct Info can change intraday. Share only the in-flight resolution, not
 // successful values or 404s, and retain the typed identity in the key.
 const directRequests = new SearchRequestCache<ContractInfo>({ ...cacheOptions, ttlMs: 0 });
+let activeCatalogVersion = getProductCatalogVersion();
+function currentCatalogVersion(): number {
+    const version = getProductCatalogVersion();
+    if (version !== activeCatalogVersion) {
+        activeCatalogVersion = version;
+        rootsCache.clear();
+        contractsCache.clear();
+        stockNamesCache.clear();
+        directRequests.clear();
+    }
+    return version;
+}
+const unsubscribeCatalog = subscribeProductCatalog(() => { currentCatalogVersion(); });
+if (import.meta.hot) import.meta.hot.dispose(unsubscribeCatalog);
 
 // The catalog is a composite of two independently shared sources. Do not
 // occupy a request slot while waiting for those sources to acquire theirs.
@@ -146,14 +167,36 @@ function warrantDateWarning(row: ContractInfo) {
         ? ' · 交易日期待確認' : '';
 }
 
+interface ProductSearchOptions {
+    includeWarrants?: boolean;
+    signal?: AbortSignal;
+    onUpdate?: (rows: ProductSuggestion[]) => void;
+}
+
 export async function searchProducts(
     rawQuery: string,
     limit = 10,
-    options: {
-        includeWarrants?: boolean;
-        signal?: AbortSignal;
-        onUpdate?: (rows: ProductSuggestion[]) => void;
-    } = {},
+    options: ProductSearchOptions = {},
+): Promise<ProductSuggestion[]> {
+    // Own only this search's readers. A fatal branch failure must detach its
+    // siblings without aborting a source still shared by another search.
+    const controller = new AbortController();
+    const abort = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
+    try {
+        return await searchProductsForRequest(rawQuery, limit, { ...options, signal: controller.signal }, error => controller.abort(error));
+    } finally {
+        options.signal?.removeEventListener('abort', abort);
+        controller.abort();
+    }
+}
+
+async function searchProductsForRequest(
+    rawQuery: string,
+    limit: number,
+    options: ProductSearchOptions,
+    abortSearch: (error: unknown) => void,
 ): Promise<ProductSuggestion[]> {
     const assertActive = () => {
         if (options.signal?.aborted) throw options.signal.reason ?? new DOMException('aborted', 'AbortError');
@@ -164,11 +207,8 @@ export async function searchProducts(
     limit = Math.floor(limit);
     // Match the complete name before interpreting type words: an index such
     // as 臺指選擇權波動率指數 is not an option-contract query.
-    const indexSuggestions = indexSearchSuggestions(raw);
-    const exactIndex = indexSuggestions.find((row) => normalizeSearchText(row.name) === raw || row.code === normalizeContractCode(raw, 'IND'));
-    // Static identities are already sufficient for typed selection; the
-    // consumer obtains fresh Info on selection rather than waiting for STK.
-    if (exactIndex) return [exactIndex, ...indexSuggestions.filter(row => row.code !== exactIndex.code)].slice(0, limit);
+    const indexCandidates = indexSearchSuggestions(raw);
+    const exactIndex = indexCandidates.find((row) => normalizeSearchText(row.name) === raw || row.code === normalizeContractCode(raw, 'IND'));
     const wantsWarrants = /(?:權證|warrant)/i.test(raw);
     if (wantsWarrants && !options.includeWarrants) return [];
     let wantsFutures = /(?:期貨|個股期|future)/i.test(raw) || /期$/.test(raw);
@@ -176,13 +216,18 @@ export async function searchProducts(
     let lookup = raw.replace(/(?:權證|warrant|期貨|個股期|future|選擇權|option)/gi, '').replace(/期$/, '').trim() || raw;
     const day = todayStr();
     const base = getApiBase();
-    const scope = JSON.stringify([base, day]);
+    const version = currentCatalogVersion();
+    const nameVersion = getEtfNamesVersion();
+    const scope = JSON.stringify([base, day, version]);
     const assertServer = () => {
-        if (getApiBase() !== base) throw new Error('商品搜尋期間伺服器已切換，請重新搜尋');
+        if (getApiBase() !== base || getProductCatalogVersion() !== version) {
+            throw new Error('商品搜尋期間伺服器已切換或商品目錄已更新，請重新搜尋');
+        }
     };
     const assertScope = () => {
         assertActive();
         assertServer();
+        if (getEtfNamesVersion() !== nameVersion) throw new Error('商品搜尋期間名稱目錄已更新，請重新搜尋');
     };
     const failures: unknown[] = [];
     const read = async <T,>(request: () => Promise<T>, fallback: T, allowNotFound = false): Promise<T> => {
@@ -195,6 +240,28 @@ export async function searchProducts(
             return fallback;
         }
     };
+    // Local names/aliases never establish availability. One shared live IND
+    // Base query validates identities without fetching every index's Info.
+    const indexRequest = indexCandidates.length
+        ? read<ProductSuggestion[]>(() => loadIndexSuggestions(raw, { signal: options.signal }), [])
+        : Promise.resolve([] as ProductSuggestion[]);
+    // Observe rejection immediately even while direct/catalog reads are waiting.
+    // Only exact index queries must await this before publishing primary rows.
+    const indexOutcome = indexRequest.then(rows => ({ rows }), error => {
+        // A fatal background failure must stop this search's other readers
+        // immediately, not wait for their individual source deadlines.
+        abortSearch(error);
+        return { error };
+    });
+    if (exactIndex) {
+        const outcome = await indexOutcome;
+        assertScope();
+        if ('error' in outcome) throw outcome.error;
+        if (!outcome.rows.length && failures.length) {
+            throw new Error('指數目錄暫時無法載入，請稍後重試', { cause: failures[0] });
+        }
+        return outcome.rows.slice(0, limit);
+    }
     const direct = /^[A-Z0-9]+$/.test(raw)
         ? await read(() => {
             const code = normalizeContractCode(raw, 'IND');
@@ -253,8 +320,28 @@ export async function searchProducts(
     };
     const loadOptions = async () => {
         if (!wantsOptions) return [];
-        const rootLookup = exactStock ? normalizeSearchText(exactStock.name) : lookup;
-        const matches = matchingRoots(await roots('options'), rootLookup, raw);
+        const rootLookup = exactStock ? normalizeSearchText(exactStock.name) || lookup : lookup;
+        const codeMatches = catalog.filter(stock => normalizeSearchText(stock.code) === lookup);
+        const needsName = exactStock && codeMatches.length === 1 && codeMatches[0] === exactStock &&
+            (!rootLookup || rootLookup === normalizeSearchText(exactStock.code)) &&
+            ['TSE', 'OTC', 'OES'].includes(exactStock.exchange);
+        const nameRequest = needsName
+            ? read(() => stockNamesCache.read(JSON.stringify([scope, 'STK', exactStock.exchange, exactStock.code]),
+                signal => inScope(async () => {
+                    const info = await fetchContractInfo(exactStock.code, 'STK', { signal });
+                    if (!info || info.code !== exactStock.code || info.security_type !== 'STK' ||
+                        info.exchange !== exactStock.exchange || info.region !== 'TW' ||
+                        !info.name?.trim() || normalizeSearchText(info.name) === normalizeSearchText(info.code)) {
+                        throw new Error('股票名稱查詢回傳身分或名稱不符');
+                    }
+                    return info.name;
+                }), options.signal), rootLookup)
+            : Promise.resolve(rootLookup);
+        // Start roots and the optional name together: a degraded source adds at
+        // most one source deadline, rather than serial root/name waits.
+        const [optionRoots, name] = await Promise.all([roots('options'), nameRequest]);
+        assertScope();
+        const matches = matchingRoots(optionRoots, normalizeSearchText(name), raw);
         return interleave(await Promise.all(matches.map(async (root) => {
             const rows = (await contracts(`option-root:${root.root}`, signal => fetchOptions(root.root, {}, { signal })))
                 .filter((row) => !exactStock || row.underlying_code === exactStock.code);
@@ -271,8 +358,14 @@ export async function searchProducts(
     };
     const priority: ProductSuggestion[] = [];
     if (direct && (direct.security_type !== 'WRT' || options.includeWarrants && currentWarrant(direct, day))) {
-        const etf = direct.security_type === 'STK' && etfNameFor(direct.code, direct.exchange ?? '');
-        priority.push(asSuggestion(direct, `${etf ? 'ETF · ' : ''}直接代碼${direct.security_type === 'WRT' ? warrantDateWarning(direct) : ''}`));
+        const etf = direct.security_type === 'STK' && etfNameForLive(direct.code, direct.exchange ?? '');
+        const suggestion = asSuggestion(direct, `${etf ? 'ETF · ' : ''}直接代碼${direct.security_type === 'WRT' ? warrantDateWarning(direct) : ''}`);
+        if (direct.security_type === 'STK') {
+            const display = stockDisplayMeta(direct.code, direct.exchange ?? '', direct.name);
+            suggestion.name = display.name;
+            if (display.kind) suggestion.kind = display.kind;
+        }
+        priority.push(suggestion);
     }
     if (exactStock) priority.push(stockSuggestion(exactStock));
     const futuresFirst = !!exactStock || wantsFutures || !!indexFutureUnderlying;
@@ -292,36 +385,37 @@ export async function searchProducts(
     };
     const futureRows = (rows: ContractInfo[]) => rows.map(row => asSuggestion(row,
         row.code.endsWith('R1') ? '期貨 · 近月' : row.code.endsWith('R2') ? '期貨 · 次月' : `期貨 · ${row.delivery_month ?? ''}`));
+    const searchHead = (rows: ProductSuggestion[]) => {
+        const continuous = rows.filter(isContinuousFuture);
+        return [...priority, ...leadingStocks, ...(continuous.length ? continuous : rows)];
+    };
     // Publish only stable prefixes. Even if warrants return first, do not show
     // them ahead of futures which are still loading. Lower-priority dated
     // contracts and other matches wait for the complete, original ordering.
     publish([...priority, ...leadingStocks]);
     const primaryRequest = Promise.all([loadFutures(), loadOptions()]).then(([futures, optionRows]) => {
         const suggestions = futureRows(futures);
-        const continuous = suggestions.filter(isContinuousFuture);
-        if (!wantsOptions && !wantsWarrants) publish([...priority, ...leadingStocks,
-            ...(continuous.length ? continuous : suggestions)]);
+        if (!wantsOptions && !wantsWarrants) publish(searchHead(suggestions));
         return [futures, optionRows] as const;
     });
-    const [[futures, optionRows], warrants] = await Promise.all([primaryRequest, loadWarrants()]);
+    const [[futures, optionRows], warrants, indices] = await Promise.all([primaryRequest, loadWarrants(), indexOutcome]);
     assertScope();
+    if ('error' in indices) throw indices.error;
+    const indexSuggestions = indices.rows;
 
     const futureSuggestions = futureRows(futures);
     const optionSuggestions = optionRows.map((row) => asSuggestion(row, `選擇權 · ${row.root ?? ''} · ${row.delivery_month ?? ''}`));
     const warrantSuggestions = warrants.map((row) => asSuggestion(row,
         `${row.call_put === 'P' ? '認售' : row.call_put === 'C' ? '認購' : '權證'} · ${row.expiry_date ?? ''}${warrantDateWarning(row)}`));
     const continuous = futureSuggestions.filter(isContinuousFuture);
-    const primaryFutures = continuous.length ? continuous : futureSuggestions;
     const additionalFutures = continuous.length ? futureSuggestions.filter(row => !isContinuousFuture(row)) : [];
     const groups = wantsOptions ? [optionSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)] : wantsWarrants
         ? [warrantSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)]
         : [futureSuggestions, warrantSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)];
-    const remainder = wantsOptions || wantsWarrants ? interleave(groups, limit * groups.length) : [
-        ...(futuresFirst ? [] : stockMatches.map(stockSuggestion)),
-        ...primaryFutures, ...warrantSuggestions, ...indexSuggestions,
+    const result = unique(wantsOptions || wantsWarrants ? [...priority, ...interleave(groups, limit * groups.length)] : [
+        ...searchHead(futureSuggestions), ...warrantSuggestions, ...indexSuggestions,
         ...(futuresFirst ? stockMatches.map(stockSuggestion) : []), ...additionalFutures,
-    ];
-    const result = unique([...priority, ...remainder]);
+    ]);
     if (!result.length && failures.length) throw new Error('商品搜尋暫時無法完成，請稍後重試', { cause: failures[0] });
     return result;
 }

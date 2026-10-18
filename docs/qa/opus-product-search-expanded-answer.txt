@@ -1,0 +1,159 @@
+# 產品搜尋擴充：最終本機草稿驗收
+
+## 審查範圍與證據等級
+
+- **審查依據**：只審查封包內提供的原始碼、diff、測試清單與 QA／Root 證據摘要。
+- **未執行任何驗證**：沒有使用工具，沒有執行測試、建置或 hash 比對，也沒有看到截圖像素。
+- **未看到的原始碼**：`useHotkeys`、`esc-cancel-arm`、`workspace.ts`、`product-badge-presentation`、`etf-catalog-normalizer`、RGL 內部實作、測試本體（只有清單），以及 `docs/qa/product-search-expanded-acceptance.md`。
+- **證據歸屬**：測試、建置與瀏覽器結果屬 QA／Root 的證據，我沒有獨立驗證。
+- **假說標示**：第 1 項依一般平台知識推論，已標為假說。
+
+## 發現：本輪沒有新的 must-fix
+
+### 1. 毛玻璃效果可能永遠不會在 WebKit 生效（低，假說待驗證）
+
+- **位置**：`src/components/search-surface.css.ts:15`
+- **觸發條件**：啟用 blur 的條件含 `(prefers-reduced-transparency: no-preference)`。不認得這個 media feature 的引擎會把整個條件判為 false。依我的了解，Safari／WKWebView 未實作此 feature，Firefox 預設也未啟用，但我沒有驗證。
+- **最小反例**：在 WKWebView 中，背景維持 `panelRaised`，`backdrop-filter` 維持 `none`。這樣 `-webkit-` 前綴與宣告順序的修正在 WebKit 上不會有作用。
+- **測試缺口**：`build-css-compatibility.test.ts` 只檢查輸出的宣告字串，不檢查條件在 Safari 能否成立。測試名稱「Chromium／Safari 相容性」因此超出實際驗證範圍。
+- **最小修正**（擇一）：
+  - 啟用條件只保留 `@supports` 與 `(forced-colors: none)`，關閉則交給既有的 `(prefers-reduced-transparency: reduce)` 覆寫。這需要確認覆寫規則在輸出 CSS 中排在後面。
+  - 維持現狀，但測試改名為「宣告輸出」，文件與 PR 都不宣稱 WebKit 有毛玻璃。
+- **處置**：不擋本機草稿。實際結果是退回不透明背景，可讀性不受影響。
+
+### 2. 名稱版本範圍有三處定義不一致（低）
+
+- **位置**：
+  - `product-search.ts:220,230`：`nameVersion` 只取 ETF 版本。
+  - `watchlist.tsx` 與 `command-palette.tsx` 的 `currentScope()`：只含商品目錄與 ETF 版本。
+  - `useProductNamesVersion`：同時含 ETF 與一般股版本。
+- **觸發條件**：一般股名稱在搜尋進行中發布，且發生在 listener 觸發之後、React commit 之前。
+- **最小反例**：舊的 click handler 仍通過 `suggestionScope` 檢查，並送出顯示舊名稱的列。
+- **影響**：只有顯示名稱是舊的。商品身分（type／exchange／code）來自 Base，不會錯。
+- **最小修正**：匯出單一的 `${etf}:${equity}` 快照函式，三處共用。
+- **處置**：選做。
+
+### 3. 背景名稱發布會清空清單並重設選取（低 UX）
+
+- **位置**：兩個入口的搜尋 effect，相依 `namesVersion`，effect 開頭呼叫 `setSuggestions([])` 與 `setActiveIdentity(null)`。
+- **觸發條件**：每個 session 的第一次搜尋會同時啟動 ETF 與一般股名稱更新。兩者的首次成功都必定讓版本遞增。
+- **最小反例**：
+  1. 輸入「台積電」，按 ArrowDown 移到第 3 列。
+  2. 一般股名稱發布。
+  3. 清單清空後重新搜尋，選取跳回第 1 列。
+  - 空窗期間按 Enter：名稱查詢會被擋下；代碼查詢會改送出輸入的代碼。兩者都安全。
+- **最小修正**（後續）：如果只是名稱版本變更，保留舊列與 `activeIdentity`，等新結果發布後再替換。身分 key 不受名稱影響，所以可以安全保留。
+- **處置**：不擋，記入 QA 已知 UX。
+
+### 4. 窄版觸控使用者看不到非 active 列的警告（低 a11y）
+
+- **位置**：
+  - `watchlist.css.ts` 的 `suggestMeta`、`command-palette.css.ts` 的 `resultMeta`：容器寬度 ≤360px 時以 clip 隱藏。
+  - `ProductSearchDetails`：只顯示 active 列。
+  - Watchlist：只能用方向鍵改變 active 列，點一下就會直接送出。
+- **最小反例**：320 寬的觸控裝置上，第 3 列權證的「交易日期待確認」只存在於被 clip 的 DOM 與 `title`。使用者在加入自選前看不到這個警告。
+- **對照計畫**：PM 計畫的「觸控可點開」只部分達成，僅限 active 列。
+- **最小修正**：窄版時讓警告文字不被 clip，或在文件中列為限制。
+- **處置**：不擋本機草稿，但必須列為限制。
+
+### 5. 摘要已收合時按 Esc 會被吞掉（低 UX）
+
+- **位置**：`product-search-details.tsx:20-24`
+- **最小反例**：在 palette 中，焦點停在已收合的摘要上，按 Esc 會被 `stopPropagation`，palette 不會關閉。使用者必須按 Shift-Tab 回到輸入框才能關閉。
+- **安全性**：在這個情況下停止傳遞是正確的，否則按鍵會觸發全域的 Esc 武裝（`resetEscCancelArm` 相關流程）。
+- **最小修正**（後續）：由 palette 外框處理「已收合時的 Esc」並負責關閉，不要在元件內放行這個事件。
+- **處置**：不擋。
+
+### 6. 用 `localhost` 開啟 dev 時 metadata 路由回 403（低，文件）
+
+- **位置**：`scripts/dev-etf-proxy.ts:29-32`
+- **觸發條件**：以 `http://localhost:5173` 開啟時，Host header 為 `localhost:5173`，請求被拒為 403。
+- **影響**：名稱靜默退回快照或券商名稱，讀取時每 30 秒重試一次。
+- **處置**：不要放寬這項檢查，它是防 DNS rebinding 的設計。只需在 dev 文件註明必須使用 127.0.0.1。
+
+### 7. Palette 高度沒有受 viewport 高度限制（低，既有問題加劇）
+
+- **位置**：`command-palette.css.ts` 的 `results` 固定 `maxHeight: 18rem`，overlay 沒有設定捲動。
+- **最小反例**：viewport 高 500px 時：
+
+  | 區塊 | 高度 |
+  |---|---|
+  | overlay 上方留白（18vh） | 90px |
+  | 輸入框 | 約 48px |
+  | 結果清單（18rem） | 288px |
+  | 新增的摘要 | 44px |
+  | 提示列 | 約 30px |
+  | 合計 | 約 500px，且展開完整資訊後會再增加 |
+
+  提示列與展開內容會被裁掉，而且無法捲動到。
+- **最小修正**：`results` 改用 `min(18rem, 40vh)`，或讓 overlay 可以捲動。
+- **處置**：不擋。目前只實測 760px 高。
+
+### 8. 維護性（選做，凍結後不建議變動）
+
+- 兩份 CSS 重複了窄版搜尋列的樣式（code／name／meta 與 container）。兩個入口也各有一份 reveal-scroll 邏輯。
+- proxy 在提供一般股資料時，仍沿用 `ETF_METADATA_*` 錯誤碼與 `createEtfMetadata*` 命名。
+- 後續可以把共用的樣式物件併到 `search-surface.css.ts`。
+
+## PM／架構／驗收處置
+
+- **裁決**：接受為 LOCAL DRAFT/DEV，不構成 production、native、CI 或 SLA 驗收。
+- **架構**：
+  - 結構精簡，沒有通用 resolver、framework 或新增快取。
+  - 商品身分只來自 live Base，官方名稱只在 `exchange:code` 交集上補強。
+  - metadata 路由固定，不轉送 cookie 或 header。原生端在兩層都有 gate。
+  - 兩個 store 結構重複，這是資料計畫已接受的取捨。
+- **排序**：
+  - 字母後綴優先只套用在 catalog `kind=ETF` 且代碼前綴命中的列。
+  - 完整代碼為 rank 0，2330 與 TX 的排序規則未被改動。
+  - Root 的瀏覽器證據與此一致。
+- **效能**：
+  - 原始的 +10% 門檻**未通過**，增幅為 +46.93% 至 +62.64%。
+  - 依 perf-plan，只在本機草稿範圍以 R1／R2 接受。R1：同目錄演算法比較 −4.63% 至 +4.43%。R2：各查詢三輪平均 p95 最大 1.8585ms，任一輪 p95 最大 1.9518ms。
+  - 任何超出草稿範圍的合併之前，都必須先取得瀏覽器輸入延遲的證據。
+
+## 殘留限制（不得標為通過）
+
+- **原生與正式環境**：
+  - private native overlay 與 cookie 管線尚未驗證，原生版維持 gated。
+  - 正式環境的同源 metadata 路由尚未部署。
+  - CI、乾淨機器、登入、popout、OS IME、NVDA 都尚未驗收。
+- **行情與資料**：
+  - 夜盤 Tick／BidAsk 沒有新資料，只有兩次 SSE heartbeat。
+  - 歷史別名、動態指數名稱、WRT 冷啟動 Info 都未擴充。
+  - 舊的 IND101 用 typed Info 查詢回 404，沒有加入對應或改寫，另開 issue 處理。
+- **版面**：
+  - 已移除的拖拉子項沒有可立即取消的公開 API。
+  - 手勢進行中跨入窄版時，會暫時溢出。
+  - 1050 到約 1290px 之間的頂欄溢出仍在（1280 寬實測 9.57px）。
+- **本輪新增**：
+  - WebKit 毛玻璃效果未驗證（第 1 項）。
+  - 窄版觸控只能看到 active 列的完整資訊（第 4 項）。
+  - 原生版只用內建快照；快照中沒有的新上市字母後綴 ETF，不享有字母後綴優先排序。
+- **文件**：PR 連結的 QA 文件是否存在，我沒有確認。
+
+BEGIN_PR
+feat(product-search): 官方名稱補強、ETF 系列排序與窄螢幕版面
+
+## 修改
+- 數字代碼查詢時，已知 ETF 的字母後綴系列排在數字延伸代碼前，完整代碼仍排第一。例：輸入 `00981` 先列 00981A／B／D／T，再列 009810…；輸入 `009810` 只出現該檔。2330 與台指期的既有排序不變。
+- 上市、上櫃、興櫃一般股改顯示官方簡稱，官方全名與券商名稱可作為別名搜尋。只套用在券商合約清單已有的代碼與市場，不會因官方名單多出可搜尋商品。
+- 容器寬度小於 640px 時，工作區改為全寬縱向排列，僅供顯示：不可拖拉或縮放，也不寫回版面。回到桌面寬度後保留原版面。
+- 頂欄在 1050px 以下改為換行，保留 LIVE 與全部控制項；設定選單改對齊整列，並限制在視窗寬度內。
+
+## 最佳化
+- 拖拉或縮放期間固定欄數、密度與寬度，直到放開為止，跨密度只換算一次座標。期間若切換設定檔、重設或移除面板，舊手勢不會寫回。
+- 搜尋結果維持單行，名稱優先、代碼其次。窄容器時分類與日期改為視覺隱藏，但仍保留在可報讀名稱與滑鼠提示中。
+- 搜尋浮層共用毛玻璃表面；不支援、偏好減少透明或強制色彩模式時改為不透明。
+
+## 新增
+- 搜尋結果新增目前選取商品的「完整資訊」展開區，列出名稱、代碼、類別、到期與警告。展開區內的按鍵不會觸發全域交易快捷鍵。
+- 以精確股票代碼加「選擇權」查詢、但目錄缺少名稱時，改以單筆合約資訊補上名稱來比對選擇權，不寫入股票目錄或報價。
+- 本機 dev 與 preview 提供固定的同源名稱資料路由（ETF 與一般股各三條），只接受 127.0.0.1 連線且不帶 Cookie；正式環境仍需另行部署。
+- 原生版不啟用官方名稱更新，改用券商與內建名稱，並在搜尋結果顯示提示。
+
+測試：全套 Vitest、ETF 目錄 Node 測試、`tsc -b` 與 `vite build` 皆通過；2 項既有原生整合測試因無原生環境而略過。
+本機 build preview 已確認 `00981`、`009810`、`2330` 的搜尋排序，以及 320／360 寬無橫向捲動。
+
+限制與效能：原生版、正式環境名稱路由、乾淨環境 CI 與夜盤行情尚未驗收，詳見 [docs/qa/product-search-expanded-acceptance.md](docs/qa/product-search-expanded-acceptance.md)。
+END_PR

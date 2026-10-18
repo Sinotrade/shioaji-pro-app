@@ -9,8 +9,10 @@ import {
 } from './shioaji';
 import { getApiBase } from './runtime';
 import { todayStr } from './utils/date';
-import { etfNameFor } from './etf-catalog';
+import { etfNameForLive, getEtfNamesStatus, getEtfNamesVersion, refreshEtfNames } from './etf-runtime-catalog';
+import { equityNameForLive, ensureEquityNamesFresh, getEquityNamesVersion } from './stock-runtime-catalog';
 import { SearchRequestCache } from './search-request';
+import { getProductCatalogVersion, subscribeProductCatalog } from './product-catalog-version';
 
 export interface StockMeta {
     code: string;
@@ -22,20 +24,52 @@ export interface StockMeta {
     aliases?: string[];
 }
 
+// Both name searches and direct codes use the same display policy. The broker
+// ContractInfo object remains untouched; aliases never establish availability.
+export function stockDisplayMeta(code: string, exchange: string, brokerName?: string,
+    officialNamesReady = !getEtfNamesStatus().usingSnapshot): Pick<StockMeta, 'name' | 'kind' | 'aliases'> {
+    const etf = etfNameForLive(code, exchange);
+    const name = brokerName && brokerName !== code ? brokerName : undefined;
+    if (!etf) {
+        const official = /^[1-9]\d{3}$/.test(code) && (exchange === 'TSE' || exchange === 'OTC' || exchange === 'OES')
+            ? equityNameForLive(exchange, code) : undefined;
+        if (!official) return { name: name ?? code };
+        return { name: official.name, aliases: [...new Set([...official.aliases, ...(name ? [name] : [])])]
+            .filter(alias => alias !== official.name) };
+    }
+    return {
+        name: officialNamesReady ? etf.name : name ?? etf.name,
+        kind: 'ETF',
+        aliases: [...new Set([etf.name, ...(etf.aliases ?? []), ...(name ? [name] : [])])],
+    };
+}
+
 const CATALOG_TTL_MS = 60_000;
 const CATALOG_DEADLINE_MS = 1000;
-const sourceOptions = { ttlMs: CATALOG_TTL_MS, limit: 2, deadlineMs: CATALOG_DEADLINE_MS };
+// These two shared sources also serve non-search panels. Keep their existing
+// deadlines independent of search saturation; each still has one in-flight
+// request per scope and independent readers.
+const sourceOptions = { ttlMs: CATALOG_TTL_MS, limit: 2, deadlineMs: CATALOG_DEADLINE_MS, queue: 'none' as const };
 const baseCache = new SearchRequestCache<Awaited<ReturnType<typeof fetchContracts>>>(sourceOptions);
 const namesCache = new SearchRequestCache<Awaited<ReturnType<typeof fetchWarrantUnderlyings>>>(sourceOptions);
 let activeSourceScope = '';
 let catalogGeneration = 0;
 let detailsCache: StockMeta[] | null = null;
+let detailsExpiresAt = 0;
+let detailsCatalog: StockMeta[] | undefined;
 let detailsLoading: Promise<StockMeta[]> | null = null;
 let detailsScope = '';
-const detailByCode = new Map<string, StockMeta>();
+const detailByCode = new Map<string, { value: StockMeta; expiresAt: number }>();
 const detailLoadingByCode = new Map<string, Promise<StockMeta | null>>();
+let assembledCatalog: {
+    scope: string;
+    base: Awaited<ReturnType<typeof fetchContracts>>;
+    names: Awaited<ReturnType<typeof fetchWarrantUnderlyings>>;
+    namesVersion: string;
+    rows: StockMeta[];
+} | undefined;
 
-const catalogScope = () => JSON.stringify([getApiBase(), todayStr()]);
+const catalogScope = () => JSON.stringify([getApiBase(), todayStr(), getProductCatalogVersion()]);
 const detailContext = () => JSON.stringify([catalogScope(), catalogGeneration]);
 
 function ensureSourceScope() {
@@ -45,12 +79,32 @@ function ensureSourceScope() {
         catalogGeneration += 1;
         baseCache.clear();
         namesCache.clear();
+        assembledCatalog = undefined;
+        detailsCache = null;
+        detailsExpiresAt = 0;
+        detailsCatalog = undefined;
+        detailsLoading = null;
+        detailsScope = '';
+        detailByCode.clear();
+        detailLoadingByCode.clear();
     }
     return scope;
 }
 
+// Contract events invalidate all metadata immediately, including typed Info.
+// A lazy scope read may already have moved this cache before its deferred
+// notification; ensureSourceScope then deliberately does nothing a second time.
+const unsubscribeCatalog = subscribeProductCatalog(() => { ensureSourceScope(); });
+if (import.meta.hot) import.meta.hot.dispose(unsubscribeCatalog);
+
 export async function loadStockCatalog(opts?: { signal?: AbortSignal }): Promise<StockMeta[]> {
     const scope = ensureSourceScope();
+    // Public name refresh belongs to the mounted App, not to a keystroke's
+    // cancellation. SSR callers can explicitly refresh; catalog reads stay local.
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+        void refreshEtfNames();
+        ensureEquityNamesFresh();
+    }
     const generation = catalogGeneration;
     const assertScope = () => {
         if (catalogScope() !== scope || catalogGeneration !== generation) throw new Error('股票目錄載入期間伺服器已切換');
@@ -74,18 +128,25 @@ export async function loadStockCatalog(opts?: { signal?: AbortSignal }): Promise
         throw error;
     });
     assertScope();
+    const namesVersion = `${getEtfNamesVersion()}:${getEquityNamesVersion()}`;
+    if (assembledCatalog?.scope === scope && assembledCatalog.base === res && assembledCatalog.names === underlyings
+        && assembledCatalog.namesVersion === namesVersion) {
+        return assembledCatalog.rows;
+    }
     const names = new Map(underlyings.filter(row => row.name).map(row => [row.underlying_code, row.name!]));
-    return res.contracts.filter(c => c.code).map(c => {
+    const officialNamesReady = !getEtfNamesStatus().usingSnapshot;
+    const rows = res.contracts.filter(c => c.code).map(c => {
         const exchange = c.exchange ?? '';
-        const etf = etfNameFor(c.code, exchange);
+        const brokerName = names.get(c.code);
         return {
             code: c.code,
-            name: names.get(c.code) ?? etf?.name ?? c.code,
+            ...stockDisplayMeta(c.code, exchange, brokerName, officialNamesReady),
             category: '',
             exchange,
-            ...(etf ? { kind: 'ETF' as const, aliases: [...new Set([etf.name, ...(etf.aliases ?? [])])] } : {}),
         };
     });
+    assembledCatalog = { scope, base: res, names: underlyings, namesVersion, rows };
+    return rows;
 }
 
 function ensureDetailsScope() {
@@ -94,6 +155,8 @@ function ensureDetailsScope() {
     if (scope !== detailsScope) {
         detailsScope = scope;
         detailsCache = null;
+        detailsExpiresAt = 0;
+        detailsCatalog = undefined;
         detailsLoading = null;
         detailByCode.clear();
         detailLoadingByCode.clear();
@@ -106,7 +169,8 @@ export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
     const unique = [...new Set(codes.filter(Boolean))];
     const load = (code: string) => {
         const cached = detailByCode.get(code);
-        if (cached) return Promise.resolve(cached);
+        if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.value);
+        detailByCode.delete(code);
         const pending = detailLoadingByCode.get(code);
         if (pending) return pending;
         const request = fetchContractInfo(code, 'STK')
@@ -119,7 +183,7 @@ export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
                     exchange: info.exchange ?? '',
                     day_trade: info.day_trade,
                 };
-                detailByCode.set(code, detail);
+                detailByCode.set(code, { value: detail, expiresAt: Date.now() + CATALOG_TTL_MS });
                 return detail;
             })
             .catch(() => null)
@@ -137,21 +201,40 @@ export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
 
 export function loadStockIndex(): Promise<StockMeta[]> {
     const scope = ensureDetailsScope();
-    if (detailsCache) return Promise.resolve(detailsCache);
     if (detailsLoading) return detailsLoading;
     const request = loadStockCatalog()
         .then(async (catalog) => {
             if (detailContext() !== scope) throw new Error('股票目錄載入期間伺服器已切換');
+            // Do not let this aggregate cache extend an older Base/name TTL.
+            if (detailsCatalog === catalog && detailsCache && detailsExpiresAt > Date.now()) return detailsCache;
             const details = await loadStockDetails(catalog.map((stock) => stock.code));
             if (detailContext() !== scope) throw new Error('股票目錄載入期間伺服器已切換');
             // Partial metadata is returned but retried next time.
-            if (details.length >= new Set(catalog.map((stock) => stock.code).filter(Boolean)).size) detailsCache = details;
+            if (details.length >= new Set(catalog.map((stock) => stock.code).filter(Boolean)).size) {
+                detailsCache = details;
+                detailsCatalog = catalog;
+                // Info cached before assembly keeps its original expiry.
+                detailsExpiresAt = details.reduce((expiry, detail) => Math.min(
+                    expiry, detailByCode.get(detail.code)?.expiresAt ?? Date.now(),
+                ), Date.now() + CATALOG_TTL_MS);
+            }
             return details;
         }).finally(() => {
             if (detailsLoading === request) detailsLoading = null;
         });
     detailsLoading = request;
     return request;
+}
+
+// 只有 ASCII 大寫、數字，以及 U+4E00..U+9FFF（排除「臺」U+81FA）是原鏈的 fixed point，可原樣回傳。
+// 其餘字元（換行、control、空白、combining、相容字、surrogate 等）一律完整走原鏈。
+// 不用 ^/$ 錨點，也不加 g/y/m flag，讓 test() 保持無狀態。
+const nonFixedPointStockChar = /[^A-Z0-9\u4E00-\u81F9\u81FB-\u9FFF]/;
+const taiVariant = /\u81FA/g;
+
+export function normalizeStockSearchText(value: string): string {
+    if (!nonFixedPointStockChar.test(value)) return value;
+    return value.trim().normalize('NFKC').replace(taiVariant, '\u53F0').toUpperCase();
 }
 
 // substring match on name, prefix match on code — ranked so the actual
@@ -161,27 +244,42 @@ export function searchStocks(
     query: string,
     limit = 8,
 ): StockMeta[] {
-    const normalize = (value: string) => value.trim().normalize('NFKC').replace(/臺/g, '台').toUpperCase();
-    const q = normalize(query);
+    const q = normalizeStockSearchText(query);
     if (!q) return [];
-    const scored: { s: StockMeta; score: number }[] = [];
+    const numericQuery = /^\d+$/.test(q);
+    const scored: { s: StockMeta; code: string; score: number; rank: number; letterSuffix: boolean }[] = [];
     for (const s of index) {
-        const name = normalize(s.name);
-        const aliases = (s.aliases ?? []).map(normalize);
-        const code = normalize(s.code);
+        const code = normalizeStockSearchText(s.code);
+        const name = s.name === s.code ? code : normalizeStockSearchText(s.name);
         const codeHit = code.startsWith(q);
-        const nameHit = name.includes(q) || aliases.some(alias => alias.includes(q));
+        let nameHit = name.includes(q);
+        let exact = code === q || name === q;
+        if (!exact) s.aliases?.some(alias => {
+            const normalized = alias === s.name ? name : alias === s.code ? code : normalizeStockSearchText(alias);
+            if (normalized === q) {
+                exact = true;
+                nameHit = true;
+                return true;
+            }
+            // A substring hit must not hide a later alias with the exact-match bonus.
+            if (!nameHit) nameHit = normalized.includes(q);
+            return false;
+        });
         if (!codeHit && !nameHit) continue;
         let score = 0;
-        if (code === q || name === q || aliases.includes(q)) score -= 100; // exact
+        if (exact) score -= 100;
         if (codeHit) score -= 10;
         else if (name.startsWith(q)) score -= 5;
         // plain 4-digit equities rank above warrants/ETNs (6-char codes)
         score += s.code.length === 4 || s.kind === 'ETF' ? 0 : 50;
         score += s.name.length; // shorter names first
-        scored.push({ s, score });
+        // Code identity and known ETF series outrank incidental name matches.
+        const rank = code === q ? 0 : numericQuery && s.kind === 'ETF' && codeHit ? 1 : 2;
+        scored.push({ s, code, score, rank, letterSuffix: rank === 1 && /^[A-Z]/.test(code.slice(q.length)) });
     }
-    scored.sort((a, b) => a.score - b.score);
+    scored.sort((a, b) => a.rank - b.rank ||
+        (a.rank === 1 ? Number(b.letterSuffix) - Number(a.letterSuffix) ||
+            a.code.localeCompare(b.code) || a.s.exchange.localeCompare(b.s.exchange) : 0) || a.score - b.score);
     return scored.slice(0, limit).map((x) => x.s);
 }
 

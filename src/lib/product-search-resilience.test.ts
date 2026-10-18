@@ -3,13 +3,14 @@ import type { ContractInfo } from './types/contract';
 
 const mocks = vi.hoisted(() => ({
     catalog: vi.fn(), resolve: vi.fn(), futures: vi.fn(), roots: vi.fn(),
-    options: vi.fn(), optionRoots: vi.fn(), warrants: vi.fn(),
+    options: vi.fn(), optionRoots: vi.fn(), warrants: vi.fn(), bases: vi.fn(),
 }));
 vi.mock('./runtime', () => ({ getApiBase: () => 'http://fixture-search' }));
 vi.mock('./utils/date', () => ({ todayStr: () => '2026-10-17' }));
 vi.mock('./shioaji', () => ({
     resolveContract: mocks.resolve, fetchFutures: mocks.futures, fetchFuturesRoots: mocks.roots,
     fetchOptions: mocks.options, fetchOptionRoots: mocks.optionRoots, fetchWarrants: mocks.warrants,
+    fetchContracts: mocks.bases,
     normalizeContractCode: (code: string) => code === '001' ? 'IX0001' : code.trim().toUpperCase(),
 }));
 vi.mock('./stock-index', async original => ({ ...await original<object>(), loadStockCatalog: mocks.catalog }));
@@ -31,6 +32,10 @@ async function search(query: string) {
 }
 
 beforeEach(() => {
+    mocks.bases.mockReset().mockResolvedValue({ region: 'TW', contracts: [
+        { code: 'IX0043', security_type: 'IND', exchange: 'OTC' },
+        { code: 'TAIWANVIX', security_type: 'IND', exchange: 'TAIFEX' },
+    ] });
     vi.resetModules();
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-17T00:00:00+08:00'));
@@ -94,11 +99,12 @@ describe('商品搜尋來源分流與有界等待', () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('名稱目錄無回應時，保留不依賴它的靜態部分指數結果', async () => {
+    it('股票名稱目錄無回應時，保留已由獨立 live IND Base 驗證的部分指數結果', async () => {
         mocks.catalog.mockReturnValue(new Promise(() => undefined));
         const pending = search('櫃買');
         await vi.advanceTimersByTimeAsync(1200);
         expect(await pending).toContainEqual(expect.objectContaining({ code: 'IX0043', security_type: 'IND', exchange: 'OTC' }));
+        expect(mocks.bases).toHaveBeenCalledWith('IND', undefined, undefined, { signal: expect.any(AbortSignal) });
     });
 
     it('root 逾時不快取失敗空值，下一次可恢復', async () => {

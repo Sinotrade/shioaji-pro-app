@@ -1,12 +1,14 @@
 import { RefreshButton } from './refresh-button';
 import { Star } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
+import { useProductNamesVersion } from '../hooks/use-product-names-version';
 import { primeContract } from '../lib/contracts-cache';
 import {
     fetchFutures
 } from '../lib/shioaji';
 import { loadStockCatalog, type StockMeta } from '../lib/stock-index';
+import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
@@ -38,26 +40,52 @@ export function StockFuturesPanel({
     const [mode, setMode] = useState<'continuous' | 'all'>('continuous');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
+    const [catalogError, setCatalogError] = useState(false);
+    const [refresh, setRefresh] = useState(0);
+    const version = useProductCatalogVersion();
+    const namesVersion = useProductNamesVersion();
+    const [catalogVersion, setCatalogVersion] = useState(-1);
+    const catalogReady = catalogVersion === version && !catalogError;
+    const requestContext = JSON.stringify([version, underlying?.code, refresh]);
+    const [loaded, setLoaded] = useState<{ context: string; code: string } | null>(null);
+    const contractsReady = catalogReady && loaded?.context === requestContext && !error;
+    const linkedCode = useRef<string | null>(null);
 
     useEffect(() => {
-        loadStockCatalog()
+        const controller = new AbortController();
+        let active = true;
+        const isCurrent = () => active && getProductCatalogVersion() === version;
+        setCatalogError(false);
+        loadStockCatalog({ signal: controller.signal })
             .then((rows) => {
+                if (!isCurrent()) return;
                 setCatalog(rows);
+                setCatalogVersion(version);
+                if (rows.length === 0) setLoading(false);
                 const saved = localStorage.getItem(STOCK_FUTURE_UNDERLYING);
-                setUnderlying(
-                    rows.find((stock) => stock.code === saved) ??
+                setUnderlying(previous =>
+                    rows.find((stock) => stock.code === previous?.code) ??
+                        rows.find((stock) => stock.code === saved) ??
                         rows.find((stock) => stock.code === '2330') ??
                         rows[0] ??
                         null,
                 );
             })
-            .catch(() => setError(true));
+            .catch(() => { if (isCurrent()) { setCatalogError(true); setLoading(false); } });
+        return () => { active = false; controller.abort(); };
+    }, [version, namesVersion, refresh]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const onFocus = () => setRefresh(value => value + 1);
+        window.addEventListener('focus', onFocus);
+        return () => window.removeEventListener('focus', onFocus);
     }, []);
 
     // 標準 chrome 連動/釘選：不釘時 contract 跟隨自選選擇 — 點到股票
     // 直接跟；點到個股期跟它的標的。目錄查不到（無個股期）就不動。
     useEffect(() => {
-        if (!contract || catalog.length === 0) return;
+        if (!contract || catalog.length === 0 || linkedCode.current === contract.code) return;
         const code =
             contract.security_type === 'STK'
                 ? contract.code
@@ -67,27 +95,32 @@ export function StockFuturesPanel({
         if (!code) return;
         const stock = catalog.find((s) => s.code === code);
         if (!stock) return;
+        linkedCode.current = contract.code;
         setUnderlying((prev) => (prev?.code === stock.code ? prev : stock));
         localStorage.setItem(STOCK_FUTURE_UNDERLYING, stock.code);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract?.code, catalog]);
 
     useEffect(() => {
-        if (!underlying) return;
+        if (!underlying || catalogVersion !== version || catalogError) return;
+        const controller = new AbortController();
         let active = true;
-        setContracts([]);
+        const isCurrent = () => active && getProductCatalogVersion() === version;
         setLoading(true);
         setError(false);
-        fetchFutures({ underlyingCode: underlying.code })
-            .then((rows) => { if (active) setContracts(rows); })
+        fetchFutures({ underlyingCode: underlying.code }, { signal: controller.signal })
+            .then((rows) => {
+                if (!isCurrent()) return;
+                setContracts(rows);
+                setLoaded({ context: requestContext, code: underlying.code });
+            })
             .catch(() => {
-                if (!active) return;
-                setContracts([]);
+                if (!isCurrent()) return;
                 setError(true);
             })
-            .finally(() => { if (active) setLoading(false); });
-        return () => { active = false; };
-    }, [underlying]);
+            .finally(() => { if (isCurrent()) setLoading(false); });
+        return () => { active = false; controller.abort(); };
+    }, [underlying?.code, version, refresh, catalogVersion, catalogError]);
 
     const visible = useMemo(() => {
         const rows =
@@ -131,6 +164,14 @@ export function StockFuturesPanel({
                 </button>
                 <RefreshButton label="更新報價" loading={quotesLoading} onClick={() => void refreshQuotes()} />
             </div>
+            {(error || catalogError) && (
+                <div role='alert' className={styles.error}>
+                    {catalogError ? '標的目錄載入失敗' : '個股期合約載入失敗'}；保留上次資料
+                    <button type='button' onClick={() => setRefresh(value => value + 1)}>重試商品資料</button>
+                </div>
+            )}
+            {loading && contracts.length > 0 && <span role='status'>更新個股期合約中…</span>}
+            {!contractsReady && contracts.length > 0 && <span role='status'>目前顯示 {loaded?.code} 的上次合約資料，更新完成後可選取</span>}
             <div className={styles.summary}>
                 <span className={styles.summaryStrong}>
                     {underlying ? `${underlying.code} ${underlying.name}` : '—'}
@@ -138,11 +179,11 @@ export function StockFuturesPanel({
                 <span>{roots.size} 種規格</span>
                 <span>{visible.length} 口合約可選</span>
             </div>
-            {loading ? (
+            {loading && contracts.length === 0 ? (
                 <div className={styles.empty}>
                     <AsyncStatus phase='loading' text='載入個股期合約…' />
                 </div>
-            ) : error ? (
+            ) : (error || catalogError) && contracts.length === 0 ? (
                 <div className={styles.error}><AsyncStatus phase='error' text='個股期合約載入失敗' /></div>
             ) : visible.length === 0 ? (
                 <div className={styles.empty}><AsyncStatus phase='empty' text='此標的目前沒有個股期' /></div>
@@ -183,6 +224,7 @@ export function StockFuturesPanel({
                                         className={styles.row}
                                         title='連動此合約'
                                         onClick={() => {
+                                            if (!contractsReady || getProductCatalogVersion() !== version) return;
                                             primeContract(contract);
                                             onPick(contract.code);
                                         }}
@@ -216,8 +258,10 @@ export function StockFuturesPanel({
                                                 className={styles.iconButton}
                                                 title='加入目前自選清單'
                                                 aria-label={`將 ${contract.code} 加入自選`}
+                                                disabled={!contractsReady}
                                                 onClick={(event) => {
                                                     event.stopPropagation();
+                                                    if (!contractsReady || getProductCatalogVersion() !== version) return;
                                                     void onAdd(contract)
                                                         .then(() =>
                                                             notify({

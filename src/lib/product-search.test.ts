@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     optionRoots: vi.fn(),
     warrants: vi.fn(),
     resolve: vi.fn(),
+    bases: vi.fn(),
 }));
 vi.mock('./runtime', () => ({ getApiBase: () => mocks.base }));
 vi.mock('./utils/date', () => ({ todayStr: () => mocks.day }));
@@ -22,6 +23,7 @@ vi.mock('./shioaji', () => ({
     fetchOptionRoots: mocks.optionRoots,
     fetchWarrants: mocks.warrants,
     resolveContract: mocks.resolve,
+    fetchContracts: mocks.bases,
     normalizeContractCode: (code: string) => code === '001' ? 'IX0001' : code.trim().toUpperCase(),
 }));
 vi.mock('./stock-index', async (original) => ({
@@ -58,6 +60,11 @@ async function search(query: string, includeWarrants = true, limit = 8) {
 }
 
 beforeEach(() => {
+    mocks.bases.mockReset().mockResolvedValue({ region: 'TW', contracts: [
+        { code: 'IX0043', security_type: 'IND', exchange: 'OTC' },
+        { code: 'TAIWANVIX', security_type: 'IND', exchange: 'TAIFEX' },
+        { code: 'IX0001', security_type: 'IND', exchange: 'TSE' },
+    ] });
     vi.resetModules();
     vi.clearAllMocks();
     vi.useFakeTimers();
@@ -214,7 +221,7 @@ describe('product search sources and related products', () => {
         mocks.catalog.mockResolvedValue([{ code: '00679B', name: '元大美債20年', exchange: 'OTC', category: '', kind: 'ETF' }]);
         mocks.futures.mockResolvedValue([contract('RZFR1', 'FUT', { name: '元大美債20年ETF期貨 近月', underlying_code: '00679B' })]);
         const rows = await search('元大美債20年');
-        expect(rows[0]).toMatchObject({ code: '00679B', exchange: 'OTC', security_type: 'STK', detail: 'ETF' });
+        expect(rows[0]).toMatchObject({ code: '00679B', exchange: 'OTC', security_type: 'STK', kind: 'ETF', detail: 'ETF' });
         expect(rows.some(row => row.code === 'RZFR1')).toBe(true);
         expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: '00679B' }, { signal: expect.any(AbortSignal) });
         expect(rows.some(row => row.code.startsWith('W'))).toBe(false);
@@ -235,8 +242,25 @@ describe('product search sources and related products', () => {
         mocks.resolve.mockResolvedValue(contract('00679B', 'STK', { name: '元大美債20年', exchange: 'OTC' }));
         mocks.futures.mockResolvedValue([]);
         mocks.warrants.mockResolvedValue([]);
-        expect((await search('00679B'))[0]).toMatchObject({ code: '00679B', detail: 'ETF · 直接代碼', exchange: 'OTC' });
+        expect((await search('00679B'))[0]).toMatchObject({ code: '00679B', detail: 'ETF · 直接代碼', exchange: 'OTC', security_type: 'STK', kind: 'ETF' });
         expect(mocks.catalog).not.toHaveBeenCalled();
+    });
+
+    it('direct and name ETF suggestions share typed kind without mutating ContractInfo or adding catalog GETs', async () => {
+        const fund = etfSnapshot.entries.find(row => row.code === '0050')!;
+        const resolved = contract('0050', 'STK', { name: fund.name });
+        mocks.resolve.mockResolvedValue(resolved);
+        mocks.futures.mockResolvedValue([]);
+        mocks.warrants.mockResolvedValue([]);
+        const direct = (await search('0050'))[0]!;
+        expect(direct).toMatchObject({ code: '0050', name: fund.name, security_type: 'STK', kind: 'ETF', contract: resolved });
+        expect(direct.contract).toBe(resolved);
+        expect(resolved).not.toHaveProperty('kind');
+        expect(mocks.catalog).not.toHaveBeenCalled();
+        mocks.catalog.mockResolvedValue([{ ...fund, kind: 'ETF', category: '' }]);
+        expect((await search(fund.name))[0]).toMatchObject({ code: direct.code, name: direct.name, security_type: 'STK', kind: 'ETF' });
+        mocks.resolve.mockResolvedValue(contract('2330', 'STK', { name: '台積電' }));
+        expect((await search('2330'))[0]).not.toHaveProperty('kind');
     });
 
     it('finds the OTC index even if stock and derivative catalogs fail', async () => {

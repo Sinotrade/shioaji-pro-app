@@ -1,0 +1,70 @@
+# CommandPalette 窄版/毛玻璃 CSS delta 最終審查
+
+**結論**：這次 CSS delta 沒有可具體觸發的 must-fix。可條件式接受為 LOCAL COMPONENT UI 證據。
+
+## 發現
+
+**1. 360 高度是臨界點，沒有安全餘裕（非阻擋，須寫入驗收）**
+- 位置：
+  - command-palette.css.ts：`results` 設 `minHeight: 0`。
+  - product-search-details.css.ts：`content` 設 `maxHeight: min(12rem, 30vh)`。
+  - `<details>` 成為 flex item 後保留預設 min-height:auto，不會收縮。
+- 推導：這是依封包量測回推的假設，未實測。條件為長詳情展開、根字級 16px、H≤640、dl 達 30vh 上限。此時 results 可用高約為 0.52H − 148。
+  - H=360 時約 39px，單列 38.4px，餘裕約 0.6px，與封包的 39.025 相符。
+- 反例：
+  - 320x340：results 約 29px。ArrowDown 後 reveal 以列底對齊，列頂約 10px 被裁。
+  - H≤約 285（例如 1280x1024 縮放 400%，得 320x256）：results 為 0，所有列不可見也不可點，外框捲動也無法露出。
+  - 收合詳情即可恢復，所以不是死路。
+- 後續建議（擇一）：
+  - 短視窗下讓 dl 上限再受 calc 約束。
+  - 或 results 設一列最小高，改由外框捲動。
+
+**2. 展開詳情後，選取列可能被隱藏（非阻擋）**
+- 位置：command-palette.tsx 的 reveal useEffect，依賴只有 `[open, activeIndex, rowIdentities]`，不含 results 高度變化。
+- 反例：
+  - 320x480，鍵盤選到第 6 列（192..230px），此時可見。
+  - 展開長詳情後，results 由約 245 收縮到約 101，選取列移出可視區。
+  - 要再按方向鍵才會恢復。封包中「ArrowUp/Down 後」的量測與此一致。
+- 詳情區仍顯示該商品，資訊沒有遺失。
+
+**3. 三層捲動不協調（維護性）**
+- box、results、dl 各自捲動。box 捲動只在 H<約 285 時生效。
+- reveal 只調整 `results.scrollTop`，不會捲動 box。目前驗收尺寸不會觸發。
+
+**4. 100vh 限制（範圍外）**
+- 行動瀏覽器在動態工具列或虛擬鍵盤出現時，overlay（fixed inset 0）實際高度小於 100vh，box 底部可能被裁。
+- 本輪未驗 Safari／行動裝置。建議日後加 100dvh 後援，不列為本輪阻擋。
+
+**5. 靜態測試**
+- 以字串 split 比對，格式化或重構就可能誤報。
+- 定位為防退守門、非幾何證明，這個定位正確，可接受。
+
+**6. PageDown**
+- onKeyDown 沒有處理 PageDown。焦點在輸入框時不捲動 results 屬既有行為。
+- 若 Root 的檢查預期它會捲動，應判為範圍外，而不是回歸。
+
+## 回歸範圍
+
+- 所見最終原始碼只有版面屬性變更。details 與 hint 成為 flex item 後仍是 stretch，沒有 margin 摺疊問題。
+- Watchlist 共用的 searchSurface 沒有變動。
+- 「只有兩個檔案不同」與 source freeze 雜湊是封包陳述。本審未獨立驗證，也沒有取得前版 diff。
+
+## 處置
+
+- **PM**：條件式接受，僅限本機元件 UI。
+- **架構**：沒有 must-fix。發現 1、2 列為已知限制與後續項目。
+- **驗收**：
+  - 須等 Root 完成 480/360 高度與鍵盤／PageDown 檢查後才定案。
+  - 適用範圍：Chromium 類引擎、視窗高 ≥360 CSS px、預設根字級。
+  - 不涵蓋：
+    - 正式環境、即時報價、完整 App、連線開發環境。
+    - Safari、降低透明度模擬。
+    - 新的 p95。
+    - 任意主題對比認證。
+  - 不推送。
+
+## 限制
+
+- 未執行測試、未看畫面、未驗雜湊。
+- 依指示未使用任何工具或檔案，因此也未建立計畫檔。
+- 所有數值推導都基於封包量測，屬於假設，有待實測確認。

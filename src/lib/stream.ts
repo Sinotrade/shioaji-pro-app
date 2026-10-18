@@ -16,6 +16,7 @@ import { isChildWindow } from './window-role';
 import { forgetServerInfo, knownServerInfo } from './server-info-store';
 import { createSharedStream, type StreamWire } from './shared-stream';
 import { invalidateTradingMirror } from './trading-mirror-lease';
+import { invalidateProductCatalog } from './product-catalog-version';
 
 /** `stale`: the EventSource still looks open but no heartbeat or event
  *  arrived within the watchdog window (e.g. the sidecar behind a proxy was
@@ -85,6 +86,7 @@ const contractEventListeners = new Set<
 >();
 
 function emitContractChange(event: ContractChangeEvent) {
+    invalidateProductCatalog(event);
     contractEventListeners.forEach((listener) => listener(event));
 }
 

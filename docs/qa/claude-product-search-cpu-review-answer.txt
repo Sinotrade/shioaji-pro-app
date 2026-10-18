@@ -1,0 +1,174 @@
+# 最終 no-cache 候選審查：stock-index searchStocks CPU 修正（僅限 local draft/dev）
+
+依指示，本次只審閱封包內文字，未使用任何工具、未讀檔、未執行測試，也未建立 plan 檔或呼叫 ExitPlanMode。封包、程式碼與先前結論都視為不可信證據。
+
+## 一、結論摘要
+
+- **Must-fix：無。**
+- 下文第三節自行推導了 fast path 與原鏈的等價性，以及 searchStocks 的邏輯等價性。目前找不到能讓結果、排序或回傳 ref 改變的字串輸入反例。
+- **PM 處置：** 有條件接受為 local draft/dev 候選。不同意 push、merge、release 或發布。
+- **架構處置：** 接受。這是無狀態、無快取、可證明等價的純函式優化，沒有失效或淘汰成本。
+- **CPU 結論的範圍：** 只成立於 Node v24 環境、3155 筆凍結資料上的 `searchStocks` filter/score/sort。不能外推為整個 87 檔 PR 或整個 App 都符合「CPU 回歸不超過 5%」。
+
+## 二、證據分級
+
+**我能從封包文字自行核對的部分：**
+- 程式邏輯（見第三節）。
+- 允許字元數：26 + 10 + (0x9FFF − 0x4E00 + 1 − 1) = 21027，與測試名稱中的「20991 個基本漢字（排除臺）」一致。
+- 百分比抽查算術。例如：
+  - 「台」warm：F 0.5094 / B 1.6540 → −69.20%；對 A 為 −49.73%。
+  - 「2330」warm：對 B 為 −71.39%。
+  - 「00981」fresh：對 B 為 −65.46%。
+- 10 個查詢的 fresh F 都小於對應的 A 與 E，與五項 gate 的方向一致。
+
+**只能視為 Root/Sol 的陳述，我未核實：**
+- 測試執行結果（4240/4238）、tsc 與 build 結果。
+- 各項 hash、87 檔中 84 檔與 f577 相同、`scopeDelta`、「production quote 未改」。
+- Unicode 17.0 原始檔的比對、瀏覽器順序檢查、SSE 結果。
+- B/E/F 在 10 個查詢上的 ordered identity 相等。
+- 原始（base 與 f577）程式碼本身。我沒有看到，因此「F 與 B 結果等價」除了我的邏輯推導外，依賴上述陳述。
+
+## 三、自行推導的等價性（must-fix 為「無」的依據）
+
+### `normalizeStockSearchText` 的 fast path
+
+Fast path 只在整串每個 code unit 都屬於 S = {A–Z, 0–9, U+4E00–U+9FFF，但排除 U+81FA} 時觸發。逐步檢查原鏈：
+
+- **trim：** S 中沒有 WhiteSpace 或 LineTerminator，結果不變。
+- **NFKC：**
+  - S 中每個字都是 NFKC_QC=Yes 且 ccc=0。依 UAX #15 的 quick check，全部為 Yes 且 ccc 不遞減時判定為 YES，這是確定性結論，所以任意串接都不變。
+  - 串接後可能發生的組合需要 QC=Maybe 的字元，S 中沒有這類字。
+  - 這與我對 Unicode 的一般認知一致，但我沒有對照原始資料檔。
+- **臺→台 替換：** S 排除 U+81FA，且 NFKC 不改變字串，所以不會產生 U+81FA。
+- **toUpperCase：** A–Z、數字與 CJK 統一漢字都沒有大寫映射。
+- **空字串：** `test('')` 為 false，回傳 `''`，與原鏈相同，之後由 `!q` 回傳 `[]`。
+- **舊版 ICU：** 即使 runtime 的 ICU 較舊、U+9FFD–9FFF 尚未指派，normalize 與 toUpperCase 對未指派字也是原樣保留，仍然等價。
+- **regex 狀態：**
+  - `nonFixedPointStockChar` 沒有 g/y flag，不涉及 lastIndex。
+  - `taiVariant` 有 g flag，但只用在 `replace`，而規格在全域 replace 前會把 lastIndex 歸零。
+  - 沒有 u flag，所以 regex 以 code unit 比對；surrogate 不在 S 中，必定走 fallback。
+
+我嘗試過但都不成立的反例（都正確走 fallback）：
+
+| 輸入 | 原因 |
+|---|---|
+| `臺積電` | 含 U+81FA |
+| `２３３０` | 全形數字 |
+| `2330\n` | 末尾換行 |
+| `ﬁ` | 連字 |
+| `台` + U+0301 | 含 combining 字元，整串 fallback |
+| U+F900（相容漢字） | 不在 S |
+| U+2F00（康熙部首） | 不在 S |
+| `tsmc` | 小寫 |
+| 非 BMP 字元 | surrogate 不在 S |
+
+### `searchStocks`
+
+- **name 重用：** `s.name === s.code ? code` 是同一輸入走同一純函式，結果相同。alias 對 name 或 code 的重用也一樣。
+- **exact 為真時略過 alias：** exact 只可能來自 `code === q`（此時 codeHit 為真）或 `name === q`（此時 `name.includes(q)` 為真），所以 filter 一定通過。nameHit 只用在 filter；score 只用 exact、codeHit 與 `name.startsWith`，因此不受影響。
+- **alias 的 `some` 迴圈：** 遇到 exact 才停，其餘情況持續累積 includes。語意正好是「任一 alias 等於 q」與「任一 alias 包含 q」，前面的子字串命中不會遮蔽後面 alias 的 exact 加分。
+- **comparator：** 改用預先算好的 normalized code，等同在比較時重算（純函式）。
+- **運算子優先序：** `cond ? X || Y || Z : 0` 的解析與預期相同，比較是字典序且具遞移性。
+- **分數與回傳：**
+  - 分數使用原始的 `s.code.length` 與 `s.name.length`。
+  - ES2019 起 `sort` 是穩定排序，同分保持原 index 順序。
+  - 回傳的是原始物件 `x.s`。
+
+## 四、非阻斷發現
+
+### N1（低）：非字串輸入的行為與原鏈不同
+
+- **位置：** `stock-index.ts` 的 `normalizeStockSearchText` fast path。
+- **觸發條件：** 型別被繞過，傳入非字串，且該值字串化後全屬 S（含空字串）。
+- **最小反例：**
+  - `searchStocks(index, [] as unknown as string)`
+    - 原鏈：`[].trim` 拋出 TypeError。
+    - 現行：`test([])` 以 `""` 判定，回傳陣列本身；`![]` 為 false；`code.startsWith([])` 等同 `startsWith("")`，全部列命中，回傳前 8 筆。
+  - `searchStocks(index, 2330 as any)`
+    - 不再拋錯，而是回傳結果。
+    - 但 `code === q`（字串 vs 數字）為 false，所以 exact 與 rank 都與查字串 `'2330'` 不同。
+- **索引列不受影響：** 若索引列的 code 或 name 是非字串，仍會在 `startsWith` 或 `includes` 拋錯，沒有靜默改變。
+- **處置：** TypeScript strict 下無法觸發，不列為 must-fix。若存在無型別的邊界（popout 的 postMessage、URL、IPC，是否存在未驗證），建議在邊界驗證，不要在熱路徑加檢查。
+
+### N2（低，選配）：alias 迴圈的寫法
+
+- **位置：** `searchStocks` 中的 `if (!exact) s.aliases?.some(alias => { ... })`。
+- **內容：** 在 `some` 的 predicate 裡改寫外部的 `let`，可讀性較差；每列也會配置 closure，被捕捉的變數需要放到 context。
+- **處置：** 不影響正確性，gate 也有大幅餘裕。**建議凍結不改**，改成 `for…of` + `break` 會需要重跑整套驗收，不值得。
+
+### N3（低，證據澄清）：NFKC 呼叫次數為何各查詢相同
+
+- 封包寫「F 433 次/查詢，NO_MATCH 434 次」。
+- 但 exact 略過 alias 與 alias 提早結束，理論上會讓不同查詢的次數略有差異。
+- 建議澄清 433 是逐查詢實測值還是代表值。不影響計時 gate。
+
+### N4（假設，我只看到測試名稱）：測試衛生
+
+- **normalize spy 的還原：** 若以 spy 觀察 `String.prototype.normalize`，應確認有 `mockRestore` 或 `afterEach` 還原，避免影響同檔其後的測試。
+- **stream 測試的成本與穩定性：**
+  - 3155 × 241 ≈ 76 萬個事件，應確認在 CI 上的執行時間。
+  - 「50ms coalesce」的斷言若使用真實 timer，可能在負載下不穩定。
+- **「normalize 零次」斷言：** 它把測試綁定在實作細節上，屬刻意的效能守門。應在文件註明：這類斷言失敗代表效能回歸，不代表功能錯誤。
+
+### N5（PM 範圍缺口）：CPU 證明的涵蓋面
+
+CPU 證明只涵蓋 Node v24 上的 `searchStocks`。以下都未在本封包中重測：
+- 整個 87 檔 PR 相對 base be4cbd3 的 CPU。
+- 型錄建構成本與記憶體（alias 由 635 增為 2984）。
+- 啟動時間、`searchProducts` 包裝層。
+- 瀏覽器或 WebView 引擎上的表現。
+
+Draft 必須明載這些未涵蓋項目。
+
+### N6（既有問題，不屬於本次 delta）
+
+- rank 1 的排序使用不指定 locale 的 `localeCompare`，結果取決於宿主 locale。
+- 對大寫 ASCII 加數字的代碼，ICU root 排序與 code point 順序通常一致；殘餘風險在含標點的代碼。
+- 本次 delta 未改動（前提是 B 也是如此），列為後續追蹤。
+
+### 量測方法
+
+- 「三個 round 的 p95 取平均」不是合併樣本的 p95。
+- warm 階段未證明沒有 GC。
+- 量測環境只有 Node。
+
+以上都已在封包中揭露。由於 F 比 B 快約 65–71%、比 A 快約 48–52%，這些方法上的瑕疵不足以翻轉 gate 結論。
+
+## 五、PM 處置
+
+- 接受為 local draft/dev 候選。
+- 無 must-fix。
+- 不同意 push、merge、release、發布或任何正式路由部署。
+
+## 六、架構處置
+
+- 接受。限縮的 fixed-point allowlist、完整 fallback、無快取，是三者中風險最低的設計。
+- 建議凍結 allowlist。日後任何擴充（例如 Ext-A、小寫、非 BMP 字元）都必須重做：
+  - NFKC_QC 與 ccc 的證明；
+  - 全 BMP code unit 對照測試；若擴及非 BMP，需另補涵蓋。
+- 現有修改（含 N2）不建議再動，以免重新驗收。
+
+## 七、驗收範圍（Draft 應原文保留）
+
+**成立的範圍：**
+- `searchStocks` 在 3155 筆凍結 identity 與完整名稱上的 filter/score/sort。
+- 在 Node v24.11.1、module-local 包裝下，10 個查詢的 warm 與 fresh-catalog p95 gate。
+- 以下等價性，均依 Root/Sol 的執行結果：
+  - fast path 與原鏈逐字等價；
+  - 排序、同分順序與原 ref 不變；
+  - 無快取。
+- 合成的 quote/stream 正確性測試。它不是計時證據，也不是市場資料證據。
+
+**不成立或未驗證：**
+- App 或 JS 啟動、型錄建構、`searchProducts`、網路、React、IME、瀏覽器延遲。
+- native 套件（private overlay 不可用，尚未建置）、public names 的 cookie 隔離。
+- NVDA、popouts、雲端 CI、乾淨 OS、夜盤或即時 Tick/BidAsk。
+- 整個 87 檔 PR 的逐行審查與整體 CPU。
+- IND101 與 Low UX 的後續項目仍然保留。
+- 沒有真實券商登入、帳號、憑證、交易或發布。
+
+## 八、限制
+
+- 我未執行任何測試、建置或基準測試，也未驗證任何 hash、截圖或畫面像素。
+- 我沒有看到 base 與 f577 的原始程式、測試本體，或 stream 測試的內容。
+- 封包稱 helper 與 6 段測試由「你的 cpu-engineering-nocache」撰寫。我對此沒有記憶，不從先前 session 推論任何事，並將其視為不可信證據。即便屬實，本審查對該部分也不構成獨立的第二審。獨立性來自 Root 與 Sol 的執行與複核，而那些複核我未能驗證。

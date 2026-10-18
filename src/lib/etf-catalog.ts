@@ -1,5 +1,6 @@
 import snapshot from './data/etf-catalog.json';
 
+// Snapshot-only compatibility helper. Production search uses etf-runtime-catalog.
 // Names are a versioned convenience index, not a trading contract catalog.
 // Only live STK Base identities joined by exchange+code may use these records.
 export const ETF_CATALOG_SOURCES = snapshot.sources;

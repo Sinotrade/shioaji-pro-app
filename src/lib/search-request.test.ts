@@ -14,7 +14,9 @@ function outcome<T>(promise: Promise<T>) {
 }
 
 const cleanups: Array<() => void> = [];
-function cache<T = string>(options: Partial<{ ttlMs: number; limit: number; deadlineMs: number }> = {}) {
+function cache<T = string>(options: Partial<{
+    ttlMs: number; limit: number; deadlineMs: number; queue: 'search' | 'none';
+}> = {}) {
     const result = new SearchRequestCache<T>({ ttlMs: 1000, limit: 16, deadlineMs: 1200, ...options });
     cleanups.push(() => result.clear());
     return result;
@@ -282,7 +284,7 @@ describe('SearchRequestCache deadline 與 clear', () => {
 
 describe('SearchRequestCache 搜尋專用四路 FIFO', () => {
     it('不同 cache instance 共用四路上限，依排隊順序啟動', async () => {
-        const first = cache();
+        const first = cache({ queue: 'search' });
         const second = cache();
         const sources = Array.from({ length: 7 }, () => deferred<string>());
         const started: number[] = [];
@@ -349,6 +351,55 @@ describe('SearchRequestCache 搜尋專用四路 FIFO', () => {
         await Promise.all(active);
     });
 
+    it('同一 signal 取消執行中與排隊 reader，不因同步釋放 slot 而啟動已取消來源', async () => {
+        const requests = cache();
+        const controller = new AbortController();
+        const running = Array.from({ length: 4 }, (_, index) => outcome(requests.read(
+            String(index), () => new Promise<string>(() => undefined), controller.signal,
+        )));
+        const cancelledLoad = vi.fn().mockResolvedValue('cancelled');
+        const cancelled = outcome(requests.read('cancelled', cancelledLoad, controller.signal));
+        const nextLoad = vi.fn().mockResolvedValue('next');
+        const next = requests.read('next', nextLoad);
+
+        controller.abort();
+
+        expect(cancelledLoad).not.toHaveBeenCalled();
+        expect(nextLoad).toHaveBeenCalledTimes(1);
+        expect(await next).toBe('next');
+        for (const result of await Promise.all([...running, cancelled])) {
+            expect(result).toMatchObject({ error: { name: 'AbortError' } });
+        }
+    });
+
+    it('同步 drain 先拒絕已取消的排隊 reader，保留同 key 的有效 reader 與來源', async () => {
+        const requests = cache();
+        const controller = new AbortController();
+        const running = Array.from({ length: 4 }, (_, index) => outcome(requests.read(
+            String(index), () => new Promise<string>(() => undefined), controller.signal,
+        )));
+        const source = deferred<string>();
+        let sourceSignal!: AbortSignal;
+        const load = vi.fn((signal: AbortSignal) => { sourceSignal = signal; return source.promise; });
+        const cancelled = [
+            outcome(requests.read('shared', load, controller.signal)),
+            outcome(requests.read('shared', load, controller.signal)),
+        ];
+        const valid = requests.read('shared', load);
+
+        controller.abort();
+
+        expect(load).toHaveBeenCalledTimes(1);
+        expect(sourceSignal.aborted).toBe(false);
+        source.resolve('shared');
+        expect(await valid).toBe('shared');
+        for (const result of await Promise.all([...running, ...cancelled])) {
+            expect(result).toMatchObject({ error: { name: 'AbortError' } });
+        }
+        expect(await requests.read('shared', load)).toBe('shared');
+        expect(load).toHaveBeenCalledTimes(1);
+    });
+
     it('排隊時間計入 deadline，到期未取得 slot 不可啟動來源', async () => {
         const blockers = cache({ deadlineMs: 1000 });
         const pending = Array.from({ length: 4 }, (_, index) => outcome(blockers.read(String(index), () => new Promise<string>(() => undefined))));
@@ -411,5 +462,91 @@ describe('SearchRequestCache 搜尋專用四路 FIFO', () => {
         expect(await valid).toBe('second');
         expect(load).toHaveBeenCalledTimes(1);
         await Promise.all(old);
+    });
+});
+
+describe('SearchRequestCache 非搜尋共享目錄不占搜尋 queue', () => {
+    it('搜尋四路飽和時目錄立即開始，仍共享同 key 並隔離 reader 取消', async () => {
+        const searches = cache();
+        const blockers = Array.from({ length: 4 }, () => deferred<string>());
+        const running = blockers.map((source, index) => searches.read(String(index), () => source.promise));
+        const queuedLoad = vi.fn().mockResolvedValue('queued search');
+        const queued = searches.read('queued', queuedLoad);
+        const catalog = cache({ queue: 'none' });
+        const source = deferred<string>();
+        let sourceSignal!: AbortSignal;
+        const load = vi.fn((signal: AbortSignal) => { sourceSignal = signal; return source.promise; });
+        const controller = new AbortController();
+        const cancelled = outcome(catalog.read('catalog', load, controller.signal));
+        const valid = catalog.read('catalog', load);
+
+        expect(load).toHaveBeenCalledTimes(1);
+        expect(queuedLoad).not.toHaveBeenCalled();
+        controller.abort();
+        expect(sourceSignal.aborted).toBe(false);
+        expect(await cancelled).toMatchObject({ error: { name: 'AbortError' } });
+        source.resolve('catalog');
+        expect(await valid).toBe('catalog');
+        expect(await catalog.read('catalog', load)).toBe('catalog');
+        expect(load).toHaveBeenCalledTimes(1);
+        // Completing an opt-out source must not release a search queue slot.
+        expect(queuedLoad).not.toHaveBeenCalled();
+
+        blockers.forEach((blocker, index) => blocker.resolve(String(index)));
+        await Promise.all(running);
+        expect(await queued).toBe('queued search');
+    });
+
+    it('目錄最後一位 reader 取消仍同步 abort，忽略取消的晚回不能填入新快取', async () => {
+        const catalog = cache({ queue: 'none' });
+        const source = deferred<string>();
+        let sourceSignal!: AbortSignal;
+        const controller = new AbortController();
+        const cancelled = outcome(catalog.read('catalog', signal => {
+            sourceSignal = signal;
+            return source.promise;
+        }, controller.signal));
+
+        controller.abort();
+
+        expect(sourceSignal.aborted).toBe(true);
+        expect(await cancelled).toMatchObject({ error: { name: 'AbortError' } });
+        expect(await catalog.read('catalog', () => Promise.resolve('fresh'))).toBe('fresh');
+        source.resolve('late');
+        await flush();
+        expect(await catalog.read('catalog', () => Promise.resolve('wrong'))).toBe('fresh');
+    });
+
+    it('目錄有自己的 deadline，逾時不影響搜尋 slot，且失敗可重試', async () => {
+        const searches = cache();
+        const running = Array.from({ length: 4 }, (_, index) => outcome(searches.read(
+            String(index), () => new Promise<string>(() => undefined),
+        )));
+        const queuedLoad = vi.fn().mockResolvedValue('queued search');
+        const queued = outcome(searches.read('queued', queuedLoad));
+        const catalog = cache({ queue: 'none', deadlineMs: 100 });
+        let sourceSignal!: AbortSignal;
+        const source = deferred<string>();
+        const load = vi.fn((signal: AbortSignal) => { sourceSignal = signal; return source.promise; });
+        const first = outcome(catalog.read('catalog', load));
+        const second = outcome(catalog.read('catalog', load));
+
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(sourceSignal.aborted).toBe(true);
+        expect(load).toHaveBeenCalledTimes(1);
+        for (const result of await Promise.all([first, second])) {
+            expect(result).toMatchObject({ error: { message: expect.stringContaining('逾時') } });
+        }
+        expect(await catalog.read('catalog', () => Promise.resolve('retry'))).toBe('retry');
+        source.resolve('late');
+        await flush();
+        expect(await catalog.read('catalog', () => Promise.resolve('wrong'))).toBe('retry');
+        expect(queuedLoad).not.toHaveBeenCalled();
+
+        searches.clear();
+        for (const result of await Promise.all(running)) expect(result).toMatchObject({ error: { name: 'AbortError' } });
+        expect(await queued).toMatchObject({ error: { name: 'AbortError' } });
+        expect(queuedLoad).not.toHaveBeenCalled();
     });
 });

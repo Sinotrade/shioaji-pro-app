@@ -4,10 +4,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import GridLayout, {
     useContainerWidth,
-    type Layout,
     type LayoutItem,
 } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
+import { useWorkspaceGrid } from './hooks/use-workspace-grid';
 import * as styles from './App.css';
 import { BottomDock } from './components/bottom-dock';
 import { AsyncStatus, type AsyncPhase } from './components/async-status';
@@ -96,7 +96,6 @@ import type { ContractInfo, SecurityType } from './lib/types/contract';
 import {
     BLOCK_META,
     DEFAULT_WORKSPACE,
-    GRID_LEGACY_COLS,
     GRID_LEGACY_SCALE,
     LAYOUT_PRESETS,
     loadProfiles,
@@ -106,7 +105,6 @@ import {
     saveWorkspace,
     popoutSessionFromQuery,
     popoutSessionParam,
-    toRenderGeom,
     withBlockSessionConfig,
     type SessionConfigPatch,
     type Block,
@@ -1127,65 +1125,9 @@ function MainApp() {
     // 儲存基準 288 欄；渲染依視窗寬選密度 k（cols=24k，每欄 ~40–55px）：
     // 欄寬與最小寬不再跟著螢幕等比放大，超寬幕上面板可以縮得更窄、
     // 拖拉步進更細。k 皆整除 12 → 同密度回存無損；跨密度僅一次舍入。
-    const density = width < 1800 ? 1 : width < 2800 ? 2 : width < 3900 ? 3 : 4;
-    const renderCols = GRID_LEGACY_COLS * density;
-    const colW = width > 0 ? width / renderCols : 53;
-    const renderLayout = useMemo(() => {
-        const typeOf = new Map(workspace.blocks.map((b) => [b.id, b.type]));
-        return workspace.layout.map((l) => {
-            const meta = BLOCK_META[typeOf.get(l.i) as BlockType];
-            // 最小寬錨定像素（24 欄 ×1280px 時代的等效值）— 在超寬幕
-            // 不再是螢幕比例，自選清單等窄面板可以真正縮窄
-            const minPx = (meta?.defaultSize.minW ?? 3) * (1280 / 24);
-            return {
-                ...l,
-                ...toRenderGeom(l, density),
-                minW: Math.min(
-                    Math.max(1, Math.ceil(minPx / colW)),
-                    renderCols,
-                ),
-            };
-        });
-    }, [workspace, density, colW, renderCols]);
-    const onLayoutChange = useCallback(
-        (next: Layout) => {
-            const fromRender = GRID_LEGACY_SCALE / density; // 12/k，整數
-            // 讀最新版面：RGL 的 mount 回報可能與面板 mount 時的寫入（例如閃電
-            // 存初始單位）落在同一次 commit，用舊的 closure 會蓋掉那筆寫入
-            const current = workspaceRef.current;
-            const prev = new Map(current.layout.map((l) => [l.i, l]));
-            // RGL 在 mount 時必發一次 onLayoutChange（含跨密度舍入後的
-            // 座標）— 儲存值渲染後與回報一致的面板保留原值，精細版面
-            // 不會只因「開了 app」就被粗化回存
-            let changed = false;
-            const stored = next.map((l) => {
-                const p = prev.get(l.i);
-                if (p) {
-                    const g = toRenderGeom(p, density);
-                    if (
-                        g.x === l.x &&
-                        g.w === l.w &&
-                        p.y === l.y &&
-                        p.h === l.h
-                    ) {
-                        return p;
-                    }
-                }
-                changed = true;
-                return {
-                    ...(p ?? {}),
-                    i: l.i,
-                    x: Math.round(l.x * fromRender),
-                    y: l.y,
-                    w: Math.max(1, Math.round(l.w * fromRender)),
-                    h: l.h,
-                };
-            });
-            if (!changed && stored.length === current.layout.length) return;
-            updateWorkspace({ ...current, layout: stored });
-        },
-        [updateWorkspace, density],
-    );
+    const { renderLayout, renderCols, renderWidth, gridProps } = useWorkspaceGrid({
+        workspace, workspaceRef, workspaceGenerationRef: workspaceGenRef, width, updateWorkspace,
+    });
 
     const addBlock = useCallback(
         (type: BlockType) => {
@@ -1654,18 +1596,14 @@ function MainApp() {
                 {mounted && (
                     <GridLayout
                         layout={renderLayout}
-                        width={width}
+                        width={renderWidth}
                         gridConfig={{
                             cols: renderCols,
                             rowHeight: 30,
                             margin: [6, 6],
                             containerPadding: [6, 6],
                         }}
-                        dragConfig={{
-                            handle: '.drag-handle',
-                            cancel: 'button, input, select',
-                        }}
-                        onLayoutChange={onLayoutChange}
+                        {...gridProps}
                     >
                         {workspace.blocks.map((block) => (
                             <div

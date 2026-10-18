@@ -103,7 +103,9 @@ describe('progressive product-search acceptance', () => {
         expect(updates.at(-1)).toEqual(['2330', ...expectedFutures]);
         expect(finished).toBe(false);
         delayedWarrants.resolve(warrants);
-        expect(codes(await pending)).toEqual(['2330', ...expectedFutures, 'W001', 'W002', 'W003']);
+        const final = codes(await pending);
+        expect(final).toEqual(['2330', ...expectedFutures, 'W001', 'W002', 'W003']);
+        for (const prefix of updates) expect(final.slice(0, prefix.length)).toEqual(prefix);
         expect(source.futures.mock.calls[0]?.[0]).toEqual({ underlyingCode: '2330' });
         expect(source.warrants.mock.calls[0]?.[0]).toBe('2330');
         if (query === '2330') {
@@ -307,6 +309,99 @@ describe('search-source sharing and independent cancellation acceptance', () => 
 });
 
 describe('partial-source recovery and stale-response acceptance', () => {
+    it('does not delay the stable index-futures prefix while its lower-priority IND Base is slow', async () => {
+        const expected = ['TXFR1', 'MXFR1', 'TMFR1', 'TXFR2', 'MXFR2', 'TMFR2'];
+        source.bases.mockImplementation((type: string) => type === 'IND'
+            ? new Promise(() => undefined) : Promise.resolve({ contracts: [stock, etf] }));
+        source.futures.mockResolvedValue(expected.map(code => row(code, 'FUT', {
+            name: `${code.startsWith('MX') ? '小型' : code.startsWith('TM') ? '微型' : ''}台指期貨`, underlying_code: 'IX0001',
+        })));
+        const { searchProducts } = await import('./product-search');
+        const updates: string[][] = [];
+        let complete = false;
+        const pending = searchProducts('台指', 8, { onUpdate: rows => updates.push(codes(rows)) })
+            .then(rows => { complete = true; return rows; });
+        await flush();
+        expect(updates.at(-1)).toEqual(expected);
+        expect(complete).toBe(false);
+        await vi.advanceTimersByTimeAsync(1200);
+        expect(codes((await pending).filter(item => item.security_type === 'FUT'))).toEqual(expected);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('a fatal background IND scope failure immediately detaches a pending stock catalog reader', async () => {
+        const indices = deferred<{ contracts: ContractInfo[] }>();
+        source.bases.mockImplementation((type: string) => type === 'IND'
+            ? indices.promise : new Promise(() => undefined));
+        const { searchProducts } = await import('./product-search');
+        const pending = searchProducts('台指');
+        const rejected = expect(pending).rejects.toThrow(/伺服器已切換|商品目錄已更新/);
+        await flush();
+        const stockSignal = source.bases.mock.calls.find(([type]) => type === 'STK')![3].signal as AbortSignal;
+        source.base = 'http://127.0.0.1:21324';
+        indices.resolve({ contracts: [] });
+        await rejected;
+        expect(stockSignal.aborted).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('lets a non-search catalog load start while the search queue is saturated', async () => {
+        const { SearchRequestCache } = await import('./search-request');
+        const busy = new SearchRequestCache<string>({ ttlMs: 0, limit: 1, deadlineMs: 1200 });
+        const running = Array.from({ length: 4 }, (_, i) => busy.read(`busy${i}`,
+            () => new Promise<string>(() => undefined)).catch(error => error));
+        try {
+            const { loadStockCatalog } = await import('./stock-index');
+            const pending = loadStockCatalog();
+            await flush();
+            expect(source.bases).toHaveBeenCalledOnce();
+            expect(source.names).toHaveBeenCalledOnce();
+            expect(codes(await pending)).toEqual(['2330', '00679B']);
+        } finally {
+            busy.clear();
+            await Promise.all(running);
+        }
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('detaches unfinished siblings after fatal scope rejection without waiting for their deadline', async () => {
+        const delayedFutures = deferred<ContractInfo[]>();
+        const delayedWarrants = deferred<ContractInfo[]>();
+        source.futures.mockReturnValue(delayedFutures.promise);
+        source.warrants.mockReturnValue(delayedWarrants.promise);
+        const { searchProducts } = await import('./product-search');
+        const pending = searchProducts('2330', 8, { includeWarrants: true });
+        const rejected = expect(pending).rejects.toThrow('伺服器已切換');
+        await flush();
+        const siblingSignal = source.futures.mock.calls[0]![1].signal as AbortSignal;
+        source.base = 'http://127.0.0.1:21324';
+        delayedWarrants.resolve(warrants);
+        await rejected;
+        expect(siblingSignal.aborted).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+        delayedFutures.resolve(futures);
+        await flush();
+    });
+
+    it('keeps a sibling source alive when a different search still owns its reader', async () => {
+        const delayedFutures = deferred<ContractInfo[]>();
+        source.futures.mockReturnValue(delayedFutures.promise);
+        const { searchProducts } = await import('./product-search');
+        const updates: string[][] = [];
+        const first = searchProducts('2330', 8, { includeWarrants: true,
+            onUpdate: rows => { if (rows.length > 1) throw new Error('Synthetic consumer failure'); } });
+        const rejected = expect(first).rejects.toThrow('Synthetic consumer failure');
+        const second = searchProducts('台積電', 8, { includeWarrants: true,
+            onUpdate: rows => updates.push(codes(rows)) });
+        await flush();
+        const sharedSignal = source.futures.mock.calls[0]![1].signal as AbortSignal;
+        delayedFutures.resolve(futures);
+        await rejected;
+        expect(codes(await second)).toEqual(['2330', ...expectedFutures, 'W001', 'W002', 'W003']);
+        expect(sharedSignal.aborted).toBe(false);
+        expect(updates.at(-1)).toEqual(['2330', ...expectedFutures]);
+    });
+
     it('retries failed optional names without refetching the successful Base catalog', async () => {
         source.names.mockRejectedValueOnce(new Error('503 optional names'));
         const { searchProducts } = await import('./product-search');

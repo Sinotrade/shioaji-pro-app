@@ -1,0 +1,139 @@
+# Shioaji Pro 商品搜尋最佳化審查（程式碼品質＋效能）
+
+**結論：沒有已確認的 blocker（High/Critical）。** 已確認的問題都是低嚴重度。另有兩項中度的可維護性成本，以及一項效能取捨：它的機制已從程式碼確認，但影響幅度沒有量測。
+
+> 判定標示：**【確認】**＝由提供的原始碼推得；**【假設】**＝需要量測或需要看到未提供的檔案才能確認。我沒有執行任何測試、建置或量測，以下所有毫秒數都引用你提供的單一樣本。
+
+---
+
+## 一、正確性與資源缺陷
+
+### F1【低｜本次引入｜確認】伺服器切換造成搜尋失敗後，畫面仍留著舊伺服器的部分結果，而且可以點選
+- **位置**：`src/components/command-palette.tsx` 94–100；`src/components/watchlist.tsx` 366–372。觸發來源在 `src/lib/product-search.ts` 180–186、192–193、232–234、289–292、298。
+- **情境**：
+  1. 輸入「台積」，base=A，catalog 回來後第 298 行先推出 `[2330]`。
+  2. 期貨請求還沒回來時，`getApiBase()` 變成 B。
+  3. 共享來源在第 234 行拋錯；`read` 的 catch 在第 193 行再拋 → `searchProducts` reject。
+  4. UI 的 catch 只設 `searchError`，**沒有清掉 suggestions**。
+- **違反**：stale-result protection 與 API guard。舊版 catch 有 `setSuggestions([])`，而且舊版在失敗前不會顯示任何列。
+- **最小反例**：mock `getApiBase` 在第一次 `onUpdate` 後回傳 `'B'`，並讓 `fetchFutures` 晚一點才回。預期 suggestions 是 `[]`；實際留著 `[2330(A)]`。這時按 Enter 會先 `primeContract(舊 contract)` 再 `onJump`。
+- **最小修正**：兩個 catch 都恢復清空（palette 另外加 `setActiveIdentity(null)`）。這樣做是安全的：已推出的列必定是第 324 行最終結果的前綴，所以「推出過列之後還 reject」只會來自 scope 失效或程式錯誤，清空不會丟掉合法的部分結果。
+- **【假設】**：`primeContract` 或 `onAdd(..., resolved)` 會不會把舊 server 的 contract 持久化，要看未提供的 contracts-cache／use-watchlist 才知道。如果會，嚴重度應升為「中」。
+
+### F2【低｜新設計的缺口，不是退化｜確認，影響有上限】非取消型的 reject 不會釋放其他分支的 reader
+- **位置**：`product-search.ts` 299–306 與 158–160；UI 端搜尋結束時不 abort controller（palette 87–100、watchlist 359–372）。
+- **情境**：`loadWarrants` 因 scope 失效先 reject，`Promise.all` 跟著 reject。但 `loadFutures` 的 reader 還掛在沒被取消的 `options.signal` 上，所以它的邏輯 slot 和傳輸會一直佔著，直到來源回應或 1200ms deadline。
+- **最小反例**：讓 futures load 延遲 1000ms，warrants 這邊觸發 server 切換。reject 之後，futures load 的 `signal.aborted` 會維持 `false` 約 1 秒。
+- **修正（約 6–8 行）**：在 `searchProducts` 內建一個 local `AbortController`，連結 `options.signal`，在 `finally` 裡 abort；所有 cache 讀取改傳 local.signal（`assertActive` 仍然看 `options.signal`）。
+- **驗收**：上述反例在 reject 的同一個 tick 內，`load` 的 signal 已經 aborted（前提是它是唯一 reader）。
+
+### F3【低｜本次引入｜確認，屬 UX】選取時取消了搜尋，若跳轉失敗，清單會停在部分結果
+- **位置**：`command-palette.tsx` 155（`submit` 內的 `cancelSearch`）、161–164、268–269。
+- **情境**：「台積」的第二階段已顯示 `[2330, CDFR1…]`。按 Enter → 權證請求被中止 → `onJump` 失敗 → 畫面顯示「找不到此商品代碼」。此後清單永遠缺權證；因為 `searching=false`，既不會顯示「補齊中」，也沒有重試鈕。舊版的 `submit` 不會取消搜尋，清單仍會補完。
+- **修正**：`onJump` 失敗且 `submitVersion` 仍有效時，呼叫 `setSearchRetry(r => r + 1)`。60 秒內快取是暖的，成本很低。
+- **驗收**：`onJump` reject 之後，最終 suggestions 和「沒有選取」時的最終結果相同。
+
+### F4【低｜確認；觸發頻率是假設】名為「search-only」的佇列，其實也承載非搜尋的 catalog 讀取
+- **位置**：`search-request.ts` 8–11；`stock-index.ts` 27–29、59–71、138–142。
+- **情境**：`loadStockIndex`（依檔頭註解，給 heatmap 這類畫面用）透過 `loadStockCatalog` 進到同一個 4-slot 全域佇列，而 1000ms deadline 包含排隊時間。選擇權搜尋（roots＋4 個 option-root）正好用滿 4 slot；若同時來源偏慢，heatmap 的 base 讀取可能還沒送出就逾時。舊版的 `loadSource` 沒有佇列。
+- **最小反例**：用永不完成的 load 佔滿 4 slot，再呼叫 `loadStockIndex()`。1000ms 後它以逾時 reject，`fetchContracts` 被呼叫 0 次。
+- **修正**：最少先把第 8 行註解改正確。若要隔離，讓 `SearchRequestCache` 的建構參數可傳入 scheduler（預設仍用全域），catalog 改用不排隊的 scheduler。
+
+---
+
+## 二、可維護性成本
+
+- **Q1【中】漸進結果的「前綴」規則被寫了兩次**（299–305 與 309–323，以及 279）。
+  - 我逐一檢查過各分支，目前兩邊確實等價。
+  - **會出事的變更**：若日後只改最終組裝，例如把 `indexSuggestions` 移到期貨前面、或改 `leadingStocks` 的條件，第二階段就不再是前綴。後果是列在使用者眼前重排、預設 index 0 在不同階段指向不同商品、階段中按 Enter 選到的商品和最終清單不同。
+  - **最小作法**：抽出 `head(futures)`，最終結果改為 `unique([...head(futures), ...tail])`。
+  - **性質測試**：每次 `onUpdate` 都必須是最終結果的前綴。查詢矩陣：`2330`、`00679B`、`元大美債20年`、`台積`、`台積電期`、`台指`、`TXFR1`、`台積電選擇權`、`台積權證`。
+- **Q2【中】兩個元件各寫了一套搜尋狀態機**（palette 42–109、watchlist 331–381）。
+  - 兩邊已經分歧：debounce 120/150ms、limit 8/10、選取重設、`open` 依賴都不同。
+  - F1、F3 的修正都得改兩處。
+  - 可選作法：抽成 `useProductSearch()`，元件只保留選取與提交。等下次要動這些行為時再做，不必為此重構。
+- **Q3【低】`withDeadline` 名稱不符實，而且有兩層 deadline**（`product-search.ts` 40–62 的 1200ms，對上 `stock-index.ts` 26 的 1000ms 且含排隊時間）。
+  - 內層一定先到期，所以外層計時器幾乎不會生效。
+  - **反例**：把 `CATALOG_DEADLINE_MS` 調成 1500、來源回應 1300ms，搜尋仍會在 1200ms 被外層截斷。
+  - 另外，`finally`（第 58 行）在 base 失敗時會中止 names reader，所以重試時 names 也得重抓。
+  - **修正**：移除外層 timer，只保留 abort 連結；或讓外層由 `CATALOG_DEADLINE_MS` 推導。
+- **Q4【低】身分鍵有三種寫法**（`product-search.ts` 283、palette 16、watchlist 743）。建議匯出單一的 `suggestionKey()`。
+- **Q5【低】測試接縫**：
+  - 全域佇列（9–11）沒有辦法重設或觀測，無法直接斷言「slot 歸零」。
+  - product-search 的模組層快取沒有 `clear()`。
+  - 如果 fake timers 只假 `setTimeout` 不假 `Date`，第 112、147、179 行的 deadline 判斷會和計時器不同步。
+  - 建議加 `searchQueueSnapshot()` 讓測試斷言 `{active: 0, queued: 0}`。測試本身沒有提供，現有測試是否已經靠行為間接涵蓋，我無法確認。
+- **Q6【低】其他小問題**：
+  - deadline 用 `Date.now()`（112、147、179），牆鐘跳動可能把有效結果誤判為逾時。只把 `deadlineAt` 改成 `performance.now()` 即可。
+  - reader 取消時改用自建的 AbortError（70、125），丟掉了 `signal.reason`。目前呼叫端靠 `assertScope` 補回，但新的呼叫端若依 reason 區分逾時與取消，會判錯。
+
+---
+
+## 三、效能評估
+
+### 量測解讀
+- **已量測**（單一本機樣本，Node fetch，不含瀏覽器渲染）：
+
+  | 查詢 | 首屏（舊 → 新） | 完成（舊 → 新） |
+  |---|---|---|
+  | 台積 | 47.0 → 16.6ms | 47.0 → 45.2ms |
+  | 2330 | 6.07 → 3.74ms | 6.07 → 6.50ms |
+  | 00679B | 12.45 → 1.40ms | 12.45 → 12.54ms |
+  | 3 個同碼並發 | — | 13.8 → 9.5ms，GET 6 → 2 |
+
+  總 GET 數 17 → 13，減少的 4 次全部來自「3 個同碼並發」這個合成情境。
+- **由程式碼推論**：
+  - 漸進推出重用同一份資料，**不增加任何請求**；相依關係不變，所以完成時間理應不變，只有首屏提前。這和樣本一致；完成時間 ±0.5ms 的差異屬雜訊範圍，不能下結論。
+  - 單一搜尋的最大並行數是 4：catalog 2，接著 futures＋warrants 2；或 roots 1 後再展開 4。所以 4-slot 佇列在單一輸入框的流程中不會造成等待。
+  - 同一個輸入框裡，前一次搜尋在下一次開始前（debounce 期間）就已被中止，因此 **pending 共享在單一輸入流程幾乎不會發生**。量測到的 6→2 只代表多個消費者同時查同一個代碼。
+- **沒有量測到的**：慢速或遠端來源、連續輸入、注音逐字送出、瀏覽器或 WebView 渲染、傳輸層是否真的有中止。
+
+### P1【設計取捨｜機制確認、幅度未量測】「最後一個 reader 中止傳輸」加上 debounce 空窗，會讓和查詢無關的共享來源每次都重抓
+- **位置**：palette 191–193 與 81、watchlist 798–800 與 353；`search-request.ts` 127；`stock-index.ts` 59–71（key 只有 scope）。
+- **合成反例**：base 延遲 600ms，watchlist 依序在 t=0／200／400 輸入「台」「台積」「台積電」。
+
+  | | base GET 次數 | 首屏時間 | 最後一次搜尋開始後 |
+  |---|---|---|---|
+  | 現行 | 3 | 約 1150ms | +600ms |
+  | d934eed | 1 | 約 750ms | +200ms |
+
+- **反向效益**：舊版會讓中間查詢的 futures／warrants 跑完，造成浪費。輸入數字代碼時，最後的直接查詢成功後根本不需要 catalog，所以中止反而有利。
+- **建議（只在實測慢速時採用）**：只對 scope-key 的 base／names／roots 加 ≤ debounce＋50ms 的寬限期，仍受原 deadline 限制。
+  - 這與規格「最後一個 reader 立即中止」有落差，需要你同意。
+  - **驗收**：上述合成情境下 base GET = 1、首屏 ≤ 最後一次搜尋開始後 +200ms；放棄的搜尋在寬限期＋50ms 內中止傳輸。
+
+### 其他可選改善（都要先量測，依效益排序）
+
+| # | 作法 | 預期效益 | 風險 | 驗收 |
+|---|---|---|---|---|
+| P2 | 在 `publish` 比對身分鍵，與上次相同就跳過（289–292） | `TXFR1` 目前三次 `setSuggestions` 內容完全相同（298、302、final） | 極低 | `TXFR1` 的 `onUpdate` 只 1 次；`2330` 2 次；前綴測試不變 |
+| P3 | Watchlist：用 `useCallback` 包 `onDragStart`（721–727）、`setDropTarget`（441–444）、`handleDrop`（459–466） | 目前每次 render 都產生新函式，`WatchRow` 的 `memo`（65）永遠失效；漸進推出讓每次搜尋多出 1–2 次整份清單重繪【機制確認、幅度假設】 | `arrange` 依賴漏寫會造成閉包過期 | React Profiler：50 列時，一次 `onUpdate` commit 的 `WatchRow` render 數 = 0；`onSelect`／`onRemove` 的穩定性取決於父層（未驗證） |
+| P4a | 224–225 每個 stock 的 `name` 只正規化一次 | 減少約 1/3 正規化次數 | 無 | 輸出不變 |
+| P4b | 依 `(res, underlyings)` 的物件身分，用 WeakMap 記住衍生出的 catalog 與已正規化的欄位（`stock-index.ts` 77–88、`product-search.ts` 214–226） | 歷史數據只有 `searchStocks` 單項 0.68ms 中位數（Node），整體 CPU 推估是幾 ms【假設】 | 共享物件被改動（應 freeze）；不增加超出來源快取的保留量 | 先在目標 WebView 做 profile，若暖快取下同步 CPU 中位數 > 2ms 才採用，並要求降幅 ≥ 50%、查詢矩陣輸出完全相同 |
+| P5 | names 逾時後短暫退避（約 5 秒，屬既有行為） | names 端點掛住時，不必每次搜尋都等 1000ms 才首屏 | 退避期間 names 失效 | 只在實際觀察到 names 逾時時採用；names 掛住時第二次搜尋 < 100ms，5 秒後會重試 |
+
+**不建議（缺乏證據）**：提高 `CACHE_LIMIT`／TTL／並行度、快取 direct Info（規格禁止）、對代碼投機預抓期貨（浪費請求，最多只省 1 RTT）。另外，`resolveContract` 兩段串行請求（`/contracts/2330` → `/info`）是代碼首屏最大的單點，但它在 `shioaji.ts`，不在本次範圍。
+
+### H1【假設】滑鼠靜止在清單區時，漸進新增的列可能被誤認為「明確選取」
+- **位置**：palette 224、248–250、127–130。
+- **情境**：清單分階段長出來時，部分瀏覽器會對新出現在游標下的列觸發 `mouseenter`，把預設選取變成明確的身分，之後最終結果還會保留它。舊版在拿到最終結果時會 `setActiveIndex(0)` 把它蓋掉。
+- **驗證**：用 Playwright 把游標固定在結果區，跑一次漸進搜尋，斷言 `activeIdentity` 仍是 `null`。
+- **緩解**：只在偵測到真正的 `mousemove` 之後才接受 `mouseenter`。
+
+---
+
+## 四、已檢查、沒有發現問題的項目
+- **共享的 loader 閉包**只捕捉由 key 決定的資料（scope／underlying／root／day）。第一位消費者的 signal 不會進入閉包（229–240、202–205）。catalog 的 generation 與 scope 同步變更並 `clear()`，所以不會跨代共享。
+- **slot 不會懸掛**：每個 entry 一建立就有 deadline timer；`settle` 是唯一出口、可重複呼叫、而且一定會 release。load 若同步 throw，由 `drainingQueue` 旗標和外層迴圈正確處理。
+- **晚到結果**：`closed` 檢查加上第 179 行的 deadline 轉換，不會寫入快取。
+- **取消**：`read` 入口與 `cache.read` 入口都會擋已取消的請求，分支展開和排隊都會被阻止；排隊中的最後一個 reader 離開時會 `cancelQueued`。
+- **前綴與順序**：第 298、302 行推出的內容都是第 324 行最終結果的前綴；期貨會比權證先拿到 slot；TSMC 與台指的排序符合 R1／R2 和一般／小型／微型的規則。
+- **數字代碼與 ETF**：直接查詢和名稱查詢都用 `exactStock.code` 當 key，並以 `underlying_code` 過濾（247、269）；`target_code` 只用於去重（99–103）。
+- **direct 查詢**：`ttlMs: 0`，成功值、失敗和 404 都不會留存。
+- **IME 與 key**：組字期間不搜尋，`onUpdate` 也被 `isCurrent` 擋住；React key 含交易所；預設選取（`null`）不會被當成身分保留。
+
+## 五、範圍與限制
+- 只審閱提示中內嵌的五個檔案與 diff。為維持獨立性，我沒有開啟工作目錄裡的其他檔案（包含先前的審查輸出和 log）。
+- 未提供的檔案：`shioaji.ts`、`contracts-cache.ts`、`index-search`、`etf-catalog`、測試檔。因此「最後一個 reader 中止傳輸」在傳輸層、尤其原生傳輸上是否真的生效，**未驗證**。
+- 沒有推論瀏覽器 P95、daemon 執行上限或行情延遲。文件中已列明的既有限制（全域名稱不完整、WRT 冷啟動完整 Info、同 URL sidecar 重啟身分）沒有算成缺陷。
+- 這個環境只有唯讀工具，所以沒有建立計畫檔，也沒有修改任何檔案。

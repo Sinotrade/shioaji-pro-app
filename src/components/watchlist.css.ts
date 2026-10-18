@@ -1,7 +1,9 @@
 // src/components/watchlist.css.ts
 
-import { globalStyle, style, styleVariants } from '@vanilla-extract/css';
+import { createContainer, globalStyle, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
+import { PRODUCT_SEARCH_ACTIVE } from '../lib/product-badge-presentation';
+import { searchSurface } from './search-surface.css';
 
 export const list = style({
     display: 'flex',
@@ -299,25 +301,36 @@ export const addRow = style({
 });
 
 // name-search suggestions float above the add input
+const searchContainer = createContainer();
+const narrowSearch = `${searchContainer} (max-width: 360px)`;
+
 export const suggestBox = style({
+    ...searchSurface,
+    containerType: 'inline-size',
+    containerName: searchContainer,
     position: 'absolute',
     bottom: '100%',
     left: vars.space.sm,
     right: vars.space.sm,
     zIndex: 30,
-    background: vars.color.panelRaised,
     border: `1px solid ${vars.color.borderBright}`,
     borderRadius: vars.radius.sm,
     boxShadow: '0 -6px 18px rgba(0, 0, 0, 0.3)',
-    overflow: 'hidden',
+    maxHeight: 'min(24rem, 50vh)',
+    overflowX: 'hidden',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
 });
 
-export const suggestRow = style({
-    display: 'grid',
-    gridTemplateColumns: '3.4rem 1fr auto',
-    columnGap: vars.space.sm,
+const suggestRowBase = {
+    position: 'relative',
+    display: 'flex',
+    flexWrap: 'nowrap',
+    gap: vars.space.sm,
     alignItems: 'center',
     width: '100%',
+    minWidth: 0,
+    boxSizing: 'border-box',
     padding: `4px ${vars.space.sm}`,
     textAlign: 'left',
     cursor: 'pointer',
@@ -326,22 +339,74 @@ export const suggestRow = style({
     color: vars.color.foreground,
     fontSize: '0.7rem',
     ':hover': { background: vars.color.muted },
+} as const;
+
+export const suggestRow = style(suggestRowBase);
+
+export const suggestActive = style({
+    ...suggestRowBase,
+    background: vars.color[PRODUCT_SEARCH_ACTIVE.background],
+    color: vars.color[PRODUCT_SEARCH_ACTIVE.color],
+    boxShadow: `inset 2px 0 0 ${vars.color[PRODUCT_SEARCH_ACTIVE.indicator]}`,
+    ':hover': { background: vars.color[PRODUCT_SEARCH_ACTIVE.background] },
+    '@media': {
+        '(forced-colors: active)': { outline: '1px solid Highlight', outlineOffset: -1 },
+    },
 });
 
 export const suggestCode = style({
-    fontFamily: vars.font.mono,
-    fontWeight: 600,
-});
-
-export const suggestName = style({
+    flex: '0 1 5.5rem',
+    maxWidth: '28%',
+    minWidth: 0,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+    fontFamily: vars.font.mono,
+    fontWeight: 600,
+    '@container': {
+        [narrowSearch]: { flex: '0 1 auto', maxWidth: '34%', fontWeight: 400 },
+    },
+});
+
+export const suggestName = style({
+    // Reserve name space before shrinking lower-priority metadata near the breakpoint.
+    flex: '1 1 10em',
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    '@container': {
+        [narrowSearch]: { flex: '1 1 0', fontWeight: 600 },
+    },
 });
 
 export const suggestCat = style({
     fontSize: '0.6rem',
-    color: vars.color.mutedForeground,
+    color: vars.color.foreground,
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    selectors: { [`${suggestActive} &`]: { color: vars.color[PRODUCT_SEARCH_ACTIVE.color] } },
+});
+
+export const suggestMeta = style({
+    flex: '0 4 auto',
+    maxWidth: '42%',
+    minWidth: 0,
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    gap: vars.space.xs,
+    // Keep classification and expiry/warnings in the accessible name at narrow widths.
+    '@container': {
+        [narrowSearch]: {
+            position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
+            clipPath: 'inset(50%)', border: 0,
+        },
+    },
 });
 
 export const addInput = style({
