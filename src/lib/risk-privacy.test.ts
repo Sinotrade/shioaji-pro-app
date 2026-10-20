@@ -4,12 +4,12 @@ vi.stubGlobal('window', new EventTarget());
 const store = new Map<string, string>();
 vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) });
 const { setPrivacyMoney } = await import('./privacy');
-const { checkOrderAllowed, getDailyPnlKnown, reportDailyPnl, setRiskSettings, subscribeRiskSettings } = await import('./risk');
+const { checkOrderAllowed, getDailyPnlKnown, getRiskSettings, reportDailyPnl, setRiskSettings, subscribeRiskSettings } = await import('./risk');
 
 afterEach(() => {
     setPrivacyMoney(false);
     reportDailyPnl(0);
-    setRiskSettings({ enabled: false, maxDailyLoss: 0 });
+    setRiskSettings({ enabled: false, maxDailyLoss: 0, orderLineLock: false });
 });
 
 it('masks the daily-loss amounts in the block reason when 遮金額 is on', () => {
@@ -37,4 +37,38 @@ it('knows whether the daily PnL was read or is only the starting zero', () => {
     expect(getDailyPnlKnown()).toBe(false);
     reportDailyPnl(0);
     expect(getDailyPnlKnown()).toBe(true);
+});
+
+it('儲存失敗時委託線鎖定仍在本視窗生效並通知訂閱者', () => {
+    const seen = vi.fn();
+    const off = subscribeRiskSettings(seen);
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('配額滿'); });
+    try {
+        expect(() => setRiskSettings({ orderLineLock: true })).not.toThrow();
+        expect(seen).toHaveBeenCalledOnce();
+        expect(getRiskSettings().orderLineLock).toBe(true);
+    } finally {
+        setItem.mockRestore();
+        off();
+    }
+});
+
+it.each([
+    [null, false],
+    ['{}', false],
+    [JSON.stringify({ orderLineLock: true }), true],
+])('跨視窗同步委託線防拖並通知訂閱者（%s → %s）', (raw, expected) => {
+    // 先設成相反值，未儲存時退回預設解鎖才驗得出來
+    setRiskSettings({ orderLineLock: !expected });
+    const seen = vi.fn();
+    const off = subscribeRiskSettings(seen);
+    try {
+        if (raw === null) store.delete('sj-pro-risk');
+        else store.set('sj-pro-risk', raw);
+        window.dispatchEvent(Object.assign(new Event('storage'), { key: 'sj-pro-risk' }));
+        expect(getRiskSettings().orderLineLock).toBe(expected);
+        expect(seen).toHaveBeenCalledOnce();
+    } finally {
+        off();
+    }
 });

@@ -138,7 +138,7 @@ export function chartHasFocus(scope: { contains(n: Node | null): boolean } | nul
 }
 
 // 在輸入框、文字區裡的按鍵是打字，不是快捷鍵
-function isTypingTarget(t: EventTarget | null): boolean {
+export function isTypingTarget(t: EventTarget | null): boolean {
     const el = t as HTMLElement | null;
     return (
         !!el &&
@@ -159,6 +159,14 @@ export function undoKeyOf(
     if (k === 'z') return e.shiftKey ? 'redo' : 'undo';
     if (k === 'y' && !e.shiftKey) return 'redo';
     return null;
+}
+
+// 委託線鎖定：Ctrl/Cmd＋L，兼顧實體鍵位與不同鍵盤配置
+export function orderLockKeyOf(
+    e: Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>,
+): boolean {
+    if (e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey)) return false;
+    return e.code === 'KeyL' || (e.key ?? '').toLowerCase() === 'l';
 }
 
 // Alt＋字母切換工具（用 code：macOS 的 Option 會把 e.key 變成特殊符號）

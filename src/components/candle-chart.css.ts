@@ -133,6 +133,12 @@ export const modeHint = style({
     pointerEvents: 'none',
 });
 
+// 提示列的第二行（防拖說明）：獨立一行、不在詞中間斷行，窄圖表時不會拆成碎字
+export const modeHintNote = style({
+    display: 'block',
+    whiteSpace: 'nowrap',
+});
+
 // 畫圖模式的提示：與交易模式同一個位置，但用中性的面板色，不搶琥珀
 // 那組「武裝中、下一下會下單」的警示語彙
 export const drawHint = style([
@@ -219,6 +225,66 @@ export const chartHost = style({
     // 點圖表時取得鍵盤焦點（畫圖的 Delete 只在焦點在圖上時作用），
     // 不畫焦點框
     outline: 'none',
+});
+
+// 工具列最右端的防拖／更新鈕：緊接在「指標」之後（指標已用 auto 邊距靠右）
+export const toolbarEnd = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '2px',
+    marginLeft: '6px',
+});
+
+// 舊版 WKWebView（Safari 13–16.1）不支援 color-mix：基本樣式用實色邊框、
+// 半透明邊框只在 @supports 內覆寫（同 server-settings-dialog.css.ts）
+const SUPPORTS_MIX = '(color: color-mix(in srgb, red 50%, transparent))';
+
+const orderLockBtnBase = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    minWidth: '28px',
+    height: '18px',
+    padding: '0 5px',
+    fontFamily: vars.font.body,
+    fontSize: '0.62rem',
+    lineHeight: 1,
+    cursor: 'pointer',
+    color: vars.color.mutedForeground,
+    background: vars.color.panelRaised,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    transition: 'color 150ms, background-color 150ms, border-color 150ms, box-shadow 150ms',
+    ':hover': { color: vars.color.foreground },
+    ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: 1 },
+    '@media': { '(prefers-reduced-motion: reduce)': { transition: 'none' } },
+});
+
+// 可拖且圖上有可拖的委託線：強調色微透光；防拖或圖上沒有可拖的線：與更新鈕同一套淡灰
+export const orderLockBtn = styleVariants({
+    draggable: [orderLockBtnBase, {
+        color: vars.color.accent,
+        background: vars.color.accentDim,
+        borderColor: vars.color.accent,
+        boxShadow: `0 0 8px ${vars.color.accentDim}`,
+        ':hover': { color: vars.color.accent, borderColor: vars.color.accent, boxShadow: `0 0 10px ${vars.color.accentDim}` },
+        '@supports': { [SUPPORTS_MIX]: { borderColor: `color-mix(in srgb, ${vars.color.accent} 45%, transparent)` } },
+    }],
+    muted: [orderLockBtnBase],
+});
+
+export const toolbarEndBtn = style({
+    // 提高局部選擇器權重，覆蓋共用更新鈕的尺寸、靠右留白與透明底色。
+    selectors: {
+        [`${toolbarEnd} &`]: {
+            width: '18px',
+            height: '18px',
+            marginLeft: 0,
+            background: vars.color.panelRaised,
+            border: `1px solid ${vars.color.border}`,
+        },
+    },
 });
 
 // ---- indicator legend（TradingView 式，圖上左上角，一列一個實例）----

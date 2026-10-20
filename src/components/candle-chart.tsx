@@ -40,8 +40,11 @@ import {
 } from 'lucide-react';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
+    chartHasFocus,
     inOrderLabelArea,
+    isTypingTarget,
     orderLineMayTakePointer,
+    orderLockKeyOf,
     useChartDrawings,
     type ChartDrawingsApi,
 } from '../hooks/use-chart-drawings';
@@ -114,6 +117,7 @@ import { loadOrderLotPreference, saveOrderLotPreference, QUICK_ORDER_LOTS } from
 import { accountMatches, resolveFlashAccount } from '../lib/flash-account';
 import { flashAccountLabels } from '../lib/flash-display';
 import { usePrivacyMode } from '../lib/privacy';
+import { getRiskSettings, setRiskSettings, subscribeRiskSettings } from '../lib/risk';
 import type { Account } from '../lib/types/portfolio';
 import { ChartOrderButton, type ChartOrderAccountView } from './chart-order-popover';
 import { isCancelUnconfirmed } from '../lib/cancel-verification';
@@ -268,6 +272,23 @@ export function CandleChart({
     const quote = useQuote(contract.code);
     const tf = TIMEFRAMES[tfIdx] ?? TIMEFRAMES[1];
     const themeSettings = useThemeSettings();
+    // 只取這個布林：別的風控欄位變動時不必重繪整張圖
+    const orderLineLock = useSyncExternalStore(subscribeRiskSettings, () => getRiskSettings().orderLineLock);
+    // 平台只判斷一次（每筆報價都會重繪）
+    const [orderLockShortcut] = useState(() => (typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent) ? '⌘L' : 'Ctrl+L'));
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.repeat) return;
+            if (!orderLockKeyOf(e)) return;
+            if (isTypingTarget(e.target)) return;
+            if (!chartHasFocus(hostRef.current?.parentElement ?? hostRef.current)) return;
+            e.preventDefault();
+            setRiskSettings({ orderLineLock: !getRiskSettings().orderLineLock });
+        };
+        // 與畫圖快捷鍵相同：capture 先於工具列的 stopPropagation 處理按鍵。
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, []);
     const colors = getChartColors(themeSettings);
     const themeKey = themeKeyOf(themeSettings);
     const [mode, setMode] = useState<TradeMode>('observe');
@@ -1494,7 +1515,7 @@ export function CandleChart({
                     lineStyle: 0, // solid
                     axisLabelVisible: true,
                     // 非現股的委託標出信用條件（融資買2、現沖賣1）
-                    title: `${creditLabel(t.order.action, t.order.order_cond, t.order.daytrade_short) ?? ''}${t.order.action === 'Buy' ? '買' : '賣'}${remaining} ⠿`,
+                    title: `${creditLabel(t.order.action, t.order.order_cond, t.order.daytrade_short) ?? ''}${t.order.action === 'Buy' ? '買' : '賣'}${remaining}${orderLineLock || !canUpdateOrderPrice(t.order) ? '' : ' ⠿'}`,
                 }),
             );
         }
@@ -1503,7 +1524,7 @@ export function CandleChart({
             for (const line of lines.values()) series.removePriceLine(line);
             orderLinesRef.current = new Map();
         };
-    }, [orderKey, themeKey, contract.code]);
+    }, [orderKey, themeKey, contract.code, orderLineLock]);
 
     // 畫圖工具武裝中（下方 useChartDrawings 每次 render 更新）。委託線的
     // 拖曳 effect 宣告在畫圖 hook 之前，靠這個 ref 讀最新狀態
@@ -1514,7 +1535,7 @@ export function CandleChart({
     const orderDragContextRef = useRef(orderDragContext);
     orderDragContextRef.current = orderDragContext;
     // 舊委託線被重建前也要還原／解除拖曳；render 後、effect 前的事件由 context 核對阻擋。
-    useLayoutEffect(() => { cancelOrderDragRef.current(); }, [orderDragContext, orderKey, themeKey]);
+    useLayoutEffect(() => { cancelOrderDragRef.current(); }, [orderDragContext, orderKey, themeKey, orderLineLock]);
 
     // drag an order line to modify its price
     useEffect(() => {
@@ -1600,7 +1621,8 @@ export function CandleChart({
 
         const hover = (e: MouseEvent) => {
             if (dragging || onOverlay(e)) return;
-            const near = findNear(yOf(e));
+            // 防拖中不找線，下面一併清掉改價游標
+            const near = getRiskSettings().orderLineLock ? null : findNear(yOf(e));
             // 武裝畫圖工具、或這個位置歸畫圖物件時委託線不接手，游標交給畫圖
             if (!near || !mayTake(e)) {
                 if (host.style.cursor === 'ns-resize') host.style.cursor = '';
@@ -1610,12 +1632,19 @@ export function CandleChart({
         };
 
         const down = (e: MouseEvent) => {
+            if (getRiskSettings().orderLineLock && modeRef.current === 'observe') return;
             if (e.button !== 0 || onOverlay(e)) return;
             // 「委託線優先」只在瀏覽模式：武裝畫圖工具時這一下屬於畫圖，
             // 在委託價附近畫線不能變成改價；別的 handler 已經接手的一下
             // 也不能同時拖畫圖又送出改價
             const hit = findNear(yOf(e));
             if (!hit || !mayTake(e)) return;
+            if (getRiskSettings().orderLineLock) {
+                // 已武裝時仍吃掉委託線點擊，避免穿透成新委託。
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
             // 價格軸把手可接手，但不能與未結束的畫圖拖曳／文字／量測共存。
             drawingsRef.current?.prepareOrderDrag();
             e.preventDefault();
@@ -2136,7 +2165,21 @@ export function CandleChart({
                         onCancel={cancelSettings}
                     />
                 )}
-                <RefreshButton label="更新歷史" loading={loading} onClick={() => setHistorySeq(nextChartHistoryRevision())} />
+                <div className={styles.toolbarEnd}>
+                    <button
+                        type='button'
+                        // 只有圖上真的有拖得動的委託線時才亮起提醒；平常不搶眼
+                        className={styles.orderLockBtn[!orderLineLock && workingOrders.some((t) => canUpdateOrderPrice(t.order)) ? 'draggable' : 'muted']}
+                        onClick={() => setRiskSettings({ orderLineLock: !orderLineLock })}
+                        title={orderLineLock ? `防拖中（所有圖表）— 按住委託線改為平移圖表，點價時點在線上不下單；點擊或按 ${orderLockShortcut} 改為可拖` : `可拖：委託線可拖曳改價 — 點擊或按 ${orderLockShortcut} 切換為防拖（所有圖表，重開後仍保留）`}
+                        aria-label='委託線防拖'
+                        aria-keyshortcuts='Control+L Meta+L'
+                        aria-pressed={orderLineLock}
+                    >
+                        {orderLineLock ? '防拖' : '可拖'}
+                    </button>
+                    <RefreshButton label='更新歷史' loading={loading} onClick={() => setHistorySeq(nextChartHistoryRevision())} className={styles.toolbarEndBtn} />
+                </div>
             </div>
             <div className={styles.chartRow}>
             <ChartDrawingTools api={drawings} />
@@ -2156,6 +2199,8 @@ export function CandleChart({
                 {shownMode !== 'observe' && (
                     <div className={styles.modeHint} style={hintStyle}>
                         交易模式 · {chartModeHint(shownMode, orderSettings, orderMarket ?? 'S')}
+                        {/* 防拖時點在委託線上會被吃掉不下單，先講清楚免得挪一下就在旁邊價位下單 */}
+                        {orderLineLock && <span className={styles.modeHintNote}>防拖中：點在線上不下單</span>}
                     </div>
                 )}
                 {mode === 'observe' && drawings.tool && (
