@@ -65,6 +65,29 @@ function resolveWatchlistContract(
     return resolveContract(base.code, base.security_type);
 }
 
+const membershipKey = (contract: { security_type: string | null; code: string }) =>
+    `${contract.security_type}:${contract.code}`;
+
+/**
+ * True when the server list's members differ from what the panel is about
+ * to save. This session's own confirmed adds/removes are overlaid first, so
+ * a read from a slightly older server snapshot is not mistaken for a change.
+ */
+export function serverMembershipChanged(
+    server: { contracts: readonly { security_type: string | null; code: string }[] },
+    toSave: readonly { security_type: string | null; code: string }[],
+    committed?: ReadonlyMap<string, { security_type: string | null; code: string } | null>,
+): boolean {
+    const members = new Set(server.contracts
+        .filter((contract) => !committed?.has(contract.code))
+        .map(membershipKey));
+    for (const contract of committed?.values() ?? []) {
+        if (contract) members.add(membershipKey(contract));
+    }
+    const saving = new Set(toSave.map(membershipKey));
+    return members.size !== saving.size || [...saving].some((key) => !members.has(key));
+}
+
 export function useWatchlist() {
     const [items, setItems] = useState<WatchItem[]>([]);
     const [loading, setLoading] = useState(true);
@@ -98,6 +121,9 @@ export function useWatchlist() {
     const editingHolds = useRef(0);
     const deferredReload = useRef<WatchlistChangedDetail | null>(null);
     const flushDeferredReload = useRef<() => void>(() => undefined);
+    // A panel save found the server list changed elsewhere: the re-read
+    // runs as soon as the queue drains, even while 調整順序 holds re-reads.
+    const conflictReload = useRef(false);
     activeIdRef.current = activeListId;
     const retryLoad = useCallback(() => {
         initStarted.current = false;
@@ -263,6 +289,25 @@ export function useWatchlist() {
             // included even if the user moved another row while it was pending.
             const write = enqueueMutation(id, async () => {
                 const contractsToSave = desiredContracts.current.get(id) ?? [];
+                if (conflictReload.current) return;
+                // The PUT replaces the whole list and the API has no version
+                // check. Read the server first: if its membership differs from
+                // this panel's snapshot (an Agent, the CLI or another device
+                // added or removed symbols), saving would silently undo that.
+                // A failed check read does not block the save; the PUT then
+                // reports its own error as before.
+                const lists = await fetchWatchlists().catch(() => null);
+                const raw = lists?.find((candidate) => candidate.id === id);
+                if (lists && (!raw || serverMembershipChanged(raw, contractsToSave, committedMembership.current.get(id)))) {
+                    conflictReload.current = true;
+                    deferredReload.current = { ...deferredReload.current };
+                    notify({
+                        kind: 'info',
+                        title: '自選清單已在其他地方變更',
+                        body: '已取消這次調整，並重新讀取伺服器上的最新清單',
+                    });
+                    return;
+                }
                 try {
                     await syncWatchlist(id, contractsToSave);
                 } catch (error) {
@@ -699,7 +744,8 @@ export function useWatchlist() {
     // runs when that edit settles, so it never overwrites unsaved work.
     const reloadFromServer = useCallback(
         async (request: WatchlistChangedDetail = {}): Promise<'reloaded' | 'deferred' | 'failed'> => {
-            if (structureBusyRef.current || pendingMutations.current.size > 0 || editingHolds.current > 0) {
+            const held = editingHolds.current > 0 && !conflictReload.current;
+            if (structureBusyRef.current || pendingMutations.current.size > 0 || held) {
                 const first = !deferredReload.current;
                 deferredReload.current = { ...deferredReload.current, ...request };
                 if (first) {
@@ -712,6 +758,7 @@ export function useWatchlist() {
                 return 'deferred';
             }
             deferredReload.current = null;
+            conflictReload.current = false;
             // An explicit re-read trusts the server: drop this session's
             // read-your-writes overlays so an outside reorder or removal is
             // not masked by an older local commit.
@@ -773,7 +820,8 @@ export function useWatchlist() {
 
     flushDeferredReload.current = () => {
         const request = deferredReload.current;
-        if (!request || structureBusyRef.current || pendingMutations.current.size > 0 || editingHolds.current > 0) return;
+        const held = editingHolds.current > 0 && !conflictReload.current;
+        if (!request || structureBusyRef.current || pendingMutations.current.size > 0 || held) return;
         deferredReload.current = null;
         void reloadFromServer(request);
     };

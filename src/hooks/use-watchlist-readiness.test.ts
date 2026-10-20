@@ -351,7 +351,8 @@ it('does not let an older refresh from another list replace a newer saved order'
     let fetchCount = 0;
     mocks.fetchLists.mockImplementation(() => {
         fetchCount += 1;
-        if (fetchCount === 2) {
+        // 1 boot, 2 pre-PUT conflict check, 3 the follow-up read
+        if (fetchCount === 3) {
             const old = snapshot();
             return new Promise((resolve) => { finishOldRefresh = () => resolve(old); });
         }
@@ -363,10 +364,10 @@ it('does not let an older refresh from another list replace a newer saved order'
     });
     await act(async () => { root = create(createElement(Probe)); });
     await act(async () => { state.reorderSymbol('A', 'B'); });
-    await vi.waitFor(() => expect(fetchCount).toBe(2));
+    await vi.waitFor(() => expect(fetchCount).toBe(3));
     await act(async () => { state.setActiveList('second'); });
     await act(async () => { state.reorderSymbol('X', 'Y'); });
-    await vi.waitFor(() => expect(fetchCount).toBe(3));
+    await vi.waitFor(() => expect(fetchCount).toBe(5));
     await act(async () => { finishOldRefresh(snapshot()); });
     await act(async () => { state.setActiveList('first'); });
     await act(async () => { state.setActiveList('second'); });
@@ -387,8 +388,9 @@ it('uses an earlier saved-list response while a newer cross-list GET is pending'
     mocks.fetchLists.mockImplementation(() => {
         fetchCount += 1;
         const response = snapshot();
-        if (fetchCount === 2) return new Promise((resolve) => { finishFirstGet = () => resolve(response); });
-        if (fetchCount === 3) return new Promise((resolve) => { finishSecondGet = () => resolve(response); });
+        // Each save reads the list first (conflict check), then again after the PUT.
+        if (fetchCount === 3) return new Promise((resolve) => { finishFirstGet = () => resolve(response); });
+        if (fetchCount === 5) return new Promise((resolve) => { finishSecondGet = () => resolve(response); });
         return Promise.resolve(response);
     });
     mocks.sync.mockImplementation(async (id: string, contracts: Array<{ code: string }>) => {
@@ -397,10 +399,10 @@ it('uses an earlier saved-list response while a newer cross-list GET is pending'
     });
     await act(async () => { root = create(createElement(Probe)); });
     await act(async () => { state.reorderSymbol('A', 'B'); });
-    await vi.waitFor(() => expect(fetchCount).toBe(2));
+    await vi.waitFor(() => expect(fetchCount).toBe(3));
     await act(async () => { state.setActiveList('second'); });
     await act(async () => { state.reorderSymbol('X', 'Y'); });
-    await vi.waitFor(() => expect(fetchCount).toBe(3));
+    await vi.waitFor(() => expect(fetchCount).toBe(5));
     await act(async () => { finishFirstGet(); });
     await act(async () => { state.setActiveList('first'); });
     expect(state.items.map(({ contract }) => contract.code)).toEqual(['B', 'A']);
@@ -473,7 +475,8 @@ it('uses raw failed-PUT recovery when another list commits during the recovery G
     ];
     mocks.fetchLists.mockImplementation(() => {
         reads += 1;
-        if (reads === 3) return new Promise((resolve) => {
+        // 1 boot, 2 pre-PUT conflict check, 3 the add's refresh, 4 recovery
+        if (reads === 4) return new Promise((resolve) => {
             const raw = snapshot();
             // Recovery reads an older successful snapshot that has not yet
             // observed the committed POST.
@@ -501,8 +504,9 @@ it('uses raw failed-PUT recovery when another list commits during the recovery G
         await Promise.resolve();
         await Promise.resolve();
     });
+    await vi.waitFor(() => expect(mocks.sync).toHaveBeenCalled());
     await act(async () => { failFirst(); await adding; });
-    await vi.waitFor(() => expect(reads).toBe(3));
+    await vi.waitFor(() => expect(reads).toBe(4));
     await act(async () => { state.setActiveList('second'); });
     await act(async () => { state.reorderSymbol('X', 'Y'); });
     await vi.waitFor(() => expect(secondOrder).toEqual(['Y', 'X']));
@@ -518,7 +522,8 @@ it('keeps a committed move when its follow-up list GET fails', async () => {
     let fetchCount = 0;
     mocks.fetchLists.mockImplementation(async () => {
         fetchCount += 1;
-        if (fetchCount === 2) throw new Error('GET failed after PUT');
+        // 1 boot, 2 pre-PUT conflict check, 3 the follow-up read
+        if (fetchCount === 3) throw new Error('GET failed after PUT');
         return [{ id: 'first', name: '一', contracts: serverOrder.map((code) => ({ code, security_type: 'STK' })) }];
     });
     let finishPut!: () => void;

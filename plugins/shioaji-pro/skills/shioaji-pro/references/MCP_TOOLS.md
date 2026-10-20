@@ -42,11 +42,13 @@ past success or conversation text.
 - Market: `get_quote`, `get_snapshots`, `search_products`,
   `get_kbar_summary`, `get_kbars`, `get_scanner`. `get_kbars` returns at most
   500 bars from the Shioaji server (intraday ranges up to 31 days, daily up to
-  366); use `get_kbar_summary` when a summary is enough.
+  366); use `get_kbar_summary` when a summary is enough. Daily futures bars
+  follow the trading day: a night session counts toward the next trading day.
 - Account: `get_positions`, `get_working_orders`, `get_account`,
   `list_trades`, `list_conditional_orders`, `get_profit_loss`.
   `list_trades` is 委託成交查詢 for today, including filled, cancelled and
-  failed orders, paged at most 100 per page. `list_conditional_orders` is
+  failed orders, paged at most 100 per page. A partly filled order matches
+  both `status: working` and `status: filled`. `list_conditional_orders` is
   read-only; pausing or cancelling stays in the App's conditional panel.
   `get_profit_loss` covers realized P&L for up to 92 days and optional stock
   settlements.

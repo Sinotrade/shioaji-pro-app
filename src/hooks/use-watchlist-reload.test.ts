@@ -172,3 +172,40 @@ it('locks edits while a re-read is in flight so nothing mixes with the old snaps
     expect(state.structureBusy).toBe(false);
     expect(codes()).toEqual(['A', 'B', 'C']);
 });
+
+it('does not overwrite an outside add while arranging: the save is cancelled and the list re-read', async () => {
+    await mount();
+    act(() => state.holdReload(true)); // 調整順序 mode
+    // the Agent adds D on the server; its re-read is held by the arrange mode
+    server = [list('first', '我的自選', ['A', 'B', 'C', 'D']), list('second', '第二組', ['X'])];
+    await act(async () => { await state.reloadFromServer({ source: 'agent' }); });
+    expect(codes()).toEqual(['A', 'B', 'C']);
+    // the stale panel moves a row: its PUT would drop D
+    await act(async () => { state.reorderSymbol('A', 'B'); });
+    expect(mocks.sync).not.toHaveBeenCalled();
+    expect(server[0]!.contracts.map((c) => c.code)).toEqual(['A', 'B', 'C', 'D']);
+    expect(codes()).toEqual(['A', 'B', 'C', 'D']);
+    expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ title: '自選清單已在其他地方變更' }));
+    // after the re-read the user can arrange the fresh list
+    await act(async () => { state.reorderSymbol('D', 'A'); });
+    expect(server[0]!.contracts.map((c) => c.code)).toEqual(['D', 'A', 'B', 'C']);
+});
+
+it('cancels a save when the list was removed elsewhere and falls back on re-read', async () => {
+    await mount();
+    server = [list('second', '第二組', ['X'])];
+    await act(async () => { state.reorderSymbol('A', 'C'); });
+    expect(mocks.sync).not.toHaveBeenCalled();
+    expect(state.activeListId).toBe('second');
+    expect(codes()).toEqual(['X']);
+});
+
+it('still saves when the server only lags behind this session\'s own add', async () => {
+    const { serverMembershipChanged } = await import('./use-watchlist');
+    const stk = (code: string) => ({ code, security_type: 'STK', exchange: 'TSE', target_code: null });
+    const stale = list('first', '我的自選', ['A', 'B']);
+    expect(serverMembershipChanged(stale, [stk('B'), stk('A'), stk('C')], new Map([['C', stk('C')]]))).toBe(false);
+    expect(serverMembershipChanged(stale, [stk('B'), stk('A'), stk('C')])).toBe(true);
+    expect(serverMembershipChanged(list('first', 'x', ['A', 'B', 'C']), [stk('A'), stk('C')], new Map([['B', null]]))).toBe(false);
+    expect(serverMembershipChanged(stale, [stk('B'), stk('A')])).toBe(false);
+});
