@@ -17,7 +17,7 @@ import {
 } from '../lib/execution/background';
 import { BRACKET_STATE_TEXT, bracketViews, type BracketView } from '../lib/execution/bracket-contract';
 import { checkRearmQuantity, fetchAccountPositions, rearmPlan, type PositionView, type RearmSubject } from '../lib/execution/rearm';
-import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import { useRevealText } from '../lib/privacy-text';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
 import { useServerInfo } from '../lib/server-info-store';
@@ -56,6 +56,7 @@ type Positions = { state: 'loading' } | { state: 'ok'; view: PositionView } | { 
 
 /** Exported for the 條件單管理面板 (#226). */
 export function BracketRearm({ v, onClose }: { v: BracketView; onClose: () => void }) {
+    const privMoney = usePrivacyMoney();
     const [pos, setPos] = useState<Positions>({ state: 'loading' });
     const [qty, setQty] = useState<string | null>(null);
     const { busy, message, run } = useRun();
@@ -84,7 +85,7 @@ export function BracketRearm({ v, onClose }: { v: BracketView; onClose: () => vo
             </div>
             {plan.notes.map(t => <div key={t} className={styles.note.warn}>{t}</div>)}
             <div className={styles.note.muted}>
-                {cap > 0 ? `最多 ${cap} 口（目前可平倉量與括號單原本持有部位的較小者）`
+                {cap > 0 ? `最多 ${maskMoney(`${cap} 口`, privMoney)}（目前可平倉量與括號單原本持有部位的較小者）`
                     : pos.state === 'ok' ? '目前沒有可平倉的部位，不需要重新啟用；若部位已自行處理，請按「我已自行處理」' : ''}
             </div>
             <label className={styles.actions}>
@@ -113,6 +114,7 @@ export function BracketRearm({ v, onClose }: { v: BracketView; onClose: () => vo
 }
 
 function Row({ v, envNow, main }: { v: BracketView; envNow: string | null; main: boolean }) {
+    const privMoney = usePrivacyMoney();
     const priv = usePrivacyMode();
     const [asking, setAsking] = useState(false);
     const [rearming, setRearming] = useState(false);
@@ -133,17 +135,17 @@ function Row({ v, envNow, main }: { v: BracketView; envNow: string | null; main:
                 背景執行 · {v.side === 'Buy' ? '買進' : '賣出'}
                 {v.stop !== null ? ` 停損 ${fmtPrice(v.stop)}` : ''}
                 {v.take !== null ? ` 停利 ${fmtPrice(v.take)}` : ''}
-                {v.state === 'protected' || v.state === 'exiting' ? ` · 保護 ${v.position} 口` : ''}
+                {v.state === 'protected' || v.state === 'exiting' ? ` · 保護 ${maskMoney(`${v.position} 口`, privMoney)}` : ''}
                 {v.origin === 'rearm' ? ' · 新盤別重新啟用' : v.origin === 'lateFill' ? ' · 晚到成交補保護' : ''}
             </div>
             {v.state === 'lapsed' && (
                 <div className={styles.note.err}>
-                    {`盤別已更換，原本 ${v.position} 口的停損停利沒有延續到這個盤別（委託不跨盤別）。需要的話請重新啟用，或按「我已自行處理」。`}
+                    {`盤別已更換，原本 ${maskMoney(`${v.position} 口`, privMoney)}的停損停利沒有延續到這個盤別（委託不跨盤別）。需要的話請重新啟用，或按「我已自行處理」。`}
                 </div>
             )}
             {v.unprotected > 0 && (
                 <div className={styles.note.err}>
-                    {`未受保護 ${v.unprotected} 口：保護結束後才成交，系統不會自動補掛；請到持倉核對後自行處理。`}
+                    {`未受保護 ${maskMoney(`${v.unprotected} 口`, privMoney)}：保護結束後才成交，系統不會自動補掛；請到持倉核對後自行處理。`}
                 </div>
             )}
             {v.state === 'needsConfirm' && (
