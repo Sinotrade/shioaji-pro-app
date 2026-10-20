@@ -185,6 +185,24 @@ describe('ConditionalPanel', () => {
         expect(m.modify).toHaveBeenCalledWith('tg-1', { price: 47850, quantity: 1, send: { type: 'MKT' }, validity: null });
     });
 
+    it('#268 history and status text re-mask marked holdings and never render marker characters', async () => {
+        const pv = await import('../lib/privacy');
+        const detail = `可賣出現股僅 ${pv.secretMoney('200 股')}，其餘 ${pv.secretMoney('300 股')}未保護`;
+        m.sources = sources({ triggers: [trig({ history: [{ at: 1, text: detail }] })] });
+        const r = render();
+        await click(byLabel(r, '修改')[0]!);
+        const shown = () => [text(r.root), ...r.root.findAll(n => typeof n.props.title === 'string').map(n => n.props.title as string)].join('|');
+        expect(shown()).toContain('可賣出現股僅 200 股，其餘 300 股未保護');
+        await act(async () => { pv.setPrivacyMoney(true); });
+        try {
+            expect(shown()).toContain('可賣出現股僅 •••••，其餘 •••••未保護');
+            expect(shown()).not.toMatch(/200 股|300 股/);
+        } finally {
+            await act(async () => { pv.setPrivacyMoney(false); });
+        }
+        expect(shown()).not.toMatch(/[\u2061-\u2063]/);
+    });
+
     it('已結束（今日） tab lists finished ones without actions', async () => {
         m.sources = sources({ triggers: [trig()], ended: [{ id: 'x', trigger: trig({ id: 'x' }), reason: 'cancelled', at: Date.now() }] });
         const r = render();

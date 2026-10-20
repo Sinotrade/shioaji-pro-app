@@ -31,7 +31,8 @@ vi.mock('../lib/trigger-engine', () => ({
 }));
 vi.mock('../lib/window-role', () => ({ focusMainWindow: m.focus }));
 vi.mock('../lib/bracket', () => ({ dismissBracket: m.dismiss }));
-vi.mock('../lib/privacy', () => ({
+vi.mock('../lib/privacy', async (orig) => ({
+    ...(await orig<typeof import('../lib/privacy')>()),
     usePrivacyMode: () => m.priv,
     maskAccountId: (id: string, priv: boolean) => priv ? `••${id.slice(-2)}` : id,
 }));
@@ -40,6 +41,7 @@ vi.mock('../lib/contracts-cache', () => ({
     ensureContract: async () => undefined,
 }));
 vi.mock('../lib/server-info-store', () => ({ useServerInfo: () => null }));
+vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [], selectedStock: null, selectedFutures: null, loaded: true, loadError: false }) }));
 vi.mock('../lib/protection-env', () => ({
     currentProtectionEnv: () => m.env,
     protectionEnvLabel: (env: string) => env.endsWith('|simulation') ? '模擬' : '正式',

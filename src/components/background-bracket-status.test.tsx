@@ -17,7 +17,8 @@ vi.mock('../lib/shioaji', () => ({}));
 vi.mock('../lib/account-query', () => ({}));
 vi.mock('../lib/main-window-commands', () => ({ isMainWindow: () => true }));
 vi.mock('../lib/server-info-store', () => ({ useServerInfo: () => null }));
-vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => false, maskAccountId: (id: string) => id }));
+vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [], selectedStock: null, selectedFutures: null, loaded: true, loadError: false }) }));
+vi.mock('../lib/privacy', async (orig) => ({ ...(await orig<typeof import('../lib/privacy')>()), usePrivacyMode: () => false, maskAccountId: (id: string) => id }));
 vi.mock('../lib/protection-env', () => ({ currentProtectionEnv: () => 'srv|simulation', protectionEnvLabel: () => '模擬' }));
 const { BackgroundBracketList } = await import('./background-bracket-status');
 

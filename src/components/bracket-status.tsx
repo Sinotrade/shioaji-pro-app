@@ -23,6 +23,7 @@ import {
     workingEntryAfterExit,
 } from '../lib/bracket-core';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import { useRevealText } from '../lib/privacy-text';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
 import { useServerInfo } from '../lib/server-info-store';
 import { useTriggerFeed } from '../lib/trigger-engine';
@@ -53,6 +54,8 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
     stale: boolean;
 }) {
     const priv = usePrivacyMode();
+    // 出場明細、保護問題與錯誤訊息保留產生當下的字串：渲染時依目前開關重遮（#268）
+    const reveal = useRevealText();
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
     const [confirmRemove, setConfirmRemove] = useState(false);
@@ -95,7 +98,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                 <div className={styles.note[tone === 'ok' ? 'ok' : 'err']}>
                     {plan.exit.kind === 'stop' ? '停損' : '停利'} {EXIT[plan.exit.status] ?? plan.exit.status}
                     {` ${plan.exit.filled}/${plan.exit.quantity}`}
-                    {plan.exit.detail ? ` — ${plan.exit.detail}` : ''}
+                    {plan.exit.detail ? ` — ${reveal(plan.exit.detail)}` : ''}
                 </div>
             )}
             {stale && (
@@ -123,7 +126,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
             )}
             {plan.issues.length > 0 ? (
                 <div className={styles.note.warn}>
-                    保護未確認完整：{plan.issues.map(i => i.detail).join('；')}
+                    保護未確認完整：{reveal(plan.issues.map(i => i.detail).join('；'))}
                 </div>
             ) : isLive(plan) && !notRunning ? (
                 <div className={styles.note.ok}>回報追蹤正常</div>

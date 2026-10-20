@@ -83,3 +83,14 @@ it('toast：顯示期間才打開遮金額／隱私也會立即遮', async () =>
     expect(shown()).not.toMatch(/35000|30000|8 張|9816502/);
     expect(shown()).toContain('9A95-•••••02');
 });
+
+it('guard: notice center and toasts never render the invisible marker characters (text or title), in any toggle state', async () => {
+    h.log = notices().map((n, i) => ({ ...n, ts: 1_700_000_000_000 + i }));
+    await act(async () => { view = create(createElement('div', null, createElement(NoticeCenter), createElement(EventToasts))); });
+    await act(async () => { for (const n of notices()) h.noticeListeners.forEach(l => l(n)); });
+    const dom = () => JSON.stringify(view!.toJSON());
+    for (const [priv, money] of [[false, false], [true, false], [false, true], [true, true]] as const) {
+        await act(async () => { privacy.setPrivacyMode(priv); privacy.setPrivacyMoney(money); });
+        expect(dom()).not.toMatch(/[\u2061-\u2063]/);
+    }
+});

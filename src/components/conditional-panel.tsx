@@ -384,6 +384,8 @@ function MoreMenu({ items, busy }: { items: { key: string; label: string; title:
 // ---- expanded: edit + history ----
 
 function HistoryList({ entries }: { entries: HistoryEntry[] }) {
+    // 歷程文字（含出場明細 detail）保留產生當下的字串：渲染時依目前開關重遮（#268）
+    const reveal = useRevealText();
     if (!entries.length) return <div className={styles.muted}>尚無紀錄</div>;
     return (
         <div className={styles.history}>
@@ -391,7 +393,7 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
                 <div key={`${e.at}:${i}`} className={styles.historyItem}>
                     <span className={styles.dot[e.tone ?? 'plain']} />
                     <span className={`${styles.mono} ${styles.muted}`}>{fmtClock(e.at)}</span>
-                    <span>{e.text}</span>
+                    <span>{reveal(e.text)}</span>
                 </div>
             ))}
         </div>
@@ -576,6 +578,7 @@ function editTitle(row: CondRow): string {
 }
 
 function Expanded({ row, onClose }: { row: CondRow; onClose: () => void }) {
+    const reveal = useRevealText();
     const src = row.source;
     let left: ReactNode = null;
     if (src.type === 'trigger' && row.actions.modify) left = <TriggerEdit trigger={src.trigger} onDone={onClose} />;
@@ -592,7 +595,7 @@ function Expanded({ row, onClose }: { row: CondRow; onClose: () => void }) {
                     {editTitle(row)}
                     <span className={styles.muted} style={{ fontWeight: 400 }}>{row.side.text} · <AccountText row={row} /></span>
                 </div>
-                <div className={`${styles.statusFull} ${styles.tone[row.status.tone]}`} data-testid='cond-status-full'>{row.status.text}</div>
+                <div className={`${styles.statusFull} ${styles.tone[row.status.tone]}`} data-testid='cond-status-full'>{reveal(row.status.text)}</div>
                 {left}
             </div>
             <div className={styles.paneSplit}>
@@ -607,7 +610,8 @@ function Expanded({ row, onClose }: { row: CondRow; onClose: () => void }) {
 
 /** Short status label; the whole sentence on hover and in the expanded row. */
 function StatusLabel({ row }: { row: CondRow }) {
-    return <span className={styles.tone[row.status.tone]} title={row.status.text} data-testid='cond-status'>{shortStatus(row.status.text)}</span>;
+    const text = useRevealText()(row.status.text);
+    return <span className={styles.tone[row.status.tone]} title={text} data-testid='cond-status'>{shortStatus(text)}</span>;
 }
 
 function TableRow({ row, expanded, onToggle }: { row: CondRow; expanded: boolean; onToggle: () => void }) {

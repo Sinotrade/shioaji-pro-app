@@ -18,6 +18,7 @@ import {
     sendOutcomeText,
 } from '../lib/pending-trigger-view';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import { useRevealText } from '../lib/privacy-text';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
 import { useServerInfo } from '../lib/server-info-store';
 import {
@@ -58,6 +59,7 @@ function Row({ trigger, price, envNow, sending }: {
     sending: boolean; // the main window is still processing a 送出 (e.g. its confirm dialog)
 }) {
     const priv = usePrivacyMode();
+    const reveal = useRevealText();
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
     // two-step; the armed label follows the latest price until the 2nd click
@@ -152,7 +154,7 @@ function Row({ trigger, price, envNow, sending }: {
                 <span className={styles.message}>目前已未穿價：價格已經回到觸發價另一側。現在送出仍{sendOutcomeText(trigger)}，需要多確認一次。</span>
             )}
             {sending && <span className={styles.message}>送出處理中…（若開啟下單確認，請在主視窗確認）</span>}
-            {message && <span className={styles.message}>{message}</span>}
+            {message && <span className={styles.message}>{reveal(message)}</span>}
             <div className={styles.actions}>
                 <button
                     className={styles.primary}

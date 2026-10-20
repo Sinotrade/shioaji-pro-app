@@ -18,6 +18,7 @@ import {
 import { BRACKET_STATE_TEXT, bracketViews, type BracketView } from '../lib/execution/bracket-contract';
 import { checkRearmQuantity, fetchAccountPositions, rearmPlan, type PositionView, type RearmSubject } from '../lib/execution/rearm';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import { useRevealText } from '../lib/privacy-text';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
 import { useServerInfo } from '../lib/server-info-store';
 import { fmtPrice } from '../lib/utils/format';
@@ -46,7 +47,9 @@ function useRun() {
             setBusy(false);
         }
     };
-    return { busy, message, run };
+    // 錯誤訊息保留產生當下的字串：渲染時依目前開關重遮（#268）
+    const reveal = useRevealText();
+    return { busy, message: message === null ? null : reveal(message), run };
 }
 
 type Positions = { state: 'loading' } | { state: 'ok'; view: PositionView } | { state: 'failed' };

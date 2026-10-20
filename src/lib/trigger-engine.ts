@@ -1381,7 +1381,7 @@ export function planExitQuantity(t: Pick<TriggerOrder, 'quantity' | 'bracketId' 
         if (free <= 0) return { quantity: 0, detail: '現股持倉已被其他出場委託保留或已無部位，未送出' };
         if (free < t.quantity) {
             const unit = stockQtyUnit(t.orderLot);
-            return { quantity: free, detail: `可賣出現股僅 ${secretMoney(`${free} ${unit}`)}，其餘 ${t.quantity - free} ${unit}未保護` };
+            return { quantity: free, detail: `可賣出現股僅 ${secretMoney(`${free} ${unit}`)}，其餘 ${secretMoney(`${t.quantity - free} ${unit}`)}未保護` };
         }
         return { quantity: t.quantity };
     }

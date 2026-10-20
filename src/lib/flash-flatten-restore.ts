@@ -155,12 +155,12 @@ export async function restoreAfterUnfilledClose(before: number, snapshots: reado
     const failed: string[] = [];
     for (const leg of plan.legs) {
         // each leg binds the environment current when it is created: checked per leg
-        if (!(await deps.envOk())) { failed.push(`${leg.quantity} ${unit}（伺服器或模擬／正式模式已切換）`); continue; }
+        if (!(await deps.envOk())) { failed.push(`${secretMoney(`${leg.quantity} ${unit}`)}（伺服器或模擬／正式模式已切換）`); continue; }
         try {
             if (await deps.restore(leg)) restored += leg.quantity;
-            else failed.push(`${leg.quantity} ${unit}`);
+            else failed.push(secretMoney(`${leg.quantity} ${unit}`));
         } catch (e) {
-            failed.push(`${leg.quantity} ${unit}（${e instanceof Error ? e.message : String(e)}）`);
+            failed.push(`${secretMoney(`${leg.quantity} ${unit}`)}（${e instanceof Error ? e.message : String(e)}）`);
         }
     }
     const what = plan.legs.map(l => `${l.stop !== null ? `停損 ${l.stop}` : ''}${l.stop !== null && l.take !== null ? '・' : ''}${l.take !== null ? `停利 ${l.take}` : ''}`).join('；');
@@ -171,8 +171,8 @@ export async function restoreAfterUnfilledClose(before: number, snapshots: reado
         return 'restored';
     }
     if (restored > 0) {
-        say('⚡ 平倉未成交，停損停利只恢復一部分', `${code} 仍持有 ${secretMoney(`${remaining} ${unit}`)}：已恢復 ${restored} ${unit}（${what}）${
-            unprotected > 0 ? `；未受保護 ${unprotected} ${unit}` : ''}。${notes.join('；')}；請自行補上沒有恢復的部分`);
+        say('⚡ 平倉未成交，停損停利只恢復一部分', `${code} 仍持有 ${secretMoney(`${remaining} ${unit}`)}：已恢復 ${secretMoney(`${restored} ${unit}`)}（${what}）${
+            unprotected > 0 ? `；未受保護 ${secretMoney(`${unprotected} ${unit}`)}` : ''}。${notes.join('；')}；請自行補上沒有恢復的部分`);
         return 'partly';
     }
     say('⚡ 平倉未成交，停損停利未恢復（未受保護）', `${code} 仍持有 ${secretMoney(`${remaining} ${unit}`)}，沒有停損停利。${notes.join('；') || '恢復未確認'}；請自行處理`);

@@ -25,7 +25,7 @@ import { usePoll } from '../hooks/use-poll';
 import { useStreamStatus } from '../hooks/use-stream';
 import { unsignedAccountLabel } from '../lib/account-signing';
 import { canTrade } from '../lib/account-tradable';
-import { secretAccount } from '../lib/privacy';
+import { plainText, secretAccount } from '../lib/privacy';
 import { useRevealText } from '../lib/privacy-text';
 import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
@@ -331,7 +331,8 @@ export function ServerManager({
             agentRuntimeDiagnostics(),
         ].filter(Boolean);
         try {
-            await navigator.clipboard.writeText(lines.join('\n'));
+            // 複製出去的文字不帶 #268 隱私標記字元
+            await navigator.clipboard.writeText(plainText(lines.join('\n')));
             notify({
                 kind: 'ok',
                 title: '已複製診斷資訊',
