@@ -29,8 +29,23 @@ export interface CompanyDataView {
     /** Text when financials failed for a reason other than "not listed". */
     financialsError: string | null;
     themes: Theme[] | null;
+    themesMeta: DataMeta | null;
     market: MarketDaily | null;
+    marketMeta: DataMeta | null;
     sources: Sources | null;
+    sourcesMeta: DataMeta | null;
+}
+
+/** Parts of the view currently served from offline cache (zh-TW labels). */
+export function staleParts(view: CompanyDataView): string[] {
+    const parts: [string, DataMeta | null][] = [
+        ['公司資料', view.meta],
+        ['財報', view.financialsMeta],
+        ['產業鏈與題材', view.themesMeta],
+        ['收盤與市值', view.marketMeta],
+        ['官方來源', view.sourcesMeta],
+    ];
+    return parts.filter(([, meta]) => meta?.stale).map(([label]) => label);
 }
 
 export type CompanyDataState =
@@ -64,8 +79,11 @@ export async function loadCompanyView(client: CompanyDataClient, code: string): 
         financialsMeta: financials.meta,
         financialsError: financials.error && !financialsMissing ? companyDataErrorText(financials.error) : null,
         themes: themes.data,
+        themesMeta: themes.meta,
         market: market.data,
+        marketMeta: market.meta,
         sources: sources.data,
+        sourcesMeta: sources.meta,
     };
 }
 

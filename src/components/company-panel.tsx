@@ -24,11 +24,12 @@ import {
     WifiOff,
     X,
 } from 'lucide-react';
-import { useCompanyData, useCompanyEntities, type CompanyDataView } from '../hooks/use-company-data';
+import { staleParts, useCompanyData, useCompanyEntities, type CompanyDataView } from '../hooks/use-company-data';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
 import { useQuote } from '../hooks/use-stream';
 import {
     MARKET_LABEL,
+    STALE_TEXT,
     entityIndex,
     entityName,
     normalizeCompanyCode,
@@ -38,6 +39,7 @@ import {
     tierLabel,
     trailingEps,
     twCodeOf,
+    type DataMeta,
 } from '../lib/company-data';
 import type {
     ChainTier,
@@ -173,7 +175,7 @@ export function CompanyPanel({
         <CompanyView
             view={state}
             refreshing={state.refreshing}
-            stale={state.meta.stale || status.phase === 'stale'}
+            stale={staleParts(state).length > 0 || status.phase === 'stale'}
             viaUnderlying={target.viaUnderlying ? contract : null}
             snapshot={snapshot}
             onPick={onPick}
@@ -328,7 +330,11 @@ function Kpis({ view, live }: { view: CompanyDataView; live: LivePrice }) {
     const months = fin ? recentRevenue(fin, 1) : [];
     const lastMonth = months[months.length - 1];
     const items = [
-        { label: '市值', value: fmtTwd(cap), sub: live.closeDate === null ? '即時價 × 股數' : `收盤 ${live.closeDate ?? '—'}` },
+        {
+            label: '市值',
+            value: fmtTwd(cap),
+            sub: `${live.closeDate === null ? '即時價 × 股數' : `收盤 ${live.closeDate ?? '—'}`}${view.marketMeta?.stale ? ' · 快取' : ''}`,
+        },
         { label: '本益比', value: pe !== null ? pe.toFixed(1) : '—', sub: eps !== null ? `近四季 EPS ${eps.toFixed(2)}` : '近四季 EPS —' },
         {
             label: '月營收',
@@ -377,6 +383,20 @@ function OfficialChip({ date }: { date?: string | null }) {
     return <span className={`${s.chip} ${s.chipTone.official}`}>官方資料{date ? ` · ${date}` : ''}</span>;
 }
 
+/** Marks one section as served from offline cache (verified, but maybe not the latest). */
+function StaleTag({ meta }: { meta: DataMeta | null | undefined }) {
+    if (!meta?.stale) return null;
+    return (
+        <span
+            className={s.stale}
+            title={`無法連線資料來源，顯示先前下載並驗證過的快取（版本 ${meta.releaseId}），未確認為最新`}
+        >
+            <WifiOff size={11} aria-hidden='true' />
+            快取
+        </span>
+    );
+}
+
 function Overview({
     view,
     researched,
@@ -416,6 +436,7 @@ function Overview({
                         <FileText size={12} aria-hidden='true' />
                         業務
                         <span className={s.sectionMeta}>
+                            <StaleTag meta={view.meta} />
                             <ThirdPartyChip asOf={c.as_of} />
                         </span>
                     </div>
@@ -428,6 +449,7 @@ function Overview({
                         <Network size={12} aria-hidden='true' />
                         產業鏈位置
                         <span className={s.sectionMeta}>
+                            <StaleTag meta={view.themesMeta} />
                             <span className={s.muted}>{chainTheme?.name ?? c.chain}</span>
                         </span>
                     </div>
@@ -483,6 +505,9 @@ function Overview({
                     <div className={s.sectionHead}>
                         <Layers size={12} aria-hidden='true' />
                         題材
+                        <span className={s.sectionMeta}>
+                            <StaleTag meta={view.themesMeta} />
+                        </span>
                     </div>
                     <div className={s.themeChips}>
                         {c.themes.map((ref) => {
@@ -761,6 +786,7 @@ function FinancialsTab({ view }: { view: CompanyDataView }) {
                 <div className={s.sectionHead}>
                     月營收
                     <span className={s.sectionMeta}>
+                        <StaleTag meta={view.financialsMeta} />
                         <OfficialChip date={view.financialsMeta?.asOf} />
                     </span>
                 </div>
@@ -1032,6 +1058,12 @@ function SourcesTab({ view, researched }: { view: CompanyDataView; researched: b
                     )}
                     <dt>資料版本</dt>
                     <dd className={panel.mono}>{view.meta.releaseId}</dd>
+                    {staleParts(view).length > 0 && (
+                        <>
+                            <dt>離線快取</dt>
+                            <dd>{staleParts(view).join('、')}（{STALE_TEXT.split('・')[1]}）</dd>
+                        </>
+                    )}
                 </dl>
             </div>
             {evidence.length > 0 && (
@@ -1071,6 +1103,9 @@ function SourcesTab({ view, researched }: { view: CompanyDataView; researched: b
                     <div className={s.sectionHead}>
                         <ExternalLinkIcon size={12} aria-hidden='true' />
                         官方資料來源
+                        <span className={s.sectionMeta}>
+                            <StaleTag meta={view.sourcesMeta} />
+                        </span>
                     </div>
                     <ul className={s.sourceList}>
                         {view.sources.sources.map((src) => (
@@ -1119,9 +1154,14 @@ function Footer({
                 <span className={panel.mono}>shioaji-data {view.meta.releaseId}</span>
             </span>
             {stale && (
-                <span className={s.stale} title='無法連線資料來源，顯示本機快取'>
+                <span
+                    className={s.stale}
+                    title={`無法連線資料來源，顯示先前下載並驗證過的本機快取，未確認為最新版本${
+                        staleParts(view).length ? `：${staleParts(view).join('、')}` : ''
+                    }`}
+                >
                     <WifiOff size={11} aria-hidden='true' />
-                    離線快取
+                    {STALE_TEXT}
                 </span>
             )}
             <RefreshButton label='重新檢查公司資料' loading={refreshing} onClick={onRefresh} />

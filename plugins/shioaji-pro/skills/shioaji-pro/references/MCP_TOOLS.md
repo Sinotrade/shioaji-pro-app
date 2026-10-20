@@ -104,4 +104,10 @@ or any other tools when they are absent.
   `official_only`, say the company has only official exchange data.
   `get_financials` and daily close and market cap are official data.
 - Company data is a daily snapshot. Use `get_quote` or `get_snapshots` for the
-  live price. A `stale` flag means the App is offline and serving its cache.
+  live price. A `stale` flag means the App is offline and serving data it
+  downloaded and verified earlier; it is not confirmed to be the latest
+  release, so say so and give the `release_id`.
+- Results are capped in size. A capped result has `truncated: true`: lists keep
+  their first entries and `count` still gives the full total. Narrow the call
+  with `limit`, `max_relations`, `months`, `quarters`, or a more specific theme
+  or stage instead of repeating it.
