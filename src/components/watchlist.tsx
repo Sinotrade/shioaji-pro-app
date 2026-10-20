@@ -39,6 +39,7 @@ import {
 } from '../lib/product-search';
 import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { Sparkline } from './sparkline';
+import { RefreshButton } from './refresh-button';
 import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import * as styles from './watchlist.css';
@@ -295,6 +296,9 @@ export function Watchlist({
     structureBusy,
     loadError,
     onRetryLoad,
+    onReload,
+    reloading = false,
+    onHoldReload,
 }: {
     items: WatchItem[];
     selectedCode: string | null;
@@ -317,6 +321,11 @@ export function Watchlist({
     structureBusy: boolean;
     loadError: boolean;
     onRetryLoad: () => void;
+    /** 重新讀取 (#340): pull lists changed outside this panel (Agent / CLI) */
+    onReload?: () => unknown;
+    reloading?: boolean;
+    /** hold outside re-reads while the user is editing (排序 / 改名 / 新增) */
+    onHoldReload?: (held: boolean) => void;
 }) {
     const [input, setInput] = useState('');
     const [busy, setBusy] = useState(false);
@@ -419,6 +428,14 @@ export function Watchlist({
         setArrange(false);
         clearDragState();
     }, [activeListId, clearDragState]);
+
+    // An Agent change waits until 調整順序 / inline rename / create is done.
+    const editing = arrange || renaming || creating;
+    useEffect(() => {
+        if (!editing || !onHoldReload) return;
+        onHoldReload(true);
+        return () => onHoldReload(false);
+    }, [editing, onHoldReload]);
 
     const handleDrop = () => {
         const from = dragCode.current;
@@ -528,6 +545,19 @@ export function Watchlist({
                                 </option>
                             ))}
                         </select>
+                        {onReload && (
+                            <RefreshButton
+                                label='重新讀取清單'
+                                iconSize={12}
+                                className={styles.reloadBtn}
+                                loading={reloading}
+                                disabled={structureBusy || arrange}
+                                onClick={() => {
+                                    setConfirmDelete(false);
+                                    void onReload();
+                                }}
+                            />
+                        )}
                         <button
                             className={styles.listBtn}
                             title='重新命名清單'

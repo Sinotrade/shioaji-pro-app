@@ -900,6 +900,9 @@ function MainApp() {
         createList,
         renameCurrentList,
         deleteCurrentList,
+        reloadFromServer,
+        reloading: watchlistReloading,
+        holdReload,
     } = useWatchlist();
     const [selected, setSelected] = useState<ContractInfo | null>(null);
     const [agentHarnessEnabled, setAgentHarnessEnabledState] = useState(
@@ -1594,6 +1597,9 @@ function MainApp() {
         structureBusy,
         loadError,
         onRetryLoad: retryLoad,
+        onReload: () => reloadFromServer({ source: 'user' }),
+        reloading: watchlistReloading,
+        onHoldReload: holdReload,
     };
     const dockProps = {
         positions: positionsState.data ?? [],

@@ -23,6 +23,7 @@ import {
 } from '../lib/shioaji';
 import { onContractEvent, registerCodeAlias } from '../lib/stream';
 import { notify } from '../lib/trade';
+import { onWatchlistChanged, type WatchlistChangedDetail } from '../lib/watchlist-sync';
 import type { ContractInfo, SecurityType } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
 
@@ -91,6 +92,12 @@ export function useWatchlist() {
     const failedSaves = useRef(new Set<string>());
     const deferredContractEvents = useRef(new Set<string>());
     const replayContractEvent = useRef<(id: string) => void>(() => undefined);
+    // 重新讀取 (#340): local edits in progress hold an external re-read until
+    // they finish, so an Agent change never yanks a row out mid-drag.
+    const [reloading, setReloading] = useState(false);
+    const editingHolds = useRef(0);
+    const deferredReload = useRef<WatchlistChangedDetail | null>(null);
+    const flushDeferredReload = useRef<() => void>(() => undefined);
     activeIdRef.current = activeListId;
     const retryLoad = useCallback(() => {
         initStarted.current = false;
@@ -240,6 +247,7 @@ export function useWatchlist() {
                 if (!failedSaves.current.has(id) && deferredContractEvents.current.delete(id)) {
                     replayContractEvent.current(id);
                 }
+                if (pendingMutations.current.size === 0) flushDeferredReload.current();
             }
         }
         return write;
@@ -630,6 +638,7 @@ export function useWatchlist() {
             } finally {
                 structureBusyRef.current = false;
                 setStructureBusy(false);
+                queueMicrotask(() => flushDeferredReload.current());
             }
         },
         [serverLists, enqueueMutation, applyLocalLists, reconcileFailedMembership, refreshLists],
@@ -663,6 +672,7 @@ export function useWatchlist() {
         } finally {
             structureBusyRef.current = false;
             setStructureBusy(false);
+            queueMicrotask(() => flushDeferredReload.current());
         }
         notify({
             kind: 'ok',
@@ -680,6 +690,90 @@ export function useWatchlist() {
             setActiveListId('');
         }
     }, [serverLists, enqueueMutation, applyLocalLists, refreshLists, setActiveList]);
+
+    // 重新讀取 (#340): read the server lists again after another program (the
+    // AI Agent, the CLI, another device) changed them. Explicit only: the
+    // reload button or the in-App WATCHLIST_CHANGED_EVENT; nothing polls.
+    // Returns 'deferred' while a local edit (pending save, rename/delete,
+    // 調整順序 mode, inline rename/create) is in progress; the re-read then
+    // runs when that edit settles, so it never overwrites unsaved work.
+    const reloadFromServer = useCallback(
+        async (request: WatchlistChangedDetail = {}): Promise<'reloaded' | 'deferred' | 'failed'> => {
+            if (structureBusyRef.current || pendingMutations.current.size > 0 || editingHolds.current > 0) {
+                const first = !deferredReload.current;
+                deferredReload.current = { ...deferredReload.current, ...request };
+                if (first) {
+                    notify({
+                        kind: 'info',
+                        title: request.source === 'agent' ? '自選清單已由 Agent 變更' : '稍後重新讀取自選清單',
+                        body: '你正在編輯或儲存清單，完成後會自動重新讀取伺服器上的最新清單',
+                    });
+                }
+                return 'deferred';
+            }
+            deferredReload.current = null;
+            if (failedSaves.current.size > 0) {
+                // A rejected save already left the panel in its error state;
+                // a full re-read from the server is the same as 重試.
+                retryLoad();
+                return 'reloaded';
+            }
+            setReloading(true);
+            try {
+                // An explicit re-read trusts the server: drop this session's
+                // read-your-writes overlays so an outside reorder or removal
+                // is not masked by an older local commit.
+                committedMembership.current.clear();
+                committedOrder.current.clear();
+                pendingServerContracts.current.clear();
+                deferredContractEvents.current.clear();
+                desiredContracts.current.clear();
+                const lists = await refreshLists();
+                const target =
+                    (request.select ? lists.find((list) => list.id === request.select) : undefined) ??
+                    lists.find((list) => list.id === activeIdRef.current) ??
+                    lists[0];
+                if (!target) {
+                    ++loadSeq.current;
+                    activeIdRef.current = '';
+                    localStorage.removeItem(ACTIVE_KEY);
+                    setActiveListId('');
+                    setItems([]);
+                    setLoading(false);
+                    return 'reloaded';
+                }
+                const sameList = target.id === activeIdRef.current;
+                activeIdRef.current = target.id;
+                setActiveListId(target.id);
+                localStorage.setItem(ACTIVE_KEY, target.id);
+                await loadList(target, sameList);
+                return 'reloaded';
+            } catch {
+                notify({ kind: 'err', title: '重新讀取自選清單失敗', body: '無法讀取伺服器上的自選清單，請稍後再試' });
+                return 'failed';
+            } finally {
+                setReloading(false);
+            }
+        },
+        [refreshLists, loadList, retryLoad],
+    );
+
+    flushDeferredReload.current = () => {
+        const request = deferredReload.current;
+        if (!request || structureBusyRef.current || pendingMutations.current.size > 0 || editingHolds.current > 0) return;
+        deferredReload.current = null;
+        void reloadFromServer(request);
+    };
+
+    /** The panel holds external re-reads while the user is editing. */
+    const holdReload = useCallback((held: boolean) => {
+        editingHolds.current = Math.max(0, editingHolds.current + (held ? 1 : -1));
+        if (!held) queueMicrotask(() => flushDeferredReload.current());
+    }, []);
+
+    useEffect(() => onWatchlistChanged((detail) => {
+        void reloadFromServer(detail);
+    }), [reloadFromServer]);
 
     // boot: load lists; migrate legacy local list / create default if empty.
     // The first fetch can race a server that is still warming up after an
@@ -807,5 +901,8 @@ export function useWatchlist() {
         createList,
         renameCurrentList,
         deleteCurrentList,
+        reloadFromServer,
+        reloading,
+        holdReload,
     };
 }
