@@ -18,7 +18,10 @@ import {
 } from 'react';
 import { useIndexComponents } from '../hooks/use-index-components';
 import { useQuote } from '../hooks/use-stream';
-import { getIcBootstrapGroupWeights } from '../lib/index-components';
+import {
+    getIcBootstrapGroupWeights,
+    getIcGroupWperfAt,
+} from '../lib/index-components';
 import { estimateOtherPct } from '../lib/sector-other-pct';
 import { useFocusedSector } from '../lib/sector-sync';
 import { loadStockDetails, SECTOR_INDICES } from '../lib/stock-index';
@@ -62,7 +65,7 @@ const SIZE_METRICS: { value: SizeMetric; label: string }[] = [
 
 // 其他成員漲跌幅不顯示時的說明（資料不同刻／餘量權重過小／超出漲跌停）
 const OTHER_PCT_UNAVAILABLE =
-    '加權漲跌暫無法可靠估算（群組與排行資料不同刻或餘量權重過小）';
+    '加權漲跌暫無法可靠估算（尚無與排行同刻的群組資料，或餘量權重過小）';
 
 const CAT_KEY = 'sj-pro-heatmap-cat'; // 舊鍵沿用：最近下鑽的產業
 const SIZE_KEY = 'sj-pro-panorama-size';
@@ -464,36 +467,32 @@ export function SectorHeatmap({
         : 0;
     const fmtDrillValue = (value: number) =>
         isAmountDrill ? fmtAmount(value) : fmtPoints(value);
-    // 其他成員的加權漲跌幅反推（群組加權漲跌扣排行前 10）— 僅在兩投影
-    // 同刻、餘量權重夠大、結果落在漲跌停內時顯示，否則「—」（#330）。
-    // 權重取建底參考權重（盤中恆定，與排行列的 weight_pct 同基準）。
-    const drillGroupWeight = useMemo(
-        () =>
-            drillCat
+    // 其他成員的加權漲跌幅反推（群組加權漲跌扣排行前 10）— 群組漲跌只取
+    // 與排行同一個 calculated_at 的那一包；沒有同刻資料、餘量權重過小或
+    // 結果超出漲跌停時顯示「—」（#330）。權重取建底參考權重（盤中恆定，
+    // 與排行列的 weight_pct 同基準）。
+    const drillCalculatedAt = drillState?.calculatedAt;
+    const { drillGroupWeight, drillGroupPctAtRows } = useMemo(
+        () => ({
+            drillGroupWeight: drillCat
                 ? getIcBootstrapGroupWeights(indexCode)?.get(drillCat)
                 : undefined,
-        // ic 每個 store 版本換新物件 — 建底抵達/日切後自動更新
+            drillGroupPctAtRows: drillCat
+                ? getIcGroupWperfAt(indexCode, drillCat, drillCalculatedAt)
+                : undefined,
+        }),
+        // ic 每個 store 版本換新物件 — 建底抵達、日切、群組新包後自動更新
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [drillCat, ic, indexCode],
+        [drillCat, drillCalculatedAt, ic, indexCode],
     );
-    const wperfCalculatedAt = wperfState?.calculatedAt;
-    const drillCalculatedAt = drillState?.calculatedAt;
     const otherPct = useMemo(
         () =>
             estimateOtherPct({
                 groupWeight: drillGroupWeight,
-                groupPct: drillGroup?.pct,
-                groupCalculatedAt: wperfCalculatedAt,
+                groupPct: drillGroupPctAtRows,
                 entries: drillEntries,
-                entriesCalculatedAt: drillCalculatedAt,
             }),
-        [
-            drillCalculatedAt,
-            drillEntries,
-            drillGroup,
-            drillGroupWeight,
-            wperfCalculatedAt,
-        ],
+        [drillEntries, drillGroupPctAtRows, drillGroupWeight],
     );
     const barScale = drillEntries.reduce(
         (max, entry) => Math.max(max, Math.abs(entry.value)),

@@ -309,6 +309,49 @@ export function getIcBootstrapGroupWeights(
     );
 }
 
+// 群組加權漲跌的近期歷史（依 calculated_at 索引）— 讓下鑽層用「與排行同
+// 一個 calculated_at」的群組漲跌反推其他成員（#330）。gm:weighted_performance
+// 1 秒一包、排行 5 秒一包，保留最近 WPERF_HISTORY_LIMIT 包即可涵蓋排行的
+// 節奏；建底快照的群組漲跌也記入（與快照投出的排行同刻）。
+const WPERF_HISTORY_LIMIT = 120;
+const wperfHistory = new Map<string, Map<number, ReadonlyMap<string, number>>>();
+
+function recordWperf(
+    code: string,
+    calculatedAt: string,
+    groups: readonly { category: string; value: number }[],
+) {
+    const at = Date.parse(calculatedAt);
+    if (!Number.isFinite(at)) return;
+    let history = wperfHistory.get(code);
+    if (!history) {
+        history = new Map();
+        wperfHistory.set(code, history);
+    }
+    history.set(
+        at,
+        new Map(groups.map((group) => [group.category, group.value])),
+    );
+    while (history.size > WPERF_HISTORY_LIMIT) {
+        let oldest = Infinity;
+        for (const key of history.keys()) oldest = Math.min(oldest, key);
+        history.delete(oldest);
+    }
+}
+
+// 指定 calculated_at（同一瞬間，格式差異如小數位數不影響）的群組加權漲跌；
+// 沒有同刻的那一包就回 undefined — 呼叫端不得拿別刻的值湊數。
+export function getIcGroupWperfAt(
+    code: string,
+    category: string,
+    calculatedAt: string | undefined,
+): number | undefined {
+    if (!calculatedAt) return undefined;
+    const at = Date.parse(calculatedAt);
+    if (!Number.isFinite(at)) return undefined;
+    return wperfHistory.get(code)?.get(at)?.get(category);
+}
+
 export function getIcBootstrapStatus(code: string): {
     status: IcBootstrapStatus;
     error?: string;
@@ -359,6 +402,14 @@ async function runBootstrap(index: ContractBase) {
             const snapshot =
                 await fetchIndexComponents<RawIndexComponentsSnapshot>(index);
             bootstraps.set(code, snapshot);
+            recordWperf(
+                code,
+                snapshot.calculated_at,
+                snapshot.groups.map((group) => ({
+                    category: group.category,
+                    value: num(group.weighted_pct_chg),
+                })),
+            );
             bootstrapStatus.set(code, 'ready');
             applyBootstrap(code);
             emit();
@@ -424,6 +475,10 @@ function maybeRollover(code: string, eventDate: string) {
 }
 
 const indexContracts = new Map<string, ContractBase>();
+const WPERF_PROJECTION: IcProjection = {
+    kind: 'group_metric',
+    metric: 'weighted_performance',
+};
 
 function handleEvent(raw: string) {
     let parsed: ReturnType<typeof parseIcEvent>;
@@ -434,8 +489,19 @@ function handleEvent(raw: string) {
     }
     if (!parsed) return;
     const key = `${parsed.code}|${parsed.projKey}`;
+    if (parsed.projKey === projectionKey(WPERF_PROJECTION)) {
+        recordWperf(
+            parsed.code,
+            parsed.state.calculatedAt,
+            parsed.state.groups ?? [],
+        );
+    }
     const current = states.get(key);
-    if (current && current.calculatedAt > parsed.state.calculatedAt) return;
+    if (current && current.calculatedAt > parsed.state.calculatedAt) {
+        // 過時的包不覆蓋目前狀態，但歷史已記下（可能正好與排行同刻）
+        if (parsed.projKey === projectionKey(WPERF_PROJECTION)) emit();
+        return;
+    }
     states.set(key, parsed.state);
     maybeRollover(parsed.code, parsed.state.date);
     emit();
