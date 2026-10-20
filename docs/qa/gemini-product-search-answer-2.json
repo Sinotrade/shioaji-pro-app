@@ -1,0 +1,42 @@
+{
+"finding_dispositions": [
+{
+"id": "F01",
+"disposition": "retracted",
+"reason": "limit=0 回傳空陣列屬於防禦性程式碼的正確預期行為，與 TC04 及測試程式碼一致，並非缺陷。"
+},
+{
+"id": "F02",
+"disposition": "retracted",
+"reason": "缺乏具體錯誤狀態與可驗證之完整事件順序，且與 verdict: NO_STATIC_BLOCKER 矛盾，故予撤回。"
+}
+],
+"corrected_tests": [
+{
+"id": "TC03",
+"fixture": "synthetic: { query: '2330期' }",
+"event_sequence": "1. 輸入 2330 期貨查詢\n2. 確認過濾出 underlying_code 為 2330 的個股期貨，不混入無關的大盤指數期貨",
+"assertion": "expect(results.every(r => r.contract?.underlying_code === '2330')).toBe(true)",
+"mutations_caught": "衍生商品 underlying_code 關聯過濾邏輯錯誤或誤入大盤指數期貨"
+},
+{
+"id": "TC05",
+"fixture": "synthetic: { query: 'warrant_expired' }",
+"event_sequence": "1. 透過公開搜尋介面查詢包含已到期之權證\n2. 驗證搜尋結果已將過期權證過濾",
+"assertion": "expect(results.some(r => r.code === 'EXPIRED_WARRANT')).toBe(false)",
+"mutations_caught": "過期權證未被正確排除於商品清單外"
+},
+{
+"id": "TC08",
+"fixture": "synthetic: { apiBaseChanged: true }",
+"event_sequence": "1. 模擬非同步請求進行中切換伺服器來源\n2. 透過公開 API 驗證是否正確拋出並攔截過期請求錯誤",
+"assertion": "await expect(searchProducts('2330')).rejects.toThrow()",
+"mutations_caught": "跨伺服器切換時未攔截過期請求導致狀態汙染"
+}
+],
+"remaining_confirmed_bugs": [],
+"unverified": [
+"真實 Shioaji Daemon 1.7.8 網路環境下的 API 回應延遲與錯誤碼",
+"Tauri WebView 環境下的外掛通訊穩定性"
+]
+}

@@ -2,6 +2,7 @@ import { RefreshButton } from './refresh-button';
 import { Star } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
+import { useProductNamesVersion } from '../hooks/use-product-names-version';
 import { primeContract } from '../lib/contracts-cache';
 import {
     fetchSnapshots,
@@ -9,6 +10,7 @@ import {
     resolveContract,
 } from '../lib/shioaji';
 import { loadStockCatalog, type StockMeta } from '../lib/stock-index';
+import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
@@ -51,47 +53,75 @@ export function WarrantPanel({
     const [sort, setSort] = useState<'moneyness' | 'expiry'>('moneyness');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
+    const [catalogError, setCatalogError] = useState(false);
+    const [refresh, setRefresh] = useState(0);
+    const version = useProductCatalogVersion();
+    const namesVersion = useProductNamesVersion();
+    const [catalogVersion, setCatalogVersion] = useState(-1);
+    const catalogReady = catalogVersion === version && !catalogError;
+    const requestContext = JSON.stringify([version, underlying?.code, refresh]);
+    const [loaded, setLoaded] = useState<{ context: string; code: string } | null>(null);
+    const contractsReady = catalogReady && loaded?.context === requestContext && !error;
 
     useEffect(() => {
-        loadStockCatalog()
+        const controller = new AbortController();
+        let active = true;
+        const isCurrent = () => active && getProductCatalogVersion() === version;
+        setCatalogError(false);
+        loadStockCatalog({ signal: controller.signal })
             .then((catalog) => {
+                if (!isCurrent()) return;
+                setCatalogVersion(version);
+                if (catalog.length === 0) setLoading(false);
                 const saved = localStorage.getItem(WARRANT_UNDERLYING);
-                setUnderlying(
-                    catalog.find((stock) => stock.code === saved) ??
+                setUnderlying(previous =>
+                    catalog.find((stock) => stock.code === previous?.code) ??
+                        catalog.find((stock) => stock.code === saved) ??
                         catalog.find((stock) => stock.code === '2330') ??
                         catalog[0] ??
                         null,
                 );
             })
-            .catch(() => setError(true));
+            .catch(() => { if (isCurrent()) { setCatalogError(true); setLoading(false); } });
+        return () => { active = false; controller.abort(); };
+    }, [version, namesVersion, refresh]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const onFocus = () => setRefresh(value => value + 1);
+        window.addEventListener('focus', onFocus);
+        return () => window.removeEventListener('focus', onFocus);
     }, []);
 
     useEffect(() => {
-        if (!underlying) return;
+        if (!underlying || catalogVersion !== version || catalogError) return;
+        const controller = new AbortController();
         let active = true;
-        setContracts([]);
+        const isCurrent = () => active && getProductCatalogVersion() === version;
         setLoading(true);
         setError(false);
         Promise.all([
-            fetchWarrants(underlying.code, { expiryFrom: todayStr() }),
-            resolveContract(underlying.code, 'STK')
-                .then((contract) => fetchSnapshots([contract]))
+            fetchWarrants(underlying.code, { expiryFrom: todayStr() }, { signal: controller.signal }),
+            resolveContract(underlying.code, 'STK', { signal: controller.signal })
+                .then((contract) => {
+                    if (controller.signal.aborted) throw new DOMException('標的查詢已取消', 'AbortError');
+                    return fetchSnapshots([contract]);
+                })
                 .then((rows) => rows[0] ?? null),
         ])
             .then(([rows, quote]) => {
-                if (!active) return;
+                if (!isCurrent()) return;
                 setContracts(rows);
+                setLoaded({ context: requestContext, code: underlying.code });
                 setUnderlyingQuote(quote);
             })
             .catch(() => {
-                if (!active) return;
-                setContracts([]);
-                setUnderlyingQuote(null);
+                if (!isCurrent()) return;
                 setError(true);
             })
-            .finally(() => { if (active) setLoading(false); });
-        return () => { active = false; };
-    }, [underlying]);
+            .finally(() => { if (isCurrent()) setLoading(false); });
+        return () => { active = false; controller.abort(); };
+    }, [underlying?.code, version, refresh, catalogVersion, catalogError]);
 
     const filtered = useMemo(() => {
         const spot = underlyingQuote?.close ?? null;
@@ -162,6 +192,14 @@ export function WarrantPanel({
                 </select>
                 <RefreshButton label="更新報價" loading={quotesLoading} onClick={() => void refreshQuotes()} />
             </div>
+            {(error || catalogError) && (
+                <div role='alert' className={styles.error}>
+                    {catalogError ? '標的目錄載入失敗' : '權證資料載入失敗'}；保留上次資料
+                    <button type='button' onClick={() => setRefresh(value => value + 1)}>重試商品資料</button>
+                </div>
+            )}
+            {loading && contracts.length > 0 && <span role='status'>更新權證資料中…</span>}
+            {!contractsReady && contracts.length > 0 && <span role='status'>目前顯示 {loaded?.code} 的上次合約資料，更新完成後可選取</span>}
             <div className={styles.summary}>
                 <span className={styles.summaryStrong}>
                     {underlying ? `${underlying.code} ${underlying.name}` : '—'}
@@ -172,11 +210,11 @@ export function WarrantPanel({
                 <span>{contracts.length.toLocaleString()} 檔發行中</span>
                 <span>顯示最接近條件的 {filtered.length} 檔</span>
             </div>
-            {loading ? (
+            {loading && contracts.length === 0 ? (
                 <div className={styles.empty}>
                     <AsyncStatus phase='loading' text='載入權證市場…' />
                 </div>
-            ) : error ? (
+            ) : (error || catalogError) && contracts.length === 0 ? (
                 <div className={styles.error}><AsyncStatus phase='error' text='權證資料載入失敗' /></div>
             ) : filtered.length === 0 ? (
                 <div className={styles.empty}><AsyncStatus phase='empty' text='目前篩選條件沒有權證' /></div>
@@ -223,6 +261,7 @@ export function WarrantPanel({
                                         className={styles.row}
                                         title='連動此權證'
                                         onClick={() => {
+                                            if (!contractsReady || getProductCatalogVersion() !== version) return;
                                             primeContract(contract);
                                             onPick(contract.code);
                                         }}
@@ -264,8 +303,10 @@ export function WarrantPanel({
                                                 className={styles.iconButton}
                                                 title='加入目前自選清單'
                                                 aria-label={`將 ${contract.code} 加入自選`}
+                                                disabled={!contractsReady}
                                                 onClick={(event) => {
                                                     event.stopPropagation();
+                                                    if (!contractsReady || getProductCatalogVersion() !== version) return;
                                                     void onAdd(contract)
                                                         .then(() =>
                                                             notify({

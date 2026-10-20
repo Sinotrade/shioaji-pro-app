@@ -1,0 +1,37 @@
+# R1–R3 收斂審查
+
+## 結論
+- **R1 主體已關閉**
+  - runner 在 freezeBefore 之前，斷言 index.html 為 fcee…（18:57:10.477Z）。
+  - build 後再檢查 dist/index.html，`buildIndexHasQaHook=false`。
+  - 因此可排除「F4 注入版被打包」的反例。
+- **R2 已關閉**：PR 已寫明單一本機 Chromium、Vite dev，且 B 僅替換 searchStocks，並非整份 PR 比較。
+- **R3 已關閉**
+  - 四個 proof 時點與 firstInput、exportedAt 交叉一致：F3 在 phase 後擷取，B1、B2、F4 在 phase 前擷取。
+  - 宣稱已降為 phase 邊界取樣，plan 原文也已加註被取代。
+
+## 殘餘必修（僅限 QA 紀錄，不阻擋 PR 文字）
+**R1-b：`headAndStagedEntriesUnchanged` 沒有計算依據**
+- **位置**
+  - runner 末段直接寫 `report.headAndStagedEntriesUnchanged=true;`。
+  - report 只有 `stagedEntriesBeforeSha256`，沒有對應的 after 值。
+  - commands 沒有 diff 或 HEAD 指令，但 executionOrder 與 SOURCE 摘要都稱 diff 已通過。
+- **反例**：執行期間 HEAD 或 staged entries 若有變動，此欄仍會是 true。
+- **修正**
+  - 附上計算 HEAD 前後值、`stagedEntriesAfterSha256` 及 diff 指令 exitCode 的程式段。
+  - 若無法附上，就刪除此欄與「diff passed」的說法。
+
+## 次要（非必修）
+- runner 寫入的是 `report.restored`，報告欄位卻是 `restoredFilesBeforeVitest`，兩者的對應未示。
+- 六步（含 `tsc --force`）在 25.1 秒內完成，合理性未驗證。
+- F4 終點只靠 18:57 的 sourceTree 間接界定。
+
+## 處置
+- **PM**：PR 文字可採用。
+- **架構**：不需修改 source。
+- **驗收**：受控本機非退化 PASS；行情、負載、IME、原生與 production 仍為 UNVERIFIED。
+
+## 限制
+- 僅依封包文字審查，runner 為節錄。
+- 未見完整程式或 raw 檔。
+- 未使用任何工具。

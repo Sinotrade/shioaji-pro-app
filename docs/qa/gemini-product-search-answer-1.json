@@ -1,0 +1,193 @@
+{
+"summary": "靜態分析顯示商品搜尋、快取隔離、競態控制與權證過濾在多數情境下具備防護，但在極端競態、直接代碼型別推導與跨來源快取隔離上仍有潛在風險，需執行動態與單元測試確認。",
+"answers": [
+{
+"id": "Q01",
+"static_judgment": "指數身分處理正確但依賴靜態對照表",
+"evidence": "src/lib/index-search.ts 定義了  INDEX_SEARCH_ENTRIES ，透過  normalizeContractCode  處理代碼對應（如 IX0043 屬 OTC）。",
+"unverified_checks": [
+"是否所有交易所回傳的即時指數身分都能正確對應 TSE/OTC"
+]
+},
+{
+"id": "Q02",
+"static_judgment": "ETF 名稱正規化與快照對應完善",
+"evidence": "src/lib/etf-catalog.ts 與 scripts/refresh-etf-catalog.mjs 實作了 NFKC、全形轉半形、台/臺對換及 HTML entities 解碼。",
+"unverified_checks": [
+"當遠端 API 格式突變或欄位缺失時的降級行為"
+]
+},
+{
+"id": "Q03",
+"static_judgment": "衍生商品關聯與 underlying_code 過濾落實",
+"evidence": "src/lib/product-search.ts 中對期貨與選擇權皆透過  underlying_code === exactStock.code  進行嚴格過濾。",
+"unverified_checks": [
+"基金持股是否可能被誤認為衍生商品關聯（程式碼中未實作持股解析，故不成立但需確認）"
+]
+},
+{
+"id": "Q04",
+"static_judgment": "結果名額與 limit 邊界處理正確",
+"evidence": "src/lib/product-search.ts 檢查  Number.isFinite(limit) || limit < 1  並使用  Math.floor(limit) ，interleave 演算法確保多樣性。",
+"unverified_checks": [
+"當 limit 異常巨大時的記憶體與效能消耗"
+]
+},
+{
+"id": "Q05",
+"static_judgment": "權證日期檢查支援到期日與最後交易日驗證",
+"evidence": "src/lib/product-search.ts 中的  currentWarrant  與  dateField  嚴格檢驗  YYYY-MM-DD  格式與大於等於今日。",
+"unverified_checks": [
+"台灣午夜換日後的時區偏移對日期比較的影響"
+]
+},
+{
+"id": "Q06",
+"static_judgment": "輸入競態透過 queryVersion 與 composing 狀態有效隔離",
+"evidence": "src/components/command-palette.tsx 與 src/components/watchlist.tsx 使用  queryVersion.current  與  composing.current  避免非同步污染。",
+"unverified_checks": [
+"極端快速切換輸入法時的非同步 Promise 殘留"
+]
+},
+{
+"id": "Q07",
+"static_judgment": "新增與重載具備世代識別與快取清除機制",
+"evidence": "src/lib/stock-index.ts 透過  catalogGeneration  與  ensureSourceScope  隔離不同伺服器與日期的快取。",
+"unverified_checks": [
+"記憶體快取在同日多次切換伺服器時的殘留狀況"
+]
+},
+{
+"id": "Q08",
+"static_judgment": "交易安全與快速下單防護明確",
+"evidence": "src/lib/quick-order-support.ts 實作  quickOrderBlockMessage ，明確阻擋 WRT 進入 flash/grid/oddspread 快速下單路徑。",
+"unverified_checks": [
+"當合約型別欄位缺漏時防護是否失效"
+]
+},
+{
+"id": "Q09",
+"static_judgment": "故障隔離透過 withDeadline 與 allowNotFound 達成部分容錯",
+"evidence": "src/lib/product-search.ts 與 src/lib/stock-index.ts 使用  SOURCE_DEADLINE_MS  與  read  輔助函式捕捉 404 與逾時錯誤。",
+"unverified_checks": [
+"伺服器回傳 503 時的實際重試恢復能力"
+]
+},
+{
+"id": "Q10",
+"static_judgment": "快取層具備 TTL 與大小限制",
+"evidence": "src/lib/product-search.ts 定義了  CACHE_TTL_MS = 60_000  與  CACHE_LIMIT = 16 ，並有容量淘汰機制。",
+"unverified_checks": [
+"同源 proxy 背後服務重啟後的快取一致性"
+]
+},
+{
+"id": "Q11",
+"static_judgment": "請求次數受 deadline 與快取控制",
+"evidence": "透過  withDeadline  限制單一來源等待時間，並以  cached  避免重複發送相同查詢。",
+"unverified_checks": [
+"大量並行輸入時的網路頻寬佔用"
+]
+},
+{
+"id": "Q12",
+"static_judgment": "交付驗收需區分休市與即時行情",
+"evidence": "程式碼中包含  simtrade  與參考價對比邏輯，但無法在無本機環境下驗證即時行情源。",
+"unverified_checks": [
+"休市期間 WebSocket/SSE 的行情推送狀態"
+]
+}
+],
+"findings": [
+{
+"id": "F01",
+"severity": "P2",
+"classification": "既有缺陷",
+"file": "src/lib/product-search.ts",
+"line": 148,
+"root_cause": "當 limit 傳入小於 1 或非數字時直接回傳空陣列，未提供具體錯誤回饋給呼叫端。",
+"reproduction": "呼叫 searchProducts('台積電', 0)",
+"expected": "應明確拋出參數錯誤或回傳合理預設結果",
+"observed_from_code": "if (!raw || !Number.isFinite(limit) || limit < 1) return [];",
+"suggested_fix": "若需嚴格校驗可拋出 Error，或維持現狀並確保不崩潰",
+"confidence": "高"
+},
+{
+"id": "F02",
+"severity": "P1",
+"classification": "本次新增回歸",
+"file": "src/lib/contracts-cache.ts",
+"line": 77,
+"root_cause": "多型別快取在 refreshCachedContracts 時若伺服器回應失敗未妥善清理舊狀態。",
+"reproduction": "快取包含同代碼不同型別商品時觸發重新整理",
+"expected": "應正確更新對應型別的合約實例",
+"observed_from_code": "const refreshed = await Promise.allSettled(...);",
+"suggested_fix": "加強 Promise.allSettled 失敗時的日誌與狀態保留",
+"confidence": "中"
+}
+],
+"test_cases": [
+{
+"id": "TC01",
+"fixture": "synthetic: { query: '櫃買半導體', limit: 5 }",
+"event_sequence": "1. 呼叫 searchProducts('櫃買半導體', 5)\n2. 檢查回傳結果是否包含 IX0053",
+"assertion": "expect(results[0].code).toBe('IX0053')",
+"mutations_caught": "指數搜尋對照表失效或正規化錯誤"
+},
+{
+"id": "TC02",
+"fixture": "synthetic: { query: '00679B', includeWarrants: false }",
+"event_sequence": "1. 輸入 ETF 代碼 00679B\n2. 檢查名稱是否對應「元大美債20年」",
+"assertion": "expect(results[0].name).toBe('元大美債20年')",
+"mutations_caught": "ETF 快照對應遺失或代碼大小寫未統一"
+},
+{
+"id": "TC03",
+"fixture": "synthetic: { query: '2330期', includeWarrants: false }",
+"event_sequence": "1. 輸入台積電期貨查詢\n2. 確認過濾出 underlying_code 為 2330 的期貨",
+"assertion": "expect(results.every(r => r.contract?.underlying_code === '2330' || r.code.startsWith('TXF'))).toBe(true)",
+"mutations_caught": "衍生商品 underlying_code 關聯過濾失效"
+},
+{
+"id": "TC04",
+"fixture": "synthetic: { limit: -5 }",
+"event_sequence": "1. 傳入負數 limit 呼叫 searchProducts",
+"assertion": "expect(await searchProducts('2330', -5)).toEqual([])",
+"mutations_caught": "limit 邊界檢查遺漏導致陣列切片錯誤"
+},
+{
+"id": "TC05",
+"fixture": "synthetic: { expiry_date: '2020-01-01', last_trading_date: '2020-01-01' }",
+"event_sequence": "1. 驗證過期權證是否被 currentWarrant 過濾",
+"assertion": "expect(currentWarrant(expiredRow, '2026-10-17')).toBe(false)",
+"mutations_caught": "過期權證錯誤允許交易"
+},
+{
+"id": "TC06",
+"fixture": "synthetic: { composing: true, query: '台' }",
+"event_sequence": "1. 模擬中文輸入法組件中觸發查詢\n2. 確認 suggestions 為空",
+"assertion": "expect(suggestions).toEqual([])",
+"mutations_caught": "中文組字中提早觸發搜尋造成候選清單亂跳"
+},
+{
+"id": "TC07",
+"fixture": "synthetic: { securityType: 'WRT', blockType: 'flash' }",
+"event_sequence": "1. 檢查 quickOrderBlockMessage 對權證與閃電下單的攔截",
+"assertion": "expect(quickOrderBlockMessage('WRT', 'flash')).not.toBeNull()",
+"mutations_caught": "權證誤入快速下單路徑"
+},
+{
+"id": "TC08",
+"fixture": "synthetic: { apiBaseChanged: true }",
+"event_sequence": "1. 發起請求途中變更 apiBase\n2. 驗證是否拋出伺服器切換錯誤",
+"assertion": "await expect(inScope(async () => 'ok')).rejects.toThrow('商品搜尋期間伺服器已切換')",
+"mutations_caught": "跨伺服器切換時未攔截過期請求"
+}
+],
+"test_code": "import { describe, it, expect } from 'vitest';\nimport { searchProducts } from '../src/lib/product-search';\nimport { quickOrderBlockMessage } from '../src/lib/quick-order-support';\n\ndescribe('Product Search & Safety Tests', () => {\n    it('should handle invalid limit gracefully', async () => {\n        const res = await searchProducts('2330', 0);\n        expect(res).toEqual([]);\n    });\n    it('should block warrants on quick order panels', () => {\n        const msg = quickOrderBlockMessage('WRT', 'flash');\n        expect(msg).toContain('權證不支援快速下單');\n    });\n});",
+"unverified": [
+"真實 Shioaji Daemon 1.7.8 網路環境下的 API 回應延遲與錯誤碼",
+"Tauri WebView 環境下的外掛通訊穩定性"
+],
+"verdict": "NO_STATIC_BLOCKER"
+}

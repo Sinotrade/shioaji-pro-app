@@ -1,0 +1,214 @@
+# Shioaji Pro 搜尋優化唯讀審查
+
+**結論：沒有確認的 blocker。** 共 1 項中度（有條件）、3 項低度且已從程式碼確認的問題，以及 1 項尚未驗證的假設。我沒有執行任何測試或指令，也沒有讀取提供內容以外的檔案或連線 API。
+
+---
+
+## 發現的問題
+
+### F1【中度，有條件】伺服器切換讓搜尋失敗後，舊伺服器回來的 partial 列仍然可以選
+
+- **位置**
+  - `src/lib/product-search.ts`：
+    - `298`：phase 1 已經先 publish 直接代碼的 Info（帶 `contract`）。
+    - `229–236`、`188–197`：之後共享來源檢查到伺服器變了，`read` 的 catch 會再 `assertScope()` 一次並往外拋。
+    - `306–307`：整個搜尋因此 reject。
+  - `src/components/command-palette.tsx:94–100`：catch 裡原本的 `setSuggestions([])` 被 diff 拿掉了。`150`、`160–161`：Enter 或點擊會把這列的 Info 交給 `primeContract(item.contract)`。
+  - `src/components/watchlist.tsx:366–372`、`754–758`：同樣保留舊列，點擊時 `onAdd(..., s.contract)`。
+- **觸發情境**
+  1. 輸入 `2330`，phase 1 先顯示 2330，內含 base A 的 Info。
+  2. 期貨或權證還在途時，`getApiBase()` 變成 B。
+  3. `inScope` 後置檢查拋出「伺服器已切換」。
+  4. UI 只顯示「搜尋失敗，可重試」，2330 這列仍在、仍可選。
+- **違反的行為**：API／generation guard 要保留，也要防舊結果。核心正確拒絕了，但 UI 把核心判定為過期的 partial 當成一般「後段失敗可用 partial」留著。舊版遇到失敗會清空。
+- **確認程度**
+  - 程式路徑已確認。
+  - 是否真的會發生，取決於執行期是否在不 reload 的情況下切換 API base。`runtime.ts:56,83` 只發事件，是否 reload 不在提供範圍內。
+  - `primeContract`／`onAdd` 用到舊 Info 的實際後果未驗證。
+- **最小反例**
+  ```ts
+  // 核心：目前錯誤無法和一般後段失敗區分
+  const p = searchProducts('2330', 8, { onUpdate });   // futures 使用 deferred
+  await flush(); source.base = 'http://127.0.0.1:21324'; delayed.resolve(futures);
+  await expect(p).rejects.toMatchObject({ scopeChanged: true }); // 目前失敗：只是普通 Error
+  // UI：
+  act(() => session.onUpdate([{ ...stock, contract: infoFromA }]));
+  await act(async () => session.reject(scopeChangedError));
+  expect(row(view, '2330')).toBeUndefined();                     // 目前失敗
+  ```
+- **最小修正**：二擇一。
+  - 核心在 scope 改變時拋出帶標記的錯誤，UI 收到時清空列表。
+  - 或 UI 在搜尋開始時記下 `getApiBase()`，在 catch 和點擊時不一致就丟棄 partial。
+
+  一般的後段失敗仍保留 partial。
+
+### F2【低度】同一個 signal 取消時，釋放出的 slot 會同步啟動同一搜尋自己還在排隊的來源
+
+- **位置**
+  - `src/lib/search-request.ts`：
+    - `122–128`：onAbort 呼叫 settle。
+    - `197–204`：settle 呼叫 release。
+    - `13–31`：drainQueue 是同步執行的。
+    - `139–152`：start callback 只檢查 `closed`、`pending` 和 deadline，不檢查剩下的 reader 的 signal。
+    - `129–133`：reader 物件沒有保存 signal。
+  - `src/lib/product-search.ts:237–240`：共享 load 刻意不看個別 reader 的 signal。
+- **觸發情境**
+  - 同一個 AbortSignal 同時有已啟動的 entry 和排隊中的 entry。
+  - abort 事件依註冊順序呼叫 listener：第一個已啟動 entry 的 onAbort → settle → release → `drainQueue` 同步取出下一個排隊 entry → `run` → `load()`。
+  - 瀏覽器路徑在 `api.ts:178` 會同步呼叫 `fetch`。之後輪到這個 entry 自己的 onAbort，才把它 abort 掉。
+  - 實例：自選清單的 2330 搜尋占 2 個 slot，同時命令面板的「金融期貨」送出 4 個 future-root（其中 2 個排隊）。面板換字時，這 2 個排隊來源會先被啟動，再立刻被取消。
+- **違反的行為**：取消應阻止佇列啟動。後果是一次多餘的派送加立即 abort，daemon 可能已經收到請求。
+- **確認程度**
+  - 邏輯層已從程式碼確認。
+  - 實際有沒有送出 HTTP 取決於 transport。Tauri 的非 Info 路徑在 `api.ts:173` 會先 await import，屆時可能已看到 signal 被 abort，這點未驗證。
+- **最小反例**
+  ```ts
+  const c = new AbortController();
+  const running = [0,1,2,3].map(i => outcome(requests.read(String(i), () => new Promise(() => {}), c.signal)));
+  const queuedLoad = vi.fn().mockResolvedValue('x');
+  const queued = outcome(requests.read('q', queuedLoad, c.signal));
+  c.abort();
+  expect(queuedLoad).not.toHaveBeenCalled();   // 目前會被呼叫 1 次
+  ```
+- **修正**：讓 reader 保存自己的 signal。start callback 執行前，先移除 `signal.aborted` 已為真的 reader；如果已經沒有 reader，就 settle 並 return。
+  - 改用 `queueMicrotask` 延後 drain 也能解決。
+  - 但這會改變既有測試「底層忽略 abort 時，取消仍釋放有效 slot 並讓下一筆開始」的同步時序。
+
+### F3【低度，需確認設計意圖】非搜尋的 `loadStockIndex()` 也進了「搜尋專用」的四路佇列，而且排隊時間算進它的 1000ms deadline
+
+- **位置**
+  - `src/lib/stock-index.ts`：`142`（`loadStockCatalog()` 沒有傳 signal）、`27–29`、`58–71`。
+  - `src/lib/search-request.ts`：`1`、`8–11`、`112`、`147–150`。
+- **觸發情境**
+  - 四個 slot 都被搜尋來源占住（每個最多可占 1200ms）時，熱圖呼叫 `loadStockIndex()`。
+  - Base 和 names 只能排隊；1000ms 內沒有 slot 釋放就逾時，而且 `fetchContracts` 從頭到尾沒有發出。舊版是立即發出。
+  - names 在排隊中逾時，會被 `68–71` 的 `.catch` 吞成 `[]`，名稱搜尋會靜默退化，不會顯示錯誤。
+  - 反過來，熱圖的 catalog 也會占掉 2 個搜尋 slot。
+- **違反的行為**：「搜尋專用四路」。前提是 catalog 不該被視為與熱圖共用的來源。
+- **確認程度**：在提供的檔案範圍內已確認。是否還有其他 `loadStockCatalog` 呼叫者不在範圍內。
+- **最小反例**
+  ```ts
+  const busy = new SearchRequestCache({ ttlMs: 0, limit: 1, deadlineMs: 5000 });
+  [0,1,2,3].forEach(i => busy.read(String(i), () => new Promise(() => {})));
+  const p = loadStockIndex();
+  await vi.advanceTimersByTimeAsync(1000);
+  await expect(p).rejects.toThrow('逾時');
+  expect(fetchContracts).not.toHaveBeenCalled();
+  ```
+- **修正方向**：任選其一。
+  - catalog 只共用 pending 和 TTL，不進全域佇列。
+  - deadline 從取得 slot 才開始計時。
+  - 明確寫進文件，說明熱圖也受搜尋流量影響。
+
+### F4【低度】partial 結果和「提交」互動的兩個小回歸（已確認，屬 UX）
+
+- **(a) 自選清單 Enter 會清掉 partial**：`src/components/watchlist.tsx:807–810` 加上 `485`。
+  - 名稱查詢還在補齊時按 Enter，會先 `setSuggestions([])`。
+  - 接著 `submit()` 因為 `searching` 為真且輸入不是代碼而直接 return，搜尋本身沒有取消。
+  - 結果是已經顯示的 partial 消失，要等下一個 phase 或 final 才重新出現。舊版搜尋中本來就沒有列可清，所以沒這個問題。
+  - 反例：在 watchlist 執行 `start('台積電')` → `onUpdate([stock])` → `onKeyDown({key:'Enter'})`，然後 `expect(row(view,'2330')).toBeDefined()` 會失敗。
+- **(b) 命令面板跳轉失敗後 partial 卡住**：`src/components/command-palette.tsx:155`、`163–165`、`270`。
+  - 從 partial 提交時會先 `cancelSearch()`。
+  - 如果 `onJump` 失敗，清單停在 partial，`searching` 為 false，不顯示「補齊中」，也沒有重試鈕（只有 searchError 時才顯示）。相關商品永遠不會補上，除非使用者改字。
+  - 反例：讓 submitHandler reject → `onUpdate([stock])` → Enter → reject 之後，`sessions.length === 1`，畫面文字既沒有「正在補齊」也沒有「重試」。
+
+### F5【低度，未驗證的假設】hover 用 `onMouseEnter` 設定「明確選取」，partial 造成的版面位移可能把游標下的列變成選取
+
+- **位置**：`src/components/command-palette.tsx:224`、`248–250`
+- **情境**：游標停在結果區下方，phase 2 或 final 追加的列移到游標底下。若 WebView 在版面變動後合成 mouse boundary 事件（這是瀏覽器行為，未驗證），activeIdentity 就會變成那一列，Enter 送出的不是第一列。
+- **驗證方式與修正**：在 WebView2／WKWebView 手動測試。改成只在 `onMouseMove` 時設定 identity。
+
+---
+
+## 已檢查、沒有發現缺陷的部分
+
+- **共享建立者 closure**
+  - 共享 load 只捕捉和 key 等價的狀態：scope=[base, day]、code/type、underlying、root（`product-search.ts:202–205, 237–240, 246, 251, 259, 268`）。不會捕捉建立者的 signal 或 failures。
+  - stock-index 的 generation 和 scope 綁定，scope 一變就 `clear()`（`stock-index.ts:41–50`）。
+- **晚到的快取寫入**
+  - `settle` 有 `closed` 和 `isCurrent` 檢查，超過 deadline 才回來的成功會轉成逾時（`search-request.ts:177–195`）。
+  - `inScope` 有後置檢查（`product-search.ts:234`）。
+  - direct 的 `ttlMs: 0`，成功和 404 都不快取。
+  - direct 的 load 沒有後置檢查，但在 `211` 由 `assertScope` 攔截。
+- **reader／slot 不會殘留**
+  - release 是冪等的；排隊中取消會被移出佇列。
+  - `withDeadline` 在 finally 釋放 composite 的另一個 reader，並移除所有 listener 和 timer。
+  - 沒有發現 unhandled rejection，`Promise.all` 已經掛上處理。
+- **漸進結果的前綴順序**
+  - 在非選擇權／權證分支，`leadingStocks` 恰好是 final remainder 的第一段，所以 phase 1 和 phase 2 都是 final 的前綴。
+  - `unique` 是保序去重，`slice` 保持前綴性質。已顯示的列不會被插隊，除了 limit 截斷之外也不會消失。
+  - 權證只在 final 才出現。
+- **數字代碼與 ETF 的關聯**
+  - 代碼和名稱都用 `exactStock.code` 去比對 `underlying_code`（`247, 269`）。
+  - ETF 名稱含「期貨」時，`exactEtfName` 會關掉類型字詞解析。
+  - 連續月保留完整的 `contract` 和 `target_code`。
+- **IME**：組字一開始就 abort；`isComposing`／`keyCode 229` 會擋 Enter；compositionend 透過 retry 計數重新啟動搜尋。
+- **全域影響**
+  - 佇列只由 `SearchRequestCache` 使用；`api.ts` 的下單和 SSE 路徑沒有改動。
+  - 搜尋途中跨日不會被拒絕，day 只存在於 key 裡。這是既有行為，不是這次的回歸。
+
+---
+
+## 效能評估
+
+### 量測觀察（來自提供的兩份 JSON；每項只量一次，Node fetch，本機 1.7.8 模擬環境）
+
+| 情境 | 基線 首屏/完成 (ms) | 優化後 首屏 / 期貨 phase / 完成 (ms) | GET 數 |
+|---|---|---|---|
+| 冷啟 `台積` | 47.0 / 47.0 | 16.6 / 26.9 / 45.2 | 4 → 4 |
+| 熱路徑 `2330` | 6.07 / 6.07 | 3.74 / 6.46 / 6.50 | 2 → 2 |
+| 3 個同碼同時查 | — / 13.8 | — / 9.5 | **6 → 2** |
+| ETF `00679B` | 12.45 / 12.45 | 1.40 / 4.17 / 12.54 | 4 → 4 |
+| ETF 名稱（熱） | 2.63 | 2.55 / 2.65 / 2.69 | 0 → 0 |
+| `台指`（熱） | 6.69 | 5.84（首屏就是期貨）/ 5.86 | 1 → 1 |
+| 總 GET 數 | 17 | 13 | 減少的部分全部來自同時查同碼 |
+
+- **從量測直接看到的**
+  - 首屏明顯改善：名稱冷啟 −30.4ms（−65%），ETF 代碼 −11.1ms。
+  - 完成時間沒有可辨識的差異（≤1.8ms，只有一次樣本，分不出是不是雜訊）。
+- **由量測數字推算的**
+  - 冷啟 `台積`：phase 1 之後，期貨 +10.3ms，權證 +28.5ms。權證是長尾，約占完成時間的 63%。
+  - 熱路徑 `2330`：兩個 phase 之間沒有任何網路請求，卻相隔 2.7ms；ETF 名稱的熱路徑只相隔 0.1ms。
+- **量測的偏差與缺口**
+  - 基線先跑，優化後才跑，而且 daemon／OS 快取沒有重置。「冷啟」樣本可能偏向優化版。
+  - 沒有量到的：UI debounce、WebView 或 Tauri transport、React render、連續打字的情境、逾時、四路佇列飽和。
+
+### 這個設計有沒有效率
+
+- **有效的部分**
+  - 關鍵路徑已經是資料相依下最短的：名稱 → catalog → exactStock → 相關來源並行。
+  - 單一入口的流程沒有增加請求；FIFO 會先排期貨再排權證。
+  - 這次優化主要是**重排感知延遲**，不是減少工作量。請求數下降只出現在合成的同時查詢案例，實際使用中兩個入口同時查同碼不常見（假設）。
+- **從程式碼確認、但沒有量測的代價**
+  1. **打字時在途的共用被丟棄**：最後一個 reader 離開就 abort，打字中在途、和查詢無關的來源（catalog）或同一標的的來源，下一輪搜尋接不上。舊版的 `cached()` 會保留 pending promise 讓下一輪共用。觸發窗口是「debounce < 擊鍵間隔 < debounce + 來源延遲」，本機大約落在 120–165ms／150–195ms；transport 越慢窗口越寬。abort 也不保證 daemon 停止運算。
+  2. **權證處理先於期貨 phase**：熱路徑上，`loadWarrants` 的 filter、`dateField` 和 `localeCompare` 排序，在 microtask 順序上排在 phase-2 publish **之前**（`266–271` 對照 `299–305`）。順序是從程式碼確認的；把那 2.7ms 歸因到權證處理則是假設。
+  3. **每次搜尋多 1–2 次 render**：每次 ≤10 列，推測可以忽略（假設）。
+- **debounce 才是感知延遲的大頭**：debounce 120/150ms 是本機中繼資料延遲（2–47ms）的 3–60 倍。這是常數對比，不是 UI 量測。
+
+### 進一步改善（依預期效益排序）
+
+| # | 改善 | 依據 | 成本 | 風險 |
+|---|---|---|---|---|
+| 1 | 快取「處理後」的權證前 8 筆（以及過濾後的期貨），取代原始陣列；排序改用 ISO 日期／ASCII 直接比較，日期每列只解析一次 | 量測到 2.7ms 對 0.1ms 的 phase 間隔；microtask 順序已確認 | 約 10–20 行；LRU 記憶體反而下降 | key 已包含 day 和 code，語意等價 |
+| 2 | 開啟面板或聚焦自選輸入時，若 TTL 已過期就預熱 catalog | 冷啟首屏的 16.6ms 幾乎都花在 catalog；transport 慢時效益更大是假設 | 每 60s 最多 2 個 GET；需要面板生命週期的 signal | 只輸入直接代碼時是浪費 |
+| 3 | catalog 的最後一個 reader 離開時不立即 abort，保留到它自己的 deadline 或短暫延遲 250ms 再放 | 共用流失已確認；效益未量測 | 最多 2 個 slot × ≤1000ms | **違反目前「最後 reader 中止 transport」的需求**，需要產品決定，也要改 HTTP 測試 |
+| 4 | 以快取物件為 WeakMap key，預存 StockMeta 和正規化後的欄位 | 熱名稱查詢在 0 個 GET 下 phase 1 為 2.55ms，這是 CPU 成本上限 | 中低 | 低；新的 fetch 會自然讓 memo 失效 |
+| 5 | compositionend 後立即搜尋，或縮短 debounce | 常數對比；需要先在 WebView 量測 | 低 | 搜尋次數增加，會和 #3 交互影響 |
+| 6 | Base 確認是 STK 後就開始抓期貨和權證，不等 Info | 本機 direct 全程 1.4–3.7ms，收益不超過一次 Info 往返 | 中 | 本機效益低 |
+| 7 | 由伺服器端限制權證筆數並排序 | 權證在冷路徑約占 28ms / 45ms | 取決於 API | 提供的 client 沒有這個參數，API 是否支援未知 |
+| 8 | 佇列加優先序（主要來源先於權證和選擇權） | 只在四路飽和時有效；未量測 | 中 | 複雜度增加，可能造成飢餓 |
+| 9 | 內容沒變時不重複 publish | 效益微小 | 極低 | 無 |
+
+---
+
+## 審查範圍與限制
+
+- 只審查提供的原始碼、diff 和兩份量測 JSON。
+- 以下不在提供範圍內，無法判定：
+  - `primeContract`、`onJump`／`onAdd`、`AsyncStatus` 的實作。
+  - 伺服器切換時是否一定 reload。
+  - 是否還有其他 `loadStockCatalog` 呼叫者。
+  - 權證 API 是否支援 limit。
+- 量測不能推論瀏覽器 P95、Tauri transport、daemon 執行上限或行情延遲。
+- 依指示，以下既有限制未列為新缺陷：全域名稱不完整、WRT 冷啟 Info、同一 URL sidecar 重啟後的身分。
+- 健壯性備註：deadline 和 TTL 使用 `Date.now()`，系統時鐘被調整時可能誤判。這不是本次的回歸。

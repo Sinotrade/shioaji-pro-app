@@ -1,0 +1,3043 @@
+{
+  "frozenAt": "2026-10-18T19:06:17.371Z",
+  "sourceHead": "4203ad559b721e48301b30459c27d06864354adf",
+  "comparisonBase": "be4cbd3073df2625db0d51f767c812a27f79cb8e",
+  "scope": "Task production/test files relative to pinned base, plus theme and version pins; exact on-disk bytes, excludes docs and local evidence helpers",
+  "sourceTreeSha256": "dbaeaaa96d0f70fb5752bcce995484bdf8faa3f3197c5989c0e18564712b561b",
+  "files": [
+    {
+      "path": "DESKTOP_MODULES_REF",
+      "bytes": 42,
+      "sha256": "e2697a9878826c44ce7addbf8ab28dd4f35189988ba06b101eafb4f58be06bf8"
+    },
+    {
+      "path": "SHIOAJI_VERSION",
+      "bytes": 8,
+      "sha256": "b2e00856c0b213a8cc2b2b20bf25e9991552b61b7a27a636ba9725afa8300bb8"
+    },
+    {
+      "path": "package.json",
+      "bytes": 1817,
+      "sha256": "6048e3dccae7dcfcbb27e2387dd32d5896808db98f017a458139993ea83b018a"
+    },
+    {
+      "path": "scripts/build-css-compatibility.test.ts",
+      "bytes": 1969,
+      "sha256": "d33c7c1e8eafd7b85366a5b497ad16ff436e25e44d6dd9e6eaab3c6f7d9366da"
+    },
+    {
+      "path": "scripts/dev-etf-proxy.test.ts",
+      "bytes": 21816,
+      "sha256": "88325c89209cb03c613aacfe0f9e010e5c7dfa4c03f9a06a0bc887f4afd3c3e5"
+    },
+    {
+      "path": "scripts/dev-etf-proxy.ts",
+      "bytes": 6851,
+      "sha256": "9798893a5014f6ad07112350e9edbfa93b9037bb259f45a727cb82a729ea2eb1"
+    },
+    {
+      "path": "scripts/refresh-etf-catalog.mjs",
+      "bytes": 1991,
+      "sha256": "30c475d1394e812885d87aeeac48295710c13fd5c2ed967d54cd955a4e12175d"
+    },
+    {
+      "path": "scripts/refresh-etf-catalog.test.mjs",
+      "bytes": 6776,
+      "sha256": "96815b29403afa52e578f3a9b726c8fd5bdb043595e1ddc9968f277ccd5980ba"
+    },
+    {
+      "path": "src/App.tsx",
+      "bytes": 70046,
+      "sha256": "347bf87f1337ba34438f3d414bbc156a60167470ad6bd231d7a8b35bcc66f837"
+    },
+    {
+      "path": "src/components/catalog-panel-refresh.test.tsx",
+      "bytes": 16282,
+      "sha256": "884d94957259802d71b6759fe48b37612db29c9ec73e5bc8cd81bc29cf2bda94"
+    },
+    {
+      "path": "src/components/command-palette.css.ts",
+      "bytes": 5894,
+      "sha256": "f22ca1d765112eb91e785cab014f640bcbd9ea70dee2c94cba77046c1643750d"
+    },
+    {
+      "path": "src/components/command-palette.tsx",
+      "bytes": 17527,
+      "sha256": "6fc3d6389bafe24968895c71dac2241149dcbcba6f5b7ce27f7d04fd866df338"
+    },
+    {
+      "path": "src/components/hud-header-responsive.test.tsx",
+      "bytes": 8374,
+      "sha256": "7587cb48fb96502ba2fd8dfd9d25f0a1ec34771cd58a45c2226d4a9341dee299"
+    },
+    {
+      "path": "src/components/hud-header.css.ts",
+      "bytes": 19862,
+      "sha256": "e23524fff8430d5d5455d980378ad4960c6fd27a7a0c6902c7961394eb706ded"
+    },
+    {
+      "path": "src/components/native-notice.test.tsx",
+      "bytes": 4125,
+      "sha256": "4a5006b3d7fa0fd8c63d0d841a2ac5f705a97fde31ecf397180fbd17394215e0"
+    },
+    {
+      "path": "src/components/product-badge.css.ts",
+      "bytes": 1197,
+      "sha256": "27430569a9755ee179f3acc390dbfd39d877a87d19cb20be2aa4c437e12d9232"
+    },
+    {
+      "path": "src/components/product-badge.test.tsx",
+      "bytes": 7405,
+      "sha256": "f7b6798776d3520cbd48246f223266b00ecad6a369c8419d0737f046bb19cf7b"
+    },
+    {
+      "path": "src/components/product-badge.tsx",
+      "bytes": 462,
+      "sha256": "9356fd4c8e7856231c60f818098696986ca746a579337fd1487eba7fed5fdd16"
+    },
+    {
+      "path": "src/components/product-search-consumers.test.tsx",
+      "bytes": 12802,
+      "sha256": "6685e1e820b89cbaa8e1e761729534515e0a5811274dd8940982e59195fd768d"
+    },
+    {
+      "path": "src/components/product-search-details.css.ts",
+      "bytes": 1371,
+      "sha256": "857524f26220e889a11e0043b57dc1f60e67b062f8558bbbf238a24b01ecf4be"
+    },
+    {
+      "path": "src/components/product-search-details.test.tsx",
+      "bytes": 9487,
+      "sha256": "ca46600a5561b16a588964f2f9f0ce720daba5b99541b717d0535990d71eadea"
+    },
+    {
+      "path": "src/components/product-search-details.tsx",
+      "bytes": 2549,
+      "sha256": "68a47661d0d43169c11c368b8aa59fc6aa2b48f091b1fc8d9c87cce34c169d5a"
+    },
+    {
+      "path": "src/components/product-search-ime.test.tsx",
+      "bytes": 6543,
+      "sha256": "1ed6727db336f77f1b89a01d9c7b5b5c386647ae1f222b1535da4352009206c3"
+    },
+    {
+      "path": "src/components/product-search-progressive.test.tsx",
+      "bytes": 84501,
+      "sha256": "e6827731525d32c46fc5cf685332b93582edab229042ed34a2d71e14d0bab012"
+    },
+    {
+      "path": "src/components/search-surface.css.ts",
+      "bytes": 1482,
+      "sha256": "d72b4fb559aa7c7470f1537e30b3d9fd0b61899c25b937958092b4956868a9d7"
+    },
+    {
+      "path": "src/components/search-surface.test.ts",
+      "bytes": 2774,
+      "sha256": "a577180ce4d034aae5e5051471ef855513992b56c9cd345fc8a38d94468ab845"
+    },
+    {
+      "path": "src/components/stock-futures-panel.tsx",
+      "bytes": 15919,
+      "sha256": "d95bd3b49cc7684b3bb3907c8b06e1a6da807fd780f98489790b1d915897d8d9"
+    },
+    {
+      "path": "src/components/underlying-picker.tsx",
+      "bytes": 5392,
+      "sha256": "2d572a05fc2ddbe5bfca42c1cc4b3c0d1146ab4e7e6f8bbfb10a97c613b62e73"
+    },
+    {
+      "path": "src/components/warrant-panel.tsx",
+      "bytes": 18292,
+      "sha256": "3ac02e337f38f3e0d089f0944b9fcd085059c5daf5ebc5469fcc4e4c6bd3c6e3"
+    },
+    {
+      "path": "src/components/watchlist.css.ts",
+      "bytes": 15140,
+      "sha256": "dc2c7018b17acb4f07a9441dc4b7bd3c4c96a2560af12e424438771b785bf88d"
+    },
+    {
+      "path": "src/components/watchlist.tsx",
+      "bytes": 44133,
+      "sha256": "8a7298d025fb10541b49cc7d6317c8562b9f1209d513384bab9981ac65a07a68"
+    },
+    {
+      "path": "src/hooks/use-product-names-version.test.tsx",
+      "bytes": 2709,
+      "sha256": "d1e08f09fa9fad3486d80cfc2038217ce469eae5a2dacb9356fb3ff5dc5bd9b5"
+    },
+    {
+      "path": "src/hooks/use-product-names-version.ts",
+      "bytes": 716,
+      "sha256": "2af996b23504a3f4d38f9745201b66499222c99f406c859a379281e7cd14bf9b"
+    },
+    {
+      "path": "src/hooks/use-workspace-grid.ts",
+      "bytes": 6377,
+      "sha256": "24ed5c762fea7c469a6f6ef05aa60b42df5dc19d5c2154df9df49dfa0c401975"
+    },
+    {
+      "path": "src/lib/contracts-cache.test.ts",
+      "bytes": 10973,
+      "sha256": "5ef9159c737a08608f25e40afd6ffaaa41e03f0ca7616409468d4663985e6584"
+    },
+    {
+      "path": "src/lib/contracts-cache.ts",
+      "bytes": 5431,
+      "sha256": "5f51f89392be8e632bd398fbaa08e7edd11c669e82e49ab821c1433b23e29155"
+    },
+    {
+      "path": "src/lib/data/etf-catalog.json",
+      "bytes": 72314,
+      "sha256": "884eda26775b31dc384900d732c9b68c7021728e6504fa48d5c97325ee2ede56"
+    },
+    {
+      "path": "src/lib/etf-catalog-integration.test.ts",
+      "bytes": 9461,
+      "sha256": "50bb01b6196f27d2c6635f540f673ba8c9393fab0236e313e06f98bf4edd782c"
+    },
+    {
+      "path": "src/lib/etf-catalog-normalizer.d.mts",
+      "bytes": 935,
+      "sha256": "be58f677c244585ba6fb1cf5be4aa95a5d5070cc35b072d3601cd5629c4ec88c"
+    },
+    {
+      "path": "src/lib/etf-catalog-normalizer.mjs",
+      "bytes": 6067,
+      "sha256": "17e7b7dce7ae39f244203b87942432fe7a5f42b7846e1d76b2c789242754db47"
+    },
+    {
+      "path": "src/lib/etf-catalog.ts",
+      "bytes": 613,
+      "sha256": "7c0c4c03e8890ee44abf1a75b2b1cfb38307751dd02c504f43fc10c62fa87d4a"
+    },
+    {
+      "path": "src/lib/etf-runtime-catalog.test.ts",
+      "bytes": 28897,
+      "sha256": "83a44ed3bf2f8555de563152119358e039bab249947707db27b2f6be034135aa"
+    },
+    {
+      "path": "src/lib/etf-runtime-catalog.ts",
+      "bytes": 6979,
+      "sha256": "e7af48f304bcd8f61cd19b87356e6c82917df64d120cc84baeb69d8c03590b61"
+    },
+    {
+      "path": "src/lib/index-catalog.test.ts",
+      "bytes": 8877,
+      "sha256": "ce90f7576e4c98f8661ea2b7de68c7cd65a0bc8bbc9a4e62e387b0fc9a7a0051"
+    },
+    {
+      "path": "src/lib/index-catalog.ts",
+      "bytes": 2046,
+      "sha256": "a661024c9738967fae7fa5200db1ea98a9875d82b70dd389c5cabc7e41b88fd7"
+    },
+    {
+      "path": "src/lib/index-search.test.ts",
+      "bytes": 1844,
+      "sha256": "a730daf970164d00de17e75b38d990855867fcf096088e5802479d28f91f2ddf"
+    },
+    {
+      "path": "src/lib/index-search.ts",
+      "bytes": 2739,
+      "sha256": "72b4777705b3fc822628ffc818f265282034ed77d4736244f3b1792bbaea3ac2"
+    },
+    {
+      "path": "src/lib/product-badge-presentation.ts",
+      "bytes": 1339,
+      "sha256": "2da87e7777e3374bc9ee833cfaa7cafb45a82dc45da7efb612fb174be0e485ab"
+    },
+    {
+      "path": "src/lib/product-catalog-version.test.ts",
+      "bytes": 7225,
+      "sha256": "95307040595aa9434a1670154707f8d2ada5501752243a791264989c628fcb76"
+    },
+    {
+      "path": "src/lib/product-catalog-version.ts",
+      "bytes": 4681,
+      "sha256": "190f63408acef7c562bb295c61c1442b8b36aef7da7f1926271bbab8d6d000d3"
+    },
+    {
+      "path": "src/lib/product-search-acceptance.test.ts",
+      "bytes": 10174,
+      "sha256": "482d6fea14c3e6f149805f0bda95ef7bf989c3e09adea28e7fa6616efdbe0c7e"
+    },
+    {
+      "path": "src/lib/product-search-freshness.test.ts",
+      "bytes": 16547,
+      "sha256": "6f10f51ee94eca1999998eaeef8218bbc9da884e1eb53b9d9650656602430ff3"
+    },
+    {
+      "path": "src/lib/product-search-name-fallback.test.ts",
+      "bytes": 13293,
+      "sha256": "61ffeb2d23b1b152f7d204f036c21e7079506d2d84117d67e81a80d451addb77"
+    },
+    {
+      "path": "src/lib/product-search-progressive-acceptance.test.ts",
+      "bytes": 24909,
+      "sha256": "acf923adb701c4bd58063ffb40602756682b66dc6551e563235324e5d87a4d4a"
+    },
+    {
+      "path": "src/lib/product-search-progressive.test.ts",
+      "bytes": 12869,
+      "sha256": "684b9757e0d472087c847c49d56d4ba93161b88087c510d92c3a063fabc6e6b8"
+    },
+    {
+      "path": "src/lib/product-search-resilience.test.ts",
+      "bytes": 10057,
+      "sha256": "e6e39133df43ac7e175ff20c17711c6c1da20ccd14d2129a693e70918aab233a"
+    },
+    {
+      "path": "src/lib/product-search.test.ts",
+      "bytes": 27028,
+      "sha256": "e1a5d1a0e683bdbef2870e299e7462f2af55d2b2f10875ec0ca1e5936a820ac7"
+    },
+    {
+      "path": "src/lib/product-search.ts",
+      "bytes": 23082,
+      "sha256": "d1e3f4813b4d11cdecf2a99b1f65814b2ac1afc6956376be33910f9b21b2cf17"
+    },
+    {
+      "path": "src/lib/public-metadata-routes.ts",
+      "bytes": 899,
+      "sha256": "727e79afabe12d0595fa40791b001228a3ecc51f9e738009a000f49127e4ffc9"
+    },
+    {
+      "path": "src/lib/public-metadata.test.ts",
+      "bytes": 5073,
+      "sha256": "b5a091b754e0d545da1ea7f971f5a399e36d78b46dfcf1b37e3317b4f350040c"
+    },
+    {
+      "path": "src/lib/public-metadata.ts",
+      "bytes": 4099,
+      "sha256": "22462f93105ff542f97372d5cbc2335a26828ac01376b55995e6aa62adef367c"
+    },
+    {
+      "path": "src/lib/quick-order-support.test.ts",
+      "bytes": 1043,
+      "sha256": "eab511530d59022b5abd8e771d348bd7eea6bfc0b8126342d75b4a390a78027b"
+    },
+    {
+      "path": "src/lib/quick-order-support.ts",
+      "bytes": 513,
+      "sha256": "85629fb79ea96c6a7f2105053215b10fd3e4dfaf4a063888407c26880514bb79"
+    },
+    {
+      "path": "src/lib/search-contract-transport.test.ts",
+      "bytes": 3196,
+      "sha256": "e623a55c24795aa1ee41e0aa854b9339924d8ebbd62c4786e1054e5d8e1ab2a6"
+    },
+    {
+      "path": "src/lib/search-request-http.test.ts",
+      "bytes": 6617,
+      "sha256": "040472edc61418fe3cf228686b5ec571cb3ab657badb3d3ba48d07f555e1ecdf"
+    },
+    {
+      "path": "src/lib/search-request.test.ts",
+      "bytes": 27630,
+      "sha256": "50fad45c4526fb90b5c88a5a8780cc0b3961bb81b8b07878f8ecd73b8be34326"
+    },
+    {
+      "path": "src/lib/search-request.ts",
+      "bytes": 8816,
+      "sha256": "f0fe0d4efed5a1307fc5d61fe324838f7d70fff5f5f50a64a7bc3c4d77c25226"
+    },
+    {
+      "path": "src/lib/shioaji.ts",
+      "bytes": 60139,
+      "sha256": "17cde69b06dbfb7814aab41d3a7c12efda38a353ab6af7b13b6d45a8ab1b54cf"
+    },
+    {
+      "path": "src/lib/stock-catalog.test.ts",
+      "bytes": 18992,
+      "sha256": "93abf6daac2f412f91923488b39080ee94f5bb58f7da17987427d12379227fe0"
+    },
+    {
+      "path": "src/lib/stock-index-search.test.ts",
+      "bytes": 16449,
+      "sha256": "7ee69af14a378a40dda9a4efa9a2e4e91ed90c573313388c976199a9e4b456db"
+    },
+    {
+      "path": "src/lib/stock-index.ts",
+      "bytes": 16743,
+      "sha256": "8dd14731beadfacc49d538d8124348b4ba49c5cba952677d74e6dcc305120f62"
+    },
+    {
+      "path": "src/lib/stock-name-integration.test.ts",
+      "bytes": 7665,
+      "sha256": "56add135af778cb0f1550db85daf164ef04cb26751c69df9e356352619fc47f1"
+    },
+    {
+      "path": "src/lib/stock-name-normalizer.test.ts",
+      "bytes": 3713,
+      "sha256": "a4c0bd2e2240b3962d28c18655e0924aa4344543a41506d0449b02079cba1b54"
+    },
+    {
+      "path": "src/lib/stock-name-normalizer.ts",
+      "bytes": 3590,
+      "sha256": "8745e3a1730632dc0e0a3f1a06815f71ac9c8cab375f305017939f6808686ed6"
+    },
+    {
+      "path": "src/lib/stock-prefix-ranking.test.ts",
+      "bytes": 5761,
+      "sha256": "6c2fae9b4687b82de97865341cef0f3c75cae2cbe92a58092d3f0ece1b9ec6a2"
+    },
+    {
+      "path": "src/lib/stock-runtime-catalog.test.ts",
+      "bytes": 8552,
+      "sha256": "fddceb298ea6bd7a39042c0987e2f64edf7b72fde6b580d5bd7b804f0da47bd0"
+    },
+    {
+      "path": "src/lib/stock-runtime-catalog.ts",
+      "bytes": 7376,
+      "sha256": "76dc5b99bee92579fb86623a077dfe16a55b94646020e060281924bd35a27194"
+    },
+    {
+      "path": "src/lib/stock-search-stream.test.ts",
+      "bytes": 6629,
+      "sha256": "7488beecfa8225f64c2f70c998211801c60ededc7f52bbcebc9f9fe1eef97602"
+    },
+    {
+      "path": "src/lib/stream.ts",
+      "bytes": 37777,
+      "sha256": "a17e75967ec04075b8731462adf5ec6ee5d1a3cc074079be760b98d34220f117"
+    },
+    {
+      "path": "src/lib/subscription-dispatch.test.ts",
+      "bytes": 11083,
+      "sha256": "94f0afe91f6a4e779f4120cf081cc317b3da2a0ed33c959c2a3ec1934ca2d647"
+    },
+    {
+      "path": "src/lib/tauri-dev-port.test.ts",
+      "bytes": 1274,
+      "sha256": "ff8962ab580a5bb456873d77cac67a19fd31165bf8ed51e76818a20e3e849cf8"
+    },
+    {
+      "path": "src/lib/tauri-server-stop.test.ts",
+      "bytes": 7856,
+      "sha256": "fed1fa4fb709d2acb8da46d578f243a8d641a771150a3a62edaf1774d29bbc66"
+    },
+    {
+      "path": "src/lib/workspace-grid.test.tsx",
+      "bytes": 32920,
+      "sha256": "6f3e4411cda1e230cad21e8787b16b755b3b706268ba135f315fd3461c7f809e"
+    },
+    {
+      "path": "src/lib/workspace-grid.ts",
+      "bytes": 3670,
+      "sha256": "eb70e863d6ffb47cc2db845cbd5f7aad9edf818530ea01a35a1f284d59519ed0"
+    },
+    {
+      "path": "src/theme.css.ts",
+      "bytes": 5253,
+      "sha256": "c04bd02e78225a22ffadc9ca35e44ee421cf779c9552b507f5c3ecce082a3b79"
+    },
+    {
+      "path": "tsconfig.node.json",
+      "bytes": 705,
+      "sha256": "ed8695947062c8dcb7111240c51ece673dfe5cbf74672dd761ddd9f589484e4c"
+    },
+    {
+      "path": "vite.config.ts",
+      "bytes": 7332,
+      "sha256": "f25def4220ab3f3f47dceb1b76a82de399073f19cff44a865f52b8f5e7d66e67"
+    }
+  ],
+  "localOnly": true,
+  "verification": {
+    "browserInputLatency": {
+      "createdAt": "2026-10-17T18:59:01.690Z",
+      "sourceTreeSha256": "6666c4bb22786cde5e6179d8462f35bfa6649f3d73c7b2ef99b1b27b7239dab7",
+      "status": "PASS_CONTROLLED_LOCAL_BROWSER",
+      "metric": "Last non-composing trusted input event timestamp to completed result double-rAF rendering opportunity",
+      "endpoint": "terminal result DOM plus second nested requestAnimationFrame opportunity with query/fingerprint/visibility recheck; not physical paint or INP",
+      "plan": {
+        "scope": "Real existing dev App at 127.0.0.1:5194, actual trusted keyboard input, full rendering and actual read-only search API calls [Historical original wording; interpretation superseded by inputPipelineScope: automated trusted events and direct Chinese insertion, not OS/HID/IME.]",
+        "sourceTree": "6666c4bb22786cde5e6179d8462f35bfa6649f3d73c7b2ef99b1b27b7239dab7",
+        "variants": {
+          "F": "Final exact no-cache searchStocks",
+          "B": "Captured f577 beforeSource function, all other final names/catalog/UI code unchanged"
+        },
+        "fixedPhases": [
+          "F3",
+          "B1",
+          "B2",
+          "F4"
+        ],
+        "surfaces": [
+          "palette",
+          "watchlist"
+        ],
+        "queries": [
+          "2330",
+          "台積電",
+          "00981"
+        ],
+        "warmupAttemptsPerQuerySurfacePhase": 10,
+        "fixedMeasuredAttemptsPerQuerySurfacePhase": 50,
+        "blocksPerPhaseSurface": 2,
+        "roundsPerBlock": 25,
+        "measuredAttemptsPerQuerySurfaceVariant": 100,
+        "completionRule": "Current input epoch saw loading, then terminal DOM; input query and ordered row fingerprint are rechecked after the second nested rAF, with at least one result intersecting viewport and scroll clipping with visible ancestors",
+        "mainMetric": "Last non-composing trusted input event timestamp to completed result double-rAF rendering opportunity",
+        "secondaryMetrics": [
+          "first visible rows DOM",
+          "first visible rows double-rAF",
+          "terminal DOM",
+          "first input to completed result",
+          "frame gaps",
+          "outcomes including superseded/error/timeout/hidden"
+        ],
+        "keepAllAttemptsAndInputs": true,
+        "noReplacingFailedTrialsWithSuccesses": true,
+        "deduplication": "Use phase+sequence; exports are cumulative so latest export per phase or deduplicate exactly",
+        "ordering": {
+          "2330": [
+            "2330",
+            "CDFR1",
+            "QFFR1",
+            "CDFR2",
+            "QFFR2"
+          ],
+          "台積電": [
+            "2330",
+            "CDFR1",
+            "QFFR1",
+            "CDFR2",
+            "QFFR2"
+          ],
+          "00981": [
+            "00981A",
+            "00981B",
+            "00981D",
+            "00981T"
+          ]
+        },
+        "debounceMs": {
+          "palette": 120,
+          "watchlist": 150
+        },
+        "calibrationExcluded": {
+          "F1": "Pilot before visibility guard, not a formal trial",
+          "F2": "Pilot and typed Unicode/clock/export check; hidden/clipping visibility guard not yet applied"
+        },
+        "startup": "Full page reload after each variant/phase, same warmup; never time HMR itself as search latency",
+        "viewport": "Keep existing browser viewport; record every trial and flag any difference",
+        "limits": "Controlled local exploratory lab test, not hardware screen presentation, INP, native IME, production build/browser population or real market load. Real SSE observed separately; no Tick/BidAsk means real-time quote acceptance remains unverified.",
+        "cleanup": "Restore original index and stock-index exact bytes, reload final actual dev, verify source freeze and HEAD/index. No commit/push/PR/merge/release/orders/watchlist membership/explicit quote subscription mutations."
+      },
+      "phases": [
+        {
+          "phase": "F3",
+          "rawPath": "work/browser-perf/F3-raw-0.json",
+          "rawSha256": "408219111de4bf757d8193e15601038ee1b5411c8842ad0406201b88842b10fd",
+          "totalInputs": 1440,
+          "completed": 360,
+          "superseded": 1080,
+          "proof": {
+            "recordedAt": "2026-10-17T18:25:24.873Z",
+            "phase": "F3",
+            "variant": "F",
+            "stockIndexSha256": "8dd14731beadfacc49d538d8124348b4ba49c5cba952677d74e6dcc305120f62",
+            "searchStocksSha256": "24a3616345d52a2e3aa864d999c85f65c30155f09fdaa9d0a2a0612bdd76abf7",
+            "other86FrozenSourcesUnchanged": true,
+            "observerSha256": "f7c066320db2716fafafea241dfb3f15e5c2ce94a44f058394765d8e62bef38d",
+            "indexSha256": "ca161d993a2ee11f73be269d178632e590c42ec04dbcb8bbb0137ae62f4e15ee",
+            "sameIsolatedSimulation": true,
+            "instance": "0d78b855d5fe",
+            "serverVersion": "1.7.8"
+          }
+        },
+        {
+          "phase": "B1",
+          "rawPath": "work/browser-perf/B1-raw-0.json",
+          "rawSha256": "af3d06c2e02c1b676bb309c36625a0cd9108254dc74da957b3c1bfb61c733df5",
+          "totalInputs": 1440,
+          "completed": 360,
+          "superseded": 1080,
+          "proof": {
+            "recordedAt": "2026-10-17T18:25:26.232Z",
+            "phase": "B1",
+            "variant": "B",
+            "stockIndexSha256": "1bf636c95b8b9ab09546287d5fba9bcf9d1ca76ce6183f2741a24472c9c0a0d8",
+            "searchStocksSha256": "6dbef06798e08918cb312eb3d9bec87b8ed2bdcbda3e1f834ec038afe773b71c",
+            "other86FrozenSourcesUnchanged": true,
+            "observerSha256": "f7c066320db2716fafafea241dfb3f15e5c2ce94a44f058394765d8e62bef38d",
+            "indexSha256": "06ed1a9c16c5249de31431321ce0b674a5f52e4e80c41e7fdac02396b00c65b4",
+            "sameIsolatedSimulation": true,
+            "instance": "0d78b855d5fe",
+            "serverVersion": "1.7.8"
+          }
+        },
+        {
+          "phase": "B2",
+          "rawPath": "work/browser-perf/B2-raw-0.json",
+          "rawSha256": "7257d5a76e7fd6d114beb990985e87c2bf4bfe9900728103bfd904aeadfeeff5",
+          "totalInputs": 1440,
+          "completed": 360,
+          "superseded": 1080,
+          "proof": {
+            "recordedAt": "2026-10-17T18:29:30.021Z",
+            "phase": "B2",
+            "variant": "B",
+            "stockIndexSha256": "1bf636c95b8b9ab09546287d5fba9bcf9d1ca76ce6183f2741a24472c9c0a0d8",
+            "searchStocksSha256": "6dbef06798e08918cb312eb3d9bec87b8ed2bdcbda3e1f834ec038afe773b71c",
+            "other86FrozenSourcesUnchanged": true,
+            "observerSha256": "f7c066320db2716fafafea241dfb3f15e5c2ce94a44f058394765d8e62bef38d",
+            "indexSha256": "ba5c3094318e076ebcf5c0cada5496a364855f9847795f4d57dea255a75e7442",
+            "sameIsolatedSimulation": true,
+            "instance": "0d78b855d5fe",
+            "serverVersion": "1.7.8"
+          }
+        },
+        {
+          "phase": "F4",
+          "rawPath": "work/browser-perf/F4-raw-0.json",
+          "rawSha256": "227f59eb90f2a7d2d47f047afd61ebfa0e7ac82c0f8ec2018382606dfe6a90a0",
+          "totalInputs": 1440,
+          "completed": 360,
+          "superseded": 1080,
+          "proof": {
+            "recordedAt": "2026-10-17T18:33:34.795Z",
+            "phase": "F4",
+            "variant": "F",
+            "stockIndexSha256": "8dd14731beadfacc49d538d8124348b4ba49c5cba952677d74e6dcc305120f62",
+            "searchStocksSha256": "24a3616345d52a2e3aa864d999c85f65c30155f09fdaa9d0a2a0612bdd76abf7",
+            "other86FrozenSourcesUnchanged": true,
+            "observerSha256": "f7c066320db2716fafafea241dfb3f15e5c2ce94a44f058394765d8e62bef38d",
+            "indexSha256": "eb3618b0b56a57f1bad93e77e9e22fd2b9b9f8797cda38de553d0794a3d33af5",
+            "sameIsolatedSimulation": true,
+            "instance": "0d78b855d5fe",
+            "serverVersion": "1.7.8"
+          }
+        }
+      ],
+      "analysisPath": "work/browser-perf/analysis-F3-B1-B2-F4.json",
+      "analysisSha256": "581179d7c19a4f47de208415dc40964f64ffeb90e2b5d8fd3b3473a54a764123",
+      "fixedAttempts": 1200,
+      "warmupAttempts": 240,
+      "totalInputs": 5760,
+      "supersededInputs": 4320,
+      "comparisons": [
+        {
+          "surface": "palette",
+          "query": "2330",
+          "beforeP95": 140.5,
+          "afterP95": 140.20000004768372,
+          "changePercent": -0.21352309773401412,
+          "within5Percent": true,
+          "completeOrderedResultsEqual": true
+        },
+        {
+          "surface": "palette",
+          "query": "台積電",
+          "beforeP95": 144.60000002384186,
+          "afterP95": 141.39999997615814,
+          "changePercent": -2.21300141573727,
+          "within5Percent": true,
+          "completeOrderedResultsEqual": true
+        },
+        {
+          "surface": "palette",
+          "query": "00981",
+          "beforeP95": 148.60000002384186,
+          "afterP95": 142,
+          "changePercent": -4.441453581953525,
+          "within5Percent": true,
+          "completeOrderedResultsEqual": true
+        },
+        {
+          "surface": "watchlist",
+          "query": "2330",
+          "beforeP95": 174.89999997615814,
+          "afterP95": 176.20000004768372,
+          "changePercent": 0.7432819163537996,
+          "within5Percent": true,
+          "completeOrderedResultsEqual": true
+        },
+        {
+          "surface": "watchlist",
+          "query": "台積電",
+          "beforeP95": 175.69999992847443,
+          "afterP95": 171.09999990463257,
+          "changePercent": -2.618099047077105,
+          "within5Percent": true,
+          "completeOrderedResultsEqual": true
+        },
+        {
+          "surface": "watchlist",
+          "query": "00981",
+          "beforeP95": 181.79999995231628,
+          "afterP95": 177.79999995231628,
+          "changePercent": -2.200220022579291,
+          "within5Percent": true,
+          "completeOrderedResultsEqual": true
+        }
+      ],
+      "gates": {
+        "all1200FixedAttemptsSuccessful": true,
+        "all6Within5Percent": true,
+        "all6CompleteResultOrdersEqual": true,
+        "all87SourcesRestored": true,
+        "indexHtmlExactBackup": true
+      },
+      "smoke": {
+        "rawPath": "work/browser-perf/F5-raw-0.json",
+        "rawSha256": "dbcc8ab32a470b0fc256064033d81e049d615e0ccdf63f6c43eaa36761890ee7",
+        "checks": [
+          {
+            "surface": "palette",
+            "query": "櫃買指數",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": [
+              "IX0043"
+            ]
+          },
+          {
+            "surface": "palette",
+            "query": "IX0043",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": [
+              "IX0043"
+            ]
+          },
+          {
+            "surface": "palette",
+            "query": "台指",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": [
+              "TXFR1",
+              "MXFR1",
+              "TMFR1",
+              "TXFR2",
+              "MXFR2",
+              "TMFR2"
+            ]
+          },
+          {
+            "surface": "palette",
+            "query": "009810",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": [
+              "009810"
+            ]
+          },
+          {
+            "surface": "palette",
+            "query": "臺積電",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": [
+              "2330",
+              "CDFR1",
+              "QFFR1",
+              "CDFR2",
+              "QFFR2"
+            ]
+          },
+          {
+            "surface": "palette",
+            "query": "NO_MATCH_XXX",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": []
+          },
+          {
+            "surface": "watchlist",
+            "query": "櫃買指數",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": [
+              "IX0043"
+            ]
+          },
+          {
+            "surface": "watchlist",
+            "query": "IX0043",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": [
+              "IX0043"
+            ]
+          },
+          {
+            "surface": "watchlist",
+            "query": "台指",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": [
+              "TXFR1",
+              "MXFR1",
+              "TMFR1",
+              "TXFR2",
+              "MXFR2",
+              "TMFR2"
+            ]
+          },
+          {
+            "surface": "watchlist",
+            "query": "009810",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": [
+              "009810"
+            ]
+          },
+          {
+            "surface": "watchlist",
+            "query": "臺積電",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": [
+              "2330",
+              "CDFR1",
+              "QFFR1",
+              "CDFR2",
+              "QFFR2"
+            ]
+          },
+          {
+            "surface": "watchlist",
+            "query": "NO_MATCH_XXX",
+            "attempts": 10,
+            "passed": 10,
+            "expectedPrefix": []
+          }
+        ],
+        "attempts": 120,
+        "passed": 120
+      },
+      "rapid": {
+        "checks": [
+          {
+            "surface": "palette",
+            "attempts": 10,
+            "passed": 10,
+            "finalQuery": "00981",
+            "full2330ObservationSuperseded": 10
+          },
+          {
+            "surface": "watchlist",
+            "attempts": 10,
+            "passed": 10,
+            "finalQuery": "00981",
+            "full2330ObservationSuperseded": 10
+          }
+        ],
+        "attempts": 20,
+        "passed": 20,
+        "scope": "Only observer records for 2330 were superseded and final 00981 results correct; does not prove App request cancellation or absence of transient stale rows"
+      },
+      "quoteDisplay": {
+        "observer": "Root actual UI before/after last F4 watchlist block of 75 formal searches",
+        "rowsBefore": 4,
+        "rowsAfter": 4,
+        "allPricesNonEmpty": true,
+        "codeNamePriceRowsUnchanged": true,
+        "evidenceLevel": "Root UI observation statement only; raw financial row values deliberately not saved, not independently reconstructible, not quote freshness or throughput"
+      },
+      "liveFeed": {
+        "rawPath": "work/pm-validation/live-feed-cpu-fix-1792261088437.json",
+        "rawSha256": "044b1eeb397562f3f24fcb65df8dcfff4c81442f01b50b6c47c0bbcfc7d4f475",
+        "startedAt": "2026-10-17T18:17:33.424Z",
+        "endedAt": "2026-10-17T18:18:08.437Z",
+        "counts": {
+          "heartbeat": 2
+        },
+        "failure": null,
+        "scope": "35-second overlap with automated trusted Unicode input in F2 only, not native IME or continuous formal-phase monitoring. Heartbeats only; no Tick/BidAsk."
+      },
+      "independentAudit": {
+        "reviewer": "Existing GPT-6.1 Sol QA agent, read-only recomputation",
+        "source": "Agent report in current task; independently recomputed all 5760 inputs, twelve groups and six complete code+name fingerprints; not actual Claude",
+        "cleanupAndF5Verified": true,
+        "stagedEntriesEqualHead": true,
+        "stagedEntryCount": 884,
+        "indexScope": "Logical staged mode/object/path entries, not raw Git index bytes"
+      },
+      "restored": [
+        {
+          "path": "index.html",
+          "sha256": "fcee78f6670c3ec0a7830f6e62ea13275a9776ec5aec75a0530e2ccd14df9ca0",
+          "expected": "fcee78f6670c3ec0a7830f6e62ea13275a9776ec5aec75a0530e2ccd14df9ca0"
+        },
+        {
+          "path": "src/lib/stock-index.ts",
+          "sha256": "8dd14731beadfacc49d538d8124348b4ba49c5cba952677d74e6dcc305120f62",
+          "expected": "8dd14731beadfacc49d538d8124348b4ba49c5cba952677d74e6dcc305120f62"
+        }
+      ],
+      "automation": {
+        "reportPath": "work/browser-perf/final-automated-qa-v2.json",
+        "reportSha256": "7ce532ba78cf6b2bb9c9306efa1532fec6b1950d8a5c73dfec8695df158a0498",
+        "startedAt": "2026-10-17T18:57:10.476Z",
+        "indexHtmlAtAutomationStart": {
+          "checkedAt": "2026-10-17T18:57:10.477Z",
+          "sha256": "fcee78f6670c3ec0a7830f6e62ea13275a9776ec5aec75a0530e2ccd14df9ca0"
+        },
+        "restorationCheckedAt": "2026-10-17T18:57:10.677Z",
+        "restoredFilesBeforeVitest": [
+          {
+            "path": "index.html",
+            "sha256": "fcee78f6670c3ec0a7830f6e62ea13275a9776ec5aec75a0530e2ccd14df9ca0",
+            "expected": "fcee78f6670c3ec0a7830f6e62ea13275a9776ec5aec75a0530e2ccd14df9ca0"
+          },
+          {
+            "path": "src/lib/stock-index.ts",
+            "sha256": "8dd14731beadfacc49d538d8124348b4ba49c5cba952677d74e6dcc305120f62",
+            "expected": "8dd14731beadfacc49d538d8124348b4ba49c5cba952677d74e6dcc305120f62"
+          }
+        ],
+        "sourceBefore": {
+          "unchanged": true,
+          "files": 87,
+          "sourceTreeSha256": "6666c4bb22786cde5e6179d8462f35bfa6649f3d73c7b2ef99b1b27b7239dab7"
+        },
+        "sourceAfter": {
+          "unchanged": true,
+          "files": 87,
+          "sourceTreeSha256": "6666c4bb22786cde5e6179d8462f35bfa6649f3d73c7b2ef99b1b27b7239dab7"
+        },
+        "commands": {
+          "freezeBefore": {
+            "args": [
+              "work/pm-validation/freeze-source.mjs",
+              "--check"
+            ],
+            "exitCode": 0
+          },
+          "vitest": {
+            "args": [
+              "node_modules/vitest/vitest.mjs",
+              "run",
+              "--silent=true",
+              "--reporter=dot",
+              "--reporter=json",
+              "--outputFile.json=work/browser-perf/final-automated-qa-v2-vitest.json"
+            ],
+            "exitCode": 0
+          },
+          "nodeEtf": {
+            "args": [
+              "--test",
+              "--test-reporter=tap",
+              "scripts/refresh-etf-catalog.test.mjs"
+            ],
+            "exitCode": 0
+          },
+          "typecheck": {
+            "args": [
+              "node_modules/typescript/bin/tsc",
+              "-b",
+              "--force"
+            ],
+            "exitCode": 0
+          },
+          "build": {
+            "args": [
+              "node_modules/vite/bin/vite.js",
+              "build"
+            ],
+            "exitCode": 0
+          },
+          "freezeAfter": {
+            "args": [
+              "work/pm-validation/freeze-source.mjs",
+              "--check"
+            ],
+            "exitCode": 0
+          }
+        },
+        "buildIndexHasQaHook": false,
+        "tests": {
+          "total": 4240,
+          "passed": 4238,
+          "failed": 0,
+          "skipped": 2
+        },
+        "testFiles": {
+          "total": 264,
+          "passed": 263,
+          "failed": 0,
+          "skipped": 1
+        },
+        "nodeEtf": {
+          "total": 10,
+          "passed": 10,
+          "failed": 0,
+          "skipped": 0
+        },
+        "status": "PASS",
+        "headAndStagedEntriesUnchanged": true,
+        "stagedEntriesBeforeSha256": "0e8770db331f07717a84819a1018daf98925579fc303fb59aff4a3a7b163b1b6",
+        "endedAt": "2026-10-17T18:57:35.584Z",
+        "runnerPath": "work/browser-perf/final-automated-qa.mjs",
+        "runnerSha256": "0d7863163f29da39cce655d8eaae978f66485ea7cedfc84edd7a970b5d4f1689",
+        "executionOrder": "Index HTML hash/time at automation start, freeze-before, exact restored file hashes/time, Vitest, ETF, tsc -b --force, Vite build, assert build HTML contains no QA hook, diff check, freeze-after, HEAD/staged-entries check. No claim of physical Git index file byte equality."
+      },
+      "cleanup": {
+        "originalIndexHtmlExact": true,
+        "finalStockIndexExact": true,
+        "browserReloaded": true,
+        "observerDomCount": 0,
+        "loaderDomCount": 0,
+        "ownedCollectorClosed": true,
+        "existingDevPreserved": true,
+        "existingSidecarPreserved": true,
+        "viewportOverrideUsed": false,
+        "screenshot": "outputs/product-search-browser-latency-final.png"
+      },
+      "writes": {
+        "commit": false,
+        "push": false,
+        "pullRequest": false,
+        "merge": false,
+        "release": false,
+        "orders": false,
+        "watchlistMembership": false,
+        "explicitQuoteSubscriptionChanges": false,
+        "login": false,
+        "credentialsCopied": false,
+        "existingServicesRestarted": false
+      },
+      "limits": [
+        "Only same local IAB Chromium 155, 725x612 viewport, warmed metadata, three main queries and two surfaces",
+        "B is captured f577 searchStocks in otherwise identical final code, not whole PR versus upstream",
+        "No physical screen presentation, INP, actual IME/WebView/native packaged evidence",
+        "Normal metadata TTL/background refresh was not frozen, no resource trace captured; full results were identical",
+        "No confidence interval or population-wide statistically significant speedup claim",
+        "No real Tick/BidAsk observed during Sunday; real market freshness/latency and search under market load remain unverified",
+        "Controlled non-regression evidence only; no browser acceleration established, no OS/HID/IME measurements",
+        "Rapid replacement does not establish actual request abort or absence of transient stale flashes",
+        "Source observer and sanitized evidence reviewed by actual Claude; documentary M1-M5 closure requires separate scope"
+      ],
+      "supersedesInterpretationOnly": {
+        "path": "work/browser-perf/final-summary-v2.json",
+        "sha256": "6f71dc7913a7a81618b08e25ea8485fe326b33bf03b868cc580b47bb3d58df66",
+        "rawUnchanged": true
+      },
+      "conclusion": "Six controlled local p95 deltas -6.6 to +1.3 ms (-4.44% to +0.74%), including unchanged debounce; within 5% but acceleration is not established",
+      "inputPipelineScope": "CUA pressSequentially generates automated trusted input events; Chinese characters directly inserted, not real OS/HID input latency or native IME composition. Backend injection implementation is not claimed.",
+      "sourceDeltaProof": {
+        "path": "work/browser-perf/source-delta-proof.json",
+        "sha256": "ea30e4d2e18097e6765f2f6e76272feb9bde140be612c2455c332db427e81bb9",
+        "createdAt": "2026-10-17T18:53:20.301Z",
+        "method": "Reconstruct B from exact saved F by replacing captured function, match entire B hash observed in B1 and B2, then AST-remove only that function and verified whitespace before next declaration; compare remaining normalized bytes",
+        "finalFileSha256": "8dd14731beadfacc49d538d8124348b4ba49c5cba952677d74e6dcc305120f62",
+        "reconstructedBFileSha256": "1bf636c95b8b9ab09546287d5fba9bcf9d1ca76ce6183f2741a24472c9c0a0d8",
+        "observedB1FileSha256": "1bf636c95b8b9ab09546287d5fba9bcf9d1ca76ce6183f2741a24472c9c0a0d8",
+        "observedB2FileSha256": "1bf636c95b8b9ab09546287d5fba9bcf9d1ca76ce6183f2741a24472c9c0a0d8",
+        "outsideFunctionNormalizedSha256": "569a8e47b9bc34a4b62ee75d0fbcc4511dee5c237e81eabf26c8e477683d25ce",
+        "outsideFunctionEqual": true,
+        "onlySearchStocksAndWhitespaceDiffer": true
+      },
+      "phaseStats": [
+        {
+          "phase": "F3",
+          "surface": "palette",
+          "query": "2330",
+          "n": 50,
+          "p50": 138.10000002384186,
+          "p95": 139.60000002384186
+        },
+        {
+          "phase": "F3",
+          "surface": "palette",
+          "query": "台積電",
+          "n": 50,
+          "p50": 135.89999997615814,
+          "p95": 141.89999997615814
+        },
+        {
+          "phase": "F3",
+          "surface": "palette",
+          "query": "00981",
+          "n": 50,
+          "p50": 140.10000002384186,
+          "p95": 141.79999995231628
+        },
+        {
+          "phase": "F3",
+          "surface": "watchlist",
+          "query": "2330",
+          "n": 50,
+          "p50": 170.29999995231628,
+          "p95": 177.69999992847443
+        },
+        {
+          "phase": "F3",
+          "surface": "watchlist",
+          "query": "台積電",
+          "n": 50,
+          "p50": 168.89999997615814,
+          "p95": 172.80000007152557
+        },
+        {
+          "phase": "F3",
+          "surface": "watchlist",
+          "query": "00981",
+          "n": 50,
+          "p50": 172.10000002384186,
+          "p95": 177.69999992847443
+        },
+        {
+          "phase": "B1",
+          "surface": "palette",
+          "query": "2330",
+          "n": 50,
+          "p50": 137.5,
+          "p95": 141.39999997615814
+        },
+        {
+          "phase": "B1",
+          "surface": "palette",
+          "query": "台積電",
+          "n": 50,
+          "p50": 139,
+          "p95": 145.5
+        },
+        {
+          "phase": "B1",
+          "surface": "palette",
+          "query": "00981",
+          "n": 50,
+          "p50": 143.29999995231628,
+          "p95": 146.5
+        },
+        {
+          "phase": "B1",
+          "surface": "watchlist",
+          "query": "2330",
+          "n": 50,
+          "p50": 171,
+          "p95": 176
+        },
+        {
+          "phase": "B1",
+          "surface": "watchlist",
+          "query": "台積電",
+          "n": 50,
+          "p50": 172.5,
+          "p95": 175.69999992847443
+        },
+        {
+          "phase": "B1",
+          "surface": "watchlist",
+          "query": "00981",
+          "n": 50,
+          "p50": 176.30000007152557,
+          "p95": 184.39999997615814
+        },
+        {
+          "phase": "B2",
+          "surface": "palette",
+          "query": "2330",
+          "n": 50,
+          "p50": 137.5,
+          "p95": 139.90000009536743
+        },
+        {
+          "phase": "B2",
+          "surface": "palette",
+          "query": "台積電",
+          "n": 50,
+          "p50": 139.29999995231628,
+          "p95": 141.90000009536743
+        },
+        {
+          "phase": "B2",
+          "surface": "palette",
+          "query": "00981",
+          "n": 50,
+          "p50": 143.30000007152557,
+          "p95": 150.89999997615814
+        },
+        {
+          "phase": "B2",
+          "surface": "watchlist",
+          "query": "2330",
+          "n": 50,
+          "p50": 171.10000002384186,
+          "p95": 174.60000002384186
+        },
+        {
+          "phase": "B2",
+          "surface": "watchlist",
+          "query": "台積電",
+          "n": 50,
+          "p50": 171.39999997615814,
+          "p95": 175.70000004768372
+        },
+        {
+          "phase": "B2",
+          "surface": "watchlist",
+          "query": "00981",
+          "n": 50,
+          "p50": 176.10000002384186,
+          "p95": 180.89999997615814
+        },
+        {
+          "phase": "F4",
+          "surface": "palette",
+          "query": "2330",
+          "n": 50,
+          "p50": 138,
+          "p95": 141.5
+        },
+        {
+          "phase": "F4",
+          "surface": "palette",
+          "query": "台積電",
+          "n": 50,
+          "p50": 136.20000004768372,
+          "p95": 138.29999995231628
+        },
+        {
+          "phase": "F4",
+          "surface": "palette",
+          "query": "00981",
+          "n": 50,
+          "p50": 139.80000007152557,
+          "p95": 142.10000002384186
+        },
+        {
+          "phase": "F4",
+          "surface": "watchlist",
+          "query": "2330",
+          "n": 50,
+          "p50": 170.60000002384186,
+          "p95": 173.90000009536743
+        },
+        {
+          "phase": "F4",
+          "surface": "watchlist",
+          "query": "台積電",
+          "n": 50,
+          "p50": 168.30000007152557,
+          "p95": 170.89999997615814
+        },
+        {
+          "phase": "F4",
+          "surface": "watchlist",
+          "query": "00981",
+          "n": 50,
+          "p50": 172.30000007152557,
+          "p95": 178.69999992847443
+        }
+      ],
+      "observerLimitations": [
+        "Only one local Vite dev/React development-mode browser; not production build or population inference",
+        "Observer getBoundingClientRect/getComputedStyle may force synchronous layout; same code in both variants does not prove equal overhead; overhead unmeasured",
+        "Observed callback gaps near 4.3 ms do not establish physical display refresh; results cannot be extrapolated to 60 Hz",
+        "Visibility check does not fully model occlusion, near-zero opacity, transform or clip-path geometry; checks at least one result not every row",
+        "Empty terminal lists count completed; primary-query complete-order checks separately prevent false empty successes in this run",
+        "No native IME claim: isComposing events are ignored; observer was not designed or validated for every composition event sequence"
+      ],
+      "documentaryCorrections": {
+        "M1": "Remove directional acceleration wording. Retain exact deltas -6.6 to +1.3 ms and debounce-inclusive 5% non-regression scope. Core CPU is a separate metric.",
+        "M2": "New exact B reconstruction and AST outside-function equality proof attached.",
+        "M3": "Automation trusted input / direct Chinese insertion; no OS/HID or IME claim.",
+        "M4": "Rename full2330Canceled to full2330ObservationSuperseded; remove App abort and no-flash claims.",
+        "M5": "Attach overall restored-run timestamps, before/after source6666 checks, every command/exit code and report SHA.",
+        "S1": "All24 per-phase query/surface p50/p95 cells derived from original raw, no new samples.",
+        "S2": "Same observer code, overhead unmeasured and not assumed equal.",
+        "S3": "Vite dev/React development mode and observed frame cadence limits explicit.",
+        "S4": "Retain frameMaxGap raw as diagnostics, not additional acceleration claim.",
+        "S5": "Root UI observation, not reconstructible raw quote evidence.",
+        "S6": "Visibility/empty/IME limitations explicit."
+      },
+      "originalPlanArtifact": {
+        "path": "work/browser-perf/plan.json",
+        "sha256": "9ddf5a69edc1e37a2bf6e81ed0277a31222234fddb3374a28d136663ca149ac1",
+        "unchanged": true
+      },
+      "phaseBoundarySourceProofs": [
+        {
+          "phase": "F3",
+          "firstInput": "2026-10-17T18:21:14.215Z",
+          "lastOutcome": "2026-10-17T18:24:24.841Z",
+          "exportedAt": "2026-10-17T18:24:24.934Z",
+          "sourceProofRecordedAt": "2026-10-17T18:25:24.873Z",
+          "sourceProofTiming": "after phase",
+          "scope": "Phase boundary sample, not continuous source monitoring"
+        },
+        {
+          "phase": "B1",
+          "firstInput": "2026-10-17T18:25:42.191Z",
+          "lastOutcome": "2026-10-17T18:29:07.357Z",
+          "exportedAt": "2026-10-17T18:29:07.447Z",
+          "sourceProofRecordedAt": "2026-10-17T18:25:26.232Z",
+          "sourceProofTiming": "before phase",
+          "scope": "Phase boundary sample, not continuous source monitoring"
+        },
+        {
+          "phase": "B2",
+          "firstInput": "2026-10-17T18:29:39.101Z",
+          "lastOutcome": "2026-10-17T18:33:29.509Z",
+          "exportedAt": "2026-10-17T18:33:29.595Z",
+          "sourceProofRecordedAt": "2026-10-17T18:29:30.021Z",
+          "sourceProofTiming": "before phase",
+          "scope": "Phase boundary sample, not continuous source monitoring"
+        },
+        {
+          "phase": "F4",
+          "firstInput": "2026-10-17T18:33:42.590Z",
+          "lastOutcome": "2026-10-17T18:37:35.704Z",
+          "exportedAt": "2026-10-17T18:37:35.817Z",
+          "sourceProofRecordedAt": "2026-10-17T18:33:34.795Z",
+          "sourceProofTiming": "before phase",
+          "scope": "Phase boundary sample, not continuous source monitoring"
+        }
+      ],
+      "documentaryResidualCorrections": {
+        "R1": "Fresh automation with index HTML start SHA/time, exact restored hashes/time before Vitest, forced typecheck, built HTML QA-hook absence, HEAD/staged entries named explicitly. Previous automation retained.",
+        "R2": "Actual PR first bullet now explicitly single local Chromium Vite dev and B only captured f577 searchStocks, not entire PR.",
+        "R3": "All four phase proof times cross-checked against raw event timestamps and explicitly boundary-only; F3 after, others before. Original plan wording historical and superseded by inputPipelineScope."
+      },
+      "rawReport": "work/browser-perf/final-summary-v3.json",
+      "rawReportSha256": "18e78ca96ae19cf1ad559022e76761cf598ea6bf67baade57e6edec3c6f7dd32",
+      "postTestGitAudit": {
+        "checkedAt": "2026-10-17T19:01:40.894Z",
+        "status": "PASS",
+        "baselineAutomationReport": "work/browser-perf/final-automated-qa-v2.json",
+        "baselineAutomationReportSha256": "7ce532ba78cf6b2bb9c9306efa1532fec6b1950d8a5c73dfec8695df158a0498",
+        "headBefore": "4203ad559b721e48301b30459c27d06864354adf",
+        "headAfter": "4203ad559b721e48301b30459c27d06864354adf",
+        "stagedEntriesBeforeSha256": "0e8770db331f07717a84819a1018daf98925579fc303fb59aff4a3a7b163b1b6",
+        "stagedEntriesAfterSha256": "0e8770db331f07717a84819a1018daf98925579fc303fb59aff4a3a7b163b1b6",
+        "commands": [
+          {
+            "args": [
+              "rev-parse",
+              "HEAD"
+            ],
+            "exitCode": 0
+          },
+          {
+            "args": [
+              "ls-files",
+              "--stage",
+              "-z"
+            ],
+            "exitCode": 0
+          },
+          {
+            "args": [
+              "diff",
+              "--cached",
+              "--quiet"
+            ],
+            "exitCode": 0
+          },
+          {
+            "args": [
+              "diff",
+              "--check"
+            ],
+            "exitCode": 0
+          }
+        ],
+        "scope": "Current post-test audit versus values captured at automation start; not retroactively timestamped as the old test endpoint. The exact runner already asserted equality and diff success before setting its PASS flag.",
+        "runnerPath": "work/browser-perf/final-automated-qa.mjs",
+        "runnerSha256": "0d7863163f29da39cce655d8eaae978f66485ea7cedfc84edd7a970b5d4f1689",
+        "actualPostTestAssertions": "    report.diffCheck=git(['diff','--check']);\n    await command('freezeAfter',['work/pm-validation/freeze-source.mjs','--check']);\n    assert.equal(git(['rev-parse','HEAD']).trim(),initialHead);\n    assert.equal(sha(git(['ls-files','--stage','-z'])),initialIndex);\n    git(['diff','--cached','--quiet']);\n    report.headAndStagedEntriesUnchanged=true;",
+        "originalReportFieldMapping": {
+          "restoredFilesBeforeVitest": "qa.restored captured before Vitest; renamed only in summary",
+          "headAndStagedEntriesUnchanged": "set only after actual HEAD, staged entries, cached diff and whitespace diff checks"
+        },
+        "reviewerCorrection": "Final packet code filter omitted these existing assertions. R1-b hypothesis was based on the excerpt, not an absent production or runner guard. Root supplies exact code and separately dated current check; no new model re-review claimed.",
+        "rawReport": "work/browser-perf/git-audit.json",
+        "rawReportSha256": "6f0140db849e1024728683ba6afc45a00b912fb81493e4e4b58b4190031e1e3a"
+      },
+      "actualReview": {
+        "model": "claude-opus-5-5",
+        "status": "success",
+        "packetSha256": "057d23325744b3d9366d9bcb4b6fd0e6d196e9dfecdef7d8c818638759d25896",
+        "elapsedMs": 234767,
+        "tools": [],
+        "mcpServerCount": 0,
+        "forbiddenEventCount": 0,
+        "effortAccepted": true,
+        "effortVerified": false,
+        "sourceAnswerPath": "work/opus-pm-review/browser-perf-review-answer.txt",
+        "sourceAnswerSha256": "1af6de2a6ac458ab4c8c8f8f96394914e48e62080cb6a2a07d2efe7fc1349ba7",
+        "rawAnswer": "claude-product-search-browser-review-answer.txt",
+        "publicAnswerSha256": "2cb510853b905f8f2460efcea50e5ff7a5fb79a816ae5ff20138b4583d276c30",
+        "scope": "Supplied observer source and sanitized measurement evidence only; did not execute tests, recompute raw data, inspect pixels or review all 87 files; no real market acceptance",
+        "closure": {
+          "model": "claude-opus-5-5",
+          "status": "success",
+          "packetSha256": "27f38b76b2f5702ffcc20e9007b9fe3ddfeacc1e0382c7d5f396c2c944624b52",
+          "elapsedMs": 128212,
+          "tools": [],
+          "mcpServerCount": 0,
+          "forbiddenEventCount": 0,
+          "effortAccepted": true,
+          "effortVerified": false,
+          "sourceAnswerPath": "work/opus-pm-review/browser-perf-closure-answer.txt",
+          "sourceAnswerSha256": "66c4aff0da194035a8c90572d6ae64b6fabf1de265593172f36e0e95974a16fe",
+          "rawAnswer": "claude-product-search-browser-closure-answer.txt",
+          "publicAnswerSha256": "b61df62fe364704d26bfe696b371130fad4cd004c89ea4d34fad0cfe7b278685",
+          "scope": "Documentary M1-M5 closure only; not new implementation, tests, pixels, source hash execution or market acceptance"
+        },
+        "final": {
+          "model": "claude-opus-5-5",
+          "status": "success",
+          "packetSha256": "4e84759c53a1b256589aced5ffe3e0f5bb052402486f028ef69c9e84e7b2fc3f",
+          "elapsedMs": 60379,
+          "tools": [],
+          "mcpServerCount": 0,
+          "forbiddenEventCount": 0,
+          "effortAccepted": true,
+          "effortVerified": false,
+          "sourceAnswerPath": "work/opus-pm-review/browser-perf-final-answer.txt",
+          "sourceAnswerSha256": "35b6a6449f55a3e5c377fd46e60a58682779db4397c503afc16e5076055a9863",
+          "rawAnswer": "claude-product-search-browser-final-answer.txt",
+          "publicAnswerSha256": "d7d18c409e61f1368d220a68b969843017120d7bd3c7b7e4fad36f57685ee773",
+          "scope": "Final R1-R3 documentary closure, exact provided evidence only; not tests, pixels, complete raw reconstruction, all-source code review or market acceptance",
+          "verdict": "PR text acceptable; controlled local browser non-regression PASS; residual QA R1-b evidence request supplied by Root postTestGitAudit, not another Claude review"
+        }
+      }
+    },
+    "independent": {
+      "reviewer": "GPT-6.1 Sol QA of the current CPU-fix candidate; author of the isolated stream test, not the production optimization or final actual-PM verdict",
+      "status": "PASS",
+      "sourceTreeSha256": "6666c4bb22786cde5e6179d8462f35bfa6649f3d73c7b2ef99b1b27b7239dab7",
+      "sourceFiles": 87,
+      "scopeDelta": {
+        "changedOrAdded": [
+          "src/lib/stock-index-search.test.ts",
+          "src/lib/stock-index.ts",
+          "src/lib/stock-search-stream.test.ts"
+        ],
+        "removed": []
+      },
+      "quoteProductionUnchanged": true,
+      "tests": {
+        "total": 4240,
+        "passed": 4238,
+        "failed": 0,
+        "skipped": 2
+      },
+      "testFiles": {
+        "total": 264,
+        "passed": 263,
+        "failed": 0,
+        "skipped": 1
+      },
+      "nodeEtf": {
+        "total": 10,
+        "passed": 10,
+        "failed": 0,
+        "skipped": 0
+      },
+      "skippedCases": [
+        {
+          "file": "src/lib/indicator-native-integration.test.ts",
+          "name": "native bridge to real indicator host lists, mounts, updates and confirms removal with auto_safe permission"
+        },
+        {
+          "file": "src/lib/indicator-native-integration.test.ts",
+          "name": "native bridge to real indicator host lists, mounts, updates and confirms removal with ask permission"
+        }
+      ],
+      "checks": {
+        "freezeBefore": 0,
+        "vitest": 0,
+        "nodeEtf": 0,
+        "typecheck": 0,
+        "build": 0,
+        "diffCheck": 0,
+        "freezeAfter": 0
+      },
+      "headAndIndexUnchanged": true,
+      "buildWarningPolicy": "Existing BigInt target, large chunk and ineffective dynamic-import warnings remain diagnostic; no zero-warning or native-build claim.",
+      "rawReport": "work/pm-validation/cpu-fix-final-qa-report.json",
+      "rawReportSha256": "6377ad9ae746e09cc1a6b156459f773206a2f1e598d6f7db677e7ae5a1e654ef",
+      "independentPerformanceEvidenceAudit": {
+        "sourceReport": "work/pm-validation/search-cpu-module-results-1792256953377.json",
+        "method": "Read-only arithmetic/hash audit; no search or benchmark rerun",
+        "sourceBundleAndSnapshotHashesMatch": true,
+        "stockIndexSha256": "8dd14731beadfacc49d538d8124348b4ba49c5cba952677d74e6dcc305120f62",
+        "warmRawSampleCount": 30000,
+        "freshCatalogRawSampleCount": 12000,
+        "rawSamplesPerQueryVariantRound": {
+          "warm": 250,
+          "freshCatalog": 100,
+          "rounds": 3
+        },
+        "rawP50P95MaxAndMeanRoundP95Recalculated": true,
+        "allFiveReported5PercentGatesRecalculatedPass": true,
+        "warmChangeVsF577Percent": {
+          "min": -71.38887701452508,
+          "max": -67.61788599184318
+        },
+        "warmChangeVsOriginalNamesAPercent": {
+          "min": -52.298266880652136,
+          "max": -47.693404392529736
+        },
+        "freshCatalogChangeVsF577Percent": {
+          "min": -69.48461960010283,
+          "max": -64.04194171294867
+        },
+        "reviewedMeasurementMechanism": "Equivalent module-local bindings for all variants; paired catalog cloning and explicit fixture GC precede timed calls; every search sample retained",
+        "gcObservationLimit": "timedGcOverlaps observes the fresh-catalog phase only, not all warm/cold execution; it must not be described as proof of no GC throughout the benchmark",
+        "notReused": "Rejected Map candidate and earlier script-global/fresh-VM/clone-GC diagnostic timings are not the accepted candidate measurement",
+        "scope": "Fixed 3155-row frozen public-name catalogs and 10 queries on Node v24.11.1; not browser/IME/React/quote-pipeline latency or a universal SLA",
+        "freshActualPmVerdict": "Owned by root and actual Claude; this arithmetic audit is not final PM acceptance"
+      }
+    },
+    "cpu": {
+      "measuredAt": "2026-10-17T17:09:13.376Z",
+      "rawReport": "work/pm-validation/search-cpu-module-results-1792256953377.json",
+      "rawReportSha256": "b17a376a8ab77a108f41e4722dcad26906272d7da8dfa2f7b1b4b2ca48d61b9e",
+      "stockIndexSha256": "8dd14731beadfacc49d538d8124348b4ba49c5cba952677d74e6dcc305120f62",
+      "bundleSha256": "2501f791ce7359e239e6db260ca9db53123b52a20373da3059adf21ff964ee51",
+      "snapshotSha256": "8aac98ae1e2ab43d7e126cf22284c53a4753b89336ec39bc621fc0521bca90d0",
+      "runtime": {
+        "node": "v24.11.1",
+        "platform": "win32",
+        "arch": "x64"
+      },
+      "rows": 3155,
+      "aliases": 2984,
+      "queries": [
+        "台",
+        "台積",
+        "233",
+        "2330",
+        "元大",
+        "元大美債20年",
+        "0053",
+        "櫃買",
+        "NO_MATCH_XXX",
+        "00981"
+      ],
+      "sameCatalogAndOrderedReferences": true,
+      "orderedEqualityScope": "B/E/F share complete names, identical ordered identities and original refs; A has its own older-name expectations",
+      "warm": [
+        {
+          "query": "台",
+          "meanRoundP95Ms": {
+            "A": 1.0134666666657115,
+            "B": 1.6540333333329424,
+            "E": 1.2632666666672776,
+            "F": 0.5094333333339213
+          },
+          "changeVsF577Percent": -69.20054009386902,
+          "changeVsEPercent": -59.67333368512785,
+          "changeVsOldNamesPercent": -49.733587685725425
+        },
+        {
+          "query": "台積",
+          "meanRoundP95Ms": {
+            "A": 0.9683999999994436,
+            "B": 1.6433666666668312,
+            "E": 1.233899999999873,
+            "F": 0.47936666666585853
+          },
+          "changeVsF577Percent": -70.83020628390028,
+          "changeVsEPercent": -61.150282302787275,
+          "changeVsOldNamesPercent": -50.49910505306341
+        },
+        {
+          "query": "233",
+          "meanRoundP95Ms": {
+            "A": 0.9660000000003492,
+            "B": 1.6099666666659687,
+            "E": 1.2282999999997628,
+            "F": 0.48266666666616703
+          },
+          "changeVsF577Percent": -70.02008323155492,
+          "changeVsEPercent": -60.70449672993078,
+          "changeVsOldNamesPercent": -50.03450655631547
+        },
+        {
+          "query": "2330",
+          "meanRoundP95Ms": {
+            "A": 0.9078333333330496,
+            "B": 1.5595333333330927,
+            "E": 1.1553999999993418,
+            "F": 0.44619999999940774
+          },
+          "changeVsF577Percent": -71.38887701452508,
+          "changeVsEPercent": -61.381339795771,
+          "changeVsOldNamesPercent": -50.85000917941467
+        },
+        {
+          "query": "元大",
+          "meanRoundP95Ms": {
+            "A": 0.981966666668086,
+            "B": 1.7391000000000834,
+            "E": 1.241399999999582,
+            "F": 0.5136333333342312
+          },
+          "changeVsF577Percent": -70.46556648069652,
+          "changeVsEPercent": -58.624671070210724,
+          "changeVsOldNamesPercent": -47.693404392529736
+        },
+        {
+          "query": "元大美債20年",
+          "meanRoundP95Ms": {
+            "A": 0.9492666666674268,
+            "B": 1.584899999999834,
+            "E": 1.2027999999994183,
+            "F": 0.4544333333339334
+          },
+          "changeVsF577Percent": -71.3273182324449,
+          "changeVsEPercent": -62.2187118944003,
+          "changeVsOldNamesPercent": -52.127958424021756
+        },
+        {
+          "query": "0053",
+          "meanRoundP95Ms": {
+            "A": 1.0174333333340353,
+            "B": 1.5189999999993233,
+            "E": 1.1988333333344297,
+            "F": 0.48533333333428647
+          },
+          "changeVsF577Percent": -68.04915514585235,
+          "changeVsEPercent": -59.51619630191776,
+          "changeVsOldNamesPercent": -52.298266880652136
+        },
+        {
+          "query": "櫃買",
+          "meanRoundP95Ms": {
+            "A": 0.9343666666663921,
+            "B": 1.4484333333336206,
+            "E": 1.1327333333326048,
+            "F": 0.469033333332239
+          },
+          "changeVsF577Percent": -67.61788599184318,
+          "changeVsEPercent": -58.59278441534865,
+          "changeVsOldNamesPercent": -49.802004923223194
+        },
+        {
+          "query": "NO_MATCH_XXX",
+          "meanRoundP95Ms": {
+            "A": 0.8834666666668151,
+            "B": 1.4287999999999859,
+            "E": 1.148099999999128,
+            "F": 0.4295666666654749
+          },
+          "changeVsF577Percent": -69.93514371042279,
+          "changeVsEPercent": -62.584559997752706,
+          "changeVsOldNamesPercent": -51.37715061891759
+        },
+        {
+          "query": "00981",
+          "meanRoundP95Ms": {
+            "A": 0.9023333333343544,
+            "B": 1.5517333333342929,
+            "E": 1.1395666666661175,
+            "F": 0.4576000000000325
+          },
+          "changeVsF577Percent": -70.51039697544148,
+          "changeVsEPercent": -59.84438529263289,
+          "changeVsOldNamesPercent": -49.28703361660347
+        }
+      ],
+      "freshCatalog": [
+        {
+          "query": "台",
+          "meanRoundP95Ms": {
+            "A": 1.0074333333335137,
+            "B": 1.683066666664672,
+            "E": 1.4622333333342492,
+            "F": 0.586399999998927
+          },
+          "changeVsF577Percent": -65.15883704351451,
+          "changeVsEPercent": -59.89696126938977,
+          "changeVsOldNamesPercent": -41.792674453347914
+        },
+        {
+          "query": "台積",
+          "meanRoundP95Ms": {
+            "A": 0.9807999999999689,
+            "B": 1.5277666666673515,
+            "E": 1.4635333333317249,
+            "F": 0.5396666666662592
+          },
+          "changeVsF577Percent": -64.67610673536421,
+          "changeVsEPercent": -63.12576868763821,
+          "changeVsOldNamesPercent": -44.97688961396042
+        },
+        {
+          "query": "233",
+          "meanRoundP95Ms": {
+            "A": 0.8933666666634963,
+            "B": 1.515199999999216,
+            "E": 1.4120666666664572,
+            "F": 0.47786666666555294
+          },
+          "changeVsF577Percent": -68.46180922216207,
+          "changeVsEPercent": -66.15834946421624,
+          "changeVsOldNamesPercent": -46.50945860222579
+        },
+        {
+          "query": "2330",
+          "meanRoundP95Ms": {
+            "A": 0.9333333333367287,
+            "B": 1.5342666666644316,
+            "E": 1.405100000002373,
+            "F": 0.524099999999938
+          },
+          "changeVsF577Percent": -65.84035804288467,
+          "changeVsEPercent": -62.70016368948453,
+          "changeVsOldNamesPercent": -43.84642857163951
+        },
+        {
+          "query": "元大",
+          "meanRoundP95Ms": {
+            "A": 0.9604333333360652,
+            "B": 1.6264000000010128,
+            "E": 1.4854666666627356,
+            "F": 0.5114999999980986
+          },
+          "changeVsF577Percent": -68.55017215950689,
+          "changeVsEPercent": -65.5663764473935,
+          "changeVsOldNamesPercent": -46.74278971332624
+        },
+        {
+          "query": "元大美債20年",
+          "meanRoundP95Ms": {
+            "A": 0.85770000000169,
+            "B": 1.4717000000018743,
+            "E": 1.3321333333321188,
+            "F": 0.4661333333327396
+          },
+          "changeVsF577Percent": -68.32687821348469,
+          "changeVsEPercent": -65.00850765690387,
+          "changeVsOldNamesPercent": -45.65310326083466
+        },
+        {
+          "query": "0053",
+          "meanRoundP95Ms": {
+            "A": 0.9397999999976795,
+            "B": 1.5117333333352387,
+            "E": 1.401233333335161,
+            "F": 0.48976666666567326
+          },
+          "changeVsF577Percent": -67.60231081330112,
+          "changeVsEPercent": -65.04745819170961,
+          "changeVsOldNamesPercent": -47.88607505140641
+        },
+        {
+          "query": "櫃買",
+          "meanRoundP95Ms": {
+            "A": 0.9588666666641075,
+            "B": 1.4846000000009856,
+            "E": 1.382333333332402,
+            "F": 0.5338333333299184
+          },
+          "changeVsF577Percent": -64.04194171294867,
+          "changeVsEPercent": -61.38172172677032,
+          "changeVsOldNamesPercent": -44.326635611693334
+        },
+        {
+          "query": "NO_MATCH_XXX",
+          "meanRoundP95Ms": {
+            "A": 0.8501999999983431,
+            "B": 1.398966666666335,
+            "E": 1.3331333333311097,
+            "F": 0.42690000000099343
+          },
+          "changeVsF577Percent": -69.48461960010283,
+          "changeVsEPercent": -67.97769665437025,
+          "changeVsOldNamesPercent": -49.788285109171326
+        },
+        {
+          "query": "00981",
+          "meanRoundP95Ms": {
+            "A": 0.9568666666661253,
+            "B": 1.4877999999977571,
+            "E": 1.341799999999542,
+            "F": 0.5139000000005277
+          },
+          "changeVsF577Percent": -65.45906707882092,
+          "changeVsEPercent": -61.700700551445586,
+          "changeVsOldNamesPercent": -46.29345781361195
+        }
+      ],
+      "gates": {
+        "warmAllAtLeast5PercentFasterVsF577": true,
+        "warmAllWithin5PercentOfOriginal": true,
+        "coldAllWithin5PercentVsF577": true,
+        "coldAllWithin5PercentVsE": true,
+        "coldAllWithin5PercentOfOriginal": true
+      },
+      "sampleCounts": {
+        "warm": 30000,
+        "freshCatalog": 12000,
+        "allRetained": true
+      },
+      "p95Definition": "Each query reports mean of three per-round p95 values, never a pooled all-query p95",
+      "normalizations": [
+        {
+          "key": "A-old-names",
+          "warmCounts": [
+            {
+              "query": "台",
+              "count": 6946
+            },
+            {
+              "query": "台積",
+              "count": 6946
+            },
+            {
+              "query": "233",
+              "count": 6946
+            },
+            {
+              "query": "2330",
+              "count": 6946
+            },
+            {
+              "query": "元大",
+              "count": 6946
+            },
+            {
+              "query": "元大美債20年",
+              "count": 6946
+            },
+            {
+              "query": "0053",
+              "count": 6946
+            },
+            {
+              "query": "櫃買",
+              "count": 6946
+            },
+            {
+              "query": "NO_MATCH_XXX",
+              "count": 6946
+            },
+            {
+              "query": "00981",
+              "count": 6946
+            }
+          ]
+        },
+        {
+          "key": "B-f577-full-names",
+          "warmCounts": [
+            {
+              "query": "台",
+              "count": 9295
+            },
+            {
+              "query": "台積",
+              "count": 9295
+            },
+            {
+              "query": "233",
+              "count": 9295
+            },
+            {
+              "query": "2330",
+              "count": 9295
+            },
+            {
+              "query": "元大",
+              "count": 9295
+            },
+            {
+              "query": "元大美債20年",
+              "count": 9295
+            },
+            {
+              "query": "0053",
+              "count": 9295
+            },
+            {
+              "query": "櫃買",
+              "count": 9295
+            },
+            {
+              "query": "NO_MATCH_XXX",
+              "count": 9295
+            },
+            {
+              "query": "00981",
+              "count": 9321
+            }
+          ]
+        },
+        {
+          "key": "E-no-cache-full-names",
+          "warmCounts": [
+            {
+              "query": "台",
+              "count": 5327
+            },
+            {
+              "query": "台積",
+              "count": 5327
+            },
+            {
+              "query": "233",
+              "count": 5326
+            },
+            {
+              "query": "2330",
+              "count": 5325
+            },
+            {
+              "query": "元大",
+              "count": 5327
+            },
+            {
+              "query": "元大美債20年",
+              "count": 5327
+            },
+            {
+              "query": "0053",
+              "count": 5324
+            },
+            {
+              "query": "櫃買",
+              "count": 5327
+            },
+            {
+              "query": "NO_MATCH_XXX",
+              "count": 5327
+            },
+            {
+              "query": "00981",
+              "count": 5326
+            }
+          ]
+        },
+        {
+          "key": "F-claude-full-names",
+          "warmCounts": [
+            {
+              "query": "台",
+              "count": 433
+            },
+            {
+              "query": "台積",
+              "count": 433
+            },
+            {
+              "query": "233",
+              "count": 433
+            },
+            {
+              "query": "2330",
+              "count": 433
+            },
+            {
+              "query": "元大",
+              "count": 433
+            },
+            {
+              "query": "元大美債20年",
+              "count": 433
+            },
+            {
+              "query": "0053",
+              "count": 433
+            },
+            {
+              "query": "櫃買",
+              "count": 433
+            },
+            {
+              "query": "NO_MATCH_XXX",
+              "count": 434
+            },
+            {
+              "query": "00981",
+              "count": 433
+            }
+          ]
+        }
+      ],
+      "newPersistentTextCacheEntries": 0,
+      "forcedEviction": "Not applicable: rejected cache/factory removed, no cache to fill or evict",
+      "freshCatalogFixturePolicy": "Two clones before each paired group, explicit GC before all4 variants; no samples filtered. Any search-own GC remains included.",
+      "freshCatalogGcEventCount": 3000,
+      "freshCatalogTimedGcOverlaps": [],
+      "warmGcAbsenceNotClaimed": true,
+      "measurementCorrection": "All four variants now have equivalent module-local bindings. Earlier script-global helper and fresh-VM startup/GC diagnostics are retained but are not valid App module search acceptance.",
+      "scope": "Exact production dependency bundle in module wrapper; warm all24 interleavings,3rounds*250/query/variant after60warmups. Fresh catalog is first search of paired cloned rows,100/query/variant/round; fixture creation/fixture GC excluded symmetrically. No normalization/result cache, network or quote pipeline. JavaScript/App startup and browser/IME end-to-end latency are not measured.",
+      "historicalFailuresPreserved": "Original +10% budget, rejected Map and initial script-global/module-local fresh-catalog diagnostic reports retained locally; none is relabeled as final acceptance"
+    },
+    "unicode": {
+      "measuredAt": "2026-10-17T16:56:02.761Z",
+      "source": "https://www.unicode.org/Public/17.0.0/ucd/DerivedNormalizationProps.txt",
+      "sha256": "71fd6a206a2c0cdd41feb6b7f656aa31091db45e9cedc926985d718397f9e488",
+      "bytes": 1377582,
+      "normativeReference": "https://www.unicode.org/reports/tr15/",
+      "allowedCodeUnits": 21027,
+      "basicCjkExcluded": "U+81FA (臺), still follows original normalization",
+      "noNfkcNoOrMaybeIntersection": true,
+      "nodeRuntimeFixedPointEquality": true,
+      "runtime": {
+        "node": "v24.11.1",
+        "icu": "77.1",
+        "unicode": "16.0"
+      },
+      "scope": "A deliberately restricted fixed-point allowlist, not a full Unicode normalization implementation or a broad Han script assumption."
+    },
+    "browser": {
+      "observedAt": "2026-10-17T17:15:36Z",
+      "sourceTreeSha256": "6666c4bb22786cde5e6179d8462f35bfa6649f3d73c7b2ef99b1b27b7239dab7",
+      "observer": "Root through the actual in-app browser, not Claude",
+      "dev": "http://127.0.0.1:5194/",
+      "buildPreview": "http://127.0.0.1:5196/",
+      "buildIdentity": "App dev · 4203ad55+dirty",
+      "checks": [
+        {
+          "surface": "dev-watchlist",
+          "queries": [
+            "台積電",
+            "臺積電",
+            "2330"
+          ],
+          "firstCodes": [
+            "2330",
+            "CDFR1",
+            "QFFR1",
+            "CDFR2",
+            "QFFR2"
+          ],
+          "warrantsFollow": true,
+          "pass": true
+        },
+        {
+          "surface": "dev-watchlist",
+          "query": "台指",
+          "firstCodes": [
+            "TXFR1",
+            "MXFR1",
+            "TMFR1",
+            "TXFR2",
+            "MXFR2",
+            "TMFR2"
+          ],
+          "pass": true
+        },
+        {
+          "surface": "dev-watchlist",
+          "query": "00981",
+          "firstCodes": [
+            "00981A",
+            "00981B",
+            "00981D",
+            "00981T",
+            "009810",
+            "009811"
+          ],
+          "pass": true
+        },
+        {
+          "surface": "dev-watchlist",
+          "query": "009810",
+          "firstCodes": [
+            "009810"
+          ],
+          "pass": true
+        },
+        {
+          "surface": "dev-watchlist",
+          "queries": [
+            "櫃買指數",
+            "IX0043"
+          ],
+          "firstCodes": [
+            "IX0043"
+          ],
+          "pass": true
+        },
+        {
+          "surface": "dev-command-palette",
+          "query": "2330",
+          "firstCodes": [
+            "2330",
+            "CDFR1",
+            "QFFR1",
+            "CDFR2",
+            "QFFR2"
+          ],
+          "pass": true
+        },
+        {
+          "surface": "dev-command-palette",
+          "query": "00981",
+          "firstCodes": [
+            "00981A",
+            "00981B",
+            "00981D",
+            "00981T"
+          ],
+          "pass": true
+        },
+        {
+          "surface": "dev-command-palette",
+          "query": "櫃買指數",
+          "firstCodes": [
+            "IX0043"
+          ],
+          "pass": true
+        },
+        {
+          "surface": "build-command-palette",
+          "query": "2330",
+          "firstCodes": [
+            "2330",
+            "CDFR1",
+            "QFFR1",
+            "CDFR2",
+            "QFFR2"
+          ],
+          "pass": true
+        },
+        {
+          "surface": "build-command-palette",
+          "query": "台指",
+          "firstCodes": [
+            "TXFR1",
+            "MXFR1",
+            "TMFR1",
+            "TXFR2",
+            "MXFR2",
+            "TMFR2"
+          ],
+          "pass": true
+        },
+        {
+          "surface": "build-command-palette",
+          "query": "00981",
+          "firstCodes": [
+            "00981A",
+            "00981B",
+            "00981D",
+            "00981T"
+          ],
+          "pass": true
+        },
+        {
+          "surface": "build-command-palette",
+          "query": "櫃買指數",
+          "firstCodes": [
+            "IX0043"
+          ],
+          "pass": true
+        }
+      ],
+      "initialHarnessFailure": {
+        "query": "台指",
+        "surface": "build-command-palette",
+        "observed": "First unscoped input-parent read returned zero rows during query transition; later scoped result read showed the full expected order.",
+        "cause": "Waiter was not restricted to result rows; this did not establish a product ordering failure.",
+        "correction": "Wait for the final expected code within the actual results container before reading only that container.",
+        "retryPass": true,
+        "samplesRemoved": false
+      },
+      "screenshot": "outputs/product-search-cpu-final-dev.png",
+      "cleanup": {
+        "ownedBuildPreviewTabClosed": true,
+        "ownedBuildPreviewServerClosed": true,
+        "existingDevPreserved": true,
+        "existingSidecarPreserved": true,
+        "viewportChanged": false
+      },
+      "writes": {
+        "orders": false,
+        "watchlistMembership": false,
+        "subscriptions": false,
+        "login": false,
+        "credentialsCopied": false
+      },
+      "scope": "Actual rendered order and successful read-only searches, not browser CPU, IME, network latency, actual market freshness or native packaged acceptance. Native and other dimensions were not rerun by this CPU-only change."
+    },
+    "feed": {
+      "startedAt": "2026-10-17T17:10:07.702Z",
+      "endedAt": "2026-10-17T17:10:42.713Z",
+      "origin": "http://127.0.0.1:5194",
+      "target": "isolated simulation 21323",
+      "instance": "0d78b855d5fe",
+      "simulation": true,
+      "serverVersion": "1.7.8",
+      "counts": {
+        "heartbeat": 2
+      },
+      "heartbeatArrivals": [
+        "2026-10-17T17:10:07.710Z",
+        "2026-10-17T17:10:37.715Z"
+      ],
+      "failure": null,
+      "limitation": "A new SSE heartbeat proves current transport, not current quote prices. Non-market-session silence is not night-session quote verification. No subscription/order/watchlist writes, login, credentials or raw SSE payloads.",
+      "scope": "Current transport only, not real-time/night quote acceptance"
+    },
+    "actualEngineering": {
+      "model": "claude-opus-5-5",
+      "status": "success",
+      "packetSha256": "2df9059b3d8c9a78255c61d5d8b72c22389b51fb2fd6db055b7eb5c808384559",
+      "elapsedMs": 239810,
+      "tools": [],
+      "mcpServerCount": 0,
+      "forbiddenEventCount": 0,
+      "effortAccepted": true,
+      "effortVerified": false,
+      "rawAnswer": "claude-product-search-cpu-engineering-answer.txt",
+      "sourceAnswerSha256": "2b13ae1b9fd097056afa55e658705510115fe320237debf4fd800d2f92c1b13b",
+      "publicAnswerSha256": "4d29ead984babd2f548a6104d55455938e9b41e094aa23108b46fba2a99cc842",
+      "publicCopyNormalization": "Line endings and final newline only",
+      "scope": "Supplied public source text and sanitized evidence only; no tools, tests, pixels or independent hash verification"
+    },
+    "actualOpus": {
+      "model": "claude-opus-5-5",
+      "status": "success",
+      "packetSha256": "619502e639270e921b12903212e017a4c348d63005280a280167ce253efc4b71",
+      "elapsedMs": 218066,
+      "tools": [],
+      "mcpServerCount": 0,
+      "forbiddenEventCount": 0,
+      "effortAccepted": true,
+      "effortVerified": false,
+      "rawAnswer": "claude-product-search-cpu-review-answer.txt",
+      "sourceAnswerSha256": "623b35950c5edeee7a9e73b4417376a2c36d483c9a7aaec230c988cc3674178c",
+      "publicAnswerSha256": "27927ca32631ec17736fed2481c4a4d859e8dd8a0500c3e1253eb0ecb983dc7c",
+      "publicCopyNormalization": "Line endings and final newline only",
+      "scope": "Supplied public source text and sanitized evidence only; no tools, tests, pixels or independent hash verification",
+      "verdict": "ACCEPTED LOCAL DRAFT/DEV; no must-fix in focused CPU delta, see exact answer and retained limitations",
+      "notClaimed": "Fresh full 87-file line review, production release, browser/IME latency or real-night-market acceptance"
+    },
+    "actualPrWriter": {
+      "model": "claude-opus-5-5",
+      "status": "success",
+      "sourceTreeSha256": "dbaeaaa96d0f70fb5752bcce995484bdf8faa3f3197c5989c0e18564712b561b",
+      "packetSha256": "975c927f92464750f41e473959763ee566aaaa56609024d0cdb114a774937da3",
+      "packetSource": "in-memory public project references and sanitized facts",
+      "styleReferences": [
+        {
+          "title": "fix(scanner): 排行榜窄面板時不顯示產業類別，代號不再被蓋住",
+          "url": "https://github.com/Sinotrade/shioaji-pro-app/pull/309"
+        },
+        {
+          "title": "fix(agent): Codex 首次設定對話與相容性檢查使用同一版本規則",
+          "url": "https://github.com/Sinotrade/shioaji-pro-app/pull/318"
+        },
+        {
+          "title": "docs(landing): v0.1.54 最新版本與更新紀錄",
+          "url": "https://github.com/Sinotrade/shioaji-pro-app/pull/317"
+        }
+      ],
+      "startedAt": "2026-10-18T19:32:20.516Z",
+      "endedAt": "2026-10-18T19:34:04.813Z",
+      "elapsedMs": 104297,
+      "tools": [],
+      "mcpServerCount": 0,
+      "forbiddenEventCount": 0,
+      "effortAccepted": true,
+      "effortVerified": false,
+      "rawAnswer": "work/opus-pm-review/project-style-pr-v2-answer.txt",
+      "sourceAnswerSha256": "532ea016074445279c187852a07568be952eed8f5fd7822edb85efe5cdc36354",
+      "metadata": "work/opus-pm-review/project-style-pr-v2-metadata.json",
+      "metadataSha256": "437e13a1a9f60f3ccdf6e722c142b3999957c671d4575e998abeb085cb5e4229",
+      "rawEvidenceLocalOnly": true,
+      "file": "../pr-drafts/product-search.md",
+      "currentFileSha256": "a66791285f79da6bd0957d81cfe31dbecbd55ee89db7f7a7762399135c0b0e23",
+      "scope": "Actual Claude wrote the public PR from current sanitized facts and user-selected recent public project Before/After/How examples; writing only, no new code review/tests/browser/deployment",
+      "exactNormalizedTrimmedTextMatch": false,
+      "rootEditorialAdjustments": [
+        "Normalized line endings and trailing newline",
+        "Replaced performance explanation with the two exact sentences supplied by the user; detailed methods and request tradeoffs remain in the linked QA document",
+        "Added the verified 1200-sample QA link and the user-requested Claude Code credit",
+        "Formatting, Taiwan-Chinese terminology and spacing; clarified rapid typing and OTC-index query scope; updated test wording to the publication-preflight rerun",
+        "Replaced the closing credit with the exact user-supplied line: 🤖 Generated with Claude Code",
+        "Removed the full acceptance-record link from the public PR per the user; retained only the 1200-sample verification result"
+      ],
+      "priorWriter": {
+        "model": "claude-opus-5-5",
+        "status": "success",
+        "sourceTreeSha256": "dbaeaaa96d0f70fb5752bcce995484bdf8faa3f3197c5989c0e18564712b561b",
+        "packetSha256": "e54dc6f727ea0354844b3cd7ca237aecb39c4d098240f7735c6fc1df4715b2fa",
+        "startedAt": "2026-10-18T19:14:38.409Z",
+        "endedAt": "2026-10-18T19:19:19.096Z",
+        "elapsedMs": 280687,
+        "tools": [],
+        "mcpServerCount": 0,
+        "forbiddenEventCount": 0,
+        "effortAccepted": true,
+        "effortVerified": false,
+        "rawAnswer": "work/opus-pm-review/css-perf-final-answer.txt",
+        "sourceAnswerSha256": "27c6985f21c63b9bf968954e393de88c51df0481dc59f4fb53e1aca25054b14b",
+        "metadata": "work/opus-pm-review/css-perf-final-metadata.json",
+        "metadataSha256": "02254108ac37a01ce90684800d3df048d931139d468ec5f77e9d8fa11585a275",
+        "rawEvidenceLocalOnly": true,
+        "file": "../pr-drafts/product-search.md",
+        "currentFileSha256": "06af313a3b5554a1bfb1133fc0dae8a7244fe61e5891e269c9a76ce33840c2e9",
+        "scope": "Actual Claude final PM/PR wording based on sanitized public source and executor facts; not an independent run or source hash validation",
+        "rootEditorialAdjustments": [
+          "Adopted actual Claude draft; Root condensed its performance section to3focused bullets without removing baseline/DOM+rAF/noCPUgain/request-tradeoff boundaries; clarified rank95 means latency-sorted, added the actually tested expanded-disclosure condition, removed historical52fixture cases from currentPR and removed user-excluded nonrequirements. QA retains all history. Replaced unverified relativePR link with a repository path. No measured numbers or product results changed."
+        ],
+        "priorWriter": {
+          "model": "claude-opus-5-5",
+          "status": "success",
+          "sourceTreeSha256": "70961cc3ef520608a92d9ffd74478d601e27d51ef648872f1b137766af3a3a1e",
+          "packetSha256": "de3dc24f8a0166cb97584df8b402b4ec32e202bac3ff5d0c6b8cad2c4a1239ff",
+          "startedAt": "2026-10-18T17:35:39.893Z",
+          "endedAt": "2026-10-18T17:37:15.842Z",
+          "elapsedMs": 95949,
+          "tools": [],
+          "mcpServerCount": 0,
+          "forbiddenEventCount": 0,
+          "effortAccepted": true,
+          "effortVerified": false,
+          "rawAnswer": "work/opus-pm-review/reader-pr-answer.txt",
+          "sourceAnswerSha256": "1d44bb2af02924d7ea83526757f25b6a281d52609de81f1b313fbf6394b4aacc",
+          "metadata": "work/opus-pm-review/reader-pr-metadata.json",
+          "metadataSha256": "f45be21a15da0e0fc58bd8d988bb6e4bc882f36cd023e1a6a096279463f01b71",
+          "rawEvidenceLocalOnly": true,
+          "file": "../pr-drafts/product-search.md",
+          "currentFileSha256": "0fc58352d5c27aa47abef5da0762245188dd2603b167cd5cf4e69fc4ba967db0",
+          "scope": "Actual Claude rewrote the public PR using supplied project template and sanitized facts; no source review, tests, screenshots or independent hash validation performed by the writer",
+          "acceptanceScope": "Search uses catalog and contract data. Live quote freshness is not a search acceptance gate. Existing displayed-quote preservation remains a separate regression concern.",
+          "rootEditorialAdjustments": [
+            {
+              "scope": "Factual precision, project terminology, readable test wording and Markdown formatting",
+              "reason": "Root added conventional title prefix, distinguished API IND/OTC proof from UI results, replaced quote-stays-unchanged wording with displayed-state preservation, described hidden narrow metadata correctly, used actual Node commands instead of unexecuted pnpm wrappers, clarified per-query CPU summary and fixed Traditional-Chinese terminology/spacing. No measurement or feature result changed.",
+              "toSha256": "0fc58352d5c27aa47abef5da0762245188dd2603b167cd5cf4e69fc4ba967db0"
+            }
+          ],
+          "exactTrimmedTextMatchAfterListedEdits": false,
+          "postWriterUpdate": "Adopted actual Claude reader-oriented draft with the listed factual/terminology edits; not a new code review or claimed re-execution of historical tests"
+        }
+      }
+    },
+    "priorActualPrWriter": {
+      "model": "claude-opus-5-5",
+      "status": "success",
+      "packetSha256": "1463d95edca64ff7b99aa953460b05551cb6be6da4b95ba9034fe60b0ce5f8b0",
+      "elapsedMs": 105802,
+      "tools": [],
+      "mcpServerCount": 0,
+      "forbiddenEventCount": 0,
+      "effortAccepted": true,
+      "effortVerified": false,
+      "rawAnswer": "claude-product-search-cpu-pr-answer.txt",
+      "sourceAnswerSha256": "13d6812105f25bf512bca7f88ef079d6b7f4908c5a6638b33fd9aafe58f0dd82",
+      "publicAnswerSha256": "9544eaac7ea8b660411ac55b0bc5adb66b11149f1fc8a092cda5e7217ab4933d",
+      "publicCopyNormalization": "Line endings and final newline only",
+      "scope": "Supplied public source text and sanitized evidence only; no tools, tests, pixels or independent hash verification",
+      "file": "../pr-drafts/product-search.md",
+      "currentFileSha256": "105a4e006220b131f292368b0a9af37c0da3f03afb21ddc556a501517d026ca2",
+      "rootEditorialAdjustments": [
+        {
+          "scope": "Test plan: actual browser input measurement",
+          "reason": "Root factual update adds six controlled browser p95 comparisons, all-attempt and complete-order gates, smoke/rapid checks and market/IME/physical-paint limitations; original Summary and engineering prose still authored by actual Claude",
+          "fromSha256": "ec0fe32bbc0f1202f481f8f79993acf8865f6f97941b927631b321dc2c647d87",
+          "toSha256": "1f84eedc66dc22e488b0bb6b516dcba81818ad9a61d7b56295c486159c3733cc"
+        },
+        {
+          "scope": "Test plan",
+          "reason": "Consolidated repeated test details into QA; kept counts, ordering, CPU measurements/scope and limitations; qualified production quote unchanged to this CPU delta relative to f577",
+          "fromSha256": "9e02c843c1fc6294fd5e959602d476e8a2250de7f5914b010e4e1a048d681a72",
+          "toSha256": "46027e1e74287e29801d7aa3462761472028e034fcdfc94fb09bad9a5a64d1f5"
+        },
+        {
+          "scope": "Fresh narrow/glass QA and two-file CSS fix",
+          "reason": "Root factual update records new4239-test run, real component fixture and offline full-App scopes, low-height fix, current LOST and historical-only performance samples; original Summary/engineering draft remains Claude-authored",
+          "fromSha256": "1f84eedc66dc22e488b0bb6b516dcba81818ad9a61d7b56295c486159c3733cc",
+          "toSha256": "2f39807e270fa81e6bbbea14c45ca5e22b6d37546ca4639c3aeba3a56eeb2934"
+        },
+        {
+          "scope": "Performance wording only, per user request",
+          "reason": "Root condensed CPU cause/implementation and performance results to key outcomes, retained same-catalog comparison, 5-percent gate and historical CSS/market/IME limits; full evidence remains in unchanged QA documents. No source or measured values changed.",
+          "fromSha256": "2f39807e270fa81e6bbbea14c45ca5e22b6d37546ca4639c3aeba3a56eeb2934",
+          "toSha256": "105a4e006220b131f292368b0a9af37c0da3f03afb21ddc556a501517d026ca2"
+        }
+      ],
+      "exactTrimmedTextMatchAfterListedEdits": false,
+      "postWriterUpdate": "Root factual browser/narrow-glass updates and user-requested performance condensation after original Claude writing; current full draft not newly rewritten or revalidated as prose by Claude"
+    },
+    "connectedSearch": {
+      "recordedDateLocal": "2026-10-19",
+      "sourceTreeSha256": "70961cc3ef520608a92d9ffd74478d601e27d51ef648872f1b137766af3a3a1e",
+      "sourceUnchanged": true,
+      "acceptanceScope": "Catalog/contract search, result order and UI; no live Tick/BidAsk freshness gate",
+      "observations": {
+        "file": "work/reconnect-20261019/connected-search-observations.json",
+        "sha256": "7f724f02fd7e414eed449f3a0bd50a57562765dbf52b4a389b577eb9b2e560be",
+        "format": "Executor summary of read-only DOM, geometry and style observations; not full raw records or independent remeasurement",
+        "desktopCases": 16,
+        "narrowCases": 12,
+        "passedCases": 28,
+        "realProductionSearch": true,
+        "bothEntrances": true,
+        "indexContract": { "code": "IX0043", "securityType": "IND", "exchange": "OTC", "httpStatus": 200 },
+        "codeAndNameRelatedOrderingPassed": true,
+        "etfLetterSeriesAndExactCodePassed": true,
+        "narrowCodeFirstAndSingleLinePassed": true,
+        "horizontalOverflow": false,
+        "backgroundAlpha": 0.9,
+        "blurPx": 12,
+        "textOpacity": 1
+      },
+      "runtime": {
+        "simulationServiceExplicitlyAuthorized": true,
+        "credentialsMemoryOnly": true,
+        "backendPort": 21323,
+        "frontendPort": 5194,
+        "version": "1.7.8",
+        "simulation": true,
+        "sameDirectAndProxyInstance": true,
+        "uiConnection": "LIVE",
+        "productionServiceStarted": false,
+        "orders": 0,
+        "watchlistMembershipWrites": 0,
+        "explicitSubscriptionWrites": 0,
+        "keptRunningForUser": true
+      },
+      "separateTransportObservation": {
+        "file": "work/reconnect-20261019/stream-observation.json",
+        "sha256": "602be8a898646df6ee54b210ed40dffcf40e601227cd81da0b9676ab2a5d45f3",
+        "durationMs": 35011,
+        "heartbeatCount": 2,
+        "marketEventCount": 0,
+        "scope": "Transport evidence only; not a search completion condition or fresh-market-data claim"
+      },
+      "cleanup": {
+        "viewportRestored": { "width": 725, "height": 612 },
+        "searchClosedAndQueryCleared": true,
+        "selectedProductUnchanged": true,
+        "displayedWatchlistRows": 4,
+        "displayedWatchlistRowsPreserved": true
+      },
+      "screenshot": {
+        "file": "outputs/reconnect-20261019/otc-index-search.png",
+        "sha256": "1a261092922e377b9dd6f43c6eebd28508ef00b49841fff2cde3f65d224e5a9b",
+        "localOnly": true,
+        "scope": "Actual dev search panel only, no account or position data"
+      },
+      "timingRetested": false,
+      "historicalAutomatedTestsNotRerunToday": true,
+      "publication": "Local documentation/evidence update only; no commit, push or GitHub PR"
+    },
+    "narrowGlass": {
+      "recordedAt": "2026-10-18T06:57:51.359Z",
+      "sourceTreeSha256": "70961cc3ef520608a92d9ffd74478d601e27d51ef648872f1b137766af3a3a1e",
+      "delta": {
+        "changedOrAdded": [
+          "src/components/command-palette.css.ts",
+          "src/components/search-surface.test.ts"
+        ],
+        "removed": []
+      },
+      "automation": {
+        "report": "work/narrow-glass-20261018/final-automated-qa-v2.json",
+        "sha256": "16bfaff8d1d8f81360a2e51bc7046569f09d18ecabbf02f2c1e4bfa0abdc4cf7",
+        "status": "PASS",
+        "startedAt": "2026-10-18T06:48:59.673Z",
+        "endedAt": "2026-10-18T06:49:24.260Z",
+        "tests": {
+          "total": 4241,
+          "passed": 4239,
+          "failed": 0,
+          "skipped": 2
+        },
+        "files": {
+          "total": 264,
+          "passed": 263,
+          "failed": 0,
+          "skipped": 1
+        },
+        "nodeEtf": {
+          "total": 10,
+          "passed": 10,
+          "failed": 0,
+          "skipped": 0
+        },
+        "commandExitCodes": {
+          "freezeNew": 0,
+          "vitest": 0,
+          "nodeEtf": 0,
+          "typecheck": 0,
+          "build": 0,
+          "freezeAfter": 0
+        },
+        "headAndStagedEntriesUnchanged": true,
+        "failedFirstAttemptRetained": "work/narrow-glass-20261018/final-automated-qa.json"
+      },
+      "browser": {
+        "report": "work/narrow-glass-20261018/browser-observations.json",
+        "sha256": "7fd967d182ef51b02e2a3d4f05ad90b9dc0ad42396bd1d5fe81b40589736bb43",
+        "format": "Root summarized read-only DOM observations; not full per-row raw or independent remeasurement",
+        "basicCases": 32,
+        "themeCases": 12,
+        "observedRows": 176,
+        "lowHeightCases": 8,
+        "fullAppOfflineCases": 4,
+        "applicationNetworkRequests": 0,
+        "liveMarketPassed": false,
+        "connectedDevPassed": false,
+        "latencyRetested": false
+      },
+      "independentSol": {
+        "model": "gpt-6.1-sol",
+        "scope": "Read-only latest two-file source review and own diff check; Root supplied browser/full-suite evidence",
+        "verdict": "Accepted no must-fix; not own browser/pixel/matrix execution"
+      },
+      "actualClaude": {
+        "model": "claude-opus-5-5",
+        "status": "success",
+        "packetSha256": "2cb0408b997005e58293c1933633e7d4218efcf48561453da36cb741f2555723",
+        "elapsedMs": 142480,
+        "tools": [],
+        "mcpServerCount": 0,
+        "forbiddenEventCount": 0,
+        "effortAccepted": true,
+        "effortVerified": false,
+        "answer": "claude-product-search-narrow-glass-answer.txt",
+        "rawAnswerSha256": "83da7c8724fa732fa4563f03dbf0ed138ef93a75af8b3badae408f050538e8ea",
+        "publicAnswerSha256": "41b1496e9928c0384c37675c1bd1cc53269133415fcf69f9f19623ff0d394dd2",
+        "publicCopyNormalization": "Line endings and final newline only",
+        "verdict": "No must-fix, accepted local component UI conditional on Root360/480 and PageDown checks; Root subsequently completed these checks",
+        "scope": "Supplied public source and summarized observations; no tools, tests, hashes or pixels independently verified"
+      },
+      "evidenceScope": {
+        "priorKeys": [
+          "browserInputLatency",
+          "independent",
+          "cpu",
+          "unicode",
+          "browser",
+          "feed",
+          "actualEngineering",
+          "actualOpus",
+          "priorActualPrWriter"
+        ],
+        "priorSourceTree": "6666c4bb22786cde5e6179d8462f35bfa6649f3d73c7b2ef99b1b27b7239dab7",
+        "oldP95NotRetested": true,
+        "uiOnlyProviderNotProductionSearch": true,
+        "arbitraryThemeContrastCertified": false,
+        "backendStatus": "Historical2026-10-18 observation:21323 was stopped and restart approval was pending; superseded by connectedSearch2026-10-19",
+        "remainingLimits": [
+          "Expanded details can temporarily hide the unchanged active row; changing arrow selection restores visibility",
+          "Heights below360 CSS px, high zoom, arbitrary contrast, native IME, Safari/mobile keyboard and OS transparency preferences not validated",
+          "No fresh input-latency, CPU, INP, actual quote, throughput or live-night-market proof",
+          "No real orders, watchlist membership writes, explicit subscriptions, credentials or service login"
+        ]
+      },
+      "screenshots": [
+        {
+          "file": "outputs/narrow-glass-20261018/before-320x480-expanded.jpg",
+          "sha256": "37c434e5675f19fc52e2fe32a2a09a93ae0ef2cea0841c1f9648b23fc46c6018",
+          "localOnly": true
+        },
+        {
+          "file": "outputs/narrow-glass-20261018/after-320-palette.jpg",
+          "sha256": "c94643108890f2dcb01258112bff6d2c196e75dce05d6c73e749cc64e771bd9b",
+          "localOnly": true
+        },
+        {
+          "file": "outputs/narrow-glass-20261018/after-320x480-expanded.jpg",
+          "sha256": "2047440760e706a53c31b101f64948b3ac5682c73e0432e51acef88d52026ba5",
+          "localOnly": true
+        }
+      ]
+    }
+  },
+  "latestAcceptance": {
+    "dateLocal": "2026-10-19",
+    "status": "PASS_LOCAL_SEARCH",
+    "sourceTreeSha256": "dbaeaaa96d0f70fb5752bcce995484bdf8faa3f3197c5989c0e18564712b561b",
+    "timedSourceTreeSha256": "cb47ee2108b270e5f13daac7b67d98417b841e461d952ed41f4285ce3539efff",
+    "finalDifferenceFromTimedSource": {
+      "paths": [
+        "src/components/product-search-progressive.test.tsx"
+      ],
+      "type": "test-only actual Claude110ms patch; all production and originalHTML bytes unchanged",
+      "productionSnapshotsChecked": [
+        {
+          "file": "index.html",
+          "sha256": "fcee78f6670c3ec0a7830f6e62ea13275a9776ec5aec75a0530e2ccd14df9ca0"
+        },
+        {
+          "file": "src/components/command-palette.css.ts",
+          "sha256": "f22ca1d765112eb91e785cab014f640bcbd9ea70dee2c94cba77046c1643750d"
+        },
+        {
+          "file": "src/components/command-palette.tsx",
+          "sha256": "6fc3d6389bafe24968895c71dac2241149dcbcba6f5b7ce27f7d04fd866df338"
+        },
+        {
+          "file": "src/components/product-search-details.css.ts",
+          "sha256": "857524f26220e889a11e0043b57dc1f60e67b062f8558bbbf238a24b01ecf4be"
+        },
+        {
+          "file": "src/components/product-search-details.tsx",
+          "sha256": "68a47661d0d43169c11c368b8aa59fc6aa2b48f091b1fc8d9c87cce34c169d5a"
+        },
+        {
+          "file": "src/components/watchlist.tsx",
+          "sha256": "8a7298d025fb10541b49cc7d6317c8562b9f1209d513384bab9981ac65a07a68"
+        },
+        {
+          "file": "src/lib/search-request.ts",
+          "sha256": "f0fe0d4efed5a1307fc5d61fe324838f7d70fff5f5f50a64a7bc3c4d77c25226"
+        }
+      ]
+    },
+    "performance": {
+      "scope": "Current UI production components in real local dev, automated ASCII trusted typing and non-trusted direct Chinese insertion. No cross-query averaging, physical paint, native IME, INP, market freshness or universal hardware claim.",
+      "baseline": "Saved7096 before this task, not main; same complete catalog/names/order/core",
+      "phases": [
+        "F9",
+        "B9",
+        "B10",
+        "F10"
+      ],
+      "formalAttempts": 1200,
+      "warmupAttempts": 240,
+      "gate": "Every surface/query final p95<=its own baseline p95;0percent tolerance, no cross-query averaging",
+      "status": "PASS_ZERO_REGRESSION_LOCAL_BROWSER",
+      "allAttemptsSuccessful": true,
+      "allCompleteOrdersEqual": true,
+      "comparisons": [
+        {
+          "surface": "palette",
+          "query": "2330",
+          "beforeP95": 141.5,
+          "afterP95": 121.5,
+          "changePercent": -14.13427561837456,
+          "noSlower": true,
+          "fullOrderedCodeAndNamesEqual": true
+        },
+        {
+          "surface": "palette",
+          "query": "台積電",
+          "beforeP95": 142.29999999701977,
+          "afterP95": 119.29999999701977,
+          "changePercent": -16.163035840113626,
+          "noSlower": true,
+          "fullOrderedCodeAndNamesEqual": true
+        },
+        {
+          "surface": "palette",
+          "query": "00981",
+          "beforeP95": 145.69999998807907,
+          "afterP95": 124.30000001192093,
+          "changePercent": -14.687714466650004,
+          "noSlower": true,
+          "fullOrderedCodeAndNamesEqual": true
+        },
+        {
+          "surface": "watchlist",
+          "query": "2330",
+          "beforeP95": 174.20000000298023,
+          "afterP95": 125,
+          "changePercent": -28.243398393879747,
+          "noSlower": true,
+          "fullOrderedCodeAndNamesEqual": true
+        },
+        {
+          "surface": "watchlist",
+          "query": "台積電",
+          "beforeP95": 173,
+          "afterP95": 123.40000000596046,
+          "changePercent": -28.670520227768513,
+          "noSlower": true,
+          "fullOrderedCodeAndNamesEqual": true
+        },
+        {
+          "surface": "watchlist",
+          "query": "00981",
+          "beforeP95": 176,
+          "afterP95": 127.30000001192093,
+          "changePercent": -27.670454538681287,
+          "noSlower": true,
+          "fullOrderedCodeAndNamesEqual": true
+        }
+      ]
+    },
+    "automated": {
+      "status": "PASS",
+      "source": "dbaeaaa96d0f70fb5752bcce995484bdf8faa3f3197c5989c0e18564712b561b",
+      "tests": {
+        "total": 4246,
+        "passed": 4244,
+        "failed": 0,
+        "skipped": 2
+      },
+      "nodeEtfTests": 10,
+      "commands": {
+        "freezeBefore": {
+          "exitCode": 0,
+          "logSha256": "e692ebbf228257446f74b8bb298fda7f06a29baaf2355353c6f7940aba1995f7"
+        },
+        "vitest": {
+          "exitCode": 0,
+          "logSha256": "6e1c9ebc330f513bc1905d5a2593f85ca3f10c144e4ba66bcbe4bdc3639b6bf4"
+        },
+        "nodeEtf": {
+          "exitCode": 0,
+          "logSha256": "17776d7b26a28f07900c4ceff2e7654fb4961c3bf32dd4488f65ef0ed9edf78f"
+        },
+        "typecheck": {
+          "exitCode": 0,
+          "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "build": {
+          "exitCode": 0,
+          "logSha256": "e3493cb3bcf05363ed09b2d4343457596059bb453e88fbfd45b12fd1f7f68495"
+        },
+        "freezeAfter": {
+          "exitCode": 0,
+          "logSha256": "e692ebbf228257446f74b8bb298fda7f06a29baaf2355353c6f7940aba1995f7"
+        }
+      }
+    },
+    "ui": {
+      "finalNarrowActualCases": 12,
+      "lowHeightActualCases": 16,
+      "zoomEquivalentCases": 4,
+      "zoomScope": "200/300percent CSS viewport-equivalent reflow only; actual nativezoom/DPI not verified",
+      "shortHeightKeyboard": "320x240 Tab/PageDown reaches bottom;Escape closes details and returns focus to summary;no submit",
+      "disclosureSelectionClipping": "fixed in observed cases without extra arrows",
+      "viewportOverrideReset": true
+    },
+    "requestTradeoff": {
+      "commonDebounceMs": 100,
+      "previousPaletteMs": 120,
+      "previousWatchlistMs": 150,
+      "extraIntermediateQueryIntervalsMs": {
+        "palette": [
+          100,
+          120
+        ],
+        "watchlist": [
+          100,
+          150
+        ]
+      },
+      "precise110msCoreCallsPerSurface": 4,
+      "canceledPriorCoreCalls": 3,
+      "realMetadataProbe": "Additional starts/aborts observed; actual gaps/cache state and calibration limitations retained in load-observations.json; not a paired server-load benchmark",
+      "logicalMetadataQueue": 4,
+      "backendAbortGuarantee": false,
+      "cpuImprovementClaim": false
+    },
+    "independentQa": {
+      "status": "PASS_LOCAL",
+      "method": "Read-only recomputation of all1200formal samples/rank95/fullcode+name/rawsource hashes and exact final test-only transition; no tests/browser/services executed by independentQA",
+      "mustFix": 0
+    },
+    "actualClaudeEngineering": {
+      "model": "claude-opus-5-5",
+      "status": "success",
+      "scope": "Actual source-text engineering, common100ms UX tradeoff and verbatim110ms dual-surface test patch; no speculative core rewrite",
+      "effortAccepted": true,
+      "effortVerified": false,
+      "tools": [],
+      "mcpServerCount": 0,
+      "forbiddenEventCount": 0
+    },
+    "actualClaudeFinal": {
+      "model": "claude-opus-5-5",
+      "status": "success",
+      "scope": "Text-only final local PM review and PR drafting; no independent execution or pixel/hardware verification",
+      "disposition": "Conditional local acceptance, executor verified closure ofM1-M5; not merge/deployment approval",
+      "conditionClosure": {
+        "M1": {
+          "originalHtmlSha256": "fcee78f6670c3ec0a7830f6e62ea13275a9776ec5aec75a0530e2ccd14df9ca0",
+          "all7ProductionSnapshotsMatch": true,
+          "observersRemoved": true
+        },
+        "M2": "Corrected extra-query intervals:palette100-120ms,watchlist100-150ms",
+        "M3": "No internal agent history in publicPR",
+        "M4": "Explicit completeDOM+2rAF metric, wait reduction not CPU/render gain",
+        "M5": "Explicit front-end cancellation is not backend-stop guarantee; observed extraGETs disclosed inQA"
+      },
+      "effortAccepted": true,
+      "effortVerified": false,
+      "tools": [],
+      "mcpServerCount": 0,
+      "forbiddenEventCount": 0
+    },
+    "previousFailedCampaigns": {
+      "files": [
+        "work/css-perf-20261019/analysis.json",
+        "work/css-perf-20261019/analysis-v3.json"
+      ],
+      "retained": true,
+      "notRetroactivelyPassed": true
+    },
+    "scope": {
+      "localOnly": true,
+      "liveQuoteFreshnessIsSearchGate": false,
+      "noTradingOrListMembershipWrites": true,
+      "notPerformed": [
+        "native package",
+        "cloudCI",
+        "production deployment",
+        "native zoom/DPI"
+      ],
+      "userExcluded": [
+        "nativeIME",
+        "screenreader",
+        "Safari",
+        "mobile",
+        "arbitrarythemecontrast"
+      ]
+    },
+    "historicalVerification": "Existing verification.* entries retain their explicitly recorded earlier source scopes; this latestAcceptance supersedes them only for the current local CSS/input-latency acceptance.",
+    "evidence": [
+      {
+        "file": "work/css-perf-20261019/plan-v4.json",
+        "sha256": "c0d0675c916b694063fde252cc8d28e44da600146ae20901e66f65ae931973ea",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/analysis-v4.json",
+        "sha256": "307e65d4a8bd65c50a8abaa0286f80f6aae82dc91cf4cfdd20778773a647a687",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/final-automated-qa-v5.json",
+        "sha256": "94c2fd70040665ee2dce92692a7d234e1ea94e5aef498065e8cb5e129661c155",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/ui-observations.json",
+        "sha256": "722a88ac811f138fd97882cfd5002888208507bce4c86f5eb096f242ce5fe020",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/load-observations.json",
+        "sha256": "5599954a234c7450e7e97cb25d3bd13fc6ad6b8a57b379ca7333fec59bc049d0",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/dev-transport-final.json",
+        "sha256": "6f2ec07eccce243ddecfc793c82bbdadea92b8fc2c22d3aff8c396ca060a311a",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/F9-raw-1.json",
+        "sha256": "acea377759683cccd578000cbc313e9185fc1603b6eea3639a09724b34b78468",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/source-F9.json",
+        "sha256": "f31940c1cc2a983b72886c97edf01321029f073afffc262b5b99fb4bb6894e86",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/B9-raw-1.json",
+        "sha256": "def1d73efb3e747946bb6e228add07afefd6dc11690357f1502b0b7eef154604",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/source-B9.json",
+        "sha256": "c3e9fbc007ad12384446ddb6a44c56a0f2a6e3b9dead43af9a32bd5c9aced165",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/B10-raw-1.json",
+        "sha256": "6d9209ec21c4a5297bb2fad631072f39a8a4e74eadb559f786af11d8681ed89d",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/source-B10.json",
+        "sha256": "d6a8a3471603e76ba4514af59109e04ac8e685dbc9654d840ebb86bf38466fc4",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/F10-raw-1.json",
+        "sha256": "1cd8bdf737639a5978d0120fc4e9d9f62fccbfb2f256da1c65d26a17bd9de47b",
+        "localOnly": true
+      },
+      {
+        "file": "work/css-perf-20261019/source-F10.json",
+        "sha256": "69847f86251ffa12b460a671332b7896b2400cbdcce082ff1821e89c54850d8d",
+        "localOnly": true
+      },
+      {
+        "file": "work/opus-pm-review/css-perf-engineering-v2-answer.txt",
+        "sha256": "32e5092c90a2f20f661bf83f9c1be89f9c8b9afe5feb1c240c26577e7f2d6f29",
+        "localOnly": true
+      },
+      {
+        "file": "work/opus-pm-review/css-perf-engineering-v2-metadata.json",
+        "sha256": "a64d41953462723f2ca2a38d53659e9cbdfbbca4da6d5becb31a771fd860e612",
+        "localOnly": true
+      },
+      {
+        "file": "work/opus-pm-review/css-perf-final-answer.txt",
+        "sha256": "27c6985f21c63b9bf968954e393de88c51df0481dc59f4fb53e1aca25054b14b",
+        "localOnly": true
+      },
+      {
+        "file": "work/opus-pm-review/css-perf-final-metadata.json",
+        "sha256": "02254108ac37a01ce90684800d3df048d931139d468ec5f77e9d8fa11585a275",
+        "localOnly": true
+      },
+      {
+        "file": "outputs/css-perf-20261019/verified-360x280-expanded.png",
+        "sha256": "57c43c33c53f438cb746b328c974e9ff39e60da907b327e9464547e306f78349",
+        "localOnly": true
+      }
+    ]
+  },
+  "prWritingRefresh": {
+    "dateLocal": "2026-10-19",
+    "format": "Before/After/How",
+    "reason": "User requested recent project PR habits, supplied exact two-sentence performance summary and authorized publication after final checks with Claude Code credit",
+    "styleReferences": [
+      {
+        "title": "fix(scanner): 排行榜窄面板時不顯示產業類別，代號不再被蓋住",
+        "url": "https://github.com/Sinotrade/shioaji-pro-app/pull/309"
+      },
+      {
+        "title": "fix(agent): Codex 首次設定對話與相容性檢查使用同一版本規則",
+        "url": "https://github.com/Sinotrade/shioaji-pro-app/pull/318"
+      },
+      {
+        "title": "docs(landing): v0.1.54 最新版本與更新紀錄",
+        "url": "https://github.com/Sinotrade/shioaji-pro-app/pull/317"
+      }
+    ],
+    "actualWriter": "claude-opus-5-5",
+    "packetSha256": "975c927f92464750f41e473959763ee566aaaa56609024d0cdb114a774937da3",
+    "sourceTreeSha256": "dbaeaaa96d0f70fb5752bcce995484bdf8faa3f3197c5989c0e18564712b561b",
+    "productionAndTestsUnchanged": true,
+    "testsRerunForWritingTask": false,
+    "priorValidation": "Final automatedQA-v5 and fixed1200-sample browser campaign remain scoped to their recorded source/runtime; publication preflight rerun recorded separately",
+    "publicationAuthorized": true,
+    "published": false,
+    "publicationPreflight": {
+      "file": "work/css-perf-20261019/final-automated-qa-v6.json",
+      "sha256": "a4ac7f43908a9672e155ee0169a2bc87c3214c76b9741ee4fb72d5224a8a282d",
+      "startedAt": "2026-10-18T19:37:56.573Z",
+      "commands": {
+        "freezeBefore": {
+          "args": [
+            "work/pm-validation/freeze-source.mjs",
+            "--check"
+          ],
+          "startedAt": "2026-10-18T19:37:56.629Z",
+          "endedAt": "2026-10-18T19:37:56.843Z",
+          "exitCode": 0,
+          "logSha256": "e692ebbf228257446f74b8bb298fda7f06a29baaf2355353c6f7940aba1995f7"
+        },
+        "vitest": {
+          "args": [
+            "node_modules/vitest/vitest.mjs",
+            "run",
+            "--silent=true",
+            "--reporter=dot",
+            "--reporter=json",
+            "--outputFile.json=work/css-perf-20261019/final-vitest-v6.json"
+          ],
+          "startedAt": "2026-10-18T19:37:56.844Z",
+          "endedAt": "2026-10-18T19:38:12.158Z",
+          "exitCode": 0,
+          "logSha256": "6fb8ed1e26b1d2119e058ca26c3894d82dac16ff283b1bd73867df232f54eb1b"
+        },
+        "nodeEtf": {
+          "args": [
+            "--test",
+            "--test-reporter=tap",
+            "scripts/refresh-etf-catalog.test.mjs"
+          ],
+          "startedAt": "2026-10-18T19:38:12.158Z",
+          "endedAt": "2026-10-18T19:38:12.282Z",
+          "exitCode": 0,
+          "logSha256": "2ffe136611ed41f4f87772b44bfe100106a84444817701b94ab0678e317a8fb4"
+        },
+        "typecheck": {
+          "args": [
+            "node_modules/typescript/bin/tsc",
+            "-b",
+            "--force"
+          ],
+          "startedAt": "2026-10-18T19:38:12.282Z",
+          "endedAt": "2026-10-18T19:38:22.222Z",
+          "exitCode": 0,
+          "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "build": {
+          "args": [
+            "node_modules/vite/bin/vite.js",
+            "build"
+          ],
+          "startedAt": "2026-10-18T19:38:22.222Z",
+          "endedAt": "2026-10-18T19:38:24.759Z",
+          "exitCode": 0,
+          "logSha256": "0162420ac1fc3938587115359135314d940cc3d8d7dbdb3ca6821b96dc087532"
+        },
+        "freezeAfter": {
+          "args": [
+            "work/pm-validation/freeze-source.mjs",
+            "--check"
+          ],
+          "startedAt": "2026-10-18T19:38:24.843Z",
+          "endedAt": "2026-10-18T19:38:25.047Z",
+          "exitCode": 0,
+          "logSha256": "e692ebbf228257446f74b8bb298fda7f06a29baaf2355353c6f7940aba1995f7"
+        }
+      },
+      "status": "PASS",
+      "source": "dbaeaaa96d0f70fb5752bcce995484bdf8faa3f3197c5989c0e18564712b561b",
+      "tests": {
+        "total": 4246,
+        "passed": 4244,
+        "failed": 0,
+        "skipped": 2
+      },
+      "headAndStagedEntriesUnchanged": true,
+      "endedAt": "2026-10-18T19:38:25.133Z"
+    },
+    "testsRerunForPublicationPreflight": true
+  },
+  "priorCheckpoint": {
+    "sourceTreeSha256": "f577eab78c7ea29e540c3467b6a051d848fdb78bcfd6c7136b648892c6a8dd56",
+    "fileCount": 86,
+    "historicalOnly": true,
+    "previousManifestLocalArchive": "work/pm-validation/manifest-f577-before-cpu.json",
+    "previousQaHistory": "product-search-expanded-acceptance.md",
+    "previousReviewAnswer": "opus-product-search-code-first-answer.txt",
+    "oldApprovalsNotReused": true
+  },
+  "publication": {
+    "committed": false,
+    "pushed": false,
+    "githubPullRequestCreated": false,
+    "merged": false,
+    "released": false,
+    "realOrders": false,
+    "serverWatchlistMembershipWrites": false
+  },
+  "exclusions": [
+    "work/",
+    "outputs/",
+    "pnpm-workspace.yaml",
+    "environment settings",
+    "credentials",
+    "private application data"
+  ],
+  "priorUiCheckpoint": {
+    "sourceTreeSha256": "6666c4bb22786cde5e6179d8462f35bfa6649f3d73c7b2ef99b1b27b7239dab7",
+    "fileCount": 87,
+    "archivedManifestLocal": "work/narrow-glass-20261018/before-public-manifest.json",
+    "historicalVerificationKeys": [
+      "browserInputLatency",
+      "independent",
+      "cpu",
+      "unicode",
+      "browser",
+      "feed",
+      "actualEngineering",
+      "actualOpus",
+      "priorActualPrWriter"
+    ],
+    "scope": "Prior CPU/browser/input/review evidence remains tied to6666; no current CSS latency or live-market approval inferred"
+  }
+}

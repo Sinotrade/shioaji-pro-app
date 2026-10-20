@@ -1,0 +1,69 @@
+## 結論
+
+本報告依此次提供的文字進行審查，處置為 **LOCAL DRAFT/DEV only**。
+
+- 可作為受控本機環境的「未見超出門檻之退化」證據。
+- 不可作為加速、真實行情或原生環境的驗收證據。
+- 我未執行測試、未重算 raw、未看畫面。
+
+## 必修（只改措辭與證據連結，不需重測）
+
+**M1　門檻被 debounce 稀釋，且有方向性宣稱**（位置：comparisons；PR 措辭「five lower」）
+- 主指標含 debounce 120/150 ms，約占 p95 的 81–88%。
+- 5% 門檻約等於 7.0–9.1 ms，是非 debounce 部分（約 20–32 ms）的 25–35%。
+- 反例：searchStocks 退化 6 ms 時，palette 2330 p95 由 140.5 變 146.5（+4.3%），仍會通過。
+- 每個變體只有 2 個 phase，沒有 CI。六組中有四組差異小於一個 frame（約 4.2 ms），方向尚未建立。
+- 修正：改為「六組 p95 差 −6.6 至 +1.3 ms（−4.44% 至 +0.74%），含 debounce，均在 5% 內；未建立加速」，並刪除「five lower」。
+
+**M2　「Source hashes prove only captured function differed」是無效推論**
+- 整檔 hash 只證明 stock-index.ts 不同、其餘 86 檔相同，不能證明檔內只有 searchStocks 不同。
+- 反例：B 檔若同時改了 import 或常數，現有 hash 證據無從區分。
+- 修正：附上 B/F diff，或提供「排除 searchStocks 後 hash 相同」的證據；否則降級為「僅 stock-index.ts 不同」。
+
+**M3　「actual typed input」誇大**
+- pressSequentially 是 CDP 注入的 isTrusted 事件，不含 OS/HID 輸入管線。
+- 「台積電」是直接插入字元，不是 IME 組字。liveFeed 的「actual Chinese typing」有相同問題。
+- 修正：改為「自動化 trusted 鍵盤事件；中文直接插入，非 IME」。
+
+**M4　rapid 的「full2330Canceled」**
+- 若此值由 outcome 為 superseded 推得，只代表觀測紀錄被後續 input 取代，不證明 app 中止了請求。
+- 觀測器有盲點：inspect 在 `!record.sawLoading` 時直接 return；stateOf 也不比對列內容與 query。
+- 反例：2330 的回應在 00981 debounce 期間（尚未出現 loading）渲染出舊列，不會記錄任何失敗；只要最終 00981 正確就 pass。
+- 修正：改為「2330 紀錄被取代，最終 00981 結果正確；未證明請求中止，也未證明沒有舊結果閃現」。
+
+**M5　tsc、build、freeze 的證據**
+- 提供的 automation 只有 tests、testFiles、nodeEtf、status 欄位。
+- PR 宣稱 tsc、build、freeze 通過，但缺少可追溯欄位，也沒有時間戳證明是在還原後、sourceTree 6666c4… 下執行。
+- 修正：補上這些欄位，否則不宣稱。
+
+## 應修
+
+- **S1**：用既有 raw 補上 F3、B1、B2、F4 各自的 p50/p95，呈現 ABBA 順序的一致性。
+- **S2**：「overhead equally」是假設。stateOf 在 MutationObserver 微任務內呼叫 getBoundingClientRect 與 getComputedStyle，會強制同步 layout。應改為「預期相近，未量測」。
+- **S3**：limits 應補兩點：
+  - 測試在 Vite dev／React 開發模式下進行。
+  - frame gap 約 4.3 ms，推測顯示器約 240 Hz（假設）。在 60 Hz 下，double-rAF 量化誤差可達 16.7–33 ms，數值不可外推。
+- **S4**：frameMaxGap 在台積電與 00981 兩組中，B 的 p50 約 8.3 ms、F 約 4.3 ms。可列為與 CPU 改善一致的觀察，但它是整段生命週期的最大值，不作結論。
+- **S5**：quoteDisplay 應標為「Root 目視陳述，不可重建」。
+- **S6**：記錄觀測器的已知限制：
+  - 可見性判斷不考慮遮蔽（包含 QA aside 本身）、接近 0 的 opacity、transform。
+  - 空列表即視為 completed；主查詢已由指紋事後驗證，本次無影響。
+  - 真實 IME 若最後一筆 input 仍為 isComposing，將不會建立紀錄（假設）。
+
+## 已核對（僅文字層）
+
+- 每個 phase 1440 筆 =（4+3+5）× 2 surface × 60 次。其中 completed 360、superseded 1080，沒有 timeout、error 或 hidden。總數 5760、正式 1200、暖機 240 皆一致。
+- 六組百分比與 +1.3 ms 的算術正確。
+- 還原後 stock-index.ts 的 hash 等於 F phase；observer hash 在四個 phase 中相同。
+
+## 處置
+
+- **PM**：M1–M5 修正後，QA 文件保留完整表格；PR 只寫 1–2 點，內容限於非退化與限制。
+- **架構**：observer 未進入 production（此為陳述，未驗證）；不需修改 source。
+- **驗收**：瀏覽器非退化門檻為有條件 PASS（受控本機）。真實行情、freshness、市場負載、IME、原生、production 皆為 UNVERIFIED。
+
+## 限制
+
+- 我未看到 raw、截圖或 report。
+- Sol 重算與 cleanup 的結果都只是陳述。
+- 以上反例是依原始碼推導的情境，未實際重現。

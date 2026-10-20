@@ -1,0 +1,130 @@
+## helper code
+
+```ts
+// 只有 ASCII 大寫、數字，以及 U+4E00..U+9FFF（排除「臺」U+81FA）是原鏈的 fixed point，可原樣回傳。
+// 其餘字元（換行、control、空白、combining、相容字、surrogate 等）一律完整走原鏈。
+// 不用 ^/$ 錨點，也不加 g/y/m flag，讓 test() 保持無狀態。
+const nonFixedPointStockChar = /[^A-Z0-9\u4E00-\u81F9\u81FB-\u9FFF]/;
+const taiVariant = /\u81FA/g;
+
+export function normalizeStockSearchText(value: string): string {
+  if (!nonFixedPointStockChar.test(value)) return value;
+  return value.trim().normalize('NFKC').replace(taiVariant, '\u53F0').toUpperCase();
+}
+```
+
+## test block code
+
+```ts
+// import：在測試檔既有 { searchStocks } 的同一個 import 大括號內加入 normalizeStockSearchText
+describe('normalizeStockSearchText 無 cache fixed-point fast path', () => {
+  const legacy = (v: string) => v.trim().normalize('NFKC').replace(/\u81FA/g, '\u53F0').toUpperCase();
+  const isFixed = (c: number) =>
+    (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || (c >= 0x4e00 && c <= 0x9fff && c !== 0x81fa);
+  // 若 StockMeta 欄位或 searchStocks 參數順序與此不同，只調整這兩個 adapter。
+  const meta = (code: string, name: string, aliases: string[] = []) => ({ code, name, aliases }) as StockMeta;
+  const search = (rows: StockMeta[], query: string) => searchStocks(rows, query);
+  const codes = (list: StockMeta[]) => list.map((row) => row.code);
+  const traced = (inputs: string[]) => {
+    const spy = vi.spyOn(String.prototype, 'normalize');
+    try {
+      return inputs.map((input) => {
+        const before = spy.mock.calls.length;
+        const out = normalizeStockSearchText(input);
+        return { input, out, calls: spy.mock.calls.length - before };
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  };
+
+  it('允許的 ASCII 與 20991 個基本漢字（排除臺）逐字及多字皆等於舊鏈，且 normalize 零次', () => {
+    const singles: string[] = [];
+    for (let c = 0; c <= 0xffff; c++) if (isFixed(c)) singles.push(String.fromCharCode(c));
+    expect(singles.length).toBe(36 + 20991);
+    const inputs = [...singles, singles.join(''), [...singles].reverse().join('')];
+    for (let i = 0; i < singles.length; i += 97) inputs.push(singles.slice(i, i + 97).join(''));
+    const results = traced(inputs);
+    const bad = results.filter(({ input, out }) => legacy(input) !== input || out !== input);
+    expect(bad.slice(0, 10).map(({ input }) => input.slice(0, 8))).toEqual([]);
+    expect(results.reduce((sum, { calls }) => sum + calls, 0)).toBe(0);
+  });
+
+  it('全部 BMP code unit 以 A+c+Z 對照舊鏈，且只有允許字元跳過 normalize', () => {
+    const inputs = Array.from({ length: 0x10000 }, (_, c) => `A${String.fromCharCode(c)}Z`);
+    const bad = traced(inputs).flatMap(({ input, out, calls }) => {
+      const c = input.charCodeAt(1);
+      return out !== legacy(input) || calls !== (isFixed(c) ? 0 : 1) ? [c.toString(16)] : [];
+    });
+    expect(bad.slice(0, 10)).toEqual([]);
+  }, 30000);
+
+  it('臺、末尾換行、control、NBSP、FEFF、全形、連字、ß、combining、相容漢字與非 BMP 皆精準走原鏈', () => {
+    const cases: Array<[string, string]> = [
+      ['臺積電', '台積電'], ['2330\n', '2330'], ['\t2330\r\n', '2330'], ['A\u0000B\u0007', 'A\u0000B\u0007'],
+      ['\u00A0台積電\u00A0', '台積電'], ['台\u00A0積', '台 積'], ['\uFEFF2330', '2330'],
+      ['２３３０', '2330'], ['ｔｓｍｃ', 'TSMC'], ['Ａ\u3000Ｂ', 'A B'], ['\uFB01\uFB03', 'FIFFI'],
+      ['Straße', 'STRASSE'], ['e\u0301', '\u00C9'], ['A\u030A', '\u00C5'], ['台\u0301', '台\u0301'],
+      ['\uF900', '\u8C48'], ['\u2F00\u2F08', '\u4E00\u4EBA'], ['\u{2F800}', '\u4E3D'],
+      ['台\u{20000}2330', '台\u{20000}2330'], ['\u{1D400}\u{1D41B}', 'AB'],
+    ];
+    const results = traced(cases.map(([input]) => input));
+    expect(results.map(({ out, calls }) => [out, calls])).toEqual(cases.map(([, want]) => [want, 1]));
+    expect(cases.map(([input]) => legacy(input))).toEqual(cases.map(([, want]) => want));
+  });
+
+  it('raw name.length 同分 tie 與回傳原 refs 不因 fast/fallback 路徑而改變', () => {
+    const fast = [meta('2330', '台積電'), meta('2331', '台積電 '), meta('2332', '台積電子'), meta('2454', '聯發科')];
+    const slow = [meta('2330', '臺積電'), meta('2331', '臺積電\u3000'), meta('2332', '臺積電子'), meta('2454', '聯發科')];
+    const a = search(fast, '台積');
+    const b = search(slow, ' 臺積\n');
+    expect(codes(a)).toEqual(expect.arrayContaining(['2330', '2331', '2332']));
+    expect(codes(b)).toEqual(codes(a));
+    expect(a.every((row) => fast.includes(row)) && b.every((row) => slow.includes(row))).toBe(true);
+    const tie = (list: StockMeta[]) => codes(list).filter((code) => code === '2330' || code === '2331');
+    expect(tie(search([...slow].reverse(), '台積'))).toEqual(tie(b));
+  });
+
+  it('暖機後原地同長替換 name/alias，以及 reverse/splice，結果立即更新且舊名稱消失', () => {
+    const firstAliases = ['丙丁'];
+    const rows = [meta('9901', '甲乙', firstAliases), meta('9902', '戊己', ['庚辛'])];
+    const [first] = rows;
+    expect(search(rows, '甲乙')).toContain(first);
+    for (const q of ['丙丁', '戊己', '庚辛']) search(rows, q);
+    first.name = '壬癸';
+    firstAliases[0] = '子丑';
+    expect(search(rows, '甲乙')).not.toContain(first);
+    expect(search(rows, '丙丁')).not.toContain(first);
+    expect(search(rows, '壬癸')).toContain(first);
+    expect(search(rows, '子丑')).toContain(first);
+    rows.reverse();
+    expect(codes(search(rows, '壬癸'))).toEqual(['9901']);
+    rows.splice(0, 1);
+    expect(search(rows, '戊己')).toEqual([]);
+    expect(search(rows, '庚辛')).toEqual([]);
+    rows.splice(1, 0, meta('9903', '臺北'));
+    expect(codes(search(rows, '台北'))).toEqual(['9903']);
+    expect(search(rows, '壬癸')).toEqual([first]);
+  });
+
+  it('不留 cache：重複的非 fixed-point 字串每次都正常 fallback，query 不被保留，空 query 回傳 []', () => {
+    const inputs = Array.from({ length: 3 }, () => ['ｔｓｍｃ', '臺積電', '2330\n']).flat();
+    expect(traced(inputs).map(({ out, calls }) => [out, calls])).toEqual(
+      Array.from({ length: 3 }, () => [['TSMC', 1], ['台積電', 1], ['2330', 1]]).flat(),
+    );
+    const rows = [meta('9901', '甲乙'), meta('9902', '戊己')];
+    expect(codes(search(rows, '甲乙'))).toEqual(['9901']);
+    expect(codes(search(rows, '戊己'))).toEqual(['9902']);
+    expect(search(rows, '')).toEqual([]);
+    expect(search(rows, ' \u3000\n')).toEqual([]);
+  });
+});
+```
+
+## wiring一句話
+
+以 helper 區塊取代 module 內 `nonCanonicalStockText`、`maxCachedStockTextLength`、`normalizeNonCanonicalStockText`、`normalizeStockText`、`createStockTextNormalizer` 與 `normalizeCachedStockText` 的全部定義。`searchStocks` 內 query、`row.code`、`row.name` 與每個 alias 原本呼叫 `normalizeStockText`／`normalizeCachedStockText` 的地方，一律改呼叫 `normalizeStockSearchText`；score、sort、late alias、stable tie、raw.length 與回傳原 refs 的邏輯完全不動。測試檔在既有 `searchStocks` 的同一個 import 加入 `normalizeStockSearchText`，再以上方 describe block 取代 6 項 `createStockTextNormalizer` 測試，其餘 35 項保留不動。
+
+補充：
+- helper 的 fallback 鏈與測試的 `legacy` 必須和原 `normalizeNonCanonicalStockText` 的呼叫順序逐字一致。trim 與 NFKC 的先後會影響 U+00B4 這類字元，若原碼順序不同，以原碼為準並兩處同步修改。
+- 若其他檔案仍引用舊名稱，改為引用 `normalizeStockSearchText`。

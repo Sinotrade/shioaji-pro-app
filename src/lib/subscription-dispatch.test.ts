@@ -63,7 +63,11 @@ beforeEach(async () => {
     mode(true);
     m.nativeFetch.mockImplementation(async () => new Response('{}'));
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+});
 
 it.each(['production', 'unknown', 'roundtrip', 'removed', 'unsigned'] as const)(
     'rejects a trade subscription after %s during native module loading', async change => {
@@ -159,6 +163,7 @@ it.each(paths.slice(1))('sends account-independent %s even if the mode changes d
 });
 
 it.each([true, false])('keeps a restored protection trigger Tick subscribed as unknown mode becomes %s', async simulation => {
+    vi.useFakeTimers();
     const contract = { code: 'TXFR1', target_code: 'TXFJ6', security_type: 'FUT', exchange: 'TAIFEX' };
     m.accounts[0]!.signed = true;
     const rows = new Map([['sj-pro-triggers', JSON.stringify([{
