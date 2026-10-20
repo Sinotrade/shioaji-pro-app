@@ -134,15 +134,46 @@ const TRUNCATED_NOTE = '結果過長已截斷：清單只列前幾筆（count �
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
-function longestArray(value: Json, best: { arr: Json[]; size: number } | null): { arr: Json[]; size: number } | null {
-    if (Array.isArray(value)) {
-        const size = value.length > 0 ? JSON.stringify(value).length : 0;
-        if (value.length > 0 && (!best || size > best.size)) best = { arr: value, size };
-        for (const item of value) best = longestArray(item, best);
-    } else if (value && typeof value === 'object') {
-        for (const item of Object.values(value)) best = longestArray(item, best);
+type Container = Json[] | { [key: string]: Json };
+
+const jsonSize = (v: unknown): number => {
+    try {
+        return JSON.stringify(v)?.length ?? 0;
+    } catch {
+        return Number.POSITIVE_INFINITY;
     }
-    return best;
+};
+
+const isContainer = (v: Json): v is Container => typeof v === 'object' && v !== null;
+const entryCount = (c: Container) => (Array.isArray(c) ? c.length : Object.keys(c).length);
+
+/**
+ * Exact JSON length of `value`, computed in one pass, collecting every
+ * non-empty nested list or dict (below the root) with its own length.
+ */
+function measure(value: Json, out: { c: Container; size: number }[] | null, nested = false): number {
+    if (!isContainer(value)) return jsonSize(value);
+    let size = 2;
+    if (Array.isArray(value)) {
+        value.forEach((child, i) => {
+            size += measure(child, out, true) + (i > 0 ? 1 : 0);
+        });
+    } else {
+        Object.entries(value).forEach(([key, child], i) => {
+            size += jsonSize(key) + 1 + measure(child, out, true) + (i > 0 ? 1 : 0);
+        });
+    }
+    if (nested && out && entryCount(value) > 0) out.push({ c: value, size });
+    return size;
+}
+
+/** Keep the first `keep` items of a list or entries of a dict. */
+function shrinkTo(c: Container, keep: number) {
+    if (Array.isArray(c)) {
+        c.splice(keep);
+        return;
+    }
+    for (const key of Object.keys(c).slice(keep)) delete c[key];
 }
 
 function clipStrings(value: Json, max: number): Json {
@@ -154,28 +185,55 @@ function clipStrings(value: Json, max: number): Json {
     return value;
 }
 
-/** Shrink `result` to at most `maxChars` of JSON, adding `truncated: true` when it had to. */
+/**
+ * Size-bounded copy of a tool result: at most `maxChars` of JSON for any input.
+ * Over the limit it clips long text, then shrinks the largest nested dicts and
+ * lists until it fits, then clips text further; if it still does not fit it
+ * keeps only the top-level scalars that fit. Any shrunk result carries
+ * `truncated: true`.
+ */
 export function capToolResult<T>(result: T, maxChars = MAX_TOOL_RESULT_CHARS): T | Record<string, unknown> {
-    const size = (v: unknown) => JSON.stringify(v)?.length ?? 0;
-    if (size(result) <= maxChars) return result;
-    let value = JSON.parse(JSON.stringify(result)) as Json;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        value = { items: value };
-    }
+    if (jsonSize(result) <= maxChars) return result;
     const flag = { truncated: true, truncated_note: TRUNCATED_NOTE };
-    const fits = () => size({ ...(value as object), ...flag }) <= maxChars;
-    // Long prose first (summaries), then lists, then any remaining text.
-    if (!fits()) value = clipStrings(value, 2000);
-    while (!fits()) {
-        const target = longestArray(value, null);
-        if (!target) break;
-        target.arr.splice(Math.floor(target.arr.length / 2));
+    if (jsonSize(flag) > maxChars) return { truncated: true };
+    let root: { [key: string]: Json };
+    try {
+        const cloned = JSON.parse(JSON.stringify(result ?? null)) as Json;
+        root = cloned && typeof cloned === 'object' && !Array.isArray(cloned) ? cloned : { items: cloned };
+    } catch {
+        return flag;
+    }
+    const fits = () => jsonSize({ ...root, ...flag }) <= maxChars;
+    if (!fits()) root = clipStrings(root, 2000) as typeof root;
+    // Shrink the largest nested lists / dicts (and any at least half that
+    // size) until the result fits: by half, or harder when far over budget.
+    // One measuring pass per round.
+    for (;;) {
+        const containers: { c: Container; size: number }[] = [];
+        const total = measure(root, containers) + jsonSize(flag);
+        if (total <= maxChars || containers.length === 0) break;
+        const ratio = Math.min(0.5, (2 * maxChars) / total);
+        const largest = containers.reduce((m, x) => Math.max(m, x.size), 0);
+        for (const x of containers) {
+            if (x.size * 2 >= largest) shrinkTo(x.c, Math.floor(entryCount(x.c) * ratio));
+        }
     }
     for (const max of [500, 120]) {
         if (fits()) break;
-        value = clipStrings(value, max);
+        root = clipStrings(root, max) as typeof root;
     }
-    return { ...(value as Record<string, Json>), ...flag };
+    if (fits()) return { ...root, ...flag };
+    // Last resort: top-level scalars (ids, counts, errors) that fit the budget.
+    const summary: { [key: string]: Json } = {};
+    let used = jsonSize(flag);
+    for (const [key, value] of Object.entries(root)) {
+        if (isContainer(value)) continue;
+        const cost = jsonSize({ [key]: value }) - 1;
+        if (used + cost > maxChars) continue;
+        summary[key] = value;
+        used += cost;
+    }
+    return { ...summary, ...flag };
 }
 
 function clampInt(value: unknown, fallback: number, max: number): number {
@@ -184,13 +242,41 @@ function clampInt(value: unknown, fallback: number, max: number): number {
     return Math.min(n, max);
 }
 
-function dataInfo(meta: DataMeta) {
+type PartMetas = Record<string, DataMeta | null | undefined>;
+
+/**
+ * Release and staleness of everything a result was built from: `main` is the
+ * file the tool is about, `parts` the supporting datasets (missing → null).
+ * Any stale part makes the whole result stale, as the panel shows it.
+ */
+function dataInfo(meta: DataMeta, main: string, parts: PartMetas = {}) {
+    const entries = Object.entries(parts).filter(([, m]) => m !== undefined);
+    const staleParts = [
+        ...(meta.stale ? [main] : []),
+        ...entries.filter(([, m]) => m?.stale).map(([k]) => k),
+    ];
     return {
         release_id: meta.releaseId,
         built_at: meta.builtAt,
         official_fetched_at: meta.officialFetchedAt,
-        ...(meta.stale
-            ? { stale: true, stale_note: `${STALE_TEXT}：目前無法連線資料來源，使用先前下載並驗證過的本機快取，可能不是最新版` }
+        ...(entries.length
+            ? {
+                  parts: Object.fromEntries(
+                      entries.map(([k, m]) => [
+                          k,
+                          m
+                              ? { release_id: m.releaseId, as_of: m.asOf, ...(m.stale ? { stale: true } : {}) }
+                              : { unavailable: true },
+                      ]),
+                  ),
+              }
+            : {}),
+        ...(staleParts.length
+            ? {
+                  stale: true,
+                  stale_parts: staleParts,
+                  stale_note: `${STALE_TEXT}：目前無法連線資料來源，${staleParts.join('、')} 使用先前下載並驗證過的本機快取，可能不是最新版`,
+              }
             : {}),
     };
 }
@@ -208,9 +294,9 @@ function officialAttributions(sources: Sources | null): string[] {
     return sources?.sources.map((s) => s.attribution) ?? [];
 }
 
-async function settled<T>(promise: Promise<Loaded<T>>): Promise<T | null> {
+async function settled<T>(promise: Promise<Loaded<T>>): Promise<Loaded<T> | null> {
     try {
-        return (await promise).data;
+        return await promise;
     } catch {
         return null;
     }
@@ -254,12 +340,15 @@ function marketOf(market: MarketDaily | null, code: string) {
 export function createCompanyDataTools(client: CompanyDataClient) {
     async function getCompany(input: Record<string, unknown>) {
         const max = clampInt(input.max_relations, 8, 30);
-        const [{ data: c, meta }, themes, market, sources] = await Promise.all([
+        const [{ data: c, meta }, themesL, marketL, sourcesL] = await Promise.all([
             client.getCompany(String(input.code ?? '')),
             settled(client.getThemes()),
             settled(client.getMarket()),
             settled(client.getSources()),
         ]);
+        const themes = themesL?.data ?? null;
+        const market = marketL?.data ?? null;
+        const sources = sourcesL?.data ?? null;
         const researched = c.has_research && c.as_of !== null;
         const chainTheme = c.chain ? themes?.find((t) => t.id === c.chain) : undefined;
         const evidence = Object.values(c.evidence ?? {});
@@ -325,7 +414,7 @@ export function createCompanyDataTools(client: CompanyDataClient) {
             sources: evidence.slice(0, 20).map(evidenceSource),
             ...(evidence.length > 20 ? { sources_truncated: evidence.length - 20 } : {}),
             official_sources: officialAttributions(sources),
-            data: dataInfo(meta),
+            data: dataInfo(meta, 'company', { themes: themesL?.meta ?? null, market: marketL?.meta ?? null, sources: sourcesL?.meta ?? null }),
             disclaimer: meta.disclaimer,
         };
     }
@@ -333,10 +422,11 @@ export function createCompanyDataTools(client: CompanyDataClient) {
     async function getFinancials(input: Record<string, unknown>) {
         const months = clampInt(input.months, 12, 36);
         const quarters = clampInt(input.quarters, 8, 14);
-        const [{ data: fin, meta }, sources] = await Promise.all([
+        const [{ data: fin, meta }, sourcesL] = await Promise.all([
             client.getFinancials(String(input.code ?? '')),
             settled(client.getSources()),
         ]);
+        const sources = sourcesL?.data ?? null;
         return {
             code: fin.code,
             name: fin.name,
@@ -358,16 +448,19 @@ export function createCompanyDataTools(client: CompanyDataClient) {
             quarters: quarterMetrics(fin, quarters),
             trailing_eps: trailingEps(fin),
             official_sources: officialAttributions(sources),
-            data: dataInfo(meta),
+            data: dataInfo(meta, 'financials', { sources: sourcesL?.meta ?? null }),
         };
     }
 
     async function findThemeMembers(input: Record<string, unknown>) {
-        const [{ data: themes, meta }, entities, market] = await Promise.all([
+        const [{ data: themes, meta }, entitiesL, marketL] = await Promise.all([
             client.getThemes(),
             settled(client.getEntities()),
             settled(client.getMarket()),
         ]);
+        const entities = entitiesL?.data ?? null;
+        const market = marketL?.data ?? null;
+        const info = dataInfo(meta, 'themes', { entities: entitiesL?.meta ?? null, market: marketL?.meta ?? null });
         const themeQuery = typeof input.theme === 'string' ? input.theme.trim() : '';
         const chainQuery = typeof input.chain === 'string' ? input.chain.trim() : '';
         const limit = clampInt(input.limit, 60, 300);
@@ -379,7 +472,7 @@ export function createCompanyDataTools(client: CompanyDataClient) {
                 themes: list(themes, limit),
                 as_of: meta.asOf,
                 notice: THIRD_PARTY_NOTICE,
-                data: dataInfo(meta),
+                data: info,
             };
         }
         const { theme, candidates } = resolveTheme(
@@ -433,7 +526,7 @@ export function createCompanyDataTools(client: CompanyDataClient) {
             })),
             as_of: theme.as_of ?? meta.asOf,
             notice: THIRD_PARTY_NOTICE,
-            data: dataInfo(meta),
+            data: info,
         };
     }
 
@@ -456,10 +549,11 @@ export function createCompanyDataTools(client: CompanyDataClient) {
         if (!RELATION_KINDS.includes(kind)) {
             return { error: `type 必須是 ${RELATION_KINDS.join('／')}` };
         }
-        const [{ data: edges, meta }, entities] = await Promise.all([
+        const [{ data: edges, meta }, entitiesL] = await Promise.all([
             client.getEdges(),
             settled(client.getEntities()),
         ]);
+        const entities = entitiesL?.data ?? null;
         const entityId = resolveEntity(String(input.code ?? ''), entities);
         if (!entityId) return { error: `看不懂 code：${String(input.code ?? '')}` };
         const index = entities ? entityIndex(entities) : null;
@@ -480,8 +574,11 @@ export function createCompanyDataTools(client: CompanyDataClient) {
             owners.slice(0, 8).map((code) => settled<Company>(client.getCompany(code))),
         );
         for (const file of files) {
-            for (const [id, e] of Object.entries(file?.evidence ?? {})) evidence.set(id, e);
+            for (const [id, e] of Object.entries(file?.data.evidence ?? {})) evidence.set(id, e);
         }
+        const evidenceMeta = files.length
+            ? (files.find((f) => f?.meta.stale)?.meta ?? files.find((f) => f)?.meta ?? null)
+            : undefined;
         const sources = new Map<string, ReturnType<typeof evidenceSource>>();
         const items = shown.map((hit) => {
             const refs = (hit.edge.evidence ?? []).filter((id) => evidence.has(id));
@@ -512,7 +609,7 @@ export function createCompanyDataTools(client: CompanyDataClient) {
                 : {}),
             as_of: meta.asOf,
             notice: THIRD_PARTY_NOTICE,
-            data: dataInfo(meta),
+            data: dataInfo(meta, 'edges', { entities: entitiesL?.meta ?? null, evidence: evidenceMeta }),
         };
     }
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { BASE, createFakeHost, type FakeHost } from './__fixtures__/server';
-import { COMPANY_DATA_TOOL_NAMES, COMPANY_DATA_TOOL_SPECS, capToolResult, createCompanyDataTools, isCompanyDataTool } from './agent';
+import { COMPANY_DATA_TOOL_NAMES, COMPANY_DATA_TOOL_SPECS, MAX_TOOL_RESULT_CHARS, capToolResult, createCompanyDataTools, isCompanyDataTool } from './agent';
 import { createCompanyDataClient } from './client';
 import { createMemoryStore } from './store';
 
@@ -155,5 +155,82 @@ describe('company data tool result size', () => {
         expect(capped.members.length).toBeGreaterThan(0);
         const small = { a: 1 };
         expect(capToolResult(small)).toBe(small);
+    });
+});
+
+describe('capToolResult bounds any input', () => {
+    // Small deterministic PRNG so failures reproduce.
+    const rng = (seed: number) => () => {
+        seed = (seed * 1664525 + 1013904223) % 2 ** 32;
+        return seed / 2 ** 32;
+    };
+    const gen = (rand: () => number, depth: number): unknown => {
+        const r = rand();
+        if (depth <= 0 || r < 0.3) {
+            return r < 0.1 ? Math.round(rand() * 1e6) : r < 0.2 ? 'z'.repeat(Math.floor(rand() * (rand() < 0.05 ? 30_000 : 200))) : null;
+        }
+        // wide (up to 2000 entries) near the leaves, narrower above, plus occasional 30k-char strings
+        const n = Math.floor(rand() * (depth <= 1 && rand() < 0.3 ? 2000 : 12));
+        if (r < 0.65) return Array.from({ length: n }, () => gen(rand, depth - 1));
+        return Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}_${'w'.repeat(Math.floor(rand() * 30))}`, gen(rand, depth - 1)]));
+    };
+
+    it.each(Array.from({ length: 40 }, (_, i) => i + 1))('random nested input #%i stays within every limit', (seed) => {
+        const rand = rng(seed);
+        const input = { count: 1, nested: gen(rand, 4), ['m'.repeat(10)]: gen(rand, 3) };
+        for (const max of [200, 2000, 20_000]) {
+            const out = capToolResult(input, max);
+            const size = JSON.stringify(out).length;
+            expect(size).toBeLessThanOrEqual(max);
+            if (JSON.stringify(input).length > max) expect(out).toMatchObject({ truncated: true });
+            else expect(out).toBe(input);
+        }
+    }, 20_000);
+
+    it('shrinks large dicts such as find_relations sources', () => {
+        const sources = Object.fromEntries(
+            Array.from({ length: 500 }, (_, i) => [`tw.2330#e_${i}`, { title: `t${i}`.repeat(20), url: `https://x.test/${i}` }]),
+        );
+        const out = capToolResult({ count: 500, items: [{ id: 'tw.2317' }], sources }) as Json;
+        expect(JSON.stringify(out).length).toBeLessThanOrEqual(MAX_TOOL_RESULT_CHARS);
+        expect(out).toMatchObject({ truncated: true, count: 500, items: [{ id: 'tw.2317' }] });
+        expect(Object.keys(out.sources).length).toBeGreaterThan(0);
+    });
+
+    it('falls back to top-level scalars for a huge top-level dict', () => {
+        const flat = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`key_${i}`, i]));
+        const out = capToolResult({ error: 'x', ...flat }, 1000) as Json;
+        expect(JSON.stringify(out).length).toBeLessThanOrEqual(1000);
+        expect(out).toMatchObject({ truncated: true, error: 'x' });
+    });
+});
+
+describe('company data tools report stale parts', () => {
+    it('flags the part that fell back to an older cache, with its own release', async () => {
+        let clock = 1_000_000;
+        const h = createFakeHost();
+        const t = createCompanyDataTools(
+            createCompanyDataClient({ baseUrl: BASE, fetch: h.fetch, store: createMemoryStore(), now: () => clock }),
+        );
+        const fresh = (await t.run('get_company', { code: '2330' })) as Json;
+        expect(fresh.data.stale).toBeUndefined();
+        expect(fresh.data.parts.market).toMatchObject({ release_id: '2026.10.20.2220' });
+        // a new market release is listed but its file cannot be downloaded
+        const path = 'v1/tw/market/daily.json';
+        h.manifest.release_id = '2026.10.21.0900';
+        h.setFile(path, `${h.files.get(path)!} `, true);
+        h.files.delete(path);
+        clock += 11 * 60_000;
+        const r = (await t.run('get_company', { code: '2330' })) as Json;
+        expect(r.data).toMatchObject({
+            release_id: '2026.10.21.0900',
+            stale: true,
+            stale_parts: ['market'],
+            parts: { market: { release_id: '2026.10.20.2220', stale: true }, themes: { release_id: '2026.10.21.0900' } },
+        });
+        expect(r.data.stale_note).toContain('market');
+        expect(r.daily).not.toBeNull();
+        const members = (await t.run('find_theme_members', { theme: 'cowos' })) as Json;
+        expect(members.data).toMatchObject({ stale: true, stale_parts: ['market'] });
     });
 });
