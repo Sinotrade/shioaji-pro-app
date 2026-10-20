@@ -9,6 +9,8 @@
 // and the user is told.
 
 import type { ProtectionSnapshot } from './flash-trigger';
+// 「仍持有 N」是持倉數量：遮金額時不露，通知中心渲染時可重遮（#268）
+import { secretMoney } from './privacy';
 import type { NewTrigger } from './trigger-engine';
 
 /** One protection to put back. */
@@ -138,12 +140,12 @@ export async function restoreAfterUnfilledClose(before: number, snapshots: reado
     const remaining = Math.min(Math.abs(held), Math.abs(before) - close.filled);
     if (remaining <= 0) return 'closed';
     if (!(await deps.envOk())) {
-        say('⚡ 平倉未成交，停損停利未恢復（未受保護）', `${code} 仍持有 ${remaining} ${unit}；伺服器或模擬／正式模式已切換，沒有恢復。${UNPROTECTED_TAIL}`);
+        say('⚡ 平倉未成交，停損停利未恢復（未受保護）', `${code} 仍持有 ${secretMoney(`${remaining} ${unit}`)}；伺服器或模擬／正式模式已切換，沒有恢復。${UNPROTECTED_TAIL}`);
         return 'failed';
     }
     const last = await deps.last();
     if (last === null) {
-        say('⚡ 平倉未成交，停損停利未恢復（未受保護）', `${code} 仍持有 ${remaining} ${unit}；沒有即時成交價可確認停損停利是否已穿價，沒有恢復。${UNPROTECTED_TAIL}`);
+        say('⚡ 平倉未成交，停損停利未恢復（未受保護）', `${code} 仍持有 ${secretMoney(`${remaining} ${unit}`)}；沒有即時成交價可確認停損停利是否已穿價，沒有恢復。${UNPROTECTED_TAIL}`);
         return 'failed';
     }
     // only protections that close what is held (a long's protection sells)
@@ -165,15 +167,15 @@ export async function restoreAfterUnfilledClose(before: number, snapshots: reado
     const notes = [...plan.skipped, ...(failed.length ? [`恢復未確認：${failed.join('、')}`] : [])];
     const unprotected = remaining - restored;
     if (restored > 0 && unprotected <= 0 && !notes.length) {
-        say('⚡ 平倉未成交，已恢復停損停利', `${code} 仍持有 ${remaining} ${unit}：已恢復 ${what}（固定價格，不含移動停損）。不會自動再平倉`);
+        say('⚡ 平倉未成交，已恢復停損停利', `${code} 仍持有 ${secretMoney(`${remaining} ${unit}`)}：已恢復 ${what}（固定價格，不含移動停損）。不會自動再平倉`);
         return 'restored';
     }
     if (restored > 0) {
-        say('⚡ 平倉未成交，停損停利只恢復一部分', `${code} 仍持有 ${remaining} ${unit}：已恢復 ${restored} ${unit}（${what}）${
+        say('⚡ 平倉未成交，停損停利只恢復一部分', `${code} 仍持有 ${secretMoney(`${remaining} ${unit}`)}：已恢復 ${restored} ${unit}（${what}）${
             unprotected > 0 ? `；未受保護 ${unprotected} ${unit}` : ''}。${notes.join('；')}；請自行補上沒有恢復的部分`);
         return 'partly';
     }
-    say('⚡ 平倉未成交，停損停利未恢復（未受保護）', `${code} 仍持有 ${remaining} ${unit}，沒有停損停利。${notes.join('；') || '恢復未確認'}；請自行處理`);
+    say('⚡ 平倉未成交，停損停利未恢復（未受保護）', `${code} 仍持有 ${secretMoney(`${remaining} ${unit}`)}，沒有停損停利。${notes.join('；') || '恢復未確認'}；請自行處理`);
     return 'failed';
 }
 
@@ -190,7 +192,7 @@ export async function warnIfStillHeld(beforeShares: number, code: string, deps: 
     }
     deps.notify({ kind: 'err', title: '⚡ 平倉未完全成交，停損停利已取消（未受保護）', body: held === null
         ? `${code}：無法確認平倉後的持倉；平倉前取消的停損停利不會自動恢復。${UNPROTECTED_TAIL}`
-        : `${code} 仍持有 ${Math.abs(held).toLocaleString()} 股；平倉前取消的停損停利不會自動恢復（股票）。${UNPROTECTED_TAIL}` });
+        : `${code} 仍持有 ${secretMoney(`${Math.abs(held).toLocaleString()} 股`)}；平倉前取消的停損停利不會自動恢復（股票）。${UNPROTECTED_TAIL}` });
     return true;
 }
 

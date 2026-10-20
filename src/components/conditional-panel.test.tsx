@@ -46,7 +46,8 @@ vi.mock('../lib/bracket', () => ({
     acknowledgeBracketExit: vi.fn(), dismissBracket: vi.fn(), modifyBracket: vi.fn(), reconcileBracket: vi.fn(),
 }));
 vi.mock('../lib/main-window-commands', () => ({ isMainWindow: () => true }));
-vi.mock('../lib/privacy', () => ({
+vi.mock('../lib/privacy', async (orig) => ({
+    ...(await orig<typeof import('../lib/privacy')>()),
     usePrivacyMode: () => m.priv,
     maskAccountId: (id: string, priv: boolean) => priv ? `•••••${id.slice(-2)}` : id,
 }));

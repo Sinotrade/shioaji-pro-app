@@ -123,6 +123,26 @@ it('張數改 2 → 加權後不賺，依完整費稅顯示虧損確認', async 
     expect(button('價差未達成本').props.disabled).toBe(true);
 });
 
+it('#268 遮金額：虧損確認鈕的文字與 aria-label 不露預估虧損，庫存量也遮', async () => {
+    const { setPrivacyMoney } = await import('../lib/privacy');
+    await render();
+    await act(async () => { input('整股張數').props.onChange({ target: { value: '2' } }); });
+    try {
+        await act(async () => { setPrivacyMoney(true); });
+        const btn = executeButton();
+        expect(text(btn)).toContain('仍要送出（預估虧損 •••••）');
+        expect(text(btn)).not.toContain('1,356');
+        expect(String(btn.props['aria-label'])).not.toContain('1,356');
+        const all = view.root.findAll(n => typeof n.props.className === 'string').map(n => text(n)).join('|');
+        expect(all).not.toMatch(/整 \d+ 張／零/);
+        await act(async () => { executeButton().props.onClick(); });
+        expect(text(executeButton())).toContain('再按一次確認 · 虧損 •••••');
+    } finally {
+        await act(async () => { setPrivacyMoney(false); });
+    }
+    expect(text(executeButton())).toContain('1,356 元');
+});
+
 it.each(['買整 → 賣零', '買零 → 賣整'])('未達成本（%s）：第一次只武裝，5 秒內第二次才交給原送單流程', async direction => {
     vi.useFakeTimers();
     await render({ feed: lossFeed });

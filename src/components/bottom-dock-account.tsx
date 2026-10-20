@@ -390,9 +390,8 @@ function PnlSection({
                                     {names[nameKey(r)] ?? ''}
                                 </span>
                                 <span className={styles.pnlDetailQty}>
-                                    {/* 平倉筆的數量帶方向正負 — 顯示絕對值 */}
-                                    {Math.abs(r.quantity).toLocaleString()}
-                                    {r.market === 'S' ? '張' : '口'}
+                                    {/* 平倉筆的數量帶方向正負 — 顯示絕對值；遮金額時一併遮（#268） */}
+                                    {maskMoney(`${Math.abs(r.quantity).toLocaleString()}${r.market === 'S' ? '張' : '口'}`, privMoney)}
                                 </span>
                                 <span
                                     className={`${styles.pnlDetailVal} ${panel.dirText[dirOfAmount(r.pnl)]}`}
@@ -520,8 +519,7 @@ function ReserveSection({
                                     <span>{s.contract.code}</span>
                                     <span className={styles.rsvInfo} />
                                     <span className={styles.rsvVal}>
-                                        {s.available_share.toLocaleString()} /{' '}
-                                        {s.reserved_share.toLocaleString()} 股
+                                        {maskMoney(`${s.available_share.toLocaleString()} / ${s.reserved_share.toLocaleString()} 股`, privMoney)}
                                     </span>
                                 </div>
                             ))}
@@ -544,7 +542,7 @@ function ReserveSection({
                                         {s.info ? `・${s.info}` : ''}
                                     </span>
                                     <span className={styles.rsvVal}>
-                                        {s.share.toLocaleString()} 股
+                                        {maskMoney(`${s.share.toLocaleString()} 股`, privMoney)}
                                     </span>
                                 </div>
                             ))}
@@ -569,7 +567,7 @@ function ReserveSection({
                                         {s.info ? `・${s.info}` : ''}
                                     </span>
                                     <span className={styles.rsvVal}>
-                                        {s.share.toLocaleString()} 股・
+                                        {maskMoney(`${s.share.toLocaleString()} 股`, privMoney)}・
                                         {maskMoney(
                                             fmtMoney(s.amount),
                                             privMoney,

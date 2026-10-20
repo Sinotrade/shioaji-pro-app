@@ -39,6 +39,7 @@ import {
 } from '../lib/execution/background';
 import { contractLabel } from '../lib/pending-trigger-view';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import { useRevealText } from '../lib/privacy-text';
 import {
     acknowledgeExit,
     modifyTrigger,
@@ -133,7 +134,10 @@ function useRun() {
             setBusy(false);
         }
     };
-    return { busy, message, setMessage, run };
+    // 錯誤訊息保留產生當下的字串（例如全平摘要的持倉量）：渲染時依目前開關重遮（#268）
+    const reveal = useRevealText();
+    const shown = message && { ...message, text: reveal(message.text) };
+    return { busy, message: shown, setMessage, run };
 }
 
 // ---- cells ----

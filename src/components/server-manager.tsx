@@ -25,7 +25,8 @@ import { usePoll } from '../hooks/use-poll';
 import { useStreamStatus } from '../hooks/use-stream';
 import { unsignedAccountLabel } from '../lib/account-signing';
 import { canTrade } from '../lib/account-tradable';
-import { getPrivacyMode, maskAccountId } from '../lib/privacy';
+import { secretAccount } from '../lib/privacy';
+import { useRevealText } from '../lib/privacy-text';
 import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
 import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
@@ -124,6 +125,8 @@ export function ServerManager({
     const [ver, setVer] = useState('');
     const [checking, setChecking] = useState(false);
     const [readyLines, setReadyLines] = useState<string[]>([]);
+    // 就緒檢查與啟動 log 保留產生當下的字串：渲染時依目前隱私模式遮帳號（#268）
+    const reveal = useRevealText();
     const [confirmLogout, setConfirmLogout] = useState(false);
     const logoutInFlight = useRef(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -197,7 +200,7 @@ export function ServerManager({
                           ? '期貨'
                           : a.account_type;
                 out.push(
-                    `${canTrade(a) ? '✓' : '✗'} ${kind} ${a.broker_id}-${maskAccountId(a.account_id, getPrivacyMode())}` +
+                    `${canTrade(a) ? '✓' : '✗'} ${kind} ${a.broker_id}-${secretAccount(a.account_id)}` +
                         `${a.signed ? ' 已簽署' : ` ${unsignedAccountLabel(info?.simulation === true)}`}`,
                 );
             }
@@ -967,7 +970,7 @@ export function ServerManager({
                                     fontWeight: 600,
                                 }}
                             >
-                                ⚠ {diagnoseOutput(lastOutput)}
+                                ⚠ {reveal(diagnoseOutput(lastOutput) ?? '')}
                             </span>
                         )}
                         {lastOutput && errorLines(lastOutput) && (
@@ -975,12 +978,12 @@ export function ServerManager({
                                 className={styles.emptyHint}
                                 style={{ color: 'var(--danger, #f23645)' }}
                             >
-                                {errorLines(lastOutput)}
+                                {reveal(errorLines(lastOutput))}
                             </span>
                         )}
                         {lastOutput && (
                             <span className={styles.emptyHint}>
-                                {lastOutput}
+                                {reveal(lastOutput)}
                             </span>
                         )}
                         {updateNeedsAttention && (
@@ -1079,7 +1082,7 @@ export function ServerManager({
                                 <ShieldCheck size={14} />{checking ? '檢查中…' : '檢查目前帳戶／CA'}
                             </button>
                             {caError && <p className={dialogStyles.warning}>{caError}</p>}
-                            {readyLines.length > 0 && <div role='status' className={dialogStyles.notice}>{readyLines.map((line, i) => <div key={i}>{line}</div>)}</div>}
+                            {readyLines.length > 0 && <div role='status' className={dialogStyles.notice}>{readyLines.map((line, i) => <div key={i}>{reveal(line)}</div>)}</div>}
                         </details>
                         <details className={dialogStyles.details}>
                             <summary>App 更新與問題回報</summary>
