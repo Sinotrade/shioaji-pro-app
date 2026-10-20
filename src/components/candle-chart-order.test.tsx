@@ -30,6 +30,7 @@ const m = vi.hoisted(() => ({
     hostNode: null as { style: { cursor?: string } } | null,
     lines: [] as { options: () => { price: number }; applyOptions: (p: { price: number }) => void }[],
     // 主窗格那一列的範圍（host 另含副圖與時間軸）；預設與 host 相同
+    paneRect: { left: 0, top: 0, right: 800, bottom: 400 },
 }));
 vi.mock('../hooks/use-chart-drawings', async (importOriginal) => {
     const real = await importOriginal<typeof import('../hooks/use-chart-drawings')>();
@@ -59,6 +60,8 @@ vi.mock('lightweight-charts', async () => {
         const inner = h.makeChart();
         return new Proxy({}, { get: (_t, p) => {
             if (p === 'subscribeClick') return (cb: (p: unknown) => void) => { m.click.push(cb); };
+            if (p === 'panes') return () => [new Proxy(inner.panes()[0], { get: (t, q) =>
+                q === 'getHTMLElement' ? () => ({ getBoundingClientRect: () => m.paneRect }) : t[q] })];
             if (p === 'addSeries') return (type: { kind: string }) => {
                 const s = h.makeSeries(type.kind);
                 return new Proxy(s, { get: (t, q) => {
@@ -108,7 +111,7 @@ async function mount(props: Record<string, unknown>) {
     await act(async () => {
         view = create(createElement(CandleChart, props as any), { createNodeMock: () => {
             const events = new EventTarget();
-            const node = { clientWidth: 800, clientHeight: 400, getBoundingClientRect: () => ({ width: 800, height: 400, left: 0, top: 0 }),
+            const node = { clientWidth: 800, clientHeight: 400, getBoundingClientRect: () => ({ width: 800, height: 400, left: 0, top: 0, right: 800, bottom: 400 }),
                 addEventListener: (name: string, cb: EventListener, capture?: boolean) => {
                     if (!m.dragEvents) return;
                     if (name === 'mousedown') { m.dragHost = events; m.hostNode = node; }
@@ -149,6 +152,7 @@ beforeEach(() => {
     m.skipDisarm = false;
     m.skipInvalidate = false;
     m.dragEvents = false; m.dragHost = null; m.hostNode = null; m.lines.length = 0;
+    m.paneRect = { left: 0, top: 0, right: 800, bottom: 400 };
     m.updatePrice.mockReset().mockResolvedValue(undefined);
     __resetDrawingsForTest();
     (globalThis as any).localStorage.setItem('sj-pro-chart-order-defaults', '{}');
@@ -206,7 +210,7 @@ it.each(['symbol', 'switch back', 'unit', 'account', 'unmount'])(
 describe('chart order settings button', () => {
     const drawingApi = () => view.root.findByType(ChartDrawingTools).props.api as ChartDrawingsApi;
 
-    async function orderDrag() {
+    async function orderDrag(extra: (trade: any) => any[] = () => []) {
         m.dragEvents = true;
         const windowEvents = new EventTarget();
         const documentEvents = new EventTarget();
@@ -227,7 +231,7 @@ describe('chart order settings button', () => {
         });
         const trade = { contract: stk, order: { id: 'drag-order', action: 'Buy', price: 100, quantity: 1 },
             status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } };
-        await mount({ contract: stk, trades: [trade] });
+        await mount({ contract: stk, trades: [trade, ...extra(trade)] });
         const mouse = (type: string, y: number, x = 790) => Object.assign(new Event(type, { cancelable: true }), { button: 0, clientX: x, clientY: y });
         const line = m.lines.find(l => l.options().price === 100)!;
         expect(line).toBeDefined();
@@ -309,9 +313,94 @@ describe('chart order settings button', () => {
         } finally { await act(async () => first.unmount()); }
     });
 
+    it.each([
+        ['按在 B 線上抓 B，不是排前面的 A', 103, 102, 'near-b'],
+        ['離 A 較近抓 A', 103, 101, 'drag-order'],
+        ['距離相同抓排前面的 A', 104, 102, 'drag-order'],
+    ])('兩條很近的委託線：%s', async (_name, priceB, y, id) => {
+        const drag = await orderDrag(t => [{ ...t, order: { ...t.order, id: 'near-b', price: priceB } }]);
+        await act(async () => { m.dragHost!.dispatchEvent(drag.mouse('mousedown', y)); });
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mousemove', 107)); });
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mouseup', 107)); });
+        expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith(id, 107);
+    });
+
     it('委託線正常拖曳放開只送出一次改價', async () => {
         const drag = await orderDrag();
         await drag.start(); await drag.release(); await drag.release();
+        expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 105);
+    });
+
+    it.each([['下方', 450, 790], ['右側', 105, 900], ['上方', -5, 790], ['左側', 105, -5]])('拖曳後在圖外（%s）放開視為取消，不送改價、線回原價', async (_side, y, x) => {
+        const drag = await orderDrag();
+        await drag.start();
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mouseup', y, x)); });
+        expect(m.updatePrice).not.toHaveBeenCalled();
+        expect(drag.line.options().price).toBe(100);
+    });
+
+    it('拖進副圖／時間軸（host 內、主窗格外）放開視為取消，不送改價、線回原價', async () => {
+        const drag = await orderDrag();
+        m.paneRect = { left: 0, top: 0, right: 800, bottom: 300 };
+        await drag.start();
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mouseup', 350)); });
+        expect(m.updatePrice).not.toHaveBeenCalled();
+        expect(drag.line.options().price).toBe(100);
+    });
+
+    it('拖到 0 以下的價格不更新委託線，回到圖內放開送出有效價', async () => {
+        const drag = await orderDrag();
+        await drag.start();
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mousemove', -5)); });
+        expect(drag.line.options().price).toBe(105);
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mousemove', 103)); });
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mouseup', 103)); });
+        expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 103);
+    });
+
+    it('委託線改價結果不確定時回到原價、不重送，只通知一次', async () => {
+        m.updatePrice.mockRejectedValueOnce(Object.assign(new Error('timeout'), { mutationOutcomeUnknown: true }));
+        const drag = await orderDrag();
+        await drag.start(); await drag.release();
+        await act(async () => {});
+        expect(drag.line.options().price).toBe(100);
+        expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 105);
+        expect(m.notify).toHaveBeenCalledOnce();
+        expect(m.notify).toHaveBeenCalledWith(expect.objectContaining({ title: '改價結果不確定' }));
+    });
+
+    it('委託線改價等待中再拖同一條線，失敗不搶游標且取消回到原價', async () => {
+        let reject!: (reason: Error) => void;
+        m.updatePrice.mockImplementationOnce(() => new Promise<void>((_resolve, r) => { reject = r; }));
+        const drag = await orderDrag();
+        await drag.start(); await drag.release();
+        await act(async () => { m.dragHost!.dispatchEvent(drag.mouse('mousedown', 105)); });
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mousemove', 108)); });
+        expect(drag.line.options().price).toBe(108);
+        await act(async () => { reject(new Error('Missing agent capability')); });
+        expect(drag.line.options().price).toBe(108);
+        await act(async () => { drag.key({ key: 'Escape' }); });
+        expect(drag.line.options().price).toBe(100);
+        expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 105);
+    });
+
+    it('委託線改價失敗前已重建時不還原舊線或改動新線', async () => {
+        let reject!: (reason: Error) => void;
+        m.updatePrice.mockImplementationOnce(() => new Promise<void>((_resolve, r) => { reject = r; }));
+        const drag = await orderDrag();
+        await drag.start(); await drag.release();
+        const trade = { ...drag.trade, status: { ...drag.trade.status, modified_price: 102 } };
+        await act(async () => { view.update(createElement(CandleChart, { contract: stk, trades: [trade] } as any)); });
+        const line = m.lines.find(l => l !== drag.line && l.options().price === 102)!;
+        expect(line).toBeDefined();
+        expect(drag.line.options().price).toBe(105);
+        const oldApply = vi.spyOn(drag.line, 'applyOptions');
+        const newApply = vi.spyOn(line, 'applyOptions');
+        await act(async () => { reject(new Error('Missing agent capability')); });
+        expect(oldApply).not.toHaveBeenCalled();
+        expect(newApply).not.toHaveBeenCalled();
+        expect(drag.line.options().price).toBe(105);
+        expect(line.options().price).toBe(102);
         expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 105);
     });
 

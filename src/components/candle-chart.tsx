@@ -1546,7 +1546,7 @@ export function CandleChart({
             null;
         // active document listeners — removed on unmount if a drag is live
         let activeMove: ((e: MouseEvent) => void) | null = null;
-        let activeUp: (() => void) | null = null;
+        let activeUp: ((e: MouseEvent) => void) | null = null;
 
         const releasePointer = () => {
             if (activeMove) document.removeEventListener('mousemove', activeMove, true);
@@ -1584,17 +1584,20 @@ export function CandleChart({
         const findNear = (y: number) => {
             const series = candleSeriesRef.current;
             if (!series) return null;
+            // 兩條線很近時抓離游標最近的那條；距離相同取先出現的
+            let best: { trade: Trade; line: IPriceLine; coord: number } | null = null;
             for (const t of workingOrdersRef.current) {
                 // 零股委託不能改價（#204）：委託線不可拖曳
                 if (!canUpdateOrderPrice(t.order)) continue;
                 const line = orderLinesRef.current.get(t.order.id);
                 if (!line) continue;
                 const coord = series.priceToCoordinate(line.options().price);
-                if (coord !== null && Math.abs(coord - y) <= 6) {
-                    return { trade: t, line, coord };
+                if (coord !== null && Math.abs(coord - y) <= 6 &&
+                    (!best || Math.abs(coord - y) < Math.abs(best.coord - y))) {
+                    best = { trade: t, line, coord };
                 }
             }
-            return null;
+            return best;
         };
 
         // 畫圖的浮動工具列／文字框蓋在委託線上時，那一下屬於它們
@@ -1671,13 +1674,22 @@ export function CandleChart({
                 const raw = series.coordinateToPrice(yOf(ev));
                 if (raw === null) return;
                 const np = roundToTick(contractRef.current, Number(raw));
+                // 拖出圖外會外推到 0 以下：保留上一個有效價
+                if (!(np > 0)) return;
                 dragging.price = np;
                 dragging.line.applyOptions({ price: np });
             };
-            const up = () => {
+            const up = (ev: MouseEvent) => {
                 // 遲到的舊 mouseup 不得接手新拖曳，更不能送出舊的改價。
                 if (dragging !== session) return;
                 if (!current(session)) { cancel(); return; }
+                // 在主窗格外放開視為取消（host 還含副圖與時間軸）：窗格外的價格
+                // 是外推的，送出可能遠離市價而成交。
+                const rect = (chartRef.current?.panes()[0]?.getHTMLElement() ?? host).getBoundingClientRect();
+                if (ev.clientX < rect.left || ev.clientX > rect.right || ev.clientY < rect.top || ev.clientY > rect.bottom) {
+                    cancel();
+                    return;
+                }
                 releasePointer();
                 const d = dragging;
                 dragging = null;
@@ -1696,14 +1708,13 @@ export function CandleChart({
                         onOrdersChangedRef.current?.();
                     })
                     .catch((err) => {
-                        notify({
-                            kind: 'err',
-                            title: '改價失敗',
-                            body:
-                                err instanceof Error
-                                    ? err.message
-                                    : String(err),
-                        });
+                        // 失敗時委託價沒變，orderKey 不變，畫線 effect 不會重跑。
+                        if (orderLinesRef.current.get(d.trade.order.id) === d.line) {
+                            // 正在拖同一條線：只改取消時的還原目標，不搶游標下的線。
+                            if (dragging?.line === d.line) dragging.originalPrice = orig;
+                            else try { d.line.applyOptions({ price: orig }); } catch { /* series 已釋放 */ }
+                        }
+                        reportOrderError('改價', err, notify);
                         onOrdersChangedRef.current?.();
                     });
             };
