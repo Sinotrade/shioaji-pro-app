@@ -8,12 +8,21 @@
 //   release may have moved on) before failing as an integrity error.
 // - A file whose sha256 has not changed is never downloaded again: parsed
 //   copies stay in memory, raw text in IndexedDB.
+// - Cached text is re-hashed on every read from the persistent store; a copy
+//   that no longer matches is evicted and downloaded again.
 // - The manifest is fresh for MANIFEST_TTL_MS (the data is rebuilt a few
-//   times a day). When the network fails, the last good manifest and the
-//   cached files keep serving, flagged `stale`.
+//   times a day). When the network fails, the last manifest fetched over
+//   HTTPS (stored with its own sha256 and re-checked) and the cached files
+//   keep serving, flagged `stale` = not verified as the latest release.
+//   shioaji-data publishes no manifest signature, so trust rests on HTTPS to
+//   GitHub Pages; the local sha256 only catches a corrupted cache, not a
+//   local process able to rewrite the App's own storage.
+// - A file served from cache after a failed download keeps the release
+//   metadata it was published under; it is never relabelled as the newer
+//   release the manifest now lists.
 // - Unknown major schema versions are refused instead of guessed at.
 
-import { createIndexedDbStore, type CompanyDataStore } from './store';
+import { MANIFEST_STORE_KEY, createIndexedDbStore, type CompanyDataStore, type StoredMeta } from './store';
 import type {
     Company,
     DatasetKey,
@@ -115,9 +124,17 @@ export interface DataMeta {
     builtAt: string;
     officialFetchedAt: string | null;
     disclaimer: string | null;
-    /** True when the manifest or this file came from cache after a network failure. */
+    /**
+     * True when the manifest or this file came from cache after a network
+     * failure: the data is verified against what was fetched earlier, but not
+     * confirmed to be the latest release.
+     */
     stale: boolean;
 }
+
+/** zh-TW label for stale data (panel and tools). */
+export const STALE_TEXT = '離線快取・未驗證最新';
+
 
 export interface Loaded<T> {
     data: T;
@@ -154,7 +171,7 @@ export interface DatasetTypes {
     'global/taxonomy': Record<string, unknown>;
 }
 
-const MANIFEST_KEY = '__manifest__';
+const MANIFEST_KEY = MANIFEST_STORE_KEY;
 /** Per-company parsed files kept in memory (shared datasets are always kept). */
 const MEMORY_COMPANY_FILES = 48;
 
@@ -208,10 +225,14 @@ function parseManifest(text: string): Manifest {
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
-async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+async function sha256Hex(bytes: BufferSource): Promise<string> {
     const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
     return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+// Keep a BOM in the text so re-encoding reproduces the downloaded bytes.
+const utf8Decoder = new TextDecoder('utf-8', { ignoreBOM: true });
+const textSha256 = (text: string) => sha256Hex(new TextEncoder().encode(text));
 
 /** Accepts `2330`, `tw.2330` (any case, surrounding spaces). Other regions → null. */
 export function normalizeCompanyCode(input: unknown): string | null {
@@ -228,6 +249,8 @@ export function companyEntityId(code: string): string {
 interface MemoryEntry {
     sha256: string;
     value: Promise<unknown>;
+    /** Release the file was published under (served with it if offline). */
+    origin: StoredMeta & { asOf: string | null };
 }
 
 export function createCompanyDataClient(options: CompanyDataClientOptions = {}) {
@@ -257,10 +280,17 @@ export function createCompanyDataClient(options: CompanyDataClientOptions = {}) 
             throw new CompanyDataError('network', error instanceof Error ? error.message : String(error));
         }
         if (!response.ok) throw new CompanyDataError('network', `manifest HTTP ${response.status}`);
-        const text = await response.text();
+        const bytes = await response.arrayBuffer();
+        const text = utf8Decoder.decode(bytes);
         const manifest = parseManifest(text);
         const fetchedAt = now();
-        void store.put({ key: MANIFEST_KEY, sha256: '', text, asOf: manifest.built_at, storedAt: fetchedAt });
+        void store.put({
+            key: MANIFEST_KEY,
+            sha256: await sha256Hex(bytes),
+            text,
+            asOf: manifest.built_at,
+            storedAt: fetchedAt,
+        });
         return { manifest, fetchedAt, stale: false };
     }
 
@@ -282,7 +312,9 @@ export function createCompanyDataClient(options: CompanyDataClientOptions = {}) 
             let fallback = current;
             if (!fallback) {
                 const stored = await store.get(MANIFEST_KEY);
-                if (stored) {
+                // Only a manifest that was fetched online and still hashes to
+                // the sha256 recorded then is used.
+                if (stored && SHA256_HEX.test(stored.sha256) && (await textSha256(stored.text)) === stored.sha256) {
                     try {
                         fallback = { manifest: parseManifest(stored.text), fetchedAt: stored.storedAt, stale: true };
                     } catch {
@@ -353,7 +385,7 @@ export function createCompanyDataClient(options: CompanyDataClientOptions = {}) 
         if (actual !== entry.sha256) {
             throw new CompanyDataError('integrity', `${entry.path} sha256 mismatch`);
         }
-        return new TextDecoder().decode(bytes);
+        return utf8Decoder.decode(bytes);
     }
 
     /**
@@ -374,6 +406,7 @@ export function createCompanyDataClient(options: CompanyDataClientOptions = {}) 
             if (typeof entry.sha256 !== 'string' || !SHA256_HEX.test(entry.sha256)) {
                 throw new CompanyDataError('invalid_data', `${entry.path} has no valid sha256`);
             }
+            const origin = originOf(state, entry, schemaVersion);
             const cached = memory.get(entry.path);
             if (cached && cached.sha256 === entry.sha256) {
                 if (perCompany) {
@@ -382,23 +415,24 @@ export function createCompanyDataClient(options: CompanyDataClientOptions = {}) 
                 }
                 return { data: (await cached.value) as T, meta: metaFor(state, entry, schemaVersion, false) };
             }
-            const stored = await store.get(entry.path);
+            let stored = await store.get(entry.path);
+            // Re-hash the persisted text: the record's sha256 field alone
+            // proves nothing about the bytes next to it.
+            if (stored && !(await storedIntact(stored))) {
+                void store.delete(entry.path);
+                stored = undefined;
+            }
             if (stored && stored.sha256 === entry.sha256) {
                 const value = parseJson(entry.path, stored.text);
-                remember(entry.path, entry.sha256, value, perCompany);
+                remember(entry.path, entry.sha256, value, perCompany, origin);
                 return { data: value as T, meta: metaFor(state, entry, schemaVersion, false) };
             }
             try {
                 const text = await download(entry);
                 const value = parseJson(entry.path, text);
-                remember(entry.path, entry.sha256, value, perCompany);
-                void store.put({
-                    key: entry.path,
-                    sha256: entry.sha256,
-                    text,
-                    asOf: entry.as_of ?? null,
-                    storedAt: now(),
-                });
+                remember(entry.path, entry.sha256, value, perCompany, origin);
+                const { asOf, ...meta } = origin;
+                void store.put({ key: entry.path, sha256: entry.sha256, text, asOf, storedAt: now(), meta });
                 return { data: value as T, meta: metaFor(state, entry, schemaVersion, false) };
             } catch (error) {
                 if (isCompanyDataError(error) && error.code === 'integrity' && attempt === 0) {
@@ -412,16 +446,13 @@ export function createCompanyDataClient(options: CompanyDataClientOptions = {}) 
                     throw error;
                 }
                 if (isCompanyDataError(error) && error.code === 'network') {
-                    const older = cached ?? (stored ? { sha256: stored.sha256, value: Promise.resolve(parseJson(entry.path, stored.text)) } : null);
+                    // Serve the older copy under the release it came from.
+                    const older = olderCopy(entry.path, kind, cached, stored);
                     if (older) {
-                        const value = await older.value;
+                        const { asOf, ...rest } = older.origin;
                         return {
-                            data: value as T,
-                            meta: {
-                                ...metaFor(state, entry, schemaVersion, true),
-                                sha256: older.sha256,
-                                asOf: stored?.asOf ?? entry.as_of ?? null,
-                            },
+                            data: (await older.value) as T,
+                            meta: { path: entry.path, sha256: older.sha256, asOf, ...rest, stale: true },
                         };
                     }
                     if (state.stale) {
@@ -433,17 +464,57 @@ export function createCompanyDataClient(options: CompanyDataClientOptions = {}) 
         }
     }
 
+    function originOf(state: ManifestState, entry: ManifestEntry | ManifestFile, schemaVersion: string): MemoryEntry['origin'] {
+        return {
+            releaseId: state.manifest.release_id,
+            builtAt: state.manifest.built_at,
+            schemaVersion,
+            officialFetchedAt: state.manifest.official_fetched_at ?? null,
+            disclaimer: state.manifest.disclaimer ?? null,
+            asOf: entry.as_of ?? null,
+        };
+    }
+
+    async function storedIntact(stored: { sha256: string; text: string }): Promise<boolean> {
+        return SHA256_HEX.test(stored.sha256) && (await textSha256(stored.text)) === stored.sha256;
+    }
+
+    /** An earlier release's copy (already hash-checked) with its own metadata, if usable. */
+    function olderCopy(
+        path: string,
+        kind: keyof typeof SUPPORTED_MAJOR,
+        cached: MemoryEntry | undefined,
+        stored: Awaited<ReturnType<CompanyDataStore['get']>>,
+    ): MemoryEntry | null {
+        const candidate: MemoryEntry | null = cached
+            ? cached
+            : stored?.meta
+              ? {
+                    sha256: stored.sha256,
+                    value: Promise.resolve().then(() => parseJson(path, stored.text)),
+                    origin: { ...stored.meta, asOf: stored.asOf },
+                }
+              : null;
+        if (!candidate) return null;
+        try {
+            assertMajor(kind, candidate.origin.schemaVersion);
+        } catch {
+            return null;
+        }
+        return candidate;
+    }
+
     function parseJson(path: string, text: string): unknown {
         try {
-            return JSON.parse(text);
+            return JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
         } catch {
             throw new CompanyDataError('invalid_data', `${path} is not JSON`);
         }
     }
 
-    function remember(path: string, sha256: string, value: unknown, perCompany: boolean) {
+    function remember(path: string, sha256: string, value: unknown, perCompany: boolean, origin: MemoryEntry['origin']) {
         memory.delete(path);
-        memory.set(path, { sha256, value: Promise.resolve(value) });
+        memory.set(path, { sha256, value: Promise.resolve(value), origin });
         if (!perCompany) return;
         let companyFiles = 0;
         for (const key of memory.keys()) if (key.includes('/json/')) companyFiles += 1;

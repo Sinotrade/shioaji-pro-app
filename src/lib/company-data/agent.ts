@@ -11,6 +11,7 @@ import {
     companyEntityId,
     isCompanyDataError,
     normalizeCompanyCode,
+    STALE_TEXT,
     type CompanyDataClient,
     type DataMeta,
     type Loaded,
@@ -91,7 +92,7 @@ export const COMPANY_DATA_TOOL_SPECS: readonly CompanyDataToolSpec[] = [
                 theme: { type: 'string', description: '題材 id、名稱或別名，例如 theme.ai_server、AI 伺服器、CoWoS' },
                 chain: { type: 'string', description: '產業鏈 id 或名稱，例如 chain.semiconductor、半導體' },
                 stage: { type: 'string', description: '階段 id／名稱，或 upstream／midstream／downstream（上游／中游／下游）' },
-                limit: { type: 'number', description: '最多列幾家，預設 60，最大 300' },
+                limit: { type: 'number', description: '最多列幾家（不指定題材時為最多列幾個題材），預設 60，最大 300' },
             },
             additionalProperties: false,
         },
@@ -123,6 +124,60 @@ const OFFICIAL_ONLY_NOTICE =
     '此公司尚未研究，只有官方資料（交易所開放資料）；沒有業務、產業鏈與上下游研究，回答時要說明。';
 const OFFICIAL_NOTICE = '官方資料：證交所、櫃買中心開放資料與公開資訊觀測站彙總報表。';
 
+/**
+ * Upper bound for one tool result, as serialised JSON characters. Results are
+ * shrunk to fit (longest lists first, then long text) and flagged `truncated`,
+ * so one call cannot flood the model context.
+ */
+export const MAX_TOOL_RESULT_CHARS = 20_000;
+const TRUNCATED_NOTE = '結果過長已截斷：清單只列前幾筆（count 為完整筆數），可用 limit、max_relations、months、quarters 或更精確的條件縮小範圍';
+
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+
+function longestArray(value: Json, best: { arr: Json[]; size: number } | null): { arr: Json[]; size: number } | null {
+    if (Array.isArray(value)) {
+        const size = value.length > 0 ? JSON.stringify(value).length : 0;
+        if (value.length > 0 && (!best || size > best.size)) best = { arr: value, size };
+        for (const item of value) best = longestArray(item, best);
+    } else if (value && typeof value === 'object') {
+        for (const item of Object.values(value)) best = longestArray(item, best);
+    }
+    return best;
+}
+
+function clipStrings(value: Json, max: number): Json {
+    if (typeof value === 'string') return value.length > max ? `${value.slice(0, max)}…` : value;
+    if (Array.isArray(value)) return value.map((v) => clipStrings(v, max));
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, clipStrings(v, max)]));
+    }
+    return value;
+}
+
+/** Shrink `result` to at most `maxChars` of JSON, adding `truncated: true` when it had to. */
+export function capToolResult<T>(result: T, maxChars = MAX_TOOL_RESULT_CHARS): T | Record<string, unknown> {
+    const size = (v: unknown) => JSON.stringify(v)?.length ?? 0;
+    if (size(result) <= maxChars) return result;
+    let value = JSON.parse(JSON.stringify(result)) as Json;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        value = { items: value };
+    }
+    const flag = { truncated: true, truncated_note: TRUNCATED_NOTE };
+    const fits = () => size({ ...(value as object), ...flag }) <= maxChars;
+    // Long prose first (summaries), then lists, then any remaining text.
+    if (!fits()) value = clipStrings(value, 2000);
+    while (!fits()) {
+        const target = longestArray(value, null);
+        if (!target) break;
+        target.arr.splice(Math.floor(target.arr.length / 2));
+    }
+    for (const max of [500, 120]) {
+        if (fits()) break;
+        value = clipStrings(value, max);
+    }
+    return { ...(value as Record<string, Json>), ...flag };
+}
+
 function clampInt(value: unknown, fallback: number, max: number): number {
     const n = Math.floor(Number(value));
     if (!Number.isFinite(n) || n <= 0) return fallback;
@@ -134,7 +189,9 @@ function dataInfo(meta: DataMeta) {
         release_id: meta.releaseId,
         built_at: meta.builtAt,
         official_fetched_at: meta.officialFetchedAt,
-        ...(meta.stale ? { stale: true, stale_note: '目前無法連線資料來源，使用本機快取' } : {}),
+        ...(meta.stale
+            ? { stale: true, stale_note: `${STALE_TEXT}：目前無法連線資料來源，使用先前下載並驗證過的本機快取，可能不是最新版` }
+            : {}),
     };
 }
 
@@ -229,7 +286,7 @@ export function createCompanyDataTools(client: CompanyDataClient) {
             },
             notice: researched ? THIRD_PARTY_NOTICE : OFFICIAL_ONLY_NOTICE,
             summary: c.summary_long ?? c.summary_short,
-            segments: (c.segments ?? []).map((s) => ({
+            segments: (c.segments ?? []).slice(0, 20).map((s) => ({
                 name: s.name,
                 revenue_share_pct: s.revenue_share_pct,
                 period: s.period,
@@ -246,7 +303,7 @@ export function createCompanyDataTools(client: CompanyDataClient) {
                   }
                 : null,
             main_theme: themeName(themes, c.main_theme),
-            themes: (c.themes ?? []).map((t) => {
+            themes: (c.themes ?? []).slice(0, 30).map((t) => {
                 const theme = themes?.find((x) => x.id === t.theme);
                 return {
                     id: t.theme,
@@ -313,10 +370,17 @@ export function createCompanyDataTools(client: CompanyDataClient) {
         ]);
         const themeQuery = typeof input.theme === 'string' ? input.theme.trim() : '';
         const chainQuery = typeof input.chain === 'string' ? input.chain.trim() : '';
-        const list = (pool: Theme[]) =>
-            pool.map((t) => ({ id: t.id, kind: t.kind, name: t.name, members: t.members.length }));
+        const limit = clampInt(input.limit, 60, 300);
+        const list = (pool: Theme[], max: number) =>
+            pool.slice(0, max).map((t) => ({ id: t.id, kind: t.kind, name: t.name, members: t.members.length }));
         if (!themeQuery && !chainQuery) {
-            return { themes: list(themes), as_of: meta.asOf, notice: THIRD_PARTY_NOTICE, data: dataInfo(meta) };
+            return {
+                count: themes.length,
+                themes: list(themes, limit),
+                as_of: meta.asOf,
+                notice: THIRD_PARTY_NOTICE,
+                data: dataInfo(meta),
+            };
         }
         const { theme, candidates } = resolveTheme(
             themes,
@@ -324,9 +388,11 @@ export function createCompanyDataTools(client: CompanyDataClient) {
             themeQuery ? undefined : 'chain',
         );
         if (!theme) {
+            const pool = candidates.length ? candidates : themes;
             return {
                 error: candidates.length > 1 ? '符合的題材不只一個，請指定 id' : '找不到這個產業鏈或題材',
-                candidates: list(candidates.length ? candidates : themes),
+                count: pool.length,
+                candidates: list(pool, Math.min(limit, 40)),
             };
         }
         const stageQuery = typeof input.stage === 'string' ? input.stage.trim() : '';
@@ -337,7 +403,6 @@ export function createCompanyDataTools(client: CompanyDataClient) {
                 stages: theme.stages.map((s) => ({ id: s.id, name: s.name, tier: tierLabel(s.tier) })),
             };
         }
-        const limit = clampInt(input.limit, 60, 300);
         const index = entities ? entityIndex(entities) : null;
         const cap = (id: string) => {
             const code = twCodeOf(id);
@@ -458,10 +523,10 @@ export function createCompanyDataTools(client: CompanyDataClient) {
         find_relations: findRelations,
     };
 
-    /** Run one tool; data-source failures come back as `{ error, code }`. */
+    /** Run one tool (result capped to MAX_TOOL_RESULT_CHARS); data-source failures come back as `{ error, code }`. */
     async function run(name: CompanyDataToolName, input: Record<string, unknown>): Promise<unknown> {
         try {
-            return await handlers[name](input ?? {});
+            return capToolResult(await handlers[name](input ?? {}));
         } catch (error) {
             if (isCompanyDataError(error)) {
                 return { error: companyDataErrorText(error), code: error.code };

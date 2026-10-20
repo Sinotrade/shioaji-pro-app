@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { BASE, createFakeHost, type FakeHost } from './__fixtures__/server';
-import { COMPANY_DATA_TOOL_NAMES, COMPANY_DATA_TOOL_SPECS, createCompanyDataTools, isCompanyDataTool } from './agent';
+import { COMPANY_DATA_TOOL_NAMES, COMPANY_DATA_TOOL_SPECS, capToolResult, createCompanyDataTools, isCompanyDataTool } from './agent';
 import { createCompanyDataClient } from './client';
 import { createMemoryStore } from './store';
 
@@ -88,6 +88,9 @@ describe('company data Agent tools', () => {
         expect(chain.theme.id).toBe('chain.semiconductor');
         const all = await run('find_theme_members', {});
         expect(all.themes.map((t: Json) => t.id)).toContain('theme.cowos');
+        const one = await run('find_theme_members', { limit: 1 });
+        expect(one.themes).toHaveLength(1);
+        expect(one.count).toBe(all.themes.length);
         const missing = await run('find_theme_members', { theme: '不存在的題材' });
         expect(missing.error).toBeTruthy();
         expect(missing.candidates.length).toBeGreaterThan(0);
@@ -135,5 +138,22 @@ describe('company data Agent tools', () => {
         expect(r.error).toContain('沒有快取');
         host.offline = false;
         expect(await run('get_company', { code: '9999' })).toMatchObject({ code: 'not_found' });
+    });
+});
+
+describe('company data tool result size', () => {
+    it('caps oversized results and flags them as truncated', () => {
+        const big = {
+            count: 500,
+            members: Array.from({ length: 500 }, (_, i) => ({ id: `tw.${1000 + i}`, detail: 'x'.repeat(200) })),
+            summary: 'y'.repeat(50_000),
+        };
+        const capped = capToolResult(big, 8000) as typeof big & { truncated?: boolean };
+        expect(JSON.stringify(capped).length).toBeLessThanOrEqual(8000);
+        expect(capped.truncated).toBe(true);
+        expect(capped.count).toBe(500);
+        expect(capped.members.length).toBeGreaterThan(0);
+        const small = { a: 1 };
+        expect(capToolResult(small)).toBe(small);
     });
 });
