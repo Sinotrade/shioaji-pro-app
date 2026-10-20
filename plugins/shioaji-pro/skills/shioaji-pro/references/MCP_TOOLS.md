@@ -8,7 +8,7 @@ calling a tool. The families below describe intent, not permission.
 
 | Family | Typical intent | Capability tier |
 | --- | --- | --- |
-| `market` | Quotes, snapshots, product search, K-bar summaries, and scanners | `market.read` |
+| `market` | Quotes, snapshots, product search, K-bar summaries, scanners, and company data | `market.read` |
 | `account` | Positions, working orders, balances, margin, and risk indicators | `account.read` |
 | `workspace` | Select a contract; inspect or change panels, links, and layouts | `ui.control` |
 | `content` | Create App-native indicators and strategies; mount, inspect, adjust, or remove chart instances; manage reusable skills | `ui.control` |
@@ -39,7 +39,12 @@ past success or conversation text.
 ## v1 semantic names
 
 - Market: `get_quote`, `get_snapshots`, `search_products`,
-  `get_kbar_summary`, `get_scanner`.
+  `get_kbar_summary`, `get_scanner`, `get_company`, `get_financials`,
+  `find_theme_members`, `find_relations`. The last four read the public
+  shioaji-data company dataset (Taiwan listed and OTC companies): business
+  summary, multi-level industry, value-chain stage, themes, suppliers and
+  customers, monthly revenue, and quarterly statements. Read
+  [Company data](#company-data) before answering from them.
 - Account: `get_positions`, `get_working_orders`, `get_account`.
 - App state: `get_app_state`, `list_panels`, `get_user_activity`.
 - Workspace mutation: `select_contract`, `add_panel`, `remove_panel`,
@@ -82,3 +87,21 @@ same key must never be reused for a different payload.
 Availability still depends on the connected server's advertised schema and the
 session's granted capabilities. Do not invent audit, approval-token, raw HTTP,
 or any other tools when they are absent.
+
+## Company data
+
+- Codes use the Shioaji stock code (`2330`) or the entity id (`tw.2330`).
+  `find_relations` also accepts foreign entity ids such as `us.NVDA`, so it can
+  list the Taiwan suppliers of a foreign company. Relation types are
+  `supplier` (who supplies it), `customer` (whom it supplies), `competitor`,
+  `partner`, `subsidiary` (its subsidiaries), `parent`, and `transaction`.
+- For a value chain or theme question, call `find_theme_members` with the
+  theme or chain and an optional stage or tier (`upstream`, `midstream`,
+  `downstream`). Without arguments it lists every chain and theme.
+- Research fields are third-party data compiled by AI from public documents and
+  cross-checked by several models. When answering from them, label them as
+  third-party data and cite `as_of` and `sources`. When `research.status` is
+  `official_only`, say the company has only official exchange data.
+  `get_financials` and daily close and market cap are official data.
+- Company data is a daily snapshot. Use `get_quote` or `get_snapshots` for the
+  live price. A `stale` flag means the App is offline and serving its cache.

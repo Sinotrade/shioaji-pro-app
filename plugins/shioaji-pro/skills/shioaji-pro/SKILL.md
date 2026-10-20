@@ -7,7 +7,8 @@ description: |
   adjustment, static portfolio research, Grid/Random optimization, bounded
   backtest analysis and export, reusable skills, background tasks,
   guarded trade preview and execution, user-authorized controlled auto, restart
-  recovery, and privacy. Use the separate
+  recovery, privacy, and read-only company data (fundamentals, value chains,
+  themes, suppliers and customers, revenue and statements). Use the separate
   Shioaji API skill for direct Python, CLI, HTTP, or SSE integration.
 ---
 
@@ -77,6 +78,14 @@ operations; never substitute shell commands, UI coordinates, or raw keystrokes.
   reporting completion. A code snippet or workspace file is not a saved App item.
 - These writes affect local App content, not brokerage orders. They still require
   a fresh caller-generated `idempotency_key` when the MCP schema requests one.
+
+## Company Data
+
+- Answer company, value-chain, theme, supplier, and customer questions with
+  `get_company`, `find_theme_members`, `find_relations`, and `get_financials`
+  as described in [MCP_TOOLS.md](references/MCP_TOOLS.md#company-data).
+- Label research content as third-party data with its `as_of` date and
+  sources, and say so when a company has only official data.
 
 ## Guardrails
 
