@@ -66,7 +66,7 @@ describe('restoreAfterUnfilledClose', () => {
         expect(await r.done).toBe('restored');
         expect(r.restore).toHaveBeenCalledTimes(1);
         expect(r.restore).toHaveBeenCalledWith({ exitAction: 'Sell', stop: 95, take: 110, quantity: 2 });
-        expect(r.notify).toHaveBeenCalledWith(expect.objectContaining({ title: '⚡ 平倉未成交，已恢復停損停利', body: expect.stringContaining('仍持有 2 口') }));
+        expect(r.notify).toHaveBeenCalledWith(expect.objectContaining({ title: '⚡ 平倉未成交，已恢復停損停利', body: expect.stringMatching(/仍持有 \u2061?2 口/) }));
     });
 
     it('partly filled: only what the close left (never more than held, never more than before − filled)', async () => {
@@ -139,7 +139,7 @@ describe('warnIfStillHeld (stocks: nothing put back)', () => {
     it('shares still held (any number, odd lots too): an unprotected warning; flat: silent', async () => {
         const notify = vi.fn();
         expect(await warnIfStillHeld(1500, '2330', { readHeld: async () => 500, notify, sleep: noSleep })).toBe(true);
-        expect(notify).toHaveBeenCalledWith(expect.objectContaining({ body: expect.stringContaining('仍持有 500 股') }));
+        expect(notify).toHaveBeenCalledWith(expect.objectContaining({ body: expect.stringMatching(/仍持有 \u2061?500 股/) }));
         const quiet = vi.fn();
         expect(await warnIfStillHeld(1500, '2330', { readHeld: async () => 0, notify: quiet, sleep: noSleep })).toBe(false);
         expect(quiet).not.toHaveBeenCalled();

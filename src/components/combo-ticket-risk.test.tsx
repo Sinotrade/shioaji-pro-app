@@ -35,7 +35,7 @@ vi.mock('../lib/combo-pick', () => ({ useComboPick: () => null }));
 vi.mock('../lib/option-pick', () => ({ useOptionLegPick: () => null }));
 vi.mock('../lib/price-sync', () => ({ usePickedPrice: () => null }));
 vi.mock('../lib/quote-ownership', () => ({ retainContractQuotes: () => () => undefined }));
-vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => false, maskAccountId: (id: string) => id, getPrivacyMoney: () => false, maskMoney: (t: string) => t }));
+vi.mock('../lib/privacy', async (orig) => ({ ...(await orig<typeof import('../lib/privacy')>()), usePrivacyMode: () => false, maskAccountId: (id: string) => id }));
 vi.mock('../lib/contracts-cache', () => ({ ensureContract: async (code: string) => contracts[code] }));
 vi.mock('../lib/shioaji', () => ({
     buildComboContract: vi.fn(),
@@ -95,7 +95,7 @@ type Rule = { name: string; qty: number; apply: () => void; reason: RegExp };
 const rules: Rule[] = [
     { name: 'Kill Switch', qty: 1, apply: () => setRiskSettings({ locked: true }), reason: /風控鎖啟動中/ },
     { name: 'per-order limit', qty: 3, apply: () => setRiskSettings({ enabled: true, maxQty: 2 }), reason: /超過單筆上限 2（本筆 3）/ },
-    { name: 'daily loss limit', qty: 1, apply: () => { setRiskSettings({ enabled: true, maxDailyLoss: 3000 }); reportDailyPnl(-3500); }, reason: /當日虧損 -3500 已達上限 -3000/ },
+    { name: 'daily loss limit', qty: 1, apply: () => { setRiskSettings({ enabled: true, maxDailyLoss: 3000 }); reportDailyPnl(-3500); }, reason: /當日虧損 \u2061?-3500\u2063? 已達上限 -\u2061?3000\u2063?/ },
 ];
 
 beforeEach(() => {

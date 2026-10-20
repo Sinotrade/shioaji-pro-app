@@ -18,6 +18,7 @@ import { conditionalDemoActive, demoFlattenState } from '../lib/conditional/demo
 import { getCachedContract } from '../lib/contracts-cache';
 import { backgroundSupported } from '../lib/execution/background';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import { useRevealText } from '../lib/privacy-text';
 import { setRiskSettings, useRiskSettings } from '../lib/risk';
 import { useTradingState } from '../lib/trading-state';
 import type { ContractInfo } from '../lib/types/contract';
@@ -123,6 +124,7 @@ export function FlattenDialog({ contract: given, rows, onClose }: { contract: Co
     const live = useTradingState();
     const trading = demo ? { ...live, positions: demo.positions as never, trades: demo.trades as never } : live;
     const priv = usePrivacyMode();
+    const reveal = useRevealText();
     const selected = futures ? accounts.selectedFutures : accounts.selectedStock;
     const account: AccountRef | null = demo ? demo.account : selected && (selected.account_type === 'S' || selected.account_type === 'F')
         ? { account_type: selected.account_type, broker_id: selected.broker_id, account_id: selected.account_id } : null;
@@ -233,8 +235,8 @@ export function FlattenDialog({ contract: given, rows, onClose }: { contract: Co
                 <div className={styles.summary} role='status'>
                     <Info size={13} aria-hidden style={{ flex: 'none', marginTop: 4 }} />
                     <span>
-                        {flattenSummary(result)}
-                        {result.remaining.length > 0 && <><br /><b className={styles.tone.err}>{remainingText(result).join('；')}</b>（已列入需要你處理）</>}
+                        {reveal(flattenSummary(result))}
+                        {result.remaining.length > 0 && <><br /><b className={styles.tone.err}>{reveal(remainingText(result).join('；'))}</b>（已列入需要你處理）</>}
                     </span>
                 </div>
             ) : loading ? (

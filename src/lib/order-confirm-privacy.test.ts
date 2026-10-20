@@ -24,4 +24,11 @@ describe('accountConfirmLabel', () => {
         expect(privacyAccountLabel('9A95-***6502', false)).toBe('9A95-***6502');
         expect(privacyAccountLabel('9A95-•••••02', true)).toBe('9A95-•••••02');
     });
+    it('#268 re-masks every account of a split-order label (帳號×數量)', () => {
+        const split = '分倉 2 戶：9A95-***6502×3、9A95-***1121×12';
+        const masked = privacyAccountLabel(split, true);
+        expect(masked).toBe('分倉 2 戶：9A95-•••••02×3、9A95-•••••21×12');
+        expect(masked).not.toMatch(/6502|1121/);
+        expect(privacyAccountLabel(split, false)).toBe(split);
+    });
 });
