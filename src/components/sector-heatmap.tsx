@@ -65,7 +65,7 @@ const SIZE_METRICS: { value: SizeMetric; label: string }[] = [
 
 // 其他成員漲跌幅不顯示時的說明（資料不同刻／餘量權重過小／超出漲跌停）
 const OTHER_PCT_UNAVAILABLE =
-    '加權漲跌暫無法可靠估算（尚無與排行同刻的群組資料，或餘量權重過小）';
+    '加權漲跌暫無法可靠估算（尚無與排行同時點的群組資料，或餘量權重過小）';
 
 const CAT_KEY = 'sj-pro-heatmap-cat'; // 舊鍵沿用：最近下鑽的產業
 const SIZE_KEY = 'sj-pro-panorama-size';
@@ -468,8 +468,9 @@ export function SectorHeatmap({
     const fmtDrillValue = (value: number) =>
         isAmountDrill ? fmtAmount(value) : fmtPoints(value);
     // 其他成員的加權漲跌幅反推（群組加權漲跌扣排行前 10）— 群組漲跌只取
-    // 與排行同一個 calculated_at 的那一包；沒有同刻資料、餘量權重過小或
-    // 結果超出漲跌停時顯示「—」（#330）。權重取建底參考權重（盤中恆定，
+    // 排行 calculated_at 當下有效的值（建底同快照／盤中 AS-OF，見
+    // getIcGroupWperfAt）；無法判定、餘量權重過小或結果超出漲跌停時顯示
+    // 「—」（#330）。權重取建底參考權重（盤中恆定，
     // 與排行列的 weight_pct 同基準）。
     const drillCalculatedAt = drillState?.calculatedAt;
     const { drillGroupWeight, drillGroupPctAtRows } = useMemo(

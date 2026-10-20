@@ -9,7 +9,11 @@ import {
     subscribeIndexComponents,
     unsubscribeIndexComponents,
 } from './shioaji';
-import { ensureStream, onStreamEvent } from './stream';
+import {
+    ensureStream,
+    onStreamEvent,
+    streamConnectionEpoch,
+} from './stream';
 import type { ContractBase } from './types/contract';
 import type {
     IcGroupMetric,
@@ -309,47 +313,122 @@ export function getIcBootstrapGroupWeights(
     );
 }
 
-// 群組加權漲跌的近期歷史（依 calculated_at 索引）— 讓下鑽層用「與排行同
-// 一個 calculated_at」的群組漲跌反推其他成員（#330）。gm:weighted_performance
-// 1 秒一包、排行 5 秒一包，保留最近 WPERF_HISTORY_LIMIT 包即可涵蓋排行的
-// 節奏；建底快照的群組漲跌也記入（與快照投出的排行同刻）。
-const WPERF_HISTORY_LIMIT = 120;
-const wperfHistory = new Map<string, Map<number, ReadonlyMap<string, number>>>();
+// ---- 群組加權漲跌依時間配對（#330 下鑽「其他成員」反推）----
+//
+// 伺服器各投影獨立「內容有變才發布」（群組指標 ≤1 秒、群組內排行 ≤5 秒，
+// 皆由同一份 canonical snapshot 投出；無 sequence／replay／retained）。所以
+// 排行在 T 更新時，群組漲跌可能沒變、也就沒有 calculated_at＝T 的那一包。
+// 正確的配對是 AS-OF：T 時有效的群組漲跌＝calculated_at ≤ T 的最後一包，
+// 前提是這段期間持續訂閱、沒有漏包：
+// - live 歷史綁定串流連線世代（streamConnectionEpoch）；世代改變（重連，
+//   期間可能漏包）或 wperf 投影退訂時清空，從下一包重新累積；
+// - 排行早於歷史最早一包 → 無法判定，回 undefined（畫面顯示「—」）。
+// 建底快照另存：它的排行投影與群組漲跌同一快照，calculated_at 完全相同
+// 時直接配對，不受連線世代影響。
+// 時間以奈秒 BigInt 比較，保留伺服器的次秒精度（Date.parse 只到毫秒）。
 
-function recordWperf(
+const WPERF_HISTORY_LIMIT = 900; // ≥15 分鐘的 1 秒包
+
+interface WperfPoint {
+    at: bigint;
+    groups: ReadonlyMap<string, number>;
+}
+
+const bootstrapWperf = new Map<string, WperfPoint>();
+const liveWperf = new Map<string, { epoch: number; points: WperfPoint[] }>();
+
+const TIME_RE =
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})$/;
+
+/** ISO 8601（需帶時區）→ epoch 奈秒；無法解析回 null */
+export function parseCalculatedAtNs(value: string | undefined): bigint | null {
+    if (!value) return null;
+    const match = TIME_RE.exec(value);
+    if (!match) return null;
+    const zone =
+        match[3] === 'Z' || match[3]!.includes(':')
+            ? match[3]
+            : `${match[3]!.slice(0, 3)}:${match[3]!.slice(3)}`;
+    const ms = Date.parse(`${match[1]}${zone}`);
+    if (!Number.isFinite(ms)) return null;
+    const frac = BigInt((match[2] ?? '').padEnd(9, '0'));
+    return BigInt(ms) * 1_000_000n + frac;
+}
+
+function toPoint(
+    calculatedAt: string,
+    groups: readonly { category: string; value: number }[],
+): WperfPoint | null {
+    const at = parseCalculatedAtNs(calculatedAt);
+    if (at === null) return null;
+    return {
+        at,
+        groups: new Map(groups.map((group) => [group.category, group.value])),
+    };
+}
+
+function recordBootstrapWperf(code: string, snapshot: RawIndexComponentsSnapshot) {
+    const point = toPoint(
+        snapshot.calculated_at,
+        snapshot.groups.map((group) => ({
+            category: group.category,
+            value: num(group.weighted_pct_chg),
+        })),
+    );
+    if (point) bootstrapWperf.set(code, point);
+    else bootstrapWperf.delete(code);
+}
+
+function recordLiveWperf(
     code: string,
     calculatedAt: string,
     groups: readonly { category: string; value: number }[],
 ) {
-    const at = Date.parse(calculatedAt);
-    if (!Number.isFinite(at)) return;
-    let history = wperfHistory.get(code);
-    if (!history) {
-        history = new Map();
-        wperfHistory.set(code, history);
+    const point = toPoint(calculatedAt, groups);
+    if (!point) return;
+    const epoch = streamConnectionEpoch();
+    let history = liveWperf.get(code);
+    if (!history || history.epoch !== epoch) {
+        history = { epoch, points: [] };
+        liveWperf.set(code, history);
     }
-    history.set(
-        at,
-        new Map(groups.map((group) => [group.category, group.value])),
-    );
-    while (history.size > WPERF_HISTORY_LIMIT) {
-        let oldest = Infinity;
-        for (const key of history.keys()) oldest = Math.min(oldest, key);
-        history.delete(oldest);
+    const { points } = history;
+    // 依時間插入（亂序到達時仍保持排序）；同刻重送則覆蓋
+    let index = points.length;
+    while (index > 0 && points[index - 1]!.at > point.at) index -= 1;
+    if (index > 0 && points[index - 1]!.at === point.at) {
+        points[index - 1] = point;
+    } else {
+        points.splice(index, 0, point);
+    }
+    if (points.length > WPERF_HISTORY_LIMIT) {
+        points.splice(0, points.length - WPERF_HISTORY_LIMIT);
     }
 }
 
-// 指定 calculated_at（同一瞬間，格式差異如小數位數不影響）的群組加權漲跌；
-// 沒有同刻的那一包就回 undefined — 呼叫端不得拿別刻的值湊數。
+function clearLiveWperf(code: string) {
+    liveWperf.delete(code);
+}
+
+// 排行 calculated_at 當下有效的群組加權漲跌（AS-OF 配對，規則見上）；
+// 無法判定時回 undefined — 呼叫端不得拿別的值湊數。
 export function getIcGroupWperfAt(
     code: string,
     category: string,
     calculatedAt: string | undefined,
 ): number | undefined {
-    if (!calculatedAt) return undefined;
-    const at = Date.parse(calculatedAt);
-    if (!Number.isFinite(at)) return undefined;
-    return wperfHistory.get(code)?.get(at)?.get(category);
+    const at = parseCalculatedAtNs(calculatedAt);
+    if (at === null) return undefined;
+    const bootstrap = bootstrapWperf.get(code);
+    if (bootstrap && bootstrap.at === at) return bootstrap.groups.get(category);
+    const epoch = streamConnectionEpoch();
+    const history = liveWperf.get(code);
+    if (!history || epoch < 0 || history.epoch !== epoch) return undefined;
+    const { points } = history;
+    let index = points.length - 1;
+    while (index >= 0 && points[index]!.at > at) index -= 1;
+    if (index < 0) return undefined; // 排行早於歷史涵蓋範圍
+    return points[index]!.groups.get(category);
 }
 
 export function getIcBootstrapStatus(code: string): {
@@ -402,14 +481,7 @@ async function runBootstrap(index: ContractBase) {
             const snapshot =
                 await fetchIndexComponents<RawIndexComponentsSnapshot>(index);
             bootstraps.set(code, snapshot);
-            recordWperf(
-                code,
-                snapshot.calculated_at,
-                snapshot.groups.map((group) => ({
-                    category: group.category,
-                    value: num(group.weighted_pct_chg),
-                })),
-            );
+            recordBootstrapWperf(code, snapshot);
             bootstrapStatus.set(code, 'ready');
             applyBootstrap(code);
             emit();
@@ -490,7 +562,7 @@ function handleEvent(raw: string) {
     if (!parsed) return;
     const key = `${parsed.code}|${parsed.projKey}`;
     if (parsed.projKey === projectionKey(WPERF_PROJECTION)) {
-        recordWperf(
+        recordLiveWperf(
             parsed.code,
             parsed.state.calculatedAt,
             parsed.state.groups ?? [],
@@ -557,6 +629,8 @@ export function retainIndexComponents(
         if (remaining <= 0) {
             refs.delete(key);
             active.get(code)?.delete(projKey);
+            // 退訂後可能漏包 — AS-OF 歷史不再可信
+            if (projKey === projectionKey(WPERF_PROJECTION)) clearLiveWperf(code);
         } else {
             refs.set(key, remaining);
         }

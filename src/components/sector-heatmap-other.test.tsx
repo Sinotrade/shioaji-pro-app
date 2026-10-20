@@ -1,5 +1,5 @@
-// #330 — 下鑽「其他成員」：沒有與排行同刻的群組漲跌時顯示「—」，
-// 同刻時顯示反推的 ≈值
+// #330 — 下鑽「其他成員」：無法取得排行當下有效的群組漲跌時顯示「—」，
+// 取得時顯示反推的 ≈值
 import { createElement } from 'react';
 import {
     act,
@@ -127,7 +127,7 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
-it('沒有與排行同刻的群組漲跌 → 其他成員顯示「—」，不再出現 ≈+10%', async () => {
+it('無法取得排行當下有效的群組漲跌 → 其他成員顯示「—」，不再出現 ≈+10%', async () => {
     m.wperfAt = undefined;
     await act(async () => {
         view = create(createElement(SectorHeatmap, {}));
@@ -140,7 +140,7 @@ it('沒有與排行同刻的群組漲跌 → 其他成員顯示「—」，不�
     expect(text(view.root)).not.toMatch(/≈\+10\.00%/);
 });
 
-it('有同刻的群組漲跌 → 顯示反推的 ≈值', async () => {
+it('取得排行當下有效的群組漲跌 → 顯示反推的 ≈值', async () => {
     m.wperfAt = -0.940698;
     await act(async () => {
         view = create(createElement(SectorHeatmap, {}));

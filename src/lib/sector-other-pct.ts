@@ -12,9 +12,10 @@
 // 值；差 0.7 個百分點乘 16 倍即衝出漲跌停。原案的雙投影 payload 未保留，
 // 這是依上述放大效應與元件資料流推得的最可能成因，未經原案資料證實。
 //
-// 因此本函式只接受「與排行同一個 calculated_at」的群組漲跌（呼叫端以
-// getIcGroupWperfAt 取得，取不到就傳 undefined），不做時間容忍；並在餘量
-// 權重過小或結果超出台股漲跌停時回 null（畫面顯示「—」），不再 clamp。
+// 因此本函式只接受「排行 calculated_at 當下有效」的群組漲跌：呼叫端以
+// getIcGroupWperfAt 取得（建底同快照精確配對；盤中依伺服器「有變才發布」
+// 做 AS-OF 配對，限持續訂閱、同一連線世代），無法判定就傳 undefined；並在
+// 餘量權重過小或結果超出台股漲跌停時回 null（畫面顯示「—」），不再 clamp。
 
 export interface OtherPctEntry {
     weight_pct: number;
@@ -24,7 +25,7 @@ export interface OtherPctEntry {
 export interface OtherPctInput {
     /** 群組參考權重（佔指數 %） */
     groupWeight: number | undefined;
-    /** 與 entries 同一 calculated_at 的群組加權漲跌幅（%）；沒有就 undefined */
+    /** entries 的 calculated_at 當下有效的群組加權漲跌幅（%）；無法判定就 undefined */
     groupPct: number | undefined;
     /** 排行前 N 成分股（權重同為佔指數 %） */
     entries: readonly OtherPctEntry[];
