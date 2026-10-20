@@ -426,11 +426,14 @@ export function Watchlist({
     // 存在於新清單，會造成看不懂的 spurious reorder
     useEffect(() => {
         setArrange(false);
+        setConfirmDelete(false);
         clearDragState();
     }, [activeListId, clearDragState]);
 
     // An Agent change waits until 調整順序 / inline rename / create is done.
-    const editing = arrange || renaming || creating;
+    // busy: an add is resolving the code; confirmDelete: the second click
+    // must still delete the list the user armed it on
+    const editing = arrange || renaming || creating || busy || confirmDelete;
     useEffect(() => {
         if (!editing || !onHoldReload) return;
         onHoldReload(true);

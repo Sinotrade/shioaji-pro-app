@@ -712,22 +712,31 @@ export function useWatchlist() {
                 return 'deferred';
             }
             deferredReload.current = null;
-            if (failedSaves.current.size > 0) {
-                // A rejected save already left the panel in its error state;
-                // a full re-read from the server is the same as 重試.
-                retryLoad();
-                return 'reloaded';
-            }
-            setReloading(true);
-            try {
-                // An explicit re-read trusts the server: drop this session's
-                // read-your-writes overlays so an outside reorder or removal
-                // is not masked by an older local commit.
+            // An explicit re-read trusts the server: drop this session's
+            // read-your-writes overlays so an outside reorder or removal is
+            // not masked by an older local commit.
+            const dropOverlays = () => {
                 committedMembership.current.clear();
                 committedOrder.current.clear();
                 pendingServerContracts.current.clear();
                 deferredContractEvents.current.clear();
                 desiredContracts.current.clear();
+            };
+            if (failedSaves.current.size > 0) {
+                // A rejected save already left the panel in its error state;
+                // a full re-read from the server is the same as 重試.
+                dropOverlays();
+                retryLoad();
+                return 'reloaded';
+            }
+            // Lock edits for the whole re-read: an add, remove or move that
+            // started now would mix with the snapshot being replaced.
+            structureBusyRef.current = true;
+            setStructureBusy(true);
+            canReplaceList.current = false;
+            setReloading(true);
+            try {
+                dropOverlays();
                 const lists = await refreshLists();
                 const target =
                     (request.select ? lists.find((list) => list.id === request.select) : undefined) ??
@@ -749,10 +758,14 @@ export function useWatchlist() {
                 await loadList(target, sameList);
                 return 'reloaded';
             } catch {
+                setLoadError(true);
                 notify({ kind: 'err', title: '重新讀取自選清單失敗', body: '無法讀取伺服器上的自選清單，請稍後再試' });
                 return 'failed';
             } finally {
+                structureBusyRef.current = false;
+                setStructureBusy(false);
                 setReloading(false);
+                queueMicrotask(() => flushDeferredReload.current());
             }
         },
         [refreshLists, loadList, retryLoad],

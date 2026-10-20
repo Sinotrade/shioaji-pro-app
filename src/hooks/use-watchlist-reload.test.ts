@@ -155,3 +155,20 @@ it('waits for a pending save instead of overwriting it, then re-reads', async ()
     // the saved order stays and the outside addition (E) arrives
     expect(codes()).toEqual(['C', 'A', 'B', 'E']);
 });
+
+it('locks edits while a re-read is in flight so nothing mixes with the old snapshot', async () => {
+    await mount();
+    let release!: () => void;
+    mocks.fetchLists.mockImplementationOnce(() => new Promise((resolve) => {
+        release = () => resolve(server.map((l) => ({ ...l, contracts: [...l.contracts] })));
+    }));
+    let reload!: Promise<string>;
+    await act(async () => { reload = state.reloadFromServer({ source: 'user' }); });
+    expect(state.structureBusy).toBe(true);
+    await act(async () => {
+        await expect(state.addSymbol('2454')).rejects.toThrow();
+    });
+    await act(async () => { release(); await reload; });
+    expect(state.structureBusy).toBe(false);
+    expect(codes()).toEqual(['A', 'B', 'C']);
+});
