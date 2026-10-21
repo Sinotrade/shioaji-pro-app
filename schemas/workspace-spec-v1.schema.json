@@ -96,6 +96,7 @@
             "grid",
             "conditional",
             "heatmap",
+            "chainmap",
             "pulse",
             "signals",
             "optpnl",

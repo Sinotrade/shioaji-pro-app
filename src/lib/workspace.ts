@@ -490,7 +490,7 @@ export const BLOCK_META: Record<
     },
     chainmap: {
         label: '產業鏈資金流向',
-        description: '產業鏈與題材的即時資金流向：每分鐘淨流入時間軸、上中下游流向與領頭股',
+        description: '產業鏈與題材的即時資金流向：族群淨流入排行、輪動與熱力，上中下游流向與領頭股',
         category: 'market',
         pinnable: false,
         singleton: false,
