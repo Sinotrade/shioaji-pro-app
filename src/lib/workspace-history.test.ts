@@ -51,11 +51,17 @@ describe('WorkspaceUndoHistory', () => {
         const changed = structuredClone(mounted);
         (changed.blocks[1] as { flashLot?: unknown }).flashLot = 'IntradayOdd';
         expect(history.settle(changed, entry.at + 600)).toBe(false);
+        // a field added to a panel that existed before the change is user work
+        const kept = structuredClone(mounted);
+        kept.blocks[0]!.chartInterval = '1D';
+        expect(history.settle(kept, entry.at + 600)).toBe(false);
+        expect(history.peek(kept)).toBeNull();
+        // link group codes are never absorbed
+        expect(history.settle({ ...mounted, linkGroups: { A: '2330' } }, entry.at + 600)).toBe(false);
         // additions after the window are not absorbed either
         const late = structuredClone(mounted);
-        late.blocks[0]!.chartInterval = '1D';
+        (late.blocks[1] as { flashQty?: unknown }).flashQty = { lot: 2 };
         expect(history.settle(late, entry.at + 5_000)).toBe(false);
-        expect(history.peek(late)).toBeNull();
         // panel list changes are never absorbed
         expect(history.settle(ws('a', 'b', 'c'), entry.at + 100)).toBe(false);
     });

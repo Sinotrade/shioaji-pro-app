@@ -25,6 +25,9 @@ export interface WorkspaceUndoEntry {
     afterRevision: string;
     /** Panels as stored right after the change, for {@link WorkspaceUndoHistory.settle}. */
     afterBlocks: Workspace['blocks'];
+    afterLinkGroups: string;
+    /** Panels the change created; only these may persist mount-time defaults. */
+    addedIds: string[];
 }
 
 export interface WorkspaceSpecValidation {
@@ -103,6 +106,10 @@ export class WorkspaceUndoHistory {
             before: structuredClone(before),
             afterRevision: workspaceContentRevision(after),
             afterBlocks: structuredClone(after.blocks),
+            afterLinkGroups: stableStringify(after.linkGroups ?? {}),
+            addedIds: after.blocks
+                .filter((block) => !before.blocks.some((b) => b.id === block.id))
+                .map((block) => block.id),
         };
         this.entries.push(entry);
         if (this.entries.length > this.limit) {
@@ -113,27 +120,31 @@ export class WorkspaceUndoHistory {
     }
 
     /**
-     * Panels that mount after an apply persist their own defaults (a new
-     * flash panel stores its lot, for example). Absorb such writes into the
-     * latest step: only within a short window after the apply, only when the
-     * panel list is unchanged and every field the apply produced keeps its
-     * value (fields may only be added). Returns whether the step was updated.
+     * Panels the change created persist their own defaults when they mount
+     * (a new flash panel stores its lot, for example). Absorb such writes into
+     * the latest step: only within a short window after the apply, only on
+     * panels the change created, only by adding fields; every other panel and
+     * the link groups must be exactly as the change left them. Returns
+     * whether the step was updated.
      */
     settle(current: Workspace, now = Date.now()): boolean {
         const top = this.entries.at(-1);
         if (!top || now - top.at > WORKSPACE_UNDO_SETTLE_MS) return false;
         const revision = workspaceContentRevision(current);
         if (revision === top.afterRevision) return false;
+        if (stableStringify(current.linkGroups ?? {}) !== top.afterLinkGroups) return false;
         const prior = top.afterBlocks;
         if (prior.length !== current.blocks.length) return false;
-        const additive = prior.every((block, i) => {
+        const added = new Set(top.addedIds);
+        const ok = prior.every((block, i) => {
             const next = current.blocks[i] as unknown as Record<string, unknown>;
             if (!next || next.id !== block.id || next.type !== block.type) return false;
+            if (!added.has(block.id)) return stableStringify(next) === stableStringify(block);
             return Object.entries(block).every(
                 ([key, value]) => stableStringify(next[key]) === stableStringify(value),
             );
         });
-        if (!additive) return false;
+        if (!ok) return false;
         top.afterRevision = revision;
         top.afterBlocks = structuredClone(current.blocks);
         this.emit();

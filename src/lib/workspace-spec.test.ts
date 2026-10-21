@@ -247,6 +247,27 @@ describe('checkWorkspaceSpec', () => {
         const coarse = checkWorkspaceSpec(spec, empty, { density: 1 });
         expect(coarse.valid).toBe(false);
         expect(coarse.errors.map((e) => [e.path, e.code])).toEqual([['panels[1].x', 'misaligned']]);
+        // the same pair already on screen untouched is never rejected
+        const live: Workspace = {
+            blocks: [{ id: 'a', type: 'chart', pin: null }, { id: 'b', type: 'chart', pin: null }],
+            layout: spec.panels.map((p) => ({ i: p.id, x: p.x, y: p.y, w: p.w, h: p.h })),
+        };
+        expect(checkWorkspaceSpec(spec, live, { density: 1 }).valid).toBe(true);
+        // review case: A (0,0,75,7), C (132,0,72,7), B (72,7,72,7) kept as-is
+        const three = {
+            version: 1,
+            columns: 288,
+            panels: [
+                { id: 'a', type: 'chart', x: 0, y: 0, w: 75, h: 7 },
+                { id: 'c', type: 'chart', x: 132, y: 0, w: 72, h: 7 },
+                { id: 'b', type: 'chart', x: 72, y: 7, w: 72, h: 7, settings: { interval: '1D' } },
+            ],
+        };
+        const liveThree: Workspace = {
+            blocks: three.panels.map((p) => ({ id: p.id, type: 'chart' as const, pin: null })),
+            layout: three.panels.map((p) => ({ i: p.id, x: p.x, y: p.y, w: p.w, h: p.h })),
+        };
+        expect(checkWorkspaceSpec(three, liveThree, { density: 1 }).valid).toBe(true);
         // aligned edges are fine at every density, and the read-back validates again
         spec.panels[0]!.w = 72;
         for (const density of [1, 2, 3, 4]) {

@@ -674,12 +674,21 @@ export function checkWorkspaceSpec(
     // density (columns: 24 always does).
     const density = options.density ?? GRID_LEGACY_SCALE;
     if (density !== GRID_LEGACY_SCALE) {
+        const unchanged = (p: NormalizedPanel) => {
+            const item = currentLayout.get(p.id);
+            return Boolean(
+                item && item.x === p.x && item.y === p.y && item.w === p.w && item.h === p.h,
+            );
+        };
         const xOverlap = (a: { x: number; w: number }, b: { x: number; w: number }) =>
             a.x < b.x + b.w && b.x < a.x + a.w;
         for (let i = 0; i < panels.length; i += 1) {
             for (let j = i + 1; j < panels.length; j += 1) {
                 const a = panels[i]!;
                 const b = panels[j]!;
+                // A pair the user already has on screen, untouched by the
+                // spec, is what the grid shows today: never reject it.
+                if (unchanged(a) && unchanged(b)) continue;
                 if (
                     xOverlap(a, b) !==
                     xOverlap(toRenderGeom(a, density), toRenderGeom(b, density))

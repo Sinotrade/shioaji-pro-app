@@ -138,8 +138,8 @@ whole visible layout as one JSON document, described by
   a panel with defaults.
 - **Validate.** Returns every problem with a JSON path and code (unknown
   fields, sizes below the panel's minimum, overlaps, singletons, pins on
-  non-pinnable panels, unknown contracts, unsupported settings, removing the
-  Agent's own panel), warnings (vertical compaction previewed at the live
+  non-pinnable panels, unknown contracts, unsupported settings, edges that
+  disagree at the live grid density, removing the Agent's own panel), warnings (vertical compaction previewed at the live
   grid density, rows below the window, removed panels), a diff and a
   `validationToken`. It never mutates.
 - **Apply.** The token is random, single-use, expires after 10 minutes, and
