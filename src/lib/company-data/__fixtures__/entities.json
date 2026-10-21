@@ -1,0 +1,356 @@
+[
+ {
+  "aliases": [
+   "European Semiconductor Manufacturing Company (ESMC) GmbH"
+  ],
+  "has_quote": false,
+  "id": "org.esmc",
+  "kind": "company",
+  "name": "European Semiconductor Manufacturing Company (ESMC) GmbH",
+  "proposed_by": "ai",
+  "region": "org"
+ },
+ {
+  "aliases": [
+   "Japan Advanced Semiconductor Manufacturing, Inc."
+  ],
+  "has_quote": false,
+  "id": "org.jasm",
+  "kind": "company",
+  "name": "Japan Advanced Semiconductor Manufacturing, Inc.",
+  "proposed_by": "ai",
+  "region": "org"
+ },
+ {
+  "aliases": [
+   "Sony Semiconductor Solutions Corporation"
+  ],
+  "has_quote": false,
+  "id": "org.sony-semiconductor-solutions",
+  "kind": "company",
+  "name": "Sony Semiconductor Solutions Corporation",
+  "proposed_by": "ai",
+  "region": "org"
+ },
+ {
+  "aliases": [
+   "TSMC Arizona Corporation"
+  ],
+  "has_quote": false,
+  "id": "org.tsmc-arizona",
+  "kind": "company",
+  "name": "TSMC Arizona Corporation",
+  "proposed_by": "ai",
+  "region": "org"
+ },
+ {
+  "aliases": [
+   "LUCKY CEMENT",
+   "幸福",
+   "幸福水泥股份有限公司"
+  ],
+  "code": "1108",
+  "has_quote": true,
+  "id": "tw.1108",
+  "kind": "company",
+  "market": "twse",
+  "name": "幸福",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "HON HAI",
+   "鴻海",
+   "鴻海精密工業股份有限公司"
+  ],
+  "code": "2317",
+  "has_quote": true,
+  "id": "tw.2317",
+  "kind": "company",
+  "market": "twse",
+  "name": "鴻海",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "TSMC",
+   "台灣積體電路製造股份有限公司",
+   "台積電"
+  ],
+  "code": "2330",
+  "has_quote": true,
+  "id": "tw.2330",
+  "kind": "company",
+  "market": "twse",
+  "name": "台積電",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "INVENTEC",
+   "英業達",
+   "英業達股份有限公司"
+  ],
+  "code": "2356",
+  "has_quote": true,
+  "id": "tw.2356",
+  "kind": "company",
+  "market": "twse",
+  "name": "英業達",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "RT",
+   "瑞昱",
+   "瑞昱半導體股份有限公司"
+  ],
+  "code": "2379",
+  "has_quote": true,
+  "id": "tw.2379",
+  "kind": "company",
+  "market": "twse",
+  "name": "瑞昱",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "QCI",
+   "廣達",
+   "廣達電腦股份有限公司"
+  ],
+  "code": "2382",
+  "has_quote": true,
+  "id": "tw.2382",
+  "kind": "company",
+  "market": "twse",
+  "name": "廣達",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "MediaTek",
+   "聯發科",
+   "聯發科技股份有限公司"
+  ],
+  "code": "2454",
+  "has_quote": true,
+  "id": "tw.2454",
+  "kind": "company",
+  "market": "twse",
+  "name": "聯發科",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "UNIMICRON",
+   "欣興",
+   "欣興電子股份有限公司"
+  ],
+  "code": "3037",
+  "has_quote": true,
+  "id": "tw.3037",
+  "kind": "company",
+  "market": "twse",
+  "name": "欣興",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "Xintec",
+   "精材",
+   "精材科技股份有限公司"
+  ],
+  "code": "3374",
+  "has_quote": true,
+  "id": "tw.3374",
+  "kind": "company",
+  "market": "tpex",
+  "name": "精材",
+  "region": "tw",
+  "status": "otc"
+ },
+ {
+  "aliases": [
+   "INX",
+   "群創",
+   "群創光電股份有限公司"
+  ],
+  "code": "3481",
+  "has_quote": true,
+  "id": "tw.3481",
+  "kind": "company",
+  "market": "twse",
+  "name": "群創",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "ASEH",
+   "日月光投控",
+   "日月光投資控股股份有限公司"
+  ],
+  "code": "3711",
+  "has_quote": true,
+  "id": "tw.3711",
+  "kind": "company",
+  "market": "twse",
+  "name": "日月光投控",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "VIS",
+   "世界",
+   "世界先進積體電路股份有限公司"
+  ],
+  "code": "5347",
+  "has_quote": true,
+  "id": "tw.5347",
+  "kind": "company",
+  "market": "tpex",
+  "name": "世界",
+  "region": "tw",
+  "status": "otc"
+ },
+ {
+  "aliases": [
+   "GPM",
+   "均豪",
+   "均豪精密工業股份有限公司"
+  ],
+  "code": "5443",
+  "has_quote": true,
+  "id": "tw.5443",
+  "kind": "company",
+  "market": "tpex",
+  "name": "均豪",
+  "region": "tw",
+  "status": "otc"
+ },
+ {
+  "aliases": [
+   "MPI",
+   "旺矽",
+   "旺矽科技股份有限公司"
+  ],
+  "code": "6223",
+  "has_quote": true,
+  "id": "tw.6223",
+  "kind": "company",
+  "market": "tpex",
+  "name": "旺矽",
+  "region": "tw",
+  "status": "otc"
+ },
+ {
+  "aliases": [
+   "WinWay",
+   "穎崴",
+   "穎崴科技股份有限公司"
+  ],
+  "code": "6515",
+  "has_quote": true,
+  "id": "tw.6515",
+  "kind": "company",
+  "market": "twse",
+  "name": "穎崴",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "Wiwynn",
+   "緯穎",
+   "緯穎科技服務股份有限公司"
+  ],
+  "code": "6669",
+  "has_quote": true,
+  "id": "tw.6669",
+  "kind": "company",
+  "market": "twse",
+  "name": "緯穎",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "Mega Union",
+   "兆聯實業",
+   "兆聯實業股份有限公司"
+  ],
+  "code": "6944",
+  "has_quote": true,
+  "id": "tw.6944",
+  "kind": "company",
+  "market": "twse",
+  "name": "兆聯實業",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "PGC",
+   "巨有科技",
+   "巨有科技股份有限公司"
+  ],
+  "code": "8227",
+  "has_quote": true,
+  "id": "tw.8227",
+  "kind": "company",
+  "market": "tpex",
+  "name": "巨有科技",
+  "region": "tw",
+  "status": "otc"
+ },
+ {
+  "aliases": [
+   "RUENTEX DEVELOP",
+   "潤泰創新國際股份有限公司",
+   "潤泰新"
+  ],
+  "code": "9945",
+  "has_quote": true,
+  "id": "tw.9945",
+  "kind": "company",
+  "market": "twse",
+  "name": "潤泰新",
+  "region": "tw",
+  "status": "listed"
+ },
+ {
+  "aliases": [
+   "AMD",
+   "超微",
+   "Advanced Micro Devices"
+  ],
+  "has_quote": false,
+  "id": "us.AMD",
+  "kind": "company",
+  "name": "AMD",
+  "region": "us"
+ },
+ {
+  "aliases": [
+   "NVIDIA",
+   "輝達",
+   "Nvidia",
+   "NVIDIA Corporation"
+  ],
+  "has_quote": false,
+  "id": "us.NVDA",
+  "kind": "company",
+  "name": "NVIDIA",
+  "region": "us"
+ }
+]

@@ -422,6 +422,13 @@ export const previewLine = style({
     borderRadius: '1px',
 });
 
+// band 預覽：淡填色＋上下緣線，和圖上的價格帶同一個樣子
+export const previewBand = style({
+    width: '22px',
+    height: '10px',
+    boxSizing: 'border-box',
+});
+
 const plotBtnBase = style({
     display: 'inline-flex',
     alignItems: 'center',

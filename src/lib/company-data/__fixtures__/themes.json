@@ -1,0 +1,349 @@
+[
+ {
+  "aliases": [
+   "半導體",
+   "Semiconductor"
+  ],
+  "as_of": "2026-10-20",
+  "id": "chain.semiconductor",
+  "kind": "chain",
+  "members": [
+   {
+    "as_of": "2026-10-13",
+    "confidence": "ai_cross_checked",
+    "detail": "晶圓製造占營收約86%為主業，另自行提供CoWoS先進封裝服務。",
+    "evidence": [
+     "tw.2330#e_foundry",
+     "tw.2330#e_identity"
+    ],
+    "id": "tw.2330",
+    "source": "classification",
+    "stage": "fab",
+    "stage_role": "primary",
+    "tier": "midstream"
+   },
+   {
+    "as_of": "2026-10-13",
+    "confidence": "ai_cross_checked",
+    "detail": "晶圓製造占營收約86%為主業，另自行提供CoWoS先進封裝服務。",
+    "evidence": [
+     "tw.2330#e_foundry",
+     "tw.2330#e_identity"
+    ],
+    "id": "tw.2330",
+    "source": "classification",
+    "stage": "osat",
+    "stage_role": "also",
+    "tier": "downstream"
+   },
+   {
+    "as_of": "2026-10-14",
+    "confidence": "ai_cross_checked",
+    "detail": "以無晶圓廠模式設計手機、智慧裝置與電源管理晶片，IC產品占營收98.43%。",
+    "evidence": [
+     "tw.2454#e01",
+     "tw.2454#e02",
+     "tw.2454#e04"
+    ],
+    "id": "tw.2454",
+    "source": "classification",
+    "stage": "ip_design",
+    "stage_role": "primary",
+    "tier": "upstream"
+   },
+   {
+    "as_of": "2026-10-14",
+    "confidence": "ai_cross_checked",
+    "detail": "封裝、測試與材料占營收59.7%，以封測為主，另有材料供應業務。",
+    "evidence": [
+     "tw.3711#e01",
+     "tw.3711#e02"
+    ],
+    "id": "tw.3711",
+    "source": "classification",
+    "stage": "osat",
+    "stage_role": "primary",
+    "tier": "downstream"
+   },
+   {
+    "as_of": "2026-10-14",
+    "confidence": "ai_cross_checked",
+    "detail": "封裝、測試與材料占營收59.7%，以封測為主，另有材料供應業務。",
+    "evidence": [
+     "tw.3711#e01",
+     "tw.3711#e02"
+    ],
+    "id": "tw.3711",
+    "source": "classification",
+    "stage": "wafer_materials",
+    "stage_role": "also",
+    "tier": "upstream"
+   },
+   {
+    "as_of": "2026-10-14",
+    "confidence": "ai_cross_checked",
+    "detail": "主要提供特殊製程晶圓代工，電源管理IC代工占平台別營收77%。",
+    "evidence": [
+     "tw.5347#e01",
+     "tw.5347#e02"
+    ],
+    "id": "tw.5347",
+    "source": "classification",
+    "stage": "fab",
+    "stage_role": "primary",
+    "tier": "midstream"
+   }
+  ],
+  "name": "半導體產業鏈",
+  "name_en": "Semiconductor Value Chain",
+  "related": [],
+  "stages": [
+   {
+    "id": "ip_design",
+    "name": "IP 與 IC 設計",
+    "name_en": "IP & IC Design",
+    "tier": "upstream"
+   },
+   {
+    "id": "wafer_materials",
+    "name": "矽晶圓與材料",
+    "name_en": "Wafers & Materials",
+    "tier": "upstream"
+   },
+   {
+    "id": "tools",
+    "name": "設備與廠務",
+    "name_en": "Equipment & Facilities",
+    "tier": "upstream"
+   },
+   {
+    "id": "fab",
+    "name": "晶圓製造",
+    "name_en": "Wafer Fabrication",
+    "tier": "midstream"
+   },
+   {
+    "id": "osat",
+    "name": "封裝測試",
+    "name_en": "Packaging & Testing",
+    "tier": "downstream"
+   },
+   {
+    "id": "distribution",
+    "name": "IC 通路與模組",
+    "name_en": "IC Distribution & Modules",
+    "tier": "downstream"
+   }
+  ]
+ },
+ {
+  "aliases": [
+   "CoWoS",
+   "先進封裝",
+   "2.5D 封裝"
+  ],
+  "as_of": "2026-10-18",
+  "id": "theme.cowos",
+  "kind": "theme",
+  "members": [
+   {
+    "as_of": "2026-10",
+    "confidence": "ai_cross_checked",
+    "detail": "CoWoS先進封裝製造",
+    "evidence": [
+     "tw.2330#e_cowos"
+    ],
+    "id": "tw.2330",
+    "stage": "manufacturing",
+    "tier": "midstream"
+   },
+   {
+    "as_of": "2026-07-31",
+    "confidence": "ai_cross_checked",
+    "detail": "運用CoWoS設計高效能ASIC",
+    "evidence": [
+     "tw.2454#e16"
+    ],
+    "id": "tw.2454",
+    "stage": "design",
+    "tier": "downstream"
+   },
+   {
+    "as_of": "2025-10-03",
+    "confidence": "ai_cross_checked",
+    "detail": "子公司日月光半導體CoWoS相關封裝產能建置",
+    "evidence": [
+     "tw.3711#e17"
+    ],
+    "id": "tw.3711",
+    "stage": "manufacturing",
+    "tier": "midstream"
+   }
+  ],
+  "name": "CoWoS 先進封裝",
+  "name_en": "CoWoS Advanced Packaging",
+  "related": [
+   "theme.hbm",
+   "theme.abf",
+   "theme.ai_server"
+  ],
+  "stages": [
+   {
+    "id": "equipment",
+    "name": "設備",
+    "name_en": "Equipment",
+    "tier": "upstream"
+   },
+   {
+    "id": "materials",
+    "name": "材料與載板",
+    "name_en": "Materials",
+    "tier": "upstream"
+   },
+   {
+    "id": "manufacturing",
+    "name": "晶圓製造與封裝",
+    "name_en": "Manufacturing",
+    "tier": "midstream"
+   },
+   {
+    "id": "test",
+    "name": "測試",
+    "name_en": "Testing",
+    "tier": "midstream"
+   },
+   {
+    "id": "design",
+    "name": "ASIC 與晶片設計",
+    "name_en": "ASIC & Chip Design",
+    "tier": "downstream"
+   }
+  ]
+ },
+ {
+  "aliases": [
+   "AI 伺服器",
+   "AI Server"
+  ],
+  "as_of": "2026-10-20",
+  "id": "theme.ai_server",
+  "kind": "theme",
+  "members": [
+   {
+    "as_of": "2025-03-18",
+    "confidence": "ai_cross_checked",
+    "detail": "AI伺服器系統與機櫃",
+    "evidence": [
+     "tw.2317#e04"
+    ],
+    "id": "tw.2317",
+    "stage": "assembly",
+    "tier": "downstream"
+   },
+   {
+    "as_of": "2026-03-24",
+    "confidence": "ai_cross_checked",
+    "detail": "AI資料中心CPU製造",
+    "evidence": [
+     "tw.2330#e_arm",
+     "tw.2330#e_arm_ai"
+    ],
+    "id": "tw.2330",
+    "stage": "chips",
+    "tier": "upstream"
+   },
+   {
+    "as_of": "2026-06",
+    "confidence": "ai_cross_checked",
+    "detail": "AI伺服器系統與機櫃組裝",
+    "evidence": [
+     "tw.2382#e.ai_share",
+     "tw.2382#e.qct_products"
+    ],
+    "id": "tw.2382",
+    "stage": "assembly",
+    "tier": "downstream"
+   },
+   {
+    "as_of": "2026-07-31",
+    "confidence": "ai_cross_checked",
+    "detail": "資料中心AI加速器ASIC設計",
+    "evidence": [
+     "tw.2454#e15"
+    ],
+    "id": "tw.2454",
+    "stage": "chips",
+    "tier": "upstream"
+   },
+   {
+    "as_of": "2026-06-30",
+    "confidence": "ai_cross_checked",
+    "detail": "AI運算用載板與電路板",
+    "evidence": [
+     "tw.3037#e9",
+     "tw.3037#e10"
+    ],
+    "id": "tw.3037",
+    "stage": "board_materials",
+    "tier": "upstream"
+   },
+   {
+    "as_of": "2026-08-04",
+    "confidence": "ai_cross_checked",
+    "detail": "AI伺服器周邊電源晶片及分離式元件製程",
+    "evidence": [
+     "tw.5347#e21"
+    ],
+    "id": "tw.5347",
+    "stage": "chips",
+    "tier": "upstream"
+   },
+   {
+    "as_of": "2026-10-12",
+    "confidence": "ai_cross_checked",
+    "detail": "AI伺服器與機櫃系統整合",
+    "evidence": [
+     "tw.6669#e3",
+     "tw.6669#e4"
+    ],
+    "id": "tw.6669",
+    "stage": "assembly",
+    "tier": "downstream"
+   }
+  ],
+  "name": "AI 伺服器",
+  "name_en": "AI Servers",
+  "related": [
+   "theme.cowos",
+   "theme.hbm",
+   "theme.liquid_cooling",
+   "theme.cpo"
+  ],
+  "stages": [
+   {
+    "id": "chips",
+    "name": "晶片與記憶體",
+    "name_en": "Chips & Memory",
+    "tier": "upstream"
+   },
+   {
+    "id": "board_materials",
+    "name": "板材與載板",
+    "name_en": "Boards & Substrates",
+    "tier": "upstream"
+   },
+   {
+    "id": "components",
+    "name": "電源、散熱、連接器、機構件",
+    "name_en": "Components",
+    "tier": "midstream"
+   },
+   {
+    "id": "assembly",
+    "name": "系統與機櫃組裝",
+    "name_en": "Assembly",
+    "tier": "downstream"
+   }
+  ]
+ }
+]

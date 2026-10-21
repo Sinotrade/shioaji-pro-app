@@ -1,0 +1,45 @@
+{
+ "as_of": null,
+ "chain": null,
+ "chain_stage": null,
+ "code": "1108",
+ "confidence": "official",
+ "english_short": "LUCKY CEMENT",
+ "evidence": {},
+ "foreign_registration": null,
+ "full_name": "幸福水泥股份有限公司",
+ "has_research": false,
+ "id": "tw.1108",
+ "incorporated": "1974-05-07",
+ "industry": {
+  "l0_code": "01",
+  "l0_name": "水泥工業",
+  "l0_name_en": "Cement"
+ },
+ "listed": "1990-06-06",
+ "main_theme": null,
+ "market": "twse",
+ "name": "幸福",
+ "primary_chain_position": "unknown",
+ "quality_flags": [
+  "no_research"
+ ],
+ "relations": {
+  "competitors": [],
+  "customers": [],
+  "parents": [],
+  "partners": [],
+  "subsidiaries": [],
+  "suppliers": [],
+  "transactions": []
+ },
+ "segments": [],
+ "summary_long": null,
+ "summary_short": null,
+ "tax_id": "40601248",
+ "themes": [],
+ "top_customers": [],
+ "top_suppliers": [],
+ "unresolved_mentions": [],
+ "website": "www.luckygrp.com.tw"
+}
