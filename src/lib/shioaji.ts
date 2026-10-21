@@ -681,6 +681,21 @@ export function unsubscribeEnrichedIndex(
     );
 }
 
+// 即時 1 分 K 訂閱（stocks only，1.7.7 專屬路由，body 可多檔）— 一個批次一個
+// capability key：同一批 key 由多個面板共用時 ref-count，重連由 capability
+// registry 重播。sidecar 請求 body 上限 64 KB，呼叫端需分批（≤300 檔）。
+export function subscribeKbars(key: string, contracts: ContractBase[]) {
+    return updateCapabilitySubscription('subscribe', 'kbars', `kbars:${key}`, {
+        stocks: contracts.map(streamContractKey),
+    });
+}
+
+export function unsubscribeKbars(key: string, contracts: ContractBase[]) {
+    return updateCapabilitySubscription('unsubscribe', 'kbars', `kbars:${key}`, {
+        stocks: contracts.map(streamContractKey),
+    });
+}
+
 // index_components projection 訂閱（1.7.4）— 一條 (指數, 投影) 一個
 // capability key，ref-count／重連重播沿用既有 capability 基建。
 // projKey 由 index-components store 產生（同一投影必須產生同一 key）。

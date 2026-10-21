@@ -199,7 +199,7 @@ it('admits a report event_id once when a replacement connection replays it', asy
 
 it('attaches named event families even when only a follower consumes them', async () => {
     const { first } = await open();
-    for (const name of ['index_components', 'calculated_index', 'scanner', 'heartbeat']) {
+    for (const name of ['index_components', 'calculated_index', 'scanner', 'kbar', 'heartbeat']) {
         expect(first.listeners.has(name)).toBe(true);
     }
 });

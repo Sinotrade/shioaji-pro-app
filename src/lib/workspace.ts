@@ -472,8 +472,8 @@ export const BLOCK_META: Record<
         defaultSize: { w: 8, h: 11, minW: 5, minH: 6 },
     },
     chainmap: {
-        label: '產業鏈地圖',
-        description: '產業鏈與題材上中下游 × 即時漲跌，題材熱度排行與供應關係',
+        label: '產業鏈資金流向',
+        description: '產業鏈與題材的即時資金流向：每分鐘淨流入時間軸、上中下游流向與領頭股',
         category: 'market',
         pinnable: false,
         singleton: false,

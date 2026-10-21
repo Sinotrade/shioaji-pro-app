@@ -466,7 +466,7 @@ let everDown = false;
 const namedListeners = new Map<string, Set<(raw: string) => void>>();
 // These families may have consumers only in follower popouts. The owner must
 // subscribe to their SSE names even when it has no local listener.
-const sharedNamedEvents = ['index_components', 'calculated_index', 'scanner', 'heartbeat'];
+const sharedNamedEvents = ['index_components', 'calculated_index', 'scanner', 'kbar', 'heartbeat'];
 const attachedNamed = new Set<string>();
 
 function attachNamed(source: EventSource, name: string) {

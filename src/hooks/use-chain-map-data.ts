@@ -1,8 +1,8 @@
-// src/hooks/use-chain-map-data.ts — shioaji-data datasets for 產業鏈地圖.
+// src/hooks/use-chain-map-data.ts — shioaji-data datasets for 產業鏈資金流向.
 //
-// Themes decide whether the panel can render; edges, market, revenue and
-// entities are optional parts that degrade on their own (no relations, no
-// market-cap sizing, no revenue colouring, codes instead of names).
+// Themes decide whether the panel can render; edges, market and entities are
+// optional parts that degrade on their own (no relation list, equal weights
+// instead of market-cap weights, codes instead of names).
 // Everything goes through the shared `companyData` reader, so files fetched
 // for the company panel or the Agent tools are reused.
 
@@ -15,7 +15,6 @@ export interface ChainMapData {
     themesMeta: DataMeta;
     edges: Edge[] | null;
     market: MarketDaily | null;
-    revenue: Record<string, unknown> | null;
     entities: Entity[] | null;
     /** Datasets served from offline cache. */
     stale: boolean;
@@ -35,11 +34,11 @@ async function optional<T>(promise: Promise<{ data: T; meta: DataMeta }>) {
 }
 
 export async function loadChainMapData(client = companyData): Promise<ChainMapData> {
-    const [themes, edges, market, revenue, entities] = await Promise.all([
+    const [themes, edges, market, entities] = await Promise.all([
         client.getDataset('tw/themes'),
         optional(client.getDataset('tw/edges')),
         optional(client.getDataset('tw/market')),
-        optional(client.getDataset('tw/revenue')),
+        
         optional(client.getDataset('global/entities')),
     ]);
     return {
@@ -47,9 +46,8 @@ export async function loadChainMapData(client = companyData): Promise<ChainMapDa
         themesMeta: themes.meta,
         edges: edges?.data ?? null,
         market: market?.data ?? null,
-        revenue: revenue?.data ?? null,
         entities: entities?.data ?? null,
-        stale: [themes, edges, market, revenue, entities].some((part) => part?.meta.stale),
+        stale: [themes, edges, market, entities].some((part) => part?.meta.stale),
     };
 }
 
