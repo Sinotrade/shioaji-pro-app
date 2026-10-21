@@ -99,7 +99,7 @@ vi.mock('../lib/stock-index', () => ({
     SECTOR_INDICES: [],
 }));
 
-const { SectorHeatmap } = await import('./sector-heatmap');
+const { SectorHeatmap, initialSizeMetric } = await import('./sector-heatmap');
 
 const text = (n: ReactTestInstance): string =>
     n.children.map((c) => (typeof c === 'string' ? c : text(c))).join('');
@@ -150,4 +150,12 @@ it('取得排行當下有效的群組漲跌 → 顯示反推的 ≈值', async (
         view = create(createElement(SectorHeatmap, {}));
     });
     expect(text(otherPctCell())).toBe('≈-2.06%');
+});
+
+it('預設面積為貢獻，已存的選擇照舊', () => {
+    expect(initialSizeMetric(null)).toBe('contribution');
+    expect(initialSizeMetric('bogus')).toBe('contribution');
+    expect(initialSizeMetric('weight')).toBe('weight');
+    expect(initialSizeMetric('amount')).toBe('amount');
+    expect(initialSizeMetric('contribution')).toBe('contribution');
 });

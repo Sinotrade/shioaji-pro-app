@@ -95,6 +95,12 @@ const SIZE_METRICS: { value: SizeMetric; label: string }[] = [
     { value: 'amount', label: '成交值' },
     { value: 'contribution', label: '貢獻' },
 ];
+// 預設面積＝貢獻（使用者 2026-10-21 決定）；已存的選擇照舊沿用
+export function initialSizeMetric(stored: string | null): SizeMetric {
+    return stored === 'weight' || stored === 'amount' || stored === 'contribution'
+        ? stored
+        : 'contribution';
+}
 // 下鑽排行只有成交值／貢獻兩種（群組內排行 published matrix）
 type DrillMetric = 'amount' | 'contribution';
 const DRILL_METRICS: { value: DrillMetric; label: string }[] = [
@@ -364,12 +370,9 @@ export function SectorHeatmap({
     const [indexCode, setIndexCode] = useState<PanoramaIndexCode>(() =>
         localStorage.getItem(INDEX_KEY) === 'IX0043' ? 'IX0043' : 'IX0001',
     );
-    const [sizeMetric, setSizeMetric] = useState<SizeMetric>(() => {
-        const stored = localStorage.getItem(SIZE_KEY);
-        return stored === 'amount' || stored === 'contribution'
-            ? stored
-            : 'weight';
-    });
+    const [sizeMetric, setSizeMetric] = useState<SizeMetric>(() =>
+        initialSizeMetric(localStorage.getItem(SIZE_KEY)),
+    );
     const [drillCat, setDrillCat] = useState<string | null>(null);
     const [nameByCode, setNameByCode] = useState<ReadonlyMap<string, string>>(
         () => new Map(),
@@ -705,13 +708,15 @@ export function SectorHeatmap({
         shownCount === 0
             ? ''
             : sizeMetric === 'contribution'
-              ? `顯示 ${shownGroups} 個產業中貢獻最大的 ${shownCount} 檔（依貢獻絕對值）`
+              ? `顯示 ${shownGroups} 個產業中貢獻最大的 ${shownCount} 檔`
               : `顯示 ${shownGroups} 個產業中${sizeMetric === 'amount' ? '成交值最大' : '成交最活躍'}的 ${shownCount} 檔${
                     coverage !== null
                         ? `（佔全體個股${metricLabel} ${Math.round(coverage * 100)}%）`
                         : ''
                 }`;
-    const captionText = `${colorHint}・面積越大代表${metricLabel}越大${coverageText ? `・${coverageText}` : ''}`;
+    const areaLabel =
+        sizeMetric === 'contribution' ? '貢獻（絕對值）' : metricLabel;
+    const captionText = `${colorHint}・面積越大代表${areaLabel}越大${coverageText ? `・${coverageText}` : ''}`;
 
     // ---- 匯出 PNG ----
     const [exporting, setExporting] = useState(false);
