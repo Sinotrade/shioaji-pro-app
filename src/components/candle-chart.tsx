@@ -289,7 +289,8 @@ export function CandleChart({
             if (e.repeat) return;
             if (!orderLockKeyOf(e)) return;
             if (isTypingTarget(e.target)) return;
-            if (!chartHasFocus(hostRef.current?.parentElement ?? hostRef.current)) return;
+            // 範圍含頂端工具列（鎖定鈕本身有焦點時也要能用快捷鍵）
+            if (!chartHasFocus(hostRef.current?.closest?.(`.${styles.wrap}`) ?? hostRef.current?.parentElement ?? hostRef.current)) return;
             e.preventDefault();
             setRiskSettings({ orderLineLock: !getRiskSettings().orderLineLock });
         };
@@ -1688,14 +1689,15 @@ export function CandleChart({
         const yOf = (e: MouseEvent) =>
             e.clientY - host.getBoundingClientRect().top;
 
-        const findNear = (y: number) => {
+        // includeFixed：連不能改價的線（零股）也算 — 鎖定時「點在線上不下單」要涵蓋圖上每一條委託線
+        const findNear = (y: number, includeFixed = false) => {
             const series = candleSeriesRef.current;
             if (!series) return null;
             // 兩條線很近時抓離游標最近的那條；距離相同取先出現的
             let best: { trade: Trade; line: IPriceLine; coord: number } | null = null;
             for (const t of workingOrdersRef.current) {
                 // 零股委託不能改價（#204）：委託線不可拖曳
-                if (!canUpdateOrderPrice(t.order)) continue;
+                if (!includeFixed && !canUpdateOrderPrice(t.order)) continue;
                 const line = orderLinesRef.current.get(t.order.id);
                 if (!line) continue;
                 const coord = series.priceToCoordinate(line.options().price);
@@ -1747,9 +1749,10 @@ export function CandleChart({
             // 「委託線優先」只在瀏覽模式：武裝畫圖工具時這一下屬於畫圖，
             // 在委託價附近畫線不能變成改價；別的 handler 已經接手的一下
             // 也不能同時拖畫圖又送出改價
-            const hit = findNear(yOf(e));
+            const locked = getRiskSettings().orderLineLock;
+            const hit = findNear(yOf(e), locked);
             if (!hit || !mayTake(e)) return;
-            if (getRiskSettings().orderLineLock) {
+            if (locked) {
                 // 已武裝時仍吃掉委託線點擊，避免穿透成新委託。
                 e.preventDefault();
                 e.stopPropagation();

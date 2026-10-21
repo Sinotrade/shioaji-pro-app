@@ -108,9 +108,12 @@ const flush = async () => { for (let i = 0; i < 6; i++) await act(async () => {}
 async function mount(props: Record<string, unknown>) {
     // 每張圖各有包含本體與左側工具列的範圍；拖曳測試以實際節點判斷焦點。
     const nodes = new Set<unknown>();
-    const scope = { contains: (n: unknown) => !m.dragEvents || nodes.has(n) };
+    // 頂端工具列的節點只在整張圖（wrap）範圍內，不在圖表列（chartRow）範圍內
+    const toolbarNodes = new Set<unknown>();
+    const scope = { contains: (n: unknown) => !m.dragEvents || (nodes.has(n) && !toolbarNodes.has(n)) };
+    const wrapScope = { contains: (n: unknown) => !m.dragEvents || nodes.has(n) };
     await act(async () => {
-        view = create(createElement(CandleChart, props as any), { createNodeMock: () => {
+        view = create(createElement(CandleChart, props as any), { createNodeMock: (element: any) => {
             const events = new EventTarget();
             const node = { clientWidth: 800, clientHeight: 400, getBoundingClientRect: () => ({ width: 800, height: 400, left: 0, top: 0, right: 800, bottom: 400 }),
                 addEventListener: (name: string, cb: EventListener, capture?: boolean) => {
@@ -119,9 +122,10 @@ async function mount(props: Record<string, unknown>) {
                     events.addEventListener(name, cb, capture);
                 },
                 removeEventListener: events.removeEventListener.bind(events), parentElement: scope,
-                contains: (n: unknown) => !m.dragEvents || n === node, hasAttribute: () => true,
+                contains: (n: unknown) => !m.dragEvents || n === node, hasAttribute: () => true, closest: () => wrapScope,
                 focus: () => { if (m.dragEvents) (document as any).activeElement = node; }, style: {} };
             nodes.add(node);
+            if (element?.props?.['aria-label'] === '委託線鎖定') toolbarNodes.add(node);
             return node;
         } });
     });
@@ -281,6 +285,16 @@ describe('chart order settings button', () => {
         expect(e.defaultPrevented).toBe(false);
     });
 
+    it('頂端工具列的鎖定鈕有焦點時 Ctrl+L 也可切換', async () => {
+        const drag = await orderDrag();
+        const lock = view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線鎖定');
+        (document as any).activeElement = lock.instance;
+        let e!: Event;
+        await act(async () => { e = drag.key({ key: 'l', code: 'KeyL', ctrlKey: true }); });
+        expect(getRiskSettings().orderLineLock).toBe(true);
+        expect(e.defaultPrevented).toBe(true);
+    });
+
     it('長按重複的 Ctrl+L 不切換委託線鎖定', async () => {
         const drag = await orderDrag();
         let e!: Event;
@@ -437,6 +451,24 @@ describe('chart order settings button', () => {
         const miss = drag.mouse('mousedown', 150, x);
         await act(async () => { m.dragHost!.dispatchEvent(miss); });
         expect(miss.defaultPrevented).toBe(false);
+    });
+
+    it('委託線鎖住且武裝買時，點在零股委託線（不能改價）上也吃掉，不穿透成新委託', async () => {
+        const drag = await orderDrag(() => [{ contract: stk, order: { id: 'odd-order', action: 'Sell', price: 120, quantity: 5, order_lot: 'IntradayOdd' },
+            status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } }]);
+        const oddY = m.lines.find(l => l.options().price === 120)!;
+        expect(oddY).toBeDefined();
+        await act(async () => { button(view.root, '點價買').props.onClick(); });
+        // 未鎖：零股線不可拖，點下去放行（照舊點價）
+        const open = drag.mouse('mousedown', 120);
+        await act(async () => { m.dragHost!.dispatchEvent(open); });
+        expect(open.cancelBubble).toBe(false);
+        act(() => setRiskSettings({ orderLineLock: true }));
+        const down = drag.mouse('mousedown', 120);
+        await act(async () => { m.dragHost!.dispatchEvent(down); });
+        expect(down.defaultPrevented).toBe(true);
+        expect(down.cancelBubble).toBe(true);
+        expect(m.updatePrice).not.toHaveBeenCalled();
     });
 
     const modeHint = () => view.root.findAll(n => n.type === 'div' && n.children[0] === '交易模式 · ')[0];
