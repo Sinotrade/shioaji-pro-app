@@ -4,6 +4,7 @@
 // panel started receiving bars (window shaded, glowing end), and the five
 // largest net-inflow and net-outflow members over the window.
 
+import { X } from 'lucide-react';
 import { useMemo } from 'react';
 import { chainFlowBook } from '../lib/chain-flow-feed';
 import { memberFlows, slotLabel } from '../lib/chain-flow';
@@ -31,6 +32,7 @@ export function FlowRankCard({
     paused,
     nameOf,
     onPick,
+    onClose,
 }: {
     row: FlowRow;
     metric: RankMetric;
@@ -40,6 +42,8 @@ export function FlowRankCard({
     paused: boolean;
     nameOf: (code: string) => string;
     onPick: (code: string) => void;
+    /** Shown as a drawer over the lanes (narrow panel): a close button. */
+    onClose?: () => void;
 }) {
     const f = row.flow;
     const value = rankValue(f, now, metric);
@@ -77,7 +81,7 @@ export function FlowRankCard({
     const live = !reducedMotion && !paused;
 
     return (
-        <aside className={s.card} aria-label={`${row.theme.name} 明細`}>
+        <aside className={`${s.card} ${onClose ? s.cardDrawer : ''}`} aria-label={`${row.theme.name} 明細`}>
             <div className={s.cardHead}>
                 <span className={s.kindMark[row.theme.kind === 'chain' ? 'chain' : 'theme']} aria-hidden='true' />
                 <span className={s.cardTitle}>{row.theme.name}</span>
@@ -85,6 +89,11 @@ export function FlowRankCard({
                     <span className={s.cardBadge[state]} title='輪動象限：依累計淨流入方向與資金動能'>
                         {QUADRANT_LABEL[state]}
                     </span>
+                )}
+                {onClose && (
+                    <button type='button' className={s.cardClose} onClick={onClose} aria-label='關閉明細' title='關閉明細'>
+                        <X size={13} aria-hidden='true' />
+                    </button>
                 )}
             </div>
             <div className={s.cardStats}>

@@ -620,7 +620,7 @@ const barGrow = ['width', 'height', 'border-radius'].map((p) => `${p} 900ms cubi
 const rankBarBase = style({ position: 'absolute', top: '50%', transform: 'translateY(-50%)', transition: barGrow, ...reduce });
 // a thin translucent lane, faint at the axis
 const lane = (color: string, deg: number) =>
-    `linear-gradient(${deg}deg, ${tint(color, 6)}, ${tint(color, 24)} 50%, ${tint(color, 46)})`;
+    `linear-gradient(${deg}deg, ${tint(color, 10)}, ${tint(color, 34)} 50%, ${tint(color, 62)})`;
 export const rankBar = styleVariants({
     in: [rankBarBase, { background: lane(vars.color.up, 90) }],
     out: [rankBarBase, { background: lane(vars.color.down, 270) }],
@@ -685,10 +685,12 @@ export const rotStateOn = style({ borderColor: vars.color.borderBright });
 export const rotStateLabel = style({ fontSize: '0.58rem', color: vars.color.mutedForeground, whiteSpace: 'nowrap' });
 export const rotStateCount = style({ ...mono, fontSize: '0.72rem', fontWeight: 700 });
 
+// two hues, diverging: inflow warm (up), outflow cool (down); the weaker
+// quadrant of each side is the same hue pulled towards grey
 const stateColor = {
     leading: vars.color.up,
-    weakening: vars.color.amber,
-    improving: vars.color.accent,
+    weakening: `color-mix(in oklab, ${vars.color.up} 58%, ${vars.color.mutedForeground})`,
+    improving: `color-mix(in oklab, ${vars.color.down} 58%, ${vars.color.mutedForeground})`,
     lagging: vars.color.down,
 } as const;
 type StateKey = keyof typeof stateColor;
@@ -696,7 +698,7 @@ const perState = <T>(fn: (color: string, key: StateKey) => T) =>
     Object.fromEntries((Object.keys(stateColor) as StateKey[]).map((k) => [k, fn(stateColor[k], k)])) as Record<StateKey, T>;
 
 // muted state colours: the hue reads, it does not shout
-const mutedState = (c: string) => soft(c, 78);
+const mutedState = (c: string) => soft(c, 92);
 export const rotDot = styleVariants(perState((c) => ({ width: '7px', height: '7px', borderRadius: '50%', background: mutedState(c) })));
 export const rotCorner = style({
     fill: vars.color.mutedForeground,
@@ -713,14 +715,15 @@ export const rotCorner = style({
 export const rotCornerDot = styleVariants(perState((c) => ({ fill: mutedState(c), opacity: 0.9 })));
 export const rotGrid = style({ stroke: tint(vars.color.border, 38) });
 export const rotAxis = style({ stroke: tint(vars.color.mutedForeground, 38) });
-export const rotTick = style({ fill: vars.color.mutedForeground, fontSize: '9px', fontFamily: vars.font.mono, opacity: 0.8 });
-export const rotCaption = style({ fill: vars.color.mutedForeground, fontSize: '9.5px', fontFamily: vars.font.body });
+export const rotTick = style({ fill: vars.color.mutedForeground, fontSize: '10.5px', fontFamily: vars.font.mono });
+export const rotCaption = style({ fill: vars.color.mutedForeground, fontSize: '11px', fontFamily: vars.font.body });
 export const rotTrail = styleVariants(perState((c) => ({ stroke: mutedState(c), fill: 'none', strokeWidth: 1.2, strokeLinecap: 'round' })));
 export const rotTrailDot = styleVariants(perState((c) => ({ fill: mutedState(c) })));
 export const rotBubble = style({ cursor: 'pointer', outline: 'none' });
+export const rotLabel = style({ pointerEvents: 'none' });
 export const rotFill = styleVariants(
     perState((c) => ({
-        fill: tint(mutedState(c), 58),
+        fill: tint(mutedState(c), 66),
         stroke: tint(mutedState(c), 90),
         strokeWidth: 1,
         transition: 'r 900ms cubic-bezier(0.22, 1, 0.36, 1), fill 600ms ease, stroke 600ms ease',
@@ -894,7 +897,45 @@ export const heatBar = styleVariants({
 
 // ---- 排行明細卡 ----
 
-export const rankLayout = style({ flex: 1, minHeight: 0, display: 'flex', gap: vars.space.sm });
+export const rankLayout = style({ position: 'relative', flex: 1, minHeight: 0, display: 'flex', gap: vars.space.sm });
+export const rankFold = style({
+    position: 'absolute',
+    left: 0,
+    width: 'max-content',
+    height: '26px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingLeft: '18px',
+    border: 'none',
+    background: 'transparent',
+    color: vars.color.mutedForeground,
+    fontSize: '0.6rem',
+    fontFamily: vars.font.body,
+    cursor: 'pointer',
+    opacity: 0.8,
+    zIndex: 1,
+    selectors: { '&:hover': { color: vars.color.foreground, opacity: 1 } },
+});
+export const rankDrawerToggle = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    marginLeft: '8px',
+    padding: '1px 7px',
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: '999px',
+    background: 'transparent',
+    color: vars.color.mutedForeground,
+    fontSize: '0.6rem',
+    fontFamily: vars.font.body,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    selectors: {
+        '&:hover': { color: vars.color.foreground, borderColor: vars.color.borderBright },
+        '&[aria-pressed="true"]': { color: vars.color.foreground, borderColor: vars.color.borderBright },
+    },
+});
 export const rankMain = style({ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' });
 export const card = style({
     width: '264px',
@@ -909,6 +950,29 @@ export const card = style({
     background: vars.color.panelRaised,
     overflowY: 'auto',
     minHeight: 0,
+});
+// narrow panel: the card floats over the lanes instead of squeezing them
+export const cardDrawer = style({
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 3,
+    boxShadow: `0 8px 28px ${tint('#000000', 35)}`,
+});
+export const cardClose = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '20px',
+    height: '20px',
+    flexShrink: 0,
+    border: 'none',
+    borderRadius: vars.radius.sm,
+    background: 'transparent',
+    color: vars.color.mutedForeground,
+    cursor: 'pointer',
+    selectors: { '&:hover': { color: vars.color.foreground, background: tint(vars.color.foreground, 8) } },
 });
 export const cardHead = style({ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 });
 export const cardTitle = style({ fontSize: '0.86rem', fontWeight: 700, color: vars.color.foreground, ...ellipsis, flex: 1, minWidth: 0 });

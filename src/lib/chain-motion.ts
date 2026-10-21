@@ -282,3 +282,75 @@ export function heatLevel(ratio: number | null, full = HEAT_FULL): number {
     if (ratio === null || !Number.isFinite(ratio) || full <= 0) return 0;
     return Math.min(1, (Math.abs(ratio) / full) ** 0.8);
 }
+
+export interface Circle {
+    x: number;
+    y: number;
+    r: number;
+}
+
+/**
+ * Gentle collision relaxation for the rotation bubbles: overlapping pairs are
+ * pushed apart (up to `overlap` × the sum of radii may still overlap), each
+ * bubble is pulled back towards its data position and never strays more
+ * than `maxShift` × its radius from it, and stays inside `box`.
+ * Deterministic: the same input gives the same layout every minute.
+ */
+export function relaxCircles(
+    circles: readonly Circle[],
+    box: { x0: number; x1: number; y0: number; y1: number },
+    { iterations = 60, overlap = 0.12, maxShift = 1.2, pull = 0.04 } = {},
+): { x: number; y: number }[] {
+    const clamp = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
+    const home = circles.map((c) => ({ x: clamp(c.x, box.x0 + c.r, box.x1 - c.r), y: clamp(c.y, box.y0 + c.r, box.y1 - c.r) }));
+    const pos = home.map((p) => ({ ...p }));
+    const n = circles.length;
+    for (let it = 0; it < iterations; it++) {
+        let moved = false;
+        for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+                const a = pos[i]!;
+                const b = pos[j]!;
+                const min = (circles[i]!.r + circles[j]!.r) * (1 - overlap);
+                let dx = b.x - a.x;
+                let dy = b.y - a.y;
+                let d = Math.hypot(dx, dy);
+                if (d >= min) continue;
+                if (d < 1e-6) {
+                    // coincident: split along a fixed per-pair angle
+                    const angle = ((i * 7 + j * 13) % 16) * (Math.PI / 8);
+                    dx = Math.cos(angle);
+                    dy = Math.sin(angle);
+                    d = 1;
+                }
+                const push = ((min - Math.min(d, min)) / 2) * 0.5;
+                const ux = dx / d;
+                const uy = dy / d;
+                a.x -= ux * push;
+                a.y -= uy * push;
+                b.x += ux * push;
+                b.y += uy * push;
+                moved = true;
+            }
+        }
+        for (let i = 0; i < n; i++) {
+            const c = circles[i]!;
+            const p = pos[i]!;
+            const h = home[i]!;
+            p.x += (h.x - p.x) * pull;
+            p.y += (h.y - p.y) * pull;
+            const sx = p.x - h.x;
+            const sy = p.y - h.y;
+            const shift = Math.hypot(sx, sy);
+            const cap = c.r * maxShift;
+            if (shift > cap) {
+                p.x = h.x + (sx / shift) * cap;
+                p.y = h.y + (sy / shift) * cap;
+            }
+            p.x = clamp(p.x, box.x0 + c.r, box.x1 - c.r);
+            p.y = clamp(p.y, box.y0 + c.r, box.y1 - c.r);
+        }
+        if (!moved) break;
+    }
+    return pos;
+}

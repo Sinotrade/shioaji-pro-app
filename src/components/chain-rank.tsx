@@ -11,7 +11,7 @@
 // under prefers-reduced-motion; the canvas is capped at 30 fps and stops
 // while the panel is hidden.
 
-import { Triangle } from 'lucide-react';
+import { ChevronsDownUp, PanelRightOpen, Triangle } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { slotLabel, SESSION_SLOTS } from '../lib/chain-flow';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
@@ -23,13 +23,16 @@ import { Odometer } from './odometer';
 import * as s from './chain-map.css';
 
 const ROW_PX = 34;
-const GAP_PX = 22;
+const GAP_PX = 26;
+/** Rows shown per side until the viewer asks for every group. */
+const SIDE_ROWS = 8;
 const MOVE_SHOW_MS = 6000;
 const MAX_PARTICLES = 40;
 /** Share of the half-track the largest value fills (room for the end dot). */
 const REACH = 0.94;
 /** Below this width the detail card is left out (the lanes need the room). */
-const CARD_MIN_PX = 760;
+/** Below this the detail card would squeeze the lanes: it becomes a drawer. */
+const CARD_DOCK_PX = 1180;
 const FRAME_MS = 1000 / 30 - 2;
 
 interface Particle {
@@ -92,12 +95,23 @@ export function FlowRank({
     );
     // fixed centre axis, one square-root scale for both sides
     const maxAbs = useMemo(() => Math.max(0, ...order.map((r) => Math.abs(r.value))), [order]);
-    const firstOut = order.findIndex((r) => r.side === 'out');
+    // the largest inflows and outflows; the quiet middle folds into the gap
+    const [showAll, setShowAll] = useState(false);
+    const shown = useMemo(() => {
+        if (showAll) return order;
+        const ins = order.filter((r) => r.side === 'in').slice(0, SIDE_ROWS);
+        const outs = order.filter((r) => r.side === 'out').slice(-SIDE_ROWS);
+        return [...ins, ...outs];
+    }, [order, showAll]);
+    const hidden = order.length - shown.length;
+    const firstOut = shown.findIndex((r) => r.side === 'out');
     const turnoverOf = (row: FlowRow) => rankTurnover(row.flow, now, metric);
     const maxTurnover = useMemo(() => Math.max(0, ...rows.map((r) => rankTurnover(r.flow, now, metric))), [rows, now, metric]);
     const { ref: layoutRef, size: layoutSize } = useBoxSize<HTMLDivElement>();
     const selectedRow = rows.find((r) => r.theme.id === selectedId) ?? null;
-    const showCard = selectedRow !== null && layoutSize.width >= CARD_MIN_PX;
+    const docked = layoutSize.width >= CARD_DOCK_PX;
+    const [drawer, setDrawer] = useState(false);
+    const showCard = selectedRow !== null && (docked || drawer);
     const label = metricLabel(metric);
 
     // rank changes and this minute's biggest mover
@@ -247,7 +261,8 @@ export function FlowRank({
         return () => cancelAnimationFrame(raf);
     }, [reducedMotion, paused, now, intensity]);
 
-    const height = order.length * ROW_PX + (firstOut > 0 ? GAP_PX : 0);
+    const gap = firstOut > 0 || hidden > 0;
+    const height = shown.length * ROW_PX + (gap ? GAP_PX : 0);
     const span =
         now === null ? '' : metric === 'cum' ? `${from !== null ? slotLabel(from) : ''} 至 ${slotLabel(Math.min(now + 1, SESSION_SLOTS - 1))}` : label;
 
@@ -281,6 +296,24 @@ export function FlowRank({
                     <div className={s.rankHeader}>
                         <span className={s.rankHeaderTitle}>{label}淨流入排行</span>
                         <span className={s.rankHeaderNote}>長度為淨流入（平方根刻度）・粗細為成交值・點選看明細</span>
+                        {showAll && order.length > SIDE_ROWS * 2 && (
+                            <button type='button' className={s.rankDrawerToggle} onClick={() => setShowAll(false)} title='只顯示淨流入與淨流出最大的族群'>
+                                <ChevronsDownUp size={12} aria-hidden='true' />
+                                收合
+                            </button>
+                        )}
+                        {!docked && selectedRow && (
+                            <button
+                                type='button'
+                                className={s.rankDrawerToggle}
+                                aria-pressed={drawer}
+                                onClick={() => setDrawer((v) => !v)}
+                                title='顯示選取族群的明細'
+                            >
+                                <PanelRightOpen size={12} aria-hidden='true' />
+                                明細
+                            </button>
+                        )}
                     </div>
                     <div className={s.rankAxis} aria-hidden='true'>
                         <span />
@@ -298,10 +331,20 @@ export function FlowRank({
                         <canvas ref={canvasRef} className={s.rankCanvas} aria-hidden='true' />
                         <div className={s.rankArea} ref={areaRef}>
                             <div className={s.rankRows} style={{ height }} role='group' aria-label={`族群${label}淨流入排行`}>
-                                {order.map((row) => {
-                                    const y = row.rank * ROW_PX + (row.side === 'out' && firstOut > 0 ? GAP_PX : 0);
+                                {hidden > 0 && (
+                                    <button
+                                        type='button'
+                                        className={s.rankFold}
+                                        style={{ top: (firstOut >= 0 ? firstOut : shown.length) * ROW_PX }}
+                                        onClick={() => setShowAll(true)}
+                                    >
+                                        另有 {hidden} 個族群淨流量較小・顯示全部
+                                    </button>
+                                )}
+                                {shown.map((row, index) => {
+                                    const y = index * ROW_PX + (row.side === 'out' && gap ? GAP_PX : 0);
                                     const width = now !== null ? riverLength(row.value, maxAbs) * 50 * REACH : 0;
-                                    const thick = Math.round(riverWidth(turnoverOf(row.item), maxTurnover, 4, 14) * 2) / 2;
+                                    const thick = Math.round(riverWidth(turnoverOf(row.item), maxTurnover, 3, 18) * 2) / 2;
                                     const move = showMoves ? (moves.map.get(row.id) ?? 0) : 0;
                                     const selected = row.id === selectedId;
                                     const f = row.item.flow;
@@ -310,7 +353,7 @@ export function FlowRank({
                                     const glow = lead || (showMoves && moves.mover === row.id);
                                     // a brief ring only when one of the top three changed place
                                     const ring = !reducedMotion && move !== 0 && row.rank < 3 && row.side === 'in';
-                                    const head = glow ? Math.min(14, thick + 5) : Math.min(8, thick + 2);
+                                    const head = glow ? Math.max(10, Math.min(18, thick + 4)) : Math.max(6, Math.min(12, thick * 0.8));
                                     return (
                                         <button
                                             key={row.id}
@@ -385,6 +428,7 @@ export function FlowRank({
                         paused={paused}
                         nameOf={nameOf}
                         onPick={onPick}
+                        onClose={docked ? undefined : () => setDrawer(false)}
                     />
                 )}
             </div>

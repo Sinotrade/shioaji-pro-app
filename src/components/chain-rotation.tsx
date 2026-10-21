@@ -7,13 +7,13 @@
 // Restraint: translucent muted bubbles with a thin outline, names inside
 // when they fit, no quadrant tints and no glow. Each minute the bubbles move
 // on a spring (motion: a retarget mid-flight keeps its velocity, CSS
-// transitions restart from zero); only the selected or hovered group draws
+// transitions restart from zero); only the hovered or focused group draws
 // its eight-minute trail, and a faint ring marks a genuine state change. The
 // viewport only widens during the session, so motion always means change,
 // never rescaling. Static under prefers-reduced-motion.
 
 import { domAnimation, LazyMotion, m } from 'motion/react';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
 import {
     asinhScale,
@@ -23,6 +23,7 @@ import {
     quadrantOf,
     rotationExtent,
     rotationPoint,
+    relaxCircles,
     rotationTrail,
     smoothTrail,
     type Quadrant,
@@ -54,6 +55,9 @@ interface LabelSpot {
     inside?: boolean;
     /** Name as drawn (fitted inside the bubble, or shortened outside). */
     text: string;
+    /** Inside: font size, and whether the value fits under the name. */
+    font?: number;
+    value?: boolean;
 }
 
 const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
@@ -103,7 +107,10 @@ function niceCeil(value: number) {
 
 /** Extent that only grows during a session; shrinks once the data fits in a third of it. */
 function useRatchet(value: number, session: string | null) {
-    const ref = useRef<{ session: string | null; value: number }>({ session, value });
+    const ref = useRef<{ session: string | null; value: number }>({
+        session,
+        value,
+    });
     if (ref.current.session !== session || value > ref.current.value || value < ref.current.value / 3) {
         ref.current = { session, value };
     }
@@ -141,12 +148,23 @@ export function FlowRotation({
             const point = rotationPoint(row.flow, now);
             if (!point) return [];
             const trail = smoothTrail(rotationTrail(row.flow, now - 1, TRAIL, 1, from ?? 0));
-            return [{ row, id: row.theme.id, point, trail, state: quadrantOf(point.net, point.y) }];
+            return [
+                {
+                    row,
+                    id: row.theme.id,
+                    point,
+                    trail,
+                    state: quadrantOf(point.net, point.y),
+                },
+            ];
         });
     }, [rows, now, from]);
 
     // states of the previous minute → pulse on change
-    const prev = useRef<{ now: number | null; states: Map<string, Quadrant> }>({ now: null, states: new Map() });
+    const prev = useRef<{ now: number | null; states: Map<string, Quadrant> }>({
+        now: null,
+        states: new Map(),
+    });
     const pulse = useMemo(() => {
         const set = new Set<string>();
         if (now === null || prev.current.now === now) return set;
@@ -154,7 +172,10 @@ export function FlowRotation({
         if (before.size > 0) {
             for (const b of bubbles) if (before.get(b.id) !== undefined && before.get(b.id) !== b.state) set.add(b.id);
         }
-        prev.current = { now, states: new Map(bubbles.map((b) => [b.id, b.state])) };
+        prev.current = {
+            now,
+            states: new Map(bubbles.map((b) => [b.id, b.state])),
+        };
         return set;
     }, [bubbles, now]);
 
@@ -185,38 +206,71 @@ export function FlowRotation({
     const cy = PAD.top + plotH / 2;
     const px = (net: number) => cx + (asinhScale(net, extentX, NET_UNIT) * plotW) / 2;
     const py = (y: number) => cy - (Math.max(-1, Math.min(1, y / extentY)) * (plotH - 12)) / 2;
-    const rMax = Math.max(14, Math.min(40, Math.min(plotW, plotH) / 9));
-    const rMin = Math.max(6, rMax * 0.26);
+    // a narrow size range: every bubble is big enough to carry its name
+    const rMax = Math.max(18, Math.min(44, Math.min(plotW, plotH) / 8));
+    const rMin = Math.max(12, rMax * 0.4);
     const radius = (size: number) => rMin + Math.sqrt(Math.max(0, size) / maxSize) * (rMax - rMin);
-    // a bubble stays whole inside the plot: an edge group sits against the frame
+    const plotBox = {
+        x0: PAD.left,
+        x1: PAD.left + plotW,
+        y0: PAD.top,
+        y1: PAD.top + plotH,
+    };
     const clampTo = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
-    const bx = (b: Bubble) => clampTo(px(b.point.net), PAD.left + radius(b.point.size), PAD.left + plotW - radius(b.point.size));
-    const by = (b: Bubble) => clampTo(py(b.point.y), PAD.top + radius(b.point.size), PAD.top + plotH - radius(b.point.size));
 
-    // label the selection and the biggest groups. Each label tries inside,
-    // above, below, right and left of its bubble and takes the first spot
-    // that hits no placed label, no other bubble and stays in the plot.
+    // gentle collision relaxation from the data positions; an edge group sits
+    // whole against the frame
+    const place = new Map<string, { x: number; y: number; r: number }>();
+    {
+        const sorted = [...bubbles].sort((a, b) => (a.id < b.id ? -1 : 1));
+        const circles = sorted.map((b) => ({
+            x: px(b.point.net),
+            y: py(b.point.y),
+            r: radius(b.point.size),
+        }));
+        const relaxed = plotW > 0 && plotH > 0 ? relaxCircles(circles, plotBox) : circles;
+        sorted.forEach((b, i) => place.set(b.id, { ...relaxed[i]!, r: circles[i]!.r }));
+    }
+    const at = (b: Bubble) => place.get(b.id)!;
+
+    // every bubble is labelled inside when its radius allows (name cut to the
+    // chord, value below); the rest try above, below, right and left and
+    // take the first spot that hits no placed label, no other bubble and stays
+    // in the plot. Outside labels are capped, inside ones are not.
     const labels = new Map<string, LabelSpot>();
     {
         const placed: Box[] = [];
-        const circles = bubbles.map((b) => ({ id: b.id, x: bx(b), y: by(b), r: radius(b.point.size) }));
+        const circles = bubbles.map((b) => ({ id: b.id, ...at(b) }));
         const candidates = [...bubbles].sort(
             (a, b) => (b.id === selectedId ? 1 : 0) - (a.id === selectedId ? 1 : 0) || Math.abs(b.point.net) - Math.abs(a.point.net),
         );
-        // inside labels add no clutter: only labels outside a bubble count to the cap
         let outside = 0;
         for (const b of candidates) {
-            const r = radius(b.point.size);
-            const x = bx(b);
-            const y = by(b);
+            const { x, y, r } = at(b);
             const name = shortName(b.row.theme.name);
             const value = fmtTwd(b.point.net, true).replace(' ', '');
             const lw = Math.max(textWidth(name), textWidth(value, 5.4)) + 4;
-            // inside: the chord at ±7 px from the centre is the room for a line
-            const room = 2 * Math.sqrt(Math.max(0, r * r - 49)) - 4;
-            const fitted = r >= 15 && textWidth(value, 5) <= room ? fitName(b.row.theme.name, room) : null;
+            // inside: font follows the radius; the chord ±font from the centre is the room
+            const font = Math.max(7.5, Math.min(10, r * 0.4));
+            const scale = font / 9.5;
+            const room = (2 * Math.sqrt(Math.max(0, r * r - font * font)) - 3) / scale;
+            const withValue = r >= 13 && textWidth(value, 5.4) <= room;
+            const fitted = r >= 10 ? fitName(b.row.theme.name, room) : null;
+            const inside: LabelSpot[] = fitted
+                ? [
+                      {
+                          dx: 0,
+                          dy: withValue ? -1 : font * 0.35,
+                          anchor: 'middle',
+                          inside: true,
+                          text: fitted,
+                          font,
+                          value: withValue,
+                      },
+                  ]
+                : [];
             const spots: LabelSpot[] = [
-                ...(fitted ? [{ dx: 0, dy: -1, anchor: 'middle' as const, inside: true, text: fitted }] : []),
+                ...inside,
                 { dx: 0, dy: -r - 13, anchor: 'middle', text: name },
                 { dx: 0, dy: r + 11, anchor: 'middle', text: name },
                 { dx: r + 4, dy: -2, anchor: 'start', text: name },
@@ -224,12 +278,25 @@ export function FlowRotation({
             ];
             for (const spot of spots) {
                 if (!spot.inside && outside >= MAX_LABELS) break;
-                const sw = spot.inside ? Math.min(lw, r * 2) : lw;
+                const sw = spot.inside ? Math.min(lw * scale, r * 1.8) : lw;
                 const x0 = spot.anchor === 'middle' ? x + spot.dx - sw / 2 : spot.anchor === 'start' ? x + spot.dx : x + spot.dx - sw;
-                const box = { x0, x1: x0 + sw, y0: y + spot.dy - 10, y1: y + spot.dy + 12 };
+                const box = spot.inside
+                    ? {
+                          x0,
+                          x1: x0 + sw,
+                          y0: y - font,
+                          y1: y + (withValue ? font * 1.1 : 2),
+                      }
+                    : { x0, x1: x0 + sw, y0: y + spot.dy - 10, y1: y + spot.dy + 12 };
                 if (box.x0 < PAD.left || box.x1 > PAD.left + plotW || box.y0 < PAD.top || box.y1 > PAD.top + plotH) continue;
                 if (placed.some((o) => overlaps(box, o))) continue;
-                if (circles.some((c) => c.id !== b.id && hitsCircle(box, c))) continue;
+                // an inside label may sit under a neighbour's rim, not across its centre
+                if (
+                    spot.inside
+                        ? circles.some((c) => c.id !== b.id && c.r > 4 && hitsCircle(box, { ...c, r: c.r * 0.55 }))
+                        : circles.some((c) => c.id !== b.id && hitsCircle(box, c))
+                )
+                    continue;
                 placed.push(box);
                 labels.set(b.id, spot);
                 if (!spot.inside) outside += 1;
@@ -241,13 +308,14 @@ export function FlowRotation({
     }
 
     const top = bubbles.reduce<Bubble | null>((best, b) => (b.point.net > 0 && (!best || b.point.net > best.point.net) ? b : best), null);
-    const bottom = bubbles.reduce<Bubble | null>((best, b) => (b.point.net < 0 && (!best || b.point.net < best.point.net) ? b : best), null);
+    const bottom = bubbles.reduce<Bubble | null>(
+        (best, b) => (b.point.net < 0 && (!best || b.point.net < best.point.net) ? b : best),
+        null,
+    );
 
     // draw order: small first, selection last
-    const ordered = [...bubbles].sort((a, b) =>
-        a.id === selectedId ? 1 : b.id === selectedId ? -1 : b.point.size - a.point.size,
-    );
-    const ticks = NET_TICKS.filter((t) => asinhScale(t, extentX, NET_UNIT) < 0.8);
+    const ordered = [...bubbles].sort((a, b) => (a.id === selectedId ? 1 : b.id === selectedId ? -1 : b.point.size - a.point.size));
+    const ticks = NET_TICKS.filter((t) => asinhScale(t, extentX, NET_UNIT) < 0.74);
 
     return (
         <div className={s.rot} ref={ref}>
@@ -284,8 +352,9 @@ export function FlowRotation({
                         [t, -t].map((v) => (
                             <g key={v}>
                                 <line className={s.rotGrid} x1={px(v)} x2={px(v)} y1={PAD.top} y2={PAD.top + plotH} />
-                                <text className={s.rotTick} x={px(v)} y={PAD.top + plotH + 11} textAnchor='middle'>
-                                    {fmtTwd(v, true).replace(' ', '')}
+                                <text className={s.rotTick} x={px(v)} y={PAD.top + plotH + 13} textAnchor='middle'>
+                                    {v > 0 ? '+' : '−'}
+                                    {(Math.abs(v) / 1e8).toLocaleString('en-US')}
                                 </text>
                             </g>
                         )),
@@ -310,23 +379,30 @@ export function FlowRotation({
                     <text className={s.rotTick} x={PAD.left - 4} y={cy + 3} textAnchor='end'>
                         0
                     </text>
-                    <text className={s.rotCaption} x={PAD.left + plotW} y={PAD.top + plotH + 11} textAnchor='end'>
-                        淨流入 →
+                    <text className={s.rotTick} x={cx} y={PAD.top + plotH + 13} textAnchor='middle'>
+                        0
                     </text>
-                    <text className={s.rotCaption} x={PAD.left} y={PAD.top + plotH + 11}>
-                        ← 淨流出
+                    <text className={s.rotCaption} x={PAD.left + plotW} y={PAD.top + plotH + 13} textAnchor='end'>
+                        淨流入（億）→
+                    </text>
+                    <text className={s.rotCaption} x={PAD.left} y={PAD.top + plotH + 13}>
+                        ← 淨流出（億）
                     </text>
                     <text className={s.rotCaption} x={6} y={PAD.top - 8}>
                         資金動能（百分點）
                     </text>
-                    {/* the trail of the selected or hovered group only */}
+                    {/* the trail of the hovered (or keyboard-focused) group only */}
                     {ordered.map((b) => {
-                        if (b.trail.length < 2 || (b.id !== selectedId && b.id !== hoverId)) return null;
+                        if (b.trail.length < 2 || b.id !== hoverId) return null;
                         if (focusState !== null && focusState !== b.state) return null;
                         // ends at the drawn (edge-clamped) centre of the bubble
                         const pts = [
-                            ...b.trail.map((p) => ({ slot: p.slot, x: px(p.net), y: py(p.y) })),
-                            { slot: b.point.slot, x: bx(b), y: by(b) },
+                            ...b.trail.map((p) => ({
+                                slot: p.slot,
+                                x: clampTo(px(p.net), plotBox.x0 + at(b).r, plotBox.x1 - at(b).r),
+                                y: clampTo(py(p.y), plotBox.y0 + at(b).r, plotBox.y1 - at(b).r),
+                            })),
+                            { slot: b.point.slot, x: at(b).x, y: at(b).y },
                         ];
                         return (
                             <g key={`trail-${b.id}`} className={s.rotTrail[b.state]}>
@@ -341,18 +417,18 @@ export function FlowRotation({
                                             y1={a.y}
                                             x2={p.x}
                                             y2={p.y}
-                                            strokeOpacity={0.08 + (0.5 * (i + 1)) / pts.length}
+                                            strokeOpacity={0.06 + (0.4 * (i + 1)) / pts.length}
                                         />
                                     );
                                 })}
-                                {b.trail.map((p, i) => (
+                                {pts.slice(0, -1).map((p, i) => (
                                     <circle
                                         key={`d${p.slot}`}
                                         className={s.rotTrailDot[b.state]}
-                                        cx={px(p.net)}
-                                        cy={py(p.y)}
+                                        cx={p.x}
+                                        cy={p.y}
                                         r={1.6}
-                                        opacity={0.15 + (0.55 * (i + 1)) / b.trail.length}
+                                        opacity={0.1 + (0.45 * (i + 1)) / pts.length}
                                     />
                                 ))}
                             </g>
@@ -362,22 +438,29 @@ export function FlowRotation({
                     {/* bubbles move on a spring to their new place */}
                     <LazyMotion features={domAnimation} strict>
                         {ordered.map((b) => {
-                            const r = radius(b.point.size);
+                            const r = at(b).r;
                             const selected = b.id === selectedId;
                             const dim = focusState !== null && focusState !== b.state;
-                            const spot = dim ? undefined : labels.get(b.id);
                             const f = b.row.flow;
-                            const value = fmtTwd(b.point.net, true).replace(' ', '');
                             return (
                                 <m.g
                                     key={b.id}
                                     className={s.rotBubble}
                                     initial={false}
-                                    animate={{ x: bx(b), y: by(b), opacity: dim ? 0.15 : 1 }}
+                                    animate={{ x: at(b).x, y: at(b).y, opacity: dim ? 0.15 : 1 }}
                                     transition={reducedMotion ? STILL : { ...SPRING, opacity: { duration: 0.3 } }}
                                     onClick={() => onSelect(b.id)}
                                     onMouseEnter={() => setHoverId(b.id)}
                                     onMouseLeave={() => setHoverId((id) => (id === b.id ? null : id))}
+                                    onFocus={() => setHoverId(b.id)}
+                                    onBlur={() => setHoverId((id) => (id === b.id ? null : id))}
+                                    tabIndex={0}
+                                    onKeyDown={(e: KeyboardEvent<SVGGElement>) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            onSelect(b.id);
+                                        }
+                                    }}
                                     role='button'
                                     aria-label={`${b.row.theme.name} ${QUADRANT_LABEL[b.state]} 淨流入 ${fmtTwd(b.point.net, true)}`}
                                 >
@@ -389,17 +472,42 @@ export function FlowRotation({
                                     )}
                                     <circle className={s.rotFill[b.state]} r={r} />
                                     {selected && <circle className={s.rotSelected} r={r + 2.5} />}
-                                    {spot?.inside && (
+                                </m.g>
+                            );
+                        })}
+                        {/* labels ride the same spring on a layer above every bubble */}
+                        {ordered.map((b) => {
+                            const dim = focusState !== null && focusState !== b.state;
+                            const spot = dim ? undefined : labels.get(b.id);
+                            if (!spot) return null;
+                            const value = fmtTwd(b.point.net, true).replace(' ', '');
+                            const font = spot.font ?? 9.5;
+                            return (
+                                <m.g
+                                    key={`label-${b.id}`}
+                                    className={s.rotLabel}
+                                    initial={false}
+                                    animate={{ x: at(b).x, y: at(b).y }}
+                                    transition={reducedMotion ? STILL : SPRING}
+                                    aria-hidden='true'
+                                >
+                                    {spot.inside ? (
                                         <>
-                                            <text className={s.rotNameIn} y={-1} textAnchor='middle'>
+                                            <text className={s.rotNameIn} y={spot.dy} textAnchor='middle' style={{ fontSize: `${font}px` }}>
                                                 {spot.text}
                                             </text>
-                                            <text className={s.rotValueIn} y={9.5} textAnchor='middle'>
-                                                {value}
-                                            </text>
+                                            {spot.value && (
+                                                <text
+                                                    className={s.rotValueIn}
+                                                    y={spot.dy + font}
+                                                    textAnchor='middle'
+                                                    style={{ fontSize: `${font * 0.9}px` }}
+                                                >
+                                                    {value}
+                                                </text>
+                                            )}
                                         </>
-                                    )}
-                                    {spot && !spot.inside && (
+                                    ) : (
                                         <>
                                             <text className={s.rotName} x={spot.dx} y={spot.dy} textAnchor={spot.anchor}>
                                                 {spot.text}
@@ -421,21 +529,32 @@ export function FlowRotation({
                             ['improving', PAD.left + 16, PAD.top + 14, 'start'],
                             ['lagging', PAD.left + 16, PAD.top + plotH - 7, 'start'],
                         ] as const
-                    ).map(([q, x, y, anchor]) => (
-                        <g key={q}>
-                            <circle className={s.rotCornerDot[q]} cx={anchor === 'end' ? x - textWidth(QUADRANT_LABEL[q]) - 7 : x - 8} cy={y - 3.5} r={3} />
-                            <text className={s.rotCorner} x={x} y={y} textAnchor={anchor}>
-                                {QUADRANT_LABEL[q]}
-                            </text>
-                        </g>
-                    ))}
-
+                    ).map(([q, x, y, anchor]) => {
+                        // a bubble parked in the corner wins: the chips still name the quadrant
+                        const lw = textWidth(QUADRANT_LABEL[q]) + 14;
+                        const box =
+                            anchor === 'end'
+                                ? { x0: x - lw, x1: x, y0: y - 12, y1: y + 3 }
+                                : { x0: x - 12, x1: x + lw - 12, y0: y - 12, y1: y + 3 };
+                        if (bubbles.some((b) => hitsCircle(box, { ...at(b), r: at(b).r + 2 }))) return null;
+                        return (
+                            <g key={q}>
+                                <circle
+                                    className={s.rotCornerDot[q]}
+                                    cx={anchor === 'end' ? x - textWidth(QUADRANT_LABEL[q]) - 7 : x - 8}
+                                    cy={y - 3.5}
+                                    r={3}
+                                />
+                                <text className={s.rotCorner} x={x} y={y} textAnchor={anchor}>
+                                    {QUADRANT_LABEL[q]}
+                                </text>
+                            </g>
+                        );
+                    })}
                 </svg>
             )}
             {now === null && (
-                <div className={s.rotEmpty}>
-                    盤中每分鐘更新：收到第一根 1 分 K 起，泡泡依淨流入與資金動能移動，點選泡泡看 8 分鐘軌跡
-                </div>
+                <div className={s.rotEmpty}>盤中每分鐘更新：收到第一根 1 分 K 起，泡泡依淨流入與資金動能移動，滑過泡泡看 8 分鐘軌跡</div>
             )}
             {now !== null && (top || bottom) && (
                 <div className={s.rotFoot}>

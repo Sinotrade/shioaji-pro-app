@@ -20,6 +20,7 @@ import {
     rotationPoint,
     rotationTrail,
     smoothTrail,
+    relaxCircles,
 } from './chain-motion';
 
 function group(minutes: [slot: number, turnover: number, net: number][]): GroupFlow {
@@ -251,5 +252,35 @@ describe('river length', () => {
         expect(riverLength(-100, 400)).toBe(0.5);
         expect(riverLength(25, 400)).toBe(0.25);
         expect(riverLength(10, 0)).toBe(0);
+    });
+});
+
+describe('bubble relaxation', () => {
+    const box = { x0: 0, x1: 400, y0: 0, y1: 300 };
+    it('pushes overlapping bubbles apart, within the cap and the box', () => {
+        const circles = [
+            { x: 200, y: 150, r: 20 },
+            { x: 205, y: 150, r: 20 },
+            { x: 200, y: 150, r: 10 },
+        ];
+        const out = relaxCircles(circles, box);
+        const d = Math.hypot(out[0]!.x - out[1]!.x, out[0]!.y - out[1]!.y);
+        expect(d).toBeGreaterThan(20);
+        out.forEach((p, i) => {
+            const c = circles[i]!;
+            expect(Math.hypot(p.x - c.x, p.y - c.y)).toBeLessThanOrEqual(c.r * 1.2 + 1e-6);
+        });
+        expect(relaxCircles(circles, box)).toEqual(out);
+    });
+    it('leaves separated bubbles alone and clamps to the box', () => {
+        const out = relaxCircles(
+            [
+                { x: 50, y: 50, r: 10 },
+                { x: 395, y: 298, r: 12 },
+            ],
+            box,
+        );
+        expect(out[0]).toEqual({ x: 50, y: 50 });
+        expect(out[1]).toEqual({ x: 388, y: 288 });
     });
 });
