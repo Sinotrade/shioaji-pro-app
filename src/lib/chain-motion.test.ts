@@ -11,6 +11,7 @@ import {
     rankOrder,
     rankValue,
     rankMoves,
+    riverWidth,
     rotationExtent,
     rotationPoint,
     rotationTrail,
@@ -196,5 +197,15 @@ describe('diverging scale', () => {
         const out = divergingScale([-30, -10]);
         expect(out.zero).toBe(85);
         expect(30 * out.scale).toBeCloseTo(85);
+    });
+});
+
+describe('river width', () => {
+    it('scales thickness by the square root of turnover with a floor', () => {
+        expect(riverWidth(100, 100)).toBe(14);
+        expect(riverWidth(25, 100)).toBeCloseTo(3 + 11 * 0.5);
+        expect(riverWidth(0, 100)).toBe(3);
+        expect(riverWidth(50, 0)).toBe(3);
+        expect(riverWidth(500, 100)).toBe(14);
     });
 });

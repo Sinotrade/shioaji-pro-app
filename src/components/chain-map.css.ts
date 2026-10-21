@@ -535,6 +535,61 @@ export const clock = style({
     color: vars.color.foreground,
 });
 
+const RANK_COLUMNS = '148px minmax(0, 1fr) 74px 56px';
+export const rankAxis = style({
+    display: 'grid',
+    gridTemplateColumns: RANK_COLUMNS,
+    alignItems: 'center',
+    columnGap: '8px',
+    padding: `3px ${vars.space.sm} 2px`,
+    fontSize: '0.56rem',
+    color: vars.color.mutedForeground,
+    borderBottom: `1px solid ${tint(vars.color.border, 60)}`,
+});
+export const rankAxisNote = style({ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
+export const rankAxisTrack = style({ position: 'relative', height: '14px' });
+export const rankAxisSide = style({
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '2px',
+    padding: '0 6px',
+    whiteSpace: 'nowrap',
+    fontWeight: 600,
+    transition: 'left 900ms cubic-bezier(0.22, 1, 0.36, 1), right 900ms cubic-bezier(0.22, 1, 0.36, 1)',
+    ...reduce,
+});
+export const rankAxisOut = style({ color: vars.color.down });
+export const rankAxisIn = style({ color: vars.color.up });
+export const rankAxisTick = style({
+    position: 'absolute',
+    top: '2px',
+    bottom: '-3px',
+    width: '1px',
+    background: tint(vars.color.mutedForeground, 55),
+    transition: 'left 900ms cubic-bezier(0.22, 1, 0.36, 1)',
+    ...reduce,
+});
+export const rankDivider = style({
+    position: 'absolute',
+    left: vars.space.sm,
+    right: vars.space.sm,
+    height: 0,
+    borderTop: `1px dashed ${tint(vars.color.mutedForeground, 35)}`,
+    transition: 'top 700ms cubic-bezier(0.22, 1, 0.36, 1)',
+    ...reduce,
+});
+export const rankMove = style({
+    ...mono,
+    display: 'inline-flex',
+    alignItems: 'center',
+    fontSize: '0.56rem',
+    fontWeight: 700,
+    lineHeight: 1,
+    flexShrink: 0,
+});
 export const rankStage = style({ position: 'relative', flex: 1, minHeight: 0, display: 'flex' });
 export const rankArea = style({ position: 'relative', flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' });
 export const rankCanvas = style({ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 });
@@ -554,9 +609,9 @@ const rankRowBase = style({
     left: 0,
     right: 0,
     top: 0,
-    height: '24px',
+    height: '28px',
     display: 'grid',
-    gridTemplateColumns: '132px minmax(0, 1fr) 74px 56px',
+    gridTemplateColumns: RANK_COLUMNS,
     alignItems: 'center',
     columnGap: '8px',
     padding: `0 ${vars.space.sm}`,
@@ -572,37 +627,42 @@ export const rankRow = styleVariants({
     off: [rankRowBase],
 });
 export const rankName = style({ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 });
-export const rankTrack = style({ position: 'relative', height: '12px', minWidth: 0 });
+export const rankTrack = style({ position: 'relative', height: '20px', minWidth: 0 });
 
-const barGrow = ['width', 'left', 'right'].map((p) => `${p} 900ms cubic-bezier(0.22, 1, 0.36, 1)`).join(', ');
-const rankBarBase = style({ position: 'absolute', top: 0, bottom: 0, transition: barGrow, ...reduce });
+const barGrow = ['width', 'left', 'right', 'height', 'border-radius'].map((p) => `${p} 900ms cubic-bezier(0.22, 1, 0.36, 1)`).join(', ');
+const rankBarBase = style({ position: 'absolute', top: '50%', transform: 'translateY(-50%)', transition: barGrow, ...reduce });
+// the trail fades toward the zero axis and is brightest at the head
+const trail = (color: string, deg: number) =>
+    `linear-gradient(${deg}deg, ${tint(color, 4)}, ${tint(color, 22)} 45%, ${tint(color, 62)} 88%, ${tint(color, 80)})`;
 export const rankBar = styleVariants({
-    in: [
-        rankBarBase,
-        {
-            borderRadius: '0 3px 3px 0',
-            background: `linear-gradient(90deg, ${tint(vars.color.up, 10)}, ${tint(vars.color.up, 55)})`,
-        },
-    ],
-    out: [
-        rankBarBase,
-        {
-            borderRadius: '3px 0 0 3px',
-            background: `linear-gradient(270deg, ${tint(vars.color.down, 10)}, ${tint(vars.color.down, 55)})`,
-        },
-    ],
+    in: [rankBarBase, { background: trail(vars.color.up, 90), boxShadow: `0 0 10px ${tint(vars.color.up, 18)}` }],
+    out: [rankBarBase, { background: trail(vars.color.down, 270), boxShadow: `0 0 10px ${tint(vars.color.down, 18)}` }],
 });
 const headBase = style({
     position: 'absolute',
     top: '50%',
-    width: '7px',
-    height: '7px',
-    marginTop: '-3.5px',
     borderRadius: '50%',
+    transition: 'width 900ms, height 900ms, margin 900ms, left 900ms, right 900ms',
+    ...reduce,
 });
+const glow = (color: string) =>
+    `0 0 0 1.5px ${tint(color, 35)}, 0 0 6px 1px ${tint(color, 75)}, 0 0 16px 4px ${tint(color, 32)}`;
 export const rankHead = styleVariants({
-    in: [headBase, { right: '-3.5px', background: vars.color.up, boxShadow: `0 0 8px 2px ${tint(vars.color.up, 60)}` }],
-    out: [headBase, { left: '-3.5px', background: vars.color.down, boxShadow: `0 0 8px 2px ${tint(vars.color.down, 60)}` }],
+    in: [headBase, { background: `radial-gradient(circle at 40% 40%, color-mix(in oklab, ${vars.color.up} 45%, white), ${vars.color.up} 70%)`, boxShadow: glow(vars.color.up) }],
+    out: [headBase, { background: `radial-gradient(circle at 60% 40%, color-mix(in oklab, ${vars.color.down} 45%, white), ${vars.color.down} 70%)`, boxShadow: glow(vars.color.down) }],
+});
+const pulse = keyframes({ from: { transform: 'scale(1)', opacity: 0.9 }, to: { transform: 'scale(3.2)', opacity: 0 } });
+const pulseBase = style({
+    position: 'absolute',
+    inset: 0,
+    borderRadius: '50%',
+    pointerEvents: 'none',
+    animation: `${pulse} 1.1s ease-out 2`,
+    ...reduce,
+});
+export const rankPulse = styleVariants({
+    in: [pulseBase, { border: `1.5px solid ${vars.color.up}` }],
+    out: [pulseBase, { border: `1.5px solid ${vars.color.down}` }],
 });
 export const rankValue = style({ ...mono, fontSize: '0.66rem', fontWeight: 650, textAlign: 'right', whiteSpace: 'nowrap' });
 export const rankPct = style({ ...mono, fontSize: '0.6rem', textAlign: 'right', whiteSpace: 'nowrap' });

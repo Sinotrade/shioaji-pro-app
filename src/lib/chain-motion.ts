@@ -36,6 +36,16 @@ export function rankOrder<T>(items: readonly T[], id: (item: T) => string, value
 }
 
 /**
+ * Bar thickness in px for a group's turnover: square-root scaled against the
+ * largest turnover on screen so area, not height, tracks money traded, and a
+ * thin floor keeps quiet groups visible.
+ */
+export function riverWidth(turnover: number, max: number, min = 3, full = 14): number {
+    if (!(max > 0) || !(turnover > 0)) return min;
+    return min + (full - min) * Math.sqrt(Math.min(1, turnover / max));
+}
+
+/**
  * Diverging bar layout: the zero line (% of the track) sits where both sides
  * fit, kept within [min, 100 − min], and one scale (% per unit) is shared by
  * both sides and recomputed after the zero is clamped, so no bar clips and

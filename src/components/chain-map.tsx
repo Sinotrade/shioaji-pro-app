@@ -63,7 +63,7 @@ export function ChainMap({
         }
     });
     const [kind, setKindState] = useState<KindFilter>(() => readPref(KIND_KEY, ['all', 'chain', 'theme'] as const, 'all'));
-    const [view, setViewState] = useState<ViewMode>(() => readPref(VIEW_KEY, ['rotation', 'rank', 'heat'] as const, 'rotation'));
+    const [view, setViewState] = useState<ViewMode>(() => readPref(VIEW_KEY, ['rotation', 'rank', 'heat'] as const, 'rank'));
     const [metric, setMetricState] = useState<RankMetric>(() => readPref(METRIC_KEY, ['cum', 'flow5'] as const, 'cum'));
     const [focus, setFocus] = useState<string | null>(null);
     const [heatWindow, setHeatWindowState] = useState<'5' | '10'>(() => readPref(HEAT_WINDOW_KEY, ['5', '10'] as const, '10'));
@@ -227,8 +227,8 @@ export function ChainMap({
                         writePref(VIEW_KEY, v);
                     }}
                     options={[
+                        { value: 'rank', label: '排行', title: '族群淨流入排行，長度為淨流入、粗細為成交值，每分鐘更新名次' },
                         { value: 'rotation', label: '輪動', title: '族群輪動象限：橫軸淨流入、縱軸資金動能，每分鐘更新位置與軌跡' },
-                        { value: 'rank', label: '排行', title: '族群淨流入排行，每分鐘更新名次' },
                         { value: 'heat', label: '熱力', title: '族群與成分股近期淨流入占成交值，點族群看成分股' },
                     ]}
                 />
