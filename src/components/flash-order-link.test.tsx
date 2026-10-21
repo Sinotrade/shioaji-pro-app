@@ -51,6 +51,11 @@ const arm = async (r: ReactTestRenderer) => { await act(async () => { button(r, 
 
 beforeEach(() => {
     vi.clearAllMocks();
+    // cdf's last trading date is 2026-10-21 and stock futures lock at 13:30 that day, so a
+    // real clock makes every cdf order test fail from that afternoon on. Pin the clock to a
+    // normal trading morning before it; tests about the expiry set their own time.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-20T10:00:00+08:00'));
     mocks.store.clear();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: (k: string) => mocks.store.get(k) ?? null, setItem: (k: string, v: string) => { mocks.store.set(k, v); } });

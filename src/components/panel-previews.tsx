@@ -379,6 +379,32 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             ))}
         </Frame>
     ),
+    company: (
+        <Frame>
+            <Ln x={8} y={9} w={14} />
+            <Ln x={26} y={8} w={28} color={vars.color.foreground} o={0.7} />
+            <Ln x={90} y={8} w={22} color={up} o={0.85} />
+            <line x1='4' y1='20' x2='116' y2='20' stroke={border} />
+            {[0, 1, 2].map((i) => (
+                <rect
+                    key={i}
+                    x={8 + i * 36}
+                    y='26'
+                    width='32'
+                    height='10'
+                    rx='2'
+                    fill={i === 1 ? accent : muted}
+                    fillOpacity={i === 1 ? 0.35 : 0.12}
+                    stroke={i === 1 ? accent : border}
+                />
+            ))}
+            <Ln x={8} y={44} w={96} />
+            <Ln x={8} y={51} w={80} />
+            {[22, 16, 12, 9, 6].map((w, i) => (
+                <rect key={i} x={8 + [0, 22, 38, 50, 59][i]!} y='60' width={w} height='6' fill={accent} fillOpacity={[0.9, 0.65, 0.45, 0.3, 0.2][i]} />
+            ))}
+        </Frame>
+    ),
     volprofile: (
         <Frame>
             {[46, 66, 88, 72, 52, 34, 22].map((w, i) => (
