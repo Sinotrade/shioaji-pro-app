@@ -22,7 +22,8 @@ import {
     lateFillQuantity,
     workingEntryAfterExit,
 } from '../lib/bracket-core';
-import { maskAccountId, usePrivacyMode } from '../lib/privacy';
+import { maskAccountId, maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
+import { useRevealText } from '../lib/privacy-text';
 import { currentProtectionEnv, protectionEnvLabel } from '../lib/protection-env';
 import { useServerInfo } from '../lib/server-info-store';
 import { useTriggerFeed } from '../lib/trigger-engine';
@@ -53,6 +54,9 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
     stale: boolean;
 }) {
     const priv = usePrivacyMode();
+    // 出場明細、保護問題與錯誤訊息保留產生當下的字串：渲染時依目前開關重遮（#268）
+    const reveal = useRevealText();
+    const privMoney = usePrivacyMoney();
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
     const [confirmRemove, setConfirmRemove] = useState(false);
@@ -89,13 +93,13 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                 {plan.action === 'Buy' ? '買進' : '賣出'}
                 {plan.stopPrice !== null ? ` 停損 ${plan.stopPrice}` : ''}
                 {plan.takePrice !== null ? ` 停利 ${plan.takePrice}` : ''}
-                {protectedQty > 0 ? ` · OCO 保護 ${protectedQty}` : ''}
+                {protectedQty > 0 ? ` · OCO 保護 ${maskMoney(String(protectedQty), privMoney)}` : ''}
             </div>
             {plan.exit && (
                 <div className={styles.note[tone === 'ok' ? 'ok' : 'err']}>
                     {plan.exit.kind === 'stop' ? '停損' : '停利'} {EXIT[plan.exit.status] ?? plan.exit.status}
                     {` ${plan.exit.filled}/${plan.exit.quantity}`}
-                    {plan.exit.detail ? ` — ${plan.exit.detail}` : ''}
+                    {plan.exit.detail ? ` — ${reveal(plan.exit.detail)}` : ''}
                 </div>
             )}
             {stale && (
@@ -105,10 +109,10 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
                 <div className={styles.note.err}>進場單仍有 {workingEntry} 未成交委託在場上；出場已觸發，之後的成交不受保護</div>
             )}
             {lateFillQuantity(plan) > 0 && (
-                <div className={styles.note.err}>未受保護 {lateFillQuantity(plan)}：進場單結束後才收到的成交（資料異常），不會自動補保護；請到委託與持倉核對後自行處理</div>
+                <div className={styles.note.err}>未受保護 {maskMoney(String(lateFillQuantity(plan)), privMoney)}：進場單結束後才收到的成交（資料異常），不會自動補保護；請到委託與持倉核對後自行處理</div>
             )}
             {unprotected - lateFillQuantity(plan) > 0 && (
-                <div className={styles.note.err}>可能未保護 {unprotected - lateFillQuantity(plan)}（待確認）：請先按「對帳」確認實際成交，勿直接另下出場單；系統不會自動重送</div>
+                <div className={styles.note.err}>可能未保護 {maskMoney(String(unprotected - lateFillQuantity(plan)), privMoney)}（待確認）：請先按「對帳」確認實際成交，勿直接另下出場單；系統不會自動重送</div>
             )}
             {isLive(plan) && elsewhere && (
                 <div className={styles.note.warn}>
@@ -123,7 +127,7 @@ function Row({ plan, envNow, feedMissing, executing, stale }: {
             )}
             {plan.issues.length > 0 ? (
                 <div className={styles.note.warn}>
-                    保護未確認完整：{plan.issues.map(i => i.detail).join('；')}
+                    保護未確認完整：{reveal(plan.issues.map(i => i.detail).join('；'))}
                 </div>
             ) : isLive(plan) && !notRunning ? (
                 <div className={styles.note.ok}>回報追蹤正常</div>

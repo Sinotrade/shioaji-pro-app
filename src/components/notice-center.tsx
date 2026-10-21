@@ -8,6 +8,7 @@ import {
     getNoticeLog,
     subscribeNoticeLog,
 } from '../lib/trade';
+import { useRevealText } from '../lib/privacy-text';
 import * as dock from './bottom-dock.css';
 import * as styles from './notice-center.css';
 
@@ -29,6 +30,8 @@ const KIND_ICON = {
 export function NoticeCenter() {
     const log = useSyncExternalStore(subscribeNoticeLog, getNoticeLog);
     const [filter, setFilter] = useState<Filter>('all');
+    // 通知保留產生當下的文字：渲染時依目前隱私／遮金額開關重新遮蔽（#268）
+    const reveal = useRevealText();
     const rows = [...log]
         .reverse()
         .filter((n) => filter === 'all' || n.kind === filter);
@@ -67,9 +70,9 @@ export function NoticeCenter() {
                             {new Date(n.ts).toLocaleTimeString('en-GB')}
                         </span>
                         <span className={styles.rowBody}>
-                            <span className={styles.title}>{n.title}</span>
+                            <span className={styles.title}>{reveal(n.title)}</span>
                             {n.body && (
-                                <span className={styles.body}>{n.body}</span>
+                                <span className={styles.body}>{reveal(n.body)}</span>
                             )}
                         </span>
                     </div>

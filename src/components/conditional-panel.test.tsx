@@ -46,7 +46,8 @@ vi.mock('../lib/bracket', () => ({
     acknowledgeBracketExit: vi.fn(), dismissBracket: vi.fn(), modifyBracket: vi.fn(), reconcileBracket: vi.fn(),
 }));
 vi.mock('../lib/main-window-commands', () => ({ isMainWindow: () => true }));
-vi.mock('../lib/privacy', () => ({
+vi.mock('../lib/privacy', async (orig) => ({
+    ...(await orig<typeof import('../lib/privacy')>()),
     usePrivacyMode: () => m.priv,
     maskAccountId: (id: string, priv: boolean) => priv ? `•••••${id.slice(-2)}` : id,
 }));
@@ -182,6 +183,24 @@ describe('ConditionalPanel', () => {
         await act(async () => { input.props.onChange({ target: { value: '47,850' } }); });
         await click(button(r, '儲存修改'));
         expect(m.modify).toHaveBeenCalledWith('tg-1', { price: 47850, quantity: 1, send: { type: 'MKT' }, validity: null });
+    });
+
+    it('#268 history and status text re-mask marked holdings and never render marker characters', async () => {
+        const pv = await import('../lib/privacy');
+        const detail = `可賣出現股僅 ${pv.secretMoney('200 股')}，其餘 ${pv.secretMoney('300 股')}未保護`;
+        m.sources = sources({ triggers: [trig({ history: [{ at: 1, text: detail }] })] });
+        const r = render();
+        await click(byLabel(r, '修改')[0]!);
+        const shown = () => [text(r.root), ...r.root.findAll(n => typeof n.props.title === 'string').map(n => n.props.title as string)].join('|');
+        expect(shown()).toContain('可賣出現股僅 200 股，其餘 300 股未保護');
+        await act(async () => { pv.setPrivacyMoney(true); });
+        try {
+            expect(shown()).toContain('可賣出現股僅 •••••，其餘 •••••未保護');
+            expect(shown()).not.toMatch(/200 股|300 股/);
+        } finally {
+            await act(async () => { pv.setPrivacyMoney(false); });
+        }
+        expect(shown()).not.toMatch(/[\u2061-\u2063]/);
     });
 
     it('已結束（今日） tab lists finished ones without actions', async () => {

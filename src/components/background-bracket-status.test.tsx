@@ -6,7 +6,7 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Level, OrderProgram } from '../lib/execution/model';
 
-const m = vi.hoisted(() => ({ programs: [] as unknown[], rearm: vi.fn(), handled: vi.fn(), resolve: vi.fn(), remove: vi.fn(), positions: vi.fn() }));
+const m = vi.hoisted(() => ({ privMoney: false, programs: [] as unknown[], rearm: vi.fn(), handled: vi.fn(), resolve: vi.fn(), remove: vi.fn(), positions: vi.fn() }));
 vi.mock('../lib/execution/background', () => ({
     useBackgroundPrograms: () => m.programs, rearmBackgroundBracket: m.rearm, markBackgroundHandled: m.handled,
     resolveBackgroundTrigger: m.resolve, removeBackgroundBracket: m.remove,
@@ -17,7 +17,8 @@ vi.mock('../lib/shioaji', () => ({}));
 vi.mock('../lib/account-query', () => ({}));
 vi.mock('../lib/main-window-commands', () => ({ isMainWindow: () => true }));
 vi.mock('../lib/server-info-store', () => ({ useServerInfo: () => null }));
-vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => false, maskAccountId: (id: string) => id }));
+vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: [], selectedStock: null, selectedFutures: null, loaded: true, loadError: false }) }));
+vi.mock('../lib/privacy', async (orig) => ({ ...(await orig<typeof import('../lib/privacy')>()), usePrivacyMode: () => false, usePrivacyMoney: () => m.privMoney, maskAccountId: (id: string) => id }));
 vi.mock('../lib/protection-env', () => ({ currentProtectionEnv: () => 'srv|simulation', protectionEnvLabel: () => '模擬' }));
 const { BackgroundBracketList } = await import('./background-bracket-status');
 
@@ -45,6 +46,7 @@ beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     for (const f of [m.rearm, m.handled, m.resolve, m.remove, m.positions]) f.mockReset();
     m.programs = [program({})];
+    m.privMoney = false;
 });
 afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); });
 
@@ -94,4 +96,13 @@ it('a leg already past waits for the user: send asks twice, keep watches again',
     expect(m.resolve).toHaveBeenCalledWith('bkt-1', 'L1', 'send');
     await act(async () => { await button(/繼續盯價/)!.props.onClick(); });
     expect(m.resolve).toHaveBeenCalledWith('bkt-1', 'L1', 'keep');
+});
+
+it('#268: 遮金額 hides the protected／unprotected quantities (they are the position size)', async () => {
+    m.programs = [program({ phase: 'holding', detail: null, unprotected: 3 })];
+    m.privMoney = true;
+    await render();
+    const shown = text(view.root);
+    expect(shown).toContain('未受保護 •••••：');
+    expect(shown).not.toMatch(/未受保護 3 口/);
 });

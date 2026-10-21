@@ -84,6 +84,12 @@ Shioaji Server 的登入＋合約載入（加上網路）；其餘階段屬 App 
 - 伺服器端的登入／合約細節另看 `~/.shioaji/sjpro-server-<port>.log`（Windows
   為 `%USERPROFILE%\.shioaji\`）。App 以 `RUST_LOG=warn` 啟動，log 只有警告
   以上，無法取得伺服器內部階段時間。
+- SDK 1.7.9+ 另寫每日檔 `server.<UTC 日期>.log`，App 以 `SJ_LOG_DIR` 指到 App
+  log 資料夾下的 `shioaji-server/server-<port>/`（macOS
+  `~/Library/Logs/com.sinotrade.shioaji-pro/`、Windows
+  `%LOCALAPPDATA%\com.sinotrade.shioaji-pro\logs\`），不再寫
+  `~/.shioaji/logs`。sidecar 結束後與下次啟動時會遮蔽身分證字號、帳號與家目錄，
+  超過 14 天的檔案會刪除。
 
 ## 量測步驟
 

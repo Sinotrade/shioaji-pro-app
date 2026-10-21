@@ -523,9 +523,10 @@ export function OddSpreadView({
                     <span>股</span>
                     <span
                         className={styles.inventory}
-                        title={`可賣現股（此帳戶）${reservedShares > 0 ? `，已扣未成交賣單 ${int(reservedShares)} 股` : ''}`}
+                        title={`可賣現股（此帳戶）${reservedShares > 0 ? `，已扣未成交賣單 ${maskMoney(`${int(reservedShares)} 股`, privMoney)}` : ''}`}
                     >
-                        可賣 {invLots === null ? '—' : `整 ${int(invLots)} 張／零 ${int(invOdd ?? 0)} 股`}
+                        {/* 庫存屬持倉數量：遮金額時一併遮（#268） */}
+                        可賣 {invLots === null ? '—' : maskMoney(`整 ${int(invLots)} 張／零 ${int(invOdd ?? 0)} 股`, privMoney)}
                     </span>
                 </div>
                 <div className={styles.fRow}>
@@ -590,6 +591,7 @@ export function OddSpreadView({
                                 q={q}
                                 blocked={blocked}
                                 label={text}
+                                privMoney={privMoney}
                                 contextKey={JSON.stringify([contract.code, account?.account_type, account?.broker_id, account?.account_id, mode, fees])}
                                 onExecute={allowBelowCost => void execute(q, allowBelowCost)}
                             />
@@ -604,8 +606,8 @@ export function OddSpreadView({
     );
 }
 
-function SpreadExecuteButton({ q, blocked, label, contextKey, onExecute }: {
-    q: SpreadQuote; blocked: string | null; label: string; contextKey: string; onExecute: (allowBelowCost: boolean) => void;
+function SpreadExecuteButton({ q, blocked, label, privMoney, contextKey, onExecute }: {
+    q: SpreadQuote; blocked: string | null; label: string; privMoney: boolean; contextKey: string; onExecute: (allowBelowCost: boolean) => void;
 }) {
     const [confirmation, setConfirmation] = useState<{ key: string; expiresAt: number } | null>(null);
     const key = `${contextKey}:${quoteKey(q)}`;
@@ -621,8 +623,9 @@ function SpreadExecuteButton({ q, blocked, label, contextKey, onExecute }: {
         const timer = setTimeout(() => setConfirmation(null), Math.max(0, confirmation.expiresAt - Date.now()));
         return () => clearTimeout(timer);
     }, [confirmation, key, belowCostOnly]);
-    const loss = int(Math.max(0, -(q.pnl ?? 0)));
-    const buttonText = belowCostOnly ? confirming ? `${label} · 再按一次確認 · 虧損 ${loss} 元` : `${label} · 仍要送出（預估虧損 ${loss} 元）` : label;
+    // 遮金額時按鈕文字與 aria-label 都不露預估虧損（#268）
+    const loss = maskMoney(`${int(Math.max(0, -(q.pnl ?? 0)))} 元`, privMoney);
+    const buttonText = belowCostOnly ? confirming ? `${label} · 再按一次確認 · 虧損 ${loss}` : `${label} · 仍要送出（預估虧損 ${loss}）` : label;
     return (
         <button
             className={styles.bigBtn[!on ? 'off' : belowCostOnly ? confirming ? 'danger' : 'warn' : 'on']}

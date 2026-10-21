@@ -7,7 +7,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTradingLive } from '../hooks/use-stream';
 import { ensureContract } from '../lib/contracts-cache';
-import { maskMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
+import { maskMoney, secretMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import { useServerInfo, yesterdayQuantityNotice } from '../lib/server-info-store';
 import {
     notify,
@@ -221,9 +221,10 @@ export function PositionsPane({
             notify({
                 kind: 'ok',
                 title: mode2 === 'close' ? '⏹ 平倉單已送出' : '🔄 反手單已送出',
-                body: `${p.code} 市價${exit === 'Buy' ? '買' : '賣'} ${
-                    isStockPosition(p) ? fmtStockLots(qty) : `${qty} 口`
-                }`,
+                // 平倉／反手量＝持倉數量：遮金額時不露，之後才開也會重遮（#268）
+                body: `${p.code} 市價${exit === 'Buy' ? '買' : '賣'} ${secretMoney(
+                    isStockPosition(p) ? fmtStockLots(qty) : `${qty} 口`,
+                )}`,
             });
             onChanged();
         } catch (e) {

@@ -115,10 +115,13 @@ export function accountConfirmLabel(account: Pick<Account, 'broker_id' | 'accoun
     return `${account.broker_id}-${masked}`;
 }
 
-/** 確認視窗開著時才開隱私模式：把已組好的「分公司-***6502」改成 dock 規則（只露末兩碼） */
+/**
+ * 確認視窗開著時才開隱私模式：把已組好的「分公司-***6502」改成 dock 規則（只露末兩碼）。
+ * 分倉格式「分倉 2 戶：9A95-***6502×3、9A95-***1121×2」的每個帳號都要重遮（#268）。
+ */
 export function privacyAccountLabel(label: string, priv: boolean): string {
     if (!priv) return label;
-    return label.replace(/\*+(\d{2})(\d{2})$/, (m: string, _a: string, tail: string) => '•'.repeat(m.length - 2) + tail);
+    return label.replace(/\*+\d{2}(\d{2})(?!\d)/g, (m: string, tail: string) => '•'.repeat(m.length - 2) + tail);
 }
 
 function selectedAccountLabel(unit: string): string | undefined {
