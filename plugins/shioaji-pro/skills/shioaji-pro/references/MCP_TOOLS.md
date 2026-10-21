@@ -63,6 +63,22 @@ past success or conversation text.
   `set_panel_pin`, `apply_layout`. Panel pinning uses a contract code; omitting
   the code restores linked behavior. Layouts identify both `source`
   (`preset` or `profile`) and `name`.
+- Workspace spec: `get_workspace_spec`, `validate_workspace_spec`,
+  `apply_workspace_spec`, `undo_workspace_change`. Use them to arrange a whole
+  research layout: positions, sizes, pins, flash link groups and chart
+  interval in one step. Read the spec first, edit it, validate, show the user
+  the diff when panels are removed, then apply with the returned
+  `validation_token` and the same spec. The spec is JSON `version: 1`;
+  `columns` is 24 (or 288 for fine positions) and rows are 30 px; read
+  `panel_types` for minimum sizes and settings and `viewport.rows` for the
+  visible height. Keep existing panel `id`s to keep their hidden settings
+  (accounts, quantities, indicators); a new `id` creates a panel. Always keep
+  your own AI Agent panel. Settings in v1: chart `interval`
+  (`1m`/`5m`/`15m`/`60m`/`1D`), `session`, `ohlc`, `high_low`; intraday
+  `session`. Validation errors carry a JSON path; fix them rather than
+  dropping panels. Applying records one undo step that the user can also undo
+  from the header (復原版面). Report what `apply_workspace_spec` returns, which
+  is the layout as actually applied.
 - Watchlists: `list_watchlists`, `get_watchlist`, `create_watchlist`,
   `add_to_watchlist`, `remove_from_watchlist`, `reorder_watchlist`,
   `rename_watchlist`, `select_watchlist`, `delete_watchlist`. These edit the

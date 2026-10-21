@@ -2,7 +2,7 @@
 // 都收斂進統一設定 dialog（settings-dialog.tsx）；header 只留高頻操作：
 // 伺服器狀態、Kill Switch（一鍵鎖定/解鎖）、新增面板、閃電全開、設定。
 
-import { LayoutGrid, Lock, Settings, Unlock, Zap } from 'lucide-react';
+import { LayoutGrid, Lock, Settings, Undo2, Unlock, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useStreamStatus } from '../hooks/use-stream';
 import { useHeaderItems } from '../lib/header-items';
@@ -193,6 +193,8 @@ export function HudHeader({
     onRenameProfile,
     onResetWorkspace,
     onLoadPreset,
+    workspaceUndo = null,
+    onUndoWorkspace,
     flashCodes = [],
 }: {
     accBalance?: number;
@@ -206,6 +208,9 @@ export function HudHeader({
     onRenameProfile: (oldName: string, newName: string) => void;
     onResetWorkspace: () => void;
     onLoadPreset: (name: string) => void;
+    // Agent 套用版面規格後可復原的那一步（#331）；null = 沒有可復原的變更
+    workspaceUndo?: { label: string; at: number } | null;
+    onUndoWorkspace?: () => void;
 }) {
     const streamStatus = useStreamStatus();
     const privMoney = usePrivacyMoney();
@@ -319,6 +324,16 @@ export function HudHeader({
                 >
                     <LayoutGrid size={11} style={{ verticalAlign: '-1px' }} />{' '}
                     版面
+                </button>
+            )}
+            {workspaceUndo && onUndoWorkspace && (
+                <button
+                    className={styles.resetBtn}
+                    title={`復原 Agent 版面變更「${workspaceUndo.label}」（${new Date(workspaceUndo.at).toLocaleTimeString('en-GB', { hour12: false })}）`}
+                    onClick={onUndoWorkspace}
+                >
+                    <Undo2 size={11} style={{ verticalAlign: '-1px' }} />{' '}
+                    復原版面
                 </button>
             )}
             {headerItems.flashAll && flashCodes.length > 0 && (

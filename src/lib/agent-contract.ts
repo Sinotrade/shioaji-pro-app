@@ -41,6 +41,10 @@ export const AGENT_APP_COMMANDS = [
     'remove_panel',
     'set_panel_pin',
     'apply_layout',
+    'get_workspace_spec',
+    'validate_workspace_spec',
+    'apply_workspace_spec',
+    'undo_workspace_change',
 ] as const;
 
 export type AgentAppCommandName = (typeof AGENT_APP_COMMANDS)[number];
@@ -60,6 +64,12 @@ export interface AgentAppState {
     panels: AgentPanelState[];
     layoutPresets: string[];
     layoutProfiles: string[];
+}
+
+export interface AgentWorkspaceUndoState {
+    undoId: string;
+    label: string;
+    at: number;
 }
 
 export interface AgentAppCommandMap {
@@ -93,6 +103,47 @@ export interface AgentAppCommandMap {
             source: 'preset' | 'profile';
             name: string;
             panels: AgentPanelState[];
+        };
+    };
+    get_workspace_spec: {
+        args: { columns?: import('./workspace-spec').WorkspaceSpecColumns };
+        result: {
+            spec: import('./workspace-spec').WorkspaceSpecV1;
+            schema: string;
+            viewport: { rows: number | null };
+            panelTypes: ReturnType<typeof import('./workspace-spec').workspaceSpecCatalog>;
+            undo: AgentWorkspaceUndoState | null;
+        };
+    };
+    validate_workspace_spec: {
+        args: { spec: unknown };
+        result: {
+            valid: boolean;
+            errors: import('./workspace-spec').WorkspaceSpecIssue[];
+            warnings: import('./workspace-spec').WorkspaceSpecIssue[];
+            diff: import('./workspace-spec').WorkspaceSpecDiff | null;
+            validationToken: string | null;
+            /** What get_workspace_spec will read back after apply (compacted). */
+            resultSpec: import('./workspace-spec').WorkspaceSpecV1 | null;
+        };
+    };
+    apply_workspace_spec: {
+        args: { spec: unknown; validationToken: string; label?: string };
+        result: {
+            applied: true;
+            undo: AgentWorkspaceUndoState;
+            diff: import('./workspace-spec').WorkspaceSpecDiff;
+            warnings: import('./workspace-spec').WorkspaceSpecIssue[];
+            spec: import('./workspace-spec').WorkspaceSpecV1;
+        };
+    };
+    undo_workspace_change: {
+        args: { undoId?: string };
+        result: {
+            undone: true;
+            undoId: string;
+            label: string;
+            spec: import('./workspace-spec').WorkspaceSpecV1;
         };
     };
 }
