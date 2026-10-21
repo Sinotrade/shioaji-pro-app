@@ -5,10 +5,12 @@ import * as styles from './refresh-button.css';
 type Props = Pick<ComponentProps<'button'>, 'onClick' | 'disabled' | 'className'> & {
     label: string;
     loading?: boolean;
+    /** lucide icon size; panels with compact toolbars use 12 */
+    iconSize?: number;
 };
 
 /** Manual refresh for the current panel; accessible text stays in the tooltip. */
-export function RefreshButton({ label, loading = false, disabled = false, className, onClick }: Props) {
+export function RefreshButton({ label, loading = false, disabled = false, className, onClick, iconSize = 14 }: Props) {
     return (
         <button
             type='button'
@@ -19,7 +21,7 @@ export function RefreshButton({ label, loading = false, disabled = false, classN
             disabled={disabled || loading}
             onClick={onClick}
         >
-            <RefreshCw size={14} aria-hidden='true' className={loading ? styles.refreshSpinning : undefined} />
+            <RefreshCw size={iconSize} aria-hidden='true' className={loading ? styles.refreshSpinning : undefined} />
         </button>
     );
 }

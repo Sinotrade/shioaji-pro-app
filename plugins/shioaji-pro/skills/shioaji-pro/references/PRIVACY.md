@@ -18,3 +18,8 @@ Before exporting diagnostics, workflows, screenshots, or audit data:
 Do not read provider credential files or ask the user to paste secrets into the
 conversation. Authentication and token refresh belong to each provider's native
 runtime and credential store.
+
+When the user turns on 遮金額 (hide amounts), money tools add a `privacy_note`
+and the App masks amounts in its tool rows. Do not repeat amounts or P&L figures
+in replies while it is on. Tool results refer to accounts only by type and the
+last two digits.
