@@ -22,8 +22,11 @@ import * as styles from './quote-board-settings.css';
 
 const KIND_LABEL: Record<BoardKind, string> = { index: '指數', stock: '個股・期貨' };
 
-// 錨點：按鈕（貼著按鈕下緣、右緣對齊）或右鍵位置
-export type SettingsAnchor = { kind: 'element'; el: HTMLElement } | { kind: 'point'; x: number; y: number; doc: Document };
+// 錨點：按鈕（右緣對齊按鈕）或右鍵位置（左緣對齊游標）。給了 board 時面板一律放在報價欄下緣之外，
+// 邊改邊看得到報價欄的變化，不會蓋住報價欄
+export type SettingsAnchor = ({ kind: 'element'; el: HTMLElement } | { kind: 'point'; x: number; y: number; doc: Document }) & {
+    board?: HTMLElement;
+};
 
 function placeOf(anchor: SettingsAnchor, popW: number, popH: number): CSSProperties {
     const win = (anchor.kind === 'element' ? anchor.el.ownerDocument : anchor.doc).defaultView;
@@ -34,11 +37,12 @@ function placeOf(anchor: SettingsAnchor, popW: number, popH: number): CSSPropert
             ? anchor.el.getBoundingClientRect()
             : { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y };
     const margin = 8;
+    const v = anchor.board ? anchor.board.getBoundingClientRect() : r;
     let left = anchor.kind === 'element' ? r.right - popW : r.left;
     left = Math.min(Math.max(margin, left), vw - popW - margin);
     // 下方放不下就翻到上方；兩邊都放不下時貼齊視窗、內容捲動
-    let top = r.bottom + 4;
-    if (top + popH > vh - margin) top = r.top - 4 - popH >= margin ? r.top - 4 - popH : Math.max(margin, vh - popH - margin);
+    let top = v.bottom + 4;
+    if (top + popH > vh - margin) top = v.top - 4 - popH >= margin ? v.top - 4 - popH : Math.max(margin, vh - popH - margin);
     return { left, top };
 }
 

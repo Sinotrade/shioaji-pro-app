@@ -664,7 +664,7 @@ export function QuoteBoard({
             onContextMenu={(e) => {
                 if ((e.target as Element).closest('button')) return;
                 e.preventDefault();
-                setSettingsAt({ kind: 'point', x: e.clientX, y: e.clientY, doc: e.currentTarget.ownerDocument });
+                setSettingsAt({ kind: 'point', x: e.clientX, y: e.clientY, doc: e.currentTarget.ownerDocument, board: e.currentTarget });
             }}
         >
             {/* 代號與名稱面板標題列已經有，看板不重複 */}
@@ -772,7 +772,7 @@ export function QuoteBoard({
                     className={styles.boardSettings}
                     onClick={(e) => {
                         const el = e.currentTarget;
-                        setSettingsAt((prev) => (prev ? null : { kind: 'element', el }));
+                        setSettingsAt((prev) => (prev ? null : { kind: 'element', el, board: boardRef.current ?? undefined }));
                     }}
                     aria-haspopup="dialog"
                     aria-expanded={settingsAt !== null}
