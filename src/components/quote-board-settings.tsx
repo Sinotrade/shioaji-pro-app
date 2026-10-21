@@ -2,7 +2,7 @@
 // 指數、個股各一組：每一區、每一格可以開關，區塊與格子可以上下移動；面板變窄時照樣依優先度自動收起。
 // 畫在錨點所在文件的 body 上：不放進報價欄，免得被階梯量測當成內容，也不會被看板的 overflow 裁掉
 
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronUp, Info, Lock, RotateCcw, X } from 'lucide-react';
 import {
@@ -66,31 +66,33 @@ export function QuoteBoardSettings({
         setPos(placeOf(anchor, pop.offsetWidth, pop.offsetHeight));
     }, [anchor, kind]);
 
+    // 用 X、Esc、點外面關閉時把焦點還給齒輪；用 Tab 離開面板時（非強制對話框）直接關閉，不搶回焦點
+    const dismiss = useCallback(() => {
+        if (anchor.kind === 'element') anchor.el.focus();
+        onClose();
+    }, [anchor, onClose]);
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 e.stopPropagation();
-                onClose();
+                dismiss();
             }
         };
         doc.addEventListener('keydown', onKey, true);
         return () => doc.removeEventListener('keydown', onKey, true);
-    }, [doc, onClose]);
+    }, [doc, dismiss]);
 
-    // 打開時把焦點移進面板，鍵盤可以直接操作；關閉時還給按鈕
+    // 打開時把焦點移進面板，鍵盤可以直接操作
     useEffect(() => {
         popRef.current?.focus();
-        return () => {
-            if (anchor.kind === 'element') anchor.el.focus();
-        };
-    }, [anchor]);
+    }, []);
 
     const metas = (kind === 'index' ? INDEX_SECTIONS : STOCK_SECTIONS) as readonly SectionMeta<string, string>[];
     const layout = fields[kind] as KindLayout<string, string>;
 
     const body = (
         <>
-            <div className={styles.backdrop} onMouseDown={onClose} />
+            <div className={styles.backdrop} onMouseDown={dismiss} />
             <div
                 ref={popRef}
                 className={styles.pop}
@@ -98,13 +100,17 @@ export function QuoteBoardSettings({
                 role="dialog"
                 aria-label="報價欄位設定"
                 tabIndex={-1}
+                onBlur={(e) => {
+                    const next = e.relatedTarget as Node | null;
+                    if (next && !e.currentTarget.contains(next)) onClose();
+                }}
             >
                 <div className={styles.head}>
                     <span className={styles.title}>
                         報價欄位
                         <span className={styles.subtitle}>只套用到這個面板，跟版面一起儲存</span>
                     </span>
-                    <button type="button" className={styles.iconBtn} onClick={onClose} aria-label="關閉" title="關閉">
+                    <button type="button" className={styles.iconBtn} onClick={dismiss} aria-label="關閉" title="關閉">
                         <X size={13} />
                     </button>
                 </div>
