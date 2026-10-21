@@ -68,35 +68,39 @@ export function drawHeatmapScene(
     ctx.fillStyle = scene.background;
     ctx.fillRect(0, 0, totalW, totalH);
 
-    // 標題列
+    // 第一行：標題＋副標（指數·面積·時間）；第二行：說明（左）＋圖例（右）
+    const innerW = totalW - PAD * 2;
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = scene.foreground;
     ctx.font = `600 16px ${FONT_BODY}`;
-    ctx.fillText(scene.title, PAD, 26);
-    const titleW = ctx.measureText(scene.title).width;
+    const title = ellipsize(ctx, scene.title, innerW);
+    ctx.fillText(title, PAD, 26);
+    const titleW = ctx.measureText(title).width;
     ctx.fillStyle = scene.muted;
     ctx.font = `12px ${FONT_BODY}`;
-    ctx.fillText(scene.subtitle, PAD + titleW + 10, 26);
-    // 圖例（右上）
-    const cell = 18;
+    const subtitleRoom = innerW - titleW - 10;
+    if (subtitleRoom > 24) {
+        ctx.fillText(ellipsize(ctx, scene.subtitle, subtitleRoom), PAD + titleW + 10, 26);
+    }
+    const cell = 16;
     const legendW = cell * scene.legend.colors.length;
     ctx.font = `11px ${FONT_MONO}`;
     const highW = ctx.measureText(scene.legend.high).width;
+    const lowW = ctx.measureText(scene.legend.low).width;
+    const legendTotal = lowW + 6 + legendW + 6 + highW;
     const legendX = totalW - PAD - highW - 6 - legendW;
     scene.legend.colors.forEach((color, i) => {
         ctx.fillStyle = color;
-        ctx.fillRect(legendX + i * cell, 16, cell, 10);
+        ctx.fillRect(legendX + i * cell, 38, cell, 9);
     });
     ctx.fillStyle = scene.muted;
-    ctx.fillText(scene.legend.high, legendX + legendW + 6, 25);
-    const lowW = ctx.measureText(scene.legend.low).width;
-    ctx.fillText(scene.legend.low, legendX - 6 - lowW, 25);
+    ctx.fillText(scene.legend.high, legendX + legendW + 6, 46);
+    ctx.fillText(scene.legend.low, legendX - 6 - lowW, 46);
     ctx.font = `11px ${FONT_BODY}`;
-    ctx.fillText(
-        ellipsize(ctx, scene.caption, totalW - PAD * 2),
-        PAD,
-        46,
-    );
+    const captionRoom = innerW - legendTotal - 12;
+    if (captionRoom > 24) {
+        ctx.fillText(ellipsize(ctx, scene.caption, captionRoom), PAD, 46);
+    }
 
     ctx.save();
     ctx.translate(PAD, HEAD);

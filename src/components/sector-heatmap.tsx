@@ -231,6 +231,27 @@ function useBoxSize<T extends HTMLElement>() {
     return { ref: setElement, size, resizing };
 }
 
+// 群組內排行每個產業各自一包、到達時間錯開；把短時間內的多包合併成一次
+// 版面重算（下鑽時暫停）。狀態物件本身沒換時不觸發。
+function useCoalescedStates<T>(
+    states: readonly T[],
+    delayMs: number,
+    paused: boolean,
+): readonly T[] {
+    const [snapshot, setSnapshot] = useState<readonly T[]>(states);
+    const latest = useRef(states);
+    latest.current = states;
+    const changed =
+        states.length !== snapshot.length ||
+        states.some((state, i) => state !== snapshot[i]);
+    useEffect(() => {
+        if (!changed || paused) return;
+        const timer = setTimeout(() => setSnapshot(latest.current), delayMs);
+        return () => clearTimeout(timer);
+    }, [changed, delayMs, paused]);
+    return snapshot;
+}
+
 interface TileView {
     key: string;
     code: string;
@@ -500,14 +521,19 @@ export function SectorHeatmap({
     // ---- 全景層：產業 → 個股兩層 treemap ----
     const { ref: panoramaRef, size: panoramaSize, resizing } =
         useBoxSize<HTMLDivElement>();
+    const groupStates = useCoalescedStates(
+        groupIc.states,
+        250,
+        drillCat !== null,
+    );
     const groupEntries = useMemo(() => {
         const map = new Map<string, IcRankingEntry[]>();
         groupProjections.forEach((projection, i) => {
             if (projection.kind !== 'ranking' || !projection.group) return;
-            map.set(projection.group, groupIc.states[i]?.entries ?? []);
+            map.set(projection.group, groupStates[i]?.entries ?? []);
         });
         return map;
-    }, [groupIc, groupProjections]);
+    }, [groupStates, groupProjections]);
     // 排序遲滯：以上一次的順序為底，同一個指數／面積指標內延續
     const orderRef = useRef<{
         scope: string;
@@ -617,6 +643,13 @@ export function SectorHeatmap({
                 stockOf.set(stock.key, { stock, row: group.row });
             }
         }
+        // 太小放不下標題列的產業：整塊點擊改為進入產業明細（窄面板沒有
+        // 側欄排行，否則就沒有入口）
+        const headerless = new Set(
+            panorama.layout.sectors
+                .filter((sector) => !sector.header)
+                .map((sector) => sector.key),
+        );
         return panorama.layout.tiles.flatMap((tile) => {
             const hit = stockOf.get(tile.key);
             if (!hit) return [];
@@ -634,12 +667,14 @@ export function SectorHeatmap({
                     rect: tile.rect,
                     pct: entry.pct_chg,
                     pctText: fmtPct(entry.pct_chg),
-                    title: `${name}（${entry.code}）· ${hit.row.name}\n漲跌 ${fmtPct(entry.pct_chg)} · 權重 ${entry.weight_pct.toFixed(2)}% · ${valueText}`,
-                    onClick: () => onPick?.(entry.code),
+                    title: `${name}（${entry.code}）· ${hit.row.name}\n漲跌 ${fmtPct(entry.pct_chg)} · 權重 ${entry.weight_pct.toFixed(2)}% · ${valueText}${headerless.has(tile.groupKey) ? `\n點擊看${hit.row.name}明細` : ''}`,
+                    onClick: headerless.has(tile.groupKey)
+                        ? () => openDrill(tile.groupKey)
+                        : () => onPick?.(entry.code),
                 }),
             ];
         });
-    }, [nameByCode, onPick, palette, panorama, rankMetric]);
+    }, [nameByCode, onPick, openDrill, palette, panorama, rankMetric]);
 
     const sectorHeaders = useMemo(
         () =>
