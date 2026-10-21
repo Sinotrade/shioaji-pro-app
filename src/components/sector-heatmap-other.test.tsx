@@ -90,6 +90,10 @@ vi.mock('../lib/index-components', () => ({
 vi.mock('../lib/sector-sync', () => ({
     useFocusedSector: () => ({ category: '24', seq: 1 }),
 }));
+vi.mock('../lib/trade', () => ({ notify: () => undefined }));
+vi.mock('../lib/theme-store', () => ({
+    useThemeSettings: () => ({ mode: 'dark', convention: 'tw', fontScale: 1 }),
+}));
 vi.mock('../lib/stock-index', () => ({
     loadStockDetails: () => Promise.resolve([]),
     SECTOR_INDICES: [],
