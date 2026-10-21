@@ -25,9 +25,11 @@ import {
     resolveWorkspaceSpecContracts,
     WORKSPACE_SPEC_SCHEMA_ID,
     WORKSPACE_SPEC_TOKEN_PATTERN,
+    workspaceRevision,
     workspaceSpecCatalog,
     workspaceToSpec,
     type WorkspaceSpecCheck,
+    type WorkspaceSpecIssue,
 } from './workspace-spec';
 
 export const AGENT_APP_COMMAND_REQUEST_EVENT =
@@ -54,6 +56,8 @@ export interface AgentAppCommandContext {
     workspaceHistory?: WorkspaceUndoHistory;
     /** Visible grid rows of the main window, for the viewport warning. */
     getViewportRows?(): number | null;
+    /** Render density (1–4) of the main grid, for compaction previews. */
+    getGridDensity?(): number | null;
     /** Called after a spec apply or undo lands (toast, activity log). */
     onWorkspaceSpecChange?(event: {
         kind: 'applied' | 'undone';
@@ -320,21 +324,29 @@ function undoState(entry: WorkspaceUndoEntry | null) {
     return entry ? { undoId: entry.id, label: entry.label, at: entry.at } : null;
 }
 
-// Contract resolution may cross the network, so the structural check runs
-// again on the workspace as it is after the await — the token then binds to
-// what will actually be replaced.
-async function checkSpecAgainstLive(
+// Contract resolution may cross the network. Callers run the final
+// structural check synchronously on the workspace as it is after the await,
+// with no further await before they act on it.
+async function resolveSpec(
     context: AgentAppCommandContext,
     spec: unknown,
-): Promise<WorkspaceSpecCheck> {
+): Promise<{ spec: unknown; errors: WorkspaceSpecIssue[] } | WorkspaceSpecCheck> {
     const first = checkWorkspaceSpec(spec, context.getWorkspace());
     if (!first.valid) return first;
-    const resolved = await resolveWorkspaceSpecContracts(spec, (code) =>
+    return resolveWorkspaceSpecContracts(spec, (code) =>
         context.resolveContract(code),
     );
-    const viewportRows = context.getViewportRows?.() ?? null;
-    const check = checkWorkspaceSpec(resolved.spec, context.getWorkspace(), {
-        viewportRows,
+}
+
+function checkResolved(
+    context: AgentAppCommandContext,
+    resolved: { spec: unknown; errors: WorkspaceSpecIssue[] } | WorkspaceSpecCheck,
+    current: Workspace,
+): WorkspaceSpecCheck {
+    if ('valid' in resolved) return resolved;
+    const check = checkWorkspaceSpec(resolved.spec, current, {
+        viewportRows: context.getViewportRows?.() ?? null,
+        density: context.getGridDensity?.() ?? null,
     });
     if (resolved.errors.length) {
         return {
@@ -566,10 +578,12 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
             } as AgentAppCommandMap[K]['result'];
         }
         case 'validate_workspace_spec': {
-            requireHistory(context);
+            const history = requireHistory(context);
             const { spec } =
                 args as AgentAppCommandMap['validate_workspace_spec']['args'];
-            const check = await checkSpecAgainstLive(context, spec);
+            const resolved = await resolveSpec(context, spec);
+            const current = context.getWorkspace();
+            const check = checkResolved(context, resolved, current);
             if (!check.valid) {
                 return {
                     valid: false,
@@ -580,16 +594,16 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
                     resultSpec: null,
                 } as AgentAppCommandMap[K]['result'];
             }
-            const preview = buildWorkspaceFromSpec(
-                context.getWorkspace(),
-                check.normalized,
-            );
+            const preview = buildWorkspaceFromSpec(current, check.normalized);
             return {
                 valid: true,
                 errors: [],
                 warnings: check.warnings,
                 diff: check.diff,
-                validationToken: check.token,
+                validationToken: history.issueValidation({
+                    spec: check.fingerprint,
+                    base: workspaceRevision(current),
+                }),
                 resultSpec: workspaceToSpec(preview, check.normalized.columns),
             } as AgentAppCommandMap[K]['result'];
         }
@@ -597,37 +611,54 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
             const history = requireHistory(context);
             const { spec, validationToken, label } =
                 args as AgentAppCommandMap['apply_workspace_spec']['args'];
-            const check = await checkSpecAgainstLive(context, spec);
+            const stale = () =>
+                new AgentAppCommandError(
+                    'conflict',
+                    'The workspace changed since validation; call validate_workspace_spec again and review the diff before applying',
+                );
+            if (!history.peekValidation(validationToken)) {
+                throw new AgentAppCommandError(
+                    'conflict',
+                    'validationToken is unknown, expired or already used; call validate_workspace_spec with this spec first',
+                );
+            }
+            const resolved = await resolveSpec(context, spec);
+            // From here to the mutation there is no await: the revision check,
+            // the token consumption and the replacement happen atomically with
+            // respect to user edits and other Agent calls.
+            const binding = history.peekValidation(validationToken);
+            if (!binding) throw stale();
+            const before = context.getWorkspace();
+            if (workspaceRevision(before) !== binding.base) {
+                history.revokeValidation(validationToken);
+                throw stale();
+            }
+            const check = checkResolved(context, resolved, before);
             if (!check.valid) {
+                history.revokeValidation(validationToken);
                 throw new AgentAppCommandError(
                     'invalid_arguments',
                     summarizeIssues(check),
                 );
             }
-            if (check.token !== validationToken) {
+            if (check.fingerprint !== binding.spec) {
+                history.revokeValidation(validationToken);
                 throw new AgentAppCommandError(
                     'conflict',
-                    'The spec or the workspace changed since validation; call validate_workspace_spec again and review the diff before applying',
+                    'This spec differs from the one validated with this token; validate it before applying',
                 );
             }
-            const before = context.getWorkspace();
-            const next = buildWorkspaceFromSpec(before, check.normalized);
-            const entry = history.push(
-                before,
-                next,
-                label ?? 'Agent 版面變更',
-            );
-            context.updateWorkspace(next);
+            history.revokeValidation(validationToken);
+            context.updateWorkspace(buildWorkspaceFromSpec(before, check.normalized));
+            const stored = context.getWorkspace();
+            const entry = history.push(before, stored, label ?? 'Agent 版面變更');
             context.onWorkspaceSpecChange?.({ kind: 'applied', entry });
             return {
                 applied: true,
                 undo: undoState(entry)!,
                 diff: check.diff,
                 warnings: check.warnings,
-                spec: workspaceToSpec(
-                    context.getWorkspace(),
-                    check.normalized.columns,
-                ),
+                spec: workspaceToSpec(stored, check.normalized.columns),
             } as AgentAppCommandMap[K]['result'];
         }
         case 'undo_workspace_change': {
@@ -642,7 +673,7 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
                         ? 'There is no workspace change to undo'
                         : result.reason === 'mismatch'
                           ? `undoId ${undoId} is not the latest workspace change`
-                          : 'Panels were added, removed or another layout was loaded after this change; undo would discard that work, so it was not applied',
+                          : 'Panels or their settings changed, or another layout was loaded, after this change; undo would discard that work, so it was not applied',
                 );
             }
             const restored = structuredClone(result.entry.before);

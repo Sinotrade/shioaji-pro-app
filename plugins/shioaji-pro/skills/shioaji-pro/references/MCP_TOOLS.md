@@ -68,7 +68,8 @@ past success or conversation text.
   research layout: positions, sizes, pins, flash link groups and chart
   interval in one step. Read the spec first, edit it, validate, show the user
   the diff when panels are removed, then apply with the returned
-  `validation_token` and the same spec. The spec is JSON `version: 1`;
+  `validation_token` and the same spec. A token works once and stops working
+  when the user changes the workspace; validate again on `conflict`. The spec is JSON `version: 1`;
   `columns` is 24 (or 288 for fine positions) and rows are 30 px; read
   `panel_types` for minimum sizes and settings and `viewport.rows` for the
   visible height. Keep existing panel `id`s to keep their hidden settings

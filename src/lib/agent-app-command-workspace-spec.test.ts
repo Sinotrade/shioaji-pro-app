@@ -140,13 +140,67 @@ describe('workspace spec commands', () => {
         await expect(
             run({ name: 'apply_workspace_spec', args: { spec: changed, validationToken } }),
         ).rejects.toMatchObject({ code: 'conflict' });
+        // a mismatched spec burns the token
+        await expect(
+            run({ name: 'apply_workspace_spec', args: { spec: research(), validationToken } }),
+        ).rejects.toMatchObject({ code: 'conflict', message: expect.stringContaining('unknown') });
         // the user edits the layout after validation
+        const second = await run({ name: 'validate_workspace_spec', args: { spec: research() } });
         const edited = structuredClone(workspace());
         edited.layout[1]!.h = 20;
         setWorkspace(edited);
         await expect(
-            run({ name: 'apply_workspace_spec', args: { spec: research(), validationToken } }),
+            run({ name: 'apply_workspace_spec', args: { spec: research(), validationToken: second.validationToken } }),
         ).rejects.toBeInstanceOf(AgentAppCommandError);
+        expect(workspace()).toBe(edited);
+    });
+
+    it('rejects a token that validation never issued', async () => {
+        const { run, workspace } = fixture();
+        const before = workspace();
+        await expect(
+            run({ name: 'apply_workspace_spec', args: { spec: research(), validationToken: '0123456789abcdef' } }),
+        ).rejects.toMatchObject({ code: 'conflict' });
+        expect(workspace()).toBe(before);
+    });
+
+    it('a hidden-setting edit after validation invalidates the token', async () => {
+        const { run, workspace, setWorkspace } = fixture();
+        const { validationToken } = await run({ name: 'validate_workspace_spec', args: { spec: research() } });
+        const edited = structuredClone(workspace());
+        (edited.blocks[2] as { flashQty?: unknown }).flashQty = { lot: 5 };
+        setWorkspace(edited);
+        await expect(
+            run({ name: 'apply_workspace_spec', args: { spec: research(), validationToken } }),
+        ).rejects.toMatchObject({ code: 'conflict' });
+        expect(workspace()).toBe(edited);
+    });
+
+    it('only one of two concurrent applies validated on the same workspace lands', async () => {
+        const { run, history } = fixture();
+        const other = research();
+        other.panels[1]!.settings = { interval: '1m' };
+        const [a, b] = await Promise.all([
+            run({ name: 'validate_workspace_spec', args: { spec: research() } }),
+            run({ name: 'validate_workspace_spec', args: { spec: other } }),
+        ]);
+        const results = await Promise.allSettled([
+            run({ name: 'apply_workspace_spec', args: { spec: research(), validationToken: a.validationToken } }),
+            run({ name: 'apply_workspace_spec', args: { spec: other, validationToken: b.validationToken } }),
+        ]);
+        expect(results.map((r) => r.status)).toEqual(['fulfilled', 'rejected']);
+        expect((results[1] as PromiseRejectedResult).reason).toMatchObject({ code: 'conflict' });
+        expect((history as unknown as { entries: unknown[] }).entries).toHaveLength(1);
+    });
+
+    it('undo is refused after the user changes a setting the apply produced', async () => {
+        const { run, workspace, setWorkspace } = fixture();
+        const { validationToken } = await run({ name: 'validate_workspace_spec', args: { spec: research() } });
+        await run({ name: 'apply_workspace_spec', args: { spec: research(), validationToken } });
+        const edited = structuredClone(workspace());
+        edited.blocks.find((b) => b.id === 'chart-1')!.chartInterval = '1m';
+        setWorkspace(edited);
+        await expect(run({ name: 'undo_workspace_change', args: {} })).rejects.toMatchObject({ code: 'conflict' });
         expect(workspace()).toBe(edited);
     });
 

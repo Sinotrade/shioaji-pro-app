@@ -15,6 +15,8 @@ import {
     WORKSPACE_SPEC_SCHEMA_ID,
     WORKSPACE_SPEC_SETTINGS,
     WORKSPACE_SPEC_VERSION,
+    workspaceContentRevision,
+    workspaceRevision,
     workspaceToSpec,
     type WorkspaceSpecV1,
 } from './workspace-spec';
@@ -124,7 +126,7 @@ describe('checkWorkspaceSpec', () => {
             resized: [],
             destructive: false,
         });
-        expect(check.token).toMatch(/^[0-9a-f]{16}$/);
+        expect(check.fingerprint).toMatch(/^[0-9a-f]{16}$/);
     });
 
     it('reports precise paths for structural errors', () => {
@@ -206,20 +208,68 @@ describe('checkWorkspaceSpec', () => {
         expect(check.diff.destructive).toBe(true);
     });
 
-    it('token changes with the spec and with the live workspace', () => {
+    it('fingerprint follows the normalized spec only', () => {
         const spec = ok();
-        const a = valid(spec).token;
-        const moved = structuredClone(spec);
-        moved.panels[1]!.settings = { interval: '1m' };
-        expect(valid(moved).token).not.toBe(a);
-        const ws = base();
-        ws.blocks[0] = { ...ws.blocks[0]!, pin: null };
-        ws.layout[0] = { ...ws.layout[0]!, h: 20 };
-        expect(valid(spec, ws).token).not.toBe(a);
-        // hidden per-panel fields do not affect the token
+        const a = valid(spec).fingerprint;
+        const changed = structuredClone(spec);
+        changed.panels[1]!.settings = { interval: '1m' };
+        expect(valid(changed).fingerprint).not.toBe(a);
+        // same normalized result (default setting written explicitly) → same fingerprint
+        const explicit = structuredClone(spec);
+        explicit.panels[0]!.settings = undefined;
+        expect(valid(explicit).fingerprint).toBe(a);
+    });
+
+    it('returns a precise error for prototype-named settings instead of throwing', () => {
+        const spec = ok();
+        spec.panels[1]!.settings = JSON.parse('{"constructor":true,"__proto__":{"x":1}}');
+        expect(errorsOf(spec)).toEqual([
+            ['panels[1].settings.constructor', 'unknown_setting'],
+            ['panels[1].settings.__proto__', 'unknown_setting'],
+        ]);
+    });
+
+    it('previews compaction at the render density of the live grid', () => {
+        const spec = {
+            version: 1,
+            columns: 288,
+            panels: [
+                { id: 'a', type: 'chart', x: 0, y: 0, w: 73, h: 7 },
+                { id: 'b', type: 'chart', x: 72, y: 7, w: 72, h: 7 },
+            ],
+        };
+        const empty: Workspace = { blocks: [], layout: [] };
+        const exact = checkWorkspaceSpec(spec, empty);
+        const coarse = checkWorkspaceSpec(spec, empty, { density: 1 });
+        if (!exact.valid || !coarse.valid) throw new Error('expected valid');
+        expect(exact.normalized.panels.map((p) => p.y)).toEqual([0, 7]);
+        // stored grid: a [0,73) and b [72,144) share a column so b stays below a;
+        // at 24 columns a ends at 6 and b starts at 6, so b rises to the top
+        expect(coarse.normalized.panels.map((p) => p.y)).toEqual([0, 0]);
+    });
+});
+
+describe('workspace revisions', () => {
+    it('workspaceRevision covers hidden fields and geometry but not grid metadata', () => {
+        const a = workspaceRevision(base());
         const hidden = base();
         (hidden.blocks[2] as { flashQty?: unknown }).flashQty = { lot: 99 };
-        expect(valid(spec, hidden).token).toBe(a);
+        expect(workspaceRevision(hidden)).not.toBe(a);
+        const moved = base();
+        moved.layout[0] = { ...moved.layout[0]!, h: 20 };
+        expect(workspaceRevision(moved)).not.toBe(a);
+        const meta = base();
+        meta.layout[0] = { ...meta.layout[0]!, minH: 2, moved: false } as never;
+        expect(workspaceRevision(meta)).toBe(a);
+    });
+
+    it('workspaceContentRevision ignores geometry', () => {
+        const moved = base();
+        moved.layout[0] = { ...moved.layout[0]!, h: 20 };
+        expect(workspaceContentRevision(moved)).toBe(workspaceContentRevision(base()));
+        const pinned = base();
+        pinned.blocks[1] = { ...pinned.blocks[1]!, pin: '2330' };
+        expect(workspaceContentRevision(pinned)).not.toBe(workspaceContentRevision(base()));
     });
 });
 

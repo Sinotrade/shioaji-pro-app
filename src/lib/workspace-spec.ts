@@ -21,6 +21,7 @@ import {
     GRID_COLS,
     GRID_LEGACY_COLS,
     GRID_LEGACY_SCALE,
+    toRenderGeom,
     type Block,
     type BlockType,
     type Workspace,
@@ -156,7 +157,8 @@ export type WorkspaceSpecCheck =
           warnings: WorkspaceSpecIssue[];
           normalized: NormalizedWorkspaceSpec;
           diff: WorkspaceSpecDiff;
-          token: string;
+          /** Binds a validation token to exactly this normalized spec. */
+          fingerprint: string;
       };
 
 // ---- helpers ----
@@ -217,27 +219,32 @@ function overlaps(a: Rect, b: Rect): boolean {
 /**
  * Vertical compaction with the same rule react-grid-layout applies on render
  * (sort by row then column; each panel rises until it would collide), so the
- * layout the Agent reads back equals what the grid shows.
+ * layout the Agent reads back equals what the grid shows. Collisions are
+ * tested on the columns the grid renders at `density` (see toRenderGeom):
+ * panels a fraction of a column apart in the stored grid touch on screen.
+ * The default density keeps the stored 288-column geometry.
  */
-export function compactVertical<T extends Rect>(items: readonly T[]): T[] {
+export function compactVertical<T extends Rect>(
+    items: readonly T[],
+    density: number = GRID_LEGACY_SCALE,
+): T[] {
+    const render = (r: Rect): Rect => ({ ...r, ...toRenderGeom(r, density) });
     const sorted = [...items].sort((a, b) => a.y - b.y || a.x - b.x);
-    const placed: T[] = [];
+    const placed: { item: T; geom: Rect }[] = [];
     for (const item of sorted) {
         const next = { ...item };
-        while (
-            next.y > 0 &&
-            !placed.some((p) => overlaps(p, { ...next, y: next.y - 1 }))
-        ) {
-            next.y -= 1;
-        }
+        const geom = render(next);
+        const collides = (y: number) =>
+            placed.find((p) => overlaps(p.geom, { ...geom, y }));
+        while (next.y > 0 && !collides(next.y - 1)) next.y -= 1;
         while (true) {
-            const hit = placed.find((p) => overlaps(p, next));
+            const hit = collides(next.y);
             if (!hit) break;
-            next.y = hit.y + hit.h;
+            next.y = hit.item.y + hit.item.h;
         }
-        placed.push(next);
+        placed.push({ item: next, geom: { ...geom, y: next.y } });
     }
-    const byId = new Map(placed.map((p) => [p.id, p]));
+    const byId = new Map(placed.map((p) => [p.item.id, p.item]));
     return items.map((item) => byId.get(item.id)!);
 }
 
@@ -358,6 +365,8 @@ const PANEL_KEYS = ['id', 'type', 'x', 'y', 'w', 'h', 'pin', 'link_group', 'sett
 export interface WorkspaceSpecCheckOptions {
     /** Visible grid rows of the current window; enables the viewport warning. */
     viewportRows?: number | null;
+    /** Render density of the main grid (1–4); compaction previews use it. */
+    density?: number | null;
 }
 
 /**
@@ -574,7 +583,7 @@ export function checkWorkspaceSpec(
                 ok = false;
             } else {
                 for (const [key, value] of Object.entries(raw.settings)) {
-                    const def = defs[key];
+                    const def = Object.hasOwn(defs, key) ? defs[key] : undefined;
                     if (!def) {
                         const supported = Object.keys(defs);
                         err(
@@ -658,7 +667,7 @@ export function checkWorkspaceSpec(
     }
     if (errors.length) return fail();
 
-    const compacted = compactVertical(panels);
+    const compacted = compactVertical(panels, options.density ?? GRID_LEGACY_SCALE);
     for (const panel of compacted) {
         const original = panels.find((p) => p.id === panel.id)!;
         if (panel.y !== original.y) {
@@ -710,7 +719,7 @@ export function checkWorkspaceSpec(
         warnings,
         normalized,
         diff,
-        token: workspaceSpecToken(current, normalized),
+        fingerprint: normalizedSpecFingerprint(normalized),
     };
 }
 
@@ -760,20 +769,34 @@ function diffWorkspaceSpec(
     return diff;
 }
 
+/** Fingerprint of a normalized spec (what apply would store). */
+export function normalizedSpecFingerprint(normalized: NormalizedWorkspaceSpec): string {
+    return hashText(stableStringify(normalized));
+}
+
 /**
- * Binds a validation to (current visible workspace, normalized spec). Apply
- * recomputes it; any user edit or spec change in between forces a fresh
- * validation, so nothing destructive lands without the Agent having seen
- * the diff.
+ * Opaque revision of everything the user can change in the workspace,
+ * including fields the spec never shows (accounts, quantities, order and
+ * indicator state). Only grid geometry is taken from the layout so a grid
+ * re-save of identical positions does not count as an edit. Never returned
+ * to the Agent.
  */
-export function workspaceSpecToken(
-    current: Workspace,
-    normalized: NormalizedWorkspaceSpec,
-): string {
+export function workspaceRevision(workspace: Workspace): string {
     return hashText(
         stableStringify({
-            base: workspaceToSpec(current, GRID_COLS),
-            next: normalized,
+            blocks: workspace.blocks,
+            linkGroups: workspace.linkGroups ?? {},
+            layout: workspace.layout.map((l) => [l.i, l.x, Number.isFinite(l.y) ? l.y : null, l.w, l.h]),
+        }),
+    );
+}
+
+/** Revision of the panels and their settings, ignoring grid geometry. */
+export function workspaceContentRevision(workspace: Workspace): string {
+    return hashText(
+        stableStringify({
+            blocks: workspace.blocks,
+            linkGroups: workspace.linkGroups ?? {},
         }),
     );
 }
@@ -866,7 +889,7 @@ export function buildWorkspaceFromSpec(
         if (panel.linkGroup) block.linkGroup = panel.linkGroup;
         const defs = WORKSPACE_SPEC_SETTINGS[panel.type] ?? {};
         for (const [key, value] of Object.entries(panel.settings)) {
-            const def = defs[key];
+            const def = Object.hasOwn(defs, key) ? defs[key] : undefined;
             if (def) (block as unknown as Record<string, unknown>)[def.field] = value;
         }
         blocks.push(block);

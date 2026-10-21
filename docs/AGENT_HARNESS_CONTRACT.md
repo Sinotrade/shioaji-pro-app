@@ -139,16 +139,22 @@ whole visible layout as one JSON document, described by
 - **Validate.** Returns every problem with a JSON path and code (unknown
   fields, sizes below the panel's minimum, overlaps, singletons, pins on
   non-pinnable panels, unknown contracts, unsupported settings, removing the
-  Agent's own panel), warnings (vertical compaction, rows below the window,
-  removed panels), a diff and `validationToken`. It never mutates.
-- **Apply.** Requires the token from validating the same spec against the
-  same workspace; any user edit in between returns `conflict`, so a
-  destructive change can only land after the Agent has seen its diff. The
-  replacement is a single state update, and it records one undo step.
+  Agent's own panel), warnings (vertical compaction previewed at the live
+  grid density, rows below the window, removed panels), a diff and a
+  `validationToken`. It never mutates.
+- **Apply.** The token is random, single-use, expires after 10 minutes, and
+  is bound in the App to the exact normalized spec and an opaque revision of
+  the whole workspace (including fields the spec hides). Apply rechecks both
+  with no await between the check and the replacement, so a forged token, a
+  different spec, any user edit since validation, or a concurrent apply
+  returns `conflict`: a destructive change can only land after the Agent has
+  seen its diff. The replacement is a single state update and records one
+  undo step.
 - **Undo.** One step per apply, in memory only. The header shows 復原版面
   while the latest step applies; the Agent's `undo_workspace_change` uses the
-  same step. Undo is refused once panels were added or removed or another
-  layout was loaded, so it never throws away work done after the change.
+  same step. Moving or resizing panels keeps the step; any other change to
+  the panels or their settings, or loading another layout, makes it stale, so
+  undo never throws away work done after the change.
 
 ## Restart policy
 

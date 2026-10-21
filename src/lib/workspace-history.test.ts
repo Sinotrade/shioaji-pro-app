@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { panelSignature, WorkspaceUndoHistory } from './workspace-history';
+import { describe, expect, it, vi } from 'vitest';
+import { WorkspaceUndoHistory } from './workspace-history';
 import type { Workspace } from './workspace';
 
 const ws = (...ids: string[]): Workspace => ({
@@ -20,7 +20,7 @@ describe('WorkspaceUndoHistory', () => {
         expect(history.pop(after)).toEqual({ ok: false, reason: 'empty' });
     });
 
-    it('stays undoable after moves but not after the panel set changes', () => {
+    it('stays undoable after moves but not after any panel or setting edit', () => {
         const history = new WorkspaceUndoHistory();
         const after = ws('a', 'b');
         history.push(ws('a'), after, 'x');
@@ -28,8 +28,30 @@ describe('WorkspaceUndoHistory', () => {
         moved.layout[1]!.y = 12;
         expect(history.peek(moved)).not.toBeNull();
         expect(history.peek(ws('a', 'b', 'c'))).toBeNull();
+        const edited = structuredClone(after);
+        edited.blocks[0]!.chartInterval = '1m';
+        expect(history.peek(edited)).toBeNull();
+        const hidden = structuredClone(after);
+        (hidden.blocks[1] as { chartOrder?: unknown }).chartOrder = { STK: { qty: 2 } };
+        expect(history.pop(hidden)).toEqual({ ok: false, reason: 'stale' });
         expect(history.pop(ws('a', 'b', 'c'))).toEqual({ ok: false, reason: 'stale' });
         expect(history.peek(after)).not.toBeNull();
+    });
+
+    it('issues random single-use validation tokens that expire', () => {
+        const history = new WorkspaceUndoHistory();
+        const t1 = history.issueValidation({ spec: 's', base: 'b' });
+        const t2 = history.issueValidation({ spec: 's', base: 'b' });
+        expect(t1).toMatch(/^[0-9a-f]{16}$/);
+        expect(t1).not.toBe(t2);
+        expect(history.peekValidation(t1)).toEqual({ spec: 's', base: 'b' });
+        history.revokeValidation(t1);
+        expect(history.peekValidation(t1)).toBeNull();
+        expect(history.peekValidation('0123456789abcdef')).toBeNull();
+        const now = Date.now();
+        const spy = vi.spyOn(Date, 'now').mockReturnValue(now + 11 * 60_000);
+        expect(history.peekValidation(t2)).toBeNull();
+        spy.mockRestore();
     });
 
     it('guards against undoing a different step than the caller saw', () => {
@@ -56,7 +78,4 @@ describe('WorkspaceUndoHistory', () => {
         expect(history.getVersion()).toBe(5);
     });
 
-    it('signature ignores panel order', () => {
-        expect(panelSignature(ws('a', 'b'))).toBe(panelSignature(ws('b', 'a')));
-    });
 });

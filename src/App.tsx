@@ -1145,6 +1145,8 @@ function MainApp() {
     // 欄寬與最小寬不再跟著螢幕等比放大，超寬幕上面板可以縮得更窄、
     // 拖拉步進更細。k 皆整除 12 → 同密度回存無損；跨密度僅一次舍入。
     const density = width < 1800 ? 1 : width < 2800 ? 2 : width < 3900 ? 3 : 4;
+    const densityRef = useRef(density);
+    densityRef.current = density;
     const renderCols = GRID_LEGACY_COLS * density;
     const colW = width > 0 ? width / renderCols : 53;
     const renderLayout = useMemo(() => {
@@ -1567,6 +1569,7 @@ function MainApp() {
                 updateWorkspace: replaceWorkspace,
                 createPanelId: newBlockId,
                 workspaceHistory,
+                getGridDensity: () => densityRef.current,
                 getViewportRows: () => {
                     // rowHeight 30 + margin 6, containerPadding 6
                     const height = containerRef.current?.clientHeight ?? 0;
