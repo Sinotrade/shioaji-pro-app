@@ -615,12 +615,22 @@ async function updateCapabilitySubscription(
                     delay === undefined ||
                     isPermanentApiError(reason)
                 ) {
+                    // the last consumer is gone even if the server could not
+                    // be told (e.g. disconnected): never replay it on reconnect
+                    if (action === 'unsubscribe') {
+                        capabilityRefs.delete(key);
+                        unregisterCapabilitySubscription(key);
+                    }
                     throw reason;
                 }
                 await new Promise((r) => setTimeout(r, delay));
             }
         }
         if (!response.success) {
+            if (action === 'unsubscribe') {
+                capabilityRefs.delete(key);
+                unregisterCapabilitySubscription(key);
+            }
             throw new Error(response.message || `${path} 訂閱操作失敗`);
         }
         if (action === 'subscribe') {

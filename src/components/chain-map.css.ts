@@ -535,8 +535,9 @@ export const clock = style({
     color: vars.color.foreground,
 });
 
+export const rankStage = style({ position: 'relative', flex: 1, minHeight: 0, display: 'flex' });
 export const rankArea = style({ position: 'relative', flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' });
-export const rankCanvas = style({ position: 'absolute', top: 0, left: 0, width: '100%', pointerEvents: 'none', zIndex: 1 });
+export const rankCanvas = style({ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 });
 export const rankRows = style({ position: 'relative', margin: `4px 0` });
 export const rankZero = style({
     position: 'absolute',
@@ -683,7 +684,7 @@ export const rotFill = styleVariants(
 );
 const breathe = keyframes({ '0%, 100%': { opacity: 0.12 }, '50%': { opacity: 0.4 } });
 export const rotHalo = styleVariants(
-    perState((c) => ({ fill: 'none', stroke: c, strokeWidth: 3, filter: 'blur(2px)', animation: `${breathe} 2.6s ease-in-out infinite`, ...reduce })),
+    perState((c) => ({ fill: 'none', stroke: c, strokeWidth: 3, strokeOpacity: 0.6, animation: `${breathe} 2.6s ease-in-out infinite`, ...reduce })),
 );
 const ring = keyframes({ from: { transform: 'scale(1)', opacity: 0.85 }, to: { transform: 'scale(2.4)', opacity: 0 } });
 export const rotPulse = styleVariants(
@@ -776,8 +777,9 @@ export const heatScale = style({
     width: '120px',
     height: '6px',
     borderRadius: '3px',
-    background: `linear-gradient(90deg, ${vars.color.down}, ${tint(vars.color.down, 25)} 35%, ${vars.color.panelRaised} 50%, ${tint(vars.color.up, 25)} 65%, ${vars.color.up})`,
+    background: `linear-gradient(90deg in oklab, color-mix(in oklab, ${vars.color.down} 54%, ${vars.color.panelRaised}), ${vars.color.panelRaised} 50%, color-mix(in oklab, ${vars.color.up} 54%, ${vars.color.panelRaised}))`,
 });
+export const heatScaleEnd = style({ ...mono, fontSize: '0.54rem' });
 export const heatGrid = style({
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))',
@@ -813,8 +815,9 @@ const heatTileBase = style({
     ...reduce,
 });
 export const heatTile = styleVariants({
-    in: [heatTileBase, { background: `color-mix(in srgb, ${vars.color.up} var(--heat), ${vars.color.panelRaised})` }],
-    out: [heatTileBase, { background: `color-mix(in srgb, ${vars.color.down} var(--heat), ${vars.color.panelRaised})` }],
+    // oklab mixing: perceptually even steps from the neutral surface
+    in: [heatTileBase, { background: `color-mix(in oklab, ${vars.color.up} var(--heat), ${vars.color.panelRaised})` }],
+    out: [heatTileBase, { background: `color-mix(in oklab, ${vars.color.down} var(--heat), ${vars.color.panelRaised})` }],
     flat: [heatTileBase, { background: vars.color.panelRaised }],
 });
 export const heatTileSmall = style({ height: '50px', padding: '4px 6px 3px' });

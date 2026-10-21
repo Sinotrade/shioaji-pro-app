@@ -297,6 +297,7 @@ export function ChainMap({
                         session={book.date}
                         selectedId={theme.id}
                         reducedMotion={reducedMotion}
+                        paused={paused}
                         onSelect={setThemeId}
                     />
                 )}

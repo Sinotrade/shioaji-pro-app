@@ -100,6 +100,7 @@ export function FlowRotation({
     session,
     selectedId,
     reducedMotion,
+    paused,
     onSelect,
 }: {
     rows: FlowRow[];
@@ -109,6 +110,8 @@ export function FlowRotation({
     session: string | null;
     selectedId: string;
     reducedMotion: boolean;
+    /** Panel hidden or scrolled away: no running animations. */
+    paused: boolean;
     onSelect: (id: string) => void;
 }) {
     const { ref, size } = useBoxSize<HTMLDivElement>();
@@ -343,8 +346,8 @@ export function FlowRotation({
                                 <title>
                                     {`${b.row.theme.name}・${QUADRANT_LABEL[b.state]}\n淨流入 ${fmtTwd(b.point.net, true)}・占成交值 ${fmtSignedPct(b.point.x, 1)}\n資金動能 ${b.point.y >= 0 ? '+' : ''}${b.point.y.toFixed(1)} 百分點\n近 10 分成交值 ${fmtTwd(b.point.size)}・漲跌 ${fmtSignedPct(f.pct)}`}
                                 </title>
-                                {hot && !reducedMotion && <circle className={s.rotHalo[b.state]} r={r + 4} />}
-                                {pulse.has(b.id) && !reducedMotion && (
+                                {hot && !reducedMotion && !paused && <circle className={s.rotHalo[b.state]} r={r + 4} />}
+                                {pulse.has(b.id) && !reducedMotion && !paused && (
                                     <circle key={`pulse-${now}`} className={s.rotPulse[b.state]} r={r} />
                                 )}
                                 <circle className={s.rotFill[b.state]} r={r} />

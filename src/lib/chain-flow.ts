@@ -141,6 +141,8 @@ export interface CodeFlow {
     /** Session-to-date turnover at seed time, and the slot it covers up to (exclusive). */
     seedAmount: number;
     seedSlot: number;
+    /** Price at seed time: the baseline of the first bar when the panel opens mid-session. */
+    seedClose: number | null;
     /** Latest cumulative turnover seen on a tick. */
     tickAmount: number;
 }
@@ -150,7 +152,7 @@ export interface SeedInput {
     close: number | null;
     totalAmount: number;
     shares: number | null;
-    /** Slot the snapshot was taken in (bars from this slot on are new). */
+    /** First slot not covered by the snapshot (bars from this slot on are new). */
     slot: number;
 }
 
@@ -176,6 +178,7 @@ export class FlowBook {
                 last: null,
                 seedAmount: 0,
                 seedSlot: 0,
+                seedClose: null,
                 tickAmount: 0,
             };
             this.codes.set(code, flow);
@@ -205,12 +208,14 @@ export class FlowBook {
 
     seed(code: string, input: SeedInput) {
         const flow = this.entry(code);
-        if (input.ref && input.ref > 0) {
-            flow.ref = input.ref;
-            const first = firstFilled(flow.close, 0);
-            if (first !== null && !flow.given[first]) flow.net[first] = computeNet(flow, first);
+        if (input.ref && input.ref > 0) flow.ref = input.ref;
+        if (input.close && input.close > 0) {
+            flow.seedClose = input.close;
+            if (flow.last === null) flow.last = input.close;
         }
-        if (input.close && input.close > 0 && flow.last === null) flow.last = input.close;
+        // the first bar's direction depends on the baseline just installed
+        const first = firstFilled(flow.close, 0);
+        if (first !== null && !flow.given[first]) flow.net[first] = computeNet(flow, first);
         flow.seedAmount = Math.max(0, input.totalAmount || 0);
         flow.seedSlot = Math.max(0, Math.min(SESSION_SLOTS, input.slot));
         if (input.shares && input.shares > 0) flow.shares = input.shares;
@@ -265,7 +270,12 @@ function computeNet(flow: CodeFlow, slot: number): number {
     const close = flow.close[slot]!;
     if (Number.isNaN(close)) return 0;
     const prevSlot = slot > 0 ? lastFilled(flow.close, slot - 1) : null;
-    const prev = prevSlot !== null ? flow.close[prevSlot]! : flow.ref;
+    // baseline of the first observed bar: the previous minute's close is
+    // unknown when the panel opens mid-session, so use the snapshot price
+    // taken just before; only the 09:00 bar compares with the reference
+    // (yesterday's close). Without either the direction is unknown (0).
+    const seedBase = flow.seedClose !== null && slot >= flow.seedSlot - 1 ? flow.seedClose : null;
+    const prev = prevSlot !== null ? flow.close[prevSlot]! : (seedBase ?? (slot === 0 ? flow.ref : null));
     if (!prev) return 0;
     const amount = flow.amount[slot]!;
     return close > prev ? amount : close < prev ? -amount : 0;

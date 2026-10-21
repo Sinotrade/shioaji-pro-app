@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { SESSION_SLOTS, type GroupFlow } from './chain-flow';
 import {
     asinhScale,
+    divergingScale,
     heatCell,
+    heatFull,
     heatLevel,
     quadrantCounts,
     quadrantOf,
@@ -158,10 +160,41 @@ describe('heat', () => {
         expect(heatCell(g.net, g.turnover, null, 5)).toEqual({ net: 0, turnover: 0, ratio: null, minutes: [], amounts: [] });
     });
 
-    it('maps ratios to a colour level with a soft knee', () => {
+    it('maps ratios to a graded colour level against the full-colour ratio', () => {
         expect(heatLevel(null)).toBe(0);
         expect(heatLevel(0.5)).toBe(1);
         expect(heatLevel(-0.9)).toBe(1);
-        expect(heatLevel(0.125)).toBeCloseTo(0.5);
+        expect(heatLevel(0.25, 0.5)).toBeCloseTo(0.5 ** 0.8);
+        expect(heatLevel(0, 0.2)).toBe(0);
+    });
+
+    it('scales colour by the 90th percentile of current ratios, with a floor', () => {
+        const ratios = Array.from({ length: 10 }, (_, i) => (i % 2 ? -1 : 1) * (i + 1) * 0.02);
+        // |ratios| 0.02 … 0.20 → the 90th percentile is 0.20
+        expect(heatFull(ratios)).toBeCloseTo(0.2);
+        // a tile at the median is clearly paler than the top one
+        expect(heatLevel(0.1, heatFull(ratios))).toBeLessThan(0.6);
+        expect(heatFull([0.001, null, -0.002])).toBe(0.05);
+        expect(heatFull([])).toBe(0.5);
+    });
+});
+
+describe('diverging scale', () => {
+    it('keeps one scale after clamping the zero line, so bars never clip or flatten', () => {
+        const { zero, scale } = divergingScale([100, 90, -1]);
+        expect(zero).toBe(15);
+        expect(100 * scale).toBeCloseTo(85); // the largest inflow fills its side
+        expect(90 * scale).toBeCloseTo(76.5); // and +90 stays shorter than +100
+        expect(1 * scale).toBeLessThanOrEqual(zero);
+    });
+
+    it('balances both sides and handles empty input', () => {
+        const both = divergingScale([50, -50]);
+        expect(both.zero).toBe(50);
+        expect(50 * both.scale).toBeCloseTo(50);
+        expect(divergingScale([])).toEqual({ zero: 50, scale: 0 });
+        const out = divergingScale([-30, -10]);
+        expect(out.zero).toBe(85);
+        expect(30 * out.scale).toBeCloseTo(85);
     });
 });

@@ -11,7 +11,7 @@ import { ArrowDown, ArrowUp } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { slotLabel, SESSION_SLOTS } from '../lib/chain-flow';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
-import { rankOrder, rankValue, rankMoves, type RankMetric } from '../lib/chain-motion';
+import { divergingScale, rankOrder, rankValue, rankMoves, type RankMetric } from '../lib/chain-motion';
 import { vars } from '../theme.css';
 import { cssColor, dir, type FlowRow } from './chain-ui';
 import * as panel from './panel.css';
@@ -21,6 +21,7 @@ const ROW_PX = 26;
 const GAP_PX = 10;
 const MOVE_SHOW_MS = 4000;
 const FLASHES = 4;
+const FRAME_MS = 1000 / 30 - 2;
 
 interface Particle {
     phase: number;
@@ -51,18 +52,9 @@ export function FlowRank({
         () => rankOrder(rows, (r) => r.theme.id, (r) => rankValue(r.flow, now, metric)),
         [rows, now, metric],
     );
-    // the zero line sits where the two sides fit best (Threads-style diverging
-    // bars, but no half of the track left empty when nearly everything flows in)
-    const { span, zero } = useMemo(() => {
-        let maxIn = 0;
-        let maxOut = 0;
-        for (const r of order) {
-            if (r.value > 0) maxIn = Math.max(maxIn, r.value);
-            else maxOut = Math.max(maxOut, -r.value);
-        }
-        const total = Math.max(1, maxIn + maxOut);
-        return { span: total, zero: Math.min(85, Math.max(15, (maxOut / total) * 100)) };
-    }, [order]);
+    // the zero line sits where the two sides fit best (diverging bars, but no
+    // half of the track left empty when nearly everything flows in)
+    const { zero, scale } = useMemo(() => divergingScale(order.map((r) => r.value)), [order]);
     const firstOut = order.findIndex((r) => r.side === 'out');
 
     // rank-move arrows and value flashes, keyed to the minute that caused them
@@ -124,23 +116,29 @@ export function FlowRank({
         const up = cssColor(area, vars.color.up);
         const down = cssColor(area, vars.color.down);
         const frame = (t: number) => {
+            raf = requestAnimationFrame(frame);
+            // ~30 fps is smooth for drifting dots and halves the work
+            if (t - last < FRAME_MS) return;
             const dt = Math.min(0.1, (t - last) / 1000);
             last = t;
+            // the canvas overlays the visible part of the list only (it does
+            // not scroll), so its size stays the viewport's, not the list's
             const box = area.getBoundingClientRect();
             const dpr = window.devicePixelRatio || 1;
             const w = Math.round(box.width * dpr);
-            const h = Math.round(area.scrollHeight * dpr);
+            const h = Math.round(box.height * dpr);
             if (canvas.width !== w) canvas.width = w;
             if (canvas.height !== h) canvas.height = h;
             const ctx = canvas.getContext('2d');
             if (!ctx) return;
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.clearRect(0, 0, box.width, area.scrollHeight);
+            ctx.clearRect(0, 0, box.width, box.height);
             for (const bar of area.querySelectorAll<HTMLElement>('[data-bar]')) {
-                const id = bar.dataset.bar!;
                 const r = bar.getBoundingClientRect();
                 const len = r.width;
-                if (len < 6) continue;
+                // rows scrolled out of view cost nothing
+                if (len < 6 || r.bottom < box.top || r.top > box.bottom) continue;
+                const id = bar.dataset.bar!;
                 const k = intensity.get(id) ?? 0;
                 const want = Math.round(2 + 9 * k * Math.min(1, len / 120));
                 let list = particles.current.get(id);
@@ -151,7 +149,7 @@ export function FlowRank({
                 while (list.length < want) list.push({ phase: Math.random(), speed: 0.25 + Math.random() * 0.35, size: 0.8 + Math.random() * 0.9 });
                 list.length = want;
                 const out = bar.dataset.side === 'out';
-                const y0 = r.top - box.top + area.scrollTop + r.height / 2;
+                const y0 = r.top - box.top + r.height / 2;
                 const x0 = out ? r.right - box.left : r.left - box.left;
                 ctx.fillStyle = out ? down : up;
                 for (const p of list) {
@@ -164,7 +162,6 @@ export function FlowRank({
                 }
             }
             ctx.globalAlpha = 1;
-            raf = requestAnimationFrame(frame);
         };
         raf = requestAnimationFrame(frame);
         return () => cancelAnimationFrame(raf);
@@ -195,12 +192,13 @@ export function FlowRank({
                     {clock}
                 </span>
             </div>
-            <div className={s.rankArea} ref={areaRef}>
+            <div className={s.rankStage}>
                 <canvas ref={canvasRef} className={s.rankCanvas} aria-hidden='true' />
+                <div className={s.rankArea} ref={areaRef}>
                 <div className={s.rankRows} style={{ height }} role='list'>
                     {order.map((row) => {
                         const y = row.rank * ROW_PX + (row.side === 'out' && firstOut > 0 ? GAP_PX : 0);
-                        const width = now !== null ? Math.min(row.side === 'in' ? 100 - zero : zero, (Math.abs(row.value) / span) * 100) : 0;
+                        const width = now !== null ? Math.abs(row.value) * scale : 0;
                         const move = showMoves ? (moves.map.get(row.id) ?? 0) : 0;
                         const flash = showMoves && moves.flash.has(row.id);
                         const selected = row.id === selectedId;
@@ -239,6 +237,7 @@ export function FlowRank({
                             </div>
                         );
                     })}
+                    </div>
                 </div>
             </div>
         </div>

@@ -35,6 +35,26 @@ export function rankOrder<T>(items: readonly T[], id: (item: T) => string, value
         .map((row, rank) => ({ ...row, rank, side: row.value >= 0 ? ('in' as const) : ('out' as const) }));
 }
 
+/**
+ * Diverging bar layout: the zero line (% of the track) sits where both sides
+ * fit, kept within [min, 100 − min], and one scale (% per unit) is shared by
+ * both sides and recomputed after the zero is clamped, so no bar clips and
+ * equal values stay equal length.
+ */
+export function divergingScale(values: Iterable<number>, min = 15): { zero: number; scale: number } {
+    let maxIn = 0;
+    let maxOut = 0;
+    for (const v of values) {
+        if (v > 0) maxIn = Math.max(maxIn, v);
+        else maxOut = Math.max(maxOut, -v);
+    }
+    const total = maxIn + maxOut;
+    if (total <= 0) return { zero: 50, scale: 0 };
+    const zero = Math.min(100 - min, Math.max(min, (maxOut / total) * 100));
+    const room = Math.min(maxIn > 0 ? (100 - zero) / maxIn : Infinity, maxOut > 0 ? zero / maxOut : Infinity);
+    return { zero, scale: room };
+}
+
 /** Rank moves since the previous order (positive = moved up). New ids are 0. */
 export function rankMoves(previous: ReadonlyMap<string, number>, rows: readonly { id: string; rank: number }[]) {
     const moves = new Map<string, number>();
@@ -171,8 +191,10 @@ export interface HeatCell {
     amounts: number[];
 }
 
-/** Ratio at which a heat tile reaches full colour. */
+/** Fallback ratio at which a heat tile reaches full colour. */
 export const HEAT_FULL = 0.5;
+/** Floor of the adaptive full-colour ratio: a quiet market stays pale. */
+export const HEAT_FLOOR = 0.05;
 
 export function heatCell(net: Float64Array, turnover: Float64Array, now: number | null, window: number): HeatCell {
     const minutes: (number | null)[] = [];
@@ -192,8 +214,21 @@ export function heatCell(net: Float64Array, turnover: Float64Array, now: number 
     return { net: n, turnover: t, ratio: t > 0 ? n / t : null, minutes, amounts };
 }
 
-/** Colour strength 0…1 of a ratio (sqrt knee so mild flows still show). */
-export function heatLevel(ratio: number | null): number {
-    if (ratio === null || !Number.isFinite(ratio)) return 0;
-    return Math.min(1, Math.sqrt(Math.abs(ratio) / HEAT_FULL));
+/**
+ * Adaptive full-colour ratio: the `q` quantile of the current |ratios|, so
+ * the spread of today's flows stays visible instead of every tile
+ * saturating. Never below HEAT_FLOOR.
+ */
+export function heatFull(ratios: Iterable<number | null>, q = 0.9): number {
+    const abs: number[] = [];
+    for (const r of ratios) if (r !== null && Number.isFinite(r)) abs.push(Math.abs(r));
+    if (abs.length === 0) return HEAT_FULL;
+    abs.sort((a, b) => a - b);
+    return Math.max(HEAT_FLOOR, abs[Math.min(abs.length - 1, Math.floor(abs.length * q))]!);
+}
+
+/** Colour strength 0…1 of a ratio against `full` (gentle 0.8 power so mild flows still register). */
+export function heatLevel(ratio: number | null, full = HEAT_FULL): number {
+    if (ratio === null || !Number.isFinite(ratio) || full <= 0) return 0;
+    return Math.min(1, (Math.abs(ratio) / full) ** 0.8);
 }

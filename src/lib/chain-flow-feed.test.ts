@@ -32,6 +32,7 @@ vi.mock('./stream', () => ({
     },
 }));
 
+import { sessionTurnover } from './chain-flow';
 import {
     chainFlowBook,
     chainFlowSeedIdle,
@@ -55,6 +56,9 @@ function emitBar(raw: unknown) {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
+    // session date of the fixtures (cached snapshots are checked against it)
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-21T02:00:00Z'));
     resetChainFlowForTest();
     mocks.subscribe.mockClear();
     mocks.unsubscribe.mockClear();
@@ -91,7 +95,7 @@ describe('connectChainFlow', () => {
         expect(mocks.snapshots.mock.calls.map(([batch]) => batch.length)).toEqual([300, 300, 21]);
         expect(chainFlowStatus()).toMatchObject({ kbarCodes: 620, batches: 3, subscribed: 3, seeding: false });
         expect(chainFlowBook.codes.get('2000')!.ref).toBe(100);
-        expect(chainFlowBook.codes.get('2000')!.seedSlot).toBe(40);
+        expect(chainFlowBook.codes.get('2000')!.seedSlot).toBe(41); // 09:40:12 covers minute 40 too
 
         // a second panel: same subscriptions (ref-counted downstream), no second seed
         const second = connectChainFlow(members);
@@ -183,6 +187,46 @@ describe('connectChainFlow', () => {
         await chainFlowSeedIdle();
         emitBar({ code: '2330', date: '2026/10/21', time: '09:41:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 3, amount: 306000, net: -120000 });
         expect(chainFlowBook.codes.get('2330')!.net[41]).toBe(-120000);
+        release();
+    });
+
+    it('does not double count the snapshot minute', async () => {
+        // snapshot at 09:40:12 already holds part of minute 40
+        mocks.snapshots.mockImplementation(async () => [{ ...snapshot('2330', 101, 1), total_amount: 1_000_000 } as Snapshot]);
+        const release = connectChainFlow([member('2330')]);
+        await flush();
+        await chainFlowSeedIdle();
+        emitBar({ code: '2330', date: '2026/10/21', time: '09:40:00.000000', open: 101, high: 101, low: 101, close: 101, volume: 1, amount: 60_000 });
+        emitBar({ code: '2330', date: '2026/10/21', time: '09:41:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 1, amount: 40_000 });
+        expect(sessionTurnover(chainFlowBook.codes.get('2330')!)).toBe(1_040_000);
+        release();
+    });
+
+    it('refetches a cached snapshot left over from an earlier trading day', async () => {
+        mocks.shared.set('2330', snapshot('2330', 999, 9, '2026-10-20 13:30:00.000000'));
+        const release = connectChainFlow([member('2330')]);
+        await flush();
+        await chainFlowSeedIdle();
+        expect(mocks.snapshots.mock.calls.map(([batch]) => batch.map((c) => c.code))).toEqual([['2330']]);
+        expect(chainFlowBook.codes.get('2330')!.ref).toBe(100);
+        release();
+    });
+
+    it('reseeds after a day rollover without reusing the old cache', async () => {
+        const release = connectChainFlow([member('2330')]);
+        await flush();
+        await chainFlowSeedIdle();
+        // the shared store still holds today's (now yesterday's) snapshot
+        mocks.shared.set('2330', snapshot('2330', 101, 1));
+        mocks.snapshots.mockClear();
+        mocks.snapshots.mockImplementation(async () => [snapshot('2330', 120, 2, '2026-10-22 09:30:00.000000')]);
+        vi.setSystemTime(new Date('2026-10-22T01:31:00Z'));
+        emitBar({ code: '2330', date: '2026/10/22', time: '09:31:00.000000', open: 120, high: 120, low: 120, close: 120, volume: 1, amount: 1000 });
+        await flush();
+        await chainFlowSeedIdle();
+        expect(chainFlowBook.date).toBe('2026-10-22');
+        expect(mocks.snapshots).toHaveBeenCalledTimes(1);
+        expect(chainFlowBook.codes.get('2330')!.ref).toBe(118);
         release();
     });
 });

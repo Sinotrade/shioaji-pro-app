@@ -142,9 +142,11 @@ function seedFrom(code: string, snapshot: Snapshot, shares: number | null) {
     const time = snapshot.datetime?.slice(11) ?? '';
     const slot = minuteSlot(time);
     const minutes = /^(\d{1,2}):(\d{2})/.exec(time);
+    // the snapshot's own minute is covered too (its turnover already holds
+    // part of that minute: counting the minute bar again would double it);
     // after the close the whole session is covered; before the open nothing is
     const covered =
-        slot !== null ? slot : minutes && Number(minutes[1]) >= 13 ? SESSION_SLOTS : 0;
+        slot !== null ? slot + 1 : minutes && Number(minutes[1]) >= 13 ? SESSION_SLOTS : 0;
     chainFlowBook.seed(code, {
         ref: ref && ref > 0 ? ref : null,
         close,
@@ -152,6 +154,17 @@ function seedFrom(code: string, snapshot: Snapshot, shares: number | null) {
         shares,
         slot: covered,
     });
+}
+
+/** Today's date in Taipei as YYYY-MM-DD (the session date before any bar arrives). */
+export function taipeiDate(now = Date.now()): string {
+    return new Date(now + 8 * 3600_000).toISOString().slice(0, 10);
+}
+
+/** A cached snapshot is usable when it belongs to the book's session (or today's, before any bar). */
+function isCurrent(snapshot: Snapshot): boolean {
+    const date = normDate(snapshot.datetime);
+    return date !== null && date === (chainFlowBook.date ?? taipeiDate());
 }
 
 /** Codes seeded for `seededDate`. */
@@ -175,7 +188,9 @@ async function seed(members: readonly FeedMember[]) {
         seeded.add(member.code);
         chainFlowBook.setShares(member.code, member.shares);
         const shared = getMarketSnapshot(member.contract);
-        if (shared) seedFrom(member.code, shared, member.shares);
+        // a snapshot cached on an earlier trading day (app left open over a
+        // rollover) must not seed today: fetch a fresh one
+        if (shared && isCurrent(shared)) seedFrom(member.code, shared, member.shares);
         else missing.push(member);
     }
     // sequential batches, never a burst against 50 req / 5 s

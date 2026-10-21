@@ -13,7 +13,7 @@ import { useMemo } from 'react';
 import { codePct, sessionTurnover } from '../lib/chain-flow';
 import { chainFlowBook } from '../lib/chain-flow-feed';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
-import { heatCell, heatLevel, type HeatCell } from '../lib/chain-motion';
+import { heatCell, heatFull, heatLevel, type HeatCell } from '../lib/chain-motion';
 import type { FlowRow } from './chain-ui';
 import * as s from './chain-map.css';
 
@@ -42,6 +42,7 @@ function sheenIds(tiles: Tile[], latest: (t: Tile) => number) {
 
 function HeatTile({
     tile,
+    full,
     selected,
     sheen,
     now,
@@ -50,6 +51,8 @@ function HeatTile({
     onClick,
 }: {
     tile: Tile;
+    /** Ratio drawn at full colour (90th percentile of the grid). */
+    full: number;
     selected: boolean;
     sheen: boolean;
     now: number | null;
@@ -58,9 +61,11 @@ function HeatTile({
     onClick: () => void;
 }) {
     const { cell } = tile;
-    const level = heatLevel(cell.ratio);
+    const level = heatLevel(cell.ratio, full);
     const side = cell.ratio === null || cell.ratio === 0 ? 'flat' : cell.ratio > 0 ? 'in' : 'out';
-    const style = { '--heat': `${Math.round(5 + level * 38)}%` } as React.CSSProperties;
+    // near zero stays on the neutral surface; the strongest flows reach 62 %
+    // (text keeps AA contrast on both themes)
+    const style = { '--heat': `${Math.round(level * 54)}%` } as React.CSSProperties;
     const peak = Math.max(1, ...cell.amounts);
     return (
         <button
@@ -154,13 +159,17 @@ export function FlowHeat({
         return m === null || m === undefined ? 0 : m * t.order;
     };
     const groupSheen = useMemo(() => sheenIds(groups, last), [groups]);
+    const groupFull = useMemo(() => heatFull(groups.map((t) => t.cell.ratio)), [groups]);
+    const memberFull = useMemo(() => heatFull(members.map((t) => t.cell.ratio)), [members]);
     const memberSheen = useMemo(() => sheenIds(members, last), [members]);
 
     return (
         <div className={s.heat}>
             <div className={s.heatLegend}>
                 <span>近 {window} 分鐘淨流入占成交值</span>
+                <span className={s.heatScaleEnd}>−{(groupFull * 100).toFixed(0)}%</span>
                 <span className={s.heatScale} aria-hidden='true' />
+                <span className={s.heatScaleEnd}>+{(groupFull * 100).toFixed(0)}%</span>
                 <span className={s.spacer} />
                 <span>依今日成交值排序；下方細條為近 {window} 分鐘逐分成交值，顏色為該分鐘淨流入方向</span>
             </div>
@@ -169,6 +178,7 @@ export function FlowHeat({
                     <HeatTile
                         key={t.id}
                         tile={t}
+                        full={groupFull}
                         selected={t.id === selectedId}
                         sheen={groupSheen.has(t.id)}
                         now={now}
@@ -181,13 +191,14 @@ export function FlowHeat({
             {members.length > 0 && (
                 <>
                     <div className={s.heatSection}>
-                        {selectedName}・成分股 {members.length} 檔
+                        {selectedName}・成分股 {members.length} 檔・色階 ±{(memberFull * 100).toFixed(0)}%
                     </div>
                     <div className={`${s.heatGrid} ${s.heatGridSmall}`}>
                         {members.map((t) => (
                             <HeatTile
                                 key={t.id}
                                 tile={t}
+                                full={memberFull}
                                 selected={false}
                                 sheen={memberSheen.has(t.id)}
                                 now={now}
