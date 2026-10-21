@@ -473,6 +473,31 @@ describe('chart order settings button', () => {
 
     const modeHint = () => view.root.findAll(n => n.type === 'div' && n.children[0] === '交易模式 · ')[0];
 
+    it.each([false, true])('武裝提示排在左上角圖例欄的流裡、委託列之前，不疊在 CANCEL 上（鎖定=%s）', async (locked) => {
+        const trade = { contract: stk, order: { id: 'hint-order', action: 'Buy', price: 100, quantity: 1 },
+            status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } };
+        await mount({ contract: stk, trades: [trade] });
+        act(() => setRiskSettings({ orderLineLock: locked }));
+        await act(async () => { button(view.root, '點價買').props.onClick(); });
+        const hint = modeHint()!;
+        expect(hint.props.className).toBe(styles.modeHint);
+        const slot = hint.parent!;
+        expect(slot.props.className).toBe(styles.hintSlot);
+        const list = slot.parent!;
+        expect(list.props.className).toBe(styles.triggerList);
+        const rows = list.children as ReactTestInstance[];
+        const orderRow = rows.findIndex(r => typeof r !== 'string' && r.findAll(n => n.type === 'button' && text(n) === 'CANCEL').length > 0);
+        expect(orderRow).toBeGreaterThan(rows.indexOf(slot));
+    });
+
+    it('畫圖模式提示同樣排在圖例欄的流裡', async () => {
+        await mount({ contract: stk });
+        await act(async () => drawingApi().setTool('horizontal'));
+        const hint = view.root.findAll(n => n.type === 'div' && n.props.className === styles.drawHint)[0]!;
+        expect(hint.parent!.props.className).toBe(styles.hintSlot);
+        expect(hint.parent!.parent!.props.className).toBe(styles.triggerList);
+    });
+
     it.each([[true, true], [false, false]])('鎖住=%s 並武裝點價買，提示列含鎖線說明=%s', async (locked, shown) => {
         await mount({ contract: stk });
         act(() => setRiskSettings({ orderLineLock: locked }));

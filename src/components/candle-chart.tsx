@@ -2146,8 +2146,23 @@ export function CandleChart({
             paneTops[inst.id] === undefined
         );
     });
-    // 交易／畫圖模式提示往下讓出 K 棒讀值那一列，兩者都看得到
-    const hintStyle = showOhlc ? { top: 30 } : undefined;
+    // 交易／畫圖模式提示（在左上角圖例欄的流裡，見 styles.hintSlot）
+    const hintMaxWidth = hostWidth > 0 ? { maxWidth: Math.max(120, hostWidth - 80) } : undefined;
+    const modeHintEl = shownMode !== 'observe' ? (
+        <div className={styles.hintSlot}>
+            <div className={styles.modeHint} style={hintMaxWidth}>
+                交易模式 · {chartModeHint(shownMode, orderSettings, orderMarket ?? 'S')}
+                {/* 鎖定時點在委託線上會被吃掉不下單，先講清楚免得挪一下就在旁邊價位下單 */}
+                {orderLineLock && <span className={styles.modeHintNote}>委託線鎖定中：點在線上不下單</span>}
+            </div>
+        </div>
+    ) : mode === 'observe' && drawings.tool ? (
+        <div className={styles.hintSlot}>
+            <div className={styles.drawHint} style={hintMaxWidth}>
+                畫圖模式 · {toolDef(drawings.tool).label}：{DRAW_HINT[drawings.tool]}（Esc 取消）
+            </div>
+        </div>
+    ) : null;
     return (
         <div className={styles.wrap}
             onPointerDownCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}
@@ -2317,19 +2332,8 @@ export function CandleChart({
                             className={panel.mono} />
                     </div>
                 )}
-                {shownMode !== 'observe' && (
-                    <div className={styles.modeHint} style={hintStyle}>
-                        交易模式 · {chartModeHint(shownMode, orderSettings, orderMarket ?? 'S')}
-                        {/* 鎖定時點在委託線上會被吃掉不下單，先講清楚免得挪一下就在旁邊價位下單 */}
-                        {orderLineLock && <span className={styles.modeHintNote}>委託線鎖定中：點在線上不下單</span>}
-                    </div>
-                )}
-                {mode === 'observe' && drawings.tool && (
-                    <div className={styles.drawHint} style={hintStyle}>
-                        畫圖模式 · {toolDef(drawings.tool).label}：{DRAW_HINT[drawings.tool]}（Esc 取消）
-                    </div>
-                )}
                 {(showOhlc ||
+                    modeHintEl ||
                     workingOrders.length > 0 ||
                     triggers.length > 0 ||
                     instances.length > 0) && (
@@ -2343,6 +2347,7 @@ export function CandleChart({
                                 colors={colors}
                             />
                         )}
+                        {modeHintEl}
                         {mainLegendInsts.map((inst) =>
                             renderLegendRow(inst),
                         )}

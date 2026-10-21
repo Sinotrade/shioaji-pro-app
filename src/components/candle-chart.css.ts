@@ -134,13 +134,19 @@ export const indicatorBtn = styleVariants({
 });
 
 
+// 交易／畫圖模式提示：放在左上角圖例欄（triggerList）的流裡、K 棒讀值之後，
+// 委託／觸價／指標列跟著往下排 — 任何寬度都不會蓋住委託的 CANCEL。
+// 外層 hintSlot 寬度為 0，提示本身不撐寬其他列；最大寬度由 inline style 依圖寬限制，
+// 超過就換行（只會把下面的列往下推）
+export const hintSlot = style({
+    alignSelf: 'flex-start',
+    width: 0,
+    overflow: 'visible',
+    pointerEvents: 'none',
+});
+
 export const modeHint = style({
-    position: 'absolute',
-    top: '8px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    // 交易／畫圖模式提示疊在左上角圖例與 K 棒讀值之上，不被遮住
-    zIndex: 6,
+    width: 'max-content',
     fontFamily: vars.font.body,
     fontSize: '0.66rem',
     fontWeight: 600,
@@ -151,10 +157,9 @@ export const modeHint = style({
     pointerEvents: 'none',
 });
 
-// 提示列的第二行（防拖說明）：獨立一行、不在詞中間斷行，窄圖表時不會拆成碎字
+// 提示列的第二行（鎖定說明）：獨立一行
 export const modeHintNote = style({
     display: 'block',
-    whiteSpace: 'nowrap',
 });
 
 // 畫圖模式的提示：與交易模式同一個位置，但用中性的面板色，不搶琥珀
