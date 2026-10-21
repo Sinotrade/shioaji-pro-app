@@ -1,24 +1,24 @@
 // src/lib/chain-motion.ts — derived views for the live 族群動態 panel.
 //
 // Pure helpers on top of chain-flow's per-minute group aggregates:
-// - race: groups ordered by net inflow (cumulative since the first bar, or
+// - rank: groups ordered by net inflow (cumulative since the first bar, or
 //   the last five minutes), inflow above, outflow below.
-// - tide (潮汐) bubbles: a point per group. x = net inflow since the first
+// - rotation (輪動) bubbles: a point per group. x = net inflow since the first
 //   bar (drawn on an asinh scale), y = 加速 (last-ten-minute intensity minus
 //   the last 30 minutes', pp), size = last-ten-minute turnover, colour =
 //   one of four states, with a trail of earlier minutes.
 
 import { SESSION_SLOTS, type GroupFlow } from './chain-flow';
 
-export type RaceMetric = 'cum' | 'flow5';
+export type RankMetric = 'cum' | 'flow5';
 
-/** Value a group races on at `now`. */
-export function raceValue(flow: GroupFlow, now: number | null, metric: RaceMetric): number {
+/** Value a group is ranked on at `now`. */
+export function rankValue(flow: GroupFlow, now: number | null, metric: RankMetric): number {
     if (now === null) return 0;
     return metric === 'flow5' ? flow.flow5 : flow.cumNet[now]!;
 }
 
-export interface RaceRow<T> {
+export interface RankRow<T> {
     item: T;
     id: string;
     value: number;
@@ -28,7 +28,7 @@ export interface RaceRow<T> {
 }
 
 /** Inflow (largest first) then outflow (largest outflow last), ties by id for stability. */
-export function raceOrder<T>(items: readonly T[], id: (item: T) => string, value: (item: T) => number): RaceRow<T>[] {
+export function rankOrder<T>(items: readonly T[], id: (item: T) => string, value: (item: T) => number): RankRow<T>[] {
     return items
         .map((item) => ({ item, id: id(item), value: value(item) }))
         .sort((a, b) => b.value - a.value || a.id.localeCompare(b.id))
@@ -57,13 +57,13 @@ export interface RotationPoint {
     size: number;
 }
 
-/** Recent window of the tide's acceleration (minutes): 10 keeps the sign-estimate noise down. */
+/** Recent window of the rotation view's acceleration (minutes): 10 keeps the sign-estimate noise down. */
 export const RECENT = 10;
 /** Minutes of the baseline the recent intensity is compared with. */
 export const BASELINE = 30;
 
 /**
- * Tide coordinates of a group at `slot`, or null without turnover.
+ * Rotation coordinates of a group at `slot`, or null without turnover.
  * y compares the last `window` minutes' intensity with the last `base`
  * minutes' (smoother than against the whole session, and it forgets the
  * open).
@@ -117,14 +117,14 @@ export function rotationTrail(flow: GroupFlow, slot: number, length = 10, every 
 
 export type Quadrant = 'leading' | 'weakening' | 'lagging' | 'improving';
 
-/** States in reading order: inflow accelerating → outflow accelerating. */
+/** RRG quadrants in reading order: 領先 → 轉弱 → 改善 → 落後. */
 export const QUADRANTS: readonly Quadrant[] = ['leading', 'weakening', 'improving', 'lagging'];
 
 export const QUADRANT_LABEL: Record<Quadrant, string> = {
-    leading: '加速流入',
-    weakening: '流入放緩',
-    improving: '流出放緩',
-    lagging: '加速流出',
+    leading: '領先',
+    weakening: '轉弱',
+    improving: '改善',
+    lagging: '落後',
 };
 
 /** Count groups per state. */
@@ -154,4 +154,46 @@ export function rotationExtent(values: Iterable<number>, min = 4, step = 2): num
     let max = min;
     for (const v of values) if (Number.isFinite(v)) max = Math.max(max, Math.abs(v));
     return Math.ceil((max * 1.1) / step) * step;
+}
+
+// ── heat ──────────────────────────────────────────────────────────────────
+
+/** Recent-window heat of one group or stock (works from the first bar, no history needed). */
+export interface HeatCell {
+    /** Net inflow over the window. */
+    net: number;
+    turnover: number;
+    /** net ÷ turnover, −1…1; null without turnover. */
+    ratio: number | null;
+    /** Per-minute net ÷ turnover, oldest first, `window` entries (null = no bar). */
+    minutes: (number | null)[];
+    /** Per-minute turnover, aligned with `minutes`. */
+    amounts: number[];
+}
+
+/** Ratio at which a heat tile reaches full colour. */
+export const HEAT_FULL = 0.5;
+
+export function heatCell(net: Float64Array, turnover: Float64Array, now: number | null, window: number): HeatCell {
+    const minutes: (number | null)[] = [];
+    const amounts: number[] = [];
+    let n = 0;
+    let t = 0;
+    if (now !== null) {
+        for (let i = now - window + 1; i <= now; i += 1) {
+            const a = i >= 0 ? turnover[i]! : 0;
+            const v = i >= 0 ? net[i]! : 0;
+            n += v;
+            t += a;
+            minutes.push(a > 0 ? v / a : null);
+            amounts.push(a);
+        }
+    }
+    return { net: n, turnover: t, ratio: t > 0 ? n / t : null, minutes, amounts };
+}
+
+/** Colour strength 0…1 of a ratio (sqrt knee so mild flows still show). */
+export function heatLevel(ratio: number | null): number {
+    if (ratio === null || !Number.isFinite(ratio)) return 0;
+    return Math.min(1, Math.sqrt(Math.abs(ratio) / HEAT_FULL));
 }

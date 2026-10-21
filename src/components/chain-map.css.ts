@@ -98,111 +98,6 @@ export const stale = style({
     whiteSpace: 'nowrap',
 });
 
-// ---- flow tape ----
-
-export const tape = style({
-    flex: 1,
-    minHeight: 120,
-    overflowY: 'auto',
-    overflowX: 'hidden',
-});
-
-export const row = style({
-    display: 'grid',
-    gridTemplateColumns: 'minmax(96px, 148px) minmax(0, 1fr) 78px 46px 62px',
-    alignItems: 'center',
-    columnGap: '10px',
-    padding: `0 ${vars.space.sm}`,
-    minWidth: 0,
-});
-
-export const rowNarrow = style({
-    gridTemplateColumns: 'minmax(80px, 112px) minmax(0, 1fr) 70px 56px',
-    columnGap: '8px',
-});
-
-export const headRow = style({
-    position: 'sticky',
-    top: 0,
-    zIndex: 2,
-    height: '22px',
-    background: vars.color.panel,
-    borderBottom: `1px solid ${vars.color.border}`,
-});
-
-export const headName = style({
-    fontSize: '0.56rem',
-    color: vars.color.mutedForeground,
-    ...ellipsis,
-});
-
-export const headNum = style({
-    fontSize: '0.56rem',
-    color: vars.color.mutedForeground,
-    textAlign: 'right',
-    whiteSpace: 'nowrap',
-    cursor: 'help',
-});
-
-export const axis = style({
-    position: 'relative',
-    height: '100%',
-});
-
-export const axisTick = style({
-    position: 'absolute',
-    top: '50%',
-    transform: 'translate(-50%, -50%)',
-    ...mono,
-    fontSize: '0.52rem',
-    color: vars.color.mutedForeground,
-    opacity: 0.8,
-    selectors: {
-        '&:first-child': { transform: 'translate(0, -50%)' },
-        '&:nth-child(6)': { transform: 'translate(-100%, -50%)' },
-    },
-});
-
-export const axisHover = style({
-    position: 'absolute',
-    top: '50%',
-    transform: 'translate(-50%, -50%)',
-    ...mono,
-    fontSize: '0.54rem',
-    fontWeight: 700,
-    color: vars.color.accent,
-    background: vars.color.panel,
-    padding: '0 3px',
-    borderRadius: '2px',
-    boxShadow: `0 0 0 1px ${vars.color.accent}`,
-    zIndex: 1,
-});
-
-const dataRowBase = style({
-    height: '30px',
-    cursor: 'pointer',
-    borderLeft: '2px solid transparent',
-    paddingLeft: `calc(${vars.space.sm} - 2px)`,
-    outline: 'none',
-    selectors: {
-        '&:hover': { background: vars.color.panelRaised },
-        '&:focus-visible': { boxShadow: `inset 0 0 0 1px ${vars.color.accent}` },
-        '& + &': { borderTop: `1px solid color-mix(in srgb, ${vars.color.border} 55%, transparent)` },
-    },
-});
-
-export const dataRow = styleVariants({
-    on: [dataRowBase, { borderLeftColor: vars.color.accent, background: vars.color.panelRaised }],
-    off: [dataRowBase],
-});
-
-export const name = style({
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    minWidth: 0,
-});
-
 export const nameText = style({
     fontSize: '0.66rem',
     fontWeight: 600,
@@ -222,55 +117,6 @@ export const kindMark = styleVariants({
     theme: [markBase, { border: `1px solid ${vars.color.mutedForeground}`, borderRadius: '50%' }],
 });
 
-export const strip = style({
-    position: 'relative',
-    height: '100%',
-    minWidth: 0,
-});
-
-export const stripCanvas = style({
-    position: 'absolute',
-    inset: 0,
-    width: '100%',
-    height: '100%',
-    display: 'block',
-});
-
-// minutes before the first received 1-minute bar: covered by the seed summary
-export const seed = style({
-    position: 'absolute',
-    top: '6px',
-    bottom: '6px',
-    left: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingRight: '6px',
-    borderRadius: '2px',
-    background: `repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, ${vars.color.border} 45%, transparent) 4px 5px)`,
-    overflow: 'hidden',
-    pointerEvents: 'none',
-});
-
-export const seedText = style({
-    ...mono,
-    fontSize: '0.54rem',
-    color: vars.color.mutedForeground,
-    background: vars.color.panel,
-    padding: '0 4px',
-    borderRadius: '2px',
-    whiteSpace: 'nowrap',
-});
-
-export const num = style({
-    ...mono,
-    fontSize: '0.64rem',
-    fontWeight: 700,
-    textAlign: 'right',
-    whiteSpace: 'nowrap',
-});
-
-export const hot = style({ color: vars.color.amber });
 export const dim = style({ color: vars.color.mutedForeground, fontWeight: 500 });
 
 // ---- chain detail ----
@@ -662,9 +508,9 @@ export const nextBarArc = style({
 
 export const views = style({ flex: 1, minHeight: 160, display: 'flex', flexDirection: 'column', minWidth: 0 });
 
-// ---- 資金賽跑 ----
+// ---- 排行 ----
 
-export const race = style({ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' });
+export const rank = style({ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' });
 
 export const kpis = style({
     display: 'flex',
@@ -689,10 +535,10 @@ export const clock = style({
     color: vars.color.foreground,
 });
 
-export const raceArea = style({ position: 'relative', flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' });
-export const raceCanvas = style({ position: 'absolute', top: 0, left: 0, width: '100%', pointerEvents: 'none', zIndex: 1 });
-export const raceRows = style({ position: 'relative', margin: `4px 0` });
-export const raceZero = style({
+export const rankArea = style({ position: 'relative', flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' });
+export const rankCanvas = style({ position: 'absolute', top: 0, left: 0, width: '100%', pointerEvents: 'none', zIndex: 1 });
+export const rankRows = style({ position: 'relative', margin: `4px 0` });
+export const rankZero = style({
     position: 'absolute',
     top: '-6px',
     bottom: '-6px',
@@ -702,7 +548,7 @@ export const raceZero = style({
     ...reduce,
 });
 
-const raceRowBase = style({
+const rankRowBase = style({
     position: 'absolute',
     left: 0,
     right: 0,
@@ -720,25 +566,25 @@ const raceRowBase = style({
     selectors: { '&:hover': { background: tint(vars.color.panelRaised, 80) } },
     ...reduce,
 });
-export const raceRow = styleVariants({
-    on: [raceRowBase, { background: vars.color.panelRaised, boxShadow: `inset 2px 0 0 ${vars.color.accent}` }],
-    off: [raceRowBase],
+export const rankRow = styleVariants({
+    on: [rankRowBase, { background: vars.color.panelRaised, boxShadow: `inset 2px 0 0 ${vars.color.accent}` }],
+    off: [rankRowBase],
 });
-export const raceName = style({ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 });
-export const raceTrack = style({ position: 'relative', height: '12px', minWidth: 0 });
+export const rankName = style({ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 });
+export const rankTrack = style({ position: 'relative', height: '12px', minWidth: 0 });
 
 const barGrow = ['width', 'left', 'right'].map((p) => `${p} 900ms cubic-bezier(0.22, 1, 0.36, 1)`).join(', ');
-const raceBarBase = style({ position: 'absolute', top: 0, bottom: 0, transition: barGrow, ...reduce });
-export const raceBar = styleVariants({
+const rankBarBase = style({ position: 'absolute', top: 0, bottom: 0, transition: barGrow, ...reduce });
+export const rankBar = styleVariants({
     in: [
-        raceBarBase,
+        rankBarBase,
         {
             borderRadius: '0 3px 3px 0',
             background: `linear-gradient(90deg, ${tint(vars.color.up, 10)}, ${tint(vars.color.up, 55)})`,
         },
     ],
     out: [
-        raceBarBase,
+        rankBarBase,
         {
             borderRadius: '3px 0 0 3px',
             background: `linear-gradient(270deg, ${tint(vars.color.down, 10)}, ${tint(vars.color.down, 55)})`,
@@ -753,12 +599,12 @@ const headBase = style({
     marginTop: '-3.5px',
     borderRadius: '50%',
 });
-export const raceHead = styleVariants({
+export const rankHead = styleVariants({
     in: [headBase, { right: '-3.5px', background: vars.color.up, boxShadow: `0 0 8px 2px ${tint(vars.color.up, 60)}` }],
     out: [headBase, { left: '-3.5px', background: vars.color.down, boxShadow: `0 0 8px 2px ${tint(vars.color.down, 60)}` }],
 });
-export const raceValue = style({ ...mono, fontSize: '0.66rem', fontWeight: 650, textAlign: 'right', whiteSpace: 'nowrap' });
-export const racePct = style({ ...mono, fontSize: '0.6rem', textAlign: 'right', whiteSpace: 'nowrap' });
+export const rankValue = style({ ...mono, fontSize: '0.66rem', fontWeight: 650, textAlign: 'right', whiteSpace: 'nowrap' });
+export const rankPct = style({ ...mono, fontSize: '0.6rem', textAlign: 'right', whiteSpace: 'nowrap' });
 
 const flashFade = keyframes({ from: { opacity: 1 }, to: { opacity: 0 } });
 const flashBase = style({
@@ -769,16 +615,16 @@ const flashBase = style({
     animation: `${flashFade} 1.2s ease-out forwards`,
     ...reduce,
 });
-export const raceFlash = styleVariants({
+export const rankFlash = styleVariants({
     in: [flashBase, { background: tint(vars.color.up, 16) }],
     out: [flashBase, { background: tint(vars.color.down, 16) }],
 });
 
-// ---- 潮汐泡泡 ----
+// ---- 輪動泡泡 ----
 
-export const tide = style({ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' });
-export const tideSvg = style({ position: 'absolute', inset: 0, display: 'block' });
-export const tideStates = style({
+export const rot = style({ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' });
+export const rotSvg = style({ position: 'absolute', inset: 0, display: 'block' });
+export const rotStates = style({
     position: 'absolute',
     top: '6px',
     left: '50%',
@@ -787,7 +633,7 @@ export const tideStates = style({
     display: 'flex',
     gap: '4px',
 });
-export const tideState = style({
+export const rotState = style({
     display: 'inline-flex',
     alignItems: 'center',
     gap: '5px',
@@ -800,47 +646,47 @@ export const tideState = style({
     fontFamily: vars.font.body,
     color: vars.color.foreground,
 });
-export const tideStateOn = style({ borderColor: vars.color.borderBright });
-export const tideStateLabel = style({ fontSize: '0.58rem', color: vars.color.mutedForeground, whiteSpace: 'nowrap' });
-export const tideStateCount = style({ ...mono, fontSize: '0.72rem', fontWeight: 700 });
+export const rotStateOn = style({ borderColor: vars.color.borderBright });
+export const rotStateLabel = style({ fontSize: '0.58rem', color: vars.color.mutedForeground, whiteSpace: 'nowrap' });
+export const rotStateCount = style({ ...mono, fontSize: '0.72rem', fontWeight: 700 });
 
 const stateColor = {
     leading: vars.color.up,
     weakening: vars.color.amber,
-    improving: vars.color.mutedForeground,
+    improving: vars.color.accent,
     lagging: vars.color.down,
 } as const;
 type StateKey = keyof typeof stateColor;
 const perState = <T>(fn: (color: string, key: StateKey) => T) =>
     Object.fromEntries((Object.keys(stateColor) as StateKey[]).map((k) => [k, fn(stateColor[k], k)])) as Record<StateKey, T>;
 
-export const tideDot = styleVariants(perState((c) => ({ width: '7px', height: '7px', borderRadius: '50%', background: c })));
-export const tideTint = styleVariants(perState((c, k) => ({ fill: tint(c, k === 'improving' ? 3 : 4) })));
-export const tideCorner = styleVariants(
+export const rotDot = styleVariants(perState((c) => ({ width: '7px', height: '7px', borderRadius: '50%', background: c })));
+export const rotTint = styleVariants(perState((c, k) => ({ fill: tint(c, k === 'improving' ? 3 : 4) })));
+export const rotCorner = styleVariants(
     perState((c) => ({ fill: c, fontSize: '10px', fontWeight: 600, opacity: 0.55, fontFamily: vars.font.body })),
 );
-export const tideGrid = style({ stroke: tint(vars.color.border, 60), strokeDasharray: '2 4' });
-export const tideAxis = style({ stroke: tint(vars.color.mutedForeground, 45) });
-export const tideTick = style({ fill: vars.color.mutedForeground, fontSize: '9px', fontFamily: vars.font.mono, opacity: 0.85 });
-export const tideCaption = style({ fill: vars.color.mutedForeground, fontSize: '9.5px', fontFamily: vars.font.body });
-export const tideTrail = styleVariants(perState((c) => ({ stroke: c, strokeWidth: 1.4, strokeLinecap: 'round' })));
-export const tideBubble = style({ cursor: 'pointer', transition: glide, willChange: 'transform', ...reduce });
-export const tideFill = styleVariants(
+export const rotGrid = style({ stroke: tint(vars.color.border, 60), strokeDasharray: '2 4' });
+export const rotAxis = style({ stroke: tint(vars.color.mutedForeground, 45) });
+export const rotTick = style({ fill: vars.color.mutedForeground, fontSize: '9px', fontFamily: vars.font.mono, opacity: 0.85 });
+export const rotCaption = style({ fill: vars.color.mutedForeground, fontSize: '9.5px', fontFamily: vars.font.body });
+export const rotTrail = styleVariants(perState((c) => ({ stroke: c, strokeWidth: 1.4, strokeLinecap: 'round' })));
+export const rotBubble = style({ cursor: 'pointer', transition: glide, willChange: 'transform', ...reduce });
+export const rotFill = styleVariants(
     perState((c) => ({
         fill: tint(c, 26),
         stroke: c,
         strokeWidth: 1.2,
         transition: 'r 900ms cubic-bezier(0.22, 1, 0.36, 1), fill 600ms ease, stroke 600ms ease',
-        selectors: { [`${tideBubble}:hover &`]: { fill: tint(c, 42) } },
+        selectors: { [`${rotBubble}:hover &`]: { fill: tint(c, 42) } },
         ...reduce,
     })),
 );
 const breathe = keyframes({ '0%, 100%': { opacity: 0.12 }, '50%': { opacity: 0.4 } });
-export const tideHalo = styleVariants(
+export const rotHalo = styleVariants(
     perState((c) => ({ fill: 'none', stroke: c, strokeWidth: 3, filter: 'blur(2px)', animation: `${breathe} 2.6s ease-in-out infinite`, ...reduce })),
 );
 const ring = keyframes({ from: { transform: 'scale(1)', opacity: 0.85 }, to: { transform: 'scale(2.4)', opacity: 0 } });
-export const tidePulse = styleVariants(
+export const rotPulse = styleVariants(
     perState((c) => ({
         fill: 'none',
         stroke: c,
@@ -851,8 +697,8 @@ export const tidePulse = styleVariants(
         ...reduce,
     })),
 );
-export const tideSelected = style({ fill: 'none', stroke: vars.color.accent, strokeWidth: 1.6, strokeDasharray: '3 2' });
-export const tideName = style({
+export const rotSelected = style({ fill: 'none', stroke: vars.color.accent, strokeWidth: 1.6, strokeDasharray: '3 2' });
+export const rotName = style({
     fill: vars.color.foreground,
     fontSize: '9.5px',
     fontWeight: 650,
@@ -863,7 +709,7 @@ export const tideName = style({
     strokeLinejoin: 'round',
     pointerEvents: 'none',
 });
-export const tideValue = styleVariants(
+export const rotValue = styleVariants(
     perState((c) => ({
         fill: c,
         color: c,
@@ -877,7 +723,7 @@ export const tideValue = styleVariants(
         pointerEvents: 'none',
     })),
 );
-export const tideEmpty = style({
+export const rotEmpty = style({
     position: 'absolute',
     left: '50%',
     top: '50%',
@@ -892,7 +738,7 @@ export const tideEmpty = style({
     border: `1px solid ${vars.color.border}`,
     borderRadius: vars.radius.md,
 });
-export const tideFoot = style({
+export const rotFoot = style({
     position: 'absolute',
     left: '50%',
     bottom: '3px',
@@ -904,4 +750,102 @@ export const tideFoot = style({
     color: vars.color.mutedForeground,
     pointerEvents: 'none',
 });
-export const tideFootName = style({ color: vars.color.foreground, fontWeight: 650 });
+export const rotFootName = style({ color: vars.color.foreground, fontWeight: 650 });
+
+// ---- 熱力 ----
+
+export const heat = style({
+    position: 'relative',
+    flex: 1,
+    minHeight: 0,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    padding: `6px ${vars.space.sm} 8px`,
+});
+export const heatLegend = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontSize: '0.56rem',
+    color: vars.color.mutedForeground,
+    marginBottom: '6px',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+});
+export const heatScale = style({
+    width: '120px',
+    height: '6px',
+    borderRadius: '3px',
+    background: `linear-gradient(90deg, ${vars.color.down}, ${tint(vars.color.down, 25)} 35%, ${vars.color.panelRaised} 50%, ${tint(vars.color.up, 25)} 65%, ${vars.color.up})`,
+});
+export const heatGrid = style({
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))',
+    gap: '4px',
+});
+export const heatGridSmall = style({ gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: '3px' });
+export const heatSection = style({
+    margin: '10px 0 5px',
+    fontSize: '0.62rem',
+    fontWeight: 650,
+    color: vars.color.foreground,
+});
+
+const heatTileBase = style({
+    position: 'relative',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '1px',
+    height: '62px',
+    padding: '5px 7px 4px',
+    border: `1px solid ${tint(vars.color.border, 70)}`,
+    borderRadius: vars.radius.sm,
+    textAlign: 'left',
+    cursor: 'pointer',
+    fontFamily: vars.font.body,
+    color: vars.color.foreground,
+    transition: 'background-color 900ms ease, border-color 300ms ease, transform 150ms ease',
+    selectors: {
+        '&:hover': { borderColor: vars.color.borderBright, transform: 'translateY(-1px)' },
+        '&:focus-visible': { outline: `1px solid ${vars.color.accent}`, outlineOffset: '1px' },
+    },
+    ...reduce,
+});
+export const heatTile = styleVariants({
+    in: [heatTileBase, { background: `color-mix(in srgb, ${vars.color.up} var(--heat), ${vars.color.panelRaised})` }],
+    out: [heatTileBase, { background: `color-mix(in srgb, ${vars.color.down} var(--heat), ${vars.color.panelRaised})` }],
+    flat: [heatTileBase, { background: vars.color.panelRaised }],
+});
+export const heatTileSmall = style({ height: '50px', padding: '4px 6px 3px' });
+export const heatTileOn = style({ boxShadow: `0 0 0 1.5px ${vars.color.accent}`, borderColor: 'transparent' });
+
+const sheen = keyframes({
+    from: { transform: 'translateX(-110%)', opacity: 0.9 },
+    to: { transform: 'translateX(110%)', opacity: 0 },
+});
+export const heatSheen = style({
+    position: 'absolute',
+    inset: 0,
+    pointerEvents: 'none',
+    background: `linear-gradient(100deg, transparent 20%, ${tint(vars.color.foreground, 22)} 50%, transparent 80%)`,
+    animation: `${sheen} 1.1s ease-out forwards`,
+    ...reduce,
+});
+export const heatHead = style({ display: 'flex', alignItems: 'baseline', gap: '4px', minWidth: 0 });
+export const heatName = style({ flex: 1, minWidth: 0, fontSize: '0.64rem', fontWeight: 650, ...ellipsis });
+export const heatPct = style({ ...mono, fontSize: '0.54rem', fontWeight: 600, whiteSpace: 'nowrap', color: vars.color.foreground, opacity: 0.72 });
+export const heatValue = style({ ...mono, fontSize: '0.78rem', fontWeight: 700, lineHeight: 1.15, whiteSpace: 'nowrap' });
+export const heatBars = style({
+    marginTop: 'auto',
+    display: 'flex',
+    alignItems: 'flex-end',
+    gap: '2px',
+    height: '12px',
+});
+const heatBarBase = style({ flex: 1, minHeight: '2px', borderRadius: '1px', transition: 'height 600ms ease', ...reduce });
+export const heatBar = styleVariants({
+    in: [heatBarBase, { background: `color-mix(in srgb, ${vars.color.up} 80%, ${vars.color.foreground})` }],
+    out: [heatBarBase, { background: `color-mix(in srgb, ${vars.color.down} 80%, ${vars.color.foreground})` }],
+    none: [heatBarBase, { height: '2px', background: tint(vars.color.foreground, 20) }],
+});

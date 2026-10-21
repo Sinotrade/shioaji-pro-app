@@ -1,9 +1,9 @@
-// src/components/chain-tide.tsx — 潮汐泡泡: every chain/theme as a bubble.
+// src/components/chain-rotation.tsx — 輪動 view: every chain/theme as a bubble.
 //
 // x = net inflow since the first received bar (asinh scale, so a small group
 // stays readable next to the largest), y = 加速 (last ten minutes' flow
 // intensity minus the last 30 minutes'), size = last ten minutes'
-// turnover, colour = state (加速流入 / 流入放緩 / 流出放緩 / 加速流出).
+// turnover, colour = RRG quadrant (領先 / 轉弱 / 改善 / 落後).
 // Each minute the bubbles glide to their new place leaving a fading
 // eight-minute trail; a ring pulses on groups that changed state or moved the
 // most; accelerating groups breathe. The viewport only widens during the
@@ -36,6 +36,38 @@ const MAX_LABELS = 12;
 const NET_UNIT = 1e8;
 const PULSES = 4;
 
+interface Box {
+    x0: number;
+    x1: number;
+    y0: number;
+    y1: number;
+}
+
+interface LabelSpot {
+    dx: number;
+    dy: number;
+    anchor: 'start' | 'middle' | 'end';
+    inside?: boolean;
+}
+
+const overlaps = (a: Box, b: Box) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+
+/** True when the box comes closer than the circle's radius (minus a hair). */
+function hitsCircle(box: Box, c: { x: number; y: number; r: number }) {
+    const nx = Math.max(box.x0, Math.min(c.x, box.x1));
+    const ny = Math.max(box.y0, Math.min(c.y, box.y1));
+    return (nx - c.x) ** 2 + (ny - c.y) ** 2 < (c.r - 1.5) ** 2;
+}
+
+/** Approximate label width: CJK ~10 px, Latin ~`latin` px at 9.5 px. */
+function textWidth(text: string, latin = 5.8) {
+    let w = 0;
+    for (const ch of text) w += ch.charCodeAt(0) > 0x2e80 ? 10 : latin;
+    return w;
+}
+
+const shortName = (name: string) => (name.length > 6 ? `${name.slice(0, 6)}…` : name);
+
 interface Bubble {
     row: FlowRow;
     id: string;
@@ -61,7 +93,7 @@ function useRatchet(value: number, session: string | null) {
     return ref.current.value;
 }
 
-export function FlowTide({
+export function FlowRotation({
     rows,
     now,
     from,
@@ -140,25 +172,40 @@ export function FlowTide({
     const rMax = Math.max(10, Math.min(30, Math.min(plotW, plotH) / 11));
     const radius = (size: number) => Math.max(3.5, Math.sqrt(size / maxSize) * rMax);
 
-    // label the selection and the biggest groups, skipping any label that
-    // would overlap one already placed
-    const labelled = new Set<string>();
+    // label the selection and the biggest groups. Each label tries inside,
+    // above, below, right and left of its bubble and takes the first spot
+    // that hits no placed label, no other bubble and stays in the plot.
+    const labels = new Map<string, LabelSpot>();
     {
-        const placed: { x0: number; x1: number; y0: number; y1: number }[] = [];
+        const placed: Box[] = [];
+        const circles = bubbles.map((b) => ({ id: b.id, x: px(b.point.net), y: py(b.point.y), r: radius(b.point.size) }));
         const candidates = [...bubbles].sort(
             (a, b) => (b.id === selectedId ? 1 : 0) - (a.id === selectedId ? 1 : 0) || Math.abs(b.point.net) - Math.abs(a.point.net),
         );
         for (const b of candidates) {
-            if (labelled.size >= MAX_LABELS) break;
+            if (labels.size >= MAX_LABELS) break;
             const r = radius(b.point.size);
             const x = px(b.point.net);
             const y = py(b.point.y);
-            const half = Math.min(6, b.row.theme.name.length) * 5 + 4;
-            const top = r >= 13 ? y - 11 : y - r - 19;
-            const box = { x0: x - half, x1: x + half, y0: top, y1: top + 22 };
-            if (placed.some((o) => box.x0 < o.x1 && box.x1 > o.x0 && box.y0 < o.y1 && box.y1 > o.y0)) continue;
-            placed.push(box);
-            labelled.add(b.id);
+            const name = shortName(b.row.theme.name);
+            const lw = Math.max(textWidth(name), textWidth(fmtTwd(b.point.net, true).replace(' ', ''), 5.4)) + 4;
+            const spots: LabelSpot[] = [
+                ...(r >= 16 && lw <= r * 2.1 ? [{ dx: 0, dy: -1, anchor: 'middle' as const, inside: true }] : []),
+                { dx: 0, dy: -r - 13, anchor: 'middle' },
+                { dx: 0, dy: r + 11, anchor: 'middle' },
+                { dx: r + 4, dy: -2, anchor: 'start' },
+                { dx: -r - 4, dy: -2, anchor: 'end' },
+            ];
+            for (const spot of spots) {
+                const x0 = spot.anchor === 'middle' ? x + spot.dx - lw / 2 : spot.anchor === 'start' ? x + spot.dx : x + spot.dx - lw;
+                const box = { x0, x1: x0 + lw, y0: y + spot.dy - 10, y1: y + spot.dy + 12 };
+                if (box.x0 < PAD.left || box.x1 > PAD.left + plotW || box.y0 < PAD.top || box.y1 > PAD.top + plotH) continue;
+                if (placed.some((o) => overlaps(box, o))) continue;
+                if (circles.some((c) => c.id !== b.id && hitsCircle(box, c))) continue;
+                placed.push(box);
+                labels.set(b.id, spot);
+                break;
+            }
         }
     }
 
@@ -172,13 +219,13 @@ export function FlowTide({
     const ticks = NET_TICKS.filter((t) => asinhScale(t, extentX, NET_UNIT) < 0.8);
 
     return (
-        <div className={s.tide} ref={ref}>
-            <div className={s.tideStates} role='group' aria-label='族群狀態'>
+        <div className={s.rot} ref={ref}>
+            <div className={s.rotStates} role='group' aria-label='族群狀態'>
                 {QUADRANTS.map((q) => (
                     <button
                         key={q}
                         type='button'
-                        className={`${s.tideState} ${focusState === q ? s.tideStateOn : ''}`}
+                        className={`${s.rotState} ${focusState === q ? s.rotStateOn : ''}`}
                         aria-pressed={focusState === q}
                         onMouseEnter={() => setFocusState(q)}
                         onMouseLeave={() => setFocusState(null)}
@@ -186,68 +233,68 @@ export function FlowTide({
                         onBlur={() => setFocusState(null)}
                         title={
                             {
-                                leading: '淨流入，且近 10 分鐘淨流入比重高於近 30 分鐘',
-                                weakening: '淨流入，但近 10 分鐘淨流入比重低於近 30 分鐘',
-                                improving: '淨流出，但近 10 分鐘比重回升',
-                                lagging: '淨流出，且近 10 分鐘比重低於近 30 分鐘',
+                                leading: '淨流入，且近 10 分鐘淨流入占比高於近 30 分鐘（動能增強）',
+                                weakening: '淨流入，但近 10 分鐘淨流入占比低於近 30 分鐘（動能減弱）',
+                                improving: '淨流出，但近 10 分鐘占比高於近 30 分鐘（流出收斂）',
+                                lagging: '淨流出，且近 10 分鐘占比低於近 30 分鐘（流出擴大）',
                             }[q]
                         }
                     >
-                        <span className={s.tideDot[q]} aria-hidden='true' />
-                        <span className={s.tideStateLabel}>{QUADRANT_LABEL[q]}</span>
-                        <span className={s.tideStateCount}>{now !== null ? counts[q] : '--'}</span>
+                        <span className={s.rotDot[q]} aria-hidden='true' />
+                        <span className={s.rotStateLabel}>{QUADRANT_LABEL[q]}</span>
+                        <span className={s.rotStateCount}>{now !== null ? counts[q] : '--'}</span>
                     </button>
                 ))}
             </div>
             {w > 0 && h > 0 && (
-                <svg className={s.tideSvg} width={w} height={h} viewBox={`0 0 ${w} ${h}`} role='img' aria-label='族群資金潮汐圖'>
+                <svg className={s.rotSvg} width={w} height={h} viewBox={`0 0 ${w} ${h}`} role='img' aria-label='族群資金輪動圖'>
                     {/* quadrant tints */}
-                    <rect className={s.tideTint.leading} x={cx} y={PAD.top} width={plotW / 2} height={plotH / 2} />
-                    <rect className={s.tideTint.weakening} x={cx} y={cy} width={plotW / 2} height={plotH / 2} />
-                    <rect className={s.tideTint.improving} x={PAD.left} y={PAD.top} width={plotW / 2} height={plotH / 2} />
-                    <rect className={s.tideTint.lagging} x={PAD.left} y={cy} width={plotW / 2} height={plotH / 2} />
+                    <rect className={s.rotTint.leading} x={cx} y={PAD.top} width={plotW / 2} height={plotH / 2} />
+                    <rect className={s.rotTint.weakening} x={cx} y={cy} width={plotW / 2} height={plotH / 2} />
+                    <rect className={s.rotTint.improving} x={PAD.left} y={PAD.top} width={plotW / 2} height={plotH / 2} />
+                    <rect className={s.rotTint.lagging} x={PAD.left} y={cy} width={plotW / 2} height={plotH / 2} />
                     {/* net ticks (asinh) */}
                     {ticks.flatMap((t) =>
                         [t, -t].map((v) => (
                             <g key={v}>
-                                <line className={s.tideGrid} x1={px(v)} x2={px(v)} y1={PAD.top} y2={PAD.top + plotH} />
-                                <text className={s.tideTick} x={px(v)} y={PAD.top + plotH + 11} textAnchor='middle'>
+                                <line className={s.rotGrid} x1={px(v)} x2={px(v)} y1={PAD.top} y2={PAD.top + plotH} />
+                                <text className={s.rotTick} x={px(v)} y={PAD.top + plotH + 11} textAnchor='middle'>
                                     {fmtTwd(v, true).replace(' ', '')}
                                 </text>
                             </g>
                         )),
                     )}
-                    <line className={s.tideAxis} x1={PAD.left} x2={PAD.left + plotW} y1={cy} y2={cy} />
-                    <line className={s.tideAxis} x1={cx} x2={cx} y1={PAD.top} y2={PAD.top + plotH} />
-                    <text className={s.tideTick} x={PAD.left - 4} y={PAD.top + 8} textAnchor='end'>
+                    <line className={s.rotAxis} x1={PAD.left} x2={PAD.left + plotW} y1={cy} y2={cy} />
+                    <line className={s.rotAxis} x1={cx} x2={cx} y1={PAD.top} y2={PAD.top + plotH} />
+                    <text className={s.rotTick} x={PAD.left - 4} y={PAD.top + 8} textAnchor='end'>
                         +{extentY}
                     </text>
-                    <text className={s.tideTick} x={PAD.left - 4} y={PAD.top + plotH} textAnchor='end'>
+                    <text className={s.rotTick} x={PAD.left - 4} y={PAD.top + plotH} textAnchor='end'>
                         −{extentY}
                     </text>
-                    <text className={s.tideTick} x={PAD.left - 4} y={cy + 3} textAnchor='end'>
+                    <text className={s.rotTick} x={PAD.left - 4} y={cy + 3} textAnchor='end'>
                         0
                     </text>
-                    <text className={s.tideCaption} x={PAD.left + plotW} y={PAD.top + plotH + 11} textAnchor='end'>
+                    <text className={s.rotCaption} x={PAD.left + plotW} y={PAD.top + plotH + 11} textAnchor='end'>
                         淨流入 →
                     </text>
-                    <text className={s.tideCaption} x={PAD.left} y={PAD.top + plotH + 11}>
+                    <text className={s.rotCaption} x={PAD.left} y={PAD.top + plotH + 11}>
                         ← 淨流出
                     </text>
-                    <text className={s.tideCaption} x={6} y={PAD.top - 8}>
-                        加速 pp
+                    <text className={s.rotCaption} x={6} y={PAD.top - 8}>
+                        資金動能（百分點）
                     </text>
                     {/* corner names */}
-                    <text className={s.tideCorner.leading} x={PAD.left + plotW - 6} y={PAD.top + 13} textAnchor='end'>
+                    <text className={s.rotCorner.leading} x={PAD.left + plotW - 6} y={PAD.top + 13} textAnchor='end'>
                         {QUADRANT_LABEL.leading}
                     </text>
-                    <text className={s.tideCorner.weakening} x={PAD.left + plotW - 6} y={PAD.top + plotH - 6} textAnchor='end'>
+                    <text className={s.rotCorner.weakening} x={PAD.left + plotW - 6} y={PAD.top + plotH - 6} textAnchor='end'>
                         {QUADRANT_LABEL.weakening}
                     </text>
-                    <text className={s.tideCorner.improving} x={PAD.left + 6} y={PAD.top + 13}>
+                    <text className={s.rotCorner.improving} x={PAD.left + 6} y={PAD.top + 13}>
                         {QUADRANT_LABEL.improving}
                     </text>
-                    <text className={s.tideCorner.lagging} x={PAD.left + 6} y={PAD.top + plotH - 6}>
+                    <text className={s.rotCorner.lagging} x={PAD.left + 6} y={PAD.top + plotH - 6}>
                         {QUADRANT_LABEL.lagging}
                     </text>
 
@@ -256,7 +303,7 @@ export function FlowTide({
                         if (b.trail.length < 2) return null;
                         const dim = focusState !== null && focusState !== b.state;
                         return (
-                            <g key={`trail-${b.id}`} className={s.tideTrail[b.state]} opacity={dim ? 0.06 : b.id === selectedId ? 1 : 0.4}>
+                            <g key={`trail-${b.id}`} className={s.rotTrail[b.state]} opacity={dim ? 0.06 : b.id === selectedId ? 1 : 0.4}>
                                 {b.trail.slice(1).map((p, i) => {
                                     const a = b.trail[i]!;
                                     // a thin group crossing zero can jump: no streak across the chart
@@ -282,32 +329,32 @@ export function FlowTide({
                         const selected = b.id === selectedId;
                         const dim = focusState !== null && focusState !== b.state;
                         const hot = b.state === 'leading' || b.state === 'lagging';
-                        const label = labelled.has(b.id) && !dim;
+                        const spot = dim ? undefined : labels.get(b.id);
                         const f = b.row.flow;
                         return (
                             <g
                                 key={b.id}
-                                className={`${s.tideBubble} ${reducedMotion ? s.still : ''}`}
+                                className={`${s.rotBubble} ${reducedMotion ? s.still : ''}`}
                                 style={{ transform: `translate(${px(b.point.net)}px, ${py(b.point.y)}px)`, opacity: dim ? 0.15 : 1 }}
                                 onClick={() => onSelect(b.id)}
                                 role='button'
                                 aria-label={`${b.row.theme.name} ${QUADRANT_LABEL[b.state]} 淨流入 ${fmtTwd(b.point.net, true)}`}
                             >
                                 <title>
-                                    {`${b.row.theme.name}・${QUADRANT_LABEL[b.state]}\n淨流入 ${fmtTwd(b.point.net, true)}（強度 ${fmtSignedPct(b.point.x, 1)}）\n加速 ${b.point.y >= 0 ? '+' : ''}${b.point.y.toFixed(1)} pp\n近 10 分成交值 ${fmtTwd(b.point.size)}・漲跌 ${fmtSignedPct(f.pct)}`}
+                                    {`${b.row.theme.name}・${QUADRANT_LABEL[b.state]}\n淨流入 ${fmtTwd(b.point.net, true)}・占成交值 ${fmtSignedPct(b.point.x, 1)}\n資金動能 ${b.point.y >= 0 ? '+' : ''}${b.point.y.toFixed(1)} 百分點\n近 10 分成交值 ${fmtTwd(b.point.size)}・漲跌 ${fmtSignedPct(f.pct)}`}
                                 </title>
-                                {hot && !reducedMotion && <circle className={s.tideHalo[b.state]} r={r + 4} />}
+                                {hot && !reducedMotion && <circle className={s.rotHalo[b.state]} r={r + 4} />}
                                 {pulse.has(b.id) && !reducedMotion && (
-                                    <circle key={`pulse-${now}`} className={s.tidePulse[b.state]} r={r} />
+                                    <circle key={`pulse-${now}`} className={s.rotPulse[b.state]} r={r} />
                                 )}
-                                <circle className={s.tideFill[b.state]} r={r} />
-                                {selected && <circle className={s.tideSelected} r={r + 3} />}
-                                {label && (
+                                <circle className={s.rotFill[b.state]} r={r} />
+                                {selected && <circle className={s.rotSelected} r={r + 3} />}
+                                {spot && (
                                     <>
-                                        <text className={s.tideName} y={r >= 13 ? -1 : -r - 9} textAnchor='middle'>
-                                            {b.row.theme.name.length > 6 ? `${b.row.theme.name.slice(0, 6)}…` : b.row.theme.name}
+                                        <text className={s.rotName} x={spot.dx} y={spot.dy} textAnchor={spot.anchor}>
+                                            {shortName(b.row.theme.name)}
                                         </text>
-                                        <text className={s.tideValue[b.state]} y={r >= 13 ? 10 : -r - 1} textAnchor='middle'>
+                                        <text className={s.rotValue[b.state]} x={spot.dx} y={spot.dy + 10} textAnchor={spot.anchor}>
                                             {fmtTwd(b.point.net, true).replace(' ', '')}
                                         </text>
                                     </>
@@ -318,22 +365,22 @@ export function FlowTide({
                 </svg>
             )}
             {now === null && (
-                <div className={s.tideEmpty}>
-                    盤中每分鐘更新：收到第一根 1 分 K 起，泡泡依淨流入與加速度移動，並留下 8 分鐘軌跡
+                <div className={s.rotEmpty}>
+                    盤中每分鐘更新：收到第一根 1 分 K 起，泡泡依淨流入與資金動能移動，並留下 8 分鐘軌跡
                 </div>
             )}
             {now !== null && (top || bottom) && (
-                <div className={s.tideFoot}>
+                <div className={s.rotFoot}>
                     {top && (
                         <span>
-                            吸金最多 <b className={s.tideFootName}>{top.row.theme.name}</b>{' '}
-                            <span className={s.tideValue.leading}>{fmtTwd(top.point.net, true)}</span>
+                            淨流入最大 <b className={s.rotFootName}>{top.row.theme.name}</b>{' '}
+                            <span className={s.rotValue.leading}>{fmtTwd(top.point.net, true)}</span>
                         </span>
                     )}
                     {bottom && (
                         <span>
-                            失血最多 <b className={s.tideFootName}>{bottom.row.theme.name}</b>{' '}
-                            <span className={s.tideValue.lagging}>{fmtTwd(bottom.point.net, true)}</span>
+                            淨流出最大 <b className={s.rotFootName}>{bottom.row.theme.name}</b>{' '}
+                            <span className={s.rotValue.lagging}>{fmtTwd(bottom.point.net, true)}</span>
                         </span>
                     )}
                 </div>

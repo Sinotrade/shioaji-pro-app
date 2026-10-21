@@ -1,10 +1,10 @@
 // src/components/chain-map.tsx — 產業鏈資金流向：shioaji-data 產業鏈／題材 ×
 // 即時 1 分 K 資金流，三種即時視圖：
-// - 潮汐（預設）：每個族群一顆泡泡，x＝開啟以來淨流入、y＝加速（近 10 分鐘
-//   流入比重 − 近 30 分鐘），大小＝近 10 分成交值、顏色＝加速流入／流入放緩／
-//   流出放緩／加速流出。每分鐘滑動到新位置並留下 8 分鐘軌跡。
-// - 賽跑：族群依淨流入上下分流排行，每分鐘換位、資金粒子沿條流動。
-// - 時間軸：每列一個族群的每分鐘淨流入。
+// - 輪動（預設）：每個族群一顆泡泡，x＝開啟以來淨流入、y＝加速（近 10 分鐘
+//   流入比重 − 近 30 分鐘），大小＝近 10 分成交值、顏色＝領先／轉弱／
+//   改善／落後（RRG 四象限）。每分鐘滑動到新位置並留下 8 分鐘軌跡。
+// - 排行：族群依淨流入上下分流排行，每分鐘換位、資金粒子沿條流動。
+// - 熱力：族群與所選族群成分股依近 5／10 分鐘淨流入占成交值著色，不需歷史資料。
 // 下方是所選族群的上中下游流向與聚焦個股。
 // 行情：即時 1 分 K 訂閱（約 800 檔、3 個 POST、每分鐘 0 request）＋其他面板
 // 既有 tick；snapshots 只在當日第一次開啟時補開盤至今的彙總，不下載歷史 K
@@ -14,36 +14,34 @@
 import { AlertTriangle, Radio } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useChainMapData } from '../hooks/use-chain-map-data';
-import { flowSortKey, groupFlow, SESSION_SLOTS, shareShift, slotLabel, type FlowSort } from '../lib/chain-flow';
+import { groupFlow, SESSION_SLOTS, shareShift } from '../lib/chain-flow';
 import { chainFlowBook, chainFlowStatus, connectChainFlow, useChainFlowRevision, type FeedMember } from '../lib/chain-flow-feed';
 import { memberCodes, stageMembers, stockContract, themeCodes, tierRank } from '../lib/chain-map';
-import type { RaceMetric } from '../lib/chain-motion';
+import type { RankMetric } from '../lib/chain-motion';
 import { entityIndex, entityName, STALE_TEXT, twCodeOf } from '../lib/company-data';
 import type { ChainTier, Theme } from '../lib/company-data/types';
 import { themeKey as themeKeyOf, useThemeSettings } from '../lib/theme-store';
 import type { ContractBase } from '../lib/types/contract';
 import { AsyncStatus } from './async-status';
 import { FocusCard, TierCard, type TierView } from './chain-detail';
-import { FlowRace } from './chain-race';
-import { FlowTape } from './chain-tape';
-import { FlowTide } from './chain-tide';
+import { FlowHeat } from './chain-heat';
+import { FlowRank } from './chain-rank';
+import { FlowRotation } from './chain-rotation';
 import { NextBar, readPref, Segment, useBoxSize, usePaused, useReducedMotion, writePref, type FlowRow } from './chain-ui';
 import * as panel from './panel.css';
 import * as s from './chain-map.css';
 
 const THEME_KEY = 'sj-pro-chainmap-theme';
 const KIND_KEY = 'sj-pro-chainmap-kind';
-const SORT_KEY = 'sj-pro-chainmap-flow-sort';
+const HEAT_WINDOW_KEY = 'sj-pro-chainmap-heat-window';
 const VIEW_KEY = 'sj-pro-chainmap-view';
-const METRIC_KEY = 'sj-pro-chainmap-race-metric';
+const METRIC_KEY = 'sj-pro-chainmap-rank-metric';
 const DEFAULT_THEME = 'theme.ai_server';
 /** Below this panel height the chain detail is hidden. */
 const DETAIL_MIN_PX = 520;
-/** Below this width the 量能 column is dropped. */
-const NARROW_PX = 720;
 const TIERS: ChainTier[] = ['upstream', 'midstream', 'downstream'];
 
-type ViewMode = 'tide' | 'race' | 'tape';
+type ViewMode = 'rotation' | 'rank' | 'heat';
 type KindFilter = 'all' | 'chain' | 'theme';
 
 export function ChainMap({
@@ -65,11 +63,10 @@ export function ChainMap({
         }
     });
     const [kind, setKindState] = useState<KindFilter>(() => readPref(KIND_KEY, ['all', 'chain', 'theme'] as const, 'all'));
-    const [sort, setSortState] = useState<FlowSort>(() => readPref(SORT_KEY, ['flow5', 'accel', 'pct'] as const, 'flow5'));
-    const [view, setViewState] = useState<ViewMode>(() => readPref(VIEW_KEY, ['tide', 'race', 'tape'] as const, 'tide'));
-    const [metric, setMetricState] = useState<RaceMetric>(() => readPref(METRIC_KEY, ['cum', 'flow5'] as const, 'cum'));
+    const [view, setViewState] = useState<ViewMode>(() => readPref(VIEW_KEY, ['rotation', 'rank', 'heat'] as const, 'rotation'));
+    const [metric, setMetricState] = useState<RankMetric>(() => readPref(METRIC_KEY, ['cum', 'flow5'] as const, 'cum'));
     const [focus, setFocus] = useState<string | null>(null);
-    const [hoverRaw, setHover] = useState<number | null>(null);
+    const [heatWindow, setHeatWindowState] = useState<'5' | '10'>(() => readPref(HEAT_WINDOW_KEY, ['5', '10'] as const, '10'));
 
     const setThemeId = useCallback((id: string) => {
         setThemeIdState(id);
@@ -101,30 +98,23 @@ export function ChainMap({
     const feed = chainFlowStatus();
     const now = book.lastSlot;
     const from = book.firstSlot;
-    // the crosshair only means something over received minutes
-    const hover = hoverRaw !== null && from !== null && now !== null && hoverRaw >= from && hoverRaw <= now ? hoverRaw : null;
 
-    // ── tape rows ──
+    // ── group rows (each view orders them itself) ──
     const pool = useMemo(() => (themes ?? []).filter((t) => kind === 'all' || t.kind === kind), [themes, kind]);
     const rows = useMemo<FlowRow[]>(() => {
-        const list = pool.flatMap((theme) => {
+        return pool.flatMap((theme) => {
             const codes = themeCodes(theme);
             return codes.length > 0 ? [{ theme, codes, flow: groupFlow(book, codes, now) }] : [];
         });
-        return list.sort(
-            (a, b) =>
-                flowSortKey(b.flow, sort) - flowSortKey(a.flow, sort) ||
-                (b.flow.pct ?? -Infinity) - (a.flow.pct ?? -Infinity) ||
-                b.flow.total - a.flow.total,
-        );
         // the book mutates in place: `revision` is the change signal
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pool, sort, revision, now]);
+    }, [pool, revision, now]);
 
     const theme: Theme | null = useMemo(() => {
         if (!themes) return null;
         return themes.find((t) => t.id === themeId) ?? themes.find((t) => t.id === DEFAULT_THEME) ?? themes[0] ?? null;
     }, [themes, themeId]);
+    const selectedCodes = useMemo(() => (theme ? themeCodes(theme) : []), [theme]);
 
     // ── chain detail: upstream → midstream → downstream ──
     const stageOf = useMemo(() => {
@@ -211,10 +201,7 @@ export function ChainMap({
         );
     }
 
-    const narrow = rootSize.width > 0 && rootSize.width < NARROW_PX;
     const showDetail = rootSize.height === 0 || rootSize.height >= DETAIL_MIN_PX;
-    // minutes before the first received bar are covered by the seed summary
-    const covered = from ?? (book.codes.size > 0 ? SESSION_SLOTS : 0);
     // seeded after 13:30: the snapshot already covers the whole session
     let closed = false;
     if (now === null) for (const f of book.codes.values()) if (f.seedSlot >= SESSION_SLOTS) { closed = true; break; }
@@ -222,7 +209,7 @@ export function ChainMap({
     const minutes = now !== null && from !== null ? now - from + 1 : 0;
     const liveText =
         now !== null
-            ? `1 分 K・${feed.kbarCodes} 檔・開啟後第 ${minutes} 分`
+            ? `1 分 K・${feed.kbarCodes} 檔・已接收 ${minutes} 分鐘`
             : closed
               ? '已收盤・今日彙總'
               : feed.batches > 0
@@ -240,9 +227,9 @@ export function ChainMap({
                         writePref(VIEW_KEY, v);
                     }}
                     options={[
-                        { value: 'tide', label: '潮汐', title: '泡泡：淨流入 × 加速度，每分鐘移動並留下軌跡' },
-                        { value: 'race', label: '賽跑', title: '族群淨流入排行，每分鐘換位' },
-                        { value: 'tape', label: '時間軸', title: '每分鐘淨流入時間軸' },
+                        { value: 'rotation', label: '輪動', title: '族群輪動象限：橫軸淨流入、縱軸資金動能，每分鐘更新位置與軌跡' },
+                        { value: 'rank', label: '排行', title: '族群淨流入排行，每分鐘更新名次' },
+                        { value: 'heat', label: '熱力', title: '族群與成分股近期淨流入占成交值，點族群看成分股' },
                     ]}
                 />
                 <Segment
@@ -258,7 +245,7 @@ export function ChainMap({
                         { value: 'theme', label: '題材' },
                     ]}
                 />
-                {view === 'race' && (
+                {view === 'rank' && (
                     <Segment
                         label='排行依據'
                         value={metric}
@@ -267,23 +254,22 @@ export function ChainMap({
                             writePref(METRIC_KEY, v);
                         }}
                         options={[
-                            { value: 'cum', label: '累積', title: '開啟面板後收到的 1 分 K 累積淨流入（估算）' },
+                            { value: 'cum', label: '累計', title: '開啟面板後收到的 1 分 K 累計淨流入（估算）' },
                             { value: 'flow5', label: '近 5 分', title: '最近 5 根 1 分 K 的淨流入（估算）' },
                         ]}
                     />
                 )}
-                {view === 'tape' && (
+                {view === 'heat' && (
                     <Segment
-                        label='排序'
-                        value={sort}
+                        label='統計區間'
+                        value={heatWindow}
                         onChange={(v) => {
-                            setSortState(v);
-                            writePref(SORT_KEY, v);
+                            setHeatWindowState(v);
+                            writePref(HEAT_WINDOW_KEY, v);
                         }}
                         options={[
-                            { value: 'flow5', label: '5 分淨流入', title: '最近 5 根 1 分 K 的淨流入（估算）' },
-                            { value: 'accel', label: '量能', title: '近 10 分鐘成交值 ÷（今日每分鐘平均 × 5）' },
-                            { value: 'pct', label: '漲跌', title: '市值加權漲跌' },
+                            { value: '5', label: '近 5 分', title: '最近 5 根 1 分 K' },
+                            { value: '10', label: '近 10 分', title: '最近 10 根 1 分 K' },
                         ]}
                     />
                 )}
@@ -303,8 +289,8 @@ export function ChainMap({
             </div>
 
             <div className={s.views}>
-                {view === 'tide' && (
-                    <FlowTide
+                {view === 'rotation' && (
+                    <FlowRotation
                         rows={rows}
                         now={now}
                         from={from}
@@ -314,8 +300,8 @@ export function ChainMap({
                         onSelect={setThemeId}
                     />
                 )}
-                {view === 'race' && (
-                    <FlowRace
+                {view === 'rank' && (
+                    <FlowRank
                         rows={rows}
                         metric={metric}
                         now={now}
@@ -326,32 +312,30 @@ export function ChainMap({
                         onSelect={setThemeId}
                     />
                 )}
-                {view === 'tape' && (
-                    <FlowTape
+                {view === 'heat' && (
+                    <FlowHeat
                         rows={rows}
-                        selectedId={theme.id}
-                        kind={kind}
-                        narrow={narrow}
-                        from={from}
                         now={now}
-                        covered={covered}
-                        hover={hover}
-                        themeKey={themeKey}
-                        revision={revision}
-                        onHover={setHover}
+                        window={Number(heatWindow)}
+                        selectedId={theme.id}
+                        selectedName={theme.name}
+                        selectedCodes={selectedCodes}
+                        nameOf={nameOf}
+                        reducedMotion={reducedMotion}
                         onSelect={setThemeId}
+                        onPick={pick}
                     />
                 )}
             </div>
 
-            {showDetail && (
+            {showDetail && view !== 'heat' && (
                 <div className={s.detail}>
                     <div className={s.detailHead}>
                         <span className={s.kindMark[theme.kind === 'chain' ? 'chain' : 'theme']} aria-hidden='true' />
                         <span className={s.detailTitle}>{theme.name}</span>
                         <span className={s.detailMeta}>
                             {themeCodes(theme).length} 檔・
-                            {now !== null ? '累積淨流入走勢・近 15 分鐘資金占比變化' : closed ? '今日收盤彙總；盤中依 1 分 K 顯示資金流向' : '開盤至今彙總，下一根 1 分 K 起顯示走勢'}
+                            {now !== null ? '累計淨流入走勢・近 15 分鐘資金占比變化' : closed ? '今日收盤彙總；盤中依 1 分 K 顯示資金流向' : '開盤至今彙總，下一根 1 分 K 起顯示走勢'}
                         </span>
                     </div>
                     <div className={`${s.detailBody} ${focus ? s.detailBodyFocus : ''}`}>
@@ -364,7 +348,7 @@ export function ChainMap({
                                     last={i === tiers.length - 1}
                                     from={from}
                                     now={now}
-                                    hover={hover}
+                                    hover={null}
                                     themeKey={themeKey}
                                     revision={revision}
                                     nameOf={nameOf}
@@ -392,7 +376,7 @@ export function ChainMap({
 
             <div className={s.footer}>
                 <span>
-                    淨流入為估算：每分鐘成交值 × 方向（收盤價較前一分鐘）。產業鏈與題材為第三方 AI 整理資料（
+                    淨流入為估算值：每分鐘成交值依收盤價相對前一分鐘漲跌給予正負號。產業鏈與題材為第三方 AI 整理資料（
                     {ready?.themesMeta.asOf ?? '--'}），可能過時或有誤
                 </span>
             </div>

@@ -137,16 +137,6 @@ export function Segment<T extends string>({
     );
 }
 
-export function fmtAccel(value: number | null) {
-    return value === null ? '--' : `${value.toFixed(1)}×`;
-}
-
-export function sumBars(flow: GroupFlow) {
-    let sum = 0;
-    for (const v of flow.turnover) sum += v;
-    return sum;
-}
-
 /** True when the viewer asked the OS for reduced motion. */
 export function useReducedMotion() {
     const query = '(prefers-reduced-motion: reduce)';

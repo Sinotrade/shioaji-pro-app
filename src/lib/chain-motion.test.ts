@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { SESSION_SLOTS, type GroupFlow } from './chain-flow';
 import {
     asinhScale,
+    heatCell,
+    heatLevel,
     quadrantCounts,
     quadrantOf,
-    raceOrder,
-    raceValue,
+    rankOrder,
+    rankValue,
     rankMoves,
     rotationExtent,
     rotationPoint,
@@ -40,16 +42,16 @@ function group(minutes: [slot: number, turnover: number, net: number][]): GroupF
     };
 }
 
-describe('race', () => {
+describe('rank', () => {
     it('reads cumulative or five-minute flow, zero before the first bar', () => {
         const g = group([[40, 100, 30], [41, 100, -10]]);
-        expect(raceValue(g, 41, 'cum')).toBe(20);
-        expect(raceValue(g, 41, 'flow5')).toBe(7);
-        expect(raceValue(g, null, 'cum')).toBe(0);
+        expect(rankValue(g, 41, 'cum')).toBe(20);
+        expect(rankValue(g, 41, 'flow5')).toBe(7);
+        expect(rankValue(g, null, 'cum')).toBe(0);
     });
 
     it('orders inflow first, outflow last, ties by id', () => {
-        const rows = raceOrder(
+        const rows = rankOrder(
             [
                 { id: 'b', v: 5 },
                 { id: 'c', v: -8 },
@@ -74,7 +76,7 @@ describe('race', () => {
     });
 });
 
-describe('tide bubbles', () => {
+describe('rotation bubbles', () => {
     it('places a group by net, intensity and acceleration', () => {
         // ten quiet minutes of mild inflow, then five strong ones
         const minutes: [number, number, number][] = [];
@@ -122,7 +124,7 @@ describe('tide bubbles', () => {
     });
 });
 
-describe('tide baseline and smoothing', () => {
+describe('rotation baseline and smoothing', () => {
     it('compares the recent window with the last 30 minutes, not the whole session', () => {
         const minutes: [number, number, number][] = [];
         // strong open, then flat for 40 minutes, then a 10-minute push
@@ -139,5 +141,27 @@ describe('tide baseline and smoothing', () => {
         const out = smoothTrail(pts);
         expect(out.map((p) => p.y)).toEqual([0, 10, 20, 30]);
         expect(out[1]!.net).toBe(10);
+    });
+});
+
+describe('heat', () => {
+    it('sums the recent window and keeps per-minute ratios, from the first bar', () => {
+        const g = group([[40, 100, 50], [42, 200, -100]]);
+        const cell = heatCell(g.net, g.turnover, 42, 5);
+        expect(cell.net).toBe(-50);
+        expect(cell.turnover).toBe(300);
+        expect(cell.ratio).toBeCloseTo(-50 / 300);
+        expect(cell.minutes).toEqual([null, null, 0.5, null, -0.5]);
+        expect(cell.amounts).toEqual([0, 0, 100, 0, 200]);
+        // window reaching before the open
+        expect(heatCell(g.net, g.turnover, 1, 5).minutes).toHaveLength(5);
+        expect(heatCell(g.net, g.turnover, null, 5)).toEqual({ net: 0, turnover: 0, ratio: null, minutes: [], amounts: [] });
+    });
+
+    it('maps ratios to a colour level with a soft knee', () => {
+        expect(heatLevel(null)).toBe(0);
+        expect(heatLevel(0.5)).toBe(1);
+        expect(heatLevel(-0.9)).toBe(1);
+        expect(heatLevel(0.125)).toBeCloseTo(0.5);
     });
 });

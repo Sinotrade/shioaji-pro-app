@@ -1,4 +1,4 @@
-// src/components/chain-race.tsx — 資金流賽跑: groups race on net inflow.
+// src/components/chain-rank.tsx — 排行 view: groups ranked by net inflow.
 //
 // Rows glide to their new rank when a minute bar lands (CSS transform
 // transition), bars grow from a centre line (inflow right, outflow left),
@@ -11,7 +11,7 @@ import { ArrowDown, ArrowUp } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { slotLabel, SESSION_SLOTS } from '../lib/chain-flow';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
-import { raceOrder, raceValue, rankMoves, type RaceMetric } from '../lib/chain-motion';
+import { rankOrder, rankValue, rankMoves, type RankMetric } from '../lib/chain-motion';
 import { vars } from '../theme.css';
 import { cssColor, dir, type FlowRow } from './chain-ui';
 import * as panel from './panel.css';
@@ -28,7 +28,7 @@ interface Particle {
     size: number;
 }
 
-export function FlowRace({
+export function FlowRank({
     rows,
     metric,
     now,
@@ -39,7 +39,7 @@ export function FlowRace({
     onSelect,
 }: {
     rows: FlowRow[];
-    metric: RaceMetric;
+    metric: RankMetric;
     now: number | null;
     from: number | null;
     selectedId: string;
@@ -48,7 +48,7 @@ export function FlowRace({
     onSelect: (id: string) => void;
 }) {
     const order = useMemo(
-        () => raceOrder(rows, (r) => r.theme.id, (r) => raceValue(r.flow, now, metric)),
+        () => rankOrder(rows, (r) => r.theme.id, (r) => rankValue(r.flow, now, metric)),
         [rows, now, metric],
     );
     // the zero line sits where the two sides fit best (Threads-style diverging
@@ -174,19 +174,19 @@ export function FlowRace({
     const height = order.length * ROW_PX + (firstOut > 0 ? GAP_PX : 0);
 
     return (
-        <div className={s.race}>
+        <div className={s.rank}>
             <div className={s.kpis}>
                 <span className={s.kpi}>
-                    <span className={s.kpiLabel}>{metric === 'cum' ? `族群合計・${from !== null ? `${slotLabel(from)} 起` : '開啟至今'}` : '族群合計・近 5 分'}</span>
+                    <span className={s.kpiLabel}>{metric === 'cum' ? `族群淨流入合計・${from !== null ? `${slotLabel(from)} 起` : '開啟至今'}` : '族群淨流入合計・近 5 分'}</span>
                     <span className={`${s.kpiValue} ${panel.dirText[dir(now !== null ? sum : null)]}`}>{now !== null ? fmtTwd(sum, true) : '--'}</span>
                 </span>
                 <span className={s.kpi}>
-                    <span className={s.kpiLabel}>吸金最多</span>
+                    <span className={s.kpiLabel}>淨流入最大</span>
                     <span className={s.kpiName}>{top && top.value > 0 ? top.item.theme.name : '--'}</span>
                     <span className={`${s.kpiSub} ${panel.dirText.up}`}>{top && top.value > 0 ? fmtTwd(top.value, true) : ''}</span>
                 </span>
                 <span className={s.kpi}>
-                    <span className={s.kpiLabel}>失血最多</span>
+                    <span className={s.kpiLabel}>淨流出最大</span>
                     <span className={s.kpiName}>{bottom && bottom.value < 0 ? bottom.item.theme.name : '--'}</span>
                     <span className={`${s.kpiSub} ${panel.dirText.down}`}>{bottom && bottom.value < 0 ? fmtTwd(bottom.value, true) : ''}</span>
                 </span>
@@ -195,9 +195,9 @@ export function FlowRace({
                     {clock}
                 </span>
             </div>
-            <div className={s.raceArea} ref={areaRef}>
-                <canvas ref={canvasRef} className={s.raceCanvas} aria-hidden='true' />
-                <div className={s.raceRows} style={{ height }} role='list'>
+            <div className={s.rankArea} ref={areaRef}>
+                <canvas ref={canvasRef} className={s.rankCanvas} aria-hidden='true' />
+                <div className={s.rankRows} style={{ height }} role='list'>
                     {order.map((row) => {
                         const y = row.rank * ROW_PX + (row.side === 'out' && firstOut > 0 ? GAP_PX : 0);
                         const width = now !== null ? Math.min(row.side === 'in' ? 100 - zero : zero, (Math.abs(row.value) / span) * 100) : 0;
@@ -209,33 +209,33 @@ export function FlowRace({
                             <div
                                 key={row.id}
                                 role='listitem'
-                                className={`${s.raceRow[selected ? 'on' : 'off']} ${reducedMotion ? s.still : ''}`}
+                                className={`${s.rankRow[selected ? 'on' : 'off']} ${reducedMotion ? s.still : ''}`}
                                 style={{ transform: `translateY(${y}px)` }}
                                 onClick={() => onSelect(row.id)}
-                                title={`${row.item.theme.name}・${row.item.codes.length} 檔\n${metric === 'cum' ? '累積' : '近 5 分'}淨流入 ${fmtTwd(row.value, true)}\n成交值 ${fmtTwd(f.total)}・漲跌 ${fmtSignedPct(f.pct)}`}
+                                title={`${row.item.theme.name}・${row.item.codes.length} 檔\n${metric === 'cum' ? '累計' : '近 5 分'}淨流入 ${fmtTwd(row.value, true)}\n成交值 ${fmtTwd(f.total)}・漲跌 ${fmtSignedPct(f.pct)}`}
                             >
-                                {flash && !reducedMotion && <span key={moves.at} className={s.raceFlash[row.side]} aria-hidden='true' />}
-                                <span className={s.raceName}>
+                                {flash && !reducedMotion && <span key={moves.at} className={s.rankFlash[row.side]} aria-hidden='true' />}
+                                <span className={s.rankName}>
                                     <span className={s.kindMark[row.item.theme.kind === 'chain' ? 'chain' : 'theme']} aria-hidden='true' />
                                     <span className={s.nameText}>{row.item.theme.name}</span>
                                     {move > 0 && <ArrowUp size={10} className={panel.dirText.up} aria-label={`上升 ${move} 名`} />}
                                     {move < 0 && <ArrowDown size={10} className={panel.dirText.down} aria-label={`下降 ${-move} 名`} />}
                                 </span>
-                                <span className={s.raceTrack}>
-                                    <span className={`${s.raceZero} ${reducedMotion ? s.still : ''}`} style={{ left: `${zero}%` }} aria-hidden='true' />
+                                <span className={s.rankTrack}>
+                                    <span className={`${s.rankZero} ${reducedMotion ? s.still : ''}`} style={{ left: `${zero}%` }} aria-hidden='true' />
                                     <span
                                         data-bar={row.id}
                                         data-side={row.side}
-                                        className={`${s.raceBar[row.side]} ${reducedMotion ? s.still : ''}`}
+                                        className={`${s.rankBar[row.side]} ${reducedMotion ? s.still : ''}`}
                                         style={row.side === 'in' ? { left: `${zero}%`, width: `${width}%` } : { right: `${100 - zero}%`, width: `${width}%` }}
                                     >
-                                        {width > 0.5 && <span className={s.raceHead[row.side]} />}
+                                        {width > 0.5 && <span className={s.rankHead[row.side]} />}
                                     </span>
                                 </span>
-                                <span className={`${s.raceValue} ${panel.dirText[dir(now !== null ? row.value : null)]}`}>
+                                <span className={`${s.rankValue} ${panel.dirText[dir(now !== null ? row.value : null)]}`}>
                                     {now !== null ? fmtTwd(row.value, true) : '--'}
                                 </span>
-                                <span className={`${s.racePct} ${panel.dirText[dir(f.pct)]}`}>{fmtSignedPct(f.pct)}</span>
+                                <span className={`${s.rankPct} ${panel.dirText[dir(f.pct)]}`}>{fmtSignedPct(f.pct)}</span>
                             </div>
                         );
                     })}

@@ -184,7 +184,7 @@ export function TierCard({
                 {live && Math.abs(shift) >= 0.05 && (
                     <span
                         className={`${s.shift} ${panel.dirText[dir(shift)]}`}
-                        title='近 15 分鐘成交值占全鏈比重，相對今日已收到 1 分 K 占比的變化'
+                        title='近 15 分鐘成交值占全鏈比重，相對今日已接收 1 分 K 期間占比的變化（百分點）'
                     >
                         {shift > 0 ? <ArrowUpRight size={11} aria-hidden='true' /> : <ArrowDownRight size={11} aria-hidden='true' />}
                         {Math.abs(shift).toFixed(1)} pp
@@ -194,7 +194,7 @@ export function TierCard({
             </div>
             <div className={s.tierFigures}>
                 <span className={s.figure}>
-                    <span className={s.figureLabel}>5 分淨流入</span>
+                    <span className={s.figureLabel}>近 5 分淨流入</span>
                     <span className={`${s.figureValue} ${panel.dirText[dir(live ? flow.flow5 : null)]}`}>
                         {live ? fmtTwd(flow.flow5, true) : '--'}
                     </span>
@@ -298,7 +298,7 @@ export function FocusCard({
                     <span className={`${s.figureValue} ${panel.dirText[dir(pct)]}`}>{fmtSignedPct(pct)}</span>
                 </span>
                 <span className={s.figure}>
-                    <span className={s.figureLabel}>5 分淨流入</span>
+                    <span className={s.figureLabel}>近 5 分淨流入</span>
                     <span className={`${s.figureValue} ${panel.dirText[dir(flow5)]}`}>{fmtTwd(flow5, true)}</span>
                 </span>
                 <span className={s.figure}>

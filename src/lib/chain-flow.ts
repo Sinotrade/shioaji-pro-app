@@ -370,14 +370,6 @@ export function groupFlow(book: FlowBook, codes: Iterable<string>, now = book.la
     };
 }
 
-export type FlowSort = 'flow5' | 'accel' | 'pct';
-
-export function flowSortKey(flow: GroupFlow, sort: FlowSort): number {
-    if (sort === 'accel') return flow.accel ?? -Infinity;
-    if (sort === 'pct') return flow.pct ?? -Infinity;
-    return flow.flow5;
-}
-
 /**
  * Stage share shift: how much of the chain's turnover each stage took in the
  * last `window` minutes versus the whole observed session, in percentage
