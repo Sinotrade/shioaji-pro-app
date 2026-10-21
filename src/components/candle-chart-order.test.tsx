@@ -556,18 +556,20 @@ describe('chart order settings button', () => {
         expect(lockButton().props.className).toBe(styles.orderLockBtn.locked);
     });
 
-    it('鎖定鈕與 K 棒讀值、最高最低同一組圖示開關，更新歷史維持在最右端', async () => {
+    it('鎖定鈕在下單區塊開頭：分隔線之後、點價買之前，更新歷史維持在最右端', async () => {
         await mount({ contract: stk });
         const lockButton = view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線鎖定');
-        const highLow = view.root.find(n => n.type === 'button' && n.props['aria-label'] === '最高最低標記');
         const toolbar = lockButton.parent!;
         expect(toolbar.props.className).toBe(styles.toolbar);
-        const items = toolbar.children;
-        expect(items.indexOf(lockButton)).toBe(items.indexOf(highLow) + 1);
+        const items = toolbar.children as ReactTestInstance[];
+        const at = items.indexOf(lockButton);
+        expect(items[at - 1]!.props.className).toBe(styles.toolbarDivider);
+        expect(items[at + 1]).toBe(button(view.root, '點價買'));
+        const highLow = view.root.find(n => n.type === 'button' && n.props['aria-label'] === '最高最低標記');
+        expect(items.indexOf(highLow)).toBeLessThan(at - 1);
         const refreshButton = view.root.findByType(RefreshButton);
         expect(refreshButton.parent).toBe(toolbar);
         expect(items.indexOf(refreshButton)).toBe(items.length - 1);
-        expect(items.indexOf(lockButton)).toBeLessThan(items.indexOf(button(view.root, '指標')));
     });
 
     it('委託線鎖住時標題沒有拖曳提示，解鎖後恢復', async () => {

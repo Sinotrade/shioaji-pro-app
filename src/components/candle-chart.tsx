@@ -2219,8 +2219,10 @@ export function CandleChart({
                 >
                     <ArrowUpDown size={12} />
                 </button>
+                <span className={styles.toolbarDivider} />
                 <button
                     type='button'
+                    // 放在下單區塊開頭：委託線是下單互動，與點價買／賣同一組。
                     // 鎖定＝按下；未鎖定時只有圖上真的有拖得動的委託線才用強調色提醒
                     className={styles.orderLockBtn[orderLineLock ? 'locked' : workingOrders.some((t) => canUpdateOrderPrice(t.order)) ? 'live' : 'idle']}
                     onClick={() => setRiskSettings({ orderLineLock: !orderLineLock })}
@@ -2233,7 +2235,6 @@ export function CandleChart({
                 >
                     {orderLineLock ? <Lock size={12} /> : <LockOpen size={12} />}
                 </button>
-                <span className={styles.toolbarDivider} />
                 {TRADE_MODES.filter(
                     // 組合商品只能用組合單下單 — 圖上僅保留警示，
                     // 點價買賣與觸價停損停利（flat code 會被 server 拒）
