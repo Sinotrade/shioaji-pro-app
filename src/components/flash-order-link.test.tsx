@@ -61,6 +61,7 @@ beforeEach(() => {
 afterEach(async () => {
     for (const r of roots.splice(0)) await act(async () => r.unmount());
     vi.unstubAllGlobals();
+    vi.useRealTimers();
 });
 
 it('a new link key (mapping or group changed, same contract) disarms in the same render and never revives', async () => {
@@ -209,6 +210,10 @@ it('a real-month future without a mapping (popout, 照選取) is also locked aft
 });
 
 it('entering the paused state voids an order waiting in confirmation, and a paused panel cannot cancel the old contract', async () => {
+    // CDFJ6's last trading day is 2026-10-21; trade before its close so the
+    // panel is not locked by expiry (the test failed on that afternoon).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-20T10:00:00+08:00'));
     let guard!: () => void;
     mocks.place.mockImplementation((_c: unknown, _a: unknown, _p: unknown, _q: unknown, opts: { beforeSend: () => void }) => {
         guard = opts.beforeSend;
@@ -224,6 +229,7 @@ it('entering the paused state voids an order waiting in confirmation, and a paus
     expect(() => guard()).toThrow();
     const cancelAll = r.root.findAllByType('button').find(b => text(b).startsWith('全刪'))!;
     expect(cancelAll.props.disabled).toBe(true);
+    vi.useRealTimers();
 });
 
 it('a cancel still waiting to be dispatched is dropped once the panel pauses (or the link changes)', async () => {

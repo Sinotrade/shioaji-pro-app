@@ -8,7 +8,7 @@ calling a tool. The families below describe intent, not permission.
 
 | Family | Typical intent | Capability tier |
 | --- | --- | --- |
-| `market` | Quotes, snapshots, product search, K-bar summaries, bounded K bars, and scanners | `market.read` |
+| `market` | Quotes, snapshots, product search, K-bar summaries, bounded K bars, scanners, and company data | `market.read` |
 | `account` | Positions, working orders, order and fill history, conditional orders, balances, margin, realized P&L, and risk indicators | `account.read` |
 | `workspace` | Select a contract; inspect or change panels, links, and layouts | `ui.control` |
 | `watchlist` | Read and edit the server 自選 watchlists the App shows | `ui.control` |
@@ -40,10 +40,16 @@ past success or conversation text.
 ## v1 semantic names
 
 - Market: `get_quote`, `get_snapshots`, `search_products`,
-  `get_kbar_summary`, `get_kbars`, `get_scanner`. `get_kbars` returns at most
-  500 bars from the Shioaji server (intraday ranges up to 31 days, daily up to
-  366); use `get_kbar_summary` when a summary is enough. Daily futures bars
-  follow the trading day: a night session counts toward the next trading day.
+  `get_kbar_summary`, `get_kbars`, `get_scanner`, `get_company`,
+  `get_financials`, `find_theme_members`, `find_relations`. `get_kbars` returns
+  at most 500 bars from the Shioaji server (intraday ranges up to 31 days,
+  daily up to 366); use `get_kbar_summary` when a summary is enough. Daily
+  futures bars follow the trading day: a night session counts toward the next
+  trading day. The last four read the public shioaji-data company dataset
+  (Taiwan listed and OTC companies): business summary, multi-level industry,
+  value-chain stage, themes, suppliers and customers, monthly revenue, and
+  quarterly statements. Read [Company data](#company-data) before answering
+  from them.
 - Account: `get_positions`, `get_working_orders`, `get_account`,
   `list_trades`, `list_conditional_orders`, `get_profit_loss`.
   `list_trades` is 委託成交查詢 for today, including filled, cancelled and
@@ -108,3 +114,29 @@ instead.
 Availability still depends on the connected server's advertised schema and the
 session's granted capabilities. Do not invent audit, approval-token, raw HTTP,
 or any other tools when they are absent.
+
+## Company data
+
+- Codes use the Shioaji stock code (`2330`) or the entity id (`tw.2330`).
+  `find_relations` also accepts foreign entity ids such as `us.NVDA`, so it can
+  list the Taiwan suppliers of a foreign company. Relation types are
+  `supplier` (who supplies it), `customer` (whom it supplies), `competitor`,
+  `partner`, `subsidiary` (its subsidiaries), `parent`, and `transaction`.
+- For a value chain or theme question, call `find_theme_members` with the
+  theme or chain and an optional stage or tier (`upstream`, `midstream`,
+  `downstream`). Without arguments it lists every chain and theme.
+- Research fields are third-party data compiled by AI from public documents and
+  cross-checked by several models. When answering from them, label them as
+  third-party data and cite `as_of` and `sources`. When `research.status` is
+  `official_only`, say the company has only official exchange data.
+  `get_financials` and daily close and market cap are official data.
+- Company data is a daily snapshot. Use `get_quote` or `get_snapshots` for the
+  live price. A `stale` flag means the App is offline and serving data it
+  downloaded and verified earlier; it is not confirmed to be the latest
+  release, so say so and give the `release_id`. `data.parts` gives the
+  release and `as_of` of each dataset a result used, and `data.stale_parts`
+  names the ones served from cache (for example only `market`).
+- Results are capped in size. A capped result has `truncated: true`: lists keep
+  their first entries and `count` still gives the full total. Narrow the call
+  with `limit`, `max_relations`, `months`, `quarters`, or a more specific theme
+  or stage instead of repeating it.

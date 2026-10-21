@@ -8,7 +8,8 @@ description: |
   adjustment, static portfolio research, Grid/Random optimization, bounded
   backtest analysis and export, reusable skills, background tasks,
   guarded trade preview and execution, user-authorized controlled auto, restart
-  recovery, and privacy. Use the separate
+  recovery, privacy, and read-only company data (fundamentals, value chains,
+  themes, suppliers and customers, revenue and statements). Use the separate
   Shioaji API skill for direct Python, CLI, HTTP, or SSE integration.
 ---
 
@@ -87,6 +88,14 @@ operations; never substitute shell commands, UI coordinates, or raw keystrokes.
   returned list back. The 自選 panel re-reads the lists after each change.
 - `delete_watchlist` always asks the user, showing the list's contents. Use
   the `watchlist_id` returned by `rename_watchlist` afterwards.
+
+## Company Data
+
+- Answer company, value-chain, theme, supplier, and customer questions with
+  `get_company`, `find_theme_members`, `find_relations`, and `get_financials`
+  as described in [MCP_TOOLS.md](references/MCP_TOOLS.md#company-data).
+- Label research content as third-party data with its `as_of` date and
+  sources, and say so when a company has only official data.
 
 ## Guardrails
 
