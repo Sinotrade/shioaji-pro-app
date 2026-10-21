@@ -136,6 +136,21 @@ describe('popout session param', () => {
         expect(popoutSessionFromQuery(qs).chartSession).toBe('day');
     });
 
+    it('carries the K-line interval into the popout URL (#331)', () => {
+        const block = { id: 'c', type: 'chart' as const, pin: null, chartSession: 'day' as const, chartInterval: '1D' as const };
+        expect(popoutSessionParam(block)).toEqual({ session: 'day', interval: '1D' });
+        expect(popoutSessionParam({ id: 'i', type: 'intraday', pin: null, chartInterval: '1D' })).toEqual({});
+        const qs = new URLSearchParams(popoutSessionParam(block));
+        expect(popoutSessionFromQuery(qs).chartInterval).toBe('1D');
+        expect(popoutSessionFromQuery(new URLSearchParams({ interval: '2h' })).chartInterval).toBeUndefined();
+    });
+
+    it('persists the K-line interval with the saved workspace (#331)', () => {
+        const ws = { blocks: [{ id: 'c1', type: 'chart' as const, pin: null }], layout: [] };
+        const saved = JSON.parse(JSON.stringify(withBlockSessionConfig(ws, 'c1', { chartInterval: '15m' }))) as Workspace;
+        expect(saved.blocks[0]!.chartInterval).toBe('15m');
+    });
+
     it('reads back only known values per panel type', () => {
         const q = (v: string) => popoutSessionFromQuery(new URLSearchParams({ session: v }));
         expect(q('day')).toEqual({ chartSession: 'day', intradaySession: 'day' });

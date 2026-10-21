@@ -1,7 +1,7 @@
 // src/App.tsx — Shioaji Pro trading terminal
 // Dynamic panel blocks on a draggable grid, with named layout profiles.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import GridLayout, {
     useContainerWidth,
     type Layout,
@@ -65,6 +65,7 @@ import { useWatchlist } from './hooks/use-watchlist';
 import { markWorkspaceVisible } from './lib/frontend-ready';
 import { trackActivity } from './lib/activity';
 import { registerAgentAppCommandHost } from './lib/agent-app-command';
+import { WorkspaceUndoHistory } from './lib/workspace-history';
 import { requestedBacktestPanelId, selectBacktestPanelId } from './lib/backtest-link-routing';
 import {
     isAgentHarnessEnabled,
@@ -176,6 +177,7 @@ const POPOUT_CODE = popoutQuery.get('code') || null;
 const popoutSession = popoutSessionFromQuery(popoutQuery);
 const popoutChartSession = popoutSession.chartSession;
 const popoutIntradaySession = popoutSession.intradaySession;
+const popoutChartInterval = popoutSession.chartInterval;
 
 // resolves a block's contract: pinned code (contract cache) or global selection
 // sourceCode: the pinned code or the link group's code (null = follow selection)
@@ -292,6 +294,10 @@ function BlockBody({
                         sessionMode={block.chartSession}
                         onSessionModeChange={(chartSession) =>
                             onSessionConfigChange(block.id, { chartSession })
+                        }
+                        interval={block.chartInterval}
+                        onIntervalChange={(chartInterval) =>
+                            onSessionConfigChange(block.id, { chartInterval })
                         }
                         orderSettings={block.chartOrder}
                         onOrderSettingsChange={(chartOrder) =>
@@ -775,6 +781,7 @@ function PopoutView({
                             trades={tradesState.data ?? []}
                             onOrdersChanged={tradesState.refresh}
                             sessionMode={popoutChartSession}
+                            interval={popoutChartInterval}
                         />
                     </>
                 );
@@ -918,6 +925,9 @@ function MainApp() {
         createList,
         renameCurrentList,
         deleteCurrentList,
+        reloadFromServer,
+        reloading: watchlistReloading,
+        holdReload,
     } = useWatchlist();
     const [selected, setSelected] = useState<ContractInfo | null>(null);
     const [agentHarnessEnabled, setAgentHarnessEnabledState] = useState(
@@ -1138,6 +1148,8 @@ function MainApp() {
     // 欄寬與最小寬不再跟著螢幕等比放大，超寬幕上面板可以縮得更窄、
     // 拖拉步進更細。k 皆整除 12 → 同密度回存無損；跨密度僅一次舍入。
     const density = width < 1800 ? 1 : width < 2800 ? 2 : width < 3900 ? 3 : 4;
+    const densityRef = useRef(density);
+    densityRef.current = density;
     const renderCols = GRID_LEGACY_COLS * density;
     const colW = width > 0 ? width / renderCols : 53;
     const renderLayout = useMemo(() => {
@@ -1457,6 +1469,27 @@ function MainApp() {
         replaceWorkspace(structuredClone(DEFAULT_WORKSPACE));
     }, [replaceWorkspace]);
 
+    // Agent 套用版面規格（#331）的復原步驟：只在記憶體，一次套用＝一步。
+    // 頁首「復原版面」與 Agent 的 undo_workspace_change 共用同一份紀錄與
+    // 同一條防呆（面板組成被改過就不能復原）
+    const workspaceHistory = useMemo(() => new WorkspaceUndoHistory(), []);
+    useSyncExternalStore(workspaceHistory.subscribe, workspaceHistory.getVersion);
+    useEffect(() => {
+        workspaceHistory.settle(workspace);
+    }, [workspaceHistory, workspace]);
+    const workspaceUndo = workspaceHistory.peek(workspace);
+    const undoWorkspaceChange = useCallback(() => {
+        const result = workspaceHistory.pop(workspaceRef.current);
+        if (!result.ok) return;
+        replaceWorkspace(structuredClone(result.entry.before));
+        trackActivity('復原版面', result.entry.label);
+        notify({
+            kind: 'info',
+            title: '版面已復原',
+            body: `已還原「${result.entry.label}」之前的版面`,
+        });
+    }, [workspaceHistory, replaceWorkspace]);
+
     const loadPreset = useCallback(
         (name: string) => {
             const preset = LAYOUT_PRESETS.find((p) => p.name === name);
@@ -1541,8 +1574,29 @@ function MainApp() {
                 },
                 updateWorkspace: replaceWorkspace,
                 createPanelId: newBlockId,
+                workspaceHistory,
+                getGridDensity: () => densityRef.current,
+                getViewportRows: () => {
+                    // rowHeight 30 + margin 6, containerPadding 6
+                    const height = containerRef.current?.clientHeight ?? 0;
+                    return height > 0 ? Math.max(1, Math.floor((height - 6) / 36)) : null;
+                },
+                onWorkspaceSpecChange: ({ kind, entry }) => {
+                    trackActivity(
+                        kind === 'applied' ? 'Agent 套版面' : '復原版面',
+                        entry.label,
+                    );
+                    notify({
+                        kind: 'info',
+                        title: kind === 'applied' ? 'Agent 已調整版面' : '版面已復原',
+                        body:
+                            kind === 'applied'
+                                ? `「${entry.label}」— 可按頁首「復原版面」還原`
+                                : `已還原「${entry.label}」之前的版面`,
+                    });
+                },
         }, { readOnly: !agentHarnessEnabled });
-    }, [agentHarnessEnabled, replaceWorkspace]);
+    }, [agentHarnessEnabled, replaceWorkspace, workspaceHistory, containerRef]);
 
     const deleteProfile = useCallback(
         (name: string) => {
@@ -1612,6 +1666,9 @@ function MainApp() {
         structureBusy,
         loadError,
         onRetryLoad: retryLoad,
+        onReload: () => reloadFromServer({ source: 'user' }),
+        reloading: watchlistReloading,
+        onHoldReload: holdReload,
     };
     const dockProps = {
         positions: positionsState.data ?? [],
@@ -1636,6 +1693,8 @@ function MainApp() {
                 onRenameProfile={renameProfile}
                 onResetWorkspace={resetWorkspace}
                 onLoadPreset={loadPreset}
+                workspaceUndo={workspaceUndo}
+                onUndoWorkspace={undoWorkspaceChange}
                 flashCodes={items
                     .filter((i) => i.contract.security_type !== 'IND')
                     .map((i) => i.contract.code)}

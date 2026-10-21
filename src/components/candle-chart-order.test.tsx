@@ -27,7 +27,10 @@ const m = vi.hoisted(() => ({
     updatePrice: vi.fn(),
     dragEvents: false,
     dragHost: null as EventTarget | null,
+    hostNode: null as { style: { cursor?: string } } | null,
     lines: [] as { options: () => { price: number }; applyOptions: (p: { price: number }) => void }[],
+    // 主窗格那一列的範圍（host 另含副圖與時間軸）；預設與 host 相同
+    paneRect: { left: 0, top: 0, right: 800, bottom: 400 },
 }));
 vi.mock('../hooks/use-chart-drawings', async (importOriginal) => {
     const real = await importOriginal<typeof import('../hooks/use-chart-drawings')>();
@@ -57,6 +60,8 @@ vi.mock('lightweight-charts', async () => {
         const inner = h.makeChart();
         return new Proxy({}, { get: (_t, p) => {
             if (p === 'subscribeClick') return (cb: (p: unknown) => void) => { m.click.push(cb); };
+            if (p === 'panes') return () => [new Proxy(inner.panes()[0], { get: (t, q) =>
+                q === 'getHTMLElement' ? () => ({ getBoundingClientRect: () => m.paneRect }) : t[q] })];
             if (p === 'addSeries') return (type: { kind: string }) => {
                 const s = h.makeSeries(type.kind);
                 return new Proxy(s, { get: (t, q) => {
@@ -77,13 +82,17 @@ vi.mock('lightweight-charts', async () => {
     return { ...base, createChart: chart };
 });
 
+import { Lock, LockOpen } from 'lucide-react';
 import { CandleChart } from './candle-chart';
+import { RefreshButton } from './refresh-button';
+import * as styles from './candle-chart.css';
 import { ChartDrawingTools, ChartDrawingOverlays, ChartObjectList, DrawingSettingsDialog, Popover, TextEditor } from './chart-drawing-tools';
 import { __resetDrawingsForTest, addDrawing, DEFAULT_DRAWING_STYLE, DRAWING_TOOL_DEFS } from '../lib/chart-drawings';
 import type { ChartDrawingsApi } from '../hooks/use-chart-drawings';
 import { loadOrderLotPreference, saveOrderLotPreference, QUICK_ORDER_LOTS } from '../lib/order-lot-preference';
 import type { ChartOrderPanelState } from '../lib/chart-order-settings';
 import { resetCreditEnquireCache } from '../lib/credit-eligibility';
+import { getRiskSettings, setRiskSettings } from '../lib/risk';
 
 const S1 = { account_type: 'S', broker_id: 'B', account_id: '1111121', signed: true, person_id: '', username: '' } as Account;
 const S2 = { ...S1, account_id: '2222207' } as Account;
@@ -97,17 +106,26 @@ const pop = () => view.root.findAll(n => n.props.role === 'dialog')[0];
 const button = (root: ReactTestInstance, label: string) => root.findAll(n => n.type === 'button' && text(n) === label)[0]!;
 const flush = async () => { for (let i = 0; i < 6; i++) await act(async () => {}); };
 async function mount(props: Record<string, unknown>) {
+    // 每張圖各有包含本體與左側工具列的範圍；拖曳測試以實際節點判斷焦點。
+    const nodes = new Set<unknown>();
+    // 頂端工具列的節點只在整張圖（wrap）範圍內，不在圖表列（chartRow）範圍內
+    const toolbarNodes = new Set<unknown>();
+    const scope = { contains: (n: unknown) => !m.dragEvents || (nodes.has(n) && !toolbarNodes.has(n)) };
+    const wrapScope = { contains: (n: unknown) => !m.dragEvents || nodes.has(n) };
     await act(async () => {
-        view = create(createElement(CandleChart, props as any), { createNodeMock: () => {
+        view = create(createElement(CandleChart, props as any), { createNodeMock: (element: any) => {
             const events = new EventTarget();
-            const node = { clientWidth: 800, clientHeight: 400, getBoundingClientRect: () => ({ width: 800, height: 400, left: 0, top: 0 }),
+            const node = { clientWidth: 800, clientHeight: 400, getBoundingClientRect: () => ({ width: 800, height: 400, left: 0, top: 0, right: 800, bottom: 400 }),
                 addEventListener: (name: string, cb: EventListener, capture?: boolean) => {
                     if (!m.dragEvents) return;
-                    if (name === 'mousedown') m.dragHost = events;
+                    if (name === 'mousedown') { m.dragHost = events; m.hostNode = node; }
                     events.addEventListener(name, cb, capture);
                 },
-                removeEventListener: events.removeEventListener.bind(events), contains: () => true, hasAttribute: () => true,
+                removeEventListener: events.removeEventListener.bind(events), parentElement: scope,
+                contains: (n: unknown) => !m.dragEvents || n === node, hasAttribute: () => true, closest: () => wrapScope,
                 focus: () => { if (m.dragEvents) (document as any).activeElement = node; }, style: {} };
+            nodes.add(node);
+            if (element?.props?.['aria-label'] === '委託線鎖定') toolbarNodes.add(node);
             return node;
         } });
     });
@@ -138,13 +156,14 @@ beforeEach(() => {
     m.drawingBusy = false;
     m.skipDisarm = false;
     m.skipInvalidate = false;
-    m.dragEvents = false; m.dragHost = null; m.lines.length = 0;
+    m.dragEvents = false; m.dragHost = null; m.hostNode = null; m.lines.length = 0;
+    m.paneRect = { left: 0, top: 0, right: 800, bottom: 400 };
     m.updatePrice.mockReset().mockResolvedValue(undefined);
     __resetDrawingsForTest();
     (globalThis as any).localStorage.setItem('sj-pro-chart-order-defaults', '{}');
     (globalThis as any).localStorage.setItem('sj-pro-order-lot-preferences', '{}');
 });
-afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => { view?.unmount(); setRiskSettings({ orderLineLock: false }); }); vi.unstubAllGlobals(); });
 
 it('#249 a 409 OrderOutcomeUnknown shows 結果不確定 (never 失敗) and is not retried', async () => {
     m.place.mockRejectedValueOnce(Object.assign(new Error('委託結果不確定（HTTP 409 OrderOutcomeUnknown）：no ack'), { mutationOutcomeUnknown: true, orderOutcomeUnknown: true }));
@@ -196,7 +215,7 @@ it.each(['symbol', 'switch back', 'unit', 'account', 'unmount'])(
 describe('chart order settings button', () => {
     const drawingApi = () => view.root.findByType(ChartDrawingTools).props.api as ChartDrawingsApi;
 
-    async function orderDrag() {
+    async function orderDrag(extra: (trade: any) => any[] = () => []) {
         m.dragEvents = true;
         const windowEvents = new EventTarget();
         const documentEvents = new EventTarget();
@@ -217,8 +236,8 @@ describe('chart order settings button', () => {
         });
         const trade = { contract: stk, order: { id: 'drag-order', action: 'Buy', price: 100, quantity: 1 },
             status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } };
-        await mount({ contract: stk, trades: [trade] });
-        const mouse = (type: string, y: number) => Object.assign(new Event(type, { cancelable: true }), { button: 0, clientX: 790, clientY: y });
+        await mount({ contract: stk, trades: [trade, ...extra(trade)] });
+        const mouse = (type: string, y: number, x = 790) => Object.assign(new Event(type, { cancelable: true }), { button: 0, clientX: x, clientY: y });
         const line = m.lines.find(l => l.options().price === 100)!;
         expect(line).toBeDefined();
         const start = async () => {
@@ -227,18 +246,358 @@ describe('chart order settings button', () => {
             expect(line.options().price).toBe(105);
         };
         const release = () => act(async () => { documentEvents.dispatchEvent(mouse('mouseup', 105)); });
-        const key = (k: Record<string, unknown>) => {
+        const key = (k: Record<string, unknown>, target?: object) => {
             const e = Object.assign(new Event('keydown', { cancelable: true }), k);
+            if (target) Object.defineProperty(e, 'target', { value: target });
             windowEvents.dispatchEvent(e);
             return e;
         };
-        return { line, start, release, key, windowEvents, documentEvents, trade, upHandlers };
+        (document as any).activeElement = m.hostNode;
+        return { line, start, release, key, mouse, windowEvents, documentEvents, trade, upHandlers };
     }
+
+    it('圖表焦點下 Ctrl+L 鎖定、Meta+L 解鎖，兩次皆阻止預設行為', async () => {
+        const drag = await orderDrag();
+        let e!: Event;
+        await act(async () => { e = drag.key({ key: 'l', code: 'KeyL', ctrlKey: true }); });
+        expect(getRiskSettings().orderLineLock).toBe(true);
+        expect(e.defaultPrevented).toBe(true);
+        await act(async () => { e = drag.key({ key: 'l', code: 'KeyL', metaKey: true }); });
+        expect(getRiskSettings().orderLineLock).toBe(false);
+        expect(e.defaultPrevented).toBe(true);
+    });
+
+    it('焦點在圖外時 Ctrl+L 不切換委託線鎖定，也不阻止預設行為', async () => {
+        const drag = await orderDrag();
+        (document as any).activeElement = { tagName: 'BUTTON' };
+        let e!: Event;
+        await act(async () => { e = drag.key({ key: 'l', code: 'KeyL', ctrlKey: true }); });
+        expect(getRiskSettings().orderLineLock).toBe(false);
+        expect(e.defaultPrevented).toBe(false);
+    });
+
+    it.each([{ tagName: 'INPUT' }, { tagName: 'TEXTAREA' }, { tagName: 'SELECT' }, { isContentEditable: true }])
+    ('輸入目標 %o 的 Ctrl+L 不切換委託線鎖定', async target => {
+        const drag = await orderDrag();
+        let e!: Event;
+        await act(async () => { e = drag.key({ key: 'l', code: 'KeyL', ctrlKey: true }, target); });
+        expect(getRiskSettings().orderLineLock).toBe(false);
+        expect(e.defaultPrevented).toBe(false);
+    });
+
+    it('頂端工具列的鎖定鈕有焦點時 Ctrl+L 也可切換', async () => {
+        const drag = await orderDrag();
+        const lock = view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線鎖定');
+        (document as any).activeElement = lock.instance;
+        let e!: Event;
+        await act(async () => { e = drag.key({ key: 'l', code: 'KeyL', ctrlKey: true }); });
+        expect(getRiskSettings().orderLineLock).toBe(true);
+        expect(e.defaultPrevented).toBe(true);
+    });
+
+    it('長按重複的 Ctrl+L 不切換委託線鎖定', async () => {
+        const drag = await orderDrag();
+        let e!: Event;
+        await act(async () => { e = drag.key({ key: 'l', code: 'KeyL', ctrlKey: true, repeat: true }); });
+        expect(getRiskSettings().orderLineLock).toBe(false);
+        expect(e.defaultPrevented).toBe(false);
+    });
+
+    it('左側工具列有焦點時 Ctrl+L 也可鎖定委託線', async () => {
+        const drag = await orderDrag();
+        const tool = view.root.findByType(ChartDrawingTools).findAllByType('button')[0]!;
+        (document as any).activeElement = tool.instance;
+        let e!: Event;
+        await act(async () => { e = drag.key({ key: 'l', code: 'KeyL', ctrlKey: true }); });
+        expect(getRiskSettings().orderLineLock).toBe(true);
+        expect(e.defaultPrevented).toBe(true);
+    });
+
+    it('多張圖只由焦點所在圖切換一次，所有圖同步鎖定', async () => {
+        const drag = await orderDrag();
+        const first = view;
+        const focusedHost = m.hostNode;
+        try {
+            await mount({ contract: fut });
+            (document as any).activeElement = focusedHost;
+            await act(async () => { drag.key({ key: 'l', code: 'KeyL', ctrlKey: true }); });
+            expect(getRiskSettings().orderLineLock).toBe(true);
+            for (const chart of [first, view]) {
+                expect(chart.root.findByProps({ 'aria-label': '委託線鎖定' }).props['aria-pressed']).toBe(true);
+            }
+        } finally { await act(async () => first.unmount()); }
+    });
+
+    it.each([
+        ['按在 B 線上抓 B，不是排前面的 A', 103, 102, 'near-b'],
+        ['離 A 較近抓 A', 103, 101, 'drag-order'],
+        ['距離相同抓排前面的 A', 104, 102, 'drag-order'],
+    ])('兩條很近的委託線：%s', async (_name, priceB, y, id) => {
+        const drag = await orderDrag(t => [{ ...t, order: { ...t.order, id: 'near-b', price: priceB } }]);
+        await act(async () => { m.dragHost!.dispatchEvent(drag.mouse('mousedown', y)); });
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mousemove', 107)); });
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mouseup', 107)); });
+        expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith(id, 107);
+    });
 
     it('委託線正常拖曳放開只送出一次改價', async () => {
         const drag = await orderDrag();
         await drag.start(); await drag.release(); await drag.release();
         expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 105);
+    });
+
+    it.each([['下方', 450, 790], ['右側', 105, 900], ['上方', -5, 790], ['左側', 105, -5]])('拖曳後在圖外（%s）放開視為取消，不送改價、線回原價', async (_side, y, x) => {
+        const drag = await orderDrag();
+        await drag.start();
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mouseup', y, x)); });
+        expect(m.updatePrice).not.toHaveBeenCalled();
+        expect(drag.line.options().price).toBe(100);
+    });
+
+    it('拖進副圖／時間軸（host 內、主窗格外）放開視為取消，不送改價、線回原價', async () => {
+        const drag = await orderDrag();
+        m.paneRect = { left: 0, top: 0, right: 800, bottom: 300 };
+        await drag.start();
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mouseup', 350)); });
+        expect(m.updatePrice).not.toHaveBeenCalled();
+        expect(drag.line.options().price).toBe(100);
+    });
+
+    it('拖到 0 以下的價格不更新委託線，回到圖內放開送出有效價', async () => {
+        const drag = await orderDrag();
+        await drag.start();
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mousemove', -5)); });
+        expect(drag.line.options().price).toBe(105);
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mousemove', 103)); });
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mouseup', 103)); });
+        expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 103);
+    });
+
+    it('委託線改價結果不確定時回到原價、不重送，只通知一次', async () => {
+        m.updatePrice.mockRejectedValueOnce(Object.assign(new Error('timeout'), { mutationOutcomeUnknown: true }));
+        const drag = await orderDrag();
+        await drag.start(); await drag.release();
+        await act(async () => {});
+        expect(drag.line.options().price).toBe(100);
+        expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 105);
+        expect(m.notify).toHaveBeenCalledOnce();
+        expect(m.notify).toHaveBeenCalledWith(expect.objectContaining({ title: '改價結果不確定' }));
+    });
+
+    it('委託線改價等待中再拖同一條線，失敗不搶游標且取消回到原價', async () => {
+        let reject!: (reason: Error) => void;
+        m.updatePrice.mockImplementationOnce(() => new Promise<void>((_resolve, r) => { reject = r; }));
+        const drag = await orderDrag();
+        await drag.start(); await drag.release();
+        await act(async () => { m.dragHost!.dispatchEvent(drag.mouse('mousedown', 105)); });
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mousemove', 108)); });
+        expect(drag.line.options().price).toBe(108);
+        await act(async () => { reject(new Error('Missing agent capability')); });
+        expect(drag.line.options().price).toBe(108);
+        await act(async () => { drag.key({ key: 'Escape' }); });
+        expect(drag.line.options().price).toBe(100);
+        expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 105);
+    });
+
+    it('委託線改價失敗前已重建時不還原舊線或改動新線', async () => {
+        let reject!: (reason: Error) => void;
+        m.updatePrice.mockImplementationOnce(() => new Promise<void>((_resolve, r) => { reject = r; }));
+        const drag = await orderDrag();
+        await drag.start(); await drag.release();
+        const trade = { ...drag.trade, status: { ...drag.trade.status, modified_price: 102 } };
+        await act(async () => { view.update(createElement(CandleChart, { contract: stk, trades: [trade] } as any)); });
+        const line = m.lines.find(l => l !== drag.line && l.options().price === 102)!;
+        expect(line).toBeDefined();
+        expect(drag.line.options().price).toBe(105);
+        const oldApply = vi.spyOn(drag.line, 'applyOptions');
+        const newApply = vi.spyOn(line, 'applyOptions');
+        await act(async () => { reject(new Error('Missing agent capability')); });
+        expect(oldApply).not.toHaveBeenCalled();
+        expect(newApply).not.toHaveBeenCalled();
+        expect(drag.line.options().price).toBe(105);
+        expect(line.options().price).toBe(102);
+        expect(m.updatePrice).toHaveBeenCalledExactlyOnceWith('drag-order', 105);
+    });
+
+    it.each([100, 790])('委託線鎖住時 x=%s 不攔截平移，放開不改價', async x => {
+        const drag = await orderDrag();
+        act(() => setRiskSettings({ orderLineLock: true }));
+        const down = drag.mouse('mousedown', 100, x);
+        await act(async () => { m.dragHost!.dispatchEvent(down); });
+        expect(down.defaultPrevented).toBe(false);
+        // 圖表只看 mousedown 有沒有傳到自己；被擋就不能平移
+        expect(down.cancelBubble).toBe(false);
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mousemove', 105, x)); });
+        await drag.release();
+        expect(m.updatePrice).not.toHaveBeenCalled();
+    });
+
+    it.each([100, 790])('委託線鎖住且武裝買時 x=%s 吃掉命中線的按下，未命中則放行', async x => {
+        const drag = await orderDrag();
+        act(() => setRiskSettings({ orderLineLock: true }));
+        await act(async () => { button(view.root, '點價買').props.onClick(); });
+        const line = m.lines.at(-1)!;
+        const sequence = drawingApi().interactionSequence();
+        const down = drag.mouse('mousedown', 100, x);
+        await act(async () => { m.dragHost!.dispatchEvent(down); });
+        expect(down.defaultPrevented).toBe(true);
+        // lightweight-charts 不看 defaultPrevented；擋住傳遞才不會變成 subscribeClick 點價單
+        expect(down.cancelBubble).toBe(true);
+        expect(drawingApi().interactionSequence()).toBe(sequence);
+        await act(async () => { drag.documentEvents.dispatchEvent(drag.mouse('mousemove', 105, x)); });
+        await drag.release();
+        expect(m.updatePrice).not.toHaveBeenCalled();
+        expect(line.options().price).toBe(100);
+        const miss = drag.mouse('mousedown', 150, x);
+        await act(async () => { m.dragHost!.dispatchEvent(miss); });
+        expect(miss.defaultPrevented).toBe(false);
+    });
+
+    it('委託線鎖住且武裝買時，點在零股委託線（不能改價）上也吃掉，不穿透成新委託', async () => {
+        const drag = await orderDrag(() => [{ contract: stk, order: { id: 'odd-order', action: 'Sell', price: 120, quantity: 5, order_lot: 'IntradayOdd' },
+            status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } }]);
+        const oddY = m.lines.find(l => l.options().price === 120)!;
+        expect(oddY).toBeDefined();
+        await act(async () => { button(view.root, '點價買').props.onClick(); });
+        // 未鎖：零股線不可拖，點下去放行（照舊點價）
+        const open = drag.mouse('mousedown', 120);
+        await act(async () => { m.dragHost!.dispatchEvent(open); });
+        expect(open.cancelBubble).toBe(false);
+        act(() => setRiskSettings({ orderLineLock: true }));
+        const down = drag.mouse('mousedown', 120);
+        await act(async () => { m.dragHost!.dispatchEvent(down); });
+        expect(down.defaultPrevented).toBe(true);
+        expect(down.cancelBubble).toBe(true);
+        expect(m.updatePrice).not.toHaveBeenCalled();
+    });
+
+    const modeHint = () => view.root.findAll(n => n.type === 'div' && n.children[0] === '交易模式 · ')[0];
+
+    it.each([false, true])('武裝提示排在左上角圖例欄的流裡、委託列之前，不疊在 CANCEL 上（鎖定=%s）', async (locked) => {
+        const trade = { contract: stk, order: { id: 'hint-order', action: 'Buy', price: 100, quantity: 1 },
+            status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } };
+        await mount({ contract: stk, trades: [trade] });
+        act(() => setRiskSettings({ orderLineLock: locked }));
+        await act(async () => { button(view.root, '點價買').props.onClick(); });
+        const hint = modeHint()!;
+        expect(hint.props.className).toBe(styles.modeHint);
+        const slot = hint.parent!;
+        expect(slot.props.className).toBe(styles.hintSlot);
+        const list = slot.parent!;
+        expect(list.props.className).toBe(styles.triggerList);
+        const rows = list.children as ReactTestInstance[];
+        const orderRow = rows.findIndex(r => typeof r !== 'string' && r.findAll(n => n.type === 'button' && text(n) === 'CANCEL').length > 0);
+        expect(orderRow).toBeGreaterThan(rows.indexOf(slot));
+    });
+
+    it('畫圖模式提示同樣排在圖例欄的流裡', async () => {
+        await mount({ contract: stk });
+        await act(async () => drawingApi().setTool('horizontal'));
+        const hint = view.root.findAll(n => n.type === 'div' && n.props.className === styles.drawHint)[0]!;
+        expect(hint.parent!.props.className).toBe(styles.hintSlot);
+        expect(hint.parent!.parent!.props.className).toBe(styles.triggerList);
+    });
+
+    it.each([[true, true], [false, false]])('鎖住=%s 並武裝點價買，提示列含鎖線說明=%s', async (locked, shown) => {
+        await mount({ contract: stk });
+        act(() => setRiskSettings({ orderLineLock: locked }));
+        await act(async () => { button(view.root, '點價買').props.onClick(); });
+        expect(text(modeHint()!).includes('委託線鎖定中：點在線上不下單')).toBe(shown);
+    });
+
+    it('委託線未鎖時滑過顯示改價游標，鎖住後滑過清掉', async () => {
+        const drag = await orderDrag();
+        await act(async () => { m.dragHost!.dispatchEvent(drag.mouse('mousemove', 100)); });
+        expect(m.hostNode!.style.cursor).toBe('ns-resize');
+        act(() => setRiskSettings({ orderLineLock: true }));
+        await act(async () => { m.dragHost!.dispatchEvent(drag.mouse('mousemove', 100)); });
+        expect(m.hostNode!.style.cursor).toBe('');
+    });
+
+    it.each([
+        ['MacIntel', '', '⌘L'],
+        ['Win32', '', 'Ctrl+L'],
+        ['', 'Macintosh', '⌘L'],
+    ])('委託線鎖定鈕依平台 %s／%s 提示 %s，圖示與按下狀態跟著切換', async (platform, userAgent, shortcut) => {
+        vi.stubGlobal('navigator', { platform, userAgent });
+        await mount({ contract: stk });
+        const lockButton = () => view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線鎖定');
+        expect(getRiskSettings().orderLineLock).toBe(false);
+        expect(lockButton().props.type).toBe('button');
+        expect(lockButton().props['aria-keyshortcuts']).toBe('Control+L Meta+L');
+        expect(lockButton().props['aria-pressed']).toBe(false);
+        expect(lockButton().findAllByType(LockOpen)).toHaveLength(1);
+        expect(lockButton().findAllByType(Lock)).toHaveLength(0);
+        // 圖上沒有委託線：未鎖定但不亮
+        expect(lockButton().props.className).toBe(styles.orderLockBtn.idle);
+        expect(lockButton().props.title).toBe(`委託線可拖曳改價 — 點擊或按 ${shortcut} 鎖定，避免誤拖（所有圖表，重開後保留）`);
+        await act(async () => { lockButton().props.onClick(); });
+        expect(getRiskSettings().orderLineLock).toBe(true);
+        expect(lockButton().props['aria-pressed']).toBe(true);
+        expect(lockButton().findAllByType(Lock)).toHaveLength(1);
+        expect(lockButton().findAllByType(LockOpen)).toHaveLength(0);
+        expect(lockButton().props.className).toBe(styles.orderLockBtn.locked);
+        expect(lockButton().props.title).toBe(`委託線已鎖定（所有圖表）：按住線只會平移圖表，點價時點在線上不下單 — 點擊或按 ${shortcut} 解鎖`);
+        await act(async () => { lockButton().props.onClick(); });
+        expect(getRiskSettings().orderLineLock).toBe(false);
+        expect(lockButton().findAllByType(LockOpen)).toHaveLength(1);
+    });
+
+    it.each([
+        ['一般委託', 'Common', 'live'],
+        ['只有零股委託（不能改價）', 'IntradayOdd', 'idle'],
+    ] as const)('未鎖定時只在圖上有拖得動的委託線才亮起：%s', async (_name, lot, lit) => {
+        const trade = { contract: stk, order: { id: 'lit-order', action: 'Buy', price: 100, quantity: 1, order_lot: lot },
+            status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } };
+        await mount({ contract: stk, trades: [trade] });
+        const lockButton = () => view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線鎖定');
+        expect(lockButton().props.className).toBe(styles.orderLockBtn[lit]);
+        act(() => setRiskSettings({ orderLineLock: true }));
+        expect(lockButton().props.className).toBe(styles.orderLockBtn.locked);
+    });
+
+    it('鎖定鈕在下單區塊開頭：分隔線之後、點價買之前，更新歷史維持在最右端', async () => {
+        await mount({ contract: stk });
+        const lockButton = view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線鎖定');
+        const toolbar = lockButton.parent!;
+        expect(toolbar.props.className).toBe(styles.toolbar);
+        const items = toolbar.children as ReactTestInstance[];
+        const at = items.indexOf(lockButton);
+        expect(items[at - 1]!.props.className).toBe(styles.toolbarDivider);
+        expect(items[at + 1]).toBe(button(view.root, '點價買'));
+        const highLow = view.root.find(n => n.type === 'button' && n.props['aria-label'] === '最高最低標記');
+        expect(items.indexOf(highLow)).toBeLessThan(at - 1);
+        const refreshButton = view.root.findByType(RefreshButton);
+        expect(refreshButton.parent).toBe(toolbar);
+        expect(items.indexOf(refreshButton)).toBe(items.length - 1);
+    });
+
+    it('委託線鎖住時標題沒有拖曳提示，解鎖後恢復', async () => {
+        await orderDrag();
+        act(() => setRiskSettings({ orderLineLock: true }));
+        expect(m.lines.at(-1)!.options()).toMatchObject({ title: '買1' });
+        act(() => setRiskSettings({ orderLineLock: false }));
+        expect(m.lines.at(-1)!.options()).toMatchObject({ title: '買1 ⠿' });
+    });
+
+    it('未鎖時零股委託線沒有拖曳提示，一般委託仍有', async () => {
+        m.dragEvents = true;
+        const trade = { contract: stk, order: { id: 'odd-order', action: 'Buy', price: 100, quantity: 1, order_lot: 'IntradayOdd' },
+            status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } };
+        await mount({ contract: stk, trades: [trade, { ...trade, order: { ...trade.order, id: 'common-order', price: 101, order_lot: 'Common' } }] });
+        expect(m.lines.map(line => line.options())).toMatchObject([
+            { price: 100, title: '買1' },
+            { price: 101, title: '買1 ⠿' },
+        ]);
+    });
+
+    it('委託線拖曳中鎖住立即還原原價，放開不改價', async () => {
+        const drag = await orderDrag();
+        await drag.start();
+        act(() => setRiskSettings({ orderLineLock: true }));
+        expect(drag.line.options().price).toBe(100);
+        await drag.release();
+        expect(m.updatePrice).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -715,12 +1074,12 @@ describe('chart order settings button', () => {
         w.dispatchEvent = target.dispatchEvent.bind(target);
         onTestFinished(() => { w.addEventListener = saved.add; w.removeEventListener = saved.remove; w.dispatchEvent = saved.dispatch; });
         await mount({ contract: stk, orderSettings: { S: { qty: 1, lot: 'Common', orderType: 'ROD', octype: 'Auto', accountKey: 'S:B:gone' } }, onOrderSettingsChange: vi.fn() });
-        // closed: no key listener is installed (chart hotkeys untouched)
+        // 圖表本身已有鎖定快捷鍵；開啟面板時才額外掛上 Esc listener。
         const spy = w.addEventListener as ReturnType<typeof vi.fn>;
-        expect(spy.mock.calls.some(c => c[0] === 'keydown')).toBe(false);
+        const chartKeyListeners = spy.mock.calls.filter(c => c[0] === 'keydown').length;
         await act(async () => { chip().props.onClick(); });
         expect(pop()).toBeDefined();
-        expect(spy.mock.calls.some(c => c[0] === 'keydown')).toBe(true);
+        expect(spy.mock.calls.filter(c => c[0] === 'keydown').length).toBeGreaterThan(chartKeyListeners);
         await act(async () => { window.dispatchEvent(Object.assign(new Event('keydown'), { key: 'Escape' })); });
         expect(pop()).toBeUndefined();
         await act(async () => { button(view.root, '點價買').props.onClick(); });
