@@ -1,20 +1,23 @@
 // src/lib/chain-flow-feed.ts — live feed for 產業鏈資金流向.
 //
-// Request budget (see PR #355):
-// - Primary feed: the realtime 1-minute K-bar stream. One subscribe POST per
-//   batch of ≤300 four-digit codes (the sidecar caps a request body at 64 KB
-//   and rejects other codes), ~800 codes → 3 POSTs. The broker maps them onto
-//   ~57 prefix topics. Subscriptions cost no traffic quota and no request is
-//   sent per minute: bars arrive on the App's existing aggregate SSE.
+// Request budget (see PR #355, design v3):
+// - Overview: the realtime 1-minute K-bar stream for each chain/theme's
+//   leading members only (top 8 by market cap, ~190 codes → one subscribe
+//   POST of ≤300 four-digit codes; the sidecar caps a body at 64 KB and
+//   rejects other codes). No request is sent per minute: bars arrive on the
+//   App's existing aggregate SSE.
+// - Drill: the selected group's remaining members, under their own key that
+//   never includes overview codes, so releasing it cannot drop them.
 // - Ticks the App already receives for other panels (watchlist, chart …)
 //   update the price of overlapping codes faster. This module never
 //   subscribes ticks itself.
 // - Snapshots only seed the reference price and session-to-date turnover,
-//   once per trading day, ≤300 per request, skipping codes another panel
-//   already fetched into the shared snapshot store.
+//   once per code per trading day, ≤300 per request, skipping codes another
+//   panel already fetched into the shared snapshot store.
 // - Subscriptions are ref-counted by the capability registry (shared across
-//   panels, replayed after a reconnect) and released when the last panel
-//   unmounts.
+//   panels, replayed after a reconnect) and released on unmount.
+// - Data layer: a bar may carry a server-side signed flow (`net`), which then
+//   replaces the sign estimate (future quotex inner/outer money flow).
 
 import { useEffect, useRef, useState } from 'react';
 import { FlowBook, minuteSlot, normDate, parseKbarEvent, SESSION_SLOTS } from './chain-flow';
@@ -29,8 +32,10 @@ export const FEED_BATCH = 300;
 const NOTIFY_MS = 400;
 
 export interface FeedStatus {
-    /** Codes the K-bar stream was asked for. */
+    /** Overview codes the K-bar stream was asked for. */
     kbarCodes: number;
+    /** Extra codes subscribed for the drilled-in group. */
+    drillCodes: number;
     /** Batches confirmed by the sidecar. */
     subscribed: number;
     batches: number;
@@ -42,21 +47,42 @@ export interface FeedStatus {
 }
 
 export const chainFlowBook = new FlowBook();
-const status: FeedStatus = {
-    kbarCodes: 0,
-    subscribed: 0,
-    batches: 0,
-    kbarError: null,
+
+export type FeedScope = 'overview' | 'drill';
+
+interface Connection {
+    scope: FeedScope;
+    codes: number;
+    batches: number;
+    subscribed: number;
+    error: string | null;
+    members: readonly FeedMember[];
+}
+
+const connections = new Set<Connection>();
+const status = {
     seeding: false,
-    seedError: null,
-    lastBarAt: null,
+    seedError: null as string | null,
+    lastBarAt: null as number | null,
 };
 let revision = 0;
 const listeners = new Set<() => void>();
 let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function chainFlowStatus(): Readonly<FeedStatus> {
-    return status;
+    let kbarCodes = 0;
+    let drillCodes = 0;
+    let subscribed = 0;
+    let batches = 0;
+    let kbarError: string | null = null;
+    for (const c of connections) {
+        if (c.scope === 'drill') drillCodes += c.codes;
+        else kbarCodes += c.codes;
+        subscribed += c.subscribed;
+        batches += c.batches;
+        kbarError ??= c.error;
+    }
+    return { kbarCodes, drillCodes, subscribed, batches, kbarError, ...status };
 }
 
 export function chainFlowRevision() {
@@ -93,13 +119,13 @@ export interface FeedMember {
 }
 
 /** Stable batches of four-digit codes, sorted so every panel builds the same keys. */
-export function kbarBatches(members: readonly FeedMember[], size = FEED_BATCH) {
+export function kbarBatches(members: readonly FeedMember[], size = FEED_BATCH, scope: FeedScope = 'overview') {
     const sorted = members.filter((m) => isKbarCode(m.code)).sort((a, b) => a.code.localeCompare(b.code));
     const batches: { key: string; contracts: ContractBase[] }[] = [];
     for (let i = 0; i < sorted.length; i += size) {
         const slice = sorted.slice(i, i + size);
         batches.push({
-            key: `chainflow:${slice[0]!.code}-${slice[slice.length - 1]!.code}:${slice.length}`,
+            key: `chainflow:${scope === 'drill' ? 'drill:' : ''}${slice[0]!.code}-${slice[slice.length - 1]!.code}:${slice.length}`,
             contracts: slice.map((m) => m.contract),
         });
     }
@@ -128,21 +154,31 @@ function seedFrom(code: string, snapshot: Snapshot, shares: number | null) {
     });
 }
 
-let seededFor: string | null = null;
-let seedRun: Promise<void> | null = null;
+/** Codes seeded for `seededDate`. */
+const seeded = new Set<string>();
+let seededDate: string | null = null;
+let seedQueue: Promise<void> = Promise.resolve();
+let seedPending = 0;
 
 async function seed(members: readonly FeedMember[]) {
+    if (seededDate !== chainFlowBook.date) {
+        seeded.clear();
+        seededDate = chainFlowBook.date;
+    }
+    const todo = members.filter((m) => !seeded.has(m.code));
+    if (todo.length === 0) return;
     status.seeding = true;
     status.seedError = null;
     notifyChainFlow(true);
     const missing: FeedMember[] = [];
-    for (const member of members) {
+    for (const member of todo) {
+        seeded.add(member.code);
         chainFlowBook.setShares(member.code, member.shares);
         const shared = getMarketSnapshot(member.contract);
         if (shared) seedFrom(member.code, shared, member.shares);
         else missing.push(member);
     }
-    // sequential batches: at most 3 requests, never a burst against 50 req / 5 s
+    // sequential batches, never a burst against 50 req / 5 s
     for (let i = 0; i < missing.length; i += FEED_BATCH) {
         const batch = missing.slice(i, i + FEED_BATCH);
         try {
@@ -153,23 +189,28 @@ async function seed(members: readonly FeedMember[]) {
                 if (row) seedFrom(member.code, row, member.shares);
             }
         } catch (error) {
+            for (const member of batch) seeded.delete(member.code);
             status.seedError = error instanceof Error ? error.message : String(error);
         }
         notifyChainFlow();
     }
-    seededFor = chainFlowBook.date;
-    status.seeding = false;
-    notifyChainFlow(true);
+    // the first seed adopted today's date: remember it for these codes
+    if (seededDate === null && chainFlowBook.date !== null) seededDate = chainFlowBook.date;
 }
 
-let lastMembers: readonly FeedMember[] = [];
-
-function startSeed() {
-    if (seedRun || lastMembers.length === 0) return;
-    if (seededFor !== null && seededFor === chainFlowBook.date) return;
-    seedRun = seed(lastMembers).finally(() => {
-        seedRun = null;
-    });
+function startSeed(members: readonly FeedMember[]) {
+    if (members.length === 0) return;
+    seedPending += 1;
+    seedQueue = seedQueue
+        .then(() => seed(members))
+        .catch(() => undefined)
+        .finally(() => {
+            seedPending -= 1;
+            if (seedPending === 0) {
+                status.seeding = false;
+                notifyChainFlow(true);
+            }
+        });
 }
 
 let streamRefs = 0;
@@ -183,8 +224,7 @@ function attachStream() {
         for (const bar of bars) chainFlowBook.addBar(bar);
         // a new trading day dropped yesterday's seed: seed again
         if (before !== null && before !== chainFlowBook.date) {
-            seededFor = null;
-            startSeed();
+            for (const c of connections) startSeed(c.members);
         }
         status.lastBarAt = Date.now();
         notifyChainFlow();
@@ -207,43 +247,51 @@ function attachStream() {
 }
 
 /**
- * Start the feed for `members` (all chain and theme members). Returns the
- * release function; the last release unsubscribes the K-bar batches.
+ * Start the feed for `members` (overview leaders, or a drilled-in group's
+ * extra codes). Returns the release function, which unsubscribes this
+ * connection's K-bar batches.
  */
-export function connectChainFlow(members: readonly FeedMember[]): () => void {
+export function connectChainFlow(members: readonly FeedMember[], scope: FeedScope = 'overview'): () => void {
     streamRefs += 1;
     if (streamRefs === 1) detachStream = attachStream();
-    const batches = kbarBatches(members);
-    status.kbarCodes = batches.reduce((n, b) => n + b.contracts.length, 0);
-    status.batches = batches.length;
-    status.subscribed = 0;
-    status.kbarError = null;
+    const batches = kbarBatches(members, FEED_BATCH, scope);
+    const conn: Connection = {
+        scope,
+        codes: batches.reduce((n, b) => n + b.contracts.length, 0),
+        batches: batches.length,
+        subscribed: 0,
+        error: null,
+        members,
+    };
+    connections.add(conn);
     let released = false;
     for (const batch of batches) {
         subscribeKbars(batch.key, batch.contracts).then(
             () => {
                 if (released) return;
-                status.subscribed += 1;
+                conn.subscribed += 1;
                 notifyChainFlow();
             },
             (error) => {
                 if (released) return;
-                status.kbarError = error instanceof Error ? error.message : String(error);
+                conn.error = error instanceof Error ? error.message : String(error);
                 notifyChainFlow(true);
             },
         );
     }
-    lastMembers = members;
-    startSeed();
+    startSeed(members);
+    notifyChainFlow(true);
     return () => {
         if (released) return;
         released = true;
+        connections.delete(conn);
         for (const batch of batches) void unsubscribeKbars(batch.key, batch.contracts).catch(() => undefined);
         streamRefs -= 1;
         if (streamRefs === 0) {
             detachStream?.();
             detachStream = null;
         }
+        notifyChainFlow(true);
     };
 }
 
@@ -271,14 +319,17 @@ export function useChainFlowRevision(paused: boolean): number {
 /** Test hook: forget the session (book, seed, status). */
 export function resetChainFlowForTest() {
     chainFlowBook.reset(null);
-    seededFor = null;
-    seedRun = null;
-    lastMembers = [];
-    status.kbarCodes = 0;
-    status.subscribed = 0;
-    status.batches = 0;
-    status.kbarError = null;
+    seeded.clear();
+    seededDate = null;
+    seedQueue = Promise.resolve();
+    seedPending = 0;
+    connections.clear();
     status.seeding = false;
     status.seedError = null;
     status.lastBarAt = null;
+}
+
+/** Test hook: wait for queued seeds. */
+export function chainFlowSeedIdle() {
+    return seedQueue;
 }

@@ -47,6 +47,11 @@ export interface KBarEvent {
     close: number;
     volume: number;
     amount: number;
+    /**
+     * Signed flow supplied by the source (e.g. a future server-side tick
+     * inner/outer split). When present it replaces the sign estimate.
+     */
+    net?: number;
 }
 
 const toNum = (v: unknown) => (typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN);
@@ -75,7 +80,9 @@ function parseRow(row: unknown, fallbackDate: string | null): KBarEvent | null {
     const high = toNum(r.high);
     const low = toNum(r.low);
     const volume = toNum(r.volume);
+    const net = toNum(r.net);
     return {
+        ...(Number.isFinite(net) ? { net } : {}),
         code,
         date,
         slot,
@@ -127,6 +134,8 @@ export interface CodeFlow {
     close: Float64Array;
     /** Signed money flow per bar, kept in step with amount/close. */
     net: Float64Array;
+    /** Slots whose net came from the source rather than the sign estimate. */
+    given: Uint8Array;
     /** Latest price from a tick, bar or seed. */
     last: number | null;
     /** Session-to-date turnover at seed time, and the slot it covers up to (exclusive). */
@@ -163,6 +172,7 @@ export class FlowBook {
                 amount: new Float64Array(SESSION_SLOTS),
                 close,
                 net: new Float64Array(SESSION_SLOTS),
+                given: new Uint8Array(SESSION_SLOTS),
                 last: null,
                 seedAmount: 0,
                 seedSlot: 0,
@@ -198,7 +208,7 @@ export class FlowBook {
         if (input.ref && input.ref > 0) {
             flow.ref = input.ref;
             const first = firstFilled(flow.close, 0);
-            if (first !== null) flow.net[first] = computeNet(flow, first);
+            if (first !== null && !flow.given[first]) flow.net[first] = computeNet(flow, first);
         }
         if (input.close && input.close > 0 && flow.last === null) flow.last = input.close;
         flow.seedAmount = Math.max(0, input.totalAmount || 0);
@@ -212,10 +222,11 @@ export class FlowBook {
         const flow = this.entry(bar.code);
         flow.amount[bar.slot] = bar.amount;
         flow.close[bar.slot] = bar.close;
-        flow.net[bar.slot] = computeNet(flow, bar.slot);
+        flow.given[bar.slot] = bar.net !== undefined ? 1 : 0;
+        flow.net[bar.slot] = bar.net ?? computeNet(flow, bar.slot);
         // the next bar's previous close may have changed
         const next = firstFilled(flow.close, bar.slot + 1);
-        if (next !== null) flow.net[next] = computeNet(flow, next);
+        if (next !== null && !flow.given[next]) flow.net[next] = computeNet(flow, next);
         // a bar never moves the price backwards in time
         const latestBar = lastFilled(flow.close, SESSION_SLOTS - 1);
         if (latestBar === bar.slot) flow.last = bar.close;

@@ -34,6 +34,7 @@ vi.mock('./stream', () => ({
 
 import {
     chainFlowBook,
+    chainFlowSeedIdle,
     chainFlowStatus,
     connectChainFlow,
     FEED_BATCH,
@@ -84,7 +85,7 @@ describe('connectChainFlow', () => {
         members.push(member('00878'));
         const release = connectChainFlow(members);
         await flush();
-        await flush();
+        await chainFlowSeedIdle();
         expect(mocks.subscribe).toHaveBeenCalledTimes(3);
         // 621 codes, ≤300 per snapshot request, sequential
         expect(mocks.snapshots.mock.calls.map(([batch]) => batch.length)).toEqual([300, 300, 21]);
@@ -95,6 +96,7 @@ describe('connectChainFlow', () => {
         // a second panel: same subscriptions (ref-counted downstream), no second seed
         const second = connectChainFlow(members);
         await flush();
+        await chainFlowSeedIdle();
         expect(mocks.snapshots).toHaveBeenCalledTimes(3);
         second();
         release();
@@ -107,7 +109,7 @@ describe('connectChainFlow', () => {
         mocks.shared.set('2330', snapshot('2330', 1010, 10));
         connectChainFlow([member('2330'), member('2317')])();
         await flush();
-        await flush();
+        await chainFlowSeedIdle();
         expect(mocks.snapshots).toHaveBeenCalledTimes(1);
         expect(mocks.snapshots.mock.calls[0]![0].map((c) => c.code)).toEqual(['2317']);
         expect(chainFlowBook.codes.get('2330')!.ref).toBe(1000);
@@ -120,7 +122,7 @@ describe('connectChainFlow', () => {
         ]);
         const release = connectChainFlow([member('2330'), member('1101')]);
         await flush();
-        await flush();
+        await chainFlowSeedIdle();
         expect(chainFlowBook.date).toBe('2026-10-21');
         expect(chainFlowBook.codes.get('2330')!.ref).toBe(100);
         expect(chainFlowBook.codes.get('1101')!.ref).toBe(50);
@@ -130,7 +132,7 @@ describe('connectChainFlow', () => {
     it('feeds 1-minute bars and existing ticks into the book', async () => {
         const release = connectChainFlow([member('2330')]);
         await flush();
-        await flush();
+        await chainFlowSeedIdle();
         emitBar({ code: '2330', date: '2026/10/21', time: '09:41:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 3, amount: 306000 });
         const flow = chainFlowBook.codes.get('2330')!;
         expect(flow.amount[41]).toBe(306000);
@@ -152,6 +154,35 @@ describe('connectChainFlow', () => {
         const release = connectChainFlow([member('2330')]);
         await flush();
         expect(chainFlowStatus().kbarError).toBe('413 Payload Too Large');
+        release();
+    });
+
+    it('drills into a group with its own key and seeds only new codes', async () => {
+        const overview = connectChainFlow([member('2330'), member('2317')]);
+        await flush();
+        await chainFlowSeedIdle();
+        mocks.snapshots.mockClear();
+        const drill = connectChainFlow([member('3711'), member('2330')], 'drill');
+        await flush();
+        await chainFlowSeedIdle();
+        const drillKey = mocks.subscribe.mock.calls.at(-1)![0];
+        expect(drillKey.startsWith('chainflow:drill:')).toBe(true);
+        expect(mocks.snapshots.mock.calls.map(([batch]) => batch.map((c) => c.code))).toEqual([['3711']]);
+        expect(chainFlowStatus()).toMatchObject({ kbarCodes: 2, drillCodes: 2, batches: 2, subscribed: 2 });
+        drill();
+        expect(mocks.unsubscribe.mock.calls.map(([key]) => key)).toEqual([drillKey]);
+        expect(chainFlowStatus()).toMatchObject({ kbarCodes: 2, drillCodes: 0, batches: 1 });
+        // the stream stays attached for the overview
+        expect(mocks.named.get('kbar')?.size).toBe(1);
+        overview();
+    });
+
+    it('lets a server-side signed flow replace the sign estimate', async () => {
+        const release = connectChainFlow([member('2330')]);
+        await flush();
+        await chainFlowSeedIdle();
+        emitBar({ code: '2330', date: '2026/10/21', time: '09:41:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 3, amount: 306000, net: -120000 });
+        expect(chainFlowBook.codes.get('2330')!.net[41]).toBe(-120000);
         release();
     });
 });
