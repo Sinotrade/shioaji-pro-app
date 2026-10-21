@@ -67,3 +67,25 @@ it('暫停時不更新，恢復後補上', () => {
     });
     expect(seen).toEqual(['a1']);
 });
+
+it('計時器排程後才暫停：暫停期間不發布', () => {
+    render(['a0']);
+    render(['a1']);
+    render(['a1'], 's', true);
+    act(() => {
+        vi.advanceTimersByTime(1000);
+    });
+    expect(seen).toEqual(['a0']);
+    render(['a2'], 's', false);
+    act(() => {
+        vi.advanceTimersByTime(250);
+    });
+    expect(seen).toEqual(['a2']);
+});
+
+it('A → B → A 來回切換不會回到 A 的舊快照', () => {
+    render(['a0'], 'A');
+    render(['b0'], 'B');
+    render(['a1'], 'A');
+    expect(seen).toEqual(['a1']);
+});

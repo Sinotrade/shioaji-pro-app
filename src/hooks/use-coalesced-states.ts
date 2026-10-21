@@ -15,8 +15,13 @@ export function useCoalescedStates<T>(
     const [snapshot, setSnapshot] = useState({ scope, states });
     const latest = useRef({ scope, states });
     latest.current = { scope, states };
+    const pausedRef = useRef(paused);
+    pausedRef.current = paused;
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const sameScope = snapshot.scope === scope;
+    // scope 換了：render 當下就把快照換成新 scope 的狀態（React 會在
+    // commit 前重跑），來回切換也不會回到更早的舊快照
+    if (!sameScope) setSnapshot({ scope, states });
     const changed =
         !sameScope ||
         states.length !== snapshot.states.length ||
@@ -27,6 +32,8 @@ export function useCoalescedStates<T>(
         if (!changed || paused || timer.current) return;
         timer.current = setTimeout(() => {
             timer.current = null;
+            // 計時器排程後才暫停：不發布，恢復後下一次 commit 會再排
+            if (pausedRef.current) return;
             setSnapshot(latest.current);
         }, delayMs);
     });
