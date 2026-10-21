@@ -247,12 +247,13 @@ describe('checkWorkspaceSpec', () => {
         const coarse = checkWorkspaceSpec(spec, empty, { density: 1 });
         expect(coarse.valid).toBe(false);
         expect(coarse.errors.map((e) => [e.path, e.code])).toEqual([['panels[1].x', 'misaligned']]);
-        // the same pair already on screen untouched is never rejected
+        // the same pair untouched on screen is exempt from the edge check, but
+        // packing would still move B into A's stored columns: rejected
         const live: Workspace = {
             blocks: [{ id: 'a', type: 'chart', pin: null }, { id: 'b', type: 'chart', pin: null }],
             layout: spec.panels.map((p) => ({ i: p.id, x: p.x, y: p.y, w: p.w, h: p.h })),
         };
-        expect(checkWorkspaceSpec(spec, live, { density: 1 }).valid).toBe(true);
+        expect(checkWorkspaceSpec(spec, live, { density: 1 }).errors.map((e) => e.code)).toEqual(['misaligned']);
         // review case: A (0,0,75,7), C (132,0,72,7), B (72,7,72,7) kept as-is
         const three = {
             version: 1,
@@ -268,6 +269,11 @@ describe('checkWorkspaceSpec', () => {
             layout: three.panels.map((p) => ({ i: p.id, x: p.x, y: p.y, w: p.w, h: p.h })),
         };
         expect(checkWorkspaceSpec(three, liveThree, { density: 1 }).valid).toBe(true);
+        // removing C would let B rise into A's stored columns: rejected
+        const withoutC = { ...three, panels: three.panels.filter((p) => p.id !== 'c') };
+        const blocked = checkWorkspaceSpec(withoutC, liveThree, { density: 1 });
+        expect(blocked.valid).toBe(false);
+        expect(blocked.errors.map((e) => [e.path, e.code])).toEqual([['panels[1].x', 'misaligned']]);
         // aligned edges are fine at every density, and the read-back validates again
         spec.panels[0]!.w = 72;
         for (const density of [1, 2, 3, 4]) {

@@ -705,6 +705,20 @@ export function checkWorkspaceSpec(
     }
 
     const compacted = compactVertical(panels, density);
+    // Safety net: packing at the render density must never produce rectangles
+    // that overlap in the stored grid, or the read-back could not validate.
+    for (let i = 0; i < compacted.length; i += 1) {
+        for (let j = i + 1; j < compacted.length; j += 1) {
+            if (overlaps(compacted[i]!, compacted[j]!)) {
+                err(
+                    `panels[${seenIds.get(compacted[j]!.id)}].x`,
+                    'misaligned',
+                    `after the grid packs panels upward, "${compacted[j]!.id}" would overlap "${compacted[i]!.id}" by less than one on-screen column; align their edges (or use columns: 24)`,
+                );
+            }
+        }
+    }
+    if (errors.length) return fail();
     for (const panel of compacted) {
         const original = panels.find((p) => p.id === panel.id)!;
         if (panel.y !== original.y) {
