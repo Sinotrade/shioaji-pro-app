@@ -31,6 +31,8 @@ import {
     Crosshair,
     Eye,
     EyeOff,
+    Lock,
+    LockOpen,
     Maximize2,
     MoreHorizontal,
     OctagonX,
@@ -2199,6 +2201,20 @@ export function CandleChart({
                 >
                     <ArrowUpDown size={12} />
                 </button>
+                <button
+                    type='button'
+                    // 鎖定＝按下；未鎖定時只有圖上真的有拖得動的委託線才用強調色提醒
+                    className={styles.orderLockBtn[orderLineLock ? 'locked' : workingOrders.some((t) => canUpdateOrderPrice(t.order)) ? 'live' : 'idle']}
+                    onClick={() => setRiskSettings({ orderLineLock: !orderLineLock })}
+                    title={orderLineLock
+                        ? `委託線已鎖定（所有圖表）：按住線只會平移圖表，點價時點在線上不下單 — 點擊或按 ${orderLockShortcut} 解鎖`
+                        : `委託線可拖曳改價 — 點擊或按 ${orderLockShortcut} 鎖定，避免誤拖（所有圖表，重開後保留）`}
+                    aria-label='委託線鎖定'
+                    aria-keyshortcuts='Control+L Meta+L'
+                    aria-pressed={orderLineLock}
+                >
+                    {orderLineLock ? <Lock size={12} /> : <LockOpen size={12} />}
+                </button>
                 <span className={styles.toolbarDivider} />
                 {TRADE_MODES.filter(
                     // 組合商品只能用組合單下單 — 圖上僅保留警示，
@@ -2281,21 +2297,7 @@ export function CandleChart({
                         onCancel={cancelSettings}
                     />
                 )}
-                <div className={styles.toolbarEnd}>
-                    <button
-                        type='button'
-                        // 只有圖上真的有拖得動的委託線時才亮起提醒；平常不搶眼
-                        className={styles.orderLockBtn[!orderLineLock && workingOrders.some((t) => canUpdateOrderPrice(t.order)) ? 'draggable' : 'muted']}
-                        onClick={() => setRiskSettings({ orderLineLock: !orderLineLock })}
-                        title={orderLineLock ? `防拖中（所有圖表）— 按住委託線改為平移圖表，點價時點在線上不下單；點擊或按 ${orderLockShortcut} 改為可拖` : `可拖：委託線可拖曳改價 — 點擊或按 ${orderLockShortcut} 切換為防拖（所有圖表，重開後仍保留）`}
-                        aria-label='委託線防拖'
-                        aria-keyshortcuts='Control+L Meta+L'
-                        aria-pressed={orderLineLock}
-                    >
-                        {orderLineLock ? '防拖' : '可拖'}
-                    </button>
-                    <RefreshButton label='更新歷史' loading={loading} onClick={() => setHistorySeq(nextChartHistoryRevision())} className={styles.toolbarEndBtn} />
-                </div>
+                <RefreshButton label="更新歷史" loading={loading} onClick={() => setHistorySeq(nextChartHistoryRevision())} />
             </div>
             <div className={styles.chartRow}>
             <ChartDrawingTools api={drawings} />
@@ -2315,8 +2317,8 @@ export function CandleChart({
                 {shownMode !== 'observe' && (
                     <div className={styles.modeHint} style={hintStyle}>
                         交易模式 · {chartModeHint(shownMode, orderSettings, orderMarket ?? 'S')}
-                        {/* 防拖時點在委託線上會被吃掉不下單，先講清楚免得挪一下就在旁邊價位下單 */}
-                        {orderLineLock && <span className={styles.modeHintNote}>防拖中：點在線上不下單</span>}
+                        {/* 鎖定時點在委託線上會被吃掉不下單，先講清楚免得挪一下就在旁邊價位下單 */}
+                        {orderLineLock && <span className={styles.modeHintNote}>委託線鎖定中：點在線上不下單</span>}
                     </div>
                 )}
                 {mode === 'observe' && drawings.tool && (

@@ -63,6 +63,24 @@ export const iconBtnToggle = styleVariants({
     off: [iconBtn, { opacity: 0.55 }],
 });
 
+// 委託線鎖定鈕（與 K 棒讀值等圖示開關同一組）：
+// - locked：已鎖定＝按下狀態（前景色＋底色），aria-pressed=true
+// - live：未鎖定且圖上有拖得動的委託線，強調色提醒「現在拖得動」
+// - idle：未鎖定但圖上沒有可拖的線，與其他關閉的開關同樣淡灰
+const orderLockBase = style([
+    iconBtn,
+    {
+        ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: 1 },
+        '@media': { '(prefers-reduced-motion: reduce)': { transition: 'none' } },
+    },
+]);
+
+export const orderLockBtn = styleVariants({
+    locked: [orderLockBase, { color: vars.color.foreground, background: vars.color.muted }],
+    live: [orderLockBase, { color: vars.color.accent, ':hover': { color: vars.color.accent, background: vars.color.accentDim } }],
+    idle: [orderLockBase, { opacity: 0.55 }],
+});
+
 export const toolbarDivider = style({
     width: '1px',
     alignSelf: 'stretch',
@@ -225,66 +243,6 @@ export const chartHost = style({
     // 點圖表時取得鍵盤焦點（畫圖的 Delete 只在焦點在圖上時作用），
     // 不畫焦點框
     outline: 'none',
-});
-
-// 工具列最右端的防拖／更新鈕：緊接在「指標」之後（指標已用 auto 邊距靠右）
-export const toolbarEnd = style({
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '2px',
-    marginLeft: '6px',
-});
-
-// 舊版 WKWebView（Safari 13–16.1）不支援 color-mix：基本樣式用實色邊框、
-// 半透明邊框只在 @supports 內覆寫（同 server-settings-dialog.css.ts）
-const SUPPORTS_MIX = '(color: color-mix(in srgb, red 50%, transparent))';
-
-const orderLockBtnBase = style({
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    minWidth: '28px',
-    height: '18px',
-    padding: '0 5px',
-    fontFamily: vars.font.body,
-    fontSize: '0.62rem',
-    lineHeight: 1,
-    cursor: 'pointer',
-    color: vars.color.mutedForeground,
-    background: vars.color.panelRaised,
-    border: `1px solid ${vars.color.border}`,
-    borderRadius: vars.radius.sm,
-    transition: 'color 150ms, background-color 150ms, border-color 150ms, box-shadow 150ms',
-    ':hover': { color: vars.color.foreground },
-    ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: 1 },
-    '@media': { '(prefers-reduced-motion: reduce)': { transition: 'none' } },
-});
-
-// 可拖且圖上有可拖的委託線：強調色微透光；防拖或圖上沒有可拖的線：與更新鈕同一套淡灰
-export const orderLockBtn = styleVariants({
-    draggable: [orderLockBtnBase, {
-        color: vars.color.accent,
-        background: vars.color.accentDim,
-        borderColor: vars.color.accent,
-        boxShadow: `0 0 8px ${vars.color.accentDim}`,
-        ':hover': { color: vars.color.accent, borderColor: vars.color.accent, boxShadow: `0 0 10px ${vars.color.accentDim}` },
-        '@supports': { [SUPPORTS_MIX]: { borderColor: `color-mix(in srgb, ${vars.color.accent} 45%, transparent)` } },
-    }],
-    muted: [orderLockBtnBase],
-});
-
-export const toolbarEndBtn = style({
-    // 提高局部選擇器權重，覆蓋共用更新鈕的尺寸、靠右留白與透明底色。
-    selectors: {
-        [`${toolbarEnd} &`]: {
-            width: '18px',
-            height: '18px',
-            marginLeft: 0,
-            background: vars.color.panelRaised,
-            border: `1px solid ${vars.color.border}`,
-        },
-    },
 });
 
 // ---- indicator legend（TradingView 式，圖上左上角，一列一個實例）----

@@ -82,6 +82,7 @@ vi.mock('lightweight-charts', async () => {
     return { ...base, createChart: chart };
 });
 
+import { Lock, LockOpen } from 'lucide-react';
 import { CandleChart } from './candle-chart';
 import { RefreshButton } from './refresh-button';
 import * as styles from './candle-chart.css';
@@ -308,7 +309,7 @@ describe('chart order settings button', () => {
             await act(async () => { drag.key({ key: 'l', code: 'KeyL', ctrlKey: true }); });
             expect(getRiskSettings().orderLineLock).toBe(true);
             for (const chart of [first, view]) {
-                expect(chart.root.findByProps({ 'aria-label': '委託線防拖' }).props['aria-pressed']).toBe(true);
+                expect(chart.root.findByProps({ 'aria-label': '委託線鎖定' }).props['aria-pressed']).toBe(true);
             }
         } finally { await act(async () => first.unmount()); }
     });
@@ -444,7 +445,7 @@ describe('chart order settings button', () => {
         await mount({ contract: stk });
         act(() => setRiskSettings({ orderLineLock: locked }));
         await act(async () => { button(view.root, '點價買').props.onClick(); });
-        expect(text(modeHint()!).includes('防拖中：點在線上不下單')).toBe(shown);
+        expect(text(modeHint()!).includes('委託線鎖定中：點在線上不下單')).toBe(shown);
     });
 
     it('委託線未鎖時滑過顯示改價游標，鎖住後滑過清掉', async () => {
@@ -460,57 +461,56 @@ describe('chart order settings button', () => {
         ['MacIntel', '', '⌘L'],
         ['Win32', '', 'Ctrl+L'],
         ['', 'Macintosh', '⌘L'],
-    ])('委託線防拖鈕依平台 %s／%s 提示 %s，並切換狀態與樣式', async (platform, userAgent, shortcut) => {
+    ])('委託線鎖定鈕依平台 %s／%s 提示 %s，圖示與按下狀態跟著切換', async (platform, userAgent, shortcut) => {
         vi.stubGlobal('navigator', { platform, userAgent });
         await mount({ contract: stk });
-        const lockButton = () => view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線防拖');
+        const lockButton = () => view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線鎖定');
         expect(getRiskSettings().orderLineLock).toBe(false);
         expect(lockButton().props.type).toBe('button');
         expect(lockButton().props['aria-keyshortcuts']).toBe('Control+L Meta+L');
-        expect(text(lockButton())).toBe('可拖');
         expect(lockButton().props['aria-pressed']).toBe(false);
-        // 圖上沒有委託線：可拖但不亮
-        expect(lockButton().props.className).toBe(styles.orderLockBtn.muted);
-        expect(lockButton().props.title).toBe(`可拖：委託線可拖曳改價 — 點擊或按 ${shortcut} 切換為防拖（所有圖表，重開後仍保留）`);
+        expect(lockButton().findAllByType(LockOpen)).toHaveLength(1);
+        expect(lockButton().findAllByType(Lock)).toHaveLength(0);
+        // 圖上沒有委託線：未鎖定但不亮
+        expect(lockButton().props.className).toBe(styles.orderLockBtn.idle);
+        expect(lockButton().props.title).toBe(`委託線可拖曳改價 — 點擊或按 ${shortcut} 鎖定，避免誤拖（所有圖表，重開後保留）`);
         await act(async () => { lockButton().props.onClick(); });
         expect(getRiskSettings().orderLineLock).toBe(true);
         expect(lockButton().props['aria-pressed']).toBe(true);
-        expect(text(lockButton())).toBe('防拖');
-        expect(lockButton().props.className).toBe(styles.orderLockBtn.muted);
-        expect(lockButton().props.title).toBe(`防拖中（所有圖表）— 按住委託線改為平移圖表，點價時點在線上不下單；點擊或按 ${shortcut} 改為可拖`);
+        expect(lockButton().findAllByType(Lock)).toHaveLength(1);
+        expect(lockButton().findAllByType(LockOpen)).toHaveLength(0);
+        expect(lockButton().props.className).toBe(styles.orderLockBtn.locked);
+        expect(lockButton().props.title).toBe(`委託線已鎖定（所有圖表）：按住線只會平移圖表，點價時點在線上不下單 — 點擊或按 ${shortcut} 解鎖`);
         await act(async () => { lockButton().props.onClick(); });
         expect(getRiskSettings().orderLineLock).toBe(false);
-        expect(text(lockButton())).toBe('可拖');
+        expect(lockButton().findAllByType(LockOpen)).toHaveLength(1);
     });
 
     it.each([
-        ['一般委託', 'Common', 'draggable'],
-        ['只有零股委託（不能改價）', 'IntradayOdd', 'muted'],
-    ] as const)('可拖鈕只在圖上有拖得動的委託線時亮起：%s', async (_name, lot, lit) => {
+        ['一般委託', 'Common', 'live'],
+        ['只有零股委託（不能改價）', 'IntradayOdd', 'idle'],
+    ] as const)('未鎖定時只在圖上有拖得動的委託線才亮起：%s', async (_name, lot, lit) => {
         const trade = { contract: stk, order: { id: 'lit-order', action: 'Buy', price: 100, quantity: 1, order_lot: lot },
             status: { status: 'Submitted', deal_quantity: 0, cancel_quantity: 0, modified_price: 0 } };
         await mount({ contract: stk, trades: [trade] });
-        const lockButton = () => view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線防拖');
+        const lockButton = () => view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線鎖定');
         expect(lockButton().props.className).toBe(styles.orderLockBtn[lit]);
         act(() => setRiskSettings({ orderLineLock: true }));
-        expect(lockButton().props.className).toBe(styles.orderLockBtn.muted);
+        expect(lockButton().props.className).toBe(styles.orderLockBtn.locked);
     });
 
-    it('防拖鈕緊鄰更新歷史左側，兩顆在工具列「指標」之後', async () => {
+    it('鎖定鈕與 K 棒讀值、最高最低同一組圖示開關，更新歷史維持在最右端', async () => {
         await mount({ contract: stk });
-        const lockButton = view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線防拖');
-        const refreshButton = view.root.findByType(RefreshButton);
-        expect(refreshButton.props.className).toBe(styles.toolbarEndBtn);
-        expect(lockButton.parent).toBe(refreshButton.parent);
-        expect(lockButton.parent!.props.className).toBe(styles.toolbarEnd);
-        const children = lockButton.parent!.children;
-        expect(children[children.indexOf(lockButton) + 1]).toBe(refreshButton);
-        const indicator = button(view.root, '指標');
-        const toolbar = indicator.parent!;
+        const lockButton = view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線鎖定');
+        const highLow = view.root.find(n => n.type === 'button' && n.props['aria-label'] === '最高最低標記');
+        const toolbar = lockButton.parent!;
         expect(toolbar.props.className).toBe(styles.toolbar);
-        expect(lockButton.parent!.parent).toBe(toolbar);
         const items = toolbar.children;
-        expect(items.indexOf(lockButton.parent!)).toBeGreaterThan(items.indexOf(indicator));
+        expect(items.indexOf(lockButton)).toBe(items.indexOf(highLow) + 1);
+        const refreshButton = view.root.findByType(RefreshButton);
+        expect(refreshButton.parent).toBe(toolbar);
+        expect(items.indexOf(refreshButton)).toBe(items.length - 1);
+        expect(items.indexOf(lockButton)).toBeLessThan(items.indexOf(button(view.root, '指標')));
     });
 
     it('委託線鎖住時標題沒有拖曳提示，解鎖後恢復', async () => {
