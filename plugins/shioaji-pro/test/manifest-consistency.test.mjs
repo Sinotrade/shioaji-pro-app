@@ -53,7 +53,7 @@ test('semantic reference retains capability, names, and bounded backtest section
     assert.ok(sections.has(heading), `missing ${heading}`);
   }
   const names = sections.get('v1 semantic names');
-  for (const label of ['Market', 'Account', 'App state', 'Workspace mutation', 'Native content', 'Chart indicators', 'Backtest reads', 'Reusable skills', 'Background tasks', 'Trading']) {
+  for (const label of ['Market', 'Account', 'App state', 'Workspace mutation', 'Watchlists', 'Native content', 'Chart indicators', 'Backtest reads', 'Reusable skills', 'Background tasks', 'Trading']) {
     assert.match(names, new RegExp(`^- ${label}:`, 'm'), `missing ${label}`);
   }
   assert.match(names, /`trade\.preview`:[\s\S]*`trade\.execute`:/);
