@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Sinotrade/shioaji-pro-app/schemas/workspace-spec-v1.schema.json",
+  "title": "Shioaji Pro Workspace Spec v1",
+  "description": "Agent-facing description of the visible workspace: panels, grid rectangles, link/pin state and whitelisted display settings. Never contains account keys, quantities or order settings. Structural rules the schema cannot express (overlaps, per-type minimum sizes, singletons, keeping the AI Agent panel, contract resolution) are enforced by validate_workspace_spec.",
+  "type": "object",
+  "required": [
+    "version",
+    "columns",
+    "panels"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "columns": {
+      "enum": [
+        24,
+        288
+      ],
+      "description": "Grid width the x/w values use. 24 = coarse columns (presets); 288 = stored precision."
+    },
+    "panels": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "items": {
+        "$ref": "#/$defs/panel"
+      }
+    },
+    "link_groups": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "A": {
+          "$ref": "#/$defs/contractCode"
+        },
+        "B": {
+          "$ref": "#/$defs/contractCode"
+        },
+        "C": {
+          "$ref": "#/$defs/contractCode"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "contractCode": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._+-]{1,64}$"
+    },
+    "panel": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,64}$",
+          "description": "Keep an existing id to keep that panel (and its hidden settings); a new id creates a panel."
+        },
+        "type": {
+          "enum": [
+            "watchlist",
+            "movers",
+            "dock",
+            "chart",
+            "intraday",
+            "intradaywall",
+            "depth",
+            "ticket",
+            "tape",
+            "flash",
+            "oddspread",
+            "pnl",
+            "chips",
+            "company",
+            "volprofile",
+            "optchain",
+            "stockfutures",
+            "warrants",
+            "replay",
+            "depthmap",
+            "combo",
+            "combolist",
+            "notices",
+            "debug",
+            "grid",
+            "conditional",
+            "heatmap",
+            "pulse",
+            "signals",
+            "optpnl",
+            "backtest",
+            "assistant"
+          ]
+        },
+        "x": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pin": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/contractCode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "link_group": {
+          "enum": [
+            "A",
+            "B",
+            "C"
+          ],
+          "description": "Flash panels only; requires pin null."
+        },
+        "settings": {
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "chart"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "settings": {
+                "$ref": "#/$defs/chartSettings"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "intraday"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "settings": {
+                "$ref": "#/$defs/intradaySettings"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "not": {
+                  "enum": [
+                    "chart",
+                    "intraday"
+                  ]
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "settings": {
+                "type": "object",
+                "maxProperties": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "chartSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "interval": {
+          "enum": [
+            "1m",
+            "5m",
+            "15m",
+            "60m",
+            "1D"
+          ],
+          "default": "5m"
+        },
+        "session": {
+          "enum": [
+            "all",
+            "day"
+          ],
+          "default": "all"
+        },
+        "ohlc": {
+          "type": "boolean",
+          "default": true
+        },
+        "high_low": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "intradaySettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session": {
+          "enum": [
+            "auto",
+            "day",
+            "night"
+          ],
+          "default": "auto"
+        }
+      }
+    }
+  }
+}

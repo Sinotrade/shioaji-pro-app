@@ -4,7 +4,7 @@ description: |
   Use when observing or controlling the Shioaji Pro desktop app through its
   native semantic MCP tools. Covers market and account context, bounded K bars,
   order and fill history, conditional orders, realized P&L, workspaces,
-  panels, 自選 watchlists, native indicators and strategies, chart indicator mounting and
+  workspace specs (layout, sizes, chart interval, undo), panels, 自選 watchlists, native indicators and strategies, chart indicator mounting and
   adjustment, static portfolio research, Grid/Random optimization, bounded
   backtest analysis and export, reusable skills, background tasks,
   guarded trade preview and execution, user-authorized controlled auto, restart
