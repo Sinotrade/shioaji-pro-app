@@ -31,6 +31,8 @@ import {
     Crosshair,
     Eye,
     EyeOff,
+    Lock,
+    LockOpen,
     Maximize2,
     MoreHorizontal,
     OctagonX,
@@ -45,8 +47,11 @@ import {
     type ChartInterval,
 } from '../lib/workspace';
 import {
+    chartHasFocus,
     inOrderLabelArea,
+    isTypingTarget,
     orderLineMayTakePointer,
+    orderLockKeyOf,
     useChartDrawings,
     type ChartDrawingsApi,
 } from '../hooks/use-chart-drawings';
@@ -125,6 +130,7 @@ import { loadOrderLotPreference, saveOrderLotPreference, QUICK_ORDER_LOTS } from
 import { accountMatches, resolveFlashAccount } from '../lib/flash-account';
 import { flashAccountLabels } from '../lib/flash-display';
 import { usePrivacyMode } from '../lib/privacy';
+import { getRiskSettings, setRiskSettings, subscribeRiskSettings } from '../lib/risk';
 import type { Account } from '../lib/types/portfolio';
 import { ChartOrderButton, type ChartOrderAccountView } from './chart-order-popover';
 import { isCancelUnconfirmed } from '../lib/cancel-verification';
@@ -301,6 +307,24 @@ export function CandleChart({
     const quote = useQuote(contract.code);
     const tf = TIMEFRAMES[tfIdx] ?? TIMEFRAMES[DEFAULT_TF_IDX]!;
     const themeSettings = useThemeSettings();
+    // 只取這個布林：別的風控欄位變動時不必重繪整張圖
+    const orderLineLock = useSyncExternalStore(subscribeRiskSettings, () => getRiskSettings().orderLineLock);
+    // 平台只判斷一次（每筆報價都會重繪）
+    const [orderLockShortcut] = useState(() => (typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || navigator.userAgent) ? '⌘L' : 'Ctrl+L'));
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.repeat) return;
+            if (!orderLockKeyOf(e)) return;
+            if (isTypingTarget(e.target)) return;
+            // 範圍含頂端工具列（鎖定鈕本身有焦點時也要能用快捷鍵）
+            if (!chartHasFocus(hostRef.current?.closest?.(`.${styles.wrap}`) ?? hostRef.current?.parentElement ?? hostRef.current)) return;
+            e.preventDefault();
+            setRiskSettings({ orderLineLock: !getRiskSettings().orderLineLock });
+        };
+        // 與畫圖快捷鍵相同：capture 先於工具列的 stopPropagation 處理按鍵。
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, []);
     const colors = getChartColors(themeSettings);
     const themeKey = themeKeyOf(themeSettings);
     const [mode, setMode] = useState<TradeMode>('observe');
@@ -1626,7 +1650,7 @@ export function CandleChart({
                     lineStyle: 0, // solid
                     axisLabelVisible: true,
                     // 非現股的委託標出信用條件（融資買2、現沖賣1）
-                    title: `${creditLabel(t.order.action, t.order.order_cond, t.order.daytrade_short) ?? ''}${t.order.action === 'Buy' ? '買' : '賣'}${remaining} ⠿`,
+                    title: `${creditLabel(t.order.action, t.order.order_cond, t.order.daytrade_short) ?? ''}${t.order.action === 'Buy' ? '買' : '賣'}${remaining}${orderLineLock || !canUpdateOrderPrice(t.order) ? '' : ' ⠿'}`,
                 }),
             );
         }
@@ -1635,7 +1659,7 @@ export function CandleChart({
             for (const line of lines.values()) series.removePriceLine(line);
             orderLinesRef.current = new Map();
         };
-    }, [orderKey, themeKey, contract.code]);
+    }, [orderKey, themeKey, contract.code, orderLineLock]);
 
     // 畫圖工具武裝中（下方 useChartDrawings 每次 render 更新）。委託線的
     // 拖曳 effect 宣告在畫圖 hook 之前，靠這個 ref 讀最新狀態
@@ -1646,7 +1670,7 @@ export function CandleChart({
     const orderDragContextRef = useRef(orderDragContext);
     orderDragContextRef.current = orderDragContext;
     // 舊委託線被重建前也要還原／解除拖曳；render 後、effect 前的事件由 context 核對阻擋。
-    useLayoutEffect(() => { cancelOrderDragRef.current(); }, [orderDragContext, orderKey, themeKey]);
+    useLayoutEffect(() => { cancelOrderDragRef.current(); }, [orderDragContext, orderKey, themeKey, orderLineLock]);
 
     // drag an order line to modify its price
     useEffect(() => {
@@ -1657,7 +1681,7 @@ export function CandleChart({
             null;
         // active document listeners — removed on unmount if a drag is live
         let activeMove: ((e: MouseEvent) => void) | null = null;
-        let activeUp: (() => void) | null = null;
+        let activeUp: ((e: MouseEvent) => void) | null = null;
 
         const releasePointer = () => {
             if (activeMove) document.removeEventListener('mousemove', activeMove, true);
@@ -1692,20 +1716,24 @@ export function CandleChart({
         const yOf = (e: MouseEvent) =>
             e.clientY - host.getBoundingClientRect().top;
 
-        const findNear = (y: number) => {
+        // includeFixed：連不能改價的線（零股）也算 — 鎖定時「點在線上不下單」要涵蓋圖上每一條委託線
+        const findNear = (y: number, includeFixed = false) => {
             const series = candleSeriesRef.current;
             if (!series) return null;
+            // 兩條線很近時抓離游標最近的那條；距離相同取先出現的
+            let best: { trade: Trade; line: IPriceLine; coord: number } | null = null;
             for (const t of workingOrdersRef.current) {
                 // 零股委託不能改價（#204）：委託線不可拖曳
-                if (!canUpdateOrderPrice(t.order)) continue;
+                if (!includeFixed && !canUpdateOrderPrice(t.order)) continue;
                 const line = orderLinesRef.current.get(t.order.id);
                 if (!line) continue;
                 const coord = series.priceToCoordinate(line.options().price);
-                if (coord !== null && Math.abs(coord - y) <= 6) {
-                    return { trade: t, line, coord };
+                if (coord !== null && Math.abs(coord - y) <= 6 &&
+                    (!best || Math.abs(coord - y) < Math.abs(best.coord - y))) {
+                    best = { trade: t, line, coord };
                 }
             }
-            return null;
+            return best;
         };
 
         // 畫圖的浮動工具列／文字框蓋在委託線上時，那一下屬於它們
@@ -1732,7 +1760,8 @@ export function CandleChart({
 
         const hover = (e: MouseEvent) => {
             if (dragging || onOverlay(e)) return;
-            const near = findNear(yOf(e));
+            // 防拖中不找線，下面一併清掉改價游標
+            const near = getRiskSettings().orderLineLock ? null : findNear(yOf(e));
             // 武裝畫圖工具、或這個位置歸畫圖物件時委託線不接手，游標交給畫圖
             if (!near || !mayTake(e)) {
                 if (host.style.cursor === 'ns-resize') host.style.cursor = '';
@@ -1742,12 +1771,20 @@ export function CandleChart({
         };
 
         const down = (e: MouseEvent) => {
+            if (getRiskSettings().orderLineLock && modeRef.current === 'observe') return;
             if (e.button !== 0 || onOverlay(e)) return;
             // 「委託線優先」只在瀏覽模式：武裝畫圖工具時這一下屬於畫圖，
             // 在委託價附近畫線不能變成改價；別的 handler 已經接手的一下
             // 也不能同時拖畫圖又送出改價
-            const hit = findNear(yOf(e));
+            const locked = getRiskSettings().orderLineLock;
+            const hit = findNear(yOf(e), locked);
             if (!hit || !mayTake(e)) return;
+            if (locked) {
+                // 已武裝時仍吃掉委託線點擊，避免穿透成新委託。
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
             // 價格軸把手可接手，但不能與未結束的畫圖拖曳／文字／量測共存。
             drawingsRef.current?.prepareOrderDrag();
             e.preventDefault();
@@ -1774,13 +1811,22 @@ export function CandleChart({
                 const raw = series.coordinateToPrice(yOf(ev));
                 if (raw === null) return;
                 const np = roundToTick(contractRef.current, Number(raw));
+                // 拖出圖外會外推到 0 以下：保留上一個有效價
+                if (!(np > 0)) return;
                 dragging.price = np;
                 dragging.line.applyOptions({ price: np });
             };
-            const up = () => {
+            const up = (ev: MouseEvent) => {
                 // 遲到的舊 mouseup 不得接手新拖曳，更不能送出舊的改價。
                 if (dragging !== session) return;
                 if (!current(session)) { cancel(); return; }
+                // 在主窗格外放開視為取消（host 還含副圖與時間軸）：窗格外的價格
+                // 是外推的，送出可能遠離市價而成交。
+                const rect = (chartRef.current?.panes()[0]?.getHTMLElement() ?? host).getBoundingClientRect();
+                if (ev.clientX < rect.left || ev.clientX > rect.right || ev.clientY < rect.top || ev.clientY > rect.bottom) {
+                    cancel();
+                    return;
+                }
                 releasePointer();
                 const d = dragging;
                 dragging = null;
@@ -1799,14 +1845,13 @@ export function CandleChart({
                         onOrdersChangedRef.current?.();
                     })
                     .catch((err) => {
-                        notify({
-                            kind: 'err',
-                            title: '改價失敗',
-                            body:
-                                err instanceof Error
-                                    ? err.message
-                                    : String(err),
-                        });
+                        // 失敗時委託價沒變，orderKey 不變，畫線 effect 不會重跑。
+                        if (orderLinesRef.current.get(d.trade.order.id) === d.line) {
+                            // 正在拖同一條線：只改取消時的還原目標，不搶游標下的線。
+                            if (dragging?.line === d.line) dragging.originalPrice = orig;
+                            else try { d.line.applyOptions({ price: orig }); } catch { /* series 已釋放 */ }
+                        }
+                        reportOrderError('改價', err, notify);
                         onOrdersChangedRef.current?.();
                     });
             };
@@ -2128,8 +2173,23 @@ export function CandleChart({
             paneTops[inst.id] === undefined
         );
     });
-    // 交易／畫圖模式提示往下讓出 K 棒讀值那一列，兩者都看得到
-    const hintStyle = showOhlc ? { top: 30 } : undefined;
+    // 交易／畫圖模式提示（在左上角圖例欄的流裡，見 styles.hintSlot）
+    const hintMaxWidth = hostWidth > 0 ? { maxWidth: Math.max(120, hostWidth - 80) } : undefined;
+    const modeHintEl = shownMode !== 'observe' ? (
+        <div className={styles.hintSlot}>
+            <div className={styles.modeHint} style={hintMaxWidth}>
+                交易模式 · {chartModeHint(shownMode, orderSettings, orderMarket ?? 'S')}
+                {/* 鎖定時點在委託線上會被吃掉不下單，先講清楚免得挪一下就在旁邊價位下單 */}
+                {orderLineLock && <span className={styles.modeHintNote}>委託線鎖定中：點在線上不下單</span>}
+            </div>
+        </div>
+    ) : mode === 'observe' && drawings.tool ? (
+        <div className={styles.hintSlot}>
+            <div className={styles.drawHint} style={hintMaxWidth}>
+                畫圖模式 · {toolDef(drawings.tool).label}：{DRAW_HINT[drawings.tool]}（Esc 取消）
+            </div>
+        </div>
+    ) : null;
     return (
         <div className={styles.wrap}
             onPointerDownCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}
@@ -2187,6 +2247,21 @@ export function CandleChart({
                     <ArrowUpDown size={12} />
                 </button>
                 <span className={styles.toolbarDivider} />
+                <button
+                    type='button'
+                    // 放在下單區塊開頭：委託線是下單互動，與點價買／賣同一組。
+                    // 鎖定＝按下；未鎖定時只有圖上真的有拖得動的委託線才用強調色提醒
+                    className={styles.orderLockBtn[orderLineLock ? 'locked' : workingOrders.some((t) => canUpdateOrderPrice(t.order)) ? 'live' : 'idle']}
+                    onClick={() => setRiskSettings({ orderLineLock: !orderLineLock })}
+                    title={orderLineLock
+                        ? `委託線已鎖定（所有圖表）：按住線只會平移圖表，點價時點在線上不下單 — 點擊或按 ${orderLockShortcut} 解鎖`
+                        : `委託線可拖曳改價 — 點擊或按 ${orderLockShortcut} 鎖定，避免誤拖（所有圖表，重開後保留）`}
+                    aria-label='委託線鎖定'
+                    aria-keyshortcuts='Control+L Meta+L'
+                    aria-pressed={orderLineLock}
+                >
+                    {orderLineLock ? <Lock size={12} /> : <LockOpen size={12} />}
+                </button>
                 {TRADE_MODES.filter(
                     // 組合商品只能用組合單下單 — 圖上僅保留警示，
                     // 點價買賣與觸價停損停利（flat code 會被 server 拒）
@@ -2285,17 +2360,8 @@ export function CandleChart({
                             className={panel.mono} />
                     </div>
                 )}
-                {shownMode !== 'observe' && (
-                    <div className={styles.modeHint} style={hintStyle}>
-                        交易模式 · {chartModeHint(shownMode, orderSettings, orderMarket ?? 'S')}
-                    </div>
-                )}
-                {mode === 'observe' && drawings.tool && (
-                    <div className={styles.drawHint} style={hintStyle}>
-                        畫圖模式 · {toolDef(drawings.tool).label}：{DRAW_HINT[drawings.tool]}（Esc 取消）
-                    </div>
-                )}
                 {(showOhlc ||
+                    modeHintEl ||
                     workingOrders.length > 0 ||
                     triggers.length > 0 ||
                     instances.length > 0) && (
@@ -2309,6 +2375,7 @@ export function CandleChart({
                                 colors={colors}
                             />
                         )}
+                        {modeHintEl}
                         {mainLegendInsts.map((inst) =>
                             renderLegendRow(inst),
                         )}

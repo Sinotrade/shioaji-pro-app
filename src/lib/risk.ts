@@ -14,6 +14,7 @@ export interface RiskSettings {
     locked: boolean; // manual kill switch — blocks ALL orders
     escCancelAll: boolean; // Esc×2 cancels all working orders — opt-in
     confirmManualOrders: boolean; // 手動下單前跳可視化委託確認 — opt-in
+    orderLineLock: boolean; // 圖上委託線鎖定：不能拖曳改價 — opt-in
 }
 
 const STORAGE_KEY = 'sj-pro-risk';
@@ -30,6 +31,7 @@ function load(): RiskSettings {
                 locked: !!s.locked,
                 escCancelAll: !!s.escCancelAll,
                 confirmManualOrders: !!s.confirmManualOrders,
+                orderLineLock: !!s.orderLineLock,
             };
         }
     } catch {
@@ -42,6 +44,7 @@ function load(): RiskSettings {
         locked: false,
         escCancelAll: false,
         confirmManualOrders: false,
+        orderLineLock: false,
     };
 }
 
@@ -66,7 +69,11 @@ function emit() {
 
 export function setRiskSettings(next: Partial<RiskSettings>) {
     settings = { ...settings, ...next };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    } catch {
+        // 配額滿時本視窗照樣生效，只是重開後不保留。
+    }
     emit();
 }
 
@@ -98,13 +105,7 @@ export function getDailyPnl(): number {
 }
 
 export function useRiskSettings(): RiskSettings {
-    return useSyncExternalStore(
-        (l) => {
-            listeners.add(l);
-            return () => listeners.delete(l);
-        },
-        () => settings,
-    );
+    return useSyncExternalStore(subscribeRiskSettings, getRiskSettings);
 }
 
 // returns an error message when the order must be blocked, null when OK.
