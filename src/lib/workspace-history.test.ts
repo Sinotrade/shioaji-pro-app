@@ -38,6 +38,28 @@ describe('WorkspaceUndoHistory', () => {
         expect(history.peek(after)).not.toBeNull();
     });
 
+    it('absorbs defaults that new panels persist right after the apply', () => {
+        const history = new WorkspaceUndoHistory();
+        const after = ws('a', 'b');
+        const entry = history.push(ws('a'), after, 'x');
+        const mounted = structuredClone(after);
+        (mounted.blocks[1] as { flashLot?: unknown }).flashLot = 'Common';
+        expect(history.peek(mounted)).toBeNull();
+        expect(history.settle(mounted, entry.at + 500)).toBe(true);
+        expect(history.peek(mounted)).toBe(entry);
+        // a changed value is user work, never absorbed
+        const changed = structuredClone(mounted);
+        (changed.blocks[1] as { flashLot?: unknown }).flashLot = 'IntradayOdd';
+        expect(history.settle(changed, entry.at + 600)).toBe(false);
+        // additions after the window are not absorbed either
+        const late = structuredClone(mounted);
+        late.blocks[0]!.chartInterval = '1D';
+        expect(history.settle(late, entry.at + 5_000)).toBe(false);
+        expect(history.peek(late)).toBeNull();
+        // panel list changes are never absorbed
+        expect(history.settle(ws('a', 'b', 'c'), entry.at + 100)).toBe(false);
+    });
+
     it('issues random single-use validation tokens that expire', () => {
         const history = new WorkspaceUndoHistory();
         const t1 = history.issueValidation({ spec: 's', base: 'b' });

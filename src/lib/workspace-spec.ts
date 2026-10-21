@@ -667,7 +667,35 @@ export function checkWorkspaceSpec(
     }
     if (errors.length) return fail();
 
-    const compacted = compactVertical(panels, options.density ?? GRID_LEGACY_SCALE);
+    // The grid renders at a coarser density. Two panels whose columns overlap
+    // in the stored grid but only touch on screen (or the reverse) would pack
+    // differently on screen than in the stored layout, and the read-back
+    // could not be validated again. Require edges that agree at the live
+    // density (columns: 24 always does).
+    const density = options.density ?? GRID_LEGACY_SCALE;
+    if (density !== GRID_LEGACY_SCALE) {
+        const xOverlap = (a: { x: number; w: number }, b: { x: number; w: number }) =>
+            a.x < b.x + b.w && b.x < a.x + a.w;
+        for (let i = 0; i < panels.length; i += 1) {
+            for (let j = i + 1; j < panels.length; j += 1) {
+                const a = panels[i]!;
+                const b = panels[j]!;
+                if (
+                    xOverlap(a, b) !==
+                    xOverlap(toRenderGeom(a, density), toRenderGeom(b, density))
+                ) {
+                    err(
+                        `panels[${seenIds.get(b.id)}].x`,
+                        'misaligned',
+                        `panels "${a.id}" and "${b.id}" are less than one on-screen column apart; align their edges (multiples of ${GRID_LEGACY_SCALE / density} in 288 columns, or use columns: 24)`,
+                    );
+                }
+            }
+        }
+        if (errors.length) return fail();
+    }
+
+    const compacted = compactVertical(panels, density);
     for (const panel of compacted) {
         const original = panels.find((p) => p.id === panel.id)!;
         if (panel.y !== original.y) {

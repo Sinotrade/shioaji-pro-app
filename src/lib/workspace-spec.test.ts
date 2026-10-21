@@ -229,7 +229,7 @@ describe('checkWorkspaceSpec', () => {
         ]);
     });
 
-    it('previews compaction at the render density of the live grid', () => {
+    it('rejects edges that disagree at the render density (#331 review)', () => {
         const spec = {
             version: 1,
             columns: 288,
@@ -239,13 +239,23 @@ describe('checkWorkspaceSpec', () => {
             ],
         };
         const empty: Workspace = { blocks: [], layout: [] };
+        // stored grid: a [0,73) and b [72,144) share a column so b stays below a
         const exact = checkWorkspaceSpec(spec, empty);
-        const coarse = checkWorkspaceSpec(spec, empty, { density: 1 });
-        if (!exact.valid || !coarse.valid) throw new Error('expected valid');
+        if (!exact.valid) throw new Error('expected valid');
         expect(exact.normalized.panels.map((p) => p.y)).toEqual([0, 7]);
-        // stored grid: a [0,73) and b [72,144) share a column so b stays below a;
-        // at 24 columns a ends at 6 and b starts at 6, so b rises to the top
-        expect(coarse.normalized.panels.map((p) => p.y)).toEqual([0, 0]);
+        // at 24 columns a ends where b starts: the screen would pack b to the top
+        const coarse = checkWorkspaceSpec(spec, empty, { density: 1 });
+        expect(coarse.valid).toBe(false);
+        expect(coarse.errors.map((e) => [e.path, e.code])).toEqual([['panels[1].x', 'misaligned']]);
+        // aligned edges are fine at every density, and the read-back validates again
+        spec.panels[0]!.w = 72;
+        for (const density of [1, 2, 3, 4]) {
+            const check = checkWorkspaceSpec(spec, empty, { density });
+            if (!check.valid) throw new Error(JSON.stringify(check.errors));
+            expect(check.normalized.panels.map((p) => p.y)).toEqual([0, 0]);
+            const read = workspaceToSpec(buildWorkspaceFromSpec(empty, check.normalized));
+            expect(checkWorkspaceSpec(read, empty, { density }).valid).toBe(true);
+        }
     });
 });
 

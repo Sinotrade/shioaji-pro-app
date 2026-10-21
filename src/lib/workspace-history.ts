@@ -15,7 +15,7 @@
 // a real validation.
 
 import type { Workspace } from './workspace';
-import { workspaceContentRevision } from './workspace-spec';
+import { stableStringify, workspaceContentRevision } from './workspace-spec';
 
 export interface WorkspaceUndoEntry {
     id: string;
@@ -23,6 +23,8 @@ export interface WorkspaceUndoEntry {
     at: number;
     before: Workspace;
     afterRevision: string;
+    /** Panels as stored right after the change, for {@link WorkspaceUndoHistory.settle}. */
+    afterBlocks: Workspace['blocks'];
 }
 
 export interface WorkspaceSpecValidation {
@@ -33,6 +35,8 @@ export interface WorkspaceSpecValidation {
 }
 
 const TOKEN_TTL_MS = 10 * 60_000;
+/** Newly mounted panels persist their defaults within this window. */
+export const WORKSPACE_UNDO_SETTLE_MS = 2_000;
 const TOKEN_LIMIT = 32;
 
 function randomToken(): string {
@@ -98,6 +102,7 @@ export class WorkspaceUndoHistory {
             at: Date.now(),
             before: structuredClone(before),
             afterRevision: workspaceContentRevision(after),
+            afterBlocks: structuredClone(after.blocks),
         };
         this.entries.push(entry);
         if (this.entries.length > this.limit) {
@@ -105,6 +110,34 @@ export class WorkspaceUndoHistory {
         }
         this.emit();
         return entry;
+    }
+
+    /**
+     * Panels that mount after an apply persist their own defaults (a new
+     * flash panel stores its lot, for example). Absorb such writes into the
+     * latest step: only within a short window after the apply, only when the
+     * panel list is unchanged and every field the apply produced keeps its
+     * value (fields may only be added). Returns whether the step was updated.
+     */
+    settle(current: Workspace, now = Date.now()): boolean {
+        const top = this.entries.at(-1);
+        if (!top || now - top.at > WORKSPACE_UNDO_SETTLE_MS) return false;
+        const revision = workspaceContentRevision(current);
+        if (revision === top.afterRevision) return false;
+        const prior = top.afterBlocks;
+        if (prior.length !== current.blocks.length) return false;
+        const additive = prior.every((block, i) => {
+            const next = current.blocks[i] as unknown as Record<string, unknown>;
+            if (!next || next.id !== block.id || next.type !== block.type) return false;
+            return Object.entries(block).every(
+                ([key, value]) => stableStringify(next[key]) === stableStringify(value),
+            );
+        });
+        if (!additive) return false;
+        top.afterRevision = revision;
+        top.afterBlocks = structuredClone(current.blocks);
+        this.emit();
+        return true;
     }
 
     /** The step undo would revert now, or null when none applies to `current`. */

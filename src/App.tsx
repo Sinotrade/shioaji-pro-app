@@ -1471,6 +1471,9 @@ function MainApp() {
     // 同一條防呆（面板組成被改過就不能復原）
     const workspaceHistory = useMemo(() => new WorkspaceUndoHistory(), []);
     useSyncExternalStore(workspaceHistory.subscribe, workspaceHistory.getVersion);
+    useEffect(() => {
+        workspaceHistory.settle(workspace);
+    }, [workspaceHistory, workspace]);
     const workspaceUndo = workspaceHistory.peek(workspace);
     const undoWorkspaceChange = useCallback(() => {
         const result = workspaceHistory.pop(workspaceRef.current);
