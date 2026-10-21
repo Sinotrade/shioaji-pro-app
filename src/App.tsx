@@ -12,6 +12,7 @@ import * as styles from './App.css';
 import { BottomDock } from './components/bottom-dock';
 import { AsyncStatus, type AsyncPhase } from './components/async-status';
 import { CandleChart } from './components/candle-chart';
+import { ChainMap } from './components/chain-map';
 import { ChipsCard } from './components/chips-card';
 import { ComboListPanel } from './components/combo-list';
 import { ComboTicket } from './components/combo-ticket';
@@ -465,6 +466,8 @@ function BlockBody({
             return <ConditionalPanel contract={contract} />;
         case 'heatmap':
             return <SectorHeatmap onPick={onSelectCode} />;
+        case 'chainmap':
+            return <ChainMap contract={contract} onPick={onSelectCode} />;
         case 'pulse':
             return (
                 <MarketPulsePanel

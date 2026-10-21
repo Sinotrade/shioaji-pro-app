@@ -17,6 +17,7 @@ import { MarketPulsePanel, MarketSignalPanel } from './market-pulse-panel';
 import { OptionChain } from './option-chain';
 import { ScannerPanel } from './scanner-panel';
 import { SectorHeatmap } from './sector-heatmap';
+import { ChainMap } from './chain-map';
 import { TickTape } from './tick-tape';
 import { VolProfile } from './vol-profile';
 import * as styles from './panel-library.css';
@@ -36,6 +37,7 @@ const NO_CONTRACT_PREVIEWS: Partial<Record<BlockType, () => ReactElement>> = {
     intradaywall: () => <IntradayWallPanel onPick={noop} />,
     movers: () => <ScannerPanel onPick={noop} />,
     heatmap: () => <SectorHeatmap onPick={noop} />,
+    chainmap: () => <ChainMap onPick={noop} />,
     pulse: () => <MarketPulsePanel />,
     signals: () => <MarketSignalPanel />,
     optchain: () => <OptionChain onPick={noop} />,

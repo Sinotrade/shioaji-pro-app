@@ -635,6 +635,21 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             <rect x='76' y='50' width='36' height='18' fill={up} fillOpacity='0.6' />
         </Frame>
     ),
+    chainmap: (
+        <Frame>
+            {[0, 1, 2].map((col) => (
+                <rect key={col} x={8 + col * 36} y='8' width='32' height='3' fill={col === 0 ? accent : muted} fillOpacity={col === 0 ? 0.9 : 0.5} />
+            ))}
+            <rect x='8' y='15' width='32' height='26' fill={up} fillOpacity='0.55' />
+            <rect x='8' y='43' width='15' height='25' fill={down} fillOpacity='0.35' />
+            <rect x='25' y='43' width='15' height='25' fill={up} fillOpacity='0.25' />
+            <rect x='44' y='15' width='32' height='18' fill={up} fillOpacity='0.35' />
+            <rect x='44' y='35' width='32' height='33' fill={down} fillOpacity='0.5' />
+            <rect x='80' y='15' width='32' height='30' fill={up} fillOpacity='0.7' />
+            <rect x='80' y='47' width='32' height='21' fill={up} fillOpacity='0.3' />
+            <path d='M40 28 C 42 28, 42 50, 44 50 M76 24 C 78 24, 78 30, 80 30' fill='none' stroke={accent} strokeWidth='1.4' />
+        </Frame>
+    ),
     pulse: (
         <Frame>
             <rect x='10' y='12' width='6' height='34' fill={down} fillOpacity='0.85' />
