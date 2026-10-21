@@ -1,6 +1,5 @@
 // src/lib/window-role.ts — which WebView is this? Only the `main` window may
-// read or write the desktop settings store (settings.json holds the API key,
-// secret key and CA password). Popouts (`?popout=<type>`, incl. the tray
+// call the native credential/settings commands. Popouts (`?popout=<type>`, incl. the tray
 // panel `?popout=traypanel`) are child windows; the approval window has its
 // own entry (approval.html) and never loads this bundle.
 

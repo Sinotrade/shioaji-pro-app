@@ -3,6 +3,7 @@
 // after the server was healthy (#142)
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EXPECTED_SERVER_VERSION } from './runtime';
 
 const m = vi.hoisted(() => ({
     child: false,
@@ -36,7 +37,7 @@ vi.mock('./shioaji', () => ({
 }));
 vi.mock('./tauri', () => ({
     // autostart off: run() goes straight to its health check
-    loadDesktopSettings: vi.fn(async () => ({ autoStart: false, apiKey: '', secretKey: '' })),
+    loadDesktopSettings: vi.fn(async () => ({ autoStart: false, configured: true, credentialRevision: 'revision' })),
     serverStatus: vi.fn(async () => ({ running: false })),
     serverStart: vi.fn(),
     reloadWhenHealthy: vi.fn(),
@@ -124,11 +125,11 @@ describe('early stream at bootstrap', () => {
         await boot(null, async () => {
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: true, apiKey: 'k', secretKey: 's', production: false,
+                autoStart: true, configured: true, credentialRevision: 'revision', production: false,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce({
                 running: true, healthy: true, port: 21322,
-                simulation: true, version: '1.7.8', scheme: 'http',
+                simulation: true, version: EXPECTED_SERVER_VERSION, scheme: 'http',
             });
         });
         await vi.waitFor(() => expect(m.startTrading).toHaveBeenCalledTimes(1));
@@ -196,7 +197,7 @@ describe('early stream at bootstrap', () => {
         await boot(null, async () => {
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: true, apiKey: 'k', secretKey: 's', production: true,
+                autoStart: true, configured: true, credentialRevision: 'revision', production: true,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce({
                 running: true, healthy: true, port: 21322, simulation: true,
@@ -223,12 +224,12 @@ describe('early stream at bootstrap', () => {
         await boot(null, async () => {
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: true, apiKey: 'k', secretKey: 's', production: false,
+                autoStart: true, configured: true, credentialRevision: 'revision', production: false,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus)
                 .mockResolvedValueOnce({ running: false })
                 .mockResolvedValueOnce({ running: true, healthy: true, port: 21322,
-                    simulation: true, version: '1.7.8', scheme: 'http' });
+                    simulation: true, version: EXPECTED_SERVER_VERSION, scheme: 'http' });
             vi.mocked(tauri.serverStart).mockResolvedValueOnce({
                 ok: false, output: 'spawn failed', port: 21322,
                 attached: false, portChanged: false,
@@ -243,12 +244,12 @@ describe('early stream at bootstrap', () => {
         await boot(null, async () => {
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: true, apiKey: 'k', secretKey: 's', production: true,
+                autoStart: true, configured: true, credentialRevision: 'revision', production: true,
                 caPath: '/qa/cert.pfx',
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce({
                 running: true, healthy: true, port: 21322, simulation: false,
-                version: '1.7.8', scheme: 'http',
+                version: EXPECTED_SERVER_VERSION, scheme: 'http',
             });
             vi.mocked(tauri.serverStart).mockResolvedValueOnce({
                 ok: false, output: 'CA inactive', port: 21322,
@@ -263,7 +264,7 @@ describe('early stream at bootstrap', () => {
 
     // #285 — another program's server is used only in the right environment
     // and on the same account; otherwise never adopted, never read
-    const prodElsewhere = { running: true, healthy: true, port: 21322, simulation: false, version: '1.7.8', scheme: 'http' as const };
+    const prodElsewhere = { running: true, healthy: true, port: 21322, simulation: false, version: EXPECTED_SERVER_VERSION, scheme: 'http' as const };
     const refusal = { reason: 'mode' as const, text: ':21322 上另一個程式啟動的正式伺服器與本 App 設定（模擬）不符，未連上' };
 
     it('autostart: another App\'s production server is not adopted; this App starts its own elsewhere', async () => {
@@ -271,7 +272,7 @@ describe('early stream at bootstrap', () => {
         await boot(null, async () => {
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: true, apiKey: 'k', secretKey: 's', production: false,
+                autoStart: true, configured: true, credentialRevision: 'revision', production: false,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce(prodElsewhere);
             vi.mocked(tauri.ownsServer).mockResolvedValueOnce(false);
@@ -296,7 +297,7 @@ describe('early stream at bootstrap', () => {
         await boot(null, async () => {
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: false, apiKey: 'k', secretKey: 's', production: false,
+                autoStart: false, configured: true, credentialRevision: 'revision', production: false,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce(prodElsewhere);
             vi.mocked(tauri.ownsServer).mockResolvedValueOnce(false);
@@ -317,7 +318,7 @@ describe('early stream at bootstrap', () => {
         await boot(null, async () => {
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: true, apiKey: 'k', secretKey: 's', production: true,
+                autoStart: true, configured: true, credentialRevision: 'revision', production: true,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce(prodElsewhere);
             vi.mocked(tauri.ownsServer).mockResolvedValueOnce(false);
@@ -334,7 +335,7 @@ describe('early stream at bootstrap', () => {
         await boot(null, async () => {
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: true, apiKey: 'k', secretKey: 's', production: true,
+                autoStart: true, configured: true, credentialRevision: 'revision', production: true,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce(prodElsewhere);
         });
@@ -343,6 +344,22 @@ describe('early stream at bootstrap', () => {
         expect(adoption.getServerAttachment()).toEqual({ kind: 'own', port: 21322 });
         const tauri = await import('./tauri');
         expect(tauri.learnOwnIdentity).toHaveBeenCalledWith(prodElsewhere);
+    });
+    it('a changed native credential revision cannot adopt the old healthy spawn after reload', async () => {
+        m.navType = 'navigate';
+        await boot(null, async () => {
+            store.set('sj-pro-spawn-keys', 'old-native-revision');
+            const tauri = await import('./tauri');
+            vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
+                autoStart: true, configured: true, credentialRevision: 'new-native-revision', production: true,
+            } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
+            vi.mocked(tauri.serverStatus).mockResolvedValueOnce(prodElsewhere);
+            vi.mocked(tauri.serverStart).mockResolvedValueOnce({ ok: true, output: '', port: 21322, attached: false, portChanged: false });
+        });
+        const tauri = await import('./tauri');
+        await vi.waitFor(() => expect(tauri.serverStart).toHaveBeenCalledOnce());
+        expect(tauri.learnOwnIdentity).not.toHaveBeenCalled();
+        expect(m.startTrading).not.toHaveBeenCalled();
     });
     // #285 regression (QA build, Agent Harness on): a block persisted by an
     // earlier run must never outlive this boot's decision — with it, every
@@ -353,10 +370,10 @@ describe('early stream at bootstrap', () => {
             store.set('sj-pro-foreign-port', '21322');
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: true, apiKey: 'k', secretKey: 's', production: false,
+                autoStart: true, configured: true, credentialRevision: 'revision', production: false,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce({
-                running: true, healthy: true, port: 21322, simulation: true, version: '1.7.8', scheme: 'http',
+                running: true, healthy: true, port: 21322, simulation: true, version: EXPECTED_SERVER_VERSION, scheme: 'http',
             });
         });
         const runtime = await import('./runtime');
@@ -374,11 +391,11 @@ describe('early stream at bootstrap', () => {
         await boot(null, async () => {
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: true, apiKey: 'k', secretKey: 's', production: false, agentHarnessEnabled: true,
+                autoStart: true, configured: true, credentialRevision: 'revision', production: false, agentHarnessEnabled: true,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             // own orphan from the previous launch: Harness mismatch → restarted
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce({
-                running: true, healthy: true, port: 21322, simulation: true, version: '1.7.8', scheme: 'http',
+                running: true, healthy: true, port: 21322, simulation: true, version: EXPECTED_SERVER_VERSION, scheme: 'http',
             });
             vi.mocked(tauri.serverStart).mockReset().mockResolvedValueOnce({
                 ok: true, output: '', port: 21322, attached: false, portChanged: false,
@@ -396,7 +413,7 @@ describe('early stream at bootstrap', () => {
             store.set('sj-pro-foreign-port', '21322');
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: false, apiKey: 'k', secretKey: 's', production: false,
+                autoStart: false, configured: true, credentialRevision: 'revision', production: false,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce(prodElsewhere);
             vi.mocked(tauri.ownsServer).mockResolvedValueOnce(false);
@@ -413,12 +430,12 @@ describe('early stream at bootstrap', () => {
     // on 8080 while Agent Harness is on
     it('customer: CLI server on 8080 + Harness on → this App starts its own on 21322 and says so', async () => {
         m.navType = 'navigate';
-        const cli = { running: true, healthy: true, port: 8080, simulation: true, version: '1.7.8', scheme: 'http' as const };
+        const cli = { running: true, healthy: true, port: 8080, simulation: true, version: EXPECTED_SERVER_VERSION, scheme: 'http' as const };
         const text = ':8080 上另一個程式啟動的伺服器（已開啟 Agent Harness，本 App 只使用自己啟動的伺服器），未連上，也不會停止它';
         await boot(null, async () => {
             const tauri = await import('./tauri');
             vi.mocked(tauri.loadDesktopSettings).mockResolvedValueOnce({
-                autoStart: true, apiKey: 'k', secretKey: 's', production: false, agentHarnessEnabled: true,
+                autoStart: true, configured: true, credentialRevision: 'revision', production: false, agentHarnessEnabled: true,
             } as Awaited<ReturnType<typeof tauri.loadDesktopSettings>>);
             vi.mocked(tauri.serverStatus).mockResolvedValueOnce(cli);
             vi.mocked(tauri.ownsServer).mockResolvedValue(false);

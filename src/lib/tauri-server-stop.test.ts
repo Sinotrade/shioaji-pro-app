@@ -117,6 +117,24 @@ describe('real desktop serverStop orchestration', () => {
         expect(serverRunning).toBe(true);
     });
 
+    it('account changes stop Agents and continue while preserving an external server', async () => {
+        storage.clear();
+        const result = await serverStop({ stopAgents: true, ownedOnly: true });
+        expect(result.ok).toBe(true);
+        expect(agentRunning).toBe(false);
+        expect(serverRunning).toBe(true);
+        expect(native.invoke.mock.calls.some(call => call[0] === 'kill_shioaji')).toBe(false);
+        expect(native.execute).not.toHaveBeenCalled();
+    });
+
+    it('account changes continue when no server or spawn record exists', async () => {
+        storage.clear(); serverRunning = false;
+        const result = await serverStop({ stopAgents: true, ownedOnly: true });
+        expect(result.ok).toBe(true);
+        expect(agentRunning).toBe(false);
+        expect(native.invoke.mock.calls.some(call => call[0] === 'kill_shioaji')).toBe(false);
+    });
+
     it('#285: a spawn record whose process exited proves nothing about the server there now', async () => {
         agentRunning = false;
         const implementation = native.invoke.getMockImplementation()!;

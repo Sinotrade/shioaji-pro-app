@@ -119,6 +119,8 @@ export function customTokens(t: CustomTheme, convention: Convention): Record<str
         wickDown: dark ? mix(down, mutedFg, 0.5) : mix(down, t.panel, 0.2),
         flat: mutedFg,
         success: t.green,
+        successDim: alpha(t.green, dim),
         danger: t.red,
+        dangerDim: alpha(t.red, dim),
     };
 }

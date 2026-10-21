@@ -30,9 +30,9 @@ export const empty = style({
 export const error = style({
     padding: '8px 10px',
     fontSize: '0.72rem',
-    color: vars.color.down,
+    color: vars.color.danger,
     background: vars.color.panelRaised,
-    border: `1px solid ${vars.color.down}`,
+    border: `1px solid ${vars.color.danger}`,
     borderRadius: vars.radius.sm,
 });
 
@@ -54,13 +54,16 @@ export const envBadge = styleVariants({
         color: vars.color.mutedForeground,
         border: `1px solid ${vars.color.border}`,
     },
+    // 正式環境固定用 danger 紅實心徽章（與頂列、帳號列表一致），
+    // 不用漲跌色：down 在台股配色是綠、國際配色是紅，會隨配色翻轉
     prod: {
         fontSize: '0.66rem',
-        fontWeight: 600,
+        fontWeight: 700,
         padding: '2px 8px',
         borderRadius: vars.radius.sm,
-        color: vars.color.down,
-        border: `1px solid ${vars.color.down}`,
+        color: '#fff',
+        background: vars.color.danger,
+        border: `1px solid ${vars.color.danger}`,
     },
 });
 

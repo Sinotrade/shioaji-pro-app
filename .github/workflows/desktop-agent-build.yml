@@ -189,11 +189,69 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
-          if (-not (Test-Path $makensis)) {
-            choco install nsis -y --no-progress | Out-Null
+          # win25-vs2026/20261018.275 (image 20261018.275.1) does not include NSIS.
+          $nsisVersion = '3.11'
+          $chocoVersion = '3.11.0'
+          $nsisPaths = @(
+            "$env:ProgramFiles\NSIS\makensis.exe"
+            "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          )
+          $findMakensis = {
+            $nsisPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
           }
-          if (-not (Test-Path $makensis)) { throw "makensis not found" }
+          $makensis = & $findMakensis
+          $installFailures = @()
+          if (-not $makensis) {
+            for ($attempt = 1; $attempt -le 4; $attempt++) {
+              $log = Join-Path $env:RUNNER_TEMP "nsis-choco-$attempt.log"
+              $nativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+              try {
+                # Handle native failures ourselves so retries and ZIP fallback can run.
+                $PSNativeCommandUseErrorActionPreference = $false
+                choco install nsis --version=$chocoVersion -y --no-progress 2>&1 | Tee-Object -FilePath $log
+                $chocoExitCode = $LASTEXITCODE
+                if ($chocoExitCode -notin @(0, 1641, 3010)) {
+                  $reason = (Get-Content -LiteralPath $log -Tail 20) -join "`n"
+                  throw "choco exited with code ${chocoExitCode}: $reason"
+                }
+                $makensis = & $findMakensis
+                if (-not $makensis) {
+                  throw "choco exited with code $chocoExitCode but makensis.exe is missing from: $($nsisPaths -join ', ')"
+                }
+                break
+              } catch {
+                $failure = "Chocolatey attempt $attempt/4 failed: $($_.Exception.Message); log: $log"
+                $installFailures += $failure
+                Write-Warning $failure
+                if ($attempt -lt 4) { Start-Sleep -Seconds (5 * [Math]::Pow(2, $attempt - 1)) }
+              } finally {
+                $PSNativeCommandUseErrorActionPreference = $nativeErrorPreference
+              }
+            }
+          }
+          if (-not $makensis) {
+            $zipUrl = "https://downloads.sourceforge.net/project/nsis/NSIS%203/$nsisVersion/nsis-$nsisVersion.zip"
+            # SHA256 from https://nsis-dev.github.io/release-data/versions.json (3.11 ZIP).
+            $zipSha256 = 'c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1'
+            $zip = Join-Path $env:RUNNER_TEMP "nsis-$nsisVersion.zip"
+            $portable = Join-Path $env:RUNNER_TEMP 'nsis-portable'
+            try {
+              Write-Host "Chocolatey exhausted; downloading official NSIS ZIP: $zipUrl"
+              Invoke-WebRequest -Uri $zipUrl -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5 -TimeoutSec 120
+              $actualSha256 = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+              if ($actualSha256 -ne $zipSha256) {
+                throw "SHA256 mismatch: expected $zipSha256, got $actualSha256"
+              }
+              Expand-Archive -LiteralPath $zip -DestinationPath $portable -Force
+              $makensis = Join-Path $portable "nsis-$nsisVersion\makensis.exe"
+              if (-not (Test-Path -LiteralPath $makensis -PathType Leaf)) {
+                throw "verified ZIP did not contain $makensis"
+              }
+            } catch {
+              throw "NSIS setup failed. Chocolatey: $($installFailures -join ' | '). Official ZIP fallback ($zipUrl): $($_.Exception.Message)"
+            }
+          }
+          Write-Host "Using makensis: $makensis"
           $base = Join-Path $env:RUNNER_TEMP "nsis hook's test"
           $inst = Join-Path $base 'inst'
           $other = Join-Path $base 'other'

@@ -75,8 +75,10 @@ function startTradingStateOnce() {
     startTradingState();
 }
 
-async function matchesServerIdentity(status: ServerStatus | null, settings: DesktopSettings): Promise<boolean> {
+async function matchesServerIdentity(status: ServerStatus | null, settings: DesktopSettings, own?: boolean): Promise<boolean> {
     if (!status?.running) return false;
+    const { getStoredSpawnKeyHash, shouldForceRespawn } = await import('./spawn-keys');
+    if ((own ?? await ownsServer(status)) && shouldForceRespawn(getStoredSpawnKeyHash(), settings.credentialRevision)) return false;
     // An HTTPS listener proves its cert exists. Only an HTTP listener needs
     // the file check before deciding the setting is incompatible.
     const scheme = status.scheme ?? 'http';
@@ -262,7 +264,7 @@ async function run() {
             settingsLoaded = true;
             expectedSettings = settings;
             const autoStart =
-                settings.autoStart && !!settings.apiKey && !!settings.secretKey;
+                settings.autoStart && settings.configured;
             openBootTiming(autoStart);
             if (autoStart) {
                 markStage('probe');
@@ -272,8 +274,8 @@ async function run() {
                 // another program's server: also the same environment and
                 // account as this App's own server had (#285)
                 const foreign = status?.running ? await foreignServerCheck(status, settings) : null;
-                const matches = !foreign && await matchesServerIdentity(status, settings);
                 const own = await ownsServer(status);
+                const matches = !foreign && await matchesServerIdentity(status, settings, own);
                 // another program's server that is not used: nothing on this
                 // page reads it, from now on (#285)
                 decideForeignBlock(status, own, matches);
@@ -399,7 +401,7 @@ async function run() {
                 const status = await serverStatus();
                 const foreign = status?.running ? await foreignServerCheck(status, settings) : null;
                 const own = await ownsServer(status);
-                const adopt = !!status?.healthy && !foreign && await matchesServerIdentity(status, settings) &&
+                const adopt = !!status?.healthy && !foreign && await matchesServerIdentity(status, settings, own) &&
                     await serverCaReady(status, settings);
                 decideForeignBlock(status, own, adopt);
                 if (adopt && status) {

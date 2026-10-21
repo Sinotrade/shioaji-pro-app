@@ -9,6 +9,7 @@ import { beginWindowFlatten, endWindowFlatten, getBackgroundPrograms, keepWindow
     resumeBackgroundProgram } from '../execution/background';
 import { bracketViews } from '../execution/bracket-contract';
 import { currentProtectionEnv } from '../protection-env';
+import { secretMoney } from '../privacy';
 import { notify } from '../trade';
 import { getDisplayTriggers, getExits, onTimedFlatten, removeTriggerStrict, setTriggerGroup, setTriggerPaused, type TriggerOrder } from '../trigger-engine';
 import { executeFlatten, inScope, quantityText, type FlattenResult, type FlattenScope } from './flatten';
@@ -55,7 +56,8 @@ export function flattenSummary(r: FlattenResult): string {
     const parts = [
         `停止條件單 ${r.stopped} 張`,
         `刪除委託 ${r.cancelled} 筆`,
-        r.sent.length ? `送出平倉 ${r.sent.map(s => `${s.code} ${s.action === 'Buy' ? '買' : '賣'} ${quantityText(s.market, s.quantity)}`).join('、')}` : '沒有需要平倉的部位',
+        // 平倉量／剩餘量＝持倉數量：遮金額時不露，畫面渲染時可重遮（#268）
+        r.sent.length ? `送出平倉 ${r.sent.map(s => `${s.code} ${s.action === 'Buy' ? '買' : '賣'} ${secretMoney(quantityText(s.market, s.quantity))}`).join('、')}` : '沒有需要平倉的部位',
     ];
     const problems = [
         ...remainingText(r),
@@ -67,7 +69,7 @@ export function flattenSummary(r: FlattenResult): string {
 export function remainingText(r: Pick<FlattenResult, 'remaining'>): string[] {
     return (r.remaining ?? []).map(o => o.unconfirmed
         ? `${o.code} 平倉結果未能確認，請到持倉核對`
-        : `${o.code} 仍有 ${o.action === 'Sell' ? '多單' : '空單'} ${quantityText(o.market, o.quantity)} 未平倉`);
+        : `${o.code} 仍有 ${o.action === 'Sell' ? '多單' : '空單'} ${secretMoney(quantityText(o.market, o.quantity))} 未平倉`);
 }
 
 export const IN_FLIGHT_WAIT_MS = 10_000;

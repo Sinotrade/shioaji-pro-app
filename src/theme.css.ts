@@ -113,8 +113,12 @@ function makeTokens(p: Palette, convention: 'tw' | 'intl') {
             wickUp: `color-mix(in srgb, ${up} ${p.wickShare}, ${p.wickBase})`,
             wickDown: `color-mix(in srgb, ${down} ${p.wickShare}, ${p.wickBase})`,
             flat: p.mutedForeground,
+            // 狀態色（成功／錯誤／正式環境等）固定綠／紅，不隨漲跌配色翻轉；
+            // 價格、買賣方向才用 up／down
             success: p.green,
+            successDim: p.greenDim,
             danger: p.red,
+            dangerDim: p.redDim,
         },
         space: {
             xs: '0.25rem',

@@ -1,8 +1,9 @@
-// src/lib/index-volume.test.ts：指數預估金額相對前一交易日（量增／量縮）
+// src/lib/index-volume.test.ts：指數預估金額相對前一交易日（+22%／-17%）
 
 import { describe, expect, it } from 'vitest';
 import {
     PREVIOUS_SESSION_LOOKBACK_DAYS,
+    fullDayAmount,
     isTransientError,
     previousSessionAmount,
     retryAfter,
@@ -53,16 +54,17 @@ describe('previousSessionAmount', () => {
 });
 
 describe('volumeChangeOf', () => {
-    it('預估高於前一交易日顯示量增', () => {
-        expect(volumeChangeOf(1220, 1000)).toEqual({ kind: 'up', text: '量增22%' });
+    it('預估高於前一交易日顯示 +%', () => {
+        expect(volumeChangeOf(1220, 1000)).toBe('+22%');
     });
 
-    it('預估低於前一交易日顯示量縮', () => {
-        expect(volumeChangeOf(830, 1000)).toEqual({ kind: 'down', text: '量縮17%' });
+    it('預估低於前一交易日顯示 -%', () => {
+        expect(volumeChangeOf(830, 1000)).toBe('-17%');
     });
 
-    it('四捨五入後為 0% 顯示量平', () => {
-        expect(volumeChangeOf(1004, 1000)).toEqual({ kind: 'flat', text: '量平' });
+    it('四捨五入後為 0% 顯示 0%，略低於持平（四捨五入出 -0）也不會顯示 -0%', () => {
+        expect(volumeChangeOf(1004, 1000)).toBe('0%');
+        expect(volumeChangeOf(996, 1000)).toBe('0%');
     });
 
     it('任一邊缺值、為 0 或不是有限數時回傳 undefined', () => {
@@ -71,6 +73,50 @@ describe('volumeChangeOf', () => {
         expect(volumeChangeOf(0, 1000)).toBeUndefined();
         expect(volumeChangeOf(1000, 0)).toBeUndefined();
         expect(volumeChangeOf(Number.NaN, 1000)).toBeUndefined();
+    });
+});
+
+describe('fullDayAmount：收盤後用實際量補預估量', () => {
+    const at = (time: string | undefined, date = '2026-10-19') => ({ date, time });
+
+    it('有預估量就用預估量，不是實際量', () => {
+        expect(fullDayAmount(9_292e8, 6_441e8, at('11:36:10'), '2026-10-19')).toEqual({ value: 9_292e8, actual: false });
+        expect(fullDayAmount(9_292e8, 8_251e8, at('13:33:00'), '2026-10-19')).toEqual({ value: 9_292e8, actual: false });
+    });
+
+    it('收盤後（13:33 最終那筆起）沒有預估量，拿全日成交金額當實際量', () => {
+        for (const estimate of [undefined, 0, Number.NaN]) {
+            expect(fullDayAmount(estimate, 8_251e8, at('13:33:00'), '2026-10-19')).toEqual({ value: 8_251e8, actual: true });
+        }
+        expect(fullDayAmount(undefined, 8_251e8, at('13:33:00.000000'), '2026-10-19').actual).toBe(true);
+    });
+
+    it('13:25 到 13:33 之間不算：收盤集合競價的成交要到 13:33 那筆才含進金額（實測 13:30 那筆少約 470 億）', () => {
+        expect(fullDayAmount(undefined, 7_113e8, at('13:30:00'), '2026-10-19').value).toBeUndefined();
+        expect(fullDayAmount(undefined, 7_113e8, at('13:32:59'), '2026-10-19').value).toBeUndefined();
+        expect(fullDayAmount(undefined, 7_587e8, at('13:33:00'), '2026-10-19').actual).toBe(true);
+    });
+
+    it('盤前與盤中沒有預估量不補，累計一半的金額不拿去比昨日', () => {
+        expect(fullDayAmount(undefined, 6_441e8, at('11:36:10'), '2026-10-19')).toEqual({ value: undefined, actual: false });
+        expect(fullDayAmount(undefined, 6_441e8, at('13:29:59'), '2026-10-19').value).toBeUndefined();
+        expect(fullDayAmount(undefined, 6_441e8, at(undefined), '2026-10-19').value).toBeUndefined();
+    });
+
+    it('金額的交易日等於基準日才算：週五收盤那筆配週五基準（週末開著或重開）算收盤', () => {
+        expect(fullDayAmount(undefined, 8_251e8, at('13:33:00', '2026-10-16'), '2026-10-16').actual).toBe(true);
+        expect(fullDayAmount(undefined, 8_251e8, at('13:33:00', '2026-10-16T13:33:00'), '2026-10-16').actual).toBe(true);
+    });
+
+    it('今天的報價配上前一交易日的快照金額不算，免得拿昨天比昨天；盤中的快照也不算', () => {
+        expect(fullDayAmount(undefined, 8_251e8, at('13:33:00', '2026-10-16T13:33:00'), '2026-10-19').value).toBeUndefined();
+        expect(fullDayAmount(undefined, 6_441e8, at('11:00:00', '2026-10-19T11:00:00'), '2026-10-19').value).toBeUndefined();
+    });
+
+    it('金額缺值、0、NaN 時不補', () => {
+        for (const amount of [undefined, 0, Number.NaN]) {
+            expect(fullDayAmount(undefined, amount, at('13:33:00'), '2026-10-19').value).toBeUndefined();
+        }
     });
 });
 

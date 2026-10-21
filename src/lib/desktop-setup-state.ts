@@ -1,9 +1,8 @@
 // src/lib/desktop-setup-state.ts — the ONE non-secret fact child windows
-// need from settings.json: whether first-run setup is done. The main window
-// derives it from the credentials it loads/saves and publishes only this
+// need from native credential status: whether first-run setup is done. The
+// main window receives non-secret metadata and publishes only this
 // boolean through localStorage (same origin for every app WebView, like the
-// API port and the Agent Harness flag). The keys themselves never leave the
-// main window.
+// API port and the Agent Harness flag). Stored secrets stay in Rust.
 
 const STORAGE_KEY = 'sj-desktop-configured';
 const CHANGE_EVENT = 'sj-desktop-configured-changed';

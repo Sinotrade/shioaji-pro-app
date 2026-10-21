@@ -5,8 +5,7 @@
 // against a server that was never even asked to start. Gate on that state
 // with a full-screen setup screen instead.
 //
-// Child windows (popouts, tray panel): never read settings.json — it holds
-// the API key, secret key and CA password, and child windows have no store
+// Child windows (popouts, tray panel) have no credential-command or store
 // permission. They only need "is setup done", which the main window publishes
 // as a non-secret flag (desktop-setup-state). Web builds are always backed by
 // a running server, so no gate applies there.
@@ -38,7 +37,7 @@ function MainWindowGate() {
         let cancelled = false;
         loadDesktopSettings()
             .then((s) => {
-                if (!cancelled) setState(!s.apiKey || !s.secretKey ? 'setup' : 'app');
+                if (!cancelled) setState(!s.configured ? 'setup' : 'app');
             })
             .catch(() => {
                 // Never fall through to first-run setup here: a transient read

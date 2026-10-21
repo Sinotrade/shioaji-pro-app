@@ -22,7 +22,7 @@ export interface HarnessRecoveryStart {
 
 export interface HarnessRecoveryDeps<R extends HarnessRecoveryStart> {
     nativeOwned: () => Promise<boolean>;
-    loadSettings: () => Promise<{ apiKey: string; secretKey: string }>;
+    loadSettings: () => Promise<{ configured: boolean }>;
     // must restart through the native spawn path with the harness flag on —
     // the serverStart harnessMismatch branch stops the unowned daemon only
     // with full is-shioaji ownership proof (fail-closed for foreign servers)
@@ -37,7 +37,7 @@ export async function recoverHarnessOwnership<R extends HarnessRecoveryStart>(
 ): Promise<R | null> {
     if (await deps.nativeOwned()) return null;
     const settings = await deps.loadSettings();
-    if (!settings.apiKey || !settings.secretKey) {
+    if (!settings.configured) {
         throw new Error(
             'Agent Harness 需要本 App 啟動的伺服器，但尚未設定 API 金鑰，' +
                 '無法自動重啟 — 請先到「設定 → 連線」完成登入',

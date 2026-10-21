@@ -44,6 +44,9 @@ vi.mock('../lib/shioaji', () => ({
     fetchSnapshots,
 }));
 // 重抓後以 store 裡的快照判斷是否已翻日
+// 產業標籤點了呼叫 focusSector（產業全景監聽它下鑽）
+const focusSector = vi.hoisted(() => vi.fn((..._args: unknown[]) => undefined));
+vi.mock('../lib/sector-sync', () => ({ focusSector }));
 const getMarketSnapshot = vi.hoisted(() => vi.fn((..._args: unknown[]): { datetime: string } | undefined => undefined));
 vi.mock('../lib/market-snapshot-store', () => ({ getMarketSnapshot }));
 
@@ -238,6 +241,16 @@ describe('日內區間軌（有漲跌停且開高低收到齊的商品）', () =
         expect(texts(render({ ...STOCK, category: '20' }).root)).not.toContain('其他');
         const futures = texts(render({ ...STOCK, code: 'TXFR1', security_type: 'FUT', category: '24' }).root);
         expect(futures).not.toContain('半導體');
+    });
+
+    it('產業標籤可點：和排行榜一樣讓產業全景下鑽到這檔的產業', () => {
+        display = { quote: { tick }, snapshot: undefined, book };
+        const tag = render({ ...STOCK, category: '24' }).root.find(hasClass(styles.sectorTag));
+        expect(tag.type).toBe('button');
+        expect(tag.props.title).toBe('跳到此類股熱力圖');
+        focusSector.mockClear();
+        act(() => tag.props.onClick());
+        expect(focusSector).toHaveBeenCalledWith('24');
     });
 
     it('指數期（台指期）：數字列兩端換成距低、距高點數；個股期照個股寫漲跌停', () => {

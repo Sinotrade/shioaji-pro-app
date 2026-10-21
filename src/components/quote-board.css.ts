@@ -232,8 +232,8 @@ export const lowPriority = style({});
 // 次要（漲停、平盤、跌停、預估量）：lean 只留上漲、下跌、較昨日
 export const secondary = style({});
 
-// 量增／量縮標籤：統計區收起時（compact）留在價格旁邊。
-// 中性色：量縮不等於下跌，紅綠只留給價格方向
+// 量能標籤（量-12%）：統計區收起時（compact）留在價格旁邊。
+// 中性色：量能減少不等於下跌，紅綠只留給價格方向
 export const leadTag = style({
     display: 'none',
     flexShrink: 0,
@@ -244,7 +244,7 @@ export const leadTag = style({
     whiteSpace: 'nowrap',
 });
 
-// compact 的家數比例條：短短一截跟在量增縮標籤後面，意思綁在內容上，不再橫跨整個看板
+// compact 的家數比例條：短短一截跟在量能標籤後面，意思綁在內容上，不再橫跨整個看板
 export const breadthMini = style({
     display: 'none',
     alignSelf: 'center',
@@ -469,6 +469,12 @@ export const sectorTag = style({
     borderRadius: vars.radius.sm,
     padding: '1px 6px',
     whiteSpace: 'nowrap',
+    // 可點（跳到產業全景）：按鈕預設的外距與行高會改變版面，歸零沿用原本的尺寸
+    margin: 0,
+    lineHeight: 'inherit',
+    cursor: 'pointer',
+    ':hover': { borderColor: vars.color.accent },
+    ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: 1 },
 });
 
 const RAIL = ['rail', 'railMid', 'railLow'];

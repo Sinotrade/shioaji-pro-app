@@ -719,7 +719,7 @@ export function GridTicket({
             )}
 
             <span className={styles.costRow}>
-                <span className={panel.dirText.up}>
+                <span className={panel.statusText.err}>
                     ⚠ 鋪單會一次送出多筆委託；動態跟隨會自動撤補，請確認風控上限並自行承擔風險
                 </span>
             </span>

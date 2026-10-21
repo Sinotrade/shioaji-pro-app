@@ -26,7 +26,8 @@ import { ConditionalBracketCards } from './conditional-panel';
 import { backgroundOwnerForNew, createBackgroundBracket } from '../lib/execution/background';
 import { backgroundBracketEligible, bracketRequestFor } from '../lib/execution/background-bracket';
 import { usePickedPrice } from '../lib/price-sync';
-import { maskAccountId, maskName, usePrivacyMode } from '../lib/privacy';
+import { maskAccountId, maskName, secretAccount, usePrivacyMode } from '../lib/privacy';
+import { useRevealText } from '../lib/privacy-text';
 import {
     selectAccount,
     useAccounts,
@@ -506,6 +507,7 @@ export function OrderTicket({
     const odd = !isFutures && isOddLot(orderLot);
     const { accounts, selectedStock, selectedFutures } = useAccounts();
     const priv = usePrivacyMode();
+    const reveal = useRevealText();
     const activeAccount = isFutures ? selectedFutures : selectedStock;
     // any selection change in this window (this ticket's menu or another
     // panel's) disarms the ticket so a pending second click can't route
@@ -640,7 +642,8 @@ export function OrderTicket({
             const unknown: string[] = [];
             // 逐戶送出（sequential — deterministic order, per-order risk）
             for (const { account, qty: q } of allocation) {
-                const label = `${account.broker_id}-${maskAccountId(account.account_id, priv)}`;
+                // 送出期間才開隱私也要遮：帳號標記成渲染時重遮（#268）
+                const label = `${account.broker_id}-${secretAccount(account.account_id)}`;
                 if (!isContextCurrent()) {
                     fail.push(`${label}: ${ORDER_CONTEXT_CHANGED_MESSAGE}`);
                     break;
@@ -1486,10 +1489,10 @@ export function OrderTicket({
             {feedback && (
                 <span
                     className={`${styles.feedback} ${
-                        panel.dirText[feedback.kind === 'ok' ? 'down' : 'up']
+                        panel.statusText[feedback.kind]
                     }`}
                 >
-                    {feedback.text}
+                    {reveal(feedback.text)}
                 </span>
             )}
             {/* after the submit button: ended / handed-over cards never push

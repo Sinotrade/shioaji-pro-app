@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { vars } from '../theme.css';
 import { CUSTOM_BASES, CUSTOM_PRESETS, customTokens, isCustomTheme, mix } from './custom-theme';
 
 describe('custom theme', () => {
@@ -32,5 +33,25 @@ describe('custom theme', () => {
         // 底色不是白色時也真的往底色混
         const tinted = customTokens({ ...CUSTOM_BASES.light, green: '#0a8a66', panel: '#f5f5f5' }, 'tw');
         expect(tinted.wickDown).toBe(mix('#0a8a66', '#f5f5f5', 0.2));
+    });
+
+    it('covers every theme color token so custom themes never fall back to the base palette', () => {
+        const t = CUSTOM_PRESETS[0]!.theme;
+        for (const convention of ['tw', 'intl'] as const) {
+            // amber 不在自訂六色內，刻意沿用基底主題
+            const expected = Object.keys(vars.color).filter(k => k !== 'amber').sort();
+            expect(Object.keys(customTokens(t, convention)).sort()).toEqual(expected);
+        }
+    });
+
+    it('keeps status colors fixed regardless of the price-color convention', () => {
+        const t = CUSTOM_PRESETS[0]!.theme;
+        for (const convention of ['tw', 'intl'] as const) {
+            const k = customTokens(t, convention);
+            expect(k.success).toBe(t.green);
+            expect(k.danger).toBe(t.red);
+            expect(k.successDim).toMatch(/^rgba\(/);
+            expect(k.dangerDim).toMatch(/^rgba\(/);
+        }
     });
 });
