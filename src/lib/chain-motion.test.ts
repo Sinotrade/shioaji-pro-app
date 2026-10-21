@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SESSION_SLOTS, type GroupFlow } from './chain-flow';
 import {
     asinhScale,
+    comparesRanks,
     divergingScale,
     heatCell,
     heatFull,
@@ -11,7 +12,9 @@ import {
     rankOrder,
     rankValue,
     rankMoves,
+    rankTurnover,
     riverWidth,
+    windowSum,
     rotationExtent,
     rotationPoint,
     rotationTrail,
@@ -46,10 +49,13 @@ function group(minutes: [slot: number, turnover: number, net: number][]): GroupF
 }
 
 describe('rank', () => {
-    it('reads cumulative or five-minute flow, zero before the first bar', () => {
-        const g = group([[40, 100, 30], [41, 100, -10]]);
-        expect(rankValue(g, 41, 'cum')).toBe(20);
-        expect(rankValue(g, 41, 'flow5')).toBe(7);
+    it('reads cumulative or windowed flow, zero before the first bar', () => {
+        const g = group([[30, 100, 5], [40, 100, 30], [41, 100, -10]]);
+        expect(rankValue(g, 41, 'cum')).toBe(25);
+        expect(rankValue(g, 41, '5')).toBe(20);
+        expect(rankValue(g, 41, '15')).toBe(25);
+        expect(rankValue(g, 41, '30')).toBe(25);
+        expect(rankValue(g, 50, '5')).toBe(0);
         expect(rankValue(g, null, 'cum')).toBe(0);
     });
 
@@ -207,5 +213,33 @@ describe('river width', () => {
         expect(riverWidth(0, 100)).toBe(3);
         expect(riverWidth(50, 0)).toBe(3);
         expect(riverWidth(500, 100)).toBe(14);
+    });
+});
+
+describe('rank windows', () => {
+    it('sums net and turnover over the last N minutes or the whole session', () => {
+        const series = new Float64Array(SESSION_SLOTS);
+        for (let i = 0; i <= 40; i += 1) series[i] = 1;
+        expect(windowSum(series, 40, '5')).toBe(5);
+        expect(windowSum(series, 40, '30')).toBe(30);
+        expect(windowSum(series, 40, 'cum')).toBe(41);
+        expect(windowSum(series, 3, '15')).toBe(4);
+    });
+
+    it('uses session turnover for the cumulative ranking', () => {
+        const g = group([[40, 100, 10], [41, 50, -3]]);
+        expect(rankTurnover(g, 41, '5')).toBe(150);
+        expect(rankTurnover(g, 41, 'cum')).toBe(g.total);
+        expect(rankTurnover(g, null, '5')).toBe(0);
+    });
+});
+
+describe('rank change baseline', () => {
+    it('compares ranks only across exactly one new minute', () => {
+        expect(comparesRanks(40, 41)).toBe(true);
+        expect(comparesRanks(40, 40)).toBe(false);
+        expect(comparesRanks(30, 41)).toBe(false);
+        expect(comparesRanks(null, 41)).toBe(false);
+        expect(comparesRanks(40, null)).toBe(false);
     });
 });

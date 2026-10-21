@@ -17,7 +17,7 @@ import { useChainMapData } from '../hooks/use-chain-map-data';
 import { groupFlow, SESSION_SLOTS, shareShift } from '../lib/chain-flow';
 import { chainFlowBook, chainFlowStatus, connectChainFlow, useChainFlowRevision, type FeedMember } from '../lib/chain-flow-feed';
 import { memberCodes, stageMembers, stockContract, themeCodes, tierRank } from '../lib/chain-map';
-import type { RankMetric } from '../lib/chain-motion';
+import { RANK_METRICS, type RankMetric } from '../lib/chain-motion';
 import { entityIndex, entityName, STALE_TEXT, twCodeOf } from '../lib/company-data';
 import type { ChainTier, Theme } from '../lib/company-data/types';
 import { themeKey as themeKeyOf, useThemeSettings } from '../lib/theme-store';
@@ -64,7 +64,7 @@ export function ChainMap({
     });
     const [kind, setKindState] = useState<KindFilter>(() => readPref(KIND_KEY, ['all', 'chain', 'theme'] as const, 'all'));
     const [view, setViewState] = useState<ViewMode>(() => readPref(VIEW_KEY, ['rotation', 'rank', 'heat'] as const, 'rank'));
-    const [metric, setMetricState] = useState<RankMetric>(() => readPref(METRIC_KEY, ['cum', 'flow5'] as const, 'cum'));
+    const [metric, setMetricState] = useState<RankMetric>(() => readPref(METRIC_KEY, RANK_METRICS, 'cum'));
     const [focus, setFocus] = useState<string | null>(null);
     const [heatWindow, setHeatWindowState] = useState<'5' | '10'>(() => readPref(HEAT_WINDOW_KEY, ['5', '10'] as const, '10'));
 
@@ -247,15 +247,17 @@ export function ChainMap({
                 />
                 {view === 'rank' && (
                     <Segment
-                        label='排行依據'
+                        label='排行區間'
                         value={metric}
                         onChange={(v) => {
                             setMetricState(v);
                             writePref(METRIC_KEY, v);
                         }}
                         options={[
+                            { value: '5', label: '近 5 分', title: '最近 5 根 1 分 K 的淨流入（估算）' },
+                            { value: '15', label: '近 15 分', title: '最近 15 根 1 分 K 的淨流入（估算）' },
+                            { value: '30', label: '近 30 分', title: '最近 30 根 1 分 K 的淨流入（估算）' },
                             { value: 'cum', label: '累計', title: '開啟面板後收到的 1 分 K 累計淨流入（估算）' },
-                            { value: 'flow5', label: '近 5 分', title: '最近 5 根 1 分 K 的淨流入（估算）' },
                         ]}
                     />
                 )}
@@ -311,6 +313,8 @@ export function ChainMap({
                         reducedMotion={reducedMotion}
                         paused={paused}
                         onSelect={setThemeId}
+                        nameOf={nameOf}
+                        onPick={pick}
                     />
                 )}
                 {view === 'heat' && (

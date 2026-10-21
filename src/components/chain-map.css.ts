@@ -615,16 +615,26 @@ const rankRowBase = style({
     alignItems: 'center',
     columnGap: '8px',
     padding: `0 ${vars.space.sm}`,
+    border: 0,
+    margin: 0,
+    font: 'inherit',
+    color: 'inherit',
+    textAlign: 'left',
+    background: 'transparent',
     cursor: 'pointer',
     borderRadius: vars.radius.sm,
     transition: glide,
     willChange: 'transform',
-    selectors: { '&:hover': { background: tint(vars.color.panelRaised, 80) } },
+    selectors: {
+        '&:hover': { background: tint(vars.color.panelRaised, 80), opacity: 1 },
+        '&:focus-visible': { outline: `1px solid ${vars.color.accent}`, outlineOffset: '-1px', opacity: 1 },
+    },
     ...reduce,
 });
+// the selected lane stays at full strength; the others step back a little
 export const rankRow = styleVariants({
     on: [rankRowBase, { background: vars.color.panelRaised, boxShadow: `inset 2px 0 0 ${vars.color.accent}` }],
-    off: [rankRowBase],
+    off: [rankRowBase, { opacity: 0.68 }],
 });
 export const rankName = style({ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 });
 export const rankTrack = style({ position: 'relative', height: '20px', minWidth: 0 });
@@ -912,3 +922,98 @@ export const heatBar = styleVariants({
     out: [heatBarBase, { background: `color-mix(in srgb, ${vars.color.down} 80%, ${vars.color.foreground})` }],
     none: [heatBarBase, { height: '2px', background: tint(vars.color.foreground, 20) }],
 });
+
+// ---- 排行明細卡 ----
+
+export const rankLayout = style({ flex: 1, minHeight: 0, display: 'flex', gap: vars.space.sm });
+export const rankMain = style({ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' });
+export const card = style({
+    width: '264px',
+    flexShrink: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    padding: '10px 12px',
+    margin: `6px ${vars.space.sm} 6px 0`,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.md,
+    background: vars.color.panelRaised,
+    overflowY: 'auto',
+    minHeight: 0,
+});
+export const cardHead = style({ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 });
+export const cardTitle = style({ fontSize: '0.86rem', fontWeight: 700, color: vars.color.foreground, ...ellipsis, flex: 1, minWidth: 0 });
+export const cardBadge = styleVariants(
+    perState((c) => ({
+        flexShrink: 0,
+        fontSize: '0.6rem',
+        fontWeight: 700,
+        padding: '2px 7px',
+        borderRadius: '999px',
+        color: c,
+        background: tint(c, 14),
+        boxShadow: `inset 0 0 0 1px ${tint(c, 40)}`,
+    })),
+);
+export const cardStats = style({ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '6px' });
+export const cardStat = style({ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0 });
+export const cardStatValue = style({ ...mono, fontSize: '0.74rem', fontWeight: 650, color: vars.color.foreground, whiteSpace: 'nowrap' });
+export const cardFlow = style({ display: 'flex', flexDirection: 'column', gap: '1px' });
+export const cardFlowValue = style({ ...mono, fontSize: '1.3rem', fontWeight: 700, lineHeight: 1.2 });
+export const cardChart = style({ position: 'relative', height: '72px' });
+export const cardSvg = style({ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' });
+export const cardShade = style({ fill: tint(vars.color.mutedForeground, 8) });
+export const cardZero = style({ stroke: tint(vars.color.mutedForeground, 45), strokeWidth: 1, strokeDasharray: '2 3' });
+export const cardArea = styleVariants({
+    up: { fill: tint(vars.color.up, 14) },
+    down: { fill: tint(vars.color.down, 14) },
+});
+export const cardLine = styleVariants({
+    up: { fill: 'none', stroke: vars.color.up, strokeWidth: 1.6 },
+    down: { fill: 'none', stroke: vars.color.down, strokeWidth: 1.6 },
+});
+const endPulse = keyframes({
+    '0%': { boxShadow: '0 0 0 0 var(--end-glow)' },
+    '70%': { boxShadow: '0 0 0 7px transparent' },
+    '100%': { boxShadow: '0 0 0 0 transparent' },
+});
+const endBase = style({
+    position: 'absolute',
+    width: '7px',
+    height: '7px',
+    margin: '-3.5px 0 0 -3.5px',
+    borderRadius: '50%',
+    animation: `${endPulse} 1.8s ease-out infinite`,
+    ...reduce,
+});
+export const cardEnd = styleVariants({
+    up: [endBase, { background: vars.color.up, vars: { '--end-glow': tint(vars.color.up, 60) }, filter: `drop-shadow(0 0 4px ${vars.color.up})` }],
+    down: [endBase, { background: vars.color.down, vars: { '--end-glow': tint(vars.color.down, 60) }, filter: `drop-shadow(0 0 4px ${vars.color.down})` }],
+});
+export const cardCaption = style({ fontSize: '0.56rem', color: vars.color.mutedForeground, marginTop: '-4px' });
+export const cardEmpty = style({ fontSize: '0.62rem', color: vars.color.mutedForeground, padding: '4px 0' });
+export const cardList = style({ display: 'flex', flexDirection: 'column', gap: '1px' });
+export const cardListTitle = style({ fontSize: '0.6rem', fontWeight: 650, color: vars.color.mutedForeground, marginBottom: '2px' });
+export const cardMember = style({
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto 52px 64px',
+    alignItems: 'baseline',
+    gap: '6px',
+    padding: '2px 4px',
+    margin: '0 -4px',
+    border: 0,
+    borderRadius: vars.radius.sm,
+    background: 'transparent',
+    color: 'inherit',
+    font: 'inherit',
+    textAlign: 'left',
+    cursor: 'pointer',
+    selectors: {
+        '&:hover': { background: tint(vars.color.mutedForeground, 10) },
+        '&:focus-visible': { outline: `1px solid ${vars.color.accent}`, outlineOffset: '-1px' },
+    },
+});
+export const cardMemberName = style({ fontSize: '0.7rem', fontWeight: 600, color: vars.color.foreground, ...ellipsis });
+export const cardMemberCode = style({ ...mono, fontSize: '0.58rem', color: vars.color.mutedForeground });
+export const cardMemberPct = style({ ...mono, fontSize: '0.62rem', textAlign: 'right' });
+export const cardMemberNet = style({ ...mono, fontSize: '0.66rem', fontWeight: 650, textAlign: 'right', whiteSpace: 'nowrap' });

@@ -4,6 +4,7 @@ import {
     FlowBook,
     groupFlow,
     leaders,
+    memberFlows,
     minuteSlot,
     normDate,
     parseKbarEvent,
@@ -204,6 +205,23 @@ describe('groupFlow', () => {
             ['C', -1500],
             ['A', 500],
         ]);
+    });
+
+    it('member flows sum each code over the window and skip idle codes', () => {
+        const book = book20();
+        book.seed('C', { ref: 50, close: 50, totalAmount: 0, shares: null, slot: 0 });
+        for (let s = 20; s < 25; s += 1) book.addBar(bar('C', s, 49 - s / 10, 300));
+        book.seed('D', { ref: 10, close: 10, totalAmount: 0, shares: null, slot: 0 });
+        const now = book.lastSlot!;
+        const recent = memberFlows(book, ['A', 'C', 'D', 'missing'], 5);
+        expect(recent.map((m) => m.code)).toEqual(['A', 'C']);
+        expect(recent.find((m) => m.code === 'C')).toMatchObject({ net: -1500, turnover: 1500 });
+        const all = memberFlows(book, ['A'], null);
+        const a = book.codes.get('A')!;
+        let turnover = 0;
+        for (let s = 0; s <= now; s += 1) turnover += a.amount[s]!;
+        expect(all[0]!.turnover).toBe(turnover);
+        expect(memberFlows(new FlowBook(), ['A'], 5)).toEqual([]);
     });
 
     it('stays fast for the whole universe (800 codes × 271 minutes)', () => {

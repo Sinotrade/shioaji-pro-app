@@ -10,12 +10,42 @@
 
 import { SESSION_SLOTS, type GroupFlow } from './chain-flow';
 
-export type RankMetric = 'cum' | 'flow5';
+/** Ranking window: the last 5 / 15 / 30 minutes, or everything observed. */
+export type RankMetric = '5' | '15' | '30' | 'cum';
+export const RANK_METRICS = ['5', '15', '30', 'cum'] as const;
 
-/** Value a group is ranked on at `now`. */
+/** Minutes in a window, or null for the whole observed session. */
+export function metricMinutes(metric: RankMetric): number | null {
+    return metric === 'cum' ? null : Number(metric);
+}
+
+/** Sum of `series` over the window ending at `now` (inclusive). */
+export function windowSum(series: ArrayLike<number>, now: number, metric: RankMetric): number {
+    const n = metricMinutes(metric);
+    let sum = 0;
+    for (let i = n === null ? 0 : Math.max(0, now - n + 1); i <= now; i += 1) sum += series[i]!;
+    return sum;
+}
+
+/** Value a group is ranked on at `now`: net inflow over the window. */
 export function rankValue(flow: GroupFlow, now: number | null, metric: RankMetric): number {
     if (now === null) return 0;
-    return metric === 'flow5' ? flow.flow5 : flow.cumNet[now]!;
+    return windowSum(flow.net, now, metric);
+}
+
+/** Turnover behind a rank value (session-to-date for the cumulative ranking). */
+export function rankTurnover(flow: GroupFlow, now: number | null, metric: RankMetric): number {
+    if (now === null) return 0;
+    return metric === 'cum' ? flow.total : windowSum(flow.turnover, now, metric);
+}
+
+/**
+ * Rank changes are reported only when exactly one new minute bar landed since
+ * the previous order; anything else (a catch-up burst, the first bars after
+ * the snapshot, a switch of window or filter) just resets the baseline.
+ */
+export function comparesRanks(prevNow: number | null, now: number | null): boolean {
+    return now !== null && prevNow !== null && now - prevNow === 1;
 }
 
 export interface RankRow<T> {

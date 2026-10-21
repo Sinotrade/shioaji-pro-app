@@ -424,3 +424,36 @@ export function leaders(book: FlowBook, codes: Iterable<string>, limit = 5, now 
     }
     return rows.sort((a, b) => Math.abs(b.flow5) - Math.abs(a.flow5)).slice(0, limit);
 }
+
+export interface MemberFlow {
+    code: string;
+    net: number;
+    turnover: number;
+    pct: number | null;
+}
+
+/**
+ * Each code's net inflow and turnover over the last `minutes` minutes ending
+ * at `now` (null = every observed minute). Codes without turnover in the
+ * window are left out.
+ */
+export function memberFlows(book: FlowBook, codes: Iterable<string>, minutes: number | null, now = book.lastSlot): MemberFlow[] {
+    if (now === null) return [];
+    const start = minutes === null ? 0 : Math.max(0, now - minutes + 1);
+    const rows: MemberFlow[] = [];
+    for (const code of codes) {
+        const flow = book.codes.get(code);
+        if (!flow) continue;
+        let net = 0;
+        let turnover = 0;
+        for (let i = start; i <= now; i += 1) {
+            const a = flow.amount[i]!;
+            if (a > 0) {
+                net += barNet(flow, i);
+                turnover += a;
+            }
+        }
+        if (turnover > 0) rows.push({ code, net, turnover, pct: codePct(flow) });
+    }
+    return rows;
+}
