@@ -1,6 +1,7 @@
 // src/components/quote-board.tsx — selected symbol mega display
 
-import { useMemo, useRef, type ReactNode } from 'react';
+import { Fragment, useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Settings2 } from 'lucide-react';
 import { useBoardTier } from '../hooks/use-board-tier';
 import { useSnapshotBaseline } from '../hooks/use-display-book';
 import { useQuote } from '../hooks/use-stream';
@@ -54,7 +55,18 @@ import { todayStr } from '../lib/utils/date';
 import { fmtCompactInt, fmtInt, fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { nowWallClockUtc, wallClockToUtc } from '../lib/utils/kbars';
 import { tickDecimals, tickSizeFor } from '../lib/utils/ticksize';
+import {
+    compactQuoteBoardFields,
+    isShown,
+    normalizeQuoteBoardFields,
+    visibleFields,
+    type IndexField,
+    type QuoteBoardFields,
+    type QuoteBoardFieldsConfig,
+    type StockField,
+} from '../lib/quote-board-fields';
 import { DayRangeRail } from './day-range-rail';
+import { QuoteBoardSettings, type SettingsAnchor } from './quote-board-settings';
 import * as panel from './panel.css';
 import * as styles from './quote-board.css';
 
@@ -124,17 +136,37 @@ export function QuoteBoard({
     contract,
     snapshot: suppliedSnapshot,
     sessionMode,
+    fields: fieldsConfig,
+    onFieldsChange,
 }: {
     contract: ContractInfo;
     snapshot?: Snapshot;
     // 同一區塊 K 線的「全盤／僅日盤」，缺省跟 K 線一樣是全盤
     sessionMode?: ChartSessionMode;
+    // 自訂欄位（面板設定，跟版面一起存）；沒有 onFieldsChange 時（彈出視窗）只在本視窗生效
+    fields?: QuoteBoardFieldsConfig;
+    onFieldsChange?: (next: QuoteBoardFieldsConfig | undefined) => void;
 }) {
+    const [localFields, setLocalFields] = useState(fieldsConfig);
+    const savedFields = onFieldsChange ? fieldsConfig : localFields;
+    const fields = useMemo(() => normalizeQuoteBoardFields(savedFields), [savedFields]);
+    const setFields = useCallback(
+        (next: QuoteBoardFields) => {
+            const compact = compactQuoteBoardFields(next);
+            if (onFieldsChange) onFieldsChange(compact);
+            else setLocalFields(compact);
+        },
+        [onFieldsChange],
+    );
+    const [settingsAt, setSettingsAt] = useState<SettingsAnchor | null>(null);
+    const closeSettings = useCallback(() => setSettingsAt(null), []);
     const quote = useQuote(contract.code, { narrow: true });
     const { snapshot } = useSnapshotBaseline(contract.code, suppliedSnapshot, contract);
     const tick = quote?.tick;
     const index = quote?.index;
     const isIndex = contract.security_type === 'IND';
+    const showI = (f: IndexField) => isShown(fields.index, f);
+    const showS = (f: StockField) => isShown(fields.stock, f);
     // 沒有即時報價時（收盤後重新整理、重開），家數與時間改用本機留下的收盤那筆；價格與金額仍看快照
     const recalled = useMemo(
         () => (isIndex && !index ? recalledIndexClose(contract.code, snapshot?.datetime) : undefined),
@@ -291,8 +323,9 @@ export function QuoteBoard({
     const volumeChange = volumeChangeOf(estimate, previous);
     // 有預估量、前一交易日金額還沒抓成功也沒失敗（剛開頁、09:00 換交易日）：較昨日先佔位顯示空值，
     // lean 不在預估量與較昨日之間來回換格；抓失敗或抓完沒有資料才讓位給預估量
-    const keepChange = volumeChange !== undefined
-        || (estimate !== undefined && previousQuery.updatedAt === null && !previousQuery.error);
+    // 使用者關掉較昨日時不佔位，lean 改留預估量
+    const keepChange = showI('change') && (volumeChange !== undefined
+        || (estimate !== undefined && previousQuery.updatedAt === null && !previousQuery.error));
     // 實際量時已成交就是 100%，不再列進度
     const progress = actual ? undefined : amountProgress(amount, estimate);
     // 成交金額、已成交比例、前一交易日、更新時間：版面收起這些格子時，改放在滑過提示裡
@@ -367,7 +400,7 @@ export function QuoteBoard({
     // 日內區間軌：有漲跌停、開高低收都到齊才畫（rail、railMid、railLow 三級取代右側數字），否則照原本的數字欄。
     // 選擇權不畫：跌停墊在最小跳動、漲停是權利金加標的 10%，兩側差數十倍，+50% 會畫得比 -5% 還小
     const range =
-        isIndex || contract.security_type === 'OPT' || !hasPriceLimits(contract) || !sameDay
+        isIndex || !showS('rail') || contract.security_type === 'OPT' || !hasPriceLimits(contract) || !sameDay
             ? undefined
             : dayRangeOf({
                   reference: ref,
@@ -418,7 +451,207 @@ export function QuoteBoard({
     ].filter(Boolean).join('，').replace(/[\n｜]+/g, '，');
     // 會畫區間軌的商品還沒有開高低（盤前、合約已換日而報價還是前一天）：wide 只在單列放得下時用，
     // 免得高窄面板盤前報價欄先長成兩列、08:30 或 09:00 再縮回
-    const railPending = !isIndex && !range && contract.security_type !== 'OPT' && hasPriceLimits(contract);
+    const railPending = !isIndex && showS('rail') && !range && contract.security_type !== 'OPT' && hasPriceLimits(contract);
+
+    // ---- 自訂欄位：依面板設定決定畫哪些格子、什麼順序（降級規則看格子的優先度 class，和順序無關） ----
+    const indexCells: Partial<Record<IndexField, ReactNode>> = {
+        limitUp: (
+            <Stat
+                key="limitUp"
+                label="漲停"
+                className={styles.secondary}
+                valueClass={styles.limitCount[(counts?.limit_up_count ?? 0) > 0 ? 'up' : 'zero']}
+            >
+                {fmtInt(counts?.limit_up_count)}
+            </Stat>
+        ),
+        raise: (
+            <Stat
+                key="raise"
+                label="上漲"
+                valueClass={counts?.raise_count === undefined ? styles.statValue : `${styles.statValue} ${panel.dirText.up}`}
+            >
+                {fmtInt(counts?.raise_count)}
+            </Stat>
+        ),
+        flat: (
+            <Stat key="flat" label="平盤" valueClass={styles.statValue} className={styles.secondary}>
+                {fmtInt(counts?.flat_count)}
+            </Stat>
+        ),
+        fall: (
+            <Stat
+                key="fall"
+                label="下跌"
+                valueClass={counts?.fall_count === undefined ? styles.statValue : `${styles.statValue} ${panel.dirText.down}`}
+            >
+                {fmtInt(counts?.fall_count)}
+            </Stat>
+        ),
+        limitDown: (
+            <Stat
+                key="limitDown"
+                label="跌停"
+                className={styles.secondary}
+                valueClass={styles.limitCount[(counts?.limit_down_count ?? 0) > 0 ? 'down' : 'zero']}
+            >
+                {fmtInt(counts?.limit_down_count)}
+            </Stat>
+        ),
+        amount: (
+            <Stat
+                key="amount"
+                label="成交金額"
+                title={progress === undefined ? undefined : `已成交預估的 ${(progress * 100).toFixed(0)}%`}
+                valueClass={styles.statValue}
+                // 有預估量（或較昨日）可依靠時，成交金額收進它們的滑過提示；兩格都被關掉時成交金額照常顯示
+                className={estimate !== undefined && (showI('estimate') || keepChange) ? styles.lowPriority : undefined}
+            >
+                <Compact value={amount} />
+            </Stat>
+        ),
+        estimate: (
+            <Stat
+                key="estimate"
+                label={actual ? '實際量' : '預估量'}
+                title={volumeTitle}
+                valueClass={styles.statValue}
+                // lean 要留下一格量能：有較昨日（或正在抓前一交易日金額）時留較昨日（預估量收起），沒有時改留預估量
+                className={estimate === undefined ? styles.lowPriority : keepChange ? styles.secondary : undefined}
+            >
+                <Compact value={estimate} />
+            </Stat>
+        ),
+        change: (
+            <Stat
+                key="change"
+                label="較昨日"
+                title={volumeTitle}
+                valueClass={styles.statValue}
+                className={keepChange ? undefined : styles.lowPriority}
+            >
+                {volumeChange ?? '—'}
+            </Stat>
+        ),
+        time: (
+            <Stat key="time" label="時間" valueClass={styles.statValue} className={styles.lowPriority}>
+                {counts?.time?.slice(0, 8) ?? '—'}
+            </Stat>
+        ),
+    };
+    const indexGroups = fields.index.sections.flatMap((section) => {
+        const cells = visibleFields(fields.index, section).filter((f) => f !== 'breadthBar');
+        if (cells.length === 0) return [];
+        return section === 'breadth'
+            ? [
+                  <div key="breadth" className={styles.indexGroup.breadth} title={breadthGroupTitle}>
+                      {cells.map((f) => indexCells[f])}
+                      {showI('breadthBar') && breadth.total > 0 && (
+                          <BreadthBar className={styles.breadthBar} breadth={breadth} title={breadthGroupTitle} />
+                      )}
+                  </div>,
+              ]
+            : [
+                  <div key="volume" className={styles.indexGroup.volume}>
+                      {cells.map((f) => indexCells[f])}
+                  </div>,
+              ];
+    });
+    // compact 的量能標籤：較昨日優先，沒有（或被關掉）時改放成交金額
+    const leadChange = showI('change') ? volumeChange : undefined;
+    const leadAmount = showI('amount') ? amount : undefined;
+
+    // 個股數字欄：高低、漲跌停是上下成對的一欄；開、量、量比這類單格連續排在一起時組成一欄，
+    // 第一格在上排、其餘在下排（預設就是原本的「上排開、下排量與量比」）
+    const statAvailable = (f: StockField) => (f === 'ratio' ? showRatio : f === 'limits' ? hasPriceLimits(contract) : true);
+    const statFields = visibleFields(fields.stock, 'stats').filter(statAvailable);
+    const rowClass = (top: boolean) => (top ? styles.rowTop : styles.rowBottom);
+    const singleCell = (f: StockField, top: boolean): ReactNode => {
+        if (f === 'open') {
+            return (
+                <Fragment key={f}>
+                    <span
+                        className={[styles.pairLabel, styles.stockOpen, rowClass(top), sessionNote && styles.tipLabel, sessionNote && styles.tipCell].filter(Boolean).join(' ')}
+                        title={sessionNote}
+                    >
+                        開
+                    </span>
+                    <span
+                        className={[styles.pairValue, styles.stockOpen, rowClass(top), sessionNote && styles.tipCell].filter(Boolean).join(' ')}
+                        title={sessionNote}
+                    >
+                        {boardPrice(open)}
+                    </span>
+                </Fragment>
+            );
+        }
+        if (f === 'volume') {
+            return (
+                <Fragment key={f}>
+                    <span className={`${styles.pairLabel} ${styles.stockVol} ${rowClass(top)}`}>量</span>
+                    <span className={`${styles.pairValue} ${styles.stockVol} ${rowClass(top)}`}>{fmtInt(vol)}</span>
+                </Fragment>
+            );
+        }
+        return (
+            <Fragment key={f}>
+                <span
+                    className={`${styles.pairLabel} ${styles.stockRatio} ${rowClass(top)} ${styles.tipLabel} ${styles.tipCell}`}
+                    title={ratioTitle}
+                >
+                    量比
+                </span>
+                <span className={`${styles.pairValue} ${styles.stockRatio} ${rowClass(top)} ${styles.tipCell}`} title={ratioTitle}>
+                    {fmtVolumeRatio(volumeRatio)}
+                </span>
+            </Fragment>
+        );
+    };
+    const statColumns: ReactNode[] = [];
+    let run: StockField[] = [];
+    const flushRun = () => {
+        if (run.length === 0) return;
+        const cols = 2 * Math.max(1, run.length - 1);
+        statColumns.push(
+            <div key={`run-${run.join('-')}`} className={styles.volGroup} style={{ [styles.VOL_COLS_VAR]: String(cols) } as CSSProperties}>
+                {run.map((f, i) => singleCell(f, i === 0))}
+            </div>,
+        );
+        run = [];
+    };
+    for (const f of statFields) {
+        if (f === 'highLow') {
+            flushRun();
+            statColumns.push(
+                <div key={f} className={styles.pairGroup}>
+                    <span className={styles.pairLabel}>高</span>
+                    <span className={vsOpen(high)}>{boardPrice(high)}</span>
+                    <span className={styles.pairLabel}>低</span>
+                    <span className={vsOpen(low)}>{boardPrice(low)}</span>
+                </div>,
+            );
+        } else if (f === 'limits') {
+            flushRun();
+            statColumns.push(
+                <div
+                    key={f}
+                    className={limitTitle ? `${styles.pairGroup} ${styles.stockLimit} ${styles.tipCell}` : `${styles.pairGroup} ${styles.stockLimit}`}
+                    title={limitTitle}
+                >
+                    <span className={limitTitle ? `${styles.pairLabel} ${styles.tipLabel}` : styles.pairLabel}>漲停</span>
+                    <span className={`${styles.pairValue} ${panel.dirText.up}`}>{boardPrice(contract.limit_up)}</span>
+                    <span className={limitTitle ? `${styles.pairLabel} ${styles.tipLabel}` : styles.pairLabel}>跌停</span>
+                    <span className={`${styles.pairValue} ${panel.dirText.down}`}>{boardPrice(contract.limit_down)}</span>
+                </div>,
+            );
+        } else {
+            run.push(f);
+        }
+    }
+    flushRun();
+    // 價格旁的量（compact、tight）跟著數字欄的開關：量、量比各自關得掉
+    const tagVolume = showS('volume') && vol !== undefined;
+    const tagRatio = showRatio && showS('ratio');
 
     const dir =
         chg === undefined || chg === 0 ? 'flat' : chg > 0 ? 'up' : 'down';
@@ -427,6 +660,12 @@ export function QuoteBoard({
         <div
             ref={boardRef}
             className={`${styles.board} ${styles.boardTiered} ${isIndex ? styles.boardIndex : styles.boardStock}${railPending ? ` ${styles.boardRailPending}` : ''} drag-handle`}
+            // 看板上按右鍵直接打開自訂欄位（精簡階梯沒有齒輪按鈕時也找得到）
+            onContextMenu={(e) => {
+                if ((e.target as Element).closest('button')) return;
+                e.preventDefault();
+                setSettingsAt({ kind: 'point', x: e.clientX, y: e.clientY, doc: e.currentTarget.ownerDocument });
+            }}
         >
             {/* 代號與名稱面板標題列已經有，看板不重複 */}
             <span
@@ -460,212 +699,117 @@ export function QuoteBoard({
 
             {isIndex ? (
                 <>
-                    {(volumeChange || amount !== undefined) && (
+                    {(leadChange || leadAmount !== undefined) && (
                         <span className={styles.leadTag} title={volumeTitle}>
                             {/* 沒有「較昨日」標籤可依靠，加「量」字和價格漲跌幅區分 */}
-                            {volumeChange ? `量${volumeChange}` : <Compact value={amount} />}
+                            {leadChange ? `量${leadChange}` : <Compact value={leadAmount} />}
                         </span>
                     )}
-                    {breadth.total > 0 && <BreadthBar className={styles.breadthMini} breadth={breadth} title={breadthGroupTitle} />}
-                    <div className={styles.indexStats}>
-                        <div className={styles.indexGroup.breadth} title={breadthGroupTitle}>
-                            <Stat
-                                label="漲停"
-                                className={styles.secondary}
-                                valueClass={styles.limitCount[(counts?.limit_up_count ?? 0) > 0 ? 'up' : 'zero']}
-                            >
-                                {fmtInt(counts?.limit_up_count)}
-                            </Stat>
-                            <Stat
-                                label="上漲"
-                                valueClass={
-                                    counts?.raise_count === undefined
-                                        ? styles.statValue
-                                        : `${styles.statValue} ${panel.dirText.up}`
-                                }
-                            >
-                                {fmtInt(counts?.raise_count)}
-                            </Stat>
-                            <Stat label="平盤" valueClass={styles.statValue} className={styles.secondary}>
-                                {fmtInt(counts?.flat_count)}
-                            </Stat>
-                            <Stat
-                                label="下跌"
-                                valueClass={
-                                    counts?.fall_count === undefined
-                                        ? styles.statValue
-                                        : `${styles.statValue} ${panel.dirText.down}`
-                                }
-                            >
-                                {fmtInt(counts?.fall_count)}
-                            </Stat>
-                            <Stat
-                                label="跌停"
-                                className={styles.secondary}
-                                valueClass={styles.limitCount[(counts?.limit_down_count ?? 0) > 0 ? 'down' : 'zero']}
-                            >
-                                {fmtInt(counts?.limit_down_count)}
-                            </Stat>
-                            {breadth.total > 0 && <BreadthBar className={styles.breadthBar} breadth={breadth} title={breadthGroupTitle} />}
-                        </div>
-                        <div className={styles.indexGroup.volume}>
-                            <Stat
-                                label="成交金額"
-                                title={progress === undefined ? undefined : `已成交預估的 ${(progress * 100).toFixed(0)}%`}
-                                valueClass={styles.statValue}
-                                className={estimate === undefined ? undefined : styles.lowPriority}
-                            >
-                                <Compact value={amount} />
-                            </Stat>
-                            <Stat
-                                label={actual ? '實際量' : '預估量'}
-                                title={volumeTitle}
-                                valueClass={styles.statValue}
-                                // lean 要留下一格量能：有較昨日（或正在抓前一交易日金額）時留較昨日（預估量收起），沒有時改留預估量
-                                className={
-                                    estimate === undefined
-                                        ? styles.lowPriority
-                                        : keepChange
-                                          ? styles.secondary
-                                          : undefined
-                                }
-                            >
-                                <Compact value={estimate} />
-                            </Stat>
-                            <Stat
-                                label="較昨日"
-                                title={volumeTitle}
-                                valueClass={styles.statValue}
-                                className={keepChange ? undefined : styles.lowPriority}
-                            >
-                                {volumeChange ?? '—'}
-                            </Stat>
-                            <Stat label="時間" valueClass={styles.statValue} className={styles.lowPriority}>
-                                {counts?.time?.slice(0, 8) ?? '—'}
-                            </Stat>
-                        </div>
-                    </div>
+                    {showI('breadthBar') && breadth.total > 0 && (
+                        <BreadthBar className={styles.breadthMini} breadth={breadth} title={breadthGroupTitle} />
+                    )}
+                    {indexGroups.length > 0 && <div className={styles.indexStats}>{indexGroups}</div>}
                 </>
             ) : (
-                <>
-                    {/* 軌道在 rail、railMid、railLow 顯示、產業分類只在 rail 顯示（CSS 依 data-tier 切換）；
-                        平常也留在畫面上，階梯量測時才量得到它們需要的寬度 */}
-                    {range && (
-                        <DayRangeRail
-                            className={styles.railSlot}
-                            range={range}
-                            fmt={boardPrice}
-                            fmtPoints={fmtPoints}
-                            scales={isIndexFuture ? INDEX_FUTURE_SCALES : STOCK_SCALES}
-                            edges={isIndexFuture ? 'distance' : 'limits'}
-                            // 試撮價不是成交，碰到停板也不算鎖住：照常畫現價針
-                            locked={sim ? null : atLimit}
-                            note={sessionNote}
-                            touched={{
-                                up: limitStateOf(contract, high) === 'up',
-                                down: limitStateOf(contract, low) === 'down',
-                            }}
-                        />
-                    )}
-                    {/* 和排行榜的產業標籤一樣：點了讓產業全景下鑽到這個產業（按鈕不會觸發面板拖曳） */}
-                    {range && sector && contract.category && (
-                        <button
-                            type="button"
-                            className={styles.sectorTag}
-                            title="跳到此類股熱力圖"
-                            onClick={() => focusSector(contract.category!)}
-                        >
-                            {sector}
-                        </button>
-                    )}
-                    {vol !== undefined && (
-                        <span
-                            className={showRatio ? `${styles.stockVolTag} ${styles.tipCell}` : styles.stockVolTag}
-                            title={showRatio ? ratioTitle : undefined}
-                        >
-                            量 {fmtInt(vol)}
-                            {showRatio && (
-                                <span className={styles.stockVolTagRatio}>量比 {fmtVolumeRatio(volumeRatio)}</span>
+                fields.stock.sections.map((section) =>
+                    section === 'range' ? (
+                        <Fragment key="range">
+                            {/* 軌道在 rail、railMid、railLow 顯示、產業分類只在 rail 顯示（CSS 依 data-tier 切換）；
+                                平常也留在畫面上，階梯量測時才量得到它們需要的寬度 */}
+                            {range && (
+                                <DayRangeRail
+                                    className={styles.railSlot}
+                                    range={range}
+                                    fmt={boardPrice}
+                                    fmtPoints={fmtPoints}
+                                    scales={isIndexFuture ? INDEX_FUTURE_SCALES : STOCK_SCALES}
+                                    edges={isIndexFuture ? 'distance' : 'limits'}
+                                    // 試撮價不是成交，碰到停板也不算鎖住：照常畫現價針
+                                    locked={sim ? null : atLimit}
+                                    note={sessionNote}
+                                    touched={{
+                                        up: limitStateOf(contract, high) === 'up',
+                                        down: limitStateOf(contract, low) === 'down',
+                                    }}
+                                    // 數字列跟著數字欄的開關：關掉的格子在軌道下方也不顯示
+                                    hide={{ edges: !showS('limits'), hl: !showS('highLow'), open: !showS('open') }}
+                                />
                             )}
-                        </span>
-                    )}
-                    <div className={styles.stockStats}>
-                        <div className={styles.pairGroup}>
-                            <span className={styles.pairLabel}>高</span>
-                            <span className={vsOpen(high)}>{boardPrice(high)}</span>
-                            <span className={styles.pairLabel}>低</span>
-                            <span className={vsOpen(low)}>{boardPrice(low)}</span>
-                        </div>
-                        <div className={styles.volGroup}>
-                            <span
-                                className={sessionNote ? `${styles.pairLabel} ${styles.stockOpen} ${styles.tipLabel} ${styles.tipCell}` : `${styles.pairLabel} ${styles.stockOpen}`}
-                                title={sessionNote}
-                            >
-                                開
-                            </span>
-                            <span
-                                className={sessionNote ? `${styles.pairValue} ${styles.stockOpen} ${styles.tipCell}` : `${styles.pairValue} ${styles.stockOpen}`}
-                                title={sessionNote}
-                            >
-                                {boardPrice(open)}
-                            </span>
-                            <span className={`${styles.pairLabel} ${styles.stockVol}`}>量</span>
-                            <span className={`${styles.pairValue} ${styles.stockVol}`}>{fmtInt(vol)}</span>
-                            {showRatio && (
-                                <>
-                                    <span
-                                        className={`${styles.pairLabel} ${styles.stockRatio} ${styles.tipLabel} ${styles.tipCell}`}
-                                        title={ratioTitle}
-                                    >
-                                        量比
-                                    </span>
-                                    <span
-                                        className={`${styles.pairValue} ${styles.stockRatio} ${styles.tipCell}`}
-                                        title={ratioTitle}
-                                    >
-                                        {fmtVolumeRatio(volumeRatio)}
-                                    </span>
-                                </>
+                            {/* 和排行榜的產業標籤一樣：點了讓產業全景下鑽到這個產業（按鈕不會觸發面板拖曳） */}
+                            {range && showS('sector') && sector && contract.category && (
+                                <button
+                                    type="button"
+                                    className={styles.sectorTag}
+                                    title="跳到此類股熱力圖"
+                                    onClick={() => focusSector(contract.category!)}
+                                >
+                                    {sector}
+                                </button>
                             )}
-                        </div>
-                        {/* 興櫃、權證、組合商品等沒有有效漲跌停的商品不顯示停板組 */}
-                        {hasPriceLimits(contract) && (
-                            <div
-                                className={limitTitle ? `${styles.pairGroup} ${styles.stockLimit} ${styles.tipCell}` : `${styles.pairGroup} ${styles.stockLimit}`}
-                                title={limitTitle}
-                            >
-                                <span className={limitTitle ? `${styles.pairLabel} ${styles.tipLabel}` : styles.pairLabel}>漲停</span>
-                                <span className={`${styles.pairValue} ${panel.dirText.up}`}>
-                                    {boardPrice(contract.limit_up)}
+                        </Fragment>
+                    ) : (
+                        <Fragment key="stats">
+                            {vol !== undefined && (tagVolume || tagRatio) && (
+                                <span
+                                    className={tagRatio ? `${styles.stockVolTag} ${styles.tipCell}` : styles.stockVolTag}
+                                    title={tagRatio ? ratioTitle : undefined}
+                                >
+                                    {tagVolume && <>量 {fmtInt(vol)}</>}
+                                    {tagRatio && (
+                                        <span className={tagVolume ? styles.stockVolTagRatio : undefined}>量比 {fmtVolumeRatio(volumeRatio)}</span>
+                                    )}
                                 </span>
-                                <span className={limitTitle ? `${styles.pairLabel} ${styles.tipLabel}` : styles.pairLabel}>跌停</span>
-                                <span className={`${styles.pairValue} ${panel.dirText.down}`}>
-                                    {boardPrice(contract.limit_down)}
-                                </span>
-                            </div>
-                        )}
-                    </div>
-                </>
+                            )}
+                            {statColumns.length > 0 && <div className={styles.stockStats}>{statColumns}</div>}
+                        </Fragment>
+                    ),
+                )
             )}
-            <button
-                type="button"
-                className={styles.boardToggle}
-                onClick={toggle}
-                aria-expanded={richBoard}
-                aria-label="報價統計"
-                title={richBoard ? '收合統計' : '展開統計'}
-            >
-                <svg viewBox="0 0 10 10" width="12" height="12" aria-hidden="true">
-                    <polyline
-                        points="2,4 5,7 8,4"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    />
-                </svg>
-            </button>
+            {/* 右側工具：自訂欄位（只在完整的階梯顯示，精簡時先展開；看板上按右鍵也能打開）與展開／收合 */}
+            <div className={styles.boardTools}>
+                <button
+                    type="button"
+                    className={styles.boardSettings}
+                    onClick={(e) => {
+                        const el = e.currentTarget;
+                        setSettingsAt((prev) => (prev ? null : { kind: 'element', el }));
+                    }}
+                    aria-haspopup="dialog"
+                    aria-expanded={settingsAt !== null}
+                    aria-label="自訂報價欄位"
+                    title="自訂報價欄位"
+                >
+                    <Settings2 size={12} aria-hidden="true" />
+                </button>
+                <button
+                    type="button"
+                    className={styles.boardToggle}
+                    onClick={toggle}
+                    aria-expanded={richBoard}
+                    aria-label="報價統計"
+                    title={richBoard ? '收合統計' : '展開統計'}
+                >
+                    <svg viewBox="0 0 10 10" width="12" height="12" aria-hidden="true">
+                        <polyline
+                            points="2,4 5,7 8,4"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                        />
+                    </svg>
+                </button>
+            </div>
+            {settingsAt && (
+                <QuoteBoardSettings
+                    anchor={settingsAt}
+                    fields={fields}
+                    currentKind={isIndex ? 'index' : 'stock'}
+                    onChange={setFields}
+                    onClose={closeSettings}
+                />
+            )}
         </div>
     );
 }

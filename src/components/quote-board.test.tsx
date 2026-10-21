@@ -760,7 +760,7 @@ describe('收合偏好：指數與個股各自一份', () => {
     it('在個股看板按收合只寫個股的 key，不影響指數；再按回自動', () => {
         display = { quote: { tick }, snapshot: undefined, book };
         const root = render(STOCK).root;
-        const button = () => root.find((n) => n.type === 'button');
+        const button = () => root.find((n) => n.type === 'button' && n.props['aria-label'] === '報價統計');
         expect(button().props['aria-label']).toBe('報價統計');
         expect(button().props['aria-expanded']).toBe(true);
         act(() => button().props.onClick());
@@ -777,8 +777,8 @@ describe('收合偏好：指數與個股各自一份', () => {
         const INDEX = { code: 'IX0001', name: '發行量加權股價指數', exchange: 'TSE', security_type: 'IND', target_code: null };
         const stock = render(STOCK).root;
         const index = render(INDEX).root;
-        const expanded = (root: ReactTestInstance) => root.find((n) => n.type === 'button').props['aria-expanded'];
-        const click = (root: ReactTestInstance) => act(() => root.find((n) => n.type === 'button').props.onClick());
+        const expanded = (root: ReactTestInstance) => root.find((n) => n.type === 'button' && n.props['aria-label'] === '報價統計').props['aria-expanded'];
+        const click = (root: ReactTestInstance) => act(() => root.find((n) => n.type === 'button' && n.props['aria-label'] === '報價統計').props.onClick());
         click(stock);
         expect([expanded(stock), expanded(index)]).toEqual([false, true]);
         click(index);

@@ -132,18 +132,21 @@ const indexGroupBase = style({
     flex: '0 0 auto',
 });
 
+// 兩組格數都會變動（沒有預估量時收起、使用者自訂關掉的格子不畫、lean 只留幾格），用自動欄數，不寫死欄數
 export const indexGroup = styleVariants({
-    // 量能組格數會依資料有無變動（沒有預估量時收起），用自動欄數，不寫死欄數
-    volume: [
-        indexGroupBase,
-        {
-            gridAutoFlow: 'column',
-            gridAutoColumns: 'auto',
-            paddingLeft: vars.space.md,
-            borderLeft: `1px solid ${vars.color.border}`,
-        },
-    ],
-    breadth: [indexGroupBase, { gridTemplateColumns: 'repeat(5, auto)' }],
+    volume: [indexGroupBase, { gridAutoFlow: 'column', gridAutoColumns: 'auto' }],
+    breadth: [indexGroupBase, { gridAutoFlow: 'column', gridAutoColumns: 'auto' }],
+});
+// 兩組之間的分隔線畫在後面那一組的左側（使用者可以調換兩組的順序）。用絕對定位的線而不是 padding＋border：
+// 家數比例條以整組的 padding box 定位，padding 會讓比例條往左多出一截
+globalStyle(`${indexGroupBase} + ${indexGroupBase}`, { marginLeft: vars.space.md });
+globalStyle(`${indexGroupBase} + ${indexGroupBase}::before`, {
+    content: '""',
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: `calc(-1 * ${vars.space.md})`,
+    borderLeft: `1px solid ${vars.color.border}`,
 });
 
 // 不准斷行：中文標籤可以在任意字之間斷開，放不下時會被擠成一字一行；
@@ -183,8 +186,6 @@ export const unit = style({
 // 不參與排版，所以不影響基線對齊、也不增加看板高度
 export const breadthBar = style({
     position: 'absolute',
-    gridRow: 1,
-    gridColumn: '1 / -1',
     top: 'calc(100% + 2px)',
     left: 0,
     right: 0,
@@ -260,11 +261,18 @@ export const breadthMini = style({
 
 // 展開／收合統計：絕對定位在看板右側、垂直置中，看板右側預留空間（TOGGLE_RESERVE）。
 // 平常就要看得到（對比至少 3:1），滑過看板或按鈕時更明顯
-export const boardToggle = style({
+// 右側工具（自訂欄位、展開收合）：絕對定位不參與排版，完整階梯（看板約 63px 高）時齒輪疊在箭頭上方
+export const boardTools = style({
     position: 'absolute',
     right: '0.35rem',
     top: '50%',
     transform: 'translateY(-50%)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+});
+
+const toolBtnBase = style({
     width: '1.4rem',
     height: '1.4rem',
     padding: 0,
@@ -281,7 +289,24 @@ export const boardToggle = style({
     },
 });
 
-globalStyle(`${boardTiered}:hover ${boardToggle}`, { opacity: 1 });
+export const boardToggle = toolBtnBase;
+// 齒輪平常淡一點，滑過看板才清楚；打開設定時維持亮著
+export const boardSettings = style([
+    toolBtnBase,
+    {
+        opacity: 0.45,
+        selectors: { '&[aria-expanded="true"]': { opacity: 1, color: vars.color.accent } },
+    },
+]);
+
+globalStyle(`${boardTiered}:hover ${boardToggle}, ${boardTiered}:hover ${boardSettings}`, { opacity: 1 });
+// 精簡階梯（單行，看板不到兩個按鈕高）只留展開收合；自訂欄位改由展開後的齒輪或右鍵打開
+globalStyle(
+    (['inline', 'lean', 'compact', 'tight', 'strip', 'railLow'] as const)
+        .map((t) => `${boardTiered}[data-tier="${t}"] ${boardSettings}`)
+        .join(', '),
+    { display: 'none' },
+);
 
 // 已展開（aria-expanded）時箭頭朝上
 globalStyle(`${boardToggle}[aria-expanded="true"] svg`, { transform: 'rotate(180deg)' });
@@ -305,7 +330,6 @@ globalStyle(tiers(['inline', 'lean'], stat), { gap: '2px', lineHeight: 1.1 });
 
 // lean：再窄一點，只留上漲、下跌、較昨日
 globalStyle(tier('lean') + ' ' + secondary, { display: 'none' });
-globalStyle(tier('lean') + ' ' + indexGroup.breadth, { gridTemplateColumns: 'repeat(2, auto)' });
 
 // compact、strip：統計區整組收起
 globalStyle(tiers(['compact', 'strip'], indexStats), { display: 'none' });
@@ -356,8 +380,12 @@ const pairBase = style({
 
 // 標籤＋數值（高／低、開／量、漲停／跌停）
 export const pairGroup = style([pairBase, { gridTemplateColumns: 'auto auto' }]);
-// 開／量組多一欄量比：上排開，下排量與量比
-export const volGroup = style([pairBase, { gridTemplateColumns: 'auto auto auto auto' }]);
+// 開、量、量比這類單格連續排成一欄：第一格在上排，其餘在下排（預設：上排開，下排量與量比）。
+// 欄數依下排格數（每格標籤加數值兩欄），由 quote-board.tsx 設定
+export const VOL_COLS_VAR = '--qb-vol-cols';
+export const volGroup = style([pairBase, { gridTemplateColumns: `repeat(var(${VOL_COLS_VAR}, 4), auto)` }]);
+export const rowTop = style({ gridRow: 1 });
+export const rowBottom = style({ gridRow: 2 });
 
 // 字級連動 lib/day-range 的 railCellsRem（軌道數字列的收起門檻）
 export const pairLabel = style({
@@ -371,10 +399,10 @@ export const pairValue = style({ textAlign: 'right' });
 // 停板組：mid 起收起（到停板時價格旁的漲停／跌停徽章照樣會亮）
 export const stockLimit = style({});
 // 開／量組固定上排開、下排量；lean 只收起開，量留在下排（優先序：量 > 高低 > 開 > 停板）
-export const stockOpen = style({ gridRow: 1 });
-export const stockVol = style({ gridRow: 2 });
+export const stockOpen = style({});
+export const stockVol = style({});
 // 量比（今日成交量 ÷ 昨日成交量），算法放在滑過提示
-export const stockRatio = style({ gridRow: 2 });
+export const stockRatio = style({});
 
 // compact：統計收起時，價格旁留成交量與量比；tight 只留成交量
 export const stockVolTag = style({
@@ -511,8 +539,10 @@ globalStyle(sTier('rail') + ' ' + sectorTag, { display: 'inline-block' });
 // 高低、開、停板交給軌道；右側只留量與量比，排成一行、對齊軌道中線
 globalStyle(sTiers(RAIL, `${stockStats} > ${pairGroup}`), { display: 'none' });
 globalStyle(sTiers(RAIL, stockOpen), { display: 'none' });
-globalStyle(sTiers(RAIL, stockVol), { gridRow: 'auto' });
-globalStyle(sTiers(RAIL, stockRatio), { gridRow: 'auto' });
+globalStyle(sTiers(RAIL, rowTop), { gridRow: 'auto' });
+globalStyle(sTiers(RAIL, rowBottom), { gridRow: 'auto' });
+// 單格欄排成一行：不論使用者把量、量比排在上排或下排，軌道階梯都放在同一行
+globalStyle(sTiers(RAIL, volGroup), { gridTemplateColumns: 'none', gridAutoFlow: 'column' });
 globalStyle(sTiers(RAIL, stockStats), { alignSelf: 'center', marginLeft: 0 });
 
 // 放在漲跌區內，避免成為階梯量測的直屬節點或污染現價的字寬估算。

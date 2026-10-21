@@ -35,9 +35,11 @@ interface RailProps {
     touched: { up: boolean; down: boolean };
     // 加在滑過提示最後一行（期貨全盤時註明開盤與高低含夜盤）
     note?: string;
+    // 使用者在自訂欄位關掉的數字格（兩端、低高、開），軌道下方也不顯示
+    hide?: { edges?: boolean; hl?: boolean; open?: boolean };
 }
 
-export function DayRangeRail({ className, ...props }: RailProps & { className?: string }) {
+export function DayRangeRail({ className, hide, ...props }: RailProps & { className?: string }) {
     const { range: r, fmt, fmtPoints, scales, edges } = props;
     const ref = useRef<HTMLDivElement>(null);
     const [box, setBox] = useState({ width: 0, rootPx: 16 });
@@ -90,15 +92,15 @@ export function DayRangeRail({ className, ...props }: RailProps & { className?: 
             <div className={styles.railNumbers} style={{ paddingLeft: inset }}>
                 {/* railMid、railLow 時這層當容器（寬度已扣掉左側留白），依低、開、高最長的字數決定留幾格 */}
                 <div className={styles.railCells} data-chars={railChars([fmt(r.low), fmt(r.open), fmt(r.high)])}>
-                    {edges === 'limits'
+                    {!hide?.edges && (edges === 'limits'
                         ? item('跌停', fmt(r.limitDown), styles.railNumMuted, styles.railEdge)
-                        : item('距低', fmtPoints(r.close - r.low), undefined, styles.railEdge)}
-                    {item('低', fmt(r.low), dirClass(r.low), styles.railHL)}
-                    {item('開', fmt(r.open), undefined, styles.railOpen)}
-                    {item('高', fmt(r.high), dirClass(r.high), styles.railHL)}
-                    {edges === 'limits'
+                        : item('距低', fmtPoints(r.close - r.low), undefined, styles.railEdge))}
+                    {!hide?.hl && item('低', fmt(r.low), dirClass(r.low), styles.railHL)}
+                    {!hide?.open && item('開', fmt(r.open), undefined, styles.railOpen)}
+                    {!hide?.hl && item('高', fmt(r.high), dirClass(r.high), styles.railHL)}
+                    {!hide?.edges && (edges === 'limits'
                         ? item('漲停', fmt(r.limitUp), styles.railNumMuted, styles.railEdge)
-                        : item('距高', fmtPoints(r.high - r.close), undefined, styles.railEdge)}
+                        : item('距高', fmtPoints(r.high - r.close), undefined, styles.railEdge))}
                 </div>
             </div>
         </div>

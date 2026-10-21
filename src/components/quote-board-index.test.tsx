@@ -414,7 +414,7 @@ describe('收合偏好', () => {
     it('按收合寫入 sj-index-board-mode，再按一次回到自動並清掉偏好', () => {
         display = { quote: { index: idx }, snapshot: undefined, book: undefined };
         const root = render();
-        const button = () => root.find((n) => n.type === 'button');
+        const button = () => root.find((n) => n.type === 'button' && n.props['aria-label'] === '報價統計');
         expect(button().props['aria-expanded']).toBe(true);
         act(() => button().props.onClick());
         expect(storage.get('sj-index-board-mode')).toBe('collapsed');

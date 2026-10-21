@@ -104,6 +104,18 @@ describe('編譯後的報價看板 CSS', () => {
         expect(at(classes.statusKeep)).toBeGreaterThan(at(classes.statusBadge));
     });
 
+    it('自訂欄位的齒輪只在完整階梯顯示；軌道階梯的單格欄排成一行', () => {
+        const tiers = [...new Set([...BOARD_TIERS, ...STOCK_TIERS, ...RAIL_TIERS])];
+        const hidden: readonly BoardTier[] = ['inline', 'lean', 'compact', 'tight', 'strip', 'railLow'];
+        for (const tier of tiers) {
+            expect(display(classes.boardTiered, tier, classes.boardSettings), tier).toBe(hidden.includes(tier) ? 'none' : undefined);
+        }
+        for (const tier of ['rail', 'railMid', 'railLow'] as const) {
+            const sel = `${dot(classes.boardStock)}[data-tier="${tier}"] ${dot(classes.volGroup)}`;
+            expect(rules.find((rule) => rule.selector.split(',').some((s) => s.trim() === sel))?.declarations['grid-auto-flow']).toBe('column');
+        }
+    });
+
     it('所有價格字數都有 railMid 與 railLow 的開盤、高低容器門檻', () => {
         for (const chars of RAIL_CHARS) {
             for (const [child, cells] of [[classes.railOpen, 3], [classes.railHL, 2]] as const) {

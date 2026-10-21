@@ -282,7 +282,13 @@ function BlockBody({
         case 'chart':
             return contract ? (
                 <>
-                    <QuoteBoard contract={contract} snapshot={snapshot} sessionMode={block.chartSession} />
+                    <QuoteBoard
+                        contract={contract}
+                        snapshot={snapshot}
+                        sessionMode={block.chartSession}
+                        fields={block.quoteBoard}
+                        onFieldsChange={(quoteBoard) => onSessionConfigChange(block.id, { quoteBoard })}
+                    />
                     <CandleChart
                         panelId={block.id}
                         contract={contract}
@@ -768,7 +774,7 @@ function PopoutView({
             case 'chart':
                 body = (
                     <>
-                        <QuoteBoard contract={contract} sessionMode={chartSession} />
+                        <QuoteBoard contract={contract} sessionMode={chartSession} fields={popoutSession.quoteBoard} />
                         <CandleChart
                             contract={contract}
                             trades={tradesState.data ?? []}
