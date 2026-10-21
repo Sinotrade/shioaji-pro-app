@@ -20,6 +20,7 @@ import {
     useRef,
     useState,
 } from 'react';
+import { useCoalescedStates } from '../hooks/use-coalesced-states';
 import { useIndexComponents } from '../hooks/use-index-components';
 import { useQuote } from '../hooks/use-stream';
 import { fitHeatLabel, type HeatLabelFit } from '../lib/heat-label';
@@ -229,27 +230,6 @@ function useBoxSize<T extends HTMLElement>() {
         };
     }, [element]);
     return { ref: setElement, size, resizing };
-}
-
-// 群組內排行每個產業各自一包、到達時間錯開；把短時間內的多包合併成一次
-// 版面重算（下鑽時暫停）。狀態物件本身沒換時不觸發。
-function useCoalescedStates<T>(
-    states: readonly T[],
-    delayMs: number,
-    paused: boolean,
-): readonly T[] {
-    const [snapshot, setSnapshot] = useState<readonly T[]>(states);
-    const latest = useRef(states);
-    latest.current = states;
-    const changed =
-        states.length !== snapshot.length ||
-        states.some((state, i) => state !== snapshot[i]);
-    useEffect(() => {
-        if (!changed || paused) return;
-        const timer = setTimeout(() => setSnapshot(latest.current), delayMs);
-        return () => clearTimeout(timer);
-    }, [changed, delayMs, paused]);
-    return snapshot;
 }
 
 interface TileView {
@@ -523,6 +503,7 @@ export function SectorHeatmap({
         useBoxSize<HTMLDivElement>();
     const groupStates = useCoalescedStates(
         groupIc.states,
+        `${indexCode}|${rankMetric}|${categoriesKey}`,
         250,
         drillCat !== null,
     );
