@@ -18,7 +18,11 @@ import {
 } from 'react';
 import { useIndexComponents } from '../hooks/use-index-components';
 import { useQuote } from '../hooks/use-stream';
-import { getIcBootstrapGroupWeights } from '../lib/index-components';
+import {
+    getIcBootstrapGroupWeights,
+    getIcGroupWperfAt,
+} from '../lib/index-components';
+import { estimateOtherPct } from '../lib/sector-other-pct';
 import { useFocusedSector } from '../lib/sector-sync';
 import { loadStockDetails, SECTOR_INDICES } from '../lib/stock-index';
 import type { ContractBase } from '../lib/types/contract';
@@ -58,6 +62,10 @@ const SIZE_METRICS: { value: SizeMetric; label: string }[] = [
     { value: 'amount', label: '成交值' },
     { value: 'contribution', label: '貢獻' },
 ];
+
+// 其他成員漲跌幅不顯示時的說明（資料不同刻／餘量權重過小／超出漲跌停）
+const OTHER_PCT_UNAVAILABLE =
+    '加權漲跌暫無法可靠估算（尚無與排行同時點的群組資料，或餘量權重過小）';
 
 const CAT_KEY = 'sj-pro-heatmap-cat'; // 舊鍵沿用：最近下鑽的產業
 const SIZE_KEY = 'sj-pro-panorama-size';
@@ -135,6 +143,7 @@ interface HeatLeaf {
     sub?: string;
     pct: number | null;
     approx?: boolean; // 反推估算值 — 顯示 ≈ 前綴
+    pctUnavailable?: boolean; // 漲跌幅無法可靠估算 — 顯示「—」
     x0: number;
     y0: number;
     x1: number;
@@ -182,6 +191,16 @@ function HeatTreemap({ leaves }: { leaves: HeatLeaf[] }) {
                                 {fmtPct(leaf.pct)}
                             </span>
                         )}
+                        {leaf.pct === null &&
+                            leaf.pctUnavailable &&
+                            width >= 52 &&
+                            height >= 38 && (
+                                <span
+                                    className={`${styles.tilePct} ${panel.dirText.flat}`}
+                                >
+                                    —
+                                </span>
+                            )}
                         {leaf.sub !== undefined &&
                             width >= 82 &&
                             height >= 54 && (
@@ -448,42 +467,34 @@ export function SectorHeatmap({
         : 0;
     const fmtDrillValue = (value: number) =>
         isAmountDrill ? fmtAmount(value) : fmtPoints(value);
-    // 其他成員的加權漲跌幅反推：群組加權漲跌（wperf 串流）＝全員權重加權
-    // 平均，扣掉排行前 10 的權重×漲跌即得餘量。權重取建底參考權重（盤中
-    // 恆定）；兩串流節奏差（1s vs 5s）帶來的微小誤差以 ≈ 標示，並夾在
-    // 台股漲跌停幅度內防瞬間偏斜。
-    const drillGroupWeight = useMemo(
-        () =>
-            drillCat
+    // 其他成員的加權漲跌幅反推（群組加權漲跌扣排行前 10）— 群組漲跌只取
+    // 排行 calculated_at 當下有效的值（建底同快照／盤中 AS-OF，見
+    // getIcGroupWperfAt）；無法判定、餘量權重過小或結果超出漲跌停時顯示
+    // 「—」（#330）。權重取建底參考權重（盤中恆定，
+    // 與排行列的 weight_pct 同基準）。
+    const drillCalculatedAt = drillState?.calculatedAt;
+    const { drillGroupWeight, drillGroupPctAtRows } = useMemo(
+        () => ({
+            drillGroupWeight: drillCat
                 ? getIcBootstrapGroupWeights(indexCode)?.get(drillCat)
                 : undefined,
-        // ic 每個 store 版本換新物件 — 建底抵達/日切後自動更新
+            drillGroupPctAtRows: drillCat
+                ? getIcGroupWperfAt(indexCode, drillCat, drillCalculatedAt)
+                : undefined,
+        }),
+        // ic 每個 store 版本換新物件 — 建底抵達、日切、群組新包後自動更新
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [drillCat, ic, indexCode],
+        [drillCat, drillCalculatedAt, ic, indexCode],
     );
-    const otherPct = useMemo(() => {
-        if (
-            drillGroupWeight === undefined ||
-            !drillGroup ||
-            drillEntries.length === 0
-        ) {
-            return null;
-        }
-        const topWeight = drillEntries.reduce(
-            (sum, entry) => sum + entry.weight_pct,
-            0,
-        );
-        const restWeight = drillGroupWeight - topWeight;
-        if (restWeight <= 1e-6) return null;
-        const topWeighted = drillEntries.reduce(
-            (sum, entry) => sum + entry.weight_pct * entry.pct_chg,
-            0,
-        );
-        const estimate =
-            (drillGroupWeight * drillGroup.pct - topWeighted) / restWeight;
-        if (!Number.isFinite(estimate)) return null;
-        return Math.max(-10, Math.min(10, estimate));
-    }, [drillEntries, drillGroup, drillGroupWeight]);
+    const otherPct = useMemo(
+        () =>
+            estimateOtherPct({
+                groupWeight: drillGroupWeight,
+                groupPct: drillGroupPctAtRows,
+                entries: drillEntries,
+            }),
+        [drillEntries, drillGroupPctAtRows, drillGroupWeight],
+    );
     const barScale = drillEntries.reduce(
         (max, entry) => Math.max(max, Math.abs(entry.value)),
         0,
@@ -526,12 +537,13 @@ export function SectorHeatmap({
             label: item.label,
             pct: item.pct,
             approx: item.code === undefined && item.pct !== null,
+            pctUnavailable: item.code === undefined && item.pct === null,
             sub: isAmountDrill
                 ? fmtAmount(item.points)
                 : `${fmtPoints(item.points)} 點`,
             title:
                 item.code === undefined
-                    ? `${item.label}｜合計${isAmountDrill ? `成交 ${fmtAmount(item.points)}` : `貢獻 ${fmtPoints(item.points)} 點`}${item.pct !== null ? `｜加權漲跌 ≈${fmtPct(item.pct)}（依群組加權與前10反推）` : ''}`
+                    ? `${item.label}｜合計${isAmountDrill ? `成交 ${fmtAmount(item.points)}` : `貢獻 ${fmtPoints(item.points)} 點`}${item.pct !== null ? `｜加權漲跌 ≈${fmtPct(item.pct)}（依群組加權與前10反推）` : `｜${OTHER_PCT_UNAVAILABLE}`}`
                     : `${item.label}｜${isAmountDrill ? `成交 ${fmtAmount(item.points)}` : `貢獻 ${fmtPoints(item.points)} 點`}｜漲跌 ${fmtPct(item.pct ?? 0)}`,
             onClick: item.code ? () => onPick?.(item.code!) : undefined,
         }));
@@ -906,7 +918,7 @@ export function SectorHeatmap({
                                             <span
                                                 className={`${styles.rankPct} ${
                                                     otherPct === null
-                                                        ? ''
+                                                        ? panel.dirText.flat
                                                         : panel.dirText[
                                                               otherPct > 0
                                                                   ? 'up'
@@ -916,10 +928,14 @@ export function SectorHeatmap({
                                                                     : 'flat'
                                                           ]
                                                 }`}
-                                                title="依群組加權漲跌與前10檔反推的估算值"
+                                                title={
+                                                    otherPct === null
+                                                        ? OTHER_PCT_UNAVAILABLE
+                                                        : '依群組加權漲跌與前10檔反推的估算值'
+                                                }
                                             >
                                                 {otherPct === null
-                                                    ? ''
+                                                    ? '—'
                                                     : `≈${fmtPct(otherPct)}`}
                                             </span>
                                             <span

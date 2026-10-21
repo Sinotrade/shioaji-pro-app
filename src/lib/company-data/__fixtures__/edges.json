@@ -1,0 +1,560 @@
+[
+ {
+  "amount": null,
+  "as_of": "2026-09-16",
+  "confidence": "ai_cross_checked",
+  "detail": "半導體設備",
+  "details": [
+   "半導體設備"
+  ],
+  "direction": "directed",
+  "dst": "tw.2330",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.5443#e9"
+  ],
+  "evidence_level": "other",
+  "id": "e046db5d81288",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.5443",
+  "type": "supplier",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2025-05",
+  "confidence": "ai_cross_checked",
+  "detail": "探針卡客戶",
+  "details": [
+   "探針卡客戶"
+  ],
+  "direction": "directed",
+  "dst": "tw.2330",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.6223#e7"
+  ],
+  "evidence_level": "primary",
+  "id": "e0d9e9a7db311",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.6223",
+  "type": "supplier",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2026-10-14",
+  "confidence": "ai_cross_checked",
+  "detail": "半導體廠水務工程實績",
+  "details": [
+   "半導體廠水務工程實績"
+  ],
+  "direction": "directed",
+  "dst": "tw.2330",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.6944#e10",
+   "tw.6944#e11",
+   "tw.6944#e12",
+   "tw.6944#e16"
+  ],
+  "evidence_level": "primary",
+  "id": "e0f9d34079ab5",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.6944",
+  "type": "supplier",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2026-10-14",
+  "confidence": "ai_cross_checked",
+  "detail": "3DFabric聯盟載板技術合作",
+  "details": [
+   "3DFabric聯盟載板技術合作"
+  ],
+  "direction": "undirected",
+  "dst": "tw.3037",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.3037#e18"
+  ],
+  "evidence_level": "primary",
+  "id": "e11aba05b9ded",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.2330",
+  "type": "partner",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2026-10-13",
+  "confidence": "ai_cross_checked",
+  "detail": "Design Center Alliance設計服務合作",
+  "details": [
+   "Design Center Alliance設計服務合作"
+  ],
+  "direction": "undirected",
+  "dst": "tw.8227",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.8227#e13"
+  ],
+  "evidence_level": "other",
+  "id": "e6197b1dadce9",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.2330",
+  "type": "partner",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2026-10-14",
+  "confidence": "ai_cross_checked",
+  "detail": "TSMC 3DFabric Alliance封測生態系合作",
+  "details": [
+   "TSMC 3DFabric Alliance封測生態系合作"
+  ],
+  "direction": "undirected",
+  "dst": "tw.3711",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.3711#e13"
+  ],
+  "evidence_level": "primary",
+  "id": "e6e099ae822b1",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.2330",
+  "type": "partner",
+  "weight": 1
+ },
+ {
+  "amount": "不超過日幣2,820億元",
+  "as_of": "2026-08-11",
+  "confidence": "ai_cross_checked",
+  "detail": "下一世代影像感測器合資",
+  "details": [
+   "下一世代影像感測器合資"
+  ],
+  "direction": "undirected",
+  "dst": "tw.2330",
+  "event_date": "2026-08-11",
+  "events": [
+   {
+    "amount": "不超過日幣2,820億元",
+    "detail": "下一世代影像感測器合資",
+    "event_date": "2026-08-11"
+   }
+  ],
+  "evidence": [
+   "tw.2330#e_sony_jv",
+   "tw.2330#e_sony_control"
+  ],
+  "evidence_level": "primary",
+  "id": "e16acdc290fcb",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "org.sony-semiconductor-solutions",
+  "type": "transaction",
+  "weight": 1
+ },
+ {
+  "amount": "美金2,000萬元至2,300萬元（預估）",
+  "as_of": "2025-11-11",
+  "confidence": "ai_cross_checked",
+  "detail": "向台積電購買機器設備",
+  "details": [
+   "向台積電購買機器設備",
+   "子公司VSMC取得130nm至40nm BCD等技術授權"
+  ],
+  "direction": "directed",
+  "dst": "tw.2330",
+  "event_date": "2025-11-11",
+  "events": [
+   {
+    "amount": "美金2,000萬元至2,300萬元（預估）",
+    "detail": "向台積電購買機器設備",
+    "event_date": "2025-11-11"
+   },
+   {
+    "amount": "US$150M（技術授權費）",
+    "detail": "子公司VSMC取得130nm至40nm BCD等技術授權",
+    "event_date": "2024-06-26"
+   }
+  ],
+  "evidence": [
+   "tw.5347#e12",
+   "tw.5347#e22"
+  ],
+  "evidence_level": "primary",
+  "id": "e2df1b850e4ae",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.5347",
+  "type": "transaction",
+  "weight": 1
+ },
+ {
+  "amount": "新台幣6,401仟元",
+  "as_of": "2024-12-31",
+  "confidence": "ai_cross_checked",
+  "detail": "取得不動產、廠房及設備",
+  "details": [
+   "取得不動產、廠房及設備"
+  ],
+  "direction": "directed",
+  "dst": "tw.2330",
+  "event_date": null,
+  "events": [
+   {
+    "amount": "新台幣6,401仟元",
+    "detail": "取得不動產、廠房及設備",
+    "event_date": null
+   }
+  ],
+  "evidence": [
+   "tw.3374#e05",
+   "tw.3374#e18"
+  ],
+  "evidence_level": "primary",
+  "id": "e313f008c3c89",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.3374",
+  "type": "transaction",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2025-12-31",
+  "confidence": "ai_cross_checked",
+  "detail": "晶圓代工",
+  "details": [
+   "晶圓代工"
+  ],
+  "direction": "directed",
+  "dst": "tw.2379",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.2379#e10"
+  ],
+  "evidence_level": "primary",
+  "id": "e1a7ebc8eae61",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.2330",
+  "type": "supplier",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2026-10",
+  "confidence": "ai_cross_checked",
+  "detail": "晶圓代工",
+  "details": [
+   "晶圓代工",
+   "資料中心晶圓代工供應鏈"
+  ],
+  "direction": "directed",
+  "dst": "tw.2454",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.2330#e_customers24_context",
+   "tw.2330#e_customers24_names",
+   "tw.2454#e18"
+  ],
+  "evidence_level": "primary",
+  "id": "e3e1708ea94b9",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.2330",
+  "type": "supplier",
+  "weight": 2
+ },
+ {
+  "amount": null,
+  "as_of": "2025-12-27",
+  "confidence": "ai_cross_checked",
+  "detail": "HPC、FPGA及adaptive SoC晶圓製造",
+  "details": [
+   "HPC、FPGA及adaptive SoC晶圓製造"
+  ],
+  "direction": "directed",
+  "dst": "us.AMD",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.2330#e_amd"
+  ],
+  "evidence_level": "primary",
+  "id": "e4480b3a1ad16",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.2330",
+  "type": "supplier",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2025-12-31",
+  "confidence": "ai_cross_checked",
+  "detail": "德國製造子公司",
+  "details": [
+   "德國製造子公司"
+  ],
+  "direction": "directed",
+  "dst": "tw.2330",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.2330#e_esmc_sub"
+  ],
+  "evidence_level": "primary",
+  "id": "e21cd6ea59d20",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "org.esmc",
+  "type": "subsidiary",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2025-12-31",
+  "confidence": "ai_cross_checked",
+  "detail": "日本製造子公司",
+  "details": [
+   "日本製造子公司"
+  ],
+  "direction": "directed",
+  "dst": "tw.2330",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.2330#e_jasm_sub"
+  ],
+  "evidence_level": "primary",
+  "id": "e33850df36c6a",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "org.jasm",
+  "type": "subsidiary",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2026-05-12",
+  "confidence": "ai_cross_checked",
+  "detail": "全資子公司",
+  "details": [
+   "全資子公司"
+  ],
+  "direction": "directed",
+  "dst": "tw.2330",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.2330#e_az26"
+  ],
+  "evidence_level": "primary",
+  "id": "ecc6f5bac83c3",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "org.tsmc-arizona",
+  "type": "subsidiary",
+  "weight": 1
+ },
+ {
+  "amount": "不超過US$5 billion",
+  "as_of": "2026-07-16",
+  "confidence": "ai_cross_checked",
+  "detail": "2024年董事會核准增資",
+  "details": [
+   "2024年董事會核准增資",
+   "2026年董事會核准增資",
+   "2025年美國製造布局追加投資計畫",
+   "2026年亞利桑那州追加投資計畫"
+  ],
+  "direction": "directed",
+  "dst": "org.tsmc-arizona",
+  "event_date": "2024-02-06",
+  "events": [
+   {
+    "amount": "追加$100 billion投資計畫",
+    "detail": "2026年亞利桑那州追加投資計畫",
+    "event_date": "2026-07-16"
+   },
+   {
+    "amount": "不超過US$20 billion",
+    "detail": "2026年董事會核准增資",
+    "event_date": "2026-05-12"
+   },
+   {
+    "amount": "追加$100 billion投資計畫",
+    "detail": "2025年美國製造布局追加投資計畫",
+    "event_date": "2025-03-04"
+   },
+   {
+    "amount": "不超過US$5 billion",
+    "detail": "2024年董事會核准增資",
+    "event_date": "2024-02-06"
+   }
+  ],
+  "evidence": [
+   "tw.2330#e_az24_invest",
+   "tw.2330#e_az26",
+   "tw.2330#e_us25_plan",
+   "tw.2330#e_us26_plan"
+  ],
+  "evidence_level": "primary",
+  "id": "e6423c0d94b9a",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.2330",
+  "type": "transaction",
+  "weight": 1
+ },
+ {
+  "amount": "新台幣37.39億元",
+  "as_of": "2024-10-08",
+  "confidence": "ai_cross_checked",
+  "detail": "台積電認購世界先進現金增資普通股",
+  "details": [
+   "台積電認購世界先進現金增資普通股"
+  ],
+  "direction": "directed",
+  "dst": "tw.5347",
+  "event_date": "2024-10-08",
+  "events": [
+   {
+    "amount": "新台幣37.39億元",
+    "detail": "台積電認購世界先進現金增資普通股",
+    "event_date": "2024-10-08"
+   }
+  ],
+  "evidence": [
+   "tw.5347#e13"
+  ],
+  "evidence_level": "media",
+  "id": "e7cbdcc60aff2",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.2330",
+  "type": "transaction",
+  "weight": 1
+ },
+ {
+  "amount": "新台幣171.4億元",
+  "as_of": "2024-08-15",
+  "confidence": "ai_cross_checked",
+  "detail": "購入南科廠房及附屬設施",
+  "details": [
+   "購入南科廠房及附屬設施",
+   "出售南科廠房及附屬設施"
+  ],
+  "direction": "directed",
+  "dst": "tw.3481",
+  "event_date": "2024-08-15",
+  "events": [
+   {
+    "amount": "新台幣171.4億元",
+    "detail": "購入南科廠房及附屬設施",
+    "event_date": "2024-08-15"
+   }
+  ],
+  "evidence": [
+   "tw.2330#e_innolux",
+   "tw.3481#e18"
+  ],
+  "evidence_level": "media",
+  "id": "e851c5b2a50bf",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.2330",
+  "type": "transaction",
+  "weight": 2
+ },
+ {
+  "amount": null,
+  "as_of": "2023-11-24",
+  "confidence": "ai_cross_checked",
+  "detail": "半導體測試介面產品；未拆分採購品項",
+  "details": [
+   "半導體測試介面產品；未拆分採購品項"
+  ],
+  "direction": "directed",
+  "dst": "us.NVDA",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.6515#e11"
+  ],
+  "evidence_level": "media",
+  "id": "e00562c92a0e0",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.6515",
+  "type": "supplier",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2026-09-24",
+  "confidence": "ai_cross_checked",
+  "detail": "承租子公司玉成廣場辦公樓層",
+  "details": [
+   "承租子公司玉成廣場辦公樓層"
+  ],
+  "direction": "directed",
+  "dst": "us.NVDA",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.9945#e12",
+   "tw.9945#e15"
+  ],
+  "evidence_level": "primary",
+  "id": "e05863fe89ece",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.9945",
+  "type": "supplier",
+  "weight": 1
+ },
+ {
+  "amount": null,
+  "as_of": "2025-11-11",
+  "confidence": "ai_cross_checked",
+  "detail": "AI伺服器業務客戶；媒體具名揭露",
+  "details": [
+   "AI伺服器業務客戶；媒體具名揭露"
+  ],
+  "direction": "directed",
+  "dst": "us.NVDA",
+  "event_date": null,
+  "events": [],
+  "evidence": [
+   "tw.2356#e_nvidia_customer"
+  ],
+  "evidence_level": "media",
+  "id": "e1cb617b28a20",
+  "ranking_basis": "unranked",
+  "shares": [],
+  "src": "tw.2356",
+  "type": "supplier",
+  "weight": 1
+ }
+]

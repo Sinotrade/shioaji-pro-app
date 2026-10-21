@@ -1,0 +1,802 @@
+{
+ "as_of": "2026-10-13",
+ "chain": "chain.semiconductor",
+ "chain_stage": {
+  "agreement": "both",
+  "also": [
+   {
+    "stage": "osat",
+    "stage_name": "封裝測試",
+    "tier": "downstream"
+   }
+  ],
+  "reason": "晶圓製造占營收約86%為主業，另自行提供CoWoS先進封裝服務。",
+  "stage": "fab",
+  "stage_name": "晶圓製造",
+  "tier": "midstream"
+ },
+ "code": "2330",
+ "confidence": "ai_cross_checked",
+ "english_short": "TSMC",
+ "evidence": {
+  "tw.2330#e_amat": {
+   "locator": "2025 Excellent Performance Award名單，Applied Materials項目",
+   "published_date": "2025-11-28",
+   "publisher": "台灣積體電路製造股份有限公司",
+   "quote_check": "found",
+   "title": "TSMC 2025 Supply Chain Management Forum Presents Awards to Outstanding Suppliers",
+   "url": "https://pr.tsmc.com/english/news/3274"
+  },
+  "tw.2330#e_amd": {
+   "locator": "Manufacturing Arrangements，Third-Party Wafer Foundry Facilities",
+   "published_date": "2026-02-04",
+   "publisher": "Advanced Micro Devices, Inc.",
+   "quote_check": "found",
+   "title": "AMD 2025年度Form 10-K",
+   "url": "https://ir.amd.com/financial-information/sec-filings/content/0000002488-26-000018/amd-20251227.htm"
+  },
+  "tw.2330#e_arm": {
+   "locator": "Supporting quotes，TSMC主管發言",
+   "published_date": "2026-03-24",
+   "publisher": "Arm Holdings plc",
+   "quote_check": "found",
+   "title": "Arm expands compute platform to silicon products in historic company first",
+   "url": "https://newsroom.arm.com/news/arm-agi-cpu-launch?trk=article-ssr-frontend-pulse_little-text-block"
+  },
+  "tw.2330#e_arm_ai": {
+   "locator": "新聞稿首段，Arm AGI CPU用途",
+   "published_date": "2026-03-24",
+   "publisher": "Arm Holdings plc",
+   "quote_check": "found",
+   "title": "Arm expands compute platform to silicon products in historic company first",
+   "url": "https://newsroom.arm.com/news/arm-agi-cpu-launch?trk=article-ssr-frontend-pulse_little-text-block"
+  },
+  "tw.2330#e_asml": {
+   "locator": "Taiwan specialties",
+   "published_date": null,
+   "publisher": "ASML",
+   "quote_check": "found",
+   "title": "Taiwan - Working at ASML",
+   "url": "https://www.asml.com/en/careers/working-at-asml/taiwan"
+  },
+  "tw.2330#e_az24_invest": {
+   "locator": "董事會決議第6項",
+   "published_date": "2024-02-06",
+   "publisher": "台灣積體電路製造股份有限公司",
+   "quote_check": "found",
+   "title": "TSMC Board of Directors Meeting Resolutions",
+   "url": "https://pr.tsmc.com/english/news/3104"
+  },
+  "tw.2330#e_innolux": {
+   "locator": "新聞首段",
+   "published_date": "2024-08-15",
+   "publisher": "中央通訊社",
+   "quote_check": "found",
+   "title": "台積電斥資171.4億元 購買群創南科廠房及設施",
+   "url": "https://www.cna.com.tw/news/afe/202408150354.aspx"
+  },
+  "tw.2330#e_customers24_names": {
+   "locator": "PDF第20頁，具名客戶名單",
+   "published_date": "2025-04-17",
+   "publisher": "台灣積體電路製造股份有限公司",
+   "quote_check": "found",
+   "title": "TSMC 2024年度Form 20-F",
+   "url": "https://investor.tsmc.com/sites/ir/sec-filings/2024%2020-F.pdf"
+  },
+  "tw.2330#e_sony_jv": {
+   "locator": "董事會決議第4項",
+   "published_date": "2026-08-11",
+   "publisher": "台灣積體電路製造股份有限公司",
+   "quote_check": "found",
+   "title": "台積公司董事會決議",
+   "url": "https://pr.tsmc.com/chinese/news/3332"
+  },
+  "tw.2330#e_sony_control": {
+   "locator": "合資公司控制權說明",
+   "published_date": "2026-08-11",
+   "publisher": "索尼半導體解決方案公司、台灣積體電路製造股份有限公司",
+   "quote_check": "found",
+   "title": "Sony與台積公司同意成立合資公司支援下一世代影像感測器",
+   "url": "https://pr.tsmc.com/chinese/news/3333"
+  },
+  "tw.2330#e_customers24_context": {
+   "locator": "PDF第20頁，Item 4客戶說明及相鄰名單",
+   "published_date": "2025-04-17",
+   "publisher": "台灣積體電路製造股份有限公司",
+   "quote_check": "found",
+   "title": "TSMC 2024年度Form 20-F",
+   "url": "https://investor.tsmc.com/sites/ir/sec-filings/2024%2020-F.pdf"
+  },
+  "tw.2330#e_az26": {
+   "locator": "董事會決議第4項",
+   "published_date": "2026-05-12",
+   "publisher": "台灣積體電路製造股份有限公司",
+   "quote_check": "found",
+   "title": "TSMC Board of Directors Meeting Resolutions",
+   "url": "https://pr.tsmc.com/english/news/3311"
+  },
+  "tw.2330#e_jasm_sub": {
+   "locator": "PDF第2頁，子公司持股圖",
+   "published_date": null,
+   "publisher": "台灣積體電路製造股份有限公司",
+   "quote_check": "found",
+   "title": "TSMC 2025 Annual Report，8.1 Subsidiaries",
+   "url": "https://investor.tsmc.com/static/annualReports/2025/english/pdf/2025_tsmc_ar_e_ch8.pdf"
+  },
+  "tw.2330#e_us26_plan": {
+   "locator": "新聞稿首段",
+   "published_date": "2026-07-16",
+   "publisher": "Arizona Commerce Authority",
+   "quote_check": "found",
+   "title": "TSMC Announces Additional $100 Billion Investment In Arizona",
+   "url": "https://azcommerce-prod.azurewebsites.net/news-events/news/2026/7/tsmc-announcement/"
+  },
+  "tw.2330#e_esmc_sub": {
+   "locator": "PDF第2頁，子公司持股圖",
+   "published_date": null,
+   "publisher": "台灣積體電路製造股份有限公司",
+   "quote_check": "found",
+   "title": "TSMC 2025 Annual Report，8.1 Subsidiaries",
+   "url": "https://investor.tsmc.com/static/annualReports/2025/english/pdf/2025_tsmc_ar_e_ch8.pdf"
+  },
+  "tw.2330#e_us25_plan": {
+   "locator": "美國製造布局投資公告首段",
+   "published_date": "2025-03-04",
+   "publisher": "台灣積體電路製造股份有限公司",
+   "quote_check": "found",
+   "title": "TSMC Intends to Expand Its Investment in the United States to US$165 Billion to Power the Future of AI",
+   "url": "https://pr.tsmc.com/english/news/3210"
+  }
+ },
+ "foreign_registration": null,
+ "full_name": "台灣積體電路製造股份有限公司",
+ "has_research": true,
+ "id": "tw.2330",
+ "incorporated": "1987-02-21",
+ "industry": {
+  "l0_code": "24",
+  "l0_name": "半導體業",
+  "l0_name_en": "Semiconductor",
+  "l1": "tech",
+  "l1_name": "科技",
+  "l1_name_en": "Technology",
+  "l2": "tech.semi",
+  "l2_name": "半導體",
+  "l2_name_en": "Semiconductors",
+  "l3": "semi.foundry",
+  "l3_name": "晶圓代工",
+  "l3_name_en": "Wafer Foundry"
+ },
+ "listed": "1994-09-05",
+ "main_theme": "theme.ai_server",
+ "market": "twse",
+ "name": "台積電",
+ "primary_chain_position": "midstream",
+ "quality_flags": [],
+ "relations": {
+  "competitors": [],
+  "customers": [
+   {
+    "as_of": "2026-10",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "晶圓代工",
+    "details": [
+     "晶圓代工",
+     "資料中心晶圓代工供應鏈"
+    ],
+    "edge": "e3e1708ea94b9",
+    "evidence_level": "primary",
+    "id": "tw.2454",
+    "name": "聯發科",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 2
+   },
+   {
+    "as_of": "2024-12-31",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "晶圓代工",
+    "details": [
+     "晶圓代工"
+    ],
+    "edge": "e46380e8c6ccc",
+    "evidence_level": "primary",
+    "id": "org.sony-semiconductor-solutions",
+    "name": "Sony Semiconductor Solutions Corporation",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "as_of": "2025-12-31",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "晶圓代工",
+    "details": [
+     "晶圓代工"
+    ],
+    "edge": "e1a7ebc8eae61",
+    "evidence_level": "primary",
+    "id": "tw.2379",
+    "name": "瑞昱",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "as_of": "2024-12-31",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "歷史委託加工服務",
+    "details": [
+     "歷史委託加工服務"
+    ],
+    "edge": "ee0cc1f78ca5f",
+    "evidence_level": "primary",
+    "id": "tw.3374",
+    "name": "精材",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   }
+  ],
+  "parents": [],
+  "partners": [
+   {
+    "as_of": "2026-10-14",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "3DFabric聯盟載板技術合作",
+    "details": [
+     "3DFabric聯盟載板技術合作"
+    ],
+    "edge": "e11aba05b9ded",
+    "evidence_level": "primary",
+    "id": "tw.3037",
+    "name": "欣興",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "as_of": "2026-03-30",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "感測元件與測試服務合作",
+    "details": [
+     "感測元件與測試服務合作"
+    ],
+    "edge": "ebcdc56de0ca4",
+    "evidence_level": "primary",
+    "id": "tw.3374",
+    "name": "精材",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "as_of": "2026-09-30",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "先進製程記憶體矽智財開發與測試晶片",
+    "details": [
+     "先進製程記憶體矽智財開發與測試晶片"
+    ],
+    "edge": "e6faa6df9f90c",
+    "evidence_level": "primary",
+    "id": "tw.3529",
+    "name": "力旺",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "as_of": "2026-10-14",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "TSMC 3DFabric Alliance封測生態系合作",
+    "details": [
+     "TSMC 3DFabric Alliance封測生態系合作"
+    ],
+    "edge": "e6e099ae822b1",
+    "evidence_level": "primary",
+    "id": "tw.3711",
+    "name": "日月光投控",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   }
+  ],
+  "subsidiaries": [
+   {
+    "as_of": "2025-12-31",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "德國製造子公司",
+    "details": [
+     "德國製造子公司"
+    ],
+    "edge": "e21cd6ea59d20",
+    "evidence_level": "primary",
+    "id": "org.esmc",
+    "name": "European Semiconductor Manufacturing Company (ESMC) GmbH",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "as_of": "2025-12-31",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "日本製造子公司",
+    "details": [
+     "日本製造子公司"
+    ],
+    "edge": "e33850df36c6a",
+    "evidence_level": "primary",
+    "id": "org.jasm",
+    "name": "Japan Advanced Semiconductor Manufacturing, Inc.",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "as_of": "2026-05-12",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "全資子公司",
+    "details": [
+     "全資子公司"
+    ],
+    "edge": "ecc6f5bac83c3",
+    "evidence_level": "primary",
+    "id": "org.tsmc-arizona",
+    "name": "TSMC Arizona Corporation",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "as_of": "2025-12-31",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "南京全資子公司",
+    "details": [
+     "南京全資子公司"
+    ],
+    "edge": "ed29f467585b8",
+    "evidence_level": "primary",
+    "id": "org.tsmc-nanjing",
+    "name": "TSMC Nanjing Company Limited",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   }
+  ],
+  "suppliers": [
+   {
+    "as_of": "2026-05-15",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "受託生產矽中介層",
+    "details": [
+     "受託生產矽中介層",
+     "委託世界先進生產矽中介層"
+    ],
+    "edge": "ea45a517a884d",
+    "evidence_level": "primary",
+    "id": "tw.5347",
+    "name": "世界",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 2
+   },
+   {
+    "as_of": "2025-12",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "原物料供應",
+    "details": [
+     "原物料供應",
+     "半導體上游材料供應關係"
+    ],
+    "edge": "e7303ecab4516",
+    "evidence_level": "primary",
+    "id": "tw.6488",
+    "name": "環球晶",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 2
+   },
+   {
+    "as_of": "2025-11-25",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "綠色製造及量產支援",
+    "details": [
+     "綠色製造及量產支援"
+    ],
+    "edge": "e6104fc4e2c67",
+    "evidence_level": "primary",
+    "id": "jp.3436",
+    "name": "SUMCO",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "as_of": "2024-12-02",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "量產支援",
+    "details": [
+     "量產支援"
+    ],
+    "edge": "e4d74b159c9a5",
+    "evidence_level": "primary",
+    "id": "jp.4063",
+    "name": "Shin-Etsu Chemical",
+    "ranking_basis": "unranked",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   }
+  ],
+  "transactions": [
+   {
+    "amount": "新台幣171.4億元",
+    "as_of": "2024-08-15",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "購入南科廠房及附屬設施",
+    "details": [
+     "購入南科廠房及附屬設施",
+     "出售南科廠房及附屬設施"
+    ],
+    "edge": "e851c5b2a50bf",
+    "event_date": "2024-08-15",
+    "events": [
+     {
+      "amount": "新台幣171.4億元",
+      "detail": "購入南科廠房及附屬設施",
+      "event_date": "2024-08-15"
+     }
+    ],
+    "evidence_level": "media",
+    "id": "tw.3481",
+    "name": "群創",
+    "ranking_basis": "unranked",
+    "role": "buyer",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 2
+   },
+   {
+    "amount": "不超過US$5.262 billion",
+    "as_of": "2024-02-06",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "董事會核准增資JASM",
+    "details": [
+     "董事會核准增資JASM"
+    ],
+    "edge": "ece75f522df47",
+    "event_date": "2024-02-06",
+    "events": [
+     {
+      "amount": "不超過US$5.262 billion",
+      "detail": "董事會核准增資JASM",
+      "event_date": "2024-02-06"
+     }
+    ],
+    "evidence_level": "primary",
+    "id": "org.jasm",
+    "name": "Japan Advanced Semiconductor Manufacturing, Inc.",
+    "ranking_basis": "unranked",
+    "role": "buyer",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "amount": "不超過日幣2,820億元",
+    "as_of": "2026-08-11",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "下一世代影像感測器合資",
+    "details": [
+     "下一世代影像感測器合資"
+    ],
+    "edge": "e16acdc290fcb",
+    "event_date": "2026-08-11",
+    "events": [
+     {
+      "amount": "不超過日幣2,820億元",
+      "detail": "下一世代影像感測器合資",
+      "event_date": "2026-08-11"
+     }
+    ],
+    "evidence_level": "primary",
+    "id": "org.sony-semiconductor-solutions",
+    "name": "Sony Semiconductor Solutions Corporation",
+    "ranking_basis": "unranked",
+    "role": "party",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   },
+   {
+    "amount": "不超過US$5 billion",
+    "as_of": "2026-07-16",
+    "confidence": "ai_cross_checked",
+    "counterparty_shares": [],
+    "detail": "2024年董事會核准增資",
+    "details": [
+     "2024年董事會核准增資",
+     "2026年董事會核准增資",
+     "2025年美國製造布局追加投資計畫",
+     "2026年亞利桑那州追加投資計畫"
+    ],
+    "edge": "e6423c0d94b9a",
+    "event_date": "2024-02-06",
+    "events": [
+     {
+      "amount": "追加$100 billion投資計畫",
+      "detail": "2026年亞利桑那州追加投資計畫",
+      "event_date": "2026-07-16"
+     },
+     {
+      "amount": "不超過US$20 billion",
+      "detail": "2026年董事會核准增資",
+      "event_date": "2026-05-12"
+     },
+     {
+      "amount": "追加$100 billion投資計畫",
+      "detail": "2025年美國製造布局追加投資計畫",
+      "event_date": "2025-03-04"
+     },
+     {
+      "amount": "不超過US$5 billion",
+      "detail": "2024年董事會核准增資",
+      "event_date": "2024-02-06"
+     }
+    ],
+    "evidence_level": "primary",
+    "id": "org.tsmc-arizona",
+    "name": "TSMC Arizona Corporation",
+    "ranking_basis": "unranked",
+    "role": "buyer",
+    "share_basis": null,
+    "share_pct": null,
+    "weight": 1
+   }
+  ]
+ },
+ "segments": [
+  {
+   "evidence_ids": [
+    "e_platforms"
+   ],
+   "id": "hpc",
+   "name": "高效能運算（HPC）",
+   "period": "2025",
+   "revenue_share_pct": 58
+  },
+  {
+   "evidence_ids": [
+    "e_platforms"
+   ],
+   "id": "smartphone",
+   "name": "智慧型手機",
+   "period": "2025",
+   "revenue_share_pct": 29
+  },
+  {
+   "evidence_ids": [
+    "e_platforms"
+   ],
+   "id": "iot",
+   "name": "物聯網",
+   "period": "2025",
+   "revenue_share_pct": 5
+  },
+  {
+   "evidence_ids": [
+    "e_platforms"
+   ],
+   "id": "automotive",
+   "name": "汽車",
+   "period": "2025",
+   "revenue_share_pct": 5
+  },
+  {
+   "evidence_ids": [
+    "e_platforms"
+   ],
+   "id": "dce",
+   "name": "數位消費性電子",
+   "period": "2025",
+   "revenue_share_pct": 1
+  },
+  {
+   "evidence_ids": [
+    "e_platforms"
+   ],
+   "id": "others",
+   "name": "其他",
+   "period": "2025",
+   "revenue_share_pct": 2
+  }
+ ],
+ "summary_long": "台積電主要依客戶設計製造晶片，2025年晶圓製造占營收約86%，另提供CoWoS先進封裝。按應用平台區分，2025年高效能運算占58%、智慧型手機29%，物聯網與汽車各5%。二奈米製程已於2025年第四季量產。具名客戶包括Apple、NVIDIA、AMD、Qualcomm及聯發科；ASML、Applied Materials等為供應商，Synopsys與Cadence參與設計技術合作。海外製造子公司包括TSMC Arizona、JASM與ESMC。近三年事件包括購入群創南科廠房、核准增資JASM與TSMC Arizona，以及與Sony Semiconductor Solutions Corporation簽署影像感測器合資協議。",
+ "summary_short": "以晶圓代工為主要收入，另提供CoWoS先進封裝等服務。",
+ "tax_id": "22099131",
+ "themes": [
+  {
+   "also": [],
+   "stage": "chips",
+   "theme": "theme.ai_server",
+   "tier": "upstream"
+  },
+  {
+   "also": [],
+   "stage": "components",
+   "theme": "theme.apple",
+   "tier": "upstream"
+  },
+  {
+   "also": [],
+   "stage": "chips",
+   "theme": "theme.nvidia",
+   "tier": "upstream"
+  },
+  {
+   "also": [],
+   "stage": "devices",
+   "theme": "theme.silicon_photonics",
+   "tier": "midstream"
+  },
+  {
+   "also": [],
+   "stage": "packaging",
+   "theme": "theme.cpo",
+   "tier": "midstream"
+  },
+  {
+   "also": [],
+   "stage": "manufacturing",
+   "theme": "theme.cowos",
+   "tier": "midstream"
+  }
+ ],
+ "top_customers": [
+  {
+   "as_of": "2026-10",
+   "confidence": "ai_cross_checked",
+   "counterparty_shares": [],
+   "detail": "晶圓代工",
+   "details": [
+    "晶圓代工",
+    "資料中心晶圓代工供應鏈"
+   ],
+   "edge": "e3e1708ea94b9",
+   "evidence_level": "primary",
+   "id": "tw.2454",
+   "name": "聯發科",
+   "ranking_basis": "unranked",
+   "share_basis": null,
+   "share_pct": null,
+   "weight": 2
+  },
+  {
+   "as_of": "2024-12-31",
+   "confidence": "ai_cross_checked",
+   "counterparty_shares": [],
+   "detail": "晶圓代工",
+   "details": [
+    "晶圓代工"
+   ],
+   "edge": "e46380e8c6ccc",
+   "evidence_level": "primary",
+   "id": "org.sony-semiconductor-solutions",
+   "name": "Sony Semiconductor Solutions Corporation",
+   "ranking_basis": "unranked",
+   "share_basis": null,
+   "share_pct": null,
+   "weight": 1
+  },
+  {
+   "as_of": "2025-12-31",
+   "confidence": "ai_cross_checked",
+   "counterparty_shares": [],
+   "detail": "晶圓代工",
+   "details": [
+    "晶圓代工"
+   ],
+   "edge": "e1a7ebc8eae61",
+   "evidence_level": "primary",
+   "id": "tw.2379",
+   "name": "瑞昱",
+   "ranking_basis": "unranked",
+   "share_basis": null,
+   "share_pct": null,
+   "weight": 1
+  }
+ ],
+ "top_suppliers": [
+  {
+   "as_of": "2026-05-15",
+   "confidence": "ai_cross_checked",
+   "counterparty_shares": [],
+   "detail": "受託生產矽中介層",
+   "details": [
+    "受託生產矽中介層",
+    "委託世界先進生產矽中介層"
+   ],
+   "edge": "ea45a517a884d",
+   "evidence_level": "primary",
+   "id": "tw.5347",
+   "name": "世界",
+   "ranking_basis": "unranked",
+   "share_basis": null,
+   "share_pct": null,
+   "weight": 2
+  },
+  {
+   "as_of": "2025-12",
+   "confidence": "ai_cross_checked",
+   "counterparty_shares": [],
+   "detail": "原物料供應",
+   "details": [
+    "原物料供應",
+    "半導體上游材料供應關係"
+   ],
+   "edge": "e7303ecab4516",
+   "evidence_level": "primary",
+   "id": "tw.6488",
+   "name": "環球晶",
+   "ranking_basis": "unranked",
+   "share_basis": null,
+   "share_pct": null,
+   "weight": 2
+  },
+  {
+   "as_of": "2025-11-25",
+   "confidence": "ai_cross_checked",
+   "counterparty_shares": [],
+   "detail": "綠色製造及量產支援",
+   "details": [
+    "綠色製造及量產支援"
+   ],
+   "edge": "e6104fc4e2c67",
+   "evidence_level": "primary",
+   "id": "jp.3436",
+   "name": "SUMCO",
+   "ranking_basis": "unranked",
+   "share_basis": null,
+   "share_pct": null,
+   "weight": 1
+  }
+ ],
+ "unresolved_mentions": [
+  "世界先進股權出售計畫中的財務投資機構：公告未具名買方。"
+ ],
+ "website": "https://www.tsmc.com"
+}
