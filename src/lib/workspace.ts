@@ -116,12 +116,22 @@ export interface Block {
     // 跟版面一起持久化；缺省 = 全盤 / 自動
     chartSession?: 'all' | 'day';
     intradaySession?: 'auto' | 'day' | 'night';
+    // K 線週期（#331）— 跟版面一起持久化；缺省 = 5m
+    chartInterval?: ChartInterval;
     // K 線圖下單設定（#204，每市場一組）— 跟版面一起持久化
     chartOrder?: import('./chart-order-settings').ChartOrderPanelState;
     // K 棒讀值列（開高低收，#240）— false = 隱藏；缺省 = 顯示
     chartOhlc?: boolean;
     // 可見範圍最高／最低標記（#240）— false = 隱藏；缺省 = 顯示
     chartHighLow?: boolean;
+}
+
+// K 線圖可選週期（工具列順序）。版面只存標籤，分鐘數與載入天數在 candle-chart
+export const CHART_INTERVALS = ['1m', '5m', '15m', '60m', '1D'] as const;
+export type ChartInterval = (typeof CHART_INTERVALS)[number];
+export const DEFAULT_CHART_INTERVAL: ChartInterval = '5m';
+export function isChartInterval(v: unknown): v is ChartInterval {
+    return (CHART_INTERVALS as readonly unknown[]).includes(v);
 }
 
 export interface Workspace {
@@ -180,10 +190,10 @@ export function linkGroupSummary(w: Workspace): { id: LinkGroupId; code: string 
 }
 
 export type SessionConfigPatch = Partial<
-    Pick<Block, 'chartSession' | 'intradaySession' | 'chartOrder' | 'chartOhlc' | 'chartHighLow'>
+    Pick<Block, 'chartSession' | 'chartInterval' | 'intradaySession' | 'chartOrder' | 'chartOhlc' | 'chartHighLow'>
 >;
 
-// 開彈出視窗時把面板的時段選擇帶進 URL（session=…）
+// 開彈出視窗時把面板的時段選擇與 K 線週期帶進 URL（session=…、interval=…）
 export function popoutSessionParam(block: Block): Record<string, string> {
     const session =
         block.type === 'chart'
@@ -191,7 +201,11 @@ export function popoutSessionParam(block: Block): Record<string, string> {
             : block.type === 'intraday'
               ? block.intradaySession
               : undefined;
-    return session ? { session } : {};
+    const interval = block.type === 'chart' ? block.chartInterval : undefined;
+    return {
+        ...(session ? { session } : {}),
+        ...(interval ? { interval } : {}),
+    };
 }
 
 // 彈出視窗讀回 URL 的 session — 依面板類型只接受已知值
@@ -201,6 +215,9 @@ export function popoutSessionFromQuery(q: URLSearchParams): SessionConfigPatch {
         chartSession: v === 'all' || v === 'day' ? v : undefined,
         intradaySession:
             v === 'auto' || v === 'day' || v === 'night' ? v : undefined,
+        chartInterval: isChartInterval(q.get('interval'))
+            ? (q.get('interval') as ChartInterval)
+            : undefined,
     };
 }
 

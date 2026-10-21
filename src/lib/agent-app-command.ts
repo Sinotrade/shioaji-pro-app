@@ -18,6 +18,19 @@ import {
     type Profile,
     type Workspace,
 } from './workspace';
+import type { WorkspaceUndoEntry, WorkspaceUndoHistory } from './workspace-history';
+import {
+    buildWorkspaceFromSpec,
+    checkWorkspaceSpec,
+    resolveWorkspaceSpecContracts,
+    WORKSPACE_SPEC_SCHEMA_ID,
+    WORKSPACE_SPEC_TOKEN_PATTERN,
+    workspaceRevision,
+    workspaceSpecCatalog,
+    workspaceToSpec,
+    type WorkspaceSpecCheck,
+    type WorkspaceSpecIssue,
+} from './workspace-spec';
 
 export const AGENT_APP_COMMAND_REQUEST_EVENT =
     'shioaji-pro:agent-app-command:request';
@@ -25,6 +38,8 @@ export const AGENT_APP_COMMAND_RESPONSE_EVENT =
     'shioaji-pro:agent-app-command:response';
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const UNDO_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const UNDO_LABEL_MAX = 60;
 const CONTRACT_CODE_PATTERN = /^[A-Za-z0-9._+-]{1,64}$/;
 
 export interface AgentAppCommandContext {
@@ -37,6 +52,17 @@ export interface AgentAppCommandContext {
     selectContract(contract: ContractInfo): void;
     updateWorkspace(workspace: Workspace): void;
     createPanelId(type: BlockType): string;
+    /** Undo steps for workspace specs; without it the spec commands are unsupported. */
+    workspaceHistory?: WorkspaceUndoHistory;
+    /** Visible grid rows of the main window, for the viewport warning. */
+    getViewportRows?(): number | null;
+    /** Render density (1–4) of the main grid, for compaction previews. */
+    getGridDensity?(): number | null;
+    /** Called after a spec apply or undo lands (toast, activity log). */
+    onWorkspaceSpecChange?(event: {
+        kind: 'applied' | 'undone';
+        entry: WorkspaceUndoEntry;
+    }): void;
 }
 
 export class AgentAppCommandError extends Error {
@@ -151,6 +177,57 @@ function validateArgs<K extends AgentAppCommandName>(
                 source: value.source,
                 name: requireString(value.name, 'name'),
             } as AgentAppCommandMap[K]['args'];
+        case 'get_workspace_spec':
+            if (!hasOnlyKeys(value, ['columns'])) break;
+            if (
+                value.columns !== undefined &&
+                value.columns !== 24 &&
+                value.columns !== 288
+            ) {
+                throw new AgentAppCommandError(
+                    'invalid_arguments',
+                    'columns must be 24 or 288',
+                );
+            }
+            return (
+                value.columns === undefined ? {} : { columns: value.columns }
+            ) as AgentAppCommandMap[K]['args'];
+        case 'validate_workspace_spec':
+            if (!hasOnlyKeys(value, ['spec']) || !('spec' in value)) break;
+            return { spec: value.spec } as AgentAppCommandMap[K]['args'];
+        case 'apply_workspace_spec': {
+            if (
+                !hasOnlyKeys(value, ['spec', 'validationToken', 'label']) ||
+                !('spec' in value)
+            ) {
+                break;
+            }
+            if (
+                typeof value.validationToken !== 'string' ||
+                !WORKSPACE_SPEC_TOKEN_PATTERN.test(value.validationToken)
+            ) {
+                throw new AgentAppCommandError(
+                    'invalid_arguments',
+                    'validationToken is required: call validate_workspace_spec with the same spec first',
+                );
+            }
+            const label =
+                value.label === undefined
+                    ? undefined
+                    : requireString(value.label, 'label').slice(0, UNDO_LABEL_MAX);
+            return {
+                spec: value.spec,
+                validationToken: value.validationToken,
+                ...(label ? { label } : {}),
+            } as AgentAppCommandMap[K]['args'];
+        }
+        case 'undo_workspace_change':
+            if (!hasOnlyKeys(value, ['undoId'])) break;
+            return (
+                value.undoId === undefined
+                    ? {}
+                    : { undoId: requireString(value.undoId, 'undoId', UNDO_ID_PATTERN) }
+            ) as AgentAppCommandMap[K]['args'];
     }
     throw new AgentAppCommandError(
         'invalid_arguments',
@@ -231,6 +308,60 @@ async function resolveValidContract(
             `Contract ${code} was not found`,
         );
     }
+}
+
+function requireHistory(context: AgentAppCommandContext): WorkspaceUndoHistory {
+    if (!context.workspaceHistory) {
+        throw new AgentAppCommandError(
+            'unsupported',
+            'Workspace specs are not available in this window',
+        );
+    }
+    return context.workspaceHistory;
+}
+
+function undoState(entry: WorkspaceUndoEntry | null) {
+    return entry ? { undoId: entry.id, label: entry.label, at: entry.at } : null;
+}
+
+// Contract resolution may cross the network. Callers run the final
+// structural check synchronously on the workspace as it is after the await,
+// with no further await before they act on it.
+async function resolveSpec(
+    context: AgentAppCommandContext,
+    spec: unknown,
+): Promise<{ spec: unknown; errors: WorkspaceSpecIssue[] } | WorkspaceSpecCheck> {
+    const first = checkWorkspaceSpec(spec, context.getWorkspace());
+    if (!first.valid) return first;
+    return resolveWorkspaceSpecContracts(spec, (code) =>
+        context.resolveContract(code),
+    );
+}
+
+function checkResolved(
+    context: AgentAppCommandContext,
+    resolved: { spec: unknown; errors: WorkspaceSpecIssue[] } | WorkspaceSpecCheck,
+    current: Workspace,
+): WorkspaceSpecCheck {
+    if ('valid' in resolved) return resolved;
+    const check = checkWorkspaceSpec(resolved.spec, current, {
+        viewportRows: context.getViewportRows?.() ?? null,
+        density: context.getGridDensity?.() ?? null,
+    });
+    if (resolved.errors.length) {
+        return {
+            valid: false,
+            errors: [...resolved.errors, ...check.errors],
+            warnings: check.warnings,
+        };
+    }
+    return check;
+}
+
+function summarizeIssues(check: WorkspaceSpecCheck): string {
+    const shown = check.errors.slice(0, 5).map((e) => `${e.path}: ${e.message}`);
+    const more = check.errors.length > 5 ? ` (+${check.errors.length - 5} more)` : '';
+    return `workspace spec is invalid — ${shown.join('; ')}${more}`;
 }
 
 function findPanel(context: AgentAppCommandContext, id: string): Block {
@@ -432,6 +563,132 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
                 panels: next.blocks.map(panelState),
             } as AgentAppCommandMap[K]['result'];
         }
+        case 'get_workspace_spec': {
+            const history = requireHistory(context);
+            const { columns } =
+                args as AgentAppCommandMap['get_workspace_spec']['args'];
+            const workspace = context.getWorkspace();
+            const spec = workspaceToSpec(workspace, columns);
+            return {
+                spec,
+                schema: WORKSPACE_SPEC_SCHEMA_ID,
+                viewport: { rows: context.getViewportRows?.() ?? null },
+                panelTypes: workspaceSpecCatalog(spec.columns),
+                undo: undoState(history.peek(workspace)),
+            } as AgentAppCommandMap[K]['result'];
+        }
+        case 'validate_workspace_spec': {
+            const history = requireHistory(context);
+            const { spec } =
+                args as AgentAppCommandMap['validate_workspace_spec']['args'];
+            const resolved = await resolveSpec(context, spec);
+            const current = context.getWorkspace();
+            const check = checkResolved(context, resolved, current);
+            if (!check.valid) {
+                return {
+                    valid: false,
+                    errors: check.errors,
+                    warnings: check.warnings,
+                    diff: null,
+                    validationToken: null,
+                    resultSpec: null,
+                } as AgentAppCommandMap[K]['result'];
+            }
+            const preview = buildWorkspaceFromSpec(current, check.normalized);
+            return {
+                valid: true,
+                errors: [],
+                warnings: check.warnings,
+                diff: check.diff,
+                validationToken: history.issueValidation({
+                    spec: check.fingerprint,
+                    base: workspaceRevision(current),
+                }),
+                resultSpec: workspaceToSpec(preview, check.normalized.columns),
+            } as AgentAppCommandMap[K]['result'];
+        }
+        case 'apply_workspace_spec': {
+            const history = requireHistory(context);
+            const { spec, validationToken, label } =
+                args as AgentAppCommandMap['apply_workspace_spec']['args'];
+            const stale = () =>
+                new AgentAppCommandError(
+                    'conflict',
+                    'The workspace changed since validation; call validate_workspace_spec again and review the diff before applying',
+                );
+            if (!history.peekValidation(validationToken)) {
+                throw new AgentAppCommandError(
+                    'conflict',
+                    'validationToken is unknown, expired or already used; call validate_workspace_spec with this spec first',
+                );
+            }
+            const resolved = await resolveSpec(context, spec);
+            // From here to the mutation there is no await: the revision check,
+            // the token consumption and the replacement happen atomically with
+            // respect to user edits and other Agent calls.
+            const binding = history.peekValidation(validationToken);
+            if (!binding) throw stale();
+            const before = context.getWorkspace();
+            if (workspaceRevision(before) !== binding.base) {
+                history.revokeValidation(validationToken);
+                throw stale();
+            }
+            const check = checkResolved(context, resolved, before);
+            if (!check.valid) {
+                history.revokeValidation(validationToken);
+                throw new AgentAppCommandError(
+                    'invalid_arguments',
+                    summarizeIssues(check),
+                );
+            }
+            if (check.fingerprint !== binding.spec) {
+                history.revokeValidation(validationToken);
+                throw new AgentAppCommandError(
+                    'conflict',
+                    'This spec differs from the one validated with this token; validate it before applying',
+                );
+            }
+            history.revokeValidation(validationToken);
+            context.updateWorkspace(buildWorkspaceFromSpec(before, check.normalized));
+            const stored = context.getWorkspace();
+            const entry = history.push(before, stored, label ?? 'Agent 版面變更');
+            context.onWorkspaceSpecChange?.({ kind: 'applied', entry });
+            return {
+                applied: true,
+                undo: undoState(entry)!,
+                diff: check.diff,
+                warnings: check.warnings,
+                spec: workspaceToSpec(stored, check.normalized.columns),
+            } as AgentAppCommandMap[K]['result'];
+        }
+        case 'undo_workspace_change': {
+            const history = requireHistory(context);
+            const { undoId } =
+                args as AgentAppCommandMap['undo_workspace_change']['args'];
+            const result = history.pop(context.getWorkspace(), undoId);
+            if (!result.ok) {
+                throw new AgentAppCommandError(
+                    result.reason === 'empty' ? 'not_found' : 'conflict',
+                    result.reason === 'empty'
+                        ? 'There is no workspace change to undo'
+                        : result.reason === 'mismatch'
+                          ? `undoId ${undoId} is not the latest workspace change`
+                          : 'Panels or their settings changed, or another layout was loaded, after this change; undo would discard that work, so it was not applied',
+                );
+            }
+            const restored = structuredClone(result.entry.before);
+            context.updateWorkspace(restored);
+            context.onWorkspaceSpecChange?.({
+                kind: 'undone',
+                entry: result.entry,
+            });
+            return {
+                undone: true,
+                undoId: result.entry.id,
+                label: result.entry.label,
+                spec: workspaceToSpec(context.getWorkspace()),
+            } as AgentAppCommandMap[K]['result'];
+        }
     }
 }
 
@@ -475,6 +732,13 @@ function failedResponse(
         },
     };
 }
+
+const READ_COMMANDS: ReadonlySet<AgentAppCommandName> = new Set([
+    'get_app_state',
+    'list_panels',
+    'get_workspace_spec',
+    'validate_workspace_spec',
+]);
 
 export function registerAgentAppCommandHost(
     target: EventTarget,
@@ -591,9 +855,7 @@ export function registerAgentAppCommandHost(
             fingerprint,
             response,
             settled: false,
-            retain:
-                request.command.name !== 'get_app_state' &&
-                request.command.name !== 'list_panels',
+            retain: !READ_COMMANDS.has(request.command.name),
         };
         requests.set(request.requestId, entry);
         void response.then((result) => {

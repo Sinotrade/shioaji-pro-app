@@ -42,6 +42,11 @@ import {
 } from 'lucide-react';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
+    DEFAULT_CHART_INTERVAL,
+    isChartInterval,
+    type ChartInterval,
+} from '../lib/workspace';
+import {
     chartHasFocus,
     inOrderLabelArea,
     isTypingTarget,
@@ -162,13 +167,19 @@ import { orderStatusWithNumber } from '../lib/order-status-label';
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
 // payload (a year of TXF ≈ 280k bars / 18MB) — keep the range tight enough
 // to load on slow machines without looking dead
-const TIMEFRAMES = [
+const TIMEFRAMES: readonly { label: ChartInterval; minutes: number; days: number }[] = [
     { label: '1m', minutes: 1, days: 3 },
     { label: '5m', minutes: 5, days: 10 },
     { label: '15m', minutes: 15, days: 20 },
     { label: '60m', minutes: 60, days: 60 },
     { label: '1D', minutes: 1440, days: 240 },
-] as const;
+];
+const DEFAULT_TF_IDX = TIMEFRAMES.findIndex((t) => t.label === DEFAULT_CHART_INTERVAL);
+function timeframeIndex(interval: unknown): number | null {
+    if (!isChartInterval(interval)) return null;
+    const i = TIMEFRAMES.findIndex((t) => t.label === interval);
+    return i >= 0 ? i : null;
+}
 
 // 圖表一次只在一種模式：交易模式（頂端工具列武裝）或畫圖／瀏覽模式
 // （左側工具列）。'observe' 不是頂端的按鈕，而是「沒有武裝交易工具」的
@@ -195,6 +206,8 @@ export function CandleChart({
     onOrdersChanged,
     sessionMode: sessionModeProp,
     onSessionModeChange,
+    interval: intervalProp,
+    onIntervalChange,
     orderSettings: orderSettingsProp,
     onOrderSettingsChange,
     showOhlc: showOhlcProp,
@@ -211,6 +224,10 @@ export function CandleChart({
     // 初始值，之後用元件內 state
     sessionMode?: ChartSessionMode;
     onSessionModeChange?: (mode: ChartSessionMode) => void;
+    // K 線週期（#331）：有 onIntervalChange（主視窗 block）時是受控值、跟版面
+    // 一起存 — 缺省 = 5m；沒有時（彈出視窗）只當初始值
+    interval?: ChartInterval;
+    onIntervalChange?: (interval: ChartInterval) => void;
     // 圖表下單設定（#204）：有 onOrderSettingsChange（主視窗 block）時跟版面
     // 一起存；沒有時（彈出視窗）只在元件內
     orderSettings?: ChartOrderPanelState;
@@ -228,7 +245,17 @@ export function CandleChart({
     const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     const lastBarRef = useRef<Candle | null>(null);
-    const [tfIdx, setTfIdx] = useState(1); // default 5m
+    const [localTfIdx, setLocalTfIdx] = useState(
+        () => timeframeIndex(intervalProp) ?? DEFAULT_TF_IDX,
+    );
+    const tfIdx = onIntervalChange
+        ? (timeframeIndex(intervalProp) ?? DEFAULT_TF_IDX)
+        : localTfIdx;
+    const pickTimeframe = (i: number) => {
+        setLocalTfIdx(i);
+        const label = TIMEFRAMES[i]?.label;
+        if (label) onIntervalChange?.(label);
+    };
     // 僅日盤：aggregate 前濾掉夜盤 1 分 K、live 夜盤 tick 不入圖，指標
     // 也就只吃日盤 K 棒。只開給日盤 08:45–13:45 的期/選，其他商品一律全盤
     // 存檔值只認 all|day，其餘退回全盤
@@ -278,7 +305,7 @@ export function CandleChart({
     // 圖上目前畫的是哪一組（商品|週期|僅日盤）— 換組時同步清圖
     const drawnKeyRef = useRef('');
     const quote = useQuote(contract.code);
-    const tf = TIMEFRAMES[tfIdx] ?? TIMEFRAMES[1];
+    const tf = TIMEFRAMES[tfIdx] ?? TIMEFRAMES[DEFAULT_TF_IDX]!;
     const themeSettings = useThemeSettings();
     // 只取這個布林：別的風控欄位變動時不必重繪整張圖
     const orderLineLock = useSyncExternalStore(subscribeRiskSettings, () => getRiskSettings().orderLineLock);
@@ -2172,7 +2199,7 @@ export function CandleChart({
                     <button
                         key={t.label}
                         className={styles.tfBtn[i === tfIdx ? 'active' : 'normal']}
-                        onClick={() => setTfIdx(i)}
+                        onClick={() => pickTimeframe(i)}
                     >
                         {t.label}
                     </button>
