@@ -14,7 +14,7 @@ const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const STAGGER_MS = 40;
 const BLUR_MS = 460;
 /** Vertical blur levels (stdDeviation y); reels pick one by distance. */
-const BLUR_LEVELS = [0.5, 1, 1.8];
+const BLUR_LEVELS = [0.2, 0.4, 0.7];
 const FILTER_PREFIX = 'sj-odometer-blur-';
 
 let defsReady = false;

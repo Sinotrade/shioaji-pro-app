@@ -512,96 +512,68 @@ export const views = style({ flex: 1, minHeight: 160, display: 'flex', flexDirec
 
 export const rank = style({ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' });
 
-export const kpis = style({
+export const kpi = style({ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 });
+export const kpiLabel = style({ fontSize: '0.58rem', color: vars.color.mutedForeground, whiteSpace: 'nowrap' });
+
+const RANK_COLUMNS = 'minmax(110px, 180px) minmax(0, 1fr) 92px';
+// muted direction colours: the values and lanes sit back, the data reads
+const soft = (color: string, pct: number) => `color-mix(in oklab, ${color} ${pct}%, ${vars.color.mutedForeground})`;
+export const rankTone = styleVariants({
+    up: { color: soft(vars.color.up, 78) },
+    down: { color: soft(vars.color.down, 78) },
+    flat: { color: vars.color.mutedForeground },
+});
+export const rankKpis = style({
     display: 'flex',
     alignItems: 'flex-end',
-    gap: '18px',
-    padding: `6px ${vars.space.sm} 6px`,
-    borderBottom: `1px solid ${tint(vars.color.border, 70)}`,
-    flexShrink: 0,
-    minWidth: 0,
+    gap: vars.space.md,
+    padding: `10px ${vars.space.md} 8px`,
 });
-export const kpi = style({ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0 });
-export const kpiLabel = style({ fontSize: '0.54rem', color: vars.color.mutedForeground, whiteSpace: 'nowrap' });
-export const kpiValue = style({ ...mono, fontSize: '1.02rem', fontWeight: 700, lineHeight: 1.1, whiteSpace: 'nowrap' });
-export const kpiName = style({ fontSize: '0.74rem', fontWeight: 650, color: vars.color.foreground, lineHeight: 1.2, ...ellipsis, maxWidth: '140px' });
-export const kpiSub = style({ ...mono, fontSize: '0.62rem', fontWeight: 600, whiteSpace: 'nowrap' });
-export const clock = style({
-    ...mono,
-    fontSize: '1.5rem',
-    fontWeight: 700,
-    lineHeight: 1,
-    letterSpacing: '0.02em',
-    color: vars.color.foreground,
+export const rankKpiValue = style({ ...mono, fontSize: '1.7rem', fontWeight: 650, lineHeight: 1.15, letterSpacing: '-0.01em' });
+export const rankKpiSide = style({ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-end', paddingBottom: '3px' });
+export const rankKpiLine = style({ display: 'flex', alignItems: 'baseline', gap: '6px', whiteSpace: 'nowrap' });
+export const rankKpiName = style({ fontSize: '0.7rem', fontWeight: 600, color: vars.color.foreground, ...ellipsis, maxWidth: '150px' });
+export const rankKpiSub = style({ ...mono, fontSize: '0.68rem', minWidth: '72px', textAlign: 'right' });
+export const rankHeader = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: vars.space.sm,
+    padding: `4px ${vars.space.md} 0`,
 });
-
-const RANK_COLUMNS = '148px minmax(0, 1fr) 74px 56px';
+export const rankHeaderTitle = style({ fontSize: '0.78rem', fontWeight: 650, color: vars.color.foreground, whiteSpace: 'nowrap' });
+export const rankHeaderNote = style({ marginLeft: 'auto', fontSize: '0.6rem', color: vars.color.mutedForeground, ...ellipsis });
 export const rankAxis = style({
     display: 'grid',
     gridTemplateColumns: RANK_COLUMNS,
-    alignItems: 'center',
-    columnGap: '8px',
-    padding: `3px ${vars.space.sm} 2px`,
-    fontSize: '0.56rem',
-    color: vars.color.mutedForeground,
-    borderBottom: `1px solid ${tint(vars.color.border, 60)}`,
+    columnGap: '12px',
+    padding: `6px ${vars.space.md} 2px`,
+    fontSize: '0.62rem',
 });
-export const rankAxisNote = style({ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
 export const rankAxisTrack = style({ position: 'relative', height: '14px' });
-export const rankAxisSide = style({
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '2px',
-    padding: '0 6px',
-    whiteSpace: 'nowrap',
-    fontWeight: 600,
-    transition: 'left 900ms cubic-bezier(0.22, 1, 0.36, 1), right 900ms cubic-bezier(0.22, 1, 0.36, 1)',
-    ...reduce,
-});
-export const rankAxisOut = style({ color: vars.color.down });
-export const rankAxisIn = style({ color: vars.color.up });
-export const rankAxisTick = style({
-    position: 'absolute',
-    top: '2px',
-    bottom: '-3px',
-    width: '1px',
-    background: tint(vars.color.mutedForeground, 55),
-    transition: 'left 900ms cubic-bezier(0.22, 1, 0.36, 1)',
-    ...reduce,
-});
-export const rankDivider = style({
-    position: 'absolute',
-    left: vars.space.sm,
-    right: vars.space.sm,
-    height: 0,
-    borderTop: `1px dashed ${tint(vars.color.mutedForeground, 35)}`,
-    transition: 'top 700ms cubic-bezier(0.22, 1, 0.36, 1)',
-    ...reduce,
-});
+export const rankAxisSide = style({ position: 'absolute', top: 0, padding: '0 7px', whiteSpace: 'nowrap', fontWeight: 600 });
 export const rankMove = style({
     ...mono,
     display: 'inline-flex',
     alignItems: 'center',
-    fontSize: '0.56rem',
-    fontWeight: 700,
+    gap: '2px',
+    fontSize: '0.58rem',
     lineHeight: 1,
     flexShrink: 0,
 });
+export const rankMoveDown = style({ transform: 'rotate(180deg)' });
 export const rankStage = style({ position: 'relative', flex: 1, minHeight: 0, display: 'flex' });
 export const rankArea = style({ position: 'relative', flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' });
 export const rankCanvas = style({ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 });
-export const rankRows = style({ position: 'relative', margin: `4px 0` });
+export const rankRows = style({ position: 'relative', margin: `2px ${vars.space.sm}` });
+// one dotted centre axis, drawn per row so it follows the list
 export const rankZero = style({
     position: 'absolute',
-    top: '-6px',
-    bottom: '-6px',
+    left: '50%',
+    top: '-8px',
+    bottom: '-8px',
     width: '1px',
-    background: tint(vars.color.mutedForeground, 40),
-    transition: 'left 900ms cubic-bezier(0.22, 1, 0.36, 1)',
-    ...reduce,
+    backgroundImage: `linear-gradient(to bottom, ${tint(vars.color.mutedForeground, 45)} 50%, transparent 50%)`,
+    backgroundSize: '1px 4px',
 });
 
 const rankRowBase = style({
@@ -609,11 +581,11 @@ const rankRowBase = style({
     left: 0,
     right: 0,
     top: 0,
-    height: '28px',
+    height: '34px',
     display: 'grid',
     gridTemplateColumns: RANK_COLUMNS,
     alignItems: 'center',
-    columnGap: '8px',
+    columnGap: '12px',
     padding: `0 ${vars.space.sm}`,
     border: 0,
     margin: 0,
@@ -622,74 +594,66 @@ const rankRowBase = style({
     textAlign: 'left',
     background: 'transparent',
     cursor: 'pointer',
-    borderRadius: vars.radius.sm,
+    borderRadius: vars.radius.lg,
     transition: glide,
     willChange: 'transform',
     selectors: {
-        '&:hover': { background: tint(vars.color.panelRaised, 80), opacity: 1 },
+        '&:hover': { opacity: 1 },
         '&:focus-visible': { outline: `1px solid ${vars.color.accent}`, outlineOffset: '-1px', opacity: 1 },
     },
     ...reduce,
 });
-// the selected lane stays at full strength; the others step back a little
+// the selected lane stays at full strength with a faint outline; the others step back
 export const rankRow = styleVariants({
-    on: [rankRowBase, { background: vars.color.panelRaised, boxShadow: `inset 2px 0 0 ${vars.color.accent}` }],
-    off: [rankRowBase, { opacity: 0.68 }],
+    on: [rankRowBase, { background: tint(vars.color.foreground, 4), boxShadow: `inset 0 0 0 1px ${tint(vars.color.foreground, 10)}` }],
+    off: [rankRowBase, { opacity: 0.65 }],
 });
-export const rankName = style({ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 });
-export const rankTrack = style({ position: 'relative', height: '20px', minWidth: 0 });
+export const rankName = style({ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, fontSize: '0.78rem', fontWeight: 500, color: vars.color.foreground });
+export const rankNameText = style({ ...ellipsis });
+export const rankDot = styleVariants({
+    chain: { width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0, background: soft(vars.color.accent, 70) },
+    theme: { width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0, background: soft(vars.color.amber, 70) },
+});
+export const rankTrack = style({ position: 'relative', height: '22px', minWidth: 0 });
 
-const barGrow = ['width', 'left', 'right', 'height', 'border-radius'].map((p) => `${p} 900ms cubic-bezier(0.22, 1, 0.36, 1)`).join(', ');
+const barGrow = ['width', 'height', 'border-radius'].map((p) => `${p} 900ms cubic-bezier(0.22, 1, 0.36, 1)`).join(', ');
 const rankBarBase = style({ position: 'absolute', top: '50%', transform: 'translateY(-50%)', transition: barGrow, ...reduce });
-// the trail fades toward the zero axis and is brightest at the head
-const trail = (color: string, deg: number) =>
-    `linear-gradient(${deg}deg, ${tint(color, 4)}, ${tint(color, 22)} 45%, ${tint(color, 62)} 88%, ${tint(color, 80)})`;
+// a thin translucent lane, faint at the axis
+const lane = (color: string, deg: number) =>
+    `linear-gradient(${deg}deg, ${tint(color, 6)}, ${tint(color, 24)} 50%, ${tint(color, 46)})`;
 export const rankBar = styleVariants({
-    in: [rankBarBase, { background: trail(vars.color.up, 90), boxShadow: `0 0 10px ${tint(vars.color.up, 18)}` }],
-    out: [rankBarBase, { background: trail(vars.color.down, 270), boxShadow: `0 0 10px ${tint(vars.color.down, 18)}` }],
+    in: [rankBarBase, { background: lane(vars.color.up, 90) }],
+    out: [rankBarBase, { background: lane(vars.color.down, 270) }],
 });
 const headBase = style({
     position: 'absolute',
     top: '50%',
     borderRadius: '50%',
-    transition: 'width 900ms, height 900ms, margin 900ms, left 900ms, right 900ms',
+    transition: 'width 600ms, height 600ms, margin 600ms, box-shadow 600ms',
     ...reduce,
 });
-const glow = (color: string) =>
-    `0 0 0 1.5px ${tint(color, 35)}, 0 0 6px 1px ${tint(color, 75)}, 0 0 16px 4px ${tint(color, 32)}`;
 export const rankHead = styleVariants({
-    in: [headBase, { background: `radial-gradient(circle at 40% 40%, color-mix(in oklab, ${vars.color.up} 45%, white), ${vars.color.up} 70%)`, boxShadow: glow(vars.color.up) }],
-    out: [headBase, { background: `radial-gradient(circle at 60% 40%, color-mix(in oklab, ${vars.color.down} 45%, white), ${vars.color.down} 70%)`, boxShadow: glow(vars.color.down) }],
+    in: [headBase, { background: soft(vars.color.up, 70) }],
+    out: [headBase, { background: soft(vars.color.down, 70) }],
 });
-const pulse = keyframes({ from: { transform: 'scale(1)', opacity: 0.9 }, to: { transform: 'scale(3.2)', opacity: 0 } });
+export const rankHeadGlow = styleVariants({
+    in: [headBase, { background: vars.color.up, boxShadow: `0 0 8px 1px ${tint(vars.color.up, 45)}` }],
+    out: [headBase, { background: vars.color.down, boxShadow: `0 0 8px 1px ${tint(vars.color.down, 45)}` }],
+});
+const pulse = keyframes({ from: { transform: 'scale(1)', opacity: 0.5 }, to: { transform: 'scale(2.4)', opacity: 0 } });
 const pulseBase = style({
     position: 'absolute',
     inset: 0,
     borderRadius: '50%',
     pointerEvents: 'none',
-    animation: `${pulse} 1.1s ease-out 2`,
+    animation: `${pulse} 900ms ease-out 1 forwards`,
     ...reduce,
 });
 export const rankPulse = styleVariants({
-    in: [pulseBase, { border: `1.5px solid ${vars.color.up}` }],
-    out: [pulseBase, { border: `1.5px solid ${vars.color.down}` }],
+    in: [pulseBase, { border: `1px solid ${vars.color.up}` }],
+    out: [pulseBase, { border: `1px solid ${vars.color.down}` }],
 });
-export const rankValue = style({ ...mono, fontSize: '0.66rem', fontWeight: 650, textAlign: 'right', whiteSpace: 'nowrap' });
-export const rankPct = style({ ...mono, fontSize: '0.6rem', textAlign: 'right', whiteSpace: 'nowrap' });
-
-const flashFade = keyframes({ from: { opacity: 1 }, to: { opacity: 0 } });
-const flashBase = style({
-    position: 'absolute',
-    inset: 0,
-    borderRadius: vars.radius.sm,
-    pointerEvents: 'none',
-    animation: `${flashFade} 1.2s ease-out forwards`,
-    ...reduce,
-});
-export const rankFlash = styleVariants({
-    in: [flashBase, { background: tint(vars.color.up, 16) }],
-    out: [flashBase, { background: tint(vars.color.down, 16) }],
-});
+export const rankValue = style({ ...mono, fontSize: '0.74rem', textAlign: 'right', whiteSpace: 'nowrap', justifyContent: 'flex-end' });
 
 // ---- 輪動泡泡 ----
 
@@ -731,69 +695,73 @@ type StateKey = keyof typeof stateColor;
 const perState = <T>(fn: (color: string, key: StateKey) => T) =>
     Object.fromEntries((Object.keys(stateColor) as StateKey[]).map((k) => [k, fn(stateColor[k], k)])) as Record<StateKey, T>;
 
-export const rotDot = styleVariants(perState((c) => ({ width: '7px', height: '7px', borderRadius: '50%', background: c })));
-export const rotTint = styleVariants(perState((c, k) => ({ fill: tint(c, k === 'improving' ? 3 : 4) })));
-export const rotCorner = styleVariants(
-    perState((c) => ({ fill: c, fontSize: '10px', fontWeight: 600, opacity: 0.55, fontFamily: vars.font.body })),
-);
-export const rotGrid = style({ stroke: tint(vars.color.border, 60), strokeDasharray: '2 4' });
-export const rotAxis = style({ stroke: tint(vars.color.mutedForeground, 45) });
-export const rotTick = style({ fill: vars.color.mutedForeground, fontSize: '9px', fontFamily: vars.font.mono, opacity: 0.85 });
-export const rotCaption = style({ fill: vars.color.mutedForeground, fontSize: '9.5px', fontFamily: vars.font.body });
-export const rotTrail = styleVariants(perState((c) => ({ stroke: c, strokeWidth: 1.4, strokeLinecap: 'round' })));
-export const rotBubble = style({ cursor: 'pointer', transition: glide, willChange: 'transform', ...reduce });
-export const rotFill = styleVariants(
-    perState((c) => ({
-        fill: tint(c, 26),
-        stroke: c,
-        strokeWidth: 1.2,
-        transition: 'r 900ms cubic-bezier(0.22, 1, 0.36, 1), fill 600ms ease, stroke 600ms ease',
-        selectors: { [`${rotBubble}:hover &`]: { fill: tint(c, 42) } },
-        ...reduce,
-    })),
-);
-const breathe = keyframes({ '0%, 100%': { opacity: 0.12 }, '50%': { opacity: 0.4 } });
-export const rotHalo = styleVariants(
-    perState((c) => ({ fill: 'none', stroke: c, strokeWidth: 3, strokeOpacity: 0.6, animation: `${breathe} 2.6s ease-in-out infinite`, ...reduce })),
-);
-const ring = keyframes({ from: { transform: 'scale(1)', opacity: 0.85 }, to: { transform: 'scale(2.4)', opacity: 0 } });
-export const rotPulse = styleVariants(
-    perState((c) => ({
-        fill: 'none',
-        stroke: c,
-        strokeWidth: 1.5,
-        transformBox: 'fill-box',
-        transformOrigin: 'center',
-        animation: `${ring} 1.4s ease-out forwards`,
-        ...reduce,
-    })),
-);
-export const rotSelected = style({ fill: 'none', stroke: vars.color.accent, strokeWidth: 1.6, strokeDasharray: '3 2' });
-export const rotName = style({
-    fill: vars.color.foreground,
-    fontSize: '9.5px',
-    fontWeight: 650,
+// muted state colours: the hue reads, it does not shout
+const mutedState = (c: string) => soft(c, 78);
+export const rotDot = styleVariants(perState((c) => ({ width: '7px', height: '7px', borderRadius: '50%', background: mutedState(c) })));
+export const rotCorner = style({
+    fill: vars.color.mutedForeground,
+    fontSize: '10px',
+    fontWeight: 600,
     fontFamily: vars.font.body,
+    letterSpacing: '0.04em',
     paintOrder: 'stroke',
     stroke: vars.color.panel,
     strokeWidth: 3,
     strokeLinejoin: 'round',
     pointerEvents: 'none',
 });
-export const rotValue = styleVariants(
+export const rotCornerDot = styleVariants(perState((c) => ({ fill: mutedState(c), opacity: 0.9 })));
+export const rotGrid = style({ stroke: tint(vars.color.border, 38) });
+export const rotAxis = style({ stroke: tint(vars.color.mutedForeground, 38) });
+export const rotTick = style({ fill: vars.color.mutedForeground, fontSize: '9px', fontFamily: vars.font.mono, opacity: 0.8 });
+export const rotCaption = style({ fill: vars.color.mutedForeground, fontSize: '9.5px', fontFamily: vars.font.body });
+export const rotTrail = styleVariants(perState((c) => ({ stroke: mutedState(c), fill: 'none', strokeWidth: 1.2, strokeLinecap: 'round' })));
+export const rotTrailDot = styleVariants(perState((c) => ({ fill: mutedState(c) })));
+export const rotBubble = style({ cursor: 'pointer', outline: 'none' });
+export const rotFill = styleVariants(
     perState((c) => ({
-        fill: c,
-        color: c,
-        fontSize: '9px',
-        fontWeight: 650,
-        fontFamily: vars.font.mono,
-        paintOrder: 'stroke',
-        stroke: vars.color.panel,
-        strokeWidth: 3,
-        strokeLinejoin: 'round',
-        pointerEvents: 'none',
+        fill: tint(mutedState(c), 58),
+        stroke: tint(mutedState(c), 90),
+        strokeWidth: 1,
+        transition: 'r 900ms cubic-bezier(0.22, 1, 0.36, 1), fill 600ms ease, stroke 600ms ease',
+        selectors: { [`${rotBubble}:hover &, ${rotBubble}:focus-visible &`]: { fill: tint(mutedState(c), 62) } },
+        ...reduce,
     })),
 );
+const ring = keyframes({ from: { transform: 'scale(1)', opacity: 0.55 }, to: { transform: 'scale(1.8)', opacity: 0 } });
+export const rotPulse = styleVariants(
+    perState((c) => ({
+        fill: 'none',
+        stroke: mutedState(c),
+        strokeWidth: 1,
+        transformBox: 'fill-box',
+        transformOrigin: 'center',
+        animation: `${ring} 1.2s ease-out forwards`,
+        ...reduce,
+    })),
+);
+export const rotSelected = style({ fill: 'none', stroke: tint(vars.color.foreground, 70), strokeWidth: 1.2 });
+const labelBase = {
+    fontFamily: vars.font.body,
+    pointerEvents: 'none',
+    paintOrder: 'stroke',
+    stroke: vars.color.panel,
+    strokeWidth: 3,
+    strokeLinejoin: 'round',
+} as const;
+export const rotName = style({ ...labelBase, fill: vars.color.foreground, fontSize: '9.5px', fontWeight: 600 });
+export const rotValue = styleVariants(
+    perState((c) => ({ ...labelBase, fill: mutedState(c), color: mutedState(c), fontSize: '9px', fontWeight: 600, fontFamily: vars.font.mono })),
+);
+// inside a bubble: no halo stroke, the fill is the backdrop
+export const rotNameIn = style({ fill: vars.color.foreground, fontSize: '9.5px', fontWeight: 650, fontFamily: vars.font.body, pointerEvents: 'none' });
+export const rotValueIn = style({
+    fill: vars.color.foreground,
+    opacity: 0.78,
+    fontSize: '8.5px',
+    fontFamily: vars.font.mono,
+    pointerEvents: 'none',
+});
 export const rotEmpty = style({
     position: 'absolute',
     left: '50%',
@@ -822,6 +790,7 @@ export const rotFoot = style({
     pointerEvents: 'none',
 });
 export const rotFootName = style({ color: vars.color.foreground, fontWeight: 650 });
+export const rotFootValue = styleVariants(perState((c) => ({ ...mono, color: mutedState(c) })));
 
 // ---- 熱力 ----
 

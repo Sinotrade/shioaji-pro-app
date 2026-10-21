@@ -66,6 +66,16 @@ export function rankOrder<T>(items: readonly T[], id: (item: T) => string, value
 }
 
 /**
+ * Lane length as a share (0…1) of the half track: square root of the value
+ * against the largest absolute value on screen, one scale for both sides, so
+ * small flows stay visible next to a dominant one while order is preserved.
+ */
+export function riverLength(value: number, maxAbs: number): number {
+    if (!(maxAbs > 0) || !Number.isFinite(value)) return 0;
+    return Math.sqrt(Math.min(1, Math.abs(value) / maxAbs));
+}
+
+/**
  * Bar thickness in px for a group's turnover: square-root scaled against the
  * largest turnover on screen so area, not height, tracks money traded, and a
  * thin floor keeps quiet groups visible.

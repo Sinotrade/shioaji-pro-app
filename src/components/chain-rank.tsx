@@ -1,42 +1,66 @@
 // src/components/chain-rank.tsx — 排行 view: groups ranked by net inflow.
 //
-// Each group is a channel growing from the zero axis (inflow right, outflow
-// left): length = net inflow, thickness = turnover. The trail fades toward
-// the axis and ends in a glowing head; streaks run along it with density and
-// speed set by the last five minutes' flow intensity. Rows glide to their new
-// rank when a minute bar lands (CSS transform transition) and show the rank
-// change (up/down N) for a few seconds; the biggest movers flash and their
-// head pulses. Inflow and outflow groups are split by a gap. Everything is
-// static under prefers-reduced-motion; the canvas is capped at 30 fps and
-// stops while the panel is hidden.
+// Restraint first. Each group is one row: a round category dot, the name,
+// a small rank-change mark, a thin lane growing from a fixed centre axis
+// (inflow right, outflow left, one square-root scale for both), and the value. Lane
+// thickness follows turnover; the lane fades toward the axis and ends in a
+// small solid dot. Only the leader (and this minute's biggest mover) gets a
+// soft glow. Fine light particles drift along each lane, sparser and slower
+// on quiet groups. Rows glide to their new rank when a minute bar lands;
+// inflow and outflow groups are separated by a gap. Everything is static
+// under prefers-reduced-motion; the canvas is capped at 30 fps and stops
+// while the panel is hidden.
 
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from 'lucide-react';
+import { Triangle } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { slotLabel, SESSION_SLOTS } from '../lib/chain-flow';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
-import { comparesRanks, divergingScale, rankOrder, rankTurnover, rankValue, rankMoves, riverWidth, type RankMetric } from '../lib/chain-motion';
+import { comparesRanks, rankOrder, rankTurnover, rankValue, rankMoves, riverLength, riverWidth, type RankMetric } from '../lib/chain-motion';
 import { vars } from '../theme.css';
 import { FlowRankCard, metricLabel } from './chain-rank-card';
 import { cssColor, dir, useBoxSize, type FlowRow } from './chain-ui';
 import { Odometer } from './odometer';
-import * as panel from './panel.css';
 import * as s from './chain-map.css';
 
-const ROW_PX = 30;
-const GAP_PX = 18;
+const ROW_PX = 34;
+const GAP_PX = 22;
 const MOVE_SHOW_MS = 6000;
-const MAX_PARTICLES = 48;
+const MAX_PARTICLES = 40;
+/** Share of the half-track the largest value fills (room for the end dot). */
+const REACH = 0.94;
 /** Below this width the detail card is left out (the lanes need the room). */
 const CARD_MIN_PX = 760;
-const FLASHES = 4;
 const FRAME_MS = 1000 / 30 - 2;
 
 interface Particle {
     phase: number;
     speed: number;
+    /** dot radius, or dash length when `dash` */
     size: number;
-    /** vertical position across the channel, -0.5…0.5 */
+    dash: boolean;
+    /** vertical position across the lane, -0.5…0.5 */
     lane: number;
+    alpha: number;
+}
+
+/** Parse #rgb / #rrggbb / rgb() into channels, or null. */
+export function rgbOf(color: string): [number, number, number] | null {
+    const hex = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+        const h = hex[1]!.length === 3 ? [...hex[1]!].map((c) => c + c).join('') : hex[1]!;
+        return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];
+    }
+    const rgb = color.match(/rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)/i);
+    return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : null;
+}
+
+/** `color` moved `t` of the way toward `target` (falls back to `color`). */
+export function mixColor(color: string, target: string, t: number): string {
+    const a = rgbOf(color);
+    const b = rgbOf(target);
+    if (!a || !b) return color;
+    const c = a.map((v, i) => Math.round(v + (b[i]! - v) * t));
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 }
 
 export function FlowRank({
@@ -66,13 +90,9 @@ export function FlowRank({
         () => rankOrder(rows, (r) => r.theme.id, (r) => rankValue(r.flow, now, metric)),
         [rows, now, metric],
     );
-    // the zero line sits where the two sides fit best (diverging bars, but no
-    // half of the track left empty when nearly everything flows in)
-    const { zero, scale } = useMemo(() => divergingScale(order.map((r) => r.value)), [order]);
+    // fixed centre axis, one square-root scale for both sides
+    const maxAbs = useMemo(() => Math.max(0, ...order.map((r) => Math.abs(r.value))), [order]);
     const firstOut = order.findIndex((r) => r.side === 'out');
-    const inCount = firstOut < 0 ? order.length : firstOut;
-    const outCount = order.length - inCount;
-    // channel thickness follows the turnover that produced the flow
     const turnoverOf = (row: FlowRow) => rankTurnover(row.flow, now, metric);
     const maxTurnover = useMemo(() => Math.max(0, ...rows.map((r) => rankTurnover(r.flow, now, metric))), [rows, now, metric]);
     const { ref: layoutRef, size: layoutSize } = useBoxSize<HTMLDivElement>();
@@ -80,13 +100,13 @@ export function FlowRank({
     const showCard = selectedRow !== null && layoutSize.width >= CARD_MIN_PX;
     const label = metricLabel(metric);
 
-    // rank-move arrows and value flashes, keyed to the minute that caused them
+    // rank changes and this minute's biggest mover
     const prevRanks = useRef(new Map<string, number>());
     const prevValues = useRef(new Map<string, number>());
-    const [moves, setMoves] = useState<{ at: number; map: Map<string, number>; flash: Set<string> }>({
+    const [moves, setMoves] = useState<{ at: number; map: Map<string, number>; mover: string | null }>({
         at: 0,
         map: new Map(),
-        flash: new Set(),
+        mover: null,
     });
     const prevNow = useRef<number | null>(null);
     useEffect(() => {
@@ -98,16 +118,19 @@ export function FlowRank({
         }
         prevNow.current = now;
         const map = rankMoves(prevRanks.current, order);
-        // flash only the biggest movers: a whole list lighting up reads as noise
-        const deltas: [string, number][] = [];
+        let mover: string | null = null;
+        let best = 0;
         for (const row of order) {
             const before = prevValues.current.get(row.id);
-            if (before !== undefined && before !== row.value) deltas.push([row.id, Math.abs(row.value - before)]);
+            const delta = before === undefined ? 0 : Math.abs(row.value - before);
+            if (delta > best) {
+                best = delta;
+                mover = row.id;
+            }
         }
-        const flash = new Set(deltas.sort((x, y) => y[1] - x[1]).slice(0, FLASHES).map(([id]) => id));
         prevRanks.current = new Map(order.map((r) => [r.id, r.rank]));
         prevValues.current = new Map(order.map((r) => [r.id, r.value]));
-        if (flash.size > 0 || [...map.values()].some((m) => m !== 0)) setMoves({ at: Date.now(), map, flash });
+        setMoves({ at: Date.now(), map, mover });
         // `now` changes together with `order`
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [order]);
@@ -119,12 +142,11 @@ export function FlowRank({
     }, [moves.at]);
     const showMoves = Date.now() - moves.at < MOVE_SHOW_MS;
 
-    // KPI strip
     const sum = order.reduce((a, r) => a + r.value, 0);
     const top = order[0];
     const bottom = order[order.length - 1];
 
-    // particles: one canvas over the bars, reading each bar's live rect so
+    // particles: one canvas over the lanes, reading each lane's live rect so
     // they follow the CSS transitions exactly
     const areaRef = useRef<HTMLDivElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -146,19 +168,18 @@ export function FlowRank({
         }
         let raf = 0;
         let last = performance.now();
+        const dark = getComputedStyle(document.documentElement).colorScheme.includes('dark');
+        // light particles on dark lanes; on a light surface, the lane colour itself
         const up = cssColor(area, vars.color.up);
         const down = cssColor(area, vars.color.down);
-        // on a dark surface the streaks add light; on a light one they are
-        // drawn as plain bright dots so they do not wash out
-        const dark = getComputedStyle(document.documentElement).colorScheme.includes('dark');
+        const inColor = dark ? mixColor(up, '#ffffff', 0.72) : up;
+        const outColor = dark ? mixColor(down, '#ffffff', 0.72) : down;
         const frame = (t: number) => {
             raf = requestAnimationFrame(frame);
-            // ~30 fps is smooth for drifting streaks and halves the work
             if (t - last < FRAME_MS) return;
             const dt = Math.min(0.1, (t - last) / 1000);
             last = t;
-            // the canvas overlays the visible part of the list only (it does
-            // not scroll), so its size stays the viewport's, not the list's
+            // the canvas overlays the visible part of the list only
             const box = area.getBoundingClientRect();
             const dpr = window.devicePixelRatio || 1;
             const w = Math.round(box.width * dpr);
@@ -169,191 +190,203 @@ export function FlowRank({
             if (!ctx) return;
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             ctx.clearRect(0, 0, box.width, box.height);
-            ctx.globalCompositeOperation = dark ? 'lighter' : 'source-over';
             ctx.lineCap = 'round';
+            ctx.lineWidth = 1;
             for (const bar of area.querySelectorAll<HTMLElement>('[data-bar]')) {
                 const r = bar.getBoundingClientRect();
                 const len = r.width;
-                // rows scrolled out of view cost nothing
-                if (len < 8 || r.bottom < box.top || r.top > box.bottom) continue;
+                if (len < 10 || r.bottom < box.top || r.top > box.bottom) continue;
                 const id = bar.dataset.bar!;
                 const k = intensity.get(id) ?? 0;
-                const thick = r.height;
-                const want = Math.min(MAX_PARTICLES, Math.round((2 + 22 * k) * Math.min(1, len / 160) * (0.5 + thick / 14)));
+                // density follows length and recent intensity: busy lanes shimmer, quiet ones barely move
+                const want = Math.min(MAX_PARTICLES, Math.round((len / 9) * (0.5 + 2.5 * k)) + 1);
                 let list = particles.current.get(id);
                 if (!list) {
                     list = [];
                     particles.current.set(id, list);
                 }
-                while (list.length < want)
-                    list.push({ phase: Math.random(), speed: 0.22 + Math.random() * 0.3, size: 0.9 + Math.random() * 1.1, lane: Math.random() - 0.5 });
+                while (list.length < want) {
+                    const dash = Math.random() < 0.25;
+                    list.push({
+                        phase: Math.random(),
+                        speed: 0.12 + Math.random() * 0.2,
+                        size: dash ? 2 + Math.random() * 3 : 0.6 + Math.random() * 0.5,
+                        dash,
+                        lane: Math.random() - 0.5,
+                        alpha: 0.35 + Math.random() * 0.5,
+                    });
+                }
                 list.length = want;
                 const out = bar.dataset.side === 'out';
                 const sign = out ? -1 : 1;
-                const yMid = r.top - box.top + thick / 2;
+                const yMid = r.top - box.top + r.height / 2;
                 const x0 = out ? r.right - box.left : r.left - box.left;
-                const color = out ? down : up;
+                const color = out ? outColor : inColor;
+                ctx.fillStyle = color;
                 ctx.strokeStyle = color;
-                const tail = 4 + 14 * k;
                 for (const p of list) {
-                    p.phase = (p.phase + dt * p.speed * (0.5 + 1.8 * k)) % 1;
-                    const x = x0 + sign * p.phase * len;
-                    const y = yMid + p.lane * Math.max(0, thick - 2);
-                    // fade in from the axis, brightest just before the head
-                    ctx.globalAlpha = (dark ? 0.2 : 0.3) + 0.7 * p.phase * (1 - Math.max(0, p.phase - 0.92) * 8);
-                    ctx.lineWidth = p.size;
+                    p.phase = (p.phase + dt * p.speed * (0.6 + 1.2 * k)) % 1;
+                    const x = x0 + sign * p.phase * (len - 4);
+                    const y = yMid + p.lane * Math.max(0, r.height - 2);
+                    // fade in off the axis and out before the end dot
+                    ctx.globalAlpha = p.alpha * Math.min(1, p.phase * 5) * Math.min(1, (1 - p.phase) * 8);
                     ctx.beginPath();
-                    ctx.moveTo(x - sign * Math.min(tail, p.phase * len), y);
-                    ctx.lineTo(x, y);
-                    ctx.stroke();
+                    if (p.dash) {
+                        ctx.moveTo(x - sign * p.size, y);
+                        ctx.lineTo(x, y);
+                        ctx.stroke();
+                    } else {
+                        ctx.arc(x, y, p.size, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
                 }
             }
             ctx.globalAlpha = 1;
-            ctx.globalCompositeOperation = 'source-over';
         };
         raf = requestAnimationFrame(frame);
         return () => cancelAnimationFrame(raf);
     }, [reducedMotion, paused, now, intensity]);
 
-    const clock = now !== null ? slotLabel(Math.min(now + 1, SESSION_SLOTS - 1)) : '--:--';
     const height = order.length * ROW_PX + (firstOut > 0 ? GAP_PX : 0);
+    const span =
+        now === null ? '' : metric === 'cum' ? `${from !== null ? slotLabel(from) : ''} 至 ${slotLabel(Math.min(now + 1, SESSION_SLOTS - 1))}` : label;
 
     return (
         <div className={s.rank}>
-            <div className={s.kpis}>
+            <div className={s.rankKpis}>
                 <span className={s.kpi}>
-                    <span className={s.kpiLabel}>{metric === 'cum' ? `族群淨流入合計・${from !== null ? `${slotLabel(from)} 起` : '開啟至今'}` : `族群淨流入合計・${label}`}</span>
+                    <span className={s.kpiLabel}>族群淨流入合計{span ? `・${span}` : ''}</span>
                     <Odometer
-                        className={`${s.kpiValue} ${panel.dirText[dir(now !== null ? sum : null)]}`}
+                        className={`${s.rankKpiValue} ${s.rankTone[dir(now !== null ? sum : null)]}`}
                         text={now !== null ? fmtTwd(sum, true) : '--'}
                         reducedMotion={reducedMotion}
                     />
                 </span>
-                <span className={s.kpi}>
-                    <span className={s.kpiLabel}>淨流入最大</span>
-                    <span className={s.kpiName}>{top && top.value > 0 ? top.item.theme.name : '--'}</span>
-                    <Odometer className={`${s.kpiSub} ${panel.dirText.up}`} text={top && top.value > 0 ? fmtTwd(top.value, true) : ''} reducedMotion={reducedMotion} />
-                </span>
-                <span className={s.kpi}>
-                    <span className={s.kpiLabel}>淨流出最大</span>
-                    <span className={s.kpiName}>{bottom && bottom.value < 0 ? bottom.item.theme.name : '--'}</span>
-                    <Odometer className={`${s.kpiSub} ${panel.dirText.down}`} text={bottom && bottom.value < 0 ? fmtTwd(bottom.value, true) : ''} reducedMotion={reducedMotion} />
-                </span>
                 <span className={s.spacer} />
-                <span className={s.clock} aria-live='off'>
-                    {clock}
+                <span className={s.rankKpiSide}>
+                    <span className={s.rankKpiLine}>
+                        <span className={s.kpiLabel}>淨流入最大</span>
+                        <span className={s.rankKpiName}>{top && top.value > 0 ? top.item.theme.name : '--'}</span>
+                        <span className={`${s.rankKpiSub} ${s.rankTone.up}`}>{top && top.value > 0 ? fmtTwd(top.value, true) : ''}</span>
+                    </span>
+                    <span className={s.rankKpiLine}>
+                        <span className={s.kpiLabel}>淨流出最大</span>
+                        <span className={s.rankKpiName}>{bottom && bottom.value < 0 ? bottom.item.theme.name : '--'}</span>
+                        <span className={`${s.rankKpiSub} ${s.rankTone.down}`}>{bottom && bottom.value < 0 ? fmtTwd(bottom.value, true) : ''}</span>
+                    </span>
                 </span>
             </div>
             <div className={s.rankLayout} ref={layoutRef}>
-            <div className={s.rankMain}>
-            <div className={s.rankAxis} aria-hidden='true'>
-                <span className={s.rankAxisNote}>長＝淨流入・粗＝成交值</span>
-                <span className={s.rankAxisTrack}>
-                    <span className={`${s.rankAxisSide} ${s.rankAxisOut}`} style={{ right: `${100 - zero}%` }}>
-                        淨流出 {outCount}
-                        <ChevronLeft size={11} />
-                    </span>
-                    <span className={s.rankAxisTick} style={{ left: `${zero}%` }} />
-                    <span className={`${s.rankAxisSide} ${s.rankAxisIn}`} style={{ left: `${zero}%` }}>
-                        <ChevronRight size={11} />
-                        淨流入 {inCount}
-                    </span>
-                </span>
-                <span />
-                <span />
-            </div>
-            <div className={s.rankStage}>
-                <canvas ref={canvasRef} className={s.rankCanvas} aria-hidden='true' />
-                <div className={s.rankArea} ref={areaRef}>
-                    <div className={s.rankRows} style={{ height }} role='group' aria-label={`族群${label}淨流入排行`}>
-                        {firstOut > 0 && <span className={s.rankDivider} style={{ top: firstOut * ROW_PX + GAP_PX / 2 }} aria-hidden='true' />}
-                        {order.map((row) => {
-                            const y = row.rank * ROW_PX + (row.side === 'out' && firstOut > 0 ? GAP_PX : 0);
-                            // 94%: room for the glowing head before the value column
-                            const width = now !== null ? Math.abs(row.value) * scale * 0.94 : 0;
-                            const thick = Math.round(riverWidth(turnoverOf(row.item), maxTurnover) * 2) / 2;
-                            const move = showMoves ? (moves.map.get(row.id) ?? 0) : 0;
-                            const flash = showMoves && moves.flash.has(row.id);
-                            const selected = row.id === selectedId;
-                            const f = row.item.flow;
-                            const head = Math.max(7, thick + 4);
-                            const barStyle = {
-                                height: `${thick}px`,
-                                width: `${width}%`,
-                                borderRadius: row.side === 'in' ? `0 ${thick / 2}px ${thick / 2}px 0` : `${thick / 2}px 0 0 ${thick / 2}px`,
-                                ...(row.side === 'in' ? { left: `${zero}%` } : { right: `${100 - zero}%` }),
-                            };
-                            const headStyle = {
-                                width: `${head}px`,
-                                height: `${head}px`,
-                                marginTop: `${-head / 2}px`,
-                                ...(row.side === 'in' ? { right: `${-head / 2}px` } : { left: `${-head / 2}px` }),
-                            };
-                            return (
-                                <button
-                                    key={row.id}
-                                    type='button'
-                                    aria-pressed={selected}
-                                    aria-label={`第 ${row.rank + 1} 名 ${row.item.theme.name}，${label}淨流入 ${fmtTwd(row.value, true)}，漲跌 ${fmtSignedPct(f.pct)}${move !== 0 ? `，${move > 0 ? '上升' : '下降'} ${Math.abs(move)} 名` : ''}`}
-                                    className={`${s.rankRow[selected ? 'on' : 'off']} ${reducedMotion ? s.still : ''}`}
-                                    style={{ transform: `translateY(${y}px)` }}
-                                    onClick={() => onSelect(row.id)}
-                                    title={`${row.item.theme.name}・${row.item.codes.length} 檔\n${label}淨流入 ${fmtTwd(row.value, true)}\n今日成交值 ${fmtTwd(f.total)}・漲跌 ${fmtSignedPct(f.pct)}`}
-                                >
-                                    {flash && !reducedMotion && <span key={moves.at} className={s.rankFlash[row.side]} aria-hidden='true' />}
-                                    <span className={s.rankName}>
-                                        <span className={s.kindMark[row.item.theme.kind === 'chain' ? 'chain' : 'theme']} aria-hidden='true' />
-                                        <span className={s.nameText}>{row.item.theme.name}</span>
-                                        {move !== 0 && (
-                                            <span
-                                                className={`${s.rankMove} ${panel.dirText[move > 0 ? 'up' : 'down']}`}
-                                                title={`與前一分鐘相比${move > 0 ? '上升' : '下降'} ${Math.abs(move)} 名`}
-                                            >
-                                                {move > 0 ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-                                                {Math.abs(move)}
-                                            </span>
-                                        )}
-                                    </span>
-                                    <span className={s.rankTrack}>
-                                        <span className={`${s.rankZero} ${reducedMotion ? s.still : ''}`} style={{ left: `${zero}%` }} aria-hidden='true' />
-                                        <span
-                                            data-bar={row.id}
-                                            data-side={row.side}
-                                            className={`${s.rankBar[row.side]} ${reducedMotion ? s.still : ''}`}
-                                            style={barStyle}
+                <div className={s.rankMain}>
+                    <div className={s.rankHeader}>
+                        <span className={s.rankHeaderTitle}>{label}淨流入排行</span>
+                        <span className={s.rankHeaderNote}>長度為淨流入（平方根刻度）・粗細為成交值・點選看明細</span>
+                    </div>
+                    <div className={s.rankAxis} aria-hidden='true'>
+                        <span />
+                        <span className={s.rankAxisTrack}>
+                            <span className={`${s.rankAxisSide} ${s.rankTone.down}`} style={{ right: '50%' }}>
+                                流出
+                            </span>
+                            <span className={`${s.rankAxisSide} ${s.rankTone.up}`} style={{ left: '50%' }}>
+                                流入
+                            </span>
+                        </span>
+                        <span />
+                    </div>
+                    <div className={s.rankStage}>
+                        <canvas ref={canvasRef} className={s.rankCanvas} aria-hidden='true' />
+                        <div className={s.rankArea} ref={areaRef}>
+                            <div className={s.rankRows} style={{ height }} role='group' aria-label={`族群${label}淨流入排行`}>
+                                {order.map((row) => {
+                                    const y = row.rank * ROW_PX + (row.side === 'out' && firstOut > 0 ? GAP_PX : 0);
+                                    const width = now !== null ? riverLength(row.value, maxAbs) * 50 * REACH : 0;
+                                    const thick = Math.round(riverWidth(turnoverOf(row.item), maxTurnover, 4, 14) * 2) / 2;
+                                    const move = showMoves ? (moves.map.get(row.id) ?? 0) : 0;
+                                    const selected = row.id === selectedId;
+                                    const f = row.item.flow;
+                                    // only the leader, and this minute's biggest mover, glow
+                                    const lead = row.rank === 0 && row.side === 'in';
+                                    const glow = lead || (showMoves && moves.mover === row.id);
+                                    // a brief ring only when one of the top three changed place
+                                    const ring = !reducedMotion && move !== 0 && row.rank < 3 && row.side === 'in';
+                                    const head = glow ? Math.min(14, thick + 5) : Math.min(8, thick + 2);
+                                    return (
+                                        <button
+                                            key={row.id}
+                                            type='button'
+                                            aria-pressed={selected}
+                                            aria-label={`第 ${row.rank + 1} 名 ${row.item.theme.name}，${label}淨流入 ${fmtTwd(row.value, true)}，漲跌 ${fmtSignedPct(f.pct)}${move !== 0 ? `，${move > 0 ? '上升' : '下降'} ${Math.abs(move)} 名` : ''}`}
+                                            className={`${s.rankRow[selected ? 'on' : 'off']} ${reducedMotion ? s.still : ''}`}
+                                            style={{ transform: `translateY(${y}px)` }}
+                                            onClick={() => onSelect(row.id)}
+                                            title={`${row.item.theme.name}・${row.item.codes.length} 檔\n${label}淨流入 ${fmtTwd(row.value, true)}\n今日成交值 ${fmtTwd(f.total)}・漲跌 ${fmtSignedPct(f.pct)}`}
                                         >
-                                            {width > 0.5 && (
-                                                <span className={s.rankHead[row.side]} style={headStyle}>
-                                                    {flash && !reducedMotion && <span key={moves.at} className={s.rankPulse[row.side]} />}
+                                            <span className={s.rankName}>
+                                                <span className={s.rankDot[row.item.theme.kind === 'chain' ? 'chain' : 'theme']} aria-hidden='true' />
+                                                <span className={s.rankNameText}>{row.item.theme.name}</span>
+                                                {move !== 0 && (
+                                                    <span
+                                                        className={`${s.rankMove} ${s.rankTone[move > 0 ? 'up' : 'down']}`}
+                                                        title={`與前一分鐘相比${move > 0 ? '上升' : '下降'} ${Math.abs(move)} 名`}
+                                                    >
+                                                        <Triangle size={6} fill='currentColor' strokeWidth={0} className={move < 0 ? s.rankMoveDown : undefined} />
+                                                        {Math.abs(move)}
+                                                    </span>
+                                                )}
+                                            </span>
+                                            <span className={s.rankTrack}>
+                                                <span className={s.rankZero} aria-hidden='true' />
+                                                <span
+                                                    data-bar={row.id}
+                                                    data-side={row.side}
+                                                    className={`${s.rankBar[row.side]} ${reducedMotion ? s.still : ''}`}
+                                                    style={{
+                                                        height: `${thick}px`,
+                                                        width: `${width}%`,
+                                                        borderRadius: `${thick / 2}px`,
+                                                        ...(row.side === 'in' ? { left: '50%' } : { right: '50%' }),
+                                                    }}
+                                                >
+                                                    {width > 0.3 && (
+                                                        <span
+                                                            className={`${(glow ? s.rankHeadGlow : s.rankHead)[row.side]} ${reducedMotion ? s.still : ''}`}
+                                                            style={{
+                                                                width: `${head}px`,
+                                                                height: `${head}px`,
+                                                                marginTop: `${-head / 2}px`,
+                                                                ...(row.side === 'in' ? { right: `${-head / 2}px` } : { left: `${-head / 2}px` }),
+                                                            }}
+                                                        >
+                                                            {ring && <span key={moves.at} className={s.rankPulse[row.side]} />}
+                                                        </span>
+                                                    )}
                                                 </span>
-                                            )}
-                                        </span>
-                                    </span>
-                                    <Odometer
-                                        className={`${s.rankValue} ${panel.dirText[dir(now !== null ? row.value : null)]}`}
-                                        text={now !== null ? fmtTwd(row.value, true) : '--'}
-                                        reducedMotion={reducedMotion}
-                                    />
-                                    <span className={`${s.rankPct} ${panel.dirText[dir(f.pct)]}`}>{fmtSignedPct(f.pct)}</span>
-                                </button>
-                            );
-                        })}
+                                            </span>
+                                            <Odometer
+                                                className={`${s.rankValue} ${s.rankTone[dir(now !== null ? row.value : null)]}`}
+                                                text={now !== null ? fmtTwd(row.value, true) : '--'}
+                                                reducedMotion={reducedMotion}
+                                            />
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            </div>
-            {showCard && selectedRow && (
-                <FlowRankCard
-                    row={selectedRow}
-                    metric={metric}
-                    now={now}
-                    from={from}
-                    reducedMotion={reducedMotion}
-                    paused={paused}
-                    nameOf={nameOf}
-                    onPick={onPick}
-                />
-            )}
+                {showCard && selectedRow && (
+                    <FlowRankCard
+                        row={selectedRow}
+                        metric={metric}
+                        now={now}
+                        from={from}
+                        reducedMotion={reducedMotion}
+                        paused={paused}
+                        nameOf={nameOf}
+                        onPick={onPick}
+                    />
+                )}
             </div>
         </div>
     );

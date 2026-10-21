@@ -13,6 +13,7 @@ import {
     rankValue,
     rankMoves,
     rankTurnover,
+    riverLength,
     riverWidth,
     windowSum,
     rotationExtent,
@@ -241,5 +242,14 @@ describe('rank change baseline', () => {
         expect(comparesRanks(30, 41)).toBe(false);
         expect(comparesRanks(null, 41)).toBe(false);
         expect(comparesRanks(40, null)).toBe(false);
+    });
+});
+
+describe('river length', () => {
+    it('uses one square-root scale for both sides', () => {
+        expect(riverLength(400, 400)).toBe(1);
+        expect(riverLength(-100, 400)).toBe(0.5);
+        expect(riverLength(25, 400)).toBe(0.25);
+        expect(riverLength(10, 0)).toBe(0);
     });
 });
