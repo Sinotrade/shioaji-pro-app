@@ -10,6 +10,7 @@ import {
     rotationExtent,
     rotationPoint,
     rotationTrail,
+    smoothTrail,
 } from './chain-motion';
 
 function group(minutes: [slot: number, turnover: number, net: number][]): GroupFlow {
@@ -79,7 +80,7 @@ describe('tide bubbles', () => {
         const minutes: [number, number, number][] = [];
         for (let s = 10; s < 20; s += 1) minutes.push([s, 100, 10]);
         for (let s = 20; s < 25; s += 1) minutes.push([s, 100, 60]);
-        const p = rotationPoint(group(minutes), 24)!;
+        const p = rotationPoint(group(minutes), 24, 5)!;
         expect(p.net).toBe(400);
         expect(p.x).toBeCloseTo((400 / 1500) * 100);
         expect(p.y).toBeCloseTo(60 - (400 / 1500) * 100);
@@ -118,5 +119,25 @@ describe('tide bubbles', () => {
         // small flows stay visible next to the largest group
         expect(asinhScale(1e8, 1e10)).toBeGreaterThan(0.35);
         expect(asinhScale(5, 0)).toBe(0);
+    });
+});
+
+describe('tide baseline and smoothing', () => {
+    it('compares the recent window with the last 30 minutes, not the whole session', () => {
+        const minutes: [number, number, number][] = [];
+        // strong open, then flat for 40 minutes, then a 10-minute push
+        for (let s = 0; s < 10; s += 1) minutes.push([s, 100, 100]);
+        for (let s = 10; s < 50; s += 1) minutes.push([s, 100, 0]);
+        for (let s = 50; s < 60; s += 1) minutes.push([s, 100, 50]);
+        const p = rotationPoint(group(minutes), 59)!;
+        // recent 50 %, baseline (slots 30..59) 500 / 3000 ≈ 16.7 %
+        expect(p.y).toBeCloseTo(50 - (500 / 3000) * 100);
+    });
+
+    it('averages interior trail points and keeps both ends', () => {
+        const pts = [0, 30, 0, 30].map((y, slot) => ({ slot, net: slot * 10, x: 0, y, size: 1 }));
+        const out = smoothTrail(pts);
+        expect(out.map((p) => p.y)).toEqual([0, 10, 20, 30]);
+        expect(out[1]!.net).toBe(10);
     });
 });

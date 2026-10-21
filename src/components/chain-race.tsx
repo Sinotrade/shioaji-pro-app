@@ -20,6 +20,7 @@ import * as s from './chain-map.css';
 const ROW_PX = 26;
 const GAP_PX = 10;
 const MOVE_SHOW_MS = 4000;
+const FLASHES = 4;
 
 interface Particle {
     phase: number;
@@ -50,7 +51,18 @@ export function FlowRace({
         () => raceOrder(rows, (r) => r.theme.id, (r) => raceValue(r.flow, now, metric)),
         [rows, now, metric],
     );
-    const max = useMemo(() => Math.max(1, ...order.map((r) => Math.abs(r.value))), [order]);
+    // the zero line sits where the two sides fit best (Threads-style diverging
+    // bars, but no half of the track left empty when nearly everything flows in)
+    const { span, zero } = useMemo(() => {
+        let maxIn = 0;
+        let maxOut = 0;
+        for (const r of order) {
+            if (r.value > 0) maxIn = Math.max(maxIn, r.value);
+            else maxOut = Math.max(maxOut, -r.value);
+        }
+        const total = Math.max(1, maxIn + maxOut);
+        return { span: total, zero: Math.min(85, Math.max(15, (maxOut / total) * 100)) };
+    }, [order]);
     const firstOut = order.findIndex((r) => r.side === 'out');
 
     // rank-move arrows and value flashes, keyed to the minute that caused them
@@ -63,11 +75,13 @@ export function FlowRace({
     });
     useEffect(() => {
         const map = rankMoves(prevRanks.current, order);
-        const flash = new Set<string>();
+        // flash only the biggest movers: a whole list lighting up reads as noise
+        const deltas: [string, number][] = [];
         for (const row of order) {
             const before = prevValues.current.get(row.id);
-            if (before !== undefined && before !== row.value) flash.add(row.id);
+            if (before !== undefined && before !== row.value) deltas.push([row.id, Math.abs(row.value - before)]);
         }
+        const flash = new Set(deltas.sort((x, y) => y[1] - x[1]).slice(0, FLASHES).map(([id]) => id));
         prevRanks.current = new Map(order.map((r) => [r.id, r.rank]));
         prevValues.current = new Map(order.map((r) => [r.id, r.value]));
         if (flash.size > 0 || [...map.values()].some((m) => m !== 0)) setMoves({ at: Date.now(), map, flash });
@@ -184,10 +198,9 @@ export function FlowRace({
             <div className={s.raceArea} ref={areaRef}>
                 <canvas ref={canvasRef} className={s.raceCanvas} aria-hidden='true' />
                 <div className={s.raceRows} style={{ height }} role='list'>
-                    <span className={s.raceZero} aria-hidden='true' />
                     {order.map((row) => {
                         const y = row.rank * ROW_PX + (row.side === 'out' && firstOut > 0 ? GAP_PX : 0);
-                        const width = now !== null ? (Math.abs(row.value) / max) * 50 : 0;
+                        const width = now !== null ? Math.min(row.side === 'in' ? 100 - zero : zero, (Math.abs(row.value) / span) * 100) : 0;
                         const move = showMoves ? (moves.map.get(row.id) ?? 0) : 0;
                         const flash = showMoves && moves.flash.has(row.id);
                         const selected = row.id === selectedId;
@@ -209,11 +222,12 @@ export function FlowRace({
                                     {move < 0 && <ArrowDown size={10} className={panel.dirText.down} aria-label={`下降 ${-move} 名`} />}
                                 </span>
                                 <span className={s.raceTrack}>
+                                    <span className={`${s.raceZero} ${reducedMotion ? s.still : ''}`} style={{ left: `${zero}%` }} aria-hidden='true' />
                                     <span
                                         data-bar={row.id}
                                         data-side={row.side}
                                         className={`${s.raceBar[row.side]} ${reducedMotion ? s.still : ''}`}
-                                        style={row.side === 'in' ? { left: '50%', width: `${width}%` } : { right: '50%', width: `${width}%` }}
+                                        style={row.side === 'in' ? { left: `${zero}%`, width: `${width}%` } : { right: `${100 - zero}%`, width: `${width}%` }}
                                     >
                                         {width > 0.5 && <span className={s.raceHead[row.side]} />}
                                     </span>

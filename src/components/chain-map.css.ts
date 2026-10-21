@@ -694,12 +694,12 @@ export const raceCanvas = style({ position: 'absolute', top: 0, left: 0, width: 
 export const raceRows = style({ position: 'relative', margin: `4px 0` });
 export const raceZero = style({
     position: 'absolute',
-    top: 0,
-    bottom: 0,
-    // centre of the track column: name 132px + gap, value 74 + pct 56 on the right
-    left: 'calc(140px + (100% - 140px - 146px) / 2)',
+    top: '-6px',
+    bottom: '-6px',
     width: '1px',
     background: tint(vars.color.mutedForeground, 40),
+    transition: 'left 900ms cubic-bezier(0.22, 1, 0.36, 1)',
+    ...reduce,
 });
 
 const raceRowBase = style({
@@ -727,7 +727,7 @@ export const raceRow = styleVariants({
 export const raceName = style({ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 });
 export const raceTrack = style({ position: 'relative', height: '12px', minWidth: 0 });
 
-const barGrow = 'width 900ms cubic-bezier(0.22, 1, 0.36, 1)';
+const barGrow = ['width', 'left', 'right'].map((p) => `${p} 900ms cubic-bezier(0.22, 1, 0.36, 1)`).join(', ');
 const raceBarBase = style({ position: 'absolute', top: 0, bottom: 0, transition: barGrow, ...reduce });
 export const raceBar = styleVariants({
     in: [
@@ -823,7 +823,7 @@ export const tideGrid = style({ stroke: tint(vars.color.border, 60), strokeDasha
 export const tideAxis = style({ stroke: tint(vars.color.mutedForeground, 45) });
 export const tideTick = style({ fill: vars.color.mutedForeground, fontSize: '9px', fontFamily: vars.font.mono, opacity: 0.85 });
 export const tideCaption = style({ fill: vars.color.mutedForeground, fontSize: '9.5px', fontFamily: vars.font.body });
-export const tideTrail = styleVariants(perState((c) => ({ stroke: c, strokeWidth: 1.6, strokeLinecap: 'round' })));
+export const tideTrail = styleVariants(perState((c) => ({ stroke: c, strokeWidth: 1.4, strokeLinecap: 'round' })));
 export const tideBubble = style({ cursor: 'pointer', transition: glide, willChange: 'transform', ...reduce });
 export const tideFill = styleVariants(
     perState((c) => ({

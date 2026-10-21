@@ -4,11 +4,11 @@
 // - race: groups ordered by net inflow (cumulative since the first bar, or
 //   the last five minutes), inflow above, outflow below.
 // - tide (潮汐) bubbles: a point per group. x = net inflow since the first
-//   bar (drawn on an asinh scale), y = 加速 (last-five-minute intensity minus
-//   the session intensity, pp), size = last-five-minute turnover, colour =
+//   bar (drawn on an asinh scale), y = 加速 (last-ten-minute intensity minus
+//   the last 30 minutes', pp), size = last-ten-minute turnover, colour =
 //   one of four states, with a trail of earlier minutes.
 
-import { SESSION_SLOTS, WINDOW, type GroupFlow } from './chain-flow';
+import { SESSION_SLOTS, type GroupFlow } from './chain-flow';
 
 export type RaceMetric = 'cum' | 'flow5';
 
@@ -51,30 +51,58 @@ export interface RotationPoint {
     net: number;
     /** 強度 (%): Σnet ÷ Σturnover from the first bar to `slot`. */
     x: number;
-    /** 加速 (pp): last-five-minute intensity minus 強度. */
+    /** 加速 (pp): last-ten-minute intensity minus the last 30 minutes'. */
     y: number;
-    /** Turnover of the last five minutes (bubble size). */
+    /** Turnover of the recent window (bubble size). */
     size: number;
 }
 
-/** Rotation coordinates of a group at `slot`, or null without turnover. */
-export function rotationPoint(flow: GroupFlow, slot: number, window = WINDOW): RotationPoint | null {
+/** Recent window of the tide's acceleration (minutes): 10 keeps the sign-estimate noise down. */
+export const RECENT = 10;
+/** Minutes of the baseline the recent intensity is compared with. */
+export const BASELINE = 30;
+
+/**
+ * Tide coordinates of a group at `slot`, or null without turnover.
+ * y compares the last `window` minutes' intensity with the last `base`
+ * minutes' (smoother than against the whole session, and it forgets the
+ * open).
+ */
+export function rotationPoint(flow: GroupFlow, slot: number, window = RECENT, base = BASELINE): RotationPoint | null {
     if (slot < 0 || slot >= SESSION_SLOTS) return null;
     let net = 0;
     let turnover = 0;
     let recentNet = 0;
     let recentTurnover = 0;
+    let baseNet = 0;
+    let baseTurnover = 0;
     for (let i = 0; i <= slot; i += 1) {
-        net += flow.net[i]!;
-        turnover += flow.turnover[i]!;
+        const n = flow.net[i]!;
+        const t = flow.turnover[i]!;
+        net += n;
+        turnover += t;
+        if (i > slot - base) {
+            baseNet += n;
+            baseTurnover += t;
+        }
         if (i > slot - window) {
-            recentNet += flow.net[i]!;
-            recentTurnover += flow.turnover[i]!;
+            recentNet += n;
+            recentTurnover += t;
         }
     }
     if (turnover <= 0 || recentTurnover <= 0) return null;
     const x = (net / turnover) * 100;
-    return { slot, net, x, y: (recentNet / recentTurnover) * 100 - x, size: recentTurnover };
+    return { slot, net, x, y: ((recentNet / recentTurnover) - baseNet / baseTurnover) * 100, size: recentTurnover };
+}
+
+/** Three-point moving average of a trail (display only; ends kept). */
+export function smoothTrail(points: readonly RotationPoint[]): RotationPoint[] {
+    return points.map((p, i) => {
+        if (i === 0 || i === points.length - 1) return p;
+        const a = points[i - 1]!;
+        const b = points[i + 1]!;
+        return { ...p, net: (a.net + p.net + b.net) / 3, y: (a.y + p.y + b.y) / 3 };
+    });
 }
 
 /** The last `length` defined points ending at `slot`, oldest first, `every` minutes apart. */

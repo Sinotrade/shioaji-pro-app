@@ -1,11 +1,11 @@
 // src/components/chain-tide.tsx — 潮汐泡泡: every chain/theme as a bubble.
 //
 // x = net inflow since the first received bar (asinh scale, so a small group
-// stays readable next to the largest), y = 加速 (last five minutes' flow
-// intensity minus the session intensity), size = last five minutes'
+// stays readable next to the largest), y = 加速 (last ten minutes' flow
+// intensity minus the last 30 minutes'), size = last ten minutes'
 // turnover, colour = state (加速流入 / 流入放緩 / 流出放緩 / 加速流出).
 // Each minute the bubbles glide to their new place leaving a fading
-// ten-minute trail; a ring pulses on groups that changed state or moved the
+// eight-minute trail; a ring pulses on groups that changed state or moved the
 // most; accelerating groups breathe. The viewport only widens during the
 // session, so motion always means change, never rescaling. Static under
 // prefers-reduced-motion.
@@ -21,16 +21,19 @@ import {
     rotationExtent,
     rotationPoint,
     rotationTrail,
+    smoothTrail,
     type Quadrant,
     type RotationPoint,
 } from '../lib/chain-motion';
 import { useBoxSize, type FlowRow } from './chain-ui';
 import * as s from './chain-map.css';
 
-const TRAIL = 10;
-const PAD = { left: 34, right: 14, top: 30, bottom: 34 };
+const TRAIL = 8;
+const PAD = { left: 40, right: 14, top: 30, bottom: 34 };
 const NET_TICKS = [1e8, 1e9, 1e10, 1e11];
-const MAX_LABELS = 10;
+const MAX_LABELS = 12;
+/** asinh knee: linear below 1 億, logarithmic above. */
+const NET_UNIT = 1e8;
 const PULSES = 4;
 
 interface Bubble {
@@ -84,7 +87,7 @@ export function FlowTide({
         return rows.flatMap((row) => {
             const point = rotationPoint(row.flow, now);
             if (!point) return [];
-            const trail = rotationTrail(row.flow, now - 1, TRAIL, 1, from ?? 0);
+            const trail = smoothTrail(rotationTrail(row.flow, now - 1, TRAIL, 1, from ?? 0));
             return [{ row, id: row.theme.id, point, trail, state: quadrantOf(point.net, point.y) }];
         });
     }, [rows, now, from]);
@@ -115,10 +118,12 @@ export function FlowTide({
         }
         return niceCeil(Math.max(max * 1.15, 1e8));
     }, [bubbles]);
-    const rawY = useMemo(
-        () => rotationExtent(bubbles.flatMap((b) => [b.point.y, ...b.trail.map((p) => p.y)]), 4, 2),
-        [bubbles],
-    );
+    // robust: a thin group's acceleration can spike; it is pinned to the edge
+    const rawY = useMemo(() => {
+        const ys = bubbles.map((b) => Math.abs(b.point.y)).sort((a, b) => a - b);
+        const p85 = ys.length > 0 ? ys[Math.min(ys.length - 1, Math.floor(ys.length * 0.85))]! : 0;
+        return rotationExtent([p85 * 1.3], 4, 2);
+    }, [bubbles]);
     const extentX = useRatchet(rawX, session);
     const extentY = useRatchet(rawY, session);
     const maxSize = useMemo(() => Math.max(1, ...bubbles.map((b) => b.point.size)), [bubbles]);
@@ -130,22 +135,32 @@ export function FlowTide({
     const plotH = Math.max(0, h - PAD.top - PAD.bottom);
     const cx = PAD.left + plotW / 2;
     const cy = PAD.top + plotH / 2;
-    const px = (net: number) => cx + (asinhScale(net, extentX) * plotW) / 2;
-    const py = (y: number) => cy - (Math.max(-1, Math.min(1, y / extentY)) * plotH) / 2;
+    const px = (net: number) => cx + (asinhScale(net, extentX, NET_UNIT) * plotW) / 2;
+    const py = (y: number) => cy - (Math.max(-1, Math.min(1, y / extentY)) * (plotH - 12)) / 2;
     const rMax = Math.max(10, Math.min(30, Math.min(plotW, plotH) / 11));
     const radius = (size: number) => Math.max(3.5, Math.sqrt(size / maxSize) * rMax);
 
-    // label the biggest movers and the selection, never all of them
-    const labelled = useMemo(() => {
-        const set = new Set(
-            [...bubbles]
-                .sort((a, b) => Math.abs(b.point.net) - Math.abs(a.point.net))
-                .slice(0, MAX_LABELS)
-                .map((b) => b.id),
+    // label the selection and the biggest groups, skipping any label that
+    // would overlap one already placed
+    const labelled = new Set<string>();
+    {
+        const placed: { x0: number; x1: number; y0: number; y1: number }[] = [];
+        const candidates = [...bubbles].sort(
+            (a, b) => (b.id === selectedId ? 1 : 0) - (a.id === selectedId ? 1 : 0) || Math.abs(b.point.net) - Math.abs(a.point.net),
         );
-        set.add(selectedId);
-        return set;
-    }, [bubbles, selectedId]);
+        for (const b of candidates) {
+            if (labelled.size >= MAX_LABELS) break;
+            const r = radius(b.point.size);
+            const x = px(b.point.net);
+            const y = py(b.point.y);
+            const half = Math.min(6, b.row.theme.name.length) * 5 + 4;
+            const top = r >= 13 ? y - 11 : y - r - 19;
+            const box = { x0: x - half, x1: x + half, y0: top, y1: top + 22 };
+            if (placed.some((o) => box.x0 < o.x1 && box.x1 > o.x0 && box.y0 < o.y1 && box.y1 > o.y0)) continue;
+            placed.push(box);
+            labelled.add(b.id);
+        }
+    }
 
     const top = bubbles.reduce<Bubble | null>((best, b) => (b.point.net > 0 && (!best || b.point.net > best.point.net) ? b : best), null);
     const bottom = bubbles.reduce<Bubble | null>((best, b) => (b.point.net < 0 && (!best || b.point.net < best.point.net) ? b : best), null);
@@ -154,7 +169,7 @@ export function FlowTide({
     const ordered = [...bubbles].sort((a, b) =>
         a.id === selectedId ? 1 : b.id === selectedId ? -1 : b.point.size - a.point.size,
     );
-    const ticks = NET_TICKS.filter((t) => asinhScale(t, extentX) < 0.8);
+    const ticks = NET_TICKS.filter((t) => asinhScale(t, extentX, NET_UNIT) < 0.8);
 
     return (
         <div className={s.tide} ref={ref}>
@@ -171,10 +186,10 @@ export function FlowTide({
                         onBlur={() => setFocusState(null)}
                         title={
                             {
-                                leading: '淨流入，且近 5 分鐘流入比重高於開啟以來',
-                                weakening: '淨流入，但近 5 分鐘流入比重下降',
-                                improving: '淨流出，但近 5 分鐘流出比重下降',
-                                lagging: '淨流出，且近 5 分鐘流出比重升高',
+                                leading: '淨流入，且近 10 分鐘淨流入比重高於近 30 分鐘',
+                                weakening: '淨流入，但近 10 分鐘淨流入比重低於近 30 分鐘',
+                                improving: '淨流出，但近 10 分鐘比重回升',
+                                lagging: '淨流出，且近 10 分鐘比重低於近 30 分鐘',
                             }[q]
                         }
                     >
@@ -219,7 +234,7 @@ export function FlowTide({
                     <text className={s.tideCaption} x={PAD.left} y={PAD.top + plotH + 11}>
                         ← 淨流出
                     </text>
-                    <text className={s.tideCaption} x={PAD.left - 4} y={PAD.top - 6} textAnchor='end'>
+                    <text className={s.tideCaption} x={6} y={PAD.top - 8}>
                         加速 pp
                     </text>
                     {/* corner names */}
@@ -241,9 +256,11 @@ export function FlowTide({
                         if (b.trail.length < 2) return null;
                         const dim = focusState !== null && focusState !== b.state;
                         return (
-                            <g key={`trail-${b.id}`} className={s.tideTrail[b.state]} opacity={dim ? 0.08 : b.id === selectedId ? 1 : 0.7}>
+                            <g key={`trail-${b.id}`} className={s.tideTrail[b.state]} opacity={dim ? 0.06 : b.id === selectedId ? 1 : 0.4}>
                                 {b.trail.slice(1).map((p, i) => {
                                     const a = b.trail[i]!;
+                                    // a thin group crossing zero can jump: no streak across the chart
+                                    if (Math.abs(px(p.net) - px(a.net)) > plotW * 0.2) return null;
                                     return (
                                         <line
                                             key={p.slot}
@@ -277,7 +294,7 @@ export function FlowTide({
                                 aria-label={`${b.row.theme.name} ${QUADRANT_LABEL[b.state]} 淨流入 ${fmtTwd(b.point.net, true)}`}
                             >
                                 <title>
-                                    {`${b.row.theme.name}・${QUADRANT_LABEL[b.state]}\n淨流入 ${fmtTwd(b.point.net, true)}（強度 ${fmtSignedPct(b.point.x, 1)}）\n加速 ${b.point.y >= 0 ? '+' : ''}${b.point.y.toFixed(1)} pp\n近 5 分成交值 ${fmtTwd(b.point.size)}・漲跌 ${fmtSignedPct(f.pct)}`}
+                                    {`${b.row.theme.name}・${QUADRANT_LABEL[b.state]}\n淨流入 ${fmtTwd(b.point.net, true)}（強度 ${fmtSignedPct(b.point.x, 1)}）\n加速 ${b.point.y >= 0 ? '+' : ''}${b.point.y.toFixed(1)} pp\n近 10 分成交值 ${fmtTwd(b.point.size)}・漲跌 ${fmtSignedPct(f.pct)}`}
                                 </title>
                                 {hot && !reducedMotion && <circle className={s.tideHalo[b.state]} r={r + 4} />}
                                 {pulse.has(b.id) && !reducedMotion && (
@@ -302,7 +319,7 @@ export function FlowTide({
             )}
             {now === null && (
                 <div className={s.tideEmpty}>
-                    每分鐘收盤後更新：收到第一根 1 分 K 起，泡泡依淨流入與加速度移動，並留下 10 分鐘軌跡
+                    盤中每分鐘更新：收到第一根 1 分 K 起，泡泡依淨流入與加速度移動，並留下 8 分鐘軌跡
                 </div>
             )}
             {now !== null && (top || bottom) && (
