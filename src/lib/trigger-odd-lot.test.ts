@@ -3,6 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Account } from './types/portfolio';
 
+// 持倉量以 secretMoney 標記（#268）：比對文字時去掉不顯示的標記字元
+const plain = (s?: string) => (s ?? '').replace(/[\u2061\u2062\u2063]/g, '');
+
 const S1: Account = { account_type: 'S', broker_id: 'fixture-broker-S', account_id: 'fixture-account-S',
     person_id: '', signed: true, username: '' };
 const F1: Account = { ...S1, account_type: 'F', account_id: 'fixture-account-F' };
@@ -163,7 +166,7 @@ describe('odd-lot triggers (#204)', () => {
         await oddTick(949);
         const [, , price, qty, opts] = m.place.mock.calls[0]!;
         expect([price, qty, opts.orderLot]).toEqual([900, 300, 'IntradayOdd']);
-        expect(engine.getExits()[0]!.detail).toContain('可賣出現股僅 300 股');
+        expect(plain(engine.getExits()[0]!.detail)).toContain('可賣出現股僅 300 股');
     });
 
     it('whole-lot and odd-lot exits share one holding, counted in shares', async () => {
@@ -200,7 +203,7 @@ describe('planExitQuantity units', () => {
     it('reports odd-lot shortfalls in 股 and whole lots in 張', async () => {
         const { planExitQuantity } = await import('./trigger-engine');
         const base = { bracketId: 'b', account: ACCT };
-        expect(planExitQuantity({ ...base, quantity: 500, orderLot: 'IntradayOdd' }, 0, 200).detail).toBe('可賣出現股僅 200 股，其餘 300 股未保護');
-        expect(planExitQuantity({ ...base, quantity: 3 }, 0, 1).detail).toBe('可賣出現股僅 1 張，其餘 2 張未保護');
+        expect(plain(planExitQuantity({ ...base, quantity: 500, orderLot: 'IntradayOdd' }, 0, 200).detail)).toBe('可賣出現股僅 200 股，其餘 300 股未保護');
+        expect(plain(planExitQuantity({ ...base, quantity: 3 }, 0, 1).detail)).toBe('可賣出現股僅 1 張，其餘 2 張未保護');
     });
 });

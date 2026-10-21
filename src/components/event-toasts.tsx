@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 import { describeOrderReport } from '../lib/order-report';
 import { playAlert, playDeal, playError, playOrder } from '../lib/sounds';
 import { onOrderEvent } from '../lib/stream';
+import { useRevealText } from '../lib/privacy-text';
 import { useToastScale } from '../lib/toast-prefs';
 import { onNotice } from '../lib/trade';
 import * as styles from './event-toasts.css';
@@ -38,6 +39,8 @@ export function EventToasts({ onEvent }: { onEvent?: () => void }) {
     const onEventRef = useRef(onEvent);
     onEventRef.current = onEvent;
     const scale = useToastScale();
+    // toast 顯示期間才打開隱私／遮金額也要立即遮（#268）
+    const reveal = useRevealText();
 
     useEffect(() => {
         const push = (
@@ -89,7 +92,7 @@ export function EventToasts({ onEvent }: { onEvent?: () => void }) {
                         {KIND_ICON[t.kind]}
                     </span>
                     <div className={styles.content}>
-                        <div className={styles.title}>{t.title}</div>
+                        <div className={styles.title}>{reveal(t.title)}</div>
                         {t.lines.map((l, i) => (
                             <div
                                 key={i}
@@ -99,7 +102,7 @@ export function EventToasts({ onEvent }: { onEvent?: () => void }) {
                                         : styles.line.plain
                                 }
                             >
-                                {l.text}
+                                {reveal(l.text)}
                             </div>
                         ))}
                     </div>

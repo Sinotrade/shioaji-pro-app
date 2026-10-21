@@ -12,6 +12,7 @@ import { CandleChart } from './candle-chart';
 import { IntradayChart } from './intraday-chart';
 import { IntradayWallPanel } from './intraday-wall';
 import { ChipsCard } from './chips-card';
+import { CompanyPanel } from './company-panel';
 import { DepthLadder } from './depth-ladder';
 import { MarketPulsePanel, MarketSignalPanel } from './market-pulse-panel';
 import { OptionChain } from './option-chain';
@@ -51,6 +52,7 @@ const CONTRACT_PREVIEWS: Partial<
     depth: (contract) => <DepthLadder contract={contract} code={contract.code} />,
     tape: (contract) => <TickTape contract={contract} />,
     chips: (contract) => <ChipsCard contract={contract} />,
+    company: (contract) => <CompanyPanel contract={contract} />,
     volprofile: (contract) => <VolProfile contract={contract} />,
 };
 

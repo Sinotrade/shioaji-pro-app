@@ -13,6 +13,7 @@ import { BottomDock } from './components/bottom-dock';
 import { AsyncStatus, type AsyncPhase } from './components/async-status';
 import { CandleChart } from './components/candle-chart';
 import { ChipsCard } from './components/chips-card';
+import { CompanyPanel } from './components/company-panel';
 import { ComboListPanel } from './components/combo-list';
 import { ComboTicket } from './components/combo-ticket';
 import { CommandPalette } from './components/command-palette';
@@ -159,6 +160,7 @@ const POPOUT_TYPES: ReadonlySet<string> = new Set([
     'flash',
     'oddspread',
     'chips',
+    'company',
     'volprofile',
     'optchain',
     'pnl',
@@ -402,6 +404,16 @@ function BlockBody({
         case 'chips':
             return contract ? (
                 <ChipsCard contract={contract} />
+            ) : (
+                <BlockPlaceholder phase={missingContractPhase} />
+            );
+        case 'company':
+            return contract ? (
+                <CompanyPanel
+                    contract={contract}
+                    snapshot={snapshot?.code === contract.code ? snapshot : undefined}
+                    onPick={onSelectCode}
+                />
             ) : (
                 <BlockPlaceholder phase={missingContractPhase} />
             );
@@ -842,6 +854,9 @@ function PopoutView({
             case 'chips':
                 body = <ChipsCard contract={contract} />;
                 break;
+            case 'company':
+                body = <CompanyPanel contract={contract} />;
+                break;
             case 'volprofile':
                 body = <VolProfile contract={contract} />;
                 break;
@@ -900,6 +915,9 @@ function MainApp() {
         createList,
         renameCurrentList,
         deleteCurrentList,
+        reloadFromServer,
+        reloading: watchlistReloading,
+        holdReload,
     } = useWatchlist();
     const [selected, setSelected] = useState<ContractInfo | null>(null);
     const [agentHarnessEnabled, setAgentHarnessEnabledState] = useState(
@@ -1594,6 +1612,9 @@ function MainApp() {
         structureBusy,
         loadError,
         onRetryLoad: retryLoad,
+        onReload: () => reloadFromServer({ source: 'user' }),
+        reloading: watchlistReloading,
+        onHoldReload: holdReload,
     };
     const dockProps = {
         positions: positionsState.data ?? [],

@@ -29,6 +29,7 @@ import {
     factoryInstance,
     INDICATOR_DEFS,
     loadFavorites,
+    outputLineStyle,
     outputStyle,
     saveFavorites,
     saveTypeDefault,
@@ -38,6 +39,7 @@ import {
     type PlotKind,
 } from '../lib/indicator-defs';
 import { CustomIndicatorEditor } from './custom-indicator-editor';
+import { bandColors } from '../lib/price-band';
 import * as styles from './indicator-dialog.css';
 
 const WIDTHS: (1 | 2 | 3 | 4)[] = [1, 2, 3, 4];
@@ -577,9 +579,18 @@ export function IndicatorSettingsModal({
                         <>
                             {def.outputs.map((o) => {
                                 const s = outputStyle(inst, def, o.key);
+                                // band 由 PriceBandPrimitive 繪製，線型選單
+                                // （折線／柱狀／圓點…）對它沒有作用，不顯示；
+                                // 粗細仍套在上下緣線
+                                const isBand = o.kind === 'band';
                                 const isLine =
-                                    s.plot !== 'histogram' &&
-                                    s.plot !== 'circles';
+                                    isBand ||
+                                    (s.plot !== 'histogram' &&
+                                        s.plot !== 'circles');
+                                const lineStyle = outputLineStyle(o);
+                                const band = isBand
+                                    ? bandColors(s.color, s.opacity)
+                                    : null;
                                 return (
                                     <div
                                         key={o.key}
@@ -638,38 +649,61 @@ export function IndicatorSettingsModal({
                                                                 100,
                                                         }}
                                                     />
-                                                    <span
+                                                    {band ? (
+                                                        <span
+                                                            className={
+                                                                styles.previewBand
+                                                            }
+                                                            style={{
+                                                                background:
+                                                                    band.fillColor,
+                                                                borderTop: `${s.width}px ${lineStyle} ${band.borderColor}`,
+                                                                borderBottom: `${s.width}px ${lineStyle} ${band.borderColor}`,
+                                                            }}
+                                                        />
+                                                    ) : (
+                                                        <span
+                                                            className={
+                                                                styles.previewLine
+                                                            }
+                                                            style={
+                                                                lineStyle ===
+                                                                'dashed'
+                                                                    ? {
+                                                                          borderTop: `${s.width}px dashed ${s.color}`,
+                                                                      }
+                                                                    : {
+                                                                          background:
+                                                                              s.color,
+                                                                          height: `${s.width}px`,
+                                                                      }
+                                                            }
+                                                        />
+                                                    )}
+                                                </button>
+                                                {!isBand && (
+                                                    <button
                                                         className={
-                                                            styles.previewLine
+                                                            styles.plotBtn[
+                                                                plotFor === o.key
+                                                                    ? 'active'
+                                                                    : 'normal'
+                                                            ]
                                                         }
-                                                        style={{
-                                                            background:
-                                                                s.color,
-                                                            height: `${s.width}px`,
+                                                        title='線型'
+                                                        onClick={() => {
+                                                            setColorFor(null);
+                                                            setPlotFor(
+                                                                plotFor === o.key
+                                                                    ? null
+                                                                    : o.key,
+                                                            );
                                                         }}
-                                                    />
-                                                </button>
-                                                <button
-                                                    className={
-                                                        styles.plotBtn[
-                                                            plotFor === o.key
-                                                                ? 'active'
-                                                                : 'normal'
-                                                        ]
-                                                    }
-                                                    title='線型'
-                                                    onClick={() => {
-                                                        setColorFor(null);
-                                                        setPlotFor(
-                                                            plotFor === o.key
-                                                                ? null
-                                                                : o.key,
-                                                        );
-                                                    }}
-                                                >
-                                                    {PLOT_LABEL[s.plot]}
-                                                    <ChevronDown size={11} />
-                                                </button>
+                                                    >
+                                                        {PLOT_LABEL[s.plot]}
+                                                        <ChevronDown size={11} />
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
                                         {colorFor === o.key && (
@@ -681,7 +715,7 @@ export function IndicatorSettingsModal({
                                                 }
                                             />
                                         )}
-                                        {plotFor === o.key && (
+                                        {plotFor === o.key && !isBand && (
                                             <div
                                                 className={styles.plotMenu}
                                             >

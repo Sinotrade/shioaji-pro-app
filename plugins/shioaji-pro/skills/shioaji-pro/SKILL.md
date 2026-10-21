@@ -2,12 +2,14 @@
 name: shioaji-pro
 description: |
   Use when observing or controlling the Shioaji Pro desktop app through its
-  native semantic MCP tools. Covers market and account context, workspaces,
-  panels, native indicators and strategies, chart indicator mounting and
+  native semantic MCP tools. Covers market and account context, bounded K bars,
+  order and fill history, conditional orders, realized P&L, workspaces,
+  panels, 自選 watchlists, native indicators and strategies, chart indicator mounting and
   adjustment, static portfolio research, Grid/Random optimization, bounded
   backtest analysis and export, reusable skills, background tasks,
   guarded trade preview and execution, user-authorized controlled auto, restart
-  recovery, and privacy. Use the separate
+  recovery, privacy, and read-only company data (fundamentals, value chains,
+  themes, suppliers and customers, revenue and statements). Use the separate
   Shioaji API skill for direct Python, CLI, HTTP, or SSE integration.
 ---
 
@@ -78,6 +80,23 @@ operations; never substitute shell commands, UI coordinates, or raw keystrokes.
 - These writes affect local App content, not brokerage orders. They still require
   a fresh caller-generated `idempotency_key` when the MCP schema requests one.
 
+## Watchlists
+
+- Edit the user's 自選 watchlists only with the watchlist tools in
+  [MCP_TOOLS.md](references/MCP_TOOLS.md), never with the `shioaji watchlist`
+  CLI. Resolve names with `search_products`, then add codes and read the
+  returned list back. The 自選 panel re-reads the lists after each change.
+- `delete_watchlist` always asks the user, showing the list's contents. Use
+  the `watchlist_id` returned by `rename_watchlist` afterwards.
+
+## Company Data
+
+- Answer company, value-chain, theme, supplier, and customer questions with
+  `get_company`, `find_theme_members`, `find_relations`, and `get_financials`
+  as described in [MCP_TOOLS.md](references/MCP_TOOLS.md#company-data).
+- Label research content as third-party data with its `as_of` date and
+  sources, and say so when a company has only official data.
+
 ## Guardrails
 
 - The App owns authentication, authorization, confirmations, credentials, and
@@ -93,6 +112,8 @@ operations; never substitute shell commands, UI coordinates, or raw keystrokes.
   in-flight authority. Uncertain mutations remain blocked until reconciled.
 - Load [PRIVACY.md](references/PRIVACY.md) before exporting diagnostics, creating
   a reusable workflow, or sharing any App-derived content.
+- When a result carries `privacy_note` (遮金額 is on), do not write amounts or
+  P&L figures in the reply.
 
 Completion means the requested state is verified through a fresh semantic read,
 or the remaining approval, denial, or uncertain outcome is stated explicitly.

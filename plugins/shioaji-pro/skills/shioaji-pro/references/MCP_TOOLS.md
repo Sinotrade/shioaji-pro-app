@@ -8,9 +8,10 @@ calling a tool. The families below describe intent, not permission.
 
 | Family | Typical intent | Capability tier |
 | --- | --- | --- |
-| `market` | Quotes, snapshots, product search, K-bar summaries, and scanners | `market.read` |
-| `account` | Positions, working orders, balances, margin, and risk indicators | `account.read` |
+| `market` | Quotes, snapshots, product search, K-bar summaries, bounded K bars, scanners, and company data | `market.read` |
+| `account` | Positions, working orders, order and fill history, conditional orders, balances, margin, realized P&L, and risk indicators | `account.read` |
 | `workspace` | Select a contract; inspect or change panels, links, and layouts | `ui.control` |
+| `watchlist` | Read and edit the server 自選 watchlists the App shows | `ui.control` |
 | `content` | Create App-native indicators and strategies; mount, inspect, adjust, or remove chart instances; manage reusable skills | `ui.control` |
 | `backtest` | Create revisions, run static portfolios and optimization, inspect bounded results, and export | `ui.control` |
 | `task` | Create and manage background monitoring or scheduled workflows | `task.manage` |
@@ -39,13 +40,39 @@ past success or conversation text.
 ## v1 semantic names
 
 - Market: `get_quote`, `get_snapshots`, `search_products`,
-  `get_kbar_summary`, `get_scanner`.
-- Account: `get_positions`, `get_working_orders`, `get_account`.
+  `get_kbar_summary`, `get_kbars`, `get_scanner`, `get_company`,
+  `get_financials`, `find_theme_members`, `find_relations`. `get_kbars` returns
+  at most 500 bars from the Shioaji server (intraday ranges up to 31 days,
+  daily up to 366); use `get_kbar_summary` when a summary is enough. Daily
+  futures bars follow the trading day: a night session counts toward the next
+  trading day. The last four read the public shioaji-data company dataset
+  (Taiwan listed and OTC companies): business summary, multi-level industry,
+  value-chain stage, themes, suppliers and customers, monthly revenue, and
+  quarterly statements. Read [Company data](#company-data) before answering
+  from them.
+- Account: `get_positions`, `get_working_orders`, `get_account`,
+  `list_trades`, `list_conditional_orders`, `get_profit_loss`.
+  `list_trades` is 委託成交查詢 for today, including filled, cancelled and
+  failed orders, paged at most 100 per page. A partly filled order matches
+  both `status: working` and `status: filled`. `list_conditional_orders` is
+  read-only; pausing or cancelling stays in the App's conditional panel.
+  `get_profit_loss` covers realized P&L for up to 92 days and optional stock
+  settlements.
 - App state: `get_app_state`, `list_panels`, `get_user_activity`.
 - Workspace mutation: `select_contract`, `add_panel`, `remove_panel`,
   `set_panel_pin`, `apply_layout`. Panel pinning uses a contract code; omitting
   the code restores linked behavior. Layouts identify both `source`
   (`preset` or `profile`) and `name`.
+- Watchlists: `list_watchlists`, `get_watchlist`, `create_watchlist`,
+  `add_to_watchlist`, `remove_from_watchlist`, `reorder_watchlist`,
+  `rename_watchlist`, `select_watchlist`, `delete_watchlist`. These edit the
+  server watchlists the 自選 panel shows, and the panel re-reads them after
+  each change. Resolve names with `search_products` before adding, pass
+  `watchlist_id` from `list_watchlists`, and read the returned list to verify.
+  Rename gives the list a new `watchlist_id`. Every write except delete is
+  reversible and runs without a confirmation card; `delete_watchlist` always
+  shows the list's contents for the user to confirm. Never use the
+  `shioaji watchlist` CLI in place of these tools.
 - Native content: `list_custom_indicators`, `save_custom_indicator`,
   `list_strategies`, `save_strategy`. In a Shioaji Pro conversation, an
   unqualified indicator or strategy request targets these tools rather than
@@ -79,6 +106,37 @@ past success or conversation text.
 Every mutation requires a caller-generated stable `idempotency_key` and the
 same key must never be reused for a different payload.
 
+When the user has turned on 遮金額 (hide amounts), money tools add a
+`privacy_note`, and the App masks amounts in the tool rows it shows. Then do not
+write amounts or P&L figures in replies either. Describe direction or ratios
+instead.
+
 Availability still depends on the connected server's advertised schema and the
 session's granted capabilities. Do not invent audit, approval-token, raw HTTP,
 or any other tools when they are absent.
+
+## Company data
+
+- Codes use the Shioaji stock code (`2330`) or the entity id (`tw.2330`).
+  `find_relations` also accepts foreign entity ids such as `us.NVDA`, so it can
+  list the Taiwan suppliers of a foreign company. Relation types are
+  `supplier` (who supplies it), `customer` (whom it supplies), `competitor`,
+  `partner`, `subsidiary` (its subsidiaries), `parent`, and `transaction`.
+- For a value chain or theme question, call `find_theme_members` with the
+  theme or chain and an optional stage or tier (`upstream`, `midstream`,
+  `downstream`). Without arguments it lists every chain and theme.
+- Research fields are third-party data compiled by AI from public documents and
+  cross-checked by several models. When answering from them, label them as
+  third-party data and cite `as_of` and `sources`. When `research.status` is
+  `official_only`, say the company has only official exchange data.
+  `get_financials` and daily close and market cap are official data.
+- Company data is a daily snapshot. Use `get_quote` or `get_snapshots` for the
+  live price. A `stale` flag means the App is offline and serving data it
+  downloaded and verified earlier; it is not confirmed to be the latest
+  release, so say so and give the `release_id`. `data.parts` gives the
+  release and `as_of` of each dataset a result used, and `data.stale_parts`
+  names the ones served from cache (for example only `market`).
+- Results are capped in size. A capped result has `truncated: true`: lists keep
+  their first entries and `count` still gives the full total. Narrow the call
+  with `limit`, `max_relations`, `months`, `quarters`, or a more specific theme
+  or stage instead of repeating it.

@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 vi.stubGlobal('window', new EventTarget());
 const store = new Map<string, string>();
 vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) });
-const { setPrivacyMoney } = await import('./privacy');
+const { plainText, revealText, setPrivacyMoney } = await import('./privacy');
 const { checkOrderAllowed, getDailyPnlKnown, getRiskSettings, reportDailyPnl, setRiskSettings, subscribeRiskSettings } = await import('./risk');
 
 afterEach(() => {
@@ -15,7 +15,10 @@ afterEach(() => {
 it('masks the daily-loss amounts in the block reason when 遮金額 is on', () => {
     setRiskSettings({ enabled: true, maxDailyLoss: 3000 });
     reportDailyPnl(-3500);
-    expect(checkOrderAllowed(1)).toBe('當日虧損 -3500 已達上限 -3000，下單封鎖');
+    const before = checkOrderAllowed(1)!;
+    expect(plainText(before)).toBe('當日虧損 -3500 已達上限 -3000，下單封鎖');
+    // #268: 先產生、之後才開遮金額 — 通知中心／toast 渲染時要重遮
+    expect(revealText(before, { priv: false, privMoney: true })).toBe('當日虧損 ••••• 已達上限 -•••••，下單封鎖');
     setPrivacyMoney(true);
     const reason = checkOrderAllowed(1)!;
     expect(reason).toContain('下單封鎖');

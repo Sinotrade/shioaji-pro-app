@@ -115,6 +115,8 @@ jobs:
         run: pnpm test
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -122,6 +124,12 @@ jobs:
 
       - name: Cargo check
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      # 與 desktop-agent-build（ubuntu-22.04）同一道關：含 test target 且
+      # warnings 視為錯誤。只跑 cargo check 時，`cfg(test)` 下沒人呼叫的
+      # 函式（dead_code）會漏到私有 main（#178 → 公開 #346 的教訓）
+      - name: Cargo clippy (all targets, deny warnings)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       # cancelled 不回報（留給接手的 run），其餘 success/failure 誠實打回；
       # 回報失敗讓 step 紅 — CI_BRIDGE_TOKEN 過期絕不允許靜默（review A4）

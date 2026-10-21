@@ -247,6 +247,27 @@ export const listBtn = style({
     ':disabled': { opacity: 0.45, cursor: 'not-allowed' },
 });
 
+// 重新讀取 (#340) reuses RefreshButton; doubled selector so the compact
+// toolbar look wins over the shared button's 28px ghost style.
+export const reloadBtn = style({
+    selectors: {
+        '&&': {
+            width: '24px',
+            height: '24px',
+            marginLeft: 0,
+            background: vars.color.inset,
+            border: `1px solid ${vars.color.border}`,
+            borderRadius: vars.radius.sm,
+            color: vars.color.mutedForeground,
+        },
+        '&&:hover:not(:disabled)': {
+            color: vars.color.foreground,
+            borderColor: vars.color.borderBright,
+            background: vars.color.inset,
+        },
+    },
+});
+
 export const listBtnOn = style({
     color: vars.color.accent,
     borderColor: vars.color.accent,
