@@ -7,7 +7,7 @@ WORKSPACE_DIR="$(dirname "$ROOT_DIR")"
 DESKTOP_DIR="${SHIOAJI_PRO_DESKTOP_DIR:-$WORKSPACE_DIR/shioaji-pro-agent-harness}"
 SERVER_DIR="${SHIOAJI_SERVER_DIR:-$WORKSPACE_DIR/shioaji-agent-permission}"
 TARGET_TRIPLE="aarch64-apple-darwin"
-APP_PROCESS="${SHIOAJI_PRO_APP_PROCESS:-Shioaji Pro}"
+APP_PROCESS="${SHIOAJI_PRO_APP_PROCESS:-Shioaji Pro Dev}"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     echo "This QA launcher currently supports Apple Silicon macOS only." >&2
@@ -81,20 +81,20 @@ fi
 
 case "$MODE" in
     run)
-        exec pnpm tauri dev
+        exec pnpm desktop:dev
         ;;
     --debug|debug)
         export RUST_BACKTRACE=1
         export RUST_LOG=debug
-        exec pnpm tauri dev
+        exec pnpm desktop:dev
         ;;
     --logs|logs|--telemetry|telemetry)
         export RUST_BACKTRACE=1
         export RUST_LOG=info
-        exec pnpm tauri dev
+        exec pnpm desktop:dev
         ;;
     --verify|verify)
-        pnpm tauri dev &
+        pnpm desktop:dev &
         launcher_pid=$!
         for _ in {1..120}; do
             if pgrep -x "$APP_PROCESS" >/dev/null; then

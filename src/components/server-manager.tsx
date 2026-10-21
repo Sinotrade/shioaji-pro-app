@@ -25,7 +25,8 @@ import { usePoll } from '../hooks/use-poll';
 import { useStreamStatus } from '../hooks/use-stream';
 import { unsignedAccountLabel } from '../lib/account-signing';
 import { canTrade } from '../lib/account-tradable';
-import { getPrivacyMode, maskAccountId } from '../lib/privacy';
+import { plainText, secretAccount } from '../lib/privacy';
+import { useRevealText } from '../lib/privacy-text';
 import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
 import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
@@ -47,6 +48,7 @@ import {
     type ServerActionDeps,
 } from '../lib/server-actions';
 import { freshDiagnostics } from '../lib/diagnostics-snapshot';
+import { agentRuntimeDiagnostics } from '../lib/agent-diagnostics';
 import {
     fetchAccounts,
     fetchCaExpire,
@@ -64,6 +66,11 @@ import {
     reloadWhenHealthy,
     restartAndInstallUpdate,
     saveDesktopSettings,
+    saveCredentialProfile,
+    selectCredentialProfile,
+    deleteCredentialProfile,
+    logoutCredentialProfile,
+    EMPTY_DESKTOP_SETTINGS,
     subscribeAgentHarnessEnabled,
     serverStart,
     serverStatus,
@@ -77,6 +84,7 @@ import { notify } from '../lib/trade';
 import { Orb } from './orb';
 import { ServerSettingsDialog, type ServerConnectionSettings } from './server-settings-dialog';
 import * as dialogStyles from './server-settings-dialog.css';
+import { vars } from '../theme.css';
 import type { Health } from '../lib/types/health';
 import { setServerIdentityVerified } from '../lib/server-identity';
 import * as styles from './hud-header.css';
@@ -111,21 +119,14 @@ export function ServerManager({
     open: boolean;
     onToggle: (open: boolean) => void;
 }) {
-    const [settings, setSettings] = useState<DesktopSettings>({
-        apiKey: '',
-        secretKey: '',
-        production: false,
-        autoStart: true,
-        caPath: '',
-        caPasswd: '',
-        httpsEnabled: false,
-        agentHarnessEnabled: true,
-    });
+    const [settings, setSettings] = useState<DesktopSettings>(EMPTY_DESKTOP_SETTINGS);
     const [busy, setBusy] = useState(false);
     const [lastOutput, setLastOutput] = useState('');
     const [ver, setVer] = useState('');
     const [checking, setChecking] = useState(false);
     const [readyLines, setReadyLines] = useState<string[]>([]);
+    // 就緒檢查與啟動 log 保留產生當下的字串：渲染時依目前隱私模式遮帳號（#268）
+    const reveal = useRevealText();
     const [confirmLogout, setConfirmLogout] = useState(false);
     const logoutInFlight = useRef(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -199,7 +200,7 @@ export function ServerManager({
                           ? '期貨'
                           : a.account_type;
                 out.push(
-                    `${canTrade(a) ? '✓' : '✗'} ${kind} ${a.broker_id}-${maskAccountId(a.account_id, getPrivacyMode())}` +
+                    `${canTrade(a) ? '✓' : '✗'} ${kind} ${a.broker_id}-${secretAccount(a.account_id)}` +
                         `${a.signed ? ' 已簽署' : ` ${unsignedAccountLabel(info?.simulation === true)}`}`,
                 );
             }
@@ -327,9 +328,11 @@ export function ServerManager({
             lastOutput ? `--- log ---\n${lastOutput}` : '',
             timingDiagnostics(),
             orderTraceDiagnostics(),
+            agentRuntimeDiagnostics(),
         ].filter(Boolean);
         try {
-            await navigator.clipboard.writeText(lines.join('\n'));
+            // 複製出去的文字不帶 #268 隱私標記字元
+            await navigator.clipboard.writeText(plainText(lines.join('\n')));
             notify({
                 kind: 'ok',
                 title: '已複製診斷資訊',
@@ -362,13 +365,12 @@ export function ServerManager({
         void (async () => {
             try {
                 setServerIdentityVerified(false);
-                const stopped = await serverStop({ stopAgents: true });
+                const stopped = await serverStop({ stopAgents: true, ownedOnly: true });
                 if (!stopped.ok) {
                     serverActionDeps.reloadAfterFailedStop();
                     throw new Error(stopped.output || '無法停止本機伺服器');
                 }
-                const current = await loadDesktopSettings();
-                await saveDesktopSettings({ ...current, apiKey: '', secretKey: '' });
+                await logoutCredentialProfile();
                 clearStoredSpawnKeyHash();
                 window.location.reload();
             } catch (e) {
@@ -468,28 +470,54 @@ export function ServerManager({
         } finally { setBusy(false); }
     };
 
-    const saveConnectionSettings = async (draft: ServerConnectionSettings, apply: boolean) => {
+    const saveConnectionSettings = async (draft: ServerConnectionSettings, apply: boolean): Promise<DesktopSettings> => {
         if (logoutInFlight.current) throw new Error('正在登出，請等待完成。');
         restartError.current = '';
-        // Re-read settings so saving this form cannot revert another panel's
-        // Harness/autostart/TLS setting while the dialog was open.
-        const current = await loadDesktopSettings();
-        const next = { ...current, ...draft };
-        if (apply) {
-            const error = validateDesktopSettings(next);
-            if (error) throw new Error(`${error.title}：${error.body}`);
-            // Do not save a new environment if a native Agent cannot be stopped.
-            await stopAgentsForServerChange();
-        }
-        await saveDesktopSettings(next);
+        let next = await saveCredentialProfile(draft);
         setSettings(next);
         setSavedForRestart(true);
         if (apply) {
-            // a mode flip against the running server is timed as a switch
+            const id = draft.id ?? next.profiles.at(-1)?.id;
+            const target = next.profiles.find(profile => profile.id === id);
+            const invalid = validateDesktopSettings({ ...next,
+                configured: target?.secretState === 'stored',
+                production: target?.environment === 'production',
+                caPath: target?.caPath ?? '',
+                hasCaPassword: target?.hasCaPassword ?? (id === next.activeProfileId && next.hasCaPassword),
+            });
+            if (invalid) throw new Error(invalid.body);
+            await stopAgentsForServerChange();
+            let stoppedForSwitch = false;
+            if (id && id !== next.activeProfileId) {
+                const stopped = await serverStop({ stopAgents: true, ownedOnly: true });
+                if (!stopped.ok) throw new Error('未能停止伺服器；帳號已儲存，尚未切換。');
+                next = await selectCredentialProfile(id);
+                setSettings(next);
+                stoppedForSwitch = true;
+            }
             const scenario = applyScenario(!!status?.running, status?.simulation, next.production);
-            const ok = status?.running ? await doRestart(next, scenario) : await doStart(next, scenario);
-            if (!ok) throw new Error(`設定已儲存，但伺服器未能套用。${restartError.current || '請查看狀態面板的錯誤後再試。'}`);
+            const ok = status?.running && !stoppedForSwitch ? await doRestart(next, scenario) : await doStart(next, scenario);
+            if (!ok) throw new Error('帳號已儲存，但伺服器未能套用。');
         }
+        return next;
+    };
+
+    const profileAction = async (action: 'select' | 'delete', id: string): Promise<DesktopSettings> => {
+        if (logoutInFlight.current) throw new Error('正在登出，請等待完成。');
+        setBusy(true);
+        try {
+            // Selecting another account always stops the old generation.
+            // Deleting the selected account follows the same logout stop path.
+            if (action === 'select' || id === settings.activeProfileId) {
+                setServerIdentityVerified(false);
+                const stopped = await serverStop({ stopAgents: true, ownedOnly: true });
+                if (!stopped.ok) throw new Error('無法停止伺服器，尚未變更帳號。');
+            }
+            const next = action === 'select' ? await selectCredentialProfile(id) : await deleteCredentialProfile(id);
+            setSettings(next); setSavedForRestart(true);
+            if (action === 'delete' && !next.activeProfileId) window.location.reload();
+            return next;
+        } finally { setBusy(false); }
     };
 
     // ---- 本機 HTTPS ----
@@ -739,7 +767,8 @@ export function ServerManager({
                                                   color: 'var(--amber, #e0a43c)',
                                               }
                                             : {
-                                                  color: 'var(--danger, #f23645)',
+                                                  // 正式環境固定 danger 紅（theme token，不隨漲跌配色翻轉）
+                                                  color: vars.color.danger,
                                                   fontWeight: 700,
                                               }
                                     }
@@ -926,7 +955,7 @@ export function ServerManager({
                                 }
                             />
                         </div>
-                        {!settings.apiKey && (
+                        {!settings.configured && (
                             <span
                                 className={styles.emptyHint}
                                 style={{ color: 'var(--amber, #e0a43c)' }}
@@ -942,7 +971,7 @@ export function ServerManager({
                                     fontWeight: 600,
                                 }}
                             >
-                                ⚠ {diagnoseOutput(lastOutput)}
+                                ⚠ {reveal(diagnoseOutput(lastOutput) ?? '')}
                             </span>
                         )}
                         {lastOutput && errorLines(lastOutput) && (
@@ -950,12 +979,12 @@ export function ServerManager({
                                 className={styles.emptyHint}
                                 style={{ color: 'var(--danger, #f23645)' }}
                             >
-                                {errorLines(lastOutput)}
+                                {reveal(errorLines(lastOutput))}
                             </span>
                         )}
                         {lastOutput && (
                             <span className={styles.emptyHint}>
-                                {lastOutput}
+                                {reveal(lastOutput)}
                             </span>
                         )}
                         {updateNeedsAttention && (
@@ -1040,7 +1069,7 @@ export function ServerManager({
                     {settingsOpen && <ServerSettingsDialog
                         settings={settings} status={status} busy={busy || httpsBusy}
                         pendingApply={savedForRestart || (!!status?.running && status.simulation === settings.production)}
-                        onSave={saveConnectionSettings} onClose={() => {
+                        onSave={saveConnectionSettings} onProfileAction={profileAction} onImported={setSettings} onClose={() => {
                             setSettingsOpen(false);
                             // macOS does not necessarily focus a button on click.
                             // Restore explicitly after the popover becomes visible.
@@ -1054,7 +1083,7 @@ export function ServerManager({
                                 <ShieldCheck size={14} />{checking ? '檢查中…' : '檢查目前帳戶／CA'}
                             </button>
                             {caError && <p className={dialogStyles.warning}>{caError}</p>}
-                            {readyLines.length > 0 && <div role='status' className={dialogStyles.notice}>{readyLines.map((line, i) => <div key={i}>{line}</div>)}</div>}
+                            {readyLines.length > 0 && <div role='status' className={dialogStyles.notice}>{readyLines.map((line, i) => <div key={i}>{reveal(line)}</div>)}</div>}
                         </details>
                         <details className={dialogStyles.details}>
                             <summary>App 更新與問題回報</summary>
@@ -1069,7 +1098,7 @@ export function ServerManager({
                         </details>
                         <details className={dialogStyles.details}>
                             <summary>登出這個 App</summary>
-                            <p className={dialogStyles.hint}>停止此 App 的 Agent、清除本機儲存的 API 金鑰，並停止此 App 管理的伺服器。</p>
+                            <p className={dialogStyles.hint}>停止此 App 的 Agent、清除使用中帳號的 API 金鑰與 CA 密碼，並停止此 App 管理的伺服器。其他帳號會保留，登出後回到首次設定。</p>
                             <button className={confirmLogout ? styles.killBtnOn : styles.killBtnOff} onClick={doLogout}><LogOut size={14} />{confirmLogout ? '確認登出並清除金鑰' : '登出並清除金鑰'}</button>
                             {confirmLogout && <button className={dialogStyles.button} onClick={() => setConfirmLogout(false)}>取消登出</button>}
                         </details>

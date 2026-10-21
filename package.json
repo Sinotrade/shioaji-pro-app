@@ -6,6 +6,8 @@
     "type": "module",
     "scripts": {
         "dev": "vite",
+        "desktop:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
+        "desktop:qa": "tauri build --debug --config src-tauri/tauri.dev.conf.json",
         "build": "tsc -b && vite build",
         "test": "vitest run",
         "preview": "vite preview"

@@ -234,8 +234,8 @@ export const lowPriority = style({});
 // 次要（漲停、平盤、跌停、預估量）：lean 只留上漲、下跌、較昨日
 export const secondary = style({});
 
-// 量增／量縮標籤：統計區收起時（compact）留在價格旁邊。
-// 中性色：量縮不等於下跌，紅綠只留給價格方向
+// 量能標籤（量-12%）：統計區收起時（compact）留在價格旁邊。
+// 中性色：量能減少不等於下跌，紅綠只留給價格方向
 export const leadTag = style({
     display: 'none',
     flexShrink: 0,
@@ -246,7 +246,7 @@ export const leadTag = style({
     whiteSpace: 'nowrap',
 });
 
-// compact 的家數比例條：短短一截跟在量增縮標籤後面，意思綁在內容上，不再橫跨整個看板
+// compact 的家數比例條：短短一截跟在量能標籤後面，意思綁在內容上，不再橫跨整個看板
 export const breadthMini = style({
     display: 'none',
     alignSelf: 'center',
@@ -328,6 +328,11 @@ globalStyle(`${gTier('strip')} ${changeBlock} > :first-child`, { display: 'none'
 // 上排放「上方」的值（高、漲停），下排放「下方」的值（低、跌停），跟價格軸方向一致。
 // 代號名稱交給標題列；參考價、時間收進漲跌與現價的滑過提示；最佳一檔交給五檔面板，看板不重複
 export const boardStock = style({});
+
+// 會畫區間軌、盤前還沒有開高低的個股：wide 只允許單行，放不下就讓給 mid 以下（和盤中軌道放不下時一樣），
+// 高窄面板 08:30、09:00 報價欄才不會先換成兩列再縮回（使用者指定；代價是盤前在窄面板手動展開時右側可能被裁掉）
+export const boardRailPending = style({});
+globalStyle(`${boardRailPending}[data-tier="wide"]`, { flexWrap: 'nowrap' });
 
 export const stockStats = style({
     display: 'flex',
@@ -472,6 +477,12 @@ export const sectorTag = style({
     borderRadius: vars.radius.sm,
     padding: '1px 6px',
     whiteSpace: 'nowrap',
+    // 可點（跳到產業全景）：按鈕預設的外距與行高會改變版面，歸零沿用原本的尺寸
+    margin: 0,
+    lineHeight: 'inherit',
+    cursor: 'pointer',
+    ':hover': { borderColor: vars.color.accent },
+    ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: 1 },
 });
 
 const RAIL: readonly BoardTier[] = ['rail', 'railMid', 'railLow'];
@@ -530,4 +541,12 @@ export const statusBadge = style({
     whiteSpace: 'nowrap',
 });
 // 單行的窄階梯保留價格空間，狀態事實仍可從提示與讀屏文字取得。
-globalStyle(sTiers(['inline', 'lean', 'compact', 'tight', 'strip'], statusBadge), { display: 'none' });
+const STOCK_NARROW: readonly BoardTier[] = ['inline', 'lean', 'compact', 'tight', 'strip'];
+globalStyle(sTiers(STOCK_NARROW, statusBadge), { display: 'none' });
+// 試撮價剛好在漲跌停：窄階梯只留一個標籤，留「試撮」、收起停板徽章，免得看成已經鎖停（寬階梯兩個都顯示）。
+// 同 specificity，靠宣告順序蓋過上一條
+export const statusKeep = style({});
+export const limitWide = style({});
+globalStyle(sTiers(STOCK_NARROW, statusKeep), { display: 'inline' });
+globalStyle(sTiers(STOCK_NARROW, limitWide), { display: 'none' });
+globalStyle(tiers(['inline', 'lean', 'compact', 'strip'], statusBadge), { display: 'none' });

@@ -141,6 +141,19 @@ describe('DayRangeRail', () => {
         );
     });
 
+    it('提示最後一行可加註記（期貨全盤時註明開盤與高低含夜盤）', () => {
+        const img = render({ note: '開盤為前一交易日 15:00 夜盤開盤，高低含夜盤' }).find((n) => typeof n.type === 'string' && n.props.role === 'img');
+        expect(img.props.title).toMatch(/\n開盤為前一交易日 15:00 夜盤開盤，高低含夜盤$/);
+    });
+
+    it('試撮價跳出今天高低之外：引線延伸到現價，實體不會比引線長', () => {
+        // 08:30 試撮 47,450 高過最高 47,380（試撮價不算進高低）
+        const root = render({ range: { ...TXF, close: 47450 } });
+        const [wick] = rects(root, styles.railWick.up);
+        const [body] = rects(root, styles.railBody.up);
+        expect(wick!.props.x + wick!.props.width).toBeGreaterThanOrEqual(body!.props.x + body!.props.width);
+    });
+
     it('平常日：兩端寫尺幅度 -1%、+1%（不再用像翻頁鍵的箭頭），現價直針照畫', () => {
         const root = render({});
         expect(svgTexts(root)).toEqual(['-1%', '+1%']);

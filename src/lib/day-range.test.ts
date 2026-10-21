@@ -5,6 +5,8 @@ import {
     dayRangeOf,
     dirVsOpen,
     INDEX_FUTURE_SCALES,
+    nightSessionOhl,
+    nightWindowOf,
     railCellsRem,
     railChars,
     railEndPcts,
@@ -12,8 +14,58 @@ import {
     railScale,
     railTicks,
     railTitle,
+    withNightSession,
     type DayRange,
 } from './day-range';
+import type { KBars } from './types/market';
+import { wallClockToUtc } from './utils/kbars';
+
+// 1 分 K（label 為分鐘結束）：[時間, 開, 高, 低]
+const kbars = (rows: [string, number, number, number][]) =>
+    ({ datetime: rows.map((r) => r[0]), Open: rows.map((r) => r[1]), High: rows.map((r) => r[2]), Low: rows.map((r) => r[3]) }) as KBars;
+
+describe('全盤開高低：補上同一交易日的夜盤', () => {
+    const at = (s: string) => wallClockToUtc(s);
+
+    it('夜盤時段：前一個平日 15:00 到隔天 05:00，週一是上週五 15:00 到週六 05:00', () => {
+        expect(nightWindowOf(at('2026-10-21T08:45:00'))).toEqual({ start: at('2026-10-20T15:00:00'), end: at('2026-10-21T05:00:00') });
+        expect(nightWindowOf(at('2026-10-19T08:45:00'))).toEqual({ start: at('2026-10-16T15:00:00'), end: at('2026-10-17T05:00:00') });
+    });
+
+    it('週一日盤取上週五夜盤（含 05:00 那根），日盤與時段外的 K 不算', () => {
+        const k = kbars([
+            ['2026-10-16T13:45:00', 47000, 47010, 46990],
+            ['2026-10-16T15:01:00', 47284, 47300, 47250],
+            ['2026-10-16T23:59:00', 47320, 47390, 47310],
+            ['2026-10-17T05:00:00', 47350, 47400, 47200],
+            ['2026-10-19T08:46:00', 47500, 47600, 47450],
+        ]);
+        expect(nightSessionOhl(k, nightWindowOf(at('2026-10-19T08:45:00')))).toEqual({ open: 47284, high: 47400, low: 47200 });
+    });
+
+    it('冷門合約前一天日盤沒有 K：只取這個交易日的夜盤，不混進更早一段夜盤', () => {
+        const k = kbars([
+            ['2026-10-19T10:00:00', 50, 50, 50],
+            ['2026-10-19T22:00:00', 80, 85, 78],
+            ['2026-10-20T22:30:00', 60, 61, 59],
+        ]);
+        expect(nightSessionOhl(k, nightWindowOf(at('2026-10-21T08:45:00')))).toEqual({ open: 60, high: 61, low: 59 });
+    });
+
+    it('時段內沒有 K（前一個平日放假、或只有日盤）時回傳 undefined，看板照日盤', () => {
+        const k = kbars([['2026-10-16T13:45:00', 47000, 47010, 46990], ['2026-10-19T08:46:00', 47500, 47600, 47450]]);
+        expect(nightSessionOhl(k, nightWindowOf(at('2026-10-19T08:45:00')))).toBeUndefined();
+    });
+
+    it('開盤用夜盤的，最高最低取兩段極值；日盤還沒有值（試撮）時用夜盤的；沒有夜盤時照日盤', () => {
+        // 2026-10-21 台指期近月：夜盤 15:00 開 46,490，日盤 08:45 開 47,240
+        const night = { open: 46490, high: 47000, low: 46400 };
+        expect(withNightSession({ open: 47240, high: 47288, low: 47131 }, night)).toEqual({ open: 46490, high: 47288, low: 46400 });
+        expect(withNightSession({ open: undefined, high: undefined, low: undefined }, night)).toEqual(night);
+        const day = { open: 47240, high: 47288, low: 47131 };
+        expect(withNightSession(day, undefined)).toBe(day);
+    });
+});
 
 // 台指期近月（2026-10-16 夜盤實際數字）：今天只在 ±0.2% 內，漲跌停 ±10%
 const TXF: DayRange = {

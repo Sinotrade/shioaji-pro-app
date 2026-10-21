@@ -28,7 +28,7 @@ vi.mock('../lib/conditional/settings', () => ({ useConditionalSettings: () => ({
     notify: true, quickQty: [1, 5, 10], pauseStopsExits: false }), setConditionalSettings: m.setLocal }));
 vi.mock('./background-execution-setting', () => ({ BackgroundExecutionSetting: () => null }));
 vi.mock('../lib/risk', () => ({ useRiskSettings: () => ({ confirmManualOrders: false, escCancelAll: false }), setRiskSettings: vi.fn() }));
-vi.mock('../lib/privacy', () => ({ usePrivacyMode: () => true, maskAccountId: (id: string) => `•••••${id.slice(-2)}` }));
+vi.mock('../lib/privacy', async (orig) => ({ ...(await orig<typeof import('../lib/privacy')>()), usePrivacyMode: () => true, maskAccountId: (id: string) => `•••••${id.slice(-2)}` }));
 vi.mock('../hooks/use-esc-close', () => ({ useEscClose: () => undefined }));
 vi.mock('./conditional-form', () => ({ Seg: ({ options, onChange }: { options: { id: string; label: string }[]; onChange: (v: string) => void }) =>
     createElement('span', null, options.map(o => createElement('button', { key: o.id, onClick: () => onChange(o.id) }, o.label))) }));

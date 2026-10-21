@@ -20,6 +20,7 @@ import { BRACKET_NOTICE_TEXT, BRACKET_STATE_TEXT, type BracketView } from '../ex
 import type { PendingConfirmItem } from '../execution/pending-confirm-contract';
 import type { OrderProgram } from '../execution/model';
 import { isOddLot } from '../odd-lot';
+import { secretMoney } from '../privacy';
 import type { FlattenLeftover } from './flatten-leftovers';
 import { quantityText } from './flatten-text';
 
@@ -306,13 +307,13 @@ function bracketStatus(p: BracketPlan, legs: TriggerOrder[], s: Sources): { text
     if (pendingLeg) return { ...triggerStatus(pendingLeg, s), attention: true };
     // before anything about building protection: a fill after the close never gets any (#177)
     if (lateFillQuantity(p) > 0) {
-        return { text: `未受保護 ${unprotected} ${unit}：進場單結束後才成交，不會自動補保護，請核對持倉`, tone: 'err', attention: true };
+        return { text: `未受保護 ${secretMoney(`${unprotected} ${unit}`)}：進場單結束後才成交，不會自動補保護，請核對持倉`, tone: 'err', attention: true };
     }
     if (p.rules && p.base === undefined && !p.exit && Math.min(p.filled, p.tier?.entryQuantity ?? p.quantity) > (p.tier?.offset ?? 0)) {
         return { text: `已成交，停損停利尚未建立${p.issues.length ? `（${p.issues[p.issues.length - 1]!.detail}）` : ''}`, tone: 'err', attention: true };
     }
     if (p.exit?.status === 'unknown' && !p.exit.acknowledged) return { text: EXIT_TEXT.unknown!, tone: 'err', attention: true };
-    if (unprotected > 0) return { text: `未受保護 ${unprotected} ${unit}，請對帳後處理`, tone: 'err', attention: true };
+    if (unprotected > 0) return { text: `未受保護 ${secretMoney(`${unprotected} ${unit}`)}，請對帳後處理`, tone: 'err', attention: true };
     if (workingEntryAfterExit(p) > 0) return { text: `已出場，進場單仍有 ${workingEntryAfterExit(p)} ${unit}未成交`, tone: 'err', attention: true };
     if (p.exit && (p.exit.status === 'not-sent' || p.exit.status === 'incomplete')) {
         return { text: `${p.exit.kind === 'stop' ? '停損' : '停利'}${EXIT_TEXT[p.exit.status]}`, tone: 'err', attention: true };
@@ -393,7 +394,7 @@ function bgBracketRow(v: BracketView, s: Sources): CondRow {
     const ended = v.state === 'done' || v.state === 'handled' || v.state === 'rearmed';
     let status: { text: string; tone: Tone } = { text: BRACKET_STATE_TEXT[v.state], tone: v.attention ? 'err' : ended ? 'muted' : 'ok' };
     if (v.state === 'protected' || v.state === 'exiting') status = { text: `${BRACKET_STATE_TEXT[v.state]} · 成交 ${Math.min(v.entryFilled, v.quantity)}/${v.quantity}`, tone: 'ok' };
-    if (v.state === 'unprotected' && v.unprotected > 0) status = { text: `未受保護 ${v.unprotected} 口`, tone: 'err' };
+    if (v.state === 'unprotected' && v.unprotected > 0) status = { text: `未受保護 ${secretMoney(`${v.unprotected} 口`)}`, tone: 'err' };
     // lots filled after the order was reported closed: data anomaly, never protected by itself
     const anomaly = v.anomalous > 0 && !ended;
     if (anomaly) status = { text: `異常成交 ${v.anomalous} 口：${BRACKET_NOTICE_TEXT['issue.fillAfterClose']}`, tone: 'err' };

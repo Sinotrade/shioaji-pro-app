@@ -125,7 +125,7 @@ export function ChipsCard({ contract }: { contract: ContractInfo }) {
                         <span className={dock.statCardLabel}>{it.label}</span>
                         <span
                             className={`${dock.statCardValue} ${
-                                it.warn ? panel.dirText.up : ''
+                                it.warn ? panel.statusText.err : ''
                             }`}
                             style={{ fontSize: '0.85rem' }}
                         >

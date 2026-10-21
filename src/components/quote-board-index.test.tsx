@@ -1,7 +1,7 @@
 // 指數看板渲染：漲跌家數與量能的欄位、資料缺值時各階梯怎麼留格子、滑過提示、現價固定小數位、收合偏好
 import { createElement } from 'react';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const storage = vi.hoisted(() => {
     const store = new Map<string, string>();
@@ -16,7 +16,7 @@ const storage = vi.hoisted(() => {
 let display: any = {};
 // 前一交易日金額由 useQuery 抓，測試直接指定它回傳什麼
 let previous: number | undefined;
-let previousState: { loading: boolean; error: string | null } = { loading: false, error: null };
+let previousState: { loading: boolean; error: string | null; updatedAt?: number | null } = { loading: false, error: null };
 vi.mock('../hooks/use-display-book', () => ({ useSnapshotBaseline: () => ({ snapshot: display.snapshot }) }));
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => display.quote }));
 // 記下每次 useQuery 的抓取函式、key、enabled，接線（只有指數才抓、key 帶交易日、回看視窗）才有測試守著
@@ -27,11 +27,12 @@ const fetchKbars = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ date
 vi.mock('../hooks/use-query', () => ({
     useQuery: (fetcher: () => Promise<unknown>, key: string, enabled?: boolean) => {
         queryCalls.push({ fetcher, key, enabled });
-        return { data: previous, ...previousState, updatedAt: null, refresh: async () => {} };
+        return { data: previous, updatedAt: null, ...previousState, refresh: async () => {} };
     },
 }));
 vi.mock('../lib/shioaji', () => ({ fetchKbars }));
 
+import { todayStr } from '../lib/utils/date';
 import { QuoteBoard } from './quote-board';
 import * as styles from './quote-board.css';
 
@@ -90,7 +91,20 @@ function leanVolumeLabels(root: ReactTestInstance): string[] {
         .map((n) => texts(n)[0]!);
 }
 
+// 某一格（標籤）的數值文字
+function statValue(root: ReactTestInstance, label: string): string | undefined {
+    const cell = root.find((n) => hasClass(styles.stat)(n) && texts(n)[0] === label);
+    return texts(cell).slice(1).join('');
+}
+
+// 元件用電腦時鐘決定基準日的退路，測試固定在 2026-10-19 14:00（台灣），跨過午夜跑也不會變
+beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-19T06:00:00Z'));
+});
+
 afterEach(() => {
+    vi.useRealTimers();
     storage.clear();
     previous = undefined;
     previousState = { loading: false, error: null };
@@ -106,7 +120,10 @@ describe('指數看板', () => {
         previousState = { loading: false, error: 'unavailable' };
         expect(titles(render()).join('\n')).toContain('前一交易日金額取得失敗，本交易日不再重試');
         display = {};
-        expect(titles(render())).toContain('本次連線尚未收到 quote_idx');
+        const empty = render();
+        expect(titles(empty)).toContain('本次連線尚未收到 quote_idx');
+        // 什麼資料都還沒到時不標快照（沒有快照可言）
+        expect(empty.findAll(hasClass(styles.statusBadge))).toHaveLength(0);
     });
 
     it('顯示漲跌家數與量能，現價固定兩位小數，不重複標題列的代號與名稱', () => {
@@ -118,22 +135,32 @@ describe('指數看板', () => {
         }
         // 指數現價固定兩位小數：尾數 0 不省略（沒有固定時會變成 47,111.9）
         expect(all).toContain('47,111.90');
-        expect(all).toContain('量縮7%');
+        // 較昨日直接用 +/-；compact 的量能標籤沒有標籤可依靠，加「量」字和價格漲跌幅區分
+        expect(all).toContain('-7%');
+        expect(all).toContain('量-7%');
         expect(all).not.toContain('IX0001');
         expect(all).not.toContain('發行量加權股價指數');
     });
 
-    it('lean 階梯在三種資料狀態下都剛好留一格量能：較昨日、成交金額、預估量', () => {
+    it('lean 階梯在各種資料狀態下都剛好留一格量能：較昨日、成交金額、預估量', () => {
         display = { quote: { index: idx }, snapshot: undefined, book: undefined };
         // 預估量與前一交易日都有：留較昨日
         previous = 1_000_000_000_000;
         expect(leanVolumeLabels(render())).toEqual(['較昨日']);
-        // 沒有預估量（盤前、盤後）：留成交金額
+        // 沒有預估量（盤前、盤中，這筆是 11:36）：留成交金額
         display = { quote: { index: { ...idx, estimate_amount_sum: '' } }, snapshot: undefined, book: undefined };
         expect(leanVolumeLabels(render())).toEqual(['成交金額']);
-        // 有預估量、前一交易日還沒抓到（或抓失敗）：留預估量，量能組不會整組空掉
+        // 有預估量、前一交易日金額還在抓（剛開頁、09:00 換交易日）：較昨日先佔位顯示空值，不換格
         display = { quote: { index: idx }, snapshot: undefined, book: undefined };
         previous = undefined;
+        const pending = render();
+        expect(leanVolumeLabels(pending)).toEqual(['較昨日']);
+        expect(statValue(pending, '較昨日')).toBe('—');
+        // 抓失敗：留預估量，量能組不會整組空掉
+        previousState = { loading: false, error: 'unavailable' };
+        expect(leanVolumeLabels(render())).toEqual(['預估量']);
+        // 抓完但 21 天內沒有資料：一樣留預估量
+        previousState = { loading: false, error: null, updatedAt: 1 };
         expect(leanVolumeLabels(render())).toEqual(['預估量']);
     });
 
@@ -164,6 +191,165 @@ describe('指數看板', () => {
     });
 });
 
+describe('收盤後改用實際量', () => {
+    const statLabels = (root: ReactTestInstance) => texts(root.find(hasClass(styles.indexGroup.volume)));
+
+    it('13:33 收盤報價沒有預估量：標「實際量」顯示全日金額，較昨日用它算，提示標全日實際、不列進度', () => {
+        previous = 1_000_000_000_000;
+        display = {
+            quote: { index: { ...idx, time: '13:33:00', amount_sum: '825100000000', estimate_amount_sum: '' } },
+            snapshot: undefined,
+            book: undefined,
+        };
+        const root = render();
+        const all = statLabels(root);
+        expect(all).toContain('實際量');
+        expect(all).not.toContain('預估量');
+        expect(all).toContain('-17%');
+        // 收盤後成交金額與實際量是同一個數字，兩格照樣並列（使用者決定）；提示不重複列
+        expect(all).toContain('成交金額');
+        const tip = titles(root).join('\n');
+        expect(tip).toContain('全日實際 8251.0億');
+        expect(tip).not.toContain('成交金額');
+        expect(tip).toContain('前一交易日 10000.0億');
+        expect(tip).not.toContain('已成交預估');
+        // lean 階梯仍只留一格量能：較昨日
+        expect(leanVolumeLabels(root)).toEqual(['較昨日']);
+    });
+
+    it('盤中沒有預估量照舊：標「預估量」、不算較昨日', () => {
+        previous = 1_000_000_000_000;
+        display = { quote: { index: { ...idx, estimate_amount_sum: '' } }, snapshot: undefined, book: undefined };
+        const root = render();
+        const all = statLabels(root);
+        expect(all).toContain('預估量');
+        expect(all).not.toContain('實際量');
+        expect(statValue(root, '較昨日')).toBe('—');
+    });
+
+    it('收盤那筆沒帶成交金額：不拿開頁當下的舊快照金額當實際量', () => {
+        previous = 1_000_000_000_000;
+        display = {
+            quote: { index: { ...idx, time: '13:33:00', amount_sum: '', estimate_amount_sum: '' } },
+            snapshot: { close: 46728.34, total_amount: 300000000000, datetime: `${todayStr()}T10:00:00` },
+            book: undefined,
+        };
+        const root = render();
+        expect(statLabels(root)).toContain('預估量');
+        expect(statLabels(root)).not.toContain('實際量');
+        expect(statValue(root, '較昨日')).toBe('—');
+    });
+
+    it('只有收盤快照（沒收到 quote_idx）也改用實際量；基準日跟著快照日期，半夜、週末重開也一樣', () => {
+        previous = 1_000_000_000_000;
+        const snapshot = (datetime: string) => ({ close: 46728.34, total_amount: 825100000000, datetime });
+        const prevKey = () => queryCalls.filter((c) => c.key.startsWith('index-prev-amount:')).at(-1)!.key;
+        display = { quote: undefined, snapshot: snapshot(`${todayStr()}T13:33:00`), book: undefined };
+        expect(statLabels(render())).toContain('實際量');
+        display = { quote: undefined, snapshot: snapshot('2020-01-03T13:33:00'), book: undefined };
+        const old = render();
+        expect(statLabels(old)).toContain('實際量');
+        expect(statValue(old, '較昨日')).toBe('-17%');
+        // 比的是快照那天的前一交易日，不是電腦日期的前一天
+        expect(prevKey()).toBe('index-prev-amount:IX0001:2020-01-03');
+    });
+
+    it('13:30 到 13:33 之間的快照還不算收盤（收盤集合競價的成交 13:33 才進金額）', () => {
+        previous = 1_000_000_000_000;
+        display = { quote: undefined, snapshot: { close: 46728.34, total_amount: 711346622130, datetime: `${todayStr()}T13:30:00` }, book: undefined };
+        const root = render();
+        expect(statLabels(root)).toContain('預估量');
+        expect(statValue(root, '較昨日')).toBe('—');
+    });
+
+    it('今天盤中的快照（11:00）不算收盤：標「預估量」、不算較昨日', () => {
+        previous = 1_000_000_000_000;
+        display = { quote: undefined, snapshot: { close: 46728.34, total_amount: 644150000000, datetime: `${todayStr()}T11:00:00` }, book: undefined };
+        const root = render();
+        expect(statLabels(root)).toContain('預估量');
+        expect(statLabels(root)).not.toContain('實際量');
+        expect(statValue(root, '較昨日')).toBe('—');
+    });
+});
+
+describe('收盤後重開：家數讀回本機存的收盤那筆', () => {
+    // 與 beforeEach 固定的系統時間同一天（describe 收集時 beforeEach 還沒跑，不能呼叫 todayStr()）
+    const today = '2026-10-19';
+    const note = `收盤時存下的家數（${today} 13:33:00）`;
+    const closeQuote = { ...idx, date: today.replace(/-/g, '/'), time: '13:33:00', limit_up_count: 7, raise_count: 160, flat_count: 72, fall_count: 862, limit_down_count: 2 };
+    const snapshot = (datetime: string) => ({ close: 46822.08, total_amount: 825100000000, datetime });
+
+    it('沒有即時報價、快照同一天：顯示存下的家數與時間，量能是實際量與較昨日（收盤後重開的完整畫面）', () => {
+        previous = 1_000_000_000_000;
+        storage.set('sj-index-close:IX0001', JSON.stringify(closeQuote));
+        display = { quote: undefined, snapshot: snapshot(`${today}T13:33:00`), book: undefined };
+        const root = render();
+        const breadthCells = texts(root.find(hasClass(styles.indexGroup.breadth)));
+        expect(breadthCells).toEqual(['漲停', '7', '上漲', '160', '平盤', '72', '下跌', '862', '跌停', '2']);
+        expect(statValue(root, '時間')).toBe('13:33:00');
+        // 金額由 Compact 拆成數字與單位兩個節點，數值從提示驗
+        expect(statValue(root, '較昨日')).toBe('-17%');
+        const tip = titles(root).join('\n');
+        expect(tip).toContain('全日實際 8251.0億');
+        // 讀回時這個時間只屬於家數
+        expect(tip).toContain('家數更新 13:33:00');
+        // 家數組與窄階梯的比例條照樣給比例，並註明是哪天收盤時存下的，不能寫「尚未收到」
+        const groupTitle = String(root.find(hasClass(styles.indexGroup.breadth)).props.title);
+        expect(groupTitle).toContain('上漲 160');
+        expect(groupTitle).toContain(note);
+        expect(groupTitle).not.toContain('尚未收到');
+        expect(String(root.find(hasClass(styles.breadthMini)).props.title)).toContain(note);
+        // 價格仍看快照，不拿讀回那筆的收盤價；現價標「快照」，提示對指數寫「尚未收到即時報價」
+        expect(texts(root)).toContain('46,822.08');
+        expect(texts(root)).not.toContain('47,111.90');
+        expect(texts(root.find(hasClass(styles.statusBadge)))).toEqual(['快照']);
+        expect(tip).toContain(`快照 ${today} 13:33:00，尚未收到即時報價`);
+        // 讀屏補充文字也要有快照時間與收盤註記（標題屬性讀屏多半不念）
+        const details = texts(root.find(hasClass(styles.srOnly))).join('');
+        expect(details).toContain(`快照 ${today} 13:33:00，尚未收到即時報價`);
+        expect(details).toContain(note);
+        expect(details).not.toContain('本次連線尚未收到 quote_idx');
+        expect(tip).not.toContain('本次連線尚未收到 quote_idx');
+    });
+
+    it('半夜重開（電腦已是隔天）：基準日跟著快照日期，照樣顯示實際量與較昨日', () => {
+        vi.setSystemTime(new Date('2026-10-19T17:40:00Z'));
+        previous = 1_000_000_000_000;
+        storage.set('sj-index-close:IX0001', JSON.stringify(closeQuote));
+        display = { quote: undefined, snapshot: snapshot(`${today}T13:33:00`), book: undefined };
+        const root = render();
+        expect(texts(root.find(hasClass(styles.indexGroup.volume)))).toContain('實際量');
+        expect(statValue(root, '較昨日')).toBe('-17%');
+        expect(statValue(root, '時間')).toBe('13:33:00');
+        expect(queryCalls.filter((c) => c.key.startsWith('index-prev-amount:')).at(-1)!.key).toBe('index-prev-amount:IX0001:2026-10-19');
+    });
+
+    it('快照是別天：不拿存下的家數，維持空值；現價仍標快照，家數組說明尚未收到', () => {
+        storage.set('sj-index-close:IX0001', JSON.stringify(closeQuote));
+        display = { quote: undefined, snapshot: snapshot('2020-01-02T08:45:00'), book: undefined };
+        const root = render();
+        const all = texts(root);
+        expect(all).not.toContain('862');
+        expect(all).not.toContain('13:33:00');
+        expect(texts(root.find(hasClass(styles.statusBadge)))).toEqual(['快照']);
+        expect(root.find(hasClass(styles.indexGroup.breadth)).props.title).toBe('本次連線尚未收到 quote_idx');
+    });
+
+    it('有即時報價時以即時為準，不讀本機（存檔與快照同一天，只有「即時優先」擋得住），也不標快照', () => {
+        storage.set('sj-index-close:IX0001', JSON.stringify(closeQuote));
+        display = { quote: { index: { ...idx, date: closeQuote.date, time: '13:20:00' } }, snapshot: snapshot(`${today}T13:33:00`), book: undefined };
+        const root = render();
+        const all = texts(root);
+        expect(all).toContain('625');
+        expect(all).not.toContain('862');
+        expect(root.findAll(hasClass(styles.statusBadge))).toHaveLength(0);
+        const details = texts(root.find(hasClass(styles.srOnly))).join('');
+        expect(details).not.toContain('快照');
+        expect(details).not.toContain('收盤時存下');
+        expect(String(root.find(hasClass(styles.indexGroup.breadth)).props.title)).not.toContain('收盤時存下');
+    });
+});
+
 describe('前一交易日金額的抓取接線', () => {
     // 看板可能不只一個 useQuery，依 key 前綴找前一交易日金額那個
     const prevAmountCall = () => queryCalls.filter((c) => c.key.startsWith('index-prev-amount:')).at(-1)!;
@@ -182,6 +368,12 @@ describe('前一交易日金額的抓取接線', () => {
         display = { quote: { index: { ...idx, date: '2026-10-19' } }, snapshot: undefined, book: undefined };
         render();
         expect(prevAmountCall().key).toBe('index-prev-amount:IX0001:2026-10-19');
+    });
+
+    it('報價與快照都還沒到時不抓，免得先用電腦日期抓一次、快照到了換基準日又抓一次', () => {
+        display = { quote: undefined, snapshot: undefined, book: undefined };
+        render();
+        expect(prevAmountCall().enabled).toBe(false);
     });
 
     it('個股不抓前一交易日金額', () => {

@@ -30,7 +30,13 @@ export const card = style({
     display: 'flex',
     flexDirection: 'column',
     gap: vars.space.md,
-    width: 'min(26rem, 92vw)',
+    // 帳號元件用 em 排版，卡片字級決定它在首次設定的大小
+    width: 'min(30rem, 92vw)',
+    maxHeight: '92vh',
+    overflowY: 'auto',
+    boxSizing: 'border-box',
+    fontSize: '0.875rem',
+    color: vars.color.foreground,
     background: vars.color.panelRaised,
     border: `1px solid ${vars.color.border}`,
     borderRadius: vars.radius.lg,
@@ -77,9 +83,9 @@ export const logo = style({
 
 export const subtitle = style({
     fontFamily: vars.font.body,
-    fontSize: '0.78rem',
+    fontSize: '0.8125rem',
     color: vars.color.mutedForeground,
-    marginTop: '-6px',
+    marginTop: '2px',
 });
 
 export const fieldGroup = style({
@@ -215,15 +221,17 @@ export const importMessage = styleVariants({
 
 export const hint = style({
     fontFamily: vars.font.body,
-    fontSize: '0.68rem',
+    fontSize: '0.75rem',
     color: vars.color.mutedForeground,
-    lineHeight: 1.5,
+    lineHeight: 1.6,
+    margin: 0,
 });
 
 export const errorText = style({
     fontFamily: vars.font.body,
-    fontSize: '0.7rem',
+    fontSize: '0.75rem',
     fontWeight: 600,
+    margin: 0,
     color: vars.color.danger,
     whiteSpace: 'pre-wrap',
 });
@@ -251,3 +259,13 @@ export const footer = style({
     color: vars.color.mutedForeground,
     textAlign: 'center',
 });
+
+export const logoutBox = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: vars.space.sm,
+    paddingTop: vars.space.md,
+    borderTop: `1px solid ${vars.color.border}`,
+});
+
+export const logoutActions = style({ display: 'flex', justifyContent: 'flex-end', gap: '6px' });

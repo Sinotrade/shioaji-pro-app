@@ -122,6 +122,12 @@ test coverage 門檻、quality metrics 等。落地時更新本節。
 
 ## Dev／候選版的版本識別
 
+- 原生開發使用 `pnpm desktop:dev`；debug QA bundle 使用 `pnpm desktop:qa`。
+  兩者均載入 private overlay 的 `src-tauri/tauri.dev.conf.json`，以
+  `com.sinotrade.shioaji-pro.dev` 與 `Shioaji Pro Dev` 隔離正式 app-data／憑證庫。
+  `scripts/build_and_run.sh` 也使用此入口。不要以未帶 dev config 的
+  `pnpm tauri dev`／本機 build 驗收，否則仍會共用正式 identifier。
+
 - App 畫面與複製診斷統一使用 build identity。`vite dev`、未帶 release tag
   的 `vite build`、本機 debug bundle 都顯示 `dev · <public short SHA>`；
   build／dev server 啟動時有未提交內容則加 `+dirty`，無 Git metadata 顯示

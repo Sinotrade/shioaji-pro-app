@@ -84,6 +84,26 @@ describe('編譯後的報價看板 CSS', () => {
         expectHidden(classes.boardStock, classes.stockVolTagRatio, tiers, ['tight']);
     });
 
+    it('試撮、快照標籤在單行的窄階梯收起，指數與個股一致', () => {
+        expectHidden(classes.boardIndex, classes.statusBadge, BOARD_TIERS, ['inline', 'lean', 'compact', 'strip']);
+        const tiers = [...new Set([...STOCK_TIERS, ...RAIL_TIERS])];
+        expectHidden(classes.boardStock, classes.statusBadge, tiers, ['inline', 'lean', 'compact', 'tight', 'strip']);
+    });
+
+    it('試撮價在漲跌停：窄階梯留試撮標籤、收起停板徽章，寬階梯兩個都在', () => {
+        const tiers = [...new Set([...STOCK_TIERS, ...RAIL_TIERS])];
+        const narrow: readonly BoardTier[] = ['inline', 'lean', 'compact', 'tight', 'strip'];
+        for (const tier of tiers) {
+            expect(display(classes.boardStock, tier, classes.statusKeep), tier).toBe(narrow.includes(tier) ? 'inline' : undefined);
+            expect(display(classes.boardStock, tier, classes.limitWide), tier).toBe(narrow.includes(tier) ? 'none' : undefined);
+        }
+        // 盤前還沒有開高低、會畫軌的個股：wide 只允許單行
+        expect(rules.find((rule) => rule.selector === `${dot(classes.boardRailPending)}[data-tier="wide"]`)?.declarations['flex-wrap']).toBe('nowrap');
+        // 同 specificity 靠順序：留試撮的規則要排在收起試撮標籤之後
+        const at = (child: string) => rules.findIndex((rule) => rule.selector.includes(`[data-tier="inline"] ${dot(child)}`));
+        expect(at(classes.statusKeep)).toBeGreaterThan(at(classes.statusBadge));
+    });
+
     it('所有價格字數都有 railMid 與 railLow 的開盤、高低容器門檻', () => {
         for (const chars of RAIL_CHARS) {
             for (const [child, cells] of [[classes.railOpen, 3], [classes.railHL, 2]] as const) {

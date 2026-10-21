@@ -33,6 +33,8 @@ interface RailProps {
     locked: LimitState;
     // 今天碰過漲停／跌停（停板端畫成實心）
     touched: { up: boolean; down: boolean };
+    // 加在滑過提示最後一行（期貨全盤時註明開盤與高低含夜盤）
+    note?: string;
 }
 
 export function DayRangeRail({ className, ...props }: RailProps & { className?: string }) {
@@ -65,7 +67,7 @@ export function DayRangeRail({ className, ...props }: RailProps & { className?: 
     // 兩端字的寬度：等寬字每字 0.6em，再留 8px；數字列也從同一個位置開始，和軌道起點對齊
     const tagPx = RAIL_METRICS.tagRem * box.rootPx;
     const inset = Math.ceil(Math.max(...tags.map((t) => t.length * RAIL_METRICS.charEm * tagPx))) + 8;
-    const title = railTitle(r, scale, fmt, edges, fmtPoints);
+    const title = [railTitle(r, scale, fmt, edges, fmtPoints), props.note].filter(Boolean).join('\n');
     const scaleText = scale === null ? '刻度到漲跌停' : `刻度 ±${scale}%`;
     const dirClass = (v: number) => {
         const d = dirVsOpen(v, r.open);
@@ -145,9 +147,12 @@ function RailSvg({
         if (b0 < x0 + 3) [b0, b1] = [x0 + 3, b1 + (x0 + 3 - b0)];
         if (b1 > x1 - 3) [b0, b1] = [b0 - (b1 - (x1 - 3)), x1 - 3];
     }
-    // 鎖在停板時引線也停在內緣，保住實體和實心停板塊之間的縫
-    const w0 = locked === 'down' ? Math.max(X(r.low), x0 + 3) : X(r.low);
-    const w1 = locked === 'up' ? Math.min(X(r.high), x1 - 3) : X(r.high);
+    // 鎖在停板時引線也停在內緣，保住實體和實心停板塊之間的縫。
+    // 試撮價不算進高低，可能超出高低之外：引線延伸到現價，實體才不會比引線長
+    const lo = Math.min(r.low, r.close);
+    const hi = Math.max(r.high, r.close);
+    const w0 = locked === 'down' ? Math.max(X(lo), x0 + 3) : X(lo);
+    const w1 = locked === 'up' ? Math.min(X(hi), x1 - 3) : X(hi);
 
     // 停板端畫在實體、引線之後，才不會被蓋掉內側
     const cap = (x: number, side: 'up' | 'down') =>

@@ -3,7 +3,10 @@
 // 尺直接畫到漲跌停的話整條軌幾乎是空的）。尺內是線性，影線長短可以直接比較。
 // 這裡只放不依賴 DOM 的計算，畫面在 components/day-range-rail。
 
+import { CLOSE_GRACE } from './intraday-session';
+import type { KBars } from './types/market';
 import { fmtPct } from './utils/format';
+import { wallClockToUtc } from './utils/kbars';
 
 export interface DayRange {
     reference: number;
@@ -57,6 +60,47 @@ export function railEndPcts(r: DayRange, scale: number | null): [number, number]
 export function dirVsOpen(v: number | undefined, open: number | undefined): 'up' | 'down' | null {
     if (v === undefined || open === undefined || !Number.isFinite(v) || !Number.isFinite(open) || v === open) return null;
     return v > open ? 'up' : 'down';
+}
+
+// 全盤（日盤＋夜盤）的開高低：有夜盤的期貨、選擇權，交易日從前一個交易日 15:00 的夜盤開始（使用者指定），
+// 日盤的即時成交與快照卻只帶日盤自己的開高低，要補上同一交易日的夜盤。
+// 交易日 dayStart（日盤 08:45，牆鐘秒）的夜盤：前一個平日 15:00 到隔天 05:00（週一是上週五 15:00 到週六 05:00）。
+// 用時段框住，不靠「碰到日盤 K 才停」：冷門合約前一天日盤常常沒有 K，會把更早一段夜盤混進來
+// shortcut: 不知道國定假日，前一個平日放假時找不到夜盤（照日盤），要補再接交易日曆
+export function nightWindowOf(dayStart: number): { start: number; end: number } {
+    const day = 86400;
+    const d0 = Math.floor(dayStart / day) * day;
+    const prev = d0 - (new Date(d0 * 1000).getUTCDay() === 1 ? 3 : 1) * day;
+    return { start: prev + 15 * 3600, end: prev + day + 5 * 3600 };
+}
+
+// 1 分 K（label 為分鐘結束，已排序）裡落在夜盤時段（含收盤定盤寬限）的開高低
+export function nightSessionOhl(k: KBars, win: { start: number; end: number }) {
+    let open: number | undefined;
+    let high = -Infinity;
+    let low = Infinity;
+    for (let i = 0; i < k.datetime.length; i++) {
+        const t = wallClockToUtc(k.datetime[i] ?? '');
+        if (t <= win.start || t > win.end + CLOSE_GRACE) continue;
+        if (open === undefined) open = k.Open[i];
+        high = Math.max(high, k.High[i] ?? -Infinity);
+        low = Math.min(low, k.Low[i] ?? Infinity);
+    }
+    return open === undefined ? undefined : { open, high, low };
+}
+
+// 夜盤的開盤價當全盤開盤，最高、最低取兩段的極值；沒有夜盤資料時照日盤
+export function withNightSession(
+    day: { open: number | undefined; high: number | undefined; low: number | undefined },
+    night: { open: number; high: number; low: number } | undefined,
+) {
+    if (!night) return day;
+    const has = (v: number | undefined): v is number => v !== undefined && Number.isFinite(v);
+    return {
+        open: night.open,
+        high: has(day.high) ? Math.max(night.high, day.high) : night.high,
+        low: has(day.low) ? Math.min(night.low, day.low) : night.low,
+    };
 }
 
 // 0（左端）到 1（右端），參考價在 0.5。有尺時線性、超出就貼在兩端；

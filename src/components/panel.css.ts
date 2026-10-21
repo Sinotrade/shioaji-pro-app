@@ -50,6 +50,13 @@ export const dirText = styleVariants({
     flat: { color: vars.color.flat },
 });
 
+// 非價格的狀態文字（下單回饋、驗證錯誤、風險警示）：固定綠／紅，
+// 不可用 dirText（up/down 會隨台股／國際配色翻轉）
+export const statusText = styleVariants({
+    ok: { color: vars.color.success },
+    err: { color: vars.color.danger },
+});
+
 export const mono = style({
     fontFamily: vars.font.mono,
     fontVariantNumeric: 'tabular-nums',

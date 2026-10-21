@@ -1,6 +1,6 @@
 // src/components/child-setup-notice.tsx — shown in the tray panel / popouts
-// while first-run setup is not done. Child windows never read settings.json
-// (API keys live there), so setup can only happen in the main window.
+// while first-run setup is not done. Child windows cannot call native
+// credential commands, so setup happens in the main window.
 
 import { AppWindow, KeyRound, RotateCw, TriangleAlert } from 'lucide-react';
 import { focusMainWindow } from '../lib/window-role';

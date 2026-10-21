@@ -1,13 +1,6 @@
-// src/lib/index-volume.ts：指數預估成交金額與前一交易日比較（量增／量縮）
+// src/lib/index-volume.ts：指數預估成交金額與前一交易日比較（+22%／-17%）
 
 import type { KBars } from './types/market';
-
-export type VolumeChangeKind = 'up' | 'down' | 'flat';
-
-export interface VolumeChange {
-    kind: VolumeChangeKind;
-    text: string;
-}
 
 // 報價所屬交易日（quote_idx 的 date）正規化成 YYYY-MM-DD；接受 2026/10/16、2026-10-16、20261016。
 // 用它（而不是電腦時鐘）當比較基準：App 跨過午夜或整個週末開著時，畫面上的預估量仍是上一個交易日的，
@@ -83,18 +76,37 @@ export function previousSessionAmount(
     return sum > 0 ? sum : undefined;
 }
 
-// 預估全日成交金額相對前一交易日：量增 22%／量縮 17%。四捨五入到整數百分比，
-// 0% 顯示「量平」。任一邊缺值或為 0 回傳 undefined（畫面顯示空值符號，不猜）。
+// 指數收盤後的最終報價時間：13:30 收盤集合競價撮合，成交金額要到 13:33 那筆 quote_idx 才算進去
+// （2026-10-20 實測加權：13:30 那筆 7113.5 億，13:33 那筆 7586.8 億）
+// shortcut: 寫死 13:33，交易時段或揭示時間調整時要改
+export const INDEX_CLOSE_TIME = '13:33:00';
+
+// 全日成交金額：有預估量用預估量。收盤後 quote_idx 不再給預估量，這時成交金額就是全日實際量，
+// 直接拿它當預估量，較昨日才算得出來（actual 為 true 讓畫面改標「實際量」）。
+// 盤前、盤中缺預估量仍回 undefined：那時的成交金額只是累計一半，拿去比昨日會誤導。
+// 金額的交易日要等於比較基準日：今天的報價配上前一交易日的快照金額時不算，免得拿昨天比昨天
+export function fullDayAmount(
+    estimate: number | undefined,
+    amount: number | undefined,
+    at: { date: string | undefined; time: string | undefined },
+    session: string,
+): { value: number | undefined; actual: boolean } {
+    if (estimate !== undefined && Number.isFinite(estimate) && estimate > 0) return { value: estimate, actual: false };
+    const closed = (at.time ?? '').slice(0, 8) >= INDEX_CLOSE_TIME && tradingDate(at.date) === session;
+    if (closed && amount !== undefined && Number.isFinite(amount) && amount > 0) return { value: amount, actual: true };
+    return { value: undefined, actual: false };
+}
+
+// 全日成交金額（預估量，收盤後為實際量）相對前一交易日：+22%／-17%，四捨五入到整數百分比，
+// 持平顯示 0%。任一邊缺值或為 0 回傳 undefined（畫面顯示空值符號，不猜）。
 export function volumeChangeOf(
     estimate: number | undefined,
     previous: number | undefined,
-): VolumeChange | undefined {
+): string | undefined {
     if (estimate === undefined || previous === undefined) return undefined;
     if (!Number.isFinite(estimate) || !Number.isFinite(previous)) return undefined;
     if (estimate <= 0 || previous <= 0) return undefined;
     const pct = Math.round((estimate / previous - 1) * 100);
-    if (pct === 0) return { kind: 'flat', text: '量平' };
-    return pct > 0
-        ? { kind: 'up', text: `量增${pct}%` }
-        : { kind: 'down', text: `量縮${-pct}%` };
+    // Math.round 可能算出 -0，字串化是 '0'，持平自然顯示 0%
+    return `${pct > 0 ? '+' : ''}${pct}%`;
 }

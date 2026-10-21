@@ -122,9 +122,15 @@ describe('flattenSummary / leftovers (2330 QA 10/12)', () => {
         const text = flattenSummary({ stopped: 0, cancelled: 0, cancelFailed: [], notSent: [], skipped: [],
             sent: [{ code: '2330', action: 'Sell', quantity: 8006, market: 'stock', account: acct }],
             remaining: [{ code: '2330', action: 'Sell', quantity: 7000, market: 'stock', account: acct }] });
-        expect(text).toContain('送出平倉 2330 賣 8 張＋6 股');
+        const { plainText, revealText } = await import('../privacy');
+        expect(plainText(text)).toContain('送出平倉 2330 賣 8 張＋6 股');
         expect(text).not.toContain('8006');
-        expect(text).toContain('需要你處理：2330 仍有 多單 7 張 未平倉');
+        expect(plainText(text)).toContain('需要你處理：2330 仍有 多單 7 張 未平倉');
+        // #268: 平倉量／剩餘量是持倉數量，遮金額時（之後才開也一樣）不露
+        const masked = revealText(text, { priv: false, privMoney: true });
+        expect(masked).toContain('送出平倉 2330 賣 •••••');
+        expect(masked).toContain('2330 仍有 多單 ••••• 未平倉');
+        expect(masked).not.toMatch(/8 張|7 張/);
     });
 
     it('leftovers: a product fully closed later clears its entry; others stay', async () => {

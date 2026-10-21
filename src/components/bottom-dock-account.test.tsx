@@ -118,3 +118,28 @@ it('#286 production realized rows (padded / long-form futures codes) show names 
     expect(json).toContain('微型臺指期貨10');
     expect(vi.mocked(resolveContract).mock.calls.map(c => c[0])).not.toContain('MXFJ6');
 });
+
+it('#268 遮金額：今日已實現損益展開列的數量也遮', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+    fixture.accounts.forEach(a => { a.account_type = 'F'; a.account_id = `${a.account_id.split('-')[0]}-268`; });
+    const { resolveContract } = await import('../lib/shioaji');
+    vi.mocked(resolveContract).mockReset().mockImplementation(async (code: string) => ({ code: code.trim(), name: '' }) as never);
+    fixture.pnl.mockReset().mockImplementation(async (_market, account) => account.account_id === 'A-268'
+        ? [{ id: 1, code: 'TXFJ6', pnl: 123456, quantity: -37, date: '20261007', direction: 'Sell', entry_price: 1, cover_price: 2, fee: 0, tax: 0 }] : []);
+    fixture.summary.mockResolvedValue({ total: { pnl: 123456 }, profitloss_sum: [] });
+    const { setPrivacyMoney } = await import('../lib/privacy');
+    setPrivacyMoney(true);
+    try {
+        await act(async () => { view = create(createElement(AccountPane, { positions: [], market: 'F', scopeAccount: null })); });
+        const toggle = view!.root.findAll(node => node.type === 'button' && node.props.title === '展開明細')[0]!;
+        await act(async () => { toggle.props.onClick(); });
+        await act(async () => { await Promise.resolve(); });
+        const json = JSON.stringify(view!.toJSON());
+        expect(json).toContain('TXFJ6');
+        expect(json).not.toMatch(/37口|123,456/);
+        expect(json).toContain('•••••');
+    } finally {
+        setPrivacyMoney(false);
+    }
+});

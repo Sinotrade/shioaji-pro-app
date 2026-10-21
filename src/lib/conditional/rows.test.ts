@@ -4,6 +4,7 @@ import type { BracketPlan } from '../bracket-core';
 import type { BackgroundTriggerOrder } from '../execution/background-view';
 import type { BracketView } from '../execution/bracket-contract';
 import { mockPendingConfirmItem } from '../execution/pending-confirm-mock';
+import { plainText, revealText } from '../privacy';
 import type { EndedTrigger, ExitRecord, TriggerOrder } from '../trigger-engine';
 import { conditionText, projectRows, rowRunner, rowsForTab, type Sources } from './rows';
 
@@ -88,7 +89,10 @@ describe('projectRows', () => {
         expect(p1.rows[0]).toMatchObject({ attention: true, status: { tone: 'err' } });
         expect(p1.rows[0]!.actions.acknowledge).toBe(true);
         const short = plan({ exit: { status: 'incomplete', kind: 'stop', quantity: 3, filled: 1, fills: { x: 1 }, at: NOW } });
-        expect(projectRows(sources({ brackets: [short] })).rows[0]!.status.text).toBe('未受保護 2 口，請對帳後處理');
+        const shortText = projectRows(sources({ brackets: [short] })).rows[0]!.status.text;
+        expect(plainText(shortText)).toBe('未受保護 2 口，請對帳後處理');
+        // #268: the unprotected quantity is the position size — hidden under 遮金額
+        expect(revealText(shortText, { priv: false, privMoney: true })).toBe('未受保護 •••••，請對帳後處理');
         const done = plan({ exit: { status: 'filled', kind: 'take', quantity: 3, filled: 3, fills: { x: 3 }, at: NOW } });
         const p3 = projectRows(sources({ brackets: [done] }));
         expect(p3.rows).toHaveLength(0);

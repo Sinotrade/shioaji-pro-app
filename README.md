@@ -138,9 +138,12 @@ Shioaji 1.7.1 的即時計算指數、成分股與產業貢獻，現在整合成
 
 ```sh
 # 推薦用 uv 安裝
-uv tool install shioaji
+uv tool install shioaji-cli
 # 或下載 standalone binary，見 https://sinotrade.github.io/
 ```
+
+CLI 由獨立的 `shioaji-cli` 套件提供，指令名稱仍是 `shioaji`；Python 3.14t 的
+`shioaji` wheel 不含 CLI。桌面版已內建 standalone binary，不需另外安裝。
 
 ### 2. Configure credentials 設定金鑰
 
