@@ -22,6 +22,20 @@ describe('diagnoseOutput', () => {
         expect(diagnoseOutput(log)).toMatch(/約定書/);
     });
 
+    it('sign data timeout → signature-expiry message naming clock and latency (#326)', () => {
+        const log = [
+            '2026-10-18T17:03:54.132364Z ERROR shioaji::cli::server: Failed to initialize server state: Authentication failed: Shioaji error Request #P2P/v:bcsolace01/x/PYAPI/x/1018/170353/889277500/LOGINING/_ error code: 400, detail: Sign data is timeout.',
+            'Error: Authentication failed: Shioaji error Request #P2P/v:bcsolace01/x/PYAPI/x/1018/170353/889277500/LOGINING/_ error code: 400, detail: Sign data is timeout.',
+        ].join('\n');
+        expect(diagnoseOutput(log)).toMatch(/登入簽章逾時/);
+        expect(diagnoseOutput(log)).toContain('預設 30 秒');
+        expect(diagnoseOutput(log)).not.toContain('5 秒');
+        expect(diagnoseOutput(log)).toMatch(/電腦時間/);
+        expect(diagnoseOutput(log)).toMatch(/網路延遲/);
+        expect(diagnoseOutput(log)).toMatch(/主機端/);
+        expect(diagnoseOutput(log)).not.toMatch(/無法連線至永豐主機/);
+    });
+
     it('connection refused → network message', () => {
         expect(
             diagnoseOutput('Error: Connection refused (os error 61)'),

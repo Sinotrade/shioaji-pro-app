@@ -1,116 +1,87 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const mocks = vi.hoisted(() => ({
-    child: false,
-    values: new Map<string, unknown>(),
-    lazyStore: vi.fn(),
-}));
-
-vi.mock('./runtime', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('./runtime')>()),
-    isTauri: true,
-}));
-vi.mock('./trade', () => ({ notify: vi.fn() }));
-vi.mock('./window-role', () => ({
-    isChildWindow: () => mocks.child,
-    focusMainWindow: vi.fn(),
-}));
-vi.mock('@tauri-apps/plugin-store', () => ({
-    LazyStore: class {
-        constructor(path: string) {
-            mocks.lazyStore(path);
-        }
-        async get(key: string) { return mocks.values.get(key); }
-        async set(key: string, value: unknown) { mocks.values.set(key, value); }
-        async save() {}
-    },
-}));
-
-class MemoryStorage {
-    private data = new Map<string, string>();
-    getItem(key: string) { return this.data.get(key) ?? null; }
-    setItem(key: string, value: string) { this.data.set(key, value); }
-    removeItem(key: string) { this.data.delete(key); }
-}
-
-import { loadDesktopSettings, saveDesktopSettings } from './tauri';
-
-describe('settings.json access is main-window only', () => {
-    beforeEach(() => {
-        vi.stubGlobal('localStorage', new MemoryStorage());
-        vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout }));
-        mocks.values = new Map<string, unknown>([
-            ['apiKey', 'API-KEY-FIXTURE'],
-            ['secretKey', 'SECRET-FIXTURE'],
-            ['caPasswd', 'CA-PASS-FIXTURE'],
-            ['agentHarnessSafeDefaultV1', true],
-        ]);
-        mocks.lazyStore.mockClear();
-    });
-
-    it('refuses to open the store from a child window', async () => {
-        mocks.child = true;
-        await expect(loadDesktopSettings()).rejects.toThrow('只能在主視窗');
-        await expect(saveDesktopSettings({} as never)).rejects.toThrow('只能在主視窗');
-        expect(mocks.lazyStore).not.toHaveBeenCalled();
-    });
-
-    it('main window loads settings and publishes only the configured boolean', async () => {
-        mocks.child = false;
-        const settings = await loadDesktopSettings();
-        expect(settings.apiKey).toBe('API-KEY-FIXTURE');
-        expect(mocks.lazyStore).toHaveBeenCalledWith('settings.json');
-        expect(localStorage.getItem('sj-desktop-configured')).toBe('true');
-        const shared = JSON.stringify(Object.fromEntries(
-            ['sj-desktop-configured', 'sj-agent-harness-enabled'].map((k) => [k, localStorage.getItem(k)]),
-        ));
-        for (const secret of ['API-KEY-FIXTURE', 'SECRET-FIXTURE', 'CA-PASS-FIXTURE']) {
-            expect(shared).not.toContain(secret);
-        }
-
-        await saveDesktopSettings({ ...settings, apiKey: '', secretKey: '' });
-        expect(localStorage.getItem('sj-desktop-configured')).toBe('false');
-    });
+const mocks = vi.hoisted(() => ({ child: false, invoke: vi.fn() }));
+vi.mock('./runtime', async original => ({ ...await original<object>(), isTauri: true }));
+vi.mock('./window-role', () => ({ isChildWindow: () => mocks.child }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
+import { EMPTY_DESKTOP_SETTINGS, loadDesktopSettings, saveDesktopSettings, saveCredentialProfile, selectCredentialProfile, deleteCredentialProfile, logoutCredentialProfile, type DesktopSettings } from './desktop-credentials';
+let settings: DesktopSettings;
+beforeEach(() => {
+    mocks.child = false; mocks.invoke.mockReset();
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() });
+    vi.stubGlobal('window', new EventTarget());
+    settings = { ...EMPTY_DESKTOP_SETTINGS, configured: true, activeProfileId: 'one', credentialRevision: 'revision' };
+    mocks.invoke.mockImplementation(async () => settings);
 });
-
-describe('shared settings read at page start (#142)', () => {
-    beforeEach(() => {
-        vi.stubGlobal('localStorage', new MemoryStorage());
-        vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout }));
-        mocks.child = false;
-        mocks.values = new Map<string, unknown>([['apiKey', 'A'], ['secretKey', 'S'], ['agentHarnessSafeDefaultV1', true]]);
-        mocks.lazyStore.mockClear();
+describe('native credential settings boundary', () => {
+    it('refuses every credential operation from child windows before IPC', async () => {
+        mocks.child = true;
+        for (const run of [() => loadDesktopSettings(), () => saveDesktopSettings(settings), () => saveCredentialProfile({ name: 'test', environment: 'simulation', caPath: '' }), () => selectCredentialProfile('one'), () => deleteCredentialProfile('one'), () => logoutCredentialProfile()]) {
+            await expect(run()).rejects.toThrow('只能在主視窗');
+        }
+        expect(mocks.invoke).not.toHaveBeenCalled();
     });
-
-    it('concurrent callers (boot + main-window gate) join one in-flight read', async () => {
+    it('shares concurrent boot/gate reads and publishes only non-secret setup state', async () => {
         const [a, b] = await Promise.all([loadDesktopSettings(), loadDesktopSettings()]);
-        expect(a).toBe(b);
-        expect(mocks.lazyStore).toHaveBeenCalledTimes(1);
+        expect(a).toBe(b); expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('credentials_status', undefined);
+        expect(localStorage.setItem).toHaveBeenCalledWith('sj-desktop-configured', 'true');
+        expect(a).not.toHaveProperty('apiKey'); expect(a).not.toHaveProperty('secretKey'); expect(a).not.toHaveProperty('caPassword');
     });
-
-    it('a later call reads fresh values', async () => {
-        await loadDesktopSettings();
-        mocks.values.set('apiKey', 'B');
-        expect((await loadDesktopSettings()).apiKey).toBe('B');
-        expect(mocks.lazyStore).toHaveBeenCalledTimes(2);
+    it('receives successful migration only as a non-secret profile index', async () => {
+        settings.profiles = [{ id: 'one', name: '預設帳戶', environment: 'production', caPath: '/fixture/ca.pfx', createdAt: '2026-10-20', hasCA: true, apiKeyMasked: '••••1234', secretState: 'stored', credentialBackend: 'system', revision: 'native-digest' }];
+        const result = await loadDesktopSettings();
+        expect(result.configured).toBe(true); expect(result.profiles[0]?.name).toBe('預設帳戶');
+        expect(result.migrationError).toBeNull();
     });
-
-    it('a save drops a read still in flight, so the next load sees the save', async () => {
-        const stale = loadDesktopSettings(); // in flight, would return 'A'
-        const current = await stale;
-        await saveDesktopSettings({ ...current, apiKey: 'SAVED' });
-        const pending = loadDesktopSettings();
-        expect(pending).not.toBe(stale);
-        expect((await pending).apiKey).toBe('SAVED');
+    it('preserves failed migration status and does not mark desktop configured', async () => {
+        settings = { ...settings, configured: false, migrationError: '舊版憑證遷移未完成；明文設定已保留' };
+        expect((await loadDesktopSettings()).migrationError).toContain('明文設定已保留');
+        expect(localStorage.setItem).toHaveBeenCalledWith('sj-desktop-configured', 'false');
     });
-
-    it('a save during an in-flight read: loads after it do not reuse that read', async () => {
-        const inFlight = loadDesktopSettings();
-        const save = saveDesktopSettings({ apiKey: 'X', secretKey: 'S', production: false, autoStart: true, caPath: '', caPasswd: '', httpsEnabled: false, agentHarnessEnabled: true });
-        const after = loadDesktopSettings();
-        expect(after).not.toBe(inFlight);
-        await save;
-        await inFlight;
-        expect((await loadDesktopSettings()).apiKey).toBe('X');
+    it('returns Linux fallback warning and path without plaintext', async () => {
+        settings = { ...settings, credentialBackend: 'plaintext-fallback', fallbackPath: '/fixture/credentials.json' };
+        expect(await loadDesktopSettings()).toMatchObject({ credentialBackend: 'plaintext-fallback', fallbackPath: '/fixture/credentials.json' });
+    });
+    it('writes only preferences even if passed a runtime object with obsolete secrets', async () => {
+        await saveDesktopSettings({ ...settings, ...{ apiKey: 'NEVER-SAVE', secretKey: 'NEVER-SAVE', caPasswd: 'NEVER-SAVE' } });
+        expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('credentials_preferences', { preferences: { autoStart: true, httpsEnabled: false, agentHarnessEnabled: true } });
+    });
+    it('sends new secrets once and wipes the caller payload after success or failure', async () => {
+        for (const fail of [false, true]) {
+            let sent: unknown;
+            mocks.invoke.mockImplementationOnce(async (_command, args) => { sent = structuredClone(args); if (fail) throw new Error('storage unavailable'); return settings; });
+            const draft = { name: 'test', environment: 'simulation' as const, caPath: '/fixture/ca', apiKey: 'canary-api', secretKey: 'canary-secret', caPassword: 'canary-password' };
+            const result = saveCredentialProfile(draft);
+            if (fail) await expect(result).rejects.toThrow(); else await result;
+            expect(sent).toMatchObject({ profile: { apiKey: 'canary-api', secretKey: 'canary-secret', caPassword: 'canary-password' } });
+            expect(draft).not.toHaveProperty('apiKey'); expect(draft).not.toHaveProperty('secretKey'); expect(draft).not.toHaveProperty('caPassword');
+        }
+    });
+    it('switches, deletes and logs out through explicit native commands', async () => {
+        await selectCredentialProfile('two'); await deleteCredentialProfile('one');
+        settings = { ...settings, configured: false, activeProfileId: null };
+        await logoutCredentialProfile();
+        expect(mocks.invoke.mock.calls.map(call => call[0])).toEqual(['credentials_select', 'credentials_delete', 'credentials_logout']);
+        expect(localStorage.setItem).toHaveBeenLastCalledWith('sj-desktop-configured', 'false');
+    });
+    it('a stale read cannot republish configured state after logout', async () => {
+        let finish!: (value: DesktopSettings) => void;
+        mocks.invoke.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        const stale = loadDesktopSettings();
+        await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+        settings = { ...settings, configured: false, activeProfileId: null };
+        await logoutCredentialProfile();
+        finish({ ...settings, configured: true }); await stale;
+        expect(localStorage.setItem).toHaveBeenLastCalledWith('sj-desktop-configured', 'false');
+        expect((await loadDesktopSettings()).configured).toBe(false);
+    });
+    it('an earlier preferences response cannot undo a later logout flag', async () => {
+        let finish!: (value: DesktopSettings) => void;
+        mocks.invoke.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        const oldSave = saveDesktopSettings(settings);
+        await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+        settings = { ...settings, configured: false, activeProfileId: null };
+        await logoutCredentialProfile();
+        finish({ ...settings, configured: true }); await oldSave;
+        expect(localStorage.setItem).toHaveBeenLastCalledWith('sj-desktop-configured', 'false');
     });
 });

@@ -129,7 +129,7 @@ describe('main window still loads settings', () => {
         expect(text()).not.toContain('ONBOARDING');
         expect(text()).not.toContain('APP');
 
-        mocks.load.mockResolvedValueOnce({ apiKey: 'k', secretKey: 's' });
+        mocks.load.mockResolvedValueOnce({ configured: true });
         await act(async () => view!.root.findByType('button').props.onClick());
         expect(mocks.load).toHaveBeenCalledTimes(2);
         expect(text()).toContain('APP');
@@ -137,7 +137,7 @@ describe('main window still loads settings', () => {
 
     it('opens the dashboard when keys exist', async () => {
         mocks.label = 'main';
-        mocks.load.mockResolvedValue({ apiKey: 'k', secretKey: 's' });
+        mocks.load.mockResolvedValue({ configured: true });
         await mount();
         expect(mocks.load).toHaveBeenCalledTimes(1);
         expect(text()).toContain('APP');
@@ -145,7 +145,7 @@ describe('main window still loads settings', () => {
 
     it('opens first-run setup when keys are missing', async () => {
         mocks.label = 'main';
-        mocks.load.mockResolvedValue({ apiKey: '', secretKey: '' });
+        mocks.load.mockResolvedValue({ configured: false });
         await mount();
         expect(mocks.load).toHaveBeenCalledTimes(1);
         expect(text()).toContain('ONBOARDING');

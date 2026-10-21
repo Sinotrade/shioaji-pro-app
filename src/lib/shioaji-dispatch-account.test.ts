@@ -37,6 +37,31 @@ it.each(['F', 'S'] as const)('dispatches an unsigned %s account in simulation wi
     expect(m.accounts[0]!.signed).toBe(false);
 });
 
+// SDK 1.7.9 accepts order_type permanently and adds time_in_force to HTTP
+// responses (src/api/api_v1/order/tif.rs, src/server/http/order.rs). Keep Pro's
+// existing request contract and tolerate the additive response field.
+it.each(['stock', 'futures', 'combo'] as const)('%s keeps legacy order_type at the HTTP boundary with SDK 1.7.9 responses', async kind => {
+    m.accounts[0]!.account_type = kind === 'stock' ? 'S' : 'F';
+    for (const order_type of ['ROD', 'IOC', 'FOK'] as const) {
+        fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+            ...m.trades[0], order: { ...m.trades[0]!.order, order_type, time_in_force: order_type },
+        })));
+        const request = { ...order, order_type };
+        const result = kind === 'stock'
+            ? await placeStockOrder({ ...contract, security_type: 'STK' }, { ...request, order_lot: 'Common' }, m.accounts[0])
+            : kind === 'futures'
+                ? await placeFuturesOrder(contract, request, m.accounts[0])
+                : await placeComboOrder({ legs: [] }, request, m.accounts[0]);
+        const [url, options] = fetchMock.mock.calls.at(-1)!;
+        expect(url).toContain(kind === 'combo' ? '/place_comboorder' : '/place_order');
+        const body = JSON.parse(options.body);
+        const sentOrder = body.stock_order ?? body.futures_order ?? body.order;
+        expect(sentOrder.order_type).toBe(order_type);
+        expect(sentOrder).not.toHaveProperty('time_in_force');
+        expect(result).toMatchObject({ order: { order_type, time_in_force: order_type } });
+    }
+});
+
 it.each([false, undefined])('all placement paths reject unsigned accounts in mode %s without HTTP', async simulation => {
     if (simulation === undefined) forgetServerInfo(''); else mode(simulation);
     await expect(placeFuturesOrder(contract, order, m.accounts[0])).rejects.toMatchObject({ mutationNotStarted: true, tradingGateRejected: true });

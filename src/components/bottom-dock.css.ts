@@ -119,8 +119,8 @@ export const statusChip = styleVariants({
     ok: [
         chipBase,
         {
-            color: vars.color.down,
-            background: vars.color.downDim,
+            color: vars.color.success,
+            background: vars.color.successDim,
         },
     ],
     pending: [
@@ -143,15 +143,15 @@ export const cancelBtn = style({
     fontFamily: vars.font.display,
     fontSize: '0.64rem',
     fontWeight: 500,
-    color: vars.color.up,
+    color: vars.color.danger,
     background: 'transparent',
     border: `1px solid ${vars.color.border}`,
     borderRadius: vars.radius.sm,
     padding: '1px 8px',
     cursor: 'pointer',
     ':hover': {
-        borderColor: vars.color.up,
-        background: vars.color.upDim,
+        borderColor: vars.color.danger,
+        background: vars.color.dangerDim,
     },
 });
 

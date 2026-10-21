@@ -32,3 +32,6 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+      - name: Release notes extractor tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v

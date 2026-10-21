@@ -2,7 +2,7 @@
 // respawn on missing data (restart-loop safety, issue #16 / bc69648).
 
 import { describe, expect, it } from 'vitest';
-import { hashCredentials, shouldForceRespawn } from './spawn-keys';
+import { shouldForceRespawn } from './spawn-keys';
 
 describe('shouldForceRespawn', () => {
     it('is false when nothing is stored (upgrade user / cleared storage)', () => {
@@ -27,26 +27,5 @@ describe('shouldForceRespawn', () => {
 
     it('is true only when both exist and differ (keys really changed)', () => {
         expect(shouldForceRespawn('old', 'new')).toBe(true);
-    });
-});
-
-describe('hashCredentials', () => {
-    it('produces a 64-char hex SHA-256 digest', async () => {
-        const h = await hashCredentials('key', 'secret');
-        expect(h).toMatch(/^[0-9a-f]{64}$/);
-    });
-
-    it('is deterministic for the same credentials', async () => {
-        expect(await hashCredentials('key', 'secret')).toBe(
-            await hashCredentials('key', 'secret'),
-        );
-    });
-
-    it('changes when either key changes, and is order-sensitive', async () => {
-        const base = await hashCredentials('key', 'secret');
-        expect(await hashCredentials('key2', 'secret')).not.toBe(base);
-        expect(await hashCredentials('key', 'secret2')).not.toBe(base);
-        // "a:b" must not collide with "b:a" — the separator matters
-        expect(await hashCredentials('secret', 'key')).not.toBe(base);
     });
 });

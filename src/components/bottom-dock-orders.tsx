@@ -69,7 +69,7 @@ function FillRing({ t }: { t: Trade }) {
     const c = 2 * Math.PI * r;
     const color =
         st === 'Filled'
-            ? vars.color.down // ok 語彙同 statusChip.ok
+            ? vars.color.success // ok 語彙同 statusChip.ok
             : vars.color.amber;
     return (
         <svg width={14} height={14} viewBox='0 0 14 14' aria-hidden>

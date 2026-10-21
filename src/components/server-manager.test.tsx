@@ -1,10 +1,13 @@
-import { createElement } from 'react';
+import { createElement, type ReactElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), envCandidate: vi.fn(), ca: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn() }));
-vi.mock('../lib/tauri', () => ({
+const mocks = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn(), profile: vi.fn(), select: vi.fn(), remove: vi.fn(), logout: vi.fn(), start: vi.fn(), stop: vi.fn(), status: vi.fn(), env: vi.fn(), envCandidate: vi.fn(), ca: vi.fn(), notify: vi.fn(), info: vi.fn(), prepare: vi.fn(), reload: vi.fn() }));
+vi.mock('../lib/tauri', async () => ({
+    ...await import('../lib/desktop-credentials'),
     isTauri: true, appVersion: async () => 'dev · test',
     loadDesktopSettings: mocks.load, saveDesktopSettings: mocks.save,
+    saveCredentialProfile: mocks.profile, selectCredentialProfile: mocks.select,
+    deleteCredentialProfile: mocks.remove, logoutCredentialProfile: mocks.logout,
     stopAgentsForServerChange: mocks.prepare,
     serverStart: mocks.start, serverStop: mocks.stop, serverStatus: mocks.status,
     pickEnvFile: mocks.env, importEnvCandidate: mocks.envCandidate, pickCaFile: mocks.ca,
@@ -15,145 +18,169 @@ vi.mock('../lib/tauri', () => ({
 vi.mock('../hooks/use-stream', () => ({ useStreamStatus: () => 'live' }));
 vi.mock('../lib/shioaji', () => ({ fetchHealth: async () => null, fetchInfo: mocks.info, fetchAccounts: async () => [], fetchCaExpire: vi.fn() }));
 vi.mock('../lib/trade', () => ({ notify: mocks.notify }));
-const updateState = { phase: 'idle' };
+import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';
 import { ServerManager } from './server-manager';
 import { ServerSettingsDialog } from './server-settings-dialog';
-const initial = { apiKey: 'test-key', secretKey: 'test-secret', production: false, caPath: '', caPasswd: '', autoStart: true, httpsEnabled: false, agentHarnessEnabled: true };
-
-describe('server settings edit and apply workflow', () => {
+import { CredentialProfiles } from './credential-profiles';
+import { getStoredSpawnKeyHash, setStoredSpawnKeyHash } from '../lib/spawn-keys';
+import { recordAgentRuntimeFailure } from '../lib/agent-diagnostics';
+const updateState = { phase: 'idle' };
+const one = { id: 'one', name: '主帳號', environment: 'simulation' as const, caPath: '', hasCA: false, apiKeyMasked: '••••1234', createdAt: '2026-10-20', secretState: 'stored' as const, credentialBackend: 'system' as const, revision: 'one-rev' };
+const two = { ...one, id: 'two', name: '備用帳號', environment: 'production' as const, hasCA: true, caPath: '/fixture/ca.pfx', revision: 'two-rev' };
+const initial: DesktopSettings = { ...EMPTY_DESKTOP_SETTINGS, profiles: [one, two], activeProfileId: 'one', credentialRevision: 'one-rev', configured: true };
+describe('credential profiles in server settings', () => {
     let view: ReactTestRenderer;
     beforeEach(() => {
         vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-        vi.stubGlobal('window', new EventTarget());
+        vi.stubGlobal('window', Object.assign(new EventTarget(), { location: { reload: mocks.reload } }));
         vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
+        const storage = new Map<string, string>();
+        vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) });
         vi.clearAllMocks();
-        mocks.prepare.mockResolvedValue(undefined);
-        mocks.load.mockResolvedValue({ ...initial }); mocks.save.mockResolvedValue(undefined);
-        mocks.status.mockResolvedValue({ running: true, healthy: true, simulation: false, scheme: 'http', port: 21322 });
-        mocks.start.mockResolvedValue({ ok: true, output: '', port: 21322, attached: true });
-        mocks.stop.mockResolvedValue({ ok: true, output: '' }); mocks.info.mockResolvedValue({ simulation: false });
+        mocks.load.mockResolvedValue(structuredClone(initial)); mocks.save.mockResolvedValue(initial); mocks.profile.mockResolvedValue(initial);
+        mocks.select.mockResolvedValue({ ...initial, activeProfileId: 'two', production: true, credentialRevision: 'two-rev', caPath: two.caPath, hasCaPassword: true });
+        mocks.remove.mockResolvedValue({ ...initial, profiles: [two], activeProfileId: null, configured: false });
+        mocks.logout.mockResolvedValue({ ...initial, activeProfileId: null, configured: false });
+        mocks.status.mockResolvedValue({ running: true, healthy: true, simulation: true, scheme: 'http', port: 12345 });
+        mocks.start.mockResolvedValue({ ok: true, output: '', port: 12345, attached: true });
+        mocks.stop.mockResolvedValue({ ok: true, output: '' }); mocks.info.mockResolvedValue({ simulation: true });
     });
     afterEach(async () => { if (view) await act(async () => view.unmount()); vi.unstubAllGlobals(); });
     const text = () => JSON.stringify(view.toJSON());
-    const button = (label: string) => view.root.findAllByType('button').find(node => node.children.filter(x => typeof x === 'string').join('').includes(label))!;
-    const open = async () => { await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); }); await act(async () => button('完整設定').props.onClick()); };
-    const changeKey = async (value: string) => { await act(async () => view.root.findByType(ServerSettingsDialog).findAllByType('input')[0]!.props.onChange({ target: { value } })); };
-    it('keeps edits and .env imports in draft; cancelling leaves saved credentials and server alone', async () => {
-        await open(); await changeKey('changed-key');
-        mocks.env.mockResolvedValue({ kind: 'imported', fileName: 's_multi.env', secretKey: 'imported-secret' });
-        await act(async () => button('選擇 .env 檔案').props.onClick());
-        expect(mocks.env).toHaveBeenCalledWith('file');
-        expect(text()).toContain('已從 s_multi.env 匯入，尚未儲存。');
-        expect(text()).toContain('尚未儲存');
-        expect(mocks.save).not.toHaveBeenCalled();
-        await act(async () => button('取消變更').props.onClick());
-        expect(view.root.findAllByType(ServerSettingsDialog)).toHaveLength(0);
-        await act(async () => button('完整設定').props.onClick());
-        expect(view.root.findByType(ServerSettingsDialog).findAllByType('input')[0]!.props.value).toBe('test-key');
-        expect(mocks.start).not.toHaveBeenCalled(); expect(mocks.stop).not.toHaveBeenCalled();
+    const button = (label: string) => view.root.findAllByType('button').find(node => (node.props['aria-label'] ?? node.children.filter(x => typeof x === 'string').join('')).includes(label))!;
+    const click = async (label: string) => { await act(async () => button(label).props.onClick()); };
+    const open = async () => { await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); }); await click('完整設定'); };
+    const field = (index: number) => view.root.findByType(CredentialProfiles).findAllByType('input')[index]!;
+    const change = async (index: number, value: string) => { await act(async () => field(index).props.onChange({ target: { value } })); };
+    it('lists names, masked keys, environments and CA state without preloading secrets', async () => {
+        await open(); expect(text()).toContain('主帳號'); expect(text()).toContain('備用帳號'); expect(text()).toContain('••••1234');
+        expect(text()).toContain('模擬'); expect(text()).toContain('正式'); expect(text()).toContain('已設定憑證');
+        // 列表模式不渲染任何輸入欄位；點編輯才展開表單
+        expect(view.root.findByType(CredentialProfiles).findAllByType('input')).toHaveLength(0);
+        // 伺服器設定有自己的啟動控制，帳號列表不重複顯示啟動鈕
+        expect(view.root.findByType(CredentialProfiles).findAllByType('button').some(b => b.children.includes('啟動'))).toBe(false);
+        await click('編輯 主帳號');
+        expect(field(1).props.value).toBe(''); expect(field(2).props.value).toBe('');
+        await change(1, 'draft-canary'); await click('關閉伺服器設定');
+        expect(mocks.profile).not.toHaveBeenCalled(); expect(mocks.stop).not.toHaveBeenCalled();
+        await click('完整設定'); expect(text()).not.toContain('draft-canary');
+        await click('編輯 主帳號'); expect(field(1).props.value).toBe('');
     });
-    it('shows a choice for multiple folder candidates and imports only the selected name', async () => {
-        await open();
-        const selection = { directory: 'C:\\Keys', candidates: ['.env', 'a.env', 'b.env'] };
-        mocks.env.mockResolvedValue({ kind: 'choose', selection });
-        mocks.envCandidate.mockResolvedValue({ kind: 'imported', fileName: 'b.env', apiKey: 'new-key' });
-        await act(async () => button('選擇資料夾').props.onClick());
-        expect(mocks.env).toHaveBeenCalledWith('directory');
-        expect(text()).toContain('b.env');
-        await act(async () => button('b.env').props.onClick());
-        expect(mocks.envCandidate).toHaveBeenCalledExactlyOnceWith(selection, 'b.env');
-        expect(text()).toContain('已從 b.env 匯入，尚未儲存。');
-        expect(mocks.save).not.toHaveBeenCalled();
+    it('requires a second confirmation to add and clears secrets before save finishes', async () => {
+        await open(); await click('新增帳號'); await change(0, '新帳號'); await change(1, 'Abc123'); await change(2, 'Xyz789');
+        let finish!: (value: DesktopSettings) => void;
+        mocks.profile.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        await click('僅儲存'); expect(mocks.profile).not.toHaveBeenCalled();
+        await click('確認新增帳號'); expect(mocks.profile).toHaveBeenCalledOnce();
+        expect(field(1).props.value).toBe(''); expect(field(2).props.value).toBe('');
+        await act(async () => finish({ ...initial, profiles: [...initial.profiles, { ...one, id: 'three', name: '新帳號' }] }));
+        expect(mocks.stop).not.toHaveBeenCalled(); expect(text()).toContain('帳號已儲存');
     });
-    it('keeps the previous import error when the next file dialog is cancelled', async () => {
-        await open();
-        mocks.env.mockResolvedValueOnce({ kind: 'error', error: 'bad.env 沒有 SJ_API_KEY / SJ_SEC_KEY。' });
-        await act(async () => button('選擇 .env 檔案').props.onClick());
-        expect(text()).toContain('bad.env 沒有 SJ_API_KEY');
-        mocks.env.mockResolvedValueOnce(null);
-        await act(async () => button('選擇 .env 檔案').props.onClick());
-        expect(text()).toContain('bad.env 沒有 SJ_API_KEY');
-    });
-    it('reports a CA picker failure as a certificate error', async () => {
-        await open();
-        await act(async () => button('正式環境').props.onClick());
-        mocks.ca.mockRejectedValue(new Error('fixture'));
-        await act(async () => button('選擇憑證檔').props.onClick());
-        expect(text()).toContain('無法讀取憑證檔。');
-        expect(text()).not.toContain('無法匯入 .env 檔案。');
-    });
-    it('saves once without restarting and preserves other panels’ latest Harness/TLS settings', async () => {
-        await open(); await changeKey('changed-key');
-        mocks.load.mockResolvedValue({ ...initial, agentHarnessEnabled: false, httpsEnabled: true });
-        await act(async () => button('僅儲存').props.onClick());
-        expect(mocks.save).toHaveBeenCalledExactlyOnceWith({ ...initial, apiKey: 'changed-key', agentHarnessEnabled: false, httpsEnabled: true });
-        expect(mocks.stop).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled();
-        expect(text()).toContain('下次啟動或重啟伺服器時套用');
-    });
-    it('does not save or stop a running server when apply validation fails', async () => {
-        await open(); await changeKey('');
-        await act(async () => button('儲存並重啟').props.onClick());
-        expect(text()).toContain('缺少 API 金鑰');
+    it('saves a profile separately from preferences without restarting', async () => {
+        await open(); await click('編輯 主帳號'); await change(0, '更名'); await click('僅儲存');
+        expect(mocks.profile).toHaveBeenCalledWith({ id: 'one', name: '更名', environment: 'simulation', caPath: '' });
         expect(mocks.save).not.toHaveBeenCalled(); expect(mocks.stop).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled();
     });
-    it('keeps the draft and reports a storage failure without restarting', async () => {
-        await open(); await changeKey('changed-key'); mocks.save.mockRejectedValue(new Error('磁碟無法寫入'));
-        await act(async () => button('儲存並重啟').props.onClick());
-        expect(text()).toContain('磁碟無法寫入');
-        expect(view.root.findByType(ServerSettingsDialog).findAllByType('input')[0]!.props.value).toBe('changed-key');
-        expect(mocks.stop).not.toHaveBeenCalled();
+    it('saves first but does not restart when native Agent shutdown fails', async () => {
+        await open(); await click('編輯 主帳號'); mocks.prepare.mockRejectedValueOnce(new Error('unavailable'));
+        await click('儲存並重啟'); expect(mocks.profile).toHaveBeenCalledOnce(); expect(mocks.start).not.toHaveBeenCalled(); expect(text()).toContain('unavailable');
     });
-    it('does not persist the new environment when stopping native Agents fails', async () => {
-        mocks.load.mockResolvedValue({ ...initial, production: true });
-        await open();
-        await act(async () => button('模擬環境').props.onClick());
-        mocks.prepare.mockRejectedValue(new Error('Agent 無法停止'));
-        await act(async () => button('儲存並重啟').props.onClick());
-        expect(text()).toContain('Agent 無法停止');
-        expect(text()).toContain('有尚未儲存的變更');
-        expect(mocks.save).not.toHaveBeenCalled();
-        expect(mocks.stop).not.toHaveBeenCalled();
+    it.each([new Error('API Key 格式錯誤'), '憑證資料超過 Windows 儲存上限'])('shows the actual native validation error without stopping (%s)', async error => {
+        await open(); await click('編輯 主帳號'); mocks.profile.mockRejectedValueOnce(error);
+        await click('儲存並重啟');
+        expect(text()).toContain(error instanceof Error ? error.message : error);
+        expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.stop).not.toHaveBeenCalled(); expect(mocks.select).not.toHaveBeenCalled();
+    });
+    it('validates the newly saved production profile before stopping or switching', async () => {
+        await open(); await click('新增帳號'); await change(0, '正式無CA'); await change(1, 'Abc123'); await change(2, 'Xyz789'); await click('正式環境');
+        mocks.profile.mockResolvedValueOnce({ ...initial, profiles: [...initial.profiles, { ...two, id: 'three', caPath: '', hasCaPassword: false }] });
+        await click('儲存並重啟'); await click('確認新增並啟動');
+        expect(text()).toContain('正式環境下單需要');
+        expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.stop).not.toHaveBeenCalled(); expect(mocks.select).not.toHaveBeenCalled();
+    });
+    it('shows the actual running environment and scheme independently of the selected profile', async () => {
+        mocks.status.mockResolvedValueOnce({ running: true, simulation: false, scheme: 'https', healthy: true });
+        await open(); expect(text()).toContain('伺服器運行中 · 正式環境 · https');
+    });
+    it('switches only after confirmation and stopping the old server', async () => {
+        setStoredSpawnKeyHash('old-spawn-revision');
+        await open(); await click('切換使用'); expect(mocks.select).not.toHaveBeenCalled();
+        await click('確認切換');
+        expect(mocks.stop).toHaveBeenCalledWith({ stopAgents: true, ownedOnly: true }); expect(mocks.select).toHaveBeenCalledWith('two');
+        expect(mocks.stop.mock.invocationCallOrder[0]).toBeLessThan(mocks.select.mock.invocationCallOrder[0]!);
         expect(mocks.start).not.toHaveBeenCalled();
+        expect(getStoredSpawnKeyHash()).toBe('old-spawn-revision');
     });
-    it('switches to simulation through Agent shutdown, save, stop and start in order', async () => {
-        mocks.load.mockResolvedValue({ ...initial, production: true });
-        await open();
-        await act(async () => button('模擬環境').props.onClick());
-        await act(async () => {
-            button('儲存並重啟').props.onClick();
-            await vi.waitFor(() => expect(mocks.start).toHaveBeenCalled(), { timeout: 2500 });
-        });
-        expect(mocks.prepare.mock.invocationCallOrder[0]).toBeLessThan(mocks.save.mock.invocationCallOrder[0]!);
-        expect(mocks.save.mock.invocationCallOrder[0]).toBeLessThan(mocks.stop.mock.invocationCallOrder[0]!);
-        expect(mocks.stop.mock.invocationCallOrder[0]).toBeLessThan(mocks.start.mock.invocationCallOrder[0]!);
-        expect(mocks.stop).toHaveBeenCalledWith({ stopAgents: true });
-        expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({ production: false }));
+    it('does not switch or delete when stopping fails', async () => {
+        await open(); mocks.stop.mockResolvedValue({ ok: false, output: 'busy' });
+        await click('切換使用'); await click('確認切換');
+        expect(mocks.select).not.toHaveBeenCalled(); expect(mocks.remove).not.toHaveBeenCalled();
     });
-    it('does not start after stop fails, and makes partial apply failure visible', async () => {
-        await open(); mocks.stop.mockResolvedValue({ ok: false, output: 'owned server busy' });
-        await act(async () => button('儲存並重啟').props.onClick());
-        expect(mocks.save).toHaveBeenCalledOnce(); expect(mocks.stop).toHaveBeenCalledOnce(); expect(mocks.start).not.toHaveBeenCalled();
-        expect(text()).toContain('設定已儲存，但伺服器未能套用');
+    it('requires confirmation and a stop before deleting the active profile', async () => {
+        await open(); await click('刪除 主帳號'); expect(mocks.remove).not.toHaveBeenCalled();
+        await click('確認刪除'); expect(mocks.remove).toHaveBeenCalledWith('one');
+        expect(mocks.stop.mock.invocationCallOrder[0]).toBeLessThan(mocks.remove.mock.invocationCallOrder[0]!);
+        expect(mocks.reload).toHaveBeenCalledOnce();
     });
-    it('locks draft saves and duplicate logout while the server stop is pending', async () => {
-        await open();
-        let finishStop!: (result: { ok: boolean; output: string }) => void;
-        mocks.stop.mockImplementation(() => new Promise(resolve => { finishStop = resolve; }));
-        await act(async () => button('登出並清除金鑰').props.onClick());
-        await act(async () => button('確認登出並清除金鑰').props.onClick());
+    it('imports only after confirmation and receives no plaintext form values', async () => {
+        await open(); mocks.env.mockResolvedValue({ kind: 'imported', fileName: 'fixture.env', settings: initial, profileId: 'two' });
+        await click('新增帳號'); await click('從 .env 匯入'); expect(mocks.env).not.toHaveBeenCalled();
+        await click('確認匯入'); expect(mocks.env).toHaveBeenCalledWith('file', 'simulation');
+        // 匯入成功回到列表，畫面上不再有任何輸入欄位
+        expect(view.root.findByType(CredentialProfiles).findAllByType('input')).toHaveLength(0); expect(text()).toContain('匯入並儲存帳號');
+    });
+    it('keeps keyboard focus when switching between the list, the editor and confirmations', async () => {
+        // 按鈕被卸載時焦點會掉到 body，Escape 就送不到 dialog；確認焦點每次都移到對應位置
+        const focused: string[] = [];
+        const nodeMock = (element: ReactElement) => {
+            const p = element.props as Record<string, unknown>;
+            return { focus: () => { focused.push(String(p['aria-label'] ?? p.placeholder ?? [p.children].flat().filter(x => typeof x === 'string').join(''))); } };
+        };
+        const props = { settings: initial, busy: false, running: false, onSave: vi.fn(async () => initial), onAction: vi.fn(async () => initial), onImported: vi.fn() };
+        await act(async () => { view = create(createElement(CredentialProfiles, props), { createNodeMock: nodeMock }); });
+        await click('編輯 備用帳號'); expect(focused.at(-1)).toBe('例如：主帳號、模擬測試');
+        await click('返回帳號列表'); expect(focused.at(-1)).toBe('編輯 備用帳號');
+        await click('新增帳號'); expect(focused.at(-1)).toBe('例如：主帳號、模擬測試');
+        await click('取消'); expect(focused.at(-1)).toBe('新增帳號');
+        await click('刪除 備用帳號'); expect(focused.at(-1)).toBe('取消刪除');
+        await click('取消刪除'); expect(focused.at(-1)).toBe('刪除 備用帳號');
+        await click('切換使用'); expect(focused.at(-1)).toBe('取消切換');
+        await click('確認切換'); expect(props.onAction).toHaveBeenCalledWith('select', 'two'); expect(focused.at(-1)).toBe('編輯 備用帳號');
+    });
+    it('shows migration and Linux fallback warnings without secrets', async () => {
+        mocks.load.mockResolvedValue({ ...initial, credentialBackend: 'plaintext-fallback', fallbackPath: '/fixture/credentials.json', migrationError: '遷移未完成；明文設定已保留' });
+        await open(); expect(text()).toContain('0600'); expect(text()).toContain('/fixture/credentials.json'); expect(text()).toContain('遷移未完成'); expect(text()).toContain('含 Agent');
+    });
+    it('logout stops then clears all active secrets through one native command and reloads', async () => {
+        await open(); await click('登出並清除金鑰'); expect(mocks.logout).not.toHaveBeenCalled();
+        await click('確認登出並清除金鑰');
+        expect(mocks.logout).toHaveBeenCalledOnce(); expect(mocks.save).not.toHaveBeenCalled();
+        expect(mocks.stop.mock.invocationCallOrder[0]).toBeLessThan(mocks.logout.mock.invocationCallOrder[0]!);
+        expect(mocks.reload).toHaveBeenCalledOnce();
+    });
+    it('locks duplicate logout and profile operations while the stop is pending', async () => {
+        await open(); let finish!: (value: { ok: boolean; output: string }) => void;
+        mocks.stop.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        await click('登出並清除金鑰'); await click('確認登出並清除金鑰');
         expect(view.root.findByType(ServerSettingsDialog).props.busy).toBe(true);
-        expect(button('儲存並重啟').props.disabled).toBe(true);
-        await expect(view.root.findByType(ServerSettingsDialog).props.onSave(initial, false)).rejects.toThrow('正在登出');
-        await act(async () => button('登出並清除金鑰').props.onClick());
-        expect(mocks.stop).toHaveBeenCalledTimes(1); expect(mocks.save).not.toHaveBeenCalled();
-        await act(async () => finishStop({ ok: false, output: 'stop failed' }));
-        expect(mocks.save).not.toHaveBeenCalled();
-        expect(view.root.findByType(ServerSettingsDialog).props.busy).toBe(false);
+        await expect(view.root.findByType(ServerSettingsDialog).props.onSave({ name: 'test', environment: 'simulation', caPath: '' }, false)).rejects.toThrow('正在登出');
+        await click('登出並清除金鑰'); expect(mocks.stop).toHaveBeenCalledTimes(1);
+        await act(async () => finish({ ok: false, output: 'failed' })); expect(mocks.logout).not.toHaveBeenCalled();
         expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ title: '登出未完成' }));
     });
     it('does not call an unknown server environment production during diagnostics', async () => {
-        await open(); mocks.info.mockRejectedValue(new Error('offline'));
-        await act(async () => button('檢查目前帳戶').props.onClick());
+        await open(); mocks.info.mockRejectedValue(new Error('offline')); await click('檢查目前帳戶');
         expect(text()).toContain('環境：未知'); expect(text()).not.toContain('環境：⚠ 正式');
+    });
+    it('includes the Agent runtime exit cause in copied server diagnostics', async () => {
+        const copy = vi.fn(async (_text: string) => undefined);
+        vi.stubGlobal('navigator', { platform: 'test', clipboard: { writeText: copy } });
+        recordAgentRuntimeFailure('Claude 連線失敗', 'exit code: 3\nInvalid settings\nAuthorization: Bearer hidden-token');
+        await act(async () => { view = create(createElement(ServerManager, { open: true, onToggle: vi.fn() })); });
+        await click('複製診斷');
+        await act(async () => {
+            await vi.waitFor(() => expect(copy).toHaveBeenCalledWith(expect.stringContaining('exit code: 3\nInvalid settings')));
+        });
+        expect(copy.mock.calls[0]![0]).not.toContain('hidden-token');
     });
 });

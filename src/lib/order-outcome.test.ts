@@ -47,10 +47,10 @@ describe('classifyHttpOrderError (#249)', () => {
 
 describe('apiPost order errors (#249)', () => {
     const cases = [
-        { name: 'SDK 1.7.8 409', res: () => json(409, { code: 409, message: 'order outcome unknown', details: { error_code: 'OrderOutcomeUnknown' } }), kind: 'unknown' },
+        { name: 'SDK 409', res: () => json(409, { code: 409, message: 'order outcome unknown', details: { error_code: 'OrderOutcomeUnknown' } }), kind: 'unknown' },
         { name: 'SDK 1.7.7 400 with code in message', res: () => json(400, { code: 400, message: 'OrderOutcomeUnknown: no ack in 5s' }), kind: 'unknown' },
-        { name: 'SDK 1.7.8 504', res: () => json(504, { code: 504, message: 'gateway timeout' }), kind: 'unknown' },
-        { name: 'SDK 1.7.8 503 NotConnected', res: () => json(503, { code: 503, message: 'not connected', details: { error_code: 'NotConnected' } }), kind: 'not-sent' },
+        { name: 'SDK 504', res: () => json(504, { code: 504, message: 'gateway timeout' }), kind: 'unknown' },
+        { name: 'SDK 503 NotConnected', res: () => json(503, { code: 503, message: 'not connected', details: { error_code: 'NotConnected' } }), kind: 'not-sent' },
         { name: 'SDK 1.7.7 500 NotConnected', res: () => json(500, { code: 500, message: 'NotConnected: gateway' }), kind: 'not-sent' },
         { name: 'broker rejection 400', res: () => json(400, { code: 400, message: 'price out of range' }), kind: 'rejected' },
     ] as const;

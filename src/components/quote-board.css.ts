@@ -95,7 +95,7 @@ export const limitBadge = styleVariants({
 
 // 指數看板：data-tier 由 useBoardTier 依面板大小設定（目標是標題列加看板不超過面板高度 1/5，
 // strip 保底），各階梯的內容取捨寫在檔尾；未設定（首次繪製前）等同 wide。
-// 整列對齊「最後一行」的文字基線：價格、漲跌的百分比、統計的數值列、量增縮標籤落在同一條線上
+// 整列對齊「最後一行」的文字基線：價格、漲跌的百分比、統計的數值列、量能標籤落在同一條線上
 // 右側多留 TOGGLE_RESERVE 給絕對定位的展開／收合按鈕，按鈕不參與排版、不會自己換到新的一列
 const TOGGLE_RESERVE = `calc(${vars.space.md} + 1.4rem)`;
 
@@ -252,8 +252,8 @@ export const lowPriority = style({});
 // 次要（漲停、平盤、跌停、預估量）：lean 只留上漲、下跌、較昨日
 export const secondary = style({});
 
-// 量增／量縮標籤：統計區收起時（compact）留在價格旁邊。
-// 中性色：量縮不等於下跌，紅綠只留給價格方向
+// 量能標籤（量-12%）：統計區收起時（compact）留在價格旁邊。
+// 中性色：量能減少不等於下跌，紅綠只留給價格方向
 export const leadTag = style({
     display: 'none',
     flexShrink: 0,
@@ -264,7 +264,7 @@ export const leadTag = style({
     whiteSpace: 'nowrap',
 });
 
-// compact 的家數比例條：短短一截跟在量增縮標籤後面，意思綁在內容上，不再橫跨整個看板
+// compact 的家數比例條：短短一截跟在量能標籤後面，意思綁在內容上，不再橫跨整個看板
 export const breadthMini = style({
     display: 'none',
     alignSelf: 'center',

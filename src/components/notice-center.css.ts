@@ -85,7 +85,7 @@ const iconBase = style({
 });
 
 export const icon = styleVariants({
-    ok: [iconBase, { color: vars.color.down }],
+    ok: [iconBase, { color: vars.color.success }],
     err: [iconBase, { color: vars.color.danger }],
     info: [iconBase, { color: vars.color.mutedForeground }],
 });

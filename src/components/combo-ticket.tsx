@@ -755,7 +755,7 @@ export function ComboTicket() {
 
             {comboError && (
                 <span className={styles.costRow}>
-                    <span className={panel.dirText.down}>⚠ {comboError}</span>
+                    <span className={panel.statusText.err}>⚠ {comboError}</span>
                 </span>
             )}
 
@@ -975,7 +975,7 @@ export function ComboTicket() {
             </div>
             {watchOn && (
                 <span className={styles.costRow}>
-                    <span className={panel.dirText.up}>
+                    <span className={panel.statusText.err}>
                         ⚠ 到價會自動送單：IOC 可能部分成交後再次觸發，請盯緊成交回報避免重複部位
                     </span>
                 </span>

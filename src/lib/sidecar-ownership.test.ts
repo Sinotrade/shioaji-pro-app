@@ -16,7 +16,7 @@ describe('Agent Harness sidecar ownership', () => {
 });
 
 describe('recoverHarnessOwnership', () => {
-    const settings = { apiKey: 'k', secretKey: 's' };
+    const settings = { configured: true };
     const started = { ok: true, output: '', portChanged: false };
 
     it('is a no-op when the sidecar is already owned', async () => {
@@ -53,7 +53,7 @@ describe('recoverHarnessOwnership', () => {
         await expect(
             recoverHarnessOwnership({
                 nativeOwned: async () => false,
-                loadSettings: async () => ({ apiKey: '', secretKey: '' }),
+                loadSettings: async () => ({ configured: false }),
                 restart: async () => {
                     restarts += 1;
                     return started;

@@ -36,7 +36,7 @@ const toastBase = style({
 
 export const toast = styleVariants({
     deal: [toastBase, { borderLeft: `4px solid ${vars.color.amber}` }],
-    ok: [toastBase, { borderLeft: `4px solid ${vars.color.down}` }],
+    ok: [toastBase, { borderLeft: `4px solid ${vars.color.success}` }],
     err: [
         toastBase,
         {
@@ -64,7 +64,7 @@ export const icon = styleVariants({
         iconBase,
         { color: vars.color.amber, background: 'rgba(224, 164, 60, 0.14)' },
     ],
-    ok: [iconBase, { color: vars.color.down, background: vars.color.downDim }],
+    ok: [iconBase, { color: vars.color.success, background: vars.color.successDim }],
     err: [
         iconBase,
         { color: vars.color.danger, background: 'rgba(242, 54, 69, 0.14)' },

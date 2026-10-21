@@ -116,6 +116,8 @@ export function customTokens(t: CustomTheme, convention: Convention): Record<str
         downFlash: alpha(down, flash),
         flat: mutedFg,
         success: t.green,
+        successDim: alpha(t.green, dim),
         danger: t.red,
+        dangerDim: alpha(t.red, dim),
     };
 }
