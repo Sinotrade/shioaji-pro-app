@@ -1,0 +1,100 @@
+{
+ "disclaimer": "本資料彙整自政府開放資料與公開文件，部分內容由 AI 整理並經多個模型交叉核對，可能過時或有誤，僅供參考，不構成投資建議或買賣推薦。各筆資料的時點與出處請見標示。",
+ "sources": [
+  {
+   "api": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+   "attribution": "臺灣證券交易所「上市公司基本資料」（政府資料開放授權條款－第1版）",
+   "id": "twse-openapi-companies",
+   "license": "政府資料開放授權條款－第1版",
+   "license_url": "https://data.gov.tw/license",
+   "name": "上市公司基本資料",
+   "provider": "臺灣證券交易所",
+   "update": "daily",
+   "url": "https://data.gov.tw/dataset/18419"
+  },
+  {
+   "api": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+   "attribution": "證券櫃檯買賣中心「上櫃公司基本資料」（政府資料開放授權條款－第1版）",
+   "id": "tpex-openapi-companies",
+   "license": "政府資料開放授權條款－第1版",
+   "license_url": "https://data.gov.tw/license",
+   "name": "上櫃公司基本資料",
+   "provider": "證券櫃檯買賣中心",
+   "update": "daily",
+   "url": "https://data.gov.tw/dataset/25036"
+  },
+  {
+   "api": "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
+   "attribution": "臺灣證券交易所「上市公司每月營業收入彙總表」（政府資料開放授權條款－第1版）",
+   "id": "twse-openapi-revenue",
+   "license": "政府資料開放授權條款－第1版",
+   "license_url": "https://data.gov.tw/license",
+   "name": "上市公司每月營業收入彙總表",
+   "provider": "臺灣證券交易所",
+   "update": "monthly",
+   "url": "https://data.gov.tw/dataset/18420"
+  },
+  {
+   "api": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O",
+   "attribution": "證券櫃檯買賣中心「上櫃公司每月營業收入彙總表」（政府資料開放授權條款－第1版）",
+   "id": "tpex-openapi-revenue",
+   "license": "政府資料開放授權條款－第1版",
+   "license_url": "https://data.gov.tw/license",
+   "name": "上櫃公司每月營業收入彙總表",
+   "provider": "證券櫃檯買賣中心",
+   "update": "monthly",
+   "url": "https://data.gov.tw/dataset/56510"
+  },
+  {
+   "api": "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data",
+   "attribution": "臺灣證券交易所「上市個股日成交資訊」（政府資料開放授權條款－第1版）",
+   "id": "twse-openapi-daily",
+   "license": "政府資料開放授權條款－第1版",
+   "license_url": "https://data.gov.tw/license",
+   "name": "上市個股日成交資訊",
+   "provider": "臺灣證券交易所",
+   "update": "daily",
+   "url": "https://data.gov.tw/dataset/11549"
+  },
+  {
+   "api": "https://www.tpex.org.tw/web/stock/aftertrading/DAILY_CLOSE_quotes/stk_quote_result.php?l=zh-tw&o=data",
+   "attribution": "證券櫃檯買賣中心「上櫃股票行情」（政府資料開放授權條款－第1版）",
+   "id": "tpex-openapi-daily",
+   "license": "政府資料開放授權條款－第1版",
+   "license_url": "https://data.gov.tw/license",
+   "name": "上櫃股票行情",
+   "provider": "證券櫃檯買賣中心",
+   "update": "daily",
+   "url": "https://data.gov.tw/dataset/11370"
+  },
+  {
+   "api": "https://mopsov.twse.com.tw/mops/web/ajax_t163sb04 (t163sb05, t163sb20)",
+   "attribution": "公開資訊觀測站「採 IFRSs 後財務報表彙總表」；證交所、櫃買中心「綜合損益表」「資產負債表」開放資料（政府資料開放授權條款－第1版）",
+   "id": "mops-ifrs-statements",
+   "license": "政府資料開放授權條款－第1版（最新一季的損益表與資產負債表同內容另由證交所 t187ap06_L／t187ap07_L、櫃買中心 mopsfin_t187ap06_O／t187ap07_O 以開放資料發布）",
+   "license_url": "https://data.gov.tw/license",
+   "name": "採 IFRSs 後財務報表彙總表（綜合損益表、資產負債表、現金流量表）",
+   "provider": "公開資訊觀測站（臺灣證券交易所）",
+   "update": "quarterly",
+   "url": "https://mopsov.twse.com.tw/mops/web/t163sb04"
+  },
+  {
+   "attribution": "由 AI 依公開文件整理並經多模型交叉核對，每筆附原始出處",
+   "id": "curated-research",
+   "license": "待定",
+   "name": "shioaji-data 公司研究",
+   "provider": "shioaji-data",
+   "update": "quarterly and on events"
+  },
+  {
+   "attribution": "研究線索參考自 My-TW-Coverage（MIT License, Copyright (c) idk_mostoftime）",
+   "id": "my-tw-coverage-leads",
+   "license": "MIT",
+   "name": "My-TW-Coverage（僅作研究線索，內容不直接發布）",
+   "provider": "Timeverse/My-TW-Coverage",
+   "update": "none",
+   "url": "https://github.com/Timeverse/My-TW-Coverage"
+  }
+ ],
+ "version": 1
+}

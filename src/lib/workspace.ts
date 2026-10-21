@@ -56,6 +56,7 @@ export type BlockType =
     | 'oddspread'
     | 'pnl'
     | 'chips'
+    | 'company'
     | 'volprofile'
     | 'optchain'
     | 'stockfutures'
@@ -354,6 +355,14 @@ export const BLOCK_META: Record<
         pinnable: true,
         singleton: false,
         defaultSize: { w: 5, h: 8, minW: 4, minH: 5 },
+    },
+    company: {
+        label: '公司資料',
+        description: '基本面、產業鏈位置、題材、上下游與財報，跟隨所選商品',
+        category: 'market',
+        pinnable: true,
+        singleton: false,
+        defaultSize: { w: 6, h: 14, minW: 4, minH: 7 },
     },
     volprofile: {
         label: '分價量表',
