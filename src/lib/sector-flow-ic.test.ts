@@ -106,4 +106,20 @@ describe('IcFlowRecorder', () => {
         expect(r.groupFlow(['IX0001:1'], 6)!.turnover[6]).toBe(100);
         expect(r.groupFlow(['IX0043:1'], 6)).toBeNull();
     });
+
+    it('keeps what an earlier span measured when a new span starts in the same minute', () => {
+        const r = new IcFlowRecorder();
+        r.sampleAmount('IX0001', D, 10, [row('1', 1000)]);
+        r.samplePerf('IX0001', D, 10, [row('1', 0)]);
+        r.sampleAmount('IX0001', D, 10, [row('1', 1200)]);
+        r.samplePerf('IX0001', D, 10, [row('1', 0.4)]);
+        r.rebase(); // reconnect inside the minute
+        r.sampleAmount('IX0001', D, 10, [row('1', 1500)]);
+        r.samplePerf('IX0001', D, 10, [row('1', 0.5)]);
+        r.sampleAmount('IX0001', D, 10, [row('1', 1600)]);
+        r.samplePerf('IX0001', D, 10, [row('1', 0.3)]);
+        const f = r.groupFlow(['IX0001:1'], 10)!;
+        expect(f.turnover[10]).toBe(300); // 200 before the gap + 100 after, not the 300 inside it
+        expect(f.net[10]).toBe(200 - 100);
+    });
 });

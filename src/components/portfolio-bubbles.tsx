@@ -13,7 +13,7 @@
 // add up to 100 % and nothing is counted twice.
 
 import { domAnimation, LazyMotion, m } from 'motion/react';
-import { useRef, useState, type KeyboardEvent } from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
 import { relaxCircles } from '../lib/chain-motion';
 import { packGroup, packScale, type PackedMember } from '../lib/portfolio-pack';
@@ -98,16 +98,22 @@ export function HoldingBubbles(props: VariantProps) {
 
     // one √-scale for every member: the biggest group fits about a quarter of
     // the short side, and all group circles together take about 30 % of the plot
-    const bubbles: Bubble[] = [];
-    if (plotW > 0 && plotH > 0 && groups.length > 0) {
+    // geometry depends on the data and the box only: hover and selection
+    // re-renders reuse it (packing + 140 relax iterations)
+    const bubbles = useMemo(() => {
+        const out: Bubble[] = [];
+        if (plotW <= 0 || plotH <= 0 || groups.length === 0) return out;
         const items = groups.map((g) => g.stocks.map((st) => ({ code: st.code, value: st.value })));
         const scale = packScale(items, plotW, plotH);
         const packed = groups.map((g, i) => ({ group: g, ...packGroup(items[i]!, scale) }));
         const sorted = [...packed].sort((a, b) => (a.group.id < b.group.id ? -1 : 1));
         const circles = sorted.map((p) => ({ x: px(gx(p.group)), y: py(gy(p.group)), r: p.R + LABEL_ROOM }));
         const relaxed = relaxCircles(circles, box, { overlap: 0, maxShift: 3, iterations: 140 });
-        sorted.forEach((p, i) => bubbles.push({ ...p, x: relaxed[i]!.x, y: relaxed[i]!.y }));
-    }
+        sorted.forEach((p, i) => out.push({ ...p, x: relaxed[i]!.x, y: relaxed[i]!.y }));
+        return out;
+        // px/py/box/groups derive from these
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view, plotW, plotH, extentX, extentY]);
     // big circles first so small ones stay on top and clickable
     const ordered = [...bubbles].sort((a, b) => b.R - a.R);
 

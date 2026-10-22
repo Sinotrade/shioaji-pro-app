@@ -162,8 +162,11 @@ export function useHoldings(): HoldingsState {
     const { positions, trades } = trading;
     const q = trading.queries.positions;
     return useMemo(() => {
-        const phase = q.updatedAt ? 'ready' : q.error ? 'failed' : 'loading';
-        return { phase, holdings: fromPositions(positions, trades), error: q.error ?? null };
+        const holdings = fromPositions(positions, trades);
+        // a failed refresh keeps the last snapshot's timestamp: with nothing to
+        // show, the failure (not "no holdings") is the answer
+        const phase = q.error && holdings.length === 0 ? 'failed' : q.updatedAt ? 'ready' : 'loading';
+        return { phase, holdings, error: q.error ?? null };
     }, [positions, trades, q.updatedAt, q.error]);
 }
 

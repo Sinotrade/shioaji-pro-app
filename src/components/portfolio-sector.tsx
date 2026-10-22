@@ -15,7 +15,7 @@
 // extra request while it is open); one drill K-bar batch for held codes outside
 // the chain/theme universe; cards come from the shared shioaji-data reader.
 
-import { BellRing, Briefcase, LogIn, RotateCw } from 'lucide-react';
+import { AlertTriangle, BellRing, Briefcase, LogIn, RotateCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { slotLabel, type FlowBook } from '../lib/chain-flow';
 import { connectChainFlow, type FeedMember } from '../lib/chain-flow-feed';
@@ -272,6 +272,16 @@ export function PortfolioSector({
                 {controls}
             </div>
             <div className={s.alerts} aria-live='polite'>
+                {holdings.error && (
+                    <span className={s.alert} title={holdings.error}>
+                        <AlertTriangle size={11} className={s.alertIcon} aria-hidden='true' />
+                        持股查詢失敗，顯示上次結果
+                        <button type='button' className={s.retry} onClick={() => void refreshTradingState('positions')}>
+                            <RotateCw size={11} aria-hidden='true' />
+                            重新查詢
+                        </button>
+                    </span>
+                )}
                 {alerts.length > 0 ? (
                     alerts.map((a) => (
                         <span key={`${a.groupId}-${a.slot}`} className={s.alert}>
@@ -282,7 +292,7 @@ export function PortfolioSector({
                         </span>
                     ))
                 ) : (
-                    <span>持有分組由淨流入轉為淨流出時會在此提示</span>
+                    !holdings.error && <span>持有分組由淨流入轉為淨流出時會在此提示</span>
                 )}
             </div>
             <div className={s.body}>

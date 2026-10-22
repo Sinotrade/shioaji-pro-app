@@ -60,6 +60,9 @@ interface Series {
     /** Baseline of a recording span starting in that minute (NaN = no span starts there). */
     startA: Float64Array;
     startP: Float64Array;
+    /** Turnover / net an earlier span already measured in a minute a later span restarted in. */
+    carryT: Float64Array;
+    carryN: Float64Array;
     /** Minute the current span started in. */
     floor: number;
     lastA: number;
@@ -77,6 +80,8 @@ function newSeries(): Series {
         endP: blank(),
         startA: blank(),
         startP: blank(),
+        carryT: new Float64Array(SESSION_SLOTS),
+        carryN: new Float64Array(SESSION_SLOTS),
         floor: 0,
         lastA: 0,
         lastP: null,
@@ -129,6 +134,16 @@ export class IcFlowRecorder {
             const s = this.at(`${index}:${g.category}`);
             s.count = g.item_count;
             if (s.rebaseA) {
+                // restarting inside a minute the previous span already covered:
+                // keep what that span measured there before the new baseline
+                if (!Number.isNaN(s.endA[slot]!)) {
+                    this.walk(s, slot, (i, d, sign) => {
+                        if (i !== slot) return;
+                        s.carryT[slot] = s.carryT[slot]! + d;
+                        s.carryN[slot] = s.carryN[slot]! + sign * d;
+                    });
+                    s.endP[slot] = NaN;
+                }
                 s.rebaseA = false;
                 s.rebaseP = true;
                 s.floor = slot;
@@ -166,6 +181,30 @@ export class IcFlowRecorder {
     }
 
     /**
+     * Visit each minute's positive turnover through `upto` with its direction
+     * (+1 / −1 / 0 when the change is flat or unknown), span by span: a span
+     * diffs against its own baseline, never across a gap.
+     */
+    private walk(s: Series, upto: number, visit: (slot: number, turnover: number, sign: number) => void) {
+        let prevA = NaN;
+        let prevP: number | null = null;
+        for (let i = 0; i <= upto; i += 1) {
+            const a = s.endA[i]!;
+            if (Number.isNaN(a)) continue;
+            if (!Number.isNaN(s.startA[i]!)) {
+                prevA = s.startA[i]!;
+                prevP = Number.isNaN(s.startP[i]!) ? null : s.startP[i]!;
+            }
+            if (Number.isNaN(prevA)) continue;
+            const d = a - prevA;
+            const p = this.perfAt(s, i);
+            if (d > 0) visit(i, d, p !== null && prevP !== null ? (p > prevP ? 1 : p < prevP ? -1 : 0) : 0);
+            prevA = a;
+            prevP = p;
+        }
+    }
+
+    /**
      * GroupFlow-shaped aggregate of the given groups up to `now` (the latest
      * completed minute). Null before any of them has a sample. Breadth is not
      * in the group metrics (zeros); `count` is the groups' member count.
@@ -188,25 +227,14 @@ export class IcFlowRecorder {
                 wSum += s.lastA;
                 wPct += s.lastA * s.lastP;
             }
-            let prevA = NaN;
-            let prevP: number | null = null;
+            this.walk(s, SESSION_SLOTS - 1, (i, d, sign) => {
+                turnover[i] = turnover[i]! + d;
+                net[i] = net[i]! + sign * d;
+            });
             for (let i = 0; i < SESSION_SLOTS; i += 1) {
-                const a = s.endA[i]!;
-                if (Number.isNaN(a)) continue;
-                if (!Number.isNaN(s.startA[i]!)) {
-                    // a new span: diff against its own baseline, never across the gap
-                    prevA = s.startA[i]!;
-                    prevP = Number.isNaN(s.startP[i]!) ? null : s.startP[i]!;
-                }
-                if (Number.isNaN(prevA)) continue;
-                const d = a - prevA;
-                const p = this.perfAt(s, i);
-                if (d > 0) {
-                    turnover[i] = turnover[i]! + d;
-                    if (p !== null && prevP !== null) net[i] = net[i]! + (p > prevP ? d : p < prevP ? -d : 0);
-                }
-                prevA = a;
-                prevP = p;
+                if (s.carryT[i]! === 0) continue;
+                turnover[i] = turnover[i]! + s.carryT[i]!;
+                net[i] = net[i]! + s.carryN[i]!;
             }
         }
         if (!seen) return null;
