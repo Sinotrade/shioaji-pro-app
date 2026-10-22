@@ -16,7 +16,7 @@ import { domAnimation, LazyMotion, m } from 'motion/react';
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
 import { relaxCircles } from '../lib/chain-motion';
-import { packGroup, packScale, type PackedMember } from '../lib/portfolio-pack';
+import { packGroup, packScale, placeLabels, type PackedMember } from '../lib/portfolio-pack';
 import { GROUPING_LABEL, othersNote, type HeldGroup } from '../lib/portfolio-sector';
 import { maskMoney } from '../lib/privacy';
 import { dir, useBoxSize } from './chain-ui';
@@ -55,6 +55,8 @@ function fitName(name: string, room: number) {
     }
     return out.length >= 2 ? `${out}…` : null;
 }
+
+const labelName = (name: string) => (name.length > 8 ? `${name.slice(0, 8)}…` : name);
 
 function niceCeil(value: number) {
     if (value <= 0) return 1;
@@ -116,6 +118,14 @@ export function HoldingBubbles(props: VariantProps) {
         // px/py/box/groups derive from these
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [view, plotW, plotH, extentX, extentY]);
+    const labelPlaces = useMemo(
+        () =>
+            placeLabels(
+                bubbles.map((b) => ({ id: b.group.id, x: b.x, y: b.y, R: b.R, w: textWidth(labelName(b.group.name), 6.5) + 64 })),
+                { top: PAD.top, bottom: PAD.top + plotH },
+            ),
+        [bubbles, plotH],
+    );
     // big circles first so small ones stay on top and clickable
     const ordered = [...bubbles].sort((a, b) => b.R - a.R);
 
@@ -255,21 +265,8 @@ export function HoldingBubbles(props: VariantProps) {
                         {ordered.map((b) => {
                             const g = b.group;
                             const dim = focusGroup !== null && focusGroup !== g.id;
-                            const name = g.name.length > 8 ? `${g.name.slice(0, 8)}…` : g.name;
-                            // above the rim unless that hits the frame or another group's circle
-                            const lw = textWidth(name, 6.5) + 64;
-                            const hits = (ly: number) =>
-                                ly - 12 < PAD.top - 8 ||
-                                ly + 3 > PAD.top + plotH + 8 ||
-                                bubbles.some((o) => {
-                                    if (o === b) return false;
-                                    const nx = Math.max(b.x - lw / 2, Math.min(o.x, b.x + lw / 2));
-                                    const ny = Math.max(ly - 12, Math.min(o.y, ly + 3));
-                                    return (nx - o.x) ** 2 + (ny - o.y) ** 2 < o.R * o.R;
-                                });
-                            const above = b.y - b.R - 6;
-                            const under = b.y + b.R + 15;
-                            const y = !hits(above) ? -b.R - 6 : !hits(under) ? b.R + 15 : -b.R - 6;
+                            const name = labelName(g.name);
+                            const place = labelPlaces.get(g.id) ?? { dx: 0, dy: -b.R - 6 };
                             const flowDir = dir(g.recent.net);
                             return (
                                 <m.g
@@ -280,7 +277,7 @@ export function HoldingBubbles(props: VariantProps) {
                                     transition={reducedMotion ? STILL : { ...SPRING, opacity: { duration: 0.3 } }}
                                     aria-hidden='true'
                                 >
-                                    <text y={y} textAnchor='middle'>
+                                    <text x={place.dx} y={place.dy} textAnchor='middle'>
                                         <tspan className={s.sectorName}>{name}</tspan>
                                         <tspan className={s.sectorMeta} dx={5}>
                                             {Math.round(g.weight * 100)}%

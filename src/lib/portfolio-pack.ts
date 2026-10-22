@@ -79,3 +79,79 @@ export function packScale(groups: readonly (readonly PackItem[])[], plotW: numbe
     for (let i = 0; i < 4; i += 1) scale *= fit(scale);
     return scale;
 }
+
+// ── rim labels ──────────────────────────────────────────────────────────────
+
+export interface LabelCircle {
+    id: string;
+    x: number;
+    y: number;
+    R: number;
+    /** Label width (px). */
+    w: number;
+}
+
+export interface LabelPlace {
+    /** Offset of the label's baseline centre from the circle centre. */
+    dx: number;
+    dy: number;
+}
+
+/** Text box of a label relative to its baseline: 12 px above, 3 px below. */
+const ASCENT = 12;
+const DESCENT = 3;
+
+/**
+ * Place each group's rim label: above the rim, else below it, else nudged
+ * sideways, avoiding the frame, every other group's circle and the labels
+ * already placed (bigger circles first, so they get the natural spot).
+ * When every spot collides the least-overlapping one wins.
+ */
+export function placeLabels(circles: readonly LabelCircle[], frame: { top: number; bottom: number }): Map<string, LabelPlace> {
+    const out = new Map<string, LabelPlace>();
+    const boxes: { x0: number; x1: number; y0: number; y1: number }[] = [];
+    const order = [...circles].sort((a, b) => b.R - a.R || (a.id < b.id ? -1 : 1));
+    for (const c of order) {
+        const above = -c.R - 6;
+        const below = c.R + 15;
+        const nudge = c.w * 0.4;
+        const spots: LabelPlace[] = [
+            { dx: 0, dy: above },
+            { dx: 0, dy: below },
+            { dx: -nudge, dy: above },
+            { dx: nudge, dy: above },
+            { dx: -nudge, dy: below },
+            { dx: nudge, dy: below },
+        ];
+        let best = spots[0]!;
+        let bestCost = Infinity;
+        for (const spot of spots) {
+            const x0 = c.x + spot.dx - c.w / 2;
+            const x1 = c.x + spot.dx + c.w / 2;
+            const y0 = c.y + spot.dy - ASCENT;
+            const y1 = c.y + spot.dy + DESCENT;
+            let cost = 0;
+            if (y0 < frame.top - 8 || y1 > frame.bottom + 8) cost += 1e6;
+            for (const o of circles) {
+                if (o.id === c.id) continue;
+                const nx = Math.max(x0, Math.min(o.x, x1));
+                const ny = Math.max(y0, Math.min(o.y, y1));
+                if ((nx - o.x) ** 2 + (ny - o.y) ** 2 < o.R * o.R) cost += 1e4;
+            }
+            for (const b of boxes) {
+                const ox = Math.min(x1, b.x1) - Math.max(x0, b.x0);
+                const oy = Math.min(y1, b.y1) - Math.max(y0, b.y0);
+                if (ox > 0 && oy > 0) cost += 1e5 + ox * oy;
+            }
+            // prefer the plain spots, then the smaller nudge
+            cost += Math.abs(spot.dx) * 0.01 + (spot.dy > 0 ? 0.001 : 0);
+            if (cost < bestCost) {
+                bestCost = cost;
+                best = spot;
+            }
+        }
+        out.set(c.id, best);
+        boxes.push({ x0: c.x + best.dx - c.w / 2, x1: c.x + best.dx + c.w / 2, y0: c.y + best.dy - ASCENT, y1: c.y + best.dy + DESCENT });
+    }
+    return out;
+}

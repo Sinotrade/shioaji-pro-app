@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MIN_MEMBER_R, PACK_GAP, PACK_RIM, packGroup, packScale, rimOf, SINGLE_RIM_MIN } from './portfolio-pack';
+import { MIN_MEMBER_R, PACK_GAP, PACK_RIM, packGroup, packScale, placeLabels, rimOf, SINGLE_RIM_MIN } from './portfolio-pack';
 
 const dist = (a: { dx: number; dy: number }, b: { dx: number; dy: number }) => Math.hypot(a.dx - b.dx, a.dy - b.dy);
 
@@ -71,5 +71,37 @@ describe('packScale', () => {
     it('returns 0 without room or groups', () => {
         expect(packScale(groups, 0, 300)).toBe(0);
         expect(packScale([], 300, 300)).toBe(0);
+    });
+});
+
+describe('placeLabels', () => {
+    const frame = { top: 0, bottom: 600 };
+
+    it('puts a label above its rim when nothing is in the way', () => {
+        const p = placeLabels([{ id: 'a', x: 300, y: 300, R: 50, w: 120 }], frame);
+        expect(p.get('a')).toEqual({ dx: 0, dy: -56 });
+    });
+
+    it('drops below the rim at the top of the frame', () => {
+        const p = placeLabels([{ id: 'a', x: 300, y: 30, R: 30, w: 120 }], frame);
+        expect(p.get('a')).toEqual({ dx: 0, dy: 45 });
+    });
+
+    it('never stacks two labels on each other', () => {
+        // two circles side by side whose below-labels would overlap; the frame forbids above for both
+        const circles = [
+            { id: 'big', x: 300, y: 30, R: 28, w: 160 },
+            { id: 'small', x: 330, y: 40, R: 14, w: 120 },
+        ];
+        const p = placeLabels(circles, frame);
+        const box = (id: string) => {
+            const c = circles.find((x) => x.id === id)!;
+            const l = p.get(id)!;
+            return { x0: c.x + l.dx - c.w / 2, x1: c.x + l.dx + c.w / 2, y0: c.y + l.dy - 12, y1: c.y + l.dy + 3 };
+        };
+        const a = box('big');
+        const b = box('small');
+        const overlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) > 0 && Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 0;
+        expect(overlap).toBe(false);
     });
 });
