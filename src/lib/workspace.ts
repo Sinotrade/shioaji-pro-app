@@ -85,6 +85,14 @@ export type PulseSection = 'stocks' | 'flow';
 export type PulseSectionWeights = Record<PulseSection, number>;
 export type PulseIndexCode = 'IX0001' | 'IX0043';
 
+// 產業全景可同時開多個面板，各面板自己選市場（加權／櫃買）
+export const PANORAMA_INDEX_CODES = ['IX0001', 'IX0043'] as const;
+export type PanoramaIndexCode = (typeof PANORAMA_INDEX_CODES)[number];
+export const PANORAMA_INDEX_LABELS: Record<PanoramaIndexCode, string> = {
+    IX0001: '加權',
+    IX0043: '櫃買',
+};
+
 export interface Block {
     id: string;
     // Panel-local indicator state travels with saved workspace profiles.
@@ -111,6 +119,10 @@ export interface Block {
     pulseSections?: PulseSection[];
     pulseWeights?: Partial<PulseSectionWeights>;
     pulseIndex?: PulseIndexCode;
+    // 產業全景各面板自己的市場（可同時開加權與櫃買）；缺省 = 沿用上次選擇。
+    // 不列入 workspace spec 的 settings（與 pulseIndex 同）：套用 spec 時由
+    // 既有面板保留自己的市場，新面板才回到預設。
+    panoramaIndex?: PanoramaIndexCode;
     // 當日走勢牆的面板設定（清單/排列）— 跟版面一起持久化
     wallList?: string;
     wallCols?: number;
@@ -534,7 +546,8 @@ export const BLOCK_META: Record<
         description: '產業資金與強弱地圖，點產業下鑽主力貢獻',
         category: 'market',
         pinnable: false,
-        singleton: true,
+        // 可同時開多個：各面板存自己的 panoramaIndex（加權／櫃買並排免切換）
+        singleton: false,
         defaultSize: { w: 8, h: 11, minW: 5, minH: 6 },
     },
     chainmap: {
