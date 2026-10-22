@@ -2,6 +2,7 @@
 
 import type { LayoutItem } from 'react-grid-layout';
 import { isLinkGroup, LINK_GROUPS, type LinkGroupId } from './flash-link';
+import { decodeQuoteBoardFields, encodeQuoteBoardFields } from './quote-board-fields';
 
 // 版面座標底座（儲存基準）：288 欄 = 傳統 24 欄 × 12。
 // - 撰寫/舊存檔仍是 24 欄語意，載入時 ×12 無損升階
@@ -122,6 +123,8 @@ export interface Block {
     chartOhlc?: boolean;
     // 可見範圍最高／最低標記（#240）— false = 隱藏；缺省 = 顯示
     chartHighLow?: boolean;
+    // 報價欄自訂欄位（顯示哪些格子、區塊與格子的順序；指數與個股各一組）— 缺省 = 預設
+    quoteBoard?: import('./quote-board-fields').QuoteBoardFieldsConfig;
 }
 
 export interface Workspace {
@@ -180,7 +183,7 @@ export function linkGroupSummary(w: Workspace): { id: LinkGroupId; code: string 
 }
 
 export type SessionConfigPatch = Partial<
-    Pick<Block, 'chartSession' | 'intradaySession' | 'chartOrder' | 'chartOhlc' | 'chartHighLow'>
+    Pick<Block, 'chartSession' | 'intradaySession' | 'chartOrder' | 'chartOhlc' | 'chartHighLow' | 'quoteBoard'>
 >;
 
 // 開彈出視窗時把面板的時段選擇帶進 URL（session=…）
@@ -191,7 +194,8 @@ export function popoutSessionParam(block: Block): Record<string, string> {
             : block.type === 'intraday'
               ? block.intradaySession
               : undefined;
-    return session ? { session } : {};
+    const qb = block.type === 'chart' ? encodeQuoteBoardFields(block.quoteBoard) : undefined;
+    return { ...(session ? { session } : {}), ...(qb ? { qb } : {}) };
 }
 
 // 彈出視窗讀回 URL 的 session — 依面板類型只接受已知值
@@ -201,6 +205,7 @@ export function popoutSessionFromQuery(q: URLSearchParams): SessionConfigPatch {
         chartSession: v === 'all' || v === 'day' ? v : undefined,
         intradaySession:
             v === 'auto' || v === 'day' || v === 'night' ? v : undefined,
+        quoteBoard: decodeQuoteBoardFields(q.get('qb')),
     };
 }
 

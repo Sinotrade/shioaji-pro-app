@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ContractInfo } from './types/contract';
-import { limitStateOf } from './limit-state';
+import { hasPriceLimits, limitStateOf } from './limit-state';
 
 function c(over: Partial<ContractInfo>): ContractInfo {
     return {
@@ -104,5 +104,23 @@ describe('limitStateOf', () => {
         expect(limitStateOf(k, 9.9)).toBe('down');
         expect(limitStateOf(k, 12.05)).toBeNull();
         expect(limitStateOf(k, 12.1)).toBe('up');
+    });
+});
+
+describe('hasPriceLimits', () => {
+    it('一般個股有漲跌停', () => {
+        expect(hasPriceLimits(c({}))).toBe(true);
+    });
+
+    it('指數、興櫃沒有', () => {
+        expect(hasPriceLimits(c({ security_type: 'IND' }))).toBe(false);
+        expect(hasPriceLimits(c({ exchange: 'OES' }))).toBe(false);
+    });
+
+    it('權證、組合商品退回 0／0，或價格不合理時視為沒有', () => {
+        expect(hasPriceLimits(c({ limit_up: 0, limit_down: 0 }))).toBe(false);
+        expect(hasPriceLimits(c({ limit_up: 100, limit_down: 0 }))).toBe(false);
+        expect(hasPriceLimits(c({ limit_up: 90, limit_down: 100 }))).toBe(false);
+        expect(hasPriceLimits(c({ limit_up: undefined as unknown as number }))).toBe(false);
     });
 });

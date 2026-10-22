@@ -136,6 +136,16 @@ describe('popout session param', () => {
         expect(popoutSessionFromQuery(qs).chartSession).toBe('day');
     });
 
+    it('carries the quote board fields of a chart panel into the popout URL', () => {
+        const quoteBoard = { stock: { sections: ['stats', 'range'] as ('stats' | 'range')[] } };
+        const param = popoutSessionParam({ id: 'c', type: 'chart', pin: null, quoteBoard });
+        expect(Object.keys(param)).toEqual(['qb']);
+        const back = popoutSessionFromQuery(new URLSearchParams(param)).quoteBoard;
+        expect(back?.stock?.sections).toEqual(['stats', 'range']);
+        expect(back?.index).toBeUndefined();
+        expect(popoutSessionParam({ id: 'i', type: 'intraday', pin: null, quoteBoard })).toEqual({});
+    });
+
     it('reads back only known values per panel type', () => {
         const q = (v: string) => popoutSessionFromQuery(new URLSearchParams({ session: v }));
         expect(q('day')).toEqual({ chartSession: 'day', intradaySession: 'day' });

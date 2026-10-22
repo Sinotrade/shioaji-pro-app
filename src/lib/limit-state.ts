@@ -19,21 +19,27 @@ type LimitContract = Pick<
 > &
     Partial<Pick<ContractInfo, 'tick_rule' | 'tick' | 'underlying_kind'>>;
 
+// 商品有沒有有效的漲跌停價：指數、興櫃沒有；權證、組合商品退回值是 0／0；
+// 漲跌停價缺席或不合理（跌停 <= 0、漲停 <= 跌停）也視為沒有。看板據此決定要不要顯示停板組
+export function hasPriceLimits(
+    contract: Pick<ContractInfo, 'exchange' | 'security_type' | 'limit_up' | 'limit_down'>,
+): boolean {
+    if (contract.security_type === 'IND' || contract.exchange === 'OES') return false;
+    const lu = Number(contract.limit_up);
+    const ld = Number(contract.limit_down);
+    return Number.isFinite(lu) && Number.isFinite(ld) && ld > 0 && lu > ld;
+}
+
 export function limitStateOf(
     contract: LimitContract,
     price: number | undefined | null,
 ): LimitState {
-    if (contract.security_type === 'IND' || contract.exchange === 'OES') {
-        return null;
-    }
+    if (!hasPriceLimits(contract)) return null;
     if (price === undefined || price === null || !Number.isFinite(price) || price <= 0) {
         return null;
     }
     const lu = Number(contract.limit_up);
     const ld = Number(contract.limit_down);
-    if (!Number.isFinite(lu) || !Number.isFinite(ld) || ld <= 0 || lu <= ld) {
-        return null;
-    }
     const decimals = Math.max(
         2,
         tickDecimals(tickSizeFor(contract, lu)),

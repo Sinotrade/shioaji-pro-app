@@ -16,31 +16,21 @@ const storage = vi.hoisted(() => {
 let display: any = {};
 // 前一交易日金額由 useQuery 抓，測試直接指定它回傳什麼
 let previous: number | undefined;
-vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => display }));
+let previousState: { loading: boolean; error: string | null; updatedAt?: number | null } = { loading: false, error: null };
+vi.mock('../hooks/use-display-book', () => ({ useSnapshotBaseline: () => ({ snapshot: display.snapshot }) }));
+vi.mock('../hooks/use-stream', () => ({ useQuote: () => display.quote }));
 // 記下每次 useQuery 的抓取函式、key、enabled，接線（只有指數才抓、key 帶交易日、回看視窗）才有測試守著
 const queryCalls = vi.hoisted(
     () => [] as { fetcher: () => Promise<unknown>; key: string; enabled?: boolean }[],
 );
-const fetchKbars = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ datetime: [], Amount: [] })));
+const fetchKbars = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ datetime: [] as string[], Amount: [] as number[] })));
 vi.mock('../hooks/use-query', () => ({
     useQuery: (fetcher: () => Promise<unknown>, key: string, enabled?: boolean) => {
         queryCalls.push({ fetcher, key, enabled });
-        return { data: previous, error: null, loading: false, updatedAt: null, refresh: async () => {} };
+        return { data: previous, updatedAt: null, ...previousState, refresh: async () => {} };
     },
 }));
 vi.mock('../lib/shioaji', () => ({ fetchKbars }));
-// 包住真的 useBoardTier，記下看板傳進去的內容簽章（格子變了要重挑階梯）
-const tierKeys = vi.hoisted(() => [] as string[]);
-vi.mock('../hooks/use-board-tier', async (importOriginal) => {
-    const real = await importOriginal<typeof import('../hooks/use-board-tier')>();
-    return {
-        ...real,
-        useBoardTier: (...args: Parameters<typeof real.useBoardTier>) => {
-            tierKeys.push(String(args[2]));
-            return real.useBoardTier(...args);
-        },
-    };
-});
 
 import { todayStr } from '../lib/utils/date';
 import { QuoteBoard } from './quote-board';
@@ -117,11 +107,25 @@ afterEach(() => {
     vi.useRealTimers();
     storage.clear();
     previous = undefined;
+    previousState = { loading: false, error: null };
     queryCalls.length = 0;
     fetchKbars.mockClear();
 });
 
 describe('指數看板', () => {
+    it('前一交易日金額的載入、失敗與未收到 quote_idx 各有明確說明', () => {
+        display = { quote: { index: idx } };
+        previousState = { loading: true, error: null };
+        expect(titles(render()).join('\n')).toContain('前一交易日金額取得中，失敗會自動重試');
+        previousState = { loading: false, error: 'unavailable' };
+        expect(titles(render()).join('\n')).toContain('前一交易日金額取得失敗，本交易日不再重試');
+        display = {};
+        const empty = render();
+        expect(titles(empty)).toContain('本次連線尚未收到 quote_idx');
+        // 什麼資料都還沒到時不標快照（沒有快照可言）
+        expect(empty.findAll(hasClass(styles.statusBadge))).toHaveLength(0);
+    });
+
     it('顯示漲跌家數與量能，現價固定兩位小數，不重複標題列的代號與名稱', () => {
         display = { quote: { index: idx }, snapshot: undefined, book: undefined };
         previous = 1_000_000_000_000;
@@ -138,7 +142,7 @@ describe('指數看板', () => {
         expect(all).not.toContain('發行量加權股價指數');
     });
 
-    it('lean 階梯在三種資料狀態下都剛好留一格量能：較昨日、成交金額、預估量', () => {
+    it('lean 階梯在各種資料狀態下都剛好留一格量能：較昨日、成交金額、預估量', () => {
         display = { quote: { index: idx }, snapshot: undefined, book: undefined };
         // 預估量與前一交易日都有：留較昨日
         previous = 1_000_000_000_000;
@@ -146,9 +150,17 @@ describe('指數看板', () => {
         // 沒有預估量（盤前、盤中，這筆是 11:36）：留成交金額
         display = { quote: { index: { ...idx, estimate_amount_sum: '' } }, snapshot: undefined, book: undefined };
         expect(leanVolumeLabels(render())).toEqual(['成交金額']);
-        // 有預估量、前一交易日還沒抓到（或抓失敗）：留預估量，量能組不會整組空掉
+        // 有預估量、前一交易日金額還在抓（剛開頁、09:00 換交易日）：較昨日先佔位顯示空值，不換格
         display = { quote: { index: idx }, snapshot: undefined, book: undefined };
         previous = undefined;
+        const pending = render();
+        expect(leanVolumeLabels(pending)).toEqual(['較昨日']);
+        expect(statValue(pending, '較昨日')).toBe('—');
+        // 抓失敗：留預估量，量能組不會整組空掉
+        previousState = { loading: false, error: 'unavailable' };
+        expect(leanVolumeLabels(render())).toEqual(['預估量']);
+        // 抓完但 21 天內沒有資料：一樣留預估量
+        previousState = { loading: false, error: null, updatedAt: 1 };
         expect(leanVolumeLabels(render())).toEqual(['預估量']);
     });
 
@@ -224,7 +236,8 @@ describe('收盤後改用實際量', () => {
         expect(reopened).not.toContain('成交金額');
     });
 
-    it('同一個看板盤中轉收盤：成交金額格消失、內容簽章跟著變（重挑階梯）；沒有前一交易日金額時 lean 留實際量', () => {
+    // 階梯重挑靠 useBoardTier 的 DOM 文字簽章：格子消失時它的文字節點也不見，不必另外帶旗標
+    it('同一個看板盤中轉收盤：成交金額格消失；前一交易日金額還在抓時 lean 留較昨日佔位', () => {
         // 數字刻意取同樣長度（金額 8251.0億 對 9292.1億、較昨日 +86% 對 +65%），只有格數不同
         previous = 500_000_000_000;
         const live = { ...idx, amount_sum: '825100000000' };
@@ -232,14 +245,14 @@ describe('收盤後改用實際量', () => {
         let root!: ReturnType<typeof create>;
         act(() => { root = create(createElement(QuoteBoard, { contract: INDEX })); });
         expect(statLabels(root.root)).toContain('成交金額');
-        const before = tierKeys.at(-1);
         display = { quote: { index: { ...live, time: '13:33:00', estimate_amount_sum: '' } }, snapshot: undefined, book: undefined };
         act(() => root.update(createElement(QuoteBoard, { contract: INDEX })));
         expect(statLabels(root.root)).not.toContain('成交金額');
-        expect(tierKeys.at(-1)).not.toBe(before);
+        // 前一交易日金額還在抓：較昨日先佔位（本分支的不跳動規則），不會出現成交金額
         previous = undefined;
         act(() => root.update(createElement(QuoteBoard, { contract: INDEX })));
-        expect(leanVolumeLabels(root.root)).toEqual(['實際量']);
+        expect(leanVolumeLabels(root.root)).toEqual(['較昨日']);
+        expect(statLabels(root.root)).not.toContain('成交金額');
     });
 
     it('盤中沒有預估量照舊：標「預估量」、不算較昨日', () => {
@@ -318,12 +331,23 @@ describe('收盤後重開：家數讀回本機存的收盤那筆', () => {
         expect(tip).toContain('全日實際 8251.0億');
         // 讀回時這個時間只屬於家數
         expect(tip).toContain('家數更新 13:33:00');
-        // 家數組與窄階梯的比例條都註明是哪天收盤時存下的
-        expect(String(root.find(hasClass(styles.indexGroup.breadth)).props.title)).toContain(note);
+        // 家數組與窄階梯的比例條照樣給比例，並註明是哪天收盤時存下的，不能寫「尚未收到」
+        const groupTitle = String(root.find(hasClass(styles.indexGroup.breadth)).props.title);
+        expect(groupTitle).toContain('上漲 160');
+        expect(groupTitle).toContain(note);
+        expect(groupTitle).not.toContain('尚未收到');
         expect(String(root.find(hasClass(styles.breadthMini)).props.title)).toContain(note);
-        // 價格仍看快照，不拿讀回那筆的收盤價
+        // 價格仍看快照，不拿讀回那筆的收盤價；現價標「快照」，提示對指數寫「尚未收到即時報價」
         expect(texts(root)).toContain('46,822.08');
         expect(texts(root)).not.toContain('47,111.90');
+        expect(texts(root.find(hasClass(styles.statusBadge)))).toEqual(['快照']);
+        expect(tip).toContain(`快照 ${today} 13:33:00，尚未收到即時報價`);
+        // 讀屏補充文字也要有快照時間與收盤註記（標題屬性讀屏多半不念）
+        const details = texts(root.find(hasClass(styles.srOnly))).join('');
+        expect(details).toContain(`快照 ${today} 13:33:00，尚未收到即時報價`);
+        expect(details).toContain(note);
+        expect(details).not.toContain('本次連線尚未收到 quote_idx');
+        expect(tip).not.toContain('本次連線尚未收到 quote_idx');
     });
 
     it('半夜重開（電腦已是隔天）：基準日跟著快照日期，照樣顯示實際量與較昨日', () => {
@@ -338,21 +362,28 @@ describe('收盤後重開：家數讀回本機存的收盤那筆', () => {
         expect(queryCalls.filter((c) => c.key.startsWith('index-prev-amount:')).at(-1)!.key).toBe('index-prev-amount:IX0001:2026-10-19');
     });
 
-    it('快照是別天：不拿存下的家數，維持空值', () => {
+    it('快照是別天：不拿存下的家數，維持空值；現價仍標快照，家數組說明尚未收到', () => {
         storage.set('sj-index-close:IX0001', JSON.stringify(closeQuote));
         display = { quote: undefined, snapshot: snapshot('2020-01-02T08:45:00'), book: undefined };
-        const all = texts(render());
+        const root = render();
+        const all = texts(root);
         expect(all).not.toContain('862');
         expect(all).not.toContain('13:33:00');
+        expect(texts(root.find(hasClass(styles.statusBadge)))).toEqual(['快照']);
+        expect(root.find(hasClass(styles.indexGroup.breadth)).props.title).toBe('本次連線尚未收到 quote_idx');
     });
 
-    it('有即時報價時以即時為準，不讀本機（存檔與快照同一天，只有「即時優先」擋得住）', () => {
+    it('有即時報價時以即時為準，不讀本機（存檔與快照同一天，只有「即時優先」擋得住），也不標快照', () => {
         storage.set('sj-index-close:IX0001', JSON.stringify(closeQuote));
         display = { quote: { index: { ...idx, date: closeQuote.date, time: '13:20:00' } }, snapshot: snapshot(`${today}T13:33:00`), book: undefined };
         const root = render();
         const all = texts(root);
         expect(all).toContain('625');
         expect(all).not.toContain('862');
+        expect(root.findAll(hasClass(styles.statusBadge))).toHaveLength(0);
+        const details = texts(root.find(hasClass(styles.srOnly))).join('');
+        expect(details).not.toContain('快照');
+        expect(details).not.toContain('收盤時存下');
         expect(String(root.find(hasClass(styles.indexGroup.breadth)).props.title)).not.toContain('收盤時存下');
     });
 });
@@ -388,13 +419,40 @@ describe('前一交易日金額的抓取接線', () => {
         render({ code: '2330', name: '台積電', exchange: 'TSE', security_type: 'STK', target_code: null } as any);
         expect(prevAmountCall().enabled).toBe(false);
     });
+
+    it('503 依接線等待完整 30 秒才重試，成功後採用前一交易日金額', async () => {
+        vi.useFakeTimers();
+        try {
+            display = { quote: { index: idx } };
+            fetchKbars.mockRejectedValueOnce({ status: 503 }).mockResolvedValueOnce({
+                datetime: ['2026-10-15 09:00:00', '2026-10-15 09:01:00'], Amount: [400, 600],
+            });
+            render();
+            const pending = prevAmountCall().fetcher();
+            await vi.advanceTimersByTimeAsync(29_999);
+            expect(fetchKbars).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(1);
+            await expect(pending).resolves.toBe(1000);
+            expect(fetchKbars).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('422 立即失敗，不啟動延遲重試', async () => {
+        display = { quote: { index: idx } };
+        fetchKbars.mockRejectedValueOnce({ status: 422 });
+        render();
+        await expect(prevAmountCall().fetcher()).rejects.toMatchObject({ status: 422 });
+        expect(fetchKbars).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('收合偏好', () => {
     it('按收合寫入 sj-index-board-mode，再按一次回到自動並清掉偏好', () => {
         display = { quote: { index: idx }, snapshot: undefined, book: undefined };
         const root = render();
-        const button = () => root.find((n) => n.type === 'button');
+        const button = () => root.find((n) => n.type === 'button' && n.props['aria-label'] === '報價統計');
         expect(button().props['aria-expanded']).toBe(true);
         act(() => button().props.onClick());
         expect(storage.get('sj-index-board-mode')).toBe('collapsed');
