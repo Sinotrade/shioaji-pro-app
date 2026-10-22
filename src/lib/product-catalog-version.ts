@@ -13,7 +13,6 @@ let version = 0;
 let context: string | undefined;
 let notificationPending = false;
 let notifiedVersion = 0;
-let listenerError: string | null = null;
 let dayTimer: ReturnType<typeof setTimeout> | undefined;
 let detachEnvironment: (() => void) | undefined;
 
@@ -30,18 +29,13 @@ function notify(): void {
     notificationPending = false;
     if (notifiedVersion === version) return;
     notifiedVersion = version;
-    listenerError = null;
     for (const listener of [...listeners]) {
+        // A display subscriber must not interrupt the stream's remaining
+        // metadata listeners.
         try { listener(); }
-        catch (error) {
-            // A display subscriber must not interrupt the stream's remaining
-            // metadata listeners. Preserve the failure for diagnostics.
-            listenerError = error instanceof Error ? error.message : '商品目錄訂閱通知失敗';
-        }
+        catch { /* isolated */ }
     }
 }
-
-export function getProductCatalogListenerError(): string | null { return listenerError; }
 
 function scheduleDayCheck(): void {
     clearTimeout(dayTimer);

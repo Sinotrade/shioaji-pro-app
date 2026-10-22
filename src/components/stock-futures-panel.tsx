@@ -2,18 +2,19 @@ import { RefreshButton } from './refresh-button';
 import { Star } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
-import { useProductNamesVersion } from '../hooks/use-product-names-version';
+import { useStockCatalog } from '../hooks/use-stock-catalog';
 import { primeContract } from '../lib/contracts-cache';
 import {
     fetchFutures
 } from '../lib/shioaji';
-import { loadStockCatalog, type StockMeta } from '../lib/stock-index';
-import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
+import type { StockMeta } from '../lib/stock-index';
+import { getProductCatalogVersion } from '../lib/product-catalog-version';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as styles from './derivative-explorer.css';
 import { AsyncStatus } from './async-status';
+import { CatalogRetryAlert } from './catalog-retry-alert';
 import * as panel from './panel.css';
 import { UnderlyingPicker } from './underlying-picker';
 
@@ -35,17 +36,24 @@ export function StockFuturesPanel({
     contract?: ContractInfo | null;
 }) {
     const [underlying, setUnderlying] = useState<StockMeta | null>(null);
-    const [catalog, setCatalog] = useState<StockMeta[]>([]);
     const [contracts, setContracts] = useState<ContractInfo[]>([]);
     const [mode, setMode] = useState<'continuous' | 'all'>('continuous');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
-    const [catalogError, setCatalogError] = useState(false);
-    const [refresh, setRefresh] = useState(0);
-    const version = useProductCatalogVersion();
-    const namesVersion = useProductNamesVersion();
-    const [catalogVersion, setCatalogVersion] = useState(-1);
-    const catalogReady = catalogVersion === version && !catalogError;
+    const { catalog, ready: catalogReady, error: catalogError, retry, reloads, version } = useStockCatalog({
+        onLoad: (rows) => {
+            if (rows.length === 0) setLoading(false);
+            const saved = localStorage.getItem(STOCK_FUTURE_UNDERLYING);
+            setUnderlying(previous =>
+                rows.find((stock) => stock.code === previous?.code) ??
+                    rows.find((stock) => stock.code === saved) ??
+                    rows.find((stock) => stock.code === '2330') ??
+                    rows[0] ??
+                    null,
+            );
+        },
+        onError: () => setLoading(false),
+    });
     // 同標的、同目錄版本重抓（重試、視窗取得焦點）時舊列身分仍有效，不鎖表格
     const requestContext = JSON.stringify([version, underlying?.code]);
     const [loadedContext, setLoadedContext] = useState<string | null>(null);
@@ -58,37 +66,6 @@ export function StockFuturesPanel({
         setContracts([]);
         if (underlying && !catalogError) setLoading(true);
     }
-
-    useEffect(() => {
-        const controller = new AbortController();
-        let active = true;
-        const isCurrent = () => active && getProductCatalogVersion() === version;
-        setCatalogError(false);
-        loadStockCatalog({ signal: controller.signal })
-            .then((rows) => {
-                if (!isCurrent()) return;
-                setCatalog(rows);
-                setCatalogVersion(version);
-                if (rows.length === 0) setLoading(false);
-                const saved = localStorage.getItem(STOCK_FUTURE_UNDERLYING);
-                setUnderlying(previous =>
-                    rows.find((stock) => stock.code === previous?.code) ??
-                        rows.find((stock) => stock.code === saved) ??
-                        rows.find((stock) => stock.code === '2330') ??
-                        rows[0] ??
-                        null,
-                );
-            })
-            .catch(() => { if (isCurrent()) { setCatalogError(true); setLoading(false); } });
-        return () => { active = false; controller.abort(); };
-    }, [version, namesVersion, refresh]);
-
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        const onFocus = () => setRefresh(value => value + 1);
-        window.addEventListener('focus', onFocus);
-        return () => window.removeEventListener('focus', onFocus);
-    }, []);
 
     // 標準 chrome 連動/釘選：不釘時 contract 跟隨自選選擇 — 點到股票
     // 直接跟；點到個股期跟它的標的。目錄查不到（無個股期）就不動。
@@ -110,7 +87,7 @@ export function StockFuturesPanel({
     }, [contract?.code, catalog]);
 
     useEffect(() => {
-        if (!underlying || catalogVersion !== version || catalogError) return;
+        if (!underlying || !catalogReady) return;
         const controller = new AbortController();
         let active = true;
         const isCurrent = () => active && getProductCatalogVersion() === version;
@@ -128,7 +105,7 @@ export function StockFuturesPanel({
             })
             .finally(() => { if (isCurrent()) setLoading(false); });
         return () => { active = false; controller.abort(); };
-    }, [underlying?.code, version, refresh, catalogVersion, catalogError]);
+    }, [underlying?.code, version, reloads, catalogReady]);
 
     const visible = useMemo(() => {
         const rows =
@@ -172,12 +149,7 @@ export function StockFuturesPanel({
                 </button>
                 <RefreshButton label="更新報價" loading={quotesLoading} onClick={() => void refreshQuotes()} />
             </div>
-            {(error || catalogError) && (
-                <div role='alert' className={styles.error}>
-                    {catalogError ? '標的目錄載入失敗' : '個股期合約載入失敗'}；保留上次資料
-                    <button type='button' onClick={() => setRefresh(value => value + 1)}>重試商品資料</button>
-                </div>
-            )}
+            <CatalogRetryAlert catalogError={catalogError} error={error} text='個股期合約載入失敗' onRetry={retry} />
             <div className={styles.summary}>
                 <span className={styles.summaryStrong}>
                     {underlying ? `${underlying.code} ${underlying.name}` : '—'}

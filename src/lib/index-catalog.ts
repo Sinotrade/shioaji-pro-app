@@ -4,7 +4,7 @@ import { SearchRequestCache } from './search-request';
 import { fetchContracts } from './shioaji';
 
 const baseCache = new SearchRequestCache<Awaited<ReturnType<typeof fetchContracts>>>({
-    ttlMs: 60_000, limit: 1, deadlineMs: 1200, queue: 'none',
+    ttlMs: 60_000, limit: 1, deadlineMs: 1200,
 });
 let activeVersion = getProductCatalogVersion();
 

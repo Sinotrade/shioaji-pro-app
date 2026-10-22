@@ -151,10 +151,21 @@ describe('標的目錄更新', () => {
         await invalidate();
         expect(signal.aborted).toBe(true);
         await act(async () => old.resolve([stock('0050', '舊版ETF')]));
-        await act(async () => view!.root.findByType('input').props.onFocus());
+        // 直接輸入開啟選單：onFocus 會再讀一次目錄，蓋過舊回應造成的錯誤
         await act(async () => view!.root.findByType('input').props.onChange({ target: { value: 'ETF' } }));
         expect(text(view!.root)).toContain('新版ETF');
         expect(text(view!.root)).not.toContain('舊版ETF');
+    });
+
+    it('新版本目錄讀到前，不用舊版本目錄提供候選', async () => {
+        await render('picker');
+        const pending = deferred<StockMeta[]>();
+        mocks.catalog.mockImplementationOnce(() => pending.promise);
+        await invalidate();
+        await act(async () => view!.root.findByType('input').props.onChange({ target: { value: '台積' } }));
+        expect(view!.root.findAllByType('button').filter(node => text(node).includes('2330'))).toHaveLength(0);
+        await act(async () => pending.resolve(stocks));
+        expect(button('2330')).toBeDefined();
     });
 
     it('中文組字確認 Enter 不會誤選商品，組字完成後才可選', async () => {
@@ -188,197 +199,198 @@ describe('標的目錄更新', () => {
     });
 });
 
-for (const kind of ['futures', 'warrants'] as const) {
-    describe(kind === 'futures' ? '個股期面板' : '權證面板', () => {
-        const rows = () => kind === 'futures' ? mocks.futures : mocks.warrants;
-        const visibleCode = kind === 'futures' ? 'CCFR1' : '123456';
-        it('版本更新保留使用者選擇，改用新版名稱並重讀衍生合約', async () => {
-            await render(kind, kind === 'futures' ? contract('2330') : undefined);
-            await act(async () => view!.root.findByType(UnderlyingPicker).props.onChange(stocks[1]));
-            mocks.catalog.mockResolvedValue([stocks[0]!, stock('0050', '新版ETF')]);
-            const before = rows().mock.calls.length;
-            await invalidate();
-            expect(view!.root.findByType(UnderlyingPicker).props.value).toMatchObject({ code: '0050', name: '新版ETF' });
-            expect(rows()).toHaveBeenCalledTimes(before + 1);
-            expect(kind === 'futures' ? rows().mock.lastCall?.[0].underlyingCode : rows().mock.lastCall?.[0]).toBe('0050');
-            await flush();
-            expect(rows()).toHaveBeenCalledTimes(before + 1);
-        });
+describe.each([
+    {
+        name: '個股期面板', kind: 'futures', Panel: StockFuturesPanel, rows: () => mocks.futures, type: 'FUT',
+        visibleCode: 'CCFR1', freshCode: 'NEWFR1', loadingText: '載入個股期合約…', failureText: '個股期合約載入失敗',
+    },
+    {
+        name: '權證面板', kind: 'warrants', Panel: WarrantPanel, rows: () => mocks.warrants, type: 'WRT',
+        visibleCode: '123456', freshCode: '654321', loadingText: '載入權證市場…', failureText: '權證資料載入失敗',
+    },
+] as const)('$name', ({ kind, Panel, rows, type, visibleCode, freshCode, loadingText, failureText }) => {
+    const panelProps = () => view!.root.findByType(Panel).props;
+    const firstRow = () => view!.root.findAllByType('tr')[1]!;
 
-        it('重讀期間及失敗後保留最後有效表格，錯誤可重試', async () => {
-            await render(kind);
-            expect(text(view!.root)).toContain(visibleCode);
-            const update = deferred<ContractInfo[]>();
-            rows().mockImplementationOnce(() => update.promise);
-            await invalidate();
-            expect(text(view!.root)).toContain(visibleCode);
-            expect(view!.root.findAllByType('table')).toHaveLength(1);
-            await act(async () => update.reject(new Error('離線')));
-            expect(text(view!.root)).toContain('保留上次資料');
-            expect(view!.root.findAllByType('table')).toHaveLength(1);
-            await act(async () => button('重試商品資料').props.onClick());
-            expect(text(view!.root)).not.toContain('保留上次資料');
-            expect(view!.root.findAllByType('table')).toHaveLength(1);
-        });
-
-        it('目錄與合約舊回應忽略取消時，也不能覆蓋新版本', async () => {
-            await render(kind);
-            const oldCatalog = deferred<StockMeta[]>();
-            const oldContracts = deferred<ContractInfo[]>();
-            mocks.catalog.mockImplementation(() => oldCatalog.promise);
-            rows().mockImplementationOnce(() => oldContracts.promise);
-            const before = rows().mock.calls.length;
-            await invalidate();
-            expect(rows()).toHaveBeenCalledTimes(before);
-            expect(view!.root.findAllByType('table')).toHaveLength(1);
-            expect(view!.root.findAllByType('button').find(node => node.props['aria-label'] === `將 ${visibleCode} 加入自選`)?.props.disabled).toBe(true);
-            await act(async () => oldCatalog.resolve(stocks));
-            expect(rows()).toHaveBeenCalledTimes(before + 1);
-            const signal = rows().mock.lastCall?.[kind === 'futures' ? 1 : 2].signal as AbortSignal;
-            mocks.catalog.mockResolvedValue([stock('2330', '新版名稱')]);
-            rows().mockResolvedValue([contract(kind === 'futures' ? 'NEWFR1' : '654321', kind === 'futures' ? 'FUT' : 'WRT')]);
-            await invalidate();
-            expect(signal.aborted).toBe(true);
-            await act(async () => {
-                oldCatalog.resolve([stock('2330', '舊版名稱')]);
-                oldContracts.resolve([contract('OLD', kind === 'futures' ? 'FUT' : 'WRT')]);
-            });
-            expect(view!.root.findByType(UnderlyingPicker).props.value.name).toBe('新版名稱');
-            expect(text(view!.root)).toContain(kind === 'futures' ? 'NEWFR1' : '654321');
-            expect(text(view!.root)).not.toContain('OLD 合約');
-        });
-
-        it('視窗重新取得焦點會重讀，完成後不會連續觸發請求', async () => {
-            await render(kind);
-            const beforeCatalog = mocks.catalog.mock.calls.length;
-            const beforeContracts = rows().mock.calls.length;
-            await act(async () => { mocks.window.dispatchEvent(new Event('focus')); });
-            expect(mocks.catalog).toHaveBeenCalledTimes(beforeCatalog + 2);
-            expect(rows()).toHaveBeenCalledTimes(beforeContracts + 1);
-            await flush();
-            expect(rows()).toHaveBeenCalledTimes(beforeContracts + 1);
-        });
-
-        it('新目錄完成後，新合約未成功前仍不可選取舊表格', async () => {
-            await render(kind);
-            const pending = deferred<ContractInfo[]>();
-            rows().mockImplementationOnce(() => pending.promise);
-            await invalidate();
-            const add = () => view!.root.findAllByType('button').find(node => node.props['aria-label'] === `將 ${visibleCode} 加入自選`)!;
-            const onPick = view!.root.findByType(kind === 'futures' ? StockFuturesPanel : WarrantPanel).props.onPick;
-            expect(add().props.disabled).toBe(true);
-            act(() => view!.root.findAllByType('tr')[1]!.props.onClick());
-            expect(onPick).not.toHaveBeenCalled();
-            await act(async () => pending.reject(new Error('新目錄合約讀取失敗')));
-            expect(add().props.disabled).toBe(true);
-            act(() => view!.root.findAllByType('tr')[1]!.props.onClick());
-            expect(onPick).not.toHaveBeenCalled();
-            await act(async () => button('重試商品資料').props.onClick());
-            expect(add().props.disabled).toBe(false);
-        });
-
-        it('視窗取得焦點重抓同標的期間，舊列仍可點選與加入自選，也不插入狀態列', async () => {
-            await render(kind);
-            const pending = deferred<ContractInfo[]>();
-            rows().mockImplementationOnce(() => pending.promise);
-            const before = rows().mock.calls.length;
-            await act(async () => { mocks.window.dispatchEvent(new Event('focus')); });
-            expect(rows()).toHaveBeenCalledTimes(before + 1);
-            const props = view!.root.findByType(kind === 'futures' ? StockFuturesPanel : WarrantPanel).props;
-            props.onAdd.mockResolvedValue(undefined);
-            expect(star(visibleCode).props.disabled).toBe(false);
-            expect(statusLines()).toHaveLength(0);
-            expect(text(view!.root)).toContain(kind === 'futures' ? '1 口合約可選' : '1 檔發行中');
-            expect(text(view!.root)).not.toContain('更新完成後可選取');
-            act(() => view!.root.findAllByType('tr')[1]!.props.onClick());
-            expect(props.onPick).toHaveBeenCalledExactlyOnceWith(visibleCode);
-            await act(async () => star(visibleCode).props.onClick({ stopPropagation: vi.fn() }));
-            expect(props.onAdd).toHaveBeenCalledOnce();
-            await act(async () => pending.resolve([contract(visibleCode, kind === 'futures' ? 'FUT' : 'WRT')]));
-            expect(star(visibleCode).props.disabled).toBe(false);
-        });
-
-        it('目錄版本更新鎖住舊表格時，提示併入摘要列而不插入狀態列', async () => {
-            await render(kind);
-            const pending = deferred<ContractInfo[]>();
-            rows().mockImplementationOnce(() => pending.promise);
-            await invalidate();
-            expect(star(visibleCode).props.disabled).toBe(true);
-            expect(statusLines()).toHaveLength(0);
-            expect(text(view!.root)).toContain('更新完成後可選取');
-            expect(text(view!.root)).not.toContain('口合約可選');
-            await act(async () => pending.resolve([contract(visibleCode, kind === 'futures' ? 'FUT' : 'WRT')]));
-            expect(star(visibleCode).props.disabled).toBe(false);
-            expect(text(view!.root)).not.toContain('更新完成後可選取');
-            if (kind === 'futures') expect(text(view!.root)).toContain('1 口合約可選');
-        });
-
-        it('換標的載入期間，摘要、表格與現貨價都屬於新標的，也不先閃空狀態', async () => {
-            await render(kind);
-            expect(text(view!.root)).toContain(visibleCode);
-            if (kind === 'warrants') expect(text(view!.root)).toContain('現貨 100.00');
-            const pending = deferred<ContractInfo[]>();
-            rows().mockImplementationOnce(() => pending.promise);
-            mocks.phases.length = 0;
-            await act(async () => view!.root.findByType(UnderlyingPicker).props.onChange(stocks[1]));
-            expect(text(view!.root)).toContain('0050 元大台灣50');
-            expect(view!.root.findAllByType('table')).toHaveLength(0);
-            expect(text(view!.root)).not.toContain(visibleCode);
-            expect(text(view!.root)).toContain(kind === 'futures' ? '載入個股期合約…' : '載入權證市場…');
-            expect(new Set(mocks.phases)).toEqual(new Set(['loading']));
-            if (kind === 'warrants') expect(text(view!.root)).not.toContain('現貨 100.00');
-            const fresh = kind === 'futures' ? 'NEWFR1' : '654321';
-            await act(async () => pending.resolve([contract(fresh, kind === 'futures' ? 'FUT' : 'WRT')]));
-            expect(text(view!.root)).toContain(fresh);
-            expect(star(fresh).props.disabled).toBe(false);
-        });
-
-        it('換標的抓取失敗時，不留上一檔的表格與現貨價', async () => {
-            await render(kind);
-            rows().mockRejectedValueOnce(new Error('離線'));
-            await act(async () => view!.root.findByType(UnderlyingPicker).props.onChange(stocks[1]));
-            expect(text(view!.root)).toContain('0050 元大台灣50');
-            expect(view!.root.findAllByType('table')).toHaveLength(0);
-            expect(text(view!.root)).not.toContain(visibleCode);
-            expect(text(view!.root)).toContain(kind === 'futures' ? '個股期合約載入失敗' : '權證資料載入失敗');
-            if (kind === 'warrants') expect(text(view!.root)).not.toContain('現貨 100.00');
-        });
-
-        it('成功空目錄會結束載入，不會無限等待標的', async () => {
-            mocks.catalog.mockResolvedValue([]);
-            await render(kind);
-            expect(text(view!.root)).not.toContain(kind === 'futures' ? '載入個股期合約…' : '載入權證市場…');
-            expect(rows()).not.toHaveBeenCalled();
-        });
-
-        it('ETF 名稱版本只重組名稱，不重抓同代碼衍生合約且保持可操作', async () => {
-            await render(kind);
-            await act(async () => view!.root.findByType(UnderlyingPicker).props.onChange(stocks[1]));
-            const before = rows().mock.calls.length;
-            mocks.catalog.mockResolvedValue([stocks[0]!, stock('0050', 'ETF更新名稱')]);
-            await act(async () => {
-                mocks.namesVersion++;
-                for (const listener of [...mocks.namesListeners]) listener();
-            });
-            expect(view!.root.findByType(UnderlyingPicker).props.value).toMatchObject({ code: '0050', name: 'ETF更新名稱' });
-            expect(rows()).toHaveBeenCalledTimes(before);
-            expect(view!.root.findAllByType('button').find(node => node.props['aria-label'] === `將 ${visibleCode} 加入自選`)?.props.disabled).toBe(false);
-            await flush();
-            expect(rows()).toHaveBeenCalledTimes(before);
-        });
-
-        it('版本通知尚未完成 React 重繪前，舊事件 handler 也不可選或新增', async () => {
-            await render(kind);
-            const row = view!.root.findAllByType('tr')[1]!;
-            const add = view!.root.findAllByType('button').find(node => node.props['aria-label'] === `將 ${visibleCode} 加入自選`)!;
-            const props = view!.root.findByType(kind === 'futures' ? StockFuturesPanel : WarrantPanel).props;
-            mocks.version++;
-            act(() => {
-                row.props.onClick();
-                add.props.onClick({ stopPropagation: vi.fn() });
-            });
-            expect(props.onPick).not.toHaveBeenCalled();
-            expect(props.onAdd).not.toHaveBeenCalled();
-        });
+    it('版本更新保留使用者選擇，改用新版名稱並重讀衍生合約', async () => {
+        await render(kind, kind === 'futures' ? contract('2330') : undefined);
+        await act(async () => view!.root.findByType(UnderlyingPicker).props.onChange(stocks[1]));
+        mocks.catalog.mockResolvedValue([stocks[0]!, stock('0050', '新版ETF')]);
+        const before = rows().mock.calls.length;
+        await invalidate();
+        expect(view!.root.findByType(UnderlyingPicker).props.value).toMatchObject({ code: '0050', name: '新版ETF' });
+        expect(rows()).toHaveBeenCalledTimes(before + 1);
+        expect(kind === 'futures' ? rows().mock.lastCall?.[0].underlyingCode : rows().mock.lastCall?.[0]).toBe('0050');
+        await flush();
+        expect(rows()).toHaveBeenCalledTimes(before + 1);
     });
-}
+
+    it('重讀期間及失敗後保留最後有效表格，錯誤可重試', async () => {
+        await render(kind);
+        expect(text(view!.root)).toContain(visibleCode);
+        const update = deferred<ContractInfo[]>();
+        rows().mockImplementationOnce(() => update.promise);
+        await invalidate();
+        expect(text(view!.root)).toContain(visibleCode);
+        expect(view!.root.findAllByType('table')).toHaveLength(1);
+        await act(async () => update.reject(new Error('離線')));
+        expect(text(view!.root)).toContain('保留上次資料');
+        expect(view!.root.findAllByType('table')).toHaveLength(1);
+        await act(async () => button('重試商品資料').props.onClick());
+        expect(text(view!.root)).not.toContain('保留上次資料');
+        expect(view!.root.findAllByType('table')).toHaveLength(1);
+    });
+
+    it('目錄首次讀取失敗會結束載入並顯示錯誤，重試成功後恢復表格', async () => {
+        mocks.catalog.mockRejectedValue(new Error('離線'));
+        await render(kind);
+        expect(text(view!.root)).toContain('標的目錄載入失敗；保留上次資料');
+        expect(text(view!.root)).not.toContain(loadingText);
+        expect(rows()).not.toHaveBeenCalled();
+        mocks.catalog.mockResolvedValue(stocks);
+        await act(async () => button('重試商品資料').props.onClick());
+        expect(text(view!.root)).not.toContain('保留上次資料');
+        expect(star(visibleCode).props.disabled).toBe(false);
+    });
+
+    it('目錄與合約舊回應忽略取消時，也不能覆蓋新版本', async () => {
+        await render(kind);
+        const oldCatalog = deferred<StockMeta[]>();
+        const oldContracts = deferred<ContractInfo[]>();
+        mocks.catalog.mockImplementation(() => oldCatalog.promise);
+        rows().mockImplementationOnce(() => oldContracts.promise);
+        const before = rows().mock.calls.length;
+        await invalidate();
+        expect(rows()).toHaveBeenCalledTimes(before);
+        expect(view!.root.findAllByType('table')).toHaveLength(1);
+        expect(star(visibleCode).props.disabled).toBe(true);
+        await act(async () => oldCatalog.resolve(stocks));
+        expect(rows()).toHaveBeenCalledTimes(before + 1);
+        const signal = rows().mock.lastCall?.[kind === 'futures' ? 1 : 2].signal as AbortSignal;
+        mocks.catalog.mockResolvedValue([stock('2330', '新版名稱')]);
+        rows().mockResolvedValue([contract(freshCode, type)]);
+        await invalidate();
+        expect(signal.aborted).toBe(true);
+        await act(async () => {
+            oldCatalog.resolve([stock('2330', '舊版名稱')]);
+            oldContracts.resolve([contract('OLD', type)]);
+        });
+        expect(view!.root.findByType(UnderlyingPicker).props.value.name).toBe('新版名稱');
+        expect(text(view!.root)).toContain(freshCode);
+        expect(text(view!.root)).not.toContain('OLD 合約');
+    });
+
+    it('視窗取得焦點會重讀目錄與合約，重抓期間舊列仍可點選與加入自選，也不插入狀態列', async () => {
+        await render(kind);
+        const beforeCatalog = mocks.catalog.mock.calls.length;
+        const beforeContracts = rows().mock.calls.length;
+        const pending = deferred<ContractInfo[]>();
+        rows().mockImplementationOnce(() => pending.promise);
+        await act(async () => { mocks.window.dispatchEvent(new Event('focus')); });
+        expect(mocks.catalog).toHaveBeenCalledTimes(beforeCatalog + 2);
+        expect(rows()).toHaveBeenCalledTimes(beforeContracts + 1);
+        panelProps().onAdd.mockResolvedValue(undefined);
+        expect(star(visibleCode).props.disabled).toBe(false);
+        expect(statusLines()).toHaveLength(0);
+        expect(text(view!.root)).toContain(kind === 'futures' ? '1 口合約可選' : '1 檔發行中');
+        expect(text(view!.root)).not.toContain('更新完成後可選取');
+        act(() => firstRow().props.onClick());
+        expect(panelProps().onPick).toHaveBeenCalledExactlyOnceWith(visibleCode);
+        await act(async () => star(visibleCode).props.onClick({ stopPropagation: vi.fn() }));
+        expect(panelProps().onAdd).toHaveBeenCalledOnce();
+        await act(async () => pending.resolve([contract(visibleCode, type)]));
+        expect(star(visibleCode).props.disabled).toBe(false);
+        await flush();
+        expect(rows()).toHaveBeenCalledTimes(beforeContracts + 1);
+    });
+
+    it('新目錄完成後，新合約未成功前仍不可選取舊表格', async () => {
+        await render(kind);
+        const pending = deferred<ContractInfo[]>();
+        rows().mockImplementationOnce(() => pending.promise);
+        await invalidate();
+        const onPick = panelProps().onPick;
+        expect(star(visibleCode).props.disabled).toBe(true);
+        // 鎖表提示併入摘要列，不另插狀態列；個股期不把鎖住的列算成可選
+        expect(statusLines()).toHaveLength(0);
+        expect(text(view!.root)).toContain('更新完成後可選取');
+        expect(text(view!.root)).not.toContain('口合約可選');
+        act(() => firstRow().props.onClick());
+        expect(onPick).not.toHaveBeenCalled();
+        await act(async () => pending.reject(new Error('新目錄合約讀取失敗')));
+        expect(star(visibleCode).props.disabled).toBe(true);
+        act(() => firstRow().props.onClick());
+        expect(onPick).not.toHaveBeenCalled();
+        await act(async () => button('重試商品資料').props.onClick());
+        expect(star(visibleCode).props.disabled).toBe(false);
+        expect(text(view!.root)).not.toContain('更新完成後可選取');
+        if (kind === 'futures') expect(text(view!.root)).toContain('1 口合約可選');
+    });
+
+    it('換標的載入期間，摘要、表格與現貨價都屬於新標的，也不先閃空狀態', async () => {
+        await render(kind);
+        expect(text(view!.root)).toContain(visibleCode);
+        if (kind === 'warrants') expect(text(view!.root)).toContain('現貨 100.00');
+        const pending = deferred<ContractInfo[]>();
+        rows().mockImplementationOnce(() => pending.promise);
+        mocks.phases.length = 0;
+        await act(async () => view!.root.findByType(UnderlyingPicker).props.onChange(stocks[1]));
+        expect(text(view!.root)).toContain('0050 元大台灣50');
+        expect(view!.root.findAllByType('table')).toHaveLength(0);
+        expect(text(view!.root)).not.toContain(visibleCode);
+        expect(text(view!.root)).toContain(loadingText);
+        expect(new Set(mocks.phases)).toEqual(new Set(['loading']));
+        if (kind === 'warrants') expect(text(view!.root)).not.toContain('現貨 100.00');
+        await act(async () => pending.resolve([contract(freshCode, type)]));
+        expect(text(view!.root)).toContain(freshCode);
+        expect(star(freshCode).props.disabled).toBe(false);
+    });
+
+    it('換標的抓取失敗時，不留上一檔的表格與現貨價', async () => {
+        await render(kind);
+        rows().mockRejectedValueOnce(new Error('離線'));
+        await act(async () => view!.root.findByType(UnderlyingPicker).props.onChange(stocks[1]));
+        expect(text(view!.root)).toContain('0050 元大台灣50');
+        expect(view!.root.findAllByType('table')).toHaveLength(0);
+        expect(text(view!.root)).not.toContain(visibleCode);
+        expect(text(view!.root)).toContain(failureText);
+        if (kind === 'warrants') expect(text(view!.root)).not.toContain('現貨 100.00');
+    });
+
+    it('成功空目錄會結束載入，不會無限等待標的', async () => {
+        mocks.catalog.mockResolvedValue([]);
+        await render(kind);
+        expect(text(view!.root)).not.toContain(loadingText);
+        expect(rows()).not.toHaveBeenCalled();
+    });
+
+    it('ETF 名稱版本只重組名稱，不重抓同代碼衍生合約且保持可操作', async () => {
+        await render(kind);
+        await act(async () => view!.root.findByType(UnderlyingPicker).props.onChange(stocks[1]));
+        const before = rows().mock.calls.length;
+        mocks.catalog.mockResolvedValue([stocks[0]!, stock('0050', 'ETF更新名稱')]);
+        await act(async () => {
+            mocks.namesVersion++;
+            for (const listener of [...mocks.namesListeners]) listener();
+        });
+        expect(view!.root.findByType(UnderlyingPicker).props.value).toMatchObject({ code: '0050', name: 'ETF更新名稱' });
+        expect(rows()).toHaveBeenCalledTimes(before);
+        expect(star(visibleCode).props.disabled).toBe(false);
+        await flush();
+        expect(rows()).toHaveBeenCalledTimes(before);
+    });
+
+    it('版本通知尚未完成 React 重繪前，舊事件 handler 也不可選或新增', async () => {
+        await render(kind);
+        const row = firstRow();
+        const add = star(visibleCode);
+        const props = panelProps();
+        mocks.version++;
+        act(() => {
+            row.props.onClick();
+            add.props.onClick({ stopPropagation: vi.fn() });
+        });
+        expect(props.onPick).not.toHaveBeenCalled();
+        expect(props.onAdd).not.toHaveBeenCalled();
+    });
+});

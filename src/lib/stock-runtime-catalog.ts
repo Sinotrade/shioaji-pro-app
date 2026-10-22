@@ -1,6 +1,7 @@
 import { isTauri } from './runtime';
+import { todayStr } from './utils/date';
 import { fetchPublicJson, isPublicMetadataUnavailable } from './public-metadata';
-import { EQUITY_SOURCE_ROUTES, EQUITY_SOURCES } from './public-metadata-routes';
+import { EQUITY_SOURCE_ROUTES } from './public-metadata-routes';
 import { normalizeStockNames, type EquityExchange, type EquityNameSource } from './stock-name-normalizer';
 
 const FRESH_MS = 60 * 60_000;
@@ -11,32 +12,7 @@ const routes = {
     OTC: EQUITY_SOURCE_ROUTES.otcCompanies,
     OES: EQUITY_SOURCE_ROUTES.oesCompanies,
 };
-export interface EquitySourceStatus {
-    readonly exchange: EquityExchange;
-    readonly url: string;
-    readonly count: number;
-    readonly sourceDate: string | null;
-    readonly invalidRows: number;
-    readonly conflictingCodes: number;
-    readonly lastSuccessAt: string | null;
-    readonly error: string | null;
-}
-export interface EquityNamesStatus {
-    readonly phase: 'idle' | 'loading' | 'ready' | 'error' | 'gated';
-    readonly sources: readonly EquitySourceStatus[];
-    readonly lastAttemptAt: string | null;
-    readonly lastSuccessAt: string | null;
-    readonly retryAt: string | null;
-    readonly error: string | null;
-    readonly listenerError: string | null;
-    readonly cleanupError: string | null;
-}
 interface DisplayName { readonly name: string; readonly aliases: readonly string[] }
-let status: EquityNamesStatus = {
-    phase: 'idle', sources: exchanges.map(exchange => ({ exchange, url: EQUITY_SOURCES[exchange],
-        count: 0, sourceDate: null, invalidRows: 0, conflictingCodes: 0, lastSuccessAt: null, error: null })),
-    lastAttemptAt: null, lastSuccessAt: null, retryAt: null, error: null, listenerError: null, cleanupError: null,
-};
 let lastGood: Partial<Record<EquityExchange, EquityNameSource>> = {};
 let byIdentity = new Map<string, DisplayName>();
 let version = 0;
@@ -47,16 +23,11 @@ let attemptDay = '';
 let lastAttempt = 0;
 let nextAttempt = 0;
 const listeners = new Set<() => void>();
-const dayAt = (now: number) => new Date(now + 8 * 3600_000).toISOString().slice(0, 10);
-const message = (error: unknown) => error instanceof Error ? error.message : '一般股官方名稱更新失敗';
 
 export function equityNameForLive(exchange: EquityExchange, code: string): DisplayName | undefined {
     return byIdentity.get(`${exchange}:${code}`);
 }
 export function getEquityNamesVersion(): number { return version; }
-export function getEquityNamesStatus(): EquityNamesStatus {
-    return { ...status, sources: status.sources.map(source => ({ ...source })) };
-}
 /** Subscriptions and reads never start IO; catalog reads explicitly refresh. */
 export function subscribeEquityNames(listener: () => void): () => void {
     listeners.add(listener);
@@ -66,18 +37,9 @@ export function subscribeEquityNames(listener: () => void): () => void {
 /** One background batch across all catalog readers; no polling or native IO. */
 export function ensureEquityNamesFresh(): void {
     // Checked before the day rollover below, which would otherwise retry every day.
-    if (isTauri || isPublicMetadataUnavailable()) {
-        if (status.phase !== 'gated') {
-            activeRound++;
-            controller?.abort();
-            pending = null;
-            status = { ...status, phase: 'gated', retryAt: null,
-                error: isTauri ? '原生版官方一般股名稱來源未啟用，使用券商名稱或代碼' : '此環境沒有公開名稱路由，使用券商名稱或代碼' };
-        }
-        return;
-    }
+    if (isTauri || isPublicMetadataUnavailable()) return;
     const now = Date.now();
-    const day = dayAt(now);
+    const day = todayStr();
     if (pending && attemptDay === day) return;
     if (attemptDay === day && now >= lastAttempt && now < nextAttempt) return;
     controller?.abort();
@@ -86,37 +48,20 @@ export function ensureEquityNamesFresh(): void {
     const round = ++activeRound;
     attemptDay = day;
     lastAttempt = now;
-    status = { ...status, phase: 'loading', lastAttemptAt: new Date(now).toISOString(), retryAt: null,
-        error: null, cleanupError: null, listenerError: null };
-    const current = () => round === activeRound && !roundController.signal.aborted && dayAt(Date.now()) === day;
+    const current = () => round === activeRound && !roundController.signal.aborted && todayStr() === day;
     const refresh = async () => {
         const outcomes = await Promise.allSettled(exchanges.map(async exchange => {
-            const payload = await fetchPublicJson(routes[exchange], {
-                signal: roundController.signal,
-                onCleanupError: error => {
-                    if (current()) status = { ...status, cleanupError: message(error) };
-                },
-            });
+            const payload = await fetchPublicJson(routes[exchange], { signal: roundController.signal });
             const previous = lastGood[exchange];
             const result = normalizeStockNames(payload, exchange, day, previous?.entries.length);
             if (previous && result.sourceDate < previous.sourceDate) throw new Error('Equity source became older');
             return result;
         }));
         if (!current()) return;
-        const completedAt = new Date().toISOString();
+        // Each failed source keeps its last good names; the successful ones publish together.
         const nextGood = { ...lastGood };
-        let failed = false;
-        const sources = outcomes.map((outcome, index): EquitySourceStatus => {
-            const exchange = exchanges[index]!;
-            const previous = status.sources[index]!;
-            if (outcome.status === 'rejected') {
-                failed = true;
-                return { ...previous, error: message(outcome.reason) };
-            }
-            const source = outcome.value;
-            nextGood[exchange] = source;
-            return { exchange, url: EQUITY_SOURCES[exchange], count: source.entries.length, sourceDate: source.sourceDate,
-                invalidRows: source.invalidRows, conflictingCodes: source.conflictingCodes, lastSuccessAt: completedAt, error: null };
+        outcomes.forEach((outcome, index) => {
+            if (outcome.status === 'fulfilled') nextGood[exchanges[index]!] = outcome.value;
         });
         const nextNames = new Map<string, DisplayName>();
         for (const exchange of exchanges) for (const entry of nextGood[exchange]?.entries ?? []) {
@@ -129,20 +74,14 @@ export function ensureEquityNamesFresh(): void {
         });
         lastGood = nextGood;
         if (changed) { byIdentity = nextNames; version++; }
-        nextAttempt = Date.now() + (failed ? RETRY_MS : FRESH_MS);
-        status = { ...status, phase: failed ? 'error' : 'ready', sources,
-            lastSuccessAt: outcomes.some(outcome => outcome.status === 'fulfilled') ? completedAt : status.lastSuccessAt,
-            retryAt: failed ? new Date(nextAttempt).toISOString() : null,
-            error: failed ? sources.filter(source => source.error).map(source => `${source.exchange}: ${source.error}`).join('; ') : null };
+        nextAttempt = Date.now() + (outcomes.some(outcome => outcome.status === 'rejected') ? RETRY_MS : FRESH_MS);
         if (changed) for (const listener of [...listeners]) {
-            try { listener(); }
-            catch (error) { status = { ...status, listenerError: message(error) }; }
+            // A consumer callback is not a source failure and must not prevent other readers.
+            try { listener(); } catch { /* isolated */ }
         }
     };
-    pending = refresh().catch(error => {
-        if (!current()) return;
-        nextAttempt = Date.now() + RETRY_MS;
-        status = { ...status, phase: 'error', error: message(error), retryAt: new Date(nextAttempt).toISOString() };
+    pending = refresh().catch(() => {
+        if (current()) nextAttempt = Date.now() + RETRY_MS;
     }).finally(() => {
         if (round === activeRound) pending = null;
     });

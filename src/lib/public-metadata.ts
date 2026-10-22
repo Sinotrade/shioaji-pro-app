@@ -24,9 +24,7 @@ function missingRoute(response: Response): boolean {
 }
 
 /** Public name metadata only. Native transport stays gated until its cookie policy is verified. */
-export function fetchPublicJson(route: PublicMetadataRoute, options: {
-    signal?: AbortSignal; onCleanupError?: (error: unknown) => void;
-} = {}): Promise<unknown> {
+export function fetchPublicJson(route: PublicMetadataRoute, options: { signal?: AbortSignal } = {}): Promise<unknown> {
     if (!ROUTES.has(route)) return Promise.reject(new Error('Public metadata route is not allowed'));
     if (isTauri) return Promise.reject(new Error('Native public metadata transport is not enabled'));
     const controller = new AbortController();
@@ -42,7 +40,7 @@ export function fetchPublicJson(route: PublicMetadataRoute, options: {
                 const owned = reader;
                 reader = null;
                 if (owned) {
-                    void owned.cancel().catch(error => options.onCleanupError?.(error));
+                    void owned.cancel().catch(() => undefined);
                     owned.releaseLock();
                 }
                 controller.abort();
@@ -59,7 +57,7 @@ export function fetchPublicJson(route: PublicMetadataRoute, options: {
                 credentials: 'omit', redirect: 'manual', cache: 'no-store', signal: controller.signal,
             });
             if (settled) {
-                void response.body?.cancel().catch(error => options.onCleanupError?.(error));
+                void response.body?.cancel().catch(() => undefined);
                 return;
             }
             if (missingRoute(response)) {

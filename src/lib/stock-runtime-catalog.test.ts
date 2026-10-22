@@ -45,7 +45,6 @@ describe('ordinary name runtime batch', () => {
         expect(store.getEquityNamesVersion()).toBe(1);
         expect(store.equityNameForLive('TSE', '2330')).toEqual({ name: '合成簡稱', aliases: ['合成簡稱股份有限公司'] });
         expect(store.equityNameForLive('OTC', '2330')).toBeUndefined();
-        expect(store.getEquityNamesStatus().phase).toBe('ready');
         expect(vi.getTimerCount()).toBe(0);
         detach();
     });
@@ -80,9 +79,6 @@ describe('ordinary name runtime batch', () => {
         expect(store.equityNameForLive('TSE', '2330')?.name).toBe('合成新簡稱');
         expect(store.equityNameForLive('OTC', '3456')?.name).toBe('合成新簡稱');
         expect(store.equityNameForLive('OES', '3456')?.name).toBe('合成簡稱');
-        const status = store.getEquityNamesStatus();
-        expect(status.phase).toBe('error');
-        expect(status.sources.find(source => source.exchange === 'OES')).toMatchObject({ count: 1, sourceDate: '2026-10-17', error: 'Synthetic OES unavailable' });
         expect(store.getEquityNamesVersion()).toBe(2);
     });
 
@@ -131,20 +127,16 @@ describe('ordinary name runtime batch', () => {
         mock.fetch.mockImplementation(async route => payload(route, '倒退名稱', '1130228'));
         store.ensureEquityNamesFresh(); await flush();
         expect(store.equityNameForLive('TSE', '2330')?.name).toBe('原簡稱');
-        expect(store.getEquityNamesStatus().sources.every(source => source.error?.includes('older'))).toBe(true);
+        expect(store.getEquityNamesVersion()).toBe(1);
     });
 
-    it('records cleanup and listener errors without blocking other subscribers', async () => {
-        mock.fetch.mockImplementation(async (route, opts) => {
-            opts.onCleanupError(new Error('Synthetic cleanup error'));
-            return payload(route);
-        });
+    it('a throwing listener does not block other subscribers or the published names', async () => {
         store.subscribeEquityNames(() => { throw new Error('Synthetic listener error'); });
         const listener = vi.fn();
         store.subscribeEquityNames(listener);
         store.ensureEquityNamesFresh(); await flush();
         expect(listener).toHaveBeenCalledTimes(1);
-        expect(store.getEquityNamesStatus()).toMatchObject({ phase: 'ready', cleanupError: 'Synthetic cleanup error', listenerError: 'Synthetic listener error' });
+        expect(store.equityNameForLive('TSE', '2330')?.name).toBe('合成簡稱');
     });
 
     it('a missing route stops refreshing until reload, past the retry delay and the next Taiwan day', async () => {
@@ -169,7 +161,6 @@ describe('ordinary name runtime batch', () => {
         store.ensureEquityNamesFresh();
         store.ensureEquityNamesFresh();
         await flush();
-        expect(store.getEquityNamesStatus()).toMatchObject({ phase: 'gated' });
         expect(mock.fetch).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
     });

@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useProductNamesVersion } from '../hooks/use-product-names-version';
+import { useStockCatalog } from '../hooks/use-stock-catalog';
 import {
-    loadStockCatalog,
     searchStocks,
     type StockMeta,
 } from '../lib/stock-index';
-import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
+import { getProductCatalogVersion } from '../lib/product-catalog-version';
 import * as styles from './derivative-explorer.css';
 
 export function UnderlyingPicker({
@@ -15,38 +14,12 @@ export function UnderlyingPicker({
     value: StockMeta | null;
     onChange: (stock: StockMeta) => void;
 }) {
-    const [catalog, setCatalog] = useState<StockMeta[]>([]);
     const [input, setInput] = useState('');
     const [open, setOpen] = useState(false);
-    const version = useProductCatalogVersion();
-    const namesVersion = useProductNamesVersion();
-    const [refresh, setRefresh] = useState(0);
-    const [error, setError] = useState(false);
-    const [loading, setLoading] = useState(false);
-    const [catalogVersion, setCatalogVersion] = useState(-1);
+    const { catalog, ready, error, loading, retry, version } = useStockCatalog();
     const composing = useRef(false);
     const blurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     useEffect(() => () => clearTimeout(blurTimer.current), []);
-
-    useEffect(() => {
-        const controller = new AbortController();
-        let active = true;
-        const isCurrent = () => active && getProductCatalogVersion() === version;
-        setLoading(true);
-        setError(false);
-        loadStockCatalog({ signal: controller.signal })
-            .then(rows => { if (isCurrent()) { setCatalog(rows); setCatalogVersion(version); } })
-            .catch(() => { if (isCurrent()) setError(true); })
-            .finally(() => { if (isCurrent()) setLoading(false); });
-        return () => { active = false; controller.abort(); };
-    }, [version, namesVersion, refresh]);
-
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        const onFocus = () => setRefresh(value => value + 1);
-        window.addEventListener('focus', onFocus);
-        return () => window.removeEventListener('focus', onFocus);
-    }, []);
 
     useEffect(() => {
         // value 清空時同步清輸入框 — 外部（連動/手動切家族）改變狀態
@@ -55,10 +28,10 @@ export function UnderlyingPicker({
     }, [value, open]);
 
     const suggestions = useMemo(() => {
-        if (!open || catalogVersion !== version || error) return [];
+        if (!open || !ready) return [];
         const query = input.replace(/^\d{4}\s+/, '').trim();
         return searchStocks(catalog, query, 8);
-    }, [catalog, input, open, catalogVersion, version, error]);
+    }, [catalog, input, open, ready]);
 
     return (
         <div className={styles.picker}>
@@ -72,7 +45,7 @@ export function UnderlyingPicker({
                     clearTimeout(blurTimer.current);
                     setInput('');
                     setOpen(true);
-                    setRefresh(value => value + 1);
+                    retry();
                 }}
                 onChange={(event) => {
                     setInput(event.target.value);
@@ -93,7 +66,7 @@ export function UnderlyingPicker({
             {error && (
                 <span role='alert'>
                     標的目錄載入失敗
-                    <button type='button' onClick={() => setRefresh(value => value + 1)}>重試</button>
+                    <button type='button' onClick={retry}>重試</button>
                 </span>
             )}
             {open && suggestions.length > 0 && (

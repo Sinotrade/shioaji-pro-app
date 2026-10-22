@@ -63,12 +63,12 @@ afterEach(() => {
     vi.unstubAllEnvs();
 });
 
-describe('ETF runtime pure source validation', () => {
+describe('ETF normalizer shared by the snapshot generator and runtime refresh', () => {
     it('keeps public names and aliases only, joins daily names without inventing ETF membership', () => {
         const data = small();
-        const catalog = runtime.buildEtfRuntimeCatalog(
-            data.tse.map(entry => ({ ...entry, price: 999 })), data.otc,
-            [...data.daily, { Code: 'STK1', Name: '普通股，不是 ETF', Date: '1151016', price: 888 }], AT, emptyPrior,
+        const catalog = buildEtfCatalog(
+            data.tse.map(entry => ({ ...entry, price: 999 })), data.otc, AT,
+            [...data.daily, { Code: 'STK1', Name: '普通股，不是 ETF', Date: '1151016', price: 888 }], emptyPrior,
         );
         expect(catalog.entries).toEqual([
             { code: 'ETF2', exchange: 'OTC', name: '上櫃基金' },
@@ -83,54 +83,55 @@ describe('ETF runtime pure source validation', () => {
 
     it('decodes named/numeric entities as plain text, not HTML, and deduplicates aliases', () => {
         const data = small();
-        const result = runtime.buildEtfRuntimeCatalog(
+        const result = buildEtfCatalog(
             [{ ...data.tse[0], 基金簡稱: 'S&amp;P&#174;', 基金中文名稱: 'S&amp;P&#174;' }],
-            data.otc, [{ ...data.daily[0], Name: '新&#xAE;&lt;基金&gt;' }], AT, emptyPrior,
+            data.otc, AT, [{ ...data.daily[0], Name: '新&#xAE;&lt;基金&gt;' }], emptyPrior,
         );
         expect(result.entries[1]).toEqual({ code: 'ETF1', exchange: 'TSE', name: '新®<基金>', aliases: ['S&P®'] });
     });
 
     it.each(['&unknown;', '&constructor;', '&#99999999;', '&#xD800;', '&#0;', '&#10;'])('rejects malformed or control name entity %s', (name) => {
         const data = small();
-        expect(() => runtime.buildEtfRuntimeCatalog(data.tse, data.otc, [{ ...data.daily[0], Name: name }], AT, emptyPrior)).toThrow(/entity|name/);
+        expect(() => buildEtfCatalog(data.tse, data.otc, AT, [{ ...data.daily[0], Name: name }], emptyPrior)).toThrow(/entity|name/);
     });
 
     it.each([null, {}, [], [null], ['bad-row']])('rejects malformed/empty TWSE structure %j', (tse) => {
         const data = small();
-        expect(() => runtime.buildEtfRuntimeCatalog(tse, data.otc, data.daily, AT, emptyPrior)).toThrow();
+        expect(() => buildEtfCatalog(tse, data.otc, AT, data.daily, emptyPrior)).toThrow();
     });
 
     it('requires success and non-empty TPEx/daily sources', () => {
         const data = small();
-        for (const otc of [null, {}, { ...data.otc, status: 'failure' }, { status: 'success', data: [] }]) {
-            expect(() => runtime.buildEtfRuntimeCatalog(data.tse, otc, data.daily, AT, emptyPrior)).toThrow();
+        for (const otc of [null, {}, { ...data.otc, status: 'failure' }, { status: 'success', data: [] }, { status: 'success', data: [null] }]) {
+            expect(() => buildEtfCatalog(data.tse, otc, AT, data.daily, emptyPrior)).toThrow();
         }
-        expect(() => runtime.buildEtfRuntimeCatalog(data.tse, data.otc, [], AT, emptyPrior)).toThrow();
+        expect(() => buildEtfCatalog(data.tse, data.otc, AT, [], emptyPrior)).toThrow();
+        expect(() => buildEtfCatalog(data.tse, data.otc, AT, [null], emptyPrior)).toThrow(/source row/);
     });
 
     it('rejects invalid identity/name fields and same-market duplicates, but allows cross-market code collisions', () => {
         const data = small();
         for (const code of ['<script>', 'etf1', ' ETF1', '', 2330]) {
-            expect(() => runtime.buildEtfRuntimeCatalog([{ ...data.tse[0], 基金代號: code }], data.otc, data.daily, AT, emptyPrior)).toThrow(/code/);
+            expect(() => buildEtfCatalog([{ ...data.tse[0], 基金代號: code }], data.otc, AT, data.daily, emptyPrior)).toThrow(/code/);
         }
-        expect(() => runtime.buildEtfRuntimeCatalog([{ ...data.tse[0], 基金簡稱: '' }], data.otc, data.daily, AT, emptyPrior)).toThrow(/name/);
-        expect(() => runtime.buildEtfRuntimeCatalog([...data.tse, ...data.tse], data.otc, data.daily, AT, emptyPrior)).toThrow(/Duplicate ETF/);
-        expect(() => runtime.buildEtfRuntimeCatalog(data.tse, { ...data.otc, data: [...data.otc.data, ...data.otc.data] }, data.daily, AT, emptyPrior)).toThrow(/Duplicate ETF/);
-        expect(() => runtime.buildEtfRuntimeCatalog(data.tse, data.otc, [...data.daily, ...data.daily], AT, emptyPrior)).toThrow(/Duplicate TWSE daily/);
-        const result = runtime.buildEtfRuntimeCatalog(data.tse, { status: 'success', data: [{ stockNo: 'ETF1', stockName: '同碼上櫃' }] }, data.daily, AT, emptyPrior);
+        expect(() => buildEtfCatalog([{ ...data.tse[0], 基金簡稱: '' }], data.otc, AT, data.daily, emptyPrior)).toThrow(/name/);
+        expect(() => buildEtfCatalog([...data.tse, ...data.tse], data.otc, AT, data.daily, emptyPrior)).toThrow(/Duplicate ETF/);
+        expect(() => buildEtfCatalog(data.tse, { ...data.otc, data: [...data.otc.data, ...data.otc.data] }, AT, data.daily, emptyPrior)).toThrow(/Duplicate ETF/);
+        expect(() => buildEtfCatalog(data.tse, data.otc, AT, [...data.daily, ...data.daily], emptyPrior)).toThrow(/Duplicate TWSE daily/);
+        const result = buildEtfCatalog(data.tse, { status: 'success', data: [{ stockNo: 'ETF1', stockName: '同碼上櫃' }] }, AT, data.daily, emptyPrior);
         expect(result.entries.map(entry => `${entry.exchange}:${entry.code}`)).toEqual(['OTC:ETF1', 'TSE:ETF1']);
     });
 
     it('rejects impossible, missing, inconsistent, future and regressed source dates', () => {
         const data = small();
         for (const date of ['1150231', '', undefined, '1151018']) {
-            expect(() => runtime.buildEtfRuntimeCatalog([{ ...data.tse[0], 出表日期: date }], data.otc, data.daily.map(entry => ({ ...entry, Date: date })), AT, emptyPrior)).toThrow(/date/);
+            expect(() => buildEtfCatalog([{ ...data.tse[0], 出表日期: date }], data.otc, AT, data.daily.map(entry => ({ ...entry, Date: date })), emptyPrior)).toThrow(/date/);
         }
-        expect(() => runtime.buildEtfRuntimeCatalog([...data.tse, { ...data.tse[0], 基金代號: 'ETF3', 出表日期: '1151015' }], data.otc, data.daily, AT, emptyPrior)).toThrow(/inconsistent/);
-        expect(() => runtime.buildEtfRuntimeCatalog(data.tse, data.otc, data.daily.map(entry => ({ ...entry, Date: '1151015' })), AT, emptyPrior)).toThrow(/older/);
-        expect(() => runtime.buildEtfRuntimeCatalog(data.tse, data.otc, data.daily, 'not-a-date', emptyPrior)).toThrow(/timestamp/);
-        const prior = runtime.buildEtfRuntimeCatalog(data.tse, data.otc, data.daily, AT, emptyPrior);
-        expect(() => runtime.buildEtfRuntimeCatalog(data.tse.map(entry => ({ ...entry, 出表日期: '1151015' })), data.otc, data.daily.map(entry => ({ ...entry, Date: '1151015' })), AT, prior)).toThrow(/became older/);
+        expect(() => buildEtfCatalog([...data.tse, { ...data.tse[0], 基金代號: 'ETF3', 出表日期: '1151015' }], data.otc, AT, data.daily, emptyPrior)).toThrow(/inconsistent/);
+        expect(() => buildEtfCatalog(data.tse, data.otc, AT, data.daily.map(entry => ({ ...entry, Date: '1151015' })), emptyPrior)).toThrow(/older/);
+        expect(() => buildEtfCatalog(data.tse, data.otc, 'not-a-date', data.daily, emptyPrior)).toThrow(/timestamp/);
+        const prior = buildEtfCatalog(data.tse, data.otc, AT, data.daily, emptyPrior);
+        expect(() => buildEtfCatalog(data.tse.map(entry => ({ ...entry, 出表日期: '1151015' })), data.otc, AT, data.daily.map(entry => ({ ...entry, Date: '1151015' })), prior)).toThrow(/became older/);
     });
 
     it('rejects over-20% shrink in each source independently, preserving the previous snapshot', () => {
@@ -140,10 +141,18 @@ describe('ETF runtime pure source validation', () => {
             if (key === 'tse') reduced.tse = reduced.tse.slice(0, 1);
             if (key === 'otc') reduced.otc.data = reduced.otc.data.slice(0, 1);
             if (key === 'daily') reduced.daily = reduced.daily.slice(0, 1);
-            expect(() => runtime.buildEtfRuntimeCatalog(reduced.tse, reduced.otc, reduced.daily, AT)).toThrow(/shrank/);
+            expect(() => buildEtfCatalog(reduced.tse, reduced.otc, AT, reduced.daily, bundled as EtfNameCatalog)).toThrow(/shrank/);
         }
-        const result = runtime.buildEtfRuntimeCatalog(data.tse, data.otc, data.daily, AT);
+        const result = buildEtfCatalog(data.tse, data.otc, AT, data.daily, bundled as EtfNameCatalog);
         expect(result.entries).toEqual(bundled.entries);
+    });
+
+    it('accepts a source that shrank by exactly 20%', () => {
+        const data = small();
+        const funds = Array.from({ length: 5 }, (_, index) => ({ ...data.tse[0]!, 基金代號: `ETF${index + 1}` }));
+        const prior = buildEtfCatalog(funds, data.otc, AT, data.daily, emptyPrior);
+        expect(buildEtfCatalog(funds.slice(0, 4), data.otc, AT, data.daily, prior).entries).toHaveLength(5);
+        expect(() => buildEtfCatalog(funds.slice(0, 3), data.otc, AT, data.daily, prior)).toThrow(/shrank/);
     });
 
     it('regenerating from identical official rows writes the committed snapshot byte for byte, key order included', () => {
@@ -163,12 +172,12 @@ describe('ETF runtime pure source validation', () => {
         data.tse[0]!.基金中文名稱 = '合成新基金完整名稱';
         data.daily.find(entry => entry.Code === keep)!.Name = '合成新每日名稱';
         data.tse = data.tse.filter(entry => entry.基金代號 !== remove);
-        const result = runtime.buildEtfRuntimeCatalog(data.tse, data.otc, data.daily, AT);
+        const result = buildEtfCatalog(data.tse, data.otc, AT, data.daily, bundled as EtfNameCatalog);
         const current = result.entries.find(entry => entry.code === keep && entry.exchange === 'TSE')!;
         expect(current.name).toBe('合成新每日名稱');
         expect(current.aliases).toEqual(expect.arrayContaining([old.name, ...(old.aliases ?? []), '合成新基金簡稱', '合成新基金完整名稱']));
         expect(result.entries.some(entry => entry.code === remove && entry.exchange === 'TSE')).toBe(false);
-        const repeated = runtime.buildEtfRuntimeCatalog(data.tse, data.otc, data.daily, AT, result);
+        const repeated = buildEtfCatalog(data.tse, data.otc, AT, data.daily, result);
         expect(repeated.entries).toEqual(result.entries);
     });
 });
@@ -180,7 +189,7 @@ describe('shared background refresh lifecycle', () => {
         const unsubscribe = runtime.subscribeEtfNames(vi.fn());
         unsubscribe();
         expect(runtime.getEtfNamesVersion()).toBe(0);
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'snapshot', usingSnapshot: true, count: bundled.entries.length });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(m.fetch).not.toHaveBeenCalled();
         expect(m.nativeFetch).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
@@ -191,7 +200,6 @@ describe('shared background refresh lifecycle', () => {
         runtime.subscribeEtfNames(notify);
         const pending = runtime.refreshEtfNames();
         for (let index = 0; index < 20; index += 1) expect(runtime.refreshEtfNames()).toBe(pending);
-        expect(runtime.getEtfNamesStatus().phase).toBe('refreshing');
         expect(runtime.etfNameForLive('00679B', 'OTC')).toBeDefined();
         await pending;
         expect(m.fetch.mock.calls.map(call => call[0])).toEqual(ROUTES);
@@ -202,25 +210,10 @@ describe('shared background refresh lifecycle', () => {
             expect(options.headers).toBeUndefined();
             expect(options.body).toBeUndefined();
         }
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'ready', usingSnapshot: false, error: null, lastSuccessAt: AT });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: false });
         expect(runtime.getEtfNamesVersion()).toBe(0);
         expect(notify).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
-    });
-
-    it('dev browser uses three fixed same-origin routes while provenance keeps official URLs', async () => {
-        vi.stubEnv('DEV', true);
-        const routes: readonly string[] = [ETF_SOURCE_ROUTES.tseFunds, ETF_SOURCE_ROUTES.otcFunds, ETF_SOURCE_ROUTES.tseNames];
-        const data = full();
-        m.fetch.mockImplementation((url: string) => {
-            const index = routes.indexOf(url);
-            return Promise.resolve(new Response(JSON.stringify(index === 0 ? data.tse : index === 1 ? data.otc : data.daily), { headers: { 'Content-Type': 'application/json' } }));
-        });
-        await runtime.refreshEtfNames();
-        expect(m.fetch.mock.calls.map(call => call[0])).toEqual(routes);
-        expect(m.fetch.mock.calls.map(call => call[1].method)).toEqual(['GET', 'POST', 'GET']);
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'ready', usingSnapshot: false });
-        expect(runtime.getEtfNamesStatus().sources.map(source => source.url)).toEqual(URLS);
     });
 
     it('useProductNamesVersion only subscribes, updates on authority change and does not start requests or polling', async () => {
@@ -305,7 +298,7 @@ describe('shared background refresh lifecycle', () => {
         m.fetch.mockImplementation((url: string) => url === ROUTES[0]
             ? Promise.resolve(new Response('<html>busy</html>', { status: 503, headers: { 'Content-Type': 'text/html' } })) : new Promise(() => undefined));
         await expect(runtime.refreshEtfNames()).resolves.toBeUndefined();
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'error', usingSnapshot: true, error: 'Public metadata HTTP 503' });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(runtime.etfNameForLive('00679B', 'OTC')?.name).toBe('元大美債20年');
         for (const [, options] of m.fetch.mock.calls) expect(options.signal.aborted).toBe(true);
         expect(vi.getTimerCount()).toBe(0);
@@ -318,7 +311,7 @@ describe('shared background refresh lifecycle', () => {
         await vi.advanceTimersByTimeAsync(1);
         await runtime.refreshEtfNames();
         expect(m.fetch).toHaveBeenCalledTimes(6);
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'ready', error: null, retryAt: null });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: false });
     });
 
     it('invalid/shrunken sources never partially replace the last good map or increment its version', async () => {
@@ -327,8 +320,7 @@ describe('shared background refresh lifecycle', () => {
         data.tse = data.tse.slice(0, 1);
         m.fetch.mockImplementation(respond(data));
         await runtime.refreshEtfNames();
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'error', usingSnapshot: true });
-        expect(runtime.getEtfNamesStatus().error).toContain('shrank');
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(runtime.getEtfNamesVersion()).toBe(0);
         expect(runtime.etfNameForLive(data.otc.data[0]!.stockNo, 'OTC')?.name).toBe(bundled.entries.find(entry => entry.code === data.otc.data[0]!.stockNo && entry.exchange === 'OTC')!.name);
     });
@@ -341,7 +333,7 @@ describe('shared background refresh lifecycle', () => {
         const timedOut = runtime.refreshEtfNames();
         await vi.advanceTimersByTimeAsync(5000);
         await timedOut;
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'error', error: 'Public metadata deadline exceeded' });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(m.fetch.mock.calls[1]![1].signal.aborted).toBe(true);
         expect(vi.getTimerCount()).toBe(0);
         await vi.advanceTimersByTimeAsync(30_000);
@@ -349,7 +341,7 @@ describe('shared background refresh lifecycle', () => {
         await runtime.refreshEtfNames();
         late(new Response(JSON.stringify(lateData.otc)));
         await flush();
-        expect(runtime.getEtfNamesStatus().phase).toBe('ready');
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: false });
         expect(runtime.getEtfNamesVersion()).toBe(0);
         expect(runtime.etfNameForLive(lateData.otc.data[0]!.stockNo, 'OTC')?.name).not.toBe('逾時晚到，不得採用');
     });
@@ -358,17 +350,17 @@ describe('shared background refresh lifecycle', () => {
         let body!: ReadableStreamDefaultController<Uint8Array>;
         const stream = new ReadableStream<Uint8Array>({ start(controller) { body = controller; } });
         m.fetch.mockImplementation((url: string) => url === ROUTES[0] ? Promise.resolve(new Response(stream, { headers: { 'Content-Type': 'application/json' } })) : respond()(url));
-        const pending = runtime.refreshEtfNames();
+        let settled = false;
+        const pending = runtime.refreshEtfNames().then(() => { settled = true; });
         await flush();
         await vi.advanceTimersByTimeAsync(4999);
-        expect(runtime.getEtfNamesStatus().phase).toBe('refreshing');
+        expect(settled).toBe(false);
         await vi.advanceTimersByTimeAsync(1);
         await pending;
-        expect(runtime.getEtfNamesStatus().phase).toBe('error');
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(m.fetch.mock.calls[0]![1].signal.aborted).toBe(true);
         expect(() => body.enqueue(new TextEncoder().encode(JSON.stringify(full().tse)))).toThrow(/closed/);
         await flush();
-        expect(runtime.getEtfNamesStatus().phase).toBe('error');
         expect(runtime.getEtfNamesVersion()).toBe(0);
         expect(vi.getTimerCount()).toBe(0);
     });
@@ -381,7 +373,7 @@ describe('shared background refresh lifecycle', () => {
             ? Promise.resolve(new Response(body, { headers: { 'Content-Type': 'application/json', 'Content-Length': String(2 * 1024 * 1024 + 1) } })) : respond()(url));
         await runtime.refreshEtfNames();
         await flush();
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'error', usingSnapshot: true, error: 'Public metadata exceeds 2 MiB' });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(pull).not.toHaveBeenCalled();
         expect(cancel).toHaveBeenCalledOnce();
         expect(m.fetch.mock.calls[0]![1].signal.aborted).toBe(true);
@@ -399,7 +391,7 @@ describe('shared background refresh lifecycle', () => {
             ? Promise.resolve(new Response(body, { headers: { 'Content-Type': 'application/json', 'Content-Length': '1' } })) : respond()(url));
         await runtime.refreshEtfNames();
         await flush();
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'error', usingSnapshot: true, error: 'Public metadata exceeds 2 MiB' });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(chunks).toBe(2);
         expect(cancel).toHaveBeenCalledOnce();
         expect(runtime.etfNameForLive('00679B', 'OTC')?.name).toBe('元大美債20年');
@@ -407,7 +399,7 @@ describe('shared background refresh lifecycle', () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('a browser slow body still expires at five seconds; reader.cancel rejection is diagnosed without an unhandled rejection', async () => {
+    it('a browser slow body still expires at five seconds; a rejected reader.cancel leaves no unhandled rejection', async () => {
         const cancel = vi.fn(async () => { throw new Error('合成 body cleanup 拒絕'); });
         const body = new ReadableStream<Uint8Array>({ cancel });
         m.fetch.mockImplementation((url: string) => url === ROUTES[0] ? Promise.resolve(new Response(body, { headers: { 'Content-Type': 'application/json' } })) : respond()(url));
@@ -416,9 +408,7 @@ describe('shared background refresh lifecycle', () => {
         await vi.advanceTimersByTimeAsync(5000);
         await expect(pending).resolves.toBeUndefined();
         await flush();
-        expect(runtime.getEtfNamesStatus()).toMatchObject({
-            phase: 'error', error: 'Public metadata deadline exceeded', cleanupError: '合成 body cleanup 拒絕',
-        });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(cancel).toHaveBeenCalledOnce();
         expect(runtime.getEtfNamesVersion()).toBe(0);
         expect(vi.getTimerCount()).toBe(0);
@@ -428,16 +418,16 @@ describe('shared background refresh lifecycle', () => {
         m.fetch.mockImplementation((url: string) => url === ROUTES[0]
             ? Promise.resolve(new Response(null, { headers: { 'Content-Type': 'application/json' } })) : respond()(url));
         await expect(runtime.refreshEtfNames()).resolves.toBeUndefined();
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'error', usingSnapshot: true, error: 'Public metadata body is empty' });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(runtime.getEtfNamesVersion()).toBe(0);
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('invalid JSON becomes a recoverable diagnostic, not a UI rejection', async () => {
+    it('invalid JSON keeps the snapshot instead of rejecting the UI', async () => {
         m.fetch.mockImplementation(() => Promise.resolve(new Response('{not-json', { headers: { 'Content-Type': 'application/json' } })));
         await expect(runtime.refreshEtfNames()).resolves.toBeUndefined();
-        expect(runtime.getEtfNamesStatus().phase).toBe('error');
-        expect(runtime.getEtfNamesStatus().error).toBeTruthy();
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
+        expect(runtime.getEtfNamesVersion()).toBe(0);
         expect(vi.getTimerCount()).toBe(0);
     });
 
@@ -454,12 +444,12 @@ describe('shared background refresh lifecycle', () => {
         vi.setSystemTime('2026-10-18T04:00:00.000Z');
         await runtime.refreshEtfNames();
         expect(m.fetch).toHaveBeenCalledTimes(3);
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ usingSnapshot: true });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(runtime.etfNameForLive('00679B', 'OTC')?.name).toBe('元大美債20年');
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('a notification exception is diagnosed without rejecting refresh or starving other subscribers', async () => {
+    it('a notification exception neither rejects refresh nor starves other subscribers', async () => {
         const data = full();
         data.otc.data[0]!.stockName = '合成更名';
         m.fetch.mockImplementation(respond(data));
@@ -467,25 +457,15 @@ describe('shared background refresh lifecycle', () => {
         const notify = vi.fn();
         runtime.subscribeEtfNames(notify);
         await expect(runtime.refreshEtfNames()).resolves.toBeUndefined();
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'ready', error: null, listenerError: '測試訂閱者失敗' });
+        expect(runtime.etfNameForLive(data.otc.data[0]!.stockNo, 'OTC')?.name).toBe('合成更名');
         expect(notify).toHaveBeenCalledOnce();
     });
 
-    it('native is gated with readable status and zero HTTP imports, requests or timers', async () => {
-        m.native = true;
-        await runtime.refreshEtfNames();
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'gated', usingSnapshot: true });
-        expect(runtime.getEtfNamesStatus().error).toContain('原生版官方名稱來源未啟用');
-        expect(m.fetch).not.toHaveBeenCalled();
-        expect(m.nativeFetch).not.toHaveBeenCalled();
-        expect(runtime.getEtfNamesVersion()).toBe(0);
-        expect(vi.getTimerCount()).toBe(0);
-    });
-
-    it('repeated native reads preserve snapshot without falling back, expanding permissions or polling', async () => {
+    it('native is gated: repeated reads keep the snapshot with zero HTTP imports, requests or timers', async () => {
         m.native = true;
         for (let index = 0; index < 20; index++) await runtime.refreshEtfNames();
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'gated', usingSnapshot: true });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
+        expect(runtime.getEtfNamesVersion()).toBe(0);
         expect(m.fetch).not.toHaveBeenCalled();
         expect(m.nativeFetch).not.toHaveBeenCalled();
         expect(runtime.etfNameForLive('00679B', 'OTC')).toBeDefined();

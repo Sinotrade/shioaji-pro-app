@@ -3,29 +3,18 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { primeContract } from '../lib/contracts-cache';
 import { isTauri } from '../lib/runtime';
-import {
-    searchProducts,
-    type ProductSuggestion,
-} from '../lib/product-search';
+import type { ProductSuggestion } from '../lib/product-search';
 import { BLOCK_META, type BlockType } from '../lib/workspace';
 import type { SecurityType } from '../lib/types/contract';
 import * as styles from './command-palette.css';
-import { optionText } from './search-surface.css';
+import { resultDetail, resultMeta } from './search-surface.css';
 import { AsyncStatus } from './async-status';
-import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
-import { useProductNamesVersion } from '../hooks/use-product-names-version';
-import { getProductNamesVersion } from '../lib/product-names-version';
-import { ProductBadge } from './product-badge';
 import { ProductSearchDetails } from './product-search-details';
-import { PRODUCT_SEARCH_DEBOUNCE_MS } from '../lib/search-request';
-import { PRODUCT_BADGES, productBadgeType, productDetailText } from '../lib/product-badge-presentation';
+import { optionId, ProductSuggestionRow, productIdentity, SearchOption } from './product-suggestion-row';
+import { useProductSearch } from '../hooks/use-product-search';
 
 const PANEL_TYPES = Object.keys(BLOCK_META) as BlockType[];
 const PANEL_MATCH_LIMIT = 4;
-const productIdentity = (item: ProductSuggestion) => JSON.stringify([item.security_type, item.exchange, item.code]);
-// Row identities hold JSON punctuation; escape it so ids also work as CSS selectors.
-const optionId = (listId: string, identity: string) =>
-    `${listId}-${identity.replace(/[^A-Za-z0-9]/g, (char) => `_${char.charCodeAt(0).toString(16)}_`)}`;
 
 export function CommandPalette({
     open,
@@ -41,23 +30,12 @@ export function CommandPalette({
     const [value, setValue] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(false);
-    const [searchError, setSearchError] = useState(false);
-    const [searching, setSearching] = useState(false);
-    const [searchRetry, setSearchRetry] = useState(0);
-    const [suggestions, setSuggestions] = useState<ProductSuggestion[]>([]);
-    const [activeIdentity, setActiveIdentity] = useState<string | null>(null);
+    const search = useProductSearch(value, { limit: 8, enabled: open, progressive: true });
+    const { suggestions, searching, searchError, activeIdentity, setActiveIdentity } = search;
     const inputRef = useRef<HTMLInputElement>(null);
     const listId = useId();
-    const resultsRef = useRef<HTMLDivElement>(null);
     const rowRefs = useRef(new Map<string, HTMLButtonElement>());
-    const composing = useRef(false);
-    const queryVersion = useRef(0);
-    const searchController = useRef<AbortController | null>(null);
     const pointerPosition = useRef<{ x: number; y: number } | null>(null);
-    const catalogVersion = useProductCatalogVersion();
-    const namesVersion = useProductNamesVersion();
-    const suggestionScope = useRef('');
-    const currentScope = () => JSON.stringify([getProductCatalogVersion(), getProductNamesVersion()]);
 
     const selectWithPointer = (identity: string, event: MouseEvent<HTMLButtonElement>) => {
         const previous = pointerPosition.current;
@@ -65,90 +43,24 @@ export function CommandPalette({
         pointerPosition.current = { x: event.clientX, y: event.clientY };
         setActiveIdentity(identity);
     };
-
-    const cancelSearch = () => {
-        queryVersion.current += 1;
-        searchController.current?.abort();
-        searchController.current = null;
-        setSearching(false);
+    const rowRef = (identity: string) => (node: HTMLButtonElement | null) => {
+        if (node) rowRefs.current.set(identity, node);
+        else rowRefs.current.delete(identity);
     };
+
     const closePalette = () => {
-        cancelSearch();
+        search.cancel();
         onClose();
     };
 
     useEffect(() => {
         if (open) {
-            composing.current = false;
-            queryVersion.current += 1;
             setValue('');
             setError(false);
-            setSuggestions([]);
-            setActiveIdentity(null);
             const focusTimer = setTimeout(() => inputRef.current?.focus(), 0);
-            return () => {
-                clearTimeout(focusTimer);
-                // Parent-driven close/unmount must also invalidate a pending jump.
-                queryVersion.current += 1;
-            };
+            return () => clearTimeout(focusTimer);
         }
     }, [open]);
-
-    useEffect(() => {
-        if (!open || !value.trim() || composing.current) {
-            setSuggestions([]);
-            setSearchError(false);
-            setSearching(open && composing.current && !!value.trim());
-            return;
-        }
-        let active = true;
-        let completed = false;
-        const controller = new AbortController();
-        searchController.current = controller;
-        const requestVersion = ++queryVersion.current;
-        const requestScope = currentScope();
-        const isCurrent = () => active && !controller.signal.aborted && requestVersion === queryVersion.current
-            && requestScope === currentScope() && !composing.current;
-        setSuggestions([]);
-        setActiveIdentity(null);
-        setSearchError(false);
-        setSearching(true);
-        const timer = setTimeout(() => {
-            void searchProducts(value, 8, {
-                includeWarrants: true,
-                signal: controller.signal,
-                onUpdate: (items) => {
-                    if (isCurrent() && !completed) { suggestionScope.current = requestScope; setSuggestions(items); }
-                },
-            })
-                .then((items) => {
-                    completed = true;
-                    if (isCurrent()) {
-                        suggestionScope.current = requestScope;
-                        setSuggestions(items);
-                        setSearching(false);
-                    }
-                })
-                .catch(() => {
-                    completed = true;
-                    if (isCurrent()) {
-                        // Ordinary source failures resolve partial rows in the core.
-                        // A rejection invalidates every row already published by this search.
-                        setSuggestions([]);
-                        setActiveIdentity(null);
-                        setSearchError(true);
-                        setSearching(false);
-                    }
-                });
-        }, PRODUCT_SEARCH_DEBOUNCE_MS);
-        controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
-        return () => {
-            active = false;
-            controller.abort();
-            if (searchController.current === controller) searchController.current = null;
-            clearTimeout(timer);
-        };
-    }, [open, value, searchRetry, catalogVersion, namesVersion]);
 
     const panelMatches = useMemo(() => {
         if (!onAddPanel) return [];
@@ -171,18 +83,12 @@ export function CommandPalette({
     }, [rowIdentities]);
     const activeIndex = Math.max(0, rowIdentities.indexOf(activeIdentity ?? ''));
     const rowCount = rowIdentities.length;
-    const renderedVersion = queryVersion.current;
+    const renderedVersion = search.renderedVersion;
     const revealActiveRow = useCallback(() => {
-        const container = resultsRef.current;
         const identity = rowIdentities[activeIndex];
         const row = identity && rowRefs.current.get(identity);
-        if (!open || !container || !row) return;
-        const box = container.getBoundingClientRect();
-        const rect = row.getBoundingClientRect();
-        const top = box.top + container.clientTop;
-        const bottom = top + container.clientHeight;
-        if (rect.top < top) container.scrollTop -= top - rect.top;
-        else if (rect.bottom > bottom) container.scrollTop += rect.bottom - bottom;
+        if (!open || !row) return;
+        row.scrollIntoView?.({ block: 'nearest' });
     }, [open, activeIndex, rowIdentities]);
     useEffect(() => {
         revealActiveRow();
@@ -196,39 +102,37 @@ export function CommandPalette({
     const addPanelAt = (index: number) => {
         const type = panelMatches[index];
         if (!type) return;
-        cancelSearch();
+        search.cancel();
         onAddPanel?.(type);
         onClose();
     };
 
     const submit = async (picked?: ProductSuggestion) => {
-        if (composing.current || renderedVersion !== queryVersion.current) return;
+        if (search.isComposing() || !search.isCurrent(renderedVersion)) return;
         // active row past the product suggestions → it's a panel command
         if (!picked && activeIndex >= suggestions.length && rowCount > 0) {
             addPanelAt(activeIndex - suggestions.length);
             return;
         }
         const item = picked ?? suggestions[activeIndex];
-        if (item && suggestionScope.current !== currentScope()) {
-            cancelSearch();
-            setSuggestions([]);
-            setSearchRetry(retry => retry + 1);
+        if (item && search.isStale()) {
+            search.retry();
             return;
         }
         const code = item?.code ?? value.trim().toUpperCase();
         if (!code || busy) return;
         // 名稱查詢待決時不可把上一輪結果當成本輪選取；直接代碼仍可送查詢。
         if (!item && searching && !/^[A-Z0-9]+$/.test(code)) return;
-        cancelSearch();
-        const submitVersion = queryVersion.current;
+        search.cancel();
+        const submitVersion = search.currentVersion();
         setBusy(true);
         setError(false);
         try {
             if (item?.contract) primeContract(item.contract);
             await onJump(code, item?.security_type);
-            if (submitVersion === queryVersion.current) onClose();
+            if (search.isCurrent(submitVersion)) onClose();
         } catch {
-            if (submitVersion === queryVersion.current) setError(true);
+            if (search.isCurrent(submitVersion)) setError(true);
         } finally {
             setBusy(false);
         }
@@ -238,7 +142,7 @@ export function CommandPalette({
         <div className={styles.overlay} onClick={closePalette}
             onMouseMove={(event) => { pointerPosition.current = { x: event.clientX, y: event.clientY }; }}>
             <div className={styles.box} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => {
-                if (e.key !== 'Escape' || composing.current || e.nativeEvent?.isComposing || e.keyCode === 229) return;
+                if (e.key !== 'Escape' || search.isComposing() || e.nativeEvent?.isComposing || e.keyCode === 229) return;
                 // Claim the press that closes the palette: focus falls back to the
                 // page, where an unclaimed Esc would arm Esc×2 cancel-all.
                 e.preventDefault();
@@ -255,30 +159,20 @@ export function CommandPalette({
                     aria-activedescendant={rowCount > 0 ? optionId(listId, rowIdentities[activeIndex]!) : undefined}
                     value={value}
                     onCompositionStart={() => {
-                        composing.current = true;
-                        cancelSearch();
-                        setSuggestions([]);
-                        setActiveIdentity(null);
+                        search.startComposition();
                         setError(false);
-                        setSearchRetry((retry) => retry + 1);
                     }}
                     onCompositionEnd={(e) => {
-                        composing.current = false;
-                        cancelSearch();
+                        search.endComposition();
                         setValue(e.currentTarget.value);
-                        setSearchRetry((retry) => retry + 1);
                     }}
                     onChange={(e) => {
-                        cancelSearch();
+                        search.change(e.target.value);
                         setValue(e.target.value);
-                        setSuggestions([]);
-                        setActiveIdentity(null);
-                        setSearchError(false);
-                        setSearching(!!e.target.value.trim());
                         setError(false);
                     }}
                     onKeyDown={(e) => {
-                        if (composing.current || e.nativeEvent?.isComposing || e.keyCode === 229) return;
+                        if (search.isComposing() || e.nativeEvent?.isComposing || e.keyCode === 229) return;
                         if (e.key === 'ArrowDown' && rowCount > 0) {
                             e.preventDefault();
                             setActiveIdentity(rowIdentities[(activeIndex + 1) % rowCount]!);
@@ -291,73 +185,46 @@ export function CommandPalette({
                     }}
                 />
                 {rowCount > 0 && (
-                    <div ref={resultsRef} className={styles.results}>
+                    <div className={styles.results}>
                         <div id={listId} role='listbox' aria-label='搜尋結果'>
                         {suggestions.map((item, index) => {
-                            const detail = productDetailText(item.detail, item.security_type, item.kind);
+                            const identity = productIdentity(item);
                             return (
-                            <button
-                                key={productIdentity(item)}
-                                id={optionId(listId, productIdentity(item))}
-                                role='option'
-                                aria-selected={index === activeIndex}
-                                tabIndex={-1}
-                                ref={(node) => { if (node) rowRefs.current.set(productIdentity(item), node); else rowRefs.current.delete(productIdentity(item)); }}
-                                className={
-                                    index === activeIndex
-                                        ? styles.resultActive
-                                        : styles.result
-                                }
-                                onMouseDown={(event) => event.preventDefault()}
-                                onMouseMove={(event) => selectWithPointer(productIdentity(item), event)}
-                                onClick={() => void submit(item)}
-                            >
-                                <span className={optionText} title={[item.name, item.code, PRODUCT_BADGES[productBadgeType(item.security_type, item.kind)].label, detail].filter(Boolean).join(' · ')}>
-                                    <span className={styles.resultCode}>
-                                        {item.code}
-                                    </span>
-                                    <span className={styles.resultName}>
-                                        {item.name}
-                                    </span>
-                                    <span className={styles.resultMeta}>
-                                        <ProductBadge security_type={item.security_type} kind={item.kind} />
-                                        {detail && <span className={styles.resultType}>{detail}</span>}
-                                    </span>
-                                </span>
-                            </button>
+                                <ProductSuggestionRow
+                                    key={identity}
+                                    item={item}
+                                    id={optionId(listId, identity)}
+                                    active={index === activeIndex}
+                                    className={styles.result}
+                                    rowRef={rowRef(identity)}
+                                    onMouseMove={(event) => selectWithPointer(identity, event)}
+                                    onSelect={() => submit(item)}
+                                />
                             );
                         })}
                         {panelMatches.map((type, index) => {
-                            const rowIndex = suggestions.length + index;
+                            const identity = `panel:${type}`;
                             return (
-                                <button
-                                    key={`panel:${type}`}
-                                    id={optionId(listId, `panel:${type}`)}
-                                    role='option'
-                                    aria-selected={rowIndex === activeIndex}
-                                    tabIndex={-1}
-                                    ref={(node) => { if (node) rowRefs.current.set(`panel:${type}`, node); else rowRefs.current.delete(`panel:${type}`); }}
-                                    className={
-                                        rowIndex === activeIndex
-                                            ? styles.resultActive
-                                            : styles.result
-                                    }
-                                    onMouseDown={(event) => event.preventDefault()}
-                                    onMouseMove={(event) => selectWithPointer(`panel:${type}`, event)}
-                                    onClick={() => addPanelAt(index)}
+                                <SearchOption
+                                    key={identity}
+                                    id={optionId(listId, identity)}
+                                    active={suggestions.length + index === activeIndex}
+                                    className={styles.result}
+                                    rowRef={rowRef(identity)}
+                                    onMouseMove={(event) => selectWithPointer(identity, event)}
+                                    onSelect={() => addPanelAt(index)}
+                                    title={`新增面板：${BLOCK_META[type].label} · ${BLOCK_META[type].description}`}
                                 >
-                                    <span className={optionText} title={`新增面板：${BLOCK_META[type].label} · ${BLOCK_META[type].description}`}>
-                                        <span className={styles.panelIcon} aria-hidden>
-                                            ＋
-                                        </span>
-                                        <span className={styles.panelName}>
-                                            新增面板：{BLOCK_META[type].label}
-                                        </span>
-                                        <span className={styles.resultMeta}>
-                                            <span className={styles.resultType}>{BLOCK_META[type].description}</span>
-                                        </span>
+                                    <span className={styles.panelIcon} aria-hidden>
+                                        ＋
                                     </span>
-                                </button>
+                                    <span className={styles.panelName}>
+                                        新增面板：{BLOCK_META[type].label}
+                                    </span>
+                                    <span className={resultMeta}>
+                                        <span className={resultDetail}>{BLOCK_META[type].description}</span>
+                                    </span>
+                                </SearchOption>
                             );
                         })}
                         </div>
@@ -369,13 +236,9 @@ export function CommandPalette({
                     <AsyncStatus phase={busy ? 'loading' : error || searchError ? 'error' : searching ? 'loading' : 'idle'}
                         text={busy ? '查詢商品中…' : error ? '找不到此商品代碼' : searchError ? '搜尋失敗，可重試' : searching ? suggestions.length ? '正在補齊關聯商品…' : '搜尋中…' : 'Enter 跳轉 · Esc 關閉'}
                         action={error || searchError ? <button type='button' onMouseDown={(e) => e.preventDefault()} onClick={() => {
-                            if (composing.current) return;
-                            cancelSearch();
+                            if (search.isComposing()) return;
                             setError(false);
-                            setSearchError(false);
-                            setSuggestions([]);
-                            setActiveIdentity(null);
-                            setSearchRetry((retry) => retry + 1);
+                            search.retry();
                             // The button disappears with the error; keep typing in the input.
                             inputRef.current?.focus();
                         }}>{error ? '重新搜尋' : '重試'}</button> : undefined}

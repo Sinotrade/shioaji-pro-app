@@ -123,8 +123,6 @@ export default defineConfig(({ mode, command }) => {
                 ...configDefaults.exclude,
                 'src-tauri/**',
                 'plugins/**/test/*.test.mjs',
-                // This script uses node:test and runs after Vitest in pnpm test.
-                'scripts/refresh-etf-catalog.test.mjs',
             ],
         },
         resolve: {

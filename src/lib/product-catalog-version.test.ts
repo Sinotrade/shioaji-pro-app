@@ -22,18 +22,16 @@ afterEach(() => {
 });
 
 describe('product catalog version store', () => {
-    it('isolates failing subscribers and keeps their failure observable without starving later subscribers', async () => {
-        const { subscribeProductCatalog, invalidateProductCatalog, getProductCatalogListenerError } = await import('./product-catalog-version');
+    it('isolates failing subscribers without starving later subscribers', async () => {
+        const { subscribeProductCatalog, invalidateProductCatalog } = await import('./product-catalog-version');
         const next = vi.fn();
         const fail = subscribeProductCatalog(() => { throw new Error('Synthetic catalog subscriber failure'); });
         cleanups.push(fail, subscribeProductCatalog(next));
         expect(() => invalidateProductCatalog({ region: 'TW', base_changed: true, info_changed: false })).not.toThrow();
         expect(next).toHaveBeenCalledOnce();
-        expect(getProductCatalogListenerError()).toBe('Synthetic catalog subscriber failure');
         fail();
         invalidateProductCatalog({ region: 'TW', base_changed: false, info_changed: true });
         expect(next).toHaveBeenCalledTimes(2);
-        expect(getProductCatalogListenerError()).toBeNull();
     });
     it('keeps snapshots stable and sends no notifications for unchanged reads or environment events', async () => {
         const { getProductCatalogVersion, subscribeProductCatalog } = await import('./product-catalog-version');

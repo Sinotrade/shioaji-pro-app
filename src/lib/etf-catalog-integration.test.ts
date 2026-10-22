@@ -110,15 +110,16 @@ describe('ETF source authority and search integration', () => {
     it('does not put the slow public source on the sidecar search critical path', async () => {
         const runtime = await import('./etf-runtime-catalog');
         source.publicFetch.mockImplementation(() => new Promise(() => undefined));
-        const refresh = runtime.refreshEtfNames();
+        let settled = false;
+        const refresh = runtime.refreshEtfNames().then(() => { settled = true; });
         const { loadStockCatalog } = await import('./stock-index');
         expect((await loadStockCatalog())[0]?.name).toBe('服務端名稱');
         const { searchProducts } = await import('./product-search');
         expect(codes(await searchProducts('0053', 8, { includeWarrants: true }))).toEqual(['0053', 'NKFR1', 'NKFR2']);
-        expect(runtime.getEtfNamesStatus().phase).toBe('refreshing');
+        expect(settled).toBe(false);
         await vi.advanceTimersByTimeAsync(5000);
         await refresh;
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'error', usingSnapshot: true });
+        expect(runtime.getEtfNamesStatus()).toEqual({ usingSnapshot: true });
         expect(vi.getTimerCount()).toBe(0);
     });
 

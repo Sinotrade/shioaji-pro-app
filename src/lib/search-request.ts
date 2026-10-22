@@ -1,54 +1,10 @@
-const SEARCH_CONCURRENCY = 4;
-// Both search inputs coalesce typing at the same cadence before using the shared queue.
+// Both search inputs coalesce typing at the same cadence.
 export const PRODUCT_SEARCH_DEBOUNCE_MS = 100;
-
-interface ScheduledRequest {
-    start: (release: () => void) => void;
-    started: boolean;
-}
-
-// Shared only by search metadata sources, not by API requests or SSE globally.
-const requestQueue: ScheduledRequest[] = [];
-let activeRequests = 0;
-let drainingQueue = false;
-
-function drainQueue(): void {
-    if (drainingQueue) return;
-    drainingQueue = true;
-    try {
-        while (activeRequests < SEARCH_CONCURRENCY && requestQueue.length > 0) {
-            const request = requestQueue.shift()!;
-            request.started = true;
-            activeRequests++;
-            let released = false;
-            request.start(() => {
-                if (released) return;
-                released = true;
-                activeRequests--;
-                drainQueue();
-            });
-        }
-    } finally {
-        drainingQueue = false;
-    }
-}
-
-function scheduleRequest(start: ScheduledRequest['start']): () => void {
-    const request: ScheduledRequest = { start, started: false };
-    requestQueue.push(request);
-    drainQueue();
-    return () => {
-        if (request.started) return;
-        const index = requestQueue.indexOf(request);
-        if (index >= 0) requestQueue.splice(index, 1);
-    };
-}
 
 interface RequestReader<T> {
     resolve: (value: T) => void;
     reject: (error: unknown) => void;
     detach: () => void;
-    signal?: AbortSignal;
 }
 
 interface PendingRequest<T> {
@@ -58,8 +14,6 @@ interface PendingRequest<T> {
     deadlineAt: number;
     closed: boolean;
     timer?: ReturnType<typeof setTimeout>;
-    cancelQueued?: () => void;
-    release?: () => void;
 }
 
 interface CachedResult<T> {
@@ -80,25 +34,16 @@ function timeoutError(): Error {
 /**
  * Same-key readers share one metadata request but keep independent cancellation.
  * `limit` bounds successful LRU entries; pending readers are never evicted by it.
- * The default search queue has four slots and deadlines include queue time.
- * Shared catalogs used outside search may opt out of that queue, keeping the
- * same cancellation/deadline/cache semantics without being starved by searches.
- * Releasing an aborted slot does not guarantee that an underlying transport or
+ * Requests start immediately: the transport bounds concurrent Info reads and
+ * each search bounds its own fan-out.
+ * Aborting the last reader does not guarantee that an underlying transport or
  * server which ignores AbortSignal has stopped working.
  */
 export class SearchRequestCache<T> {
     private readonly pending = new Map<string, PendingRequest<T>>();
     private readonly completed = new Map<string, CachedResult<T>>();
 
-    constructor(private readonly options: {
-        ttlMs: number; limit: number; deadlineMs: number; queue?: 'search' | 'none';
-    }) {
-        if (!Number.isFinite(options.ttlMs) || options.ttlMs < 0
-            || !Number.isInteger(options.limit) || options.limit < 1
-            || !Number.isFinite(options.deadlineMs) || options.deadlineMs <= 0) {
-            throw new Error('商品搜尋快取設定無效');
-        }
-    }
+    constructor(private readonly options: { ttlMs: number; limit: number; deadlineMs: number }) {}
 
     read(key: string, load: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
         if (signal?.aborted) return Promise.reject(abortError());
@@ -135,55 +80,23 @@ export class SearchRequestCache<T> {
                 if (request.readers.size === 0) this.settle(request, { ok: false, error });
             };
             const reader: RequestReader<T> = {
-                resolve, reject, signal,
+                resolve, reject,
                 detach: () => signal?.removeEventListener('abort', onAbort),
             };
             request.readers.add(reader);
             signal?.addEventListener('abort', onAbort, { once: true });
-            if (signal?.aborted) onAbort();
         });
 
-        if (isNew && !request.closed) {
-            const start: ScheduledRequest['start'] = release => {
-                request.release = release;
-                if (request.closed || this.pending.get(key) !== request) {
-                    release();
-                    return;
-                }
-                // A shared signal's earlier abort listener can release a slot
-                // before its queued readers receive their own abort callbacks.
-                // Inspect their state now rather than dispatching cancelled work.
-                for (const reader of request.readers) {
-                    if (!reader.signal?.aborted) continue;
-                    request.readers.delete(reader);
-                    reader.detach();
-                    reader.reject(abortError());
-                }
-                if (request.readers.size === 0) {
-                    this.settle(request, { ok: false, error: abortError() });
-                    return;
-                }
-                // A preceding timeout can release a slot before this entry's
-                // timer fires. Do not start an already-expired queued request.
-                if (Date.now() >= request.deadlineAt) {
-                    this.settle(request, { ok: false, error: timeoutError() });
-                    return;
-                }
-                void this.run(request, load);
-            };
-            if (this.options.queue === 'none') start(() => undefined);
-            else request.cancelQueued = scheduleRequest(start);
-        }
+        if (isNew) void this.run(request, load);
         return result;
     }
 
     clear(): void {
         this.completed.clear();
         const requests = [...this.pending.values()];
-        // Invalidate every old entry before releasing any slot, so clear cannot
-        // accidentally start its own queued work or delete a reentrant new read.
+        // Invalidate every old entry first, so an abort listener can start a
+        // new same-key read that a later settle must not delete.
         this.pending.clear();
-        for (const request of requests) request.cancelQueued?.();
         for (const request of requests) this.settle(request, { ok: false, error: abortError() });
     }
 
@@ -204,7 +117,6 @@ export class SearchRequestCache<T> {
         const isCurrent = this.pending.get(request.key) === request;
         if (isCurrent) this.pending.delete(request.key);
         clearTimeout(request.timer);
-        request.cancelQueued?.();
 
         if (result.ok && isCurrent && this.options.ttlMs > 0) {
             const now = Date.now();
@@ -224,6 +136,5 @@ export class SearchRequestCache<T> {
         }
         request.readers.clear();
         if (!result.ok) request.controller.abort(result.error);
-        request.release?.();
     }
 }

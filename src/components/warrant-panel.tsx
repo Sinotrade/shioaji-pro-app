@@ -2,15 +2,15 @@ import { RefreshButton } from './refresh-button';
 import { Star } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
-import { useProductNamesVersion } from '../hooks/use-product-names-version';
+import { useStockCatalog } from '../hooks/use-stock-catalog';
 import { primeContract } from '../lib/contracts-cache';
 import {
     fetchSnapshots,
     fetchWarrants,
     resolveContract,
 } from '../lib/shioaji';
-import { loadStockCatalog, type StockMeta } from '../lib/stock-index';
-import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
+import type { StockMeta } from '../lib/stock-index';
+import { getProductCatalogVersion } from '../lib/product-catalog-version';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
@@ -18,6 +18,7 @@ import { todayStr } from '../lib/utils/date';
 import { fmtPrice } from '../lib/utils/format';
 import * as styles from './derivative-explorer.css';
 import { AsyncStatus } from './async-status';
+import { CatalogRetryAlert } from './catalog-retry-alert';
 import * as panel from './panel.css';
 import { UnderlyingPicker } from './underlying-picker';
 
@@ -53,12 +54,20 @@ export function WarrantPanel({
     const [sort, setSort] = useState<'moneyness' | 'expiry'>('moneyness');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
-    const [catalogError, setCatalogError] = useState(false);
-    const [refresh, setRefresh] = useState(0);
-    const version = useProductCatalogVersion();
-    const namesVersion = useProductNamesVersion();
-    const [catalogVersion, setCatalogVersion] = useState(-1);
-    const catalogReady = catalogVersion === version && !catalogError;
+    const { ready: catalogReady, error: catalogError, retry, reloads, version } = useStockCatalog({
+        onLoad: (catalog) => {
+            if (catalog.length === 0) setLoading(false);
+            const saved = localStorage.getItem(WARRANT_UNDERLYING);
+            setUnderlying(previous =>
+                catalog.find((stock) => stock.code === previous?.code) ??
+                    catalog.find((stock) => stock.code === saved) ??
+                    catalog.find((stock) => stock.code === '2330') ??
+                    catalog[0] ??
+                    null,
+            );
+        },
+        onError: () => setLoading(false),
+    });
     // 同標的、同目錄版本重抓（重試、視窗取得焦點）時舊列身分仍有效，不鎖表格
     const requestContext = JSON.stringify([version, underlying?.code]);
     const [loadedContext, setLoadedContext] = useState<string | null>(null);
@@ -73,37 +82,7 @@ export function WarrantPanel({
     }
 
     useEffect(() => {
-        const controller = new AbortController();
-        let active = true;
-        const isCurrent = () => active && getProductCatalogVersion() === version;
-        setCatalogError(false);
-        loadStockCatalog({ signal: controller.signal })
-            .then((catalog) => {
-                if (!isCurrent()) return;
-                setCatalogVersion(version);
-                if (catalog.length === 0) setLoading(false);
-                const saved = localStorage.getItem(WARRANT_UNDERLYING);
-                setUnderlying(previous =>
-                    catalog.find((stock) => stock.code === previous?.code) ??
-                        catalog.find((stock) => stock.code === saved) ??
-                        catalog.find((stock) => stock.code === '2330') ??
-                        catalog[0] ??
-                        null,
-                );
-            })
-            .catch(() => { if (isCurrent()) { setCatalogError(true); setLoading(false); } });
-        return () => { active = false; controller.abort(); };
-    }, [version, namesVersion, refresh]);
-
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-        const onFocus = () => setRefresh(value => value + 1);
-        window.addEventListener('focus', onFocus);
-        return () => window.removeEventListener('focus', onFocus);
-    }, []);
-
-    useEffect(() => {
-        if (!underlying || catalogVersion !== version || catalogError) return;
+        if (!underlying || !catalogReady) return;
         const controller = new AbortController();
         let active = true;
         const isCurrent = () => active && getProductCatalogVersion() === version;
@@ -130,7 +109,7 @@ export function WarrantPanel({
             })
             .finally(() => { if (isCurrent()) setLoading(false); });
         return () => { active = false; controller.abort(); };
-    }, [underlying?.code, version, refresh, catalogVersion, catalogError]);
+    }, [underlying?.code, version, reloads, catalogReady]);
 
     const filtered = useMemo(() => {
         const spot = underlyingQuote?.close ?? null;
@@ -201,12 +180,7 @@ export function WarrantPanel({
                 </select>
                 <RefreshButton label="更新報價" loading={quotesLoading} onClick={() => void refreshQuotes()} />
             </div>
-            {(error || catalogError) && (
-                <div role='alert' className={styles.error}>
-                    {catalogError ? '標的目錄載入失敗' : '權證資料載入失敗'}；保留上次資料
-                    <button type='button' onClick={() => setRefresh(value => value + 1)}>重試商品資料</button>
-                </div>
-            )}
+            <CatalogRetryAlert catalogError={catalogError} error={error} text='權證資料載入失敗' onRetry={retry} />
             <div className={styles.summary}>
                 <span className={styles.summaryStrong}>
                     {underlying ? `${underlying.code} ${underlying.name}` : '—'}

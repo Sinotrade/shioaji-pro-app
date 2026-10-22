@@ -19,6 +19,7 @@ vi.mock('./sparkline', () => ({ Sparkline: () => null }));
 import { isTauri } from '../lib/runtime';
 import { CommandPalette } from './command-palette';
 import { Watchlist } from './watchlist';
+import { DEBOUNCE, hostChildren, kinds, watchlistProps } from './product-search.test-harness';
 
 const NOTICE = '原生版官方名稱更新未啟用，使用券商與內建名稱';
 const views: ReactTestRenderer[] = [];
@@ -37,7 +38,7 @@ afterEach(() => {
 });
 
 describe.each([false, true])('真入口 runtime isTauri=%s', native => {
-    it.each([{ kind: 'palette', debounce: 120 }, { kind: 'watchlist', debounce: 150 }])('$kind 只在原生搜尋結果顯示可報讀的名稱來源提示', async ({ kind, debounce }) => {
+    it.each(kinds)('$kind 只在原生搜尋結果顯示可報讀的名稱來源提示', async ({ kind }) => {
         mocks.native = native;
         expect(isTauri).toBe(native);
         const submit = vi.fn(async () => undefined);
@@ -45,18 +46,13 @@ describe.each([false, true])('真入口 runtime isTauri=%s', native => {
         act(() => {
             view = create(kind === 'palette'
                 ? createElement(CommandPalette, { open: true, onClose: vi.fn(), onJump: submit })
-                : createElement(Watchlist, {
-                    items: [], selectedCode: null, onSelect: vi.fn(), onAdd: submit, onRemove: vi.fn(), onReorder: vi.fn(),
-                    serverLists: [{ id: 'fixture', name: '測試', contracts: [] }], activeListId: 'fixture',
-                    onSelectList: vi.fn(), onCreateList: vi.fn(async () => undefined), onRenameList: vi.fn(async () => true),
-                    onDeleteList: vi.fn(async () => undefined), loading: false, structureBusy: false, loadError: false, onRetryLoad: vi.fn(),
-                }));
+                : createElement(Watchlist, watchlistProps(submit)));
         });
         views.push(view);
         const notices = () => view.root.findAll(node => typeof node.type === 'string' && node.props.role === 'status' && text(node) === NOTICE);
         expect(notices()).toHaveLength(0);
         act(() => view.root.findByType('input').props.onChange({ target: { value: '2330' } }));
-        await act(async () => { await vi.advanceTimersByTimeAsync(debounce); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(DEBOUNCE); });
         expect(notices()).toHaveLength(native ? 1 : 0);
         if (native) {
             expect(notices()[0]!.props['aria-hidden']).not.toBe(true);
@@ -65,7 +61,7 @@ describe.each([false, true])('真入口 runtime isTauri=%s', native => {
         // The notice is a status next to the results, never an item of the listbox.
         const listbox = view.root.find(node => typeof node.type === 'string' && node.props.role === 'listbox');
         expect(listbox.findAll(node => node.props.role === 'status')).toHaveLength(0);
-        expect(listbox.children.every(child => typeof child !== 'string' && child.props.role === 'option')).toBe(true);
+        expect(hostChildren(listbox).every(child => typeof child !== 'string' && child.props.role === 'option')).toBe(true);
         expect(view.root.findAllByType('button').some(node => text(node).includes('2330'))).toBe(true);
         expect(submit).not.toHaveBeenCalled();
         expect(mocks.fetch).not.toHaveBeenCalled();

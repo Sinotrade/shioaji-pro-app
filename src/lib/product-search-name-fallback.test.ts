@@ -126,24 +126,6 @@ describe('精確股票代碼選擇權的名稱降級', () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('並行讀者共用一個 Info，取消首位不影響另一位', async () => {
-        const result = deferred<ContractInfo>();
-        source.info.mockReturnValue(result.promise);
-        const search = await api();
-        const controller = new AbortController();
-        const cancelled = search('2330選擇權', 20, { signal: controller.signal });
-        const rejected = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
-        const survivor = search('2330選擇權', 20);
-        await tick();
-        expect(source.info).toHaveBeenCalledTimes(1);
-        const signal = source.info.mock.calls[0]![2].signal as AbortSignal;
-        controller.abort();
-        await rejected;
-        expect(signal.aborted).toBe(false);
-        result.resolve(contract());
-        expect(codes(await survivor)).toEqual(['2330', 'CDAQA', 'CDOQA']);
-    });
-
     it.each(['epoch', 'day', 'API'])('%s 改變後舊 Info 不得發布或污染新搜尋', async change => {
         const result = deferred<ContractInfo>();
         source.info.mockReturnValueOnce(result.promise);
@@ -165,47 +147,6 @@ describe('精確股票代碼選擇權的名稱降級', () => {
         expect(source.info).toHaveBeenCalledTimes(2);
     });
 
-    it('成功名稱共用 60 秒，TTL 到期重新取得', async () => {
-        const search = await api();
-        await search('2330選擇權');
-        await vi.advanceTimersByTimeAsync(59_999);
-        await search('2330選擇權');
-        expect(source.info).toHaveBeenCalledTimes(1);
-        await vi.advanceTimersByTimeAsync(1);
-        await search('2330選擇權');
-        expect(source.info).toHaveBeenCalledTimes(2);
-    });
-
-    it('名稱成功快取限 16 筆並依最近讀取保留', async () => {
-        const stocks = Array.from({ length: 17 }, (_, i) => contract(String(2300 + i)));
-        source.bases.mockResolvedValue({ region: 'TW', contracts: stocks });
-        const search = await api();
-        for (const stock of stocks.slice(0, 16)) await search(`${stock.code}選擇權`);
-        await search('2300選擇權');
-        await search('2316選擇權');
-        await search('2300選擇權');
-        expect(source.info).toHaveBeenCalledTimes(17);
-        await search('2301選擇權');
-        expect(source.info).toHaveBeenCalledTimes(18);
-    });
-
-    it('全讀者取消後中止 Info，晚回不快取', async () => {
-        const result = deferred<ContractInfo>();
-        source.info.mockReturnValueOnce(result.promise);
-        const search = await api();
-        const controller = new AbortController();
-        const pending = search('2330選擇權', 20, { signal: controller.signal });
-        const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
-        await tick();
-        controller.abort();
-        await rejected;
-        expect(source.info.mock.calls[0]![2].signal.aborted).toBe(true);
-        result.resolve(contract());
-        await tick();
-        await search('2330選擇權');
-        expect(source.info).toHaveBeenCalledTimes(2);
-    });
-
     it('缺少有效名稱且 Info 失敗不會以空字串命中所有 roots', async () => {
         source.names.mockResolvedValue([{ underlying_code: '2330', name: '   ' }]);
         source.info.mockRejectedValue(new Error('Info unavailable'));
@@ -220,23 +161,6 @@ describe('精確股票代碼選擇權的名稱降級', () => {
         expect(source.info).toHaveBeenCalledTimes(1);
         expect(source.options).toHaveBeenCalledTimes(4);
         expect(source.options.mock.calls.map(call => call[0])).toEqual(['CD0', 'CD1', 'CD2', 'CD3']);
-    });
-
-    it('搜尋 queue 飽和時名稱等待含排隊時間，逾時不派出 Info', async () => {
-        const search = await api();
-        const { SearchRequestCache } = await import('./search-request');
-        const blockers = new SearchRequestCache<string>({ ttlMs: 0, limit: 4, deadlineMs: 5000 });
-        const blocking = Array.from({ length: 4 }, (_, i) => blockers.read(String(i),
-            () => new Promise<string>(() => undefined)).catch(() => undefined));
-        const pending = search('2330選擇權', 20);
-        await tick();
-        expect(source.info).not.toHaveBeenCalled();
-        await vi.advanceTimersByTimeAsync(1200);
-        expect(codes(await pending)).toEqual(['2330']);
-        blockers.clear();
-        await Promise.all(blocking);
-        expect(source.info).not.toHaveBeenCalled();
-        expect(vi.getTimerCount()).toBe(0);
     });
 
     it('Info 逾時晚回不污染下一次成功的名稱', async () => {

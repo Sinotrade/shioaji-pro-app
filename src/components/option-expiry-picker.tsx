@@ -13,13 +13,11 @@
 import {
     useEffect,
     useId,
-    useLayoutEffect,
     useRef,
     useState,
-    type CSSProperties,
     type KeyboardEvent,
 } from 'react';
-import { createPortal } from 'react-dom';
+import { useAnchoredPopup } from '../hooks/use-anchored-popup';
 import { useEscClose } from '../hooks/use-esc-close';
 import {
     daysLeftLabel,
@@ -187,40 +185,29 @@ function ExpiryList({
     const active = found >= 0 ? found : Math.max(0, expiries.findIndex((e) => e.key === value));
     const setActive = (next: number | ((a: number) => number)) =>
         setActiveKey(expiries[typeof next === 'function' ? next(active) : next]?.key);
-    const [pos, setPos] = useState<CSSProperties | undefined>(undefined);
     const closeRef = useRef(onClose);
     closeRef.current = onClose;
 
     useEscClose(() => onClose(true));
 
     // 依錨點位置擺放：預設在下方，下方太擠且上方較寬時翻到上方
-    useLayoutEffect(() => {
-        const win = anchor?.ownerDocument?.defaultView;
-        if (!anchor || !win) return;
-        const place = () => {
-            const r = anchor.getBoundingClientRect();
-            const vw = win.innerWidth;
-            const vh = win.innerHeight;
+    const { style: pos, portal } = useAnchoredPopup({
+        anchor,
+        place: (target, { width: vw, height: vh }) => {
+            const r = target.getBoundingClientRect();
             const below = vh - r.bottom - EDGE;
             const above = r.top - EDGE;
             const up = below < 160 && above > below;
             const width = Math.min(Math.max(r.width, 240), vw - EDGE * 2);
             const left = Math.min(Math.max(EDGE, r.left), vw - width - EDGE);
-            setPos({
+            return {
                 left,
                 width,
                 maxHeight: Math.max(96, Math.min(LIST_MAX_HEIGHT, up ? above - 4 : below - 4)),
                 ...(up ? { bottom: vh - r.top + 4 } : { top: r.bottom + 4 }),
-            });
-        };
-        place();
-        win.addEventListener('resize', place);
-        win.addEventListener('scroll', place, true);
-        return () => {
-            win.removeEventListener('resize', place);
-            win.removeEventListener('scroll', place, true);
-        };
-    }, [anchor]);
+            };
+        },
+    });
 
     // 開啟時聚焦清單、選取列捲入可見；點清單與錨點以外即關閉
     useEffect(() => {
@@ -339,6 +326,5 @@ function ExpiryList({
     );
 
     // 測試（無 DOM）時就地渲染；瀏覽器中 portal 到錨點所在文件的 body
-    const host = anchor?.ownerDocument?.body;
-    return host ? createPortal(list, host) : list;
+    return portal(list);
 }

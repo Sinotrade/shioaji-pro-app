@@ -24,6 +24,10 @@ describe('已驗證指數的名稱搜尋', () => {
         expect(indexSearchSuggestions(query)[0]).toMatchObject({ code: 'TAIWANVIX', exchange: 'TAIFEX' });
     });
 
+    it.each([['ＶＩＸ', 'TAIWANVIX'], ['ｉｘ００４３', 'IX0043'], ['櫃買　', 'IX0043']])('全形 %s 與股票搜尋同樣正規化', (query, code) => {
+        expect(indexSearchSuggestions(query)[0]?.code).toBe(code);
+    });
+
     it('保留既有上市指數舊代碼的正規化，不將股票 2330 當成指數', () => {
         expect(indexSearchSuggestions('036')[0]?.code).toBe('IX0028');
         expect(indexSearchSuggestions('2330')).toEqual([]);

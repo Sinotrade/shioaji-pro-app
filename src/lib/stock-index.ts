@@ -52,7 +52,7 @@ const CATALOG_TTL_MS = 60_000;
 // panels. A native cold start can hold reads behind the boot gate for seconds,
 // so this deadline stays long; search applies its own shorter cutoff.
 const CATALOG_DEADLINE_MS = 10_000;
-const sourceOptions = { ttlMs: CATALOG_TTL_MS, limit: 2, deadlineMs: CATALOG_DEADLINE_MS, queue: 'none' as const };
+const sourceOptions = { ttlMs: CATALOG_TTL_MS, limit: 2, deadlineMs: CATALOG_DEADLINE_MS };
 const baseCache = new SearchRequestCache<Awaited<ReturnType<typeof fetchContracts>>>(sourceOptions);
 const namesCache = new SearchRequestCache<Awaited<ReturnType<typeof fetchWarrantUnderlyings>>>(sourceOptions);
 let activeSourceScope = '';
@@ -61,7 +61,6 @@ let detailsCache: StockMeta[] | null = null;
 let detailsExpiresAt = 0;
 let detailsCatalog: StockMeta[] | undefined;
 let detailsLoading: Promise<StockMeta[]> | null = null;
-let detailsScope = '';
 const detailByCode = new Map<string, { value: StockMeta; expiresAt: number }>();
 const detailLoadingByCode = new Map<string, Promise<StockMeta | null>>();
 let assembledCatalog: {
@@ -87,7 +86,6 @@ function ensureSourceScope() {
         detailsExpiresAt = 0;
         detailsCatalog = undefined;
         detailsLoading = null;
-        detailsScope = '';
         detailByCode.clear();
         detailLoadingByCode.clear();
     }
@@ -151,19 +149,10 @@ export async function loadStockCatalog(opts?: { signal?: AbortSignal }): Promise
     return rows;
 }
 
+// ensureSourceScope already drops every details cache when the scope moves.
 function ensureDetailsScope() {
     ensureSourceScope();
-    const scope = detailContext();
-    if (scope !== detailsScope) {
-        detailsScope = scope;
-        detailsCache = null;
-        detailsExpiresAt = 0;
-        detailsCatalog = undefined;
-        detailsLoading = null;
-        detailByCode.clear();
-        detailLoadingByCode.clear();
-    }
-    return scope;
+    return detailContext();
 }
 
 // 個股明細請求的並行上限：熱力圖一次可能要 400+ 檔名稱，原生 fallback

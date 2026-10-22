@@ -1,5 +1,5 @@
 import { normalizeContractCode } from './shioaji';
-import { SECTOR_INDICES } from './stock-index';
+import { normalizeStockSearchText, SECTOR_INDICES } from './stock-index';
 import type { Exchange } from './types/contract';
 
 interface IndexSearchEntry {
@@ -29,14 +29,12 @@ export const INDEX_SEARCH_ENTRIES: readonly IndexSearchEntry[] = [
     { code: 'TAIWANVIX', name: '臺指選擇權波動率指數', exchange: 'TAIFEX', aliases: ['VIX'] },
 ];
 
-const normalize = (value: string) => value.trim().replace(/臺/g, '台').toUpperCase();
-
 export function indexSearchSuggestions(query: string) {
-    const needle = normalize(query);
+    const needle = normalizeStockSearchText(query);
     if (!needle) return [];
     const canonical = normalizeContractCode(needle, 'IND');
     const score = (entry: IndexSearchEntry) => {
-        const names = [entry.name, ...(entry.aliases ?? [])].map(normalize);
+        const names = [entry.name, ...(entry.aliases ?? [])].map(normalizeStockSearchText);
         if (entry.code === canonical || names.includes(needle)) return 0;
         if (entry.code.startsWith(canonical) || names.some(name => name.startsWith(needle))) return 1;
         return names.some(name => name.includes(needle)) ? 2 : Infinity;

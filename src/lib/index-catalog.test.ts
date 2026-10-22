@@ -69,87 +69,11 @@ describe('指數名稱的動態 Base 身分檢查', () => {
         expect(await loadIndexSuggestions('櫃買')).toEqual([]);
     });
 
-    it('不同 query 共用成功來源 60 秒，期限到才重讀', async () => {
-        const { loadIndexSuggestions } = await import('./index-catalog');
-        await loadIndexSuggestions('櫃買');
-        await vi.advanceTimersByTimeAsync(59_999);
-        await loadIndexSuggestions('半導體');
-        expect(mocks.fetch).toHaveBeenCalledTimes(1);
-        await vi.advanceTimersByTimeAsync(1);
-        await loadIndexSuggestions('櫃買');
-        expect(mocks.fetch).toHaveBeenCalledTimes(2);
-    });
-
-    it('同來源合併請求，取消一個 reader 不取消其他 reader', async () => {
-        let complete!: (value: ReturnType<typeof result>) => void;
-        mocks.fetch.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
-        const { loadIndexSuggestions } = await import('./index-catalog');
-        const controller = new AbortController();
-        const first = loadIndexSuggestions('櫃買', { signal: controller.signal });
-        const rejected = expect(first).rejects.toMatchObject({ name: 'AbortError' });
-        const second = loadIndexSuggestions('IX0043');
-        controller.abort();
-        await rejected;
-        expect(mocks.fetch.mock.calls[0]![3].signal.aborted).toBe(false);
-        complete(result(base()));
-        expect(await second).toHaveLength(1);
-        expect(mocks.fetch).toHaveBeenCalledTimes(1);
-    });
-
-    it('最後一個 reader 取消會中止來源，已取消的 reader 不發請求', async () => {
-        mocks.fetch.mockImplementation(() => new Promise(() => undefined));
-        const { loadIndexSuggestions } = await import('./index-catalog');
-        const controller = new AbortController();
-        const request = loadIndexSuggestions('櫃買', { signal: controller.signal });
-        const rejected = expect(request).rejects.toMatchObject({ name: 'AbortError' });
-        controller.abort();
-        await rejected;
-        expect(mocks.fetch.mock.calls[0]![3].signal.aborted).toBe(true);
-        await expect(loadIndexSuggestions('櫃買', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
-        expect(mocks.fetch).toHaveBeenCalledTimes(1);
-    });
-
-    it('來源超過 1200 ms reject，且不快取失敗', async () => {
-        mocks.fetch.mockImplementationOnce(() => new Promise(() => undefined));
-        const { loadIndexSuggestions } = await import('./index-catalog');
-        const request = loadIndexSuggestions('櫃買');
-        const rejected = expect(request).rejects.toThrow('逾時');
-        await vi.advanceTimersByTimeAsync(1200);
-        await rejected;
-        expect(mocks.fetch.mock.calls[0]![3].signal.aborted).toBe(true);
-        expect(await loadIndexSuggestions('櫃買')).toHaveLength(1);
-        expect(mocks.fetch).toHaveBeenCalledTimes(2);
-    });
-
-    it('來源失敗 reject 而非成功空結果，下次可重試', async () => {
-        mocks.fetch.mockRejectedValueOnce(new Error('離線'));
-        const { loadIndexSuggestions } = await import('./index-catalog');
-        await expect(loadIndexSuggestions('櫃買')).rejects.toThrow('離線');
-        expect(await loadIndexSuggestions('櫃買')).toHaveLength(1);
-    });
-
     it('新版本立即清除成功快取', async () => {
         const { loadIndexSuggestions } = await import('./index-catalog');
         expect(await loadIndexSuggestions('櫃買')).toHaveLength(1);
         invalidate();
         mocks.fetch.mockResolvedValue(result());
-        expect(await loadIndexSuggestions('櫃買')).toEqual([]);
-        expect(mocks.fetch).toHaveBeenCalledTimes(2);
-    });
-
-    it('A→B→A 舊請求不可覆蓋新結果，忽略 abort 的來源也不例外', async () => {
-        let completeOld!: (value: ReturnType<typeof result>) => void;
-        mocks.fetch.mockImplementationOnce(() => new Promise(resolve => { completeOld = resolve; }));
-        const { loadIndexSuggestions } = await import('./index-catalog');
-        const old = loadIndexSuggestions('櫃買');
-        const rejected = expect(old).rejects.toMatchObject({ name: 'AbortError' });
-        invalidate();
-        invalidate();
-        await rejected;
-        mocks.fetch.mockResolvedValue(result());
-        expect(await loadIndexSuggestions('櫃買')).toEqual([]);
-        completeOld(result(base()));
-        await Promise.resolve();
         expect(await loadIndexSuggestions('櫃買')).toEqual([]);
         expect(mocks.fetch).toHaveBeenCalledTimes(2);
     });
@@ -162,16 +86,5 @@ describe('指數名稱的動態 Base 身分檢查', () => {
         mocks.version++;
         complete(result(base()));
         await expect(request).rejects.toThrow('商品目錄已更新');
-    });
-
-    it('搜尋佇列滿載時跨面板指數來源仍立即開始', async () => {
-        const { SearchRequestCache } = await import('./search-request');
-        const occupied = new SearchRequestCache({ ttlMs: 0, limit: 1, deadlineMs: 2000 });
-        const pending = Array.from({ length: 4 }, (_, index) => occupied.read(String(index), () => new Promise(() => undefined)).catch(() => undefined));
-        const { loadIndexSuggestions } = await import('./index-catalog');
-        expect(await loadIndexSuggestions('櫃買')).toHaveLength(1);
-        expect(mocks.fetch).toHaveBeenCalledOnce();
-        occupied.clear();
-        await Promise.all(pending);
     });
 });

@@ -33,6 +33,13 @@ describe('正式 CSS 編譯的 Chromium／Safari 相容性', () => {
         expect(/[;{]-webkit-backdrop-filter:blur\(12px\)/.test(css), 'WebKit blur declaration is missing from emitted CSS').toBe(true);
     });
 
+    it('搜尋結果列編譯後仍是不換行的單行 flex，代碼、名稱與補充以省略號截斷', () => {
+        const rules = [...css.matchAll(/\{([^{}]*)\}/g)].map(match => match[1]!.split(';'));
+        expect(rules.some(rule => rule.includes('display:flex') && rule.includes('flex-wrap:nowrap')), 'No single-line flex row').toBe(true);
+        const truncated = rules.filter(rule => ['overflow:hidden', 'text-overflow:ellipsis', 'white-space:nowrap'].every(part => rule.includes(part)));
+        expect(truncated.length, 'Code, name and detail cells should each truncate').toBeGreaterThanOrEqual(3);
+    });
+
     it('JavaScript 仍維持 ES2020 與 Safari 13 目標', () => {
         expect(javascriptTarget).toEqual(['es2020', 'safari13']);
     });

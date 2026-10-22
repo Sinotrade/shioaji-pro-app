@@ -1,10 +1,7 @@
 // Public name metadata only. No brokerage session, account, price or credentials.
 // Generated output is the bundled fallback. Runtime refresh uses the same validator.
 import { readFile, writeFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
 import { ETF_SOURCES, buildEtfCatalog } from '../src/lib/etf-catalog-normalizer.mjs';
-export { ETF_SOURCES, buildEtfCatalog };
 
 async function getJson(url, method = 'GET') {
     const response = await fetch(url, { method, credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(20_000) });
@@ -30,7 +27,4 @@ async function main() {
     process.stdout.write(`Updated ETF name snapshot: ${snapshot.entries.length} (${summary}). Review the diff before committing.\n`);
 }
 
-// Importing the pure transformer from tests performs no network or file writes.
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-    await main();
-}
+await main();

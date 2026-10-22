@@ -147,11 +147,14 @@ describe('progressive product-search acceptance', () => {
         expect((await pending)[0]).toMatchObject({ code: '00679B', exchange: 'OTC', security_type: 'STK' });
     });
 
-    it('keeps monthly regular, small, micro ordering for index-family progressive results', async () => {
+    it('keeps monthly regular, small, micro ordering ahead of weekly futures in partial and final results', async () => {
         const expected = ['TXFR1', 'MXFR1', 'TMFR1', 'TXFR2', 'MXFR2', 'TMFR2'];
-        source.futures.mockResolvedValue([...expected].reverse().map(code => row(code, 'FUT', {
-            name: `${code.startsWith('MX') ? '小型' : code.startsWith('TM') ? '微型' : ''}台指期貨`, underlying_code: 'IX0001',
-        })));
+        source.futures.mockResolvedValue([
+            row('MX4R1', 'FUT', { name: '小型台指期貨 W4', underlying_code: 'IX0001' }),
+            ...[...expected].reverse().map(code => row(code, 'FUT', {
+                name: `${code.startsWith('MX') ? '小型' : code.startsWith('TM') ? '微型' : ''}台指期貨`, underlying_code: 'IX0001',
+            })),
+        ]);
         const { searchProducts } = await import('./product-search');
         const updates: string[][] = [];
         const result = await searchProducts('台指', 8, { includeWarrants: true, onUpdate: rows => updates.push(codes(rows)) });
@@ -344,25 +347,6 @@ describe('partial-source recovery and stale-response acceptance', () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('lets a non-search catalog load start while the search queue is saturated', async () => {
-        const { SearchRequestCache } = await import('./search-request');
-        const busy = new SearchRequestCache<string>({ ttlMs: 0, limit: 1, deadlineMs: 1200 });
-        const running = Array.from({ length: 4 }, (_, i) => busy.read(`busy${i}`,
-            () => new Promise<string>(() => undefined)).catch(error => error));
-        try {
-            const { loadStockCatalog } = await import('./stock-index');
-            const pending = loadStockCatalog();
-            await flush();
-            expect(source.bases).toHaveBeenCalledOnce();
-            expect(source.names).toHaveBeenCalledOnce();
-            expect(codes(await pending)).toEqual(['2330', '00679B']);
-        } finally {
-            busy.clear();
-            await Promise.all(running);
-        }
-        expect(vi.getTimerCount()).toBe(0);
-    });
-
     it('detaches unfinished siblings after fatal scope rejection without waiting for their deadline', async () => {
         const delayedFutures = deferred<ContractInfo[]>();
         const delayedWarrants = deferred<ContractInfo[]>();
@@ -399,16 +383,6 @@ describe('partial-source recovery and stale-response acceptance', () => {
         expect(codes(await second)).toEqual(['2330', ...expectedFutures, 'W001', 'W002', 'W003']);
         expect(sharedSignal.aborted).toBe(false);
         expect(updates.at(-1)).toEqual(['2330', ...expectedFutures]);
-    });
-
-    it('retries failed optional names without refetching the successful Base catalog', async () => {
-        source.names.mockRejectedValueOnce(new Error('503 optional names'));
-        const { searchProducts } = await import('./product-search');
-        expect(await searchProducts('台積', 8, { includeWarrants: true })).toEqual([]);
-        const recovered = await searchProducts('台積', 8, { includeWarrants: true });
-        expect(codes(recovered)).toEqual(['2330', ...expectedFutures, 'W001', 'W002', 'W003']);
-        expect(source.bases).toHaveBeenCalledTimes(1);
-        expect(source.names).toHaveBeenCalledTimes(2);
     });
 
     it('rejects a changed server and does not cache its late futures response', async () => {

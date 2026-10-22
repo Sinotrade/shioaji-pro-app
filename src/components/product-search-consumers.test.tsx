@@ -1,8 +1,7 @@
-import { createElement } from 'react';
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProductSuggestion } from '../lib/product-search';
-import type { ContractInfo, SecurityType } from '../lib/types/contract';
+import type { ContractInfo } from '../lib/types/contract';
 
 const mocks = vi.hoisted(() => ({ search: vi.fn(), prime: vi.fn() }));
 vi.mock('../lib/product-search', () => ({ searchProducts: mocks.search }));
@@ -15,8 +14,9 @@ vi.mock('../lib/stream', () => ({ getQuote: () => undefined }));
 vi.mock('../lib/limit-style-prefs', () => ({ useLimitStyle: () => 'none' }));
 vi.mock('./sparkline', () => ({ Sparkline: () => null }));
 
-import { CommandPalette } from './command-palette';
-import { Watchlist } from './watchlist';
+import {
+    DEBOUNCE, input, key, kinds, render, row, searchLimit, text, type as query, unmountAll,
+} from './product-search.test-harness';
 
 const otcIndex: ProductSuggestion = {
     code: 'IX0043', name: '櫃買指數', security_type: 'IND', exchange: 'OTC', detail: '指數',
@@ -31,41 +31,6 @@ const warrantSuggestion: ProductSuggestion = {
     code: warrant.code, name: warrant.name, security_type: 'WRT', exchange: 'TSE', detail: '認購', contract: warrant,
 };
 
-let view: ReactTestRenderer | undefined;
-const searchOptions = expect.objectContaining({ includeWarrants: true, signal: expect.any(AbortSignal), onUpdate: expect.any(Function) });
-// The watchlist shows final rows only.
-const watchSearchOptions = expect.objectContaining({ includeWarrants: true, signal: expect.any(AbortSignal) });
-
-function text(node: ReactTestInstance | string): string {
-    return typeof node === 'string' ? node : node.children.map(text).join('');
-}
-
-function button(label: string) {
-    return view!.root.findAllByType('button').find((node) => text(node).includes(label))!;
-}
-
-async function query(value: string, debounce: number) {
-    act(() => view!.root.findByType('input').props.onChange({ target: { value } }));
-    await act(async () => { await vi.advanceTimersByTimeAsync(debounce); });
-}
-
-function renderPalette(onJump = vi.fn(async () => undefined), onClose = vi.fn()) {
-    act(() => { view = create(createElement(CommandPalette, { open: true, onJump, onClose })); });
-    return { onJump, onClose };
-}
-
-function renderWatchlist(onAdd = vi.fn(async (_code: string, _type?: SecurityType, _contract?: ContractInfo) => undefined)) {
-    act(() => {
-        view = create(createElement(Watchlist, {
-            items: [], selectedCode: null, onSelect: vi.fn(), onAdd, onRemove: vi.fn(), onReorder: vi.fn(),
-            serverLists: [{ id: 'test', name: '測試', contracts: [] }], activeListId: 'test',
-            onSelectList: vi.fn(), onCreateList: vi.fn(async () => undefined), onRenameList: vi.fn(async () => true),
-            onDeleteList: vi.fn(async () => undefined), loading: false, structureBusy: false, loadError: false, onRetryLoad: vi.fn(),
-        }));
-    });
-    return { onAdd };
-}
-
 beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -75,171 +40,113 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    act(() => view?.unmount());
-    view = undefined;
+    unmountAll();
     vi.useRealTimers();
     vi.unstubAllGlobals();
 });
 
-describe('命令面板商品搜尋', () => {
-    it('保留 IND 型別供跳轉查詢，並明確開啟權證搜尋', async () => {
+describe.each(kinds)('$kind 商品搜尋', ({ kind }) => {
+    // Only the palette subscribes to partial rows; the watchlist shows final rows only.
+    const searchOptions = expect.objectContaining({
+        includeWarrants: true, signal: expect.any(AbortSignal), ...(kind === 'palette' ? { onUpdate: expect.any(Function) } : {}),
+    });
+    // The palette jumps by code and type; the watchlist also keeps the resolved contract.
+    const submitted = (item: ProductSuggestion) => (kind === 'palette'
+        ? [item.code, item.security_type] : [item.code, item.security_type, item.contract]);
+
+    it('IND 結果的代碼及型別原樣交出，並明確開啟權證搜尋', async () => {
         mocks.search.mockResolvedValue([otcIndex]);
-        const { onJump, onClose } = renderPalette();
-        await query('櫃買', 120);
-        expect(mocks.search).toHaveBeenCalledWith('櫃買', 8, searchOptions);
-        await act(async () => { await button('IX0043').props.onClick(); });
-        expect(onJump).toHaveBeenCalledWith('IX0043', 'IND');
-        expect(onClose).toHaveBeenCalledOnce();
+        const { view, submit, close } = render(kind);
+        await query(view, '櫃買');
+        expect(mocks.search).toHaveBeenCalledWith('櫃買', searchLimit(kind), searchOptions);
+        await act(async () => { await row(view, 'IX0043')!.props.onClick(); });
+        expect(submit).toHaveBeenCalledWith(...submitted(otcIndex));
+        if (kind === 'palette') expect(close).toHaveBeenCalledOnce();
     });
 
-    it('完整權證合約先存入快取再傳 WRT 跳轉，不偽裝成股票', async () => {
+    it('完整權證合約不額外解碼，不偽裝成股票', async () => {
         mocks.search.mockResolvedValue([warrantSuggestion]);
-        const { onJump } = renderPalette(vi.fn(async () => {
-            expect(mocks.prime).toHaveBeenCalledWith(warrant);
-        }));
-        await query('台積電', 120);
-        await act(async () => { await button(warrant.code).props.onClick(); });
-        expect(mocks.prime.mock.calls[0]?.[0]).toBe(warrant);
-        expect(onJump).toHaveBeenCalledWith(warrant.code, 'WRT');
+        const { view, submit } = render(kind, {
+            // The palette stores the contract before it jumps.
+            submitHandler: async () => { if (kind === 'palette') expect(mocks.prime).toHaveBeenCalledWith(warrant); },
+        });
+        await query(view, '台積電');
+        await act(async () => { await row(view, warrant.code)!.props.onClick(); });
+        expect(submit).toHaveBeenCalledWith(...submitted(warrantSuggestion));
+        if (kind === 'palette') expect(mocks.prime.mock.calls[0]?.[0]).toBe(warrant);
+        else expect((submit.mock.calls[0] as unknown[] | undefined)?.[2]).toBe(warrant);
     });
 
     it('搜尋失敗和成功空結果不同，重試仍帶權證選項', async () => {
         mocks.search.mockRejectedValueOnce(new Error('來源讀取失敗')).mockResolvedValueOnce([]);
-        renderPalette();
-        await query('櫃買', 120);
-        expect(text(view!.root)).toContain('搜尋失敗，可重試');
-        expect(view!.root.findAll((node) => node.props.role === 'alert')).toHaveLength(1);
-        act(() => button('重試').props.onClick());
-        await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+        const { view } = render(kind);
+        await query(view, '櫃買');
+        expect(text(view.root)).toContain('搜尋失敗，可重試');
+        expect(view.root.findAll((node) => node.props.role === 'alert')).toHaveLength(1);
+        act(() => row(view, '重試')!.props.onClick());
+        await act(async () => { await vi.advanceTimersByTimeAsync(DEBOUNCE); });
         expect(mocks.search).toHaveBeenCalledTimes(2);
-        expect(mocks.search).toHaveBeenLastCalledWith('櫃買', 8, searchOptions);
-        expect(text(view!.root)).not.toContain('搜尋失敗');
-        expect(view!.root.findAll((node) => node.props.role === 'alert')).toHaveLength(0);
+        expect(mocks.search).toHaveBeenLastCalledWith('櫃買', searchLimit(kind), searchOptions);
+        expect(text(view.root)).not.toContain('搜尋失敗');
+        expect(view.root.findAll((node) => node.props.role === 'alert')).toHaveLength(0);
     });
 
-    it('保留方向鍵與 Enter 選擇，以及無建議時的直接代碼', async () => {
-        mocks.search.mockResolvedValue([otcIndex, warrantSuggestion]);
-        const { onJump } = renderPalette();
-        await query('台積電', 120);
-        act(() => view!.root.findByType('input').props.onKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() }));
-        await act(async () => { view!.root.findByType('input').props.onKeyDown({ key: 'Enter' }); });
-        expect(onJump).toHaveBeenLastCalledWith(warrant.code, 'WRT');
-        mocks.search.mockResolvedValue([]);
-        await query('txfr1', 120);
-        await act(async () => { view!.root.findByType('input').props.onKeyDown({ key: 'Enter' }); });
-        expect(onJump).toHaveBeenLastCalledWith('TXFR1', undefined);
-    });
-
-    it('較舊查詢的失敗不可蓋掉較新查詢的結果', async () => {
+    it.each(['失敗', '結果'] as const)('較舊查詢晚到的%s不可蓋掉較新查詢的結果', async (outcome) => {
         let rejectOld!: (reason: Error) => void;
-        mocks.search.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject; }))
+        let finishOld!: (value: ProductSuggestion[]) => void;
+        mocks.search.mockImplementationOnce(() => new Promise((resolve, reject) => { finishOld = resolve; rejectOld = reject; }))
             .mockResolvedValueOnce([otcIndex]);
-        renderPalette();
-        await query('台積電', 120);
-        await query('櫃買', 120);
-        await act(async () => { rejectOld(new Error('舊請求失敗')); });
-        expect(button('IX0043')).toBeDefined();
-        expect(text(view!.root)).not.toContain('搜尋失敗');
+        const { view } = render(kind);
+        await query(view, '台積電');
+        await query(view, '櫃買');
+        await act(async () => { if (outcome === '失敗') rejectOld(new Error('舊請求失敗')); else finishOld([warrantSuggestion]); });
+        expect(row(view, 'IX0043')).toBeDefined();
+        expect(row(view, warrant.code)).toBeUndefined();
+        expect(text(view.root)).not.toContain('搜尋失敗');
     });
 
-    it('輸入一改就移除舊結果，debounce 與新請求待決期間 Enter 不會選到舊商品', async () => {
+    it('輸入一改就移除舊結果，debounce 與新請求待決期間不會選到舊商品', async () => {
         let finishNew!: (items: ProductSuggestion[]) => void;
         mocks.search.mockResolvedValueOnce([otcIndex, warrantSuggestion])
             .mockImplementationOnce(() => new Promise((resolve) => { finishNew = resolve; }));
-        const { onJump } = renderPalette();
-        await query('台積電', 120);
-        act(() => view!.root.findByType('input').props.onKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() }));
-        act(() => view!.root.findByType('input').props.onChange({ target: { value: '櫃買' } }));
-        expect(button(warrant.code)).toBeUndefined();
-        expect(text(view!.root)).toContain('搜尋中…');
-        await act(async () => { view!.root.findByType('input').props.onKeyDown({ key: 'Enter' }); });
-        expect(onJump).not.toHaveBeenCalled();
-        await act(async () => { await vi.advanceTimersByTimeAsync(120); });
-        await act(async () => { view!.root.findByType('input').props.onKeyDown({ key: 'Enter' }); });
-        expect(onJump).not.toHaveBeenCalled();
+        const { view, submit } = render(kind);
+        await query(view, '台積電');
+        act(() => key(view, 'ArrowDown'));
+        act(() => input(view).props.onChange({ target: { value: '櫃買' } }));
+        expect(row(view, warrant.code)).toBeUndefined();
+        expect(text(view.root)).toContain('搜尋中…');
+        await act(async () => { input(view).props.onKeyDown({ key: 'Enter' }); });
+        expect(submit).not.toHaveBeenCalled();
+        await act(async () => { await vi.advanceTimersByTimeAsync(DEBOUNCE); });
+        await act(async () => { input(view).props.onKeyDown({ key: 'Enter' }); });
+        // The watchlist's add button submits the same way.
+        if (kind === 'watchlist') await act(async () => { await row(view, '+')!.props.onClick(); });
+        expect(submit).not.toHaveBeenCalled();
         await act(async () => { finishNew([otcIndex]); });
-        await act(async () => { view!.root.findByType('input').props.onKeyDown({ key: 'Enter' }); });
-        expect(onJump).toHaveBeenCalledExactlyOnceWith('IX0043', 'IND');
+        await act(async () => { input(view).props.onKeyDown({ key: 'Enter' }); });
+        expect(submit).toHaveBeenCalledExactlyOnceWith(...submitted(otcIndex));
     });
 
-    it('換成直接代碼後，即使名稱搜尋還在 debounce 也只查新代碼', async () => {
+    it('換成直接代碼後，即使名稱搜尋還在 debounce 也只送出新代碼', async () => {
         mocks.search.mockResolvedValue([warrantSuggestion]);
-        const { onJump } = renderPalette();
-        await query('台積電', 120);
-        act(() => view!.root.findByType('input').props.onChange({ target: { value: 'txfr1' } }));
-        await act(async () => { view!.root.findByType('input').props.onKeyDown({ key: 'Enter' }); });
-        expect(onJump).toHaveBeenCalledExactlyOnceWith('TXFR1', undefined);
+        const { view, submit } = render(kind);
+        await query(view, '台積電');
+        act(() => input(view).props.onChange({ target: { value: 'txfr1' } }));
+        await act(async () => { input(view).props.onKeyDown({ key: 'Enter' }); });
+        expect(submit).toHaveBeenCalledExactlyOnceWith(...(kind === 'palette' ? ['TXFR1', undefined] : ['TXFR1']));
         expect(mocks.prime).not.toHaveBeenCalled();
     });
 });
 
-describe('自選清單商品搜尋', () => {
-    it('IND 結果的代碼及型別原樣交給新增流程', async () => {
-        mocks.search.mockResolvedValue([otcIndex]);
-        const { onAdd } = renderWatchlist();
-        await query('櫃買', 150);
-        expect(mocks.search).toHaveBeenCalledWith('櫃買', 10, watchSearchOptions);
-        await act(async () => { await button('IX0043').props.onClick(); });
-        expect(onAdd).toHaveBeenCalledWith('IX0043', 'IND', undefined);
-    });
-
-    it('新增權證保留完整合約及交易所，不額外解碼', async () => {
-        mocks.search.mockResolvedValue([warrantSuggestion]);
-        const { onAdd } = renderWatchlist();
-        await query('台積電', 150);
-        await act(async () => { await button(warrant.code).props.onClick(); });
-        expect(onAdd).toHaveBeenCalledWith(warrant.code, 'WRT', warrant);
-        expect(onAdd.mock.calls[0]?.[2]).toBe(warrant);
-    });
-
-    it('搜尋失敗提供重試，成功空結果不冒充讀取失敗', async () => {
-        mocks.search.mockRejectedValueOnce(new Error('來源讀取失敗')).mockResolvedValueOnce([]);
-        renderWatchlist();
-        await query('櫃買', 150);
-        expect(text(view!.root)).toContain('搜尋失敗，可重試');
-        act(() => button('重試').props.onClick());
-        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
-        expect(mocks.search).toHaveBeenCalledTimes(2);
-        expect(text(view!.root)).not.toContain('搜尋失敗');
-    });
-
-    it('較舊查詢的結果不可蓋掉新結果', async () => {
-        let finishOld!: (value: ProductSuggestion[]) => void;
-        mocks.search.mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }))
-            .mockResolvedValueOnce([otcIndex]);
-        renderWatchlist();
-        await query('台積電', 150);
-        await query('櫃買', 150);
-        await act(async () => { finishOld([warrantSuggestion]); });
-        expect(button('IX0043')).toBeDefined();
-        expect(button(warrant.code)).toBeUndefined();
-    });
-
-    it('名稱變更立即移除舊列，debounce 與新請求待決時不新增舊商品', async () => {
-        let finishNew!: (items: ProductSuggestion[]) => void;
-        mocks.search.mockResolvedValueOnce([warrantSuggestion])
-            .mockImplementationOnce(() => new Promise((resolve) => { finishNew = resolve; }));
-        const { onAdd } = renderWatchlist();
-        await query('台積電', 150);
-        act(() => view!.root.findByType('input').props.onChange({ target: { value: '櫃買' } }));
-        expect(button(warrant.code)).toBeUndefined();
-        expect(text(view!.root)).toContain('搜尋中…');
-        await act(async () => { view!.root.findByType('input').props.onKeyDown({ key: 'Enter' }); });
-        expect(onAdd).not.toHaveBeenCalled();
-        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
-        await act(async () => { await button('+').props.onClick(); });
-        expect(onAdd).not.toHaveBeenCalled();
-        await act(async () => { finishNew([otcIndex]); });
-        await act(async () => { await button('IX0043').props.onClick(); });
-        expect(onAdd).toHaveBeenCalledExactlyOnceWith('IX0043', 'IND', undefined);
-    });
-
-    it('直接代碼不必等待名稱搜尋且只新增本次輸入', async () => {
-        mocks.search.mockResolvedValue([warrantSuggestion]);
-        const { onAdd } = renderWatchlist();
-        await query('台積電', 150);
-        act(() => view!.root.findByType('input').props.onChange({ target: { value: 'txfr1' } }));
-        await act(async () => { view!.root.findByType('input').props.onKeyDown({ key: 'Enter' }); });
-        expect(onAdd).toHaveBeenCalledExactlyOnceWith('TXFR1');
-    });
+it('命令面板保留方向鍵與 Enter 選擇，以及無建議時的直接代碼', async () => {
+    mocks.search.mockResolvedValue([otcIndex, warrantSuggestion]);
+    const { view, submit } = render('palette');
+    await query(view, '台積電');
+    act(() => key(view, 'ArrowDown'));
+    await act(async () => { input(view).props.onKeyDown({ key: 'Enter' }); });
+    expect(submit).toHaveBeenLastCalledWith(warrant.code, 'WRT');
+    mocks.search.mockResolvedValue([]);
+    await query(view, 'txfr1');
+    await act(async () => { input(view).props.onKeyDown({ key: 'Enter' }); });
+    expect(submit).toHaveBeenLastCalledWith('TXFR1', undefined);
 });

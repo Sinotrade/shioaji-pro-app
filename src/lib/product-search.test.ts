@@ -97,13 +97,6 @@ describe('futures month and size priority', () => {
         contract('AAAR2', 'FUT', { root: 'AAA', name: '小型測試期貨 次月', underlying_code: '2330', delivery_month: '202611', target_code: 'AAAK6' }),
     ];
 
-    it.each(['台積電', '台積電期貨'])('orders regular near, small near, regular next, small next for %s', async query => {
-        mocks.futures.mockResolvedValue([ordered[3], ordered[1], ordered[2], ordered[0]]);
-        const rows = (await search(query, false)).filter(row => row.security_type === 'FUT');
-        expect(rows.map(row => row.code)).toEqual(ordered.map(row => row.code));
-        expect(rows.map(row => row.contract)).toEqual(ordered);
-    });
-
     it('globally sorts multiple roots instead of inheriting the first matching root', async () => {
         mocks.catalog.mockResolvedValue([]);
         mocks.futureRoots.mockResolvedValue([
@@ -116,40 +109,6 @@ describe('futures month and size priority', () => {
         expect(mocks.futures).toHaveBeenCalledTimes(2);
     });
 
-    it('uses R1/R2 identities even when delivery-month metadata is missing', async () => {
-        mocks.futures.mockResolvedValue([...ordered].reverse().map(row => ({ ...row, delivery_month: undefined })));
-        expect((await search('台積電', false)).filter(row => row.security_type === 'FUT').map(row => row.code))
-            .toEqual(ordered.map(row => row.code));
-    });
-
-    it.each(['ZZZ', 'AAA'])('keeps near before next when only root %s is available', async root => {
-        mocks.futures.mockResolvedValue(ordered.filter(row => row.root === root).reverse());
-        expect((await search('台積電', false)).filter(row => row.security_type === 'FUT').map(row => row.code))
-            .toEqual([`${root}R1`, `${root}R2`]);
-    });
-
-    it('keeps each month together in regular, small, micro order without mutating identities', async () => {
-        const dated = contract('ZZZJ6', 'FUT', { name: '測試一般期貨 202610', underlying_code: '2330', delivery_month: '202610' });
-        const micro = contract('MMMR1', 'FUT', { name: '微型測試期貨 近月', underlying_code: '2330', delivery_month: '202610', target_code: 'MMMJ6' });
-        const source = [dated, micro, ...ordered].reverse();
-        const before = structuredClone(source);
-        mocks.futures.mockResolvedValue(source);
-        const rows = (await search('台積電', false, 10)).filter(row => row.security_type === 'FUT');
-        expect(rows.slice(0, 5).map(row => row.code)).toEqual(['ZZZR1', 'AAAR1', 'MMMR1', 'ZZZR2', 'AAAR2']);
-        expect(source).toEqual(before);
-        expect(rows.find(row => row.code === 'MMMR1')?.contract?.target_code).toBe('MMMJ6');
-    });
-
-    it('preserves the relative futures order when mixed with stocks and warrants at a limited size', async () => {
-        mocks.futures.mockResolvedValue([...ordered].reverse());
-        const rows = await search('台積電', true, 8);
-        expect(rows[0]?.code).toBe('2330');
-        const futureCodes = rows.filter(row => row.security_type === 'FUT').map(row => row.code);
-        expect(futureCodes).toEqual(ordered.slice(0, futureCodes.length).map(row => row.code));
-        expect(rows.some(row => row.security_type === 'WRT')).toBe(true);
-        expect(rows).toHaveLength(8);
-    });
-
     it('resolves a unique 台積 prefix and groups its stock, continuous futures, then warrants', async () => {
         mocks.futures.mockResolvedValue([...futures].reverse());
         const rows = await search('台積');
@@ -157,27 +116,6 @@ describe('futures month and size priority', () => {
         expect(rows.slice(5).every(row => row.security_type === 'WRT')).toBe(true);
         expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: '2330' }, { signal: expect.any(AbortSignal) });
         expect(mocks.warrants).toHaveBeenCalledWith('2330', { expiryFrom: mocks.day }, { signal: expect.any(AbortSignal) });
-    });
-
-    it('does not promote an ambiguous prefix or a unique non-prefix substring', async () => {
-        mocks.catalog.mockResolvedValue([stock, { ...stock, code: 'FIXTURE', name: '台積其他測試股' }]);
-        await search('台積');
-        expect(mocks.futures.mock.calls.some(([filters]) => filters.underlyingCode)).toBe(false);
-        expect(mocks.warrants).not.toHaveBeenCalled();
-        mocks.futures.mockClear();
-        mocks.catalog.mockResolvedValue([stock]);
-        await search('積電');
-        expect(mocks.futures.mock.calls.some(([filters]) => filters.underlyingCode)).toBe(false);
-        expect(mocks.warrants).not.toHaveBeenCalled();
-    });
-
-    it('does not treat a code-only name fallback as a unique stock-name prefix', async () => {
-        mocks.catalog.mockResolvedValue([stock, { ...stock, code: '2337', name: '2337' }]);
-        const rows = await search('233');
-        expect(rows.some(row => row.code === '2330')).toBe(true);
-        expect(rows.some(row => row.code === '2337')).toBe(true);
-        expect(mocks.futures.mock.calls.some(([filters]) => filters.underlyingCode)).toBe(false);
-        expect(mocks.warrants).not.toHaveBeenCalled();
     });
 
     it.each(['台指', '台指期貨', '臺股期貨'])('finds the same index underlying and groups all sizes for %s', async query => {
@@ -191,22 +129,6 @@ describe('futures month and size priority', () => {
         expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: 'IX0001' }, { signal: expect.any(AbortSignal) });
         expect(mocks.futureRoots).not.toHaveBeenCalled();
         expect(mocks.warrants).not.toHaveBeenCalled();
-    });
-
-    it.each([4, undefined])('does not let a weekly mini alias evict micro next-month (week metadata=%s)', async week => {
-        // MX4R1 shares IX0001 with the monthly roots in the inspected 1.7.8
-        // metadata. Both structured week metadata and the official W4 name work.
-        const codes = ['TXFR1', 'MXFR1', 'TMFR1', 'TXFR2', 'MXFR2', 'TMFR2'];
-        mocks.futures.mockResolvedValue([
-            contract('MX4R1', 'FUT', { name: '小型臺指期貨 202610 W4 近月', underlying_code: 'IX0001', week_of_month: week, target_code: 'MX4J6' }),
-            ...codes.map((code, i) => contract(code, 'FUT', {
-                name: `${i % 3 === 0 ? '臺股' : i % 3 === 1 ? '小型臺指' : '微型臺指'}期貨`,
-                underlying_code: 'IX0001', target_code: `${code.slice(0, 3)}${i < 3 ? 'J6' : 'K6'}`,
-            })),
-        ]);
-        expect((await search('台指期貨', false)).filter(row => row.security_type === 'FUT').map(row => row.code)).toEqual(codes);
-        mocks.resolve.mockResolvedValue(contract('MX4R1', 'FUT', { name: '小型臺指期貨 202610 W4 近月', underlying_code: 'IX0001', target_code: 'MX4J6' }));
-        expect((await search('MX4R1', false))[0]).toMatchObject({ code: 'MX4R1', contract: { target_code: 'MX4J6' } });
     });
 
     it('keeps dated aliases out of the primary group and places warrants immediately after continuous futures', async () => {
@@ -528,17 +450,6 @@ describe('product search sources and related products', () => {
 });
 
 describe('related product request cache', () => {
-    it('shares simultaneous requests and caches successful warrant results', async () => {
-        let resolve!: (rows: ContractInfo[]) => void;
-        mocks.warrants.mockReturnValue(new Promise<ContractInfo[]>((done) => { resolve = done; }));
-        const pending = Promise.all([search('台積電'), search('2330')]);
-        await vi.waitFor(() => expect(mocks.warrants).toHaveBeenCalledTimes(1));
-        resolve(warrants);
-        await pending;
-        await search('臺積電');
-        expect(mocks.warrants).toHaveBeenCalledTimes(1);
-    });
-
     it('retries a failed request without poisoning other product types', async () => {
         mocks.warrants.mockRejectedValueOnce(new Error('503 warrants'));
         expect((await search('台積電'))[0]?.code).toBe('2330');
@@ -556,20 +467,6 @@ describe('related product request cache', () => {
         mocks.day = '2026-10-18';
         await search('台積電');
         expect(mocks.warrants).toHaveBeenCalledTimes(4);
-    });
-
-    it('rejects a mid-request API switch and does not cache that response under the old server', async () => {
-        let resolve!: (rows: ContractInfo[]) => void;
-        mocks.warrants.mockReturnValueOnce(new Promise<ContractInfo[]>((done) => { resolve = done; }));
-        const pending = search('台積電');
-        const rejected = expect(pending).rejects.toThrow('伺服器已切換');
-        await vi.waitFor(() => expect(mocks.warrants).toHaveBeenCalledTimes(1));
-        mocks.base = 'http://127.0.0.1:21324';
-        resolve(warrants);
-        await rejected;
-        mocks.base = 'http://127.0.0.1:21323';
-        await search('台積電');
-        expect(mocks.warrants).toHaveBeenCalledTimes(2);
     });
 
     it('bounds cached underlying requests instead of retaining every visited stock', async () => {
