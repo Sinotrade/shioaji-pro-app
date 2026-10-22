@@ -1,7 +1,7 @@
 // Mock-verified bracket / trigger runtime (#102). All broker I/O is mocked:
 // no network, no real or simulated order is sent. Wire payloads come from
 // the de-identified 1.7.6 simulation capture.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeOrderEvent, type OrderEventReport } from './order-report';
 import fixture from './fixtures/native-simulation-bracket-reports-1.7.6.json';
 import type { Trade } from './types/order';
@@ -134,6 +134,17 @@ const emit = async (r: OrderEventReport) => { m.order!(r); await flush(); };
 const tick = async (close: number, simtrade = false) => { m.tick!({ code: 'TXFR1', close, simtrade }); await flush(); };
 const triggersOf = (planId: string) => engine.getTriggers().filter(t => t.bracketId === planId);
 const planOf = (id: string) => bracket.getBrackets().find(p => p.id === id)!;
+
+// 第一個案例會付 trigger-engine／bracket 的冷轉譯成本：Windows CI 整套並行時超過 5 秒的預設逾時（2026-10-22 run 39707054988）。
+// 先在 hook 裡（較長逾時）載入一次，各案例 resetModules 後重新評估時就只剩評估、不必再轉譯
+beforeAll(async () => {
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined });
+    vi.stubGlobal('location', { search: '' });
+    vi.stubGlobal('BroadcastChannel', undefined);
+    await import('./trigger-engine');
+    await import('./bracket');
+    vi.unstubAllGlobals();
+}, 60_000);
 
 beforeEach(() => {
     vi.useFakeTimers();
