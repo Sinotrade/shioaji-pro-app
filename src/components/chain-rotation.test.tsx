@@ -86,6 +86,15 @@ describe('FlowRotation', () => {
         expect(relax.calls).toBe(afterMount);
     });
 
+    it('reuses the layout when a price tick rebuilds rows with the same bar data', () => {
+        relax.calls = 0;
+        render();
+        const afterMount = relax.calls;
+        const props = { rows: rows(), now: NOW, from: 0, session: '2026-10-21', selectedId: 't0', reducedMotion: true, paused: false, onSelect: () => undefined };
+        act(() => renderer!.update(createElement(FlowRotation, props)));
+        expect(relax.calls).toBe(afterMount);
+    });
+
     it('is a labelled group of buttons, not an image, with decorative layers hidden', () => {
         render('t2');
         const svg = renderer!.root.find((n: ReactTestInstance) => n.type === 'svg' && n.props.role === 'group');

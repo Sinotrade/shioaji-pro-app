@@ -475,13 +475,19 @@ export interface Circle {
     x: number;
     y: number;
     r: number;
+    /**
+     * Region the centre must stay in (e.g. its quadrant), on top of the box:
+     * relaxation may nudge a bubble, never carry it across a zero line.
+     */
+    keep?: { x0: number; x1: number; y0: number; y1: number };
 }
 
 /**
  * Gentle collision relaxation for the rotation bubbles: overlapping pairs are
  * pushed apart (up to `overlap` × the sum of radii may still overlap), each
  * bubble is pulled back towards its data position and never strays more
- * than `maxShift` × its radius from it, and stays inside `box`.
+ * than `maxShift` × its radius from it, and stays inside `box` (and its own
+ * `keep` region, when given).
  * Deterministic: the same input gives the same layout every minute.
  */
 export function relaxCircles(
@@ -490,7 +496,19 @@ export function relaxCircles(
     { iterations = 60, overlap = 0.12, maxShift = 1.2, pull = 0.04 } = {},
 ): { x: number; y: number }[] {
     const clamp = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
-    const home = circles.map((c) => ({ x: clamp(c.x, box.x0 + c.r, box.x1 - c.r), y: clamp(c.y, box.y0 + c.r, box.y1 - c.r) }));
+    const settle = (p: { x: number; y: number }, c: Circle) => {
+        p.x = clamp(p.x, box.x0 + c.r, box.x1 - c.r);
+        p.y = clamp(p.y, box.y0 + c.r, box.y1 - c.r);
+        if (c.keep) {
+            p.x = clamp(p.x, c.keep.x0, c.keep.x1);
+            p.y = clamp(p.y, c.keep.y0, c.keep.y1);
+        }
+    };
+    const home = circles.map((c) => {
+        const p = { x: c.x, y: c.y };
+        settle(p, c);
+        return p;
+    });
     const pos = home.map((p) => ({ ...p }));
     const n = circles.length;
     for (let it = 0; it < iterations; it++) {
@@ -535,23 +553,27 @@ export function relaxCircles(
                 p.x = h.x + (sx / shift) * cap;
                 p.y = h.y + (sy / shift) * cap;
             }
-            p.x = clamp(p.x, box.x0 + c.r, box.x1 - c.r);
-            p.y = clamp(p.y, box.y0 + c.r, box.y1 - c.r);
+            settle(p, c);
         }
         if (!moved) break;
     }
     // a dense pile the capped pass could not open (many groups at one spot):
     // separate it for real, still inside the box; a pile-up hides groups
-    const placed = () => pos.map((p, i) => ({ ...p, r: circles[i]!.r }));
-    for (let it = 0; it < iterations * 2 && maxOverlap(placed()) > overlap + 0.02; it++) {
+    // (the worst overlap is measured during each pass: no extra O(n²) scan)
+    const limit = overlap + 0.02;
+    let worst = maxOverlap(pos.map((p, i) => ({ ...p, r: circles[i]!.r })));
+    for (let it = 0; it < iterations * 2 && worst > limit; it++) {
+        worst = 0;
         for (let i = 0; i < n; i++) {
             for (let j = i + 1; j < n; j++) {
                 const a = pos[i]!;
                 const b = pos[j]!;
-                const min = (circles[i]!.r + circles[j]!.r) * (1 - overlap);
+                const sum = circles[i]!.r + circles[j]!.r;
+                const min = sum * (1 - overlap);
                 let dx = b.x - a.x;
                 let dy = b.y - a.y;
                 let d = Math.hypot(dx, dy);
+                if (sum > 0) worst = Math.max(worst, 1 - d / sum);
                 if (d >= min) continue;
                 if (d < 1e-6) {
                     const angle = ((i * 7 + j * 13) % 16) * (Math.PI / 8);
@@ -574,8 +596,7 @@ export function relaxCircles(
         for (let i = 0; i < n; i++) {
             const c = circles[i]!;
             const p = pos[i]!;
-            p.x = clamp(p.x, box.x0 + c.r, box.x1 - c.r);
-            p.y = clamp(p.y, box.y0 + c.r, box.y1 - c.r);
+            settle(p, c);
         }
     }
     return pos;

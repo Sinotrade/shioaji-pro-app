@@ -320,6 +320,19 @@ describe('bubble relaxation', () => {
         });
     });
 
+    it('never carries a bubble across a zero line in a dense same-quadrant pile', () => {
+        // Codex repro: 36 groups just above the horizontal zero (cy = 208)
+        const plot = { x0: 40, x1: 626, y0: 30, y1: 386 };
+        const keep = { x0: 333, x1: Infinity, y0: -Infinity, y1: 208 };
+        const circles = Array.from({ length: 36 }, (_, i) => ({ x: 340 + i * 0.5, y: 149, r: 14, keep }));
+        const out = relaxCircles(circles, plot);
+        for (const p of out) {
+            expect(p.y).toBeLessThanOrEqual(208);
+            expect(p.x).toBeGreaterThanOrEqual(333);
+        }
+        expect(maxOverlap(out.map((p) => ({ ...p, r: 14 })))).toBeLessThanOrEqual(0.14);
+    });
+
     it('leaves separated bubbles alone and clamps to the box', () => {
         const out = relaxCircles(
             [

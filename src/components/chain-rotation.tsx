@@ -149,13 +149,24 @@ function plotGeometry(w: number, h: number, scale: NetScale, extentY: number, si
  * sits whole against the frame.
  */
 function placeBubbles(bubbles: readonly Bubble[], geo: Geometry, warming: boolean): Placement {
-    const { px, py, radius, plotW, plotH, plotBox, cy } = geo;
+    const { px, py, radius, plotW, plotH, plotBox, cx, cy } = geo;
     const place: Placement = new Map();
     const sorted = [...bubbles].sort((a, b) => (a.id < b.id ? -1 : 1));
     const circles = sorted.map((b) => {
         const r = radius(b.point.size);
         const x = Math.max(plotBox.x0 + r, Math.min(plotBox.x1 - r, px(b.point.net)));
-        return { x, y: warming ? cy : py(b.point.y), r };
+        if (warming) return { x, y: cy, r };
+        // live: a nudge never carries a bubble across a zero line, so its
+        // drawn quadrant always matches its colour (quadrantOf: 0 is ≥ 0)
+        const right = b.point.net >= 0;
+        const up = b.point.y >= 0;
+        const keep = {
+            x0: right ? cx : -Infinity,
+            x1: right ? Infinity : cx - 0.01,
+            y0: up ? -Infinity : cy + 0.01,
+            y1: up ? cy : Infinity,
+        };
+        return { x, y: py(b.point.y), r, keep };
     });
     let out: { x: number; y: number }[] = circles;
     if (plotW > 0 && plotH > 0) {
@@ -251,6 +262,13 @@ function placeLabels(bubbles: readonly Bubble[], place: Placement, geo: Geometry
     return labels;
 }
 
+/** `value` as of the last time `key` changed: tick-only updates reuse the layout. */
+function useKeyed<T>(value: T, key: string): T {
+    const ref = useRef({ key, value });
+    if (ref.current.key !== key) ref.current = { key, value };
+    return ref.current.value;
+}
+
 /** Extent that only grows during a session; shrinks once the data fits in a third of it. */
 function useRatchet(value: number, session: string | null) {
     const ref = useRef<{ session: string | null; value: number }>({
@@ -311,6 +329,14 @@ export function FlowRotation({
         });
     }, [rows, now, from, warming]);
 
+    // layout inputs change once a minute (bar data), not on every price
+    // tick that rebuilds `rows`: the expensive placement keys on them only
+    const layoutKey = useMemo(
+        () => `${warming ? 'w' : 'l'}|${bubbles.map((b) => `${b.id}:${b.row.theme.name}:${b.point.net}:${b.point.y}:${b.point.size}`).join('|')}`,
+        [bubbles, warming],
+    );
+    const layoutBubbles = useKeyed(bubbles, layoutKey);
+
     // states of the previous minute → pulse on change
     const prev = useRef<{ now: number | null; states: Map<string, Quadrant> }>({
         now: null,
@@ -335,18 +361,18 @@ export function FlowRotation({
     }, [bubbles, now]);
 
     // robust per side: one dominant group does not squash the other 35
-    const rawX = useMemo(() => netExtents(bubbles.map((b) => b.point.net), { floor: NET_UNIT }), [bubbles]);
+    const rawX = useMemo(() => netExtents(layoutBubbles.map((b) => b.point.net), { floor: NET_UNIT }), [layoutBubbles]);
     // robust: a thin group's acceleration can spike; it is pinned to the edge
     const rawY = useMemo(() => {
-        const ys = bubbles.map((b) => Math.abs(b.point.y)).sort((a, b) => a - b);
+        const ys = layoutBubbles.map((b) => Math.abs(b.point.y)).sort((a, b) => a - b);
         const p85 = ys.length > 0 ? ys[Math.min(ys.length - 1, Math.floor(ys.length * 0.85))]! : 0;
         return rotationExtent([p85 * 1.3], 4, 2);
-    }, [bubbles]);
+    }, [layoutBubbles]);
     const extentPos = useRatchet(rawX.pos, session);
     const extentNeg = useRatchet(rawX.neg, session);
     const extentY = useRatchet(rawY, session);
     const scale = useMemo(() => netScale(extentPos, extentNeg, NET_UNIT), [extentPos, extentNeg]);
-    const sizes = useMemo(() => bubbles.map((b) => b.point.size), [bubbles]);
+    const sizes = useMemo(() => layoutBubbles.map((b) => b.point.size), [layoutBubbles]);
     const counts = useMemo(() => quadrantCounts(bubbles.map((b) => ({ x: b.point.net, y: b.point.y }))), [bubbles]);
 
     const w = size.width;
@@ -358,9 +384,9 @@ export function FlowRotation({
     // collision relaxation and label placement are the expensive part: they
     // depend on the data, the box and the selection only, so a hover or a
     // quadrant focus reuses them
-    const place = useMemo(() => placeBubbles(bubbles, geo, warming), [bubbles, geo, warming]);
+    const place = useMemo(() => placeBubbles(layoutBubbles, geo, warming), [layoutBubbles, geo, warming]);
     const at = (b: Bubble) => place.get(b.id)!;
-    const labels = useMemo(() => placeLabels(bubbles, place, geo, selectedId), [bubbles, place, geo, selectedId]);
+    const labels = useMemo(() => placeLabels(layoutBubbles, place, geo, selectedId), [layoutBubbles, place, geo, selectedId]);
 
     const top = bubbles.reduce<Bubble | null>((best, b) => (b.point.net > 0 && (!best || b.point.net > best.point.net) ? b : best), null);
     const bottom = bubbles.reduce<Bubble | null>(
@@ -376,6 +402,18 @@ export function FlowRotation({
     const stateText = (b: Bubble) => (b.state ? QUADRANT_LABEL[b.state] : '動能累積中');
     // the hovered group is always named, even when the label cap hid it
     const hovered = hoverId !== null && !labels.has(hoverId) ? bubbles.find((b) => b.id === hoverId) : undefined;
+    // kept inside the plot: shifted sideways at an edge, below when no room above
+    const hoverSpot = (() => {
+        if (!hovered) return null;
+        const { x, y, r } = at(hovered);
+        const value = fmtTwd(hovered.point.net, true).replace(' ', '');
+        const half = Math.max(textWidth(hovered.row.theme.name), textWidth(value, 5.4)) / 2 + 2;
+        const lo = PAD.left + half;
+        const hi = PAD.left + plotW - half;
+        const dx = (lo > hi ? PAD.left + plotW / 2 : Math.max(lo, Math.min(hi, x))) - x;
+        const above = y - r - 23 >= PAD.top;
+        return { dx, nameY: above ? -r - 13 : r + 11, value };
+    })();
 
     return (
         <div className={s.rot} ref={ref}>
@@ -600,7 +638,7 @@ export function FlowRotation({
                                 </m.g>
                             );
                         })}
-                        {hovered && (
+                        {hovered && hoverSpot && (
                             <m.g
                                 key={`hover-${hovered.id}`}
                                 className={s.rotLabel}
@@ -609,15 +647,16 @@ export function FlowRotation({
                                 transition={reducedMotion ? STILL : SPRING}
                                 aria-hidden='true'
                             >
-                                <text className={s.rotName} y={-at(hovered).r - 13} textAnchor='middle'>
+                                <text className={s.rotName} x={hoverSpot.dx} y={hoverSpot.nameY} textAnchor='middle'>
                                     {hovered.row.theme.name}
                                 </text>
                                 <text
                                     className={hovered.state ? s.rotValue[hovered.state] : s.rotValueWarm}
-                                    y={-at(hovered).r - 3}
+                                    x={hoverSpot.dx}
+                                    y={hoverSpot.nameY + 10}
                                     textAnchor='middle'
                                 >
-                                    {fmtTwd(hovered.point.net, true).replace(' ', '')}
+                                    {hoverSpot.value}
                                 </text>
                             </m.g>
                         )}
