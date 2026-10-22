@@ -801,8 +801,9 @@ export const heat = style({
     position: 'relative',
     flex: 1,
     minHeight: 0,
-    overflowY: 'auto',
-    overflowX: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
     padding: `6px ${vars.space.sm} 8px`,
 });
 export const heatLegend = style({
@@ -822,37 +823,37 @@ export const heatScale = style({
     background: `linear-gradient(90deg in oklab, color-mix(in oklab, ${vars.color.down} 54%, ${vars.color.panelRaised}), ${vars.color.panelRaised} 50%, color-mix(in oklab, ${vars.color.up} 54%, ${vars.color.panelRaised}))`,
 });
 export const heatScaleEnd = style({ ...mono, fontSize: '0.54rem' });
-export const heatGrid = style({
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))',
-    gap: '4px',
-});
-export const heatGridSmall = style({ gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: '3px' });
+// treemap panes: groups over members (3 : 2), each measured for its layout
+export const heatPaneOnly = style({ flex: '1 1 0', minHeight: '120px', display: 'flex' });
+export const heatPaneMain = style({ flex: '3 1 0', minHeight: '120px', display: 'flex' });
+export const heatPaneMembers = style({ flex: '2 1 0', minHeight: '96px', display: 'flex' });
+export const heatMap = style({ position: 'relative', flex: 1, minWidth: 0, minHeight: 0 });
 export const heatSection = style({
-    margin: '10px 0 5px',
+    flexShrink: 0,
+    margin: '8px 0 5px',
     fontSize: '0.62rem',
     fontWeight: 650,
     color: vars.color.foreground,
 });
 
+// position/size ease over 0.6 s when a minute bar re-weights the map (cut to
+// 0 s while the panel is being resized); colour keeps its slower ease
 const heatTileBase = style({
-    position: 'relative',
+    position: 'absolute',
     overflow: 'hidden',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '1px',
-    height: '62px',
-    padding: '5px 7px 4px',
+    padding: 0,
     border: `1px solid ${tint(vars.color.border, 70)}`,
-    borderRadius: vars.radius.sm,
+    borderRadius: '3px',
     textAlign: 'left',
     cursor: 'pointer',
     fontFamily: vars.font.body,
     color: vars.color.foreground,
-    transition: 'background-color 900ms ease, border-color 300ms ease, transform 150ms ease',
+    transitionProperty: 'left, top, width, height, background-color, border-color',
+    transitionDuration: 'var(--heat-move, 0.6s), var(--heat-move, 0.6s), var(--heat-move, 0.6s), var(--heat-move, 0.6s), 900ms, 300ms',
+    transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1), cubic-bezier(0.22, 1, 0.36, 1), cubic-bezier(0.22, 1, 0.36, 1), cubic-bezier(0.22, 1, 0.36, 1), ease, ease',
     selectors: {
-        '&:hover': { borderColor: vars.color.borderBright, transform: 'translateY(-1px)' },
-        '&:focus-visible': { outline: `1px solid ${vars.color.accent}`, outlineOffset: '1px' },
+        '&:hover': { borderColor: vars.color.borderBright },
+        '&:focus-visible': { outline: `1.5px solid ${vars.color.accent}`, outlineOffset: '-1.5px', zIndex: 1 },
     },
     ...reduce,
 });
@@ -862,8 +863,7 @@ export const heatTile = styleVariants({
     out: [heatTileBase, { background: `color-mix(in oklab, ${vars.color.down} var(--heat), ${vars.color.panelRaised})` }],
     flat: [heatTileBase, { background: vars.color.panelRaised }],
 });
-export const heatTileSmall = style({ height: '50px', padding: '4px 6px 3px' });
-export const heatTileOn = style({ boxShadow: `0 0 0 1.5px ${vars.color.accent}`, borderColor: 'transparent' });
+export const heatTileOn = style({ boxShadow: `inset 0 0 0 1.5px ${vars.color.accent}`, borderColor: 'transparent' });
 
 const sheen = keyframes({
     from: { transform: 'translateX(-110%)', opacity: 0.9 },
@@ -877,16 +877,32 @@ export const heatSheen = style({
     animation: `${sheen} 1.1s ease-out forwards`,
     ...reduce,
 });
-export const heatHead = style({ display: 'flex', alignItems: 'baseline', gap: '4px', minWidth: 0 });
-export const heatName = style({ flex: 1, minWidth: 0, fontSize: '0.64rem', fontWeight: 650, ...ellipsis });
-export const heatPct = style({ ...mono, fontSize: '0.54rem', fontWeight: 600, whiteSpace: 'nowrap', color: vars.color.foreground, opacity: 0.72 });
-export const heatValue = style({ ...mono, fontSize: '0.78rem', fontWeight: 700, lineHeight: 1.15, whiteSpace: 'nowrap' });
+// label: font size comes from the tile (heat-label font steps), lines scale with it
+export const heatLabel = style({
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '0.08em',
+    padding: '0 4px',
+    lineHeight: 1.1,
+    pointerEvents: 'none',
+});
+export const heatName = style({ maxWidth: '100%', fontWeight: 650, ...ellipsis });
+export const heatPct = style({ ...mono, fontSize: '0.86em', fontWeight: 600, whiteSpace: 'nowrap', opacity: 0.8 });
+export const heatValue = style({ ...mono, fontSize: '0.72em', fontWeight: 700, whiteSpace: 'nowrap', opacity: 0.9 });
 export const heatBars = style({
-    marginTop: 'auto',
+    position: 'absolute',
+    left: '5px',
+    right: '5px',
+    bottom: '4px',
     display: 'flex',
     alignItems: 'flex-end',
     gap: '2px',
-    height: '12px',
+    height: '10px',
+    pointerEvents: 'none',
 });
 const heatBarBase = style({ flex: 1, minHeight: '2px', borderRadius: '1px', transition: 'height 600ms ease', ...reduce });
 export const heatBar = styleVariants({
