@@ -306,14 +306,17 @@ export function QuoteBoard({
                             {breadth.total > 0 && <BreadthBar className={styles.breadthBar} breadth={breadth} title={breadthGroupTitle} />}
                         </div>
                         <div className={styles.indexGroup.volume}>
-                            <Stat
-                                label="成交金額"
-                                title={progress === undefined ? undefined : `已成交預估的 ${(progress * 100).toFixed(0)}%`}
-                                valueClass={styles.statValue}
-                                className={estimate === undefined ? undefined : styles.lowPriority}
-                            >
-                                <Compact value={amount} />
-                            </Stat>
+                            {/* 收盤後實際量就是全日成交金額，兩格同一個數字：只留實際量（使用者決定） */}
+                            {!actual && (
+                                <Stat
+                                    label="成交金額"
+                                    title={progress === undefined ? undefined : `已成交預估的 ${(progress * 100).toFixed(0)}%`}
+                                    valueClass={styles.statValue}
+                                    className={estimate === undefined ? undefined : styles.lowPriority}
+                                >
+                                    <Compact value={amount} />
+                                </Stat>
+                            )}
                             <Stat
                                 label={actual ? '實際量' : '預估量'}
                                 title={volumeTitle}
