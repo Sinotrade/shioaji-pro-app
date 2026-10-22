@@ -40,6 +40,15 @@ it('drops the replay entry when the server rejects the unsubscribe', async () =>
     expect(m.unregister).toHaveBeenCalledWith('kbars:t2');
 });
 
+it('forgets the key without a request when the last release has no stock left to drop', async () => {
+    m.post.mockResolvedValue({ success: true });
+    await subscribeKbars('t4', contracts);
+    // every stock is still fed under another key (overlapping drill batches)
+    await unsubscribeKbars('t4', []);
+    expect(m.post).toHaveBeenCalledTimes(1);
+    expect(m.unregister).toHaveBeenCalledWith('kbars:t4');
+});
+
 it('keeps the subscription while another consumer holds it', async () => {
     m.post.mockResolvedValue({ success: true });
     await subscribeKbars('t3', contracts);

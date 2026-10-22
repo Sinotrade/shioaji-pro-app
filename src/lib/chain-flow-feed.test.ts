@@ -110,6 +110,27 @@ describe('connectChainFlow', () => {
         expect(mocks.ticks.size).toBe(0);
     });
 
+    it('keeps a code another drill still feeds when one drill is released, and reseeds it later', async () => {
+        const holdings = connectChainFlow([member('6643')], 'drill');
+        const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+        await flush();
+        await chainFlowSeedIdle();
+        expect(mocks.snapshots.mock.calls.flatMap(([batch]) => batch.map((c) => c.code))).toEqual(['6643', '3529']);
+
+        industry();
+        // 6643 still feeds 持股族群: only 3529 is dropped
+        const [, dropped] = mocks.unsubscribe.mock.calls.at(-1)!;
+        expect((dropped as ContractBase[]).map((c) => c.code)).toEqual(['3529']);
+
+        // back to 細產業: 3529 missed bars while released, so it is seeded again
+        const again = connectChainFlow([member('6643'), member('3529')], 'drill');
+        await flush();
+        await chainFlowSeedIdle();
+        expect(mocks.snapshots.mock.calls.at(-1)![0].map((c) => c.code)).toEqual(['3529']);
+        again();
+        holdings();
+    });
+
     it('reuses snapshots another panel already fetched', async () => {
         mocks.shared.set('2330', snapshot('2330', 1010, 10, '2026-10-21 09:59:50.000000'));
         const release = connectChainFlow([member('2330'), member('2317')]);

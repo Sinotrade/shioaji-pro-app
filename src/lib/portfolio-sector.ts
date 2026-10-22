@@ -8,11 +8,11 @@
 // - 分組：shioaji-data tw/cards（官方產業別、主要產業鏈與位置、主要題材）＋ tw/themes。
 // - 不在產業鏈／題材成分內的持股，由面板以 drill scope 補訂 1 分 K（通常 1 個 POST）。
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { codePct, groupFlow, type FlowBook, type GroupFlow } from './chain-flow';
 import { themeCodes } from './chain-map';
+import type { CardInfo } from './company-cards';
 import { icKeyOf } from './sector-flow-ic';
-import { companyData } from './company-data';
 import type { ChainTier, Theme } from './company-data/types';
 import { useTradingState } from './trading-state';
 import type { Trade } from './types/order';
@@ -176,65 +176,6 @@ export function useHoldings(): HoldingsState {
         const holdings = fromPositions(positions, trades);
         return { phase: holdingsPhase(q.updatedAt, q.error ?? null, holdings.length), holdings, error: q.error ?? null };
     }, [positions, trades, q.updatedAt, q.error]);
-}
-
-// ── company cards: industry, primary chain and tier, main theme ─────────────
-
-export interface CardInfo {
-    code: string;
-    name: string;
-    market: string;
-    industry: string | null;
-    industryCode: string | null;
-    chain: string | null;
-    tier: ChainTier | null;
-    mainTheme: string | null;
-}
-
-let cardsPromise: Promise<Map<string, CardInfo>> | null = null;
-
-function loadCards(): Promise<Map<string, CardInfo>> {
-    cardsPromise ??= companyData.getDataset('tw/cards').then(({ data }) => {
-        const map = new Map<string, CardInfo>();
-        for (const raw of data as Record<string, unknown>[]) {
-            const code = typeof raw.code === 'string' ? raw.code : null;
-            if (!code) continue;
-            const ind = (raw.industry ?? {}) as Record<string, unknown>;
-            const stage = (raw.chain_stage ?? null) as Record<string, unknown> | null;
-            map.set(code, {
-                code,
-                name: typeof raw.name === 'string' ? raw.name : code,
-                market: typeof raw.market === 'string' ? raw.market : 'twse',
-                industry: typeof ind.l0_name === 'string' ? ind.l0_name : null,
-                industryCode: typeof ind.l0_code === 'string' ? ind.l0_code : null,
-                chain: typeof raw.chain === 'string' ? raw.chain : null,
-                tier: stage && typeof stage.tier === 'string' ? (stage.tier as ChainTier) : null,
-                mainTheme: typeof raw.main_theme === 'string' ? raw.main_theme : null,
-            });
-        }
-        return map;
-    });
-    cardsPromise.catch(() => {
-        cardsPromise = null;
-    });
-    return cardsPromise;
-}
-
-export function useCards(enabled = true) {
-    const [cards, setCards] = useState<Map<string, CardInfo> | null>(null);
-    const [error, setError] = useState<string | null>(null);
-    useEffect(() => {
-        if (!enabled) return;
-        let alive = true;
-        loadCards().then(
-            (m) => alive && setCards(m),
-            (e) => alive && setError(e instanceof Error ? e.message : String(e)),
-        );
-        return () => {
-            alive = false;
-        };
-    }, [enabled]);
-    return { cards, error };
 }
 
 // ── grouping ────────────────────────────────────────────────────────────────

@@ -15,10 +15,10 @@ import {
     othersNote,
     portfolioView,
     todayBuys,
-    type CardInfo,
     type HeldGroup,
     type RawHolding,
 } from './portfolio-sector';
+import type { CardInfo } from './company-cards';
 import type { Trade } from './types/order';
 import type { AccountedPosition } from './types/portfolio';
 
@@ -190,6 +190,7 @@ const card = (code: string, industry: string, industryCode: string, market = 'tw
     market,
     industry,
     industryCode,
+    subIndustry: null,
     chain: null,
     tier: null,
     mainTheme: null,
@@ -288,6 +289,7 @@ describe('portfolioView', () => {
             accel: null,
             total: 400,
             pct: -1.5,
+            volumeRatio: null,
             breadth: { up: 0, flat: 0, down: 0 },
         };
         const v = portfolioView(holdings, assign, book(), 11, (c) => c, (def) => (def.id === 'ind.01' ? ext : null));

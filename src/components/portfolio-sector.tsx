@@ -28,11 +28,11 @@ import {
     GROUPING_LABEL,
     GROUPINGS,
     portfolioView,
-    useCards,
     useHoldings,
     type FlipAlert,
     type Grouping,
 } from '../lib/portfolio-sector';
+import { useCards } from '../lib/company-cards';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { icFlowRecorder, useIcSectorFlow } from '../lib/sector-flow-ic';
 import { refreshTradingState } from '../lib/trading-state';

@@ -1,4 +1,4 @@
-// src/components/chain-rank.tsx — 排行 view: groups ranked by net inflow.
+// src/components/chain-rank.tsx — 金流 (rank) view: groups ranked by net inflow.
 //
 // One row per group: a category dot, the name, a small rank-change mark, a
 // lane growing from a fixed dashed centre axis (inflow right, outflow left,
@@ -19,7 +19,7 @@ import { comparesRanks, rankOrder, rankTurnover, rankValue, rankMoves, riverLeng
 import { bandThickness } from '../lib/chain-river';
 import { FlowRankCard, metricLabel } from './chain-rank-card';
 import { RIVER_ROW_PX, useRiver, type RiverLane } from './chain-river';
-import { dir, useBoxSize, type FlowRow } from './chain-ui';
+import { dir, markKind, useBoxSize, type FlowRow } from './chain-ui';
 import { Odometer } from './odometer';
 import * as s from './chain-map.css';
 
@@ -51,6 +51,7 @@ export function FlowRank({
     paused,
     onSelect,
     nameOf,
+    focus = null,
     onPick,
 }: {
     rows: FlowRow[];
@@ -62,6 +63,8 @@ export function FlowRank({
     paused: boolean;
     onSelect: (id: string) => void;
     nameOf: (code: string) => string;
+    /** The stock the panel follows: marked in the detail card's list. */
+    focus?: string | null;
     onPick: (code: string) => void;
 }) {
     const order = useMemo(
@@ -94,6 +97,10 @@ export function FlowRank({
         drawerToggle.current?.focus();
     };
     const label = metricLabel(metric);
+    const note =
+        now === null
+            ? '尚無淨流入：盤中收到 1 分 K 起才有；今日漲跌與成交值請看「漲跌」'
+            : '長度為淨流入（平方根刻度）・粗細為成交值・點選看明細';
 
     // rank changes since the previous minute bar
     const prevRanks = useRef(new Map<string, number>());
@@ -175,7 +182,9 @@ export function FlowRank({
                 <div className={s.rankMain}>
                     <div className={s.rankHeader}>
                         <span className={s.rankHeaderTitle}>{label}淨流入排行</span>
-                        <span className={s.rankHeaderNote}>長度為淨流入（平方根刻度）・粗細為成交值・點選看明細</span>
+                        <span className={s.rankHeaderNote} title={note}>
+                            {note}
+                        </span>
                         {showAll && order.length > SIDE_ROWS * 2 && (
                             <button type='button' className={s.rankDrawerToggle} onClick={() => setShowAll(false)} title='只顯示淨流入與淨流出最大的族群'>
                                 <ChevronsDownUp size={12} aria-hidden='true' />
@@ -220,7 +229,7 @@ export function FlowRank({
                                         style={{ top: (firstOut >= 0 ? firstOut : shown.length) * ROW_PX }}
                                         onClick={() => setShowAll(true)}
                                     >
-                                        另有 {hidden} 個族群淨流量較小・顯示全部
+                                        {now === null ? `另有 ${hidden} 個族群・顯示全部` : `另有 ${hidden} 個族群淨流量較小・顯示全部`}
                                     </button>
                                 )}
                                 {shown.map((row) => {
@@ -244,7 +253,7 @@ export function FlowRank({
                                             title={`${row.item.theme.name}・${row.item.codes.length} 檔\n${label}淨流入 ${fmtTwd(row.value, true)}\n今日成交值 ${fmtTwd(f.total)}・漲跌 ${fmtSignedPct(f.pct)}`}
                                         >
                                             <span className={s.rankName}>
-                                                <span className={s.rankDot[row.item.theme.kind === 'chain' ? 'chain' : 'theme']} aria-hidden='true' />
+                                                <span className={s.rankDot[markKind(row.item.theme.kind)]} aria-hidden='true' />
                                                 <span className={s.rankNameText}>{row.item.theme.name}</span>
                                                 {move !== 0 && (
                                                     <span
@@ -277,6 +286,7 @@ export function FlowRank({
                         reducedMotion={reducedMotion}
                         paused={paused}
                         nameOf={nameOf}
+                        focus={focus}
                         onPick={onPick}
                         onClose={docked ? undefined : closeDrawer}
                         id={docked ? undefined : drawerId}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     codePct,
+    codeVolumeRatio,
     FlowBook,
     groupFlow,
     leaders,
@@ -94,6 +95,20 @@ describe('parseKbarEvent', () => {
         ]);
         expect(parseKbarEvent('not json')).toEqual([]);
         expect(parseKbarEvent([{ code: '2330', time: '09:05:00', close: 1, amount: 5 }])[0]?.slot).toBe(4);
+    });
+});
+
+describe('量比', () => {
+    it('is session volume (snapshot + bars after it) over the previous session, per stock and per group', () => {
+        const book = new FlowBook();
+        book.seed('A', { ref: 100, close: 100, totalAmount: 0, totalVolume: 300, yesterdayVolume: 1000, shares: null, slot: 5 });
+        book.addBar({ ...bar('A', 4, 100, 10), volume: 50 }); // inside the snapshot: already counted
+        book.addBar({ ...bar('A', 5, 100, 10), volume: 100 });
+        expect(codeVolumeRatio(book.codes.get('A'))).toBeCloseTo(0.4);
+        book.seed('B', { ref: 50, close: 50, totalAmount: 0, totalVolume: 600, yesterdayVolume: 1000, shares: null, slot: 5 });
+        book.seed('C', { ref: 10, close: 10, totalAmount: 0, totalVolume: 99, shares: null, slot: 5 }); // no previous volume: left out
+        expect(groupFlow(book, ['A', 'B', 'C']).volumeRatio).toBeCloseTo((400 + 600) / 2000);
+        expect(groupFlow(book, ['C']).volumeRatio).toBeNull();
     });
 });
 

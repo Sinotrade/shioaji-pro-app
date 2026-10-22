@@ -139,7 +139,7 @@ export interface Block {
 
 export const CHAIN_VIEWS = ['rank', 'rotation', 'heat'] as const;
 export type ChainView = (typeof CHAIN_VIEWS)[number];
-export const CHAIN_KINDS = ['all', 'chain', 'theme'] as const;
+export const CHAIN_KINDS = ['all', 'chain', 'theme', 'industry'] as const;
 export type ChainKind = (typeof CHAIN_KINDS)[number];
 export const HOLDING_FORMS = ['bubble', 'lanes'] as const;
 export type HoldingForm = (typeof HOLDING_FORMS)[number];
@@ -539,7 +539,7 @@ export const BLOCK_META: Record<
     },
     chainmap: {
         label: '產業鏈資金流向',
-        description: '產業鏈與題材的即時資金流向：族群淨流入排行、輪動與熱力，上中下游流向與領頭股',
+        description: '產業鏈、題材與細產業的即時資金流向：族群金流排行、輪動與漲跌熱力／清單，上中下游流向與領頭股',
         category: 'market',
         pinnable: false,
         singleton: false,
@@ -1122,7 +1122,7 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
     },
     {
         name: '族群輪動',
-        desc: '輪動象限看資金轉進、熱力看成分股，訊號與 K 線找點、閃電進場',
+        desc: '輪動象限看資金轉進、漲跌看成分股，訊號與 K 線找點、閃電進場',
         workspace: {
             blocks: [
                 { id: 'rotation-rt', type: 'chainmap', pin: null, chainView: 'rotation', chainKind: 'all' },
@@ -1142,7 +1142,7 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
     },
     {
         name: '個股研究',
-        desc: '日 K 與報價、公司基本面與供應鏈位置，對照所屬族群的資金熱力',
+        desc: '日 K 與報價、公司基本面與供應鏈位置，對照所屬族群的漲跌熱力',
         workspace: {
             blocks: [
                 { id: 'watch-sr', type: 'watchlist', pin: null },

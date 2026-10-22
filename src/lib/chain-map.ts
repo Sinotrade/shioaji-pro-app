@@ -41,6 +41,35 @@ export function memberCodes(themes: readonly Theme[]): string[] {
     return [...seen];
 }
 
+/** Smallest 細產業 shown: below this a group is one or two stocks, not an industry's flow. */
+export const INDUSTRY_MIN = 4;
+
+/**
+ * 細產業 (shioaji-data AI taxonomy l3, from the company cards) shaped as
+ * stage-less themes, so every view reads them like chains and themes.
+ */
+export function industryThemes(cards: Iterable<{ code: string; subIndustry: string | null }>, min = INDUSTRY_MIN): Theme[] {
+    const byName = new Map<string, string[]>();
+    for (const card of cards) {
+        if (!card.subIndustry || !isKbarCode(card.code)) continue;
+        const codes = byName.get(card.subIndustry) ?? [];
+        codes.push(card.code);
+        byName.set(card.subIndustry, codes);
+    }
+    return [...byName]
+        .filter(([, codes]) => codes.length >= min)
+        .map(([name, codes]) => ({
+            id: `industry.${name}`,
+            kind: 'industry',
+            name,
+            aliases: [],
+            related: [],
+            stages: [],
+            members: codes.sort().map((code) => ({ id: `tw.${code}`, stage: '', tier: 'midstream', detail: null, as_of: null, confidence: 'official' })),
+            as_of: null,
+        }));
+}
+
 /** Taiwan member codes of one theme. */
 export function themeCodes(theme: Theme): string[] {
     return memberCodes([theme]);
