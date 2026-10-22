@@ -95,7 +95,18 @@ export function HoldingLanes({
     const rowsRef = useRef<HTMLDivElement | null>(null);
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const rowEls = useRef(new Map<string, HTMLElement>());
-    useRiver({ lanes: layout.lanes, stageRef, areaRef, rowsRef, canvasRef, rowEls, reducedMotion, active: !paused && now !== null });
+    useRiver({
+        lanes: layout.lanes,
+        stageRef,
+        areaRef,
+        rowsRef,
+        canvasRef,
+        rowEls,
+        reducedMotion,
+        active: !paused && now !== null,
+        // the grid columns switch at NARROW_PX without the stage resizing
+        layoutKey: narrow ? 'narrow' : 'wide',
+    });
 
     const label = GROUPING_LABEL[grouping];
     const winLabel = WINDOWS.find((w) => w.value === win)!.label;

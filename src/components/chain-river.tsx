@@ -112,6 +112,7 @@ export function useRiver({
     rowEls,
     reducedMotion,
     active,
+    layoutKey,
 }: {
     lanes: RiverLane[];
     stageRef: RefObject<HTMLElement | null>;
@@ -121,12 +122,18 @@ export function useRiver({
     rowEls: RefObject<Map<string, HTMLElement>>;
     reducedMotion: boolean;
     active: boolean;
+    /**
+     * Changes when the row columns change without the stage or rows box
+     * resizing (e.g. responsive grid columns): the track is measured again.
+     */
+    layoutKey?: string | number;
 }) {
     const target = useRef(lanes);
     target.current = lanes;
     const states = useRef(new Map<string, LaneState>());
     const particles = useRef<Particle[]>([]);
     const kick = useRef<() => void>(() => {});
+    const remeasure = useRef<() => void>(() => {});
     const reduced = useRef(reducedMotion);
     reduced.current = reducedMotion;
 
@@ -351,6 +358,14 @@ export function useRiver({
                     st.shownY = st.y;
                 }
             }
+            // and paint that state once, without particles: an inactive river
+            // (no data yet, a session reset) must not keep the last frame's bands
+            particles.current = [];
+            draw(performance.now(), 0);
+        };
+        remeasure.current = () => {
+            measure();
+            kick.current();
         };
 
         measure();
@@ -385,6 +400,7 @@ export function useRiver({
             if (raf !== 0) cancelAnimationFrame(raf);
             raf = 0;
             kick.current = () => {};
+            remeasure.current = () => {};
             resize?.disconnect();
             io?.disconnect();
             document.removeEventListener('visibilitychange', onVisible);
@@ -393,4 +409,9 @@ export function useRiver({
             particles.current = [];
         };
     }, [active, reducedMotion, canvasRef, stageRef, areaRef, rowsRef]);
+
+    // columns changed inside an unchanged box: the track moved, measure again
+    useEffect(() => {
+        if (layoutKey !== undefined) remeasure.current();
+    }, [layoutKey]);
 }
