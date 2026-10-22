@@ -903,13 +903,18 @@ export function SectorHeatmap({
             points: number;
             code?: string;
         };
-        // 全部為 0（開盤前／全面平盤）時同全景，面積改用市值權重
-        const { weight: wallWeight, fallback: wallFallback } =
-            weightWithFallback(
-                [drillEntries],
-                (entry) => Math.abs(entry.value),
-                (entry) => entry.weight_pct,
-            );
+        // 全部為 0（開盤前／全面平盤）時同全景，面積改用市值權重；「其他
+        // 成員」餘量不為 0 時仍照原指標（單位一致，餘量照畫）
+        const residual = otherCount > 0 && Math.abs(otherValue) > 1e-9;
+        const picked = weightWithFallback(
+            [drillEntries],
+            (entry) => Math.abs(entry.value),
+            (entry) => entry.weight_pct,
+        );
+        const wallFallback = picked.fallback && !residual;
+        const wallWeight = wallFallback
+            ? picked.weight
+            : (entry: IcRankingEntry) => Math.abs(entry.value);
         const items: WallItem[] = drillEntries.map((entry) => ({
             key: entry.code,
             weight: wallWeight(entry),
@@ -918,7 +923,7 @@ export function SectorHeatmap({
             points: entry.value,
             code: entry.code,
         }));
-        if (!wallFallback && otherCount > 0 && Math.abs(otherValue) > 1e-9) {
+        if (residual) {
             items.push({
                 key: 'other',
                 weight: Math.abs(otherValue),
