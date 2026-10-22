@@ -53,6 +53,28 @@ export function loadStockCatalog(): Promise<StockMeta[]> {
     return catalogLoading;
 }
 
+// 個股明細請求的並行上限：熱力圖一次可能要 400+ 檔名稱，原生 fallback
+// transport 沒有自己的並行限制，不設上限會一口氣送出數百個請求
+export const DETAIL_CONCURRENCY = 6;
+let detailActive = 0;
+const detailQueue: (() => void)[] = [];
+
+function limitDetail<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const run = () => {
+            detailActive += 1;
+            task()
+                .then(resolve, reject)
+                .finally(() => {
+                    detailActive -= 1;
+                    detailQueue.shift()?.();
+                });
+        };
+        if (detailActive < DETAIL_CONCURRENCY) run();
+        else detailQueue.push(run);
+    });
+}
+
 export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
     const unique = [...new Set(codes.filter(Boolean))];
     const load = (code: string) => {
@@ -60,7 +82,7 @@ export async function loadStockDetails(codes: string[]): Promise<StockMeta[]> {
         if (cached) return Promise.resolve(cached);
         const pending = detailLoadingByCode.get(code);
         if (pending) return pending;
-        const request = fetchContractInfo(code, 'STK')
+        const request = limitDetail(() => fetchContractInfo(code, 'STK'))
             .then((info) => {
                 const detail: StockMeta = {
                     code: info.code,

@@ -305,3 +305,18 @@ export function layoutFlat(
     }
     return out;
 }
+
+/**
+ * 面積權重：主要指標（成交值／|貢獻|）全部為 0 時（開盤前、全面平盤）
+ * 改用備援（市值權重），已載入的資料才不會因權重全 0 而整片不畫。
+ */
+export function weightWithFallback<E>(
+    groups: readonly (readonly E[])[],
+    primary: (entry: E) => number,
+    fallback: (entry: E) => number,
+): (entry: E) => number {
+    const hasPrimary = groups.some((entries) =>
+        entries.some((entry) => primary(entry) > 0),
+    );
+    return hasPrimary ? primary : fallback;
+}

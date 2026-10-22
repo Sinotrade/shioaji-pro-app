@@ -14,6 +14,7 @@ import { AlertTriangle, ChevronLeft, ImageDown } from 'lucide-react';
 import { LayoutGroup, motion, MotionConfig } from 'motion/react';
 import {
     type CSSProperties,
+    memo,
     useCallback,
     useEffect,
     useMemo,
@@ -22,6 +23,7 @@ import {
 } from 'react';
 import { useCoalescedStates } from '../hooks/use-coalesced-states';
 import { useIndexComponents } from '../hooks/use-index-components';
+import { useBoxSize } from '../hooks/use-box-size';
 import { useQuote } from '../hooks/use-stream';
 import { fitHeatLabel, type HeatLabelFit } from '../lib/heat-label';
 import {
@@ -31,6 +33,7 @@ import {
     type Rect,
     selectHeatItems,
     type SplitMemo,
+    weightWithFallback,
     stableOrder,
 } from '../lib/heat-layout';
 import {
@@ -200,44 +203,6 @@ function shortSectorName(name: string): string {
 
 const dirOf = (value: number) => (value > 0 ? 'up' : value < 0 ? 'down' : 'flat');
 
-// callback ref：條件渲染的量測目標（下鑽磚牆）晚於元件 mount 才出現，
-// useRef+空依賴 effect 會掛不到 observer — 以元素 state 驅動重掛。
-// 尺寸變動時回報 resizing（約 250ms），tile transition 跟著縮短。
-function useBoxSize<T extends HTMLElement>() {
-    const [element, setElement] = useState<T | null>(null);
-    const [size, setSize] = useState({ width: 0, height: 0 });
-    const [resizing, setResizing] = useState(false);
-    useEffect(() => {
-        if (!element || typeof ResizeObserver === 'undefined') return;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        let first = true;
-        const update = () => {
-            const { width, height } = element.getBoundingClientRect();
-            const next = { width: Math.floor(width), height: Math.floor(height) };
-            setSize((current) =>
-                current.width === next.width && current.height === next.height
-                    ? current
-                    : next,
-            );
-            if (first) {
-                first = false;
-                return;
-            }
-            setResizing(true);
-            clearTimeout(timer);
-            timer = setTimeout(() => setResizing(false), 250);
-        };
-        update();
-        const observer = new ResizeObserver(update);
-        observer.observe(element);
-        return () => {
-            observer.disconnect();
-            clearTimeout(timer);
-        };
-    }, [element]);
-    return { ref: setElement, size, resizing };
-}
-
 interface TileView {
     key: string;
     code: string;
@@ -269,7 +234,8 @@ function buildTile(
 
 // tile 依 key 排序後渲染：DOM 節點順序固定，位置／尺寸／顏色的 CSS
 // transition 才不會因節點搬移而中斷
-function HeatTiles({ tiles }: { tiles: TileView[] }) {
+// memo：父層因串流版本重繪但 tiles 沒變時，不重新比對整片按鈕
+const HeatTiles = memo(function HeatTiles({ tiles }: { tiles: TileView[] }) {
     const sorted = useMemo(
         () => [...tiles].sort((a, b) => (a.key < b.key ? -1 : 1)),
         [tiles],
@@ -324,7 +290,7 @@ function HeatTiles({ tiles }: { tiles: TileView[] }) {
             })}
         </>
     );
-}
+});
 
 function Legend({ palette, domain }: { palette: HeatPalette; domain: number }) {
     const colors = legendColors(domain, palette);
@@ -401,14 +367,20 @@ export function SectorHeatmap({
         .map((group) => group.category)
         .sort()
         .join(',');
+    // 下鑽時全景隱藏：全景的群組排行凍結在進入下鑽前的指標，下鑽內切換
+    // 成交值／貢獻只換下鑽那一條訂閱，不讓 G 個產業整批退訂再重訂
+    const [groupMetric, setGroupMetric] = useState<DrillMetric>(rankMetric);
+    if (drillCat === null && groupMetric !== rankMetric) {
+        setGroupMetric(rankMetric);
+    }
     const groupProjections = useMemo(
         () =>
             categoriesKey
                 ? categoriesKey
                       .split(',')
-                      .map((category) => groupRanking(rankMetric, category))
+                      .map((category) => groupRanking(groupMetric, category))
                 : NO_PROJECTIONS,
-        [categoriesKey, rankMetric],
+        [categoriesKey, groupMetric],
     );
     const groupIc = useIndexComponents(INDICES[indexCode], groupProjections);
     const sideIc = useIndexComponents(
@@ -506,7 +478,7 @@ export function SectorHeatmap({
         useBoxSize<HTMLDivElement>();
     const groupStates = useCoalescedStates(
         groupIc.states,
-        `${indexCode}|${rankMetric}|${categoriesKey}`,
+        `${indexCode}|${groupMetric}|${categoriesKey}`,
         250,
         drillCat !== null,
     );
@@ -536,10 +508,17 @@ export function SectorHeatmap({
             };
         }
         const memo = orderRef.current;
-        const weightOf = (entry: IcRankingEntry) =>
+        const metricWeight = (entry: IcRankingEntry) =>
             sizeMetric === 'weight'
                 ? entry.weight_pct
                 : Math.abs(entry.value);
+        // 開盤前／全部平盤時貢獻皆為 0：面積改用市值權重，不讓已載入的資料
+        // 整片消失、一直停在「等待產業資料」
+        const weightOf = weightWithFallback(
+            groupRows.map((row) => groupEntries.get(row.category) ?? []),
+            metricWeight,
+            (entry) => entry.weight_pct,
+        );
         const groupsIn = groupRows.map((row) => {
             const items: PanoramaStock[] = (
                 groupEntries.get(row.category) ?? []
@@ -640,7 +619,7 @@ export function SectorHeatmap({
             const { entry } = hit.stock;
             const name = nameByCode.get(entry.code) ?? entry.code;
             const valueText =
-                rankMetric === 'amount'
+                groupMetric === 'amount'
                     ? `成交 ${fmtAmount(entry.value)}`
                     : `貢獻 ${fmtPoints(entry.value)} 點`;
             return [
@@ -658,7 +637,7 @@ export function SectorHeatmap({
                 }),
             ];
         });
-    }, [nameByCode, onPick, openDrill, palette, panorama, rankMetric]);
+    }, [groupMetric, nameByCode, onPick, openDrill, palette, panorama]);
 
     const sectorHeaders = useMemo(
         () =>

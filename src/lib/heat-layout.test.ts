@@ -8,6 +8,7 @@ import {
     type SplitMemo,
     stableOrder,
     type Rect,
+    weightWithFallback,
 } from './heat-layout';
 
 const area = (r: Rect) => r.w * r.h;
@@ -222,5 +223,34 @@ describe('heatBudget / selectHeatItems', () => {
         for (const entry of picked) {
             expect(entry.stocks[0]!.key).toBe(`${entry.group.key}s0`);
         }
+    });
+});
+
+describe('weightWithFallback', () => {
+    type E = { value: number; weight: number };
+    const primary = (e: E) => Math.abs(e.value);
+    const fallback = (e: E) => e.weight;
+
+    it('uses the primary metric when any entry has a positive value', () => {
+        const pick = weightWithFallback<E>(
+            [[{ value: 0, weight: 3 }], [{ value: -2, weight: 1 }]],
+            primary,
+            fallback,
+        );
+        expect(pick({ value: -2, weight: 1 })).toBe(2);
+        expect(pick({ value: 0, weight: 3 })).toBe(0);
+    });
+
+    it('falls back when every primary value is zero (pre-open contribution)', () => {
+        const pick = weightWithFallback<E>(
+            [[{ value: 0, weight: 3 }], [{ value: 0, weight: 1 }]],
+            primary,
+            fallback,
+        );
+        expect(pick({ value: 0, weight: 3 })).toBe(3);
+    });
+
+    it('uses the fallback for empty input', () => {
+        expect(weightWithFallback<E>([], primary, fallback)).toBe(fallback);
     });
 });
