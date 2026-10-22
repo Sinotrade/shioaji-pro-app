@@ -1,4 +1,5 @@
 import {
+    fetchContractInfo,
     fetchFutures,
     fetchFuturesRoots,
     fetchOptionRoots,
@@ -6,17 +7,17 @@ import {
     fetchWarrants,
     normalizeContractCode,
     resolveContract,
+    type ContractRoot,
 } from './shioaji';
-import {
-    loadStockCatalog,
-    searchStocks,
-    SECTOR_INDICES,
-} from './stock-index';
+import { loadStockCatalog, searchStocks, stockDisplayMeta, type StockMeta } from './stock-index';
+import { indexSearchSuggestions } from './index-search';
+import { getApiBase } from './runtime';
 import { todayStr } from './utils/date';
-import type {
-    ContractInfo,
-    SecurityType,
-} from './types/contract';
+import type { ContractInfo, SecurityType } from './types/contract';
+import { etfNameForLive, getEtfNamesVersion } from './etf-runtime-catalog';
+import { SearchRequestCache } from './search-request';
+import { getProductCatalogVersion, subscribeProductCatalog } from './product-catalog-version';
+import { loadIndexSuggestions } from './index-catalog';
 
 export interface ProductSuggestion {
     code: string;
@@ -24,255 +25,397 @@ export interface ProductSuggestion {
     security_type: Exclude<SecurityType, null>;
     exchange: string;
     detail: string;
+    kind?: 'ETF';
     contract?: ContractInfo;
 }
 
-let rootsLoading:
-    | Promise<{
-          futures: Awaited<ReturnType<typeof fetchFuturesRoots>>;
-          options: Awaited<ReturnType<typeof fetchOptionRoots>>;
-      }>
-    | null = null;
-
-function loadRoots() {
-    if (!rootsLoading) {
-        rootsLoading = Promise.all([
-            fetchFuturesRoots(),
-            fetchOptionRoots(),
-        ])
-            .then(([futures, options]) => ({ futures, options }))
-            .catch((error) => {
-                rootsLoading = null;
-                throw error;
-            });
+const CACHE_TTL_MS = 60_000;
+const CACHE_LIMIT = 16;
+const SOURCE_DEADLINE_MS = 1200;
+const cacheOptions = { ttlMs: CACHE_TTL_MS, limit: CACHE_LIMIT, deadlineMs: SOURCE_DEADLINE_MS };
+const rootsCache = new SearchRequestCache<ContractRoot[]>(cacheOptions);
+const contractsCache = new SearchRequestCache<ContractInfo[]>(cacheOptions);
+// Only a validated name is retained here; quotes and catalog identities stay
+// with their existing sources. This fallback never enriches the stock catalog.
+const stockNamesCache = new SearchRequestCache<string>(cacheOptions);
+// Direct Info can change intraday. Share only the in-flight resolution, not
+// successful values or 404s, and retain the typed identity in the key.
+const directRequests = new SearchRequestCache<ContractInfo>({ ...cacheOptions, ttlMs: 0 });
+let activeCatalogVersion = getProductCatalogVersion();
+function currentCatalogVersion(): number {
+    const version = getProductCatalogVersion();
+    if (version !== activeCatalogVersion) {
+        activeCatalogVersion = version;
+        rootsCache.clear();
+        contractsCache.clear();
+        stockNamesCache.clear();
+        directRequests.clear();
     }
-    return rootsLoading;
+    return version;
+}
+const unsubscribeCatalog = subscribeProductCatalog(() => { currentCatalogVersion(); });
+if (import.meta.hot) import.meta.hot.dispose(unsubscribeCatalog);
+
+// The catalog is a composite of two independently shared sources. Do not
+// occupy a request slot while waiting for those sources to acquire theirs.
+function withDeadline<T>(request: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason ?? new DOMException('aborted', 'AbortError'));
+    let onAbort!: () => void;
+    const aborted = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(controller.signal.reason ?? new DOMException('aborted', 'AbortError'));
+        controller.signal.addEventListener('abort', onAbort, { once: true });
+    });
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    const timer = setTimeout(() => controller.abort(new Error('商品資料來源回應逾時，請重試')), SOURCE_DEADLINE_MS);
+    return Promise.race([Promise.resolve().then(() => {
+        if (controller.signal.aborted) throw controller.signal.reason ?? new DOMException('aborted', 'AbortError');
+        return request(controller.signal);
+    }), aborted]).finally(() => {
+        clearTimeout(timer);
+        // If one catalog source fails early, release this composite's other
+        // reader too. It must not outlive the search or cancel shared readers.
+        controller.abort();
+        signal?.removeEventListener('abort', abort);
+        controller.signal.removeEventListener('abort', onAbort);
+    });
 }
 
-function asSuggestion(
-    contract: ContractInfo,
-    detail?: string,
-): ProductSuggestion {
+function asSuggestion(contract: ContractInfo, detail?: string): ProductSuggestion {
     return {
         code: contract.code,
         name: contract.name || contract.code,
-        security_type: (contract.security_type ?? 'STK') as Exclude<
-            SecurityType,
-            null
-        >,
+        security_type: contract.security_type ?? 'STK',
         exchange: contract.exchange ?? '',
-        detail:
-            detail ??
-            contract.spec_kind ??
-            contract.root ??
-            contract.security_type ??
-            '',
+        detail: detail ?? contract.spec_kind ?? contract.root ?? contract.security_type ?? '',
         contract,
     };
 }
 
+function stockSuggestion(stock: StockMeta): ProductSuggestion {
+    return { ...stock, security_type: 'STK', detail: stock.kind === 'ETF' ? 'ETF' : stock.category ? `股票 · ${stock.category}` : '股票' };
+}
+
 function derivativeSort(a: ContractInfo, b: ContractInfo) {
-    const aliasA = /R[12]$/.test(a.code) ? 0 : 1;
-    const aliasB = /R[12]$/.test(b.code) ? 0 : 1;
-    return (
-        aliasA - aliasB ||
+    // Explicit priority, independent of root letters or missing month metadata:
+    // near: regular → small → micro; then the same sizes in the next month.
+    const rank = (row: ContractInfo) => {
+        const month = row.code.endsWith('R1') ? 0 : row.code.endsWith('R2') ? 1 : -1;
+        if (month < 0) return 12;
+        const name = normalizeSearchText(row.name);
+        // Weekly mini futures share the same underlying, but must not evict
+        // the six regular/small/micro monthly continuous identities.
+        const weekly = !!row.week_of_month || /(?:^|\s)W\d+(?:\s|$)/.test(name);
+        return (weekly ? 6 : 0) + month * 3 + (name.includes('微型') ? 2 : name.includes('小型') ? 1 : 0);
+    };
+    return rank(a) - rank(b) ||
         (a.delivery_month ?? '').localeCompare(b.delivery_month ?? '') ||
-        a.code.localeCompare(b.code)
-    );
+        a.code.localeCompare(b.code);
+}
+
+const isContinuousFuture = (row: { code: string }) => /R[12]$/.test(row.code);
+
+function orderedFutures(rows: ContractInfo[]) {
+    const covered = new Set(rows.filter(isContinuousFuture).filter(row => row.target_code)
+        .map(row => `${row.exchange}:${row.target_code}`));
+    // Keep the continuous identity and its full target metadata, not a second
+    // dated row for the same contract. Never sort the shared source in place.
+    return rows.filter(row => isContinuousFuture(row) || !covered.has(`${row.exchange}:${row.code}`))
+        .sort(derivativeSort).slice(0, 6);
 }
 
 function normalizeSearchText(value: string) {
-    return value.trim().replace(/臺/g, '台').toUpperCase();
+    return value.trim().normalize('NFKC').replace(/臺/g, '台').toUpperCase();
 }
 
-function findRoot(
-    roots: { root: string; name: string }[],
-    lookup: string,
-    raw: string,
-) {
-    const normalizedLookup = normalizeSearchText(lookup);
-    const normalizedRaw = normalizeSearchText(raw);
-    return roots
-        .filter((root) => {
-            const code = normalizeSearchText(root.root);
-            const name = normalizeSearchText(root.name);
-            return code === normalizedLookup || name.includes(normalizedLookup);
-        })
+function matchingRoots(roots: ContractRoot[], lookup: string, raw: string) {
+    return roots.filter((root) => normalizeSearchText(root.root) === lookup || normalizeSearchText(root.name).includes(lookup))
         .sort((a, b) => {
-            const exactA = normalizeSearchText(a.name) === normalizedRaw ? 0 : 1;
-            const exactB = normalizeSearchText(b.name) === normalizedRaw ? 0 : 1;
-            return exactA - exactB || a.name.length - b.name.length;
-        })[0];
+            const rank = (root: ContractRoot) => normalizeSearchText(root.root) === lookup ? 0 : normalizeSearchText(root.name) === raw ? 1 : 2;
+            return rank(a) - rank(b) || a.name.length - b.name.length || a.root.localeCompare(b.root);
+        }).slice(0, 4);
+}
+
+// Round-robin rather than concatenation keeps one product family from filling
+// every slot (e.g. monthly options hiding weekly options, or warrants hiding futures).
+function interleave<T>(groups: T[][], limit: number): T[] {
+    const result: T[] = [];
+    for (let i = 0; result.length < limit && groups.some((group) => i < group.length); i++) {
+        for (const group of groups) {
+            if (i < group.length) result.push(group[i]!);
+            if (result.length === limit) break;
+        }
+    }
+    return result;
+}
+
+function dateField(value?: string): string | undefined {
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : undefined;
+}
+
+function currentWarrant(row: ContractInfo, day: string) {
+    const expiry = dateField(row.expiry_date);
+    const lastTrading = dateField(row.last_trading_date);
+    return (!expiry || expiry >= day) && (!lastTrading || lastTrading >= day);
+}
+
+function warrantDateWarning(row: ContractInfo) {
+    return !dateField(row.last_trading_date) || !dateField(row.expiry_date)
+        ? ' · 交易日期待確認' : '';
+}
+
+interface ProductSearchOptions {
+    includeWarrants?: boolean;
+    signal?: AbortSignal;
+    onUpdate?: (rows: ProductSuggestion[]) => void;
 }
 
 export async function searchProducts(
     rawQuery: string,
     limit = 10,
-    options: { includeWarrants?: boolean } = {},
+    options: ProductSearchOptions = {},
 ): Promise<ProductSuggestion[]> {
-    const raw = rawQuery.trim();
-    if (!raw) return [];
-    const warrantQuery = /(?:權證|warrant)/i.test(raw);
-    if (warrantQuery && options.includeWarrants !== true) return [];
-    const wantsWarrants = options.includeWarrants === true && warrantQuery;
-    const wantsFutures =
-        /(?:期貨|個股期|future)/i.test(raw) || /期$/.test(raw);
-    const wantsOptions = /(?:選擇權|option)/i.test(raw);
-    const query = raw
-        .replace(/(?:權證|warrant|期貨|個股期|future|選擇權|option)/gi, '')
-        .replace(/期$/, '')
-        .trim();
-    const lookup = query || raw;
+    // Own only this search's readers. A fatal branch failure must detach its
+    // siblings without aborting a source still shared by another search.
+    const controller = new AbortController();
+    const abort = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
+    try {
+        return await searchProductsForRequest(rawQuery, limit, { ...options, signal: controller.signal }, error => controller.abort(error));
+    } finally {
+        options.signal?.removeEventListener('abort', abort);
+        controller.abort();
+    }
+}
 
-    const [catalog, roots] = await Promise.all([
-        loadStockCatalog(),
-        loadRoots(),
-    ]);
-    const stockMatches = searchStocks(catalog, lookup, limit);
-    const exactStock =
-        stockMatches.find(
-            (stock) =>
-                stock.code.toUpperCase() === lookup.toUpperCase() ||
-                stock.name === lookup,
-        ) ?? stockMatches[0];
-    const results: ProductSuggestion[] = stockMatches.map((stock) => ({
-        code: stock.code,
-        name: stock.name,
-        security_type: 'STK',
-        exchange: stock.exchange,
-        detail: stock.category ? `股票 · ${stock.category}` : '股票',
-    }));
-
-    const normalized = raw.toUpperCase();
-    if (/^[A-Z0-9]+$/.test(normalized)) {
-        const canonicalIndex = normalizeContractCode(normalized, 'IND');
-        const direct = await resolveContract(
-            canonicalIndex,
-            canonicalIndex !== normalized ? 'IND' : undefined,
-        ).catch(() => null);
-        if (
-            direct &&
-            (direct.security_type !== 'WRT' || options.includeWarrants)
-        ) {
-            results.unshift(asSuggestion(direct, '直接代碼'));
+async function searchProductsForRequest(
+    rawQuery: string,
+    limit: number,
+    options: ProductSearchOptions,
+    abortSearch: (error: unknown) => void,
+): Promise<ProductSuggestion[]> {
+    const assertActive = () => {
+        if (options.signal?.aborted) throw options.signal.reason ?? new DOMException('aborted', 'AbortError');
+    };
+    assertActive();
+    const raw = normalizeSearchText(rawQuery);
+    if (!raw || !Number.isFinite(limit) || limit < 1) return [];
+    limit = Math.floor(limit);
+    // Match the complete name before interpreting type words: an index such
+    // as 臺指選擇權波動率指數 is not an option-contract query.
+    const indexCandidates = indexSearchSuggestions(raw);
+    const exactIndex = indexCandidates.find((row) => normalizeSearchText(row.name) === raw || row.code === normalizeContractCode(raw, 'IND'));
+    const wantsWarrants = /(?:權證|warrant)/i.test(raw);
+    if (wantsWarrants && !options.includeWarrants) return [];
+    let wantsFutures = /(?:期貨|個股期|future)/i.test(raw) || /期$/.test(raw);
+    let wantsOptions = /(?:選擇權|option)/i.test(raw);
+    let lookup = raw.replace(/(?:權證|warrant|期貨|個股期|future|選擇權|option)/gi, '').replace(/期$/, '').trim() || raw;
+    const day = todayStr();
+    const base = getApiBase();
+    const version = currentCatalogVersion();
+    const nameVersion = getEtfNamesVersion();
+    const scope = JSON.stringify([base, day, version]);
+    const assertServer = () => {
+        if (getApiBase() !== base || getProductCatalogVersion() !== version) {
+            throw new Error('商品搜尋期間伺服器已切換或商品目錄已更新，請重新搜尋');
         }
+    };
+    const assertScope = () => {
+        assertActive();
+        assertServer();
+        if (getEtfNamesVersion() !== nameVersion) throw new Error('商品搜尋期間名稱目錄已更新，請重新搜尋');
+    };
+    const failures: unknown[] = [];
+    const read = async <T,>(request: () => Promise<T>, fallback: T, allowNotFound = false): Promise<T> => {
+        try {
+            assertScope();
+            return await request();
+        } catch (error) {
+            assertScope();
+            if (!allowNotFound || !error || typeof error !== 'object' || !('status' in error) || error.status !== 404) failures.push(error);
+            return fallback;
+        }
+    };
+    // Local names/aliases never establish availability. One shared live IND
+    // Base query validates identities without fetching every index's Info.
+    const indexRequest = indexCandidates.length
+        ? read<ProductSuggestion[]>(() => loadIndexSuggestions(raw, { signal: options.signal }), [])
+        : Promise.resolve([] as ProductSuggestion[]);
+    // Observe rejection immediately even while direct/catalog reads are waiting.
+    // Only exact index queries must await this before publishing primary rows.
+    const indexOutcome = indexRequest.then(rows => ({ rows }), error => {
+        // A fatal background failure must stop this search's other readers
+        // immediately, not wait for their individual source deadlines.
+        abortSearch(error);
+        return { error };
+    });
+    if (exactIndex) {
+        const outcome = await indexOutcome;
+        assertScope();
+        if ('error' in outcome) throw outcome.error;
+        if (!outcome.rows.length && failures.length) {
+            throw new Error('指數目錄暫時無法載入，請稍後重試', { cause: failures[0] });
+        }
+        return outcome.rows.slice(0, limit);
     }
-
-    if (exactStock && (wantsFutures || /期$/.test(raw))) {
-        const futures = await fetchFutures({
-            underlyingCode: exactStock.code,
-        }).catch((): ContractInfo[] => []);
-        results.unshift(
-            ...[...futures]
-                .sort(derivativeSort)
-                .slice(0, 6)
-                .map((contract) =>
-                    asSuggestion(
-                        contract,
-                        contract.code.endsWith('R1')
-                            ? '個股期 · 近月'
-                            : contract.code.endsWith('R2')
-                              ? '個股期 · 次月'
-                              : `個股期 · ${contract.delivery_month ?? ''}`,
-                    ),
-                ),
-        );
+    const direct = /^[A-Z0-9]+$/.test(raw)
+        ? await read(() => {
+            const code = normalizeContractCode(raw, 'IND');
+            const type = code !== raw ? 'IND' : undefined;
+            return directRequests.read(JSON.stringify([scope, code, type]), signal => {
+                assertServer();
+                return resolveContract(code, type, { signal });
+            }, options.signal);
+        }, null as ContractInfo | null, true)
+        : null;
+    // A successful direct lookup is its own authoritative identity/name.
+    // Unrelated stock-catalog loading must not delay it or its related search.
+    const catalog = direct ? [] : await read(() => withDeadline(signal => loadStockCatalog({ signal }), options.signal), [] as StockMeta[]);
+    assertScope();
+    // Official fund names can themselves contain 「期貨」. An exact ETF
+    // identity is not a request to strip that word and search futures roots.
+    const exactEtfName = catalog.find(stock => stock.kind === 'ETF' &&
+        (normalizeSearchText(stock.name) === raw || stock.aliases?.some(alias => normalizeSearchText(alias) === raw)));
+    if (exactEtfName) {
+        lookup = raw;
+        wantsFutures = false;
+        wantsOptions = false;
     }
+    const stockMatches = searchStocks(catalog, lookup, limit);
+    // These are verified names for the IX0001 family, not stock-name guesses.
+    const indexFutureUnderlying = lookup === '台指' || lookup === '台股' ? 'IX0001' : undefined;
+    const prefixMatches = indexFutureUnderlying ? [] : catalog.filter(stock =>
+        normalizeSearchText(stock.name) !== normalizeSearchText(stock.code) && normalizeSearchText(stock.name).startsWith(lookup));
+    const exactStock = catalog.find((stock) => normalizeSearchText(stock.code) === lookup || normalizeSearchText(stock.name) === lookup || stock.aliases?.some(alias => normalizeSearchText(alias) === lookup)) ??
+        (direct?.security_type === 'STK' ? { ...direct, category: direct.category ?? '', exchange: direct.exchange ?? '' } : undefined) ??
+        (prefixMatches.length === 1 ? prefixMatches[0] : undefined);
+    const inScope = async <T,>(request: () => Promise<T>) => {
+        // This closure belongs to a shared source, not its first consumer.
+        // One consumer leaving must not fail the other readers of this entry.
+        assertServer();
+        const result = await request();
+        assertServer();
+        return result;
+    };
+    const roots = (kind: 'futures' | 'options') => read(() => rootsCache.read(JSON.stringify([scope, kind]),
+        signal => inScope(() => kind === 'futures' ? fetchFuturesRoots({ signal }) : fetchOptionRoots({ signal })), options.signal), [] as ContractRoot[]);
+    const contracts = (key: string, request: (signal: AbortSignal) => Promise<ContractInfo[]>) =>
+        read(() => contractsCache.read(JSON.stringify([scope, key]), signal => inScope(() => request(signal)), options.signal), [] as ContractInfo[]);
 
-    if (exactStock && wantsWarrants) {
-        const warrants = await fetchWarrants(exactStock.code, {
-            expiryFrom: todayStr(),
-        }).catch(
-            (): ContractInfo[] => [],
-        );
-        results.unshift(
-            ...[...warrants]
-                .filter((contract) => contract.name)
-                .sort(
-                    (a, b) =>
-                        (a.expiry_date ?? '').localeCompare(
-                            b.expiry_date ?? '',
-                        ) || a.code.localeCompare(b.code),
-                )
-                .slice(0, 8)
-                .map((contract) =>
-                    asSuggestion(
-                        contract,
-                        `${contract.call_put === 'P' ? '認售' : '認購'} · ${contract.expiry_date ?? ''}`,
-                    ),
-                ),
-        );
+    const loadFutures = async () => {
+        if (wantsOptions || wantsWarrants || (direct && direct.security_type !== 'STK')) return [];
+        const underlying = exactStock?.code ?? indexFutureUnderlying;
+        if (underlying) {
+            return orderedFutures((await contracts(`future-underlying:${underlying}`, signal => fetchFutures({ underlyingCode: underlying }, { signal })))
+                .filter((row) => row.underlying_code === underlying));
+        }
+        const matches = matchingRoots(await roots('futures'), lookup, raw);
+        const groups = await Promise.all(matches.map(async (root) =>
+            orderedFutures(await contracts(`future-root:${root.root}`, signal => fetchFutures({ root: root.root }, { signal })))));
+        return orderedFutures(groups.flat());
+    };
+    const loadOptions = async () => {
+        if (!wantsOptions) return [];
+        const rootLookup = exactStock ? normalizeSearchText(exactStock.name) || lookup : lookup;
+        const codeMatches = catalog.filter(stock => normalizeSearchText(stock.code) === lookup);
+        const needsName = exactStock && codeMatches.length === 1 && codeMatches[0] === exactStock &&
+            (!rootLookup || rootLookup === normalizeSearchText(exactStock.code)) &&
+            ['TSE', 'OTC', 'OES'].includes(exactStock.exchange);
+        const nameRequest = needsName
+            ? read(() => stockNamesCache.read(JSON.stringify([scope, 'STK', exactStock.exchange, exactStock.code]),
+                signal => inScope(async () => {
+                    const info = await fetchContractInfo(exactStock.code, 'STK', { signal });
+                    if (!info || info.code !== exactStock.code || info.security_type !== 'STK' ||
+                        info.exchange !== exactStock.exchange || info.region !== 'TW' ||
+                        !info.name?.trim() || normalizeSearchText(info.name) === normalizeSearchText(info.code)) {
+                        throw new Error('股票名稱查詢回傳身分或名稱不符');
+                    }
+                    return info.name;
+                }), options.signal), rootLookup)
+            : Promise.resolve(rootLookup);
+        // Start roots and the optional name together: a degraded source adds at
+        // most one source deadline, rather than serial root/name waits.
+        const [optionRoots, name] = await Promise.all([roots('options'), nameRequest]);
+        assertScope();
+        const matches = matchingRoots(optionRoots, normalizeSearchText(name), raw);
+        return interleave(await Promise.all(matches.map(async (root) => {
+            const rows = (await contracts(`option-root:${root.root}`, signal => fetchOptions(root.root, {}, { signal })))
+                .filter((row) => !exactStock || row.underlying_code === exactStock.code);
+            const frontMonth = rows.map((row) => row.delivery_month).filter((month): month is string => !!month).sort()[0];
+            return rows.filter((row) => !frontMonth || row.delivery_month === frontMonth)
+                .sort((a, b) => (a.strike_price ?? 0) - (b.strike_price ?? 0) || a.code.localeCompare(b.code)).slice(0, 8);
+        })), 8);
+    };
+    const loadWarrants = async () => {
+        if (!exactStock || !options.includeWarrants || wantsFutures || wantsOptions) return [];
+        return (await contracts(`warrant:${exactStock.code}`, signal => fetchWarrants(exactStock.code, { expiryFrom: day }, { signal })))
+            .filter((row) => row.name && row.underlying_code === exactStock.code && currentWarrant(row, day))
+            .sort((a, b) => (a.expiry_date ?? '9999').localeCompare(b.expiry_date ?? '9999') || a.code.localeCompare(b.code)).slice(0, 8);
+    };
+    const priority: ProductSuggestion[] = [];
+    if (direct && (direct.security_type !== 'WRT' || options.includeWarrants && currentWarrant(direct, day))) {
+        const etf = direct.security_type === 'STK' && etfNameForLive(direct.code, direct.exchange ?? '');
+        const suggestion = asSuggestion(direct, `${etf ? 'ETF · ' : ''}直接代碼${direct.security_type === 'WRT' ? warrantDateWarning(direct) : ''}`);
+        if (direct.security_type === 'STK') {
+            const display = stockDisplayMeta(direct.code, direct.exchange ?? '', direct.name);
+            suggestion.name = display.name;
+            if (display.kind) suggestion.kind = display.kind;
+        }
+        priority.push(suggestion);
     }
+    if (exactStock) priority.push(stockSuggestion(exactStock));
+    const futuresFirst = !!exactStock || wantsFutures || !!indexFutureUnderlying;
+    const leadingStocks = !wantsOptions && !wantsWarrants && !futuresFirst ? stockMatches.map(stockSuggestion) : [];
+    const unique = (rows: ProductSuggestion[]) => {
+        const seen = new Set<string>();
+        return rows.filter(row => {
+            const key = `${row.security_type}:${row.exchange}:${row.code}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        }).slice(0, limit);
+    };
+    const publish = (rows: ProductSuggestion[]) => {
+        assertScope();
+        if (options.onUpdate && rows.length) options.onUpdate(unique(rows));
+    };
+    const futureRows = (rows: ContractInfo[]) => rows.map(row => asSuggestion(row,
+        row.code.endsWith('R1') ? '期貨 · 近月' : row.code.endsWith('R2') ? '期貨 · 次月' : `期貨 · ${row.delivery_month ?? ''}`));
+    const searchHead = (rows: ProductSuggestion[]) => {
+        const continuous = rows.filter(isContinuousFuture);
+        return [...priority, ...leadingStocks, ...(continuous.length ? continuous : rows)];
+    };
+    // Publish only stable prefixes. Even if warrants return first, do not show
+    // them ahead of futures which are still loading. Lower-priority dated
+    // contracts and other matches wait for the complete, original ordering.
+    publish([...priority, ...leadingStocks]);
+    const primaryRequest = Promise.all([loadFutures(), loadOptions()]).then(([futures, optionRows]) => {
+        const suggestions = futureRows(futures);
+        if (!wantsOptions && !wantsWarrants) publish(searchHead(suggestions));
+        return [futures, optionRows] as const;
+    });
+    const [[futures, optionRows], warrants, indices] = await Promise.all([primaryRequest, loadWarrants(), indexOutcome]);
+    assertScope();
+    if ('error' in indices) throw indices.error;
+    const indexSuggestions = indices.rows;
 
-    const matchingFutureRoot = findRoot(roots.futures, lookup, raw);
-    if (matchingFutureRoot && (wantsFutures || !exactStock)) {
-        const futures = await fetchFutures({
-            root: matchingFutureRoot.root,
-        }).catch((): ContractInfo[] => []);
-        results.unshift(
-            ...[...futures]
-                .sort(derivativeSort)
-                .slice(0, 6)
-                .map((contract) => asSuggestion(contract, '期貨')),
-        );
-    }
-
-    const matchingOptionRoot = findRoot(roots.options, lookup, raw);
-    if (matchingOptionRoot && wantsOptions) {
-        const options = await fetchOptions(matchingOptionRoot.root).catch(
-            (): ContractInfo[] => [],
-        );
-        const frontMonth = options
-            .map((contract) => contract.delivery_month)
-            .filter((month): month is string => !!month)
-            .sort()[0];
-        results.unshift(
-            ...[...options]
-                .filter(
-                    (contract) =>
-                        !frontMonth || contract.delivery_month === frontMonth,
-                )
-                .sort(
-                    (a, b) =>
-                        (a.strike_price ?? 0) - (b.strike_price ?? 0),
-                )
-                .slice(0, 8)
-                .map((contract) => asSuggestion(contract, '選擇權')),
-        );
-    }
-
-    const indexMatches = [
-        {
-            code: 'IX0001',
-            name: '發行量加權股價指數',
-            category: '',
-        },
-        ...SECTOR_INDICES.map((index) => ({
-            code: index.index,
-            name: `${index.label}類指數`,
-            category: index.category,
-        })),
-    ].filter(
-        (index) =>
-            index.code.startsWith(
-                normalizeContractCode(normalized, 'IND'),
-            ) || index.name.includes(lookup),
-    );
-    results.push(
-        ...indexMatches.map((index) => ({
-            code: index.code,
-            name: index.name,
-            security_type: 'IND' as const,
-            exchange: 'TSE',
-            detail: '指數',
-        })),
-    );
-
-    const seen = new Set<string>();
-    return results.filter((item) => {
-        const key = `${item.security_type}:${item.code}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    }).slice(0, limit);
+    const futureSuggestions = futureRows(futures);
+    const optionSuggestions = optionRows.map((row) => asSuggestion(row, `選擇權 · ${row.root ?? ''} · ${row.delivery_month ?? ''}`));
+    const warrantSuggestions = warrants.map((row) => asSuggestion(row,
+        `${row.call_put === 'P' ? '認售' : row.call_put === 'C' ? '認購' : '權證'} · ${row.expiry_date ?? ''}${warrantDateWarning(row)}`));
+    const continuous = futureSuggestions.filter(isContinuousFuture);
+    const additionalFutures = continuous.length ? futureSuggestions.filter(row => !isContinuousFuture(row)) : [];
+    const groups = wantsOptions ? [optionSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)] : wantsWarrants
+        ? [warrantSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)]
+        : [futureSuggestions, warrantSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)];
+    const result = unique(wantsOptions || wantsWarrants ? [...priority, ...interleave(groups, limit * groups.length)] : [
+        ...searchHead(futureSuggestions), ...warrantSuggestions, ...indexSuggestions,
+        ...(futuresFirst ? stockMatches.map(stockSuggestion) : []), ...additionalFutures,
+    ]);
+    if (!result.length && failures.length) throw new Error('商品搜尋暫時無法完成，請稍後重試', { cause: failures[0] });
+    return result;
 }

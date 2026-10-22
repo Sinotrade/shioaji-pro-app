@@ -20,6 +20,7 @@ import {
     memo,
     useCallback,
     useEffect,
+    useLayoutEffect,
     useMemo,
     useRef,
     useState,
@@ -31,6 +32,7 @@ import { useQuote } from '../hooks/use-stream';
 import type { WatchItem } from '../hooks/use-watchlist';
 import type { ServerWatchlist } from '../lib/shioaji';
 import { getQuote } from '../lib/stream';
+import { isTauri } from '../lib/runtime';
 import type { ContractInfo } from '../lib/types/contract';
 import type { SecurityType } from '../lib/types/contract';
 import {
@@ -41,6 +43,13 @@ import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { Sparkline } from './sparkline';
 import { RefreshButton } from './refresh-button';
 import { AsyncStatus } from './async-status';
+import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
+import { useProductNamesVersion } from '../hooks/use-product-names-version';
+import { getEtfNamesVersion } from '../lib/etf-runtime-catalog';
+import { ProductBadge } from './product-badge';
+import { ProductSearchDetails } from './product-search-details';
+import { PRODUCT_SEARCH_DEBOUNCE_MS } from '../lib/search-request';
+import { PRODUCT_BADGES, productBadgeType, productDetailText } from '../lib/product-badge-presentation';
 import * as panel from './panel.css';
 import * as styles from './watchlist.css';
 
@@ -331,27 +340,171 @@ export function Watchlist({
     const [busy, setBusy] = useState(false);
     const [creating, setCreating] = useState(false);
     const [suggestions, setSuggestions] = useState<ProductSuggestion[]>([]);
+    const currentSuggestionsRef = useRef(suggestions);
+    currentSuggestionsRef.current = suggestions;
+    const [activeIdentity, setActiveIdentity] = useState<string | null>(null);
+    const [addError, setAddError] = useState(false);
+    const addRowRef = useRef<HTMLDivElement>(null);
+    const suggestBoxRef = useRef<HTMLDivElement>(null);
+    const suggestRowRefs = useRef(new Map<string, HTMLButtonElement>());
+    const activeSuggestionRef = useRef<string | undefined>(undefined);
+    const updatePopupGeometry = useRef<() => void>(() => undefined);
+    const submitBusy = useRef(false);
+    const activeListRef = useRef(activeListId);
+    activeListRef.current = activeListId;
+    const [searchError, setSearchError] = useState(false);
+    const [searching, setSearching] = useState(false);
+    const [searchRetry, setSearchRetry] = useState(0);
+    const composing = useRef(false);
+    const queryVersion = useRef(0);
+    const searchController = useRef<AbortController | null>(null);
+    const catalogVersion = useProductCatalogVersion();
+    const namesVersion = useProductNamesVersion();
+    const suggestionScope = useRef('');
+    const currentScope = () => JSON.stringify([getProductCatalogVersion(), getEtfNamesVersion()]);
+    const cancelSearch = () => {
+        queryVersion.current += 1;
+        searchController.current?.abort();
+        searchController.current = null;
+        setSearching(false);
+    };
     useEffect(() => {
         const query = input.trim();
-        if (!query) {
+        if (!query || composing.current) {
             setSuggestions([]);
+            setSearchError(false);
+            setSearching(composing.current && !!query);
             return;
         }
         let active = true;
+        let completed = false;
+        const controller = new AbortController();
+        searchController.current = controller;
+        const requestVersion = ++queryVersion.current;
+        const requestScope = currentScope();
+        const isCurrent = () => active && !controller.signal.aborted && requestVersion === queryVersion.current
+            && requestScope === currentScope() && !composing.current;
+        setSuggestions([]);
+        setActiveIdentity(null);
+        setSearchError(false);
+        setSearching(true);
         const timer = setTimeout(() => {
-            void searchProducts(query, 10)
+            void searchProducts(query, 10, {
+                includeWarrants: true,
+                signal: controller.signal,
+                onUpdate: (results) => {
+                    if (isCurrent() && !completed) { suggestionScope.current = requestScope; setSuggestions(results); }
+                },
+            })
                 .then((results) => {
-                    if (active) setSuggestions(results);
+                    completed = true;
+                    if (isCurrent()) {
+                        suggestionScope.current = requestScope;
+                        setSuggestions(results);
+                        setSearching(false);
+                    }
                 })
                 .catch(() => {
-                    if (active) setSuggestions([]);
+                    completed = true;
+                    if (isCurrent()) {
+                        // The core resolves ordinary source failures with usable partial rows.
+                        // A fatal rejection (for example a server switch) invalidates them.
+                        setSuggestions([]);
+                        setSearchError(true);
+                        setSearching(false);
+                    }
                 });
-        }, 150);
+        }, PRODUCT_SEARCH_DEBOUNCE_MS);
+        controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
         return () => {
             active = false;
+            controller.abort();
+            if (searchController.current === controller) searchController.current = null;
             clearTimeout(timer);
         };
-    }, [input]);
+    }, [input, searchRetry, catalogVersion, namesVersion, activeListId]);
+    const suggestionIdentities = useMemo(() => suggestions.map(item => JSON.stringify([item.security_type, item.exchange, item.code])), [suggestions]);
+    const explicitIndex = suggestionIdentities.indexOf(activeIdentity ?? '');
+    const activeIndex = explicitIndex >= 0 ? explicitIndex : searching ? -1 : 0;
+    activeSuggestionRef.current = suggestionIdentities[activeIndex];
+    const popupOpen = suggestions.length > 0 || searchError || searching || addError;
+    const renderedVersion = queryVersion.current;
+    useEffect(() => {
+        setActiveIdentity(current => current && suggestionIdentities.includes(current) ? current : null);
+    }, [suggestionIdentities]);
+    const revealActiveSuggestion = useCallback(() => {
+        const container = suggestBoxRef.current;
+        const identity = activeSuggestionRef.current;
+        const row = identity && suggestRowRefs.current.get(identity);
+        if (!container || !row || container.style?.visibility === 'hidden') return;
+        const box = container.getBoundingClientRect();
+        const rect = row.getBoundingClientRect();
+        const top = box.top + container.clientTop;
+        const bottom = top + container.clientHeight;
+        if (rect.top < top) container.scrollTop -= top - rect.top;
+        else if (rect.bottom > bottom) container.scrollTop += rect.bottom - bottom;
+    }, []);
+    useEffect(revealActiveSuggestion, [activeIndex, suggestionIdentities, revealActiveSuggestion]);
+    useLayoutEffect(() => {
+        const anchor = addRowRef.current;
+        const popup = suggestBoxRef.current;
+        if (!popupOpen || !anchor || !popup || typeof window === 'undefined') return;
+        const ancestors: HTMLElement[] = [];
+        const clipping: HTMLElement[] = [];
+        for (let parent = anchor.parentElement; parent; parent = parent.parentElement) {
+            ancestors.push(parent);
+            if (/^(auto|scroll|hidden|clip)$/.test(window.getComputedStyle(parent).overflowY)) clipping.push(parent);
+        }
+        let active = true;
+        let previousHeight: number | undefined;
+        let previouslyVisible = false;
+        const update = () => {
+            if (!active) return;
+            let safeTop = 0;
+            let safeBottom = window.innerHeight;
+            for (const parent of clipping) {
+                const top = parent.getBoundingClientRect().top + parent.clientTop;
+                safeTop = Math.max(safeTop, top);
+                safeBottom = Math.min(safeBottom, top + parent.clientHeight);
+            }
+            const rect = anchor.getBoundingClientRect();
+            const available = Math.max(0, Math.floor(rect.top - safeTop - 8));
+            const computed = window.getComputedStyle(popup);
+            const border = (parseFloat(computed.borderTopWidth) || 0) + (parseFloat(computed.borderBottomWidth) || 0);
+            popup.style.boxSizing = 'border-box';
+            popup.style.maxHeight = `min(24rem, 50vh, ${available}px)`;
+            popup.style.visibility = safeBottom <= safeTop || rect.bottom <= safeTop || rect.top >= safeBottom || available <= border ? 'hidden' : 'visible';
+            const visible = popup.style.visibility === 'visible';
+            const height = popup.clientHeight;
+            if (visible && (!previouslyVisible || height !== previousHeight)) revealActiveSuggestion();
+            previousHeight = height;
+            previouslyVisible = visible;
+        };
+        const onScroll = (event: Event) => {
+            // Ignore the popup's own nearest scrolling and unrelated panels.
+            if (event.target === window || event.target === window.document || ancestors.includes(event.target as HTMLElement)) update();
+        };
+        updatePopupGeometry.current = update;
+        update();
+        window.addEventListener('resize', update);
+        window.addEventListener('scroll', onScroll, true);
+        const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update);
+        observer?.observe(anchor);
+        for (const parent of clipping) observer?.observe(parent);
+        // RGL moves this one panel with transforms, which do not trigger ResizeObserver.
+        const movingPanel = ancestors.find(parent => parent.hasAttribute?.('data-block-id'));
+        const motionObserver = movingPanel && typeof MutationObserver !== 'undefined' ? new MutationObserver(update) : undefined;
+        if (movingPanel) motionObserver?.observe(movingPanel, { attributes: true, attributeFilter: ['style', 'class'] });
+        return () => {
+            active = false;
+            updatePopupGeometry.current = () => undefined;
+            window.removeEventListener('resize', update);
+            window.removeEventListener('scroll', onScroll, true);
+            observer?.disconnect();
+            motionObserver?.disconnect();
+        };
+    }, [popupOpen, revealActiveSuggestion]);
+    useLayoutEffect(() => { updatePopupGeometry.current(); }, [suggestions, searchError, searching, addError]);
     const [newName, setNewName] = useState('');
     const [confirmDelete, setConfirmDelete] = useState(false);
     // inline rename (issue #9) — WKWebView has no working window.prompt,
@@ -411,10 +564,10 @@ export function Watchlist({
         return sorted;
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [items, sortMode, sortTick]);
-    const setDropTarget = (code: string) => {
+    const setDropTarget = useCallback((code: string) => {
         dropCodeRef.current = code;
         setDropCode(code);
-    };
+    }, []);
 
     const clearDragState = useCallback(() => {
         dragCode.current = null;
@@ -440,14 +593,18 @@ export function Watchlist({
         return () => onHoldReload(false);
     }, [editing, onHoldReload]);
 
-    const handleDrop = () => {
+    const handleRowDragStart = useCallback((code: string) => {
+        if (arrange) dragCode.current = code;
+    }, [arrange]);
+
+    const handleDrop = useCallback(() => {
         const from = dragCode.current;
         const to = dropCodeRef.current;
         dragCode.current = null;
         dropCodeRef.current = null;
         setDropCode(null);
         if (from && to && from !== to) onReorder(from, to);
-    };
+    }, [onReorder]);
 
     // 上移/下移 — same persisted onReorder path as drag-to-reorder
     const moveRow = useCallback(
@@ -462,16 +619,44 @@ export function Watchlist({
         [items, onReorder],
     );
 
-    const submit = async () => {
-        const code = input.trim().toUpperCase();
-        if (!code || busy || loading || !activeListId) return;
+    const submit = async (picked?: ProductSuggestion) => {
+        if (composing.current || renderedVersion !== queryVersion.current || activeListRef.current !== activeListId) return;
+        if (busy || submitBusy.current || loading || !activeListId) return;
+        const rawCode = input.trim().toUpperCase();
+        const isDirectCode = /^[A-Z0-9]+$/.test(rawCode);
+        if (!picked && searching && !isDirectCode && activeIdentity === null) return;
+        let item = picked ?? suggestions[activeIndex];
+        if (item && suggestionScope.current !== currentScope()) {
+            cancelSearch();
+            setSuggestions([]);
+            setActiveIdentity(null);
+            setSearchRetry(retry => retry + 1);
+            return;
+        }
+        if (suggestBoxRef.current?.style?.visibility === 'hidden') {
+            if (!isDirectCode) return;
+            // Same-query phases can replace rows captured by an old handler.
+            const matchingRows = currentSuggestionsRef.current.filter(row => row.code === rawCode);
+            if (matchingRows.length !== 1 || matchingRows[0] !== item) item = undefined;
+        }
+        const code = item?.code ?? rawCode;
+        if (!code || !item && !isDirectCode) return;
+        cancelSearch();
+        const submitVersion = queryVersion.current;
+        setSuggestions([]);
+        setActiveIdentity(null);
+        setSearchError(false);
+        setAddError(false);
+        submitBusy.current = true;
         setBusy(true);
         try {
-            await onAdd(code);
-            setInput('');
+            if (item) await onAdd(item.code, item.security_type, item.contract);
+            else await onAdd(code);
+            if (submitVersion === queryVersion.current && activeListRef.current === activeListId) setInput('');
         } catch {
-            // keep input so user can fix typo
+            if (submitVersion === queryVersion.current && activeListRef.current === activeListId) setAddError(true);
         } finally {
+            submitBusy.current = false;
             setBusy(false);
         }
     };
@@ -709,13 +894,7 @@ export function Watchlist({
                             }
                             onSelect={onSelect}
                             onRemove={onRemove}
-                            onDragStart={(code) => {
-                                // dragging only exists in 排序模式 (which is
-                                // always the custom order)
-                                if (arrange) {
-                                    dragCode.current = code;
-                                }
-                            }}
+                            onDragStart={handleRowDragStart}
                             onDragOver={setDropTarget}
                             onDrop={handleDrop}
                             onDragEnd={clearDragState}
@@ -726,28 +905,20 @@ export function Watchlist({
                     )}
                 </div>
             </div>
-            <div className={styles.addRow}>
-                {suggestions.length > 0 && (
-                    <div className={styles.suggestBox}>
-                        {suggestions.map((s) => (
+            <div ref={addRowRef} className={styles.addRow}>
+                {popupOpen && (
+                    <div ref={suggestBoxRef} className={styles.suggestBox}>
+                        {suggestions.map((s, index) => {
+                            const detail = productDetailText(s.detail, s.security_type, s.kind);
+                            return (
                             <button
-                                key={s.code}
-                                className={styles.suggestRow}
-                                disabled={loading}
-                                onClick={async () => {
-                                    setSuggestions([]);
-                                    setInput('');
-                                    setBusy(true);
-                                    try {
-                                        await onAdd(
-                                            s.code,
-                                            s.security_type,
-                                            s.contract,
-                                        );
-                                    } finally {
-                                        setBusy(false);
-                                    }
-                                }}
+                                key={`${s.security_type}:${s.exchange}:${s.code}`}
+                                ref={(node) => { const identity = suggestionIdentities[index]!; if (node) suggestRowRefs.current.set(identity, node); else suggestRowRefs.current.delete(identity); }}
+                                className={index === activeIndex ? styles.suggestActive : styles.suggestRow}
+                                title={[s.name, s.code, PRODUCT_BADGES[productBadgeType(s.security_type, s.kind)].label, detail].filter(Boolean).join(' · ')}
+                                disabled={busy || loading || !activeListId}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => submit(s)}
                             >
                                 <span className={styles.suggestCode}>
                                     {s.code}
@@ -755,11 +926,19 @@ export function Watchlist({
                                 <span className={styles.suggestName}>
                                     {s.name}
                                 </span>
-                                <span className={styles.suggestCat}>
-                                    {s.detail}
+                                <span className={styles.suggestMeta}>
+                                    <ProductBadge security_type={s.security_type} kind={s.kind} />
+                                    {detail && <span className={styles.suggestCat}>{detail}</span>}
                                 </span>
                             </button>
-                        ))}
+                            );
+                        })}
+                        <ProductSearchDetails item={suggestions[activeIndex]} />
+                        {isTauri && <div role='status' className={styles.loadingHint}>原生版官方名稱更新未啟用，使用券商與內建名稱</div>}
+                        {(searchError || searching || addError) && <AsyncStatus phase={searchError || addError ? 'error' : 'loading'}
+                            text={addError ? '加入自選失敗，可重新搜尋' : searchError ? '搜尋失敗，可重試' : suggestions.length ? '正在補齊關聯商品…' : '搜尋中…'}
+                            className={styles.loadingHint}
+                            action={searchError || addError ? <button type='button' onClick={() => { setAddError(false); setSearchRetry((retry) => retry + 1); }}>{addError ? '重新搜尋' : '重試'}</button> : undefined} />}
                     </div>
                 )}
                 <input
@@ -767,18 +946,52 @@ export function Watchlist({
                     placeholder='股票、期貨或指數（如 台積電期）'
                     disabled={loading || !activeListId}
                     value={input}
+                    onCompositionStart={() => {
+                        composing.current = true;
+                        cancelSearch();
+                        setSuggestions([]);
+                        setActiveIdentity(null);
+                        setAddError(false);
+                        setSearchRetry((retry) => retry + 1);
+                    }}
+                    onCompositionEnd={(e) => {
+                        composing.current = false;
+                        cancelSearch();
+                        setInput(e.currentTarget.value);
+                        setSearchRetry((retry) => retry + 1);
+                    }}
                     onChange={(e) => {
+                        cancelSearch();
                         setInput(e.target.value);
+                        setSuggestions([]);
+                        setActiveIdentity(null);
+                        setAddError(false);
+                        setSearchError(false);
+                        setSearching(!!e.target.value.trim());
                     }}
                     onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                            setSuggestions([]);
-                            submit();
+                        if (composing.current || e.nativeEvent?.isComposing || e.keyCode === 229) return;
+                        if (e.key === 'ArrowDown' && suggestions.length > 0) {
+                            e.preventDefault();
+                            setActiveIdentity(suggestionIdentities[(activeIndex + 1) % suggestions.length]!);
                         }
-                        if (e.key === 'Escape') setSuggestions([]);
+                        if (e.key === 'ArrowUp' && suggestions.length > 0) {
+                            e.preventDefault();
+                            setActiveIdentity(suggestionIdentities[activeIndex < 0 ? suggestions.length - 1 : (activeIndex - 1 + suggestions.length) % suggestions.length]!);
+                        }
+                        if (e.key === 'Enter') {
+                            void submit();
+                        }
+                        if (e.key === 'Escape') {
+                            cancelSearch();
+                            setSuggestions([]);
+                            setActiveIdentity(null);
+                            setSearchError(false);
+                            setAddError(false);
+                        }
                     }}
                 />
-                <button className={panel.btn} onClick={submit} disabled={busy || loading || !activeListId}>
+                <button className={panel.btn} onClick={() => void submit()} disabled={busy || loading || !activeListId}>
                     {busy ? '…' : '+'}
                 </button>
             </div>
