@@ -11,6 +11,14 @@ export const header = style({
     background: vars.color.panel,
     borderBottom: `1px solid ${vars.color.border}`,
     flexShrink: 0,
+    '@media': {
+        '(max-width: 1050px)': {
+            position: 'relative',
+            flexWrap: 'wrap',
+            gap: vars.space.sm,
+            minWidth: 0,
+        },
+    },
 });
 
 export const logoBlock = style({
@@ -19,6 +27,9 @@ export const logoBlock = style({
     gap: vars.space.sm,
     // 窄視窗時 flex 壓縮會讓副標逐字折行、header 長成兩列
     whiteSpace: 'nowrap',
+    '@media': {
+        '(max-width: 1050px)': { flexWrap: 'wrap', maxWidth: '100%', minWidth: 0 },
+    },
 });
 
 export const logoMark = style({
@@ -43,6 +54,9 @@ export const logoSub = style({
     fontSize: '0.68rem',
     fontWeight: 500,
     color: vars.color.mutedForeground,
+    '@media': {
+        '(max-width: 1050px)': { minWidth: 0, whiteSpace: 'normal', overflowWrap: 'anywhere' },
+    },
 });
 
 // server 版本與 app 期望不一致的警示（hover 有完整說明）
@@ -52,7 +66,10 @@ export const versionWarn = style({
     cursor: 'help',
 });
 
-export const spacer = style({ flex: 1 });
+export const spacer = style({
+    flex: 1,
+    '@media': { '(max-width: 1050px)': { display: 'none' } },
+});
 
 // 頂欄所有 chip/按鈕的統一高度 — 字級與 padding 各異會造成 23/25px
 // 混排，邊框線上下參差（使用者回報的「水平不齊」）
@@ -187,6 +204,8 @@ export const settingsWrap = style({
     // line box，兩個引擎都是精確的內容高度
     display: 'flex',
     alignItems: 'center',
+    // Wrapped controls anchor their menu to the whole header, not the leftmost button.
+    '@media': { '(max-width: 1050px)': { position: 'static' } },
 });
 
 export const popover = style({
@@ -203,6 +222,15 @@ export const popover = style({
     display: 'flex',
     flexDirection: 'column',
     gap: vars.space.sm,
+    '@media': {
+        '(max-width: 1050px)': {
+            left: 8,
+            right: 8,
+            width: 'auto',
+            maxWidth: 'calc(100vw - 16px)',
+            boxSizing: 'border-box',
+        },
+    },
 });
 
 export const popoverBackdrop = style({
@@ -504,8 +532,8 @@ export const clock = style({
     whiteSpace: 'nowrap',
 });
 
-// 窄視窗時 header 維持單列：文字已全部 nowrap 不再折行，改依優先序
-// 自動收起純資訊項（互動按鈕與 LIVE 永遠保留、不會被裁切）。被收起
+// 窄視窗先依優先序收起純資訊，1050px 以下再允許頂欄換行，保留全部
+// 互動按鈕與 LIVE，避免控制項被裁切。被收起
 // 的資訊各有替代入口：加權/基差可加自選或開行情面板、銀行水位在帳務
 // dock、時鐘看系統列；這幾項本來就能在 設定 → 頂欄顯示 手動關閉。
 export const infoAutoHide = styleVariants({
@@ -685,6 +713,15 @@ export const foreignChip = style({
     height: '25px',
     boxSizing: 'border-box',
     whiteSpace: 'nowrap',
+    '@media': {
+        '(max-width: 1050px)': {
+            flexWrap: 'wrap',
+            whiteSpace: 'normal',
+            maxWidth: '100%',
+            height: 'auto',
+            minHeight: '25px',
+        },
+    },
 });
 
 export const foreignChipAction = style({
