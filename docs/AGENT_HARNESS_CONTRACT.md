@@ -131,7 +131,11 @@ whole visible layout as one JSON document, described by
   `h`, optional `pin` (contract code), `link_group` (flash panels only) and
   `settings`, plus optional `link_groups`. Rows are 30 px. Settings in v1:
   chart `interval` (`1m`/`5m`/`15m`/`60m`/`1D`), `session`, `ohlc`,
-  `high_low`; intraday `session`. An absent setting means the default.
+  `high_low`; intraday `session`; chainmap `view` (`rank`/`rotation`/`heat`)
+  and `kind` (`all`/`chain`/`theme`); holdingmap `form` (`bubble`/`lanes`)
+  and `grouping` (`sector`/`chain`/`theme`). An absent chart or intraday
+  setting means the default; an absent chainmap or holdingmap setting follows
+  the user's last choice in that kind of panel.
 - **Privacy.** The spec never contains account keys, quantities, order or
   indicator settings. Those fields stay in the stored workspace and carry
   over untouched for every panel the spec keeps by `id`; a new `id` creates

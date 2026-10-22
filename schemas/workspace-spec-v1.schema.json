@@ -180,10 +180,44 @@
           "if": {
             "properties": {
               "type": {
+                "const": "chainmap"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "settings": {
+                "$ref": "#/$defs/chainmapSettings"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "holdingmap"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "settings": {
+                "$ref": "#/$defs/holdingmapSettings"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
                 "not": {
                   "enum": [
                     "chart",
-                    "intraday"
+                    "intraday",
+                    "chainmap",
+                    "holdingmap"
                   ]
                 }
               }
@@ -242,6 +276,47 @@
             "night"
           ],
           "default": "auto"
+        }
+      }
+    },
+    "chainmapSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Absent = the panel follows the last choice made in any 產業鏈資金流向 panel.",
+      "properties": {
+        "view": {
+          "enum": [
+            "rank",
+            "rotation",
+            "heat"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "all",
+            "chain",
+            "theme"
+          ]
+        }
+      }
+    },
+    "holdingmapSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Absent = the panel follows the last choice made in a 持股族群 panel.",
+      "properties": {
+        "form": {
+          "enum": [
+            "bubble",
+            "lanes"
+          ]
+        },
+        "grouping": {
+          "enum": [
+            "sector",
+            "chain",
+            "theme"
+          ]
         }
       }
     }

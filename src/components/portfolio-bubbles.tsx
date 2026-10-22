@@ -24,6 +24,8 @@ import type { VariantProps } from './portfolio-types';
 import * as s from './portfolio-bubbles.css';
 
 const PAD = { left: 48, right: 18, top: 34, bottom: 38 };
+/** Plot width that fits the 漲跌 caption and the circle legend on one line. */
+const LEGEND_MIN_PLOT_W = 740;
 const SPRING = { type: 'spring', stiffness: 60, damping: 17, mass: 1 } as const;
 const PACK_SPRING = { type: 'spring', stiffness: 80, damping: 18, mass: 1 } as const;
 const STILL = { duration: 0 } as const;
@@ -162,9 +164,12 @@ export function HoldingBubbles(props: VariantProps) {
                     <text className={s.caption} x={PAD.left} y={PAD.top - 14}>
                         ↑ {gLabel}今日漲跌（{grouping === 'sector' ? '產業指標加權' : '市值加權'}）
                     </text>
-                    <text className={s.cornerSoft} x={PAD.left + plotW} y={PAD.top - 14} textAnchor='end' style={{ opacity: 0.85 }}>
-                        外圓為{gLabel}（權重・近 10 分淨流入占成交值），內圓為持股，大小為市值、顏色為今日漲跌
-                    </text>
+                    {/* same line as the 漲跌 caption: only when both fit (a ~600px panel would overlap them) */}
+                    {plotW >= LEGEND_MIN_PLOT_W && (
+                        <text className={s.cornerSoft} x={PAD.left + plotW} y={PAD.top - 14} textAnchor='end' style={{ opacity: 0.85 }}>
+                            外圓為{gLabel}（權重・近 10 分淨流入占成交值），內圓為持股，大小為市值、顏色為今日漲跌
+                        </text>
+                    )}
                     {(
                         [
                             ['流入・上漲', PAD.left + plotW - 8, PAD.top + 14, 'end'],

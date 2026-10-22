@@ -19,13 +19,14 @@ import { entityName, twCodeOf } from '../lib/company-data';
 import type { ChainTier, Theme } from '../lib/company-data/types';
 import { themeKey as themeKeyOf, useThemeSettings } from '../lib/theme-store';
 import type { ContractBase } from '../lib/types/contract';
+import { CHAIN_KINDS, panelPref, type ChainKind, type ChainView } from '../lib/workspace';
 import { AsyncStatus } from './async-status';
 import { FocusCard, TierCard, type TierView } from './chain-detail';
 import { FlowHeat } from './chain-heat';
 import { FlowRank } from './chain-rank';
 import { FlowRotation } from './chain-rotation';
 import { FeedStatus, useChainFeed } from './chain-feed';
-import { readPref, Segment, writePref, type FlowRow } from './chain-ui';
+import { readPref, Segment, useSharedPref, writePref, type FlowRow } from './chain-ui';
 import * as panel from './panel.css';
 import * as s from './chain-map.css';
 
@@ -41,7 +42,7 @@ const TIERS: ChainTier[] = ['upstream', 'midstream', 'downstream'];
 
 // 持股 moved to its own panel (持股族群): a saved 'holdings' view is no longer
 // allowed by readPref and falls back to 排行
-type ViewMode = 'rotation' | 'rank' | 'heat';
+type ViewMode = ChainView;
 const VIEW_MODES = ['rotation', 'rank', 'heat'] as const satisfies readonly ViewMode[];
 
 /** Saved view of the panel; the retired 持股 tab (or anything unknown) becomes 排行 and is saved back. */
@@ -54,14 +55,23 @@ export function readChainView(): ViewMode {
     }
     return view;
 }
-type KindFilter = 'all' | 'chain' | 'theme';
+type KindFilter = ChainKind;
 
 export function ChainMap({
     contract,
     onPick,
+    view: panelView,
+    kind: panelKind,
+    onViewChange,
+    onKindChange,
 }: {
     contract?: ContractBase | null;
     onPick?: (code: string) => void;
+    /** The panel's own 視圖 / 類型 (saved with the layout); absent = last choice in any 產業鏈資金流向 panel. */
+    view?: ViewMode;
+    kind?: KindFilter;
+    onViewChange?: (view: ViewMode) => void;
+    onKindChange?: (kind: KindFilter) => void;
 }) {
     const chainFeed = useChainFeed();
     const { data, ready, themes, index, nameOf, rootRef, rootSize, paused, reducedMotion, revision, book, now, from, closed } = chainFeed;
@@ -74,8 +84,10 @@ export function ChainMap({
             return DEFAULT_THEME;
         }
     });
-    const [kind, setKindState] = useState<KindFilter>(() => readPref(KIND_KEY, ['all', 'chain', 'theme'] as const, 'all'));
-    const [view, setViewState] = useState<ViewMode>(() => readChainView());
+    const [savedKind, setKindState] = useSharedPref<KindFilter>(panelKind, () => readPref(KIND_KEY, CHAIN_KINDS, 'all'));
+    const [savedView, setViewState] = useSharedPref<ViewMode>(panelView, readChainView);
+    const kind = panelPref(panelKind, CHAIN_KINDS, savedKind);
+    const view = panelPref(panelView, VIEW_MODES, savedView);
     const [metric, setMetricState] = useState<RankMetric>(() => readPref(METRIC_KEY, RANK_METRICS, 'cum'));
     const [focus, setFocus] = useState<string | null>(null);
     const [heatWindow, setHeatWindowState] = useState<'5' | '10'>(() => readPref(HEAT_WINDOW_KEY, ['5', '10'] as const, '10'));
@@ -198,6 +210,7 @@ export function ChainMap({
                     onChange={(v) => {
                         setViewState(v);
                         writePref(VIEW_KEY, v);
+                        onViewChange?.(v);
                     }}
                     options={[
                         { value: 'rank', label: '排行', title: '族群淨流入排行，長度為淨流入、粗細為成交值，每分鐘更新名次' },
@@ -211,6 +224,7 @@ export function ChainMap({
                     onChange={(v) => {
                         setKindState(v);
                         writePref(KIND_KEY, v);
+                        onKindChange?.(v);
                     }}
                     options={[
                         { value: 'all', label: '全部' },

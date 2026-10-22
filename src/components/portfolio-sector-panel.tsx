@@ -8,10 +8,25 @@
 import { AsyncStatus } from './async-status';
 import { FeedStatus, useChainFeed } from './chain-feed';
 import { PortfolioSector } from './portfolio-sector';
+import type { Grouping } from '../lib/portfolio-sector';
+import type { HoldingForm } from '../lib/workspace';
 import * as panel from './panel.css';
 import * as s from './chain-map.css';
 
-export function PortfolioSectorPanel({ onPick }: { onPick?: (code: string) => void }) {
+export function PortfolioSectorPanel({
+    onPick,
+    form,
+    grouping,
+    onFormChange,
+    onGroupingChange,
+}: {
+    onPick?: (code: string) => void;
+    /** The panel's own 呈現 / 分組 (saved with the layout); absent = last choice. */
+    form?: HoldingForm;
+    grouping?: Grouping;
+    onFormChange?: (form: HoldingForm) => void;
+    onGroupingChange?: (grouping: Grouping) => void;
+}) {
     const feed = useChainFeed();
     const { data, ready } = feed;
 
@@ -51,6 +66,10 @@ export function PortfolioSectorPanel({ onPick }: { onPick?: (code: string) => vo
                 paused={feed.paused}
                 onPick={onPick ?? noop}
                 status={<FeedStatus feed={feed} />}
+                form={form}
+                grouping={grouping}
+                onFormChange={onFormChange}
+                onGroupingChange={onGroupingChange}
             />
             <div className={s.footer}>
                 <span>

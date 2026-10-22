@@ -16,11 +16,15 @@ import type { LayoutItem } from 'react-grid-layout';
 import { isLinkGroup, LINK_GROUPS, type LinkGroupId } from './flash-link';
 import {
     BLOCK_META,
+    CHAIN_KINDS,
+    CHAIN_VIEWS,
     CHART_INTERVALS,
     DEFAULT_CHART_INTERVAL,
     GRID_COLS,
     GRID_LEGACY_COLS,
     GRID_LEGACY_SCALE,
+    HOLDING_FORMS,
+    HOLDING_GROUPINGS,
     toRenderGeom,
     type Block,
     type BlockType,
@@ -44,7 +48,8 @@ const CONTRACT_CODE_PATTERN = /^[A-Za-z0-9._+-]{1,64}$/;
 interface SettingDef {
     values: readonly (string | boolean)[];
     field: keyof Block;
-    fallback: string | boolean;
+    /** Value an absent setting means; none = absent follows the panel's last global choice, so every value is kept. */
+    fallback?: string | boolean;
 }
 
 /**
@@ -71,6 +76,14 @@ export const WORKSPACE_SPEC_SETTINGS: Partial<
             field: 'intradaySession',
             fallback: 'auto',
         },
+    },
+    chainmap: {
+        view: { values: CHAIN_VIEWS, field: 'chainView' },
+        kind: { values: CHAIN_KINDS, field: 'chainKind' },
+    },
+    holdingmap: {
+        form: { values: HOLDING_FORMS, field: 'holdingForm' },
+        grouping: { values: HOLDING_GROUPINGS, field: 'holdingGrouping' },
     },
 };
 
@@ -258,7 +271,7 @@ function settingsOf(block: Block): WorkspaceSpecSettings | undefined {
         const raw = block[def.field];
         if (raw === undefined) continue;
         if (!def.values.includes(raw as string | boolean)) continue;
-        if (raw === def.fallback) continue;
+        if (def.fallback !== undefined && raw === def.fallback) continue;
         out[key] = raw as string | boolean;
     }
     return Object.keys(out).length ? out : undefined;
@@ -334,7 +347,7 @@ export function workspaceSpecCatalog(columns: WorkspaceSpecColumns) {
                     pinnable: meta.pinnable,
                     settings: Object.fromEntries(
                         Object.entries(WORKSPACE_SPEC_SETTINGS[type] ?? {}).map(
-                            ([key, def]) => [key, { values: def.values, default: def.fallback }],
+                            ([key, def]) => [key, { values: def.values, default: def.fallback ?? null }],
                         ),
                     ),
                 },
@@ -601,7 +614,7 @@ export function checkWorkspaceSpec(
                             `${key} must be one of ${def.values.map((v) => JSON.stringify(v)).join(', ')}`,
                         );
                         ok = false;
-                    } else if (value !== def.fallback) {
+                    } else if (def.fallback === undefined || value !== def.fallback) {
                         settings[key] = value as string | boolean;
                     }
                 }

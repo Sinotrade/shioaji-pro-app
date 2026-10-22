@@ -16,6 +16,21 @@ export function readPref<T extends string>(key: string, allowed: readonly T[], f
     }
 }
 
+/**
+ * The shared (last-choice) preference behind a panel's own setting. When the
+ * panel setting is cleared, re-read the shared choice during render, so no
+ * effect ever sees the value read at mount.
+ */
+export function useSharedPref<T extends string>(panelValue: T | undefined, read: () => T): [T, (value: T) => void] {
+    const [saved, setSaved] = useState<T>(read);
+    const [prevPanel, setPrevPanel] = useState(panelValue);
+    if (prevPanel !== panelValue) {
+        setPrevPanel(panelValue);
+        if (panelValue === undefined) setSaved(read());
+    }
+    return [saved, setSaved];
+}
+
 export function writePref(key: string, value: string) {
     try {
         localStorage.setItem(key, value);

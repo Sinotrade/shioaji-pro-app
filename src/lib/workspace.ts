@@ -129,6 +129,29 @@ export interface Block {
     chartHighLow?: boolean;
     // 報價欄自訂欄位（顯示哪些格子、區塊與格子的順序；指數與個股各一組）— 缺省 = 預設
     quoteBoard?: import('./quote-board-fields').QuoteBoardFieldsConfig;
+    // 產業鏈資金流向的視圖／類型、持股族群的呈現／分組（內建版面可指定）—
+    // 缺省 = 沿用上次在任一同類面板的選擇
+    chainView?: ChainView;
+    chainKind?: ChainKind;
+    holdingForm?: HoldingForm;
+    holdingGrouping?: import('./portfolio-sector').Grouping;
+}
+
+export const CHAIN_VIEWS = ['rank', 'rotation', 'heat'] as const;
+export type ChainView = (typeof CHAIN_VIEWS)[number];
+export const CHAIN_KINDS = ['all', 'chain', 'theme'] as const;
+export type ChainKind = (typeof CHAIN_KINDS)[number];
+export const HOLDING_FORMS = ['bubble', 'lanes'] as const;
+export type HoldingForm = (typeof HOLDING_FORMS)[number];
+export const HOLDING_GROUPINGS = ['sector', 'chain', 'theme'] as const satisfies readonly import('./portfolio-sector').Grouping[];
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+    return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : undefined;
+}
+
+/** 面板自己的設定值（舊存檔可能是任意值）：合法才採用，否則用 fallback */
+export function panelPref<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+    return oneOf(value, allowed) ?? fallback;
 }
 
 // K 線圖可選週期（工具列順序）。版面只存標籤，分鐘數與載入天數在 candle-chart
@@ -195,7 +218,20 @@ export function linkGroupSummary(w: Workspace): { id: LinkGroupId; code: string 
 }
 
 export type SessionConfigPatch = Partial<
-    Pick<Block, 'chartSession' | 'chartInterval' | 'intradaySession' | 'chartOrder' | 'chartOhlc' | 'chartHighLow' | 'quoteBoard'>
+    Pick<
+        Block,
+        | 'chartSession'
+        | 'chartInterval'
+        | 'intradaySession'
+        | 'chartOrder'
+        | 'chartOhlc'
+        | 'chartHighLow'
+        | 'quoteBoard'
+        | 'chainView'
+        | 'chainKind'
+        | 'holdingForm'
+        | 'holdingGrouping'
+    >
 >;
 
 // 開彈出視窗時把面板的時段選擇與 K 線週期帶進 URL（session=…、interval=…）
@@ -208,10 +244,14 @@ export function popoutSessionParam(block: Block): Record<string, string> {
               : undefined;
     const interval = block.type === 'chart' ? block.chartInterval : undefined;
     const qb = block.type === 'chart' ? encodeQuoteBoardFields(block.quoteBoard) : undefined;
+    const form = block.type === 'holdingmap' ? block.holdingForm : undefined;
+    const grouping = block.type === 'holdingmap' ? block.holdingGrouping : undefined;
     return {
         ...(session ? { session } : {}),
         ...(interval ? { interval } : {}),
         ...(qb ? { qb } : {}),
+        ...(form ? { form } : {}),
+        ...(grouping ? { grouping } : {}),
     };
 }
 
@@ -226,6 +266,8 @@ export function popoutSessionFromQuery(q: URLSearchParams): SessionConfigPatch {
             ? (q.get('interval') as ChartInterval)
             : undefined,
         quoteBoard: decodeQuoteBoardFields(q.get('qb')),
+        holdingForm: oneOf(q.get('form'), HOLDING_FORMS),
+        holdingGrouping: oneOf(q.get('grouping'), HOLDING_GROUPINGS),
     };
 }
 
@@ -1034,6 +1076,85 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
                 presetCell('heatmap-ov', 'heatmap', 12, 0, 12, 12),
                 presetCell('wall-ov', 'intradaywall', 0, 12, 16, 12),
                 presetCell('movers-ov', 'movers', 16, 12, 8, 12),
+            ],
+        },
+    },
+    // ---- 產業資金面板組合（產業全景、產業鏈資金流向、持股族群、公司資料）----
+    {
+        name: '產業掃描',
+        desc: '產業全景＋族群資金排行找強勢方向，點個股帶出 K 線、報價與公司資料',
+        workspace: {
+            blocks: [
+                { id: 'heatmap-ms', type: 'heatmap', pin: null },
+                { id: 'chain-ms', type: 'chainmap', pin: null, chainView: 'rank', chainKind: 'all' },
+                { id: 'watch-ms', type: 'watchlist', pin: null },
+                { id: 'chart-ms', type: 'chart', pin: null },
+                { id: 'company-ms', type: 'company', pin: null },
+            ],
+            layout: [
+                presetCell('heatmap-ms', 'heatmap', 0, 0, 13, 13),
+                presetCell('chain-ms', 'chainmap', 13, 0, 11, 13),
+                presetCell('watch-ms', 'watchlist', 0, 13, 5, 11),
+                presetCell('chart-ms', 'chart', 5, 13, 12, 11),
+                presetCell('company-ms', 'company', 17, 13, 7, 11),
+            ],
+        },
+    },
+    {
+        name: '持股健檢',
+        desc: '持股依族群分組對照產業全景，持倉、日 K 與公司資料同屏檢視',
+        workspace: {
+            blocks: [
+                { id: 'holding-hc', type: 'holdingmap', pin: null, holdingForm: 'bubble', holdingGrouping: 'sector' },
+                { id: 'heatmap-hc', type: 'heatmap', pin: null },
+                { id: 'company-hc', type: 'company', pin: null },
+                { id: 'dock-hc', type: 'dock', pin: null },
+                { id: 'chart-hc', type: 'chart', pin: null, chartInterval: '1D' },
+            ],
+            layout: [
+                presetCell('holding-hc', 'holdingmap', 0, 0, 10, 14),
+                presetCell('heatmap-hc', 'heatmap', 10, 0, 8, 14),
+                presetCell('company-hc', 'company', 18, 0, 6, 24),
+                presetCell('dock-hc', 'dock', 0, 14, 9, 10),
+                presetCell('chart-hc', 'chart', 9, 14, 9, 10),
+            ],
+        },
+    },
+    {
+        name: '族群輪動',
+        desc: '輪動象限看資金轉進、熱力看成分股，訊號與 K 線找點、閃電進場',
+        workspace: {
+            blocks: [
+                { id: 'rotation-rt', type: 'chainmap', pin: null, chainView: 'rotation', chainKind: 'all' },
+                { id: 'heat-rt', type: 'chainmap', pin: null, chainView: 'heat', chainKind: 'all' },
+                { id: 'signals-rt', type: 'signals', pin: null },
+                { id: 'chart-rt', type: 'chart', pin: null },
+                { id: 'flash-rt', type: 'flash', pin: null },
+            ],
+            layout: [
+                presetCell('rotation-rt', 'chainmap', 0, 0, 10, 14),
+                presetCell('heat-rt', 'chainmap', 10, 0, 9, 14),
+                presetCell('signals-rt', 'signals', 0, 14, 6, 10),
+                presetCell('chart-rt', 'chart', 6, 14, 13, 10),
+                presetCell('flash-rt', 'flash', 19, 0, 5, 24),
+            ],
+        },
+    },
+    {
+        name: '個股研究',
+        desc: '日 K 與報價、公司基本面與供應鏈位置，對照所屬族群的資金熱力',
+        workspace: {
+            blocks: [
+                { id: 'watch-sr', type: 'watchlist', pin: null },
+                { id: 'chart-sr', type: 'chart', pin: null, chartInterval: '1D' },
+                { id: 'chain-sr', type: 'chainmap', pin: null, chainView: 'heat', chainKind: 'all' },
+                { id: 'company-sr', type: 'company', pin: null },
+            ],
+            layout: [
+                presetCell('watch-sr', 'watchlist', 0, 0, 5, 24),
+                presetCell('chart-sr', 'chart', 5, 0, 11, 14),
+                presetCell('chain-sr', 'chainmap', 5, 14, 11, 10),
+                presetCell('company-sr', 'company', 16, 0, 8, 24),
             ],
         },
     },

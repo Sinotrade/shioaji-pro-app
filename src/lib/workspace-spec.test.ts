@@ -114,6 +114,56 @@ describe('workspaceToSpec', () => {
     });
 });
 
+describe('panel view settings (產業鏈資金流向／持股族群)', () => {
+    const empty: Workspace = { blocks: [], layout: [] };
+    const settingFields = Object.values(WORKSPACE_SPEC_SETTINGS).flatMap((defs) =>
+        Object.values(defs ?? {}).map((def) => def.field),
+    );
+
+    it('rebuilding any built-in preset from its spec keeps every panel setting', () => {
+        for (const preset of LAYOUT_PRESETS) {
+            // validated against the live preset (some legacy presets sit below today's minimum sizes), rebuilt with no prior panels
+            const rebuilt = buildWorkspaceFromSpec(empty, valid(workspaceToSpec(preset.workspace), preset.workspace).normalized);
+            for (const block of preset.workspace.blocks) {
+                const got = rebuilt.blocks.find((b) => b.id === block.id)!;
+                for (const field of settingFields) {
+                    expect(got[field], `${preset.name} ${block.id}.${field}`).toEqual(block[field]);
+                }
+            }
+        }
+    });
+
+    it('an Agent can set and clear a chain panel view; absent follows the last choice', () => {
+        const ws: Workspace = {
+            blocks: [{ id: 'c', type: 'chainmap', pin: null, chainView: 'heat', chainKind: 'theme' }],
+            layout: [{ i: 'c', x: 0, y: 0, w: 168, h: 14 }],
+        };
+        const spec = workspaceToSpec(ws);
+        expect(spec.panels[0]!.settings).toEqual({ view: 'heat', kind: 'theme' });
+        spec.panels[0]!.settings = { view: 'rotation' };
+        const next = buildWorkspaceFromSpec(ws, valid(spec, ws).normalized);
+        expect(next.blocks[0]).toMatchObject({ chainView: 'rotation' });
+        expect(next.blocks[0]!.chainKind).toBeUndefined();
+        spec.panels[0]!.settings = { view: 'holdings' };
+        expect(checkWorkspaceSpec(spec, ws).valid).toBe(false);
+    });
+
+    it('holding panels accept 呈現 and 分組 and reject them on other panels', () => {
+        const ws: Workspace = {
+            blocks: [{ id: 'h', type: 'holdingmap', pin: null }],
+            layout: [{ i: 'h', x: 0, y: 0, w: 120, h: 14 }],
+        };
+        const spec = workspaceToSpec(ws);
+        spec.panels[0]!.settings = { form: 'lanes', grouping: 'chain' };
+        expect(buildWorkspaceFromSpec(ws, valid(spec, ws).normalized).blocks[0]).toMatchObject({
+            holdingForm: 'lanes',
+            holdingGrouping: 'chain',
+        });
+        spec.panels[0]!.settings = { view: 'rank' };
+        expect(checkWorkspaceSpec(spec, ws).valid).toBe(false);
+    });
+});
+
 describe('checkWorkspaceSpec', () => {
     const ok = (): WorkspaceSpecV1 => workspaceToSpec(base());
 
@@ -407,6 +457,17 @@ describe('workspace spec JSON schema', () => {
         expect(Object.keys(specSchema.$defs.intradaySettings.properties)).toEqual(
             Object.keys(WORKSPACE_SPEC_SETTINGS.intraday!),
         );
-        expect(Object.keys(WORKSPACE_SPEC_SETTINGS)).toEqual(['chart', 'intraday']);
+        expect(Object.keys(specSchema.$defs.chainmapSettings.properties)).toEqual(
+            Object.keys(WORKSPACE_SPEC_SETTINGS.chainmap!),
+        );
+        expect(Object.keys(specSchema.$defs.holdingmapSettings.properties)).toEqual(
+            Object.keys(WORKSPACE_SPEC_SETTINGS.holdingmap!),
+        );
+        for (const [type, defs] of [['chainmap', specSchema.$defs.chainmapSettings], ['holdingmap', specSchema.$defs.holdingmapSettings]] as const) {
+            for (const [key, def] of Object.entries(WORKSPACE_SPEC_SETTINGS[type]!)) {
+                expect((defs.properties as Record<string, { enum: unknown[] }>)[key]!.enum, `${type}.${key}`).toEqual([...def.values]);
+            }
+        }
+        expect(Object.keys(WORKSPACE_SPEC_SETTINGS)).toEqual(['chart', 'intraday', 'chainmap', 'holdingmap']);
     });
 });
