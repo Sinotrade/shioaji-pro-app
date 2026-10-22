@@ -114,6 +114,8 @@ import {
     type SessionConfigPatch,
     type Block,
     type BlockType,
+    PANORAMA_INDEX_LABELS,
+    type PanoramaIndexCode,
     type Profile,
     type PulseSection,
     type PulseSectionWeights,
@@ -222,6 +224,7 @@ function BlockBody({
     dockProps,
     onSelectCode,
     onPulseConfigChange,
+    onPanoramaIndexChange,
     onWallConfigChange,
     onFlashAccountsChange,
     onFlashLotChange,
@@ -251,6 +254,7 @@ function BlockBody({
         sections: PulseSection[],
         weights: PulseSectionWeights,
     ) => void;
+    onPanoramaIndexChange: (id: string, index: PanoramaIndexCode) => void;
     onWallConfigChange: (
         id: string,
         list: string,
@@ -491,7 +495,15 @@ function BlockBody({
         case 'conditional':
             return <ConditionalPanel contract={contract} />;
         case 'heatmap':
-            return <SectorHeatmap onPick={onSelectCode} />;
+            return (
+                <SectorHeatmap
+                    onPick={onSelectCode}
+                    index={block.panoramaIndex}
+                    onIndexChange={(index) =>
+                        onPanoramaIndexChange(block.id, index)
+                    }
+                />
+            );
         case 'chainmap':
             return (
                 <ChainMap
@@ -637,6 +649,7 @@ interface BlockViewProps {
         sections: PulseSection[],
         weights: PulseSectionWeights,
     ) => void;
+    onPanoramaIndexChange: (id: string, index: PanoramaIndexCode) => void;
     onWallConfigChange: (
         id: string,
         list: string,
@@ -672,11 +685,16 @@ function BlockView(props: BlockViewProps) {
         block.type === 'pulse' && block.pulseIndex
             ? ` · ${block.pulseIndex === 'IX0001' ? '上市' : '上櫃'}`
             : '';
+    // 同時開多個產業全景時，標題要標出各自的市場免得分不出哪個是哪個
+    const panoramaMarket =
+        block.type === 'heatmap' && block.panoramaIndex
+            ? ` · ${PANORAMA_INDEX_LABELS[block.panoramaIndex]}`
+            : '';
 
     return (
         <section className={panel.panel}>
             <PanelChrome
-                title={`${meta.label}${pulseMarket}`}
+                title={`${meta.label}${pulseMarket}${panoramaMarket}`}
                 symbolCode={symbol?.code}
                 // 閃電下單的商品名稱改在面板內的名稱列顯示（#176）
                 symbolName={block.type === 'flash' || block.type === 'oddspread' ? undefined : symbol?.name}
@@ -1508,6 +1526,18 @@ function MainApp() {
         [workspace, updateWorkspace],
     );
 
+    const setBlockPanoramaIndex = useCallback(
+        (id: string, panoramaIndex: PanoramaIndexCode) => {
+            updateWorkspace({
+                ...workspace,
+                blocks: workspace.blocks.map((block) =>
+                    block.id === id ? { ...block, panoramaIndex } : block,
+                ),
+            });
+        },
+        [workspace, updateWorkspace],
+    );
+
     const resetWorkspace = useCallback(() => {
         replaceWorkspace(structuredClone(DEFAULT_WORKSPACE));
     }, [replaceWorkspace]);
@@ -1803,6 +1833,7 @@ function MainApp() {
                                     dockProps={dockProps}
                                     onSelectCode={selectByCode}
                                     onPulseConfigChange={setBlockPulseConfig}
+                                    onPanoramaIndexChange={setBlockPanoramaIndex}
                                     onWallConfigChange={setBlockWallConfig}
                                     onFlashAccountsChange={setBlockFlashAccounts}
                                     onFlashLotChange={setBlockFlashLot}

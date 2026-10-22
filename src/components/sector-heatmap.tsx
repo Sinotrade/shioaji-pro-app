@@ -64,12 +64,17 @@ import { notify } from '../lib/trade';
 import type { ContractBase } from '../lib/types/contract';
 import type { IcProjection, IcRankingEntry } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
+import {
+    PANORAMA_INDEX_CODES,
+    PANORAMA_INDEX_LABELS,
+    type PanoramaIndexCode,
+} from '../lib/workspace';
 import { vars } from '../theme.css';
 import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import * as styles from './sector-heatmap.css';
 
-const INDICES: Record<'IX0001' | 'IX0043', ContractBase> = {
+const INDICES: Record<PanoramaIndexCode, ContractBase> = {
     IX0001: {
         security_type: 'IND',
         region: 'TW',
@@ -85,11 +90,7 @@ const INDICES: Record<'IX0001' | 'IX0043', ContractBase> = {
         target_code: null,
     },
 };
-type PanoramaIndexCode = keyof typeof INDICES;
-const INDEX_LABELS: Record<PanoramaIndexCode, string> = {
-    IX0001: '加權',
-    IX0043: '櫃買',
-};
+const INDEX_LABELS = PANORAMA_INDEX_LABELS;
 
 // 面積：市值（建底參考市值權重，盤中恆定 → 版圖最穩定）／成交值／|貢獻|
 type SizeMetric = 'weight' | 'amount' | 'contribution';
@@ -324,8 +325,16 @@ interface PanoramaStock {
 
 export function SectorHeatmap({
     onPick,
+    index,
+    onIndexChange,
 }: {
     onPick?: (code: string) => void;
+    /**
+     * 版面為這個面板指定的市場（跟版面一起持久化）；缺省 = 沿用上次選擇。
+     * 同時開多個產業全景時，各面板各存各的（加權／櫃買並排免切換）。
+     */
+    index?: PanoramaIndexCode;
+    onIndexChange?: (index: PanoramaIndexCode) => void;
 }) {
     const theme = useThemeSettings();
     const palette = useMemo(
@@ -333,13 +342,28 @@ export function SectorHeatmap({
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [theme.mode, theme.convention, theme.custom],
     );
-    const [indexCode, setIndexCode] = useState<PanoramaIndexCode>(() =>
-        localStorage.getItem(INDEX_KEY) === 'IX0043' ? 'IX0043' : 'IX0001',
+    const [indexCode, setIndexCode] = useState<PanoramaIndexCode>(
+        () =>
+            index ??
+            (localStorage.getItem(INDEX_KEY) === 'IX0043' ? 'IX0043' : 'IX0001'),
     );
     const [sizeMetric, setSizeMetric] = useState<SizeMetric>(() =>
         initialSizeMetric(localStorage.getItem(SIZE_KEY)),
     );
     const [drillCat, setDrillCat] = useState<string | null>(null);
+    // 版面指定的市場優先：換版面或外部改欄位時都要跟上
+    useEffect(() => {
+        if (index) setIndexCode(index);
+    }, [index]);
+    const selectIndex = useCallback(
+        (code: PanoramaIndexCode) => {
+            setIndexCode(code);
+            setDrillCat(null);
+            localStorage.setItem(INDEX_KEY, code);
+            onIndexChange?.(code);
+        },
+        [onIndexChange],
+    );
     const [nameByCode, setNameByCode] = useState<ReadonlyMap<string, string>>(
         () => new Map(),
     );
@@ -1020,9 +1044,7 @@ export function SectorHeatmap({
                 <>
                     <div className={styles.toolbar}>
                         <span className={styles.segmentGroup}>
-                            {(
-                                Object.keys(INDICES) as PanoramaIndexCode[]
-                            ).map((code) => (
+                            {PANORAMA_INDEX_CODES.map((code) => (
                                 <button
                                     key={code}
                                     className={
@@ -1031,11 +1053,7 @@ export function SectorHeatmap({
                                         ]
                                     }
                                     aria-pressed={code === indexCode}
-                                    onClick={() => {
-                                        setIndexCode(code);
-                                        setDrillCat(null);
-                                        localStorage.setItem(INDEX_KEY, code);
-                                    }}
+                                    onClick={() => selectIndex(code)}
                                 >
                                     {INDEX_LABELS[code]}
                                 </button>

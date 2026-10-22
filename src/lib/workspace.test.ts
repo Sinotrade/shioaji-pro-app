@@ -9,6 +9,7 @@ import {
     DEFAULT_WORKSPACE,
     HOLDING_FORMS,
     HOLDING_GROUPINGS,
+    PANORAMA_INDEX_LABELS,
     GRID_COLS,
     GRID_LEGACY_COLS,
     GRID_LEGACY_SCALE,
@@ -129,6 +130,28 @@ describe('panel session config (issue #73)', () => {
             JSON.stringify(withBlockSessionConfig(ws, 'c1', { chartSession: 'day' })),
         ) as Workspace;
         expect(saved.blocks[0]!.chartSession).toBe('day');
+    });
+});
+
+describe('產業全景可同時開多個（加權／櫃買並排）', () => {
+    it('不再是 singleton，各面板可以各存各的市場', () => {
+        expect(BLOCK_META.heatmap.singleton).toBe(false);
+        const ws: Workspace = {
+            blocks: [
+                { id: 'h1', type: 'heatmap', pin: null, panoramaIndex: 'IX0001' },
+                { id: 'h2', type: 'heatmap', pin: null, panoramaIndex: 'IX0043' },
+            ],
+            layout: [],
+        };
+        expect(ws.blocks.map((b) => b.panoramaIndex)).toEqual(['IX0001', 'IX0043']);
+        expect(PANORAMA_INDEX_LABELS.IX0001).toBe('加權');
+        expect(PANORAMA_INDEX_LABELS.IX0043).toBe('櫃買');
+    });
+
+    it('其他 singleton 面板不受影響', () => {
+        expect(BLOCK_META.watchlist.singleton).toBe(true);
+        expect(BLOCK_META.movers.singleton).toBe(true);
+        expect(BLOCK_META.dock.singleton).toBe(true);
     });
 });
 
