@@ -28,11 +28,29 @@ import { TIER_LABEL } from '../lib/company-data/queries';
 import { GROUPING_LABEL, othersNote, type HeldGroup } from '../lib/portfolio-sector';
 import { maskMoney } from '../lib/privacy';
 import { vars } from '../theme.css';
-import { mixColor } from './chain-rank';
 import { cssColor, dir, useBoxSize } from './chain-ui';
 import { Odometer } from './odometer';
 import type { VariantProps } from './portfolio-types';
 import * as s from './portfolio-lanes.css';
+
+function rgbOf(color: string): [number, number, number] | null {
+    const hex = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+        const h = hex[1]!.length === 3 ? [...hex[1]!].map((c) => c + c).join('') : hex[1]!;
+        return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];
+    }
+    const rgb = color.match(/rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)/i);
+    return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : null;
+}
+
+/** `color` moved `t` of the way toward `target` (falls back to `color`). */
+function mixColor(color: string, target: string, t: number): string {
+    const a = rgbOf(color);
+    const b = rgbOf(target);
+    if (!a || !b) return color;
+    const c = a.map((v, i) => Math.round(v + (b[i]! - v) * t));
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
 
 type Win = '5' | '10' | 'cum';
 const WINDOWS: { value: Win; label: string }[] = [
