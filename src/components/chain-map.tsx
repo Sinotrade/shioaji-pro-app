@@ -27,6 +27,7 @@ import { FocusCard, TierCard, type TierView } from './chain-detail';
 import { FlowHeat } from './chain-heat';
 import { FlowRank } from './chain-rank';
 import { FlowRotation } from './chain-rotation';
+import { PortfolioSector } from './portfolio-sector';
 import { NextBar, readPref, Segment, useBoxSize, useFeedPhase, usePaused, useReducedMotion, writePref, type FlowRow } from './chain-ui';
 import * as panel from './panel.css';
 import * as s from './chain-map.css';
@@ -41,7 +42,7 @@ const DEFAULT_THEME = 'theme.ai_server';
 const DETAIL_MIN_PX = 520;
 const TIERS: ChainTier[] = ['upstream', 'midstream', 'downstream'];
 
-type ViewMode = 'rotation' | 'rank' | 'heat';
+type ViewMode = 'rotation' | 'rank' | 'heat' | 'holdings';
 type KindFilter = 'all' | 'chain' | 'theme';
 
 export function ChainMap({
@@ -63,7 +64,7 @@ export function ChainMap({
         }
     });
     const [kind, setKindState] = useState<KindFilter>(() => readPref(KIND_KEY, ['all', 'chain', 'theme'] as const, 'all'));
-    const [view, setViewState] = useState<ViewMode>(() => readPref(VIEW_KEY, ['rotation', 'rank', 'heat'] as const, 'rank'));
+    const [view, setViewState] = useState<ViewMode>(() => readPref(VIEW_KEY, ['rotation', 'rank', 'heat', 'holdings'] as const, 'rank'));
     const [metric, setMetricState] = useState<RankMetric>(() => readPref(METRIC_KEY, RANK_METRICS, 'cum'));
     const [focus, setFocus] = useState<string | null>(null);
     const [heatWindow, setHeatWindowState] = useState<'5' | '10'>(() => readPref(HEAT_WINDOW_KEY, ['5', '10'] as const, '10'));
@@ -234,9 +235,10 @@ export function ChainMap({
                         { value: 'rank', label: '排行', title: '族群淨流入排行，長度為淨流入、粗細為成交值，每分鐘更新名次' },
                         { value: 'rotation', label: '輪動', title: '族群輪動象限：橫軸淨流入、縱軸資金動能，每分鐘更新位置與軌跡' },
                         { value: 'heat', label: '熱力', title: '族群與成分股近期淨流入占成交值，點族群看成分股' },
+                        { value: 'holdings', label: '持股', title: '我的持股依族群、產業鏈或題材分組，對照各分組的即時資金流向' },
                     ]}
                 />
-                <Segment
+                {view !== 'holdings' && <Segment
                     label='類型'
                     value={kind}
                     onChange={(v) => {
@@ -248,7 +250,7 @@ export function ChainMap({
                         { value: 'chain', label: '產業鏈' },
                         { value: 'theme', label: '題材' },
                     ]}
-                />
+                />}
                 {view === 'rank' && (
                     <Segment
                         label='排行區間'
@@ -321,6 +323,19 @@ export function ChainMap({
                         onPick={pick}
                     />
                 )}
+                {view === 'holdings' && themes && (
+                    <PortfolioSector
+                        themes={themes}
+                        book={book}
+                        revision={revision}
+                        now={now}
+                        from={from}
+                        nameOf={nameOf}
+                        reducedMotion={reducedMotion}
+                        paused={paused}
+                        onPick={pick}
+                    />
+                )}
                 {view === 'heat' && (
                     <FlowHeat
                         rows={rows}
@@ -337,7 +352,7 @@ export function ChainMap({
                 )}
             </div>
 
-            {showDetail && view !== 'heat' && (
+            {showDetail && view !== 'heat' && view !== 'holdings' && (
                 <div className={s.detail}>
                     <div className={s.detailHead}>
                         <span className={s.kindMark[theme.kind === 'chain' ? 'chain' : 'theme']} aria-hidden='true' />
