@@ -38,7 +38,7 @@ import { icFlowRecorder, useIcSectorFlow } from '../lib/sector-flow-ic';
 import { refreshTradingState } from '../lib/trading-state';
 import { HOLDING_FORMS, panelPref, type HoldingForm } from '../lib/workspace';
 import { AsyncStatus } from './async-status';
-import { dir, readPref, Segment, writePref } from './chain-ui';
+import { dir, readPref, Segment, useSharedPref, writePref } from './chain-ui';
 import { Odometer } from './odometer';
 import { HoldingBubbles } from './portfolio-bubbles';
 import { HoldingLanes } from './portfolio-lanes';
@@ -87,17 +87,10 @@ export function PortfolioSector({
     const holdings = useHoldings();
     const { cards, error: cardsError } = useCards(true);
     const privacyMoney = usePrivacyMoney();
-    const [savedForm, setFormState] = useState<HoldingForm>(() => readPref(FORM_KEY, FORMS, 'bubble'));
-    const [savedGrouping, setGroupingState] = useState<Grouping>(() => readPref(GROUPING_KEY, GROUPINGS, 'sector'));
+    const [savedForm, setFormState] = useSharedPref<HoldingForm>(panelForm, () => readPref(FORM_KEY, FORMS, 'bubble'));
+    const [savedGrouping, setGroupingState] = useSharedPref<Grouping>(panelGrouping, () => readPref(GROUPING_KEY, GROUPINGS, 'sector'));
     const form = panelPref(panelForm, FORMS, savedForm);
     const grouping = panelPref(panelGrouping, GROUPINGS, savedGrouping);
-    // a cleared panel setting falls back to the latest shared choice, not the one read at mount
-    useEffect(() => {
-        if (panelForm === undefined) setFormState(readPref(FORM_KEY, FORMS, 'bubble'));
-    }, [panelForm]);
-    useEffect(() => {
-        if (panelGrouping === undefined) setGroupingState(readPref(GROUPING_KEY, GROUPINGS, 'sector'));
-    }, [panelGrouping]);
     // the selected group id belongs to one grouping: drop it whenever the grouping changes (switch, preset or Agent spec)
     const [selection, setSelection] = useState<{ grouping: Grouping; id: string } | null>(null);
     const selectedGroup = selection?.grouping === grouping ? selection.id : null;

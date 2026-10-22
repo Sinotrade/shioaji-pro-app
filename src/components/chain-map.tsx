@@ -26,7 +26,7 @@ import { FlowHeat } from './chain-heat';
 import { FlowRank } from './chain-rank';
 import { FlowRotation } from './chain-rotation';
 import { FeedStatus, useChainFeed } from './chain-feed';
-import { readPref, Segment, writePref, type FlowRow } from './chain-ui';
+import { readPref, Segment, useSharedPref, writePref, type FlowRow } from './chain-ui';
 import * as panel from './panel.css';
 import * as s from './chain-map.css';
 
@@ -84,17 +84,10 @@ export function ChainMap({
             return DEFAULT_THEME;
         }
     });
-    const [savedKind, setKindState] = useState<KindFilter>(() => readPref(KIND_KEY, CHAIN_KINDS, 'all'));
-    const [savedView, setViewState] = useState<ViewMode>(() => readChainView());
+    const [savedKind, setKindState] = useSharedPref<KindFilter>(panelKind, () => readPref(KIND_KEY, CHAIN_KINDS, 'all'));
+    const [savedView, setViewState] = useSharedPref<ViewMode>(panelView, readChainView);
     const kind = panelPref(panelKind, CHAIN_KINDS, savedKind);
     const view = panelPref(panelView, VIEW_MODES, savedView);
-    // a cleared panel setting falls back to the latest shared choice, not the one read at mount
-    useEffect(() => {
-        if (panelView === undefined) setViewState(readChainView());
-    }, [panelView]);
-    useEffect(() => {
-        if (panelKind === undefined) setKindState(readPref(KIND_KEY, CHAIN_KINDS, 'all'));
-    }, [panelKind]);
     const [metric, setMetricState] = useState<RankMetric>(() => readPref(METRIC_KEY, RANK_METRICS, 'cum'));
     const [focus, setFocus] = useState<string | null>(null);
     const [heatWindow, setHeatWindowState] = useState<'5' | '10'>(() => readPref(HEAT_WINDOW_KEY, ['5', '10'] as const, '10'));
