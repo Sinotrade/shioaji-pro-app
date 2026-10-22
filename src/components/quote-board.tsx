@@ -260,16 +260,19 @@ export function QuoteBoard({
                 return ohl && { ...ohl, partial: findKbarGap(times, contract.security_type, nowWallClockUtc())?.startsWith('tail') === true };
             }),
         `night-ohl:${nightKey}:${nightPhase}`,
-        nightWin !== undefined && !liveNight,
+        // 隔夜開著、最後一筆落在夜盤最後 5 分鐘：開盤前直接用它，不抓 K；開盤後仍抓一次，
+        // 斷線停在 04:56 這類情況，最後幾分鐘的量（和高低）才補得回來
+        nightWin !== undefined && (!liveNight || nightPhase === 'open'),
     );
     // 開盤後換新的查詢還沒回來（08:45 正忙）時，先沿用開盤前抓到的同一段夜盤，「開」與區間軌不會閃回日盤
     const fetchedNight = useRef<{ key: string; open: number; high: number; low: number; volume?: number; partial: boolean }>(undefined);
     if (nightQuery.data) fetchedNight.current = { key: nightKey, ...nightQuery.data };
     const fetched = nightQuery.data ?? (fetchedNight.current?.key === nightKey ? fetchedNight.current : undefined);
     // 抓回的 K 缺尾段時，睡眠前收到的那筆可能更完整：兩者都有就取聯集（開盤都是 15:00 那筆），高低不會往回縮
-    const night = liveNight ?? (fetched && sameNight
+    // 隔夜開著的最後一筆（liveNight 也是 sameNight）同理：K 抓回來後取聯集，量取較大的
+    const night = fetched && sameNight
         ? { ...fetched, high: Math.max(fetched.high, sameNight.high), low: Math.min(fetched.low, sameNight.low), volume: maxDefined(fetched.volume, sameNight.volume) }
-        : fetched ?? sameNight);
+        : fetched ?? sameNight;
     // 夜盤不完整：K 缺凌晨尾段，或只有停在半夜的那筆成交可墊
     const nightPartial = !liveNight && (fetched ? fetched.partial : !!sameNight);
     const { open, high, low } = withNightSession(dayOhl, night);

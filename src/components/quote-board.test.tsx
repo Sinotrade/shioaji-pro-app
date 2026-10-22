@@ -229,6 +229,25 @@ describe('個股看板（成對兩行）', () => {
             expect(texts(root.root)).toContain('38,993');
         });
 
+        it('隔夜開著但停在 04:56（斷線）：開盤後仍抓一次夜盤 K，最後幾分鐘的量與高低補回來', () => {
+            display = { quote: { tick: { ...dayTick, time: '04:56:00.000', open: '46490', high: '47000', low: '46400', close: '46900', total_volume: 20000 } } };
+            const root = renderTxf();
+            // 08:40 試撮：直接用最後一筆，不抓
+            display = { quote: { tick: { ...dayTick, time: '08:40:00.000', simtrade: true, open: '0', high: '0', low: '0', total_volume: 0 } } };
+            queryCalls.length = 0;
+            act(() => root.update(createElement(QuoteBoard, { contract: TXF })));
+            expect(queryCalls.some((c) => c.key.startsWith('night-ohl:') && c.enabled)).toBe(false);
+            expect(texts(root.root)).toContain('20,000');
+            // 09:10 開盤後抓到完整夜盤：22,000 口、高 47,050
+            queryData.set(openKey, { open: 46490, high: 47050, low: 46400, volume: 22000, partial: false });
+            display = { quote: { tick: { ...dayTick, time: '09:10:00.000', total_volume: 11453 } } };
+            queryCalls.length = 0;
+            act(() => root.update(createElement(QuoteBoard, { contract: TXF })));
+            expect(queryCalls.find((c) => c.key === openKey)?.enabled).toBe(true);
+            expect(texts(root.root)).toEqual(expect.arrayContaining(['33,453', '47,288']));
+            expect(titles(root.root)).toContain('開盤為前一交易日 15:00 夜盤開盤，高低與量含夜盤');
+        });
+
         it('夜盤 K 抓前一個平日到交易日當天，只取夜盤時段', async () => {
             display = { quote: { tick: dayTick } };
             queryCalls.length = 0;
