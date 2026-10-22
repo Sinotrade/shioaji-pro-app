@@ -169,14 +169,9 @@ export interface CodeFlow {
     last: number | null;
     /** Market time (seconds since midnight) of `last`; an older price never replaces it. */
     lastAt: number;
-    /** Session-to-date turnover at seed time, and the first slot it does not fully cover. */
+    /** Session-to-date turnover at seed time, and the slot it covers up to (exclusive). */
     seedAmount: number;
     seedSlot: number;
-    /**
-     * Share of `seedSlot` already inside `seedAmount` (snapshot taken mid-minute,
-     * e.g. 0.2 at 09:40:12). That minute's bar only adds the remaining share.
-     */
-    seedFrac: number;
     /** Price at seed time: the baseline of the first bar when the panel opens mid-session. */
     seedClose: number | null;
     /** Latest cumulative turnover seen on a tick. */
@@ -188,10 +183,8 @@ export interface SeedInput {
     close: number | null;
     totalAmount: number;
     shares: number | null;
-    /** First slot not fully covered by the snapshot (bars from this slot on are new). */
+    /** First slot not covered by the snapshot (bars from this slot on are new). */
     slot: number;
-    /** Share of `slot` already inside `totalAmount` (0 = none, the default). */
-    fraction?: number;
     /** Market time (seconds since midnight) of `close`. */
     at?: number;
 }
@@ -219,7 +212,6 @@ export class FlowBook {
                 lastAt: -Infinity,
                 seedAmount: 0,
                 seedSlot: 0,
-                seedFrac: 0,
                 seedClose: null,
                 tickAmount: 0,
             };
@@ -259,8 +251,6 @@ export class FlowBook {
         }
         flow.seedAmount = Math.max(0, input.totalAmount || 0);
         flow.seedSlot = Math.max(0, Math.min(SESSION_SLOTS, input.slot));
-        const fraction = input.fraction ?? 0;
-        flow.seedFrac = flow.seedSlot < SESSION_SLOTS && fraction > 0 ? Math.min(1, fraction) : 0;
         // the first bar's direction depends on the baseline just installed
         const first = firstFilled(flow.close, 0);
         if (first !== null && !flow.given[first]) flow.net[first] = computeNet(flow, first);
@@ -328,9 +318,7 @@ function computeNet(flow: CodeFlow, slot: number): number {
     // unknown when the panel opens mid-session, so use the snapshot price
     // taken just before; only the 09:00 bar compares with the reference
     // (yesterday's close). Without either the direction is unknown (0).
-    // (the snapshot's own minute when taken mid-minute, else the minute just before it)
-    const seedBase =
-        flow.seedClose !== null && slot >= flow.seedSlot - (flow.seedFrac > 0 ? 0 : 1) ? flow.seedClose : null;
+    const seedBase = flow.seedClose !== null && slot >= flow.seedSlot - 1 ? flow.seedClose : null;
     const prev = prevSlot !== null ? flow.close[prevSlot]! : (seedBase ?? (slot === 0 ? flow.ref : null));
     if (!prev) return 0;
     const amount = flow.amount[slot]!;
@@ -338,15 +326,15 @@ function computeNet(flow: CodeFlow, slot: number): number {
 }
 
 /**
- * Session-to-date turnover: seed + bars after the seed (the snapshot's own
- * minute pro rata: only the part after the snapshot time is new), or the
- * latest tick total.
+ * Session-to-date turnover: seed + bars after the seed, or the latest tick total.
+ * The snapshot's own minute counts as covered by the seed: how much of that
+ * minute traded before the snapshot is unknown (elapsed time says nothing
+ * about turnover), so adding any share of its bar could overcount. Worst case
+ * this undercounts under a minute of trading; a later tick total still wins.
  */
 export function sessionTurnover(flow: CodeFlow): number {
     let bars = 0;
-    for (let i = flow.seedSlot; i < SESSION_SLOTS; i += 1) {
-        bars += i === flow.seedSlot ? flow.amount[i]! * (1 - flow.seedFrac) : flow.amount[i]!;
-    }
+    for (let i = flow.seedSlot; i < SESSION_SLOTS; i += 1) bars += flow.amount[i]!;
     let all = 0;
     for (let i = 0; i < SESSION_SLOTS; i += 1) all += flow.amount[i]!;
     return Math.max(flow.seedAmount + bars, all, flow.tickAmount);

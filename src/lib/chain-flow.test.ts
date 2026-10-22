@@ -165,12 +165,14 @@ describe('FlowBook', () => {
         expect(book.codes.get('A')!.last).toBe(105);
     });
 
-    it('counts the partially covered snapshot minute pro rata', () => {
+    it('never overcounts the snapshot minute: it counts as covered by the seed', () => {
         const book = new FlowBook();
-        book.seed('A', { ref: 10, close: 10, totalAmount: 1000, shares: null, slot: 30, fraction: 0.25 });
+        // snapshot taken during minute 30 (slot: 31 covers it); all of minute
+        // 30 may have traded before the snapshot, so its bar adds nothing
+        book.seed('A', { ref: 10, close: 10, totalAmount: 1000, shares: null, slot: 31 });
         book.addBar(bar('A', 30, 10, 400));
         book.addBar(bar('A', 31, 10, 50));
-        expect(sessionTurnover(book.codes.get('A')!)).toBe(1000 + 300 + 50);
+        expect(sessionTurnover(book.codes.get('A')!)).toBe(1050);
     });
 
     it('session turnover = seed (before the panel opened) + bars after it, never below a tick total', () => {

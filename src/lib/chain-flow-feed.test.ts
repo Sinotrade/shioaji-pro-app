@@ -96,9 +96,7 @@ describe('connectChainFlow', () => {
         expect(mocks.snapshots.mock.calls.map(([batch]) => batch.length)).toEqual([300, 300, 21]);
         expect(chainFlowStatus()).toMatchObject({ kbarCodes: 620, batches: 3, subscribed: 3, seeding: false });
         expect(chainFlowBook.codes.get('2000')!.ref).toBe(100);
-        // 09:40:12 covers minutes before 40 fully and 20 % of minute 40
-        expect(chainFlowBook.codes.get('2000')!.seedSlot).toBe(40);
-        expect(chainFlowBook.codes.get('2000')!.seedFrac).toBeCloseTo(0.2);
+        expect(chainFlowBook.codes.get('2000')!.seedSlot).toBe(41); // 09:40:12 covers minute 40 too
 
         // a second panel: same subscriptions (ref-counted downstream), no second seed
         const second = connectChainFlow(members);
@@ -194,17 +192,17 @@ describe('connectChainFlow', () => {
         release();
     });
 
-    it('counts the snapshot minute once, pro rata, without losing trading after the snapshot', async () => {
-        // snapshot at 09:40:12 already holds the first 12 s of minute 40,
-        // whose bar is stamped 09:41 (minute end): only its remaining 48 s are
-        // new; the 09:42 bar is new
+    it('never double counts the snapshot minute', async () => {
+        // snapshot at 09:40:12 already holds an unknown part of minute 40
+        // (here: all of it traded before :12), whose bar is stamped 09:41
+        // (minute end): it counts as covered; the 09:42 bar is new
         mocks.snapshots.mockImplementation(async () => [{ ...snapshot('2330', 101, 1), total_amount: 1_000_000 } as Snapshot]);
         const release = connectChainFlow([member('2330')]);
         await flush();
         await chainFlowSeedIdle();
         emitBar({ code: '2330', date: '2026/10/21', time: '09:41:00.000000', open: 101, high: 101, low: 101, close: 101, volume: 1, amount: 60_000 });
         emitBar({ code: '2330', date: '2026/10/21', time: '09:42:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 1, amount: 40_000 });
-        expect(sessionTurnover(chainFlowBook.codes.get('2330')!)).toBeCloseTo(1_000_000 + 60_000 * 0.8 + 40_000);
+        expect(sessionTurnover(chainFlowBook.codes.get('2330')!)).toBe(1_040_000);
         release();
     });
 
@@ -264,7 +262,7 @@ describe('connectChainFlow', () => {
         expect(mocks.snapshots).toHaveBeenCalledTimes(2);
         const flow = chainFlowBook.codes.get('2330')!;
         expect(flow.seedAmount).toBe(9e6);
-        expect(flow.seedSlot).toBe(119);
+        expect(flow.seedSlot).toBe(120); // 10:59:58 covers minute 119 too
         expect(sessionTurnover(flow)).toBe(9e6);
         release();
     });
@@ -285,6 +283,30 @@ describe('connectChainFlow', () => {
         expect(old.seedSlot).toBe(0);
         expect(sessionTurnover(old)).toBe(0);
         expect(chainFlowBook.codes.get('2330')!.ref).toBe(100);
+        release();
+    });
+
+    it('adopts the newest session across batches before installing any seed', async () => {
+        // empty book; the first batch of 300 last traded on an earlier
+        // session, the next batch has today's rows
+        const members = Array.from({ length: 301 }, (_, i) => member(String(2000 + i)));
+        mocks.snapshots.mockImplementation(async (contracts) =>
+            contracts.map((c) =>
+                c.code === '2300'
+                    ? snapshot(c.code, 101, 1, '2026-10-21 09:59:58.000000')
+                    : ({ ...snapshot(c.code, 50, 1, '2026-10-20 13:30:00.000000'), total_amount: 8e8 } as Snapshot),
+            ),
+        );
+        const release = connectChainFlow(members);
+        await flush();
+        await chainFlowSeedIdle();
+        expect(mocks.snapshots.mock.calls.map(([batch]) => batch.length)).toEqual([300, 1]);
+        expect(chainFlowBook.date).toBe('2026-10-21');
+        expect(chainFlowBook.codes.size).toBe(301);
+        const old = chainFlowBook.codes.get('2000')!;
+        expect(old.ref).toBe(50);
+        expect(sessionTurnover(old)).toBe(0);
+        expect(chainFlowBook.codes.get('2300')!.ref).toBe(100);
         release();
     });
 

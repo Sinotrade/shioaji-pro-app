@@ -950,7 +950,7 @@ export const rankDrawerToggle = style({
     whiteSpace: 'nowrap',
     selectors: {
         '&:hover': { color: vars.color.foreground, borderColor: vars.color.borderBright },
-        '&[aria-pressed="true"]': { color: vars.color.foreground, borderColor: vars.color.borderBright },
+        '&[aria-expanded="true"]': { color: vars.color.foreground, borderColor: vars.color.borderBright },
     },
 });
 export const rankMain = style({ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' });

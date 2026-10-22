@@ -159,19 +159,18 @@ function seedFrom(code: string, snapshot: Snapshot, shares: number | null) {
     const time = snapshot.datetime?.slice(11) ?? '';
     const slot = minuteSlot(time);
     const seconds = marketSeconds(time);
-    // minutes before the snapshot's own are fully covered; that minute is
-    // covered pro rata (09:40:12 → 20 % of minute 40 is already in the
-    // turnover, the rest arrives with its bar); after the close the whole
-    // session is covered; before the open nothing is
-    const covered = slot !== null ? slot : seconds !== null && seconds >= 13 * 3600 ? SESSION_SLOTS : 0;
-    const fraction = slot !== null && seconds !== null ? (seconds - (SESSION_START_MIN + slot) * 60) / 60 : 0;
+    // the snapshot's own minute counts as covered: its turnover already holds
+    // an unknown part of that minute, so adding the minute bar could double
+    // count (never overcount; at worst under a minute is missed until a tick
+    // total arrives); after the close the whole session is covered; before
+    // the open nothing is
+    const covered = slot !== null ? slot + 1 : seconds !== null && seconds >= 13 * 3600 ? SESSION_SLOTS : 0;
     chainFlowBook.seed(code, {
         ref: ref && ref > 0 ? ref : null,
         close,
         totalAmount: snapshot.total_amount || 0,
         shares,
         slot: covered,
-        fraction,
         ...(seconds !== null ? { at: seconds } : {}),
     });
 }
@@ -278,23 +277,29 @@ async function seedOnce(members: readonly FeedMember[]) {
         if (shared && isCurrent(shared)) seedFrom(member.code, shared, member.shares);
         else missing.push(member);
     }
-    // sequential batches, never a burst against 50 req / 5 s
+    // sequential batches, never a burst against 50 req / 5 s. Rows are
+    // installed only after every batch is in: the newest session across all
+    // of them is adopted first, so a first batch of older-session rows
+    // (suspended / illiquid stocks) cannot set the date that a later batch
+    // then rolls over, wiping what was already installed
+    const fetched: { member: FeedMember; row: Snapshot }[] = [];
     for (let i = 0; i < missing.length; i += FEED_BATCH) {
         const batch = missing.slice(i, i + FEED_BATCH);
         try {
             const rows = await fetchSnapshots(batch.map((m) => m.contract));
-            adoptDate(rows);
             const byCode = new Map(rows.map((row) => [row.code, row]));
             for (const member of batch) {
                 const row = byCode.get(member.code);
-                if (row) seedFrom(member.code, row, member.shares);
+                if (row) fetched.push({ member, row });
             }
         } catch (error) {
             for (const member of batch) seeded.delete(member.code);
             status.seedError = error instanceof Error ? error.message : String(error);
         }
-        notifyChainFlow();
     }
+    adoptDate(fetched.map((f) => f.row));
+    for (const { member, row } of fetched) seedFrom(member.code, row, member.shares);
+    if (missing.length > 0) notifyChainFlow();
     // the first seed adopted today's date: remember it for these codes
     if (seededDate === null && chainFlowBook.date !== null) seededDate = chainFlowBook.date;
 }
