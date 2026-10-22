@@ -1,6 +1,6 @@
 // src/components/portfolio-bubbles.css.ts — 持股泡泡
 
-import { keyframes, style, styleVariants } from '@vanilla-extract/css';
+import { globalStyle, keyframes, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 const mono = { fontFamily: vars.font.mono, fontVariantNumeric: 'tabular-nums' } as const;
@@ -176,3 +176,5 @@ export const sectorFlow = styleVariants({
 });
 export const cornerSoft = style({ fill: vars.color.mutedForeground, fontSize: '10.5px', fontFamily: vars.font.body, opacity: 0.55 });
 export const member = style({ cursor: 'pointer', outline: 'none' });
+// keyboard focus on a holding: a clear ring on its circle (the group's own focus tints the rim)
+globalStyle(`${member}:focus-visible > circle`, { stroke: vars.color.accent, strokeWidth: 2.2 });

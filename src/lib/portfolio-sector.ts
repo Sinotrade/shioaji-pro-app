@@ -35,10 +35,12 @@ export interface RawHolding {
     cost: number;
     /** Last price from the positions query (fallback when the book has none). */
     last: number;
-    /** Shares held at yesterday's close (broker yd_quantity), null when unknown. */
-    ydShares: number | null;
-    /** Today's cash buy fills of this code: shares and average fill price. */
-    boughtToday: { shares: number; avg: number } | null;
+    /**
+     * Shares still held that were bought today at a known price, and what they
+     * cost (Σ shares × fill price). Every other share moves from the reference.
+     */
+    todayShares: number;
+    todayCost: number;
 }
 
 const LOT = 1000;
@@ -49,20 +51,27 @@ function taipeiDay(ts: number): number {
     return Math.floor((ms + 8 * 3_600_000) / 86_400_000);
 }
 
+type AccountRef = { broker_id: string; account_id: string } | null | undefined;
+
+/** Per-account key: today's buys only reclassify shares of the account that bought them. */
+export function buyKey(account: AccountRef, code: string): string {
+    return `${account?.broker_id ?? ''}|${account?.account_id ?? ''}|${code}`;
+}
+
 /**
- * Today's cash buy fills per code from the orders query plus deal reports
+ * Today's cash buy fills per account and code from the orders query plus deal reports
  * (useTradingState().trades): shares (lots × 1000 unless odd lot) and the
  * volume-weighted fill price. Margin buys and other conditions are a
  * different position and are left out, like the positions rows.
  */
-export function todayBuys(trades: readonly Trade[], nowMs = Date.now()): Map<string, { shares: number; avg: number }> {
+export function todayBuys(trades: readonly (Trade & { account?: AccountRef })[], nowMs = Date.now()): Map<string, { shares: number; avg: number }> {
     const today = taipeiDay(nowMs);
     const acc = new Map<string, { shares: number; cost: number }>();
     for (const t of trades) {
         const o = t.order;
         if (o.action !== 'Buy' || (o.account && o.account.account_type !== 'S')) continue;
         if ((o.order_cond ?? 'Cash') !== 'Cash' || o.daytrade_short) continue;
-        const code = t.contract.code;
+        const code = buyKey(t.account ?? o.account, t.contract.code);
         const unit = o.order_lot === 'Odd' || o.order_lot === 'IntradayOdd' ? 1 : LOT;
         for (const d of t.status?.deals ?? []) {
             if (!(d.quantity > 0) || !(d.price > 0)) continue;
@@ -82,46 +91,62 @@ export function todayBuys(trades: readonly Trade[], nowMs = Date.now()): Map<str
  * Today's P&L of a holding. Shares carried from yesterday move from the
  * reference price; shares bought today move from their fill price (a stock
  * bought today at 105 with reference 100 and last 106 made 1, not 6).
- * Shares bought today = today's buy fills capped by the holding; without
- * fills, the excess over yesterday's quantity at the average cost when the
- * whole holding is new (cost = fill price), else at the reference.
  */
 export function dayPnlOf(h: RawHolding, last: number, ref: number | null): number {
     if (!ref) return 0;
-    let todayShares = 0;
-    let todayAvg = ref;
-    if (h.boughtToday) {
-        todayShares = Math.min(h.shares, h.boughtToday.shares);
-        todayAvg = h.boughtToday.avg;
-    } else if (h.ydShares !== null && h.ydShares < h.shares) {
-        todayShares = h.shares - h.ydShares;
-        todayAvg = h.ydShares === 0 && h.cost > 0 ? h.cost : ref;
+    const today = Math.min(h.shares, h.todayShares);
+    const todayCost = h.todayShares > 0 ? (h.todayCost * today) / h.todayShares : 0;
+    return (h.shares - today) * (last - ref) + today * last - todayCost;
+}
+
+/**
+ * Shares of one position row bought today at a known price: today's buy fills
+ * of that account capped by the row; without fills, a row new today
+ * (yd_quantity 0) at its average cost (= the fill price). A row that only
+ * added to yesterday's shares without fills moves from the reference.
+ */
+function rowToday(quantity: number, yd: number | null, cost: number, buy: { shares: number; avg: number } | undefined) {
+    if (buy) {
+        const shares = Math.min(quantity, buy.shares);
+        return { shares, cost: shares * buy.avg };
     }
-    const carried = h.shares - todayShares;
-    return carried * (last - ref) + todayShares * (last - todayAvg);
+    if (yd === 0 && cost > 0) return { shares: quantity, cost: quantity * cost };
+    return { shares: 0, cost: 0 };
 }
 
 /** Long cash stock rows merged by code across accounts (weighted average cost). */
-export function fromPositions(positions: readonly AccountedPosition[], trades: readonly Trade[] = [], nowMs = Date.now()): RawHolding[] {
+export function fromPositions(
+    positions: readonly AccountedPosition[],
+    trades: readonly (Trade & { account?: AccountRef })[] = [],
+    nowMs = Date.now(),
+): RawHolding[] {
+    const buys = todayBuys(trades, nowMs);
     const byCode = new Map<string, RawHolding>();
     for (const p of positions) {
         // stock rows carry yd_quantity; long cash only (margin and short sales are a different exposure)
         if (!('yd_quantity' in p) || p.direction !== 'Buy' || !(p.quantity > 0)) continue;
         if ((p.cond ?? 'Cash') !== 'Cash') continue;
         const yd = Number.isFinite(p.yd_quantity) ? Math.max(0, p.yd_quantity) : null;
+        const today = rowToday(p.quantity, yd, p.price, buys.get(buyKey(p.account, p.code)));
         const prev = byCode.get(p.code);
         if (prev) {
             const shares = prev.shares + p.quantity;
             prev.cost = (prev.cost * prev.shares + p.price * p.quantity) / shares;
             prev.shares = shares;
             prev.last = p.last_price || prev.last;
-            prev.ydShares = prev.ydShares === null || yd === null ? null : prev.ydShares + yd;
+            prev.todayShares += today.shares;
+            prev.todayCost += today.cost;
         } else {
-            byCode.set(p.code, { code: p.code, shares: p.quantity, cost: p.price, last: p.last_price, ydShares: yd, boughtToday: null });
+            byCode.set(p.code, {
+                code: p.code,
+                shares: p.quantity,
+                cost: p.price,
+                last: p.last_price,
+                todayShares: today.shares,
+                todayCost: today.cost,
+            });
         }
     }
-    const buys = todayBuys(trades, nowMs);
-    for (const h of byCode.values()) h.boughtToday = buys.get(h.code) ?? null;
     return [...byCode.values()];
 }
 

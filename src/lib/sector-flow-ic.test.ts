@@ -95,4 +95,15 @@ describe('IcFlowRecorder', () => {
         expect(f.total).toBe(10);
         expect(f.turnover[6]).toBe(0);
     });
+
+    it('ignores a state from an older day instead of wiping the newer session', () => {
+        const r = new IcFlowRecorder();
+        r.sampleAmount('IX0001', D, 5, [row('1', 100)]);
+        r.sampleAmount('IX0001', D, 6, [row('1', 200)]);
+        r.sampleAmount('IX0043', '2026-10-21', 270, [row('1', 9999)]);
+        r.samplePerf('IX0043', '2026-10-21', 270, [row('1', 3)]);
+        expect(r.date).toBe(D);
+        expect(r.groupFlow(['IX0001:1'], 6)!.turnover[6]).toBe(100);
+        expect(r.groupFlow(['IX0043:1'], 6)).toBeNull();
+    });
 });

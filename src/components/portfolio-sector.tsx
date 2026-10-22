@@ -15,7 +15,7 @@
 // extra request while it is open); one drill K-bar batch for held codes outside
 // the chain/theme universe; cards come from the shared shioaji-data reader.
 
-import { BellRing, Briefcase, LogIn } from 'lucide-react';
+import { BellRing, Briefcase, LogIn, RotateCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { slotLabel, type FlowBook } from '../lib/chain-flow';
 import { connectChainFlow, type FeedMember } from '../lib/chain-flow-feed';
@@ -35,6 +35,7 @@ import {
 } from '../lib/portfolio-sector';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { icFlowRecorder, useIcSectorFlow } from '../lib/sector-flow-ic';
+import { refreshTradingState } from '../lib/trading-state';
 import { AsyncStatus } from './async-status';
 import { dir, readPref, Segment, writePref } from './chain-ui';
 import { Odometer } from './odometer';
@@ -82,24 +83,32 @@ export function PortfolioSector({
 
     // held codes outside the chain/theme universe get their own K-bar batch
     const universe = useMemo(() => new Set(memberCodes(themes)), [themes]);
+    // wait for the cards: the market decides the contract's exchange (TSE / OTC)
     const extra = useMemo<FeedMember[]>(
         () =>
-            holdings.holdings
-                .filter((h) => !universe.has(h.code))
-                .map((h) => ({ code: h.code, contract: stockContract(h.code, cards?.get(h.code)?.market), shares: null })),
+            !cards
+                ? []
+                : holdings.holdings
+                      .filter((h) => !universe.has(h.code))
+                      .map((h) => ({ code: h.code, contract: stockContract(h.code, cards.get(h.code)?.market), shares: null })),
         [holdings.holdings, universe, cards],
     );
-    const extraKey = extra.map((m) => m.code).sort().join(',');
+    const extraKey = extra.map((m) => `${m.code}@${m.contract.exchange}`).sort().join(',');
     useEffect(() => (extra.length > 0 ? connectChainFlow(extra, 'drill') : undefined),
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [extraKey]);
 
     const assign = useMemo(() => (cards ? buildAssigner(effective, themes, cards) : null), [effective, themes, cards]);
     const view = useMemo(
-        () => (assign ? portfolioView(holdings.holdings, assign, book, now, nameOf) : null),
-        // the book mutates in place: `revision` is the change signal
+        () =>
+            assign
+                ? portfolioView(holdings.holdings, assign, book, now, nameOf, (def) =>
+                      effective === 'sector' && def.icKeys?.length ? icFlowRecorder.groupFlow(def.icKeys, now) : null,
+                  )
+                : null,
+        // the book and the recorder mutate in place: the revisions are the change signals
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [assign, holdings.holdings, revision, now, nameOf],
+        [assign, holdings.holdings, revision, icRevision, now, nameOf, effective],
     );
 
     // flip alerts: a held group turns from net inflow to net outflow (or back)
@@ -181,6 +190,19 @@ export function PortfolioSector({
             <div className={s.root}>
                 <div className={s.empty}>
                     <AsyncStatus phase='loading' text={holdings.phase === 'loading' ? '讀取持股…' : '讀取公司分類資料…'} />
+                </div>
+            </div>
+        );
+    }
+    if (holdings.phase === 'failed') {
+        return (
+            <div className={s.root}>
+                <div className={s.empty}>
+                    <AsyncStatus phase='error' text={`持股查詢失敗：${holdings.error ?? '未知錯誤'}`} />
+                    <button type='button' className={s.retry} onClick={() => void refreshTradingState('positions')}>
+                        <RotateCw size={12} aria-hidden='true' />
+                        重新查詢
+                    </button>
                 </div>
             </div>
         );

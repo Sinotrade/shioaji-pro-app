@@ -47,6 +47,7 @@ export const alignFill = style({
     borderRadius: '2px',
     background: `color-mix(in oklab, ${vars.color.up} 70%, ${vars.color.mutedForeground})`,
     transition: 'width 0.6s cubic-bezier(0.22, 1, 0.36, 1)',
+    '@media': { '(prefers-reduced-motion: reduce)': { transition: 'none' } },
 });
 
 export const controls = style({ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' });
@@ -100,4 +101,20 @@ export const note = style({
     fontSize: '0.6rem',
     color: vars.color.mutedForeground,
     ...ellipsis,
+});
+export const retry = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    padding: '4px 10px',
+    borderRadius: '6px',
+    border: `1px solid ${vars.color.border}`,
+    background: 'transparent',
+    color: vars.color.foreground,
+    fontSize: '0.72rem',
+    cursor: 'pointer',
+    selectors: {
+        '&:hover': { borderColor: vars.color.borderBright },
+        '&:focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: '2px' },
+    },
 });

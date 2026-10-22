@@ -7,6 +7,7 @@ import { FlowBook, SESSION_SLOTS, type GroupFlow, type KBarEvent } from './chain
 import type { Theme } from './company-data/types';
 import {
     buildAssigner,
+    buyKey,
     dayPnlOf,
     detectFlips,
     fromPositions,
@@ -26,13 +27,16 @@ const NOW_MS = Date.parse('2026-10-22T10:30:00+08:00');
 const TODAY_S = Math.floor(Date.parse('2026-10-22T09:15:00+08:00') / 1000);
 const YESTERDAY_S = TODAY_S - 86_400;
 
+const ACC1 = { broker_id: '9A95', account_id: '1', account_type: 'S', person_id: 'P', signed: true, username: 'u' };
+const ACC2 = { ...ACC1, account_id: '2' };
+
 const holding = (over: Partial<RawHolding>): RawHolding => ({
     code: '2330',
     shares: 1000,
     cost: 100,
     last: 100,
-    ydShares: 1000,
-    boughtToday: null,
+    todayShares: 0,
+    todayCost: 0,
     ...over,
 });
 
@@ -42,6 +46,7 @@ const trade = (over: {
     lot?: string;
     cond?: string;
     type?: string;
+    account?: '1' | '2';
     deals: { price: number; quantity: number; ts?: number }[];
 }): Trade =>
     ({
@@ -55,7 +60,7 @@ const trade = (over: {
             quantity: 1,
             order_lot: over.lot ?? 'Common',
             order_cond: over.cond ?? 'Cash',
-            account: { broker_id: '9A95', account_id: '1', account_type: over.type ?? 'S' },
+            account: { broker_id: '9A95', account_id: over.account ?? '1', account_type: over.type ?? 'S' },
         },
         status: {
             id: 'x',
@@ -71,7 +76,7 @@ const trade = (over: {
     }) as unknown as Trade;
 
 describe('todayBuys', () => {
-    it('sums today’s cash buy fills in shares with the volume-weighted price', () => {
+    it('sums today’s cash buy fills per account in shares with the volume-weighted price', () => {
         const buys = todayBuys(
             [
                 trade({ deals: [{ price: 100, quantity: 1 }, { price: 103, quantity: 2 }] }),
@@ -80,20 +85,22 @@ describe('todayBuys', () => {
                 trade({ cond: 'MarginTrading', deals: [{ price: 99, quantity: 1 }] }),
                 trade({ type: 'F', code: 'TXFK6', deals: [{ price: 99, quantity: 1 }] }),
                 trade({ deals: [{ price: 90, quantity: 1, ts: YESTERDAY_S }] }),
+                trade({ account: '2', deals: [{ price: 50, quantity: 1 }] }),
             ],
             NOW_MS,
         );
-        expect([...buys.keys()]).toEqual(['2330']);
-        const b = buys.get('2330')!;
+        expect([...buys.keys()].sort()).toEqual([buyKey(ACC1, '2330'), buyKey(ACC2, '2330')]);
+        const b = buys.get(buyKey(ACC1, '2330'))!;
         expect(b.shares).toBe(3500);
         expect(b.avg).toBeCloseTo((100 * 1000 + 103 * 2000 + 106 * 500) / 3500);
+        expect(buys.get(buyKey(ACC2, '2330'))).toEqual({ shares: 1000, avg: 50 });
     });
 
     it('accepts millisecond and nanosecond deal timestamps', () => {
         const ms = TODAY_S * 1000;
         const ns = TODAY_S * 1e9;
         const buys = todayBuys([trade({ deals: [{ price: 10, quantity: 1, ts: ms }, { price: 20, quantity: 1, ts: ns }] })], NOW_MS);
-        expect(buys.get('2330')?.shares).toBe(2000);
+        expect(buys.get(buyKey(ACC1, '2330'))?.shares).toBe(2000);
     });
 });
 
@@ -104,18 +111,8 @@ describe('dayPnlOf', () => {
 
     it('moves shares bought today from their fill price', () => {
         // 1000 carried + 1000 bought today at 105; reference 100, last 106
-        const h = holding({ shares: 2000, ydShares: 1000, boughtToday: { shares: 1000, avg: 105 } });
+        const h = holding({ shares: 2000, todayShares: 1000, todayCost: 105_000 });
         expect(dayPnlOf(h, 106, 100)).toBe(1000 * 6 + 1000 * 1);
-    });
-
-    it('caps today’s buys by the holding (bought and partly sold again)', () => {
-        const h = holding({ shares: 500, ydShares: 0, boughtToday: { shares: 2000, avg: 104 } });
-        expect(dayPnlOf(h, 106, 100)).toBe(500 * 2);
-    });
-
-    it('without fills: a holding new today moves from its cost, an added part from the reference', () => {
-        expect(dayPnlOf(holding({ ydShares: 0, cost: 103 }), 106, 100)).toBe(3000);
-        expect(dayPnlOf(holding({ shares: 2000, ydShares: 1000, cost: 103 }), 106, 100)).toBe(12000);
     });
 
     it('is 0 without a reference', () => {
@@ -125,13 +122,12 @@ describe('dayPnlOf', () => {
 
 describe('fromPositions', () => {
     const pos = (over: Partial<AccountedPosition & { yd_quantity: number; cond: string }>): AccountedPosition =>
-        ({ id: 1, code: '2330', direction: 'Buy', quantity: 1000, price: 100, last_price: 101, pnl: 0, yd_quantity: 1000, ...over }) as AccountedPosition;
+        ({ id: 1, code: '2330', direction: 'Buy', quantity: 1000, price: 100, last_price: 101, pnl: 0, yd_quantity: 1000, account: ACC1, ...over }) as AccountedPosition;
 
-    it('merges long cash rows by code with a weighted cost and attaches today’s buys', () => {
+    it('merges long cash rows by code with a weighted cost and today’s bought shares', () => {
         const rows = fromPositions(
             [
-                pos({}),
-                pos({ quantity: 3000, price: 104, yd_quantity: 0 }),
+                pos({ quantity: 4000, price: 103, yd_quantity: 1000 }),
                 pos({ code: '2454', direction: 'Sell' }),
                 pos({ code: '2317', cond: 'MarginTrading' }),
                 pos({ code: '2603', quantity: 0 }),
@@ -141,7 +137,27 @@ describe('fromPositions', () => {
             NOW_MS,
         );
         expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ code: '2330', shares: 4000, cost: 103, ydShares: 1000, boughtToday: { shares: 3000, avg: 104 } });
+        expect(rows[0]).toMatchObject({ code: '2330', shares: 4000, cost: 103, todayShares: 3000, todayCost: 312_000 });
+        expect(dayPnlOf(rows[0]!, 106, 100)).toBe(1000 * 6 + 3000 * 2);
+    });
+
+    it('never lets one account’s buys reclassify another account’s carried shares', () => {
+        // account 1 bought 1000 at 105 and sold them all; account 2 holds 1000 carried
+        const rows = fromPositions([pos({ account: ACC2 })], [trade({ deals: [{ price: 105, quantity: 1 }] })], NOW_MS);
+        expect(rows[0]).toMatchObject({ shares: 1000, todayShares: 0 });
+        expect(dayPnlOf(rows[0]!, 106, 100)).toBe(6000);
+    });
+
+    it('caps today’s buys by the row (bought and partly sold again)', () => {
+        const rows = fromPositions([pos({ quantity: 500, yd_quantity: 0, price: 104 })], [trade({ deals: [{ price: 104, quantity: 2 }] })], NOW_MS);
+        expect(dayPnlOf(rows[0]!, 106, 100)).toBe(500 * 2);
+    });
+
+    it('without fills: a row new today moves from its cost, an added part from the reference', () => {
+        const fresh = fromPositions([pos({ yd_quantity: 0, price: 103 })], [], NOW_MS);
+        expect(dayPnlOf(fresh[0]!, 106, 100)).toBe(3000);
+        const added = fromPositions([pos({ quantity: 2000, yd_quantity: 1000, price: 103 })], [], NOW_MS);
+        expect(dayPnlOf(added[0]!, 106, 100)).toBe(12000);
     });
 });
 
@@ -220,7 +236,7 @@ describe('portfolioView', () => {
     const holdings: RawHolding[] = [
         holding({ code: 'A', shares: 1000, cost: 90 }),
         holding({ code: 'B', shares: 2000, cost: 100 }),
-        holding({ code: 'C', shares: 1000, cost: 120, ydShares: 0, boughtToday: { shares: 1000, avg: 96 } }),
+        holding({ code: 'C', shares: 1000, cost: 120, todayShares: 1000, todayCost: 96_000 }),
     ];
 
     it('values holdings at the book price and groups them with the 10-minute window', () => {

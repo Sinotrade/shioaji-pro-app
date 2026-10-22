@@ -12,9 +12,10 @@
 //   權重分母不同，無法直接用參考權重合併）。
 // 只在面板開著（retain）期間記錄；中斷後重設基準，不把空窗的成交值灌進一分鐘。
 
-import { useEffect, useState } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { SESSION_SLOTS, WINDOW, type GroupFlow } from './chain-flow';
 import { getIcState, parseCalculatedAtNs, projectionKey, retainIndexComponents, subscribeIcStore } from './index-components';
+import { streamConnectionEpoch } from './stream';
 import type { ContractBase } from './types/contract';
 import type { IcProjection } from './types/market';
 
@@ -104,11 +105,13 @@ export class IcFlowRecorder {
         return s;
     }
 
-    private day(date: string) {
-        if (this.date !== date) {
-            this.date = date;
-            this.series.clear();
-        }
+    /** Adopt a newer trading day (clears); a state from an older day is ignored (false). */
+    private day(date: string): boolean {
+        if (this.date === date) return true;
+        if (this.date !== null && date < this.date) return false;
+        this.date = date;
+        this.series.clear();
+        return true;
     }
 
     /** Recording stopped (panel released the stream): the next samples start new spans. */
@@ -120,7 +123,7 @@ export class IcFlowRecorder {
     }
 
     sampleAmount(index: IcIndexCode, date: string, slot: number, groups: readonly IcGroupSample[]) {
-        this.day(date);
+        if (!this.day(date)) return;
         for (const g of groups) {
             if (!Number.isFinite(g.value)) continue;
             const s = this.at(`${index}:${g.category}`);
@@ -138,7 +141,7 @@ export class IcFlowRecorder {
     }
 
     samplePerf(index: IcIndexCode, date: string, slot: number, groups: readonly IcGroupSample[]) {
-        this.day(date);
+        if (!this.day(date)) return;
         for (const g of groups) {
             if (!Number.isFinite(g.value)) continue;
             const s = this.at(`${index}:${g.category}`);
@@ -242,14 +245,43 @@ export const icFlowRecorder = new IcFlowRecorder();
 const STREAMS = (Object.keys(IC_INDICES) as IcIndexCode[]).flatMap((index) =>
     [GM_AMOUNT, GM_WPERF].map((projection) => ({ index, projection, key: projectionKey(projection) })),
 );
+/** calculated_at of the state last fed (or skipped as stale) per stream. */
 const fed = new Map<string, string>();
-let holders = 0;
+let epoch = -1;
+
+function stateOf(index: IcIndexCode, key: string) {
+    const st = getIcState(index, key);
+    if (!st || !('groups' in st) || !st.groups || !st.date) return null;
+    return { date: st.date, calculatedAt: st.calculatedAt, groups: st.groups };
+}
+
+/**
+ * Start a new recording span: the next fresh sample of every group becomes
+ * its baseline. States already in the store predate the span (cached from
+ * before a release or a reconnect, possibly with a gap after them), so they
+ * are marked as seen and never diffed against.
+ */
+function restart() {
+    icFlowRecorder.rebase();
+    for (const { index, key } of STREAMS) {
+        const st = stateOf(index, key);
+        if (st) fed.set(`${index}|${key}`, st.calculatedAt);
+        else fed.delete(`${index}|${key}`);
+    }
+}
 
 function feed(): boolean {
+    // a reconnect may have dropped packets: never diff across it
+    const e = streamConnectionEpoch();
+    if (e !== epoch) {
+        epoch = e;
+        restart();
+        return false;
+    }
     let changed = false;
     for (const { index, projection, key } of STREAMS) {
-        const st = getIcState(index, key);
-        if (!st || !('groups' in st) || !st.groups || !st.date) continue;
+        const st = stateOf(index, key);
+        if (!st) continue;
         const id = `${index}|${key}`;
         if (fed.get(id) === st.calculatedAt) continue;
         fed.set(id, st.calculatedAt);
@@ -266,43 +298,69 @@ function feed(): boolean {
 /** Revision refresh at most this often: the stream publishes ≤1/s, the chart moves per minute. */
 const BUMP_MS = 3000;
 
-/**
- * Keep the group-metric streams retained while `enabled` and return a
- * revision that changes when new samples arrived (throttled).
- */
-export function useIcSectorFlow(enabled: boolean): number {
-    const [revision, setRevision] = useState(0);
-    useEffect(() => {
-        if (!enabled) return;
-        const releases = STREAMS.map(({ index, projection }) => retainIndexComponents(IC_INDICES[index], projection));
-        holders += 1;
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        let last = 0;
-        const bump = () => {
-            const wait = last + BUMP_MS - Date.now();
-            if (wait <= 0) {
-                last = Date.now();
-                setRevision((r) => r + 1);
-            } else timer ??= setTimeout(() => {
-                timer = null;
-                last = Date.now();
-                setRevision((r) => r + 1);
-            }, wait);
-        };
-        if (feed()) bump();
-        const unsubscribe = subscribeIcStore(() => {
+// one shared feeder for every holder; each holder reads the shared revision
+let holders = 0;
+let revision = 0;
+let releases: (() => void)[] = [];
+let unsubscribe: (() => void) | null = null;
+let timer: ReturnType<typeof setTimeout> | null = null;
+let lastBump = 0;
+const revListeners = new Set<() => void>();
+
+function bumpNow() {
+    lastBump = Date.now();
+    revision += 1;
+    revListeners.forEach((l) => l());
+}
+
+function bump() {
+    const wait = lastBump + BUMP_MS - Date.now();
+    if (wait <= 0) bumpNow();
+    else
+        timer ??= setTimeout(() => {
+            timer = null;
+            bumpNow();
+        }, wait);
+}
+
+function hold(): () => void {
+    holders += 1;
+    if (holders === 1) {
+        releases = STREAMS.map(({ index, projection }) => retainIndexComponents(IC_INDICES[index], projection));
+        epoch = streamConnectionEpoch();
+        restart();
+        unsubscribe = subscribeIcStore(() => {
             if (feed()) bump();
         });
-        return () => {
-            unsubscribe();
-            if (timer) clearTimeout(timer);
-            releases.forEach((release) => release());
-            holders -= 1;
-            if (holders === 0) {
-                icFlowRecorder.rebase();
-                fed.clear();
-            }
-        };
-    }, [enabled]);
-    return revision;
+    }
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        holders -= 1;
+        if (holders > 0) return;
+        unsubscribe?.();
+        unsubscribe = null;
+        if (timer) clearTimeout(timer);
+        timer = null;
+        releases.forEach((release) => release());
+        releases = [];
+        // the next holder starts a new span (restart on hold)
+    };
+}
+
+/**
+ * Keep the group-metric streams retained while `enabled` and return a
+ * revision that changes when new samples arrived (throttled, shared by
+ * every holder).
+ */
+export function useIcSectorFlow(enabled: boolean): number {
+    useEffect(() => (enabled ? hold() : undefined), [enabled]);
+    return useSyncExternalStore(
+        (l) => {
+            revListeners.add(l);
+            return () => revListeners.delete(l);
+        },
+        () => revision,
+    );
 }
