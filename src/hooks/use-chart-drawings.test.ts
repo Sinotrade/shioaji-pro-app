@@ -5,6 +5,7 @@ import {
     chartHasFocus,
     inOrderLabelArea,
     orderLineMayTakePointer,
+    orderLockKeyOf,
     toolShortcutOf,
     undoKeyOf,
     useChartDrawings,
@@ -106,6 +107,21 @@ afterEach(async () => {
         for (const root of roots.splice(0)) root.unmount();
     });
     vi.unstubAllGlobals();
+});
+
+describe('委託線鎖定快捷鍵', () => {
+    it.each([
+        [{ key: 'l', ctrlKey: true }, true],
+        [{ key: 'l', metaKey: true }, true],
+        [{ key: 'L', ctrlKey: true }, true],
+        [{ key: '中', code: 'KeyL', ctrlKey: true }, true],
+        [{ key: 'l', code: 'KeyL', ctrlKey: true, shiftKey: true }, false],
+        [{ key: 'l', code: 'KeyL', ctrlKey: true, altKey: true }, false],
+        [{ key: 'l', code: 'KeyL' }, false],
+        [{ key: 'k', code: 'KeyK', ctrlKey: true }, false],
+    ] as const)('%o → %s', (key, expected) => {
+        expect(orderLockKeyOf({ code: '', ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...key })).toBe(expected);
+    });
 });
 
 describe('跨視窗改動後的復原／重做', () => {

@@ -52,6 +52,10 @@ describe('public Agent Harness contract', () => {
             'remove_panel',
             'set_panel_pin',
             'apply_layout',
+            'get_workspace_spec',
+            'validate_workspace_spec',
+            'apply_workspace_spec',
+            'undo_workspace_change',
         ]);
         expect(isAgentAppCommandName('select_contract')).toBe(true);
         expect(isAgentAppCommandName('click_at')).toBe(false);

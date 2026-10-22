@@ -119,6 +119,43 @@ Account/environment changes, renderer reload and runtime stop revoke authority.
 Risk rules still apply and may reject or require confirmation. Raw CLI trading
 remains unavailable in production; semantic App Tools are the execution path.
 
+## Workspace spec v1
+
+`get_workspace_spec`, `validate_workspace_spec`, `apply_workspace_spec` and
+`undo_workspace_change` (all `ui.control`) let the Agent read and replace the
+whole visible layout as one JSON document, described by
+[`schemas/workspace-spec-v1.schema.json`](../schemas/workspace-spec-v1.schema.json).
+
+- **Shape.** `version: 1`, `columns: 24 | 288` (the grid width `x`/`w` use;
+  288 is the stored precision), `panels[]` with `id`, `type`, `x`, `y`, `w`,
+  `h`, optional `pin` (contract code), `link_group` (flash panels only) and
+  `settings`, plus optional `link_groups`. Rows are 30 px. Settings in v1:
+  chart `interval` (`1m`/`5m`/`15m`/`60m`/`1D`), `session`, `ohlc`,
+  `high_low`; intraday `session`. An absent setting means the default.
+- **Privacy.** The spec never contains account keys, quantities, order or
+  indicator settings. Those fields stay in the stored workspace and carry
+  over untouched for every panel the spec keeps by `id`; a new `id` creates
+  a panel with defaults.
+- **Validate.** Returns every problem with a JSON path and code (unknown
+  fields, sizes below the panel's minimum, overlaps, singletons, pins on
+  non-pinnable panels, unknown contracts, unsupported settings, edges that
+  disagree at the live grid density, removing the Agent's own panel), warnings (vertical compaction previewed at the live
+  grid density, rows below the window, removed panels), a diff and a
+  `validationToken`. It never mutates.
+- **Apply.** The token is random, single-use, expires after 10 minutes, and
+  is bound in the App to the exact normalized spec and an opaque revision of
+  the whole workspace (including fields the spec hides). Apply rechecks both
+  with no await between the check and the replacement, so a forged token, a
+  different spec, any user edit since validation, or a concurrent apply
+  returns `conflict`: a destructive change can only land after the Agent has
+  seen its diff. The replacement is a single state update and records one
+  undo step.
+- **Undo.** One step per apply, in memory only. The header shows 復原版面
+  while the latest step applies; the Agent's `undo_workspace_change` uses the
+  same step. Moving or resizing panels keeps the step; any other change to
+  the panels or their settings, or loading another layout, makes it stale, so
+  undo never throws away work done after the change.
+
 ## Restart policy
 
 | State | Restart behavior |

@@ -63,6 +63,24 @@ export const iconBtnToggle = styleVariants({
     off: [iconBtn, { opacity: 0.55 }],
 });
 
+// 委託線鎖定鈕（與 K 棒讀值等圖示開關同一組）：
+// - locked：已鎖定＝按下狀態（前景色＋底色），aria-pressed=true
+// - live：未鎖定且圖上有拖得動的委託線，強調色提醒「現在拖得動」
+// - idle：未鎖定但圖上沒有可拖的線，與其他關閉的開關同樣淡灰
+const orderLockBase = style([
+    iconBtn,
+    {
+        ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: 1 },
+        '@media': { '(prefers-reduced-motion: reduce)': { transition: 'none' } },
+    },
+]);
+
+export const orderLockBtn = styleVariants({
+    locked: [orderLockBase, { color: vars.color.foreground, background: vars.color.muted }],
+    live: [orderLockBase, { color: vars.color.accent, ':hover': { color: vars.color.accent, background: vars.color.accentDim } }],
+    idle: [orderLockBase, { opacity: 0.55 }],
+});
+
 export const toolbarDivider = style({
     width: '1px',
     alignSelf: 'stretch',
@@ -116,13 +134,19 @@ export const indicatorBtn = styleVariants({
 });
 
 
+// 交易／畫圖模式提示：放在左上角圖例欄（triggerList）的流裡、K 棒讀值之後，
+// 委託／觸價／指標列跟著往下排 — 任何寬度都不會蓋住委託的 CANCEL。
+// 外層 hintSlot 寬度為 0，提示本身不撐寬其他列；最大寬度由 inline style 依圖寬限制，
+// 超過就換行（只會把下面的列往下推）
+export const hintSlot = style({
+    alignSelf: 'flex-start',
+    width: 0,
+    overflow: 'visible',
+    pointerEvents: 'none',
+});
+
 export const modeHint = style({
-    position: 'absolute',
-    top: '8px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    // 交易／畫圖模式提示疊在左上角圖例與 K 棒讀值之上，不被遮住
-    zIndex: 6,
+    width: 'max-content',
     fontFamily: vars.font.body,
     fontSize: '0.66rem',
     fontWeight: 600,
@@ -131,6 +155,11 @@ export const modeHint = style({
     borderRadius: vars.radius.sm,
     padding: '2px 10px',
     pointerEvents: 'none',
+});
+
+// 提示列的第二行（鎖定說明）：獨立一行
+export const modeHintNote = style({
+    display: 'block',
 });
 
 // 畫圖模式的提示：與交易模式同一個位置，但用中性的面板色，不搶琥珀
