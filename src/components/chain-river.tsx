@@ -43,7 +43,6 @@ interface LaneState {
     thick: number;
     alpha: number;
     m: number;
-    seen: number;
     live: boolean;
     el: HTMLElement | null;
     shownY: number;
@@ -133,20 +132,29 @@ export function useRiver({
 
     // place new rows (and every row while the loop is idle) before paint
     useLayoutEffect(() => {
-        const now = performance.now();
         const map = states.current;
         for (const lane of lanes) {
             const el = rowEls.current.get(lane.id) ?? null;
             let st = map.get(lane.id);
             if (!st) {
-                st = { y: lane.y, len: 0, thick: lane.thick, alpha: lane.focus, m: lane.m, seen: now, live: true, el, shownY: Number.NaN };
+                st = { y: lane.y, len: 0, thick: lane.thick, alpha: lane.focus, m: lane.m, live: true, el, shownY: Number.NaN };
                 map.set(lane.id, st);
             }
+            // a remounted row starts without a transform: write it again
+            if (st.el !== el) st.shownY = Number.NaN;
             st.el = el;
             st.live = true;
             if (el && st.shownY !== st.y) {
                 el.style.transform = `translateY(${st.y.toFixed(1)}px)`;
                 st.shownY = st.y;
+            }
+        }
+        // lanes that left the list go now; their particles see `live` and drop
+        const ids = new Set(lanes.map((l) => l.id));
+        for (const [id, st] of map) {
+            if (!ids.has(id)) {
+                st.live = false;
+                map.delete(id);
             }
         }
         kick.current();
@@ -226,7 +234,6 @@ export function useRiver({
             for (const lane of lanesNow) {
                 const st = map.get(lane.id);
                 if (!st) continue;
-                st.seen = t;
                 const lenTarget = lane.m * half;
                 st.y = approach(st.y, lane.y, kY, 0.05);
                 st.len = approach(st.len, lenTarget, kLen, 0.05);
@@ -312,14 +319,6 @@ export function useRiver({
                 particles.current = capParticles(kept);
             }
 
-            // lanes that left the list: drop them once they have been gone a while
-            const ids = new Set(lanesNow.map((l) => l.id));
-            for (const [id, st] of map) {
-                if (!ids.has(id)) {
-                    st.live = false;
-                    if (t - st.seen > 800) map.delete(id);
-                }
-            }
             // particles keep the loop alive; reduced motion stops once settled
             return moving || !reduce;
         };
@@ -370,10 +369,18 @@ export function useRiver({
         io?.observe(stage);
         const onVisible = () => kick.current();
         document.addEventListener('visibilitychange', onVisible);
+        // moving to a display with another pixel ratio: rebuild the backing store
+        let dprQuery: MediaQueryList | null = null;
+        const onDpr = () => {
+            dprQuery?.removeEventListener('change', onDpr);
+            dprQuery = typeof matchMedia === 'function' ? matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`) : null;
+            dprQuery?.addEventListener('change', onDpr);
+            kick.current();
+        };
         const onScroll = () => kick.current();
         area.addEventListener('scroll', onScroll, { passive: true });
         if (!active) particles.current = [];
-        kick.current();
+        onDpr();
         return () => {
             if (raf !== 0) cancelAnimationFrame(raf);
             raf = 0;
@@ -382,6 +389,7 @@ export function useRiver({
             io?.disconnect();
             document.removeEventListener('visibilitychange', onVisible);
             area.removeEventListener('scroll', onScroll);
+            dprQuery?.removeEventListener('change', onDpr);
             particles.current = [];
         };
     }, [active, reducedMotion, canvasRef, stageRef, areaRef, rowsRef]);
