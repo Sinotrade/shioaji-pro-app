@@ -71,6 +71,8 @@ export type BlockType =
     | 'grid'
     | 'conditional'
     | 'heatmap'
+    | 'chainmap'
+    | 'holdingmap'
     | 'pulse'
     | 'signals'
     | 'optpnl'
@@ -492,6 +494,22 @@ export const BLOCK_META: Record<
         pinnable: false,
         singleton: true,
         defaultSize: { w: 8, h: 11, minW: 5, minH: 6 },
+    },
+    chainmap: {
+        label: '產業鏈資金流向',
+        description: '產業鏈與題材的即時資金流向：族群淨流入排行、輪動與熱力，上中下游流向與領頭股',
+        category: 'market',
+        pinnable: false,
+        singleton: false,
+        defaultSize: { w: 14, h: 14, minW: 6, minH: 8 },
+    },
+    holdingmap: {
+        label: '持股族群',
+        description: '我的持股依族群、產業鏈或題材分組，對照各分組的即時資金流向與今日損益',
+        category: 'account',
+        pinnable: false,
+        singleton: true,
+        defaultSize: { w: 10, h: 14, minW: 6, minH: 8 },
     },
     pulse: {
         label: '市場脈動',
@@ -978,6 +996,26 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
                 presetCell('optpnl-oc', 'optpnl', 16, 0, 8, 14),
                 presetCell('chart-oc', 'chart', 0, 14, 10, 10),
                 presetCell('dock-oc', 'dock', 10, 14, 14, 10),
+            ],
+        },
+    },
+    {
+        name: '族群資金',
+        desc: '產業鏈資金流向＋持股族群並排，看資金往哪走、自己的持股站在哪邊',
+        workspace: {
+            blocks: [
+                { id: 'chain-sf', type: 'chainmap', pin: null },
+                { id: 'holding-sf', type: 'holdingmap', pin: null },
+                { id: 'watch-sf', type: 'watchlist', pin: null },
+                { id: 'chart-sf', type: 'chart', pin: null },
+                { id: 'dock-sf', type: 'dock', pin: null },
+            ],
+            layout: [
+                presetCell('chain-sf', 'chainmap', 0, 0, 14, 14),
+                presetCell('holding-sf', 'holdingmap', 14, 0, 10, 14),
+                presetCell('watch-sf', 'watchlist', 0, 14, 6, 10),
+                presetCell('chart-sf', 'chart', 6, 14, 10, 10),
+                presetCell('dock-sf', 'dock', 16, 14, 8, 10),
             ],
         },
     },

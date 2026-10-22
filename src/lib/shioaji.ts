@@ -615,12 +615,22 @@ async function updateCapabilitySubscription(
                     delay === undefined ||
                     isPermanentApiError(reason)
                 ) {
+                    // the last consumer is gone even if the server could not
+                    // be told (e.g. disconnected): never replay it on reconnect
+                    if (action === 'unsubscribe') {
+                        capabilityRefs.delete(key);
+                        unregisterCapabilitySubscription(key);
+                    }
                     throw reason;
                 }
                 await new Promise((r) => setTimeout(r, delay));
             }
         }
         if (!response.success) {
+            if (action === 'unsubscribe') {
+                capabilityRefs.delete(key);
+                unregisterCapabilitySubscription(key);
+            }
             throw new Error(response.message || `${path} 訂閱操作失敗`);
         }
         if (action === 'subscribe') {
@@ -679,6 +689,21 @@ export function unsubscribeEnrichedIndex(
         `${capability}:${contract.code}${suffix}`,
         body,
     );
+}
+
+// 即時 1 分 K 訂閱（stocks only，1.7.7 專屬路由，body 可多檔）— 一個批次一個
+// capability key：同一批 key 由多個面板共用時 ref-count，重連由 capability
+// registry 重播。sidecar 請求 body 上限 64 KB，呼叫端需分批（≤300 檔）。
+export function subscribeKbars(key: string, contracts: ContractBase[]) {
+    return updateCapabilitySubscription('subscribe', 'kbars', `kbars:${key}`, {
+        stocks: contracts.map(streamContractKey),
+    });
+}
+
+export function unsubscribeKbars(key: string, contracts: ContractBase[]) {
+    return updateCapabilitySubscription('unsubscribe', 'kbars', `kbars:${key}`, {
+        stocks: contracts.map(streamContractKey),
+    });
 }
 
 // index_components projection 訂閱（1.7.4）— 一條 (指數, 投影) 一個

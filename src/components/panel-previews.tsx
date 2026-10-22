@@ -661,6 +661,45 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             <rect x='76' y='50' width='36' height='18' fill={up} fillOpacity='0.6' />
         </Frame>
     ),
+    chainmap: (
+        <Frame>
+            {[
+                'M28 15 L40 14 L52 12 L64 10 L76 9 L88 8',
+                'M28 30 L40 29 L52 27 L64 27 L76 26 L88 25',
+                'M28 41 L40 43 L52 42 L64 44 L76 44 L88 45',
+                'M28 55 L40 56 L52 58 L64 59 L76 60 L88 61',
+            ].map((d, i) => {
+                const base = [16, 30, 42, 54][i]!;
+                const color = i < 2 ? up : down;
+                return (
+                    <g key={i}>
+                        <Ln x={8} y={base - 1} w={14} />
+                        <line x1='28' y1={base} x2='88' y2={base} stroke={border} />
+                        <path d={`${d} L88 ${base} L28 ${base} Z`} fill={color} fillOpacity='0.25' />
+                        <path d={d} fill='none' stroke={color} strokeWidth='1.2' />
+                        <Ln x={94} y={base - 1} w={18} color={color} o={0.8} />
+                    </g>
+                );
+            })}
+            <rect x='8' y='64' width='104' height='4' rx='1' fill={accent} fillOpacity='0.35' />
+        </Frame>
+    ),
+    holdingmap: (
+        <Frame>
+            <Ln x={8} y={8} w={22} />
+            <Ln x={8} y={14} w={34} color={up} o={0.9} />
+            <circle cx='38' cy='44' r='20' fill='none' stroke={up} strokeOpacity='0.6' strokeWidth='1.4' />
+            <circle cx='32' cy='40' r='9' fill={up} fillOpacity='0.55' />
+            <circle cx='45' cy='48' r='6' fill={up} fillOpacity='0.4' />
+            <circle cx='42' cy='35' r='4' fill={down} fillOpacity='0.5' />
+            <circle cx='86' cy='30' r='14' fill='none' stroke={down} strokeOpacity='0.6' strokeWidth='1.4' />
+            <circle cx='82' cy='28' r='7' fill={down} fillOpacity='0.55' />
+            <circle cx='91' cy='34' r='4' fill={up} fillOpacity='0.4' />
+            <circle cx='92' cy='58' r='8' fill='none' stroke={muted} strokeOpacity='0.5' strokeWidth='1.2' />
+            <circle cx='92' cy='58' r='5' fill={up} fillOpacity='0.35' />
+            <line x1='8' y1='66' x2='112' y2='66' stroke={border} />
+        </Frame>
+    ),
     pulse: (
         <Frame>
             <rect x='10' y='12' width='6' height='34' fill={down} fillOpacity='0.85' />
