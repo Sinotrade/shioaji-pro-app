@@ -1,10 +1,11 @@
 // 產業鏈資金流向 and 持股族群 open together: the shared feed hook builds the
 // same overview K-bar batches, the capability registry ref-counts them, so the
 // second panel sends no K-bar subscribe and no snapshot request; closing one
-// keeps the subscription, closing both releases it. 持股族群's 族群 grouping
-// retains the index_components group metrics 產業全景 already holds, so those
-// add no subscribe either. (Holdings outside every chain/theme still get their
-// own small drill batch: no other panel subscribes them.)
+// keeps the subscription, closing both releases it.
+// 持股族群's 族群 grouping retains the index_components group metrics (amount,
+// weighted change) of 上市 and 上櫃; 產業全景 holds the same streams for its
+// selected index, so only the other index is added. Holdings outside every
+// chain/theme get their own small drill K-bar batch: no other panel has them.
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -138,27 +139,33 @@ describe('useChainFeed shared by two panels', () => {
         expect(calls('/api/v1/stream/unsubscribe/kbars')).toHaveLength(1);
     });
 
-    it('retains the 族群 group metrics 產業全景 already subscribed, adding no subscribe', async () => {
-        // 產業全景 holds the amount and weighted-performance group metrics of both indices
-        const heatmap = Object.values(IC_INDICES).flatMap((index) => [GM_AMOUNT, GM_WPERF].map((p) => retainIndexComponents(index, p)));
+    it('shares the group metrics of 產業全景 for its index and adds only the other index', async () => {
+        // 產業全景 subscribes the group metrics of its selected index only (上市 here)
+        const heatmap = [GM_AMOUNT, GM_WPERF].map((p) => retainIndexComponents(IC_INDICES.IX0001, p));
         await flush();
-        const icSubscribes = calls('/api/v1/stream/subscribe/index_components').length;
-        expect(icSubscribes).toBe(4);
-        const bootstraps = calls('/api/v1/data/index_components').length;
+        const subscribes = () => calls('/api/v1/stream/subscribe/index_components');
+        const unsubscribes = () => calls('/api/v1/stream/unsubscribe/index_components');
+        const bootstraps = () => calls('/api/v1/data/index_components');
+        const indexOf = (call: unknown[]) => JSON.stringify(call[1]).includes('IX0043') ? 'IX0043' : 'IX0001';
+        expect(subscribes().map(indexOf)).toEqual(['IX0001', 'IX0001']);
+        expect(bootstraps().map(indexOf)).toEqual(['IX0001']);
 
+        // 持股族群 covers 上市 and 上櫃 holdings: 上市 rides the retained streams,
+        // 上櫃 is the only addition (two subscribes and its first bootstrap)
         act(() => {
             holdings = create(createElement(HoldingsPanel));
         });
         await flush();
-        expect(calls('/api/v1/stream/subscribe/index_components')).toHaveLength(icSubscribes);
-        expect(calls('/api/v1/data/index_components')).toHaveLength(bootstraps);
+        expect(subscribes().map(indexOf)).toEqual(['IX0001', 'IX0001', 'IX0043', 'IX0043']);
+        expect(bootstraps().map(indexOf)).toEqual(['IX0001', 'IX0043']);
 
+        // closing 持股族群 releases only what it added
         act(() => holdings!.unmount());
         holdings = null;
         await flush();
-        expect(calls('/api/v1/stream/unsubscribe/index_components')).toHaveLength(0);
+        expect(unsubscribes().map(indexOf)).toEqual(['IX0043', 'IX0043']);
         heatmap.forEach((release) => release());
         await flush();
-        expect(calls('/api/v1/stream/unsubscribe/index_components')).toHaveLength(4);
+        expect(unsubscribes().map(indexOf)).toEqual(['IX0043', 'IX0043', 'IX0001', 'IX0001']);
     });
 });
