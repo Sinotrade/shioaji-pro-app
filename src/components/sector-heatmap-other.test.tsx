@@ -14,6 +14,7 @@ const ROWS_AT = '2026-10-20T13:33:00+08:00';
 const m = vi.hoisted(() => ({
     wperfAt: undefined as number | undefined,
     wperfAtCalls: [] as (string | undefined)[],
+    zero: false,
 }));
 
 function state(
@@ -54,7 +55,7 @@ vi.mock('../hooks/use-index-components', () => ({
                     entries: TOP.map(([code, pct, ppm], i) => ({
                         code,
                         category: '24',
-                        value: 400 - i * 30,
+                        value: m.zero ? 0 : 400 - i * 30,
                         price: 100,
                         reference: 100,
                         price_chg: 0,
@@ -125,6 +126,7 @@ beforeEach(() => {
         removeItem: (k: string) => void store.delete(k),
     });
     m.wperfAtCalls = [];
+    m.zero = false;
 });
 afterEach(async () => {
     await act(async () => view?.unmount());
@@ -158,4 +160,32 @@ it('預設面積為貢獻，已存的選擇照舊', () => {
     expect(initialSizeMetric('weight')).toBe('weight');
     expect(initialSizeMetric('amount')).toBe('amount');
     expect(initialSizeMetric('contribution')).toBe('contribution');
+});
+
+it('開盤前貢獻全為 0 → 下鑽磚牆改用市值權重，不停在「等待分布資料」', async () => {
+    m.zero = true;
+    m.wperfAt = undefined;
+    vi.stubGlobal(
+        'ResizeObserver',
+        class {
+            observe() {}
+            disconnect() {}
+        },
+    );
+    await act(async () => {
+        view = create(createElement(SectorHeatmap, {}), {
+            createNodeMock: () => ({
+                getBoundingClientRect: () => ({ width: 480, height: 320 }),
+            }),
+        });
+    });
+    const tiles = view.root.findAll(
+        (n) =>
+            n.type === 'button' &&
+            typeof n.props.title === 'string' &&
+            /成交|貢獻/.test(n.props.title) &&
+            n.props.style?.width > 0,
+    );
+    expect(tiles.length).toBeGreaterThanOrEqual(TOP.length);
+    expect(text(view.root)).not.toMatch(/等待分布資料/);
 });
