@@ -13,6 +13,7 @@ import {
     railScale,
     railTicks,
     railTitle,
+    RAIL_METRICS,
     type DayRange,
 } from '../lib/day-range';
 import type { LimitState } from '../lib/limit-state';
@@ -32,12 +33,13 @@ interface RailProps {
     locked: LimitState;
     // 今天碰過漲停／跌停（停板端畫成實心）
     touched: { up: boolean; down: boolean };
+    // 加在滑過提示最後一行（期貨全盤時註明開盤與高低含夜盤）
+    note?: string;
+    // 使用者在自訂欄位關掉的數字格（兩端、低高、開），軌道下方也不顯示
+    hide?: { edges?: boolean; hl?: boolean; open?: boolean };
 }
 
-// 兩端幅度字的字級（rem），和 railTag 樣式一致
-const TAG_REM = 0.6;
-
-export function DayRangeRail({ className, ...props }: RailProps & { className?: string }) {
+export function DayRangeRail({ className, hide, ...props }: RailProps & { className?: string }) {
     const { range: r, fmt, fmtPoints, scales, edges } = props;
     const ref = useRef<HTMLDivElement>(null);
     const [box, setBox] = useState({ width: 0, rootPx: 16 });
@@ -65,10 +67,10 @@ export function DayRangeRail({ className, ...props }: RailProps & { className?: 
     const [leftPct, rightPct] = railEndPcts(r, scale);
     const tags = [`-${leftPct}%`, `+${rightPct}%`] as const;
     // 兩端字的寬度：等寬字每字 0.6em，再留 8px；數字列也從同一個位置開始，和軌道起點對齊
-    const tagPx = TAG_REM * box.rootPx;
-    const inset = Math.ceil(Math.max(...tags.map((t) => t.length * 0.6 * tagPx))) + 8;
-    const title = railTitle(r, scale, fmt);
-    const scaleText = scale === null ? '尺到漲跌停' : `尺 ±${scale}%`;
+    const tagPx = RAIL_METRICS.tagRem * box.rootPx;
+    const inset = Math.ceil(Math.max(...tags.map((t) => t.length * RAIL_METRICS.charEm * tagPx))) + 8;
+    const title = [railTitle(r, scale, fmt, edges, fmtPoints), props.note].filter(Boolean).join('\n');
+    const scaleText = scale === null ? '刻度到漲跌停' : `刻度 ±${scale}%`;
     const dirClass = (v: number) => {
         const d = dirVsOpen(v, r.open);
         return d ? panel.dirText[d] : undefined;
@@ -90,15 +92,15 @@ export function DayRangeRail({ className, ...props }: RailProps & { className?: 
             <div className={styles.railNumbers} style={{ paddingLeft: inset }}>
                 {/* railMid、railLow 時這層當容器（寬度已扣掉左側留白），依低、開、高最長的字數決定留幾格 */}
                 <div className={styles.railCells} data-chars={railChars([fmt(r.low), fmt(r.open), fmt(r.high)])}>
-                    {edges === 'limits'
+                    {!hide?.edges && (edges === 'limits'
                         ? item('跌停', fmt(r.limitDown), styles.railNumMuted, styles.railEdge)
-                        : item('距低', fmtPoints(r.close - r.low), undefined, styles.railEdge)}
-                    {item('低', fmt(r.low), dirClass(r.low), styles.railHL)}
-                    {item('開', fmt(r.open), undefined, styles.railOpen)}
-                    {item('高', fmt(r.high), dirClass(r.high), styles.railHL)}
-                    {edges === 'limits'
+                        : item('距低', fmtPoints(r.close - r.low), undefined, styles.railEdge))}
+                    {!hide?.hl && item('低', fmt(r.low), dirClass(r.low), styles.railHL)}
+                    {!hide?.open && item('開', fmt(r.open), undefined, styles.railOpen)}
+                    {!hide?.hl && item('高', fmt(r.high), dirClass(r.high), styles.railHL)}
+                    {!hide?.edges && (edges === 'limits'
                         ? item('漲停', fmt(r.limitUp), styles.railNumMuted, styles.railEdge)
-                        : item('距高', fmtPoints(r.high - r.close), undefined, styles.railEdge)}
+                        : item('距高', fmtPoints(r.high - r.close), undefined, styles.railEdge))}
                 </div>
             </div>
         </div>
@@ -147,9 +149,12 @@ function RailSvg({
         if (b0 < x0 + 3) [b0, b1] = [x0 + 3, b1 + (x0 + 3 - b0)];
         if (b1 > x1 - 3) [b0, b1] = [b0 - (b1 - (x1 - 3)), x1 - 3];
     }
-    // 鎖在停板時引線也停在內緣，保住實體和實心停板塊之間的縫
-    const w0 = locked === 'down' ? Math.max(X(r.low), x0 + 3) : X(r.low);
-    const w1 = locked === 'up' ? Math.min(X(r.high), x1 - 3) : X(r.high);
+    // 鎖在停板時引線也停在內緣，保住實體和實心停板塊之間的縫。
+    // 試撮價不算進高低，可能超出高低之外：引線延伸到現價，實體才不會比引線長
+    const lo = Math.min(r.low, r.close);
+    const hi = Math.max(r.high, r.close);
+    const w0 = locked === 'down' ? Math.max(X(lo), x0 + 3) : X(lo);
+    const w1 = locked === 'up' ? Math.min(X(hi), x1 - 3) : X(hi);
 
     // 停板端畫在實體、引線之後，才不會被蓋掉內側
     const cap = (x: number, side: 'up' | 'down') =>

@@ -1,7 +1,8 @@
 // src/components/quote-board.css.ts
 
 import { createContainer, globalStyle, style, styleVariants } from '@vanilla-extract/css';
-import { RAIL_CHARS, railCellsRem } from '../lib/day-range';
+import type { BoardTier } from '../lib/board-tier';
+import { RAIL_CHARS, RAIL_METRICS, railCellsRem } from '../lib/day-range';
 import { vars } from '../theme.css';
 
 export const board = style({
@@ -68,6 +69,7 @@ export const limitBadge = styleVariants({
 // 整列對齊「最後一行」的文字基線：價格、漲跌的百分比、統計的數值列落在同一條線上
 // 右側多留 TOGGLE_RESERVE 給絕對定位的展開／收合按鈕，按鈕不參與排版、不會自己換到新的一列
 const TOGGLE_RESERVE = `calc(${vars.space.md} + 1.4rem)`;
+const on = (...names: BoardTier[]) => names.map((name) => `&[data-tier="${name}"]`).join(', ');
 
 export const boardTiered = style({
     position: 'relative',
@@ -78,22 +80,22 @@ export const boardTiered = style({
     selectors: {
         // mid 只允許單行：放不下就讓給 inline，不會換成兩行留下大片空白。
         // 個股軌道兩級也只允許單行：放不下就讓給原本的數字欄
-        '&[data-tier="mid"], &[data-tier="rail"], &[data-tier="railMid"]': { flexWrap: 'nowrap' },
+        [on('mid', 'rail', 'railMid')]: { flexWrap: 'nowrap' },
         // inline、lean 底部多留一點給數字下方的家數比例條
-        '&[data-tier="inline"], &[data-tier="lean"], &[data-tier="railLow"]': {
+        [on('inline', 'lean', 'railLow')]: {
             flexWrap: 'nowrap',
             columnGap: '0.9rem',
             padding: `${vars.space.xs} ${TOGGLE_RESERVE} 0.3rem ${vars.space.md}`,
         },
         // 軌道各級的項目間距收窄：軌道取代數字欄時要多約 200px，1.5rem 的間距一個就占 28px，
         // 收窄後中等寬度（台指期約 640px 起）就放得下軌道，不會明明有空位卻退回數字欄
-        '&[data-tier="rail"], &[data-tier="railMid"], &[data-tier="railLow"]': { columnGap: '0.75rem' },
-        '&[data-tier="compact"], &[data-tier="tight"]': {
+        [on('rail', 'railMid', 'railLow')]: { columnGap: '0.75rem' },
+        [on('compact', 'tight')]: {
             flexWrap: 'nowrap',
             columnGap: '0.9rem',
             padding: `${vars.space.xs} ${TOGGLE_RESERVE} ${vars.space.xs} ${vars.space.md}`,
         },
-        '&[data-tier="strip"]': {
+        [on('strip')]: {
             flexWrap: 'nowrap',
             columnGap: '0.75rem',
             padding: `0.2rem ${TOGGLE_RESERVE} 0.2rem ${vars.space.md}`,
@@ -130,18 +132,21 @@ const indexGroupBase = style({
     flex: '0 0 auto',
 });
 
+// 兩組格數都會變動（沒有預估量時收起、使用者自訂關掉的格子不畫、lean 只留幾格），用自動欄數，不寫死欄數
 export const indexGroup = styleVariants({
-    // 量能組格數會依資料有無變動（沒有預估量時收起），用自動欄數，不寫死欄數
-    volume: [
-        indexGroupBase,
-        {
-            gridAutoFlow: 'column',
-            gridAutoColumns: 'auto',
-            paddingLeft: vars.space.md,
-            borderLeft: `1px solid ${vars.color.border}`,
-        },
-    ],
-    breadth: [indexGroupBase, { gridTemplateColumns: 'repeat(5, auto)' }],
+    volume: [indexGroupBase, { gridAutoFlow: 'column', gridAutoColumns: 'auto' }],
+    breadth: [indexGroupBase, { gridAutoFlow: 'column', gridAutoColumns: 'auto' }],
+});
+// 兩組之間的分隔線畫在後面那一組的左側（使用者可以調換兩組的順序）。用絕對定位的線而不是 padding＋border：
+// 家數比例條以整組的 padding box 定位，padding 會讓比例條往左多出一截
+globalStyle(`${indexGroupBase} + ${indexGroupBase}`, { marginLeft: vars.space.md });
+globalStyle(`${indexGroupBase} + ${indexGroupBase}::before`, {
+    content: '""',
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: `calc(-1 * ${vars.space.md})`,
+    borderLeft: `1px solid ${vars.color.border}`,
 });
 
 // 不准斷行：中文標籤可以在任意字之間斷開，放不下時會被擠成一字一行；
@@ -181,8 +186,6 @@ export const unit = style({
 // 不參與排版，所以不影響基線對齊、也不增加看板高度
 export const breadthBar = style({
     position: 'absolute',
-    gridRow: 1,
-    gridColumn: '1 / -1',
     top: 'calc(100% + 2px)',
     left: 0,
     right: 0,
@@ -258,11 +261,18 @@ export const breadthMini = style({
 
 // 展開／收合統計：絕對定位在看板右側、垂直置中，看板右側預留空間（TOGGLE_RESERVE）。
 // 平常就要看得到（對比至少 3:1），滑過看板或按鈕時更明顯
-export const boardToggle = style({
+// 右側工具（自訂欄位、展開收合）：絕對定位不參與排版，完整階梯（看板約 63px 高）時齒輪疊在箭頭上方
+export const boardTools = style({
     position: 'absolute',
     right: '0.35rem',
     top: '50%',
     transform: 'translateY(-50%)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+});
+
+const toolBtnBase = style({
     width: '1.4rem',
     height: '1.4rem',
     padding: 0,
@@ -279,7 +289,24 @@ export const boardToggle = style({
     },
 });
 
-globalStyle(`${boardTiered}:hover ${boardToggle}`, { opacity: 1 });
+export const boardToggle = toolBtnBase;
+// 齒輪平常淡一點，滑過看板才清楚；打開設定時維持亮著
+export const boardSettings = style([
+    toolBtnBase,
+    {
+        opacity: 0.45,
+        selectors: { '&[aria-expanded="true"]': { opacity: 1, color: vars.color.accent } },
+    },
+]);
+
+globalStyle(`${boardTiered}:hover ${boardToggle}, ${boardTiered}:hover ${boardSettings}`, { opacity: 1 });
+// 精簡階梯（單行，看板不到兩個按鈕高）只留展開收合；自訂欄位改由展開後的齒輪或右鍵打開
+globalStyle(
+    (['inline', 'lean', 'compact', 'tight', 'strip', 'railLow'] as const)
+        .map((t) => `${boardTiered}[data-tier="${t}"] ${boardSettings}`)
+        .join(', '),
+    { display: 'none' },
+);
 
 // 已展開（aria-expanded）時箭頭朝上
 globalStyle(`${boardToggle}[aria-expanded="true"] svg`, { transform: 'rotate(180deg)' });
@@ -287,12 +314,12 @@ globalStyle(`${boardToggle}[aria-expanded="true"] svg`, { transform: 'rotate(180
 globalStyle(`${indexStats} > :first-child`, { marginLeft: 'auto' });
 
 // ---- 各階梯的內容取捨（wide 為完整版，不需另外寫規則） ----
-const tierOf = (base: string) => (name: string) => `${base}[data-tier="${name}"]`;
-const tiersOf = (base: string) => (names: string[], child: string) =>
+const tierOf = (base: string) => (name: BoardTier) => `${base}[data-tier="${name}"]`;
+const tiersOf = (base: string) => (names: readonly BoardTier[], child: string) =>
     names.map((n) => `${tierOf(base)(n)} ${child}`).join(', ');
 const tier = tierOf(boardIndex);
 const tiers = tiersOf(boardIndex);
-const SINGLE_ROW = ['mid', 'inline', 'lean'];
+const SINGLE_ROW: readonly BoardTier[] = ['mid', 'inline', 'lean'];
 
 // mid、inline、lean：成交金額、時間收進預估量的滑過提示；統計單行、依內容寬度，兩組整組靠右
 globalStyle(tiers(SINGLE_ROW, lowPriority), { display: 'none' });
@@ -303,7 +330,6 @@ globalStyle(tiers(['inline', 'lean'], stat), { gap: '2px', lineHeight: 1.1 });
 
 // lean：再窄一點，只留上漲、下跌、較昨日
 globalStyle(tier('lean') + ' ' + secondary, { display: 'none' });
-globalStyle(tier('lean') + ' ' + indexGroup.breadth, { gridTemplateColumns: 'repeat(2, auto)' });
 
 // compact、strip：統計區整組收起
 globalStyle(tiers(['compact', 'strip'], indexStats), { display: 'none' });
@@ -313,8 +339,9 @@ globalStyle(tier('compact') + ' ' + breadthMini, { display: 'flex' });
 // ---- 通用（指數、個股）：單行階梯縮小價格、收緊漲跌兩行 ----
 const gTier = tierOf(boardTiered);
 const gTiers = tiersOf(boardTiered);
-globalStyle(gTiers(['inline', 'lean', 'railLow', 'compact', 'tight'], bigPriceBase), { fontSize: '1.5rem' });
-globalStyle(gTiers(['inline', 'lean', 'railLow', 'compact', 'tight'], changeBlock), { lineHeight: 1.05 });
+const SMALL_PRICE: readonly BoardTier[] = ['inline', 'lean', 'railLow', 'compact', 'tight'];
+globalStyle(gTiers(SMALL_PRICE, bigPriceBase), { fontSize: '1.5rem' });
+globalStyle(gTiers(SMALL_PRICE, changeBlock), { lineHeight: 1.05 });
 
 // strip（保底）：現價與漲跌幅一行，拿掉漲跌點數，確保比其他階梯都窄
 globalStyle(gTier('strip') + ' ' + bigPriceBase, { fontSize: '1.1rem' });
@@ -325,6 +352,11 @@ globalStyle(`${gTier('strip')} ${changeBlock} > :first-child`, { display: 'none'
 // 上排放「上方」的值（高、漲停），下排放「下方」的值（低、跌停），跟價格軸方向一致。
 // 代號名稱交給標題列；參考價、時間收進漲跌與現價的滑過提示；最佳一檔交給五檔面板，看板不重複
 export const boardStock = style({});
+
+// 會畫區間軌、盤前還沒有開高低的個股：wide 只允許單行，放不下就讓給 mid 以下（和盤中軌道放不下時一樣），
+// 高窄面板 08:30、09:00 報價欄才不會先換成兩列再縮回（使用者指定；代價是盤前在窄面板手動展開時右側可能被裁掉）
+export const boardRailPending = style({});
+globalStyle(`${boardRailPending}[data-tier="wide"]`, { flexWrap: 'nowrap' });
 
 export const stockStats = style({
     display: 'flex',
@@ -348,13 +380,17 @@ const pairBase = style({
 
 // 標籤＋數值（高／低、開／量、漲停／跌停）
 export const pairGroup = style([pairBase, { gridTemplateColumns: 'auto auto' }]);
-// 開／量組多一欄量比：上排開，下排量與量比
-export const volGroup = style([pairBase, { gridTemplateColumns: 'auto auto auto auto' }]);
+// 開、量、量比這類單格連續排成一欄：第一格在上排，其餘在下排（預設：上排開，下排量與量比）。
+// 欄數依下排格數（每格標籤加數值兩欄），由 quote-board.tsx 設定
+export const VOL_COLS_VAR = '--qb-vol-cols';
+export const volGroup = style([pairBase, { gridTemplateColumns: `repeat(var(${VOL_COLS_VAR}, 4), auto)` }]);
+export const rowTop = style({ gridRow: 1 });
+export const rowBottom = style({ gridRow: 2 });
 
 // 字級連動 lib/day-range 的 railCellsRem（軌道數字列的收起門檻）
 export const pairLabel = style({
     fontFamily: vars.font.display,
-    fontSize: '0.62rem',
+    fontSize: `${RAIL_METRICS.labelRem}rem`,
     color: vars.color.mutedForeground,
 });
 
@@ -363,10 +399,10 @@ export const pairValue = style({ textAlign: 'right' });
 // 停板組：mid 起收起（到停板時價格旁的漲停／跌停徽章照樣會亮）
 export const stockLimit = style({});
 // 開／量組固定上排開、下排量；lean 只收起開，量留在下排（優先序：量 > 高低 > 開 > 停板）
-export const stockOpen = style({ gridRow: 1 });
-export const stockVol = style({ gridRow: 2 });
+export const stockOpen = style({});
+export const stockVol = style({});
 // 量比（今日成交量 ÷ 昨日成交量），算法放在滑過提示
-export const stockRatio = style({ gridRow: 2 });
+export const stockRatio = style({});
 
 // compact：統計收起時，價格旁留成交量與量比；tight 只留成交量
 export const stockVolTag = style({
@@ -422,7 +458,7 @@ export const railRef = style({
     strokeDasharray: '2 2',
 });
 // 兩端的尺幅度字（-1%、+1%）；字級要和 day-range-rail 量寬度用的 TAG_REM 一致
-export const railTag = style({ fontFamily: vars.font.mono, fontSize: '0.6rem', fill: vars.color.mutedForeground });
+export const railTag = style({ fontFamily: vars.font.mono, fontSize: `${RAIL_METRICS.tagRem}rem`, fill: vars.color.mutedForeground });
 // 參考線兩側的縫：穿過實體或引線時才看得見
 export const railGap = style({ fill: vars.color.panel });
 export const railBody = styleVariants({ up: { fill: vars.color.up }, down: { fill: vars.color.down } });
@@ -438,14 +474,14 @@ export const railNeedle = style({
 // 字級同右側數字欄
 export const railNumbers = style({
     fontFamily: vars.font.mono,
-    fontSize: '0.72rem',
+    fontSize: `${RAIL_METRICS.numberRem}rem`,
     fontVariantNumeric: 'tabular-nums',
     lineHeight: 1.25,
     whiteSpace: 'nowrap',
 });
 // 格距連動 lib/day-range 的 railCellsRem
-export const railCells = style({ display: 'flex', justifyContent: 'flex-start', columnGap: '0.9rem' });
-export const railNumLabel = style([pairLabel, { marginRight: '0.3rem' }]);
+export const railCells = style({ display: 'flex', justifyContent: 'flex-start', columnGap: `${RAIL_METRICS.cellGapRem}rem` });
+export const railNumLabel = style([pairLabel, { marginRight: `${RAIL_METRICS.labelGapRem}rem` }]);
 // 跌停、漲停價整天不變，數值降成次要灰，讓低、開、高跳出來
 export const railNumMuted = style({ color: vars.color.mutedForeground });
 // 數字列兩端的格子（跌停／漲停，或指數期的距低／距高）：railMid、railLow 收起
@@ -477,9 +513,9 @@ export const sectorTag = style({
     ':focus-visible': { outline: `2px solid ${vars.color.accent}`, outlineOffset: 1 },
 });
 
-const RAIL = ['rail', 'railMid', 'railLow'];
+const RAIL: readonly BoardTier[] = ['rail', 'railMid', 'railLow'];
 globalStyle(sTiers(RAIL, railSlot), { display: 'flex' });
-const RAIL_NARROW = ['railMid', 'railLow'];
+const RAIL_NARROW: readonly BoardTier[] = ['railMid', 'railLow'];
 globalStyle(sTiers(RAIL_NARROW, railEdge), { display: 'none' });
 // railLow：圖與數字之間不留縫、數字列行高 1，顯示低、高時也不比沒有數字時高（不會因此換到沒有軌道的階梯）
 globalStyle(sTier('railLow') + ' ' + railSlot, { gap: 0 });
@@ -503,6 +539,44 @@ globalStyle(sTier('rail') + ' ' + sectorTag, { display: 'inline-block' });
 // 高低、開、停板交給軌道；右側只留量與量比，排成一行、對齊軌道中線
 globalStyle(sTiers(RAIL, `${stockStats} > ${pairGroup}`), { display: 'none' });
 globalStyle(sTiers(RAIL, stockOpen), { display: 'none' });
-globalStyle(sTiers(RAIL, stockVol), { gridRow: 'auto' });
-globalStyle(sTiers(RAIL, stockRatio), { gridRow: 'auto' });
+globalStyle(sTiers(RAIL, rowTop), { gridRow: 'auto' });
+globalStyle(sTiers(RAIL, rowBottom), { gridRow: 'auto' });
+// 單格欄排成一行：不論使用者把量、量比排在上排或下排，軌道階梯都放在同一行
+globalStyle(sTiers(RAIL, volGroup), { gridTemplateColumns: 'none', gridAutoFlow: 'column' });
 globalStyle(sTiers(RAIL, stockStats), { alignSelf: 'center', marginLeft: 0 });
+
+// 放在漲跌區內，避免成為階梯量測的直屬節點或污染現價的字寬估算。
+export const srOnly = style({
+    position: 'absolute',
+    width: 1,
+    height: 1,
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clip: 'rect(0, 0, 0, 0)',
+    whiteSpace: 'nowrap',
+    border: 0,
+});
+
+export const statusBadge = style({
+    alignSelf: 'center',
+    flexShrink: 0,
+    fontFamily: vars.font.body,
+    fontSize: '0.56rem',
+    fontWeight: 600,
+    padding: '0 3px',
+    color: vars.color.amber,
+    border: `1px solid ${vars.color.amber}`,
+    borderRadius: vars.radius.sm,
+    whiteSpace: 'nowrap',
+});
+// 單行的窄階梯保留價格空間，狀態事實仍可從提示與讀屏文字取得。
+const STOCK_NARROW: readonly BoardTier[] = ['inline', 'lean', 'compact', 'tight', 'strip'];
+globalStyle(sTiers(STOCK_NARROW, statusBadge), { display: 'none' });
+// 試撮價剛好在漲跌停：窄階梯只留一個標籤，留「試撮」、收起停板徽章，免得看成已經鎖停（寬階梯兩個都顯示）。
+// 同 specificity，靠宣告順序蓋過上一條
+export const statusKeep = style({});
+export const limitWide = style({});
+globalStyle(sTiers(STOCK_NARROW, statusKeep), { display: 'inline' });
+globalStyle(sTiers(STOCK_NARROW, limitWide), { display: 'none' });
+globalStyle(tiers(['inline', 'lean', 'compact', 'strip'], statusBadge), { display: 'none' });

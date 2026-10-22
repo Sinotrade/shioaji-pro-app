@@ -8,8 +8,7 @@ import type { Snapshot } from '../lib/types/market';
 import { useQuery } from './use-query';
 import { useQuote } from './use-stream';
 
-export function useDisplayBook(code: string, supplied?: Snapshot, suppliedContract?: ContractBase) {
-    const quote = useQuote(code);
+export function useSnapshotBaseline(code: string, supplied?: Snapshot, suppliedContract?: ContractBase) {
     const cachedContract = useContract(code);
     const contract = suppliedContract ?? cachedContract;
     const cached = useSyncExternalStore(subscribeMarketSnapshots, () => contract ? getMarketSnapshot(contract) : undefined);
@@ -25,6 +24,12 @@ export function useDisplayBook(code: string, supplied?: Snapshot, suppliedContra
         return existing ? [existing] : pendingMarketSnapshot(contract) ?? fetchSnapshots([contract]);
     }, [key, contract]), `display-snapshot:${key}`, !!contract && !snapshot);
     const baseline = snapshot ?? query.data?.find(s => matchesSnapshot(s, code, contract?.target_code));
+    return { snapshot: baseline, contract };
+}
+
+export function useDisplayBook(code: string, supplied?: Snapshot, suppliedContract?: ContractBase) {
+    const quote = useQuote(code);
+    const { snapshot: baseline, contract } = useSnapshotBaseline(code, supplied, suppliedContract);
     const allowSigned = !!(contract && 'combo' in contract && contract.combo);
     const book = useMemo(() => displayBook(code, baseline, quote?.bidask, contract?.target_code, allowSigned), [code, baseline, quote?.bidask, contract?.target_code, allowSigned]);
     return { quote, snapshot: baseline, book };

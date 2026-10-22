@@ -1,14 +1,22 @@
 // src/lib/utils/format.ts
 
+const numberFormats = new Map<string, Intl.NumberFormat>();
+function numberFormat(minimum: number, maximum: number): Intl.NumberFormat {
+    const key = `${minimum}-${maximum}`;
+    let formatter = numberFormats.get(key);
+    if (!formatter) {
+        formatter = new Intl.NumberFormat('en-US', { minimumFractionDigits: minimum, maximumFractionDigits: maximum });
+        numberFormats.set(key, formatter);
+    }
+    return formatter;
+}
+
 export function fmtPrice(v: number | string | undefined, digits?: number) {
     if (v === undefined || v === null || v === '') return '—';
     const n = Number(v);
     if (Number.isNaN(n)) return '—';
     const d = digits ?? (Math.abs(n) >= 500 ? 0 : 2);
-    return n.toLocaleString('en-US', {
-        minimumFractionDigits: d,
-        maximumFractionDigits: Math.max(d, 2),
-    });
+    return numberFormat(d, Math.max(d, 2)).format(n);
 }
 
 export function fmtInt(v: number | undefined) {
@@ -20,10 +28,7 @@ export function fmtSigned(v: number | string | undefined, digits = 2) {
     if (v === undefined || v === null || v === '') return '—';
     const n = Number(v);
     if (Number.isNaN(n)) return '—';
-    const s = n.toLocaleString('en-US', {
-        minimumFractionDigits: digits,
-        maximumFractionDigits: digits,
-    });
+    const s = numberFormat(digits, digits).format(n);
     return n > 0 ? `+${s}` : s;
 }
 

@@ -33,16 +33,17 @@ export function volumeRatioTitle(
     yesterday: number | undefined,
     stale = false,
 ): string {
-    const formula = '量比 = 今日成交量 ÷ 昨日成交量';
+    const formula = '量比 = 今日累計成交量 ÷ 前一交易日全日成交量';
     if (stale) return `${formula}
-昨日成交量待更新`;
+前一交易日成交量待更新`;
     if (yesterday === undefined) return `${formula}
-昨日成交量尚未取得`;
+前一交易日成交量尚未取得`;
     // 0 可能是新上市第一天、停牌後復牌，也可能是伺服器沒資料的預設值，只寫數值不推論原因
     if (yesterday <= 0) return `${formula}
-昨日成交量為 0，無法計算`;
+前一交易日成交量為 0，無法計算`;
     const ratio = volumeRatioOf(today, yesterday);
     if (ratio === undefined) return formula;
     return `${formula}
-${fmtInt(today)} ÷ ${fmtInt(yesterday)} = ${fmtVolumeRatio(ratio)}`;
+${fmtInt(today)} ÷ ${fmtInt(yesterday)} = ${fmtVolumeRatio(ratio)}
+1.00 代表已達前一交易日全日量`;
 }

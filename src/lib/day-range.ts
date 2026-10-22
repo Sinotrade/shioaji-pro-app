@@ -3,7 +3,10 @@
 // 尺直接畫到漲跌停的話整條軌幾乎是空的）。尺內是線性，影線長短可以直接比較。
 // 這裡只放不依賴 DOM 的計算，畫面在 components/day-range-rail。
 
+import { CLOSE_GRACE } from './intraday-session';
+import type { KBars } from './types/market';
 import { fmtPct } from './utils/format';
+import { wallClockToUtc } from './utils/kbars';
 
 export interface DayRange {
     reference: number;
@@ -59,6 +62,61 @@ export function dirVsOpen(v: number | undefined, open: number | undefined): 'up'
     return v > open ? 'up' : 'down';
 }
 
+// 全盤（日盤＋夜盤）的開高低：有夜盤的期貨、選擇權，交易日從前一個交易日 15:00 的夜盤開始（使用者指定），
+// 日盤的即時成交與快照卻只帶日盤自己的開高低，要補上同一交易日的夜盤。
+// 交易日 dayStart（日盤 08:45，牆鐘秒）的夜盤：前一個平日 15:00 到隔天 05:00（週一是上週五 15:00 到週六 05:00）。
+// 用時段框住，不靠「碰到日盤 K 才停」：冷門合約前一天日盤常常沒有 K，會把更早一段夜盤混進來
+// shortcut: 不知道國定假日，前一個平日放假時找不到夜盤（照日盤），要補再接交易日曆
+export function nightWindowOf(dayStart: number): { start: number; end: number } {
+    const day = 86400;
+    const d0 = Math.floor(dayStart / day) * day;
+    const prev = d0 - (new Date(d0 * 1000).getUTCDay() === 1 ? 3 : 1) * day;
+    return { start: prev + 15 * 3600, end: prev + day + 5 * 3600 };
+}
+
+// 1 分 K（label 為分鐘結束，已排序）裡落在夜盤時段（含收盤定盤寬限）的開高低與成交量（口數加總；K 沒帶 Volume 時為 undefined）
+export function nightSessionOhl(k: Pick<KBars, 'datetime' | 'Open' | 'High' | 'Low'> & Partial<Pick<KBars, 'Volume'>>, win: { start: number; end: number }) {
+    let open: number | undefined;
+    let high = -Infinity;
+    let low = Infinity;
+    let volume: number | undefined = k.Volume ? 0 : undefined;
+    for (let i = 0; i < k.datetime.length; i++) {
+        const t = wallClockToUtc(k.datetime[i] ?? '');
+        if (t <= win.start || t > win.end + CLOSE_GRACE) continue;
+        if (open === undefined) open = k.Open[i];
+        high = Math.max(high, k.High[i] ?? -Infinity);
+        low = Math.min(low, k.Low[i] ?? Infinity);
+        if (volume !== undefined) volume += k.Volume![i] ?? 0;
+    }
+    return open === undefined ? undefined : { open, high, low, volume };
+}
+
+// 全盤的成交量：日盤累計量加上同一交易日的夜盤量（使用者指定，和含夜盤的開高低一致）。
+// 沒有夜盤資料或夜盤量時照日盤；試撮的量是模擬撮合量、不是成交，全盤時只算夜盤
+export function withNightVolume(
+    dayVolume: number | undefined,
+    night: { volume?: number } | undefined,
+    simtrade = false,
+): number | undefined {
+    if (night?.volume === undefined || !Number.isFinite(night.volume)) return dayVolume;
+    const day = simtrade || dayVolume === undefined || !Number.isFinite(dayVolume) ? 0 : dayVolume;
+    return day + night.volume;
+}
+
+// 夜盤的開盤價當全盤開盤，最高、最低取兩段的極值；沒有夜盤資料時照日盤
+export function withNightSession(
+    day: { open: number | undefined; high: number | undefined; low: number | undefined },
+    night: { open: number; high: number; low: number } | undefined,
+) {
+    if (!night) return day;
+    const has = (v: number | undefined): v is number => v !== undefined && Number.isFinite(v);
+    return {
+        open: night.open,
+        high: has(day.high) ? Math.max(night.high, day.high) : night.high,
+        low: has(day.low) ? Math.min(night.low, day.low) : night.low,
+    };
+}
+
 // 0（左端）到 1（右端），參考價在 0.5。有尺時線性、超出就貼在兩端；
 // 沒有尺時兩側各自線性對到漲跌停（漲跌停距離不對稱時兩側比例不同）
 export function railPos(price: number, r: DayRange, scale: number | null): number {
@@ -91,14 +149,20 @@ export function railTicks(r: DayRange, scale: number | null): number[] {
 }
 
 // 滑過提示：開高低與平盤價（軌道變窄時數字列會收起，這裡一定看得到）、看板上沒有的資訊，以及粗細兩段怎麼看
-export function railTitle(r: DayRange, scale: number | null, fmt: (v: number) => string): string {
+export function railTitle(r: DayRange, scale: number | null, fmt: (v: number) => string,
+    edges: 'limits' | 'distance' = 'limits', fmtPoints: (v: number) => string = fmt): string {
     const pct = (to: number, from: number) => fmtPct(((to - from) / from) * 100);
     const kind = r.close > r.open ? '陽線' : r.close < r.open ? '陰線' : '十字線';
     const ruler = scale === null ? '刻度到漲跌停' : `刻度 ±${scale}%，每格 ${tickStep(scale)}%`;
+    const toLimits = `距漲停 ${pct(r.limitUp, r.close)}｜距跌停 ${pct(r.limitDown, r.close)}`;
+    // 指數期的數字列兩端是距低、距高點數（railMid 以下被收起，提示是唯一來源），尺到漲跌停時也要寫
+    const distances = edges === 'distance'
+        ? `距低 ${fmtPoints(r.close - r.low)} 點｜距高 ${fmtPoints(r.high - r.close)} 點${scale === null ? `｜${toLimits}` : ''}`
+        : toLimits;
     return (
-        `開 ${fmt(r.open)}｜高 ${fmt(r.high)}｜低 ${fmt(r.low)}｜平盤 ${fmt(r.reference)}\n` +
-        `較開盤 ${pct(r.close, r.open)}（${kind}）｜距漲停 ${pct(r.limitUp, r.close)}｜距跌停 ${pct(r.limitDown, r.close)}｜${ruler}\n` +
-        '粗段：開盤到現價｜細段：今日最低到最高'
+        `開 ${fmt(r.open)}｜高 ${fmt(r.high)}（${pct(r.high, r.reference)}）｜低 ${fmt(r.low)}（${pct(r.low, r.reference)}）｜平盤 ${fmt(r.reference)}（幅度對平盤）\n` +
+        `較開盤 ${pct(r.close, r.open)}（${kind}）｜${distances}｜${ruler}\n` +
+        '粗：開到現價｜細：最低到最高'
     );
 }
 
@@ -109,6 +173,10 @@ export function railTitle(r: DayRange, scale: number | null, fmt: (v: number) =>
 // 連動 quote-board.css.ts：標籤字級在 pairLabel、右距在 railNumLabel、數值字級在 railNumbers、格距在 railCells，
 // 改任何一個都要一起改這裡
 export const RAIL_CHARS: readonly number[] = [3, 4, 5, 6, 7, 8, 9, 10];
+export const RAIL_METRICS = {
+    tagRem: 0.6, labelRem: 0.62, labelGapRem: 0.3, numberRem: 0.72,
+    charEm: 0.6, cellGapRem: 0.9, padRem: 0.25,
+} as const;
 
 export function railChars(values: readonly string[]): number {
     const n = Math.max(...values.map((v) => v.length));
@@ -116,5 +184,6 @@ export function railChars(values: readonly string[]): number {
 }
 
 export function railCellsRem(cells: number, chars: number): number {
-    return cells * (0.62 + 0.3 + chars * 0.72 * 0.6) + (cells - 1) * 0.9 + 0.25;
+    const m = RAIL_METRICS;
+    return cells * (m.labelRem + m.labelGapRem + chars * m.numberRem * m.charEm) + (cells - 1) * m.cellGapRem + m.padRem;
 }

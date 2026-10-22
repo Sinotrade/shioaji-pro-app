@@ -5,6 +5,8 @@ import {
     dayRangeOf,
     dirVsOpen,
     INDEX_FUTURE_SCALES,
+    nightSessionOhl,
+    nightWindowOf,
     railCellsRem,
     railChars,
     railEndPcts,
@@ -12,8 +14,81 @@ import {
     railScale,
     railTicks,
     railTitle,
+    withNightSession,
+    withNightVolume,
     type DayRange,
 } from './day-range';
+import type { KBars } from './types/market';
+import { wallClockToUtc } from './utils/kbars';
+
+// 1 分 K（label 為分鐘結束）：[時間, 開, 高, 低]
+const kbars = (rows: [string, number, number, number][]) =>
+    ({ datetime: rows.map((r) => r[0]), Open: rows.map((r) => r[1]), High: rows.map((r) => r[2]), Low: rows.map((r) => r[3]) }) as KBars;
+
+describe('全盤開高低：補上同一交易日的夜盤', () => {
+    const at = (s: string) => wallClockToUtc(s);
+
+    it('夜盤時段：前一個平日 15:00 到隔天 05:00，週一是上週五 15:00 到週六 05:00', () => {
+        expect(nightWindowOf(at('2026-10-21T08:45:00'))).toEqual({ start: at('2026-10-20T15:00:00'), end: at('2026-10-21T05:00:00') });
+        expect(nightWindowOf(at('2026-10-19T08:45:00'))).toEqual({ start: at('2026-10-16T15:00:00'), end: at('2026-10-17T05:00:00') });
+    });
+
+    it('週一日盤取上週五夜盤（含 05:00 那根），日盤與時段外的 K 不算', () => {
+        const k = kbars([
+            ['2026-10-16T13:45:00', 47000, 47010, 46990],
+            ['2026-10-16T15:01:00', 47284, 47300, 47250],
+            ['2026-10-16T23:59:00', 47320, 47390, 47310],
+            ['2026-10-17T05:00:00', 47350, 47400, 47200],
+            ['2026-10-19T08:46:00', 47500, 47600, 47450],
+        ]);
+        expect(nightSessionOhl(k, nightWindowOf(at('2026-10-19T08:45:00')))).toEqual({ open: 47284, high: 47400, low: 47200 });
+    });
+
+    it('冷門合約前一天日盤沒有 K：只取這個交易日的夜盤，不混進更早一段夜盤', () => {
+        const k = kbars([
+            ['2026-10-19T10:00:00', 50, 50, 50],
+            ['2026-10-19T22:00:00', 80, 85, 78],
+            ['2026-10-20T22:30:00', 60, 61, 59],
+        ]);
+        expect(nightSessionOhl(k, nightWindowOf(at('2026-10-21T08:45:00')))).toEqual({ open: 60, high: 61, low: 59 });
+    });
+
+    it('時段內沒有 K（前一個平日放假、或只有日盤）時回傳 undefined，看板照日盤', () => {
+        const k = kbars([['2026-10-16T13:45:00', 47000, 47010, 46990], ['2026-10-19T08:46:00', 47500, 47600, 47450]]);
+        expect(nightSessionOhl(k, nightWindowOf(at('2026-10-19T08:45:00')))).toBeUndefined();
+    });
+
+    it('開盤用夜盤的，最高最低取兩段極值；日盤還沒有值（試撮）時用夜盤的；沒有夜盤時照日盤', () => {
+        // 2026-10-21 台指期近月：夜盤 15:00 開 46,490，日盤 08:45 開 47,240
+        const night = { open: 46490, high: 47000, low: 46400 };
+        expect(withNightSession({ open: 47240, high: 47288, low: 47131 }, night)).toEqual({ open: 46490, high: 47288, low: 46400 });
+        expect(withNightSession({ open: undefined, high: undefined, low: undefined }, night)).toEqual(night);
+        const day = { open: 47240, high: 47288, low: 47131 };
+        expect(withNightSession(day, undefined)).toBe(day);
+    });
+
+    it('夜盤量：只加總夜盤時段內的 K（日盤與時段外不算）；K 沒帶 Volume 時不猜', () => {
+        const base = kbars([
+            ['2026-10-16T13:45:00', 47000, 47010, 46990],
+            ['2026-10-16T15:01:00', 47284, 47300, 47250],
+            ['2026-10-17T05:00:00', 47350, 47400, 47200],
+            ['2026-10-19T08:46:00', 47500, 47600, 47450],
+        ]);
+        const win = nightWindowOf(at('2026-10-19T08:45:00'));
+        expect(nightSessionOhl({ ...base, Volume: [900, 120, 30, 5000] }, win)).toEqual({ open: 47284, high: 47400, low: 47200, volume: 150 });
+        expect(nightSessionOhl(base, win)?.volume).toBeUndefined();
+    });
+
+    it('全盤量 = 日盤累計量 + 夜盤量；沒有夜盤量照日盤；試撮的模擬量不算', () => {
+        expect(withNightVolume(11453, { volume: 27540 })).toBe(38993);
+        expect(withNightVolume(11453, undefined)).toBe(11453);
+        expect(withNightVolume(11453, { volume: undefined })).toBe(11453);
+        // 08:30 試撮：日盤還沒成交，全盤量只有夜盤
+        expect(withNightVolume(320, { volume: 27540 }, true)).toBe(27540);
+        // 只有夜盤資料（日盤量缺）
+        expect(withNightVolume(undefined, { volume: 27540 })).toBe(27540);
+    });
+});
 
 // 台指期近月（2026-10-16 夜盤實際數字）：今天只在 ±0.2% 內，漲跌停 ±10%
 const TXF: DayRange = {
@@ -143,9 +218,9 @@ describe('railTitle', () => {
 
     it('第一行開高低與平盤價（數字列收起時的退路），第二行看板上沒有的資訊與尺度，第三行說明粗細兩段', () => {
         expect(railTitle(TXF, 1, fmt)).toBe(
-            '開 47,269｜高 47,380｜低 47,214｜平盤 47,284\n' +
+            '開 47,269｜高 47,380（+0.20%）｜低 47,214（-0.15%）｜平盤 47,284（幅度對平盤）\n' +
                 '較開盤 +0.04%（陽線）｜距漲停 +9.99%｜距跌停 -10.01%｜刻度 ±1%，每格 0.5%\n' +
-                '粗段：開盤到現價｜細段：今日最低到最高',
+                '粗：開到現價｜細：最低到最高',
         );
     });
 
@@ -157,6 +232,14 @@ describe('railTitle', () => {
     it('現價低於開盤是陰線，等於開盤是十字線', () => {
         expect(railTitle({ ...TXF, close: 47200 }, 1, fmt)).toContain('（陰線）');
         expect(railTitle({ ...TXF, close: 47269 }, 1, fmt)).toContain('較開盤 0.00%（十字線）');
+    });
+
+    it('指數期提示補足窄版收起的距低、距高點數；刻度到停板時維持停板幅度', () => {
+        const title = railTitle(TXF, 2.5, fmt, 'distance', value => value.toFixed(1));
+        expect(title).toContain('距低 75.0 點｜距高 91.0 點');
+        expect(title).not.toContain('距漲停');
+        expect(railTitle(TXF, null, fmt, 'distance')).toContain('距漲停');
+        expect(railTitle(TXF, null, fmt, 'distance')).toContain('距低');
     });
 });
 
