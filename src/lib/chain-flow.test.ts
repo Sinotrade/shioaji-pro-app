@@ -4,6 +4,7 @@ import {
     FlowBook,
     groupFlow,
     leaders,
+    marketSeconds,
     memberFlows,
     barSlot,
     minuteSlot,
@@ -149,6 +150,27 @@ describe('FlowBook', () => {
         book.tick('B', 11, 500);
         expect(book.codes.get('B')!.last).toBe(11);
         expect(book.codes.get('B')!.tickAmount).toBe(500);
+    });
+
+    it('a delayed bar never replaces a newer tick price; a newer bar does', () => {
+        const book = new FlowBook();
+        book.addBar(bar('A', 40, 100, 1));
+        book.tick('A', 103, null, marketSeconds('09:42:30'));
+        book.addBar(bar('A', 41, 102, 1)); // closes 09:42:00, older than the tick
+        expect(book.codes.get('A')!.last).toBe(103);
+        book.addBar(bar('A', 42, 104, 1)); // closes 09:43:00
+        expect(book.codes.get('A')!.last).toBe(104);
+        // a tick without a time is taken as newest
+        book.tick('A', 105, null);
+        expect(book.codes.get('A')!.last).toBe(105);
+    });
+
+    it('counts the partially covered snapshot minute pro rata', () => {
+        const book = new FlowBook();
+        book.seed('A', { ref: 10, close: 10, totalAmount: 1000, shares: null, slot: 30, fraction: 0.25 });
+        book.addBar(bar('A', 30, 10, 400));
+        book.addBar(bar('A', 31, 10, 50));
+        expect(sessionTurnover(book.codes.get('A')!)).toBe(1000 + 300 + 50);
     });
 
     it('session turnover = seed (before the panel opened) + bars after it, never below a tick total', () => {

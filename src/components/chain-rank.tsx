@@ -12,7 +12,7 @@
 // while the panel is hidden.
 
 import { ChevronsDownUp, PanelRightOpen, Triangle } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { slotLabel, SESSION_SLOTS } from '../lib/chain-flow';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
 import { comparesRanks, rankOrder, rankTurnover, rankValue, rankMoves, riverLength, riverWidth, type RankMetric } from '../lib/chain-motion';
@@ -112,6 +112,13 @@ export function FlowRank({
     const docked = layoutSize.width >= CARD_DOCK_PX;
     const [drawer, setDrawer] = useState(false);
     const showCard = selectedRow !== null && (docked || drawer);
+    const drawerId = useId();
+    const drawerToggle = useRef<HTMLButtonElement | null>(null);
+    // closing from inside the drawer (close button, Escape) returns focus to its trigger
+    const closeDrawer = () => {
+        setDrawer(false);
+        drawerToggle.current?.focus();
+    };
     const label = metricLabel(metric);
 
     // rank changes and this minute's biggest mover
@@ -305,8 +312,10 @@ export function FlowRank({
                         {!docked && selectedRow && (
                             <button
                                 type='button'
+                                ref={drawerToggle}
                                 className={s.rankDrawerToggle}
-                                aria-pressed={drawer}
+                                aria-expanded={drawer}
+                                aria-controls={drawer ? drawerId : undefined}
                                 onClick={() => setDrawer((v) => !v)}
                                 title='顯示選取族群的明細'
                             >
@@ -428,7 +437,8 @@ export function FlowRank({
                         paused={paused}
                         nameOf={nameOf}
                         onPick={onPick}
-                        onClose={docked ? undefined : () => setDrawer(false)}
+                        onClose={docked ? undefined : closeDrawer}
+                        id={docked ? undefined : drawerId}
                     />
                 )}
             </div>

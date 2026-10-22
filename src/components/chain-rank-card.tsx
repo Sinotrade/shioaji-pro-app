@@ -5,7 +5,7 @@
 // largest net-inflow and net-outflow members over the window.
 
 import { X } from 'lucide-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import { chainFlowBook } from '../lib/chain-flow-feed';
 import { memberFlows, slotLabel } from '../lib/chain-flow';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
@@ -33,6 +33,7 @@ export function FlowRankCard({
     nameOf,
     onPick,
     onClose,
+    id,
 }: {
     row: FlowRow;
     metric: RankMetric;
@@ -42,9 +43,25 @@ export function FlowRankCard({
     paused: boolean;
     nameOf: (code: string) => string;
     onPick: (code: string) => void;
-    /** Shown as a drawer over the lanes (narrow panel): a close button. */
+    /**
+     * Shown as a drawer over the lanes (narrow panel): a close button, focus
+     * moves into the drawer when it opens and Escape closes it.
+     */
     onClose?: () => void;
+    /** Element id (the drawer toggle's aria-controls). */
+    id?: string;
 }) {
+    const drawer = onClose !== undefined;
+    const rootRef = useRef<HTMLElement | null>(null);
+    useEffect(() => {
+        if (drawer) rootRef.current?.focus();
+    }, [drawer]);
+    const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+        if (onClose && e.key === 'Escape') {
+            e.stopPropagation();
+            onClose();
+        }
+    };
     const f = row.flow;
     const value = rankValue(f, now, metric);
     const point = now !== null ? rotationPoint(f, now) : null;
@@ -81,7 +98,14 @@ export function FlowRankCard({
     const live = !reducedMotion && !paused;
 
     return (
-        <aside className={`${s.card} ${onClose ? s.cardDrawer : ''}`} aria-label={`${row.theme.name} 明細`}>
+        <aside
+            ref={rootRef}
+            id={id}
+            className={`${s.card} ${onClose ? s.cardDrawer : ''}`}
+            aria-label={`${row.theme.name} 明細`}
+            tabIndex={drawer ? -1 : undefined}
+            onKeyDown={drawer ? onKeyDown : undefined}
+        >
             <div className={s.cardHead}>
                 <span className={s.kindMark[row.theme.kind === 'chain' ? 'chain' : 'theme']} aria-hidden='true' />
                 <span className={s.cardTitle}>{row.theme.name}</span>

@@ -43,6 +43,18 @@ export function barSlot(time: string | undefined | null): number | null {
     return Math.min(label - 1, SESSION_SLOTS - 1);
 }
 
+/** Wall-clock "HH:MM[:SS[.ffffff]]" → seconds since midnight, or null. */
+export function marketSeconds(time: string | undefined | null): number | null {
+    const match = /^(\d{1,2}):(\d{2})(?::(\d{2})(\.\d+)?)?/.exec(time ?? '');
+    if (!match) return null;
+    return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3] ?? 0) + Number(match[4] ?? 0);
+}
+
+/** Market time (seconds since midnight) of a bar's close: the end of its minute. */
+export function barEndSeconds(slot: number): number {
+    return (SESSION_START_MIN + slot + 1) * 60;
+}
+
 export function slotLabel(slot: number): string {
     const minutes = SESSION_START_MIN + slot;
     return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
@@ -155,9 +167,16 @@ export interface CodeFlow {
     given: Uint8Array;
     /** Latest price from a tick, bar or seed. */
     last: number | null;
-    /** Session-to-date turnover at seed time, and the slot it covers up to (exclusive). */
+    /** Market time (seconds since midnight) of `last`; an older price never replaces it. */
+    lastAt: number;
+    /** Session-to-date turnover at seed time, and the first slot it does not fully cover. */
     seedAmount: number;
     seedSlot: number;
+    /**
+     * Share of `seedSlot` already inside `seedAmount` (snapshot taken mid-minute,
+     * e.g. 0.2 at 09:40:12). That minute's bar only adds the remaining share.
+     */
+    seedFrac: number;
     /** Price at seed time: the baseline of the first bar when the panel opens mid-session. */
     seedClose: number | null;
     /** Latest cumulative turnover seen on a tick. */
@@ -169,8 +188,12 @@ export interface SeedInput {
     close: number | null;
     totalAmount: number;
     shares: number | null;
-    /** First slot not covered by the snapshot (bars from this slot on are new). */
+    /** First slot not fully covered by the snapshot (bars from this slot on are new). */
     slot: number;
+    /** Share of `slot` already inside `totalAmount` (0 = none, the default). */
+    fraction?: number;
+    /** Market time (seconds since midnight) of `close`. */
+    at?: number;
 }
 
 export class FlowBook {
@@ -193,8 +216,10 @@ export class FlowBook {
                 net: new Float64Array(SESSION_SLOTS),
                 given: new Uint8Array(SESSION_SLOTS),
                 last: null,
+                lastAt: -Infinity,
                 seedAmount: 0,
                 seedSlot: 0,
+                seedFrac: 0,
                 seedClose: null,
                 tickAmount: 0,
             };
@@ -229,12 +254,16 @@ export class FlowBook {
         if (input.close && input.close > 0) {
             flow.seedClose = input.close;
             if (flow.last === null) flow.last = input.close;
+            else if (input.at !== undefined && input.at > flow.lastAt) flow.last = input.close;
+            if (input.at !== undefined && input.at > flow.lastAt) flow.lastAt = input.at;
         }
+        flow.seedAmount = Math.max(0, input.totalAmount || 0);
+        flow.seedSlot = Math.max(0, Math.min(SESSION_SLOTS, input.slot));
+        const fraction = input.fraction ?? 0;
+        flow.seedFrac = flow.seedSlot < SESSION_SLOTS && fraction > 0 ? Math.min(1, fraction) : 0;
         // the first bar's direction depends on the baseline just installed
         const first = firstFilled(flow.close, 0);
         if (first !== null && !flow.given[first]) flow.net[first] = computeNet(flow, first);
-        flow.seedAmount = Math.max(0, input.totalAmount || 0);
-        flow.seedSlot = Math.max(0, Math.min(SESSION_SLOTS, input.slot));
         if (input.shares && input.shares > 0) flow.shares = input.shares;
         this.version += 1;
     }
@@ -249,19 +278,27 @@ export class FlowBook {
         // the next bar's previous close may have changed
         const next = firstFilled(flow.close, bar.slot + 1);
         if (next !== null && !flow.given[next]) flow.net[next] = computeNet(flow, next);
-        // a bar never moves the price backwards in time
-        const latestBar = lastFilled(flow.close, SESSION_SLOTS - 1);
-        if (latestBar === bar.slot) flow.last = bar.close;
+        // a bar (or a delayed one) never moves the price backwards in time,
+        // neither past a newer bar nor past a newer tick
+        const at = barEndSeconds(bar.slot);
+        if (at >= flow.lastAt) {
+            flow.last = bar.close;
+            flow.lastAt = at;
+        }
         if (this.firstSlot === null || bar.slot < this.firstSlot) this.firstSlot = bar.slot;
         if (this.lastSlot === null || bar.slot > this.lastSlot) this.lastSlot = bar.slot;
         this.version += 1;
         return true;
     }
 
-    tick(code: string, close: number, totalAmount: number | null) {
+    /** `at` = the trade's market time (seconds since midnight); unknown ticks are taken as newest. */
+    tick(code: string, close: number, totalAmount: number | null, at: number | null = null) {
         const flow = this.codes.get(code);
         if (!flow || !(close > 0)) return;
-        flow.last = close;
+        if (at === null || at >= flow.lastAt) {
+            flow.last = close;
+            if (at !== null) flow.lastAt = at;
+        }
         if (totalAmount && totalAmount > flow.tickAmount) flow.tickAmount = totalAmount;
         this.version += 1;
     }
@@ -291,17 +328,25 @@ function computeNet(flow: CodeFlow, slot: number): number {
     // unknown when the panel opens mid-session, so use the snapshot price
     // taken just before; only the 09:00 bar compares with the reference
     // (yesterday's close). Without either the direction is unknown (0).
-    const seedBase = flow.seedClose !== null && slot >= flow.seedSlot - 1 ? flow.seedClose : null;
+    // (the snapshot's own minute when taken mid-minute, else the minute just before it)
+    const seedBase =
+        flow.seedClose !== null && slot >= flow.seedSlot - (flow.seedFrac > 0 ? 0 : 1) ? flow.seedClose : null;
     const prev = prevSlot !== null ? flow.close[prevSlot]! : (seedBase ?? (slot === 0 ? flow.ref : null));
     if (!prev) return 0;
     const amount = flow.amount[slot]!;
     return close > prev ? amount : close < prev ? -amount : 0;
 }
 
-/** Session-to-date turnover: seed + bars after the seed, or the latest tick total. */
+/**
+ * Session-to-date turnover: seed + bars after the seed (the snapshot's own
+ * minute pro rata: only the part after the snapshot time is new), or the
+ * latest tick total.
+ */
 export function sessionTurnover(flow: CodeFlow): number {
     let bars = 0;
-    for (let i = flow.seedSlot; i < SESSION_SLOTS; i += 1) bars += flow.amount[i]!;
+    for (let i = flow.seedSlot; i < SESSION_SLOTS; i += 1) {
+        bars += i === flow.seedSlot ? flow.amount[i]! * (1 - flow.seedFrac) : flow.amount[i]!;
+    }
     let all = 0;
     for (let i = 0; i < SESSION_SLOTS; i += 1) all += flow.amount[i]!;
     return Math.max(flow.seedAmount + bars, all, flow.tickAmount);

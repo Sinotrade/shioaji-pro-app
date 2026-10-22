@@ -27,7 +27,7 @@ import { FocusCard, TierCard, type TierView } from './chain-detail';
 import { FlowHeat } from './chain-heat';
 import { FlowRank } from './chain-rank';
 import { FlowRotation } from './chain-rotation';
-import { NextBar, readPref, Segment, useBoxSize, usePaused, useReducedMotion, writePref, type FlowRow } from './chain-ui';
+import { NextBar, readPref, Segment, useBoxSize, useFeedPhase, usePaused, useReducedMotion, writePref, type FlowRow } from './chain-ui';
 import * as panel from './panel.css';
 import * as s from './chain-map.css';
 
@@ -98,6 +98,7 @@ export function ChainMap({
     const feed = chainFlowStatus();
     const now = book.lastSlot;
     const from = book.firstSlot;
+    const phase = useFeedPhase(book.date, feed.lastBarAt, now, paused);
 
     // ── group rows (each view orders them itself) ──
     const pool = useMemo(() => (themes ?? []).filter((t) => kind === 'all' || t.kind === kind), [themes, kind]);
@@ -202,19 +203,22 @@ export function ChainMap({
     }
 
     const showDetail = rootSize.height === 0 || rootSize.height >= DETAIL_MIN_PX;
-    // seeded after 13:30: the snapshot already covers the whole session
-    let closed = false;
-    if (now === null) for (const f of book.codes.values()) if (f.seedSlot >= SESSION_SLOTS) { closed = true; break; }
-    const live = now !== null && !closed && now < SESSION_SLOTS - 1;
+    // live / closed come from the Taipei clock, the session date and feed
+    // freshness (useFeedPhase); seeded after 13:30 also means the snapshot
+    // already covers the whole session
+    let closed = phase === 'closed';
+    if (!closed && now === null) for (const f of book.codes.values()) if (f.seedSlot >= SESSION_SLOTS) { closed = true; break; }
+    const live = !closed && phase === 'live';
     const minutes = now !== null && from !== null ? now - from + 1 : 0;
-    const liveText =
-        now !== null
-            ? `1 分 K・${feed.kbarCodes} 檔・已接收 ${minutes} 分鐘`
-            : closed
-              ? '已收盤・今日彙總'
-              : feed.batches > 0
-                ? `1 分 K 已訂閱 ${feed.subscribed}/${feed.batches} 批・等待下一根`
-                : '';
+    const liveText = closed
+        ? now !== null
+            ? `已收盤・1 分 K 已接收 ${minutes} 分鐘`
+            : '已收盤・今日彙總'
+        : now !== null
+          ? `1 分 K・${feed.kbarCodes} 檔・已接收 ${minutes} 分鐘${phase === 'stalled' ? '・暫無新資料' : ''}`
+          : feed.batches > 0
+            ? `1 分 K 已訂閱 ${feed.subscribed}/${feed.batches} 批・等待下一根`
+            : '';
 
     return (
         <div ref={rootRef} className={s.wrap}>
@@ -282,7 +286,7 @@ export function ChainMap({
                     </span>
                 ) : liveText ? (
                     <span className={s.live} title='即時 1 分 K 訂閱；其他面板已訂閱的 tick 會更快更新價格。開啟面板前的分鐘只有 snapshot 彙總，不下載歷史 K 線'>
-                        <Radio size={11} className={now !== null ? s.liveOn : undefined} aria-hidden='true' />
+                        <Radio size={11} className={live ? s.liveOn : undefined} aria-hidden='true' />
                         {liveText}
                     </span>
                 ) : null}

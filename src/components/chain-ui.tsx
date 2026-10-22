@@ -4,6 +4,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { SESSION_SLOTS, type GroupFlow } from '../lib/chain-flow';
+import { feedPhase, type FeedPhase } from '../lib/chain-flow-feed';
 import * as s from './chain-map.css';
 
 export function readPref<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
@@ -158,6 +159,26 @@ export interface FlowRow {
     theme: import('../lib/company-data/types').Theme;
     codes: string[];
     flow: GroupFlow;
+}
+
+/** Re-check interval of {@link useFeedPhase} (clock-driven changes: close, stall). */
+const PHASE_CHECK_MS = 5_000;
+
+/**
+ * Live / closed state of the minute-bar feed, re-evaluated against the
+ * Taipei clock while the panel is visible, so it flips at the close (or when
+ * bars stop arriving) even though no new bar triggers a render.
+ */
+export function useFeedPhase(session: string | null, lastBarAt: number | null, lastSlot: number | null, paused: boolean): FeedPhase {
+    const phase = feedPhase({ now: Date.now(), session, lastBarAt, lastSlot });
+    // holds the last clock-checked phase: setting an unchanged value does not re-render
+    const [, setChecked] = useState(phase);
+    useEffect(() => {
+        if (paused || phase === 'closed') return;
+        const timer = setInterval(() => setChecked(feedPhase({ now: Date.now(), session, lastBarAt, lastSlot })), PHASE_CHECK_MS);
+        return () => clearInterval(timer);
+    }, [paused, phase, session, lastBarAt, lastSlot]);
+    return phase;
 }
 
 /**

@@ -20,7 +20,7 @@
 //   replaces the sign estimate (future quotex inner/outer money flow).
 
 import { useEffect, useRef, useState } from 'react';
-import { FlowBook, minuteSlot, normDate, parseKbarEvent, SESSION_SLOTS } from './chain-flow';
+import { FlowBook, marketSeconds, minuteSlot, normDate, parseKbarEvent, SESSION_SLOTS, SESSION_START_MIN } from './chain-flow';
 import { isKbarCode } from './chain-map';
 import { getMarketSnapshot } from './market-snapshot-store';
 import { fetchSnapshots, subscribeKbars, unsubscribeKbars } from './shioaji';
@@ -132,28 +132,77 @@ export function kbarBatches(members: readonly FeedMember[], size = FEED_BATCH, s
     return batches;
 }
 
-function seedFrom(code: string, snapshot: Snapshot, shares: number | null) {
+/** Adopt the newest session date among `rows` before seeding any of them (order-independent). */
+function adoptDate(rows: readonly Snapshot[]) {
+    let newest: string | null = null;
+    for (const row of rows) {
+        const date = normDate(row.datetime);
+        if (date && (newest === null || date > newest)) newest = date;
+    }
     // a stock that has not traded today carries an older datetime: never let
     // it roll the book back a day
+    if (newest && (chainFlowBook.date === null || newest > chainFlowBook.date)) chainFlowBook.ensureDate(newest);
+}
+
+function seedFrom(code: string, snapshot: Snapshot, shares: number | null) {
+    adoptDate([snapshot]);
     const date = normDate(snapshot.datetime);
-    if (date && (chainFlowBook.date === null || date > chainFlowBook.date)) chainFlowBook.ensureDate(date);
     const close = snapshot.close > 0 ? snapshot.close : null;
+    if (date && chainFlowBook.date && date < chainFlowBook.date) {
+        // last traded on an earlier session (suspended, illiquid): its
+        // turnover and minutes belong to that day. Keep only the reference:
+        // that session's close is this session's previous close.
+        chainFlowBook.seed(code, { ref: close, close, totalAmount: 0, shares, slot: 0 });
+        return;
+    }
     const ref = close !== null && Number.isFinite(snapshot.change_price) ? close - snapshot.change_price : null;
     const time = snapshot.datetime?.slice(11) ?? '';
     const slot = minuteSlot(time);
-    const minutes = /^(\d{1,2}):(\d{2})/.exec(time);
-    // the snapshot's own minute is covered too (its turnover already holds
-    // part of that minute: counting the minute bar again would double it);
-    // after the close the whole session is covered; before the open nothing is
-    const covered =
-        slot !== null ? slot + 1 : minutes && Number(minutes[1]) >= 13 ? SESSION_SLOTS : 0;
+    const seconds = marketSeconds(time);
+    // minutes before the snapshot's own are fully covered; that minute is
+    // covered pro rata (09:40:12 → 20 % of minute 40 is already in the
+    // turnover, the rest arrives with its bar); after the close the whole
+    // session is covered; before the open nothing is
+    const covered = slot !== null ? slot : seconds !== null && seconds >= 13 * 3600 ? SESSION_SLOTS : 0;
+    const fraction = slot !== null && seconds !== null ? (seconds - (SESSION_START_MIN + slot) * 60) / 60 : 0;
     chainFlowBook.seed(code, {
         ref: ref && ref > 0 ? ref : null,
         close,
         totalAmount: snapshot.total_amount || 0,
         shares,
         slot: covered,
+        fraction,
+        ...(seconds !== null ? { at: seconds } : {}),
     });
+}
+
+export type FeedPhase = 'waiting' | 'live' | 'stalled' | 'closed';
+
+/** No bar for this long while the market is open: the stream is stalled. */
+export const BAR_STALE_MS = 3 * 60_000;
+const OPEN_SECONDS = SESSION_START_MIN * 60;
+/** The closing-auction bar may be stamped up to 13:34 and arrive a little later. */
+const LIVE_UNTIL_SECONDS = (13 * 60 + 36) * 60;
+
+/**
+ * Whether the minute-bar feed is live, from the Taipei clock, the session
+ * date and feed freshness, never from the last bar alone (which stops
+ * changing once bars stop, e.g. after the close or when the stream stalls).
+ */
+export function feedPhase(input: {
+    now: number;
+    /** Session date of the book (null before anything arrived). */
+    session: string | null;
+    lastBarAt: number | null;
+    lastSlot: number | null;
+}): FeedPhase {
+    const today = taipeiDate(input.now);
+    const seconds = taipeiSeconds(input.now);
+    if (input.session !== null && input.session < today) return 'closed';
+    if (input.lastSlot !== null && input.lastSlot >= SESSION_SLOTS - 1) return 'closed';
+    if (seconds >= LIVE_UNTIL_SECONDS) return 'closed';
+    if (seconds < OPEN_SECONDS || input.lastBarAt === null) return 'waiting';
+    return input.now - input.lastBarAt > BAR_STALE_MS ? 'stalled' : 'live';
 }
 
 /** Today's date in Taipei as YYYY-MM-DD (the session date before any bar arrives). */
@@ -161,10 +210,31 @@ export function taipeiDate(now = Date.now()): string {
     return new Date(now + 8 * 3600_000).toISOString().slice(0, 10);
 }
 
-/** A cached snapshot is usable when it belongs to the book's session (or today's, before any bar). */
-function isCurrent(snapshot: Snapshot): boolean {
+/** Seconds since midnight in Taipei. */
+export function taipeiSeconds(now = Date.now()): number {
+    return Math.floor(((now / 1000 + 8 * 3600) % 86400 + 86400) % 86400);
+}
+
+const CLOSE_SECONDS = (13 * 60 + 30) * 60;
+/** How far behind the feed start a cached snapshot may be and still seed it. */
+export const SNAPSHOT_FRESH_SEC = 60;
+
+/**
+ * A cached snapshot is usable when it belongs to the book's session (or
+ * today's, before any bar) and is recent relative to now: the bars between
+ * an older snapshot and this feed's start were never received, so seeding
+ * from it would lose that turnover. A past session must be cached after its
+ * close. (A stock that simply has not traded since is refetched: one cheap
+ * request, and fetched rows are taken as they are.)
+ */
+function isCurrent(snapshot: Snapshot, now = Date.now()): boolean {
     const date = normDate(snapshot.datetime);
-    return date !== null && date === (chainFlowBook.date ?? taipeiDate());
+    const session = chainFlowBook.date ?? taipeiDate(now);
+    if (date === null || date !== session) return false;
+    const at = marketSeconds(snapshot.datetime.slice(11));
+    if (at === null) return false;
+    const until = session < taipeiDate(now) ? CLOSE_SECONDS : Math.min(taipeiSeconds(now), CLOSE_SECONDS);
+    return at >= until - SNAPSHOT_FRESH_SEC;
 }
 
 /** Codes seeded for `seededDate`. */
@@ -172,8 +242,23 @@ const seeded = new Set<string>();
 let seededDate: string | null = null;
 let seedQueue: Promise<void> = Promise.resolve();
 let seedPending = 0;
+/** Bumped when the last panel closes: seeds queued before that are dropped. */
+let seedGeneration = 0;
 
 async function seed(members: readonly FeedMember[]) {
+    const startDate = chainFlowBook.date;
+    try {
+        await seedOnce(members);
+    } finally {
+        // a newer session among the fetched rows rolled the book, dropping
+        // codes seeded under the old date: seed every connection again
+        if (startDate !== null && chainFlowBook.date !== startDate) {
+            for (const c of connections) startSeed(c.members);
+        }
+    }
+}
+
+async function seedOnce(members: readonly FeedMember[]) {
     if (seededDate !== chainFlowBook.date) {
         seeded.clear();
         seededDate = chainFlowBook.date;
@@ -198,6 +283,7 @@ async function seed(members: readonly FeedMember[]) {
         const batch = missing.slice(i, i + FEED_BATCH);
         try {
             const rows = await fetchSnapshots(batch.map((m) => m.contract));
+            adoptDate(rows);
             const byCode = new Map(rows.map((row) => [row.code, row]));
             for (const member of batch) {
                 const row = byCode.get(member.code);
@@ -215,9 +301,12 @@ async function seed(members: readonly FeedMember[]) {
 
 function startSeed(members: readonly FeedMember[]) {
     if (members.length === 0) return;
+    const generation = seedGeneration;
     seedPending += 1;
     seedQueue = seedQueue
-        .then(() => seed(members))
+        // every panel closed before this seed ran: marking its codes seeded
+        // would make the next open skip the snapshots it needs
+        .then(() => (generation === seedGeneration ? seed(members) : undefined))
         .catch(() => undefined)
         .finally(() => {
             seedPending -= 1;
@@ -252,7 +341,7 @@ function attachStream() {
         if (date && chainFlowBook.date && date !== chainFlowBook.date) return;
         const close = Number(tick.close);
         const total = tick.total_amount !== undefined ? Number(tick.total_amount) : NaN;
-        chainFlowBook.tick(tick.code, close, Number.isFinite(total) ? total : null);
+        chainFlowBook.tick(tick.code, close, Number.isFinite(total) ? total : null, marketSeconds(tick.time));
         notifyChainFlow();
     });
     return () => {
@@ -305,6 +394,11 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
         if (streamRefs === 0) {
             detachStream?.();
             detachStream = null;
+            // nothing is received while no panel is open: the next open must
+            // seed again from fresh snapshots to cover the minutes in between
+            seeded.clear();
+            seededDate = null;
+            seedGeneration += 1;
         }
         notifyChainFlow(true);
     };
