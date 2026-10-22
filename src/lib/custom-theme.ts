@@ -114,6 +114,9 @@ export function customTokens(t: CustomTheme, convention: Convention): Record<str
         down,
         downDim: alpha(down, dim),
         downFlash: alpha(down, flash),
+        // 日內區間軌的引線：同 theme.css.ts，深底往次要文字色混一半、淺底往底色混兩成
+        wickUp: dark ? mix(up, mutedFg, 0.5) : mix(up, t.panel, 0.2),
+        wickDown: dark ? mix(down, mutedFg, 0.5) : mix(down, t.panel, 0.2),
         flat: mutedFg,
         success: t.green,
         successDim: alpha(t.green, dim),
