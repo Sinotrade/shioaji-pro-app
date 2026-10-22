@@ -146,18 +146,27 @@ export const empty = style({
 
 // ── grouped (A2): one enclosing circle per held group ──
 export const sector = style({ cursor: 'pointer', outline: 'none' });
+// rim in the river's flow tone (the colour with 18 % grey, as the 排行 and
+// 通道 bands), kept translucent like a band
 const sectorTone = (c: string) => ({
     fill: tint(c, 7),
-    stroke: soft(c, 55),
+    stroke: soft(c, 82),
+    strokeOpacity: 0.62,
     strokeWidth: 1,
     transition: 'r 900ms cubic-bezier(0.22, 1, 0.36, 1), fill 600ms ease, stroke 600ms ease',
-    selectors: { [`${sector}:hover &, ${sector}:focus-visible &`]: { fill: tint(c, 12), stroke: soft(c, 80) } },
+    selectors: { [`${sector}:hover &, ${sector}:focus-visible &`]: { fill: tint(c, 12), strokeOpacity: 1 } },
     ...reduce,
 });
 export const sectorRim = styleVariants({
     up: sectorTone(vars.color.up),
     down: sectorTone(vars.color.down),
     flat: sectorTone(vars.color.mutedForeground),
+});
+// a strong flow (|net ÷ turnover| ≥ 20 %) glows like the river's band head
+export const sectorGlow = styleVariants({
+    up: { filter: `drop-shadow(0 0 5px ${tint(vars.color.up, 40)})` },
+    down: { filter: `drop-shadow(0 0 5px ${tint(vars.color.down, 40)})` },
+    flat: {},
 });
 export const sectorSelected = style({ fill: 'none', stroke: tint(vars.color.accent, 85), strokeWidth: 1.5 });
 export const sectorLabel = style({ pointerEvents: 'none' });
@@ -170,8 +179,8 @@ const halo = {
 export const sectorName = style({ ...halo, fill: vars.color.foreground, fontSize: '11.5px', fontWeight: 650, fontFamily: vars.font.body });
 export const sectorMeta = style({ ...halo, fill: vars.color.mutedForeground, fontSize: '10px', fontFamily: vars.font.mono, fontWeight: 500 });
 export const sectorFlow = styleVariants({
-    up: { ...halo, fill: soft(vars.color.up, 92), fontSize: '10px', fontFamily: vars.font.mono, fontWeight: 600 },
-    down: { ...halo, fill: soft(vars.color.down, 92), fontSize: '10px', fontFamily: vars.font.mono, fontWeight: 600 },
+    up: { ...halo, fill: soft(vars.color.up, 82), fontSize: '10px', fontFamily: vars.font.mono, fontWeight: 600 },
+    down: { ...halo, fill: soft(vars.color.down, 82), fontSize: '10px', fontFamily: vars.font.mono, fontWeight: 600 },
     flat: { ...halo, fill: vars.color.mutedForeground, fontSize: '10px', fontFamily: vars.font.mono, fontWeight: 600 },
 });
 export const cornerSoft = style({ fill: vars.color.mutedForeground, fontSize: '10.5px', fontFamily: vars.font.body, opacity: 0.55 });

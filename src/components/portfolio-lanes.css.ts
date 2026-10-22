@@ -1,11 +1,13 @@
 // src/components/portfolio-lanes.css.ts — 持股「資金通道」variant.
 //
 // Same visual language as 排行 (chain-map.css.ts): hairline structure, muted
-// up/down tones, a dotted centre axis, translucent lanes with a small head,
-// light particles on a canvas above. Up/down only for price, P&L and flow
-// direction; accent only for selection.
+// up/down tones. The bands, heads, particles and the dashed centre axis are
+// drawn by the shared river engine (chain-river.tsx) on the canvas; these
+// styles only lay out the DOM rows it moves. Up/down only for price, P&L and
+// flow direction; accent only for selection.
 
 import { keyframes, style, styleVariants } from '@vanilla-extract/css';
+import { BAND_LINE_PX, CHIP_LINE_PX } from '../lib/portfolio-lanes-layout';
 import { vars } from '../theme.css';
 
 const mono = { fontFamily: vars.font.mono, fontVariantNumeric: 'tabular-nums' } as const;
@@ -14,9 +16,6 @@ const reduce = { '@media': { '(prefers-reduced-motion: reduce)': { transition: '
 const tint = (color: string, pct: number) => `color-mix(in srgb, ${color} ${pct}%, transparent)`;
 const soft = (color: string, pct: number) => `color-mix(in oklab, ${color} ${pct}%, ${vars.color.mutedForeground})`;
 const ease = 'cubic-bezier(0.22, 1, 0.36, 1)';
-
-/** Applied when the viewer asked for reduced motion. */
-export const still = style({ transition: 'none !important', animation: 'none !important' });
 
 export const tone = styleVariants({
     up: { color: soft(vars.color.up, 80) },
@@ -82,17 +81,6 @@ export const area = style({ position: 'relative', flex: 1, minHeight: 0, overflo
 export const canvas = style({ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 });
 export const rows = style({ position: 'relative', margin: `2px ${vars.space.md}` });
 
-// one dotted centre axis drawn per row so it travels with the list
-export const zero = style({
-    position: 'absolute',
-    left: '50%',
-    top: '-6px',
-    bottom: '-6px',
-    width: '1px',
-    backgroundImage: `linear-gradient(to bottom, ${tint(vars.color.mutedForeground, 45)} 50%, transparent 50%)`,
-    backgroundSize: '1px 4px',
-});
-
 const flash = keyframes({
     '0%': { boxShadow: `inset 0 0 0 1px ${tint(vars.color.amber, 0)}`, background: tint(vars.color.amber, 0) },
     '18%': { boxShadow: `inset 0 0 0 1px ${tint(vars.color.amber, 55)}`, background: tint(vars.color.amber, 7) },
@@ -106,13 +94,15 @@ const rowBase = style({
     top: 0,
     display: 'grid',
     gridTemplateColumns: COLUMNS,
-    gridTemplateRows: 'var(--lane-h) 18px',
+    // band line (the river draws the band in its middle), then the chip line
+    gridTemplateRows: `${BAND_LINE_PX}px ${CHIP_LINE_PX}px`,
     columnGap: 'var(--gap)',
     alignItems: 'center',
     padding: `0 ${vars.space.sm}`,
     borderRadius: vars.radius.lg,
     cursor: 'pointer',
-    transition: `transform 700ms ${ease}, opacity 300ms ease, background 300ms ease`,
+    // the river engine writes translateY every frame: no CSS transform transition
+    transition: 'opacity 300ms ease, background 300ms ease',
     willChange: 'transform',
     selectors: { '&:hover': { opacity: 1, background: tint(vars.color.foreground, 2.5) } },
     '@media': { '(prefers-reduced-motion: reduce)': { transition: 'none' } },
@@ -166,32 +156,8 @@ export const sub = style({
 });
 export const subNum = style({ ...mono });
 
-export const track = style({ gridRow: '1', gridColumn: '2', position: 'relative', height: '100%', minWidth: 0 });
-
-const grow = ['width', 'height', 'border-radius'].map((p) => `${p} 800ms ${ease}`).join(', ');
-const barBase = style({ position: 'absolute', top: '50%', transform: 'translateY(-50%)', transition: grow, ...reduce });
-// translucent lane, faint at the axis, firmer toward the head
-const lane = (color: string, deg: number) =>
-    `linear-gradient(${deg}deg, ${tint(color, 10)}, ${tint(color, 32)} 50%, ${tint(color, 60)})`;
-export const bar = styleVariants({
-    in: [barBase, { background: lane(vars.color.up, 90) }],
-    out: [barBase, { background: lane(vars.color.down, 270) }],
-});
-const headBase = style({
-    position: 'absolute',
-    top: '50%',
-    borderRadius: '50%',
-    transition: 'width 600ms, height 600ms, margin 600ms, box-shadow 600ms',
-    ...reduce,
-});
-export const head = styleVariants({
-    in: [headBase, { background: soft(vars.color.up, 70) }],
-    out: [headBase, { background: soft(vars.color.down, 70) }],
-});
-export const headGlow = styleVariants({
-    in: [headBase, { background: vars.color.up, boxShadow: `0 0 9px 1px ${tint(vars.color.up, 45)}` }],
-    out: [headBase, { background: vars.color.down, boxShadow: `0 0 9px 1px ${tint(vars.color.down, 45)}` }],
-});
+// the river measures this column for its centre axis and band reach
+export const track = style({ gridRow: '1', gridColumn: '2', position: 'relative', height: '22px', minWidth: 0 });
 
 // chips: my stocks in the group, under the lane
 const chipsBase = style({
@@ -265,8 +231,6 @@ export const divider = style({
     right: vars.space.sm,
     height: '1px',
     background: vars.color.border,
-    transition: `transform 700ms ${ease}`,
-    ...reduce,
 });
 
 export const waiting = style({

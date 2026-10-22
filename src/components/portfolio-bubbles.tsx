@@ -29,6 +29,8 @@ const PACK_SPRING = { type: 'spring', stiffness: 80, damping: 18, mass: 1 } as c
 const STILL = { duration: 0 } as const;
 /** Room kept around a group circle for its rim label when relaxing. */
 const LABEL_ROOM = 16;
+/** |net ÷ turnover| (%) from which a group's rim glows like a river head. */
+const STRONG_FLOW = 20;
 
 interface Bubble {
     group: HeldGroup;
@@ -197,7 +199,7 @@ export function HoldingBubbles(props: VariantProps) {
                                     >
                                         <title>{`${g.name}・持有 ${g.stocks.length} 檔・權重 ${Math.round(g.weight * 100)}%\n近 10 分淨流入 ${fmtTwd(g.recent.net, true)}（占成交值 ${fmtSignedPct(g.recent.ratio, 1)}）\n${gLabel}漲跌 ${fmtSignedPct(g.flow.pct)}・今日持股損益 ${maskMoney(fmtTwd(g.dayPnl, true), privacyMoney)}`}</title>
                                         {flip && !reducedMotion && !paused && <circle key={`pulse-${now}`} className={s.pulse} r={b.R} />}
-                                        <circle className={s.sectorRim[flowDir]} r={b.R} />
+                                        <circle className={`${s.sectorRim[flowDir]} ${Math.abs(g.recent.ratio ?? 0) >= STRONG_FLOW ? s.sectorGlow[flowDir] : ''}`} r={b.R} />
                                         {selected && <circle className={s.sectorSelected} r={b.R + 3} />}
                                     </g>
                                     {b.members.map((mb) => {
