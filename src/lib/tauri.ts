@@ -40,6 +40,7 @@ import {
 } from './server-adoption';
 import { FAST_START_SCHEDULE, STOP_SCHEDULE, pollDelay, pollUntil, throttled } from './poll-until';
 import { serverHealthReady } from './server-health';
+import { BINARY_PROBLEM_TEXT, classifyServerStart, type BinaryProblem, type ServerStartError, type StartFailureStage } from './server-start-error';
 import { serverIdentityVerified, setServerIdentityVerified } from './server-identity';
 import {
     boundPorts,
@@ -209,7 +210,7 @@ async function spawnServer(
     scheme: ApiScheme = 'http',
     agentHarnessEnabled = true,
     credentialRevision: string | null = null,
-): Promise<SidecarResult> {
+): Promise<SidecarResult & { stage?: StartFailureStage }> {
     const fullEnv = { NO_COLOR: '1', ...env };
     const { invoke } = await import('@tauri-apps/api/core');
     markStage('spawn', `port=${port} ${args.includes('--production') ? 'prod' : 'sim'}`);
@@ -226,7 +227,9 @@ async function spawnServer(
         pid = receipt.pid;
         setStoredSpawnKeyHash(receipt.credentialRevision);
     } catch (e) {
-        return { ok: false, output: `啟動失敗：${String(e)}` };
+        // the native refusal names its cause (an unusable bundled sidecar
+        // also writes it to this port's log); keep it verbatim to classify
+        return { ok: false, output: `啟動失敗：${String(e)}`, stage: 'spawn' };
     }
     setServerPid(pid);
     setSpawnPort(port);
@@ -261,11 +264,12 @@ async function spawnServer(
     }
     if (waited.value === 'died') {
         setServerPid(null);
-        return { ok: false, output: await readServerLog(port) };
+        return { ok: false, output: await readServerLog(port), stage: 'died' };
     }
     return {
         ok: false,
         output: `${await readServerLog(port)}\n啟動逾時（45 秒未就緒）`.trim(),
+        stage: 'timeout',
     };
 }
 
@@ -371,16 +375,21 @@ export function ensureHarnessOwnedServer(opts: { deferReload?: boolean } = {}): 
 // Pro's native shell captures stdout/stderr in ~/.shioaji/sjpro-server-<port>.log.
 // SDK 1.7.9 also writes daily logs, while keeping its terminal output —
 // read it back for error surfacing and the CA-activation warning scan
+export async function serverLogPath(port: number): Promise<string> {
+    const { homeDir, join } = await import('@tauri-apps/api/path');
+    return join(await homeDir(), '.shioaji', `sjpro-server-${port}.log`);
+}
+
+/** Open the folder of the sidecar start logs (fixed natively: ~/.shioaji). */
+export async function openServerLogFolder(): Promise<void> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke<string>('open_server_log_folder');
+}
+
 async function readServerLog(port: number): Promise<string> {
     try {
         const { readTextFile } = await import('@tauri-apps/plugin-fs');
-        const { homeDir, join } = await import('@tauri-apps/api/path');
-        const p = await join(
-            await homeDir(),
-            '.shioaji',
-            `sjpro-server-${port}.log`,
-        );
-        const text = await readTextFile(p);
+        const text = await readTextFile(await serverLogPath(port));
         return text.replace(ANSI_RE, '').trim().slice(-4000);
     } catch {
         return '';
@@ -452,8 +461,21 @@ async function runMkcert(args: string[]): Promise<SidecarResult> {
         const text = `${out.stdout}\n${out.stderr}`.replace(ANSI_RE, '').trim();
         return { ok: out.code === 0, output: text };
     } catch (e) {
-        // dev builds without scripts/fetch-mkcert.sh, or a broken bundle
-        return { ok: false, output: `MKCERT_SIDECAR_MISSING: ${String(e)}` };
+        // dev builds without scripts/fetch-mkcert.sh, or a broken bundle —
+        // name the path and why (missing, 0 bytes, not executable)
+        return { ok: false, output: `MKCERT_SIDECAR_MISSING: ${(await mkcertProblem()) ?? String(e)}` };
+    }
+}
+
+type BundledBinaryStatus = { binary: string; path: string | null; problem: BinaryProblem | null };
+async function mkcertProblem(): Promise<string | null> {
+    try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const all = await invoke<BundledBinaryStatus[]>('bundled_binaries_status');
+        const mk = all.find((b) => b.binary === 'mkcert');
+        return mk?.problem ? `${mk.path ?? 'mkcert'}（${BINARY_PROBLEM_TEXT[mk.problem]}）` : null;
+    } catch {
+        return null; // older native shell without the command
     }
 }
 
@@ -833,9 +855,15 @@ export interface StartResult extends SidecarResult {
     attachedExternal?: boolean;
     /** another program's server was found and NOT used (#285) */
     foreign?: { port: number; simulation: boolean | undefined; text: string };
+    /** how a failed start ended (set only when ok is false) */
+    stage?: StartFailureStage;
+    /** why a failed start failed, for a specific message (ok false only) */
+    error?: ServerStartError;
+    /** the sidecar start log of a failed spawn */
+    logPath?: string;
 }
 
-export async function serverStart(opts: {
+type StartOptions = {
     // boot already probed the servers a moment ago: reuse that result
     // instead of a second identical round of probes (cold start)
     knownStatus?: ServerStatus | null;
@@ -844,9 +872,22 @@ export async function serverStart(opts: {
     caPath?: string;
     httpsEnabled?: boolean;
     agentHarnessEnabled?: boolean;
-}): Promise<StartResult> {
+};
+
+export async function serverStart(opts: StartOptions): Promise<StartResult> {
+    const res = await startServerOnce(opts);
+    if (res.ok) return res;
+    const spawned = res.stage !== undefined && res.stage !== 'precheck';
+    return {
+        ...res,
+        error: classifyServerStart({ output: res.output, stage: res.stage, port: res.port }),
+        ...(spawned ? { logPath: await serverLogPath(res.port).catch(() => undefined) } : {}),
+    };
+}
+
+async function startServerOnce(opts: StartOptions): Promise<StartResult> {
     if (!opts.credentialRevision) {
-        return { ok: false, output: '請先完成帳號設定並選擇使用中的帳號', port: getApiPort(), attached: false, portChanged: false };
+        return { ok: false, output: '請先完成帳號設定並選擇使用中的帳號', port: getApiPort(), attached: false, portChanged: false, stage: 'precheck' };
     }
     // when production+CA is requested, a daemon is only good enough to reuse
     // if its CA is actually active — otherwise orders 400 (issue #1)
@@ -1059,6 +1100,7 @@ export async function serverStart(opts: {
                     port: st.port,
                     attached: false,
                     portChanged: false,
+                    stage: 'precheck',
                 };
             }
         }
@@ -1103,7 +1145,7 @@ export async function serverStart(opts: {
             markStage('reclaim-port', `port freed after ${picked.elapsedMs} ms`);
         }
         if (getDevServerPort() && free !== preferredPort) {
-            return { ok: false, output: '隔離測試連接埠已被占用；不切換至其他伺服器', port: preferredPort, attached: false, portChanged: false, ...(foreign ? { foreign } : {}) };
+            return { ok: false, output: '隔離測試連接埠已被占用；不切換至其他伺服器', port: preferredPort, attached: false, portChanged: false, stage: 'precheck', ...(foreign ? { foreign } : {}) };
         }
         if (free > 0) port = free;
     } catch {

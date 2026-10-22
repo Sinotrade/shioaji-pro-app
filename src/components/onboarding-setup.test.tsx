@@ -2,18 +2,19 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ panel: vi.fn(() => null), defaults: vi.fn(), load: vi.fn(), save: vi.fn(), select: vi.fn(), start: vi.fn(), reload: vi.fn(), stop: vi.fn(), logout: vi.fn(), clearHash: vi.fn() }));
+const mocks = vi.hoisted(() => ({ panel: vi.fn(() => null), defaults: vi.fn(), load: vi.fn(), save: vi.fn(), select: vi.fn(), start: vi.fn(), reload: vi.fn(), stop: vi.fn(), logout: vi.fn(), clearHash: vi.fn(), openLogs: vi.fn() }));
 vi.mock('../lib/spawn-keys', () => ({ clearStoredSpawnKeyHash: mocks.clearHash }));
 vi.mock('../lib/features', () => ({ agentModule: { Panel: mocks.panel, ensureDefaultProvider: mocks.defaults }, useFeature: () => ({ enabled: true }), FEATURES: [] }));
 vi.mock('../lib/tauri', async () => ({
     ...await import('../lib/desktop-credentials'), isTauri: true,
     loadDesktopSettings: mocks.load, saveCredentialProfile: mocks.save, selectCredentialProfile: mocks.select,
     pickCaFile: vi.fn(), pickEnvFile: vi.fn(), importEnvCandidate: vi.fn(), reloadWhenHealthy: mocks.reload, serverStart: mocks.start,
-    serverStop: mocks.stop, logoutCredentialProfile: mocks.logout,
+    serverStop: mocks.stop, logoutCredentialProfile: mocks.logout, openServerLogFolder: mocks.openLogs,
 }));
 import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';
 import { OnboardingSetup } from './onboarding-setup';
 import { CredentialProfiles } from './credential-profiles';
+import { ServerStartErrorPanel } from './server-start-error-panel';
 let view: ReactTestRenderer | undefined;
 beforeEach(() => {
     vi.clearAllMocks(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('window', new EventTarget());
@@ -123,5 +124,61 @@ describe('first-run credential profiles', () => {
         await act(async () => button().props.onClick()); await act(async () => button().props.onClick());
         expect(mocks.logout).not.toHaveBeenCalled(); expect(mocks.clearHash).not.toHaveBeenCalled();
         expect(JSON.stringify(view!.toJSON())).toContain('外部伺服器不是本 App 啟動的');
+    });
+});
+
+describe('server start failure', () => {
+    const profile = { id: 'new', name: '新帳號', environment: 'simulation', hasCA: false, caPath: '', createdAt: '', apiKeyMasked: '••••1234', secretState: 'stored', credentialBackend: 'system', revision: 'native' } as const;
+    const ready: DesktopSettings = { ...EMPTY_DESKTOP_SETTINGS, configured: true, activeProfileId: 'new', credentialRevision: 'native', profiles: [profile] };
+    const text = () => JSON.stringify(view!.toJSON());
+    const startNow = async () => {
+        mocks.load.mockResolvedValue(ready);
+        await act(async () => { view = create(createElement(OnboardingSetup)); });
+        const button = view!.root.findAllByType('button').find(b => b.children.filter(x => typeof x === 'string').join('') === '啟動')!;
+        await act(async () => button.props.onClick());
+    };
+    it('names a missing sidecar, its searched path and the log, and opens the log folder', async () => {
+        mocks.start.mockResolvedValue({ ok: false, output: 'x', port: 21322, attached: false, portChanged: false,
+            error: { kind: 'sidecar_missing', binary: 'shioaji', path: '/dev/target/debug/shioaji', reason: 'not_found' },
+            logPath: '/Users/me/.shioaji/sjpro-server-21322.log' });
+        mocks.openLogs.mockResolvedValue(undefined);
+        await startNow();
+        const panel = view!.root.findByType(ServerStartErrorPanel);
+        expect(panel.props.error.kind).toBe('sidecar_missing');
+        expect(text()).toContain('找不到內建的伺服器程式');
+        expect(text()).toContain('/dev/target/debug/shioaji');
+        expect(text()).toContain('/Users/me/.shioaji/sjpro-server-21322.log');
+        expect(text()).not.toContain('請確認帳號設定、網路與憑證');
+        const open = view!.root.findAllByType('button').find(b => b.children.join('').includes('打開記錄資料夾'))!;
+        await act(async () => open.props.onClick());
+        expect(mocks.openLogs).toHaveBeenCalledOnce();
+    });
+    it('explains a login failure with its own message', async () => {
+        mocks.start.mockResolvedValue({ ok: false, output: '', port: 21322, attached: false, portChanged: false,
+            error: { kind: 'auth_failed', hint: null, lastLines: ['Authentication failed: auth rejected'] }, logPath: '/l.log' });
+        await startNow();
+        expect(text()).toContain('登入失敗');
+        expect(text()).toContain('Authentication failed: auth rejected');
+    });
+    it('tells the user when the log folder cannot be opened', async () => {
+        mocks.start.mockResolvedValue({ ok: false, output: '', port: 1, attached: false, portChanged: false,
+            error: { kind: 'sidecar_exited', lastLines: ['boom'] }, logPath: '/l.log' });
+        mocks.openLogs.mockRejectedValue(new Error('no'));
+        await startNow();
+        const open = view!.root.findAllByType('button').find(b => b.children.join('').includes('打開記錄資料夾'))!;
+        await act(async () => open.props.onClick());
+        expect(text()).toContain('無法開啟記錄資料夾');
+    });
+    it('keeps the generic message for a result without a classified error', async () => {
+        mocks.start.mockResolvedValue({ ok: false, output: '', port: 1, attached: false, portChanged: false });
+        await startNow();
+        expect(text()).toContain('伺服器啟動失敗，請確認帳號設定、網路與憑證後重試。');
+        expect(view!.root.findAllByType(ServerStartErrorPanel)).toHaveLength(0);
+    });
+    it('classifies a thrown start without leaking credentials', async () => {
+        mocks.start.mockRejectedValue(new Error('api_key=LEAKME connection refused'));
+        await startNow();
+        expect(text()).toContain('無法連線至永豐主機');
+        expect(text()).not.toContain('LEAKME');
     });
 });
