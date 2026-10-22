@@ -13,7 +13,7 @@ import { useMemo } from 'react';
 import { codePct, sessionTurnover } from '../lib/chain-flow';
 import { chainFlowBook } from '../lib/chain-flow-feed';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
-import { heatCell, heatFull, heatLevel, type HeatCell } from '../lib/chain-motion';
+import { heatCell, heatFull, heatLevel, minuteSide, type HeatCell } from '../lib/chain-motion';
 import type { FlowRow } from './chain-ui';
 import * as s from './chain-map.css';
 
@@ -86,7 +86,7 @@ function HeatTile({
                 {cell.minutes.map((m, i) => (
                     <span
                         key={i}
-                        className={m === null ? s.heatBar.none : m >= 0 ? s.heatBar.in : s.heatBar.out}
+                        className={s.heatBar[minuteSide(m)]}
                         style={{ height: m === null ? undefined : `${Math.max(14, (cell.amounts[i]! / peak) * 100)}%` }}
                     />
                 ))}

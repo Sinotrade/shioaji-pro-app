@@ -241,6 +241,16 @@ export interface HeatCell {
     amounts: number[];
 }
 
+/**
+ * Colour side of one heat minute bar. A flat minute (no price change, e.g. a
+ * stock pinned at the limit, or no baseline yet) has turnover but no
+ * direction: it must not read as inflow.
+ */
+export function minuteSide(ratio: number | null | undefined): 'in' | 'out' | 'flat' | 'none' {
+    if (ratio === null || ratio === undefined) return 'none';
+    return ratio > 0 ? 'in' : ratio < 0 ? 'out' : 'flat';
+}
+
 /** Fallback ratio at which a heat tile reaches full colour. */
 export const HEAT_FULL = 0.5;
 /** Floor of the adaptive full-colour ratio: a quiet market stays pale. */

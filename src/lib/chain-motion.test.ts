@@ -5,6 +5,7 @@ import {
     comparesRanks,
     divergingScale,
     heatCell,
+    minuteSide,
     heatFull,
     heatLevel,
     quadrantCounts,
@@ -167,6 +168,12 @@ describe('heat', () => {
         // window reaching before the open
         expect(heatCell(g.net, g.turnover, 1, 5).minutes).toHaveLength(5);
         expect(heatCell(g.net, g.turnover, null, 5)).toEqual({ net: 0, turnover: 0, ratio: null, minutes: [], amounts: [] });
+    });
+
+    it('colours a flat minute neutral, not as inflow', () => {
+        // live 2026-10-22: a limit-up stock trades at one price, net 0 with turnover
+        const g = group([[40, 100, 0], [41, 100, 30], [42, 100, -30]]);
+        expect(heatCell(g.net, g.turnover, 43, 4).minutes.map(minuteSide)).toEqual(['flat', 'in', 'out', 'none']);
     });
 
     it('maps ratios to a graded colour level against the full-colour ratio', () => {

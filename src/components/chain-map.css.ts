@@ -892,6 +892,7 @@ const heatBarBase = style({ flex: 1, minHeight: '2px', borderRadius: '1px', tran
 export const heatBar = styleVariants({
     in: [heatBarBase, { background: `color-mix(in srgb, ${vars.color.up} 80%, ${vars.color.foreground})` }],
     out: [heatBarBase, { background: `color-mix(in srgb, ${vars.color.down} 80%, ${vars.color.foreground})` }],
+    flat: [heatBarBase, { background: tint(vars.color.foreground, 45) }],
     none: [heatBarBase, { height: '2px', background: tint(vars.color.foreground, 20) }],
 });
 
