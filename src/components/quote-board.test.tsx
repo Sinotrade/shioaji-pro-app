@@ -238,13 +238,14 @@ describe('個股看板（成對兩行）', () => {
             act(() => root.update(createElement(QuoteBoard, { contract: TXF })));
             expect(queryCalls.some((c) => c.key.startsWith('night-ohl:') && c.enabled)).toBe(false);
             expect(texts(root.root)).toContain('20,000');
-            // 09:10 開盤後抓到完整夜盤：22,000 口、高 47,050
-            queryData.set(openKey, { open: 46490, high: 47050, low: 46400, volume: 22000, partial: false });
+            // 09:10 開盤後抓到完整夜盤：22,000 口、最後幾分鐘跌到 46,300（比最後一筆的低點 46,400、日盤低點都低）
+            queryData.set(openKey, { open: 46490, high: 47050, low: 46300, volume: 22000, partial: false });
             display = { quote: { tick: { ...dayTick, time: '09:10:00.000', total_volume: 11453 } } };
             queryCalls.length = 0;
             act(() => root.update(createElement(QuoteBoard, { contract: TXF })));
             expect(queryCalls.find((c) => c.key === openKey)?.enabled).toBe(true);
-            expect(texts(root.root)).toEqual(expect.arrayContaining(['33,453', '47,288']));
+            expect(texts(root.root)).toEqual(expect.arrayContaining(['33,453', '46,300']));
+            expect(texts(root.root)).not.toContain('46,400');
             expect(titles(root.root)).toContain('開盤為前一交易日 15:00 夜盤開盤，高低與量含夜盤');
         });
 
