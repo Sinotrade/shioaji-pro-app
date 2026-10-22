@@ -1449,3 +1449,24 @@ footer { padding: 56px 0 48px; border-top: 1px solid var(--line); font-size: 14p
 @media (max-width: 900px) { .fshot-duo .duo-imgs { max-width: 400px; } }
 .fshot-form img { max-width: 480px; margin-inline: auto; }
 .fshot-form figcaption { text-align: center; }
+
+/* ---------- v0.1.56：分頁圖片／循環影片（資金流向、持股族群、公司資料） ---------- */
+#flow { border-top: 1px solid var(--line); }
+.vt-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.vt-tabs button { font: inherit; font-size: 14px; padding: 5px 14px; border-radius: 99px; border: 1px solid var(--line-2); background: transparent; color: var(--text-2); cursor: pointer; }
+.vt-tabs button[aria-selected="true"] { background: var(--btn-bg); color: var(--btn-fg); border-color: var(--btn-bg); }
+.vt-tabs button:focus-visible, .vid-ctrl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.vt-pane img, .vt-pane video { display: block; width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--line-2); box-shadow: var(--shadow); background: var(--app-bg); }
+.vt-pane[hidden] { display: none; }
+:root:not(.js-ready) .vt-tabs { display: none; }
+:root:not(.js-ready) .vt-pane + .vt-pane { margin-top: 16px; }
+.vt-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.vt-foot figcaption { margin-top: 0; }
+.vid-ctrl {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px 5px 9px; border-radius: 99px;
+  border: 1px solid var(--line-2); background: var(--surface); color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer;
+}
+.vid-ctrl[hidden] { display: none; }
+.vid-ctrl .i { width: 14px; height: 14px; }
+.vid-ctrl .play, .vid-ctrl.is-paused .pause { display: none; }
+.vid-ctrl.is-paused .play { display: block; }

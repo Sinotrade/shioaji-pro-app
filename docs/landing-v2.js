@@ -606,4 +606,90 @@
   reduce.addEventListener('change', function () {
     if (reduce.matches) demos.forEach(function (d) { d.userStopped = true; d.stop(); });
   });
+  // ---------- v0.1.56：分頁圖片／循環影片 ----------
+  // 影片依深淺色載入對應檔；進入畫面才載入與播放，離開或切到其他分頁就暫停。
+  // 「減少動態」時不自動播放，只顯示靜態畫面，可按「播放動畫」手動播放。
+  var vts = Array.prototype.slice.call(document.querySelectorAll('[data-vt]')).map(function (fig) {
+    var tabs = Array.prototype.slice.call(fig.querySelectorAll('[role="tab"]'));
+    var panes = tabs.map(function (t) { return document.getElementById(t.getAttribute('aria-controls')); });
+    var vt = { fig: fig, tabs: tabs, panes: panes, btn: fig.querySelector('.vid-ctrl'), visible: false, userPaused: reduce.matches };
+    function select(i, focus) {
+      tabs.forEach(function (t, k) {
+        var on = k === i;
+        t.setAttribute('aria-selected', String(on));
+        t.tabIndex = on ? 0 : -1;
+        panes[k].hidden = !on;
+      });
+      if (focus) tabs[i].focus();
+      vtUpdate(vt);
+    }
+    tabs.forEach(function (t, i) {
+      t.addEventListener('click', function () { select(i, false); });
+      t.addEventListener('keydown', function (e) {
+        var n = tabs.length, j = null;
+        if (e.key === 'ArrowRight') j = (i + 1) % n;
+        else if (e.key === 'ArrowLeft') j = (i + n - 1) % n;
+        else if (e.key === 'Home') j = 0;
+        else if (e.key === 'End') j = n - 1;
+        if (j !== null) { e.preventDefault(); select(j, true); }
+      });
+    });
+    if (vt.btn) vt.btn.addEventListener('click', function () { vt.userPaused = !vt.userPaused; vtUpdate(vt); });
+    select(0, false);
+    return vt;
+  });
+  // H.264（mp4）優先；瀏覽器不支援時改用同名的 VP9（webm）
+  var probe = document.createElement('video');
+  var useWebm = !(probe.canPlayType && probe.canPlayType('video/mp4; codecs="avc1.64001F"')) && !!(probe.canPlayType && probe.canPlayType('video/webm; codecs="vp9"'));
+  function vtSrc(v) {
+    var dark = effectiveTheme() === 'dark';
+    var src = (dark ? v.dataset.dark : v.dataset.light) || v.dataset.light;
+    var poster = src.replace(/\.mp4$/, '-poster.webp');
+    if (v.getAttribute('poster') !== poster) v.setAttribute('poster', poster);
+    return useWebm ? src.replace(/\.mp4$/, '.webm') : src;
+  }
+  function vtUpdate(vt) {
+    var active = null;
+    vt.panes.forEach(function (p) {
+      var v = p.querySelector('video');
+      if (!v) return;
+      if (p.hidden || !vt.visible) { if (!v.paused) v.pause(); vtSrc(v); return; }
+      active = v;
+    });
+    if (vt.btn) {
+      vt.btn.hidden = !active;
+      vt.btn.classList.toggle('is-paused', vt.userPaused);
+      vt.btn.setAttribute('aria-pressed', String(vt.userPaused));
+      vt.btn.querySelector('span').textContent = vt.userPaused ? '播放動畫' : '暫停動畫';
+    }
+    if (!active) return;
+    var src = vtSrc(active);
+    // 已載入過的影片在換主題時一併換檔（暫停中也換，避免停在舊主題的畫面）
+    if (active.dataset.cur ? active.dataset.cur !== src : !vt.userPaused) {
+      var t = active.currentTime || 0;
+      active.dataset.cur = src;
+      active.src = src;
+      if (t) active.addEventListener('loadedmetadata', function once() { active.removeEventListener('loadedmetadata', once); active.currentTime = t % (active.duration || 1); });
+    }
+    if (vt.userPaused) { if (!active.paused) active.pause(); return; }
+    var pr = active.play();
+    // 瀏覽器擋自動播放：按鈕改成「播放動畫」，按一下就播放
+    if (pr && pr.catch) pr.catch(function (e) { if (e && e.name === 'NotAllowedError' && !vt.userPaused) { vt.userPaused = true; vtUpdate(vt); } });
+  }
+  if (vts.length) {
+    if ('IntersectionObserver' in window) {
+      var vio = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          vts.forEach(function (vt) { if (vt.fig === e.target) { vt.visible = e.isIntersecting; vtUpdate(vt); } });
+        });
+      }, { threshold: 0.25 });
+      vts.forEach(function (vt) { vio.observe(vt.fig); });
+    } else {
+      vts.forEach(function (vt) { vt.visible = true; vtUpdate(vt); });
+    }
+    new MutationObserver(function () { vts.forEach(vtUpdate); }).observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    darkMq.addEventListener('change', function () { vts.forEach(vtUpdate); });
+    reduce.addEventListener('change', function () { if (reduce.matches) vts.forEach(function (vt) { vt.userPaused = true; vtUpdate(vt); }); });
+    document.addEventListener('visibilitychange', function () { vts.forEach(function (vt) { if (document.hidden) vt.panes.forEach(function (p) { var v = p.querySelector('video'); if (v && !v.paused) v.pause(); }); else vtUpdate(vt); }); });
+  }
 })();

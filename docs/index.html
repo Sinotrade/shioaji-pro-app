@@ -67,6 +67,7 @@
       <a href="#habit">Agent 能做什麼</a>
       <a href="#safe">安全機制</a>
       <a href="#trade">看盤下單</a>
+      <a href="#flow">資金流向</a>
       <a href="#start">申請 API Key</a>
       <a href="#source">開源</a>
       <a href="#releases">更新紀錄</a>
@@ -621,7 +622,107 @@
       </figure>
     </div>
 
+<div class="feature">
+      <div class="f-text">
+        <h3>報價列更精簡，要看什麼自己挑<span class="tag">v0.1.56</span></h3>
+        <p>K 線圖上方的報價列改得更精簡，把空間留給圖。指數與個股／期貨可以分別設定要顯示哪些欄位、排什麼順序：成交量、量比、高低、開盤、漲跌停、日內區間軌、產業標籤；指數還能加上漲跌家數與成交金額。</p>
+        <ul class="pts">
+          <li><svg class="i"><use href="#i-check"/></svg>期貨切到全盤時，開高低與成交量都含夜盤</li>
+          <li><svg class="i"><use href="#i-check"/></svg>設定只套用到這個面板，跟版面一起儲存</li>
+          <li><svg class="i"><use href="#i-check"/></svg>面板變窄時，依序收起次要的欄位</li>
+        </ul>
+      </div>
+      <figure class="fshot"><picture><source media="(prefers-color-scheme: dark)" srcset="images/release-0.1.56-quote-fields-dark.webp"><img src="images/release-0.1.56-quote-fields-light.webp" width="1200" height="586" alt="台積電 K 線圖上方的精簡報價列：現價、漲跌、量、量比與日內區間軌、產業標籤；右側「報價欄位」設定可勾選量、量比、高低、開、漲跌停、區間軌與產業標籤並調整順序。" loading="lazy" decoding="async"></picture><figcaption>報價欄位設定（App 實際畫面，模擬環境）</figcaption></figure>
+    </div>
 
+  </div>
+</section>
+
+<!-- 產業資金流向、持股族群、公司資料（v0.1.56） -->
+<section id="flow" aria-labelledby="flow-h">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2 id="flow-h">資金往哪裡流，盤中一眼看出來</h2>
+      <p>依各產業鏈、題材成分股每分鐘的成交與漲跌，即時估算資金流向。不用一檔一檔翻，就知道今天資金在追哪裡、從哪裡撤出，再對照自己的持股和公司基本面。</p>
+    </div>
+
+    <div class="feature">
+      <div class="f-text">
+        <h3>產業鏈資金流向：看資金像河流一樣流動<span class="tag">v0.1.56</span></h3>
+        <p>每個產業鏈或題材是一條通道：往右是流入、往左是流出，長度是淨流入，粗細是成交值，光點流得越密代表資金越集中。每分鐘依最新成交重新排名，點一下就展開上、中、下游和帶頭的個股。</p>
+        <ul class="pts">
+          <li><svg class="i"><use href="#i-check"/></svg><span><b>排行</b>累計或近 5、15、30 分鐘的淨流入排行，看誰在吸金、誰在失血</span></li>
+          <li><svg class="i"><use href="#i-check"/></svg><span><b>輪動</b>依淨流入與資金動能分成領先、轉弱、改善、落後四區，看資金從哪裡轉到哪裡</span></li>
+          <li><svg class="i"><use href="#i-check"/></svg><span><b>熱力</b>面積是成交值、顏色是近幾分鐘的淨流入占比，可下鑽到成分股</span></li>
+        </ul>
+      </div>
+      <figure class="fshot vt" data-vt>
+        <div class="vt-tabs" role="tablist" aria-label="資金流向的三種看法">
+          <button type="button" role="tab" id="vt-flow-0" aria-controls="vp-flow-0" aria-selected="true">排行</button>
+          <button type="button" role="tab" id="vt-flow-1" aria-controls="vp-flow-1" aria-selected="false">輪動</button>
+          <button type="button" role="tab" id="vt-flow-2" aria-controls="vp-flow-2" aria-selected="false">熱力</button>
+        </div>
+        <div class="vt-pane" role="tabpanel" tabindex="0" id="vp-flow-0" aria-labelledby="vt-flow-0"><video class="vid" muted loop playsinline preload="none" width="1280" height="889" poster="images/release-0.1.56-flow-rank-light-poster.webp" data-light="images/release-0.1.56-flow-rank-light.mp4" data-dark="images/release-0.1.56-flow-rank-dark.mp4" aria-label="產業鏈資金流向的排行：CPO 共封裝光學、半導體產業鏈、CoWoS 先進封裝等族群的通道向右延伸代表資金流入，機器人、碳化矽等向左代表流出，光點沿通道持續流動。"></video></div>
+        <div class="vt-pane" role="tabpanel" tabindex="0" id="vp-flow-1" aria-labelledby="vt-flow-1"><picture><source media="(prefers-color-scheme: dark)" srcset="images/release-0.1.56-flow-rotation-dark.webp"><img src="images/release-0.1.56-flow-rotation-light.webp" width="1200" height="785" alt="輪動圖：橫軸為淨流入、縱軸為資金動能，各族群以泡泡分布在領先、轉弱、改善、落後四區；下方是選取的 AI 伺服器上、中、下游的淨流入走勢與主要個股。" loading="lazy" decoding="async"></picture></div>
+        <div class="vt-pane" role="tabpanel" tabindex="0" id="vp-flow-2" aria-labelledby="vt-flow-2"><picture><source media="(prefers-color-scheme: dark)" srcset="images/release-0.1.56-flow-heat-dark.webp"><img src="images/release-0.1.56-flow-heat-light.webp" width="1200" height="785" alt="熱力圖：上方各族群方塊的面積為成交值、顏色為近 10 分鐘淨流入占比，下方是 AI 伺服器成分股的方塊。" loading="lazy" decoding="async"></picture></div>
+        <div class="vt-foot"><figcaption>示意資料（模擬行情）；淨流入為依每分鐘成交與漲跌估算</figcaption><button class="vid-ctrl" type="button" hidden><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button></div>
+      </figure>
+    </div>
+
+    <div class="feature flip">
+      <div class="f-text">
+        <h3>產業全景：大盤由誰撐起，一張圖看完<span class="tag">v0.1.56</span></h3>
+        <p>先分產業、再分個股的兩層熱力圖。面積可選貢獻、市值或成交值，預設是對指數的貢獻：格子越大，對大盤的影響越大；紅漲綠跌，深淺代表幅度。行情更新時格子平滑移動，不會整片跳動。</p>
+        <ul class="pts">
+          <li><svg class="i"><use href="#i-check"/></svg>點產業看下鑽，點個股直接切換商品</li>
+          <li><svg class="i"><use href="#i-check"/></svg>面板夠寬時，旁邊列出類股漲跌、貢獻前後 12 檔</li>
+          <li><svg class="i"><use href="#i-check"/></svg>可以匯出成圖片，盤後分享或留存</li>
+        </ul>
+      </div>
+      <figure class="fshot"><picture><source media="(prefers-color-scheme: dark)" srcset="images/release-0.1.56-panorama-dark.webp"><img src="images/release-0.1.56-panorama-light.webp" width="1200" height="868" alt="產業全景熱力圖：依電子零組件、半導體、電腦及週邊設備等產業分區，方塊面積為對加權指數的貢獻、顏色為漲跌；右側列出類股漲跌與貢獻前 12 檔。" loading="lazy" decoding="async"></picture><figcaption>產業全景，面積為貢獻（App 實際畫面，模擬環境行情）</figcaption></figure>
+    </div>
+
+    <div class="feature">
+      <div class="f-text">
+        <h3>持股族群：你的持股站在資金哪一邊<span class="tag">v0.1.56</span></h3>
+        <p>把持有的現股依族群、產業鏈或題材分組，直接對上資金流向。泡泡圖把每個族群畫成一個大圓，位置是近 10 分鐘淨流入占成交值的比例和今日漲跌，持股依市值放在裡面；通道圖每個族群一條，粗細是你的持股權重，長度是族群的淨流入。</p>
+        <ul class="pts">
+          <li><svg class="i"><use href="#i-check"/></svg>「順資金比重」告訴你有多少持股站在資金流入的那一邊</li>
+          <li><svg class="i"><use href="#i-check"/></svg>持有的族群由流入轉為流出時，面板裡馬上提示</li>
+          <li><svg class="i"><use href="#i-check"/></svg>打開金額遮蔽後只顯示百分比，截圖、直播都放心</li>
+        </ul>
+      </div>
+      <figure class="fshot vt" data-vt>
+        <div class="vt-tabs" role="tablist" aria-label="持股族群的兩種看法">
+          <button type="button" role="tab" id="vt-hold-0" aria-controls="vp-hold-0" aria-selected="true">泡泡</button>
+          <button type="button" role="tab" id="vt-hold-1" aria-controls="vp-hold-1" aria-selected="false">通道</button>
+        </div>
+        <div class="vt-pane" role="tabpanel" tabindex="0" id="vp-hold-0" aria-labelledby="vt-hold-0"><video class="vid" muted loop playsinline preload="none" width="1280" height="925" poster="images/release-0.1.56-holdings-bubble-light-poster.webp" data-light="images/release-0.1.56-holdings-bubble-light.mp4" data-dark="images/release-0.1.56-holdings-bubble-dark.mp4" aria-label="持股族群泡泡圖：半導體業大圓在右上（資金流入、上漲），內有台積電、聯發科、創意；電腦及週邊設備業、電子零組件業等在左側流出區。每分鐘更新時泡泡隨資金移動；持股損益與市值已遮蔽。"></video></div>
+        <div class="vt-pane" role="tabpanel" tabindex="0" id="vp-hold-1" aria-labelledby="vt-hold-1"><video class="vid" muted loop playsinline preload="none" width="1280" height="791" poster="images/release-0.1.56-holdings-lanes-light-poster.webp" data-light="images/release-0.1.56-holdings-lanes-light.mp4" data-dark="images/release-0.1.56-holdings-lanes-dark.mp4" aria-label="持股族群通道圖：每個持有族群一條通道，半導體業向右流入最長，塑膠工業、電腦及週邊設備業等向左流出，右側列出淨流入、權重；今日損益已遮蔽。"></video></div>
+        <div class="vt-foot"><figcaption>示意持股與模擬行情；已開啟金額遮蔽</figcaption><button class="vid-ctrl" type="button" hidden><svg class="i pause"><use href="#i-pause"/></svg><svg class="i play"><use href="#i-play"/></svg><span>暫停動畫</span></button></div>
+      </figure>
+    </div>
+
+    <div class="feature flip">
+      <div class="f-text">
+        <h3>公司資料：基本面和產業鏈位置，一頁看懂<span class="tag">v0.1.56</span></h3>
+        <p>選一檔股票，就看到產業分類、市值、本益比、月營收、毛利率，以及業務介紹、營收組成和所屬題材；它在產業鏈的上游、中游還是下游，點一下就看同一段的其他公司。</p>
+        <ul class="pts">
+          <li><svg class="i"><use href="#i-check"/></svg><span><b>財務</b>近 36 個月營收與年增率、近八季財報</span></li>
+          <li><svg class="i"><use href="#i-check"/></svg><span><b>上下游</b>供應商、客戶、合作夥伴，點了就切換商品</span></li>
+          <li><svg class="i"><use href="#i-check"/></svg><span><b>來源</b>每一項都標出官方或第三方資料與日期</span></li>
+        </ul>
+      </div>
+      <figure class="fshot vt" data-vt>
+        <div class="vt-tabs" role="tablist" aria-label="公司資料分頁">
+          <button type="button" role="tab" id="vt-co-0" aria-controls="vp-co-0" aria-selected="true">概覽</button>
+          <button type="button" role="tab" id="vt-co-1" aria-controls="vp-co-1" aria-selected="false">上下游</button>
+        </div>
+        <div class="vt-pane" role="tabpanel" tabindex="0" id="vp-co-0" aria-labelledby="vt-co-0"><picture><source media="(prefers-color-scheme: dark)" srcset="images/release-0.1.56-company-dark.webp"><img src="images/release-0.1.56-company-light.webp" width="1200" height="955" alt="公司資料面板・台積電概覽：產業路徑半導體業、晶圓代工，市值、本益比、月營收、毛利率，業務說明，產業鏈位置標出中游晶圓製造，營收組成與所屬題材。" loading="lazy" decoding="async"></picture></div>
+        <div class="vt-pane" role="tabpanel" tabindex="0" id="vp-co-1" aria-labelledby="vt-co-1"><picture><source media="(prefers-color-scheme: dark)" srcset="images/release-0.1.56-company-relations-dark.webp"><img src="images/release-0.1.56-company-relations-light.webp" width="1200" height="955" alt="公司資料面板・台積電上下游：供應商 43 家、客戶 19 家、合作夥伴 10 家，每筆列出關係說明與日期。" loading="lazy" decoding="async"></picture></div>
+        <div class="vt-foot"><figcaption>公司資料（App 實際畫面）</figcaption></div>
+      </figure>
+    </div>
   </div>
 </section>
 
@@ -652,7 +753,7 @@
     <div class="feature">
       <div class="f-text">
         <h3 id="layout-h">版面自己排</h3>
-        <p>從「新增面板」搜尋要的面板加進來，拖曳、調整大小；排好後在「版面庫」存成自己的版面，下次一鍵套用。App 也內建十多組版面，例如標準看盤、當沖交易、閃電矩陣、雙圖對照；v0.1.53 再加六組：期貨當沖、期現對照、零股存股、條件單監控、選擇權組合、盤勢總覽。多螢幕的話，把面板彈出成獨立視窗；彈出的閃電下單視窗也能直接點價、平倉、刪單，確認也在同一個視窗完成。</p>
+        <p>從「新增面板」搜尋要的面板加進來，拖曳、調整大小；排好後在「版面庫」存成自己的版面，下次一鍵套用。App 也內建十多組版面，例如標準看盤、當沖交易、閃電矩陣、雙圖對照；v0.1.53 再加六組：期貨當沖、期現對照、零股存股、條件單監控、選擇權組合、盤勢總覽。v0.1.56 再加五組研究版面：族群資金、產業掃描、持股健檢、族群輪動、個股研究。多螢幕的話，把面板彈出成獨立視窗；彈出的閃電下單視窗也能直接點價、平倉、刪單，確認也在同一個視窗完成。</p>
         <ol class="caps" data-for="ws">
           <li>按「新增面板」，搜尋「閃電」</li>
           <li>加入閃電下單，拖邊框調整大小</li>
@@ -981,9 +1082,9 @@ codex plugin add shioaji@sinotrade</pre>
   <div class="wrap">
     <div class="sec-head"><h2 id="releases-h">最新版本</h2><p>App 會自動更新；這裡是最近一版改了什麼。</p></div>
     <article class="rel card" data-rel>
-      <header class="rel-h"><b class="rel-ver" data-rel-ver>v0.1.55</b><time class="rel-date" data-rel-date datetime="2026-10-20">2026-10-20</time></header>
-      <ul class="rel-list" data-rel-list><li>金鑰改存系統憑證庫，可設定多組帳號</li><li>登入簽章逾時改提示正確原因</li><li>「正式」標示與狀態顏色固定，不隨漲跌配色變</li><li>AI Agent：對話啟動失敗會顯示原因，並可直接重試</li><li>內建 Shioaji 升到 1.7.9：其他軟體下的單也能刪</li></ul>
-      <div class="rel-links"><a class="btn ghost small" data-rel-url href="https://github.com/Sinotrade/shioaji-pro-app/releases/tag/v0.1.55">看完整更新說明</a><a class="btn ghost small" href="changelog.html">更新紀錄</a><a class="rel-all" href="https://github.com/Sinotrade/shioaji-pro-app/releases">所有版本</a></div>
+      <header class="rel-h"><b class="rel-ver" data-rel-ver>v0.1.56</b><time class="rel-date" data-rel-date datetime="2026-10-22">2026-10-22</time></header>
+      <ul class="rel-list" data-rel-list><li>產業鏈資金流向：即時看錢往哪個族群走</li><li>產業全景升級為「產業 → 個股」兩層熱力圖</li><li>持股族群：你的持股在資金流入還是流出的族群</li><li>公司資料面板</li><li>報價欄改版：更精簡、資訊更多</li></ul>
+      <div class="rel-links"><a class="btn ghost small" data-rel-url href="https://github.com/Sinotrade/shioaji-pro-app/releases/tag/v0.1.56">看完整更新說明</a><a class="btn ghost small" href="changelog.html">更新紀錄</a><a class="rel-all" href="https://github.com/Sinotrade/shioaji-pro-app/releases">所有版本</a></div>
     </article>
   </div>
 </section>
@@ -1017,6 +1118,7 @@ codex plugin add shioaji@sinotrade</pre>
       <details><summary>資料和金鑰存在哪裡？</summary><p>API Key、Secret Key 和憑證密碼存在你電腦的 App 資料夾，不會上傳。操作紀錄也只存在本機。</p></details>
       <details><summary>AI Agent 會不會自己亂下單？</summary><p>不會。交易權限預設要逐筆核可，每一筆下單都需要你的核可；也可以設成只能分析、完全不下單。另外有單筆數量、金額等風控上限，Agent 也要遵守。</p></details>
       <details><summary>支援哪些商品？</summary><p>台股上市、上櫃的現股與盤中零股，以及期貨、選擇權。這頁以股票為主介紹。</p></details>
+      <details><summary>App 啟動失敗怎麼辦？</summary><p>啟動畫面會直接說明原因，例如登入失敗、憑證無法使用、連線逾時或連接埠被占用，並附上記錄檔位置和「打開記錄資料夾」按鈕。照提示處理後重試即可；需要回報問題時，附上記錄檔能更快找到原因。</p></details>
       <details><summary>Windows、Linux 能用嗎？</summary><p>可以。Shioaji Pro 是為 Mac 打造的跨平台 App，Windows 10／11 和 Linux 也有安裝檔，功能相同。</p></details>
     </div>
   </div>
