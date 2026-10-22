@@ -19,6 +19,7 @@ import { OptionChain } from './option-chain';
 import { ScannerPanel } from './scanner-panel';
 import { SectorHeatmap } from './sector-heatmap';
 import { ChainMap } from './chain-map';
+import { PortfolioSectorPanel } from './portfolio-sector-panel';
 import { TickTape } from './tick-tape';
 import { VolProfile } from './vol-profile';
 import * as styles from './panel-library.css';
@@ -39,6 +40,7 @@ const NO_CONTRACT_PREVIEWS: Partial<Record<BlockType, () => ReactElement>> = {
     movers: () => <ScannerPanel onPick={noop} />,
     heatmap: () => <SectorHeatmap onPick={noop} />,
     chainmap: () => <ChainMap onPick={noop} />,
+    holdingmap: () => <PortfolioSectorPanel onPick={noop} />,
     pulse: () => <MarketPulsePanel />,
     signals: () => <MarketSignalPanel />,
     optchain: () => <OptionChain onPick={noop} />,

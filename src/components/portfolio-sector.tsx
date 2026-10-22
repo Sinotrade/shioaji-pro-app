@@ -1,6 +1,6 @@
-// src/components/portfolio-sector.tsx — 持股 view of 產業鏈資金流向: the user's
+// src/components/portfolio-sector.tsx — body of the 持股族群 panel: the user's
 // stock holdings grouped by 族群（官方產業別）／產業鏈／題材, read against the
-// same live 1-minute K-bar flow the panel already subscribes to.
+// same live 1-minute K-bar flow as 產業鏈資金流向 (shared feed, chain-feed.tsx).
 //
 // Two forms share one data model (lib/portfolio-sector.ts) and one chrome
 // (KPI strip, in-panel flip alerts, empty states):
@@ -10,13 +10,13 @@
 // - lanes:  資金通道 — one lane per held group, thickness = my weight,
 //   length = the group's net flow, reorders each minute.
 // 族群 flow comes from the index_components group metrics (shared with
-// 產業全景); 產業鏈／題材 flow from the panel's 1-minute K-bar book.
+// 產業全景); 產業鏈／題材 flow from the shared 1-minute K-bar book.
 // Requests: the group-metric subscriptions are ref-counted with 產業全景 (no
 // extra request while it is open); one drill K-bar batch for held codes outside
 // the chain/theme universe; cards come from the shared shioaji-data reader.
 
 import { AlertTriangle, BellRing, Briefcase, LogIn, RotateCw } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { slotLabel, type FlowBook } from '../lib/chain-flow';
 import { connectChainFlow, type FeedMember } from '../lib/chain-flow-feed';
 import { fmtSignedPct, fmtTwd, memberCodes, stockContract } from '../lib/chain-map';
@@ -60,6 +60,7 @@ export function PortfolioSector({
     reducedMotion,
     paused,
     onPick,
+    status,
 }: {
     themes: readonly Theme[];
     book: FlowBook;
@@ -70,6 +71,8 @@ export function PortfolioSector({
     reducedMotion: boolean;
     paused: boolean;
     onPick: (code: string) => void;
+    /** Feed status shown at the end of the alert line. */
+    status?: ReactNode;
 }) {
     const { accounts } = useAccounts();
     const holdings = useHoldings();
@@ -180,7 +183,7 @@ export function PortfolioSector({
                 <div className={s.empty}>
                     <LogIn size={22} className={s.emptyIcon} aria-hidden='true' />
                     <span className={s.emptyTitle}>登入後顯示持股的族群資金</span>
-                    <span>持股依族群、產業鏈或題材分組，對照各分組的即時資金流向。族群與題材資金流不需登入，可切回「排行」「輪動」。</span>
+                    <span>持股依族群、產業鏈或題材分組，對照各分組的即時資金流向。族群與題材的資金流不需登入，可在「產業鏈資金流向」面板查看。</span>
                 </div>
             </div>
         );
@@ -294,6 +297,7 @@ export function PortfolioSector({
                 ) : (
                     !holdings.error && <span>持有分組由淨流入轉為淨流出時會在此提示</span>
                 )}
+                {status && <span className={s.status}>{status}</span>}
             </div>
             <div className={s.body}>
                 {form === 'bubble' && <HoldingBubbles {...props} />}

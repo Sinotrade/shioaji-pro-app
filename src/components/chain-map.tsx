@@ -11,14 +11,11 @@
 // 線。見 lib/chain-flow-feed.ts。面板隱藏或捲出畫面時暫停重繪；
 // prefers-reduced-motion 時不做動畫。
 
-import { AlertTriangle, Radio } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useChainMapData } from '../hooks/use-chain-map-data';
-import { groupFlow, SESSION_SLOTS, shareShift } from '../lib/chain-flow';
-import { chainFlowBook, chainFlowStatus, connectChainFlow, useChainFlowRevision, type FeedMember } from '../lib/chain-flow-feed';
-import { memberCodes, stageMembers, stockContract, themeCodes, tierRank } from '../lib/chain-map';
+import { groupFlow, shareShift } from '../lib/chain-flow';
+import { stageMembers, themeCodes, tierRank } from '../lib/chain-map';
 import { RANK_METRICS, type RankMetric } from '../lib/chain-motion';
-import { entityIndex, entityName, STALE_TEXT, twCodeOf } from '../lib/company-data';
+import { entityName, twCodeOf } from '../lib/company-data';
 import type { ChainTier, Theme } from '../lib/company-data/types';
 import { themeKey as themeKeyOf, useThemeSettings } from '../lib/theme-store';
 import type { ContractBase } from '../lib/types/contract';
@@ -27,8 +24,8 @@ import { FocusCard, TierCard, type TierView } from './chain-detail';
 import { FlowHeat } from './chain-heat';
 import { FlowRank } from './chain-rank';
 import { FlowRotation } from './chain-rotation';
-import { PortfolioSector } from './portfolio-sector';
-import { NextBar, readPref, Segment, useBoxSize, useFeedPhase, usePaused, useReducedMotion, writePref, type FlowRow } from './chain-ui';
+import { FeedStatus, useChainFeed } from './chain-feed';
+import { readPref, Segment, writePref, type FlowRow } from './chain-ui';
 import * as panel from './panel.css';
 import * as s from './chain-map.css';
 
@@ -42,7 +39,21 @@ const DEFAULT_THEME = 'theme.ai_server';
 const DETAIL_MIN_PX = 520;
 const TIERS: ChainTier[] = ['upstream', 'midstream', 'downstream'];
 
-type ViewMode = 'rotation' | 'rank' | 'heat' | 'holdings';
+// 持股 moved to its own panel (持股族群): a saved 'holdings' view is no longer
+// allowed by readPref and falls back to 排行
+type ViewMode = 'rotation' | 'rank' | 'heat';
+const VIEW_MODES = ['rotation', 'rank', 'heat'] as const satisfies readonly ViewMode[];
+
+/** Saved view of the panel; the retired 持股 tab (or anything unknown) becomes 排行 and is saved back. */
+export function readChainView(): ViewMode {
+    const view = readPref(VIEW_KEY, VIEW_MODES, 'rank');
+    try {
+        if (localStorage.getItem(VIEW_KEY) !== view) localStorage.removeItem(VIEW_KEY);
+    } catch {
+        // storage unavailable: nothing saved to migrate
+    }
+    return view;
+}
 type KindFilter = 'all' | 'chain' | 'theme';
 
 export function ChainMap({
@@ -52,8 +63,8 @@ export function ChainMap({
     contract?: ContractBase | null;
     onPick?: (code: string) => void;
 }) {
-    const data = useChainMapData();
-    const ready = data.phase === 'ready' ? data : null;
+    const chainFeed = useChainFeed();
+    const { data, ready, themes, index, nameOf, rootRef, rootSize, paused, reducedMotion, revision, book, now, from, closed } = chainFeed;
     const themeKey = themeKeyOf(useThemeSettings());
 
     const [themeId, setThemeIdState] = useState(() => {
@@ -64,7 +75,7 @@ export function ChainMap({
         }
     });
     const [kind, setKindState] = useState<KindFilter>(() => readPref(KIND_KEY, ['all', 'chain', 'theme'] as const, 'all'));
-    const [view, setViewState] = useState<ViewMode>(() => readPref(VIEW_KEY, ['rotation', 'rank', 'heat', 'holdings'] as const, 'rank'));
+    const [view, setViewState] = useState<ViewMode>(() => readChainView());
     const [metric, setMetricState] = useState<RankMetric>(() => readPref(METRIC_KEY, RANK_METRICS, 'cum'));
     const [focus, setFocus] = useState<string | null>(null);
     const [heatWindow, setHeatWindowState] = useState<'5' | '10'>(() => readPref(HEAT_WINDOW_KEY, ['5', '10'] as const, '10'));
@@ -73,33 +84,6 @@ export function ChainMap({
         setThemeIdState(id);
         writePref(THEME_KEY, id);
     }, []);
-
-    const themes = ready?.themes ?? null;
-    const entities = ready?.entities ?? null;
-    const index = useMemo(() => (entities ? entityIndex(entities) : null), [entities]);
-    const nameOf = useCallback((code: string) => entityName(index, `tw.${code}`), [index]);
-
-    // ── live feed: every member of every chain and theme ──
-    const members = useMemo<FeedMember[]>(() => {
-        if (!themes) return [];
-        const daily = ready?.market?.quotes;
-        return memberCodes(themes).map((code) => ({
-            code,
-            contract: stockContract(code, index?.get(`tw.${code}`)?.market),
-            shares: daily?.[code]?.shares ?? null,
-        }));
-    }, [themes, index, ready?.market]);
-    useEffect(() => (members.length > 0 ? connectChainFlow(members) : undefined), [members]);
-
-    const { ref: rootRef, element: rootEl, size: rootSize } = useBoxSize<HTMLDivElement>();
-    const paused = usePaused(rootEl);
-    const reducedMotion = useReducedMotion();
-    const revision = useChainFlowRevision(paused);
-    const book = chainFlowBook;
-    const feed = chainFlowStatus();
-    const now = book.lastSlot;
-    const from = book.firstSlot;
-    const phase = useFeedPhase(book.date, feed.lastBarAt, now, paused);
 
     // ── group rows (each view orders them itself) ──
     const pool = useMemo(() => (themes ?? []).filter((t) => kind === 'all' || t.kind === kind), [themes, kind]);
@@ -204,22 +188,6 @@ export function ChainMap({
     }
 
     const showDetail = rootSize.height === 0 || rootSize.height >= DETAIL_MIN_PX;
-    // live / closed come from the Taipei clock, the session date and feed
-    // freshness (useFeedPhase); seeded after 13:30 also means the snapshot
-    // already covers the whole session
-    let closed = phase === 'closed';
-    if (!closed && now === null) for (const f of book.codes.values()) if (f.seedSlot >= SESSION_SLOTS) { closed = true; break; }
-    const live = !closed && phase === 'live';
-    const minutes = now !== null && from !== null ? now - from + 1 : 0;
-    const liveText = closed
-        ? now !== null
-            ? `已收盤・1 分 K 已接收 ${minutes} 分鐘`
-            : '已收盤・今日彙總'
-        : now !== null
-          ? `1 分 K・${feed.kbarCodes} 檔・已接收 ${minutes} 分鐘${phase === 'stalled' ? '・暫無新資料' : ''}`
-          : feed.batches > 0
-            ? `1 分 K 已訂閱 ${feed.subscribed}/${feed.batches} 批・等待下一根`
-            : '';
 
     return (
         <div ref={rootRef} className={s.wrap}>
@@ -235,10 +203,9 @@ export function ChainMap({
                         { value: 'rank', label: '排行', title: '族群淨流入排行，長度為淨流入、粗細為成交值，每分鐘更新名次' },
                         { value: 'rotation', label: '輪動', title: '族群輪動象限：橫軸淨流入、縱軸資金動能，每分鐘更新位置與軌跡' },
                         { value: 'heat', label: '熱力', title: '族群與成分股近期淨流入占成交值，點族群看成分股' },
-                        { value: 'holdings', label: '持股', title: '我的持股依族群、產業鏈或題材分組，對照各分組的即時資金流向' },
                     ]}
                 />
-                {view !== 'holdings' && <Segment
+                <Segment
                     label='類型'
                     value={kind}
                     onChange={(v) => {
@@ -250,7 +217,7 @@ export function ChainMap({
                         { value: 'chain', label: '產業鏈' },
                         { value: 'theme', label: '題材' },
                     ]}
-                />}
+                />
                 {view === 'rank' && (
                     <Segment
                         label='排行區間'
@@ -282,18 +249,7 @@ export function ChainMap({
                     />
                 )}
                 <span className={s.spacer} />
-                {feed.kbarError ? (
-                    <span className={`${s.live} ${panel.statusText.err}`} title={feed.kbarError}>
-                        <AlertTriangle size={11} aria-hidden='true' />1 分 K 訂閱失敗
-                    </span>
-                ) : liveText ? (
-                    <span className={s.live} title='即時 1 分 K 訂閱；其他面板已訂閱的 tick 會更快更新價格。開啟面板前的分鐘只有 snapshot 彙總，不下載歷史 K 線'>
-                        <Radio size={11} className={live ? s.liveOn : undefined} aria-hidden='true' />
-                        {liveText}
-                    </span>
-                ) : null}
-                <NextBar live={live && !paused} />
-                {ready?.stale && <span className={s.stale}>{STALE_TEXT}</span>}
+                <FeedStatus feed={chainFeed} />
             </div>
 
             <div className={s.views}>
@@ -323,19 +279,6 @@ export function ChainMap({
                         onPick={pick}
                     />
                 )}
-                {view === 'holdings' && themes && (
-                    <PortfolioSector
-                        themes={themes}
-                        book={book}
-                        revision={revision}
-                        now={now}
-                        from={from}
-                        nameOf={nameOf}
-                        reducedMotion={reducedMotion}
-                        paused={paused}
-                        onPick={pick}
-                    />
-                )}
                 {view === 'heat' && (
                     <FlowHeat
                         rows={rows}
@@ -352,7 +295,7 @@ export function ChainMap({
                 )}
             </div>
 
-            {showDetail && view !== 'heat' && view !== 'holdings' && (
+            {showDetail && view !== 'heat' && (
                 <div className={s.detail}>
                     <div className={s.detailHead}>
                         <span className={s.kindMark[theme.kind === 'chain' ? 'chain' : 'theme']} aria-hidden='true' />

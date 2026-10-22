@@ -75,6 +75,7 @@ export const alert = style({
     animation: `${slideIn} 0.4s ease-out`,
     '@media': { '(prefers-reduced-motion: reduce)': { animation: 'none' } },
 });
+export const status = style({ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '10px', flexShrink: 0 });
 export const alertIcon = style({ color: vars.color.amber, flexShrink: 0 });
 export const alertTime = style({ ...mono, color: vars.color.mutedForeground });
 export const alertName = style({ color: vars.color.foreground, fontWeight: 600 });
