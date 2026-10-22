@@ -18,12 +18,29 @@ export const SESSION_START_MIN = 9 * 60;
 export const SESSION_SLOTS = 271;
 export const WINDOW = 5;
 
-/** "HH:MM[:SS[.ffffff]]" (bar start time) → slot index, or null outside the session. */
+/** Wall-clock "HH:MM[:SS[.ffffff]]" (tick, snapshot) → slot index, or null outside the session. */
 export function minuteSlot(time: string | undefined | null): number | null {
     const match = /^(\d{1,2}):(\d{2})/.exec(time ?? '');
     if (!match) return null;
     const slot = Number(match[1]) * 60 + Number(match[2]) - SESSION_START_MIN;
     return slot >= 0 && slot < SESSION_SLOTS ? slot : null;
+}
+
+/** The closing auction may be stamped a few minutes after 13:30 (cf. intraday-session CLOSE_GRACE). */
+const CLOSE_GRACE_MIN = 4;
+
+/**
+ * Stream bar label → slot. The 1-minute K-bar stream stamps each bar with its
+ * minute END, like every Shioaji 1-minute K: the 09:00–09:01 bar arrives at
+ * about 09:01:02 as `time: "09:01:00"`. Label L therefore holds minute L − 1;
+ * the closing auction (13:30–13:34 labels) folds into the 13:30 slot.
+ */
+export function barSlot(time: string | undefined | null): number | null {
+    const match = /^(\d{1,2}):(\d{2})/.exec(time ?? '');
+    if (!match) return null;
+    const label = Number(match[1]) * 60 + Number(match[2]) - SESSION_START_MIN;
+    if (label < 1 || label > SESSION_SLOTS - 1 + CLOSE_GRACE_MIN) return null;
+    return Math.min(label - 1, SESSION_SLOTS - 1);
 }
 
 export function slotLabel(slot: number): string {
@@ -60,7 +77,7 @@ function parseRow(row: unknown, fallbackDate: string | null): KBarEvent | null {
     if (!row || typeof row !== 'object') return null;
     const r = row as Record<string, unknown>;
     const code = typeof r.code === 'string' ? r.code : null;
-    // `time` is the bar start; some payloads carry a combined datetime/ts
+    // `time` is the bar's minute END; some payloads carry a combined datetime/ts
     const timeText =
         typeof r.time === 'string'
             ? r.time
@@ -69,7 +86,7 @@ function parseRow(row: unknown, fallbackDate: string | null): KBarEvent | null {
               : typeof r.ts === 'string'
                 ? r.ts.slice(11)
                 : null;
-    const slot = minuteSlot(timeText);
+    const slot = barSlot(timeText);
     const close = toNum(r.close);
     const amount = toNum(r.amount);
     if (!code || slot === null || !Number.isFinite(close) || close <= 0 || !Number.isFinite(amount)) return null;

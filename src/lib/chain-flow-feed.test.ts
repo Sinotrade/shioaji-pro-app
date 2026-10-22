@@ -137,7 +137,7 @@ describe('connectChainFlow', () => {
         const release = connectChainFlow([member('2330')]);
         await flush();
         await chainFlowSeedIdle();
-        emitBar({ code: '2330', date: '2026/10/21', time: '09:41:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 3, amount: 306000 });
+        emitBar({ code: '2330', date: '2026/10/21', time: '09:42:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 3, amount: 306000 });
         const flow = chainFlowBook.codes.get('2330')!;
         expect(flow.amount[41]).toBe(306000);
         expect(flow.net[41]).toBe(306000); // 102 above the 100 reference
@@ -185,19 +185,20 @@ describe('connectChainFlow', () => {
         const release = connectChainFlow([member('2330')]);
         await flush();
         await chainFlowSeedIdle();
-        emitBar({ code: '2330', date: '2026/10/21', time: '09:41:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 3, amount: 306000, net: -120000 });
+        emitBar({ code: '2330', date: '2026/10/21', time: '09:42:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 3, amount: 306000, net: -120000 });
         expect(chainFlowBook.codes.get('2330')!.net[41]).toBe(-120000);
         release();
     });
 
     it('does not double count the snapshot minute', async () => {
-        // snapshot at 09:40:12 already holds part of minute 40
+        // snapshot at 09:40:12 already holds part of minute 40, whose bar is
+        // stamped 09:41 (minute end); the 09:42 bar is new
         mocks.snapshots.mockImplementation(async () => [{ ...snapshot('2330', 101, 1), total_amount: 1_000_000 } as Snapshot]);
         const release = connectChainFlow([member('2330')]);
         await flush();
         await chainFlowSeedIdle();
-        emitBar({ code: '2330', date: '2026/10/21', time: '09:40:00.000000', open: 101, high: 101, low: 101, close: 101, volume: 1, amount: 60_000 });
-        emitBar({ code: '2330', date: '2026/10/21', time: '09:41:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 1, amount: 40_000 });
+        emitBar({ code: '2330', date: '2026/10/21', time: '09:41:00.000000', open: 101, high: 101, low: 101, close: 101, volume: 1, amount: 60_000 });
+        emitBar({ code: '2330', date: '2026/10/21', time: '09:42:00.000000', open: 101, high: 102, low: 101, close: 102, volume: 1, amount: 40_000 });
         expect(sessionTurnover(chainFlowBook.codes.get('2330')!)).toBe(1_040_000);
         release();
     });

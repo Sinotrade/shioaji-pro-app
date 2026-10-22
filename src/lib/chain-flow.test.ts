@@ -5,6 +5,7 @@ import {
     groupFlow,
     leaders,
     memberFlows,
+    barSlot,
     minuteSlot,
     normDate,
     parseKbarEvent,
@@ -37,6 +38,19 @@ describe('minute slots', () => {
         expect(minuteSlot('13:31:00')).toBeNull();
         expect(minuteSlot('')).toBeNull();
         expect(slotLabel(102)).toBe('10:42');
+    });
+
+    it('maps the stream bar label (minute end) onto the minute it closes', () => {
+        // the 09:00–09:01 bar is stamped 09:01:00
+        expect(barSlot('09:01:00.000000')).toBe(0);
+        expect(barSlot('10:43:00')).toBe(102);
+        expect(barSlot('13:30:00')).toBe(SESSION_SLOTS - 2);
+        // the closing auction may be stamped after 13:30: it folds into the 13:30 slot
+        expect(barSlot('13:31:00')).toBe(SESSION_SLOTS - 1);
+        expect(barSlot('13:34:00')).toBe(SESSION_SLOTS - 1);
+        expect(barSlot('13:35:00')).toBeNull();
+        expect(barSlot('09:00:00')).toBeNull();
+        expect(barSlot('')).toBeNull();
         expect(normDate('2026/10/21')).toBe(DATE);
     });
 });
@@ -58,7 +72,7 @@ describe('parseKbarEvent', () => {
             }),
         );
         expect(rows).toEqual([
-            { code: '2330', date: DATE, slot: 31, open: 1000, high: 1005, low: 999, close: 1004, volume: 120, amount: 120480000 },
+            { code: '2330', date: DATE, slot: 30, open: 1000, high: 1005, low: 999, close: 1004, volume: 120, amount: 120480000 },
         ]);
     });
 
@@ -74,11 +88,11 @@ describe('parseKbarEvent', () => {
             ],
         });
         expect(rows.map((r) => [r.code, r.slot, r.date])).toEqual([
-            ['2330', 1, DATE],
-            ['2317', 2, DATE],
+            ['2330', 0, DATE],
+            ['2317', 1, DATE],
         ]);
         expect(parseKbarEvent('not json')).toEqual([]);
-        expect(parseKbarEvent([{ code: '2330', time: '09:05:00', close: 1, amount: 5 }])[0]?.slot).toBe(5);
+        expect(parseKbarEvent([{ code: '2330', time: '09:05:00', close: 1, amount: 5 }])[0]?.slot).toBe(4);
     });
 });
 
