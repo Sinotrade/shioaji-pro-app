@@ -25,6 +25,7 @@ import {
     X,
 } from 'lucide-react';
 import { staleParts, useCompanyData, useCompanyEntities, type CompanyDataView } from '../hooks/use-company-data';
+import { useBoxSize } from '../hooks/use-box-size';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
 import { useQuote } from '../hooks/use-stream';
 import {
@@ -711,10 +712,26 @@ function CompanyFacts({ company: c, officialDate }: { company: Company; official
 
 // ── financials ────────────────────────────────────────────────────────────
 
+// The chart is drawn in CSS pixels: the viewBox follows the measured box
+// width so one SVG unit is one pixel. A fixed viewBox stretched to the panel
+// width (width 100%, height auto) scaled the 9px axis labels and the chart
+// height with it — at a wide panel the dates rendered at 25px+.
+export const REVENUE_CHART_H = 116;
+const REVENUE_CHART_FALLBACK_W = 360;
+
 function RevenueChart({ fin }: { fin: Financials }) {
+    const { ref, size } = useBoxSize<HTMLDivElement>();
+    return (
+        <div ref={ref} className={s.chartBox} style={{ height: REVENUE_CHART_H }}>
+            <RevenueChartSvg fin={fin} width={size.width || REVENUE_CHART_FALLBACK_W} />
+        </div>
+    );
+}
+
+export function RevenueChartSvg({ fin, width }: { fin: Financials; width: number }) {
     const months = recentRevenue(fin, 36);
-    const W = 360;
-    const H = 116;
+    const W = Math.max(1, Math.floor(width));
+    const H = REVENUE_CHART_H;
     const top = 12;
     const bottom = 16;
     const plotH = H - top - bottom;
@@ -733,7 +750,7 @@ function RevenueChart({ fin }: { fin: Financials }) {
         .join(' ');
     const labelIdx = new Set([0, Math.floor((months.length - 1) / 2), months.length - 1]);
     return (
-        <svg className={s.chart} viewBox={`0 0 ${W} ${H}`} role='img' aria-label='月營收與年增率'>
+        <svg className={s.chart} width={W} height={H} viewBox={`0 0 ${W} ${H}`} role='img' aria-label='月營收與年增率'>
             <text x='0' y='9'>{fmtK(max)}</text>
             {months.map((m, i) => {
                 const v = m.revenue_thousand_twd ?? 0;

@@ -8,8 +8,12 @@ vi.hoisted(() => {
         localStorage: storage,
     });
 });
+import { readFileSync } from 'node:fs';
+import { createElement } from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import type { Financials } from '../lib/company-data/types';
 import type { ContractInfo } from '../lib/types/contract';
-import { companyTarget, fmtTwd } from './company-panel';
+import { companyTarget, fmtTwd, REVENUE_CHART_H, RevenueChartSvg } from './company-panel';
 
 const c = (fields: Partial<ContractInfo>) => fields as ContractInfo;
 
@@ -26,5 +30,34 @@ describe('company panel helpers (#337)', () => {
         expect(fmtTwd(5.119e11)).toBe('5,119 億');
         expect(fmtTwd(3.5e8)).toBe('3.5 億');
         expect(fmtTwd(null)).toBe('—');
+    });
+});
+
+describe('monthly revenue chart (#351)', () => {
+    const fin = JSON.parse(
+        readFileSync(new URL('../lib/company-data/__fixtures__/financials-2330.json', import.meta.url), 'utf8'),
+    ) as Financials;
+
+    // Regression: a fixed 360-wide viewBox stretched to the panel width scaled
+    // the 9px axis labels (25px+ in a wide panel). The SVG must be drawn at its
+    // real pixel size so its text is never scaled.
+    it.each([240, 360, 868, 1400])('draws at its pixel size, unscaled, at width %i', async (width) => {
+        vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+        let view: ReactTestRenderer | undefined;
+        await act(async () => {
+            view = create(createElement(RevenueChartSvg, { fin, width }));
+        });
+        const svg = view!.root.findByType('svg');
+        expect(svg.props.width).toBe(width);
+        expect(svg.props.height).toBe(REVENUE_CHART_H);
+        expect(svg.props.viewBox).toBe(`0 0 ${width} ${REVENUE_CHART_H}`);
+        const dates = svg.findAllByType('text').filter((t) => /^\d{4}-\d{2}$/.test(String(t.props.children)));
+        expect(dates).toHaveLength(3);
+        for (const t of dates) {
+            expect(t.props.x).toBeGreaterThanOrEqual(0);
+            expect(t.props.x).toBeLessThanOrEqual(width);
+        }
+        await act(async () => view!.unmount());
+        vi.unstubAllGlobals();
     });
 });

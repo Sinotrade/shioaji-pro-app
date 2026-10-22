@@ -486,7 +486,9 @@ export const more = style({
 });
 
 // financials
-export const chart = style({ display: 'block', width: '100%', height: 'auto' });
+// 量測寬度的外框：SVG 以實際像素寬高繪製（不縮放），字級固定 9px
+export const chartBox = style({ width: '100%', overflow: 'hidden' });
+export const chart = style({ display: 'block' });
 
 globalStyle(`${chart} text`, {
     fontFamily: vars.font.mono,
