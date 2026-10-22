@@ -1,23 +1,54 @@
 // src/components/sector-heatmap.tsx — 產業全景（原類股熱力圖，issue #2 原地
-// 升級）。資料源：shioaji 1.7.4 index_components 群組串流（1 秒），查詢僅
-// 建底（docs/adr/0001）。兩層：
-// - 全景層：產業 treemap — 面積可切換（成交值/|貢獻|/權重）、顏色＝加權
-//   漲跌幅、tile 標貢獻點；加權/櫃買切換。
-// - 下鑽層：點產業進入，左＝主力貢獻排行（該群 AbsDesc10 串流＋「其他成
-//   員」餘量＋產業合計自洽列）、右＝同 10 檔＋餘量磚的磁磚牆（面積＝
-//   |貢獻|）；窄面板退化為上下堆疊。header 掛官方類股指數為權威錨點。
+// 升級）。資料源：shioaji index_components 群組／群組內排行串流（1 秒），
+// 查詢僅建底（docs/adr/0001）。兩層：
+// - 全景層：產業 → 個股兩層 treemap。每個產業訂閱群組內排行（成交值
+//   desc/10 或貢獻 abs_desc/10），產業頂端標題列＝名稱＋加權漲跌，個股
+//   tile 面積＝市值（參考權重）／成交值／|貢獻|、顏色＝漲跌幅（連續色階）。
+//   面板夠寬時右側加產業漲跌排行與貢獻前後。可匯出 PNG。
+// - 下鑽層：點產業標題進入，左＝主力貢獻排行（該群 AbsDesc10 串流＋「其他
+//   成員」餘量＋產業合計自洽列）、右＝同 10 檔＋餘量磚的磁磚牆；窄面板
+//   退化為上下堆疊。header 掛官方類股指數為權威錨點。
 //   純串流 — 不掛成員報價、不輪詢 snapshot。
 
-import { hierarchy, treemap, treemapSquarify } from 'd3-hierarchy';
-import { AlertTriangle, ChevronLeft } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ImageDown } from 'lucide-react';
+import { LayoutGroup, motion, MotionConfig } from 'motion/react';
 import {
     type CSSProperties,
+    useCallback,
     useEffect,
     useMemo,
+    useRef,
     useState,
 } from 'react';
+import { useCoalescedStates } from '../hooks/use-coalesced-states';
 import { useIndexComponents } from '../hooks/use-index-components';
 import { useQuote } from '../hooks/use-stream';
+import { fitHeatLabel, type HeatLabelFit } from '../lib/heat-label';
+import {
+    heatBudget,
+    layoutFlat,
+    layoutNested,
+    type Rect,
+    selectHeatItems,
+    type SplitMemo,
+    stableOrder,
+} from '../lib/heat-layout';
+import {
+    heatColor,
+    heatInk,
+    heatPalette,
+    heatRgb,
+    legendColors,
+    rgbCss,
+    SECTOR_HEAT_DOMAIN,
+    STOCK_HEAT_DOMAIN,
+    type HeatPalette,
+} from '../lib/heat-scale';
+import {
+    exportFileName,
+    renderHeatmapPng,
+    saveHeatmapPng,
+} from '../lib/heatmap-export';
 import {
     getIcBootstrapGroupWeights,
     getIcGroupWperfAt,
@@ -25,8 +56,10 @@ import {
 import { estimateOtherPct } from '../lib/sector-other-pct';
 import { useFocusedSector } from '../lib/sector-sync';
 import { loadStockDetails, SECTOR_INDICES } from '../lib/stock-index';
+import { useThemeSettings } from '../lib/theme-store';
+import { notify } from '../lib/trade';
 import type { ContractBase } from '../lib/types/contract';
-import type { IcProjection } from '../lib/types/market';
+import type { IcProjection, IcRankingEntry } from '../lib/types/market';
 import { fmtPrice } from '../lib/utils/format';
 import { vars } from '../theme.css';
 import { AsyncStatus } from './async-status';
@@ -55,10 +88,22 @@ const INDEX_LABELS: Record<PanoramaIndexCode, string> = {
     IX0043: '櫃買',
 };
 
-// 權重不設面積選項 — 它只是計算貢獻的係數（參考市值權重、盤中恆定），
-// 觀察「權值版圖」看貢獻/成交值即可
-type SizeMetric = 'amount' | 'contribution';
+// 面積：市值（建底參考市值權重，盤中恆定 → 版圖最穩定）／成交值／|貢獻|
+type SizeMetric = 'weight' | 'amount' | 'contribution';
 const SIZE_METRICS: { value: SizeMetric; label: string }[] = [
+    { value: 'weight', label: '市值' },
+    { value: 'amount', label: '成交值' },
+    { value: 'contribution', label: '貢獻' },
+];
+// 預設面積＝貢獻（使用者 2026-10-21 決定）；已存的選擇照舊沿用
+export function initialSizeMetric(stored: string | null): SizeMetric {
+    return stored === 'weight' || stored === 'amount' || stored === 'contribution'
+        ? stored
+        : 'contribution';
+}
+// 下鑽排行只有成交值／貢獻兩種（群組內排行 published matrix）
+type DrillMetric = 'amount' | 'contribution';
+const DRILL_METRICS: { value: DrillMetric; label: string }[] = [
     { value: 'amount', label: '成交值' },
     { value: 'contribution', label: '貢獻' },
 ];
@@ -72,6 +117,11 @@ const SIZE_KEY = 'sj-pro-panorama-size';
 const INDEX_KEY = 'sj-pro-panorama-index';
 // 左右並排的最小面板寬 — 更窄就退化為上下堆疊
 const NARROW_PX = 520;
+// 全景側欄（產業排行＋貢獻前後）出現的最小面板寬
+const SIDE_PX = 760;
+const HEADER_PX = 18;
+// 群組內排行每組最多 10 檔（published matrix）
+const GROUP_RANK_LIMIT = 10;
 
 const GM_CONTRIBUTION: IcProjection = {
     kind: 'group_metric',
@@ -82,6 +132,41 @@ const GM_WPERF: IcProjection = {
     metric: 'weighted_performance',
 };
 const GM_AMOUNT: IcProjection = { kind: 'group_metric', metric: 'amount' };
+// 全市場貢獻前／後 25（與市場脈動共用同一條投影）
+const RK_POS: IcProjection = {
+    kind: 'ranking',
+    target: 'component',
+    metric: 'contribution',
+    order: 'positive_desc',
+    limit: 25,
+};
+const RK_NEG: IcProjection = {
+    kind: 'ranking',
+    target: 'component',
+    metric: 'contribution',
+    order: 'negative_asc',
+    limit: 25,
+};
+
+function groupRanking(metric: DrillMetric, group: string): IcProjection {
+    return metric === 'amount'
+        ? {
+              kind: 'ranking',
+              target: 'component',
+              metric: 'amount',
+              order: 'desc',
+              limit: GROUP_RANK_LIMIT,
+              group,
+          }
+        : {
+              kind: 'ranking',
+              target: 'component',
+              metric: 'contribution',
+              order: 'abs_desc',
+              limit: GROUP_RANK_LIMIT,
+              group,
+          };
+}
 
 interface GroupRow {
     category: string;
@@ -90,17 +175,6 @@ interface GroupRow {
     points: number;
     pct: number;
     size: number;
-}
-
-function heatStyle(pct: number, extra?: CSSProperties): CSSProperties {
-    const color =
-        pct > 0 ? vars.color.up : pct < 0 ? vars.color.down : vars.color.flat;
-    const alpha = 10 + Math.min(1, Math.abs(pct) / 4) * 46;
-    return {
-        '--heat-color': color,
-        '--heat-alpha': `${alpha.toFixed(0)}%`,
-        ...extra,
-    } as CSSProperties;
 }
 
 function fmtAmount(value: number) {
@@ -118,96 +192,133 @@ function fmtPct(value: number) {
     return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
+// 標題列／排行用的短名：去掉「工業」「業」字尾（半導體業→半導體、塑膠工業→塑膠）
+function shortSectorName(name: string): string {
+    const short = name.replace(/(工業|業)$/, '');
+    return short.length > 0 ? short : name;
+}
+
+const dirOf = (value: number) => (value > 0 ? 'up' : value < 0 ? 'down' : 'flat');
+
 // callback ref：條件渲染的量測目標（下鑽磚牆）晚於元件 mount 才出現，
-// useRef+空依賴 effect 會掛不到 observer — 以元素 state 驅動重掛
+// useRef+空依賴 effect 會掛不到 observer — 以元素 state 驅動重掛。
+// 尺寸變動時回報 resizing（約 250ms），tile transition 跟著縮短。
 function useBoxSize<T extends HTMLElement>() {
     const [element, setElement] = useState<T | null>(null);
     const [size, setSize] = useState({ width: 0, height: 0 });
+    const [resizing, setResizing] = useState(false);
     useEffect(() => {
         if (!element || typeof ResizeObserver === 'undefined') return;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let first = true;
         const update = () => {
             const { width, height } = element.getBoundingClientRect();
-            setSize({ width: Math.floor(width), height: Math.floor(height) });
+            const next = { width: Math.floor(width), height: Math.floor(height) };
+            setSize((current) =>
+                current.width === next.width && current.height === next.height
+                    ? current
+                    : next,
+            );
+            if (first) {
+                first = false;
+                return;
+            }
+            setResizing(true);
+            clearTimeout(timer);
+            timer = setTimeout(() => setResizing(false), 250);
         };
         update();
         const observer = new ResizeObserver(update);
         observer.observe(element);
-        return () => observer.disconnect();
+        return () => {
+            observer.disconnect();
+            clearTimeout(timer);
+        };
     }, [element]);
-    return { ref: setElement, size };
+    return { ref: setElement, size, resizing };
 }
 
-interface HeatLeaf {
+interface TileView {
     key: string;
-    label: string;
-    sub?: string;
+    code: string;
+    name: string;
+    rect: Rect;
     pct: number | null;
-    approx?: boolean; // 反推估算值 — 顯示 ≈ 前綴
-    pctUnavailable?: boolean; // 漲跌幅無法可靠估算 — 顯示「—」
-    x0: number;
-    y0: number;
-    x1: number;
-    y1: number;
-    onClick?: () => void;
+    pctText: string | null;
+    sub?: string;
+    fill: string;
+    ink: string;
+    fit: HeatLabelFit;
     title: string;
+    onClick?: () => void;
 }
 
-// 共用 squarified treemap 渲染 — 全景層（產業）與下鑽磚牆（個股）皆用
-function HeatTreemap({ leaves }: { leaves: HeatLeaf[] }) {
+function buildTile(
+    palette: HeatPalette,
+    domain: number,
+    t: Omit<TileView, 'fill' | 'ink' | 'fit'>,
+): TileView {
+    const rgb = heatRgb(t.pct, domain, palette);
+    return {
+        ...t,
+        fill: rgbCss(rgb),
+        ink: heatInk(rgb, palette),
+        fit: fitHeatLabel(t.rect.w, t.rect.h, t.name, t.pctText, t.code),
+    };
+}
+
+// tile 依 key 排序後渲染：DOM 節點順序固定，位置／尺寸／顏色的 CSS
+// transition 才不會因節點搬移而中斷
+function HeatTiles({ tiles }: { tiles: TileView[] }) {
+    const sorted = useMemo(
+        () => [...tiles].sort((a, b) => (a.key < b.key ? -1 : 1)),
+        [tiles],
+    );
     return (
         <>
-            {leaves.map((leaf) => {
-                const width = leaf.x1 - leaf.x0;
-                const height = leaf.y1 - leaf.y0;
+            {sorted.map((tile) => {
+                const { fit } = tile;
+                const showSub =
+                    tile.sub !== undefined &&
+                    fit.mode === 'both' &&
+                    tile.rect.h >= fit.fontSize * 3.6 + 16;
                 return (
                     <button
-                        key={leaf.key}
+                        key={tile.key}
                         className={styles.heatTile}
-                        style={heatStyle(leaf.pct ?? 0, {
-                            left: leaf.x0,
-                            top: leaf.y0,
-                            width,
-                            height,
-                        })}
-                        title={leaf.title}
-                        onClick={leaf.onClick}
+                        style={{
+                            left: tile.rect.x,
+                            top: tile.rect.y,
+                            width: tile.rect.w,
+                            height: tile.rect.h,
+                            background: tile.fill,
+                            color: tile.ink,
+                        }}
+                        title={tile.title}
+                        aria-label={tile.title}
+                        onClick={tile.onClick}
                     >
-                        {width >= 46 && height >= 24 && (
-                            <span className={styles.tileName}>{leaf.label}</span>
-                        )}
-                        {leaf.pct !== null && width >= 52 && height >= 38 && (
+                        {fit.mode !== 'none' && (
                             <span
-                                className={`${styles.tilePct} ${
-                                    panel.dirText[
-                                        leaf.pct > 0
-                                            ? 'up'
-                                            : leaf.pct < 0
-                                              ? 'down'
-                                              : 'flat'
-                                    ]
-                                }`}
+                                className={styles.tileName}
+                                style={{ fontSize: fit.fontSize }}
                             >
-                                {leaf.approx ? '≈' : ''}
-                                {fmtPct(leaf.pct)}
+                                {fit.mode === 'code' ? tile.code : tile.name}
                             </span>
                         )}
-                        {leaf.pct === null &&
-                            leaf.pctUnavailable &&
-                            width >= 52 &&
-                            height >= 38 && (
-                                <span
-                                    className={`${styles.tilePct} ${panel.dirText.flat}`}
-                                >
-                                    —
-                                </span>
-                            )}
-                        {leaf.sub !== undefined &&
-                            width >= 82 &&
-                            height >= 54 && (
-                                <span className={styles.tileSub}>
-                                    {leaf.sub}
-                                </span>
-                            )}
+                        {fit.mode === 'both' && tile.pctText && (
+                            <span
+                                className={styles.tilePct}
+                                style={{
+                                    fontSize: Math.round(fit.fontSize * 0.86),
+                                }}
+                            >
+                                {tile.pctText}
+                            </span>
+                        )}
+                        {showSub && (
+                            <span className={styles.tileSub}>{tile.sub}</span>
+                        )}
                     </button>
                 );
             })}
@@ -215,34 +326,34 @@ function HeatTreemap({ leaves }: { leaves: HeatLeaf[] }) {
     );
 }
 
-function layoutTreemap<T>(
-    items: T[],
-    value: (item: T) => number,
-    width: number,
-    height: number,
-): { item: T; x0: number; y0: number; x1: number; y1: number }[] {
-    if (width <= 0 || height <= 0) return [];
-    type Datum = { item?: T; children?: Datum[] };
-    const root = hierarchy<Datum>({
-        children: items.map((item) => ({ item })),
-    })
-        .sum((datum) => (datum.item ? Math.max(0, value(datum.item)) : 0))
-        .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
-    const laidOut = treemap<Datum>()
-        .tile(treemapSquarify.ratio(1.35))
-        .size([width, height])
-        .paddingInner(2)
-        .round(true)(root);
-    return laidOut
-        .leaves()
-        .filter((leaf) => (leaf.value ?? 0) > 0 && leaf.data.item !== undefined)
-        .map((leaf) => ({
-            item: leaf.data.item as T,
-            x0: leaf.x0,
-            y0: leaf.y0,
-            x1: leaf.x1,
-            y1: leaf.y1,
-        }));
+function Legend({ palette, domain }: { palette: HeatPalette; domain: number }) {
+    const colors = legendColors(domain, palette);
+    return (
+        <span
+            className={styles.legend}
+            aria-label={`色階範圍 正負 ${domain}%`}
+        >
+            -{domain}%
+            <span className={styles.legendBar}>
+                {colors.map((color, i) => (
+                    <span
+                        key={i}
+                        className={styles.legendCell}
+                        style={{ background: color }}
+                    />
+                ))}
+            </span>
+            +{domain}%
+        </span>
+    );
+}
+
+const NO_PROJECTIONS: IcProjection[] = [];
+
+interface PanoramaStock {
+    key: string;
+    weight: number;
+    entry: IcRankingEntry;
 }
 
 export function SectorHeatmap({
@@ -250,13 +361,17 @@ export function SectorHeatmap({
 }: {
     onPick?: (code: string) => void;
 }) {
+    const theme = useThemeSettings();
+    const palette = useMemo(
+        () => heatPalette(theme),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [theme.mode, theme.convention, theme.custom],
+    );
     const [indexCode, setIndexCode] = useState<PanoramaIndexCode>(() =>
         localStorage.getItem(INDEX_KEY) === 'IX0043' ? 'IX0043' : 'IX0001',
     );
     const [sizeMetric, setSizeMetric] = useState<SizeMetric>(() =>
-        localStorage.getItem(SIZE_KEY) === 'contribution'
-            ? 'contribution'
-            : 'amount',
+        initialSizeMetric(localStorage.getItem(SIZE_KEY)),
     );
     const [drillCat, setDrillCat] = useState<string | null>(null);
     const [nameByCode, setNameByCode] = useState<ReadonlyMap<string, string>>(
@@ -264,49 +379,60 @@ export function SectorHeatmap({
     );
     const { ref: rootRef, size: rootSize } = useBoxSize<HTMLDivElement>();
     const narrow = rootSize.width > 0 && rootSize.width < NARROW_PX;
+    const showSide = drillCat === null && rootSize.width >= SIDE_PX;
 
-    // 下鑽排行指標跟隨面積選擇（群組內排行 published matrix 恰好就是
-    // 貢獻 AbsDesc10 與成交值 Desc10 兩種）
-    const drillMetric: 'contribution' | 'amount' = sizeMetric;
-    const projections = useMemo<IcProjection[]>(() => {
-        // gm:amount 常駐：面積預設模式要用，且全景 header 的總成交值恆需
-        const list: IcProjection[] = [GM_CONTRIBUTION, GM_WPERF, GM_AMOUNT];
-        if (drillCat) {
-            list.push(
-                sizeMetric === 'amount'
-                    ? {
-                          kind: 'ranking',
-                          target: 'component',
-                          metric: 'amount',
-                          order: 'desc',
-                          limit: 10,
-                          group: drillCat,
-                      }
-                    : {
-                          kind: 'ranking',
-                          target: 'component',
-                          metric: 'contribution',
-                          order: 'abs_desc',
-                          limit: 10,
-                          group: drillCat,
-                      },
-            );
-        }
-        return list;
-    }, [drillCat, sizeMetric]);
-    const ic = useIndexComponents(INDICES[indexCode], projections);
-    const contributionState = ic.states[0];
-    const wperfState = ic.states[1];
-    const amountState = ic.states[2];
+    // 群組內排行與下鑽排行的指標：市值面積沿用成交值排行（published
+    // matrix 沒有群組內權重排行）
+    const rankMetric: DrillMetric =
+        sizeMetric === 'contribution' ? 'contribution' : 'amount';
+    const drillMetric = rankMetric;
+
+    // 各自獨立的 useIndexComponents：切換下鑽／側欄只動自己那幾條訂閱
+    const baseIc = useIndexComponents(
+        INDICES[indexCode],
+        useMemo(() => [GM_CONTRIBUTION, GM_WPERF, GM_AMOUNT], []),
+    );
+    const contributionState = baseIc.states[0];
+    const wperfState = baseIc.states[1];
+    const amountState = baseIc.states[2];
+
+    // 產業清單（建底／群組串流抵達後才知道）→ 每個產業一條群組內排行
+    const categoriesKey = (contributionState?.groups ?? [])
+        .map((group) => group.category)
+        .sort()
+        .join(',');
+    const groupProjections = useMemo(
+        () =>
+            categoriesKey
+                ? categoriesKey
+                      .split(',')
+                      .map((category) => groupRanking(rankMetric, category))
+                : NO_PROJECTIONS,
+        [categoriesKey, rankMetric],
+    );
+    const groupIc = useIndexComponents(INDICES[indexCode], groupProjections);
+    const sideIc = useIndexComponents(
+        INDICES[indexCode],
+        useMemo(() => (showSide ? [RK_POS, RK_NEG] : NO_PROJECTIONS), [showSide]),
+    );
+    const drillIc = useIndexComponents(
+        INDICES[indexCode],
+        useMemo(
+            () =>
+                drillCat ? [groupRanking(drillMetric, drillCat)] : NO_PROJECTIONS,
+            [drillCat, drillMetric],
+        ),
+    );
+    const drillState = drillCat ? drillIc.states[0] : undefined;
     const sizeState =
-        sizeMetric === 'amount' ? amountState : contributionState;
-    const drillState = drillCat
-        ? ic.states[projections.length - 1]
-        : undefined;
+        sizeMetric === 'contribution' ? contributionState : amountState;
     const icError =
-        ic.subErrors.find(Boolean) ??
-        (ic.bootstrap.status === 'error' || ic.bootstrap.status === 'quota'
-            ? ic.bootstrap.error
+        [...baseIc.subErrors, ...groupIc.subErrors, ...drillIc.subErrors].find(
+            Boolean,
+        ) ??
+        (baseIc.bootstrap.status === 'error' ||
+        baseIc.bootstrap.status === 'quota'
+            ? baseIc.bootstrap.error
             : undefined);
 
     const groupRows = useMemo<GroupRow[]>(() => {
@@ -375,16 +501,106 @@ export function SectorHeatmap({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [focused?.seq]);
 
-    // 下鑽排行的個股名稱（僅 10 檔，經 contracts 快取懶載）
-    const drillCodes = (drillState?.entries ?? [])
-        .map((entry) => entry.code)
+    // ---- 全景層：產業 → 個股兩層 treemap ----
+    const { ref: panoramaRef, size: panoramaSize, resizing } =
+        useBoxSize<HTMLDivElement>();
+    const groupStates = useCoalescedStates(
+        groupIc.states,
+        `${indexCode}|${rankMetric}|${categoriesKey}`,
+        250,
+        drillCat !== null,
+    );
+    const groupEntries = useMemo(() => {
+        const map = new Map<string, IcRankingEntry[]>();
+        groupProjections.forEach((projection, i) => {
+            if (projection.kind !== 'ranking' || !projection.group) return;
+            map.set(projection.group, groupStates[i]?.entries ?? []);
+        });
+        return map;
+    }, [groupStates, groupProjections]);
+    // 排序遲滯：以上一次的順序為底，同一個指數／面積指標內延續
+    const orderRef = useRef<{
+        scope: string;
+        groups: string[];
+        stocks: Map<string, string[]>;
+        split: SplitMemo;
+    }>({ scope: '', groups: [], stocks: new Map(), split: new Map() });
+    const panorama = useMemo(() => {
+        const scope = `${indexCode}|${sizeMetric}`;
+        if (orderRef.current.scope !== scope) {
+            orderRef.current = {
+                scope,
+                groups: [],
+                stocks: new Map(),
+                split: new Map(),
+            };
+        }
+        const memo = orderRef.current;
+        const weightOf = (entry: IcRankingEntry) =>
+            sizeMetric === 'weight'
+                ? entry.weight_pct
+                : Math.abs(entry.value);
+        const groupsIn = groupRows.map((row) => {
+            const items: PanoramaStock[] = (
+                groupEntries.get(row.category) ?? []
+            ).map((entry) => ({
+                key: entry.code,
+                weight: weightOf(entry),
+                entry,
+            }));
+            const order = stableOrder(memo.stocks.get(row.category), items);
+            memo.stocks.set(row.category, order);
+            const byKey = new Map(items.map((item) => [item.key, item]));
+            const stocks = order.map((key) => byKey.get(key)!);
+            return {
+                key: row.category,
+                row,
+                stocks,
+                weight: stocks.reduce((sum, stock) => sum + stock.weight, 0),
+            };
+        });
+        const groupOrder = stableOrder(memo.groups, groupsIn);
+        memo.groups = groupOrder;
+        const groupIn = new Map(groupsIn.map((group) => [group.key, group]));
+        const ordered = groupOrder.map((key) => groupIn.get(key)!);
+        const budget = heatBudget(
+            panoramaSize.width,
+            panoramaSize.height,
+            GROUP_RANK_LIMIT,
+        );
+        const selected = selectHeatItems(ordered, budget);
+        const nextSplit: SplitMemo = new Map();
+        const layout = layoutNested(
+            selected.map(({ group, stocks }) => ({ key: group.key, stocks })),
+            panoramaSize.width,
+            panoramaSize.height,
+            HEADER_PX,
+            memo.split,
+            nextSplit,
+        );
+        memo.split = nextSplit;
+        return { selected, layout, groupCount: groupsIn.filter((g) => g.weight > 0).length };
+    }, [groupEntries, groupRows, indexCode, panoramaSize, sizeMetric]);
+
+    // 個股名稱（入選者，經 contracts 快取懶載）
+    const posEntries = sideIc.states[0]?.entries ?? [];
+    const negEntries = sideIc.states[1]?.entries ?? [];
+    const drillEntries = drillState?.entries ?? [];
+    const wantedCodes = [
+        ...panorama.layout.tiles.map((tile) => tile.key),
+        ...posEntries.map((entry) => entry.code),
+        ...negEntries.map((entry) => entry.code),
+        ...drillEntries.map((entry) => entry.code),
+    ]
+        .filter((code) => !nameByCode.has(code))
+        .sort()
         .join(',');
     useEffect(() => {
-        if (!drillCodes) return;
+        if (!wantedCodes) return;
         let active = true;
-        void loadStockDetails(drillCodes.split(','))
+        void loadStockDetails(wantedCodes.split(','))
             .then((details) => {
-                if (!active) return;
+                if (!active || details.length === 0) return;
                 setNameByCode((current) => {
                     const next = new Map(current);
                     details.forEach((detail) =>
@@ -397,7 +613,206 @@ export function SectorHeatmap({
         return () => {
             active = false;
         };
-    }, [drillCodes]);
+    }, [wantedCodes]);
+
+    const openDrill = useCallback((category: string) => {
+        setDrillCat(category);
+        localStorage.setItem(CAT_KEY, category);
+    }, []);
+
+    const panoramaTiles = useMemo<TileView[]>(() => {
+        const stockOf = new Map<string, { stock: PanoramaStock; row: GroupRow }>();
+        for (const { group, stocks } of panorama.selected) {
+            for (const stock of stocks) {
+                stockOf.set(stock.key, { stock, row: group.row });
+            }
+        }
+        // 太小放不下標題列的產業：整塊點擊改為進入產業明細（窄面板沒有
+        // 側欄排行，否則就沒有入口）
+        const headerless = new Set(
+            panorama.layout.sectors
+                .filter((sector) => !sector.header)
+                .map((sector) => sector.key),
+        );
+        return panorama.layout.tiles.flatMap((tile) => {
+            const hit = stockOf.get(tile.key);
+            if (!hit) return [];
+            const { entry } = hit.stock;
+            const name = nameByCode.get(entry.code) ?? entry.code;
+            const valueText =
+                rankMetric === 'amount'
+                    ? `成交 ${fmtAmount(entry.value)}`
+                    : `貢獻 ${fmtPoints(entry.value)} 點`;
+            return [
+                buildTile(palette, STOCK_HEAT_DOMAIN, {
+                    key: entry.code,
+                    code: entry.code,
+                    name,
+                    rect: tile.rect,
+                    pct: entry.pct_chg,
+                    pctText: fmtPct(entry.pct_chg),
+                    title: `${name}（${entry.code}）· ${hit.row.name}\n漲跌 ${fmtPct(entry.pct_chg)} · 權重 ${entry.weight_pct.toFixed(2)}% · ${valueText}${headerless.has(tile.groupKey) ? `\n點擊看${hit.row.name}明細` : ''}`,
+                    onClick: headerless.has(tile.groupKey)
+                        ? () => openDrill(tile.groupKey)
+                        : () => onPick?.(entry.code),
+                }),
+            ];
+        });
+    }, [nameByCode, onPick, openDrill, palette, panorama, rankMetric]);
+
+    const sectorHeaders = useMemo(
+        () =>
+            panorama.layout.sectors.flatMap((sector) => {
+                const row = groupByCat.get(sector.key);
+                if (!row || !sector.header) return [];
+                return [{ key: sector.key, row, rect: sector.header }];
+            }),
+        [groupByCat, panorama],
+    );
+
+    // 涵蓋率：成交值＝Σ入選成交值／全市場成交值；市值＝Σ入選權重／Σ群組權重
+    const shownCount = panorama.layout.tiles.length;
+    const shownGroups = panorama.layout.sectors.length;
+    const coverage = useMemo(() => {
+        const entries = panorama.selected.flatMap(({ stocks }) =>
+            stocks.map((stock) => stock.entry),
+        );
+        if (sizeMetric === 'amount') {
+            if (totalAmount <= 0) return null;
+            return (
+                entries.reduce((sum, entry) => sum + entry.value, 0) /
+                totalAmount
+            );
+        }
+        if (sizeMetric === 'weight') {
+            const weights = getIcBootstrapGroupWeights(indexCode);
+            const total = weights
+                ? [...weights.values()].reduce((sum, w) => sum + w, 0)
+                : 100;
+            if (total <= 0) return null;
+            return (
+                entries.reduce((sum, entry) => sum + entry.weight_pct, 0) /
+                total
+            );
+        }
+        return null;
+        // ic 換新物件代表建底可能已更新（權重來源）
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [baseIc, indexCode, panorama, sizeMetric, totalAmount]);
+    const metricLabel = SIZE_METRICS.find(
+        (metric) => metric.value === sizeMetric,
+    )!.label;
+    const colorHint =
+        theme.convention === 'intl' ? '綠色上漲・紅色下跌' : '紅色上漲・綠色下跌';
+    const coverageText =
+        shownCount === 0
+            ? ''
+            : sizeMetric === 'contribution'
+              ? `顯示 ${shownGroups} 個產業中貢獻最大的 ${shownCount} 檔`
+              : `顯示 ${shownGroups} 個產業中${sizeMetric === 'amount' ? '成交值最大' : '成交最活躍'}的 ${shownCount} 檔${
+                    coverage !== null
+                        ? `（佔全體個股${metricLabel} ${Math.round(coverage * 100)}%）`
+                        : ''
+                }`;
+    const areaLabel =
+        sizeMetric === 'contribution' ? '貢獻（絕對值）' : metricLabel;
+    const captionText = `${colorHint}・面積越大代表${areaLabel}越大${coverageText ? `・${coverageText}` : ''}`;
+
+    // ---- 匯出 PNG ----
+    const [exporting, setExporting] = useState(false);
+    const exportPng = useCallback(async () => {
+        if (exporting || panoramaTiles.length === 0) return;
+        setExporting(true);
+        try {
+            const now = new Date();
+            const p2 = (n: number) => String(n).padStart(2, '0');
+            const stamp = `${now.getFullYear()}/${p2(now.getMonth() + 1)}/${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}`;
+            const blob = await renderHeatmapPng({
+                width: panoramaSize.width,
+                height: panoramaSize.height,
+                title: `產業全景・${INDEX_LABELS[indexCode]}`,
+                subtitle: `面積＝${metricLabel}・${stamp}${isSimtrade ? '・試撮' : ''}`,
+                caption: captionText,
+                legend: {
+                    colors: legendColors(STOCK_HEAT_DOMAIN, palette),
+                    low: `-${STOCK_HEAT_DOMAIN}%`,
+                    high: `+${STOCK_HEAT_DOMAIN}%`,
+                },
+                background: rgbCss(palette.gap),
+                headerFill: rgbCss(palette.header),
+                foreground: rgbCss(palette.fg),
+                muted: rgbCss(palette.muted),
+                sectors: sectorHeaders.map(({ row, rect }) => ({
+                    rect,
+                    header: rect,
+                    name: shortSectorName(row.name),
+                    pctText: fmtPct(row.pct),
+                    pctColor: rgbCss(
+                        row.pct > 0
+                            ? palette.upText
+                            : row.pct < 0
+                              ? palette.downText
+                              : palette.muted,
+                    ),
+                })),
+                tiles: panoramaTiles.map((tile) => ({
+                    rect: tile.rect,
+                    fill: tile.fill,
+                    ink: tile.ink,
+                    name: tile.name,
+                    code: tile.code,
+                    pctText: tile.pctText,
+                    mode: tile.fit.mode,
+                    fontSize: tile.fit.fontSize,
+                })),
+            });
+            const saved = await saveHeatmapPng(
+                blob,
+                exportFileName(`${INDEX_LABELS[indexCode]}-${metricLabel}`, now),
+            );
+            if (saved) {
+                notify({ kind: 'ok', title: '已匯出產業全景', body: saved });
+            }
+        } catch (reason) {
+            notify({
+                kind: 'err',
+                title: '產業全景匯出失敗',
+                body: reason instanceof Error ? reason.message : String(reason),
+            });
+        } finally {
+            setExporting(false);
+        }
+    }, [
+        captionText,
+        exporting,
+        indexCode,
+        isSimtrade,
+        metricLabel,
+        palette,
+        panoramaSize,
+        panoramaTiles,
+        sectorHeaders,
+    ]);
+
+    // ---- 側欄：產業漲跌排行＋貢獻前後 ----
+    const sectorRank = useMemo(
+        () =>
+            [...groupRows].sort(
+                (a, b) =>
+                    b.pct - a.pct || (a.category < b.category ? -1 : 1),
+            ),
+        [groupRows],
+    );
+    const sectorRankMax = sectorRank.reduce(
+        (max, row) => Math.max(max, Math.abs(row.pct)),
+        0,
+    );
+    const { ref: moversRef, size: moversSize } = useBoxSize<HTMLDivElement>();
+    // 每塊：標題約 20px、列高 18px；兩塊平分高度
+    const moverRows = Math.max(
+        3,
+        Math.min(25, Math.floor((moversSize.height / 2 - 24) / 18)),
+    );
 
     // 下鑽 header 的官方類股指數（僅上市有對應官方指數）
     const officialSector =
@@ -416,43 +831,21 @@ export function SectorHeatmap({
             ? ((officialClose - officialReference) / officialReference) * 100
             : null;
 
-    const { ref: panoramaRef, size: panoramaSize } =
-        useBoxSize<HTMLDivElement>();
-    const panoramaLeaves = useMemo<HeatLeaf[]>(
-        () =>
-            layoutTreemap(
-                groupRows.filter((group) => group.size > 0),
-                (group) => group.size,
-                panoramaSize.width,
-                panoramaSize.height,
-            ).map(({ item: group, ...rect }) => ({
-                ...rect,
-                key: group.category,
-                label: group.name,
-                pct: group.pct,
-                // 角落數字跟著面積指標走：成交值模式顯示成交值、貢獻模式顯示貢獻點
-                sub:
-                    sizeMetric === 'amount'
-                        ? fmtAmount(group.size)
-                        : `${fmtPoints(group.points)} 點`,
-                title: `${group.name}（${group.itemCount} 檔）｜加權漲跌 ${fmtPct(group.pct)}｜貢獻 ${fmtPoints(group.points)} 點${sizeMetric === 'amount' ? `｜成交 ${fmtAmount(group.size)}` : ''}`,
-                onClick: () => {
-                    setDrillCat(group.category);
-                    localStorage.setItem(CAT_KEY, group.category);
-                },
-            })),
-        [groupRows, panoramaSize, sizeMetric],
-    );
-
     // ---- 下鑽層資料：10 檔主力＋餘量＋合計（與群組串流自洽） ----
     const drillGroup = drillCat ? groupByCat.get(drillCat) : undefined;
-    const drillEntries = drillState?.entries ?? [];
     const isAmountDrill = drillMetric === 'amount';
     const top10Sum = drillEntries.reduce((sum, entry) => sum + entry.value, 0);
     // 餘量與合計跟著下鑽指標走：貢獻＝群組貢獻點、成交值＝群組總成交值
+    const drillGroupAmount = drillCat
+        ? Math.abs(
+              (amountState?.groups ?? []).find(
+                  (group) => group.category === drillCat,
+              )?.value ?? 0,
+          )
+        : 0;
     const drillTotal = drillGroup
         ? isAmountDrill
-            ? drillGroup.size
+            ? drillGroupAmount
             : drillGroup.points
         : 0;
     // 成交值餘量 clamp ≥0 — 群組整包與排行整包非同刻，節奏差可瞬現微負
@@ -484,7 +877,7 @@ export function SectorHeatmap({
         }),
         // ic 每個 store 版本換新物件 — 建底抵達、日切、群組新包後自動更新
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [drillCat, drillCalculatedAt, ic, indexCode],
+        [drillCat, drillCalculatedAt, baseIc, drillIc, indexCode],
     );
     const otherPct = useMemo(
         () =>
@@ -500,19 +893,26 @@ export function SectorHeatmap({
         0,
     );
 
-    const { ref: wallRef, size: wallSize } = useBoxSize<HTMLDivElement>();
-    const wallLeaves = useMemo<HeatLeaf[]>(() => {
+    const { ref: wallRef, size: wallSize, resizing: wallResizing } =
+        useBoxSize<HTMLDivElement>();
+    const wallOrderRef = useRef<{
+        scope: string;
+        order: string[];
+        split: SplitMemo;
+    }>({ scope: '', order: [], split: new Map() });
+    const wallTiles = useMemo<TileView[]>(() => {
         type WallItem = {
             key: string;
-            label: string;
+            weight: number;
+            name: string;
             pct: number | null;
             points: number;
             code?: string;
-            count?: number;
         };
         const items: WallItem[] = drillEntries.map((entry) => ({
             key: entry.code,
-            label: `${entry.code} ${nameByCode.get(entry.code) ?? ''}`.trim(),
+            weight: Math.abs(entry.value),
+            name: nameByCode.get(entry.code) ?? entry.code,
             pct: entry.pct_chg,
             points: entry.value,
             code: entry.code,
@@ -520,50 +920,87 @@ export function SectorHeatmap({
         if (otherCount > 0 && Math.abs(otherValue) > 1e-9) {
             items.push({
                 key: 'other',
-                label: `其他成員（${otherCount} 檔）`,
+                weight: Math.abs(otherValue),
+                name: `其他 ${otherCount} 檔`,
                 pct: otherPct,
                 points: otherValue,
-                count: otherCount,
             });
         }
-        return layoutTreemap(
-            items,
-            (item) => Math.abs(item.points),
+        const scope = `${indexCode}|${drillCat}|${drillMetric}`;
+        if (wallOrderRef.current.scope !== scope) {
+            wallOrderRef.current = { scope, order: [], split: new Map() };
+        }
+        const order = stableOrder(wallOrderRef.current.order, items);
+        wallOrderRef.current.order = order;
+        const byKey = new Map(items.map((item) => [item.key, item]));
+        const ordered = order.map((key) => byKey.get(key)!);
+        const nextSplit: SplitMemo = new Map();
+        const boxes = layoutFlat(
+            ordered,
             wallSize.width,
             wallSize.height,
-        ).map(({ item, ...rect }) => ({
-            ...rect,
-            key: item.key,
-            label: item.label,
-            pct: item.pct,
-            approx: item.code === undefined && item.pct !== null,
-            pctUnavailable: item.code === undefined && item.pct === null,
-            sub: isAmountDrill
-                ? fmtAmount(item.points)
-                : `${fmtPoints(item.points)} 點`,
-            title:
-                item.code === undefined
-                    ? `${item.label}｜合計${isAmountDrill ? `成交 ${fmtAmount(item.points)}` : `貢獻 ${fmtPoints(item.points)} 點`}${item.pct !== null ? `｜加權漲跌 ≈${fmtPct(item.pct)}（依群組加權與前10反推）` : `｜${OTHER_PCT_UNAVAILABLE}`}`
-                    : `${item.label}｜${isAmountDrill ? `成交 ${fmtAmount(item.points)}` : `貢獻 ${fmtPoints(item.points)} 點`}｜漲跌 ${fmtPct(item.pct ?? 0)}`,
-            onClick: item.code ? () => onPick?.(item.code!) : undefined,
-        }));
+            wallOrderRef.current.split,
+            nextSplit,
+        );
+        wallOrderRef.current.split = nextSplit;
+        return boxes.map(
+            (box) => {
+                const item = byKey.get(box.key)!;
+                const valueText = isAmountDrill
+                    ? `成交 ${fmtAmount(item.points)}`
+                    : `貢獻 ${fmtPoints(item.points)} 點`;
+                const pctText =
+                    item.pct === null
+                        ? item.code === undefined
+                            ? '—'
+                            : null
+                        : `${item.code === undefined ? '≈' : ''}${fmtPct(item.pct)}`;
+                return buildTile(palette, STOCK_HEAT_DOMAIN, {
+                    key: item.key,
+                    code: item.code ?? item.name,
+                    name: item.name,
+                    rect: box.rect,
+                    pct: item.pct,
+                    pctText,
+                    sub: isAmountDrill
+                        ? fmtAmount(item.points)
+                        : `${fmtPoints(item.points)} 點`,
+                    title:
+                        item.code === undefined
+                            ? `其他成員（${otherCount} 檔）｜合計${valueText}${item.pct !== null ? `｜加權漲跌 ≈${fmtPct(item.pct)}（依群組加權與前10反推）` : `｜${OTHER_PCT_UNAVAILABLE}`}`
+                            : `${item.name}（${item.code}）｜${valueText}｜漲跌 ${fmtPct(item.pct ?? 0)}`,
+                    onClick: item.code
+                        ? () => onPick?.(item.code!)
+                        : undefined,
+                });
+            },
+        );
     }, [
+        drillCat,
         drillEntries,
+        drillMetric,
+        indexCode,
         isAmountDrill,
         nameByCode,
         onPick,
         otherCount,
         otherPct,
         otherValue,
+        palette,
         wallSize,
     ]);
 
     const bootstrapPending =
-        ic.bootstrap.status === 'pending' || ic.bootstrap.status === 'idle';
+        baseIc.bootstrap.status === 'pending' ||
+        baseIc.bootstrap.status === 'idle';
 
     // ---- render ----
 
     const drillView = drillCat !== null;
+    const setMetric = (metric: SizeMetric) => {
+        setSizeMetric(metric);
+        localStorage.setItem(SIZE_KEY, metric);
+    };
 
     return (
         <div ref={rootRef} className={styles.wrap}>
@@ -611,38 +1048,17 @@ export function SectorHeatmap({
                                     }
                                     aria-pressed={metric.value === sizeMetric}
                                     title={`面積＝${metric.label}`}
-                                    onClick={() => {
-                                        setSizeMetric(metric.value);
-                                        localStorage.setItem(
-                                            SIZE_KEY,
-                                            metric.value,
-                                        );
-                                    }}
+                                    onClick={() => setMetric(metric.value)}
                                 >
                                     {metric.label}
                                 </button>
                             ))}
                         </span>
-                        <span className={styles.hint}>
-                            面積＝
-                            {
-                                SIZE_METRICS.find(
-                                    (metric) => metric.value === sizeMetric,
-                                )!.label
-                            }
-                            ・色＝加權漲跌幅・點產業下鑽
-                        </span>
                         <span className={styles.spacer} />
                         {contributionState && (
                             <span
                                 className={`${styles.totals} ${
-                                    panel.dirText[
-                                        totalPoints > 0
-                                            ? 'up'
-                                            : totalPoints < 0
-                                              ? 'down'
-                                              : 'flat'
-                                    ]
+                                    panel.dirText[dirOf(totalPoints)]
                                 }`}
                                 title="產業貢獻合計 ≈ 指數漲跌點數"
                             >
@@ -660,16 +1076,184 @@ export function SectorHeatmap({
                         {isSimtrade && (
                             <span className={styles.simtrade}>試撮</span>
                         )}
+                        <button
+                            className={styles.iconBtn}
+                            onClick={() => void exportPng()}
+                            disabled={exporting || panoramaTiles.length === 0}
+                            title="匯出 PNG 圖片"
+                            aria-label="匯出 PNG 圖片"
+                        >
+                            <ImageDown size={13} />
+                        </button>
                     </div>
-                    <div ref={panoramaRef} className={styles.treemapBox}>
-                        <HeatTreemap leaves={panoramaLeaves} />
-                        {panoramaLeaves.length === 0 && (
-                            <div className={styles.empty}>
-                                <AsyncStatus
-                                    phase={icError ? 'error' : bootstrapPending ? 'loading' : 'idle'}
-                                    text={icError ? '產業資料無法取得' : bootstrapPending ? '載入產業資料…' : '等待產業資料'}
-                                />
-                            </div>
+                    <div className={styles.caption}>
+                        <span className={styles.captionText} title={captionText}>
+                            {captionText}
+                        </span>
+                        <Legend palette={palette} domain={STOCK_HEAT_DOMAIN} />
+                    </div>
+                    <div className={styles.panoramaBody}>
+                        <div
+                            ref={panoramaRef}
+                            className={styles.treemapBox}
+                            style={
+                                {
+                                    background: rgbCss(palette.gap),
+                                    '--heat-move': resizing ? '0.18s' : '0.6s',
+                                } as CSSProperties
+                            }
+                        >
+                            {sectorHeaders.map(({ key, row, rect }) => (
+                                <button
+                                    key={`h${key}`}
+                                    className={styles.sectorHeader}
+                                    style={{
+                                        left: rect.x,
+                                        top: rect.y,
+                                        width: rect.w,
+                                        height: rect.h,
+                                        background: rgbCss(palette.header),
+                                    }}
+                                    title={`${row.name}（${row.itemCount} 檔）｜加權漲跌 ${fmtPct(row.pct)}｜貢獻 ${fmtPoints(row.points)} 點・點擊看產業明細`}
+                                    onClick={() => openDrill(key)}
+                                >
+                                    <span className={styles.sectorHeaderName}>
+                                        {shortSectorName(row.name)}
+                                    </span>
+                                    {rect.w >= shortSectorName(row.name).length * 11 + 62 && (
+                                        <span
+                                            className={`${styles.sectorHeaderPct} ${panel.dirText[dirOf(row.pct)]}`}
+                                        >
+                                            {fmtPct(row.pct)}
+                                        </span>
+                                    )}
+                                </button>
+                            ))}
+                            <HeatTiles tiles={panoramaTiles} />
+                            {panoramaTiles.length === 0 && (
+                                <div className={styles.empty}>
+                                    <AsyncStatus
+                                        phase={icError ? 'error' : bootstrapPending ? 'loading' : 'idle'}
+                                        text={icError ? '產業資料無法取得' : bootstrapPending ? '載入產業資料…' : '等待產業資料'}
+                                    />
+                                </div>
+                            )}
+                        </div>
+                        {showSide && (
+                            <MotionConfig reducedMotion="user">
+                                <div className={styles.sideCol}>
+                                    <div
+                                        className={styles.sideBlock}
+                                        style={{ flex: '1 1 52%' }}
+                                    >
+                                        <div className={styles.sideTitle}>
+                                            類股漲跌
+                                            <span className={styles.sideNote}>
+                                                加權漲跌幅
+                                            </span>
+                                        </div>
+                                        <div className={styles.sideList}>
+                                            <LayoutGroup>
+                                                {sectorRank.map((row) => (
+                                                    <motion.button
+                                                        layout="position"
+                                                        transition={{
+                                                            duration: 0.45,
+                                                            ease: [0.22, 1, 0.36, 1],
+                                                        }}
+                                                        key={row.category}
+                                                        className={styles.sideRow}
+                                                        title={`${row.name}・點擊看產業明細`}
+                                                        onClick={() =>
+                                                            openDrill(row.category)
+                                                        }
+                                                    >
+                                                        <span className={styles.sideName}>
+                                                            {shortSectorName(row.name)}
+                                                        </span>
+                                                        <span className={styles.sideBarTrack}>
+                                                            <span
+                                                                className={styles.sideBar}
+                                                                style={{
+                                                                    display: 'block',
+                                                                    width: `${sectorRankMax > 0 ? Math.max(2, (Math.abs(row.pct) / sectorRankMax) * 100) : 0}%`,
+                                                                    background: heatColor(
+                                                                        row.pct === 0 ? 0 : Math.sign(row.pct) * SECTOR_HEAT_DOMAIN,
+                                                                        SECTOR_HEAT_DOMAIN,
+                                                                        palette,
+                                                                    ),
+                                                                }}
+                                                            />
+                                                        </span>
+                                                        <span
+                                                            className={`${styles.sideValue} ${panel.dirText[dirOf(row.pct)]}`}
+                                                        >
+                                                            {fmtPct(row.pct)}
+                                                        </span>
+                                                    </motion.button>
+                                                ))}
+                                            </LayoutGroup>
+                                        </div>
+                                    </div>
+                                    <div
+                                        ref={moversRef}
+                                        style={{
+                                            flex: '1 1 48%',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: vars.space.xs,
+                                            minHeight: 0,
+                                        }}
+                                    >
+                                        {(
+                                            [
+                                                ['貢獻前', posEntries],
+                                                ['貢獻後', negEntries],
+                                            ] as const
+                                        ).map(([label, list]) => (
+                                            <div
+                                                key={label}
+                                                className={styles.sideBlock}
+                                                style={{ flex: '1 1 0' }}
+                                            >
+                                                <div className={styles.sideTitle}>
+                                                    {label} {Math.min(moverRows, list.length)} 檔
+                                                    <span className={styles.sideNote}>
+                                                        點
+                                                    </span>
+                                                </div>
+                                                <div className={styles.sideList}>
+                                                    {list.slice(0, moverRows).map((entry) => (
+                                                        <motion.button
+                                                            layout="position"
+                                                            transition={{
+                                                                duration: 0.45,
+                                                                ease: [0.22, 1, 0.36, 1],
+                                                            }}
+                                                            key={entry.code}
+                                                            className={styles.moverRow}
+                                                            title={`${nameByCode.get(entry.code) ?? entry.code}（${entry.code}）｜漲跌 ${fmtPct(entry.pct_chg)}`}
+                                                            onClick={() => onPick?.(entry.code)}
+                                                        >
+                                                            <span className={styles.moverCode}>
+                                                                {entry.code}
+                                                            </span>
+                                                            <span className={styles.sideName}>
+                                                                {nameByCode.get(entry.code) ?? ''}
+                                                            </span>
+                                                            <span
+                                                                className={`${styles.sideValue} ${panel.dirText[dirOf(entry.value)]}`}
+                                                            >
+                                                                {fmtPoints(entry.value)}
+                                                            </span>
+                                                        </motion.button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </MotionConfig>
                         )}
                     </div>
                 </>
@@ -735,25 +1319,19 @@ export function SectorHeatmap({
                         )}
                         <span className={styles.spacer} />
                         <span className={styles.segmentGroup}>
-                            {SIZE_METRICS.map((metric) => (
+                            {DRILL_METRICS.map((metric) => (
                                 <button
                                     key={metric.value}
                                     className={
                                         styles.segment[
-                                            metric.value === sizeMetric
+                                            metric.value === drillMetric
                                                 ? 'on'
                                                 : 'off'
                                         ]
                                     }
-                                    aria-pressed={metric.value === sizeMetric}
+                                    aria-pressed={metric.value === drillMetric}
                                     title={`排行＝${metric.label}`}
-                                    onClick={() => {
-                                        setSizeMetric(metric.value);
-                                        localStorage.setItem(
-                                            SIZE_KEY,
-                                            metric.value,
-                                        );
-                                    }}
+                                    onClick={() => setMetric(metric.value)}
                                 >
                                     {metric.label}
                                 </button>
@@ -994,9 +1572,18 @@ export function SectorHeatmap({
                                 </>
                             )}
                         </div>
-                        <div ref={wallRef} className={styles.wallPane}>
-                            <HeatTreemap leaves={wallLeaves} />
-                            {wallLeaves.length === 0 &&
+                        <div
+                            ref={wallRef}
+                            className={styles.wallPane}
+                            style={
+                                {
+                                    background: rgbCss(palette.gap),
+                                    '--heat-move': wallResizing ? '0.18s' : '0.6s',
+                                } as CSSProperties
+                            }
+                        >
+                            <HeatTiles tiles={wallTiles} />
+                            {wallTiles.length === 0 &&
                                 drillEntries.length > 0 && (
                                     <div className={styles.empty}>
                                         等待分布資料
