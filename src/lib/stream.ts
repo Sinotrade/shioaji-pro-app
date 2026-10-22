@@ -6,6 +6,7 @@ import { getApiBase, getStreamBase } from './runtime';
 import { serverUrlBlocked } from './server-read-gate';
 import { apiPost } from './api';
 import type { SseBidAsk, SseIndexQuote, SseTick } from './types/market';
+import { rememberIndexClose } from './index-close-quote';
 import {
     normalizeOrderEvent,
     type OrderEventReport,
@@ -328,6 +329,7 @@ function handleIndexQuote(raw: string) {
         flashSeq: (prev?.flashSeq ?? 0) + (moved ? 1 : 0),
     });
     emitQuote(index.code);
+    rememberIndexClose(index);
 }
 
 // registry of every quote subscription made this session — replayed after

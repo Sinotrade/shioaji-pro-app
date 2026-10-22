@@ -285,7 +285,13 @@ function BlockBody({
         case 'chart':
             return contract ? (
                 <>
-                    <QuoteBoard contract={contract} snapshot={snapshot} />
+                    <QuoteBoard
+                        contract={contract}
+                        snapshot={snapshot}
+                        sessionMode={block.chartSession}
+                        fields={block.quoteBoard}
+                        onFieldsChange={(quoteBoard) => onSessionConfigChange(block.id, { quoteBoard })}
+                    />
                     <CandleChart
                         panelId={block.id}
                         contract={contract}
@@ -737,6 +743,8 @@ function PopoutView({
     // 信用條件也依視窗 id 存（開啟端預先寫入面板的條件），重新整理後保留
     const [flashCredit, setFlashCredit] = useState(() => loadPopoutFlashCredit(POPOUT_WINDOW_ID));
     const [flashOrder, setFlashOrder] = useState(() => loadPopoutFlashOrder(POPOUT_WINDOW_ID));
+    // K 線的全盤／僅日盤放在這裡，報價欄的開高低才能跟著切（只在這個視窗內，不寫回面板）
+    const [chartSession, setChartSession] = useState(popoutChartSession);
     // heartbeat: a long-open popout must not be evicted as "stale"
     useEffect(() => {
         if (type !== 'flash' || !POPOUT_WINDOW_ID) return;
@@ -775,12 +783,13 @@ function PopoutView({
             case 'chart':
                 body = (
                     <>
-                        <QuoteBoard contract={contract} />
+                        <QuoteBoard contract={contract} sessionMode={chartSession} fields={popoutSession.quoteBoard} />
                         <CandleChart
                             contract={contract}
                             trades={tradesState.data ?? []}
                             onOrdersChanged={tradesState.refresh}
-                            sessionMode={popoutChartSession}
+                            sessionMode={chartSession}
+                            onSessionModeChange={setChartSession}
                             interval={popoutChartInterval}
                         />
                     </>

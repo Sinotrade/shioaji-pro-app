@@ -27,6 +27,9 @@ interface Palette {
     green: string;
     greenDim: string;
     greenFlash: string;
+    // 日內區間軌的引線（影線）：漲跌色往 wickBase 混到 wickShare，霧面淡色但對背景仍過 3:1
+    wickBase: string;
+    wickShare: string;
 }
 
 // 深色＝原本的純黑（使用者 2026-09-29 決定只留純黑與淺色）
@@ -49,6 +52,9 @@ const dark: Palette = {
     green: '#16b389',
     greenDim: 'rgba(22, 179, 137, 0.13)',
     greenFlash: 'rgba(22, 179, 137, 0.18)',
+    // 往灰色混：紅 #b85e6e 4.53:1、綠 #4a9d90 6.07:1（對 panel）
+    wickBase: '#7e8798',
+    wickShare: '50%',
 };
 
 const light: Palette = {
@@ -70,6 +76,9 @@ const light: Palette = {
     green: '#0a8a66',
     greenDim: 'rgba(10, 138, 102, 0.10)',
     greenFlash: 'rgba(10, 138, 102, 0.14)',
+    // 淺色的灰比實體深，往灰混會比實體還搶眼，改往白混：紅 #de4d61 3.93:1、綠 #3ba185 3.17:1
+    wickBase: '#ffffff',
+    wickShare: '80%',
 };
 
 // tw: red = up (台股慣例); intl: green = up
@@ -101,6 +110,8 @@ function makeTokens(p: Palette, convention: 'tw' | 'intl') {
             down,
             downDim,
             downFlash,
+            wickUp: `color-mix(in srgb, ${up} ${p.wickShare}, ${p.wickBase})`,
+            wickDown: `color-mix(in srgb, ${down} ${p.wickShare}, ${p.wickBase})`,
             flat: p.mutedForeground,
             // 狀態色（成功／錯誤／正式環境等）固定綠／紅，不隨漲跌配色翻轉；
             // 價格、買賣方向才用 up／down
