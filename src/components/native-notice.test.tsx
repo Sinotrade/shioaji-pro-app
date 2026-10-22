@@ -62,6 +62,10 @@ describe.each([false, true])('真入口 runtime isTauri=%s', native => {
             expect(notices()[0]!.props['aria-hidden']).not.toBe(true);
             expect(notices()[0]!.findAllByType('button')).toHaveLength(0);
         }
+        // The notice is a status next to the results, never an item of the listbox.
+        const listbox = view.root.find(node => typeof node.type === 'string' && node.props.role === 'listbox');
+        expect(listbox.findAll(node => node.props.role === 'status')).toHaveLength(0);
+        expect(listbox.children.every(child => typeof child !== 'string' && child.props.role === 'option')).toBe(true);
         expect(view.root.findAllByType('button').some(node => text(node).includes('2330'))).toBe(true);
         expect(submit).not.toHaveBeenCalled();
         expect(mocks.fetch).not.toHaveBeenCalled();

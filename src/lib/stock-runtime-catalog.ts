@@ -1,9 +1,9 @@
 import { isTauri } from './runtime';
-import { fetchPublicJson } from './public-metadata';
+import { fetchPublicJson, isPublicMetadataUnavailable } from './public-metadata';
 import { EQUITY_SOURCE_ROUTES, EQUITY_SOURCES } from './public-metadata-routes';
 import { normalizeStockNames, type EquityExchange, type EquityNameSource } from './stock-name-normalizer';
 
-const FRESH_MS = 300_000;
+const FRESH_MS = 60 * 60_000;
 const RETRY_MS = 30_000;
 const exchanges = ['TSE', 'OTC', 'OES'] as const;
 const routes = {
@@ -65,12 +65,14 @@ export function subscribeEquityNames(listener: () => void): () => void {
 
 /** One background batch across all catalog readers; no polling or native IO. */
 export function ensureEquityNamesFresh(): void {
-    if (isTauri) {
+    // Checked before the day rollover below, which would otherwise retry every day.
+    if (isTauri || isPublicMetadataUnavailable()) {
         if (status.phase !== 'gated') {
             activeRound++;
             controller?.abort();
             pending = null;
-            status = { ...status, phase: 'gated', retryAt: null, error: '原生版官方一般股名稱來源未啟用，使用券商名稱或代碼' };
+            status = { ...status, phase: 'gated', retryAt: null,
+                error: isTauri ? '原生版官方一般股名稱來源未啟用，使用券商名稱或代碼' : '此環境沒有公開名稱路由，使用券商名稱或代碼' };
         }
         return;
     }

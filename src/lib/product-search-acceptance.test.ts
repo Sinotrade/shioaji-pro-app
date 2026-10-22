@@ -132,11 +132,11 @@ describe('獨立搜尋整合驗收', () => {
         await act(async () => { root = create(createElement(CommandPalette, { open: true, onClose: vi.fn(), onJump })); });
         act(() => root!.root.findByType('input').props.onChange({ target: { value: '櫃買' } }));
         await act(async () => { await vi.advanceTimersByTimeAsync(120); });
-        expect(root!.root.findAllByType('button').some(button => button.children.some(child => typeof child !== 'string' && child.children.includes('IX0043')))).toBe(true);
+        expect(root!.root.findAllByType('button').some(button => button.findAll(node => node.children.includes('IX0043')).length > 0)).toBe(true);
 
         mocks.catalog.mockReturnValueOnce(new Promise(() => undefined));
         act(() => root!.root.findByType('input').props.onChange({ target: { value: '台積電' } }));
-        expect(root!.root.findAllByType('button').some(button => button.children.some(child => typeof child !== 'string' && child.children.includes('IX0043')))).toBe(false);
+        expect(root!.root.findAllByType('button').some(button => button.findAll(node => node.children.includes('IX0043')).length > 0)).toBe(false);
         await act(async () => { root!.root.findByType('input').props.onKeyDown({ key: 'Enter' }); });
         expect(onJump).not.toHaveBeenCalled();
     });

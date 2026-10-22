@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import bundled from './data/etf-catalog.json';
+import { buildEtfCatalog } from './etf-catalog-normalizer.mjs';
 import type { EtfNameCatalog } from './etf-runtime-catalog';
 import { ETF_SOURCE_ROUTES } from './public-metadata-routes';
 
@@ -144,6 +146,14 @@ describe('ETF runtime pure source validation', () => {
         expect(result.entries).toEqual(bundled.entries);
     });
 
+    it('regenerating from identical official rows writes the committed snapshot byte for byte, key order included', () => {
+        const data = full();
+        const committed = readFileSync(new URL('./data/etf-catalog.json', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+        const regenerated = buildEtfCatalog(data.tse, data.otc, bundled.retrievedAt, data.daily, bundled as EtfNameCatalog);
+        expect(Object.keys(regenerated.entries.find(entry => entry.aliases)!)).toEqual(['code', 'name', 'exchange', 'aliases']);
+        expect(`${JSON.stringify(regenerated, null, 2)}\n`).toBe(committed);
+    });
+
     it('preserves reviewed old names/aliases for current identities but never resurrects removed ETF membership', () => {
         const data = full();
         const keep = data.tse[0]!.基金代號;
@@ -176,7 +186,7 @@ describe('shared background refresh lifecycle', () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('coalesces concurrent readers, uses only three fixed public requests and publishes the first official authority once', async () => {
+    it('coalesces concurrent readers and uses only three fixed public requests; names equal to the snapshot publish nothing', async () => {
         const notify = vi.fn();
         runtime.subscribeEtfNames(notify);
         const pending = runtime.refreshEtfNames();
@@ -188,18 +198,14 @@ describe('shared background refresh lifecycle', () => {
         expect(m.fetch.mock.calls.map(call => call[1].method)).toEqual(['GET', 'POST', 'GET']);
         for (const [url, options] of m.fetch.mock.calls) {
             expect(ROUTES).toContain(url);
-            expect(options).toMatchObject({ credentials: 'omit', redirect: 'error', cache: 'no-store', signal: expect.any(AbortSignal) });
+            expect(options).toMatchObject({ credentials: 'omit', redirect: 'manual', cache: 'no-store', signal: expect.any(AbortSignal) });
             expect(options.headers).toBeUndefined();
             expect(options.body).toBeUndefined();
         }
         expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'ready', usingSnapshot: false, error: null, lastSuccessAt: AT });
-        expect(runtime.getEtfNamesVersion()).toBe(1);
-        expect(notify).toHaveBeenCalledOnce();
+        expect(runtime.getEtfNamesVersion()).toBe(0);
+        expect(notify).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
-        await vi.advanceTimersByTimeAsync(5 * 60_000);
-        await runtime.refreshEtfNames();
-        expect(runtime.getEtfNamesVersion()).toBe(1);
-        expect(notify).toHaveBeenCalledOnce();
     });
 
     it('dev browser uses three fixed same-origin routes while provenance keeps official URLs', async () => {
@@ -232,10 +238,13 @@ describe('shared background refresh lifecycle', () => {
             act(() => { view = create(createElement(Probe)); });
             expect(view!.root.findByType('span').children).toEqual(['0:0']);
             expect(m.fetch).not.toHaveBeenCalled();
+            const renamed = full();
+            renamed.otc.data[0]!.stockName = '合成更名';
+            m.fetch.mockImplementation(respond(renamed));
             await act(async () => { await runtime.refreshEtfNames(); });
             expect(view!.root.findByType('span').children).toEqual(['1:0']);
             const rendered = renders;
-            await vi.advanceTimersByTimeAsync(5 * 60_000);
+            await vi.advanceTimersByTimeAsync(60 * 60_000);
             expect(m.fetch).toHaveBeenCalledTimes(3);
             await act(async () => { await runtime.refreshEtfNames(); });
             expect(renders).toBe(rendered);
@@ -246,9 +255,9 @@ describe('shared background refresh lifecycle', () => {
         }
     });
 
-    it('refreshes on the next read after five minutes, but never runs a timer poll while unused', async () => {
+    it('refreshes on the next read after an hour, but never runs a timer poll while unused', async () => {
         await runtime.refreshEtfNames();
-        await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
+        await vi.advanceTimersByTimeAsync(60 * 60_000 - 1);
         await runtime.refreshEtfNames();
         expect(m.fetch).toHaveBeenCalledTimes(3);
         await vi.advanceTimersByTimeAsync(1);
@@ -286,14 +295,15 @@ describe('shared background refresh lifecycle', () => {
         expect(notify).toHaveBeenCalledOnce();
         expect(removed).not.toHaveBeenCalled();
         expect(m.fetch).toHaveBeenCalledTimes(3);
-        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        await vi.advanceTimersByTimeAsync(60 * 60_000);
         await runtime.refreshEtfNames();
         expect(runtime.getEtfNamesVersion()).toBe(1);
         expect(notify).toHaveBeenCalledOnce();
     });
 
     it('HTTP failure aborts unfinished sibling requests, preserves names, backs off typing and later recovers', async () => {
-        m.fetch.mockImplementation((url: string) => url === ROUTES[0] ? Promise.resolve(new Response('{}', { status: 503 })) : new Promise(() => undefined));
+        m.fetch.mockImplementation((url: string) => url === ROUTES[0]
+            ? Promise.resolve(new Response('<html>busy</html>', { status: 503, headers: { 'Content-Type': 'text/html' } })) : new Promise(() => undefined));
         await expect(runtime.refreshEtfNames()).resolves.toBeUndefined();
         expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'error', usingSnapshot: true, error: 'Public metadata HTTP 503' });
         expect(runtime.etfNameForLive('00679B', 'OTC')?.name).toBe('元大美債20年');
@@ -340,7 +350,7 @@ describe('shared background refresh lifecycle', () => {
         late(new Response(JSON.stringify(lateData.otc)));
         await flush();
         expect(runtime.getEtfNamesStatus().phase).toBe('ready');
-        expect(runtime.getEtfNamesVersion()).toBe(1);
+        expect(runtime.getEtfNamesVersion()).toBe(0);
         expect(runtime.etfNameForLive(lateData.otc.data[0]!.stockNo, 'OTC')?.name).not.toBe('逾時晚到，不得採用');
     });
 
@@ -415,7 +425,8 @@ describe('shared background refresh lifecycle', () => {
     });
 
     it('a null Response body is a recoverable error, not a valid empty ETF catalog', async () => {
-        m.fetch.mockImplementation((url: string) => url === ROUTES[0] ? Promise.resolve(new Response(null, { status: 204 })) : respond()(url));
+        m.fetch.mockImplementation((url: string) => url === ROUTES[0]
+            ? Promise.resolve(new Response(null, { headers: { 'Content-Type': 'application/json' } })) : respond()(url));
         await expect(runtime.refreshEtfNames()).resolves.toBeUndefined();
         expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'error', usingSnapshot: true, error: 'Public metadata body is empty' });
         expect(runtime.getEtfNamesVersion()).toBe(0);
@@ -430,18 +441,22 @@ describe('shared background refresh lifecycle', () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('an undeployed production route returning SPA HTML backs off instead of retrying every keystroke', async () => {
-        m.fetch.mockImplementation(() => Promise.resolve(new Response('<html>app</html>', { headers: { 'Content-Type': 'text/html' } })));
+    it.each([
+        ['404', () => new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } })],
+        ['SPA HTML fallback', () => new Response('<html>app</html>', { headers: { 'Content-Type': 'text/html' } })],
+    ])('a deployment without metadata routes (%s) keeps the snapshot and stops refreshing until reload', async (_label, reply) => {
+        m.fetch.mockImplementation(() => Promise.resolve(reply()));
         await runtime.refreshEtfNames();
-        expect(runtime.getEtfNamesStatus()).toMatchObject({ phase: 'error', usingSnapshot: true, error: 'Public metadata response is not JSON' });
-        for (let index = 0; index < 20; index++) await runtime.refreshEtfNames();
         expect(m.fetch).toHaveBeenCalledTimes(3);
-        expect(vi.getTimerCount()).toBe(0);
-        await vi.advanceTimersByTimeAsync(30_000);
         m.fetch.mockImplementation(respond());
+        await vi.advanceTimersByTimeAsync(30_000);
         await runtime.refreshEtfNames();
-        expect(runtime.getEtfNamesStatus().phase).toBe('ready');
-        expect(m.fetch).toHaveBeenCalledTimes(6);
+        vi.setSystemTime('2026-10-18T04:00:00.000Z');
+        await runtime.refreshEtfNames();
+        expect(m.fetch).toHaveBeenCalledTimes(3);
+        expect(runtime.getEtfNamesStatus()).toMatchObject({ usingSnapshot: true });
+        expect(runtime.etfNameForLive('00679B', 'OTC')?.name).toBe('元大美債20年');
+        expect(vi.getTimerCount()).toBe(0);
     });
 
     it('a notification exception is diagnosed without rejecting refresh or starving other subscribers', async () => {

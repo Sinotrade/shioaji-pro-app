@@ -3,7 +3,7 @@ import { ETF_SOURCE_ROUTES, EQUITY_SOURCE_ROUTES, type PublicMetadataRoute } fro
 
 const m = vi.hoisted(() => ({ native: false, fetch: vi.fn() }));
 vi.mock('./runtime', () => ({ get isTauri() { return m.native; } }));
-beforeEach(() => { vi.useFakeTimers(); m.native = false; m.fetch.mockReset(); vi.stubGlobal('fetch', m.fetch); });
+beforeEach(() => { vi.resetModules(); vi.useFakeTimers(); m.native = false; m.fetch.mockReset(); vi.stubGlobal('fetch', m.fetch); });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it.each(['https://example.test/private', '//example.test/a', '/metadata/etf/tse-funds?url=x', '/api/v1/info'])(
@@ -23,7 +23,7 @@ it.each([
     const { fetchPublicJson } = await import('./public-metadata');
     await expect(fetchPublicJson(route as PublicMetadataRoute)).resolves.toEqual([{ name: '公開名稱' }]);
     expect(m.fetch).toHaveBeenCalledExactlyOnceWith(route, {
-        method, credentials: 'omit', redirect: 'error', cache: 'no-store', signal: expect.any(AbortSignal),
+        method, credentials: 'omit', redirect: 'manual', cache: 'no-store', signal: expect.any(AbortSignal),
     });
     expect(vi.getTimerCount()).toBe(0);
 });
@@ -35,11 +35,34 @@ it('gates the native path even if a caller bypasses its catalog gate', async () 
     expect(m.fetch).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
 });
 
-it('rejects a successful SPA HTML fallback instead of treating it as metadata', async () => {
-    m.fetch.mockResolvedValue(new Response('<html>app</html>', { headers: { 'Content-Type': 'text/html' } }));
-    const { fetchPublicJson } = await import('./public-metadata');
-    await expect(fetchPublicJson(ETF_SOURCE_ROUTES.tseFunds)).rejects.toThrow(/JSON/);
+const opaqueRedirect = () => Object.defineProperties(new Response(null), {
+    type: { value: 'opaqueredirect' }, status: { value: 0 }, ok: { value: false },
+});
+it.each([
+    ['404 JSON', () => new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } })],
+    ['403 JSON', () => new Response('{"error":"ETF_METADATA_LOCAL_ONLY"}', { status: 403, headers: { 'Content-Type': 'application/json' } })],
+    ['405 HTML', () => new Response('<html>no</html>', { status: 405, headers: { 'Content-Type': 'text/html' } })],
+    ['200 SPA HTML fallback', () => new Response('<html>app</html>', { headers: { 'Content-Type': 'text/html' } })],
+    ['opaque redirect', opaqueRedirect],
+])('marks the environment as having no route after %s', async (_label, reply) => {
+    m.fetch.mockResolvedValue(reply());
+    const { fetchPublicJson, isPublicMetadataUnavailable } = await import('./public-metadata');
+    expect(isPublicMetadataUnavailable()).toBe(false);
+    await expect(fetchPublicJson(ETF_SOURCE_ROUTES.tseFunds)).rejects.toThrow(/route unavailable|not JSON/);
+    expect(isPublicMetadataUnavailable()).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([
+    ['502 JSON from the dev proxy', 502, 'application/json'],
+    ['503 HTML error page', 503, 'text/html'],
+    ['408 timeout', 408, 'application/json'],
+    ['429 rate limit', 429, 'text/html'],
+])('keeps %s retryable', async (_label, status, type) => {
+    m.fetch.mockResolvedValue(new Response('<html>busy</html>', { status, headers: { 'Content-Type': type } }));
+    const { fetchPublicJson, isPublicMetadataUnavailable } = await import('./public-metadata');
+    await expect(fetchPublicJson(EQUITY_SOURCE_ROUTES.tseCompanies)).rejects.toThrow(`Public metadata HTTP ${status}`);
+    expect(isPublicMetadataUnavailable()).toBe(false);
 });
 
 it('counts body wait in its deadline and cancels the owned reader', async () => {

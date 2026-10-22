@@ -44,6 +44,11 @@ function respond(data = payloads()) {
     ), { headers: { 'Content-Type': 'application/json' } }));
 }
 const codes = (rows: { code: string }[]) => rows.map(row => row.code);
+function renamed(name: string) {
+    const data = payloads();
+    data.daily.find(row => row.Code === '0053')!.Name = name;
+    return data;
+}
 
 beforeEach(() => {
     vi.resetModules();
@@ -62,7 +67,8 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('ETF source authority and search integration', () => {
-    it('publishes the first official authority even with identical entries and rebuilds names without refetching Base/underlyings', async () => {
+    it('a changed official name joins the aliases under the broker display name, rebuilding rows without refetching Base/underlyings', async () => {
+        respond(renamed('合成官方新名'));
         const runtime = await import('./etf-runtime-catalog');
         const { loadStockCatalog } = await import('./stock-index');
         const before = await loadStockCatalog();
@@ -73,8 +79,8 @@ describe('ETF source authority and search integration', () => {
         expect(runtime.getEtfNamesVersion()).toBe(1);
         expect(changed).toHaveBeenCalledOnce();
         const after = await loadStockCatalog();
-        expect(after[0]?.name).toBe(officialName);
-        expect(after[0]?.aliases).toContain('服務端名稱');
+        expect(after[0]?.name).toBe('服務端名稱');
+        expect(after[0]?.aliases).toEqual(expect.arrayContaining(['合成官方新名', officialName]));
         expect(after).not.toBe(before);
         expect(await loadStockCatalog()).toBe(after);
         expect(source.bases).toHaveBeenCalledOnce();
@@ -83,7 +89,7 @@ describe('ETF source authority and search integration', () => {
         unsubscribe();
     });
 
-    it('uses the same official ETF display name and related ordering for code, official name and broker alias without mutating Info', async () => {
+    it('code, official name and broker name share the broker display name and related ordering without mutating Info', async () => {
         const runtime = await import('./etf-runtime-catalog');
         await runtime.refreshEtfNames();
         const { searchProducts } = await import('./product-search');
@@ -91,7 +97,7 @@ describe('ETF source authority and search integration', () => {
         const byName = await searchProducts(officialName, 8, { includeWarrants: true });
         const byAlias = await searchProducts('服務端名稱', 8, { includeWarrants: true });
         for (const rows of [byCode, byName, byAlias]) {
-            expect(rows[0]?.name).toBe(officialName);
+            expect(rows[0]?.name).toBe('服務端名稱');
             expect(codes(rows)).toEqual(['0053', 'NKFR1', 'NKFR2']);
         }
         expect(byCode[0]?.contract?.name).toBe('服務端名稱');
@@ -145,12 +151,13 @@ describe('ETF source authority and search integration', () => {
         const pending = searchProducts('0053', 8, { includeWarrants: true });
         const rejected = expect(pending).rejects.toThrow('名稱目錄已更新');
         await vi.advanceTimersByTimeAsync(0);
+        respond(renamed('合成官方新名'));
         const runtime = await import('./etf-runtime-catalog');
         await runtime.refreshEtfNames();
         finish([future('NKFR1'), future('NKFR2')]);
         await rejected;
         const current = await searchProducts('0053', 8, { includeWarrants: true });
-        expect(current[0]?.name).toBe(officialName);
+        expect(current[0]?.name).toBe('服務端名稱');
         expect(codes(current)).toEqual(['0053', 'NKFR1', 'NKFR2']);
         expect(source.futures).toHaveBeenCalledOnce();
         expect(vi.getTimerCount()).toBe(0);

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { preview, type Connect, type PreviewServer, type ViteDevServer } from 'vite';
+import { preview, resolveConfig, type Connect, type PreviewServer, type ViteDevServer } from 'vite';
 import { ETF_SOURCES } from '../src/lib/etf-catalog-normalizer.mjs';
 import { EQUITY_SOURCE_ROUTES, EQUITY_SOURCES, ETF_SOURCE_ROUTES } from '../src/lib/public-metadata-routes';
 import { createEtfMetadataMiddleware, etfMetadataProxyPlugin } from './dev-etf-proxy';
@@ -114,6 +114,23 @@ describe('本機開發與 preview 的六條固定名稱 metadata 代理', () => 
         });
         expect(status).toBe(400);
         expect(transport).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['localhost:5173', 200], ['LOCALHOST:5173', 200], ['localhost', 200], ['127.0.0.1:5173', 200],
+        ['attacker.example', 403], ['localhost.attacker.example', 403], ['attacker.localhost:5173', 403], ['localhost:5173.attacker.example', 403],
+    ])('README 的 localhost 網址可用，其他 Host 仍拒絕：%s', async (host, expected) => {
+        const transport = vi.fn<typeof fetch>().mockResolvedValue(new Response('[]', { headers: { 'content-type': 'application/json' } }));
+        const origin = await listen(createEtfMetadataMiddleware({ fetch: transport }));
+        const status = await new Promise<number>((resolve, reject) => {
+            const req = httpRequest(origin + ETF_SOURCE_ROUTES.tseFunds, { headers: { Host: host } }, res => {
+                res.resume(); resolve(res.statusCode!);
+            });
+            req.on('error', reject);
+            req.end();
+        });
+        expect(status).toBe(expected);
+        expect(transport).toHaveBeenCalledTimes(expected === 200 ? 1 : 0);
     });
 
     it('即使 Host 偽裝 loopback，非 loopback socket 仍拒絕', () => {
@@ -314,6 +331,18 @@ describe('本機開發與 preview 的六條固定名稱 metadata 代理', () => 
         configure.call({} as never, { config: { server: { host: '127.0.0.1' } }, middlewares: { use } } as unknown as ViteDevServer);
         expect(use).toHaveBeenCalledOnce();
     });
+
+    it('repo 的 vite.config 預設 dev 與 preview 設定都會註冊 middleware', async () => {
+        const plugin = etfMetadataProxyPlugin();
+        const configFile = path.resolve(__dirname, '../vite.config.ts');
+        const dev = await resolveConfig({ configFile, logLevel: 'silent' }, 'serve', 'development');
+        const previewConfig = await resolveConfig({ configFile, logLevel: 'silent' }, 'serve', 'production', 'production', true);
+        const use = vi.fn();
+        if (typeof plugin.configureServer !== 'function' || typeof plugin.configurePreviewServer !== 'function') throw new Error('hooks missing');
+        plugin.configureServer.call({} as never, { config: dev, middlewares: { use } } as unknown as ViteDevServer);
+        plugin.configurePreviewServer.call({} as never, { config: previewConfig, middlewares: { use } } as unknown as PreviewServer);
+        expect(use).toHaveBeenCalledTimes(2);
+    }, 30_000);
 
     it('preview hook 也只在明確 loopback 啟用', () => {
         const configure = etfMetadataProxyPlugin().configurePreviewServer;

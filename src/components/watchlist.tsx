@@ -20,6 +20,7 @@ import {
     memo,
     useCallback,
     useEffect,
+    useId,
     useLayoutEffect,
     useMemo,
     useRef,
@@ -45,15 +46,19 @@ import { RefreshButton } from './refresh-button';
 import { AsyncStatus } from './async-status';
 import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
 import { useProductNamesVersion } from '../hooks/use-product-names-version';
-import { getEtfNamesVersion } from '../lib/etf-runtime-catalog';
+import { getProductNamesVersion } from '../lib/product-names-version';
 import { ProductBadge } from './product-badge';
 import { ProductSearchDetails } from './product-search-details';
 import { PRODUCT_SEARCH_DEBOUNCE_MS } from '../lib/search-request';
 import { PRODUCT_BADGES, productBadgeType, productDetailText } from '../lib/product-badge-presentation';
 import * as panel from './panel.css';
 import * as styles from './watchlist.css';
+import { optionText } from './search-surface.css';
 
 const SPARK_KEY = 'sj-pro-watchlist-spark';
+// Row identities hold JSON punctuation; escape it so ids also work as CSS selectors.
+const optionId = (listId: string, identity: string) =>
+    `${listId}-${identity.replace(/[^A-Za-z0-9]/g, (char) => `_${char.charCodeAt(0).toString(16)}_`)}`;
 
 type SortMode = 'custom' | 'desc' | 'asc';
 
@@ -345,6 +350,9 @@ export function Watchlist({
     const [activeIdentity, setActiveIdentity] = useState<string | null>(null);
     const [addError, setAddError] = useState(false);
     const addRowRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+    const listId = useId();
+    const [popupHidden, setPopupHidden] = useState(false);
     const suggestBoxRef = useRef<HTMLDivElement>(null);
     const suggestRowRefs = useRef(new Map<string, HTMLButtonElement>());
     const activeSuggestionRef = useRef<string | undefined>(undefined);
@@ -361,7 +369,7 @@ export function Watchlist({
     const catalogVersion = useProductCatalogVersion();
     const namesVersion = useProductNamesVersion();
     const suggestionScope = useRef('');
-    const currentScope = () => JSON.stringify([getProductCatalogVersion(), getEtfNamesVersion()]);
+    const currentScope = () => JSON.stringify([getProductCatalogVersion(), getProductNamesVersion()]);
     const cancelSearch = () => {
         queryVersion.current += 1;
         searchController.current?.abort();
@@ -377,7 +385,6 @@ export function Watchlist({
             return;
         }
         let active = true;
-        let completed = false;
         const controller = new AbortController();
         searchController.current = controller;
         const requestVersion = ++queryVersion.current;
@@ -389,15 +396,10 @@ export function Watchlist({
         setSearchError(false);
         setSearching(true);
         const timer = setTimeout(() => {
-            void searchProducts(query, 10, {
-                includeWarrants: true,
-                signal: controller.signal,
-                onUpdate: (results) => {
-                    if (isCurrent() && !completed) { suggestionScope.current = requestScope; setSuggestions(results); }
-                },
-            })
+            // Final rows only: this popup grows upward, so partial rows would shift
+            // under the pointer while later sources fill in.
+            void searchProducts(query, 10, { includeWarrants: true, signal: controller.signal })
                 .then((results) => {
-                    completed = true;
                     if (isCurrent()) {
                         suggestionScope.current = requestScope;
                         setSuggestions(results);
@@ -405,7 +407,6 @@ export function Watchlist({
                     }
                 })
                 .catch(() => {
-                    completed = true;
                     if (isCurrent()) {
                         // The core resolves ordinary source failures with usable partial rows.
                         // A fatal rejection (for example a server switch) invalidates them.
@@ -475,6 +476,7 @@ export function Watchlist({
             popup.style.maxHeight = `min(24rem, 50vh, ${available}px)`;
             popup.style.visibility = safeBottom <= safeTop || rect.bottom <= safeTop || rect.top >= safeBottom || available <= border ? 'hidden' : 'visible';
             const visible = popup.style.visibility === 'visible';
+            setPopupHidden(!visible);
             const height = popup.clientHeight;
             if (visible && (!previouslyVisible || height !== previousHeight)) revealActiveSuggestion();
             previousHeight = height;
@@ -497,6 +499,7 @@ export function Watchlist({
         if (movingPanel) motionObserver?.observe(movingPanel, { attributes: true, attributeFilter: ['style', 'class'] });
         return () => {
             active = false;
+            setPopupHidden(false);
             updatePopupGeometry.current = () => undefined;
             window.removeEventListener('resize', update);
             window.removeEventListener('scroll', onScroll, true);
@@ -908,42 +911,64 @@ export function Watchlist({
             <div ref={addRowRef} className={styles.addRow}>
                 {popupOpen && (
                     <div ref={suggestBoxRef} className={styles.suggestBox}>
+                        {suggestions.length > 0 && <div id={listId} role='listbox' aria-label='搜尋結果'>
                         {suggestions.map((s, index) => {
                             const detail = productDetailText(s.detail, s.security_type, s.kind);
                             return (
                             <button
                                 key={`${s.security_type}:${s.exchange}:${s.code}`}
+                                id={optionId(listId, suggestionIdentities[index]!)}
+                                role='option'
+                                aria-selected={index === activeIndex}
+                                tabIndex={-1}
                                 ref={(node) => { const identity = suggestionIdentities[index]!; if (node) suggestRowRefs.current.set(identity, node); else suggestRowRefs.current.delete(identity); }}
                                 className={index === activeIndex ? styles.suggestActive : styles.suggestRow}
-                                title={[s.name, s.code, PRODUCT_BADGES[productBadgeType(s.security_type, s.kind)].label, detail].filter(Boolean).join(' · ')}
                                 disabled={busy || loading || !activeListId}
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={() => submit(s)}
                             >
-                                <span className={styles.suggestCode}>
-                                    {s.code}
-                                </span>
-                                <span className={styles.suggestName}>
-                                    {s.name}
-                                </span>
-                                <span className={styles.suggestMeta}>
-                                    <ProductBadge security_type={s.security_type} kind={s.kind} />
-                                    {detail && <span className={styles.suggestCat}>{detail}</span>}
+                                <span className={optionText} title={[s.name, s.code, PRODUCT_BADGES[productBadgeType(s.security_type, s.kind)].label, detail].filter(Boolean).join(' · ')}>
+                                    <span className={styles.suggestCode}>
+                                        {s.code}
+                                    </span>
+                                    <span className={styles.suggestName}>
+                                        {s.name}
+                                    </span>
+                                    <span className={styles.suggestMeta}>
+                                        <ProductBadge security_type={s.security_type} kind={s.kind} />
+                                        {detail && <span className={styles.suggestCat}>{detail}</span>}
+                                    </span>
                                 </span>
                             </button>
                             );
                         })}
-                        <ProductSearchDetails item={suggestions[activeIndex]} />
+                        </div>}
+                        <ProductSearchDetails item={suggestions[activeIndex]} onToggle={(details) => {
+                            // Opening adds content below the rows; bring it into the popup's view.
+                            if (details.open) details.scrollIntoView?.({ block: 'nearest' });
+                        }} />
                         {isTauri && <div role='status' className={styles.loadingHint}>原生版官方名稱更新未啟用，使用券商與內建名稱</div>}
                         {(searchError || searching || addError) && <AsyncStatus phase={searchError || addError ? 'error' : 'loading'}
-                            text={addError ? '加入自選失敗，可重新搜尋' : searchError ? '搜尋失敗，可重試' : suggestions.length ? '正在補齊關聯商品…' : '搜尋中…'}
+                            text={addError ? '加入自選失敗，可重新搜尋' : searchError ? '搜尋失敗，可重試' : '搜尋中…'}
                             className={styles.loadingHint}
-                            action={searchError || addError ? <button type='button' onClick={() => { setAddError(false); setSearchRetry((retry) => retry + 1); }}>{addError ? '重新搜尋' : '重試'}</button> : undefined} />}
+                            action={searchError || addError ? <button type='button' onMouseDown={(event) => event.preventDefault()} onClick={() => {
+                                setAddError(false);
+                                setSearchRetry((retry) => retry + 1);
+                                // The button disappears with the error; keep typing in the input.
+                                inputRef.current?.focus();
+                            }}>{addError ? '重新搜尋' : '重試'}</button> : undefined} />}
                     </div>
                 )}
                 <input
+                    ref={inputRef}
                     className={styles.addInput}
                     placeholder='股票、期貨或指數（如 台積電期）'
+                    role='combobox'
+                    aria-autocomplete='list'
+                    aria-expanded={suggestions.length > 0 && !popupHidden}
+                    aria-controls={suggestions.length > 0 ? listId : undefined}
+                    aria-activedescendant={!popupHidden && activeIndex >= 0 && suggestionIdentities[activeIndex]
+                        ? optionId(listId, suggestionIdentities[activeIndex]!) : undefined}
                     disabled={loading || !activeListId}
                     value={input}
                     onCompositionStart={() => {

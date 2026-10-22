@@ -19,7 +19,10 @@ const suggestion: ProductSuggestion = {
     code: '2330', name: '台積電', security_type: 'STK', exchange: 'TSE', detail: '股票',
 };
 let view: ReactTestRenderer | undefined;
-const searchOptions = expect.objectContaining({ includeWarrants: true, signal: expect.any(AbortSignal), onUpdate: expect.any(Function) });
+// Only the palette subscribes to partial rows.
+const searchOptions = (kind: 'palette' | 'watchlist') => expect.objectContaining({
+    includeWarrants: true, signal: expect.any(AbortSignal), ...(kind === 'palette' ? { onUpdate: expect.any(Function) } : {}),
+});
 
 beforeEach(() => {
     vi.useFakeTimers();
@@ -83,7 +86,7 @@ describe.each([
         expect(submit).not.toHaveBeenCalled();
         act(() => input().props.onCompositionEnd({ currentTarget: { value: '台積電' } }));
         await act(async () => { await vi.advanceTimersByTimeAsync(debounce); });
-        expect(mocks.search).toHaveBeenCalledExactlyOnceWith('台積電', kind === 'palette' ? 8 : 10, searchOptions);
+        expect(mocks.search).toHaveBeenCalledExactlyOnceWith('台積電', kind === 'palette' ? 8 : 10, searchOptions(kind));
     });
 
     it('組字開始取消先前在途查詢，其結果不得回填或被選取', async () => {
@@ -101,7 +104,7 @@ describe.each([
         expect(submit).not.toHaveBeenCalled();
         act(() => input().props.onCompositionEnd({ currentTarget: { value: '新商品' } }));
         await act(async () => { await vi.advanceTimersByTimeAsync(debounce); });
-        expect(mocks.search).toHaveBeenLastCalledWith('新商品', kind === 'palette' ? 8 : 10, searchOptions);
+        expect(mocks.search).toHaveBeenLastCalledWith('新商品', kind === 'palette' ? 8 : 10, searchOptions(kind));
     });
 
     it('卸載取消尚未發出的 debounce', async () => {
@@ -119,7 +122,10 @@ it('命令面板組字時方向鍵與 Escape 不控制搜尋面板', async () =>
     await act(async () => { await vi.advanceTimersByTimeAsync(120); });
     const preventDefault = vi.fn();
     act(() => input().props.onKeyDown({ key: 'ArrowDown', nativeEvent: { isComposing: true }, preventDefault }));
-    act(() => input().props.onKeyDown({ key: 'Escape', keyCode: 229 }));
+    // Esc closes from the palette frame; an IME Esc there only cancels the composition.
+    const box = view!.root.find((node) => node.type === 'div' && typeof node.props.onKeyDown === 'function');
+    act(() => box.props.onKeyDown({ key: 'Escape', keyCode: 229, preventDefault }));
+    act(() => box.props.onKeyDown({ key: 'Escape', nativeEvent: { isComposing: true }, preventDefault }));
     expect(preventDefault).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();

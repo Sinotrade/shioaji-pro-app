@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContractInfo } from './types/contract';
 
 const m = vi.hoisted(() => ({
-    equityVersion: 0, etfVersion: 0, snapshot: true,
+    equityVersion: 0, etfVersion: 0,
     equity: new Map<string, { name: string; aliases: readonly string[] }>(),
     etfs: new Map<string, { name: string; aliases: string[] }>(),
     ensure: vi.fn(), refreshEtf: vi.fn(), bases: vi.fn(), names: vi.fn(), info: vi.fn(), resolve: vi.fn(),
@@ -16,7 +16,7 @@ vi.mock('./stock-runtime-catalog', () => ({
 }));
 vi.mock('./etf-runtime-catalog', () => ({
     etfNameForLive: (code: string, exchange: string) => m.etfs.get(`${exchange}:${code}`),
-    getEtfNamesVersion: () => m.etfVersion, getEtfNamesStatus: () => ({ usingSnapshot: m.snapshot }), refreshEtfNames: m.refreshEtf,
+    getEtfNamesVersion: () => m.etfVersion, refreshEtfNames: m.refreshEtf,
 }));
 vi.mock('./shioaji', () => ({
     fetchContracts: m.bases, fetchWarrantUnderlyings: m.names, fetchContractInfo: m.info, resolveContract: m.resolve,
@@ -24,16 +24,16 @@ vi.mock('./shioaji', () => ({
     fetchOptions: m.options, fetchWarrants: m.warrants, normalizeContractCode: (code: string) => code.trim().toUpperCase(),
 }));
 function info(fields: Partial<ContractInfo> = {}): ContractInfo {
-    return { code: '2330', name: '券商舊名稱', security_type: 'STK', exchange: 'TSE', region: 'TW', target_code: null,
+    return { code: '2330', name: '券商簡稱', security_type: 'STK', exchange: 'TSE', region: 'TW', target_code: null,
         currency: 'TWD', reference: 1000, limit_up: 1100, limit_down: 900, day_trade: '', update_date: '', category: '',
         margin_trading_balance: 0, short_selling_balance: 0, ...fields };
 }
 beforeEach(() => {
     vi.resetModules(); vi.clearAllMocks();
-    m.equityVersion = 0; m.etfVersion = 0; m.snapshot = true;
+    m.equityVersion = 0; m.etfVersion = 0;
     m.equity.clear(); m.etfs.clear();
     m.bases.mockResolvedValue({ contracts: [info()] });
-    m.names.mockResolvedValue([{ underlying_code: '2330', name: '券商舊名稱' }]);
+    m.names.mockResolvedValue([{ underlying_code: '2330', name: '券商簡稱' }]);
     m.info.mockResolvedValue(info());
     m.resolve.mockResolvedValue(info());
     m.futures.mockResolvedValue([]); m.futureRoots.mockResolvedValue([]); m.warrants.mockResolvedValue([]);
@@ -43,17 +43,44 @@ beforeEach(() => {
 });
 
 describe('shared official ordinary stock display policy', () => {
-    it('uses official short name and full/broker aliases, intersects exchange/code with live Base only', async () => {
+    it('keeps the broker trading name and adds official names as aliases, intersecting exchange/code with live Base only', async () => {
         m.equity.set('TSE:2330', { name: '台積電', aliases: ['台灣積體電路製造股份有限公司'] });
         m.equity.set('TSE:9999', { name: '不存在於 Base', aliases: [] });
         m.equity.set('OTC:2330', { name: '合成另一市場', aliases: [] });
         const { loadStockCatalog, searchStocks } = await import('./stock-index');
         const catalog = await loadStockCatalog();
-        expect(catalog).toEqual([{ code: '2330', name: '台積電', exchange: 'TSE', category: '',
-            aliases: ['台灣積體電路製造股份有限公司', '券商舊名稱'] }]);
-        expect(searchStocks(catalog, '券商舊名稱')[0]?.code).toBe('2330');
+        expect(catalog).toEqual([{ code: '2330', name: '券商簡稱', exchange: 'TSE', category: '',
+            aliases: ['台積電', '台灣積體電路製造股份有限公司'] }]);
+        expect(searchStocks(catalog, '台積電')[0]?.code).toBe('2330');
         expect(searchStocks(catalog, '台灣積體電路製造股份有限公司')[0]?.code).toBe('2330');
         expect(m.info).not.toHaveBeenCalled();
+    });
+
+    it('a TPEx company short name stays an alias: 元大期 displays as 元大期 and 元大期貨 still finds 6023', async () => {
+        m.bases.mockResolvedValue({ contracts: [info({ code: '6023', exchange: 'OTC' })] });
+        m.names.mockResolvedValue([{ underlying_code: '6023', name: '元大期' }]);
+        m.equity.set('OTC:6023', { name: '元大期貨', aliases: ['元大期貨股份有限公司'] });
+        const { loadStockCatalog, searchStocks } = await import('./stock-index');
+        const catalog = await loadStockCatalog();
+        expect(catalog[0]).toMatchObject({ code: '6023', name: '元大期', aliases: ['元大期貨', '元大期貨股份有限公司'] });
+        expect(searchStocks(catalog, '元大期貨')[0]?.code).toBe('6023');
+        expect(searchStocks(catalog, '元大期')[0]?.code).toBe('6023');
+    });
+
+    it('on a rename day the broker already has the new name while the official source still has the old one', async () => {
+        m.names.mockResolvedValue([{ underlying_code: '2330', name: '合成新名' }]);
+        m.equity.set('TSE:2330', { name: '合成舊名', aliases: ['合成舊名股份有限公司'] });
+        const { loadStockCatalog, searchStocks } = await import('./stock-index');
+        const catalog = await loadStockCatalog();
+        expect(catalog[0]?.name).toBe('合成新名');
+        expect(searchStocks(catalog, '合成舊名')[0]?.code).toBe('2330');
+        expect(searchStocks(catalog, '合成新名')[0]?.code).toBe('2330');
+    });
+
+    it.each([undefined, '', '2330'])('falls back to the official name when the broker name is %j', async brokerName => {
+        m.equity.set('TSE:2330', { name: '台積電', aliases: ['台灣積體電路製造股份有限公司'] });
+        const { stockDisplayMeta } = await import('./stock-index');
+        expect(stockDisplayMeta('2330', 'TSE', brokerName)).toEqual({ name: '台積電', aliases: ['台灣積體電路製造股份有限公司'] });
     });
 
     it('equity version invalidates assembled names without refetching Base or mutating prior rows', async () => {
@@ -64,17 +91,18 @@ describe('shared official ordinary stock display policy', () => {
         m.equityVersion++;
         const after = await loadStockCatalog();
         expect(after).not.toBe(before);
-        expect(after[0]?.name).toBe('台積電');
-        expect(before[0]?.name).toBe('券商舊名稱');
+        expect(after[0]).toMatchObject({ name: '券商簡稱', aliases: ['台積電', '台灣積體電路製造股份有限公司'] });
+        expect(before[0]).toEqual({ code: '2330', name: '券商簡稱', exchange: 'TSE', category: '' });
         expect(await loadStockCatalog()).toBe(after);
         expect(m.bases).toHaveBeenCalledTimes(1);
         expect(m.names).toHaveBeenCalledTimes(1);
     });
 
-    it('direct code shares display policy while preserving the broker ContractInfo and prices', async () => {
+    it.each([['券商簡稱', '券商簡稱'], ['2330', '台積電']])('direct code with broker name %s shares the display policy (%s) and keeps ContractInfo', async (broker, shown) => {
         m.equity.set('TSE:2330', { name: '台積電', aliases: ['台灣積體電路製造股份有限公司'] });
+        m.resolve.mockResolvedValue(info({ name: broker }));
         const result = await (await import('./product-search')).searchProducts('2330');
-        expect(result[0]).toMatchObject({ code: '2330', name: '台積電', contract: { name: '券商舊名稱', reference: 1000 } });
+        expect(result[0]).toMatchObject({ code: '2330', name: shown, contract: { name: broker, reference: 1000 } });
         expect(m.info).not.toHaveBeenCalled();
     });
 
@@ -86,13 +114,14 @@ describe('shared official ordinary stock display policy', () => {
         expect(m.info).not.toHaveBeenCalled();
     });
 
-    it('display priority preserves ETF authority and rejects unsupported ordinary identity classes', async () => {
+    it('ETF display also prefers the broker name, and unsupported ordinary identity classes ignore official names', async () => {
         const { stockDisplayMeta } = await import('./stock-index');
         m.equity.set('TSE:2330', { name: '一般股名稱', aliases: [] });
         m.etfs.set('TSE:2330', { name: '合成 ETF 官方名', aliases: ['合成基金別名'] });
-        expect(stockDisplayMeta('2330', 'TSE', '券商基金名')).toMatchObject({ name: '券商基金名', kind: 'ETF' });
-        m.snapshot = false;
-        expect(stockDisplayMeta('2330', 'TSE', '券商基金名')).toMatchObject({ name: '合成 ETF 官方名', kind: 'ETF' });
+        const etf = stockDisplayMeta('2330', 'TSE', '券商基金名');
+        expect(etf).toMatchObject({ name: '券商基金名', kind: 'ETF' });
+        expect(etf.aliases).toEqual(expect.arrayContaining(['合成 ETF 官方名', '合成基金別名']));
+        expect(stockDisplayMeta('2330', 'TSE')).toMatchObject({ name: '合成 ETF 官方名', kind: 'ETF' });
         for (const code of ['0050', '2330A', '123456', 'IX0001']) {
             m.equity.set(`TSE:${code}`, { name: '不得使用的一般股名稱', aliases: [] });
             expect(stockDisplayMeta(code, 'TSE', '券商名稱')).toEqual({ name: '券商名稱' });

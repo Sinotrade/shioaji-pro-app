@@ -33,6 +33,8 @@ const warrantSuggestion: ProductSuggestion = {
 
 let view: ReactTestRenderer | undefined;
 const searchOptions = expect.objectContaining({ includeWarrants: true, signal: expect.any(AbortSignal), onUpdate: expect.any(Function) });
+// The watchlist shows final rows only.
+const watchSearchOptions = expect.objectContaining({ includeWarrants: true, signal: expect.any(AbortSignal) });
 
 function text(node: ReactTestInstance | string): string {
     return typeof node === 'string' ? node : node.children.map(text).join('');
@@ -176,7 +178,7 @@ describe('自選清單商品搜尋', () => {
         mocks.search.mockResolvedValue([otcIndex]);
         const { onAdd } = renderWatchlist();
         await query('櫃買', 150);
-        expect(mocks.search).toHaveBeenCalledWith('櫃買', 10, searchOptions);
+        expect(mocks.search).toHaveBeenCalledWith('櫃買', 10, watchSearchOptions);
         await act(async () => { await button('IX0043').props.onClick(); });
         expect(onAdd).toHaveBeenCalledWith('IX0043', 'IND', undefined);
     });

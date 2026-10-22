@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     warrants: vi.fn(),
     resolve: vi.fn(),
     bases: vi.fn(),
+    equityVersion: 0,
 }));
 vi.mock('./runtime', () => ({ getApiBase: () => mocks.base }));
 vi.mock('./utils/date', () => ({ todayStr: () => mocks.day }));
@@ -24,11 +25,15 @@ vi.mock('./shioaji', () => ({
     fetchWarrants: mocks.warrants,
     resolveContract: mocks.resolve,
     fetchContracts: mocks.bases,
-    normalizeContractCode: (code: string) => code === '001' ? 'IX0001' : code.trim().toUpperCase(),
+    normalizeContractCode: (code: string) => code === '001' ? 'IX0001' : code === '020' ? 'IX0018' : code.trim().toUpperCase(),
 }));
 vi.mock('./stock-index', async (original) => ({
     ...await original<object>(),
     loadStockCatalog: mocks.catalog,
+}));
+vi.mock('./stock-runtime-catalog', async (original) => ({
+    ...await original<object>(),
+    getEquityNamesVersion: () => mocks.equityVersion,
 }));
 
 function contract(code: string, type: 'STK' | 'FUT' | 'OPT' | 'WRT', rest: Partial<ContractInfo> = {}): ContractInfo {
@@ -71,6 +76,7 @@ beforeEach(() => {
     vi.setSystemTime(new Date('2026-10-17T01:00:00+08:00'));
     mocks.base = 'http://127.0.0.1:21323';
     mocks.day = '2026-10-17';
+    mocks.equityVersion = 0;
     mocks.catalog.mockResolvedValue([stock]);
     mocks.futures.mockResolvedValue(futures);
     mocks.futureRoots.mockResolvedValue([{ root: 'CDF', name: '台積電期貨' }, { root: 'QFF', name: '小型台積電期貨' }]);
@@ -209,10 +215,85 @@ describe('futures month and size priority', () => {
             contract('CDFK6', 'FUT', { name: '台積電期貨 202611', underlying_code: '2330', delivery_month: '202611' }),
             contract('CDFL6', 'FUT', { name: '台積電期貨 202612', underlying_code: '2330', delivery_month: '202612' }),
         ]);
-        const rows = await search('台積電');
+        // A large limit: the far month must be absent, not merely cut off.
+        const rows = await search('台積電', true, 30);
         expect(rows.slice(0, 5).map(row => row.code)).toEqual(['2330', 'CDFR1', 'QFFR1', 'CDFR2', 'QFFR2']);
         expect(rows.slice(5).every(row => row.security_type === 'WRT')).toBe(true);
-        expect(rows.some(row => row.code === 'CDFJ6' || row.code === 'CDFK6')).toBe(false);
+        expect(rows.some(row => ['CDFJ6', 'CDFK6', 'CDFL6'].includes(row.code))).toBe(false);
+    });
+
+    it('keeps a same-prefix stock after the exact stock futures and ahead of its warrants', async () => {
+        mocks.catalog.mockResolvedValue([
+            { code: '1303', name: '南亞', exchange: 'TSE', category: '' },
+            { code: '2408', name: '南亞科', exchange: 'TSE', category: '' },
+        ]);
+        mocks.futures.mockResolvedValue(['R2', 'R1'].map(suffix => contract(`NYF${suffix}`, 'FUT', {
+            root: 'NYF', name: `南亞期貨 ${suffix === 'R1' ? '近月' : '次月'}`, underlying_code: '1303',
+            delivery_month: suffix === 'R1' ? '202610' : '202611', target_code: `NYF${suffix === 'R1' ? 'J6' : 'K6'}`,
+        })));
+        mocks.warrants.mockResolvedValue(Array.from({ length: 8 }, (_, i) => contract(`NYW${i}`, 'WRT', {
+            name: `南亞購 ${i}`, underlying_code: '1303', expiry_date: '2027-04-07', last_trading_date: '2027-04-01',
+        })));
+        const updates: string[][] = [];
+        const rows = (await (await import('./product-search')).searchProducts('南亞', 8, {
+            includeWarrants: true, onUpdate: partial => updates.push(partial.map(row => row.code)),
+        })).map(row => row.code);
+        expect(rows).toEqual(['1303', 'NYFR1', 'NYFR2', '2408', 'NYW0', 'NYW1', 'NYW2', 'NYW3']);
+        expect(updates.length).toBeGreaterThan(0);
+        for (const prefix of updates) expect(rows.slice(0, prefix.length)).toEqual(prefix);
+    });
+});
+
+describe('only the near and next month of each futures specification', () => {
+    const far = ['202612', '202703'];
+    const months = [['J6', '202610'], ['K6', '202611'], ['L6', '202612'], ['H7', '202703']] as const;
+    // Continuous R1/R2 identities plus every actual month, including far ones.
+    const family = (root: string, name: string, underlying: string, continuous: string[] = ['R1', 'R2'],
+        fields: Partial<ContractInfo> = {}) => [
+        ...continuous.map(suffix => contract(`${root}${suffix}`, 'FUT', {
+            root, name: `${name} ${suffix === 'R1' ? '近月' : '次月'}`, underlying_code: underlying,
+            delivery_month: suffix === 'R1' ? '202610' : '202611', target_code: `${root}${suffix === 'R1' ? 'J6' : 'K6'}`,
+            ...fields,
+        })),
+        ...months.map(([suffix, month]) => contract(`${root}${suffix}`, 'FUT', {
+            root, name: `${name} ${month}`, underlying_code: underlying, delivery_month: month,
+        })),
+    ];
+    const stockFamily = (fields: Partial<ContractInfo> = {}) =>
+        [...family('CDF', '台積電期貨', '2330', ['R1', 'R2'], fields), ...family('QFF', '小型台積電期貨', '2330')];
+    const indexFamily = (txf: string[], mxf: string[], tmf: string[], tmfFields: Partial<ContractInfo> = {}) => [
+        ...family('TXF', '臺股期貨', 'IX0001', txf), ...family('MXF', '小型臺指期貨', 'IX0001', mxf),
+        ...family('TMF', '微型臺指期貨', 'IX0001', tmf, tmfFields),
+    ];
+    const R = ['R1', 'R2'];
+
+    it.each([
+        { label: '沒有權證', query: '台積電', includeWarrants: false, limit: 8, rows: stockFamily(),
+            expected: ['CDFR1', 'QFFR1', 'CDFR2', 'QFFR2'] },
+        { label: 'limit 30', query: '台積電', includeWarrants: true, limit: 30, rows: stockFamily(),
+            expected: ['CDFR1', 'QFFR1', 'CDFR2', 'QFFR2'] },
+        { label: '部分 R 列缺 target_code', query: '台積電', includeWarrants: true, limit: 30,
+            rows: stockFamily({ target_code: null }), expected: ['CDFR1', 'QFFR1', 'CDFR2', 'QFFR2'] },
+        // Without target_code, its own actual near month is not covered and
+        // must still not be listed again as the next month.
+        { label: '某規格只有 R1', query: '台指期貨', includeWarrants: false, limit: 30,
+            rows: indexFamily(R, R, ['R1'], { target_code: null }),
+            expected: ['TXFR1', 'MXFR1', 'TMFR1', 'TXFR2', 'MXFR2', 'TMFK6'] },
+        { label: '某規格只有 R1 且缺 delivery_month', query: '台指期貨', includeWarrants: false, limit: 30,
+            rows: indexFamily(R, R, ['R1'], { delivery_month: undefined }),
+            expected: ['TXFR1', 'MXFR1', 'TMFR1', 'TXFR2', 'MXFR2', 'TMFK6'] },
+        { label: '某規格只有 R2', query: '台指期貨', includeWarrants: false, limit: 30, rows: indexFamily(R, R, ['R2']),
+            expected: ['TXFR1', 'MXFR1', 'TMFJ6', 'TXFR2', 'MXFR2', 'TMFR2'] },
+        { label: '某規格沒有任何 R', query: '台指期貨', includeWarrants: false, limit: 30, rows: indexFamily(R, [], R),
+            expected: ['TXFR1', 'MXFJ6', 'TMFR1', 'TXFR2', 'MXFK6', 'TMFR2'] },
+        { label: '列缺 delivery_month', query: '台指期貨', includeWarrants: false, limit: 30,
+            rows: [contract('MXFA6', 'FUT', { root: 'MXF', name: '小型臺指期貨', underlying_code: 'IX0001' }), ...indexFamily(R, [], R)],
+            expected: ['TXFR1', 'MXFJ6', 'TMFR1', 'TXFR2', 'MXFK6', 'TMFR2'] },
+    ])('$label', async ({ query, includeWarrants, limit, rows, expected }) => {
+        mocks.futures.mockResolvedValue([...rows].reverse());
+        const result = await search(query, includeWarrants, limit);
+        expect(result.filter(row => row.security_type === 'FUT').map(row => row.code)).toEqual(expected);
+        expect(result.some(row => far.includes(row.contract?.delivery_month ?? ''))).toBe(false);
     });
 });
 
@@ -238,15 +319,29 @@ describe('product search sources and related products', () => {
         expect(mocks.futures).toHaveBeenCalledWith({ underlyingCode: fund.code }, { signal: expect.any(AbortSignal) });
     });
 
-    it('labels a direct ETF code without requiring the stock catalog', async () => {
+    it('labels a direct ETF code and still reads the stock catalog for same-prefix products', async () => {
         mocks.resolve.mockResolvedValue(contract('00679B', 'STK', { name: '元大美債20年', exchange: 'OTC' }));
         mocks.futures.mockResolvedValue([]);
         mocks.warrants.mockResolvedValue([]);
         expect((await search('00679B'))[0]).toMatchObject({ code: '00679B', detail: 'ETF · 直接代碼', exchange: 'OTC', security_type: 'STK', kind: 'ETF' });
-        expect(mocks.catalog).not.toHaveBeenCalled();
+        expect(mocks.catalog).toHaveBeenCalledOnce();
     });
 
-    it('direct and name ETF suggestions share typed kind without mutating ContractInfo or adding catalog GETs', async () => {
+    it('keeps same-code preferred shares for a direct stock code, and the direct row if the catalog fails', async () => {
+        mocks.catalog.mockResolvedValue([
+            { code: '2881', name: '富邦金', exchange: 'TSE', category: '' },
+            { code: '2881A', name: '富邦特', exchange: 'TSE', category: '' },
+            { code: '2881B', name: '富邦金乙特', exchange: 'TSE', category: '' },
+        ]);
+        mocks.resolve.mockResolvedValue(contract('2881', 'STK', { name: '富邦金' }));
+        mocks.futures.mockResolvedValue([]);
+        mocks.warrants.mockResolvedValue([]);
+        expect((await search('2881')).map(row => row.code)).toEqual(['2881', '2881A', '2881B']);
+        mocks.catalog.mockRejectedValue(new Error('503 stock'));
+        expect(await search('2881')).toEqual([expect.objectContaining({ code: '2881', detail: '直接代碼', security_type: 'STK' })]);
+    });
+
+    it('direct and name ETF suggestions share typed kind without mutating ContractInfo or extra catalog reads', async () => {
         const fund = etfSnapshot.entries.find(row => row.code === '0050')!;
         const resolved = contract('0050', 'STK', { name: fund.name });
         mocks.resolve.mockResolvedValue(resolved);
@@ -256,7 +351,7 @@ describe('product search sources and related products', () => {
         expect(direct).toMatchObject({ code: '0050', name: fund.name, security_type: 'STK', kind: 'ETF', contract: resolved });
         expect(direct.contract).toBe(resolved);
         expect(resolved).not.toHaveProperty('kind');
-        expect(mocks.catalog).not.toHaveBeenCalled();
+        expect(mocks.catalog).toHaveBeenCalledOnce();
         mocks.catalog.mockResolvedValue([{ ...fund, kind: 'ETF', category: '' }]);
         expect((await search(fund.name))[0]).toMatchObject({ code: direct.code, name: direct.name, security_type: 'STK', kind: 'ETF' });
         mocks.resolve.mockResolvedValue(contract('2330', 'STK', { name: '台積電' }));
@@ -388,6 +483,41 @@ describe('product search sources and related products', () => {
         mocks.catalog.mockRejectedValue(new Error('503 stock'));
         mocks.futureRoots.mockRejectedValue(new Error('503 roots'));
         await expect(search('不存在商品')).rejects.toThrow('搜尋');
+    });
+
+    // 台指 would otherwise show only the VIX index; 台積電期貨 only the stock.
+    it.each(['台指', '台積電期貨'])('reports a timed-out primary futures source for %s instead of a partial list', async query => {
+        mocks.futures.mockReturnValue(new Promise(() => undefined));
+        const rejected = expect(search(query)).rejects.toThrow('商品搜尋暫時無法完成');
+        await vi.advanceTimersByTimeAsync(1200);
+        await rejected;
+        expect(mocks.futures).toHaveBeenCalledOnce();
+    });
+
+    it('finds an exact index code by direct lookup when the IND batch catalog fails', async () => {
+        mocks.bases.mockRejectedValue(Object.assign(new Error('503 IND'), { status: 503 }));
+        mocks.resolve.mockResolvedValue(contract('IX0001', 'STK', { security_type: 'IND', name: '發行量加權股價指數' }));
+        expect(await search('IX0001')).toEqual([expect.objectContaining({ code: 'IX0001', security_type: 'IND', exchange: 'TSE' })]);
+        expect(mocks.bases).toHaveBeenCalledOnce();
+    });
+
+    it('lists both the legacy index alias 020 and the 020xxx products it prefixes', async () => {
+        mocks.catalog.mockResolvedValue([{ code: '020001', name: '測試 ETN', exchange: 'TSE', category: '' }]);
+        mocks.bases.mockResolvedValue({ region: 'TW', contracts: [{ code: 'IX0018', security_type: 'IND', exchange: 'TSE' }] });
+        mocks.resolve.mockResolvedValue(contract('IX0018', 'STK', { security_type: 'IND', name: '電器電纜類指數' }));
+        expect((await search('020')).map(row => `${row.security_type}:${row.code}`)).toEqual(['IND:IX0018', 'STK:020001']);
+        expect(mocks.resolve).toHaveBeenCalledWith('IX0018', 'IND', { signal: expect.any(AbortSignal) });
+    });
+
+    it('rejects an old search when only the equity name version changes', async () => {
+        let finish!: (rows: ContractInfo[]) => void;
+        mocks.futures.mockReturnValue(new Promise<ContractInfo[]>(resolve => { finish = resolve; }));
+        const rejected = expect(search('台積電')).rejects.toThrow('名稱目錄已更新');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mocks.futures).toHaveBeenCalledOnce();
+        mocks.equityVersion++;
+        finish(futures);
+        await rejected;
     });
 
     it('returns an ordinary empty list for a successful no-match search and direct 404', async () => {

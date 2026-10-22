@@ -26,8 +26,10 @@ function json(res: ServerResponse, status: number, value: unknown) {
     res.end(JSON.stringify(value));
 }
 
+// The Host check blocks DNS rebinding. `localhost` (the README dev URL) can only
+// come from a page on this machine; the socket check below still applies.
 function isLoopback(req: IncomingMessage): boolean {
-    return /^127\.0\.0\.1(?::\d{1,5})?$/.test(req.headers.host ?? '')
+    return /^(?:127\.0\.0\.1|localhost)(?::\d{1,5})?$/i.test(req.headers.host ?? '')
         && ['127.0.0.1', '::ffff:127.0.0.1', '::1'].includes(req.socket.remoteAddress ?? '');
 }
 

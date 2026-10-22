@@ -86,18 +86,22 @@ describe('stock catalog identity, source recovery and scope', () => {
         m.names.mockReturnValueOnce(old.promise);
         const { loadStockCatalog } = await import('./stock-index');
         const pending = loadStockCatalog();
-        await vi.advanceTimersByTimeAsync(1000);
+        await vi.advanceTimersByTimeAsync(10_000);
         expect((await pending)[0]?.name).toBe('2330');
         expect((await loadStockCatalog())[0]?.name).toBe('台積電');
         old.resolve([{ underlying_code: '2330', name: 'Synthetic stale' }]);
         await vi.advanceTimersByTimeAsync(0);
         expect((await loadStockCatalog())[0]?.name).toBe('台積電');
     });
-    it('bounds a stuck Base source, then allows a successful retry', async () => {
+    it('bounds a stuck Base source at ten seconds for non-search panels, then allows a successful retry', async () => {
         m.baseRows.mockReturnValueOnce(new Promise(() => undefined));
         const { loadStockCatalog } = await import('./stock-index');
-        const pending = expect(loadStockCatalog()).rejects.toThrow('逾時');
-        await vi.advanceTimersByTimeAsync(1000);
+        let settled = false;
+        const read = loadStockCatalog().finally(() => { settled = true; });
+        const pending = expect(read).rejects.toThrow('逾時');
+        await vi.advanceTimersByTimeAsync(9_999);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
         await pending;
         expect((await loadStockCatalog())[0]?.name).toBe('台積電');
     });

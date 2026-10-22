@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mock = vi.hoisted(() => ({ fetch: vi.fn(), native: false }));
+const mock = vi.hoisted(() => ({ fetch: vi.fn(), native: false, missing: false }));
 vi.mock('./runtime', () => ({ get isTauri() { return mock.native; } }));
-vi.mock('./public-metadata', () => ({ fetchPublicJson: mock.fetch }));
+vi.mock('./public-metadata', () => ({ fetchPublicJson: mock.fetch, isPublicMetadataUnavailable: () => mock.missing }));
 vi.mock('@tauri-apps/plugin-http', () => { throw new Error('Equity path must not import native HTTP'); });
 const routes = {
     TSE: '/metadata/equity/tse-companies', OTC: '/metadata/equity/otc-companies', OES: '/metadata/equity/oes-companies',
@@ -24,6 +24,7 @@ beforeEach(async () => {
     vi.useFakeTimers();
     vi.setSystemTime('2026-10-17T04:00:00Z');
     mock.native = false;
+    mock.missing = false;
     mock.fetch.mockReset().mockImplementation(async route => payload(route));
     store = await import('./stock-runtime-catalog');
 });
@@ -61,7 +62,7 @@ describe('ordinary name runtime batch', () => {
         await flush();
         expect(listener).toHaveBeenCalledTimes(1);
         mock.fetch.mockImplementation(async route => payload(route));
-        await vi.advanceTimersByTimeAsync(300_000);
+        await vi.advanceTimersByTimeAsync(3_600_000);
         store.ensureEquityNamesFresh();
         await flush();
         expect(listener).toHaveBeenCalledTimes(1);
@@ -70,7 +71,7 @@ describe('ordinary name runtime batch', () => {
 
     it('retains each failed source last-good while publishing the successful sources together', async () => {
         store.ensureEquityNamesFresh(); await flush();
-        await vi.advanceTimersByTimeAsync(300_000);
+        await vi.advanceTimersByTimeAsync(3_600_000);
         mock.fetch.mockImplementation(async route => {
             if (route === routes.OES) throw new Error('Synthetic OES unavailable');
             return payload(route, '合成新簡稱');
@@ -85,7 +86,7 @@ describe('ordinary name runtime batch', () => {
         expect(store.getEquityNamesVersion()).toBe(2);
     });
 
-    it('TTL is five minutes, failed batch retries after 30 seconds, with no poller', async () => {
+    it('TTL is one hour, failed batch retries after 30 seconds, with no poller', async () => {
         mock.fetch.mockRejectedValue(new Error('Synthetic offline'));
         store.ensureEquityNamesFresh(); await flush();
         store.ensureEquityNamesFresh();
@@ -96,7 +97,7 @@ describe('ordinary name runtime batch', () => {
         mock.fetch.mockImplementation(async route => payload(route));
         store.ensureEquityNamesFresh(); await flush();
         expect(mock.fetch).toHaveBeenCalledTimes(6);
-        await vi.advanceTimersByTimeAsync(299_999);
+        await vi.advanceTimersByTimeAsync(3_599_999);
         store.ensureEquityNamesFresh();
         expect(mock.fetch).toHaveBeenCalledTimes(6);
         await vi.advanceTimersByTimeAsync(1);
@@ -126,7 +127,7 @@ describe('ordinary name runtime batch', () => {
         mock.fetch.mockImplementation(async route => payload(route, '原簡稱', '1130229'));
         store.ensureEquityNamesFresh(); await flush();
         expect(store.equityNameForLive('TSE', '2330')?.name).toBe('原簡稱');
-        await vi.advanceTimersByTimeAsync(300_000);
+        await vi.advanceTimersByTimeAsync(3_600_000);
         mock.fetch.mockImplementation(async route => payload(route, '倒退名稱', '1130228'));
         store.ensureEquityNamesFresh(); await flush();
         expect(store.equityNameForLive('TSE', '2330')?.name).toBe('原簡稱');
@@ -144,6 +145,23 @@ describe('ordinary name runtime batch', () => {
         store.ensureEquityNamesFresh(); await flush();
         expect(listener).toHaveBeenCalledTimes(1);
         expect(store.getEquityNamesStatus()).toMatchObject({ phase: 'ready', cleanupError: 'Synthetic cleanup error', listenerError: 'Synthetic listener error' });
+    });
+
+    it('a missing route stops refreshing until reload, past the retry delay and the next Taiwan day', async () => {
+        mock.fetch.mockImplementation(async () => {
+            mock.missing = true;
+            throw new Error('Public metadata route unavailable (404)');
+        });
+        store.ensureEquityNamesFresh(); await flush();
+        expect(mock.fetch).toHaveBeenCalledTimes(3);
+        mock.fetch.mockImplementation(async route => payload(route));
+        await vi.advanceTimersByTimeAsync(30_000);
+        store.ensureEquityNamesFresh(); await flush();
+        vi.setSystemTime('2026-10-18T04:00:00Z');
+        store.ensureEquityNamesFresh(); await flush();
+        expect(mock.fetch).toHaveBeenCalledTimes(3);
+        expect(store.equityNameForLive('TSE', '2330')).toBeUndefined();
+        expect(vi.getTimerCount()).toBe(0);
     });
 
     it('native is gated with zero requests, native imports or timers even on repeated reads', async () => {

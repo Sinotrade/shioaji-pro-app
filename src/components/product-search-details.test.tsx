@@ -127,16 +127,33 @@ describe.each([true, false])('disclosure 與真 useHotkeys 隔離（escCancelAll
         return event;
     }
 
-    it('summary 連按 Esc 只收合，焦點留在 summary，不 armed、不通知、不全部刪單', () => {
+    it('summary 連按 Esc 先收合、焦點留在 summary，不 armed、不通知、不全部刪單', () => {
         let first!: ReturnType<typeof press>;
-        act(() => { first = press('Escape'); press('Escape'); press('Escape', true, { repeat: true }); });
+        let second!: ReturnType<typeof press>;
+        act(() => { first = press('Escape'); second = press('Escape'); press('Escape', true, { repeat: true }); });
         expect(first.defaultPrevented).toBe(true);
         expect(first.stopped).toBe(true);
         expect(disclosure.open).toBe(false);
         expect(documentState.activeElement).toBe(summary);
         expect(hotkeys.cancelAll).not.toHaveBeenCalled();
         expect(hotkeys.notify).not.toHaveBeenCalled();
-        expect(parentKey).not.toHaveBeenCalled();
+        // Only presses after collapsing reach the popup owner, already claimed.
+        expect(second.stopped).toBe(false);
+        expect(parentKey).toHaveBeenCalledTimes(2);
+        expect(parentKey.mock.calls.every(([event]) => event.defaultPrevented)).toBe(true);
+    });
+
+    it('收合後的 Esc 交給外層關閉浮層，仍不 armed；之後的外部 Esc 只算第一下', () => {
+        disclosure.open = false;
+        let collapsed!: ReturnType<typeof press>;
+        act(() => { collapsed = press('Escape'); });
+        expect(collapsed.defaultPrevented).toBe(true);
+        expect(collapsed.stopped).toBe(false);
+        expect(parentKey).toHaveBeenCalledOnce();
+        expect(hotkeys.notify).not.toHaveBeenCalled();
+        act(() => { press('Escape', false); });
+        expect(hotkeys.cancelAll).not.toHaveBeenCalled();
+        expect(hotkeys.notify).toHaveBeenCalledTimes(enabled ? 1 : 0);
     });
 
     it('外部 Esc、summary Esc、外部 Esc 不湊成全部刪單；離開後全域風控仍正常', () => {

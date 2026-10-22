@@ -1,5 +1,9 @@
-import type { StyleRule } from '@vanilla-extract/css';
+import { style, type StyleRule } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
+
+// Carries an option's hover title without a box of its own, so the row layout is
+// unchanged and screen readers do not read the title as the option's description.
+export const optionText = style({ display: 'contents' });
 
 // One bounded surface per search popup; children retain their own opaque text.
 export const searchSurface = {

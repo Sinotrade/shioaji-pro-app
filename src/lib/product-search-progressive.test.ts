@@ -127,7 +127,6 @@ describe('each search owns its cancellation, shared sources do not', () => {
         await pending;
         await run('2330', 8, { includeWarrants: true });
         expect(m.resolve).toHaveBeenCalledTimes(2);
-        expect(m.catalog).not.toHaveBeenCalled();
         expect(m.futures).toHaveBeenCalledTimes(1);
     });
 

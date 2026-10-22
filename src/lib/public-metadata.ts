@@ -4,6 +4,24 @@ import { ETF_SOURCE_ROUTES, EQUITY_SOURCE_ROUTES, type PublicMetadataRoute } fro
 const ROUTES = new Set<string>([...Object.values(ETF_SOURCE_ROUTES), ...Object.values(EQUITY_SOURCE_ROUTES)]);
 const DEADLINE_MS = 5000;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const JSON_TYPE = /^application\/(?:[\w.+-]+\+)?json(?:\s*;|$)/i;
+// Memory only: a reload is the retry, so a later deploy is picked up without stored state.
+let routesMissing = false;
+
+/** True once this page has seen that the environment serves no /metadata route. */
+export function isPublicMetadataUnavailable(): boolean {
+    return routesMissing;
+}
+
+// 408/429 and every 5xx (including HTML error pages) stay retryable; the dev
+// proxy reports upstream failures as 502. A client error, a redirect or a 2xx
+// SPA fallback page means this deployment has no route at all.
+function missingRoute(response: Response): boolean {
+    if (response.type === 'opaqueredirect') return true;
+    const { status } = response;
+    if (status >= 400 && status < 500) return status !== 408 && status !== 429;
+    return response.ok && !JSON_TYPE.test(response.headers.get('content-type') ?? '');
+}
 
 /** Public name metadata only. Native transport stays gated until its cookie policy is verified. */
 export function fetchPublicJson(route: PublicMetadataRoute, options: {
@@ -38,17 +56,18 @@ export function fetchPublicJson(route: PublicMetadataRoute, options: {
         void (async () => {
             const response = await fetch(route, {
                 method: route === ETF_SOURCE_ROUTES.otcFunds ? 'POST' : 'GET',
-                credentials: 'omit', redirect: 'error', cache: 'no-store', signal: controller.signal,
+                credentials: 'omit', redirect: 'manual', cache: 'no-store', signal: controller.signal,
             });
             if (settled) {
                 void response.body?.cancel().catch(error => options.onCleanupError?.(error));
                 return;
             }
+            if (missingRoute(response)) {
+                routesMissing = true;
+                throw new Error(response.ok ? 'Public metadata response is not JSON' : `Public metadata route unavailable (${response.status})`);
+            }
             if (!response.ok) throw new Error(`Public metadata HTTP ${response.status}`);
             if (!response.body) throw new Error('Public metadata body is empty');
-            if (!/^application\/(?:[\w.+-]+\+)?json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')) {
-                throw new Error('Public metadata response is not JSON');
-            }
             const owned = response.body.getReader();
             reader = owned;
             try {

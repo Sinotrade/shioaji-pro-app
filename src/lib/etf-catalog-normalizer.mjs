@@ -78,7 +78,7 @@ export function buildEtfCatalog(tsePayload, otcPayload, retrievedAt, dailyPayloa
         const prior = previousNames.get(key);
         const unique = [...new Set([...aliases, ...(prior ? [prior.name, ...(prior.aliases ?? [])] : [])])]
             .filter(alias => alias && alias !== name);
-        entries.push(Object.freeze({ code, exchange, name, ...(unique.length ? { aliases: Object.freeze(unique) } : {}) }));
+        entries.push(Object.freeze({ code, name, exchange, ...(unique.length ? { aliases: Object.freeze(unique) } : {}) }));
     };
     for (const row of tse) {
         const code = identity(row['基金代號']);

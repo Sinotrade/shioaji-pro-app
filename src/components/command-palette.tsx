@@ -1,6 +1,6 @@
 // src/components/command-palette.tsx — Cmd+K symbol jump + panel commands
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { primeContract } from '../lib/contracts-cache';
 import { isTauri } from '../lib/runtime';
 import {
@@ -10,10 +10,11 @@ import {
 import { BLOCK_META, type BlockType } from '../lib/workspace';
 import type { SecurityType } from '../lib/types/contract';
 import * as styles from './command-palette.css';
+import { optionText } from './search-surface.css';
 import { AsyncStatus } from './async-status';
 import { getProductCatalogVersion, useProductCatalogVersion } from '../lib/product-catalog-version';
 import { useProductNamesVersion } from '../hooks/use-product-names-version';
-import { getEtfNamesVersion } from '../lib/etf-runtime-catalog';
+import { getProductNamesVersion } from '../lib/product-names-version';
 import { ProductBadge } from './product-badge';
 import { ProductSearchDetails } from './product-search-details';
 import { PRODUCT_SEARCH_DEBOUNCE_MS } from '../lib/search-request';
@@ -22,6 +23,9 @@ import { PRODUCT_BADGES, productBadgeType, productDetailText } from '../lib/prod
 const PANEL_TYPES = Object.keys(BLOCK_META) as BlockType[];
 const PANEL_MATCH_LIMIT = 4;
 const productIdentity = (item: ProductSuggestion) => JSON.stringify([item.security_type, item.exchange, item.code]);
+// Row identities hold JSON punctuation; escape it so ids also work as CSS selectors.
+const optionId = (listId: string, identity: string) =>
+    `${listId}-${identity.replace(/[^A-Za-z0-9]/g, (char) => `_${char.charCodeAt(0).toString(16)}_`)}`;
 
 export function CommandPalette({
     open,
@@ -43,6 +47,7 @@ export function CommandPalette({
     const [suggestions, setSuggestions] = useState<ProductSuggestion[]>([]);
     const [activeIdentity, setActiveIdentity] = useState<string | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const listId = useId();
     const resultsRef = useRef<HTMLDivElement>(null);
     const rowRefs = useRef(new Map<string, HTMLButtonElement>());
     const composing = useRef(false);
@@ -52,7 +57,7 @@ export function CommandPalette({
     const catalogVersion = useProductCatalogVersion();
     const namesVersion = useProductNamesVersion();
     const suggestionScope = useRef('');
-    const currentScope = () => JSON.stringify([getProductCatalogVersion(), getEtfNamesVersion()]);
+    const currentScope = () => JSON.stringify([getProductCatalogVersion(), getProductNamesVersion()]);
 
     const selectWithPointer = (identity: string, event: MouseEvent<HTMLButtonElement>) => {
         const previous = pointerPosition.current;
@@ -232,11 +237,22 @@ export function CommandPalette({
     return (
         <div className={styles.overlay} onClick={closePalette}
             onMouseMove={(event) => { pointerPosition.current = { x: event.clientX, y: event.clientY }; }}>
-            <div className={styles.box} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.box} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => {
+                if (e.key !== 'Escape' || composing.current || e.nativeEvent?.isComposing || e.keyCode === 229) return;
+                // Claim the press that closes the palette: focus falls back to the
+                // page, where an unclaimed Esc would arm Esc×2 cancel-all.
+                e.preventDefault();
+                closePalette();
+            }}>
                 <input
                     ref={inputRef}
                     className={styles.input}
                     placeholder='輸入代碼跳轉商品（2330、TXFR1…）'
+                    role='combobox'
+                    aria-autocomplete='list'
+                    aria-expanded={rowCount > 0}
+                    aria-controls={rowCount > 0 ? listId : undefined}
+                    aria-activedescendant={rowCount > 0 ? optionId(listId, rowIdentities[activeIndex]!) : undefined}
                     value={value}
                     onCompositionStart={() => {
                         composing.current = true;
@@ -272,35 +288,41 @@ export function CommandPalette({
                             setActiveIdentity(rowIdentities[(activeIndex - 1 + rowCount) % rowCount]!);
                         }
                         if (e.key === 'Enter') void submit();
-                        if (e.key === 'Escape') closePalette();
                     }}
                 />
                 {rowCount > 0 && (
                     <div ref={resultsRef} className={styles.results}>
+                        <div id={listId} role='listbox' aria-label='搜尋結果'>
                         {suggestions.map((item, index) => {
                             const detail = productDetailText(item.detail, item.security_type, item.kind);
                             return (
                             <button
                                 key={productIdentity(item)}
-                                title={[item.name, item.code, PRODUCT_BADGES[productBadgeType(item.security_type, item.kind)].label, detail].filter(Boolean).join(' · ')}
+                                id={optionId(listId, productIdentity(item))}
+                                role='option'
+                                aria-selected={index === activeIndex}
+                                tabIndex={-1}
                                 ref={(node) => { if (node) rowRefs.current.set(productIdentity(item), node); else rowRefs.current.delete(productIdentity(item)); }}
                                 className={
                                     index === activeIndex
                                         ? styles.resultActive
                                         : styles.result
                                 }
+                                onMouseDown={(event) => event.preventDefault()}
                                 onMouseMove={(event) => selectWithPointer(productIdentity(item), event)}
                                 onClick={() => void submit(item)}
                             >
-                                <span className={styles.resultCode}>
-                                    {item.code}
-                                </span>
-                                <span className={styles.resultName}>
-                                    {item.name}
-                                </span>
-                                <span className={styles.resultMeta}>
-                                    <ProductBadge security_type={item.security_type} kind={item.kind} />
-                                    {detail && <span className={styles.resultType}>{detail}</span>}
+                                <span className={optionText} title={[item.name, item.code, PRODUCT_BADGES[productBadgeType(item.security_type, item.kind)].label, detail].filter(Boolean).join(' · ')}>
+                                    <span className={styles.resultCode}>
+                                        {item.code}
+                                    </span>
+                                    <span className={styles.resultName}>
+                                        {item.name}
+                                    </span>
+                                    <span className={styles.resultMeta}>
+                                        <ProductBadge security_type={item.security_type} kind={item.kind} />
+                                        {detail && <span className={styles.resultType}>{detail}</span>}
+                                    </span>
                                 </span>
                             </button>
                             );
@@ -310,36 +332,43 @@ export function CommandPalette({
                             return (
                                 <button
                                     key={`panel:${type}`}
-                                    title={`新增面板：${BLOCK_META[type].label} · ${BLOCK_META[type].description}`}
+                                    id={optionId(listId, `panel:${type}`)}
+                                    role='option'
+                                    aria-selected={rowIndex === activeIndex}
+                                    tabIndex={-1}
                                     ref={(node) => { if (node) rowRefs.current.set(`panel:${type}`, node); else rowRefs.current.delete(`panel:${type}`); }}
                                     className={
                                         rowIndex === activeIndex
                                             ? styles.resultActive
                                             : styles.result
                                     }
+                                    onMouseDown={(event) => event.preventDefault()}
                                     onMouseMove={(event) => selectWithPointer(`panel:${type}`, event)}
                                     onClick={() => addPanelAt(index)}
                                 >
-                                    <span className={styles.panelIcon}>
-                                        ＋
-                                    </span>
-                                    <span className={styles.panelName}>
-                                        新增面板：{BLOCK_META[type].label}
-                                    </span>
-                                    <span className={styles.resultMeta}>
-                                        <span className={styles.resultType}>{BLOCK_META[type].description}</span>
+                                    <span className={optionText} title={`新增面板：${BLOCK_META[type].label} · ${BLOCK_META[type].description}`}>
+                                        <span className={styles.panelIcon} aria-hidden>
+                                            ＋
+                                        </span>
+                                        <span className={styles.panelName}>
+                                            新增面板：{BLOCK_META[type].label}
+                                        </span>
+                                        <span className={styles.resultMeta}>
+                                            <span className={styles.resultType}>{BLOCK_META[type].description}</span>
+                                        </span>
                                     </span>
                                 </button>
                             );
                         })}
+                        </div>
                         {isTauri && <div role='status' className={styles.hint}>原生版官方名稱更新未啟用，使用券商與內建名稱</div>}
                     </div>
                 )}
-                <ProductSearchDetails item={suggestions[activeIndex]} onToggle={revealActiveRow} />
+                <ProductSearchDetails item={suggestions[activeIndex]} onToggle={() => revealActiveRow()} />
                 <div className={styles.hint}>
                     <AsyncStatus phase={busy ? 'loading' : error || searchError ? 'error' : searching ? 'loading' : 'idle'}
                         text={busy ? '查詢商品中…' : error ? '找不到此商品代碼' : searchError ? '搜尋失敗，可重試' : searching ? suggestions.length ? '正在補齊關聯商品…' : '搜尋中…' : 'Enter 跳轉 · Esc 關閉'}
-                        action={error || searchError ? <button type='button' onClick={() => {
+                        action={error || searchError ? <button type='button' onMouseDown={(e) => e.preventDefault()} onClick={() => {
                             if (composing.current) return;
                             cancelSearch();
                             setError(false);
@@ -347,6 +376,8 @@ export function CommandPalette({
                             setSuggestions([]);
                             setActiveIdentity(null);
                             setSearchRetry((retry) => retry + 1);
+                            // The button disappears with the error; keep typing in the input.
+                            inputRef.current?.focus();
                         }}>{error ? '重新搜尋' : '重試'}</button> : undefined}
                         className={error || searchError ? styles.err : ''} />
                     <span>⌘K</span>

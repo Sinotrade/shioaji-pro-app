@@ -9,8 +9,9 @@ import {
 } from './shioaji';
 import { getApiBase } from './runtime';
 import { todayStr } from './utils/date';
-import { etfNameForLive, getEtfNamesStatus, getEtfNamesVersion, refreshEtfNames } from './etf-runtime-catalog';
-import { equityNameForLive, ensureEquityNamesFresh, getEquityNamesVersion } from './stock-runtime-catalog';
+import { etfNameForLive, refreshEtfNames } from './etf-runtime-catalog';
+import { equityNameForLive, ensureEquityNamesFresh } from './stock-runtime-catalog';
+import { getProductNamesVersion } from './product-names-version';
 import { SearchRequestCache } from './search-request';
 import { getProductCatalogVersion, subscribeProductCatalog } from './product-catalog-version';
 
@@ -26,29 +27,31 @@ export interface StockMeta {
 
 // Both name searches and direct codes use the same display policy. The broker
 // ContractInfo object remains untouched; aliases never establish availability.
-export function stockDisplayMeta(code: string, exchange: string, brokerName?: string,
-    officialNamesReady = !getEtfNamesStatus().usingSnapshot): Pick<StockMeta, 'name' | 'kind' | 'aliases'> {
+// The broker name is the trading short name and changes on the rename day, while
+// TPEx publishes company short names and TWSE lags by a day, so official names
+// only add aliases.
+export function stockDisplayMeta(code: string, exchange: string, brokerName?: string): Pick<StockMeta, 'name' | 'kind' | 'aliases'> {
     const etf = etfNameForLive(code, exchange);
     const name = brokerName && brokerName !== code ? brokerName : undefined;
     if (!etf) {
         const official = /^[1-9]\d{3}$/.test(code) && (exchange === 'TSE' || exchange === 'OTC' || exchange === 'OES')
             ? equityNameForLive(exchange, code) : undefined;
         if (!official) return { name: name ?? code };
-        return { name: official.name, aliases: [...new Set([...official.aliases, ...(name ? [name] : [])])]
-            .filter(alias => alias !== official.name) };
+        const display = name ?? official.name;
+        return { name: display, aliases: [...new Set([official.name, ...official.aliases])].filter(alias => alias !== display) };
     }
     return {
-        name: officialNamesReady ? etf.name : name ?? etf.name,
+        name: name ?? etf.name,
         kind: 'ETF',
         aliases: [...new Set([etf.name, ...(etf.aliases ?? []), ...(name ? [name] : [])])],
     };
 }
 
 const CATALOG_TTL_MS = 60_000;
-const CATALOG_DEADLINE_MS = 1000;
-// These two shared sources also serve non-search panels. Keep their existing
-// deadlines independent of search saturation; each still has one in-flight
-// request per scope and independent readers.
+// These two shared sources also serve the warrant, stock futures and underlying
+// panels. A native cold start can hold reads behind the boot gate for seconds,
+// so this deadline stays long; search applies its own shorter cutoff.
+const CATALOG_DEADLINE_MS = 10_000;
 const sourceOptions = { ttlMs: CATALOG_TTL_MS, limit: 2, deadlineMs: CATALOG_DEADLINE_MS, queue: 'none' as const };
 const baseCache = new SearchRequestCache<Awaited<ReturnType<typeof fetchContracts>>>(sourceOptions);
 const namesCache = new SearchRequestCache<Awaited<ReturnType<typeof fetchWarrantUnderlyings>>>(sourceOptions);
@@ -128,19 +131,18 @@ export async function loadStockCatalog(opts?: { signal?: AbortSignal }): Promise
         throw error;
     });
     assertScope();
-    const namesVersion = `${getEtfNamesVersion()}:${getEquityNamesVersion()}`;
+    const namesVersion = getProductNamesVersion();
     if (assembledCatalog?.scope === scope && assembledCatalog.base === res && assembledCatalog.names === underlyings
         && assembledCatalog.namesVersion === namesVersion) {
         return assembledCatalog.rows;
     }
     const names = new Map(underlyings.filter(row => row.name).map(row => [row.underlying_code, row.name!]));
-    const officialNamesReady = !getEtfNamesStatus().usingSnapshot;
     const rows = res.contracts.filter(c => c.code).map(c => {
         const exchange = c.exchange ?? '';
         const brokerName = names.get(c.code);
         return {
             code: c.code,
-            ...stockDisplayMeta(c.code, exchange, brokerName, officialNamesReady),
+            ...stockDisplayMeta(c.code, exchange, brokerName),
             category: '',
             exchange,
         };

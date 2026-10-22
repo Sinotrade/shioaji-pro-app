@@ -39,15 +39,17 @@ beforeEach(async () => {
     server = createServer((request, response) => {
         const url = new URL(request.url!, 'http://fixture');
         requests.push(url.pathname);
-        if (url.pathname.endsWith('/warrants') || url.pathname.endsWith('/warrants/underlyings')) {
+        if (url.pathname.endsWith('/warrants') || mode === 'catalog-failure' && url.pathname.endsWith('/warrants/underlyings')) {
             held.push(response);
             response.on('close', () => { if (!response.writableEnded) closedBeforeReply++; });
             if (mode === 'catalog-failure' && failingBase) reply(failingBase, { message: 'synthetic Base failure' }, 503);
+        } else if (url.pathname.endsWith('/warrants/underlyings')) {
+            reply(response, [{ underlying_code: '2330', name: '台積電' }]);
         } else if (url.pathname === '/api/v1/data/contracts') {
             if (mode === 'catalog-failure') {
                 failingBase = response;
                 if (held.length) reply(response, { message: 'synthetic Base failure' }, 503);
-            } else reply(response, { message: 'unexpected catalog fallback' }, 500);
+            } else reply(response, { region: 'TW', contracts: [{ code: '2330', security_type: 'STK', exchange: 'TSE', target_code: null }] });
         } else if (url.pathname === '/api/v1/data/contracts/2330' || url.pathname === '/api/v1/data/contracts/2330/info') {
             reply(response, stock);
         } else if (url.pathname === '/api/v1/data/contracts/futures') {
@@ -87,11 +89,13 @@ describe('search cancellation reaches real loopback fetch', () => {
         signal.abort();
         await rejected;
         await vi.waitFor(() => expect(closedBeforeReply).toBe(1));
+        // A direct stock code also reads the shared stock catalog for same-prefix stocks.
         expect(requests).toEqual(expect.arrayContaining([
             '/api/v1/data/contracts/2330', '/api/v1/data/contracts/2330/info',
+            '/api/v1/data/contracts', '/api/v1/data/contracts/warrants/underlyings',
             '/api/v1/data/contracts/futures', '/api/v1/data/contracts/warrants',
         ]));
-        expect(requests).toHaveLength(4);
+        expect(requests).toHaveLength(6);
     });
 
     it('one cancelled reader leaves the shared real HTTP request usable for the other reader', async () => {

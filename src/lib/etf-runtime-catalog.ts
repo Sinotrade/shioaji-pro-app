@@ -2,11 +2,11 @@
 import bundled from './data/etf-catalog.json';
 import { isTauri } from './runtime';
 import { ETF_SOURCE_ROUTES, type PublicMetadataRoute } from './public-metadata-routes';
-import { fetchPublicJson } from './public-metadata';
+import { fetchPublicJson, isPublicMetadataUnavailable } from './public-metadata';
 import { buildEtfCatalog, type EtfNameCatalog, type EtfNameEntry, type EtfNameSource } from './etf-catalog-normalizer.mjs';
 
 export type { EtfNameCatalog, EtfNameEntry } from './etf-catalog-normalizer.mjs';
-const FRESH_MS = 5 * 60_000;
+const FRESH_MS = 60 * 60_000;
 const RETRY_MS = 30_000;
 export interface EtfNamesStatus {
     readonly phase: 'snapshot' | 'refreshing' | 'ready' | 'error' | 'gated';
@@ -85,8 +85,9 @@ function sameContent(left: readonly EtfNameEntry[], right: readonly EtfNameEntry
 
 /** Triggered by catalog reads, not a poller or a single search reader's lifecycle. */
 export function refreshEtfNames(): Promise<void> {
-    if (isTauri) {
-        status = { ...status, phase: 'gated', error: '原生版官方名稱來源未啟用，使用內建快照' };
+    // Checked before the day rollover below, which would otherwise retry every day.
+    if (isTauri || isPublicMetadataUnavailable()) {
+        status = { ...status, phase: 'gated', error: isTauri ? '原生版官方名稱來源未啟用，使用內建快照' : '此環境沒有公開名稱路由，使用內建快照' };
         return Promise.resolve();
     }
     if (pending) return pending;
@@ -107,9 +108,8 @@ export function refreshEtfNames(): Promise<void> {
                 publicJson(ETF_SOURCE_ROUTES.tseNames, controller.signal, round),
             ]);
             const next = buildEtfRuntimeCatalog(tse, otc, daily, new Date().toISOString(), current);
-            // The first successful refresh changes display authority even when the
-            // names equal the snapshot. Later unchanged successes must not loop.
-            changed = status.usingSnapshot || !sameContent(current.entries, next.entries);
+            // Broker names keep display authority, so a refresh equal to the snapshot changes nothing.
+            changed = !sameContent(current.entries, next.entries);
             current = next;
             if (changed) {
                 byIdentity = new Map(current.entries.map(entry => [`${entry.exchange}:${entry.code}`, entry]));

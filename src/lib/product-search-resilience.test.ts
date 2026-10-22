@@ -50,13 +50,23 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe('商品搜尋來源分流與有界等待', () => {
-    it.each(['櫃買指數', 'IX0043', '臺指選擇權波動率指數'])('%s 不啟動無關的股票目錄或直接查詢', async query => {
+    it.each(['櫃買指數', '臺指選擇權波動率指數'])('%s 不啟動無關的股票目錄或直接查詢', async query => {
         mocks.catalog.mockReturnValue(new Promise(() => undefined));
         mocks.resolve.mockReturnValue(new Promise(() => undefined));
         const result = await search(query);
         expect(result[0]?.security_type).toBe('IND');
         expect(mocks.catalog).not.toHaveBeenCalled();
         expect(mocks.resolve).not.toHaveBeenCalled();
+        expect(mocks.roots).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('指數代碼 IX0043 走直接查詢，不啟動無關的股票目錄', async () => {
+        mocks.catalog.mockReturnValue(new Promise(() => undefined));
+        mocks.resolve.mockResolvedValue(contract('IX0043', 'STK', { security_type: 'IND', name: '櫃買指數', exchange: 'OTC' }));
+        expect(await search('IX0043')).toEqual([expect.objectContaining({ code: 'IX0043', security_type: 'IND', exchange: 'OTC' })]);
+        expect(mocks.resolve).toHaveBeenCalledWith('IX0043', undefined, { signal: expect.any(AbortSignal) });
+        expect(mocks.catalog).not.toHaveBeenCalled();
         expect(mocks.roots).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
     });
@@ -70,14 +80,17 @@ describe('商品搜尋來源分流與有界等待', () => {
         expect(mocks.roots).not.toHaveBeenCalled();
     });
 
-    it('直接現股代碼以自身完整名稱找關聯商品，不等無關股票目錄', async () => {
+    it('直接現股代碼在股票目錄無回應時，到期後仍以自身完整名稱找關聯商品', async () => {
         mocks.catalog.mockReturnValue(new Promise(() => undefined));
         mocks.resolve.mockResolvedValue(contract('2330', 'STK', { name: '台積電' }));
-        const rows = await search('2330');
+        const pending = search('2330');
+        await vi.advanceTimersByTimeAsync(1200);
+        const rows = await pending;
         expect(rows[0]).toMatchObject({ code: '2330', detail: '直接代碼' });
         expect(rows.some(row => row.code === future.code)).toBe(true);
         expect(rows.some(row => row.code === warrant.code)).toBe(true);
-        expect(mocks.catalog).not.toHaveBeenCalled();
+        expect(mocks.catalog).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
     });
 
     it('直接查詢無回應時，到期後仍使用可用股票目錄及關聯商品', async () => {

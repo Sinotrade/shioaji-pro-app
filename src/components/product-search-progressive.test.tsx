@@ -9,6 +9,14 @@ const mocks = vi.hoisted(() => ({
     search: vi.fn(), prime: vi.fn(), rowRender: vi.fn(),
     quotes: new Map<string, QuoteState>(), quoteListeners: new Map<string, Set<() => void>>(),
     etfVersion: 0, etfListeners: new Set<() => void>(),
+    equityVersion: 0, equityListeners: new Set<() => void>(),
+}));
+vi.mock('../lib/stock-runtime-catalog', () => ({
+    getEquityNamesVersion: () => mocks.equityVersion,
+    subscribeEquityNames: (listener: () => void) => {
+        mocks.equityListeners.add(listener);
+        return () => { mocks.equityListeners.delete(listener); };
+    },
 }));
 vi.mock('../lib/etf-runtime-catalog', () => ({
     getEtfNamesVersion: () => mocks.etfVersion,
@@ -42,10 +50,13 @@ import * as paletteStyles from './command-palette.css';
 import { invalidateProductCatalog } from '../lib/product-catalog-version';
 import * as watchStyles from './watchlist.css';
 import { ProductBadge } from './product-badge';
+import { optionText } from './search-surface.css';
 import type { ContractInfo } from '../lib/types/contract';
 
 interface Session {
     signal: AbortSignal;
+    /** False when the consumer shows final rows only; onUpdate is then a no-op. */
+    progressive: boolean;
     onUpdate: (rows: ProductSuggestion[]) => void;
     resolve: (rows: ProductSuggestion[]) => void;
     reject: (error: Error) => void;
@@ -63,6 +74,22 @@ function row(view: ReactTestRenderer, value: string) {
     return view.root.findAllByType('button').find((node) => text(node).includes(value));
 }
 const input = (view: ReactTestRenderer) => view.root.findByType('input');
+const paletteBox = (view: ReactTestRenderer) => view.root.find((node) => node.type === 'div' && node.props.className === paletteStyles.box);
+// The palette closes from its frame, so Esc on any row or button also closes it.
+function escape(view: ReactTestRenderer, kind: 'palette' | 'watchlist', extra: Record<string, unknown> = {}) {
+    const event = { key: 'Escape', defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...extra };
+    if (kind === 'palette') paletteBox(view).props.onKeyDown(event);
+    else input(view).props.onKeyDown(event);
+    return event;
+}
+// Rows wrap code/name/meta in one hover-title element.
+const rowCode = (props: Record<string, unknown>) =>
+    (((props.children as ReactElement).props as { children: ReactElement[] }).children[0]!.props as { children: string }).children;
+// Code, name and meta sit in one display:contents element that carries the hover title.
+const rowText = (button: ReactTestInstance) => button.children[0] as ReactTestInstance;
+const rowParts = (button: ReactTestInstance) => rowText(button).children as ReactTestInstance[];
+const listbox = (view: ReactTestRenderer) => view.root.find((node) => typeof node.type === 'string' && node.props.role === 'listbox');
+const optionNodes = (view: ReactTestRenderer) => view.root.findAll((node) => typeof node.type === 'string' && node.props.role === 'option');
 function activeText(view: ReactTestRenderer) {
     return text(view.root.findAllByType('button').find((node) => node.props.className === paletteStyles.resultActive)!);
 }
@@ -103,8 +130,9 @@ beforeEach(() => {
     mocks.quotes.clear();
     mocks.etfVersion = 0;
     mocks.quoteListeners.clear();
-    mocks.search.mockReset().mockImplementation((_query: string, _limit: number, options: Pick<Session, 'signal' | 'onUpdate'>) => new Promise((resolve, reject) => {
-        sessions.push({ ...options, resolve, reject });
+    mocks.equityVersion = 0;
+    mocks.search.mockReset().mockImplementation((_query: string, _limit: number, options: { signal: AbortSignal; onUpdate?: Session['onUpdate'] }) => new Promise((resolve, reject) => {
+        sessions.push({ signal: options.signal, progressive: !!options.onUpdate, onUpdate: options.onUpdate ?? (() => undefined), resolve, reject });
     }));
 });
 
@@ -152,7 +180,7 @@ it.each(['palette', 'watchlist'] as const)('%s 按鍵間隔110ms時每個前綴�
     expect(row(view, '200001')).toBeUndefined();
     expect(row(view, 'CDFR1')).toBeUndefined();
 
-    await act(async () => latest.onUpdate([stock]));
+    await act(async () => (kind === 'palette' ? latest.onUpdate : latest.resolve)([stock]));
     expect(row(view, '2330')).toBeDefined();
 
     await act(async () => { lastCanceled.resolve([warrant]); second.onUpdate([future]); second.reject(new Error('stale')); });
@@ -182,7 +210,7 @@ it('命令面板展開資訊或縮放後保留原選取列可見，不需要再�
         if (element.type === 'input') return { focus };
         if (element.type === 'div' && props.className === paletteStyles.results) return container;
         if (element.type === 'button' && [paletteStyles.result, paletteStyles.resultActive].includes(String(props.className))) {
-            const code = ((props.children as ReactElement[])[0]!.props as { children: string }).children;
+            const code = rowCode(props);
             return { focus: rowFocus, getBoundingClientRect: () => {
                 const top = 100 + order.indexOf(code) * 56 - container.scrollTop;
                 return { top, bottom: top + 56 };
@@ -231,15 +259,21 @@ it.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as con
     },
 );
 
-it.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as const, debounce: 150 }])(
-    '$kind 已完成的結果在 ETF 名稱權威切換後自動重新組裝，不等使用者改字', async ({ kind, debounce }) => {
+it.each([
+    { kind: 'palette' as const, debounce: 120, source: 'ETF' as const },
+    { kind: 'watchlist' as const, debounce: 150, source: 'ETF' as const },
+    { kind: 'palette' as const, debounce: 120, source: '一般股' as const },
+    { kind: 'watchlist' as const, debounce: 150, source: '一般股' as const },
+])(
+    '$kind 已完成的結果在 $source 名稱權威切換後自動重新組裝，不等使用者改字', async ({ kind, debounce, source }) => {
         const { view, submit } = render(kind);
         const old = await start(view, debounce, '2330');
         await act(async () => old.resolve([stock]));
         const oldClick = row(view, '2330')!.props.onClick;
         act(() => {
-            mocks.etfVersion++;
-            for (const listener of mocks.etfListeners) listener();
+            if (source === 'ETF') mocks.etfVersion++;
+            else mocks.equityVersion++;
+            for (const listener of source === 'ETF' ? mocks.etfListeners : mocks.equityListeners) listener();
         });
         await act(async () => oldClick());
         expect(submit).not.toHaveBeenCalled();
@@ -257,7 +291,9 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-describe.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as const, debounce: 150 }])('$kind 分段搜尋', ({ kind, debounce }) => {
+describe('palette 分段搜尋', () => {
+    const kind = 'palette' as const;
+    const debounce = 120;
     it.each(['台積電', '2330'])('輸入 %s：主商品先可見，再補期貨／權證，最終 Promise 完成才結束補齊狀態', async (query) => {
         const { view, submit, close } = render(kind);
         const session = await start(view, debounce, query);
@@ -293,6 +329,47 @@ describe.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' 
         expect(row(view, '00679B')).toBeDefined();
     });
 
+    it('partial 可立即選取，選取後 abort 且晚到結果不能重開清單', async () => {
+        const { view, submit } = render(kind);
+        const session = await start(view, debounce);
+        act(() => session.onUpdate([stock]));
+        await act(async () => { await row(view, '2330')!.props.onClick(); });
+        expect(session.signal.aborted).toBe(true);
+        expect(submit).toHaveBeenCalledWith('2330', 'STK');
+        act(() => session.onUpdate([future, warrant]));
+        await act(async () => session.resolve([future, warrant]));
+        expect(row(view, 'CDFR1')).toBeUndefined();
+        expect(row(view, '200001')).toBeUndefined();
+        expect(text(view.root)).not.toContain('正在補齊關聯商品');
+    });
+
+    it('最終 Promise 完成後不再接受來源違約的額外 onUpdate', async () => {
+        const { view } = render(kind);
+        const session = await start(view, debounce);
+        await act(async () => session.resolve([stock]));
+        act(() => session.onUpdate([future]));
+        expect(row(view, '2330')).toBeDefined();
+        expect(row(view, 'CDFR1')).toBeUndefined();
+    });
+});
+
+it('自選不訂閱分段結果：補齊期間只顯示搜尋中，最終結果一次出現，已顯示的列不會位移', async () => {
+    const { view } = render('watchlist');
+    const session = await start(view, 150);
+    expect(session.progressive).toBe(false);
+    expect(mocks.search.mock.calls[0]![2]).not.toHaveProperty('onUpdate');
+    expect(text(view.root)).toContain('搜尋中…');
+    expect(text(view.root)).not.toContain('正在補齊');
+    expect(row(view, '2330')).toBeUndefined();
+    await act(async () => session.resolve([stock, future, warrant]));
+    expect(optionNodes(view).map((node) => rowCode(node.props))).toEqual([stock.code, future.code, warrant.code]);
+    expect(text(view.root)).not.toContain('搜尋中');
+});
+
+describe.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as const, debounce: 150 }])('$kind 分段搜尋', ({ kind, debounce }) => {
+    // The palette shows partial rows; the watchlist only shows a completed search.
+    const publish = (session: Session, rows: ProductSuggestion[]) => (kind === 'palette' ? session.onUpdate : session.resolve)(rows);
+
     it('換字當下 abort 舊輪，即使舊來源違約繼續回填也不採用', async () => {
         const { view } = render(kind);
         const old = await start(view, debounce);
@@ -305,7 +382,7 @@ describe.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' 
         await act(async () => { await vi.advanceTimersByTimeAsync(debounce); });
         expect(sessions).toHaveLength(2);
         expect(sessions[1]!.signal.aborted).toBe(false);
-        act(() => sessions[1]!.onUpdate([warrant]));
+        await act(async () => publish(sessions[1]!, [warrant]));
         expect(row(view, '200001')).toBeDefined();
     });
 
@@ -324,25 +401,11 @@ describe.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' 
         expect(sessions[1]!.signal.aborted).toBe(false);
     });
 
-    it('partial 可立即選取，選取後 abort 且晚到結果不能重開清單', async () => {
-        const { view, submit } = render(kind);
-        const session = await start(view, debounce);
-        act(() => session.onUpdate([stock]));
-        await act(async () => { await row(view, '2330')!.props.onClick(); });
-        expect(session.signal.aborted).toBe(true);
-        expect(submit).toHaveBeenCalledWith(...(kind === 'palette' ? ['2330', 'STK'] : ['2330', 'STK', undefined]));
-        act(() => session.onUpdate([future, warrant]));
-        await act(async () => session.resolve([future, warrant]));
-        expect(row(view, 'CDFR1')).toBeUndefined();
-        expect(row(view, '200001')).toBeUndefined();
-        expect(text(view.root)).not.toContain('正在補齊關聯商品');
-    });
-
     it('Escape 即刻 abort，之後 onUpdate 與 final 都不再回填', async () => {
         const { view, close } = render(kind);
         const session = await start(view, debounce);
         act(() => session.onUpdate([stock]));
-        act(() => input(view).props.onKeyDown({ key: 'Escape' }));
+        act(() => { escape(view, kind); });
         expect(session.signal.aborted).toBe(true);
         if (kind === 'palette') expect(close).toHaveBeenCalledOnce();
         act(() => session.onUpdate([future]));
@@ -363,18 +426,9 @@ describe.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' 
     it('debounce 期間 Escape 會直接移除計時器，不呼叫核心搜尋', async () => {
         const { view } = render(kind);
         act(() => input(view).props.onChange({ target: { value: '台積電' } }));
-        act(() => input(view).props.onKeyDown({ key: 'Escape' }));
+        act(() => { escape(view, kind); });
         await act(async () => { await vi.advanceTimersByTimeAsync(debounce); });
         expect(mocks.search).not.toHaveBeenCalled();
-    });
-
-    it('最終 Promise 完成後不再接受來源違約的額外 onUpdate', async () => {
-        const { view } = render(kind);
-        const session = await start(view, debounce);
-        await act(async () => session.resolve([stock]));
-        act(() => session.onUpdate([future]));
-        expect(row(view, '2330')).toBeDefined();
-        expect(row(view, 'CDFR1')).toBeUndefined();
     });
 
     it('一般來源失敗由核心 resolve 可用 partial，不能當作致命搜尋錯誤', async () => {
@@ -502,22 +556,20 @@ it('兩入口 signal 獨立，一方換字／取消不妨礙另一方補齊與�
     act(() => input(palette.view).props.onChange({ target: { value: '另一個商品' } }));
     expect(first.signal.aborted).toBe(true);
     expect(second.signal.aborted).toBe(false);
-    act(() => second.onUpdate([stock, future]));
+    await act(async () => second.resolve([stock, future]));
     expect(row(watchlist.view, 'CDFR1')).toBeDefined();
     await act(async () => { await row(watchlist.view, 'CDFR1')!.props.onClick(); });
     expect(watchlist.submit).toHaveBeenCalledExactlyOnceWith('CDFR1', 'FUT', undefined);
     expect(palette.submit).not.toHaveBeenCalled();
 });
 
-it('Watchlist 名稱 pending 時 Enter 不送出，也不清除已出現的 partial', async () => {
+it('Watchlist 名稱 pending 時 Enter 不送出也不中斷搜尋，完成後才出現結果', async () => {
     const { view, submit } = render('watchlist');
     const session = await start(view, 150);
-    act(() => session.onUpdate([stock]));
     await act(async () => input(view).props.onKeyDown({ key: 'Enter' }));
     expect(submit).not.toHaveBeenCalled();
     expect(session.signal.aborted).toBe(false);
-    expect(row(view, '2330')).toBeDefined();
-    expect(text(view.root)).toContain('正在補齊');
+    expect(text(view.root)).toContain('搜尋中…');
     await act(async () => session.resolve([stock, future]));
     expect(row(view, 'CDFR1')).toBeDefined();
 });
@@ -731,22 +783,6 @@ describe.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' 
     });
 });
 
-it.each([['ArrowDown', stock], ['ArrowUp', warrant]] as const)('Watchlist pending 中文未明確選取不畫 active，首次 %s 選取邊界列後才可提交', async (direction, expected) => {
-    const { view, submit } = render('watchlist');
-    const session = await start(view, 150);
-    act(() => session.onUpdate([stock, future, warrant]));
-    expect(view.root.findAllByType('button').filter(node => node.props.className === watchStyles.suggestActive)).toHaveLength(0);
-    await act(async () => key(view, 'Enter'));
-    expect(submit).not.toHaveBeenCalled();
-    expect(input(view).props.value).toBe('台積電');
-    expect(row(view, stock.code)).toBeDefined();
-    expect(session.signal.aborted).toBe(false);
-    act(() => key(view, direction));
-    expect(activeWatchText(view)).toContain(expected.code);
-    await act(async () => key(view, 'Enter'));
-    expect(submit).toHaveBeenCalledExactlyOnceWith(expected.code, expected.security_type, undefined);
-});
-
 it('Watchlist 完成名稱搜尋後 Enter 預設加入首筆 code/type，不提交中文原字串', async () => {
     const { view, submit } = render('watchlist');
     const session = await start(view, 150, '台積電');
@@ -757,14 +793,12 @@ it('Watchlist 完成名稱搜尋後 Enter 預設加入首筆 code/type，不提�
     expect(input(view).props.value).toBe('');
 });
 
-it('Watchlist 上下鍵循環，名稱 pending 明確選取後才傳完整合約', async () => {
+it('Watchlist 上下鍵循環，明確選取後傳完整合約', async () => {
     const { view, submit } = render('watchlist');
     const resolved: ContractInfo = { ...watchItems(1)[0]!.contract, code: future.code, security_type: 'FUT', exchange: 'TAIFEX' };
     const picked = { ...future, contract: resolved };
     const session = await start(view, 150);
-    act(() => session.onUpdate([stock, picked, warrant]));
-    await act(async () => key(view, 'Enter'));
-    expect(submit).not.toHaveBeenCalled();
+    await act(async () => session.resolve([stock, picked, warrant]));
     act(() => key(view, 'ArrowUp'));
     expect(activeWatchText(view)).toContain(warrant.code);
     act(() => key(view, 'ArrowDown'));
@@ -777,35 +811,16 @@ it('Watchlist 上下鍵循環，名稱 pending 明確選取後才傳完整合約
     expect(session.signal.aborted).toBe(true);
 });
 
-it('Watchlist 明確選取以 type/exchange/code 維持，插列與 final 重排不換商品', async () => {
+it('Watchlist 同碼商品以 type/exchange/code 區分，Enter 送出所選那一筆', async () => {
     const { view, submit } = render('watchlist');
     const otc = { ...stock, exchange: 'OTC', name: 'OTC 同碼股票' };
     const index = { ...otc, security_type: 'IND' as const, name: 'OTC 同碼指數' };
     const session = await start(view, 150);
-    act(() => session.onUpdate([stock, otc]));
+    await act(async () => session.resolve([stock, otc, index]));
     act(() => key(view, 'ArrowDown'));
-    act(() => key(view, 'ArrowDown'));
-    act(() => session.onUpdate([index, stock, otc]));
-    expect(activeWatchText(view)).toContain('OTC 同碼股票');
-    await act(async () => session.resolve([otc, index, stock]));
     expect(activeWatchText(view)).toContain('OTC 同碼股票');
     await act(async () => key(view, 'Enter'));
     expect(submit).toHaveBeenCalledExactlyOnceWith(otc.code, 'STK', undefined);
-});
-
-it('Watchlist 已選身分消失後，pending 名稱 Enter 不會提交隱性新首列', async () => {
-    const { view, submit } = render('watchlist');
-    const session = await start(view, 150);
-    act(() => session.onUpdate([stock, future]));
-    act(() => key(view, 'ArrowDown'));
-    act(() => key(view, 'ArrowDown'));
-    act(() => session.onUpdate([warrant, stock]));
-    expect(view.root.findAllByType('button').filter(node => node.props.className === watchStyles.suggestActive)).toHaveLength(0);
-    await act(async () => key(view, 'Enter'));
-    expect(submit).not.toHaveBeenCalled();
-    await act(async () => session.resolve([warrant, stock]));
-    await act(async () => key(view, 'Enter'));
-    expect(submit).toHaveBeenCalledExactlyOnceWith(warrant.code, 'WRT', undefined);
 });
 
 it('Watchlist 完成且空結果時，只有正規代碼能 fallback', async () => {
@@ -822,7 +837,7 @@ it('Watchlist 完成且空結果時，只有正規代碼能 fallback', async () 
 it.each(['換字', '組字', '換清單'] as const)('Watchlist %s後的舊 click 不可再提交', async change => {
     const { view, submit, watchProps } = render('watchlist');
     const session = await start(view, 150);
-    act(() => session.onUpdate([stock]));
+    await act(async () => session.resolve([stock]));
     const oldClick = row(view, stock.code)!.props.onClick;
     if (change === '換字') act(() => input(view).props.onChange({ target: { value: '新商品' } }));
     if (change === '組字') act(() => input(view).props.onCompositionStart());
@@ -863,7 +878,7 @@ it('Watchlist busy 同 frame 重複 click 只送一次，晚到失敗不覆蓋�
     let reject!: (reason: Error) => void;
     const { view, submit } = render('watchlist', false, () => new Promise((_resolve, no) => { reject = no; }));
     const session = await start(view, 150);
-    act(() => session.onUpdate([stock]));
+    await act(async () => session.resolve([stock]));
     const click = row(view, stock.code)!.props.onClick;
     act(() => { void click(); void click(); });
     expect(submit).toHaveBeenCalledOnce();
@@ -881,9 +896,9 @@ it.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as con
         const long: ProductSuggestion = { ...warrant, code: 'LONGWARRANT1234', name: '完整權證商品名稱', detail: '2027-04-07 · 交易日期待確認' };
         await act(async () => session.resolve([etf, { ...stock, detail: 'ETF 字串不得改股票分類' }, long]));
         expect(view.root.findAllByType(ProductBadge).map(node => node.findByType('span').children.join(''))).toEqual(['ETF', '股票', '權證']);
-        expect(text(row(view, long.code)!.children[0] as ReactTestInstance)).toBe(long.code);
-        expect(text(row(view, long.code)!.children[1] as ReactTestInstance)).toBe(long.name);
-        expect(row(view, long.code)!.props.title).toBe(`${long.name} · ${long.code} · 權證 · ${long.detail}`);
+        expect(text(rowParts(row(view, long.code)!)[0]!)).toBe(long.code);
+        expect(text(rowParts(row(view, long.code)!)[1]!)).toBe(long.name);
+        expect(rowText(row(view, long.code)!).props.title).toBe(`${long.name} · ${long.code} · 權證 · ${long.detail}`);
         expect(text(row(view, long.code)!)).toContain(long.detail);
     },
 );
@@ -905,7 +920,7 @@ it.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as con
 );
 
 it.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as const, debounce: 150 }])(
-    '$kind 單行 DOM 依序 code／name／badge／detail，完整摘要只放列 title，窄版仍可讀日期警告', async ({ kind, debounce }) => {
+    '$kind 單行 DOM 依序 code／name／badge／detail，完整摘要放在列內的 hover 元素，窄版仍可讀日期警告', async ({ kind, debounce }) => {
         const { view } = render(kind);
         const session = await start(view, debounce);
         const values: ProductSuggestion[] = [
@@ -915,12 +930,17 @@ it.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as con
         await act(async () => session.resolve(values));
         for (const item of values) {
             const button = row(view, item.code)!;
-            const children = button.children as ReactTestInstance[];
+            expect(button.children).toHaveLength(1);
+            const wrapper = rowText(button);
+            expect(wrapper.props.className).toBe(optionText);
+            const children = rowParts(button);
             expect(children).toHaveLength(3);
             expect(children.map(node => node.type)).toEqual(['span', 'span', 'span']);
-            expect(button.props.title).toBe(`${item.name} · ${item.code} · ${item.security_type === 'FUT' ? '期貨 · 近月' : `權證 · ${item.detail}`}`);
+            // A title on the option itself would be read again as its description.
+            expect(button.props.title).toBeUndefined();
+            expect(wrapper.props.title).toBe(`${item.name} · ${item.code} · ${item.security_type === 'FUT' ? '期貨 · 近月' : `權證 · ${item.detail}`}`);
             expect(button.props['aria-label']).toBeUndefined();
-            expect(button.findAllByType('span').filter(node => node.props.title !== undefined)).toHaveLength(0);
+            expect(button.findAllByType('span').filter(node => node.props.title !== undefined)).toEqual([wrapper]);
             expect(text(children[0]!)).toBe(item.code);
             expect(text(children[1]!)).toBe(item.name);
             const meta = children[2]!;
@@ -988,20 +1008,21 @@ it('palette 面板命令描述也維持單行結構與完整 title', async () =>
     const session = await start(view, 120);
     await act(async () => session.resolve([]));
     const command = row(view, '新增面板：圖表')!;
-    expect(command.children).toHaveLength(3);
-    const icon = command.children[0] as ReactTestInstance;
-    const name = command.children[1] as ReactTestInstance;
+    expect(rowParts(command)).toHaveLength(3);
+    const [icon, name] = rowParts(command) as [ReactTestInstance, ReactTestInstance];
     expect(icon.props.className).toBe(paletteStyles.panelIcon);
     expect(text(icon)).toBe('＋');
+    expect(icon.props['aria-hidden']).toBe(true);
     expect(name.props.className).toBe(paletteStyles.panelName);
     expect(text(name)).toBe('新增面板：圖表');
-    const description = command.children[2] as ReactTestInstance;
+    const description = rowParts(command)[2]!;
     expect(description.props.className).toBe(paletteStyles.resultMeta);
     expect(description.props.title).toBeUndefined();
     const inner = description.children[0] as ReactTestInstance;
     expect(inner.props.className).toBe(paletteStyles.resultType);
     expect(inner.props.title).toBeUndefined();
-    expect(command.props.title).toBe('新增面板：圖表 · 台積電');
+    expect(command.props.title).toBeUndefined();
+    expect(rowText(command).props.title).toBe('新增面板：圖表 · 台積電');
     expect(text(description)).toBe('台積電');
 });
 
@@ -1048,15 +1069,15 @@ it.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as con
         await act(async () => session.resolve([stock, etf, dated]));
         for (const item of [stock, etf]) {
             const button = row(view, item.code)!;
-            const meta = button.children[2] as ReactTestInstance;
+            const meta = rowParts(button)[2]!;
             expect(meta.children).toHaveLength(1);
             expect((meta.children[0] as ReactTestInstance).type).toBe(ProductBadge);
             expect(button.findAllByType('span').filter(node => node.props.title === item.detail)).toHaveLength(0);
-            expect(button.props.title).toBe(`${item.name} · ${item.code} · ${item.detail}`);
+            expect(rowText(button).props.title).toBe(`${item.name} · ${item.code} · ${item.detail}`);
         }
         const button = row(view, dated.code)!;
-        expect(button.props.title).toBe(`${dated.name} · ${dated.code} · 期貨 · 近月`);
-        expect(button.findAllByType('span').filter(node => node.props.title !== undefined)).toHaveLength(0);
+        expect(rowText(button).props.title).toBe(`${dated.name} · ${dated.code} · 期貨 · 近月`);
+        expect(button.findAllByType('span').filter(node => node.props.title !== undefined)).toEqual([rowText(button)]);
         expect(text(button)).toContain('近月');
     },
 );
@@ -1073,8 +1094,7 @@ it.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as con
             if (element.type === 'input') return { focus };
             if (element.type === 'div' && [paletteStyles.results, watchStyles.suggestBox].includes(String(props.className))) return container;
             if (element.type === 'button' && [paletteStyles.result, paletteStyles.resultActive, watchStyles.suggestRow, watchStyles.suggestActive].includes(String(props.className))) {
-                const first = (props.children as ReactElement[])[0]!;
-                const code = (first.props as { children: string }).children;
+                const code = rowCode(props);
                 return { focus: rowFocus, scrollIntoView, getBoundingClientRect: () => {
                     const top = 100 + order.indexOf(code) * 56 - container.scrollTop;
                     return { top, bottom: top + 56 };
@@ -1084,22 +1104,144 @@ it.each([{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as con
         };
         const { view } = render(kind, false, async () => undefined, {}, nodeMock);
         const session = await start(view, debounce);
-        act(() => session.onUpdate([stock, future, warrant]));
+        await act(async () => (kind === 'palette' ? session.onUpdate : session.resolve)([stock, future, warrant]));
         const initialFocusCount = focus.mock.calls.length;
         act(() => key(view, 'ArrowUp'));
         expect(container.scrollTop).toBe(56);
         act(() => key(view, 'ArrowDown'));
         expect(container.scrollTop).toBe(0);
         act(() => key(view, 'ArrowDown'));
-        order.unshift('NEW');
-        act(() => session.onUpdate([{ ...stock, code: 'NEW' }, stock, future, warrant]));
-        expect(container.scrollTop).toBe(56);
+        if (kind === 'palette') {
+            // Only the palette shows partial rows, so only it can insert rows above the selection.
+            order.unshift('NEW');
+            act(() => session.onUpdate([{ ...stock, code: 'NEW' }, stock, future, warrant]));
+            expect(container.scrollTop).toBe(56);
+        }
         expect(focus).toHaveBeenCalledTimes(initialFocusCount);
         expect(rowFocus).not.toHaveBeenCalled();
         expect(scrollIntoView).not.toHaveBeenCalled();
         expect(kind === 'palette' ? activeText(view) : activeWatchText(view)).toContain(future.code);
     },
 );
+
+const kinds = [{ kind: 'palette' as const, debounce: 120 }, { kind: 'watchlist' as const, debounce: 150 }];
+
+it.each(kinds)('$kind 一般股名稱版本在結果出現與 Enter 之間改變時，不送出舊列並以新名稱重查', async ({ kind, debounce }) => {
+    const { view, submit } = render(kind);
+    const session = await start(view, debounce);
+    // The palette shows partial rows; the watchlist only shows a completed search.
+    await act(async () => (kind === 'palette' ? session.onUpdate : session.resolve)([stock]));
+    expect(row(view, stock.code)).toBeDefined();
+    // The catalog moves before its listeners have re-rendered this surface.
+    mocks.equityVersion++;
+    await act(async () => key(view, 'Enter'));
+    expect(submit).not.toHaveBeenCalled();
+    expect(row(view, stock.code)).toBeUndefined();
+    await act(async () => { await vi.advanceTimersByTimeAsync(debounce); });
+    expect(sessions).toHaveLength(2);
+    await act(async () => sessions[1]!.resolve([{ ...stock, name: '一般股更新名稱' }]));
+    expect(text(row(view, stock.code)!)).toContain('一般股更新名稱');
+    await act(async () => key(view, 'Enter'));
+    expect(submit).toHaveBeenCalledExactlyOnceWith(...(kind === 'palette' ? ['2330', 'STK'] : ['2330', 'STK', undefined]));
+});
+
+it('命令面板的 Esc 從外框關閉並標記已處理，關閉那一下不算 Esc×2 全部刪單的第一下', async () => {
+    const { view, close } = render('palette');
+    const session = await start(view, 120);
+    act(() => session.onUpdate([stock]));
+    // Rows and the retry button sit inside the frame, so their Esc bubbles here too.
+    expect(input(view).props.onKeyDown({ key: 'Escape', preventDefault: vi.fn() })).toBeUndefined();
+    expect(close).not.toHaveBeenCalled();
+    let event!: ReturnType<typeof escape>;
+    act(() => { event = escape(view, 'palette'); });
+    expect(event.defaultPrevented).toBe(true);
+    expect(close).toHaveBeenCalledOnce();
+    expect(session.signal.aborted).toBe(true);
+});
+
+describe.each(kinds)('$kind combobox 與 listbox', ({ kind, debounce }) => {
+    it('輸入框是 combobox；只有搜尋中提示時不展開、不指向 listbox', async () => {
+        const { view } = render(kind);
+        await start(view, debounce);
+        const box = input(view);
+        expect(box.props.role).toBe('combobox');
+        expect(box.props['aria-autocomplete']).toBe('list');
+        expect(box.props['aria-expanded']).toBe(false);
+        expect(box.props['aria-controls']).toBeUndefined();
+        expect(box.props['aria-activedescendant']).toBeUndefined();
+        expect(view.root.findAll((node) => node.props.role === 'listbox')).toHaveLength(0);
+        expect(text(view.root)).toContain('搜尋中…');
+    });
+
+    it('方向鍵後 aria-activedescendant 等於 active 列的 id，listbox 只含 option', async () => {
+        const { view } = render(kind);
+        const session = await start(view, debounce);
+        await act(async () => session.resolve([stock, future, warrant]));
+        const list = listbox(view);
+        expect(input(view).props['aria-expanded']).toBe(true);
+        expect(input(view).props['aria-controls']).toBe(list.props.id);
+        expect(list.children).toHaveLength(3);
+        expect(list.children.every((child) => typeof child !== 'string' && child.props.role === 'option')).toBe(true);
+        expect(list.findAllByType('details')).toHaveLength(0);
+        const active = () => optionNodes(view).find((node) => node.props.id === input(view).props['aria-activedescendant'])!;
+        expect(rowCode(active().props)).toBe(stock.code);
+        act(() => key(view, 'ArrowDown'));
+        expect(rowCode(active().props)).toBe(future.code);
+        // aria-selected marks the keyboard row, not the stored value.
+        expect(optionNodes(view).filter((node) => node.props['aria-selected']).map((node) => node.props.id)).toEqual([active().props.id]);
+        // Tab leaves the input instead of walking through every option.
+        expect(optionNodes(view).map((node) => node.props.tabIndex)).toEqual([-1, -1, -1]);
+        const ids = optionNodes(view).map((node) => String(node.props.id));
+        expect(new Set(ids).size).toBe(3);
+        for (const id of ids) expect(id).toMatch(/^[A-Za-z0-9_-]+$/);
+    });
+
+    it('重試鈕按下不搶走焦點，點擊後焦點回到輸入框', async () => {
+        const focus = vi.fn();
+        const { view } = render(kind, false, async () => undefined, {}, (element) => element.type === 'input' ? { focus } : null);
+        const session = await start(view, debounce);
+        await act(async () => session.reject(new Error('搜尋失敗')));
+        const retry = row(view, '重試')!;
+        for (let parent = retry.parent; parent; parent = parent.parent) expect(parent.props.role).not.toBe('listbox');
+        const mouseDown = { preventDefault: vi.fn() };
+        retry.props.onMouseDown(mouseDown);
+        expect(mouseDown.preventDefault).toHaveBeenCalledOnce();
+        focus.mockClear();
+        act(() => retry.props.onClick());
+        expect(focus).toHaveBeenCalledOnce();
+    });
+});
+
+it('命令面板的 option id 取自商品身分：前方插入 partial 列時 active 列的 id 不變', async () => {
+    const { view } = render('palette', true);
+    const session = await start(view, 120);
+    act(() => session.onUpdate([stock, future]));
+    act(() => key(view, 'ArrowDown'));
+    const before = input(view).props['aria-activedescendant'];
+    act(() => session.onUpdate([warrant, stock, future]));
+    expect(input(view).props['aria-activedescendant']).toBe(before);
+    expect(rowCode(optionNodes(view).find((node) => node.props.id === before)!.props)).toBe(future.code);
+    // Panel commands are options as well, with a decorative icon.
+    const command = row(view, '新增面板')!;
+    expect(command.props.role).toBe('option');
+    expect(listbox(view).children.at(-1)).toBe(command);
+    const mouseDown = { preventDefault: vi.fn() };
+    command.props.onMouseDown(mouseDown);
+    row(view, stock.code)!.props.onMouseDown(mouseDown);
+    expect(mouseDown.preventDefault).toHaveBeenCalledTimes(2);
+});
+
+it('自選展開完整資訊時把明細捲進浮層可視範圍，收合時不捲動', async () => {
+    const { view } = render('watchlist');
+    const session = await start(view, 150);
+    await act(async () => session.resolve([stock]));
+    const scrollIntoView = vi.fn();
+    const details = view.root.findByType('details');
+    act(() => details.props.onToggle({ currentTarget: { open: false, scrollIntoView } }));
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    act(() => details.props.onToggle({ currentTarget: { open: true, scrollIntoView } }));
+    expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: 'nearest' });
+});
 
 describe('Watchlist 浮層可視裁切幾何', () => {
     function fixture(popout = false) {
@@ -1141,7 +1283,7 @@ describe('Watchlist 浮層可視裁切幾何', () => {
             if (element.type === 'div' && props.className === watchStyles.addRow) return anchor;
             if (element.type === 'div' && props.className === watchStyles.suggestBox) return popup;
             if (element.type === 'button' && [watchStyles.suggestRow, watchStyles.suggestActive].includes(String(props.className))) {
-                const code = ((props.children as ReactElement[])[0]!.props as { children: string }).children;
+                const code = rowCode(props);
                 const getBoundingClientRect = () => {
                     const top = popup.getBoundingClientRect().top + popup.clientTop + values.findIndex(item => item.code === code) * 56 - popup.scrollTop;
                     return { top, bottom: top + 56 };
@@ -1167,15 +1309,15 @@ describe('Watchlist 浮層可視裁切幾何', () => {
     it('1910×872 已內捲動的 workspace：以祖先 client box 限高，首尾列都在 viewport 與 header 下方', async () => {
         const state = fixture();
         const session = await start(state.view, 150);
-        act(() => session.onUpdate(state.values));
+        await act(async () => session.resolve(state.values));
         expect(state.style).toMatchObject({ maxHeight: 'min(24rem, 50vh, 343px)', boxSizing: 'border-box', visibility: 'visible' });
         expect(state.popup.height).toBeLessThanOrEqual(343);
         expect(state.popup.getBoundingClientRect().top).toBeGreaterThanOrEqual(state.grid.top + state.grid.clientTop + 8);
         expect(state.popup.getBoundingClientRect().bottom).toBeLessThanOrEqual(state.viewport.innerHeight);
-        act(() => key(state.view, 'ArrowDown'));
-        state.activeFullyVisible('S0');
         act(() => key(state.view, 'ArrowUp'));
         state.activeFullyVisible('S9');
+        act(() => key(state.view, 'ArrowDown'));
+        state.activeFullyVisible('S0');
         expect(state.viewport.scrollY).toBe(0);
         expect(state.focus).not.toHaveBeenCalled();
         expect(state.rowFocus).not.toHaveBeenCalled();
@@ -1186,7 +1328,7 @@ describe('Watchlist 浮層可視裁切幾何', () => {
     it('只處理祖先 capture scroll，非 window 捲動也重算並保留 active；忽略 popup 自身與其他面板', async () => {
         const state = fixture();
         const session = await start(state.view, 150);
-        act(() => session.onUpdate(state.values));
+        await act(async () => session.resolve(state.values));
         act(() => key(state.view, 'ArrowUp'));
         state.anchor.top = 180;
         state.emit('scroll', state.grid);
@@ -1265,11 +1407,11 @@ describe('Watchlist 浮層可視裁切幾何', () => {
         expect(state.popup.scrollTop).toBe(93.5);
     });
 
-    it.each(['pending', 'completed'] as const)('hidden 浮層的 %s 中文 Enter 不提交隱性首筆，保留輸入及建議', async phase => {
+    it('hidden 浮層的中文 Enter 不提交隱性首筆，保留輸入及建議', async () => {
+        const phase = 'completed';
         const state = fixture();
         const session = await start(state.view, 150);
-        if (phase === 'pending') act(() => session.onUpdate(state.values));
-        else await act(async () => session.resolve(state.values));
+        await act(async () => session.resolve(state.values));
         state.anchor.top = 90;
         state.emit('resize');
         expect(state.style.visibility).toBe('hidden');
@@ -1321,14 +1463,13 @@ describe('Watchlist 浮層可視裁切幾何', () => {
         expect(state.submit).toHaveBeenCalledExactlyOnceWith(future.code, 'FUT', resolved);
     });
 
-    it.each(['debounce', 'pending', 'completed', 'explicit mismatch'] as const)('hidden 時純代碼 %s 仍走輸入碼，不提交別筆 hidden suggestion', async phase => {
+    it.each(['debounce', 'completed', 'explicit mismatch'] as const)('hidden 時純代碼 %s 仍走輸入碼，不提交別筆 hidden suggestion', async phase => {
         const state = fixture();
         act(() => input(state.view).props.onChange({ target: { value: '2330' } }));
         if (phase !== 'debounce') {
             await act(async () => { await vi.advanceTimersByTimeAsync(150); });
             const session = sessions.at(-1)!;
-            if (phase === 'pending') act(() => session.onUpdate(state.values));
-            else await act(async () => session.resolve(state.values));
+            await act(async () => session.resolve(state.values));
             if (phase === 'explicit mismatch') act(() => key(state.view, 'ArrowDown'));
         }
         state.anchor.top = 90;
@@ -1378,43 +1519,10 @@ describe('Watchlist 浮層可視裁切幾何', () => {
         expect(state.submit).toHaveBeenCalledExactlyOnceWith('S0', 'STK', resolved);
     });
 
-    it.each([
-        ['異型別', '插入同碼'], ['異型別', '替換唯一列'], ['異交易所', '插入同碼'], ['異交易所', '替換唯一列'],
-    ] as const)('hidden captured click 在同一 query phase %s／%s 後不可保留舊 typed contract', async (difference, change) => {
-        const state = fixture();
-        const first = { ...stock, code: 'X1', name: '舊同碼股票' };
-        const second: ProductSuggestion = difference === '異型別'
-            ? { ...future, code: 'X1', name: '新同碼期貨' }
-            : { ...first, exchange: 'OTC', name: '新同碼上櫃股票' };
-        const session = await start(state.view, 150, 'X1');
-        act(() => session.onUpdate([first]));
-        const oldClick = row(state.view, 'X1')!.props.onClick;
-        act(() => session.onUpdate(change === '插入同碼' ? [first, second] : [second]));
-        state.anchor.top = 90;
-        state.emit('resize');
-        expect(state.style.visibility).toBe('hidden');
-        await act(async () => oldClick());
-        expect(state.submit).toHaveBeenCalledExactlyOnceWith('X1');
-    });
-
-    it('hidden captured click 即使身分相同，也不沿用已被目前唯一列替換的舊 full-contract 物件', async () => {
-        const state = fixture();
-        const oldContract = { code: 'X1', security_type: 'STK', exchange: 'TSE', name: '舊合約' } as ContractInfo;
-        const first: ProductSuggestion = { ...stock, code: 'X1', contract: oldContract };
-        const session = await start(state.view, 150, 'X1');
-        act(() => session.onUpdate([first]));
-        const oldClick = row(state.view, 'X1')!.props.onClick;
-        act(() => session.onUpdate([{ ...first, contract: { ...oldContract, name: '新合約' } }]));
-        state.anchor.top = 90;
-        state.emit('resize');
-        await act(async () => oldClick());
-        expect(state.submit).toHaveBeenCalledExactlyOnceWith('X1');
-    });
-
     it('window resize 與裁切祖先 ResizeObserver 都重算，clamp 後選中列仍 fully visible', async () => {
         const state = fixture();
         const session = await start(state.view, 150);
-        act(() => session.onUpdate(state.values));
+        await act(async () => session.resolve(state.values));
         act(() => key(state.view, 'ArrowUp'));
         state.viewport.innerHeight = 300;
         state.anchor.top = 230;
@@ -1434,7 +1542,7 @@ describe('Watchlist 浮層可視裁切幾何', () => {
         const state = fixture(true);
         state.anchor.top = 200;
         const session = await start(state.view, 150);
-        act(() => session.onUpdate(state.values));
+        await act(async () => session.resolve(state.values));
         expect(state.style.maxHeight).toBe('min(24rem, 50vh, 192px)');
         expect(state.style.visibility).toBe('visible');
         expect(state.observers[0]!.observe.mock.calls.map(call => call[0])).toEqual([state.anchor]);
@@ -1443,7 +1551,7 @@ describe('Watchlist 浮層可視裁切幾何', () => {
     it.each(['零空間', '不足 border', 'anchor 在裁切上方', 'anchor 在裁切下方', 'viewport 縮到 anchor 外'] as const)('%s 時隱藏，空間恢復後顯示且不丟明確身分', async condition => {
         const state = fixture();
         const session = await start(state.view, 150);
-        act(() => session.onUpdate(state.values));
+        await act(async () => session.resolve(state.values));
         act(() => key(state.view, 'ArrowUp'));
         if (condition === '零空間') state.anchor.top = 90;
         if (condition === '不足 border') state.anchor.top = 91;

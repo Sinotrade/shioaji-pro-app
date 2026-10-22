@@ -14,7 +14,8 @@ import { indexSearchSuggestions } from './index-search';
 import { getApiBase } from './runtime';
 import { todayStr } from './utils/date';
 import type { ContractInfo, SecurityType } from './types/contract';
-import { etfNameForLive, getEtfNamesVersion } from './etf-runtime-catalog';
+import { etfNameForLive } from './etf-runtime-catalog';
+import { getProductNamesVersion } from './product-names-version';
 import { SearchRequestCache } from './search-request';
 import { getProductCatalogVersion, subscribeProductCatalog } from './product-catalog-version';
 import { loadIndexSuggestions } from './index-catalog';
@@ -97,32 +98,49 @@ function stockSuggestion(stock: StockMeta): ProductSuggestion {
     return { ...stock, security_type: 'STK', detail: stock.kind === 'ETF' ? 'ETF' : stock.category ? `股票 · ${stock.category}` : '股票' };
 }
 
-function derivativeSort(a: ContractInfo, b: ContractInfo) {
-    // Explicit priority, independent of root letters or missing month metadata:
-    // near: regular → small → micro; then the same sizes in the next month.
-    const rank = (row: ContractInfo) => {
-        const month = row.code.endsWith('R1') ? 0 : row.code.endsWith('R2') ? 1 : -1;
-        if (month < 0) return 12;
-        const name = normalizeSearchText(row.name);
-        // Weekly mini futures share the same underlying, but must not evict
-        // the six regular/small/micro monthly continuous identities.
-        const weekly = !!row.week_of_month || /(?:^|\s)W\d+(?:\s|$)/.test(name);
-        return (weekly ? 6 : 0) + month * 3 + (name.includes('微型') ? 2 : name.includes('小型') ? 1 : 0);
-    };
-    return rank(a) - rank(b) ||
-        (a.delivery_month ?? '').localeCompare(b.delivery_month ?? '') ||
-        a.code.localeCompare(b.code);
-}
-
 const isContinuousFuture = (row: { code: string }) => /R[12]$/.test(row.code);
 
+// Explicit priority, independent of root letters or missing month metadata:
+// near: regular → small → micro; then the same sizes in the next month.
+function futureRank(row: ContractInfo, month: number) {
+    const name = normalizeSearchText(row.name);
+    // Weekly mini futures share the same underlying, but must not evict
+    // the six regular/small/micro monthly identities.
+    const weekly = !!row.week_of_month || /(?:^|\s)W\d+(?:\s|$)/.test(name);
+    return (weekly ? 6 : 0) + month * 3 + (name.includes('微型') ? 2 : name.includes('小型') ? 1 : 0);
+}
+
+// One specification (TXF, MXF, TMF, or a stock's regular or small contract)
+// lists only its near and next month. Keep the continuous identity and its
+// full target metadata; fill a missing one with that specification's actual
+// month, never with a second dated row for a covered contract.
+function frontMonths(rows: ContractInfo[]): [ContractInfo, number][] {
+    const near = rows.find(row => row.code.endsWith('R1'));
+    const next = rows.find(row => row.code.endsWith('R2'));
+    const covered = new Set([near?.target_code, next?.target_code]);
+    const dated = rows.filter(row => !isContinuousFuture(row) && row.delivery_month && !covered.has(row.code))
+        .sort((a, b) => a.delivery_month!.localeCompare(b.delivery_month!) || a.code.localeCompare(b.code));
+    const nearRow = near ?? dated[0];
+    const nearMonth = nearRow?.delivery_month ?? '';
+    const nextRow = next ?? dated.find(row => row.delivery_month! > nearMonth);
+    return [[nearRow, 0], [nextRow, 1]].filter((pair): pair is [ContractInfo, number] => !!pair[0]);
+}
+
 function orderedFutures(rows: ContractInfo[]) {
-    const covered = new Set(rows.filter(isContinuousFuture).filter(row => row.target_code)
-        .map(row => `${row.exchange}:${row.target_code}`));
-    // Keep the continuous identity and its full target metadata, not a second
-    // dated row for the same contract. Never sort the shared source in place.
-    return rows.filter(row => isContinuousFuture(row) || !covered.has(`${row.exchange}:${row.code}`))
-        .sort(derivativeSort).slice(0, 6);
+    const specs = new Map<string, ContractInfo[]>();
+    for (const row of rows) {
+        const key = `${row.exchange}:${row.root || row.code.slice(0, -2)}`;
+        const group = specs.get(key);
+        if (group) group.push(row);
+        else specs.set(key, [row]);
+    }
+    // Never sort the shared source in place.
+    return [...specs.values()].flatMap(frontMonths)
+        .map(([row, month]) => ({ row, rank: futureRank(row, month) }))
+        .sort((a, b) => a.rank - b.rank ||
+            (a.row.delivery_month ?? '').localeCompare(b.row.delivery_month ?? '') ||
+            a.row.code.localeCompare(b.row.code))
+        .slice(0, 6).map(({ row }) => row);
 }
 
 function normalizeSearchText(value: string) {
@@ -206,9 +224,10 @@ async function searchProductsForRequest(
     if (!raw || !Number.isFinite(limit) || limit < 1) return [];
     limit = Math.floor(limit);
     // Match the complete name before interpreting type words: an index such
-    // as 臺指選擇權波動率指數 is not an option-contract query.
+    // as 臺指選擇權波動率指數 is not an option-contract query. Index codes use
+    // the direct lookup below, so a slow IND batch cannot hide them.
     const indexCandidates = indexSearchSuggestions(raw);
-    const exactIndex = indexCandidates.find((row) => normalizeSearchText(row.name) === raw || row.code === normalizeContractCode(raw, 'IND'));
+    const exactIndex = indexCandidates.some((row) => normalizeSearchText(row.name) === raw);
     const wantsWarrants = /(?:權證|warrant)/i.test(raw);
     if (wantsWarrants && !options.includeWarrants) return [];
     let wantsFutures = /(?:期貨|個股期|future)/i.test(raw) || /期$/.test(raw);
@@ -217,7 +236,7 @@ async function searchProductsForRequest(
     const day = todayStr();
     const base = getApiBase();
     const version = currentCatalogVersion();
-    const nameVersion = getEtfNamesVersion();
+    const nameVersion = getProductNamesVersion();
     const scope = JSON.stringify([base, day, version]);
     const assertServer = () => {
         if (getApiBase() !== base || getProductCatalogVersion() !== version) {
@@ -227,7 +246,7 @@ async function searchProductsForRequest(
     const assertScope = () => {
         assertActive();
         assertServer();
-        if (getEtfNamesVersion() !== nameVersion) throw new Error('商品搜尋期間名稱目錄已更新，請重新搜尋');
+        if (getProductNamesVersion() !== nameVersion) throw new Error('商品搜尋期間名稱目錄已更新，請重新搜尋');
     };
     const failures: unknown[] = [];
     const read = async <T,>(request: () => Promise<T>, fallback: T, allowNotFound = false): Promise<T> => {
@@ -272,9 +291,13 @@ async function searchProductsForRequest(
             }, options.signal);
         }, null as ContractInfo | null, true)
         : null;
-    // A successful direct lookup is its own authoritative identity/name.
-    // Unrelated stock-catalog loading must not delay it or its related search.
-    const catalog = direct ? [] : await read(() => withDeadline(signal => loadStockCatalog({ signal }), options.signal), [] as StockMeta[]);
+    // A successful non-stock direct code is its own authoritative identity.
+    // Unrelated stock-catalog loading must not delay it. A stock code still
+    // lists same-prefix stocks (2881A, 2881B), and a legacy index alias (020)
+    // still lists the codes it prefixes.
+    const catalog = direct && direct.security_type !== 'STK' && direct.code === raw
+        ? []
+        : await read(() => withDeadline(signal => loadStockCatalog({ signal }), options.signal), [] as StockMeta[]);
     assertScope();
     // Official fund names can themselves contain 「期貨」. An exact ETF
     // identity is not a request to strip that word and search futures roots.
@@ -314,8 +337,8 @@ async function searchProductsForRequest(
                 .filter((row) => row.underlying_code === underlying));
         }
         const matches = matchingRoots(await roots('futures'), lookup, raw);
-        const groups = await Promise.all(matches.map(async (root) =>
-            orderedFutures(await contracts(`future-root:${root.root}`, signal => fetchFutures({ root: root.root }, { signal })))));
+        const groups = await Promise.all(matches.map(root =>
+            contracts(`future-root:${root.root}`, signal => fetchFutures({ root: root.root }, { signal }))));
         return orderedFutures(groups.flat());
     };
     const loadOptions = async () => {
@@ -385,13 +408,10 @@ async function searchProductsForRequest(
     };
     const futureRows = (rows: ContractInfo[]) => rows.map(row => asSuggestion(row,
         row.code.endsWith('R1') ? '期貨 · 近月' : row.code.endsWith('R2') ? '期貨 · 次月' : `期貨 · ${row.delivery_month ?? ''}`));
-    const searchHead = (rows: ProductSuggestion[]) => {
-        const continuous = rows.filter(isContinuousFuture);
-        return [...priority, ...leadingStocks, ...(continuous.length ? continuous : rows)];
-    };
+    const searchHead = (rows: ProductSuggestion[]) => [...priority, ...leadingStocks, ...rows];
     // Publish only stable prefixes. Even if warrants return first, do not show
-    // them ahead of futures which are still loading. Lower-priority dated
-    // contracts and other matches wait for the complete, original ordering.
+    // them ahead of futures which are still loading. Other matches wait for
+    // the complete, original ordering.
     publish([...priority, ...leadingStocks]);
     const primaryRequest = Promise.all([loadFutures(), loadOptions()]).then(([futures, optionRows]) => {
         const suggestions = futureRows(futures);
@@ -407,15 +427,16 @@ async function searchProductsForRequest(
     const optionSuggestions = optionRows.map((row) => asSuggestion(row, `選擇權 · ${row.root ?? ''} · ${row.delivery_month ?? ''}`));
     const warrantSuggestions = warrants.map((row) => asSuggestion(row,
         `${row.call_put === 'P' ? '認售' : row.call_put === 'C' ? '認購' : '權證'} · ${row.expiry_date ?? ''}${warrantDateWarning(row)}`));
-    const continuous = futureSuggestions.filter(isContinuousFuture);
-    const additionalFutures = continuous.length ? futureSuggestions.filter(row => !isContinuousFuture(row)) : [];
-    const groups = wantsOptions ? [optionSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)] : wantsWarrants
-        ? [warrantSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)]
-        : [futureSuggestions, warrantSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)];
+    const groups = [wantsOptions ? optionSuggestions : warrantSuggestions, indexSuggestions, stockMatches.map(stockSuggestion)];
+    // Same-prefix stocks (南亞科 for 南亞) follow the related futures, not
+    // every warrant of the exact stock.
     const result = unique(wantsOptions || wantsWarrants ? [...priority, ...interleave(groups, limit * groups.length)] : [
-        ...searchHead(futureSuggestions), ...warrantSuggestions, ...indexSuggestions,
-        ...(futuresFirst ? stockMatches.map(stockSuggestion) : []), ...additionalFutures,
+        ...searchHead(futureSuggestions), ...(futuresFirst ? stockMatches.map(stockSuggestion) : []),
+        ...warrantSuggestions, ...indexSuggestions,
     ]);
-    if (!result.length && failures.length) throw new Error('商品搜尋暫時無法完成，請稍後重試', { cause: failures[0] });
+    // A failed primary futures source must not pass a lone index as complete.
+    if (failures.length && (!result.length || (wantsFutures || indexFutureUnderlying) && !futures.length)) {
+        throw new Error('商品搜尋暫時無法完成，請稍後重試', { cause: failures[0] });
+    }
     return result;
 }

@@ -108,10 +108,9 @@ describe('progressive product-search acceptance', () => {
         for (const prefix of updates) expect(final.slice(0, prefix.length)).toEqual(prefix);
         expect(source.futures.mock.calls[0]?.[0]).toEqual({ underlyingCode: '2330' });
         expect(source.warrants.mock.calls[0]?.[0]).toBe('2330');
-        if (query === '2330') {
-            expect(source.bases).not.toHaveBeenCalled();
-            expect(source.names).not.toHaveBeenCalled();
-        }
+        // A direct stock code also reads the stock catalog, once, for same-prefix stocks.
+        expect(source.bases.mock.calls.map(([type]) => type)).toEqual(['STK']);
+        expect(source.names).toHaveBeenCalledOnce();
     });
 
     it('never publishes fast warrants ahead of still-pending monthly futures', async () => {

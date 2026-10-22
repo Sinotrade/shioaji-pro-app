@@ -46,10 +46,18 @@ export function StockFuturesPanel({
     const namesVersion = useProductNamesVersion();
     const [catalogVersion, setCatalogVersion] = useState(-1);
     const catalogReady = catalogVersion === version && !catalogError;
-    const requestContext = JSON.stringify([version, underlying?.code, refresh]);
-    const [loaded, setLoaded] = useState<{ context: string; code: string } | null>(null);
-    const contractsReady = catalogReady && loaded?.context === requestContext && !error;
+    // 同標的、同目錄版本重抓（重試、視窗取得焦點）時舊列身分仍有效，不鎖表格
+    const requestContext = JSON.stringify([version, underlying?.code]);
+    const [loadedContext, setLoadedContext] = useState<string | null>(null);
+    const contractsReady = catalogReady && loadedContext === requestContext && !error;
     const linkedCode = useRef<string | null>(null);
+    // 換標的時在同一次 render 清掉上一檔的合約，摘要與表格才不會分屬兩檔
+    const [shownCode, setShownCode] = useState(underlying?.code);
+    if (shownCode !== underlying?.code) {
+        setShownCode(underlying?.code);
+        setContracts([]);
+        if (underlying && !catalogError) setLoading(true);
+    }
 
     useEffect(() => {
         const controller = new AbortController();
@@ -112,7 +120,7 @@ export function StockFuturesPanel({
             .then((rows) => {
                 if (!isCurrent()) return;
                 setContracts(rows);
-                setLoaded({ context: requestContext, code: underlying.code });
+                setLoadedContext(requestContext);
             })
             .catch(() => {
                 if (!isCurrent()) return;
@@ -170,14 +178,12 @@ export function StockFuturesPanel({
                     <button type='button' onClick={() => setRefresh(value => value + 1)}>重試商品資料</button>
                 </div>
             )}
-            {loading && contracts.length > 0 && <span role='status'>更新個股期合約中…</span>}
-            {!contractsReady && contracts.length > 0 && <span role='status'>目前顯示 {loaded?.code} 的上次合約資料，更新完成後可選取</span>}
             <div className={styles.summary}>
                 <span className={styles.summaryStrong}>
                     {underlying ? `${underlying.code} ${underlying.name}` : '—'}
                 </span>
                 <span>{roots.size} 種規格</span>
-                <span>{visible.length} 口合約可選</span>
+                <span>{contractsReady || visible.length === 0 ? `${visible.length} 口合約可選` : '更新完成後可選取'}</span>
             </div>
             {loading && contracts.length === 0 ? (
                 <div className={styles.empty}>

@@ -4,7 +4,10 @@ import { resetEscCancelArm } from '../lib/esc-cancel-arm';
 import * as styles from './product-search-details.css';
 
 /** Native disclosure for the active result only. It never resolves or submits a product. */
-export function ProductSearchDetails({ item, onToggle }: { item?: ProductSuggestion; onToggle?: () => void }) {
+export function ProductSearchDetails({ item, onToggle }: {
+    item?: ProductSuggestion;
+    onToggle?: (details: HTMLDetailsElement) => void;
+}) {
     if (!item) return null;
     const label = PRODUCT_BADGES[productBadgeType(item.security_type, item.kind)].label;
     const detail = productDetailText(item.detail, item.security_type, item.kind);
@@ -13,16 +16,21 @@ export function ProductSearchDetails({ item, onToggle }: { item?: ProductSuggest
         || (item.security_type === 'WRT' ? item.detail.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] : undefined);
     const warningCount = item.detail.split(' · ').filter(part => part === '交易日期待確認').length;
     return (
-        <details className={styles.disclosure} onToggle={onToggle} onKeyDown={event => {
+        <details className={styles.disclosure} onToggle={event => onToggle?.(event.currentTarget)} onKeyDown={event => {
             if (event.key === 'Tab') return;
-            // Reading product details must not reach the global trading shortcuts.
-            event.stopPropagation();
             if (event.key === 'Escape') {
+                // Never a cancel-all press. Collapsed details hand Esc to the popup owner.
                 event.preventDefault();
+                if (!event.currentTarget.open) return;
+                event.stopPropagation();
                 resetEscCancelArm();
                 event.currentTarget.open = false;
                 event.currentTarget.querySelector('summary')?.focus();
-            } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+                return;
+            }
+            // Reading product details must not reach the global trading shortcuts.
+            event.stopPropagation();
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
                 event.preventDefault();
             }
         }}>
