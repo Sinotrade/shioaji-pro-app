@@ -6,7 +6,10 @@
 // - rotation (輪動) bubbles: a point per group. x = net inflow since the first
 //   bar (drawn on an asinh scale), y = 加速 (last-ten-minute intensity minus
 //   the last 30 minutes', pp), size = last-ten-minute turnover, colour =
-//   one of four states, with a trail of earlier minutes.
+//   one of four states, with a trail of earlier minutes. Momentum needs
+//   MOMENTUM_WARMUP minutes of bars; before that the view does not classify.
+//   Net axis: robust per-side extents, asymmetric asinh, soft-clamped edges;
+//   collision relaxation and a warm-up beeswarm keep bubbles apart.
 
 import { SESSION_SLOTS, type GroupFlow } from './chain-flow';
 
@@ -185,6 +188,21 @@ export function rotationTrail(flow: GroupFlow, slot: number, length = 10, every 
     return points.reverse();
 }
 
+/**
+ * Minutes of received bars before 資金動能 means anything. Until the session
+ * has more than RECENT minutes, the recent window and the baseline cover the
+ * same bars and y is exactly 0 for every group; five more minutes give the
+ * baseline something the recent window does not contain.
+ */
+export const MOMENTUM_WARMUP = RECENT + 5;
+
+/** Minutes still missing before the momentum is shown (0 = ready). */
+export function momentumWarmup(from: number | null, now: number | null, need = MOMENTUM_WARMUP): number {
+    if (now === null) return need;
+    const observed = now - (from ?? 0) + 1;
+    return Math.max(0, need - observed);
+}
+
 export type Quadrant = 'leading' | 'weakening' | 'lagging' | 'improving';
 
 /** RRG quadrants in reading order: 領先 → 轉弱 → 改善 → 落後. */
@@ -212,6 +230,166 @@ export function quadrantCounts(points: Iterable<{ x: number; y: number }>): Reco
 export function asinhScale(value: number, extent: number, unit = 1e7): number {
     if (extent <= 0) return 0;
     return Math.asinh(value / unit) / Math.asinh(extent / unit);
+}
+
+/**
+ * Soft clamp of a non-negative axis fraction: linear up to `knee`, then it
+ * eases towards 1 with matching slope, so an outlier sits against the edge
+ * but stays distinct from its neighbours and never leaves the plot.
+ */
+export function softUnit(t: number, knee = 0.9): number {
+    if (!(t > 0)) return 0;
+    if (t <= knee) return t;
+    const tail = 1 - knee;
+    return knee + tail * (1 - Math.exp(-(t - knee) / tail));
+}
+
+/** Round up to 1 / 2 / 5 × 10^n. */
+export function niceCeil(value: number): number {
+    if (!(value > 0)) return 1;
+    const p = 10 ** Math.floor(Math.log10(value));
+    const m = value / p;
+    return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+}
+
+/** The `q` quantile of non-negative numbers (0 when empty). */
+function quantile(values: number[], q: number): number {
+    if (values.length === 0) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * q + 0.5))]!;
+}
+
+/**
+ * Robust extents of the net-inflow axis, one per side: the `q` quantile of
+ * that side's magnitudes plus a margin, rounded up to 1 / 2 / 5 and never
+ * below `floor`. A lone outlier does not squash every other group (it is
+ * soft-clamped to the edge by `netFrac`).
+ */
+export function netExtents(values: Iterable<number>, { q = 0.95, floor = 1e8, margin = 1.1 } = {}): { pos: number; neg: number } {
+    const pos: number[] = [];
+    const neg: number[] = [];
+    for (const v of values) {
+        if (!Number.isFinite(v)) continue;
+        if (v > 0) pos.push(v);
+        else if (v < 0) neg.push(-v);
+    }
+    return {
+        pos: niceCeil(Math.max(floor, quantile(pos, q) * margin)),
+        neg: niceCeil(Math.max(floor, quantile(neg, q) * margin)),
+    };
+}
+
+/** asinh net axis: one scale for both sides, zero placed where both fit. */
+export interface NetScale {
+    unit: number;
+    /** asinh extents of each side (after the minimum share). */
+    uPos: number;
+    uNeg: number;
+    /** Position of zero across the width, 0…1. */
+    zero: number;
+}
+
+/**
+ * Asymmetric asinh scale: a market where almost every group flows in uses
+ * the width for inflow instead of leaving half the plot empty, yet the
+ * smaller side keeps at least `minShare` of the width (so 淨流出 stays
+ * readable) and both sides share one px-per-unit, so equal flows sit at
+ * equal distances from zero.
+ */
+export function netScale(pos: number, neg: number, unit = 1e8, minShare = 0.2): NetScale {
+    let uPos = Math.asinh(Math.max(pos, unit * 1e-3) / unit);
+    let uNeg = Math.asinh(Math.max(neg, unit * 1e-3) / unit);
+    const k = minShare / (1 - minShare);
+    if (uNeg < uPos * k) uNeg = uPos * k;
+    if (uPos < uNeg * k) uPos = uNeg * k;
+    return { unit, uPos, uNeg, zero: uNeg / (uNeg + uPos) };
+}
+
+/** Position of a net value across the width, 0…1 (soft-clamped at both edges). */
+export function netFrac(value: number, scale: NetScale): number {
+    if (!Number.isFinite(value)) return scale.zero;
+    const u = Math.asinh(value / scale.unit);
+    return u >= 0
+        ? scale.zero + softUnit(u / scale.uPos) * (1 - scale.zero)
+        : scale.zero - softUnit(-u / scale.uNeg) * scale.zero;
+}
+
+const NET_TICK_STEPS = [1, 2, 5];
+
+/**
+ * Readable ticks (TWD) for a net axis `width` px wide: 1 / 2 / 5 × 10^n on
+ * both sides, inside the linear part of the scale, largest first, each at
+ * least `minGap` px from zero and from every kept tick.
+ */
+export function netTicks(scale: NetScale, width: number, minGap = 44): number[] {
+    const candidates: number[] = [];
+    for (let e = -2; e <= 4; e += 1) for (const m of NET_TICK_STEPS) candidates.push(m * 10 ** e * scale.unit);
+    const kept: number[] = [];
+    const xs: number[] = [scale.zero * width];
+    for (const sign of [1, -1]) {
+        for (const c of [...candidates].reverse()) {
+            const v = sign * c;
+            const u = Math.abs(Math.asinh(v / scale.unit)) / (sign > 0 ? scale.uPos : scale.uNeg);
+            if (u > 0.9) continue;
+            const x = netFrac(v, scale) * width;
+            if (xs.some((o) => Math.abs(o - x) < minGap)) continue;
+            xs.push(x);
+            kept.push(v);
+        }
+    }
+    return kept.sort((a, b) => a - b);
+}
+
+/**
+ * Beeswarm on a centre line: each circle keeps its x and takes the free y
+ * closest to `cy` (largest first, so the heavy groups sit on the line). Used
+ * while there is no second dimension yet; no two circles overlap as long as
+ * the box has room, and the order is deterministic.
+ */
+export function beeswarm(circles: readonly Circle[], cy: number, box: { y0: number; y1: number }): number[] {
+    const order = circles.map((_, i) => i).sort((a, b) => circles[b]!.r - circles[a]!.r || a - b);
+    const ys = new Array<number>(circles.length).fill(cy);
+    const placed: number[] = [];
+    for (const i of order) {
+        const c = circles[i]!;
+        const lo = box.y0 + c.r;
+        const hi = box.y1 - c.r;
+        const candidates = [cy];
+        for (const j of placed) {
+            const o = circles[j]!;
+            const dx = Math.abs(o.x - c.x);
+            const reach = o.r + c.r + 1;
+            if (dx >= reach) continue;
+            const dy = Math.sqrt(reach * reach - dx * dx);
+            candidates.push(ys[j]! - dy, ys[j]! + dy);
+        }
+        const free = (y: number) =>
+            placed.every((j) => {
+                const o = circles[j]!;
+                return Math.hypot(o.x - c.x, ys[j]! - y) >= o.r + c.r - 1e-6;
+            });
+        candidates.sort((a, b) => Math.abs(a - cy) - Math.abs(b - cy) || a - b);
+        const inBox = candidates.find((y) => y >= lo && y <= hi && free(y));
+        // no room left in the box: the free spot closest to it, clamped
+        ys[i] = inBox ?? Math.max(lo, Math.min(hi, candidates.find(free) ?? cy));
+        placed.push(i);
+    }
+    return ys;
+}
+
+/** Largest overlap between two circles as a share of their radii sum (0 = none). */
+export function maxOverlap(circles: readonly Circle[]): number {
+    let worst = 0;
+    for (let i = 0; i < circles.length; i += 1) {
+        for (let j = i + 1; j < circles.length; j += 1) {
+            const a = circles[i]!;
+            const b = circles[j]!;
+            const sum = a.r + b.r;
+            if (sum <= 0) continue;
+            worst = Math.max(worst, 1 - Math.hypot(a.x - b.x, a.y - b.y) / sum);
+        }
+    }
+    return worst;
 }
 
 export function quadrantOf(x: number, y: number): Quadrant {
@@ -297,13 +475,19 @@ export interface Circle {
     x: number;
     y: number;
     r: number;
+    /**
+     * Region the centre must stay in (e.g. its quadrant), on top of the box:
+     * relaxation may nudge a bubble, never carry it across a zero line.
+     */
+    keep?: { x0: number; x1: number; y0: number; y1: number };
 }
 
 /**
  * Gentle collision relaxation for the rotation bubbles: overlapping pairs are
  * pushed apart (up to `overlap` × the sum of radii may still overlap), each
  * bubble is pulled back towards its data position and never strays more
- * than `maxShift` × its radius from it, and stays inside `box`.
+ * than `maxShift` × its radius from it, and stays inside `box` (and its own
+ * `keep` region, when given).
  * Deterministic: the same input gives the same layout every minute.
  */
 export function relaxCircles(
@@ -312,7 +496,19 @@ export function relaxCircles(
     { iterations = 60, overlap = 0.12, maxShift = 1.2, pull = 0.04 } = {},
 ): { x: number; y: number }[] {
     const clamp = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
-    const home = circles.map((c) => ({ x: clamp(c.x, box.x0 + c.r, box.x1 - c.r), y: clamp(c.y, box.y0 + c.r, box.y1 - c.r) }));
+    const settle = (p: { x: number; y: number }, c: Circle) => {
+        p.x = clamp(p.x, box.x0 + c.r, box.x1 - c.r);
+        p.y = clamp(p.y, box.y0 + c.r, box.y1 - c.r);
+        if (c.keep) {
+            p.x = clamp(p.x, c.keep.x0, c.keep.x1);
+            p.y = clamp(p.y, c.keep.y0, c.keep.y1);
+        }
+    };
+    const home = circles.map((c) => {
+        const p = { x: c.x, y: c.y };
+        settle(p, c);
+        return p;
+    });
     const pos = home.map((p) => ({ ...p }));
     const n = circles.length;
     for (let it = 0; it < iterations; it++) {
@@ -357,10 +553,51 @@ export function relaxCircles(
                 p.x = h.x + (sx / shift) * cap;
                 p.y = h.y + (sy / shift) * cap;
             }
-            p.x = clamp(p.x, box.x0 + c.r, box.x1 - c.r);
-            p.y = clamp(p.y, box.y0 + c.r, box.y1 - c.r);
+            settle(p, c);
         }
         if (!moved) break;
+    }
+    // a dense pile the capped pass could not open (many groups at one spot):
+    // separate it for real, still inside the box; a pile-up hides groups
+    // (the worst overlap is measured during each pass: no extra O(n²) scan)
+    const limit = overlap + 0.02;
+    let worst = maxOverlap(pos.map((p, i) => ({ ...p, r: circles[i]!.r })));
+    for (let it = 0; it < iterations * 2 && worst > limit; it++) {
+        worst = 0;
+        for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+                const a = pos[i]!;
+                const b = pos[j]!;
+                const sum = circles[i]!.r + circles[j]!.r;
+                const min = sum * (1 - overlap);
+                let dx = b.x - a.x;
+                let dy = b.y - a.y;
+                let d = Math.hypot(dx, dy);
+                if (sum > 0) worst = Math.max(worst, 1 - d / sum);
+                if (d >= min) continue;
+                if (d < 1e-6) {
+                    const angle = ((i * 7 + j * 13) % 16) * (Math.PI / 8);
+                    dx = Math.cos(angle);
+                    dy = Math.sin(angle);
+                    d = 1;
+                }
+                // a fixed per-pair tilt: groups on one line (equal y) must be
+                // able to step off it, or the pile only compresses sideways
+                const tilt = (((i * 7 + j * 13) % 5) - 2) * 0.2;
+                const ux = (dx / d) * Math.cos(tilt) - (dy / d) * Math.sin(tilt);
+                const uy = (dx / d) * Math.sin(tilt) + (dy / d) * Math.cos(tilt);
+                const push = (min - d) / 2;
+                a.x -= ux * push;
+                a.y -= uy * push;
+                b.x += ux * push;
+                b.y += uy * push;
+            }
+        }
+        for (let i = 0; i < n; i++) {
+            const c = circles[i]!;
+            const p = pos[i]!;
+            settle(p, c);
+        }
     }
     return pos;
 }

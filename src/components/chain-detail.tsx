@@ -6,7 +6,6 @@ import { useMemo } from 'react';
 import {
     codePct,
     leaders,
-    SESSION_SLOTS,
     sessionTurnover,
     WINDOW,
     type GroupFlow,
@@ -17,9 +16,22 @@ import { relationsFor, tierLabel, twCodeOf, type RelationHit, type RelationKind 
 import type { ChainTier, Edge, Theme } from '../lib/company-data/types';
 import { fmtPrice } from '../lib/utils/format';
 import { vars } from '../theme.css';
-import { cssColor, dir, slotX, useCanvas } from './chain-ui';
+import { cssColor, dir, useCanvas } from './chain-ui';
 import * as panel from './panel.css';
 import * as s from './chain-map.css';
+
+/** Shortest span (minutes) the tier chart's x axis covers: the line grows from the left. */
+export const TIER_SPAN = 15;
+/** Fewer bars than this draw dots, not a line: two points scaled to the full height read as a spike. */
+const TIER_MIN_LINE = 3;
+
+/**
+ * x domain of the tier chart: from the first received bar over at least
+ * TIER_SPAN minutes, then the whole observed span.
+ */
+export function tierDomain(from: number, now: number, span = TIER_SPAN): { start: number; slots: number } {
+    return { start: from, slots: Math.max(span, now - from + 1) };
+}
 
 /** Tier card chart: minute turnover (muted bars) and cumulative net inflow (line). */
 function TierChart({
@@ -49,7 +61,10 @@ function TierChart({
                 ctx.stroke();
                 return;
             }
-            const step = w / SESSION_SLOTS;
+            const { start, slots } = tierDomain(from, now);
+            const step = w / slots;
+            const sx = (slot: number) => ((slot - start + 0.5) / slots) * w;
+            const count = now - from + 1;
             let maxT = 0;
             let minC = 0;
             let maxC = 0;
@@ -67,13 +82,15 @@ function TierChart({
                     const t = flow.turnover[i]!;
                     if (t <= 0) continue;
                     const len = Math.max(0.5, (t / maxT) * barH);
-                    ctx.fillRect(i * step, h - len, Math.max(1, step - 0.5), len);
+                    ctx.fillRect((i - start) * step, h - len, Math.max(1, step - 1), len);
                 }
             }
             ctx.globalAlpha = 1;
             // cumulative net inflow over the full height
             const pad = 6;
-            const span = maxC - minC || 1;
+            // a quiet group's few-thousand wobble must not fill the card
+            const span = Math.max(maxC - minC, 1e6);
+            if (maxC - minC < span) minC = (maxC + minC) / 2 - span / 2;
             const y = (v: number) => pad + (1 - (v - minC) / span) * (h - pad * 2);
             const zero = Math.round(y(0)) + 0.5;
             ctx.strokeStyle = border;
@@ -85,9 +102,18 @@ function TierChart({
             ctx.setLineDash([]);
             const last = flow.cumNet[now]!;
             const color = cssColor(el, last >= 0 ? vars.color.up : vars.color.down);
+            if (count < TIER_MIN_LINE) {
+                ctx.fillStyle = color;
+                for (let i = from; i <= now; i += 1) {
+                    ctx.beginPath();
+                    ctx.arc(sx(i), y(flow.cumNet[i]!), 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                return;
+            }
             ctx.beginPath();
             for (let i = from; i <= now; i += 1) {
-                const x = slotX(i, w);
+                const x = sx(i);
                 if (i === from) ctx.moveTo(x, y(flow.cumNet[i]!));
                 else ctx.lineTo(x, y(flow.cumNet[i]!));
             }
@@ -96,8 +122,8 @@ function TierChart({
             ctx.lineJoin = 'round';
             ctx.stroke();
             // soft fill back to the zero line
-            ctx.lineTo(slotX(now, w), zero);
-            ctx.lineTo(slotX(from, w), zero);
+            ctx.lineTo(sx(now), zero);
+            ctx.lineTo(sx(from), zero);
             ctx.closePath();
             ctx.globalAlpha = 0.1;
             ctx.fillStyle = color;
@@ -105,11 +131,11 @@ function TierChart({
             ctx.globalAlpha = 1;
             ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.arc(slotX(now, w), y(last), 2.5, 0, Math.PI * 2);
+            ctx.arc(sx(now), y(last), 2.5, 0, Math.PI * 2);
             ctx.fill();
-            if (hover !== null) {
+            if (hover !== null && hover >= start && hover < start + slots) {
                 ctx.fillStyle = cssColor(el, vars.color.accent);
-                ctx.fillRect(Math.round(slotX(hover, w)), 0, 1, h);
+                ctx.fillRect(Math.round(sx(hover)), 0, 1, h);
             }
         },
         [flow, from, now, hover, themeKey, revision],

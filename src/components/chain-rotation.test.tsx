@@ -30,6 +30,7 @@ vi.mock('motion/react', () => {
 
 import { FlowBook, groupFlow, type KBarEvent } from '../lib/chain-flow';
 import type { Theme } from '../lib/company-data/types';
+import { MOMENTUM_WARMUP } from '../lib/chain-motion';
 import { FlowRotation } from './chain-rotation';
 import type { FlowRow } from './chain-ui';
 
@@ -57,8 +58,8 @@ afterEach(() => {
     renderer = null;
 });
 
-function render(selectedId = 't0', data = rows()) {
-    const props = { rows: data, now: NOW, from: 0, session: '2026-10-21', reducedMotion: true, paused: false, onSelect: () => undefined };
+function render(selectedId = 't0', data = rows(), from = 0) {
+    const props = { rows: data, now: NOW, from, session: '2026-10-21', reducedMotion: true, paused: false, onSelect: () => undefined };
     act(() => {
         renderer = create(createElement(FlowRotation, { ...props, selectedId }));
     });
@@ -85,9 +86,18 @@ describe('FlowRotation', () => {
         expect(relax.calls).toBe(afterMount);
     });
 
+    it('reuses the layout when a price tick rebuilds rows with the same bar data', () => {
+        relax.calls = 0;
+        render();
+        const afterMount = relax.calls;
+        const props = { rows: rows(), now: NOW, from: 0, session: '2026-10-21', selectedId: 't0', reducedMotion: true, paused: false, onSelect: () => undefined };
+        act(() => renderer!.update(createElement(FlowRotation, props)));
+        expect(relax.calls).toBe(afterMount);
+    });
+
     it('is a labelled group of buttons, not an image, with decorative layers hidden', () => {
         render('t2');
-        const svg = renderer!.root.findByType('svg');
+        const svg = renderer!.root.find((n: ReactTestInstance) => n.type === 'svg' && n.props.role === 'group');
         expect(svg.props.role).toBe('group');
         expect(svg.props['aria-label']).toBe('族群資金輪動圖');
         const list = bubbles();
@@ -105,5 +115,26 @@ describe('FlowRotation', () => {
             const hasOnlyControls = child.findAll((n: ReactTestInstance) => n.type === 'g' && n.parent === child).every((g) => g.props.role === 'button' || g.props['aria-hidden'] === 'true');
             expect(hasOnlyControls).toBe(true);
         }
+    });
+
+    it('warm-up: no quadrant, counters blank, grey bubbles on the centre line, a badge with the minutes left', () => {
+        // 5 minutes received (slots 26..30): momentum is still identically 0
+        render('t0', rows(), NOW - 4);
+        const text = (n: ReactTestInstance): string => n.children.map((c) => (typeof c === 'string' ? c : text(c))).join('');
+        const counts = renderer!.root.findAll((n: ReactTestInstance) => n.type === 'button').map((b) => text(b));
+        expect(counts).toEqual(['領先—', '轉弱—', '改善—', '落後—']);
+        const badge = renderer!.root.find((n: ReactTestInstance) => n.props.role === 'status');
+        expect(text(badge)).toContain(`資金動能累積中・還需 ${MOMENTUM_WARMUP - 5} 分鐘`);
+        for (const b of bubbles()) expect(b.props['aria-label']).toMatch(/動能累積中/);
+        // no corner quadrant names and no momentum axis caption
+        const svgText = text(renderer!.root.find((n: ReactTestInstance) => n.type === 'svg' && n.props.role === 'group'));
+        expect(svgText).not.toMatch(/資金動能（百分點）/);
+        expect(svgText).not.toMatch(/領先|轉弱|改善|落後/);
+    });
+
+    it('after warm-up: classified, no badge', () => {
+        render('t0', rows(), 0);
+        expect(renderer!.root.findAll((n: ReactTestInstance) => n.props.role === 'status')).toHaveLength(0);
+        for (const b of bubbles()) expect(b.props['aria-label']).toMatch(/領先|轉弱|改善|落後/);
     });
 });
