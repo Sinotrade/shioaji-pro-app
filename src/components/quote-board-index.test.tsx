@@ -29,6 +29,18 @@ vi.mock('../hooks/use-query', () => ({
     },
 }));
 vi.mock('../lib/shioaji', () => ({ fetchKbars }));
+// 包住真的 useBoardTier，記下看板傳進去的內容簽章（格子變了要重挑階梯）
+const tierKeys = vi.hoisted(() => [] as string[]);
+vi.mock('../hooks/use-board-tier', async (importOriginal) => {
+    const real = await importOriginal<typeof import('../hooks/use-board-tier')>();
+    return {
+        ...real,
+        useBoardTier: (...args: Parameters<typeof real.useBoardTier>) => {
+            tierKeys.push(String(args[2]));
+            return real.useBoardTier(...args);
+        },
+    };
+});
 
 import { todayStr } from '../lib/utils/date';
 import { QuoteBoard } from './quote-board';
@@ -210,6 +222,24 @@ describe('收盤後改用實際量', () => {
         const reopened = statLabels(render());
         expect(reopened).toContain('實際量');
         expect(reopened).not.toContain('成交金額');
+    });
+
+    it('同一個看板盤中轉收盤：成交金額格消失、內容簽章跟著變（重挑階梯）；沒有前一交易日金額時 lean 留實際量', () => {
+        // 數字刻意取同樣長度（金額 8251.0億 對 9292.1億、較昨日 +86% 對 +65%），只有格數不同
+        previous = 500_000_000_000;
+        const live = { ...idx, amount_sum: '825100000000' };
+        display = { quote: { index: live }, snapshot: undefined, book: undefined };
+        let root!: ReturnType<typeof create>;
+        act(() => { root = create(createElement(QuoteBoard, { contract: INDEX })); });
+        expect(statLabels(root.root)).toContain('成交金額');
+        const before = tierKeys.at(-1);
+        display = { quote: { index: { ...live, time: '13:33:00', estimate_amount_sum: '' } }, snapshot: undefined, book: undefined };
+        act(() => root.update(createElement(QuoteBoard, { contract: INDEX })));
+        expect(statLabels(root.root)).not.toContain('成交金額');
+        expect(tierKeys.at(-1)).not.toBe(before);
+        previous = undefined;
+        act(() => root.update(createElement(QuoteBoard, { contract: INDEX })));
+        expect(leanVolumeLabels(root.root)).toEqual(['實際量']);
     });
 
     it('盤中沒有預估量照舊：標「預估量」、不算較昨日', () => {

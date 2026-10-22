@@ -303,6 +303,8 @@ export function QuoteBoard({
         range && isIndexFuture ? fmtPoints(range.high - range.close) : undefined,
     ]
         .map((v) => String(v ?? '').length)
+        // 收盤後改成實際量時成交金額格不畫：數字長度可能都沒變，格數少一格也要重挑階梯
+        .concat(actual ? 1 : 0)
         .join(',');
     // 指數與個股各自記收合偏好
     const { tier, toggle } = useBoardTier(
