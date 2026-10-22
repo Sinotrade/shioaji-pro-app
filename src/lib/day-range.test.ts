@@ -15,6 +15,7 @@ import {
     railTicks,
     railTitle,
     withNightSession,
+    withNightVolume,
     type DayRange,
 } from './day-range';
 import type { KBars } from './types/market';
@@ -64,6 +65,28 @@ describe('全盤開高低：補上同一交易日的夜盤', () => {
         expect(withNightSession({ open: undefined, high: undefined, low: undefined }, night)).toEqual(night);
         const day = { open: 47240, high: 47288, low: 47131 };
         expect(withNightSession(day, undefined)).toBe(day);
+    });
+
+    it('夜盤量：只加總夜盤時段內的 K（日盤與時段外不算）；K 沒帶 Volume 時不猜', () => {
+        const base = kbars([
+            ['2026-10-16T13:45:00', 47000, 47010, 46990],
+            ['2026-10-16T15:01:00', 47284, 47300, 47250],
+            ['2026-10-17T05:00:00', 47350, 47400, 47200],
+            ['2026-10-19T08:46:00', 47500, 47600, 47450],
+        ]);
+        const win = nightWindowOf(at('2026-10-19T08:45:00'));
+        expect(nightSessionOhl({ ...base, Volume: [900, 120, 30, 5000] }, win)).toEqual({ open: 47284, high: 47400, low: 47200, volume: 150 });
+        expect(nightSessionOhl(base, win)?.volume).toBeUndefined();
+    });
+
+    it('全盤量 = 日盤累計量 + 夜盤量；沒有夜盤量照日盤；試撮的模擬量不算', () => {
+        expect(withNightVolume(11453, { volume: 27540 })).toBe(38993);
+        expect(withNightVolume(11453, undefined)).toBe(11453);
+        expect(withNightVolume(11453, { volume: undefined })).toBe(11453);
+        // 08:30 試撮：日盤還沒成交，全盤量只有夜盤
+        expect(withNightVolume(320, { volume: 27540 }, true)).toBe(27540);
+        // 只有夜盤資料（日盤量缺）
+        expect(withNightVolume(undefined, { volume: 27540 })).toBe(27540);
     });
 });
 

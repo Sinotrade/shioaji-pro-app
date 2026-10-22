@@ -15,6 +15,7 @@ import {
     nightWindowOf,
     STOCK_SCALES,
     withNightSession,
+    withNightVolume,
 } from '../lib/day-range';
 import {
     CLOSE_GRACE,
@@ -66,6 +67,10 @@ import {
     type StockField,
 } from '../lib/quote-board-fields';
 import { DayRangeRail } from './day-range-rail';
+
+// 兩個累計量取較大的（同一段夜盤的兩份資料，量只會往上加）；只有一邊有值時用那一邊
+const maxDefined = (a: number | undefined, b: number | undefined) =>
+    a === undefined ? b : b === undefined ? a : Math.max(a, b);
 import { QuoteBoardSettings, type SettingsAnchor } from './quote-board-settings';
 import * as panel from './panel.css';
 import * as styles from './quote-board.css';
@@ -225,9 +230,10 @@ export function QuoteBoard({
     const nightWin = sessionWin && !sessionWin.night ? nightWindowOf(sessionWin.start) : undefined;
     // App 隔夜開著時，最後一筆夜盤成交本身就是整段夜盤的開高低（含凌晨），先拿來用：
     // 08:30 試撮進來、夜盤 K 還沒抓回來時，區間軌不會先換成數字欄再換回來
-    const lastNight = useRef<{ code: string; end: number; t: number; open: number; high: number; low: number }>(undefined);
+    const lastNight = useRef<{ code: string; end: number; t: number; open: number; high: number; low: number; volume?: number }>(undefined);
     if (tick && sessionWin?.night && quoteT !== undefined && dayOhl.open && dayOhl.high && dayOhl.low) {
-        lastNight.current = { code: contract.code, end: sessionWin.end, t: quoteT, open: dayOhl.open, high: dayOhl.high, low: dayOhl.low };
+        // 夜盤時段的即時累計量從 15:00 算起，就是這段夜盤到這筆為止的量
+        lastNight.current = { code: contract.code, end: sessionWin.end, t: quoteT, open: dayOhl.open, high: dayOhl.high, low: dayOhl.low, volume: tick.total_volume };
     }
     // 同一段夜盤的最後一筆；落在夜盤最後 5 分鐘內才當成整段。電腦睡眠、斷線停在半夜那筆時高低不完整，
     // 照常去抓 K，抓回來前先拿它墊著（08:30 區間軌不會先換成數字欄）
@@ -257,12 +263,12 @@ export function QuoteBoard({
         nightWin !== undefined && !liveNight,
     );
     // 開盤後換新的查詢還沒回來（08:45 正忙）時，先沿用開盤前抓到的同一段夜盤，「開」與區間軌不會閃回日盤
-    const fetchedNight = useRef<{ key: string; open: number; high: number; low: number; partial: boolean }>(undefined);
+    const fetchedNight = useRef<{ key: string; open: number; high: number; low: number; volume?: number; partial: boolean }>(undefined);
     if (nightQuery.data) fetchedNight.current = { key: nightKey, ...nightQuery.data };
     const fetched = nightQuery.data ?? (fetchedNight.current?.key === nightKey ? fetchedNight.current : undefined);
     // 抓回的 K 缺尾段時，睡眠前收到的那筆可能更完整：兩者都有就取聯集（開盤都是 15:00 那筆），高低不會往回縮
     const night = liveNight ?? (fetched && sameNight
-        ? { ...fetched, high: Math.max(fetched.high, sameNight.high), low: Math.min(fetched.low, sameNight.low) }
+        ? { ...fetched, high: Math.max(fetched.high, sameNight.high), low: Math.min(fetched.low, sameNight.low), volume: maxDefined(fetched.volume, sameNight.volume) }
         : fetched ?? sameNight);
     // 夜盤不完整：K 缺凌晨尾段，或只有停在半夜的那筆成交可墊
     const nightPartial = !liveNight && (fetched ? fetched.partial : !!sameNight);
@@ -272,16 +278,22 @@ export function QuoteBoard({
         ? undefined
         : night
           ? nightPartial
-              ? '開盤為前一交易日 15:00 夜盤開盤；夜盤資料尚未齊全，高低可能不完整'
-              : '開盤為前一交易日 15:00 夜盤開盤，高低含夜盤'
+              ? '開盤為前一交易日 15:00 夜盤開盤；夜盤資料尚未齊全，高低與量可能不完整'
+              : '開盤為前一交易日 15:00 夜盤開盤，高低與量含夜盤'
           : nightQuery.error
-            ? '夜盤資料取得失敗，開高低為日盤'
-            : nightQuery.updatedAt !== null ? '夜盤時段沒有成交，開高低為日盤' : undefined;
-    const vol =
+            ? '夜盤資料取得失敗，開高低與量為日盤'
+            : nightQuery.updatedAt !== null ? '夜盤時段沒有成交，開高低與量為日盤' : undefined;
+    // 量的提示：全盤補到夜盤（或補不到）時和「開」用同一句註記；僅日盤、沒有夜盤的商品不寫
+    const volNote = sessionNote;
+    // 全盤時量也加上夜盤（和開高低一致）；僅日盤、沒有夜盤的商品照舊
+    const vol = withNightVolume(
         tick?.total_volume ??
-        index?.vol_sum ??
-        index?.volume ??
-        snapshot?.total_volume;
+            index?.vol_sum ??
+            index?.volume ??
+            snapshot?.total_volume,
+        night,
+        tick?.simtrade === true,
+    );
     // 指數看板看成交金額（元，換算成億）；amount_sum 為空字串時退回快照
     const liveAmount = index?.amount_sum ? Number(index.amount_sum) : undefined;
     const amount = liveAmount ?? snapshot?.total_amount;
@@ -591,8 +603,18 @@ export function QuoteBoard({
         if (f === 'volume') {
             return (
                 <Fragment key={f}>
-                    <span className={`${styles.pairLabel} ${styles.stockVol} ${rowClass(top)}`}>量</span>
-                    <span className={`${styles.pairValue} ${styles.stockVol} ${rowClass(top)}`}>{fmtInt(vol)}</span>
+                    <span
+                        className={[styles.pairLabel, styles.stockVol, rowClass(top), volNote && styles.tipLabel, volNote && styles.tipCell].filter(Boolean).join(' ')}
+                        title={volNote}
+                    >
+                        量
+                    </span>
+                    <span
+                        className={[styles.pairValue, styles.stockVol, rowClass(top), volNote && styles.tipCell].filter(Boolean).join(' ')}
+                        title={volNote}
+                    >
+                        {fmtInt(vol)}
+                    </span>
                 </Fragment>
             );
         }
@@ -754,8 +776,8 @@ export function QuoteBoard({
                         <Fragment key="stats">
                             {vol !== undefined && (tagVolume || tagRatio) && (
                                 <span
-                                    className={tagRatio ? `${styles.stockVolTag} ${styles.tipCell}` : styles.stockVolTag}
-                                    title={tagRatio ? ratioTitle : undefined}
+                                    className={tagRatio || (tagVolume && volNote) ? `${styles.stockVolTag} ${styles.tipCell}` : styles.stockVolTag}
+                                    title={tagRatio ? ratioTitle : tagVolume ? volNote : undefined}
                                 >
                                     {tagVolume && <>量 {fmtInt(vol)}</>}
                                     {tagRatio && (

@@ -202,8 +202,31 @@ describe('個股看板（成對兩行）', () => {
             const root = renderTxf().root;
             expect(texts(root)).toEqual(expect.arrayContaining(['46,490', '47,288', '46,400']));
             expect(queryCalls.find((c) => c.key === openKey)?.enabled).toBe(true);
-            expect(titles(root)).toContain('開盤為前一交易日 15:00 夜盤開盤，高低含夜盤');
+            expect(titles(root)).toContain('開盤為前一交易日 15:00 夜盤開盤，高低與量含夜盤');
             expect(root.findByProps({ role: 'img' }).props.title).toContain('開盤為前一交易日 15:00 夜盤開盤');
+        });
+
+        it('全盤：量 = 日盤累計量 + 夜盤量，量的提示和開盤同一句註記；僅日盤時照日盤量、不加提示', () => {
+            queryData.set(openKey, { ...nightOhl, volume: 27540 });
+            display = { quote: { tick: { ...dayTick, total_volume: 11453 } } };
+            const root = renderTxf().root;
+            expect(texts(root)).toContain('38,993');
+            expect(texts(root)).not.toContain('11,453');
+            const volCell = root.find((n) => typeof n.type === 'string' && n.children.length === 1 && n.children[0] === '38,993');
+            expect(volCell.props.title).toBe('開盤為前一交易日 15:00 夜盤開盤，高低與量含夜盤');
+            const day = renderTxf('day').root;
+            expect(texts(day)).toContain('11,453');
+            expect(texts(day)).not.toContain('38,993');
+            const dayCell = day.find((n) => typeof n.type === 'string' && n.children.length === 1 && n.children[0] === '11,453');
+            expect(dayCell.props.title).toBeUndefined();
+        });
+
+        it('App 隔夜開著：最後一筆夜盤成交的累計量就是夜盤量，日盤開盤後加上日盤量', () => {
+            display = { quote: { tick: { ...dayTick, time: '04:59:58.000', open: '46490', high: '47000', low: '46400', close: '46900', total_volume: 27540 } } };
+            const root = renderTxf();
+            display = { quote: { tick: { ...dayTick, time: '09:10:00.000', total_volume: 11453 } } };
+            act(() => root.update(createElement(QuoteBoard, { contract: TXF })));
+            expect(texts(root.root)).toContain('38,993');
         });
 
         it('夜盤 K 抓前一個平日到交易日當天，只取夜盤時段', async () => {
@@ -255,11 +278,11 @@ describe('個股看板（成對兩行）', () => {
         it('提示：夜盤不完整時說可能不含凌晨；抓取失敗時說開高低為日盤', () => {
             display = { quote: { tick: dayTick } };
             queryData.set(openKey, { ...nightOhl, partial: true });
-            expect(titles(renderTxf().root)).toContain('開盤為前一交易日 15:00 夜盤開盤；夜盤資料尚未齊全，高低可能不完整');
+            expect(titles(renderTxf().root)).toContain('開盤為前一交易日 15:00 夜盤開盤；夜盤資料尚未齊全，高低與量可能不完整');
             queryData.clear();
             queryErrors.set(openKey, '503 Service Unavailable');
             try {
-                expect(titles(renderTxf().root)).toContain('夜盤資料取得失敗，開高低為日盤');
+                expect(titles(renderTxf().root)).toContain('夜盤資料取得失敗，開高低與量為日盤');
             } finally {
                 queryErrors.clear();
             }
@@ -321,7 +344,7 @@ describe('個股看板（成對兩行）', () => {
             expect(titles(loading).some((t) => t.includes('開高低為日盤'))).toBe(false);
             expect(texts(loading)).toContain('47,240');
             queryData.set(openKey, undefined);
-            expect(titles(renderTxf().root)).toContain('夜盤時段沒有成交，開高低為日盤');
+            expect(titles(renderTxf().root)).toContain('夜盤時段沒有成交，開高低與量為日盤');
         });
 
         it('08:45 開盤後換成開盤後的查詢、還沒回來時，先沿用開盤前抓到的同一段夜盤', () => {
@@ -342,7 +365,7 @@ describe('個股看板（成對兩行）', () => {
             expect(queryCalls.find((c) => c.key === preKey)?.enabled).toBe(true);
             // K 抓回來前先拿半夜那筆墊著（區間軌不會先換成數字欄），提示說不完整
             expect(texts(root.root)).toEqual(expect.arrayContaining(['46,490', '46,800', '46,480']));
-            expect(titles(root.root)).toContain('開盤為前一交易日 15:00 夜盤開盤；夜盤資料尚未齊全，高低可能不完整');
+            expect(titles(root.root)).toContain('開盤為前一交易日 15:00 夜盤開盤；夜盤資料尚未齊全，高低與量可能不完整');
         });
 
         it('睡眠前那筆比抓回的 K（缺凌晨尾段）更完整時取聯集，高低不會往回縮', () => {

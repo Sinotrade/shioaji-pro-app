@@ -74,19 +74,33 @@ export function nightWindowOf(dayStart: number): { start: number; end: number } 
     return { start: prev + 15 * 3600, end: prev + day + 5 * 3600 };
 }
 
-// 1 分 K（label 為分鐘結束，已排序）裡落在夜盤時段（含收盤定盤寬限）的開高低
-export function nightSessionOhl(k: KBars, win: { start: number; end: number }) {
+// 1 分 K（label 為分鐘結束，已排序）裡落在夜盤時段（含收盤定盤寬限）的開高低與成交量（口數加總；K 沒帶 Volume 時為 undefined）
+export function nightSessionOhl(k: Pick<KBars, 'datetime' | 'Open' | 'High' | 'Low'> & Partial<Pick<KBars, 'Volume'>>, win: { start: number; end: number }) {
     let open: number | undefined;
     let high = -Infinity;
     let low = Infinity;
+    let volume: number | undefined = k.Volume ? 0 : undefined;
     for (let i = 0; i < k.datetime.length; i++) {
         const t = wallClockToUtc(k.datetime[i] ?? '');
         if (t <= win.start || t > win.end + CLOSE_GRACE) continue;
         if (open === undefined) open = k.Open[i];
         high = Math.max(high, k.High[i] ?? -Infinity);
         low = Math.min(low, k.Low[i] ?? Infinity);
+        if (volume !== undefined) volume += k.Volume![i] ?? 0;
     }
-    return open === undefined ? undefined : { open, high, low };
+    return open === undefined ? undefined : { open, high, low, volume };
+}
+
+// 全盤的成交量：日盤累計量加上同一交易日的夜盤量（使用者指定，和含夜盤的開高低一致）。
+// 沒有夜盤資料或夜盤量時照日盤；試撮的量是模擬撮合量、不是成交，全盤時只算夜盤
+export function withNightVolume(
+    dayVolume: number | undefined,
+    night: { volume?: number } | undefined,
+    simtrade = false,
+): number | undefined {
+    if (night?.volume === undefined || !Number.isFinite(night.volume)) return dayVolume;
+    const day = simtrade || dayVolume === undefined || !Number.isFinite(dayVolume) ? 0 : dayVolume;
+    return day + night.volume;
 }
 
 // 夜盤的開盤價當全盤開盤，最高、最低取兩段的極值；沒有夜盤資料時照日盤
