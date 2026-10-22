@@ -479,7 +479,6 @@ export const footer = style({
 
 // ---- v3 motion: shared ----
 
-const glide = 'transform 900ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms ease';
 const reduce = { '@media': { '(prefers-reduced-motion: reduce)': { transition: 'none', animation: 'none' } } } as const;
 
 /** Applied when the viewer asked for reduced motion (also covered by the media query). */
@@ -550,7 +549,7 @@ export const rankAxis = style({
     fontSize: '0.62rem',
 });
 export const rankAxisTrack = style({ position: 'relative', height: '14px' });
-export const rankAxisSide = style({ position: 'absolute', top: 0, padding: '0 7px', whiteSpace: 'nowrap', fontWeight: 600 });
+export const rankAxisSide = style({ position: 'absolute', top: 0, padding: '0 7px', whiteSpace: 'nowrap', fontWeight: 500, letterSpacing: '0.08em' });
 export const rankMove = style({
     ...mono,
     display: 'inline-flex',
@@ -565,17 +564,6 @@ export const rankStage = style({ position: 'relative', flex: 1, minHeight: 0, di
 export const rankArea = style({ position: 'relative', flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' });
 export const rankCanvas = style({ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 });
 export const rankRows = style({ position: 'relative', margin: `2px ${vars.space.sm}` });
-// one dotted centre axis, drawn per row so it follows the list
-export const rankZero = style({
-    position: 'absolute',
-    left: '50%',
-    top: '-8px',
-    bottom: '-8px',
-    width: '1px',
-    backgroundImage: `linear-gradient(to bottom, ${tint(vars.color.mutedForeground, 45)} 50%, transparent 50%)`,
-    backgroundSize: '1px 4px',
-});
-
 const rankRowBase = style({
     position: 'absolute',
     left: 0,
@@ -594,8 +582,9 @@ const rankRowBase = style({
     textAlign: 'left',
     background: 'transparent',
     cursor: 'pointer',
-    borderRadius: vars.radius.lg,
-    transition: glide,
+    borderRadius: '8px',
+    // translateY is eased by the river engine each frame, in step with the canvas
+    transition: 'opacity 300ms ease, background 300ms ease',
     willChange: 'transform',
     selectors: {
         '&:hover': { opacity: 1 },
@@ -611,49 +600,23 @@ export const rankRow = styleVariants({
 export const rankName = style({ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, fontSize: '0.78rem', fontWeight: 500, color: vars.color.foreground });
 export const rankNameText = style({ ...ellipsis });
 export const rankDot = styleVariants({
-    chain: { width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0, background: soft(vars.color.accent, 70) },
-    theme: { width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0, background: soft(vars.color.amber, 70) },
+    chain: { width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0, background: soft(vars.color.accent, 70) },
+    theme: { width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0, background: soft(vars.color.amber, 70) },
 });
 export const rankTrack = style({ position: 'relative', height: '22px', minWidth: 0 });
 
-const barGrow = ['width', 'height', 'border-radius'].map((p) => `${p} 900ms cubic-bezier(0.22, 1, 0.36, 1)`).join(', ');
-const rankBarBase = style({ position: 'absolute', top: '50%', transform: 'translateY(-50%)', transition: barGrow, ...reduce });
-// a thin translucent lane, faint at the axis
-const lane = (color: string, deg: number) =>
-    `linear-gradient(${deg}deg, ${tint(color, 10)}, ${tint(color, 34)} 50%, ${tint(color, 62)})`;
-export const rankBar = styleVariants({
-    in: [rankBarBase, { background: lane(vars.color.up, 90) }],
-    out: [rankBarBase, { background: lane(vars.color.down, 270) }],
+export const rankValue = style({
+    ...mono,
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    justifyContent: 'flex-end',
+    fontSize: '0.76rem',
+    textAlign: 'right',
+    whiteSpace: 'nowrap',
+    letterSpacing: '0.02em',
 });
-const headBase = style({
-    position: 'absolute',
-    top: '50%',
-    borderRadius: '50%',
-    transition: 'width 600ms, height 600ms, margin 600ms, box-shadow 600ms',
-    ...reduce,
-});
-export const rankHead = styleVariants({
-    in: [headBase, { background: soft(vars.color.up, 70) }],
-    out: [headBase, { background: soft(vars.color.down, 70) }],
-});
-export const rankHeadGlow = styleVariants({
-    in: [headBase, { background: vars.color.up, boxShadow: `0 0 8px 1px ${tint(vars.color.up, 45)}` }],
-    out: [headBase, { background: vars.color.down, boxShadow: `0 0 8px 1px ${tint(vars.color.down, 45)}` }],
-});
-const pulse = keyframes({ from: { transform: 'scale(1)', opacity: 0.5 }, to: { transform: 'scale(2.4)', opacity: 0 } });
-const pulseBase = style({
-    position: 'absolute',
-    inset: 0,
-    borderRadius: '50%',
-    pointerEvents: 'none',
-    animation: `${pulse} 900ms ease-out 1 forwards`,
-    ...reduce,
-});
-export const rankPulse = styleVariants({
-    in: [pulseBase, { border: `1px solid ${vars.color.up}` }],
-    out: [pulseBase, { border: `1px solid ${vars.color.down}` }],
-});
-export const rankValue = style({ ...mono, fontSize: '0.74rem', textAlign: 'right', whiteSpace: 'nowrap', justifyContent: 'flex-end' });
+// the unit sits back so the digits read first
+export const rankUnit = style({ marginLeft: '0.35em', opacity: 0.55, fontSize: '0.92em' });
 
 // ---- 輪動泡泡 ----
 
