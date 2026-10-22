@@ -3,7 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import { registerOnboardingAppStateHost } from '../lib/agent-app-command';
 import { agentModule } from '../lib/features';
 import { validateDesktopSettings } from '../lib/server-diagnostics';
-import { isTauri, loadDesktopSettings, saveCredentialProfile, selectCredentialProfile, deleteCredentialProfile, logoutCredentialProfile, serverStop, serverStart, reloadWhenHealthy, EMPTY_DESKTOP_SETTINGS, type CredentialDraft, type DesktopSettings } from '../lib/tauri';
+import { isTauri, loadDesktopSettings, saveCredentialProfile, selectCredentialProfile, deleteCredentialProfile, logoutCredentialProfile, serverStop, serverStart, reloadWhenHealthy, openServerLogFolder, EMPTY_DESKTOP_SETTINGS, type CredentialDraft, type DesktopSettings } from '../lib/tauri';
+import { classifyServerStart, type ServerStartError } from '../lib/server-start-error';
+import { ServerStartErrorPanel } from './server-start-error-panel';
 import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
 import { FeatureGate } from './feature-gate';
 import { CredentialProfiles } from './credential-profiles';
@@ -15,7 +17,10 @@ const AGENT_STARTER_PROMPT = '我是第一次使用，還沒有永豐 Shioaji AP
 export function OnboardingSetup() {
     const [settings, setSettings] = useState<DesktopSettings>(EMPTY_DESKTOP_SETTINGS);
     const [busy, setBusy] = useState(false);
-    const [error, setError] = useState('');
+    const [error, setErrorText] = useState('');
+    // a failed start, explained by kind (replaces the plain error text)
+    const [startError, setStartError] = useState<{ error: ServerStartError; logPath?: string } | null>(null);
+    const setError = (text: string) => { setErrorText(text); setStartError(null); };
     const [loaded, setLoaded] = useState(false);
     const [confirmLogout, setConfirmLogout] = useState(false);
     const logoutInFlight = useRef(false);
@@ -71,8 +76,15 @@ export function OnboardingSetup() {
         setBusy(true); setError('');
         try {
             const result = await timedOnboarding({ save: async () => {}, start: () => serverStart(target), reloadWhenHealthy });
-            if (!result.ok) { setError('伺服器啟動失敗，請確認帳號設定、網路與憑證後重試。'); setBusy(false); }
-        } catch { setError('伺服器啟動失敗，請重試。'); setBusy(false); }
+            if (!result.ok) {
+                if (result.error) { setErrorText(''); setStartError({ error: result.error, logPath: result.logPath }); }
+                else setError('伺服器啟動失敗，請確認帳號設定、網路與憑證後重試。');
+                setBusy(false);
+            }
+        } catch (e) {
+            setStartError({ error: classifyServerStart({ output: e instanceof Error ? e.message : String(e), port: 0 }) });
+            setErrorText(''); setBusy(false);
+        }
     };
     const start = async () => {
         if (logoutInFlight.current) throw new Error('正在登出，請等待完成。');
@@ -93,6 +105,7 @@ export function OnboardingSetup() {
         <div className={styles.card}>
             <div><div className={styles.logo}>Shioaji Pro</div><div className={styles.subtitle}>設定或選擇帳號以啟動交易伺服器</div></div>
             {error && <p className={styles.errorText} role="alert">{error}</p>}
+            {startError && <ServerStartErrorPanel error={startError.error} logPath={startError.logPath} onOpenLogFolder={isTauri ? openServerLogFolder : undefined} />}
             {loaded && <CredentialProfiles settings={settings} busy={busy} running={false} onSave={save} onAction={action} onImported={setSettings} onStart={start} onBusyChange={setBusy} />}
             {loaded && settings.migrationError && <div className={styles.logoutBox}>
                 <p className={styles.hint}>無法轉移時可以登出重來：會停止本 App 的 Agent 與伺服器，並清除舊金鑰、CA 密碼與使用中帳號的金鑰。</p>

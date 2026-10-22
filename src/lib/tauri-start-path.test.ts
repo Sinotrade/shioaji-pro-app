@@ -93,6 +93,54 @@ describe('serverStart start path', () => {
         expect(native.readTextFile).toHaveBeenCalledExactlyOnceWith('/home/.shioaji/sjpro-server-21322.log');
     });
 
+    it('a sidecar the native shell cannot run is classified with its searched path and log', async () => {
+        const invoke = native.invoke.getMockImplementation()!;
+        const refusal = '內建 shioaji 無法執行：/dev/target/debug/shioaji（檔案不存在）\n@@sjpro-error {"kind":"sidecar_missing","binary":"shioaji","path":"/dev/target/debug/shioaji","reason":"not_found"}';
+        native.invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
+            if (cmd === 'spawn_server') throw refusal;
+            return invoke(cmd, args);
+        });
+        const result = await tauri.serverStart(settings);
+        expect(result).toMatchObject({
+            ok: false, stage: 'spawn', logPath: '/home/.shioaji/sjpro-server-21322.log',
+            error: { kind: 'sidecar_missing', binary: 'shioaji', path: '/dev/target/debug/shioaji', reason: 'not_found' },
+        });
+    });
+
+    it('a sidecar that dies during login is classified from its log', async () => {
+        vi.useFakeTimers();
+        native.readTextFile.mockResolvedValue('INFO starting\nERROR Failed to initialize server state: Authentication failed: auth rejected');
+        const invoke = native.invoke.getMockImplementation()!;
+        native.invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) =>
+            cmd === 'spawn_server' ? { pid: 777, credentialRevision: 'native-revision' } : invoke(cmd, args));
+        const starting = tauri.serverStart(settings);
+        await vi.waitFor(() => expect(calls('spawn_server')).toHaveLength(1));
+        await vi.advanceTimersByTimeAsync(3000);
+        const result = await starting;
+        expect(result).toMatchObject({ ok: false, stage: 'died', error: { kind: 'auth_failed' }, logPath: '/home/.shioaji/sjpro-server-21322.log' });
+    });
+
+    it('the HTTP-fallback TLS note is not taken as the cause of a failed start', async () => {
+        vi.useFakeTimers();
+        native.readTextFile.mockResolvedValue("thread 'main' panicked at src/main.rs:1");
+        const invoke = native.invoke.getMockImplementation()!;
+        native.invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) =>
+            cmd === 'spawn_server' ? { pid: 777, credentialRevision: 'native-revision' } : invoke(cmd, args));
+        const starting = tauri.serverStart({ ...settings, httpsEnabled: true });
+        await vi.waitFor(() => expect(calls('spawn_server')).toHaveLength(1));
+        await vi.advanceTimersByTimeAsync(3000);
+        const result = await starting;
+        expect(result.output).toContain('TLS');
+        expect(result.error).toMatchObject({ kind: 'sidecar_exited' });
+    });
+
+    it('no account selected: account setup error and no log path', async () => {
+        const result = await tauri.serverStart({ ...settings, credentialRevision: null });
+        expect(result.error).toMatchObject({ kind: 'account_setup' });
+        expect(result.logPath).toBeUndefined();
+        expect(calls('spawn_server')).toHaveLength(0);
+    });
+
     it('relaunch: a dead remembered spawn is skipped at once and its PID never reaches kill', async () => {
         storage.set('sj-pro-server-pid', '4242');
         storage.set('sj-pro-server-port', '21322');

@@ -29,6 +29,7 @@ import { plainText, secretAccount } from '../lib/privacy';
 import { useRevealText } from '../lib/privacy-text';
 import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
 import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
+import { serverStartErrorCopy } from '../lib/server-start-error';
 import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
 import { orderTraceDiagnostics } from '../lib/order-trace';
 import {
@@ -412,11 +413,13 @@ export function ServerManager({
                             ? '🔗 已連上另一個程式啟動的伺服器'
                             : '🔗 已連接既有伺服器'
                         : '🟢 伺服器啟動指令已送出'
-                    : '伺服器啟動失敗',
+                    : res.error ? serverStartErrorCopy(res.error).title : '伺服器啟動失敗',
                 body: res.ok
                     ? `port ${res.port} · 模式：${cfg.production ? '⚠ 正式環境' : '模擬環境'}${
                         res.foreign ? `（${res.foreign.text}，未使用）` : ''}`
-                    : diagnoseOutput(res.output) ||
+                    : res.error?.kind === 'sidecar_missing' || res.error?.kind === 'port_in_use'
+                      ? serverStartErrorCopy(res.error).body + (res.error.kind === 'sidecar_missing' ? `\n${res.error.path}` : '')
+                      : diagnoseOutput(res.output) ||
                       errorLines(res.output) ||
                       res.output.slice(-120),
             });
@@ -536,7 +539,7 @@ export function ServerManager({
                         : res.output === 'LINUX_MANUAL_TRUST'
                           ? 'Linux 需手動信任本機憑證：請在終端機安裝 mkcert 並執行「mkcert -install」後，再按一次「啟用」。'
                           : res.output.startsWith('MKCERT_SIDECAR_MISSING')
-                            ? '找不到內建的 mkcert 元件（開發環境請先執行 scripts/fetch-mkcert.sh）。'
+                            ? `找不到可執行的內建 mkcert 元件（開發環境請先執行 scripts/fetch-mkcert.sh）：${res.output.replace(/^MKCERT_SIDECAR_MISSING:\s*/, '').slice(0, 300)}`
                             : `憑證產生失敗：${res.output.slice(-300)}`,
                 );
                 return;
