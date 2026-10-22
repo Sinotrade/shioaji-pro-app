@@ -12,7 +12,7 @@
    （見 [RELEASE.md](RELEASE.md)），merge 進 main 等同宣告「可出貨」。
 3. **PR 合進 main 一律 merge commit（`--merge`）** — 禁 squash merge／
    rebase merge。保留功能分支 commit SHA 是發佈追溯與 tag 祖先關係的
-   前提；開發分支同步 main 的 rebase 規則見下節。
+   前提（指合進 main 之後的 SHA）；開發分支同步 main 的 rebase 規則見下節。
 
 ## 分支與 worktree
 
@@ -31,17 +31,19 @@
 
 ### 開發分支同步 main
 
-- 尚未推送、只有單一開發者使用、且未被其他 repo／分支以 SHA 引用的
-  短期開發分支，應定期同步最新 main：
+- **只有 `main` 不能 force-push**（`main-protect` 強制）。功能分支是自己的
+  主線，跟上最新 main 一律用 rebase 解衝突，不用 merge origin/main：
 
   ```bash
   git fetch origin
   git rebase origin/main
+  git push --force-with-lease
   ```
 
-- 分支一旦已推送共享、開啟 PR／進入 review，或被跨 repo pin 指向，
-  就必須保留既有 SHA，改用 `git merge origin/main` 同步；不得 force-push
-  重寫已共享歷史。
+- 已開 PR、進入 review 的分支也照這樣做；用 `--force-with-lease`，避免蓋掉
+  別人剛推上的 commit。多人共用同一條分支時，先在 PR 裡說一聲再 rebase。
+- 被 `DESKTOP_MODULES_REF` 釘住的 private PR 分支 rebase 後 SHA 會變，
+  要同步把 public PR 的 `DESKTOP_MODULES_REF` 更新到新的 head，再重跑 CI。
 - PR 最終仍以 merge commit 合進 main；開發分支曾 rebase 不改變這項規則。
 
 ## PR 與 review
