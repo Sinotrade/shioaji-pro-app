@@ -13,6 +13,7 @@ import { BottomDock } from './components/bottom-dock';
 import { AsyncStatus, type AsyncPhase } from './components/async-status';
 import { CandleChart } from './components/candle-chart';
 import { ChainMap } from './components/chain-map';
+import { PortfolioSectorPanel } from './components/portfolio-sector-panel';
 import { ChipsCard } from './components/chips-card';
 import { CompanyPanel } from './components/company-panel';
 import { ComboListPanel } from './components/combo-list';
@@ -166,6 +167,7 @@ const POPOUT_TYPES: ReadonlySet<string> = new Set([
     'volprofile',
     'optchain',
     'pnl',
+    'holdingmap',
     'replay',
     'depthmap',
 ]);
@@ -492,6 +494,8 @@ function BlockBody({
             return <SectorHeatmap onPick={onSelectCode} />;
         case 'chainmap':
             return <ChainMap contract={contract} onPick={onSelectCode} />;
+        case 'holdingmap':
+            return <PortfolioSectorPanel onPick={onSelectCode} />;
         case 'pulse':
             return (
                 <MarketPulsePanel
@@ -755,6 +759,9 @@ function PopoutView({
 
     let body: React.ReactNode = <BlockPlaceholder />;
     if (type === 'pnl') body = <PnlPanel />;
+    else if (type === 'holdingmap')
+        // popout 點持股 → 切換主視窗的選取商品
+        body = <PortfolioSectorPanel onPick={broadcastSelectCode} />;
     else if (type === 'optchain')
         // popout T 字 click → switch the MAIN window's selected symbol so
         // 下單面板等連動面板跟著動（issue #1: T 字要同時連動下單面板）

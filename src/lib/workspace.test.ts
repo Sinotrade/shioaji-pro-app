@@ -172,7 +172,7 @@ describe('popout session param', () => {
 });
 
 describe('built-in layout presets', () => {
-    const NEW_PRESETS = ['期貨當沖', '期現對照', '零股存股', '條件單監控', '選擇權組合', '盤勢總覽'];
+    const NEW_PRESETS = ['期貨當沖', '期現對照', '零股存股', '條件單監控', '選擇權組合', '盤勢總覽', '族群資金'];
     const BANNED = ['原生', '免費', '交易終端', 'Claude', 'Codex'];
     const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a) =>
         a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;

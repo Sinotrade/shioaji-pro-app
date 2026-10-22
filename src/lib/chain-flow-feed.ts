@@ -52,9 +52,10 @@ export type FeedScope = 'overview' | 'drill';
 
 interface Connection {
     scope: FeedScope;
-    codes: number;
-    batches: number;
-    subscribed: number;
+    /** K-bar batch key → number of codes in it. */
+    batches: Map<string, number>;
+    /** Batch keys whose subscribe succeeded. */
+    subscribed: Set<string>;
     error: string | null;
     members: readonly FeedMember[];
 }
@@ -70,19 +71,26 @@ const listeners = new Set<() => void>();
 let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function chainFlowStatus(): Readonly<FeedStatus> {
+    // panels sharing a batch share one ref-counted subscription: count each key once
+    const keys = new Map<string, { codes: number; drill: boolean; subscribed: boolean }>();
+    let kbarError: string | null = null;
+    for (const c of connections) {
+        for (const [key, codes] of c.batches) {
+            const entry = keys.get(key) ?? { codes, drill: c.scope === 'drill', subscribed: false };
+            entry.subscribed ||= c.subscribed.has(key);
+            keys.set(key, entry);
+        }
+        kbarError ??= c.error;
+    }
     let kbarCodes = 0;
     let drillCodes = 0;
     let subscribed = 0;
-    let batches = 0;
-    let kbarError: string | null = null;
-    for (const c of connections) {
-        if (c.scope === 'drill') drillCodes += c.codes;
-        else kbarCodes += c.codes;
-        subscribed += c.subscribed;
-        batches += c.batches;
-        kbarError ??= c.error;
+    for (const entry of keys.values()) {
+        if (entry.drill) drillCodes += entry.codes;
+        else kbarCodes += entry.codes;
+        if (entry.subscribed) subscribed += 1;
     }
-    return { kbarCodes, drillCodes, subscribed, batches, kbarError, ...status };
+    return { kbarCodes, drillCodes, subscribed, batches: keys.size, kbarError, ...status };
 }
 
 export function chainFlowRevision() {
@@ -366,9 +374,8 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
     const batches = kbarBatches(members, FEED_BATCH, scope);
     const conn: Connection = {
         scope,
-        codes: batches.reduce((n, b) => n + b.contracts.length, 0),
-        batches: batches.length,
-        subscribed: 0,
+        batches: new Map(batches.map((b) => [b.key, b.contracts.length])),
+        subscribed: new Set(),
         error: null,
         members,
     };
@@ -378,7 +385,7 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
         subscribeKbars(batch.key, batch.contracts).then(
             () => {
                 if (released) return;
-                conn.subscribed += 1;
+                conn.subscribed.add(batch.key);
                 notifyChainFlow();
             },
             (error) => {
