@@ -496,13 +496,15 @@ export function relaxCircles(
     { iterations = 60, overlap = 0.12, maxShift = 1.2, pull = 0.04 } = {},
 ): { x: number; y: number }[] {
     const clamp = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
+    // the frame wins over the keep region: a bubble wider than its
+    // quadrant's room stays whole on screen
     const settle = (p: { x: number; y: number }, c: Circle) => {
-        p.x = clamp(p.x, box.x0 + c.r, box.x1 - c.r);
-        p.y = clamp(p.y, box.y0 + c.r, box.y1 - c.r);
         if (c.keep) {
             p.x = clamp(p.x, c.keep.x0, c.keep.x1);
             p.y = clamp(p.y, c.keep.y0, c.keep.y1);
         }
+        p.x = clamp(p.x, box.x0 + c.r, box.x1 - c.r);
+        p.y = clamp(p.y, box.y0 + c.r, box.y1 - c.r);
     };
     const home = circles.map((c) => {
         const p = { x: c.x, y: c.y };
@@ -559,21 +561,17 @@ export function relaxCircles(
     }
     // a dense pile the capped pass could not open (many groups at one spot):
     // separate it for real, still inside the box; a pile-up hides groups
-    // (the worst overlap is measured during each pass: no extra O(n²) scan)
     const limit = overlap + 0.02;
-    let worst = maxOverlap(pos.map((p, i) => ({ ...p, r: circles[i]!.r })));
-    for (let it = 0; it < iterations * 2 && worst > limit; it++) {
-        worst = 0;
+    const worstNow = () => maxOverlap(pos.map((p, i) => ({ ...p, r: circles[i]!.r })));
+    for (let it = 0; it < iterations * 2 && worstNow() > limit; it++) {
         for (let i = 0; i < n; i++) {
             for (let j = i + 1; j < n; j++) {
                 const a = pos[i]!;
                 const b = pos[j]!;
-                const sum = circles[i]!.r + circles[j]!.r;
-                const min = sum * (1 - overlap);
+                const min = (circles[i]!.r + circles[j]!.r) * (1 - overlap);
                 let dx = b.x - a.x;
                 let dy = b.y - a.y;
                 let d = Math.hypot(dx, dy);
-                if (sum > 0) worst = Math.max(worst, 1 - d / sum);
                 if (d >= min) continue;
                 if (d < 1e-6) {
                     const angle = ((i * 7 + j * 13) % 16) * (Math.PI / 8);

@@ -51,6 +51,8 @@ import * as s from './chain-map.css';
 const TRAIL = 8;
 const PAD = { left: 40, right: 14, top: 30, bottom: 34 };
 const MAX_LABELS = 12;
+/** Width kept clear for the 淨流出／淨流入 captions at both ends of the tick row. */
+const CAPTION_W = 96;
 /** asinh knee: linear below 1 億, logarithmic above. */
 const NET_UNIT = 1e8;
 const SPRING = { type: 'spring', stiffness: 60, damping: 17, mass: 1 } as const;
@@ -396,8 +398,6 @@ export function FlowRotation({
 
     // draw order: small first, selection last
     const ordered = [...bubbles].sort((a, b) => (a.id === selectedId ? 1 : b.id === selectedId ? -1 : b.point.size - a.point.size));
-    // the 淨流出／淨流入 captions share the tick row at both ends: keep clear of them
-    const CAPTION_W = 96;
     const ticks = useMemo(
         () => netTicks(scale, plotW).filter((v) => {
             const x = netFrac(v, scale) * plotW;
@@ -492,9 +492,11 @@ export function FlowRotation({
                                 </text>
                             </>
                         )}
-                        <text className={s.rotTick} x={cx} y={PAD.top + plotH + 13} textAnchor='middle'>
-                            0
-                        </text>
+                        {cx - PAD.left > CAPTION_W && PAD.left + plotW - cx > CAPTION_W && (
+                            <text className={s.rotTick} x={cx} y={PAD.top + plotH + 13} textAnchor='middle'>
+                                0
+                            </text>
+                        )}
                         <text className={s.rotCaption} x={PAD.left + plotW} y={PAD.top + plotH + 13} textAnchor='end'>
                             淨流入（億）→
                         </text>
