@@ -10,7 +10,7 @@ import { diagnoseOutput } from './server-diagnostics';
 /** Prefix of the native machine-readable error line (bundled_bin.rs). */
 export const SIDECAR_ERROR_MARKER = '@@sjpro-error ';
 
-export type BinaryProblem = 'not_found' | 'not_a_file' | 'empty' | 'not_executable';
+export type BinaryProblem = 'not_found' | 'not_a_file' | 'empty' | 'not_executable' | 'cannot_execute';
 
 export type ServerStartError =
     | { kind: 'sidecar_missing'; binary: string; path: string; reason: BinaryProblem }
@@ -70,7 +70,7 @@ function nativeBinaryError(output: string): ServerStartError | null {
                 kind: 'sidecar_missing',
                 binary: typeof detail.binary === 'string' ? detail.binary : 'shioaji',
                 path: typeof detail.path === 'string' ? detail.path : '',
-                reason: (['not_found', 'not_a_file', 'empty', 'not_executable'] as const)
+                reason: (['not_found', 'not_a_file', 'empty', 'not_executable', 'cannot_execute'] as const)
                     .find((r) => r === detail.reason) ?? 'not_found',
             };
         } catch {
@@ -89,8 +89,10 @@ const PORT_IN_USE_RE =
 const NETWORK_RE =
     /timed? ?out|connection (refused|reset)|network is unreachable|failed to (lookup|resolve)|dns error|Session initialization failed|solClient_context_create/i;
 const SIGN_TIMEOUT_RE = /sign data is timeout/i;
+// "not exist" only counts when it is about the key or the user — a missing
+// certificate file says the same words
 const AUTH_RE =
-    /Authentication failed|auth rejected|login validation error|LOGINING|not exist|invalid (secret_key|api_key)|base58/i;
+    /Authentication failed|auth rejected|login validation error|LOGINING|(api[ _-]?key|secret|user|account|person)[^\n]*not exist|invalid (secret_key|api_key)|base58/i;
 // Sinopac.pfx problems are named outright; checked before login failure so a
 // missing .pfx ("… not exist") is not blamed on the API key
 const CA_STRONG_RE = /Ca Password Incorrect|Ca has expired|CA error|ca.*(password|passwd)|pfx|pkcs ?12/i;
@@ -118,15 +120,19 @@ export function classifyServerStart(input: {
     }
     if (PORT_IN_USE_RE.test(output)) return { kind: 'port_in_use', port, lastLines };
     const fatal = output.split('\n').filter((line) => !CA_WARNING_RE.test(line)).join('\n');
-    const hint = diagnoseOutput(fatal);
-    if (SIGN_TIMEOUT_RE.test(fatal)) return { kind: 'auth_failed', hint, lastLines };
+    // diagnoseOutput's sentence only when it is about the same kind: its
+    // broad "not exist" rule would put API-key advice on a missing .pfx
+    const general = diagnoseOutput(fatal);
+    const hintFor = (prefixes: string[]) => general && prefixes.some((p) => general.startsWith(p)) ? general : null;
+    const authHint = hintFor(['API Key 不存在', '金鑰格式錯誤', '登入簽章逾時', '登入失敗']);
+    if (SIGN_TIMEOUT_RE.test(fatal)) return { kind: 'auth_failed', hint: authHint, lastLines };
     if (NETWORK_RE.test(fatal)) {
-        return { kind: 'network', timeout: /timed? ?out/i.test(fatal), hint, lastLines };
+        return { kind: 'network', timeout: /timed? ?out/i.test(fatal), hint: hintFor(['無法連線至永豐主機']), lastLines };
     }
-    if (CA_STRONG_RE.test(fatal)) return { kind: 'ca_cert', hint, lastLines };
-    if (AUTH_RE.test(fatal)) return { kind: 'auth_failed', hint, lastLines };
-    if (stage === 'timeout') return { kind: 'network', timeout: true, hint: null, lastLines };
+    if (CA_STRONG_RE.test(fatal)) return { kind: 'ca_cert', hint: hintFor(['憑證載入失敗']), lastLines };
     if (TLS_RE.test(fatal)) return { kind: 'ca_cert', hint: null, lastLines };
+    if (AUTH_RE.test(fatal)) return { kind: 'auth_failed', hint: authHint, lastLines };
+    if (stage === 'timeout') return { kind: 'network', timeout: true, hint: null, lastLines };
     if (stage === 'died') return { kind: 'sidecar_exited', lastLines };
     return { kind: 'unknown', message: redactLogLine(firstLine(output)), lastLines };
 }
@@ -140,6 +146,7 @@ export const BINARY_PROBLEM_TEXT: Record<BinaryProblem, string> = {
     not_a_file: '不是一般檔案',
     empty: '檔案是 0 bytes，下載或複製不完整',
     not_executable: '檔案沒有執行權限',
+    cannot_execute: '系統無法執行，檔案可能損毀或與此電腦不相容',
 };
 
 export interface ServerStartErrorCopy {

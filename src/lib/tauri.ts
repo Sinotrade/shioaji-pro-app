@@ -861,6 +861,9 @@ export interface StartResult extends SidecarResult {
     error?: ServerStartError;
     /** the sidecar start log of a failed spawn */
     logPath?: string;
+    /** a failed start's own output, without the explanatory notes appended
+     * to `output` (an HTTP-fallback TLS note must not read as the cause) */
+    failureOutput?: string;
 }
 
 type StartOptions = {
@@ -880,7 +883,7 @@ export async function serverStart(opts: StartOptions): Promise<StartResult> {
     const spawned = res.stage !== undefined && res.stage !== 'precheck';
     return {
         ...res,
-        error: classifyServerStart({ output: res.output, stage: res.stage, port: res.port }),
+        error: classifyServerStart({ output: res.failureOutput ?? res.output, stage: res.stage, port: res.port }),
         ...(spawned ? { logPath: await serverLogPath(res.port).catch(() => undefined) } : {}),
     };
 }
@@ -1209,6 +1212,7 @@ async function startServerOnce(opts: StartOptions): Promise<StartResult> {
     return {
         ...res,
         output: `${res.output}${note}`,
+        ...(res.ok ? {} : { failureOutput: res.output }),
         port,
         attached: false,
         portChanged,

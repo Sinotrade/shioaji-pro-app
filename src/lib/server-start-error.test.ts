@@ -53,7 +53,16 @@ describe('classifyServerStart', () => {
         expect(classifyServerStart({ output: 'Error: Ca Password Incorrect', stage: 'died', port: 1 }).kind).toBe('ca_cert');
         expect(classifyServerStart({ output: 'Failed to start HTTP server: invalid TLS certificate: no keys found', stage: 'died', port: 1 }).kind).toBe('ca_cert');
         // a missing .pfx is not blamed on the API key
-        expect(classifyServerStart({ output: 'CA error: /x/Sinopac.pfx not exist', stage: 'died', port: 1 }).kind).toBe('ca_cert');
+        const pfx = classifyServerStart({ output: 'CA error: /x/Sinopac.pfx not exist', stage: 'died', port: 1 });
+        expect(pfx.kind).toBe('ca_cert');
+        expect(serverStartErrorCopy(pfx).body).not.toContain('API Key');
+        // a missing TLS file is not a login failure either
+        expect(classifyServerStart({ output: 'Failed to start HTTP server: TLS certificate file does not exist', stage: 'died', port: 1 }).kind).toBe('ca_cert');
+    });
+    it('a binary the OS refuses to run keeps its path', () => {
+        const error = classifyServerStart({ output: nativeMissing('cannot_execute'), stage: 'spawn', port: 1 });
+        expect(error).toMatchObject({ kind: 'sidecar_missing', reason: 'cannot_execute' });
+        expect(serverStartErrorCopy(error).body).toContain('損毀');
     });
     it('a CA activation warning alone does not explain a failed start', () => {
         const output = 'WARN Failed to activate CA certificate: Ca has expired!\nthread main panicked';

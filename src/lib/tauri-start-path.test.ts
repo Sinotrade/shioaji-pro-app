@@ -120,6 +120,20 @@ describe('serverStart start path', () => {
         expect(result).toMatchObject({ ok: false, stage: 'died', error: { kind: 'auth_failed' }, logPath: '/home/.shioaji/sjpro-server-21322.log' });
     });
 
+    it('the HTTP-fallback TLS note is not taken as the cause of a failed start', async () => {
+        vi.useFakeTimers();
+        native.readTextFile.mockResolvedValue("thread 'main' panicked at src/main.rs:1");
+        const invoke = native.invoke.getMockImplementation()!;
+        native.invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) =>
+            cmd === 'spawn_server' ? { pid: 777, credentialRevision: 'native-revision' } : invoke(cmd, args));
+        const starting = tauri.serverStart({ ...settings, httpsEnabled: true });
+        await vi.waitFor(() => expect(calls('spawn_server')).toHaveLength(1));
+        await vi.advanceTimersByTimeAsync(3000);
+        const result = await starting;
+        expect(result.output).toContain('TLS');
+        expect(result.error).toMatchObject({ kind: 'sidecar_exited' });
+    });
+
     it('no account selected: account setup error and no log path', async () => {
         const result = await tauri.serverStart({ ...settings, credentialRevision: null });
         expect(result.error).toMatchObject({ kind: 'account_setup' });
