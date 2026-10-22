@@ -104,4 +104,17 @@ describe('placeLabels', () => {
         const overlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) > 0 && Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0) > 0;
         expect(overlap).toBe(false);
     });
+
+    it('keeps a nudged label inside the panel', () => {
+        const circles = [
+            { id: 'big', x: 220, y: 150, R: 80, w: 154 },
+            { id: 'small', x: 100, y: 90, R: 20, w: 154 },
+        ];
+        const p = placeLabels(circles, { top: 0, bottom: 600, left: 0, right: 800 });
+        for (const c of circles) {
+            const l = p.get(c.id)!;
+            expect(c.x + l.dx - c.w / 2).toBeGreaterThanOrEqual(0);
+            expect(c.x + l.dx + c.w / 2).toBeLessThanOrEqual(800);
+        }
+    });
 });

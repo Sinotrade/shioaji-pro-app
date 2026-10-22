@@ -122,9 +122,9 @@ export function HoldingBubbles(props: VariantProps) {
         () =>
             placeLabels(
                 bubbles.map((b) => ({ id: b.group.id, x: b.x, y: b.y, R: b.R, w: textWidth(labelName(b.group.name), 6.5) + 64 })),
-                { top: PAD.top, bottom: PAD.top + plotH },
+                { top: PAD.top, bottom: PAD.top + plotH, left: 0, right: w },
             ),
-        [bubbles, plotH],
+        [bubbles, plotH, w],
     );
     // big circles first so small ones stay on top and clickable
     const ordered = [...bubbles].sort((a, b) => b.R - a.R);

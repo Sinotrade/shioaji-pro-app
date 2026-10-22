@@ -92,6 +92,17 @@ describe('useRiver', () => {
         expect(ctx.calls).not.toContain('fill');
     });
 
+    it('repaints a static frame when an active river turns inactive', () => {
+        act(() => {
+            renderer = create(createElement(Harness, { lanes: [lane(1)], active: true }));
+        });
+        ctx.calls = [];
+        // a session reset: inactive with no flow → one cleared frame, nothing filled
+        act(() => renderer!.update(createElement(Harness, { lanes: [lane(0)], active: false })));
+        expect(ctx.calls).toContain('clear');
+        expect(ctx.calls).not.toContain('fill');
+    });
+
     it('measures the track again when layoutKey changes', () => {
         const spy = vi.spyOn(track, 'getBoundingClientRect');
         act(() => {

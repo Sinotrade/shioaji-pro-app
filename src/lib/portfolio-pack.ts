@@ -107,7 +107,10 @@ const DESCENT = 3;
  * already placed (bigger circles first, so they get the natural spot).
  * When every spot collides the least-overlapping one wins.
  */
-export function placeLabels(circles: readonly LabelCircle[], frame: { top: number; bottom: number }): Map<string, LabelPlace> {
+export function placeLabels(
+    circles: readonly LabelCircle[],
+    frame: { top: number; bottom: number; left?: number; right?: number },
+): Map<string, LabelPlace> {
     const out = new Map<string, LabelPlace>();
     const boxes: { x0: number; x1: number; y0: number; y1: number }[] = [];
     const order = [...circles].sort((a, b) => b.R - a.R || (a.id < b.id ? -1 : 1));
@@ -132,6 +135,7 @@ export function placeLabels(circles: readonly LabelCircle[], frame: { top: numbe
             const y1 = c.y + spot.dy + DESCENT;
             let cost = 0;
             if (y0 < frame.top - 8 || y1 > frame.bottom + 8) cost += 1e6;
+            if ((frame.left !== undefined && x0 < frame.left) || (frame.right !== undefined && x1 > frame.right)) cost += 1e6;
             for (const o of circles) {
                 if (o.id === c.id) continue;
                 const nx = Math.max(x0, Math.min(o.x, x1));
