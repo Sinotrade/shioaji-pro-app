@@ -156,6 +156,17 @@ export interface HoldingsState {
     error: string | null;
 }
 
+/**
+ * With an error, show whatever is held (partial or retained rows, with the
+ * error noted) or else the failure — never "no holdings" and never an endless
+ * loading: a failed refresh keeps the last timestamp, and a first refresh
+ * where one account failed has none.
+ */
+export function holdingsPhase(updatedAt: number | null | undefined, error: string | null, count: number): HoldingsState['phase'] {
+    if (error) return count > 0 ? 'ready' : 'failed';
+    return updatedAt ? 'ready' : 'loading';
+}
+
 /** Stock holdings across every account in view (no extra request). */
 export function useHoldings(): HoldingsState {
     const trading = useTradingState();
@@ -163,10 +174,7 @@ export function useHoldings(): HoldingsState {
     const q = trading.queries.positions;
     return useMemo(() => {
         const holdings = fromPositions(positions, trades);
-        // a failed refresh keeps the last snapshot's timestamp: with nothing to
-        // show, the failure (not "no holdings") is the answer
-        const phase = q.error && holdings.length === 0 ? 'failed' : q.updatedAt ? 'ready' : 'loading';
-        return { phase, holdings, error: q.error ?? null };
+        return { phase: holdingsPhase(q.updatedAt, q.error ?? null, holdings.length), holdings, error: q.error ?? null };
     }, [positions, trades, q.updatedAt, q.error]);
 }
 

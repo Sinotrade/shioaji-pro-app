@@ -11,6 +11,7 @@ import {
     dayPnlOf,
     detectFlips,
     fromPositions,
+    holdingsPhase,
     othersNote,
     portfolioView,
     todayBuys,
@@ -101,6 +102,16 @@ describe('todayBuys', () => {
         const ns = TODAY_S * 1e9;
         const buys = todayBuys([trade({ deals: [{ price: 10, quantity: 1, ts: ms }, { price: 20, quantity: 1, ts: ns }] })], NOW_MS);
         expect(buys.get(buyKey(ACC1, '2330'))?.shares).toBe(2000);
+    });
+});
+
+describe('holdingsPhase', () => {
+    it('never hides an error behind loading or an empty portfolio', () => {
+        expect(holdingsPhase(null, null, 0)).toBe('loading');
+        expect(holdingsPhase(1, null, 0)).toBe('ready');
+        expect(holdingsPhase(1, 'timeout', 0)).toBe('failed'); // retained empty snapshot
+        expect(holdingsPhase(null, 'timeout', 3)).toBe('ready'); // one account failed on the first refresh
+        expect(holdingsPhase(null, 'timeout', 0)).toBe('failed');
     });
 });
 
