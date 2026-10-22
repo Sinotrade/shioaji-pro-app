@@ -226,6 +226,18 @@ describe('指數自訂欄位', () => {
         const root = render(INDEX, undefined, cfg((f) => toggleField(f, 'index', 'estimate'), (f) => toggleField(f, 'index', 'change'))).root;
         expect(hasClass(styles.lowPriority)(amountCell(root))).toBe(false);
     });
+
+    it('收盤後只留實際量、不畫成交金額；關掉實際量那格時成交金額照常顯示', () => {
+        const closed = { ...idx, time: '13:33:00', amount_sum: '825100000000', estimate_amount_sum: '' };
+        display = { quote: { index: closed }, snapshot: undefined, book: undefined };
+        const labels = (root: ReactTestInstance) => texts(root.find(hasClass(styles.indexGroup.volume)));
+        const def = labels(render(INDEX).root);
+        expect(def).toContain('實際量');
+        expect(def).not.toContain('成交金額');
+        const noEstimate = labels(render(INDEX, undefined, cfg((f) => toggleField(f, 'index', 'estimate'))).root);
+        expect(noEstimate).toContain('成交金額');
+        expect(noEstimate).not.toContain('實際量');
+    });
 });
 
 describe('設定面板', () => {

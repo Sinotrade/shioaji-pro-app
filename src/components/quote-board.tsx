@@ -539,8 +539,11 @@ export function QuoteBoard({
             </Stat>
         ),
     };
+    // 收盤後實際量就是全日成交金額，兩格同一個數字：只留實際量（使用者決定）。
+    // 使用者關掉預估量／實際量那格時，成交金額照常顯示，全日金額才不會整個不見
+    const amountDuplicated = actual && showI('estimate');
     const indexGroups = fields.index.sections.flatMap((section) => {
-        const cells = visibleFields(fields.index, section).filter((f) => f !== 'breadthBar');
+        const cells = visibleFields(fields.index, section).filter((f) => f !== 'breadthBar' && !(f === 'amount' && amountDuplicated));
         if (cells.length === 0) return [];
         return section === 'breadth'
             ? [
