@@ -333,6 +333,12 @@ describe('bubble relaxation', () => {
         expect(maxOverlap(out.map((p) => ({ ...p, r: 14 })))).toBeLessThanOrEqual(0.14);
     });
 
+    it('keeps a bubble wider than its quadrant room whole inside the frame', () => {
+        const frame = { x0: 40, x1: 100, y0: 0, y1: 100 };
+        const [p] = relaxCircles([{ x: 45, y: 50, r: 18, keep: { x0: -Infinity, x1: 51.99, y0: -Infinity, y1: Infinity } }], frame);
+        expect(p!.x - 18).toBeGreaterThanOrEqual(40);
+    });
+
     it('leaves separated bubbles alone and clamps to the box', () => {
         const out = relaxCircles(
             [
