@@ -9,6 +9,8 @@ afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks();
 it('does not probe or adopt the formal default server when the isolated dev service is down', async () => {
     vi.stubEnv('DEV', true); vi.stubEnv('VITE_DEV_SERVER_PORT', '21323');
     vi.stubGlobal('window', { setTimeout, clearTimeout });
+    // HTTP 探測優先走 WebView fetch；兩條路徑都隔離，不接觸本機執行中的服務。
+    vi.stubGlobal('fetch', native.fetch);
     native.fetch.mockImplementation(async (url: string) => new Response('{}', { status: url.includes(':21322/') ? 200 : 503 }));
     expect(await serverStatus()).toEqual({ running: false });
     expect(native.fetch.mock.calls.length).toBeGreaterThan(0);

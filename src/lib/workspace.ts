@@ -2,6 +2,7 @@
 
 import type { LayoutItem } from 'react-grid-layout';
 import { isLinkGroup, LINK_GROUPS, type LinkGroupId } from './flash-link';
+import { decodeQuoteBoardFields, encodeQuoteBoardFields } from './quote-board-fields';
 
 // 版面座標底座（儲存基準）：288 欄 = 傳統 24 欄 × 12。
 // - 撰寫/舊存檔仍是 24 欄語意，載入時 ×12 無損升階
@@ -124,6 +125,8 @@ export interface Block {
     chartOhlc?: boolean;
     // 可見範圍最高／最低標記（#240）— false = 隱藏；缺省 = 顯示
     chartHighLow?: boolean;
+    // 報價欄自訂欄位（顯示哪些格子、區塊與格子的順序；指數與個股各一組）— 缺省 = 預設
+    quoteBoard?: import('./quote-board-fields').QuoteBoardFieldsConfig;
 }
 
 // K 線圖可選週期（工具列順序）。版面只存標籤，分鐘數與載入天數在 candle-chart
@@ -190,7 +193,7 @@ export function linkGroupSummary(w: Workspace): { id: LinkGroupId; code: string 
 }
 
 export type SessionConfigPatch = Partial<
-    Pick<Block, 'chartSession' | 'chartInterval' | 'intradaySession' | 'chartOrder' | 'chartOhlc' | 'chartHighLow'>
+    Pick<Block, 'chartSession' | 'chartInterval' | 'intradaySession' | 'chartOrder' | 'chartOhlc' | 'chartHighLow' | 'quoteBoard'>
 >;
 
 // 開彈出視窗時把面板的時段選擇與 K 線週期帶進 URL（session=…、interval=…）
@@ -202,9 +205,11 @@ export function popoutSessionParam(block: Block): Record<string, string> {
               ? block.intradaySession
               : undefined;
     const interval = block.type === 'chart' ? block.chartInterval : undefined;
+    const qb = block.type === 'chart' ? encodeQuoteBoardFields(block.quoteBoard) : undefined;
     return {
         ...(session ? { session } : {}),
         ...(interval ? { interval } : {}),
+        ...(qb ? { qb } : {}),
     };
 }
 
@@ -218,6 +223,7 @@ export function popoutSessionFromQuery(q: URLSearchParams): SessionConfigPatch {
         chartInterval: isChartInterval(q.get('interval'))
             ? (q.get('interval') as ChartInterval)
             : undefined,
+        quoteBoard: decodeQuoteBoardFields(q.get('qb')),
     };
 }
 
