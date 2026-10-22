@@ -15,6 +15,7 @@ const m = vi.hoisted(() => ({
     wperfAt: undefined as number | undefined,
     wperfAtCalls: [] as (string | undefined)[],
     zero: false,
+    groupZero: false,
 }));
 
 function state(
@@ -74,7 +75,7 @@ vi.mock('../hooks/use-index-components', () => ({
             if (p.metric === 'amount') {
                 return state('group_metric', { groups: group(5000) });
             }
-            return state('group_metric', { groups: group(-240) });
+            return state('group_metric', { groups: group(m.groupZero ? 0 : -240) });
         }),
         subErrors: projections.map(() => undefined),
         bootstrap: { status: 'ready' },
@@ -127,6 +128,7 @@ beforeEach(() => {
     });
     m.wperfAtCalls = [];
     m.zero = false;
+    m.groupZero = false;
 });
 afterEach(async () => {
     await act(async () => view?.unmount());
@@ -162,8 +164,41 @@ it('預設面積為貢獻，已存的選擇照舊', () => {
     expect(initialSizeMetric('contribution')).toBe('contribution');
 });
 
+async function renderSized() {
+    vi.stubGlobal(
+        'ResizeObserver',
+        class {
+            observe() {}
+            disconnect() {}
+        },
+    );
+    await act(async () => {
+        view = create(createElement(SectorHeatmap, {}), {
+            createNodeMock: () => ({
+                getBoundingClientRect: () => ({ width: 480, height: 320 }),
+            }),
+        });
+    });
+    return view.root.findAll(
+        (n) =>
+            n.type === 'button' &&
+            typeof n.props.title === 'string' &&
+            /成交|貢獻/.test(n.props.title) &&
+            n.props.style?.width > 0,
+    );
+}
+
+it('排行全為 0 但「其他成員」餘量不為 0 → 照原指標，只畫餘量磚', async () => {
+    m.zero = true;
+    m.wperfAt = undefined;
+    const tiles = await renderSized();
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0]!.props.title).toMatch(/其他/);
+});
+
 it('開盤前貢獻全為 0 → 下鑽磚牆改用市值權重，不停在「等待分布資料」', async () => {
     m.zero = true;
+    m.groupZero = true;
     m.wperfAt = undefined;
     vi.stubGlobal(
         'ResizeObserver',
