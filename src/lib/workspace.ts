@@ -129,6 +129,24 @@ export interface Block {
     chartHighLow?: boolean;
     // 報價欄自訂欄位（顯示哪些格子、區塊與格子的順序；指數與個股各一組）— 缺省 = 預設
     quoteBoard?: import('./quote-board-fields').QuoteBoardFieldsConfig;
+    // 產業鏈資金流向的視圖／類型、持股族群的呈現／分組（內建版面可指定）—
+    // 缺省 = 沿用上次在任一同類面板的選擇
+    chainView?: ChainView;
+    chainKind?: ChainKind;
+    holdingForm?: HoldingForm;
+    holdingGrouping?: import('./portfolio-sector').Grouping;
+}
+
+export const CHAIN_VIEWS = ['rank', 'rotation', 'heat'] as const;
+export type ChainView = (typeof CHAIN_VIEWS)[number];
+export const CHAIN_KINDS = ['all', 'chain', 'theme'] as const;
+export type ChainKind = (typeof CHAIN_KINDS)[number];
+export const HOLDING_FORMS = ['bubble', 'lanes'] as const;
+export type HoldingForm = (typeof HOLDING_FORMS)[number];
+
+/** 面板自己的設定值（舊存檔可能是任意值）：合法才採用，否則用 fallback */
+export function panelPref<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+    return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
 // K 線圖可選週期（工具列順序）。版面只存標籤，分鐘數與載入天數在 candle-chart
@@ -195,7 +213,20 @@ export function linkGroupSummary(w: Workspace): { id: LinkGroupId; code: string 
 }
 
 export type SessionConfigPatch = Partial<
-    Pick<Block, 'chartSession' | 'chartInterval' | 'intradaySession' | 'chartOrder' | 'chartOhlc' | 'chartHighLow' | 'quoteBoard'>
+    Pick<
+        Block,
+        | 'chartSession'
+        | 'chartInterval'
+        | 'intradaySession'
+        | 'chartOrder'
+        | 'chartOhlc'
+        | 'chartHighLow'
+        | 'quoteBoard'
+        | 'chainView'
+        | 'chainKind'
+        | 'holdingForm'
+        | 'holdingGrouping'
+    >
 >;
 
 // 開彈出視窗時把面板的時段選擇與 K 線週期帶進 URL（session=…、interval=…）
@@ -1034,6 +1065,83 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
                 presetCell('heatmap-ov', 'heatmap', 12, 0, 12, 12),
                 presetCell('wall-ov', 'intradaywall', 0, 12, 16, 12),
                 presetCell('movers-ov', 'movers', 16, 12, 8, 12),
+            ],
+        },
+    },
+    // ---- 產業資金面板組合（產業全景、產業鏈資金流向、持股族群）----
+    {
+        name: '產業掃描',
+        desc: '產業全景＋族群資金排行找強勢方向，點個股帶出 K 線與報價',
+        workspace: {
+            blocks: [
+                { id: 'heatmap-ms', type: 'heatmap', pin: null },
+                { id: 'chain-ms', type: 'chainmap', pin: null, chainView: 'rank', chainKind: 'all' },
+                { id: 'watch-ms', type: 'watchlist', pin: null },
+                { id: 'chart-ms', type: 'chart', pin: null },
+                { id: 'movers-ms', type: 'movers', pin: null },
+            ],
+            layout: [
+                presetCell('heatmap-ms', 'heatmap', 0, 0, 13, 13),
+                presetCell('chain-ms', 'chainmap', 13, 0, 11, 13),
+                presetCell('watch-ms', 'watchlist', 0, 13, 5, 11),
+                presetCell('chart-ms', 'chart', 5, 13, 13, 11),
+                presetCell('movers-ms', 'movers', 18, 13, 6, 11),
+            ],
+        },
+    },
+    {
+        name: '持股健檢',
+        desc: '持股依族群分組對照產業全景，持倉損益與日 K 同屏檢視',
+        workspace: {
+            blocks: [
+                { id: 'holding-hc', type: 'holdingmap', pin: null, holdingForm: 'bubble', holdingGrouping: 'sector' },
+                { id: 'heatmap-hc', type: 'heatmap', pin: null },
+                { id: 'dock-hc', type: 'dock', pin: null },
+                { id: 'chart-hc', type: 'chart', pin: null, chartInterval: '1D' },
+            ],
+            layout: [
+                presetCell('holding-hc', 'holdingmap', 0, 0, 11, 14),
+                presetCell('heatmap-hc', 'heatmap', 11, 0, 13, 14),
+                presetCell('dock-hc', 'dock', 0, 14, 14, 10),
+                presetCell('chart-hc', 'chart', 14, 14, 10, 10),
+            ],
+        },
+    },
+    {
+        name: '族群輪動',
+        desc: '輪動象限看資金轉進、熱力看成分股，訊號與 K 線找點、閃電進場',
+        workspace: {
+            blocks: [
+                { id: 'rotation-rt', type: 'chainmap', pin: null, chainView: 'rotation', chainKind: 'all' },
+                { id: 'heat-rt', type: 'chainmap', pin: null, chainView: 'heat', chainKind: 'all' },
+                { id: 'signals-rt', type: 'signals', pin: null },
+                { id: 'chart-rt', type: 'chart', pin: null },
+                { id: 'flash-rt', type: 'flash', pin: null },
+            ],
+            layout: [
+                presetCell('rotation-rt', 'chainmap', 0, 0, 10, 14),
+                presetCell('heat-rt', 'chainmap', 10, 0, 9, 14),
+                presetCell('signals-rt', 'signals', 0, 14, 6, 10),
+                presetCell('chart-rt', 'chart', 6, 14, 13, 10),
+                presetCell('flash-rt', 'flash', 19, 0, 5, 24),
+            ],
+        },
+    },
+    {
+        name: '產業鏈研究',
+        desc: '產業鏈上中下游資金流向與領頭股，日 K、公司資料與籌碼對照',
+        workspace: {
+            blocks: [
+                { id: 'chain-cr', type: 'chainmap', pin: null, chainView: 'rank', chainKind: 'chain' },
+                { id: 'chart-cr', type: 'chart', pin: null, chartInterval: '1D' },
+                { id: 'company-cr', type: 'company', pin: null },
+                { id: 'chips-cr', type: 'chips', pin: null },
+            ],
+            layout: [
+                presetCell('chain-cr', 'chainmap', 0, 0, 13, 24),
+                presetCell('chart-cr', 'chart', 13, 0, 11, 14),
+                presetCell('company-cr', 'company', 13, 14, 6, 10),
+                presetCell('chips-cr', 'chips', 19, 14, 5, 10),
             ],
         },
     },

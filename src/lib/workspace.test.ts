@@ -3,12 +3,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     BLOCK_META,
+    CHAIN_KINDS,
+    CHAIN_VIEWS,
+    CHART_INTERVALS,
     DEFAULT_WORKSPACE,
+    HOLDING_FORMS,
     GRID_COLS,
     GRID_LEGACY_COLS,
     GRID_LEGACY_SCALE,
     LAYOUT_PRESETS,
     loadWorkspace,
+    panelPref,
     toRenderGeom,
     popoutSessionFromQuery,
     popoutSessionParam,
@@ -172,7 +177,8 @@ describe('popout session param', () => {
 });
 
 describe('built-in layout presets', () => {
-    const NEW_PRESETS = ['期貨當沖', '期現對照', '零股存股', '條件單監控', '選擇權組合', '盤勢總覽', '族群資金'];
+    const SECTOR_PRESETS = ['產業掃描', '持股健檢', '族群輪動', '產業鏈研究'];
+    const NEW_PRESETS = ['期貨當沖', '期現對照', '零股存股', '條件單監控', '選擇權組合', '盤勢總覽', '族群資金', ...SECTOR_PRESETS];
     const BANNED = ['原生', '免費', '交易終端', 'Claude', 'Codex'];
     const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a) =>
         a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
@@ -264,5 +270,98 @@ describe('built-in layout presets', () => {
         const ws = LAYOUT_PRESETS.find((x) => x.name === '期貨當沖')!.workspace;
         const pins = ws.blocks.filter((b) => BLOCK_META[b.type].pinnable).map((b) => b.pin);
         expect(new Set(pins)).toEqual(new Set(['TXFR1']));
+    });
+
+    const preset = (name: string) => LAYOUT_PRESETS.find((x) => x.name === name)!.workspace;
+
+    it('sector presets only carry valid panel view settings', () => {
+        for (const name of SECTOR_PRESETS) {
+            for (const b of preset(name).blocks) {
+                if (b.chainView !== undefined) {
+                    expect(b.type, b.id).toBe('chainmap');
+                    expect(CHAIN_VIEWS).toContain(b.chainView);
+                }
+                if (b.chainKind !== undefined) {
+                    expect(b.type, b.id).toBe('chainmap');
+                    expect(CHAIN_KINDS).toContain(b.chainKind);
+                }
+                if (b.holdingForm !== undefined) {
+                    expect(b.type, b.id).toBe('holdingmap');
+                    expect(HOLDING_FORMS).toContain(b.holdingForm);
+                }
+                if (b.holdingGrouping !== undefined) {
+                    expect(b.type, b.id).toBe('holdingmap');
+                    // lib/portfolio-sector 的 GROUPINGS（該模組帶瀏覽器依賴，測試不直接 import）
+                    expect(['sector', 'chain', 'theme']).toContain(b.holdingGrouping);
+                }
+                if (b.chartInterval !== undefined) {
+                    expect(b.type, b.id).toBe('chart');
+                    expect(CHART_INTERVALS).toContain(b.chartInterval);
+                }
+                // 產業面板一律帶指定視圖，套用版面時不受上次的全域選擇影響
+                if (b.type === 'chainmap') expect(b.chainView && b.chainKind, b.id).toBeTruthy();
+                if (b.type === 'holdingmap') expect(b.holdingForm && b.holdingGrouping, b.id).toBeTruthy();
+            }
+        }
+    });
+
+    it('sector presets combine the new panels with a linked chart and are not copies of 族群資金', () => {
+        const typeSet = (name: string) => [...new Set(preset(name).blocks.map((b) => b.type))].sort().join(',');
+        const seen = new Set([typeSet('族群資金'), typeSet('盤勢總覽'), typeSet('熱力選股')]);
+        for (const name of SECTOR_PRESETS) {
+            const ws = preset(name);
+            expect(ws.blocks.some((b) => ['heatmap', 'chainmap', 'holdingmap'].includes(b.type)), name).toBe(true);
+            // 點族群／個股要有一張跟選取連動的 K 線（含報價欄）
+            expect(ws.blocks.some((b) => b.type === 'chart' && b.pin === null), name).toBe(true);
+            const key = typeSet(name);
+            expect(seen.has(key), `${name} duplicates another preset's panel set`).toBe(false);
+            seen.add(key);
+        }
+    });
+
+    it('族群輪動 shows the rotation quadrant and the heat view side by side', () => {
+        const views = preset('族群輪動').blocks.filter((b) => b.type === 'chainmap').map((b) => b.chainView);
+        expect(views.sort()).toEqual(['heat', 'rotation']);
+    });
+
+    it('產業鏈研究 keeps the chain panel full height so the 上中下游 detail is shown', () => {
+        const ws = preset('產業鏈研究');
+        const chain = ws.blocks.find((b) => b.type === 'chainmap')!;
+        expect(chain.chainKind).toBe('chain');
+        const cell = ws.layout.find((l) => l.i === chain.id)!;
+        // DETAIL_MIN_PX = 520：24 列 × 30px＋間距 ≈ 858px
+        expect(cell.h * 30 + (cell.h - 1) * 6).toBeGreaterThanOrEqual(520);
+    });
+
+    // App 的渲染：rowHeight 30、margin 6、padding 6；密度依視窗寬（<1800 → 24 欄、<2800 → 48 欄）
+    for (const width of [1440, 1920]) {
+        it(`sector presets keep the data panels readable on a ${width}px-wide screen`, () => {
+            const density = width < 1800 ? 1 : 2;
+            const cols = GRID_LEGACY_COLS * density;
+            const colW = (width - 2 * 6 - 6 * (cols - 1)) / cols;
+            for (const name of SECTOR_PRESETS) {
+                const ws = preset(name);
+                const typeOf = new Map(ws.blocks.map((b) => [b.id, b.type]));
+                for (const l of ws.layout) {
+                    if (!['heatmap', 'chainmap', 'holdingmap', 'chart'].includes(typeOf.get(l.i)!)) continue;
+                    const { w } = toRenderGeom(l, density);
+                    expect(w * colW + (w - 1) * 6, `${name} ${l.i}`).toBeGreaterThanOrEqual(500);
+                }
+            }
+        });
+    }
+
+    it('panel view settings fall back when a saved value is unknown', () => {
+        expect(panelPref('rotation', CHAIN_VIEWS, 'rank')).toBe('rotation');
+        expect(panelPref('holdings', CHAIN_VIEWS, 'rank')).toBe('rank');
+        expect(panelPref(undefined, HOLDING_FORMS, 'lanes')).toBe('lanes');
+        expect(panelPref(3, CHAIN_KINDS, 'all')).toBe('all');
+    });
+
+    it('a changed panel view is saved on that panel only', () => {
+        const ws = preset('族群輪動');
+        const next = withBlockSessionConfig(ws, 'heat-rt', { chainView: 'rank' });
+        expect(next.blocks.find((b) => b.id === 'heat-rt')?.chainView).toBe('rank');
+        expect(next.blocks.find((b) => b.id === 'rotation-rt')?.chainView).toBe('rotation');
     });
 });

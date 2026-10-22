@@ -36,6 +36,7 @@ import {
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
 import { icFlowRecorder, useIcSectorFlow } from '../lib/sector-flow-ic';
 import { refreshTradingState } from '../lib/trading-state';
+import { HOLDING_FORMS, panelPref, type HoldingForm } from '../lib/workspace';
 import { AsyncStatus } from './async-status';
 import { dir, readPref, Segment, writePref } from './chain-ui';
 import { Odometer } from './odometer';
@@ -47,8 +48,7 @@ import * as s from './portfolio-sector.css';
 const FORM_KEY = 'sj-pro-chainmap-holding-form';
 const GROUPING_KEY = 'sj-pro-chainmap-holding-grouping';
 
-export type HoldingForm = 'bubble' | 'lanes';
-const FORMS = ['bubble', 'lanes'] as const;
+const FORMS = HOLDING_FORMS;
 
 export function PortfolioSector({
     themes,
@@ -61,6 +61,10 @@ export function PortfolioSector({
     paused,
     onPick,
     status,
+    form: panelForm,
+    grouping: panelGrouping,
+    onFormChange,
+    onGroupingChange,
 }: {
     themes: readonly Theme[];
     book: FlowBook;
@@ -73,13 +77,20 @@ export function PortfolioSector({
     onPick: (code: string) => void;
     /** Feed status shown at the end of the alert line. */
     status?: ReactNode;
+    /** The panel's own 呈現 / 分組 (saved with the layout); absent = last choice. */
+    form?: HoldingForm;
+    grouping?: Grouping;
+    onFormChange?: (form: HoldingForm) => void;
+    onGroupingChange?: (grouping: Grouping) => void;
 }) {
     const { accounts } = useAccounts();
     const holdings = useHoldings();
     const { cards, error: cardsError } = useCards(true);
     const privacyMoney = usePrivacyMoney();
-    const [form, setFormState] = useState<HoldingForm>(() => readPref(FORM_KEY, FORMS, 'bubble'));
-    const [grouping, setGroupingState] = useState<Grouping>(() => readPref(GROUPING_KEY, GROUPINGS, 'sector'));
+    const [savedForm, setFormState] = useState<HoldingForm>(() => readPref(FORM_KEY, FORMS, 'bubble'));
+    const [savedGrouping, setGroupingState] = useState<Grouping>(() => readPref(GROUPING_KEY, GROUPINGS, 'sector'));
+    const form = panelPref(panelForm, FORMS, savedForm);
+    const grouping = panelPref(panelGrouping, GROUPINGS, savedGrouping);
     const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
     const effective = grouping;
     const icRevision = useIcSectorFlow(true);
@@ -141,10 +152,12 @@ export function PortfolioSector({
     const setForm = (v: HoldingForm) => {
         setFormState(v);
         writePref(FORM_KEY, v);
+        onFormChange?.(v);
     };
     const setGrouping = (v: Grouping) => {
         setGroupingState(v);
         writePref(GROUPING_KEY, v);
+        onGroupingChange?.(v);
         setSelectedGroup(null);
     };
 

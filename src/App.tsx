@@ -493,9 +493,26 @@ function BlockBody({
         case 'heatmap':
             return <SectorHeatmap onPick={onSelectCode} />;
         case 'chainmap':
-            return <ChainMap contract={contract} onPick={onSelectCode} />;
+            return (
+                <ChainMap
+                    contract={contract}
+                    onPick={onSelectCode}
+                    view={block.chainView}
+                    kind={block.chainKind}
+                    onViewChange={(chainView) => onSessionConfigChange(block.id, { chainView })}
+                    onKindChange={(chainKind) => onSessionConfigChange(block.id, { chainKind })}
+                />
+            );
         case 'holdingmap':
-            return <PortfolioSectorPanel onPick={onSelectCode} />;
+            return (
+                <PortfolioSectorPanel
+                    onPick={onSelectCode}
+                    form={block.holdingForm}
+                    grouping={block.holdingGrouping}
+                    onFormChange={(holdingForm) => onSessionConfigChange(block.id, { holdingForm })}
+                    onGroupingChange={(holdingGrouping) => onSessionConfigChange(block.id, { holdingGrouping })}
+                />
+            );
         case 'pulse':
             return (
                 <MarketPulsePanel
