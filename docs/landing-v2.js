@@ -664,15 +664,17 @@
     }
     if (!active) return;
     var src = vtSrc(active);
-    if (vt.userPaused) { if (!active.paused) active.pause(); return; }
-    if (active.dataset.cur !== src) {
+    // 已載入過的影片在換主題時一併換檔（暫停中也換，避免停在舊主題的畫面）
+    if (active.dataset.cur ? active.dataset.cur !== src : !vt.userPaused) {
       var t = active.currentTime || 0;
       active.dataset.cur = src;
       active.src = src;
       if (t) active.addEventListener('loadedmetadata', function once() { active.removeEventListener('loadedmetadata', once); active.currentTime = t % (active.duration || 1); });
     }
+    if (vt.userPaused) { if (!active.paused) active.pause(); return; }
     var pr = active.play();
-    if (pr && pr.catch) pr.catch(function () { /* autoplay blocked: poster stays */ });
+    // 瀏覽器擋自動播放：按鈕改成「播放動畫」，按一下就播放
+    if (pr && pr.catch) pr.catch(function (e) { if (e && e.name === 'NotAllowedError' && !vt.userPaused) { vt.userPaused = true; vtUpdate(vt); } });
   }
   if (vts.length) {
     if ('IntersectionObserver' in window) {
