@@ -22,6 +22,17 @@ import {
     rotationTrail,
     smoothTrail,
     relaxCircles,
+    beeswarm,
+    maxOverlap,
+    MOMENTUM_WARMUP,
+    momentumWarmup,
+    netExtents,
+    netFrac,
+    netScale,
+    netTicks,
+    niceCeil,
+    RECENT,
+    softUnit,
 } from './chain-motion';
 
 function group(minutes: [slot: number, turnover: number, net: number][]): GroupFlow {
@@ -273,12 +284,42 @@ describe('bubble relaxation', () => {
         const out = relaxCircles(circles, box);
         const d = Math.hypot(out[0]!.x - out[1]!.x, out[0]!.y - out[1]!.y);
         expect(d).toBeGreaterThan(20);
+        // a pile the capped pass cannot open is separated for real, still close by
+        expect(maxOverlap(out.map((p, i) => ({ ...p, r: circles[i]!.r })))).toBeLessThanOrEqual(0.14);
+        out.forEach((p, i) => {
+            const c = circles[i]!;
+            expect(Math.hypot(p.x - c.x, p.y - c.y)).toBeLessThanOrEqual(c.r * 1.5);
+        });
+        expect(relaxCircles(circles, box)).toEqual(out);
+    });
+
+    it('keeps the cap when a light nudge is enough', () => {
+        const circles = [
+            { x: 100, y: 100, r: 20 },
+            { x: 130, y: 100, r: 20 },
+        ];
+        const out = relaxCircles(circles, box);
         out.forEach((p, i) => {
             const c = circles[i]!;
             expect(Math.hypot(p.x - c.x, p.y - c.y)).toBeLessThanOrEqual(c.r * 1.2 + 1e-6);
         });
-        expect(relaxCircles(circles, box)).toEqual(out);
+        expect(maxOverlap(out.map((p, i) => ({ ...p, r: circles[i]!.r })))).toBeLessThanOrEqual(0.14);
     });
+
+    it('opens a 36-group pile on one line (the warm-up bug) without overlap beyond tolerance', () => {
+        const wide = { x0: 40, x1: 1360, y0: 30, y1: 650 };
+        const circles = Array.from({ length: 36 }, (_, i) => ({ x: 700 + i * 12, y: 340, r: 16 + (i % 5) * 4 }));
+        const out = relaxCircles(circles, wide);
+        expect(maxOverlap(out.map((p, i) => ({ ...p, r: circles[i]!.r })))).toBeLessThanOrEqual(0.14);
+        out.forEach((p, i) => {
+            const r = circles[i]!.r;
+            expect(p.x).toBeGreaterThanOrEqual(wide.x0 + r - 1e-6);
+            expect(p.x).toBeLessThanOrEqual(wide.x1 - r + 1e-6);
+            expect(p.y).toBeGreaterThanOrEqual(wide.y0 + r - 1e-6);
+            expect(p.y).toBeLessThanOrEqual(wide.y1 - r + 1e-6);
+        });
+    });
+
     it('leaves separated bubbles alone and clamps to the box', () => {
         const out = relaxCircles(
             [
@@ -289,5 +330,102 @@ describe('bubble relaxation', () => {
         );
         expect(out[0]).toEqual({ x: 50, y: 50 });
         expect(out[1]).toEqual({ x: 388, y: 288 });
+    });
+});
+
+describe('beeswarm (warm-up layout)', () => {
+    const box = { y0: 0, y1: 400 };
+    it('keeps x, never overlaps and stays near the centre line', () => {
+        const circles = Array.from({ length: 36 }, (_, i) => ({ x: 300 + i * 8, y: 0, r: 10 + (i % 4) * 3 }));
+        const ys = beeswarm(circles, 200, box);
+        const placed = circles.map((c, i) => ({ ...c, y: ys[i]! }));
+        expect(maxOverlap(placed)).toBeLessThanOrEqual(1e-6);
+        placed.forEach((c) => {
+            expect(c.y - c.r).toBeGreaterThanOrEqual(0);
+            expect(c.y + c.r).toBeLessThanOrEqual(400);
+        });
+        // the largest circle sits on the line
+        expect(ys[3]).toBe(200);
+        expect(beeswarm(circles, 200, box)).toEqual(ys);
+    });
+    it('leaves separated circles on the line', () => {
+        expect(beeswarm([{ x: 0, y: 0, r: 5 }, { x: 50, y: 0, r: 5 }], 100, box)).toEqual([100, 100]);
+    });
+});
+
+describe('momentum warm-up', () => {
+    it('counts the minutes still missing from the first received bar', () => {
+        expect(MOMENTUM_WARMUP).toBe(RECENT + 5);
+        expect(momentumWarmup(100, null)).toBe(MOMENTUM_WARMUP);
+        expect(momentumWarmup(100, 104)).toBe(MOMENTUM_WARMUP - 5); // 5 minutes received
+        expect(momentumWarmup(100, 100 + MOMENTUM_WARMUP - 2)).toBe(1);
+        expect(momentumWarmup(100, 100 + MOMENTUM_WARMUP - 1)).toBe(0);
+        expect(momentumWarmup(100, 200)).toBe(0);
+        expect(momentumWarmup(null, MOMENTUM_WARMUP - 1)).toBe(0);
+    });
+    it('is exactly zero momentum while the session is shorter than the recent window', () => {
+        // why the warm-up exists: both windows hold the same bars
+        const minutes: [number, number, number][] = [];
+        for (let s = 100; s < 100 + RECENT; s += 1) minutes.push([s, 100, s % 3 === 0 ? 40 : -10]);
+        const g = group(minutes);
+        for (let s = 100; s < 100 + RECENT; s += 1) expect(rotationPoint(g, s)!.y).toBeCloseTo(0, 10);
+        // and real once the warm-up is over
+        for (let s = 100 + RECENT; s < 100 + MOMENTUM_WARMUP; s += 1) minutes.push([s, 100, 80]);
+        expect(rotationPoint(group(minutes), 100 + MOMENTUM_WARMUP - 1)!.y).toBeGreaterThan(5);
+    });
+});
+
+describe('net axis', () => {
+    it('takes robust per-side extents: one outlier does not set the scale', () => {
+        const values = [10.4e8, 6.3e8, 5.6e8, 5.3e8, 3.4e8, 2.4e8, 1.3e8, ...Array.from({ length: 27 }, (_, i) => (i + 1) * 0.04e8), -0.08e8];
+        const { pos, neg } = netExtents(values);
+        // p95 of 34 inflows is the runner-up, not the outlier: 6.3 × 1.1 → 10 億
+        expect(pos).toBe(1e9);
+        expect(netExtents([...values, 40e8]).pos).toBe(1e9);
+        expect(neg).toBe(1e8); // floor
+        expect(netExtents([])).toEqual({ pos: 1e8, neg: 1e8 });
+        expect(niceCeil(6.9e8)).toBe(1e9);
+        expect(niceCeil(1.3e8)).toBe(2e8);
+    });
+    it('puts zero where both sides fit, one px-per-unit, at least the minimum share each', () => {
+        const all = netScale(1e10, 1e8);
+        expect(all.zero).toBeCloseTo(0.2, 6); // inflow-only market: outflow keeps 20 %
+        const even = netScale(1e9, 1e9);
+        expect(even.zero).toBeCloseTo(0.5, 6);
+        // equal flows are equal distances from zero (inside the linear part)
+        const s = netScale(1e9, 5e8);
+        expect(netFrac(2e8, s) - s.zero).toBeCloseTo(s.zero - netFrac(-2e8, s), 9);
+    });
+    it('soft-clamps outliers inside the edge, keeping their order', () => {
+        const s = netScale(1e9, 1e9);
+        const a = netFrac(1e9, s);
+        const b = netFrac(3e9, s);
+        const c = netFrac(1e11, s);
+        expect(a).toBeLessThan(b);
+        expect(b).toBeLessThan(c);
+        expect(c).toBeLessThan(1);
+        expect(netFrac(-1e11, s)).toBeGreaterThan(0);
+        expect(softUnit(0.5)).toBe(0.5);
+        expect(softUnit(1.5)).toBeLessThan(1);
+        expect(softUnit(1.5)).toBeGreaterThan(softUnit(1.2));
+        expect(softUnit(-1)).toBe(0);
+    });
+    it('picks readable ticks spaced apart on both sides', () => {
+        const s = netScale(1e9, 1e8);
+        const ticks = netTicks(s, 1300, 44);
+        expect(ticks.some((t) => t > 0)).toBe(true);
+        expect(ticks.some((t) => t < 0)).toBe(true);
+        const xs = [s.zero * 1300, ...ticks.map((t) => netFrac(t, s) * 1300)].sort((a, b) => a - b);
+        for (let i = 1; i < xs.length; i += 1) expect(xs[i]! - xs[i - 1]!).toBeGreaterThanOrEqual(44);
+        for (const t of ticks) expect([1, 2, 5]).toContain(Number((Math.abs(t) / 10 ** Math.floor(Math.log10(Math.abs(t)))).toFixed(6)));
+    });
+});
+
+describe('quadrant boundary', () => {
+    it('classifies exact zeros consistently', () => {
+        expect(quadrantOf(0, 0)).toBe('leading');
+        expect(quadrantOf(0, -0.01)).toBe('weakening');
+        expect(quadrantOf(-0.01, 0)).toBe('improving');
+        expect(quadrantOf(-0.01, -0.01)).toBe('lagging');
     });
 });

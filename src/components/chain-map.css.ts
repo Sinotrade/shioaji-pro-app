@@ -731,6 +731,15 @@ export const rotFill = styleVariants(
         ...reduce,
     })),
 );
+// warm-up: no quadrant yet, so no hue — the grey says "not classified"
+export const rotFillWarm = style({
+    fill: tint(vars.color.mutedForeground, 22),
+    stroke: tint(vars.color.mutedForeground, 55),
+    strokeWidth: 1,
+    transition: 'r 900ms cubic-bezier(0.22, 1, 0.36, 1), fill 600ms ease, stroke 600ms ease',
+    selectors: { [`${rotBubble}:hover &, ${rotBubble}:focus-visible &`]: { fill: tint(vars.color.mutedForeground, 32) } },
+    ...reduce,
+});
 const ring = keyframes({ from: { transform: 'scale(1)', opacity: 0.55 }, to: { transform: 'scale(1.8)', opacity: 0 } });
 export const rotPulse = styleVariants(
     perState((c) => ({
@@ -756,6 +765,27 @@ export const rotName = style({ ...labelBase, fill: vars.color.foreground, fontSi
 export const rotValue = styleVariants(
     perState((c) => ({ ...labelBase, fill: mutedState(c), color: mutedState(c), fontSize: '9px', fontWeight: 600, fontFamily: vars.font.mono })),
 );
+export const rotValueWarm = style({ ...labelBase, fill: vars.color.mutedForeground, fontSize: '9px', fontWeight: 600, fontFamily: vars.font.mono });
+export const rotWarm = style({
+    position: 'absolute',
+    top: '34px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 2,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    padding: '2px 9px',
+    whiteSpace: 'nowrap',
+    fontSize: '0.6rem',
+    color: vars.color.mutedForeground,
+    border: `1px dashed ${vars.color.border}`,
+    borderRadius: '999px',
+    background: tint(vars.color.panel, 88),
+    backdropFilter: 'blur(4px)',
+    pointerEvents: 'auto',
+    cursor: 'help',
+});
 // inside a bubble: no halo stroke, the fill is the backdrop
 export const rotNameIn = style({ fill: vars.color.foreground, fontSize: '9.5px', fontWeight: 650, fontFamily: vars.font.body, pointerEvents: 'none' });
 export const rotValueIn = style({
