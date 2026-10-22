@@ -182,8 +182,8 @@ describe('收盤後改用實際量', () => {
         expect(all).toContain('實際量');
         expect(all).not.toContain('預估量');
         expect(all).toContain('-17%');
-        // 收盤後成交金額與實際量是同一個數字，兩格照樣並列（使用者決定）；提示不重複列
-        expect(all).toContain('成交金額');
+        // 收盤後成交金額與實際量是同一個數字：只留實際量，成交金額格不畫（使用者決定）；提示也不重複列
+        expect(all).not.toContain('成交金額');
         const tip = titles(root).join('\n');
         expect(tip).toContain('全日實際 8251.0億');
         expect(tip).not.toContain('成交金額');
@@ -191,6 +191,25 @@ describe('收盤後改用實際量', () => {
         expect(tip).not.toContain('已成交預估');
         // lean 階梯仍只留一格量能：較昨日
         expect(leanVolumeLabels(root)).toEqual(['較昨日']);
+    });
+
+    it('盤中有預估量時成交金額與預估量並列；收盤後只留實際量', () => {
+        previous = 1_000_000_000_000;
+        display = { quote: { index: idx }, snapshot: undefined, book: undefined };
+        expect(statLabels(render())).toEqual(expect.arrayContaining(['成交金額', '預估量']));
+        display = {
+            quote: { index: { ...idx, time: '13:33:00', amount_sum: '825100000000', estimate_amount_sum: '' } },
+            snapshot: undefined,
+            book: undefined,
+        };
+        const closed = statLabels(render());
+        expect(closed).toContain('實際量');
+        expect(closed).not.toContain('成交金額');
+        // 只有收盤快照（沒收到 quote_idx）重開時也一樣
+        display = { quote: undefined, snapshot: { close: 46822.08, total_amount: 825100000000, datetime: '2026-10-19T13:33:00' }, book: undefined };
+        const reopened = statLabels(render());
+        expect(reopened).toContain('實際量');
+        expect(reopened).not.toContain('成交金額');
     });
 
     it('盤中沒有預估量照舊：標「預估量」、不算較昨日', () => {
