@@ -1151,9 +1151,9 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
                 { id: 'company-sr', type: 'company', pin: null },
             ],
             layout: [
-                presetCell('watch-sr', 'watchlist', 0, 0, 4, 24),
-                presetCell('chart-sr', 'chart', 4, 0, 12, 14),
-                presetCell('chain-sr', 'chainmap', 4, 14, 12, 10),
+                presetCell('watch-sr', 'watchlist', 0, 0, 5, 24),
+                presetCell('chart-sr', 'chart', 5, 0, 11, 14),
+                presetCell('chain-sr', 'chainmap', 5, 14, 11, 10),
                 presetCell('company-sr', 'company', 16, 0, 8, 24),
             ],
         },

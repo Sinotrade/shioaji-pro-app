@@ -91,7 +91,17 @@ export function PortfolioSector({
     const [savedGrouping, setGroupingState] = useState<Grouping>(() => readPref(GROUPING_KEY, GROUPINGS, 'sector'));
     const form = panelPref(panelForm, FORMS, savedForm);
     const grouping = panelPref(panelGrouping, GROUPINGS, savedGrouping);
-    const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+    // a cleared panel setting falls back to the latest shared choice, not the one read at mount
+    useEffect(() => {
+        if (panelForm === undefined) setFormState(readPref(FORM_KEY, FORMS, 'bubble'));
+    }, [panelForm]);
+    useEffect(() => {
+        if (panelGrouping === undefined) setGroupingState(readPref(GROUPING_KEY, GROUPINGS, 'sector'));
+    }, [panelGrouping]);
+    // the selected group id belongs to one grouping: drop it whenever the grouping changes (switch, preset or Agent spec)
+    const [selection, setSelection] = useState<{ grouping: Grouping; id: string } | null>(null);
+    const selectedGroup = selection?.grouping === grouping ? selection.id : null;
+    const setSelectedGroup = (id: string | null) => setSelection(id === null ? null : { grouping, id });
     const effective = grouping;
     const icRevision = useIcSectorFlow(true);
 
