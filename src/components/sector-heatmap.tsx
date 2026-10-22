@@ -514,11 +514,12 @@ export function SectorHeatmap({
                 : Math.abs(entry.value);
         // 開盤前／全部平盤時貢獻皆為 0：面積改用市值權重，不讓已載入的資料
         // 整片消失、一直停在「等待產業資料」
-        const weightOf = weightWithFallback(
-            groupRows.map((row) => groupEntries.get(row.category) ?? []),
-            metricWeight,
-            (entry) => entry.weight_pct,
-        );
+        const { weight: weightOf, fallback: weightFallback } =
+            weightWithFallback(
+                groupRows.map((row) => groupEntries.get(row.category) ?? []),
+                metricWeight,
+                (entry) => entry.weight_pct,
+            );
         const groupsIn = groupRows.map((row) => {
             const items: PanoramaStock[] = (
                 groupEntries.get(row.category) ?? []
@@ -558,7 +559,12 @@ export function SectorHeatmap({
             nextSplit,
         );
         memo.split = nextSplit;
-        return { selected, layout, groupCount: groupsIn.filter((g) => g.weight > 0).length };
+        return {
+            selected,
+            layout,
+            groupCount: groupsIn.filter((g) => g.weight > 0).length,
+            weightFallback,
+        };
     }, [groupEntries, groupRows, indexCode, panoramaSize, sizeMetric]);
 
     // 個股名稱（入選者，經 contracts 快取懶載）
@@ -678,23 +684,32 @@ export function SectorHeatmap({
         // ic 換新物件代表建底可能已更新（權重來源）
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [baseIc, indexCode, panorama, sizeMetric, totalAmount]);
+    // 備援時面積其實是市值權重：說明與匯出都照實際面積指標寫
+    const effectiveMetric: SizeMetric = panorama.weightFallback
+        ? 'weight'
+        : sizeMetric;
     const metricLabel = SIZE_METRICS.find(
-        (metric) => metric.value === sizeMetric,
+        (metric) => metric.value === effectiveMetric,
     )!.label;
     const colorHint =
         theme.convention === 'intl' ? '綠色上漲・紅色下跌' : '紅色上漲・綠色下跌';
     const coverageText =
         shownCount === 0
             ? ''
-            : sizeMetric === 'contribution'
+            : panorama.weightFallback
+              ? `顯示 ${shownGroups} 個產業、${shownCount} 檔`
+              : effectiveMetric === 'contribution'
               ? `顯示 ${shownGroups} 個產業中貢獻最大的 ${shownCount} 檔`
-              : `顯示 ${shownGroups} 個產業中${sizeMetric === 'amount' ? '成交值最大' : '成交最活躍'}的 ${shownCount} 檔${
+              : `顯示 ${shownGroups} 個產業中${effectiveMetric === 'amount' ? '成交值最大' : '成交最活躍'}的 ${shownCount} 檔${
                     coverage !== null
                         ? `（佔全體個股${metricLabel} ${Math.round(coverage * 100)}%）`
                         : ''
                 }`;
-    const areaLabel =
-        sizeMetric === 'contribution' ? '貢獻（絕對值）' : metricLabel;
+    const areaLabel = panorama.weightFallback
+        ? `市值（${sizeMetric === 'contribution' ? '貢獻' : '成交值'}尚未產生）`
+        : sizeMetric === 'contribution'
+          ? '貢獻（絕對值）'
+          : metricLabel;
     const captionText = `${colorHint}・面積越大代表${areaLabel}越大${coverageText ? `・${coverageText}` : ''}`;
 
     // ---- 匯出 PNG ----
@@ -888,15 +903,22 @@ export function SectorHeatmap({
             points: number;
             code?: string;
         };
+        // 全部為 0（開盤前／全面平盤）時同全景，面積改用市值權重
+        const { weight: wallWeight, fallback: wallFallback } =
+            weightWithFallback(
+                [drillEntries],
+                (entry) => Math.abs(entry.value),
+                (entry) => entry.weight_pct,
+            );
         const items: WallItem[] = drillEntries.map((entry) => ({
             key: entry.code,
-            weight: Math.abs(entry.value),
+            weight: wallWeight(entry),
             name: nameByCode.get(entry.code) ?? entry.code,
             pct: entry.pct_chg,
             points: entry.value,
             code: entry.code,
         }));
-        if (otherCount > 0 && Math.abs(otherValue) > 1e-9) {
+        if (!wallFallback && otherCount > 0 && Math.abs(otherValue) > 1e-9) {
             items.push({
                 key: 'other',
                 weight: Math.abs(otherValue),

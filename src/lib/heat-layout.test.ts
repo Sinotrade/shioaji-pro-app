@@ -237,8 +237,9 @@ describe('weightWithFallback', () => {
             primary,
             fallback,
         );
-        expect(pick({ value: -2, weight: 1 })).toBe(2);
-        expect(pick({ value: 0, weight: 3 })).toBe(0);
+        expect(pick.fallback).toBe(false);
+        expect(pick.weight({ value: -2, weight: 1 })).toBe(2);
+        expect(pick.weight({ value: 0, weight: 3 })).toBe(0);
     });
 
     it('falls back when every primary value is zero (pre-open contribution)', () => {
@@ -247,10 +248,14 @@ describe('weightWithFallback', () => {
             primary,
             fallback,
         );
-        expect(pick({ value: 0, weight: 3 })).toBe(3);
+        expect(pick.fallback).toBe(true);
+        expect(pick.weight({ value: 0, weight: 3 })).toBe(3);
     });
 
     it('uses the fallback for empty input', () => {
-        expect(weightWithFallback<E>([], primary, fallback)).toBe(fallback);
+        expect(weightWithFallback<E>([], primary, fallback)).toEqual({
+            weight: fallback,
+            fallback: true,
+        });
     });
 });
