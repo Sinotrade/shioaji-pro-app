@@ -236,6 +236,25 @@ describe('收盤後改用實際量', () => {
         expect(reopened).not.toContain('成交金額');
     });
 
+    // 階梯重挑靠 useBoardTier 的 DOM 文字簽章：格子消失時它的文字節點也不見，不必另外帶旗標
+    it('同一個看板盤中轉收盤：成交金額格消失；前一交易日金額還在抓時 lean 留較昨日佔位', () => {
+        // 數字刻意取同樣長度（金額 8251.0億 對 9292.1億、較昨日 +86% 對 +65%），只有格數不同
+        previous = 500_000_000_000;
+        const live = { ...idx, amount_sum: '825100000000' };
+        display = { quote: { index: live }, snapshot: undefined, book: undefined };
+        let root!: ReturnType<typeof create>;
+        act(() => { root = create(createElement(QuoteBoard, { contract: INDEX })); });
+        expect(statLabels(root.root)).toContain('成交金額');
+        display = { quote: { index: { ...live, time: '13:33:00', estimate_amount_sum: '' } }, snapshot: undefined, book: undefined };
+        act(() => root.update(createElement(QuoteBoard, { contract: INDEX })));
+        expect(statLabels(root.root)).not.toContain('成交金額');
+        // 前一交易日金額還在抓：較昨日先佔位（本分支的不跳動規則），不會出現成交金額
+        previous = undefined;
+        act(() => root.update(createElement(QuoteBoard, { contract: INDEX })));
+        expect(leanVolumeLabels(root.root)).toEqual(['較昨日']);
+        expect(statLabels(root.root)).not.toContain('成交金額');
+    });
+
     it('盤中沒有預估量照舊：標「預估量」、不算較昨日', () => {
         previous = 1_000_000_000_000;
         display = { quote: { index: { ...idx, estimate_amount_sum: '' } }, snapshot: undefined, book: undefined };
