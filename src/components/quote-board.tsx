@@ -220,7 +220,7 @@ export function QuoteBoard({
     ]
         .map((v) => String(v ?? '').length)
         // 收盤後改成實際量時成交金額格不畫：數字長度可能都沒變，格數少一格也要重挑階梯
-        .concat(actual ? 'actual' : '')
+        .concat(actual ? 1 : 0)
         .join(',');
     const { tier, toggle } = useBoardTier(boardRef, isIndex, contentKey);
     const richBoard = isRichTier(tier);
