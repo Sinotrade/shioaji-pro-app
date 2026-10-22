@@ -396,7 +396,15 @@ export function FlowRotation({
 
     // draw order: small first, selection last
     const ordered = [...bubbles].sort((a, b) => (a.id === selectedId ? 1 : b.id === selectedId ? -1 : b.point.size - a.point.size));
-    const ticks = useMemo(() => netTicks(scale, plotW), [scale, plotW]);
+    // the 淨流出／淨流入 captions share the tick row at both ends: keep clear of them
+    const CAPTION_W = 96;
+    const ticks = useMemo(
+        () => netTicks(scale, plotW).filter((v) => {
+            const x = netFrac(v, scale) * plotW;
+            return x > CAPTION_W && x < plotW - CAPTION_W;
+        }),
+        [scale, plotW],
+    );
     const focus = warming ? null : focusState;
     const fillOf = (b: Bubble) => (b.state ? s.rotFill[b.state] : s.rotFillWarm);
     const stateText = (b: Bubble) => (b.state ? QUADRANT_LABEL[b.state] : '動能累積中');
