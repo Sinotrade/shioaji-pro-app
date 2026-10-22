@@ -219,6 +219,8 @@ export function QuoteBoard({
         counts?.limit_down_count,
     ]
         .map((v) => String(v ?? '').length)
+        // 收盤後改成實際量時成交金額格不畫：數字長度可能都沒變，格數少一格也要重挑階梯
+        .concat(actual ? 'actual' : '')
         .join(',');
     const { tier, toggle } = useBoardTier(boardRef, isIndex, contentKey);
     const richBoard = isRichTier(tier);
