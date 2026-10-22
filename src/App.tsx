@@ -766,6 +766,8 @@ function PopoutView({
     const [flashOrder, setFlashOrder] = useState(() => loadPopoutFlashOrder(POPOUT_WINDOW_ID));
     // K 線的全盤／僅日盤放在這裡，報價欄的開高低才能跟著切（只在這個視窗內，不寫回面板）
     const [chartSession, setChartSession] = useState(popoutChartSession);
+    const [holdingForm, setHoldingForm] = useState(popoutSession.holdingForm);
+    const [holdingGrouping, setHoldingGrouping] = useState(popoutSession.holdingGrouping);
     // heartbeat: a long-open popout must not be evicted as "stale"
     useEffect(() => {
         if (type !== 'flash' || !POPOUT_WINDOW_ID) return;
@@ -777,8 +779,16 @@ function PopoutView({
     let body: React.ReactNode = <BlockPlaceholder />;
     if (type === 'pnl') body = <PnlPanel />;
     else if (type === 'holdingmap')
-        // popout 點持股 → 切換主視窗的選取商品
-        body = <PortfolioSectorPanel onPick={broadcastSelectCode} />;
+        // popout 點持股 → 切換主視窗的選取商品；呈現／分組從面板帶入，之後只在這個視窗內切換
+        body = (
+            <PortfolioSectorPanel
+                onPick={broadcastSelectCode}
+                form={holdingForm}
+                grouping={holdingGrouping}
+                onFormChange={setHoldingForm}
+                onGroupingChange={setHoldingGrouping}
+            />
+        );
     else if (type === 'optchain')
         // popout T 字 click → switch the MAIN window's selected symbol so
         // 下單面板等連動面板跟著動（issue #1: T 字要同時連動下單面板）

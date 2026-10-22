@@ -143,10 +143,15 @@ export const CHAIN_KINDS = ['all', 'chain', 'theme'] as const;
 export type ChainKind = (typeof CHAIN_KINDS)[number];
 export const HOLDING_FORMS = ['bubble', 'lanes'] as const;
 export type HoldingForm = (typeof HOLDING_FORMS)[number];
+export const HOLDING_GROUPINGS = ['sector', 'chain', 'theme'] as const satisfies readonly import('./portfolio-sector').Grouping[];
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+    return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : undefined;
+}
 
 /** 面板自己的設定值（舊存檔可能是任意值）：合法才採用，否則用 fallback */
 export function panelPref<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
-    return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+    return oneOf(value, allowed) ?? fallback;
 }
 
 // K 線圖可選週期（工具列順序）。版面只存標籤，分鐘數與載入天數在 candle-chart
@@ -239,10 +244,14 @@ export function popoutSessionParam(block: Block): Record<string, string> {
               : undefined;
     const interval = block.type === 'chart' ? block.chartInterval : undefined;
     const qb = block.type === 'chart' ? encodeQuoteBoardFields(block.quoteBoard) : undefined;
+    const form = block.type === 'holdingmap' ? block.holdingForm : undefined;
+    const grouping = block.type === 'holdingmap' ? block.holdingGrouping : undefined;
     return {
         ...(session ? { session } : {}),
         ...(interval ? { interval } : {}),
         ...(qb ? { qb } : {}),
+        ...(form ? { form } : {}),
+        ...(grouping ? { grouping } : {}),
     };
 }
 
@@ -257,6 +266,8 @@ export function popoutSessionFromQuery(q: URLSearchParams): SessionConfigPatch {
             ? (q.get('interval') as ChartInterval)
             : undefined,
         quoteBoard: decodeQuoteBoardFields(q.get('qb')),
+        holdingForm: oneOf(q.get('form'), HOLDING_FORMS),
+        holdingGrouping: oneOf(q.get('grouping'), HOLDING_GROUPINGS),
     };
 }
 
@@ -1068,42 +1079,44 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
             ],
         },
     },
-    // ---- 產業資金面板組合（產業全景、產業鏈資金流向、持股族群）----
+    // ---- 產業資金面板組合（產業全景、產業鏈資金流向、持股族群、公司資料）----
     {
         name: '產業掃描',
-        desc: '產業全景＋族群資金排行找強勢方向，點個股帶出 K 線與報價',
+        desc: '產業全景＋族群資金排行找強勢方向，點個股帶出 K 線、報價與公司資料',
         workspace: {
             blocks: [
                 { id: 'heatmap-ms', type: 'heatmap', pin: null },
                 { id: 'chain-ms', type: 'chainmap', pin: null, chainView: 'rank', chainKind: 'all' },
                 { id: 'watch-ms', type: 'watchlist', pin: null },
                 { id: 'chart-ms', type: 'chart', pin: null },
-                { id: 'movers-ms', type: 'movers', pin: null },
+                { id: 'company-ms', type: 'company', pin: null },
             ],
             layout: [
                 presetCell('heatmap-ms', 'heatmap', 0, 0, 13, 13),
                 presetCell('chain-ms', 'chainmap', 13, 0, 11, 13),
                 presetCell('watch-ms', 'watchlist', 0, 13, 5, 11),
-                presetCell('chart-ms', 'chart', 5, 13, 13, 11),
-                presetCell('movers-ms', 'movers', 18, 13, 6, 11),
+                presetCell('chart-ms', 'chart', 5, 13, 12, 11),
+                presetCell('company-ms', 'company', 17, 13, 7, 11),
             ],
         },
     },
     {
         name: '持股健檢',
-        desc: '持股依族群分組對照產業全景，持倉損益與日 K 同屏檢視',
+        desc: '持股依族群分組對照產業全景，持倉、日 K 與公司資料同屏檢視',
         workspace: {
             blocks: [
                 { id: 'holding-hc', type: 'holdingmap', pin: null, holdingForm: 'bubble', holdingGrouping: 'sector' },
                 { id: 'heatmap-hc', type: 'heatmap', pin: null },
+                { id: 'company-hc', type: 'company', pin: null },
                 { id: 'dock-hc', type: 'dock', pin: null },
                 { id: 'chart-hc', type: 'chart', pin: null, chartInterval: '1D' },
             ],
             layout: [
-                presetCell('holding-hc', 'holdingmap', 0, 0, 11, 14),
-                presetCell('heatmap-hc', 'heatmap', 11, 0, 13, 14),
-                presetCell('dock-hc', 'dock', 0, 14, 14, 10),
-                presetCell('chart-hc', 'chart', 14, 14, 10, 10),
+                presetCell('holding-hc', 'holdingmap', 0, 0, 10, 14),
+                presetCell('heatmap-hc', 'heatmap', 10, 0, 8, 14),
+                presetCell('company-hc', 'company', 18, 0, 6, 24),
+                presetCell('dock-hc', 'dock', 0, 14, 9, 10),
+                presetCell('chart-hc', 'chart', 9, 14, 9, 10),
             ],
         },
     },
@@ -1128,20 +1141,20 @@ const RAW_LAYOUT_PRESETS: { name: string; desc: string; workspace: Workspace }[]
         },
     },
     {
-        name: '產業鏈研究',
-        desc: '產業鏈上中下游資金流向與領頭股，日 K、公司資料與籌碼對照',
+        name: '個股研究',
+        desc: '日 K 與報價、公司基本面與供應鏈位置，對照所屬族群的資金熱力',
         workspace: {
             blocks: [
-                { id: 'chain-cr', type: 'chainmap', pin: null, chainView: 'rank', chainKind: 'chain' },
-                { id: 'chart-cr', type: 'chart', pin: null, chartInterval: '1D' },
-                { id: 'company-cr', type: 'company', pin: null },
-                { id: 'chips-cr', type: 'chips', pin: null },
+                { id: 'watch-sr', type: 'watchlist', pin: null },
+                { id: 'chart-sr', type: 'chart', pin: null, chartInterval: '1D' },
+                { id: 'chain-sr', type: 'chainmap', pin: null, chainView: 'heat', chainKind: 'all' },
+                { id: 'company-sr', type: 'company', pin: null },
             ],
             layout: [
-                presetCell('chain-cr', 'chainmap', 0, 0, 13, 24),
-                presetCell('chart-cr', 'chart', 13, 0, 11, 14),
-                presetCell('company-cr', 'company', 13, 14, 6, 10),
-                presetCell('chips-cr', 'chips', 19, 14, 5, 10),
+                presetCell('watch-sr', 'watchlist', 0, 0, 4, 24),
+                presetCell('chart-sr', 'chart', 4, 0, 12, 14),
+                presetCell('chain-sr', 'chainmap', 4, 14, 12, 10),
+                presetCell('company-sr', 'company', 16, 0, 8, 24),
             ],
         },
     },

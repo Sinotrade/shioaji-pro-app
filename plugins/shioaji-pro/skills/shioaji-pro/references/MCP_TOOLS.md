@@ -76,7 +76,10 @@ past success or conversation text.
   (accounts, quantities, indicators); a new `id` creates a panel. Always keep
   your own AI Agent panel. Settings in v1: chart `interval`
   (`1m`/`5m`/`15m`/`60m`/`1D`), `session`, `ohlc`, `high_low`; intraday
-  `session`. Validation errors carry a JSON path; fix them rather than
+  `session`; chainmap `view` (`rank`/`rotation`/`heat`) and `kind`
+  (`all`/`chain`/`theme`); holdingmap `form` (`bubble`/`lanes`) and
+  `grouping` (`sector`/`chain`/`theme`). A chainmap or holdingmap setting
+  left out follows the user's last choice in that kind of panel. Validation errors carry a JSON path; fix them rather than
   dropping panels. Applying records one undo step that the user can also undo
   from the header (復原版面). Report what `apply_workspace_spec` returns, which
   is the layout as actually applied.

@@ -8,6 +8,7 @@ import {
     CHART_INTERVALS,
     DEFAULT_WORKSPACE,
     HOLDING_FORMS,
+    HOLDING_GROUPINGS,
     GRID_COLS,
     GRID_LEGACY_COLS,
     GRID_LEGACY_SCALE,
@@ -177,7 +178,7 @@ describe('popout session param', () => {
 });
 
 describe('built-in layout presets', () => {
-    const SECTOR_PRESETS = ['產業掃描', '持股健檢', '族群輪動', '產業鏈研究'];
+    const SECTOR_PRESETS = ['產業掃描', '持股健檢', '族群輪動', '個股研究'];
     const NEW_PRESETS = ['期貨當沖', '期現對照', '零股存股', '條件單監控', '選擇權組合', '盤勢總覽', '族群資金', ...SECTOR_PRESETS];
     const BANNED = ['原生', '免費', '交易終端', 'Claude', 'Codex'];
     const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a) =>
@@ -291,8 +292,7 @@ describe('built-in layout presets', () => {
                 }
                 if (b.holdingGrouping !== undefined) {
                     expect(b.type, b.id).toBe('holdingmap');
-                    // lib/portfolio-sector 的 GROUPINGS（該模組帶瀏覽器依賴，測試不直接 import）
-                    expect(['sector', 'chain', 'theme']).toContain(b.holdingGrouping);
+                    expect(HOLDING_GROUPINGS).toContain(b.holdingGrouping);
                 }
                 if (b.chartInterval !== undefined) {
                     expect(b.type, b.id).toBe('chart');
@@ -324,13 +324,14 @@ describe('built-in layout presets', () => {
         expect(views.sort()).toEqual(['heat', 'rotation']);
     });
 
-    it('產業鏈研究 keeps the chain panel full height so the 上中下游 detail is shown', () => {
-        const ws = preset('產業鏈研究');
-        const chain = ws.blocks.find((b) => b.type === 'chainmap')!;
-        expect(chain.chainKind).toBe('chain');
-        const cell = ws.layout.find((l) => l.i === chain.id)!;
-        // DETAIL_MIN_PX = 520：24 列 × 30px＋間距 ≈ 858px
-        expect(cell.h * 30 + (cell.h - 1) * 6).toBeGreaterThanOrEqual(520);
+    it('公司資料 follows the same selection as the chart wherever it is included', () => {
+        for (const name of ['產業掃描', '持股健檢', '個股研究']) {
+            const ws = preset(name);
+            const company = ws.blocks.find((b) => b.type === 'company');
+            expect(company, name).toBeDefined();
+            expect(company!.pin).toBeNull();
+            expect(ws.blocks.find((b) => b.type === 'chart')!.pin).toBeNull();
+        }
     });
 
     // App 的渲染：rowHeight 30、margin 6、padding 6；密度依視窗寬（<1800 → 24 欄、<2800 → 48 欄）
@@ -343,9 +344,11 @@ describe('built-in layout presets', () => {
                 const ws = preset(name);
                 const typeOf = new Map(ws.blocks.map((b) => [b.id, b.type]));
                 for (const l of ws.layout) {
-                    if (!['heatmap', 'chainmap', 'holdingmap', 'chart'].includes(typeOf.get(l.i)!)) continue;
+                    // 產業全景的面板庫預設寬（8 欄）在 1440 約 470px，其餘資料面板至少 500px
+                    const min = { heatmap: 440, chainmap: 500, holdingmap: 500, chart: 500, company: 300 }[typeOf.get(l.i)! as string];
+                    if (min === undefined) continue;
                     const { w } = toRenderGeom(l, density);
-                    expect(w * colW + (w - 1) * 6, `${name} ${l.i}`).toBeGreaterThanOrEqual(500);
+                    expect(w * colW + (w - 1) * 6, `${name} ${l.i}`).toBeGreaterThanOrEqual(min);
                 }
             }
         });
@@ -356,6 +359,18 @@ describe('built-in layout presets', () => {
         expect(panelPref('holdings', CHAIN_VIEWS, 'rank')).toBe('rank');
         expect(panelPref(undefined, HOLDING_FORMS, 'lanes')).toBe('lanes');
         expect(panelPref(3, CHAIN_KINDS, 'all')).toBe('all');
+    });
+
+    it('a 持股族群 popout opens on the panel 呈現 and 分組', () => {
+        const holding = preset('持股健檢').blocks.find((b) => b.type === 'holdingmap')!;
+        const q = new URLSearchParams(popoutSessionParam(holding));
+        expect(popoutSessionFromQuery(q)).toMatchObject({ holdingForm: 'bubble', holdingGrouping: 'sector' });
+        expect(popoutSessionParam({ id: 'h', type: 'holdingmap', pin: null })).toEqual({});
+        const junk = popoutSessionFromQuery(new URLSearchParams({ form: 'pie', grouping: 'x' }));
+        expect(junk.holdingForm).toBeUndefined();
+        expect(junk.holdingGrouping).toBeUndefined();
+        // 其他面板不帶持股設定
+        expect(popoutSessionParam({ id: 'c', type: 'chart', pin: null, holdingForm: 'lanes' })).toEqual({});
     });
 
     it('a changed panel view is saved on that panel only', () => {
