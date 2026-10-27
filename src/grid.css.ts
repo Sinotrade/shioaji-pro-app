@@ -26,6 +26,11 @@ globalStyle('.drag-handle', {
     cursor: 'grab',
 });
 
+// The narrow display is static: nothing to grab.
+globalStyle('.react-grid-item.static .drag-handle', {
+    cursor: 'default',
+});
+
 globalStyle('.react-grid-item.react-draggable-dragging .drag-handle', {
     cursor: 'grabbing',
 });

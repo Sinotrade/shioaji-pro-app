@@ -7,6 +7,7 @@ import GridLayout, {
     type LayoutItem,
 } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
+import { bottom } from 'react-grid-layout/core';
 import { useWorkspaceGrid } from './hooks/use-workspace-grid';
 import * as styles from './App.css';
 import { BottomDock } from './components/bottom-dock';
@@ -1189,7 +1190,7 @@ function MainApp() {
     // 欄寬與最小寬不再跟著螢幕等比放大，超寬幕上面板可以縮得更窄、
     // 拖拉步進更細。k 皆整除 12 → 同密度回存無損；跨密度僅一次舍入。
     const { renderLayout, renderCols, renderWidth, density, gridProps } = useWorkspaceGrid({
-        workspace, workspaceRef, workspaceGenerationRef: workspaceGenRef, width, updateWorkspace,
+        workspace, workspaceRef, width, updateWorkspace,
     });
     const densityRef = useRef(density);
     densityRef.current = density;
@@ -1208,7 +1209,8 @@ function MainApp() {
             const item: LayoutItem = {
                 i: id,
                 x: 0,
-                y: Infinity, // RGL drops it at the bottom
+                // A finite bottom: the narrow display never writes RGL's placement back, and JSON stores Infinity as null.
+                y: bottom(workspace.layout),
                 // defaultSize 以 24 欄語意撰寫 → 存檔是 288 基準
                 w: meta.defaultSize.w * GRID_LEGACY_SCALE,
                 h: meta.defaultSize.h,

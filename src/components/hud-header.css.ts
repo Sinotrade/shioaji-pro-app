@@ -223,10 +223,9 @@ export const popover = style({
     flexDirection: 'column',
     gap: vars.space.sm,
     '@media': {
+        // Right-aligned like the desktop menu, at its own width, never past the window.
         '(max-width: 1050px)': {
-            left: 8,
             right: 8,
-            width: 'auto',
             maxWidth: 'calc(100vw - 16px)',
             boxSizing: 'border-box',
         },
