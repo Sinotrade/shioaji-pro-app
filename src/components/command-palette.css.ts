@@ -2,6 +2,10 @@
 
 import { style } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
+import { resultCodeWeight, resultDetailSize, resultTextSize, searchResults, searchSurface } from './search-surface.css';
+
+// Keep the usual top inset, but give short or zoomed viewports room for the controls.
+const paletteTop = 'clamp(0.5rem, calc((100vh - 20rem) / 2), 18vh)';
 
 export const overlay = style({
     position: 'fixed',
@@ -11,20 +15,31 @@ export const overlay = style({
     display: 'flex',
     alignItems: 'flex-start',
     justifyContent: 'center',
-    paddingTop: '18vh',
+    paddingTop: paletteTop,
 });
 
 export const box = style({
+    ...searchSurface,
     width: '26rem',
-    background: vars.color.panelRaised,
+    maxWidth: 'calc(100vw - 2rem)',
+    // Keep expanded details reachable below the top inset, including short windows.
+    maxHeight: `calc(100vh - ${paletteTop} - 1rem)`,
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    boxSizing: 'border-box',
     border: `1px solid ${vars.color.borderBright}`,
     borderRadius: vars.radius.lg,
     boxShadow: '0 24px 64px rgba(0, 0, 0, 0.5)',
-    overflow: 'hidden',
+    overflowX: 'hidden',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
 });
 
 export const input = style({
+    flexShrink: 0,
     width: '100%',
+    boxSizing: 'border-box',
     fontFamily: vars.font.mono,
     fontSize: '1rem',
     fontWeight: 600,
@@ -40,64 +55,59 @@ export const input = style({
         textTransform: 'none',
         fontWeight: 400,
     },
+    '@media': {
+        '(max-height: 360px)': { padding: `${vars.space.sm} ${vars.space.lg}` },
+    },
 });
 
 export const hint = style({
+    flexShrink: 0,
     padding: `${vars.space.sm} ${vars.space.lg}`,
     fontSize: '0.68rem',
     color: vars.color.mutedForeground,
     display: 'flex',
     justifyContent: 'space-between',
+    '@media': {
+        '(max-height: 360px)': { padding: `${vars.space.xs} ${vars.space.sm}` },
+    },
 });
 
 export const results = style({
+    ...searchResults,
     maxHeight: '18rem',
+    flex: '1 1 2.4rem',
+    boxSizing: 'border-box',
+    // Expanded details must never squeeze the selected result out of the list.
+    minHeight: 'calc(2.4rem + 2px)',
+    // Leave a fractional-pixel-safe edge below the final selected row.
+    paddingBottom: 1,
+    overscrollBehavior: 'contain',
     overflowY: 'auto',
     borderBottom: `1px solid ${vars.color.border}`,
 });
 
-const resultBase = {
-    width: '100%',
-    minHeight: '2.4rem',
-    display: 'grid',
-    gridTemplateColumns: '5.5rem minmax(0, 1fr) auto',
-    alignItems: 'center',
-    gap: vars.space.sm,
-    padding: `${vars.space.xs} ${vars.space.lg}`,
-    border: 'none',
-    color: vars.color.foreground,
-    textAlign: 'left' as const,
-    cursor: 'pointer',
-};
-
+// Palette rows are taller and wider set than the watchlist popup's.
 export const result = style({
-    ...resultBase,
-    background: 'transparent',
+    minHeight: '2.4rem',
+    padding: `${vars.space.xs} ${vars.space.lg}`,
+    vars: { [resultTextSize]: '0.76rem', [resultCodeWeight]: '700', [resultDetailSize]: '0.65rem' },
 });
 
-export const resultActive = style({
-    ...resultBase,
-    background: vars.color.accent,
-});
-
-export const resultCode = style({
+// Panel commands keep their leading icon at every width; product order is unrelated.
+export const panelIcon = style({
+    flex: '0 0 auto',
     fontFamily: vars.font.mono,
     fontWeight: 700,
     fontSize: '0.76rem',
 });
 
-export const resultName = style({
+export const panelName = style({
+    flex: '1 1 10em',
     minWidth: 0,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
     fontSize: '0.76rem',
-});
-
-export const resultType = style({
-    color: vars.color.mutedForeground,
-    fontSize: '0.65rem',
-    whiteSpace: 'nowrap',
 });
 
 export const err = style({

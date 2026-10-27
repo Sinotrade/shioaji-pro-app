@@ -2,13 +2,15 @@ import { RefreshButton } from './refresh-button';
 import { Star } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
+import { pickUnderlying, useStockCatalog } from '../hooks/use-stock-catalog';
 import { primeContract } from '../lib/contracts-cache';
 import {
     fetchSnapshots,
     fetchWarrants,
     resolveContract,
 } from '../lib/shioaji';
-import { loadStockCatalog, type StockMeta } from '../lib/stock-index';
+import type { StockMeta } from '../lib/stock-index';
+import { getProductCatalogVersion } from '../lib/product-catalog-version';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Snapshot } from '../lib/types/market';
@@ -16,6 +18,7 @@ import { todayStr } from '../lib/utils/date';
 import { fmtPrice } from '../lib/utils/format';
 import * as styles from './derivative-explorer.css';
 import { AsyncStatus } from './async-status';
+import { CatalogRetryAlert } from './catalog-retry-alert';
 import * as panel from './panel.css';
 import { UnderlyingPicker } from './underlying-picker';
 
@@ -51,47 +54,56 @@ export function WarrantPanel({
     const [sort, setSort] = useState<'moneyness' | 'expiry'>('moneyness');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
-
-    useEffect(() => {
-        loadStockCatalog()
-            .then((catalog) => {
-                const saved = localStorage.getItem(WARRANT_UNDERLYING);
-                setUnderlying(
-                    catalog.find((stock) => stock.code === saved) ??
-                        catalog.find((stock) => stock.code === '2330') ??
-                        catalog[0] ??
-                        null,
-                );
-            })
-            .catch(() => setError(true));
-    }, []);
-
-    useEffect(() => {
-        if (!underlying) return;
-        let active = true;
+    const { ready: catalogReady, error: catalogError, retry, reloads, version } = useStockCatalog({
+        onLoad: (catalog) => {
+            if (catalog.length === 0) setLoading(false);
+            const saved = localStorage.getItem(WARRANT_UNDERLYING);
+            setUnderlying(previous => pickUnderlying(catalog, previous, saved));
+        },
+        onError: () => setLoading(false),
+    });
+    // 同標的、同目錄版本重抓（重試、視窗取得焦點）時舊列身分仍有效，不鎖表格
+    const requestContext = JSON.stringify([version, underlying?.code]);
+    const [loadedContext, setLoadedContext] = useState<string | null>(null);
+    const contractsReady = catalogReady && loadedContext === requestContext && !error;
+    // 換標的時在同一次 render 清掉上一檔的權證與現貨價，摘要與表格才不會分屬兩檔
+    const [shownCode, setShownCode] = useState(underlying?.code);
+    if (shownCode !== underlying?.code) {
+        setShownCode(underlying?.code);
         setContracts([]);
+        setUnderlyingQuote(null);
+        if (underlying && !catalogError) setLoading(true);
+    }
+
+    useEffect(() => {
+        if (!underlying || !catalogReady) return;
+        const controller = new AbortController();
+        let active = true;
+        const isCurrent = () => active && getProductCatalogVersion() === version;
         setLoading(true);
         setError(false);
         Promise.all([
-            fetchWarrants(underlying.code, { expiryFrom: todayStr() }),
-            resolveContract(underlying.code, 'STK')
-                .then((contract) => fetchSnapshots([contract]))
+            fetchWarrants(underlying.code, { expiryFrom: todayStr() }, { signal: controller.signal }),
+            resolveContract(underlying.code, 'STK', { signal: controller.signal })
+                .then((contract) => {
+                    if (controller.signal.aborted) throw new DOMException('標的查詢已取消', 'AbortError');
+                    return fetchSnapshots([contract]);
+                })
                 .then((rows) => rows[0] ?? null),
         ])
             .then(([rows, quote]) => {
-                if (!active) return;
+                if (!isCurrent()) return;
                 setContracts(rows);
+                setLoadedContext(requestContext);
                 setUnderlyingQuote(quote);
             })
             .catch(() => {
-                if (!active) return;
-                setContracts([]);
-                setUnderlyingQuote(null);
+                if (!isCurrent()) return;
                 setError(true);
             })
-            .finally(() => { if (active) setLoading(false); });
-        return () => { active = false; };
-    }, [underlying]);
+            .finally(() => { if (isCurrent()) setLoading(false); });
+        return () => { active = false; controller.abort(); };
+    }, [underlying?.code, version, reloads, catalogReady]);
 
     const filtered = useMemo(() => {
         const spot = underlyingQuote?.close ?? null;
@@ -162,6 +174,7 @@ export function WarrantPanel({
                 </select>
                 <RefreshButton label="更新報價" loading={quotesLoading} onClick={() => void refreshQuotes()} />
             </div>
+            <CatalogRetryAlert catalogError={catalogError} error={error} text='權證資料載入失敗' onRetry={retry} />
             <div className={styles.summary}>
                 <span className={styles.summaryStrong}>
                     {underlying ? `${underlying.code} ${underlying.name}` : '—'}
@@ -171,12 +184,13 @@ export function WarrantPanel({
                 </span>
                 <span>{contracts.length.toLocaleString()} 檔發行中</span>
                 <span>顯示最接近條件的 {filtered.length} 檔</span>
+                {!contractsReady && filtered.length > 0 && <span>更新完成後可選取</span>}
             </div>
-            {loading ? (
+            {loading && contracts.length === 0 ? (
                 <div className={styles.empty}>
                     <AsyncStatus phase='loading' text='載入權證市場…' />
                 </div>
-            ) : error ? (
+            ) : (error || catalogError) && contracts.length === 0 ? (
                 <div className={styles.error}><AsyncStatus phase='error' text='權證資料載入失敗' /></div>
             ) : filtered.length === 0 ? (
                 <div className={styles.empty}><AsyncStatus phase='empty' text='目前篩選條件沒有權證' /></div>
@@ -223,6 +237,7 @@ export function WarrantPanel({
                                         className={styles.row}
                                         title='連動此權證'
                                         onClick={() => {
+                                            if (!contractsReady || getProductCatalogVersion() !== version) return;
                                             primeContract(contract);
                                             onPick(contract.code);
                                         }}
@@ -264,8 +279,10 @@ export function WarrantPanel({
                                                 className={styles.iconButton}
                                                 title='加入目前自選清單'
                                                 aria-label={`將 ${contract.code} 加入自選`}
+                                                disabled={!contractsReady}
                                                 onClick={(event) => {
                                                     event.stopPropagation();
+                                                    if (!contractsReady || getProductCatalogVersion() !== version) return;
                                                     void onAdd(contract)
                                                         .then(() =>
                                                             notify({

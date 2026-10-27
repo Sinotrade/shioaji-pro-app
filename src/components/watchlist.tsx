@@ -20,6 +20,7 @@ import {
     memo,
     useCallback,
     useEffect,
+    useId,
     useMemo,
     useRef,
     useState,
@@ -31,16 +32,18 @@ import { useQuote } from '../hooks/use-stream';
 import type { WatchItem } from '../hooks/use-watchlist';
 import type { ServerWatchlist } from '../lib/shioaji';
 import { getQuote } from '../lib/stream';
+import { isTauri } from '../lib/runtime';
 import type { ContractInfo } from '../lib/types/contract';
 import type { SecurityType } from '../lib/types/contract';
-import {
-    searchProducts,
-    type ProductSuggestion,
-} from '../lib/product-search';
+import type { ProductSuggestion } from '../lib/product-search';
 import { fmtPct, fmtPrice, fmtSigned } from '../lib/utils/format';
 import { Sparkline } from './sparkline';
 import { RefreshButton } from './refresh-button';
 import { AsyncStatus } from './async-status';
+import { ProductSearchDetails } from './product-search-details';
+import { optionId, ProductSuggestionRow, productIdentity } from './product-suggestion-row';
+import { useAnchoredPopup } from '../hooks/use-anchored-popup';
+import { useProductSearch } from '../hooks/use-product-search';
 import * as panel from './panel.css';
 import * as styles from './watchlist.css';
 
@@ -330,28 +333,69 @@ export function Watchlist({
     const [input, setInput] = useState('');
     const [busy, setBusy] = useState(false);
     const [creating, setCreating] = useState(false);
-    const [suggestions, setSuggestions] = useState<ProductSuggestion[]>([]);
+    // Final rows only: this popup grows upward, so partial rows would shift
+    // under the pointer while later sources fill in.
+    const search = useProductSearch(input, { limit: 10, resetKey: activeListId });
+    const { suggestions, searching, searchError, activeIdentity, setActiveIdentity } = search;
+    const [addError, setAddError] = useState(false);
+    const [addRow, setAddRow] = useState<HTMLDivElement | null>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
+    const listId = useId();
+    const suggestBoxRef = useRef<HTMLDivElement>(null);
+    const suggestRowRefs = useRef(new Map<string, HTMLButtonElement>());
+    const submitBusy = useRef(false);
+    const activeListRef = useRef(activeListId);
+    activeListRef.current = activeListId;
+    const suggestionIdentities = useMemo(() => suggestions.map(productIdentity), [suggestions]);
+    const explicitIndex = suggestionIdentities.indexOf(activeIdentity ?? '');
+    const activeIndex = explicitIndex >= 0 ? explicitIndex : searching ? -1 : 0;
+    const popupOpen = suggestions.length > 0 || searchError || searching || addError;
+    const renderedVersion = search.renderedVersion;
     useEffect(() => {
-        const query = input.trim();
-        if (!query) {
-            setSuggestions([]);
-            return;
-        }
-        let active = true;
-        const timer = setTimeout(() => {
-            void searchProducts(query, 10)
-                .then((results) => {
-                    if (active) setSuggestions(results);
-                })
-                .catch(() => {
-                    if (active) setSuggestions([]);
-                });
-        }, 150);
-        return () => {
-            active = false;
-            clearTimeout(timer);
-        };
-    }, [input]);
+        setActiveIdentity(current => current && suggestionIdentities.includes(current) ? current : null);
+    }, [suggestionIdentities]);
+    const activeSuggestion = suggestionIdentities[activeIndex];
+    useEffect(() => {
+        const row = activeSuggestion ? suggestRowRefs.current.get(activeSuggestion) : undefined;
+        row?.scrollIntoView?.({ block: 'nearest' });
+    }, [activeSuggestion, suggestionIdentities]);
+    // Closing keeps the typed text, like Esc: the popup never stays behind at a stale place.
+    const closePopup = () => {
+        search.clear();
+        setAddError(false);
+    };
+    // Only rows hidden by an outside press come back on focus; Esc and typing keep them closed.
+    const reopenOnFocus = useRef(false);
+    // Focus inside the popup is lost to the page when its rows are replaced; give it back to the input.
+    const focusInPopup = useRef(false);
+    useEffect(() => {
+        const doc = inputRef.current?.ownerDocument;
+        if (focusInPopup.current && doc?.activeElement === doc?.body) inputRef.current?.focus();
+    });
+    const addButtonRef = useRef<HTMLButtonElement>(null);
+    const { style: popupStyle, portal } = useAnchoredPopup({
+        anchor: popupOpen ? addRow : null,
+        popup: suggestBoxRef,
+        onDismiss: () => {
+            reopenOnFocus.current = true;
+            focusInPopup.current = false;
+            closePopup();
+        },
+        // Above the add row's padding box, inset like the row's content; below it when the
+        // space above is too short to read and the space below is larger.
+        place: (row, { height }) => {
+            const rect = row.getBoundingClientRect();
+            const above = Math.floor(rect.top - 8);
+            const below = Math.floor(height - rect.bottom - 8);
+            const down = above < 120 && below > above;
+            return {
+                left: rect.left,
+                right: row.ownerDocument.documentElement.clientWidth - rect.right,
+                ...(down ? { top: rect.bottom, boxShadow: '0 6px 18px rgba(0, 0, 0, 0.3)' } : { bottom: height - rect.top - row.clientTop }),
+                maxHeight: `min(24rem, 50vh, ${Math.max(0, down ? below : above)}px)`,
+            };
+        },
+    });
     const [newName, setNewName] = useState('');
     const [confirmDelete, setConfirmDelete] = useState(false);
     // inline rename (issue #9) — WKWebView has no working window.prompt,
@@ -411,10 +455,10 @@ export function Watchlist({
         return sorted;
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [items, sortMode, sortTick]);
-    const setDropTarget = (code: string) => {
+    const setDropTarget = useCallback((code: string) => {
         dropCodeRef.current = code;
         setDropCode(code);
-    };
+    }, []);
 
     const clearDragState = useCallback(() => {
         dragCode.current = null;
@@ -440,14 +484,18 @@ export function Watchlist({
         return () => onHoldReload(false);
     }, [editing, onHoldReload]);
 
-    const handleDrop = () => {
+    const handleRowDragStart = useCallback((code: string) => {
+        if (arrange) dragCode.current = code;
+    }, [arrange]);
+
+    const handleDrop = useCallback(() => {
         const from = dragCode.current;
         const to = dropCodeRef.current;
         dragCode.current = null;
         dropCodeRef.current = null;
         setDropCode(null);
         if (from && to && from !== to) onReorder(from, to);
-    };
+    }, [onReorder]);
 
     // 上移/下移 — same persisted onReorder path as drag-to-reorder
     const moveRow = useCallback(
@@ -462,16 +510,33 @@ export function Watchlist({
         [items, onReorder],
     );
 
-    const submit = async () => {
-        const code = input.trim().toUpperCase();
-        if (!code || busy || loading || !activeListId) return;
+    const submit = async (picked?: ProductSuggestion) => {
+        if (search.isComposing() || !search.isCurrent(renderedVersion) || activeListRef.current !== activeListId) return;
+        if (busy || submitBusy.current || loading || !activeListId) return;
+        const rawCode = input.trim().toUpperCase();
+        const isDirectCode = /^[A-Z0-9]+$/.test(rawCode);
+        if (!picked && searching && !isDirectCode && activeIdentity === null) return;
+        const item = picked ?? suggestions[activeIndex];
+        if (item && search.isStale()) {
+            search.retry();
+            return;
+        }
+        const code = item?.code ?? rawCode;
+        if (!code || !item && !isDirectCode) return;
+        search.clear();
+        reopenOnFocus.current = false;
+        const submitVersion = search.currentVersion();
+        setAddError(false);
+        submitBusy.current = true;
         setBusy(true);
         try {
-            await onAdd(code);
-            setInput('');
+            if (item) await onAdd(item.code, item.security_type, item.contract);
+            else await onAdd(code);
+            if (search.isCurrent(submitVersion) && activeListRef.current === activeListId) setInput('');
         } catch {
-            // keep input so user can fix typo
+            if (search.isCurrent(submitVersion) && activeListRef.current === activeListId) setAddError(true);
         } finally {
+            submitBusy.current = false;
             setBusy(false);
         }
     };
@@ -709,13 +774,7 @@ export function Watchlist({
                             }
                             onSelect={onSelect}
                             onRemove={onRemove}
-                            onDragStart={(code) => {
-                                // dragging only exists in 排序模式 (which is
-                                // always the custom order)
-                                if (arrange) {
-                                    dragCode.current = code;
-                                }
-                            }}
+                            onDragStart={handleRowDragStart}
                             onDragOver={setDropTarget}
                             onDrop={handleDrop}
                             onDragEnd={clearDragState}
@@ -726,59 +785,118 @@ export function Watchlist({
                     )}
                 </div>
             </div>
-            <div className={styles.addRow}>
-                {suggestions.length > 0 && (
-                    <div className={styles.suggestBox}>
-                        {suggestions.map((s) => (
-                            <button
-                                key={s.code}
-                                className={styles.suggestRow}
-                                disabled={loading}
-                                onClick={async () => {
-                                    setSuggestions([]);
-                                    setInput('');
-                                    setBusy(true);
-                                    try {
-                                        await onAdd(
-                                            s.code,
-                                            s.security_type,
-                                            s.contract,
-                                        );
-                                    } finally {
-                                        setBusy(false);
-                                    }
-                                }}
-                            >
-                                <span className={styles.suggestCode}>
-                                    {s.code}
-                                </span>
-                                <span className={styles.suggestName}>
-                                    {s.name}
-                                </span>
-                                <span className={styles.suggestCat}>
-                                    {s.detail}
-                                </span>
-                            </button>
-                        ))}
-                    </div>
+            <div ref={setAddRow} className={styles.addRow}>
+                {popupOpen && portal(
+                    <div ref={suggestBoxRef} className={styles.suggestBox} style={popupStyle} onFocus={() => { focusInPopup.current = true; }} onBlur={(e) => {
+                        // A removed row blurs with no next target; only a real move elsewhere ends it.
+                        if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) focusInPopup.current = false;
+                    }} onKeyDown={(e) => {
+                        // The popup sits at the end of the page: Tab order runs input → popup → add button.
+                        if (e.key === 'Tab') {
+                            const stops = [...e.currentTarget.querySelectorAll<HTMLElement>('summary, button:not([role=option])')];
+                            const edge = e.shiftKey ? stops[0] : stops[stops.length - 1];
+                            if (e.target !== edge) return;
+                            e.preventDefault();
+                            (e.shiftKey ? inputRef.current : addButtonRef.current)?.focus();
+                            return;
+                        }
+                        // Expanded details handle their own Esc; anything else closes and returns to the input.
+                        if (e.key !== 'Escape') return;
+                        e.preventDefault();
+                        inputRef.current?.focus();
+                        closePopup();
+                    }}>
+                        {suggestions.length > 0 && <div id={listId} role='listbox' aria-label='搜尋結果'>
+                        {suggestions.map((s, index) => {
+                            const identity = suggestionIdentities[index]!;
+                            return (
+                                <ProductSuggestionRow
+                                    key={identity}
+                                    item={s}
+                                    id={optionId(listId, identity)}
+                                    active={index === activeIndex}
+                                    className={styles.suggestRow}
+                                    disabled={busy || loading || !activeListId}
+                                    rowRef={(node) => { if (node) suggestRowRefs.current.set(identity, node); else suggestRowRefs.current.delete(identity); }}
+                                    onSelect={() => submit(s)}
+                                />
+                            );
+                        })}
+                        </div>}
+                        <ProductSearchDetails item={suggestions[activeIndex]} onToggle={(details) => {
+                            // Opening adds content below the rows; bring it into the popup's view.
+                            if (details.open) details.scrollIntoView?.({ block: 'nearest' });
+                        }} />
+                        {isTauri && <div role='status' className={styles.loadingHint}>原生版官方名稱更新未啟用，使用券商與內建名稱</div>}
+                        {(searchError || searching || addError) && <AsyncStatus phase={searchError || addError ? 'error' : 'loading'}
+                            text={addError ? '加入自選失敗，可重新搜尋' : searchError ? '搜尋失敗，可重試' : '搜尋中…'}
+                            className={styles.loadingHint}
+                            action={searchError || addError ? <button type='button' onMouseDown={(event) => event.preventDefault()} onClick={() => {
+                                setAddError(false);
+                                search.retry();
+                                // The button disappears with the error; keep typing in the input.
+                                inputRef.current?.focus();
+                            }}>{addError ? '重新搜尋' : '重試'}</button> : undefined} />}
+                    </div>,
                 )}
                 <input
+                    ref={inputRef}
                     className={styles.addInput}
                     placeholder='股票、期貨或指數（如 台積電期）'
+                    role='combobox'
+                    aria-autocomplete='list'
+                    aria-expanded={suggestions.length > 0}
+                    aria-controls={suggestions.length > 0 ? listId : undefined}
+                    aria-activedescendant={activeIndex >= 0 && suggestionIdentities[activeIndex]
+                        ? optionId(listId, suggestionIdentities[activeIndex]!) : undefined}
                     disabled={loading || !activeListId}
                     value={input}
+                    // Rows cleared by an outside press come back when the input is focused again.
+                    onFocus={() => {
+                        focusInPopup.current = false;
+                        if (!reopenOnFocus.current) return;
+                        reopenOnFocus.current = false;
+                        if (input.trim()) search.retry();
+                    }}
+                    onCompositionStart={() => {
+                        search.startComposition();
+                        setAddError(false);
+                    }}
+                    onCompositionEnd={(e) => {
+                        search.endComposition();
+                        setInput(e.currentTarget.value);
+                    }}
                     onChange={(e) => {
+                        reopenOnFocus.current = false;
+                        search.change(e.target.value);
                         setInput(e.target.value);
+                        setAddError(false);
                     }}
                     onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                            setSuggestions([]);
-                            submit();
+                        if (search.isComposing() || e.nativeEvent?.isComposing || e.keyCode === 229) return;
+                        if (e.key === 'ArrowDown' && suggestions.length > 0) {
+                            e.preventDefault();
+                            setActiveIdentity(suggestionIdentities[(activeIndex + 1) % suggestions.length]!);
                         }
-                        if (e.key === 'Escape') setSuggestions([]);
+                        if (e.key === 'ArrowUp' && suggestions.length > 0) {
+                            e.preventDefault();
+                            setActiveIdentity(suggestionIdentities[activeIndex < 0 ? suggestions.length - 1 : (activeIndex - 1 + suggestions.length) % suggestions.length]!);
+                        }
+                        if (e.key === 'Enter') {
+                            void submit();
+                        }
+                        if (e.key === 'Escape') closePopup();
+                        // The popup is portaled to the end of the page; Tab reaches its details and retry first.
+                        if (e.key === 'Tab' && !e.shiftKey && popupOpen) {
+                            const next = suggestBoxRef.current?.querySelector<HTMLElement>('summary, button:not([role=option])');
+                            if (next) {
+                                e.preventDefault();
+                                next.focus();
+                            }
+                        }
                     }}
                 />
-                <button className={panel.btn} onClick={submit} disabled={busy || loading || !activeListId}>
+                <button ref={addButtonRef} className={panel.btn} onClick={() => void submit()} disabled={busy || loading || !activeListId}>
                     {busy ? '…' : '+'}
                 </button>
             </div>
