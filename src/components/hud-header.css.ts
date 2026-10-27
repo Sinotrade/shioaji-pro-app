@@ -64,10 +64,7 @@ export const versionWarn = style({
     cursor: 'help',
 });
 
-export const spacer = style({
-    flex: 1,
-    '@media': { '(max-width: 1050px)': { display: 'none' } },
-});
+export const spacer = style({ flex: 1 });
 
 // 頂欄所有 chip/按鈕的統一高度 — 字級與 padding 各異會造成 23/25px
 // 混排，邊框線上下參差（使用者回報的「水平不齊」）
@@ -519,10 +516,17 @@ export const clock = style({
     whiteSpace: 'nowrap',
 });
 
-// 窄視窗先依優先序收起純資訊，1050px 以下再允許頂欄換行，保留全部
+// 窄視窗先依優先序收起純資訊，頂欄仍放不下時換行，保留全部
 // 互動按鈕與 LIVE，避免控制項被裁切。被收起
 // 的資訊各有替代入口：加權/基差可加自選或開行情面板、銀行水位在帳務
 // dock、時鐘看系統列；這幾項本來就能在 設定 → 頂欄顯示 手動關閉。
+// 報價位數會變（加權省略尾數 0、基差正負與位數），頂欄可換行時寬度一變
+// 整個工作區就會上下跳；以等寬字元數固定最小寬度，文字不變
+export const liveNumber = styleVariants({
+    index: { minWidth: '16ch', textAlign: 'right' },
+    basis: { minWidth: '4ch', textAlign: 'right' },
+});
+
 export const infoAutoHide = styleVariants({
     // 先收：基差、時鐘
     first: {

@@ -74,7 +74,7 @@ function VisibleMarketBar() {
             {headerItems.marketIndex && (
                 <div className={`${styles.chip} ${styles.infoAutoHide.last}`}>
                     <span className={styles.chipLabel}>加權</span>
-                    <span className={panel.dirText[dir]}>
+                    <span className={`${panel.dirText[dir]} ${styles.liveNumber.index}`}>
                         {fmtPrice(indexClose)} {fmtPct(indexPct)}
                     </span>
                 </div>
@@ -85,7 +85,7 @@ function VisibleMarketBar() {
                     title='台指期 − 加權指數（價差）'
                 >
                     <span className={styles.chipLabel}>基差</span>
-                    <span className={panel.dirText[basisDir]}>
+                    <span className={`${panel.dirText[basisDir]} ${styles.liveNumber.basis}`}>
                         {fmtSigned(basis, 0)}
                     </span>
                 </div>

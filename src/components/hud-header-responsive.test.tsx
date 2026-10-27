@@ -31,11 +31,12 @@ function media(name: string, query: string): ts.ObjectLiteralExpression {
 const narrow = (name: string) => media(name, '(max-width: 1050px)');
 const cssText = (object: ts.ObjectLiteralExpression, name: string) => field(object, name)?.getText(source);
 
-it('header 放不下時換行容納全部控制，窄版僅隱藏 spacer，未以裁切或橫捲掩蓋溢出', () => {
+it('header 放不下時換行容納全部控制，未以裁切或橫捲掩蓋溢出', () => {
     // Wrapping only happens when a row does not fit, so a wide window keeps one row.
     expect(cssText(styleObject('header'), 'flexWrap')).toBe("'wrap'");
     expect(cssText(media('header', '(max-width: 1600px)'), 'gap')).toBe('vars.space.sm');
-    expect(cssText(narrow('spacer'), 'display')).toBe("'none'");
+    // The spacer keeps main's right-aligned controls; wrapping alone makes room.
+    expect(field(styleObject('spacer'), '@media')).toBeUndefined();
     for (const name of ['overflow', 'overflowX']) expect(cssText(styleObject('header'), name)).toBeUndefined();
     for (const name of ['header', 'resetBtn', 'chip', 'killHeaderOn', 'simBadge', 'prodBadge']) {
         expect(cssText(styleObject(name), 'display')).not.toBe("'none'");
