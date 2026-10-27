@@ -11,13 +11,11 @@ export const header = style({
     background: vars.color.panel,
     borderBottom: `1px solid ${vars.color.border}`,
     flexShrink: 0,
+    // A row that does not fit (long bank balance, index digits) wraps instead of clipping buttons.
+    flexWrap: 'wrap',
     '@media': {
-        '(max-width: 1050px)': {
-            position: 'relative',
-            flexWrap: 'wrap',
-            gap: vars.space.sm,
-            minWidth: 0,
-        },
+        // Tighter gaps keep one row while the index quote, basis and clock are still shown.
+        '(max-width: 1600px)': { gap: vars.space.sm },
     },
 });
 
@@ -204,8 +202,6 @@ export const settingsWrap = style({
     // line box，兩個引擎都是精確的內容高度
     display: 'flex',
     alignItems: 'center',
-    // Wrapped controls anchor their menu to the whole header, not the leftmost button.
-    '@media': { '(max-width: 1050px)': { position: 'static' } },
 });
 
 export const popover = style({
@@ -222,14 +218,6 @@ export const popover = style({
     display: 'flex',
     flexDirection: 'column',
     gap: vars.space.sm,
-    '@media': {
-        // Right-aligned like the desktop menu, at its own width, never past the window.
-        '(max-width: 1050px)': {
-            right: 8,
-            maxWidth: 'calc(100vw - 16px)',
-            boxSizing: 'border-box',
-        },
-    },
 });
 
 export const popoverBackdrop = style({
