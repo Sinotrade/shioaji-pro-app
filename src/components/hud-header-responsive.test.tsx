@@ -81,7 +81,8 @@ it('品牌／build identity 與外部伺服器警示可折行，窄版 popover �
     expect(cssText(narrow('foreignChip'), 'maxWidth')).toBe("'100%'");
     expect(cssText(narrow('header'), 'position')).toBe("'relative'");
     expect(cssText(narrow('settingsWrap'), 'position')).toBe("'static'");
-    expect(cssText(narrow('popover'), 'left')).toBe('8');
+    expect(cssText(narrow('popover'), 'left')).toBeUndefined();
+    expect(cssText(narrow('popover'), 'width')).toBeUndefined();
     expect(cssText(narrow('popover'), 'right')).toBe('8');
     expect(cssText(narrow('popover'), 'boxSizing')).toBe("'border-box'");
     expect(cssText(narrow('popover'), 'maxWidth')).toBe("'calc(100vw - 16px)'");

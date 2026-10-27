@@ -59,7 +59,6 @@ function createHarness(options: { width?: number; guarded?: boolean; layout?: La
             layout: options.layout ?? initial,
         }));
         const pendingBounce = useRef<number | undefined>(undefined);
-        const workspaceGenerationRef = useRef(0);
         const latest = useRef(workspace);
         latest.current = workspace;
         api.stored = workspace.layout;
@@ -67,7 +66,6 @@ function createHarness(options: { width?: number; guarded?: boolean; layout?: La
         api.width = setWidth;
         api.bounce = (next, back) => { pendingBounce.current = back; setWidth(next); };
         api.replace = (next, nextIds = next.map(item => item.i)) => {
-            workspaceGenerationRef.current++;
             const current = latest.current;
             const replacement: Workspace = {
                 ...current, layout: next,
@@ -90,7 +88,7 @@ function createHarness(options: { width?: number; guarded?: boolean; layout?: La
             latest.current = next;
             setWorkspace(next);
         }, []);
-        const adapter = useWorkspaceGrid({ workspace, workspaceRef: latest, workspaceGenerationRef, width, updateWorkspace });
+        const adapter = useWorkspaceGrid({ workspace, workspaceRef: latest, width, updateWorkspace });
         // Test-only legacy control. The production branch uses the complete shared handler bag.
         const legacyOnLayoutChange = useCallback((next: Layout) => {
             legacyCallbacks++;
@@ -324,7 +322,7 @@ describe('gesture coordinate epoch', () => {
         const stop = item().props.onDragStop;
         await act(async () => api.width(320));
         const replacement = action === 'profile' ? initial.map(row => ({ ...row, x: row.i === 'a' ? 72 : 144, w: 72 }))
-            : action === 'remove' ? [initial[1]!] : initial;
+            : action === 'remove' ? [initial[1]!] : structuredClone(initial);
         await act(async () => api.replace(replacement));
         await act(async () => stop('a', 2, 10, { e: {}, node }));
         expect(api.stored).toEqual(replacement);
@@ -332,21 +330,6 @@ describe('gesture coordinate epoch', () => {
         expect(stats.capped).toBe(false);
         expect(grid().width).toBe(320);
         expect(grid().dragConfig.enabled).toBe(false);
-    });
-
-    it('a captured stop from an old session cannot release or persist a newer gesture', async () => {
-        const { api, stats } = await mountHarness();
-        await act(async () => item().props.onDragStart('a', 0, 0, { e: {}, node }));
-        const staleStop = grid().onDragStop;
-        await act(async () => item().props.onDragStop('a', 0, 0, { e: {}, node }));
-        await act(async () => item().props.onDragStart('a', 0, 0, { e: {}, node }));
-        await act(async () => api.width(640));
-        await act(async () => staleStop(initial, initial[0], initial[0]));
-        expect(grid().width).toBe(1910);
-        expect(stats.writes).toBe(0);
-        await act(async () => item().props.onDragStop('a', 0, 0, { e: {}, node }));
-        expect(grid().width).toBe(640);
-        expect(api.stored).toEqual(initial);
     });
 
     it('a workspace replacement revokes captured callbacks before React commits', async () => {
@@ -363,16 +346,28 @@ describe('gesture coordinate epoch', () => {
         expect(stats.writes).toBe(0);
     });
 
-    it('reset of the same layout reference still revokes a pre-commit old stop', async () => {
+    it('an equal-content replacement revokes the drop and RGL shows the stored position again', async () => {
         const { api, stats } = await mountHarness();
         await act(async () => item().props.onDragStart('a', 0, 0, { e: {}, node }));
-        const old = grid();
-        await act(async () => {
-            api.replace(initial);
-            old.onDragStop(initial.map(row => ({ ...row, x: 2 })), initial[0], initial[0]);
-        });
-        expect(api.stored).toEqual(initial);
+        await act(async () => api.replace(structuredClone(initial)));
+        await act(async () => item().props.onDragStop('a', 2, 10, { e: {}, node }));
         expect(stats.writes).toBe(0);
+        expect(api.stored).toEqual(initial);
+        expect(item().props).toMatchObject({ x: 0, y: 0 });
+        // Later gestures persist again instead of being rejected as foreign geometry.
+        await act(async () => item().props.onDragStart('a', 0, 0, { e: {}, node }));
+        await act(async () => item().props.onDragStop('a', 2, 10, { e: {}, node }));
+        expect(stats.writes).toBe(1);
+        expect(api.stored.find(row => row.i === 'a')).toMatchObject({ x: 12 });
+    });
+
+    it('a replacement that keeps the layout (agent pin) still saves the drop', async () => {
+        const { api, stats } = await mountHarness();
+        await act(async () => item().props.onDragStart('a', 0, 0, { e: {}, node }));
+        await act(async () => api.replace(api.stored));
+        await act(async () => item().props.onDragStop('a', 2, 10, { e: {}, node }));
+        expect(stats.writes).toBe(1);
+        expect(api.stored.find(row => row.i === 'a')).toMatchObject({ x: 12 });
     });
 
     it('a same-generation layout update revokes the previous gesture source', async () => {
@@ -565,7 +560,6 @@ describe('App shared-adapter wiring', () => {
         if (!declaration.initializer || !ts.isCallExpression(declaration.initializer)) throw new Error('Missing shared adapter call');
         const options = declaration.initializer.arguments[0];
         if (!options || !ts.isObjectLiteralExpression(options)) throw new Error('Missing shared adapter options');
-        expect(options.properties.filter(ts.isPropertyAssignment).find(property => property.name.getText(source) === 'workspaceGenerationRef')?.initializer.getText(source)).toBe('workspaceGenRef');
         const config = attributes.find(attribute => attribute.name.getText(source) === 'gridConfig');
         expect(config?.initializer && ts.isJsxExpression(config.initializer) && config.initializer.expression && ts.isObjectLiteralExpression(config.initializer.expression)).toBe(true);
         if (!config?.initializer || !ts.isJsxExpression(config.initializer) || !config.initializer.expression || !ts.isObjectLiteralExpression(config.initializer.expression)) throw new Error('Missing grid config');
