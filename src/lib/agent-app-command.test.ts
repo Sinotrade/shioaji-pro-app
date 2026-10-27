@@ -272,6 +272,8 @@ describe('semantic workspace commands', () => {
         });
         expect(workspace().blocks.at(-1)?.id).toBe('depth-1');
         expect(workspace().layout.at(-1)?.i).toBe('depth-1');
+        // A finite bottom survives JSON and the narrow display, which never writes RGL's placement back.
+        expect(workspace().layout.at(-1)?.y).toBe(Math.max(0, ...workspace().layout.slice(0, -1).map(item => item.y + item.h)));
 
         await expect(
             executeAgentAppCommand(

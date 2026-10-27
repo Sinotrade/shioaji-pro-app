@@ -11,6 +11,12 @@ export const header = style({
     background: vars.color.panel,
     borderBottom: `1px solid ${vars.color.border}`,
     flexShrink: 0,
+    // A row that does not fit (long bank balance, index digits) wraps instead of clipping buttons.
+    flexWrap: 'wrap',
+    '@media': {
+        // Tighter gaps keep one row while the index quote, basis and clock are still shown.
+        '(max-width: 1600px)': { gap: vars.space.sm },
+    },
 });
 
 export const logoBlock = style({
@@ -19,6 +25,9 @@ export const logoBlock = style({
     gap: vars.space.sm,
     // 窄視窗時 flex 壓縮會讓副標逐字折行、header 長成兩列
     whiteSpace: 'nowrap',
+    '@media': {
+        '(max-width: 1050px)': { flexWrap: 'wrap', maxWidth: '100%', minWidth: 0 },
+    },
 });
 
 export const logoMark = style({
@@ -43,6 +52,9 @@ export const logoSub = style({
     fontSize: '0.68rem',
     fontWeight: 500,
     color: vars.color.mutedForeground,
+    '@media': {
+        '(max-width: 1050px)': { minWidth: 0, whiteSpace: 'normal', overflowWrap: 'anywhere' },
+    },
 });
 
 // server 版本與 app 期望不一致的警示（hover 有完整說明）
@@ -504,10 +516,17 @@ export const clock = style({
     whiteSpace: 'nowrap',
 });
 
-// 窄視窗時 header 維持單列：文字已全部 nowrap 不再折行，改依優先序
-// 自動收起純資訊項（互動按鈕與 LIVE 永遠保留、不會被裁切）。被收起
+// 窄視窗先依優先序收起純資訊，頂欄仍放不下時換行，保留全部
+// 互動按鈕與 LIVE，避免控制項被裁切。被收起
 // 的資訊各有替代入口：加權/基差可加自選或開行情面板、銀行水位在帳務
 // dock、時鐘看系統列；這幾項本來就能在 設定 → 頂欄顯示 手動關閉。
+// 報價位數會變（加權省略尾數 0、基差正負與位數），頂欄可換行時寬度一變
+// 整個工作區就會上下跳；以等寬字元數固定最小寬度，文字不變
+export const liveNumber = styleVariants({
+    index: { minWidth: '16ch', textAlign: 'right' },
+    basis: { minWidth: '4ch', textAlign: 'right' },
+});
+
 export const infoAutoHide = styleVariants({
     // 先收：基差、時鐘
     first: {
@@ -685,6 +704,15 @@ export const foreignChip = style({
     height: '25px',
     boxSizing: 'border-box',
     whiteSpace: 'nowrap',
+    '@media': {
+        '(max-width: 1050px)': {
+            flexWrap: 'wrap',
+            whiteSpace: 'normal',
+            maxWidth: '100%',
+            height: 'auto',
+            minHeight: '25px',
+        },
+    },
 });
 
 export const foreignChipAction = style({

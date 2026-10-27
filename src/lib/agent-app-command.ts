@@ -9,6 +9,7 @@ import {
     type AgentPanelState,
     isAgentAppCommandName,
 } from './agent-contract';
+import { bottom } from 'react-grid-layout/core';
 import type { ContractInfo } from './types/contract';
 import {
     BLOCK_META,
@@ -421,7 +422,7 @@ export async function executeAgentAppCommand<K extends AgentAppCommandName>(
                     {
                         i: block.id,
                         x: 0,
-                        y: Infinity,
+                        y: bottom(workspace.layout),
                         w: meta.defaultSize.w * GRID_LEGACY_SCALE,
                         h: meta.defaultSize.h,
                         minW: meta.defaultSize.minW * GRID_LEGACY_SCALE,
