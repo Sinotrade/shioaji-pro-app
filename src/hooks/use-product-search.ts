@@ -108,16 +108,13 @@ export function useProductSearch(query: string, { limit, enabled = true, resetKe
             active = false;
             request.abort();
             if (controller.current === request) controller.current = null;
-            clearTimeout(timer);
         };
     }, [enabled, query, attempt, catalogVersion, namesVersion, resetKey, limit, progressive]);
 
-    const retry = () => {
-        if (composing.current) return;
+    const clear = () => {
         cancel();
         clearRows();
         setSearchError(false);
-        setAttempt((count) => count + 1);
     };
 
     return {
@@ -135,19 +132,17 @@ export function useProductSearch(query: string, { limit, enabled = true, resetKe
         isStale: () => rowsScope.current !== currentScope(),
         cancel,
         /** Esc or a completed submit: drop the rows and any pending search. */
-        clear: () => {
-            cancel();
-            clearRows();
-            setSearchError(false);
-        },
+        clear,
         /** The query is changing: old rows go now, the new search waits for the debounce. */
         change: (next: string) => {
-            cancel();
-            clearRows();
-            setSearchError(false);
+            clear();
             setSearching(!!next.trim());
         },
-        retry,
+        retry: () => {
+            if (composing.current) return;
+            clear();
+            setAttempt((count) => count + 1);
+        },
         startComposition: () => {
             composing.current = true;
             cancel();

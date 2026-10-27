@@ -83,6 +83,14 @@ describe('pickAnchor', () => {
         }
     });
 
+    it('anchors a stock whose exact name ends in 期 instead of the futures of a shorter name', () => {
+        const broker = stock('6023', '元大期');
+        const catalog = [stock('9998', '元大'), broker];
+        expect(pickAnchor(parseProductQuery('元大期'), catalog, null)).toMatchObject({
+            exactStock: broker, query: { lookup: '元大期', wantsFutures: false },
+        });
+    });
+
     it.each(['台指', '台股期貨'])('uses the verified IX0001 underlying for %s without promoting a stock prefix', query => {
         expect(pickAnchor(parseProductQuery(query), [stock('9999', '台指測試股')], null)).toMatchObject({
             exactStock: undefined, indexFutureUnderlying: 'IX0001', futuresFirst: true,

@@ -15,7 +15,7 @@ vi.mock('../lib/limit-style-prefs', () => ({ useLimitStyle: () => 'none' }));
 vi.mock('./sparkline', () => ({ Sparkline: () => null }));
 
 import {
-    DEBOUNCE, input, key, kinds, render, row, searchLimit, text, type as query, unmountAll,
+    DEBOUNCE, input, key, kinds, render, row, searchLimit, searchOptionsFor, text, type as query, unmountAll,
 } from './product-search.test-harness';
 
 const otcIndex: ProductSuggestion = {
@@ -46,10 +46,7 @@ afterEach(() => {
 });
 
 describe.each(kinds)('$kind 商品搜尋', ({ kind }) => {
-    // Only the palette subscribes to partial rows; the watchlist shows final rows only.
-    const searchOptions = expect.objectContaining({
-        includeWarrants: true, signal: expect.any(AbortSignal), ...(kind === 'palette' ? { onUpdate: expect.any(Function) } : {}),
-    });
+    const searchOptions = searchOptionsFor(kind);
     // The palette jumps by code and type; the watchlist also keeps the resolved contract.
     const submitted = (item: ProductSuggestion) => (kind === 'palette'
         ? [item.code, item.security_type] : [item.code, item.security_type, item.contract]);

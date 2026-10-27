@@ -220,11 +220,10 @@ export interface ProductAnchor {
 export function pickAnchor(parsed: ProductQuery, catalog: StockMeta[], direct: ContractInfo | null): ProductAnchor {
     const { raw } = parsed;
     const matches = (value: string, target: string) => normalizeStockSearchText(value) === target;
-    // Official fund names can themselves contain 「期貨」. An exact ETF
-    // identity is not a request to strip that word and search futures roots.
-    const exactEtfName = catalog.some(stock => stock.kind === 'ETF' &&
-        (matches(stock.name, raw) || stock.aliases?.some(alias => matches(alias, raw))));
-    const query = exactEtfName ? { ...parsed, lookup: raw, wantsFutures: false, wantsOptions: false } : parsed;
+    // Names can themselves contain type words (元大期, 期貨 ETF). An exact name
+    // is that stock, not a request to strip the word and search futures roots.
+    const exactName = catalog.some(stock => matches(stock.name, raw) || stock.aliases?.some(alias => matches(alias, raw)));
+    const query = exactName ? { ...parsed, lookup: raw, wantsFutures: false, wantsOptions: false } : parsed;
     const { lookup } = query;
     // These are verified names for the IX0001 family, not stock-name guesses.
     const indexFutureUnderlying = lookup === '台指' || lookup === '台股' ? 'IX0001' : undefined;

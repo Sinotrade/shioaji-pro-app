@@ -131,19 +131,6 @@ describe('futures month and size priority', () => {
         expect(mocks.warrants).not.toHaveBeenCalled();
     });
 
-    it('keeps dated aliases out of the primary group and places warrants immediately after continuous futures', async () => {
-        mocks.futures.mockResolvedValue([
-            ...futures,
-            contract('CDFK6', 'FUT', { name: '台積電期貨 202611', underlying_code: '2330', delivery_month: '202611' }),
-            contract('CDFL6', 'FUT', { name: '台積電期貨 202612', underlying_code: '2330', delivery_month: '202612' }),
-        ]);
-        // A large limit: the far month must be absent, not merely cut off.
-        const rows = await search('台積電', true, 30);
-        expect(rows.slice(0, 5).map(row => row.code)).toEqual(['2330', 'CDFR1', 'QFFR1', 'CDFR2', 'QFFR2']);
-        expect(rows.slice(5).every(row => row.security_type === 'WRT')).toBe(true);
-        expect(rows.some(row => ['CDFJ6', 'CDFK6', 'CDFL6'].includes(row.code))).toBe(false);
-    });
-
     it('keeps a same-prefix stock after the exact stock futures and ahead of its warrants', async () => {
         mocks.catalog.mockResolvedValue([
             { code: '1303', name: '南亞', exchange: 'TSE', category: '' },
@@ -156,13 +143,8 @@ describe('futures month and size priority', () => {
         mocks.warrants.mockResolvedValue(Array.from({ length: 8 }, (_, i) => contract(`NYW${i}`, 'WRT', {
             name: `南亞購 ${i}`, underlying_code: '1303', expiry_date: '2027-04-07', last_trading_date: '2027-04-01',
         })));
-        const updates: string[][] = [];
-        const rows = (await (await import('./product-search')).searchProducts('南亞', 8, {
-            includeWarrants: true, onUpdate: partial => updates.push(partial.map(row => row.code)),
-        })).map(row => row.code);
+        const rows = (await (await import('./product-search')).searchProducts('南亞', 8, { includeWarrants: true })).map(row => row.code);
         expect(rows).toEqual(['1303', 'NYFR1', 'NYFR2', '2408', 'NYW0', 'NYW1', 'NYW2', 'NYW3']);
-        expect(updates.length).toBeGreaterThan(0);
-        for (const prefix of updates) expect(rows.slice(0, prefix.length)).toEqual(prefix);
     });
 });
 

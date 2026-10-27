@@ -368,15 +368,18 @@ export function Watchlist({
         anchor: popupOpen ? addRow : null,
         popup: suggestBoxRef,
         onDismiss: closePopup,
-        // Above the add row's padding box, inset like the row's content, and never past the viewport top.
+        // Above the add row's padding box, inset like the row's content; below it when the
+        // space above is too short to read and the space below is larger.
         place: (row, { height }) => {
             const rect = row.getBoundingClientRect();
-            const top = rect.top + row.clientTop;
+            const above = Math.floor(rect.top - 8);
+            const below = Math.floor(height - rect.bottom - 8);
+            const down = above < 120 && below > above;
             return {
                 left: rect.left,
                 right: row.ownerDocument.documentElement.clientWidth - rect.right,
-                bottom: height - top,
-                maxHeight: `min(24rem, 50vh, ${Math.max(0, Math.floor(rect.top - 8))}px)`,
+                ...(down ? { top: rect.bottom } : { bottom: height - rect.top - row.clientTop }),
+                maxHeight: `min(24rem, 50vh, ${Math.max(0, down ? below : above)}px)`,
             };
         },
     });
@@ -770,7 +773,13 @@ export function Watchlist({
             </div>
             <div ref={setAddRow} className={styles.addRow}>
                 {popupOpen && portal(
-                    <div ref={suggestBoxRef} className={styles.suggestBox} style={popupStyle}>
+                    <div ref={suggestBoxRef} className={styles.suggestBox} style={popupStyle} onKeyDown={(e) => {
+                        // Expanded details handle their own Esc; anything else closes and returns to the input.
+                        if (e.key !== 'Escape') return;
+                        e.preventDefault();
+                        inputRef.current?.focus();
+                        closePopup();
+                    }}>
                         {suggestions.length > 0 && <div id={listId} role='listbox' aria-label='搜尋結果'>
                         {suggestions.map((s, index) => {
                             const identity = suggestionIdentities[index]!;
@@ -816,6 +825,8 @@ export function Watchlist({
                         ? optionId(listId, suggestionIdentities[activeIndex]!) : undefined}
                     disabled={loading || !activeListId}
                     value={input}
+                    // Rows cleared by an outside press come back when the input is focused again.
+                    onFocus={() => { if (input.trim() && !popupOpen) search.retry(); }}
                     onCompositionStart={() => {
                         search.startComposition();
                         setAddError(false);
@@ -843,6 +854,14 @@ export function Watchlist({
                             void submit();
                         }
                         if (e.key === 'Escape') closePopup();
+                        // The popup is portaled to the end of the page; Tab reaches its details and retry first.
+                        if (e.key === 'Tab' && !e.shiftKey && popupOpen) {
+                            const next = suggestBoxRef.current?.querySelector<HTMLElement>('summary, button:not([role=option])');
+                            if (next) {
+                                e.preventDefault();
+                                next.focus();
+                            }
+                        }
                     }}
                 />
                 <button className={panel.btn} onClick={() => void submit()} disabled={busy || loading || !activeListId}>

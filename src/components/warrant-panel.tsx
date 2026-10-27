@@ -2,7 +2,7 @@ import { RefreshButton } from './refresh-button';
 import { Star } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
-import { useStockCatalog } from '../hooks/use-stock-catalog';
+import { pickUnderlying, useStockCatalog } from '../hooks/use-stock-catalog';
 import { primeContract } from '../lib/contracts-cache';
 import {
     fetchSnapshots,
@@ -58,13 +58,7 @@ export function WarrantPanel({
         onLoad: (catalog) => {
             if (catalog.length === 0) setLoading(false);
             const saved = localStorage.getItem(WARRANT_UNDERLYING);
-            setUnderlying(previous =>
-                catalog.find((stock) => stock.code === previous?.code) ??
-                    catalog.find((stock) => stock.code === saved) ??
-                    catalog.find((stock) => stock.code === '2330') ??
-                    catalog[0] ??
-                    null,
-            );
+            setUnderlying(previous => pickUnderlying(catalog, previous, saved));
         },
         onError: () => setLoading(false),
     });

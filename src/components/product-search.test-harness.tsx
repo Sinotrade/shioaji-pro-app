@@ -4,7 +4,7 @@
 
 import { createElement, type ReactElement } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { vi, type Mock } from 'vitest';
+import { expect, vi, type Mock } from 'vitest';
 import type { ProductSuggestion } from '../lib/product-search';
 import { PRODUCT_SEARCH_DEBOUNCE_MS } from '../lib/search-request';
 import { CommandPalette } from './command-palette';
@@ -15,6 +15,10 @@ export const kinds = [{ kind: 'palette' as const }, { kind: 'watchlist' as const
 export const DEBOUNCE = PRODUCT_SEARCH_DEBOUNCE_MS;
 /** Result limit each surface asks the search core for. */
 export const searchLimit = (kind: SurfaceKind) => (kind === 'palette' ? 8 : 10);
+/** Options each surface passes the search core; only the palette subscribes to partial rows. */
+export const searchOptionsFor = (kind: SurfaceKind) => expect.objectContaining({
+    includeWarrants: true, signal: expect.any(AbortSignal), ...(kind === 'palette' ? { onUpdate: expect.any(Function) } : {}),
+});
 
 export const stock: ProductSuggestion = { code: '2330', name: '台積電', security_type: 'STK', exchange: 'TSE', detail: '股票' };
 export const future: ProductSuggestion = { code: 'CDFR1', name: '台積電期貨', security_type: 'FUT', exchange: 'TAIFEX', detail: '近月' };

@@ -141,7 +141,7 @@ export function CommandPalette({
     return (
         <div className={styles.overlay} onClick={closePalette}
             onMouseMove={(event) => { pointerPosition.current = { x: event.clientX, y: event.clientY }; }}>
-            <div className={styles.box} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => {
+            <div className={styles.box} tabIndex={-1} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => {
                 if (e.key !== 'Escape' || search.isComposing() || e.nativeEvent?.isComposing || e.keyCode === 229) return;
                 // Claim the press that closes the palette: focus falls back to the
                 // page, where an unclaimed Esc would arm Esc×2 cancel-all.
@@ -236,7 +236,6 @@ export function CommandPalette({
                     <AsyncStatus phase={busy ? 'loading' : error || searchError ? 'error' : searching ? 'loading' : 'idle'}
                         text={busy ? '查詢商品中…' : error ? '找不到此商品代碼' : searchError ? '搜尋失敗，可重試' : searching ? suggestions.length ? '正在補齊關聯商品…' : '搜尋中…' : 'Enter 跳轉 · Esc 關閉'}
                         action={error || searchError ? <button type='button' onMouseDown={(e) => e.preventDefault()} onClick={() => {
-                            if (search.isComposing()) return;
                             setError(false);
                             search.retry();
                             // The button disappears with the error; keep typing in the input.

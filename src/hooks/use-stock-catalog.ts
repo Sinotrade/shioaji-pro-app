@@ -9,6 +9,15 @@ interface StockCatalogEvents {
     onError?: () => void;
 }
 
+// 衍生面板的標的：上次選的 → 存下的 → 2330 → 第一筆
+export function pickUnderlying(catalog: StockMeta[], previous: StockMeta | null, saved: string | null): StockMeta | null {
+    return catalog.find((stock) => stock.code === previous?.code) ??
+        catalog.find((stock) => stock.code === saved) ??
+        catalog.find((stock) => stock.code === '2330') ??
+        catalog[0] ??
+        null;
+}
+
 // 標的股票目錄：目錄版本、名稱版本變更、視窗重新取得焦點或 retry 時重讀。
 // 已取消或屬於舊版本的回應一律丟棄，ready 只在目錄屬於目前版本且未失敗時成立。
 // reloads 是 focus 與 retry 的累計次數，衍生資料以它決定何時跟著重抓。

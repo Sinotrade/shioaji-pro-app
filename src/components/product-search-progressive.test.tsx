@@ -53,7 +53,7 @@ import { optionText, resultDetail, resultMeta } from './search-surface.css';
 import type { ContractInfo } from '../lib/types/contract';
 import {
     activeText, DEBOUNCE, escape, forget, future, hostChildren, input, key, kinds, listbox, optionNodes, render, row,
-    rowCode, rowParts, rowText, searchLimit, stock, text, unmountAll, warrant,
+    rowCode, rowParts, rowText, searchLimit, searchOptionsFor, stock, text, unmountAll, warrant,
 } from './product-search.test-harness';
 
 interface Session {
@@ -100,14 +100,6 @@ it.each(['palette', 'watchlist'] as const)('%s 統一等待100ms且連續輸入�
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(mocks.search).toHaveBeenCalledTimes(1);
     expect(mocks.search.mock.calls[0]![0]).toBe('2330');
-    const old = sessions[0]!;
-    act(() => input(view).props.onChange({ target: { value: '00981' } }));
-    expect(old.signal.aborted).toBe(true);
-    await act(async () => old.resolve([stock]));
-    expect(row(view, '2330')).toBeUndefined();
-    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
-    expect(mocks.search).toHaveBeenCalledTimes(2);
-    expect(mocks.search.mock.calls[1]![0]).toBe('00981');
 });
 
 it.each(['palette', 'watchlist'] as const)('%s 按鍵間隔110ms時每個前綴各查一次且換字即刻取消，舊輪亂序進度或完成不得回填，只顯示最後一輪結果', async kind => {
@@ -319,40 +311,6 @@ it('自選不訂閱分段結果：補齊期間只顯示搜尋中，最終結果�
 });
 
 describe.each(kinds)('$kind 分段搜尋', ({ kind }) => {
-    // The palette shows partial rows; the watchlist only shows a completed search.
-    const publish = (session: Session, rows: ProductSuggestion[]) => (kind === 'palette' ? session.onUpdate : session.resolve)(rows);
-
-    it('換字當下 abort 舊輪，即使舊來源違約繼續回填也不採用', async () => {
-        const { view } = render(kind);
-        const old = await start(view);
-        act(() => old.onUpdate([stock]));
-        act(() => input(view).props.onChange({ target: { value: '新商品' } }));
-        expect(old.signal.aborted).toBe(true);
-        act(() => old.onUpdate([future]));
-        await act(async () => old.resolve([future]));
-        expect(row(view, 'CDFR1')).toBeUndefined();
-        await act(async () => { await vi.advanceTimersByTimeAsync(DEBOUNCE); });
-        expect(sessions).toHaveLength(2);
-        expect(sessions[1]!.signal.aborted).toBe(false);
-        await act(async () => publish(sessions[1]!, [warrant]));
-        expect(row(view, '200001')).toBeDefined();
-    });
-
-    it('組字當下 abort，結束組字後才建立新的搜尋', async () => {
-        const { view, submit } = render(kind);
-        const old = await start(view);
-        act(() => input(view).props.onCompositionStart());
-        expect(old.signal.aborted).toBe(true);
-        act(() => old.onUpdate([stock]));
-        await act(async () => input(view).props.onKeyDown({ key: 'Enter' }));
-        expect(submit).not.toHaveBeenCalled();
-        expect(row(view, '2330')).toBeUndefined();
-        act(() => input(view).props.onCompositionEnd({ currentTarget: { value: '完整商品名' } }));
-        await act(async () => { await vi.advanceTimersByTimeAsync(DEBOUNCE); });
-        expect(sessions).toHaveLength(2);
-        expect(sessions[1]!.signal.aborted).toBe(false);
-    });
-
     it('Escape 即刻 abort，之後 onUpdate 與 final 都不再回填', async () => {
         const { view, close } = render(kind);
         const session = await start(view);
@@ -1140,7 +1098,8 @@ describe('自選浮層錨定在輸入列', () => {
         // No body: the popup renders in place, but listeners attach to this document.
         const doc = { ...listen(), defaultView: win, documentElement: { clientWidth: 1900 } };
         const outside = { name: 'outside' };
-        const popup = { contains: (node: unknown) => node === popup };
+        const details = { focus: vi.fn() };
+        const popup = { contains: (node: unknown) => node === popup, querySelector: vi.fn(() => details) };
         const anchor = {
             ownerDocument: doc, top: 500, left: 40, right: 340, clientTop: 1,
             contains: (node: unknown) => node === anchor,
@@ -1154,7 +1113,7 @@ describe('自選浮層錨定在輸入列', () => {
         };
         const rendered = render('watchlist', { createNodeMock });
         const box = () => rendered.view.root.findAll((node) => node.type === 'div' && node.props.className === watchStyles.suggestBox);
-        return { ...rendered, win, doc, anchor, popup, outside, observers, box };
+        return { ...rendered, win, doc, anchor, popup, details, outside, observers, box };
     }
 
     it('在輸入列上方、左右對齊輸入列，max-height 同為 min(24rem, 50vh) 且不超出視窗頂端；捲動與縮放跟著移動', async () => {
@@ -1171,6 +1130,29 @@ describe('自選浮層錨定在輸入列', () => {
         expect(state.box()[0]!.props.style).toMatchObject({ bottom: 399 });
     });
 
+    it('上方不到 120px 且下方較大時改往下開，不留看不見的浮層', async () => {
+        const state = fixture();
+        state.anchor.top = 60;
+        const session = await start(state.view);
+        await act(async () => session.resolve([stock]));
+        expect(state.box()[0]!.props.style).toEqual({ left: 40, right: 1560, top: 95, maxHeight: 'min(24rem, 50vh, 769px)' });
+    });
+
+    it('Tab 先進到浮層的詳情，浮層內 Esc 收起並回到輸入框', async () => {
+        const state = fixture();
+        const session = await start(state.view);
+        await act(async () => session.resolve([stock]));
+        const tab = { key: 'Tab', shiftKey: false, preventDefault: vi.fn() };
+        act(() => input(state.view).props.onKeyDown(tab));
+        expect(tab.preventDefault).toHaveBeenCalled();
+        expect(state.details.focus).toHaveBeenCalledOnce();
+        const esc = { key: 'Escape', preventDefault: vi.fn() };
+        act(() => state.box()[0]!.props.onKeyDown(esc));
+        expect(esc.preventDefault).toHaveBeenCalled();
+        expect(state.box()).toHaveLength(0);
+        expect(input(state.view).props.value).toBe('台積電');
+    });
+
     it.each(['pointerdown', 'focusin'] as const)('%s 落在浮層與輸入列以外（例如拖動面板）即收起，不留可送出的隱藏列', async (type) => {
         const state = fixture();
         const session = await start(state.view);
@@ -1184,6 +1166,9 @@ describe('自選浮層錨定在輸入列', () => {
         await act(async () => key(state.view, 'Enter'));
         expect(state.submit).not.toHaveBeenCalled();
         expect(input(state.view).props.value).toBe('台積電');
+        // Focusing the input again searches the kept text.
+        act(() => input(state.view).props.onFocus());
+        expect(state.box()).toHaveLength(1);
     });
 
     it('輸入列捲出可視範圍即收起，收起後移除所有監聽', async () => {
@@ -1206,10 +1191,7 @@ describe('自選浮層錨定在輸入列', () => {
 });
 
 describe.each(kinds)('$kind 中文輸入法與查詢取消', ({ kind }) => {
-    // Only the palette subscribes to partial rows.
-    const searchOptions = expect.objectContaining({
-        includeWarrants: true, signal: expect.any(AbortSignal), ...(kind === 'palette' ? { onUpdate: expect.any(Function) } : {}),
-    });
+    const searchOptions = searchOptionsFor(kind);
 
     it.each([
         { nativeEvent: { isComposing: true }, keyCode: 13 },
@@ -1240,7 +1222,9 @@ describe.each(kinds)('$kind 中文輸入法與查詢取消', ({ kind }) => {
         const { view, submit } = render(kind);
         const old = await start(view, '舊商品');
         act(() => input(view).props.onCompositionStart());
+        expect(old.signal.aborted).toBe(true);
         act(() => input(view).props.onChange({ target: { value: '新商品' } }));
+        act(() => old.onUpdate([stock]));
         await act(async () => old.resolve([stock]));
         expect(view.root.findAllByType('span').some((node) => node.children.includes('2330'))).toBe(false);
         await act(async () => { input(view).props.onKeyDown({ key: 'Enter' }); });

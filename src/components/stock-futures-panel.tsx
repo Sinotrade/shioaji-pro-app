@@ -2,7 +2,7 @@ import { RefreshButton } from './refresh-button';
 import { Star } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
-import { useStockCatalog } from '../hooks/use-stock-catalog';
+import { pickUnderlying, useStockCatalog } from '../hooks/use-stock-catalog';
 import { primeContract } from '../lib/contracts-cache';
 import {
     fetchFutures
@@ -44,13 +44,7 @@ export function StockFuturesPanel({
         onLoad: (rows) => {
             if (rows.length === 0) setLoading(false);
             const saved = localStorage.getItem(STOCK_FUTURE_UNDERLYING);
-            setUnderlying(previous =>
-                rows.find((stock) => stock.code === previous?.code) ??
-                    rows.find((stock) => stock.code === saved) ??
-                    rows.find((stock) => stock.code === '2330') ??
-                    rows[0] ??
-                    null,
-            );
+            setUnderlying(previous => pickUnderlying(rows, previous, saved));
         },
         onError: () => setLoading(false),
     });
