@@ -364,10 +364,23 @@ export function Watchlist({
         search.clear();
         setAddError(false);
     };
+    // Only rows hidden by an outside press come back on focus; Esc and typing keep them closed.
+    const reopenOnFocus = useRef(false);
+    // Focus inside the popup is lost to the page when its rows are replaced; give it back to the input.
+    const focusInPopup = useRef(false);
+    useEffect(() => {
+        const doc = inputRef.current?.ownerDocument;
+        if (focusInPopup.current && doc?.activeElement === doc?.body) inputRef.current?.focus();
+    });
+    const addButtonRef = useRef<HTMLButtonElement>(null);
     const { style: popupStyle, portal } = useAnchoredPopup({
         anchor: popupOpen ? addRow : null,
         popup: suggestBoxRef,
-        onDismiss: closePopup,
+        onDismiss: () => {
+            reopenOnFocus.current = true;
+            focusInPopup.current = false;
+            closePopup();
+        },
         // Above the add row's padding box, inset like the row's content; below it when the
         // space above is too short to read and the space below is larger.
         place: (row, { height }) => {
@@ -378,7 +391,7 @@ export function Watchlist({
             return {
                 left: rect.left,
                 right: row.ownerDocument.documentElement.clientWidth - rect.right,
-                ...(down ? { top: rect.bottom } : { bottom: height - rect.top - row.clientTop }),
+                ...(down ? { top: rect.bottom, boxShadow: '0 6px 18px rgba(0, 0, 0, 0.3)' } : { bottom: height - rect.top - row.clientTop }),
                 maxHeight: `min(24rem, 50vh, ${Math.max(0, down ? below : above)}px)`,
             };
         },
@@ -511,6 +524,7 @@ export function Watchlist({
         const code = item?.code ?? rawCode;
         if (!code || !item && !isDirectCode) return;
         search.clear();
+        reopenOnFocus.current = false;
         const submitVersion = search.currentVersion();
         setAddError(false);
         submitBusy.current = true;
@@ -773,7 +787,19 @@ export function Watchlist({
             </div>
             <div ref={setAddRow} className={styles.addRow}>
                 {popupOpen && portal(
-                    <div ref={suggestBoxRef} className={styles.suggestBox} style={popupStyle} onKeyDown={(e) => {
+                    <div ref={suggestBoxRef} className={styles.suggestBox} style={popupStyle} onFocus={() => { focusInPopup.current = true; }} onBlur={(e) => {
+                        // A removed row blurs with no next target; only a real move elsewhere ends it.
+                        if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) focusInPopup.current = false;
+                    }} onKeyDown={(e) => {
+                        // The popup sits at the end of the page: Tab order runs input → popup → add button.
+                        if (e.key === 'Tab') {
+                            const stops = [...e.currentTarget.querySelectorAll<HTMLElement>('summary, button:not([role=option])')];
+                            const edge = e.shiftKey ? stops[0] : stops[stops.length - 1];
+                            if (e.target !== edge) return;
+                            e.preventDefault();
+                            (e.shiftKey ? inputRef.current : addButtonRef.current)?.focus();
+                            return;
+                        }
                         // Expanded details handle their own Esc; anything else closes and returns to the input.
                         if (e.key !== 'Escape') return;
                         e.preventDefault();
@@ -826,7 +852,12 @@ export function Watchlist({
                     disabled={loading || !activeListId}
                     value={input}
                     // Rows cleared by an outside press come back when the input is focused again.
-                    onFocus={() => { if (input.trim() && !popupOpen) search.retry(); }}
+                    onFocus={() => {
+                        focusInPopup.current = false;
+                        if (!reopenOnFocus.current) return;
+                        reopenOnFocus.current = false;
+                        if (input.trim()) search.retry();
+                    }}
                     onCompositionStart={() => {
                         search.startComposition();
                         setAddError(false);
@@ -836,6 +867,7 @@ export function Watchlist({
                         setInput(e.currentTarget.value);
                     }}
                     onChange={(e) => {
+                        reopenOnFocus.current = false;
                         search.change(e.target.value);
                         setInput(e.target.value);
                         setAddError(false);
@@ -864,7 +896,7 @@ export function Watchlist({
                         }
                     }}
                 />
-                <button className={panel.btn} onClick={() => void submit()} disabled={busy || loading || !activeListId}>
+                <button ref={addButtonRef} className={panel.btn} onClick={() => void submit()} disabled={busy || loading || !activeListId}>
                     {busy ? '…' : '+'}
                 </button>
             </div>

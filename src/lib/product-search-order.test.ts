@@ -89,6 +89,10 @@ describe('pickAnchor', () => {
         expect(pickAnchor(parseProductQuery('元大期'), catalog, null)).toMatchObject({
             exactStock: broker, query: { lookup: '元大期', wantsFutures: false },
         });
+        // A name plus 期 that is not itself a stock still asks for that stock's futures.
+        expect(pickAnchor(parseProductQuery('台積電期'), [tsmc], null)).toMatchObject({
+            exactStock: tsmc, query: { lookup: '台積電', wantsFutures: true },
+        });
     });
 
     it.each(['台指', '台股期貨'])('uses the verified IX0001 underlying for %s without promoting a stock prefix', query => {

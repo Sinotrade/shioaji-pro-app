@@ -143,8 +143,14 @@ describe('futures month and size priority', () => {
         mocks.warrants.mockResolvedValue(Array.from({ length: 8 }, (_, i) => contract(`NYW${i}`, 'WRT', {
             name: `南亞購 ${i}`, underlying_code: '1303', expiry_date: '2027-04-07', last_trading_date: '2027-04-01',
         })));
-        const rows = (await (await import('./product-search')).searchProducts('南亞', 8, { includeWarrants: true })).map(row => row.code);
+        // The same-prefix stock sits between futures and warrants; every partial update is still a prefix.
+        const updates: string[][] = [];
+        const rows = (await (await import('./product-search')).searchProducts('南亞', 8, {
+            includeWarrants: true, onUpdate: partial => updates.push(partial.map(row => row.code)),
+        })).map(row => row.code);
         expect(rows).toEqual(['1303', 'NYFR1', 'NYFR2', '2408', 'NYW0', 'NYW1', 'NYW2', 'NYW3']);
+        expect(updates.length).toBeGreaterThan(0);
+        for (const prefix of updates) expect(rows.slice(0, prefix.length)).toEqual(prefix);
     });
 });
 

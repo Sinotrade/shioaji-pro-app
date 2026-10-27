@@ -33,6 +33,6 @@ node scripts/refresh-etf-catalog.mjs --write
 
 ## 2026-10-27 結果
 
-- `tsc -b`、`vitest run`（5029 passed、2 skipped）、`vite build` 通過。
-- dev（Vite 5198，`/api` 代理到本機 sidecar 21322，唯讀查詢）實測上表各查詢結果與規則一致；方向鍵移動時 `aria-activedescendant` 指向 listbox 內的 option；用 Esc 關命令面板不會出現「再按一次 Esc 全部刪單」，點面板內文字後再按 Esc 也一樣。自選浮層：Tab 進到詳情，浮層內 Esc 收起並回到輸入框，點外面收起後重新聚焦會恢復結果。
+- `tsc -b`、`vitest run`（5031 passed、2 skipped）、`vite build` 通過。
+- dev（Vite 5198，`/api` 代理到本機 sidecar 21322，唯讀查詢）實測上表各查詢結果與規則一致；方向鍵移動時 `aria-activedescendant` 指向 listbox 內的 option；用 Esc 關命令面板不會出現「再按一次 Esc 全部刪單」，點面板內文字後再按 Esc 也一樣。自選浮層：Tab 依輸入框、詳情、「+」的順序移動，Shift+Tab 可回輸入框，浮層內 Esc 收起並回到輸入框，點外面收起後重新聚焦會恢復結果。
 - 未驗證：浮層往下開只有單元測試（dev 版面上方空間足夠）；原生安裝包、讀屏軟體實機朗讀、正式網頁部署環境的 `/metadata` 路由。未送出委託，未修改自選清單成員。

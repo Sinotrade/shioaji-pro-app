@@ -1135,7 +1135,7 @@ describe('自選浮層錨定在輸入列', () => {
         state.anchor.top = 60;
         const session = await start(state.view);
         await act(async () => session.resolve([stock]));
-        expect(state.box()[0]!.props.style).toEqual({ left: 40, right: 1560, top: 95, maxHeight: 'min(24rem, 50vh, 769px)' });
+        expect(state.box()[0]!.props.style).toEqual({ left: 40, right: 1560, top: 95, boxShadow: '0 6px 18px rgba(0, 0, 0, 0.3)', maxHeight: 'min(24rem, 50vh, 769px)' });
     });
 
     it('Tab 先進到浮層的詳情，浮層內 Esc 收起並回到輸入框', async () => {
@@ -1151,6 +1151,9 @@ describe('自選浮層錨定在輸入列', () => {
         expect(esc.preventDefault).toHaveBeenCalled();
         expect(state.box()).toHaveLength(0);
         expect(input(state.view).props.value).toBe('台積電');
+        // Closed on purpose: focusing the input again does not reopen it.
+        act(() => input(state.view).props.onFocus());
+        expect(state.box()).toHaveLength(0);
     });
 
     it.each(['pointerdown', 'focusin'] as const)('%s 落在浮層與輸入列以外（例如拖動面板）即收起，不留可送出的隱藏列', async (type) => {
