@@ -262,6 +262,7 @@ export class IcFlowRecorder {
             accel: null,
             total,
             pct: wSum > 0 ? wPct / wSum : null,
+            volumeRatio: null,
             breadth: { up: 0, flat: 0, down: 0 },
         };
     }

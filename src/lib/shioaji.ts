@@ -597,6 +597,13 @@ async function updateCapabilitySubscription(
         if (action === 'unsubscribe' && refs === 0) {
             return { success: true, message: 'Already unsubscribed' };
         }
+        // the last consumer releases nothing the server should drop (every
+        // stock is still fed under another key): forget the key locally
+        if (action === 'unsubscribe' && Array.isArray(body.stocks) && body.stocks.length === 0) {
+            capabilityRefs.delete(key);
+            unregisterCapabilitySubscription(key);
+            return { success: true, message: 'Nothing to release' };
+        }
         let response: CapabilityResponse;
         for (let attempt = 0; ; attempt++) {
             try {

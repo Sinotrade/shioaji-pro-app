@@ -3,7 +3,7 @@
 // Hairline structure, tabular mono figures, colour only where it carries
 // meaning: up/down for flow direction and price, accent for selection.
 
-import { keyframes, style, styleVariants } from '@vanilla-extract/css';
+import { globalStyle, keyframes, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
 
 const ellipsis = {
@@ -66,10 +66,12 @@ const segmentBase = style({
     borderRadius: vars.radius.sm,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
+    selectors: { '&:focus-visible': { outline: `1.5px solid ${vars.color.accent}`, outlineOffset: '-1.5px' } },
 });
 
+// the selected segment is a visible thumb (panel on inset was 1.04:1 in dark), not only brighter text
 export const segment = styleVariants({
-    on: [segmentBase, { background: vars.color.panel, color: vars.color.foreground, fontWeight: 600 }],
+    on: [segmentBase, { background: vars.color.borderBright, color: vars.color.foreground, fontWeight: 600 }],
     off: [
         segmentBase,
         {
@@ -79,6 +81,48 @@ export const segment = styleVariants({
         },
     ],
 });
+// as tall as a text segment (0.6rem × 1.4 + 2px), whatever the icon size
+export const segmentIcon = style({ display: 'inline-flex', alignItems: 'center', height: 'calc(0.84rem + 2px)', padding: '0 6px' });
+
+// the view switcher reads as the panel's tabs (as the bottom dock's), a level above the segmented filters
+export const viewTabs = style({ display: 'inline-flex', gap: '2px', marginRight: '4px' });
+const viewTabBase = style({
+    fontFamily: vars.font.display,
+    fontSize: '0.72rem',
+    fontWeight: 500,
+    padding: '2px 8px 3px',
+    cursor: 'pointer',
+    background: 'transparent',
+    border: 'none',
+    borderBottom: '2px solid transparent',
+    color: vars.color.mutedForeground,
+    whiteSpace: 'nowrap',
+    transition: 'color 0.12s, border-color 0.12s',
+    ':hover': { color: vars.color.foreground },
+    selectors: { '&:focus-visible': { outline: `1.5px solid ${vars.color.accent}`, outlineOffset: '-1.5px' } },
+});
+export const viewTab = styleVariants({
+    off: [viewTabBase],
+    on: [viewTabBase, { color: vars.color.foreground, fontWeight: 600, borderBottomColor: vars.color.accent }],
+});
+
+/** Time-window pop-up: as quiet as the segments around it. */
+export const select = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.6rem',
+    lineHeight: 1.4,
+    // the segmented groups' height (segment + 1px padding + 1px border, each side)
+    height: 'calc(0.84rem + 6px)',
+    padding: '0 4px',
+    color: vars.color.foreground,
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    cursor: 'pointer',
+    selectors: { '&:focus-visible': { outline: `1.5px solid ${vars.color.accent}`, outlineOffset: '-1.5px' } },
+});
+/** The right side of the toolbar (display settings and feed status): wraps as one group. */
+export const toolSide = style({ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '8px', marginLeft: 'auto' });
 
 export const live = style({
     display: 'inline-flex',
@@ -115,6 +159,7 @@ const markBase = style({
 export const kindMark = styleVariants({
     chain: [markBase, { background: vars.color.accent, borderRadius: '1px' }],
     theme: [markBase, { border: `1px solid ${vars.color.mutedForeground}`, borderRadius: '50%' }],
+    industry: [markBase, { border: `1px dashed ${vars.color.mutedForeground}`, borderRadius: '1px' }],
 });
 
 export const dim = style({ color: vars.color.mutedForeground, fontWeight: 500 });
@@ -507,7 +552,7 @@ export const nextBarArc = style({
 
 export const views = style({ flex: 1, minHeight: 160, display: 'flex', flexDirection: 'column', minWidth: 0 });
 
-// ---- 排行 ----
+// ---- 金流 (rank) ----
 
 export const rank = style({ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' });
 
@@ -602,6 +647,8 @@ export const rankNameText = style({ ...ellipsis });
 export const rankDot = styleVariants({
     chain: { width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0, background: soft(vars.color.accent, 70) },
     theme: { width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0, background: soft(vars.color.amber, 70) },
+    // 細產業: a square, apart from the chains' and themes' dots
+    industry: { width: '7px', height: '7px', borderRadius: '1px', flexShrink: 0, background: soft(vars.color.foreground, 60) },
 });
 export const rankTrack = style({ position: 'relative', height: '22px', minWidth: 0 });
 
@@ -816,6 +863,7 @@ export const heatScale = style({
     background: `linear-gradient(90deg in oklab, color-mix(in oklab, ${vars.color.down} 54%, ${vars.color.panelRaised}), ${vars.color.panelRaised} 50%, color-mix(in oklab, ${vars.color.up} 54%, ${vars.color.panelRaised}))`,
 });
 export const heatScaleEnd = style({ ...mono, fontSize: '0.54rem' });
+export const heatLegendNote = style({ minWidth: 0, ...ellipsis });
 // treemap panes: groups over members (3 : 2), each measured for its layout
 export const heatPaneOnly = style({ flex: '1 1 0', minHeight: '120px', display: 'flex' });
 export const heatPaneMain = style({ flex: '3 1 0', minHeight: '120px', display: 'flex' });
@@ -828,6 +876,84 @@ export const heatSection = style({
     fontWeight: 650,
     color: vars.color.foreground,
 });
+
+// 清單 form: groups beside the selected group's members, each table scrolling on its own
+// always side by side (each table drops columns as it narrows); 5 : 6 follows what each table's figures take
+export const list = style({ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 5fr) minmax(0, 6fr)', gap: vars.space.sm });
+export const listPane = style({
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    overflow: 'auto',
+    // the panel surface also inside the 金流 detail card, so the sticky header matches
+    background: vars.color.panel,
+    // a row focused by the arrow keys never hides under the sticky header
+    scrollPaddingTop: '1.6rem',
+    border: `1px solid ${tint(vars.color.border, 70)}`,
+    borderRadius: '3px',
+});
+export const listTable = style({ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', ...mono, fontSize: '0.66rem', lineHeight: 1.35 });
+export const listTh = style({
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
+    padding: 0,
+    textAlign: 'right',
+    fontFamily: vars.font.body,
+    fontSize: '0.58rem',
+    fontWeight: 500,
+    color: vars.color.mutedForeground,
+    background: vars.color.panel,
+    borderBottom: `1px solid ${vars.color.border}`,
+});
+export const listThText = style([listTh, { padding: '4px 6px' }]);
+export const listThName = style([listThText, { textAlign: 'left', color: vars.color.foreground, fontWeight: 650, ...ellipsis }]);
+export const listSort = style({
+    width: '100%',
+    padding: '4px 6px',
+    border: 0,
+    background: 'none',
+    font: 'inherit',
+    color: 'inherit',
+    textAlign: 'right',
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+    selectors: {
+        '&:hover': { color: vars.color.foreground },
+        '&:focus-visible': { outline: `1.5px solid ${vars.color.accent}`, outlineOffset: '-1.5px' },
+    },
+});
+export const listRow = style({
+    cursor: 'pointer',
+    borderBottom: `1px solid ${tint(vars.color.border, 50)}`,
+    selectors: { '&:hover': { background: vars.color.muted } },
+});
+// a light tint, hovered or not, keeps the up / down figures readable (red ≥ 4.5:1 on both themes; the light
+// theme's green is 4.34:1 even on plain white); the ▶ and the bar carry the selection
+export const listRowOn = style({ background: tint(vars.color.accent, 8), selectors: { '&:hover': { background: tint(vars.color.accent, 8) } } });
+globalStyle(`${listRowOn} > td:first-child`, { boxShadow: `inset 3px 0 0 ${vars.color.accent}` });
+export const listTd = style({ padding: '3px 6px', textAlign: 'right', ...ellipsis });
+export const listTdName = style([listTd, { textAlign: 'left' }]);
+export const listName = style({
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: '5px',
+    width: '100%',
+    padding: 0,
+    border: 0,
+    background: 'none',
+    textAlign: 'left',
+    cursor: 'pointer',
+    fontFamily: vars.font.body,
+    fontSize: '0.68rem',
+    fontWeight: 600,
+    color: vars.color.foreground,
+    selectors: { '&:focus-visible': { outline: `1.5px solid ${vars.color.accent}`, outlineOffset: '1px' } },
+});
+export const listNameText = style({ minWidth: 0, ...ellipsis });
+/** ▶ before the selected name (as a quote board marks it). */
+export const listMark = style({ flexShrink: 0, color: vars.color.accent, fontSize: '0.55rem' });
+export const listCode = style({ ...mono, flexShrink: 0, fontSize: '0.56rem', fontWeight: 400, color: vars.color.mutedForeground });
 
 // position/size ease over 0.6 s when a minute bar re-weights the map (cut to
 // 0 s while the panel is being resized); colour keeps its slower ease
@@ -905,7 +1031,7 @@ export const heatBar = styleVariants({
     none: [heatBarBase, { height: '2px', background: tint(vars.color.foreground, 20) }],
 });
 
-// ---- 排行明細卡 ----
+// ---- 金流明細卡 ----
 
 export const rankLayout = style({ position: 'relative', flex: 1, minHeight: 0, display: 'flex', gap: vars.space.sm });
 export const rankFold = style({
@@ -1003,7 +1129,8 @@ export const cardStat = style({ display: 'flex', flexDirection: 'column', gap: '
 export const cardStatValue = style({ ...mono, fontSize: '0.74rem', fontWeight: 650, color: vars.color.foreground, whiteSpace: 'nowrap' });
 export const cardFlow = style({ display: 'flex', flexDirection: 'column', gap: '1px' });
 export const cardFlowValue = style({ ...mono, fontSize: '1.3rem', fontWeight: 700, lineHeight: 1.2 });
-export const cardChart = style({ position: 'relative', height: '72px' });
+// fixed: the member list below keeps its own minimum, so a short card scrolls instead of flattening the chart
+export const cardChart = style({ position: 'relative', height: '72px', flexShrink: 0 });
 export const cardSvg = style({ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' });
 export const cardShade = style({ fill: tint(vars.color.mutedForeground, 8) });
 export const cardZero = style({ stroke: tint(vars.color.mutedForeground, 45), strokeWidth: 1, strokeDasharray: '2 3' });
@@ -1035,28 +1162,6 @@ export const cardEnd = styleVariants({
 });
 export const cardCaption = style({ fontSize: '0.56rem', color: vars.color.mutedForeground, marginTop: '-4px' });
 export const cardEmpty = style({ fontSize: '0.62rem', color: vars.color.mutedForeground, padding: '4px 0' });
-export const cardList = style({ display: 'flex', flexDirection: 'column', gap: '1px' });
-export const cardListTitle = style({ fontSize: '0.6rem', fontWeight: 650, color: vars.color.mutedForeground, marginBottom: '2px' });
-export const cardMember = style({
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto 52px 64px',
-    alignItems: 'baseline',
-    gap: '6px',
-    padding: '2px 4px',
-    margin: '0 -4px',
-    border: 0,
-    borderRadius: vars.radius.sm,
-    background: 'transparent',
-    color: 'inherit',
-    font: 'inherit',
-    textAlign: 'left',
-    cursor: 'pointer',
-    selectors: {
-        '&:hover': { background: tint(vars.color.mutedForeground, 10) },
-        '&:focus-visible': { outline: `1px solid ${vars.color.accent}`, outlineOffset: '-1px' },
-    },
-});
-export const cardMemberName = style({ fontSize: '0.7rem', fontWeight: 600, color: vars.color.foreground, ...ellipsis });
-export const cardMemberCode = style({ ...mono, fontSize: '0.58rem', color: vars.color.mutedForeground });
-export const cardMemberPct = style({ ...mono, fontSize: '0.62rem', textAlign: 'right' });
-export const cardMemberNet = style({ ...mono, fontSize: '0.66rem', fontWeight: 650, textAlign: 'right', whiteSpace: 'nowrap' });
+// every member: fills what the card has left and scrolls on its own (the
+// whole card scrolls instead once it is shorter than this)
+export const cardMembers = style({ flex: '1 0 180px', minHeight: '180px', display: 'flex', flexDirection: 'column' });

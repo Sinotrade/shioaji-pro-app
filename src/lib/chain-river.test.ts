@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+    addToBatch,
+    alphaStep,
     approach,
     bandThickness,
     capParticles,
@@ -103,5 +105,25 @@ describe('band geometry', () => {
     it('head grows with the band', () => {
         expect(headRadius(3)).toBe(2);
         expect(headRadius(16)).toBeGreaterThan(headRadius(8));
+    });
+});
+
+describe('particle batches', () => {
+    it('rounds alphas to shared steps and clamps them', () => {
+        expect(alphaStep(0.512)).toBe(0.5);
+        expect(alphaStep(0.53)).toBe(0.55);
+        expect(alphaStep(-0.2)).toBe(0);
+        expect(alphaStep(1.4)).toBe(1);
+    });
+
+    it('collects marks of one look into one list', () => {
+        const batches = new Map<string, number[]>();
+        addToBatch(batches, 'up|0.5', 1, 2, 3);
+        addToBatch(batches, 'down|0.5', 4, 5, 6);
+        addToBatch(batches, 'up|0.5', 7, 8, 9);
+        expect([...batches]).toEqual([
+            ['up|0.5', [1, 2, 3, 7, 8, 9]],
+            ['down|0.5', [4, 5, 6]],
+        ]);
     });
 });

@@ -2,7 +2,7 @@
 // preferences, direction tokens, canvas plumbing, visibility pause and
 // reduced-motion detection.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { SESSION_SLOTS, type GroupFlow } from '../lib/chain-flow';
 import { feedPhase, type FeedPhase } from '../lib/chain-flow-feed';
 import * as s from './chain-map.css';
@@ -39,6 +39,11 @@ export function writePref(key: string, value: string) {
     }
 }
 
+/** Marker style of a group kind: 產業鏈, 細產業, or 題材 (anything else). */
+export function markKind(kind: string): 'chain' | 'industry' | 'theme' {
+    return kind === 'chain' ? 'chain' : kind === 'industry' ? 'industry' : 'theme';
+}
+
 export function dir(value: number | null | undefined): 'up' | 'down' | 'flat' {
     return value === null || value === undefined || value === 0 ? 'flat' : value > 0 ? 'up' : 'down';
 }
@@ -56,7 +61,9 @@ export function useBoxSize<T extends HTMLElement>() {
         if (!element || typeof ResizeObserver === 'undefined') return;
         const update = () => {
             const { width, height } = element.getBoundingClientRect();
-            setSize({ width: Math.floor(width), height: Math.floor(height) });
+            const w = Math.floor(width);
+            const h = Math.floor(height);
+            setSize((cur) => (cur.width === w && cur.height === h ? cur : { width: w, height: h }));
         };
         update();
         const observer = new ResizeObserver(update);
@@ -129,27 +136,61 @@ export function Segment<T extends string>({
     options,
     onChange,
     label,
+    variant = 'segment',
 }: {
     value: T;
-    options: { value: T; label: string; title?: string }[];
+    /** With an icon the label becomes the button's accessible name. */
+    options: { value: T; label: string; title?: string; icon?: ReactNode }[];
     onChange: (value: T) => void;
     label: string;
+    /** tabs: the panel's view switcher (underlined, larger), above the segmented filters. */
+    variant?: 'segment' | 'tabs';
+}) {
+    const tabs = variant === 'tabs';
+    return (
+        <span className={tabs ? s.viewTabs : s.segmentGroup} role='group' aria-label={label}>
+            {options.map((option) => {
+                const on = option.value === value;
+                return (
+                    <button
+                        key={option.value}
+                        type='button'
+                        className={`${(tabs ? s.viewTab : s.segment)[on ? 'on' : 'off']} ${option.icon ? s.segmentIcon : ''}`}
+                        aria-pressed={on}
+                        aria-label={option.icon ? option.label : undefined}
+                        title={option.title ?? (option.icon ? option.label : undefined)}
+                        onClick={() => onChange(option.value)}
+                    >
+                        {option.icon ?? option.label}
+                    </button>
+                );
+            })}
+        </span>
+    );
+}
+
+/** A setting changed now and then (a time window): one compact pop-up instead of a row of segments. */
+export function Select<T extends string>({
+    value,
+    options,
+    onChange,
+    label,
+    title,
+}: {
+    value: T;
+    options: { value: T; label: string }[];
+    onChange: (value: T) => void;
+    label: string;
+    title?: string;
 }) {
     return (
-        <span className={s.segmentGroup} role='group' aria-label={label}>
+        <select className={s.select} value={value} aria-label={label} title={title ?? label} onChange={(e) => onChange(e.target.value as T)}>
             {options.map((option) => (
-                <button
-                    key={option.value}
-                    type='button'
-                    className={s.segment[option.value === value ? 'on' : 'off']}
-                    aria-pressed={option.value === value}
-                    title={option.title}
-                    onClick={() => onChange(option.value)}
-                >
+                <option key={option.value} value={option.value}>
                     {option.label}
-                </button>
+                </option>
             ))}
-        </span>
+        </select>
     );
 }
 

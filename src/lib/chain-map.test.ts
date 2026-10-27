@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmtSignedPct, fmtTwd, isKbarCode, memberCodes, orderedStages, stageMembers, stockContract, themeCodes } from './chain-map';
+import { fmtSignedPct, fmtTwd, industryThemes, isKbarCode, memberCodes, orderedStages, stageMembers, stockContract, themeCodes } from './chain-map';
 import type { Theme } from './company-data/types';
 
 const member = (id: string, stage: string) => ({
@@ -43,6 +43,21 @@ describe('chain structure', () => {
         expect(isKbarCode('2330')).toBe(true);
         expect(isKbarCode('00878')).toBe(false);
         expect(isKbarCode('910861')).toBe(false);
+    });
+});
+
+describe('細產業', () => {
+    it('groups cards by sub-industry, drops small groups and codes the K-bar stream rejects', () => {
+        const cards = [
+            ...['2454', '3034', '3035', '3661'].map((code) => ({ code, subIndustry: 'IC 設計' })),
+            ...['2330', '2303', '00981A'].map((code) => ({ code, subIndustry: '晶圓代工' })),
+            { code: '1101', subIndustry: null },
+        ];
+        const themes = industryThemes(cards);
+        expect(themes.map((t) => [t.id, t.kind, t.name])).toEqual([['industry.IC 設計', 'industry', 'IC 設計']]);
+        expect(themeCodes(themes[0]!)).toEqual(['2454', '3034', '3035', '3661']);
+        // 晶圓代工 has only two four-digit codes: below the minimum
+        expect(industryThemes(cards, 2).map((t) => t.name)).toEqual(['IC 設計', '晶圓代工']);
     });
 });
 

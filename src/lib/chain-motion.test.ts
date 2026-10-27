@@ -58,6 +58,7 @@ function group(minutes: [slot: number, turnover: number, net: number][]): GroupF
         accel: null,
         total: 0,
         pct: null,
+        volumeRatio: null,
         breadth: { up: 0, flat: 0, down: 0 },
     };
 }
@@ -203,6 +204,8 @@ describe('heat', () => {
         expect(heatLevel(0.1, heatFull(ratios))).toBeLessThan(0.6);
         expect(heatFull([0.001, null, -0.002])).toBe(0.05);
         expect(heatFull([])).toBe(0.5);
+        // percent changes on a quiet day: the caller's floor keeps them pale
+        expect(heatFull([0.3, -0.4, 0.2], 0.9, 1)).toBe(1);
     });
 });
 

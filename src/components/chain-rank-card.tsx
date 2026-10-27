@@ -1,23 +1,26 @@
-// src/components/chain-rank-card.tsx — detail card beside the 排行 view for
+// src/components/chain-rank-card.tsx：detail card beside the 金流 view for
 // the selected group: rotation state, change, turnover, net inflow over the
 // ranking window (rolling digits), the cumulative net-inflow line since the
-// panel started receiving bars (window shaded, glowing end), and the five
-// largest net-inflow and net-outflow members over the window.
+// panel started receiving bars (window shaded, glowing end), and every member
+// with its net inflow over the window, sortable.
 
 import { X } from 'lucide-react';
 import { useEffect, useMemo, useRef, type KeyboardEvent } from 'react';
 import { chainFlowBook } from '../lib/chain-flow-feed';
-import { memberFlows, slotLabel } from '../lib/chain-flow';
+import { codePct, memberFlows, sessionTurnover, slotLabel } from '../lib/chain-flow';
 import { fmtSignedPct, fmtTwd } from '../lib/chain-map';
 import { metricMinutes, QUADRANT_LABEL, quadrantOf, rankValue, rotationPoint, type RankMetric } from '../lib/chain-motion';
-import { dir, type FlowRow } from './chain-ui';
+import { HeatList, type ListCol, type ListStep, type Tile } from './chain-heat';
+import { dir, markKind, type FlowRow } from './chain-ui';
 import { Odometer } from './odometer';
 import * as panel from './panel.css';
 import * as s from './chain-map.css';
 
 const W = 240;
 const H = 72;
-const TOP = 5;
+// the card is too narrow for codes or 成交值; its point is each member's net inflow
+const CARD_COLUMNS: readonly ListCol[] = ['pct', 'net'];
+const CARD_STEPS: readonly ListStep[] = ['slim'];
 
 export function metricLabel(metric: RankMetric): string {
     return metric === 'cum' ? '累計' : `近 ${metric} 分`;
@@ -31,6 +34,7 @@ export function FlowRankCard({
     reducedMotion,
     paused,
     nameOf,
+    focus = null,
     onPick,
     onClose,
     id,
@@ -42,6 +46,8 @@ export function FlowRankCard({
     reducedMotion: boolean;
     paused: boolean;
     nameOf: (code: string) => string;
+    /** The stock the panel follows: marked in the list. */
+    focus?: string | null;
     onPick: (code: string) => void;
     /**
      * Shown as a drawer over the lanes (narrow panel): a close button, focus
@@ -67,9 +73,28 @@ export function FlowRankCard({
     const point = now !== null ? rotationPoint(f, now) : null;
     const state = point ? quadrantOf(point.x, point.y) : null;
 
-    const members = useMemo(() => memberFlows(chainFlowBook, row.codes, metricMinutes(metric), now), [row, metric, now]);
-    const ins = members.filter((m) => m.net > 0).sort((a, b) => b.net - a.net).slice(0, TOP);
-    const outs = members.filter((m) => m.net < 0).sort((a, b) => a.net - b.net).slice(0, TOP);
+    // every member; memberFlows only has the ones with a bar in the window
+    const members = useMemo<Tile[]>(() => {
+        const inWindow = new Map(memberFlows(chainFlowBook, row.codes, metricMinutes(metric), now).map((m) => [m.code, m]));
+        return row.codes.flatMap((code) => {
+            const flow = chainFlowBook.codes.get(code);
+            if (!flow) return [];
+            const m = inWindow.get(code);
+            const net = m?.net ?? 0;
+            const turnover = m?.turnover ?? 0;
+            return [
+                {
+                    id: code,
+                    name: nameOf(code),
+                    sub: code,
+                    code,
+                    cell: { net, turnover, ratio: null, minutes: [], amounts: [] },
+                    pct: codePct(flow),
+                    order: sessionTurnover(flow),
+                },
+            ];
+        });
+    }, [row, metric, now, nameOf]);
 
     // cumulative net since the first observed bar
     const chart = useMemo(() => {
@@ -107,7 +132,7 @@ export function FlowRankCard({
             onKeyDown={drawer ? onKeyDown : undefined}
         >
             <div className={s.cardHead}>
-                <span className={s.kindMark[row.theme.kind === 'chain' ? 'chain' : 'theme']} aria-hidden='true' />
+                <span className={s.kindMark[markKind(row.theme.kind)]} aria-hidden='true' />
                 <span className={s.cardTitle}>{row.theme.name}</span>
                 {state && (
                     <span className={s.cardBadge[state]} title='輪動象限：依累計淨流入方向與資金動能'>
@@ -165,46 +190,23 @@ export function FlowRankCard({
                 累計淨流入走勢{from !== null ? `・${slotLabel(from)} 起` : ''}
                 {metric !== 'cum' ? `・陰影為${metricLabel(metric)}` : ''}
             </div>
-            <MemberList title={`${metricLabel(metric)}淨流入前 ${TOP}`} rows={ins} nameOf={nameOf} onPick={onPick} />
-            <MemberList title={`${metricLabel(metric)}淨流出前 ${TOP}`} rows={outs} nameOf={nameOf} onPick={onPick} />
+            <div className={s.cardMembers}>
+                <HeatList
+                    tiles={members}
+                    now={now}
+                    netTitle={`${metricLabel(metric)}淨流入（估算）`}
+                    nameLabel='個股'
+                    columns={CARD_COLUMNS}
+                    steps={CARD_STEPS}
+                    selectedId={focus}
+                    scope={row.theme.id}
+                    sortKey='sj-pro-chainmap-card-sort'
+                    label={`${row.theme.name}成分股`}
+                    onClick={onPick}
+                />
+            </div>
         </aside>
     );
 }
 
 const TOP_PAD = 6;
-
-function MemberList({
-    title,
-    rows,
-    nameOf,
-    onPick,
-}: {
-    title: string;
-    rows: { code: string; net: number; pct: number | null }[];
-    nameOf: (code: string) => string;
-    onPick: (code: string) => void;
-}) {
-    return (
-        <div className={s.cardList}>
-            <div className={s.cardListTitle}>{title}</div>
-            {rows.length === 0 ? (
-                <div className={s.cardEmpty}>無</div>
-            ) : (
-                rows.map((m) => (
-                    <button
-                        key={m.code}
-                        type='button'
-                        className={s.cardMember}
-                        onClick={() => onPick(m.code)}
-                        aria-label={`${nameOf(m.code)} ${m.code}，淨流入 ${fmtTwd(m.net, true)}，漲跌 ${fmtSignedPct(m.pct)}`}
-                    >
-                        <span className={s.cardMemberName}>{nameOf(m.code)}</span>
-                        <span className={s.cardMemberCode}>{m.code}</span>
-                        <span className={`${s.cardMemberPct} ${panel.dirText[dir(m.pct)]}`}>{fmtSignedPct(m.pct)}</span>
-                        <span className={`${s.cardMemberNet} ${panel.dirText[dir(m.net)]}`}>{fmtTwd(m.net, true)}</span>
-                    </button>
-                ))
-            )}
-        </div>
-    );
-}

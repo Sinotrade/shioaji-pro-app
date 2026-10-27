@@ -1,13 +1,14 @@
 // src/lib/chain-flow-feed.ts — live feed for 產業鏈資金流向.
 //
 // Request budget (see PR #355, design v3):
-// - Overview: the realtime 1-minute K-bar stream for each chain/theme's
-//   leading members only (top 8 by market cap, ~190 codes → one subscribe
-//   POST of ≤300 four-digit codes; the sidecar caps a body at 64 KB and
-//   rejects other codes). No request is sent per minute: bars arrive on the
-//   App's existing aggregate SSE.
-// - Drill: the selected group's remaining members, under their own key that
-//   never includes overview codes, so releasing it cannot drop them.
+// - Overview: the realtime 1-minute K-bar stream for every member of every
+//   chain/theme (~800 codes → subscribe POSTs of ≤300 four-digit codes; the
+//   sidecar caps a body at 64 KB and rejects other codes). No request is sent
+//   per minute: bars arrive on the App's existing aggregate SSE.
+// - Drill: extra codes outside that universe (持股族群's holdings, 細產業's
+//   members), under their own keys that never include overview codes, so
+//   releasing them cannot drop overview codes; a release also keeps any code
+//   another drill still feeds.
 // - Ticks the App already receives for other panels (watchlist, chart …)
 //   update the price of overlapping codes faster. This module never
 //   subscribes ticks itself.
@@ -56,6 +57,8 @@ interface Connection {
     batches: Map<string, number>;
     /** Batch keys whose subscribe succeeded. */
     subscribed: Set<string>;
+    /** Codes of batches whose subscribe failed: nothing of this connection feeds them. */
+    failed: Set<string>;
     error: string | null;
     members: readonly FeedMember[];
 }
@@ -126,14 +129,26 @@ export interface FeedMember {
     shares: number | null;
 }
 
+/** FNV-1a of the batch's codes, as base-36. */
+function codeHash(members: readonly FeedMember[]) {
+    let h = 0x811c9dc5;
+    for (const m of members) {
+        for (let i = 0; i < m.code.length; i++) h = Math.imul(h ^ m.code.charCodeAt(i), 0x01000193);
+        h = Math.imul(h ^ 44, 0x01000193);
+    }
+    return (h >>> 0).toString(36);
+}
+
 /** Stable batches of four-digit codes, sorted so every panel builds the same keys. */
 export function kbarBatches(members: readonly FeedMember[], size = FEED_BATCH, scope: FeedScope = 'overview') {
     const sorted = members.filter((m) => isKbarCode(m.code)).sort((a, b) => a.code.localeCompare(b.code));
     const batches: { key: string; contracts: ContractBase[] }[] = [];
     for (let i = 0; i < sorted.length; i += size) {
         const slice = sorted.slice(i, i + size);
+        // two drill sources (持股族群, 細產業) can share first / last / count: key drills by every code
+        const span = scope === 'drill' ? `drill:${codeHash(slice)}:` : '';
         batches.push({
-            key: `chainflow:${scope === 'drill' ? 'drill:' : ''}${slice[0]!.code}-${slice[slice.length - 1]!.code}:${slice.length}`,
+            key: `chainflow:${span}${slice[0]!.code}-${slice[slice.length - 1]!.code}:${slice.length}`,
             contracts: slice.map((m) => m.contract),
         });
     }
@@ -177,6 +192,8 @@ function seedFrom(code: string, snapshot: Snapshot, shares: number | null) {
         ref: ref && ref > 0 ? ref : null,
         close,
         totalAmount: snapshot.total_amount || 0,
+        totalVolume: snapshot.total_volume || 0,
+        yesterdayVolume: snapshot.yesterday_volume || null,
         shares,
         slot: covered,
         ...(seconds !== null ? { at: seconds } : {}),
@@ -312,14 +329,15 @@ async function seedOnce(members: readonly FeedMember[]) {
     if (seededDate === null && chainFlowBook.date !== null) seededDate = chainFlowBook.date;
 }
 
-function startSeed(members: readonly FeedMember[]) {
+/** `live`: false once the connection is released, so a queued seed of a dropped drill marks nothing seeded. */
+function startSeed(members: readonly FeedMember[], live: () => boolean = () => true) {
     if (members.length === 0) return;
     const generation = seedGeneration;
     seedPending += 1;
     seedQueue = seedQueue
         // every panel closed before this seed ran: marking its codes seeded
         // would make the next open skip the snapshots it needs
-        .then(() => (generation === seedGeneration ? seed(members) : undefined))
+        .then(() => (generation === seedGeneration && live() ? seed(members) : undefined))
         .catch(() => undefined)
         .finally(() => {
             seedPending -= 1;
@@ -376,6 +394,7 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
         scope,
         batches: new Map(batches.map((b) => [b.key, b.contracts.length])),
         subscribed: new Set(),
+        failed: new Set(),
         error: null,
         members,
     };
@@ -390,18 +409,28 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
             },
             (error) => {
                 if (released) return;
+                for (const c of batch.contracts) conn.failed.add(c.code);
                 conn.error = error instanceof Error ? error.message : String(error);
                 notifyChainFlow(true);
             },
         );
     }
-    startSeed(members);
+    startSeed(members, () => !released);
     notifyChainFlow(true);
     return () => {
         if (released) return;
         released = true;
         connections.delete(conn);
-        for (const batch of batches) void unsubscribeKbars(batch.key, batch.contracts).catch(() => undefined);
+        // drill batches can overlap (持股族群's holdings, 細產業's members): a code
+        // another connection still feeds keeps its K-bars; the others are
+        // dropped, and seeded afresh if subscribed again (their bars stopped)
+        const inUse = new Set<string>();
+        for (const c of connections) for (const m of c.members) if (!c.failed.has(m.code)) inUse.add(m.code);
+        for (const batch of batches) {
+            const contracts = batch.contracts.filter((c) => !inUse.has(c.code));
+            void unsubscribeKbars(batch.key, contracts).catch(() => undefined);
+        }
+        for (const m of members) if (!inUse.has(m.code)) seeded.delete(m.code);
         streamRefs -= 1;
         if (streamRefs === 0) {
             detachStream?.();
