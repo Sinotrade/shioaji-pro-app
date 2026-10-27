@@ -1,4 +1,4 @@
-// src/components/chain-map.tsx — 產業鏈資金流向：shioaji-data 產業鏈／題材／細產業 ×
+// src/components/chain-map.tsx：產業鏈資金流向：shioaji-data 產業鏈／題材／細產業 ×
 // 即時 1 分 K 資金流，三種即時視圖：
 // - 輪動（預設）：每個族群一顆泡泡，x＝開啟以來淨流入、y＝加速（近 10 分鐘
 //   流入比重 − 近 30 分鐘），大小＝近 10 分成交值、顏色＝領先／轉弱／
@@ -205,7 +205,8 @@ export function ChainMap({
             setFocus(linkedCode);
             return;
         }
-        const owners = (kind === 'industry' && industries ? industries : themes).filter((t) => t.members.some((m) => m.id === id));
+        // only groups of the current 類型, or the lists would show no selection
+        const owners = pool.filter((t) => t.members.some((m) => m.id === id));
         const next = owners.find((t) => t.kind === 'chain' && t.id !== 'chain.finance') ?? owners[0];
         if (next) {
             setThemeId(next.id);
@@ -213,14 +214,15 @@ export function ChainMap({
         }
         // only react to the linked code, not to theme switches made here
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [linkedCode, themes, industries]);
+    }, [linkedCode, themes, pool]);
 
     // when the list (on open, or after a 類型 switch) lacks the selection, select the group of the
     // linked / followed stock, else the list's largest group (today's turnover); waits for the list
     // (細產業 loads its cards first)
     const checkedKind = useRef<KindFilter | null>(null);
     useEffect(() => {
-        if (checkedKind.current === kind || rows.length === 0 || !theme) return;
+        // also waits for the snapshots: before them every turnover is 0
+        if (checkedKind.current === kind || !theme || !rows.some((r) => r.flow.total > 0)) return;
         checkedKind.current = kind;
         const next = fallbackGroup(rows, theme.id, linkedCode ?? focus);
         if (next) setThemeId(next);
@@ -421,8 +423,8 @@ export function ChainMap({
                 )}
             </div>
 
-            {/* 細產業 have no upstream / downstream stages to show */}
-            {showDetail && view !== 'heat' && tiers.length > 0 && !industryLoading && (
+            {/* 細產業 have no upstream / downstream stages: only the followed stock's card */}
+            {showDetail && view !== 'heat' && (tiers.length > 0 || focus !== null) && !industryLoading && (
                 <div className={s.detail}>
                     <div className={s.detailHead}>
                         <span className={s.kindMark[markKind(theme.kind)]} aria-hidden='true' />
@@ -433,25 +435,27 @@ export function ChainMap({
                         </span>
                     </div>
                     <div className={`${s.detailBody} ${focus ? s.detailBodyFocus : ''}`}>
-                        <div className={s.tiers} style={{ gridTemplateColumns: `repeat(${Math.max(1, tiers.length)}, minmax(0, 1fr))` }}>
-                            {tiers.map((tier, i) => (
-                                <TierCard
-                                    key={tier.tier}
-                                    view={tier}
-                                    shift={shifts[i] ?? 0}
-                                    last={i === tiers.length - 1}
-                                    from={from}
-                                    now={now}
-                                    hover={null}
-                                    themeKey={themeKey}
-                                    revision={revision}
-                                    nameOf={nameOf}
-                                    stageOf={stageOf}
-                                    focus={focus}
-                                    onPick={pick}
-                                />
-                            ))}
-                        </div>
+                        {tiers.length > 0 && (
+                            <div className={s.tiers} style={{ gridTemplateColumns: `repeat(${tiers.length}, minmax(0, 1fr))` }}>
+                                {tiers.map((tier, i) => (
+                                    <TierCard
+                                        key={tier.tier}
+                                        view={tier}
+                                        shift={shifts[i] ?? 0}
+                                        last={i === tiers.length - 1}
+                                        from={from}
+                                        now={now}
+                                        hover={null}
+                                        themeKey={themeKey}
+                                        revision={revision}
+                                        nameOf={nameOf}
+                                        stageOf={stageOf}
+                                        focus={focus}
+                                        onPick={pick}
+                                    />
+                                ))}
+                            </div>
+                        )}
                         {focus && (
                             <FocusCard
                                 code={focus}

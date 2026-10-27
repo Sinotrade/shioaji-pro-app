@@ -57,6 +57,8 @@ interface Connection {
     batches: Map<string, number>;
     /** Batch keys whose subscribe succeeded. */
     subscribed: Set<string>;
+    /** Codes of batches whose subscribe failed: nothing of this connection feeds them. */
+    failed: Set<string>;
     error: string | null;
     members: readonly FeedMember[];
 }
@@ -127,14 +129,26 @@ export interface FeedMember {
     shares: number | null;
 }
 
+/** FNV-1a of the batch's codes, as base-36. */
+function codeHash(members: readonly FeedMember[]) {
+    let h = 0x811c9dc5;
+    for (const m of members) {
+        for (let i = 0; i < m.code.length; i++) h = Math.imul(h ^ m.code.charCodeAt(i), 0x01000193);
+        h = Math.imul(h ^ 44, 0x01000193);
+    }
+    return (h >>> 0).toString(36);
+}
+
 /** Stable batches of four-digit codes, sorted so every panel builds the same keys. */
 export function kbarBatches(members: readonly FeedMember[], size = FEED_BATCH, scope: FeedScope = 'overview') {
     const sorted = members.filter((m) => isKbarCode(m.code)).sort((a, b) => a.code.localeCompare(b.code));
     const batches: { key: string; contracts: ContractBase[] }[] = [];
     for (let i = 0; i < sorted.length; i += size) {
         const slice = sorted.slice(i, i + size);
+        // two drill sources (持股族群, 細產業) can share first / last / count: key drills by every code
+        const span = scope === 'drill' ? `drill:${codeHash(slice)}:` : '';
         batches.push({
-            key: `chainflow:${scope === 'drill' ? 'drill:' : ''}${slice[0]!.code}-${slice[slice.length - 1]!.code}:${slice.length}`,
+            key: `chainflow:${span}${slice[0]!.code}-${slice[slice.length - 1]!.code}:${slice.length}`,
             contracts: slice.map((m) => m.contract),
         });
     }
@@ -380,6 +394,7 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
         scope,
         batches: new Map(batches.map((b) => [b.key, b.contracts.length])),
         subscribed: new Set(),
+        failed: new Set(),
         error: null,
         members,
     };
@@ -394,6 +409,7 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
             },
             (error) => {
                 if (released) return;
+                for (const c of batch.contracts) conn.failed.add(c.code);
                 conn.error = error instanceof Error ? error.message : String(error);
                 notifyChainFlow(true);
             },
@@ -409,7 +425,7 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
         // another connection still feeds keeps its K-bars; the others are
         // dropped, and seeded afresh if subscribed again (their bars stopped)
         const inUse = new Set<string>();
-        for (const c of connections) for (const m of c.members) inUse.add(m.code);
+        for (const c of connections) for (const m of c.members) if (!c.failed.has(m.code)) inUse.add(m.code);
         for (const batch of batches) {
             const contracts = batch.contracts.filter((c) => !inUse.has(c.code));
             void unsubscribeKbars(batch.key, contracts).catch(() => undefined);

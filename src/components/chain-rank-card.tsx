@@ -1,4 +1,4 @@
-// src/components/chain-rank-card.tsx — detail card beside the 金流 view for
+// src/components/chain-rank-card.tsx：detail card beside the 金流 view for
 // the selected group: rotation state, change, turnover, net inflow over the
 // ranking window (rolling digits), the cumulative net-inflow line since the
 // panel started receiving bars (window shaded, glowing end), and every member

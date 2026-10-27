@@ -61,7 +61,9 @@ export function useBoxSize<T extends HTMLElement>() {
         if (!element || typeof ResizeObserver === 'undefined') return;
         const update = () => {
             const { width, height } = element.getBoundingClientRect();
-            setSize({ width: Math.floor(width), height: Math.floor(height) });
+            const w = Math.floor(width);
+            const h = Math.floor(height);
+            setSize((cur) => (cur.width === w && cur.height === h ? cur : { width: w, height: h }));
         };
         update();
         const observer = new ResizeObserver(update);

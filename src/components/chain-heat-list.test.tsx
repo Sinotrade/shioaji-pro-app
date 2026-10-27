@@ -160,6 +160,14 @@ describe('HeatList', () => {
         expect(rowNames()).toEqual(['d', 'a', 'b', 'c']);
     });
 
+    it('says so when no member has a quote yet', () => {
+        act(() => {
+            renderer = create(createElement(HeatList, { ...groups(10, null).props, tiles: [] }));
+        });
+        expect(rows()).toHaveLength(1);
+        expect(rows()[0]!.findByType('td').props.children).toBe('尚無報價');
+    });
+
     it('sorts by 漲跌% when the sorted column gave way to a narrow pane', () => {
         vi.stubGlobal('document', { documentElement: {} });
         vi.stubGlobal('getComputedStyle', () => ({ fontSize: '16px' }));

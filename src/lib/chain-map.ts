@@ -99,12 +99,15 @@ export function fmtSignedPct(value: number | null | undefined, digits = 2): stri
 }
 
 /** TWD in 兆 / 億 / 萬, with a sign when asked. */
+// one formatter for every cell: toLocaleString builds a new one per call (hot in the 漲跌 list)
+const WAN = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+
 export function fmtTwd(value: number | null | undefined, signed = false): string {
     if (value === null || value === undefined || !Number.isFinite(value)) return '--';
     const sign = value < 0 ? '−' : signed && value > 0 ? '+' : '';
     const abs = Math.abs(value);
     if (abs >= 1e12) return `${sign}${(abs / 1e12).toFixed(2)} 兆`;
     if (abs >= 1e8) return `${sign}${(abs / 1e8).toFixed(abs >= 1e10 ? 0 : abs >= 1e9 ? 1 : 2)} 億`;
-    if (abs >= 1e4) return `${sign}${Math.round(abs / 1e4).toLocaleString('en-US')} 萬`;
+    if (abs >= 1e4) return `${sign}${WAN.format(Math.round(abs / 1e4))} 萬`;
     return abs === 0 ? '0' : `${sign}${Math.round(abs)}`;
 }

@@ -1,4 +1,4 @@
-// src/lib/company-cards.ts — shioaji-data tw/cards reduced to what the
+// src/lib/company-cards.ts：shioaji-data tw/cards reduced to what the
 // panels group by: official industry, 細產業, primary chain and tier, main
 // theme. Read once and shared (持股族群, 產業鏈資金流向's 細產業).
 //

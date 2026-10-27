@@ -1,4 +1,4 @@
-// src/components/chain-heat.tsx — 漲跌 view: heat of every group, and of the
+// src/components/chain-heat.tsx：漲跌 view: heat of every group, and of the
 // selected group's member stocks.
 //
 // Each tile is coloured by today's change (up colour, down colour, strength
@@ -323,6 +323,13 @@ export function HeatList({
                     </tr>
                 </thead>
                 <tbody onKeyDown={onKeyDown}>
+                    {sorted.length === 0 && (
+                        <tr>
+                            <td className={s.listTdName} colSpan={figures.length + 1}>
+                                尚無報價
+                            </td>
+                        </tr>
+                    )}
                     {sorted.map((t) => {
                         const on = t.id === selectedId;
                         return (

@@ -1,4 +1,4 @@
-// src/components/chain-rank.tsx — 金流 (rank) view: groups ranked by net inflow.
+// src/components/chain-rank.tsx：金流 (rank) view: groups ranked by net inflow.
 //
 // One row per group: a category dot, the name, a small rank-change mark, a
 // lane growing from a fixed dashed centre axis (inflow right, outflow left,

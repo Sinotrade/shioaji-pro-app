@@ -1,4 +1,4 @@
-// src/components/chain-river.tsx — the canvas engine behind the 金流 (rank) lanes.
+// src/components/chain-river.tsx：the canvas engine behind the 金流 (rank) lanes.
 //
 // DOM owns the rows (name, value, hit target); one canvas over the list owns
 // everything that moves: a dashed centre axis, each group's soft gradient
