@@ -21,31 +21,31 @@ function field(object: ts.ObjectLiteralExpression, name: string): ts.Expression 
         && (ts.isStringLiteral(node.name) ? node.name.text : node.name.getText(source)) === name);
     return property?.initializer;
 }
-function narrow(name: string): ts.ObjectLiteralExpression {
-    const media = field(styleObject(name), '@media');
-    expect(media && ts.isObjectLiteralExpression(media), `${name} media`).toBe(true);
-    const rule = field(media as ts.ObjectLiteralExpression, '(max-width: 1050px)');
-    expect(rule && ts.isObjectLiteralExpression(rule), `${name} narrow`).toBe(true);
+function media(name: string, query: string): ts.ObjectLiteralExpression {
+    const rules = field(styleObject(name), '@media');
+    expect(rules && ts.isObjectLiteralExpression(rules), `${name} media`).toBe(true);
+    const rule = field(rules as ts.ObjectLiteralExpression, query);
+    expect(rule && ts.isObjectLiteralExpression(rule), `${name} ${query}`).toBe(true);
     return rule as ts.ObjectLiteralExpression;
 }
+const narrow = (name: string) => media(name, '(max-width: 1050px)');
 const cssText = (object: ts.ObjectLiteralExpression, name: string) => field(object, name)?.getText(source);
 
-it('窄版 header 換行容納全部控制，僅隱藏 spacer，未以裁切或橫捲掩蓋溢出', () => {
-    expect(cssText(narrow('header'), 'flexWrap')).toBe("'wrap'");
-    expect(cssText(narrow('header'), 'gap')).toBe('vars.space.sm');
-    expect(cssText(narrow('header'), 'minWidth')).toBe('0');
+it('header 放不下時換行容納全部控制，窄版僅隱藏 spacer，未以裁切或橫捲掩蓋溢出', () => {
+    // Wrapping only happens when a row does not fit, so a wide window keeps one row.
+    expect(cssText(styleObject('header'), 'flexWrap')).toBe("'wrap'");
+    expect(cssText(media('header', '(max-width: 1600px)'), 'gap')).toBe('vars.space.sm');
     expect(cssText(narrow('spacer'), 'display')).toBe("'none'");
-    for (const name of ['overflow', 'overflowX']) expect(cssText(narrow('header'), name)).toBeUndefined();
+    for (const name of ['overflow', 'overflowX']) expect(cssText(styleObject('header'), name)).toBeUndefined();
     for (const name of ['header', 'resetBtn', 'chip', 'killHeaderOn', 'simBadge', 'prodBadge']) {
         expect(cssText(styleObject(name), 'display')).not.toBe("'none'");
     }
-    // Desktop keeps the original single-row layout and dimensions.
-    expect(cssText(styleObject('header'), 'flexWrap')).toBeUndefined();
+    // Wide windows keep the original spacing and dimensions.
     expect(cssText(styleObject('header'), 'gap')).toBe('vars.space.md');
     expect(cssText(styleObject('resetBtn'), 'height')).toBe("'25px'");
 });
 
-it('品牌／build identity 與外部伺服器警示可折行，窄版 popover 錨整個 header 並受 viewport 限寬', () => {
+it('品牌／build identity 與外部伺服器警示可折行，popover 維持按鈕錨定的桌面設計', () => {
     expect(cssText(narrow('logoBlock'), 'flexWrap')).toBe("'wrap'");
     expect(cssText(narrow('logoBlock'), 'maxWidth')).toBe("'100%'");
     expect(cssText(narrow('logoBlock'), 'minWidth')).toBe('0');
@@ -54,11 +54,8 @@ it('品牌／build identity 與外部伺服器警示可折行，窄版 popover �
     expect(cssText(narrow('foreignChip'), 'flexWrap')).toBe("'wrap'");
     expect(cssText(narrow('foreignChip'), 'height')).toBe("'auto'");
     expect(cssText(narrow('foreignChip'), 'maxWidth')).toBe("'100%'");
-    expect(cssText(narrow('header'), 'position')).toBe("'relative'");
-    expect(cssText(narrow('settingsWrap'), 'position')).toBe("'static'");
-    expect(cssText(narrow('popover'), 'left')).toBeUndefined();
-    expect(cssText(narrow('popover'), 'width')).toBeUndefined();
-    expect(cssText(narrow('popover'), 'right')).toBe('8');
-    expect(cssText(narrow('popover'), 'boxSizing')).toBe("'border-box'");
-    expect(cssText(narrow('popover'), 'maxWidth')).toBe("'calc(100vw - 16px)'");
+    // Wrapped buttons keep their own anchor; useHeaderPopoverFit pulls the menu back on screen.
+    expect(cssText(styleObject('settingsWrap'), 'position')).toBe("'relative'");
+    expect(cssText(styleObject('popover'), 'right')).toBe('0');
+    for (const name of ['settingsWrap', 'popover']) expect(field(styleObject(name), '@media')).toBeUndefined();
 });
