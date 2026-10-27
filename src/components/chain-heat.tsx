@@ -330,7 +330,11 @@ export function HeatList({
                                 key={t.id}
                                 ref={on ? selectedRef : undefined}
                                 className={`${s.listRow} ${on ? s.listRowOn : ''}`}
-                                onClick={() => onClick(t.id)}
+                                onClick={(e) => {
+                                    // a click on a figure cell still moves the keyboard handle here
+                                    e.currentTarget.querySelector('button')?.focus({ preventScroll: true });
+                                    onClick(t.id);
+                                }}
                             >
                                 <td className={s.listTdName}>
                                     {/* keyboard / screen-reader handle; its click bubbles to the row */}

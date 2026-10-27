@@ -120,8 +120,11 @@ describe('HeatList', () => {
         act(() => header('漲跌%').props.onClick());
         expect(rowNames()).toEqual(['d', 'a', 'b', 'c']);
 
-        act(() => rows()[2]!.props.onClick());
+        const focus = vi.fn();
+        act(() => rows()[2]!.props.onClick({ currentTarget: { querySelector: () => ({ focus }) } }));
         expect(onClick).toHaveBeenCalledWith('b');
+        // a click on a figure cell hands the arrow keys to that row
+        expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     });
 
     it('marks change as the sort before the first bar, and a click on it flips it', () => {
