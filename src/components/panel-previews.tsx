@@ -777,4 +777,34 @@ export const PANEL_PREVIEWS: Record<BlockType, ReactNode> = {
             <rect x='8' y='54' width='52' height='14' rx='5' fill={muted} fillOpacity='0.2' />
         </Frame>
     ),
+    broadcast: (
+        <Frame>
+            {/* 喇叭 */}
+            <path
+                d='M10 30 h8 l10 -8 v32 l-10 -8 h-8 z'
+                fill={accent}
+                fillOpacity='0.35'
+            />
+            <path
+                d='M36 26 a12 12 0 0 1 0 24'
+                fill='none'
+                stroke={accent}
+                strokeWidth='2.5'
+                strokeLinecap='round'
+            />
+            <path
+                d='M44 18 a22 22 0 0 1 0 40'
+                fill='none'
+                stroke={accent}
+                strokeOpacity='0.45'
+                strokeWidth='2.5'
+                strokeLinecap='round'
+            />
+            {/* 播報清單 */}
+            <Ln x={62} y={20} w={50} color={up} o={0.8} />
+            <Ln x={62} y={32} w={42} />
+            <Ln x={62} y={44} w={48} color={down} o={0.8} />
+            <Ln x={62} y={56} w={36} />
+        </Frame>
+    ),
 };

@@ -77,7 +77,8 @@ export type BlockType =
     | 'signals'
     | 'optpnl'
     | 'backtest'
-    | 'assistant';
+    | 'assistant'
+    | 'broadcast';
 
 // 'industries' 區塊已移出市場脈動（產業地圖歸產業全景面板）— 舊存檔的
 // 'industries' 值由面板端讀時過濾、權重按比例併入其餘區塊
@@ -147,6 +148,8 @@ export interface Block {
     chainKind?: ChainKind;
     holdingForm?: HoldingForm;
     holdingGrouping?: import('./portfolio-sector').Grouping;
+    // 語音播報面板要播報的商品代碼 — 每個面板各一份，跟版面一起持久化
+    broadcastCodes?: string[];
 }
 
 export const CHAIN_VIEWS = ['rank', 'rotation', 'heat'] as const;
@@ -613,6 +616,15 @@ export const BLOCK_META: Record<
         pinnable: false,
         singleton: true,
         defaultSize: { w: 7, h: 14, minW: 5, minH: 9 },
+    },
+    broadcast: {
+        label: '語音播報',
+        description: '指定商品，創新高／破新低／漲跌停時語音播報',
+        category: 'tools',
+        pinnable: false,
+        // 不是 singleton：每個面板各有一份播報清單（可開多個，各播各的）
+        singleton: false,
+        defaultSize: { w: 8, h: 14, minW: 6, minH: 8 },
     },
 };
 

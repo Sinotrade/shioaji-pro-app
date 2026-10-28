@@ -43,6 +43,7 @@ import {
     Table,
     TrendingUp,
     Users,
+    Volume2,
     Zap,
 } from 'lucide-react';
 import {
@@ -106,6 +107,7 @@ const PANEL_ICONS: Record<BlockType, LucideIcon> = {
     optpnl: AreaChart,
     backtest: FlaskConical,
     assistant: Bot,
+    broadcast: Volume2,
 };
 
 const ALL_TYPES = Object.keys(BLOCK_META) as BlockType[];
