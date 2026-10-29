@@ -66,6 +66,14 @@ export interface BroadcastDecision {
     /** 要念的完整句子；空字串代表這次不念 */
     text: string;
     speak: boolean;
+    /**
+     * 這次「沒有播報」的原因。
+     *
+     * 注意：**「沒有狀態詞」不是不播報的原因** —— 依 WpfApp6 的原始行為，
+     * 沒有狀態詞時照樣會播（「台積電 1900.0」），只是受冷卻限制。
+     * 所以不播報只有兩種原因。
+     */
+    reason?: 'first-tick' | 'cooldown';
 }
 
 export interface BroadcastRuleOptions {
@@ -90,6 +98,7 @@ export function evaluateBroadcast(
             status: '',
             text: '',
             speak: false,
+            reason: 'first-tick',
         };
     }
 
@@ -117,6 +126,7 @@ export function evaluateBroadcast(
             status: '',
             text: '',
             speak: false,
+            reason: 'cooldown',
         };
     }
 

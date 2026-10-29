@@ -22,6 +22,19 @@ import type { TtsEngine } from '../tts';
 import type { ContractInfo } from '../types/contract';
 import type { QuoteTypeName } from '../types/market';
 import { BroadcastQueue, STALE_AFTER_MS } from './broadcast-queue';
+import {
+    debugContract,
+    debugDecision,
+    debugDealEvent,
+    debugNoQuote,
+    debugNoticeEvent,
+    debugQuoteArrived,
+    debugSubscribed,
+    debugSwitches,
+    debugTestAnnouncement,
+    debugTick,
+    getBroadcastDebug,
+} from './broadcast-debug';
 import { describeNoticeVoice, describeOrderVoice } from './broadcast-events';
 import {
     createSymbolState,
@@ -43,6 +56,10 @@ const LOG_LIMIT = 50;
 const states = new Map<string, SymbolBroadcastState>();
 // 每筆訂閱記住它的合約代碼：移除時要連帶清掉同一個 key 的播報狀態
 const subscriptions = new Map<string, { release: () => void; contractCode: string }>();
+// 「訂閱了卻沒資料」的判定計時器
+const noQuoteTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** 訂閱後多久還沒收到 tick 就判定「這個環境沒有這種商品的即時報價」 */
+const NO_QUOTE_GRACE_MS = 8000;
 // 這個陣列的參考值必須在沒有新播報時保持穩定 —— useSyncExternalStore
 // 每次 render 都會比對 getSnapshot 的結果，參考值一直變會造成無限重繪。
 let log: BroadcastLogEntry[] = [];
@@ -155,6 +172,11 @@ function sync() {
         if (desired.has(code)) continue;
         entry.release();
         subscriptions.delete(code);
+        const timer = noQuoteTimers.get(code);
+        if (timer) {
+            clearTimeout(timer);
+            noQuoteTimers.delete(code);
+        }
         // 這檔商品的播報狀態也一併清掉，下次加入時重新從第一筆開始
         states.delete(code);
         states.delete(entry.contractCode);
@@ -170,11 +192,22 @@ async function attach(code: string) {
     let contract: ContractInfo;
     try {
         contract = await ensureContract(code);
-    } catch {
+    } catch (e) {
         // 解析不到合約（代號打錯 / 尚未開盤）→ 稍後再試
+        debugContract(code, {
+            name: code,
+            resolved: false,
+            error: e instanceof Error ? e.message : String(e),
+        });
         scheduleRetry();
         return;
     }
+    debugContract(code, {
+        name: contract.name || code,
+        resolved: true,
+        contractCode: contract.code,
+        contractTargetCode: contract.target_code ?? null,
+    });
     if (!desiredCodes().has(code)) return;
 
     const type: QuoteTypeName = contract.security_type === 'IND' ? 'Quote' : 'Tick';
@@ -182,6 +215,21 @@ async function attach(code: string) {
     const unsubscribe = subscribeQuoteStore(contract.code, () => {
         onTick(contract);
     });
+    debugSubscribed(code, [type]);
+    // 「訂閱了卻一直沒資料」要講清楚：伺服器端可能訂閱成功（desired=true），
+    // 但當下不是這個商品的交易時段 → 上游沒有這種商品的即時成交可推。
+    // 模擬與正式環境的行情覆蓋相同，不要誤導成「模擬環境沒有股票 tick」。
+    // 沒有這段，使用者只會看到「沒聲音」，分不出是沒開關還是沒資料。
+    const timer = setTimeout(() => {
+        noQuoteTimers.delete(code);
+        const t = getBroadcastDebug().targets[code];
+        if (!t || t.tickCount > 0) return;
+        debugNoQuote(
+            code,
+            '已訂閱但沒有即時報價 —— 當下可能不是該商品的交易時段（台股盤中 09:00–13:30、盤後定價 14:00–14:30；期貨另有夜盤），語音播報不會有聲',
+        );
+    }, NO_QUOTE_GRACE_MS);
+    noQuoteTimers.set(code, timer);
     // 以「面板填的代號」當 key：合約代碼可能跟輸入不同（target_code 别名）
     subscriptions.set(code, { release, contractCode: contract.code });
 }
@@ -198,6 +246,14 @@ function scheduleRetry() {
 
 function onTick(contract: ContractInfo) {
     const settings = getBroadcastSettings();
+    // 開關狀態要在任何 early return 之前先記錄，
+    // 否則面板看不出「為什麼沒播報」。
+    debugSwitches({
+        enabled: settings.enabled,
+        quote: settings.quoteEnabled,
+        deal: settings.dealEnabled,
+        notice: settings.noticeEnabled,
+    });
     if (!settings.enabled || !settings.quoteEnabled) return;
 
     const quote = getQuote(contract.code);
@@ -212,6 +268,9 @@ function onTick(contract: ContractInfo) {
     const low = Number(tick?.low ?? index?.low ?? price);
 
     const code = contract.code;
+    debugTick(code, price, high, low);
+    debugQuoteArrived(code);
+
     const state = states.get(code) ?? createSymbolState();
     const decision = evaluateBroadcast(
         state,
@@ -229,6 +288,12 @@ function onTick(contract: ContractInfo) {
         },
     );
     states.set(code, decision.state);
+    debugDecision(code, {
+        status: decision.status,
+        speak: decision.speak,
+        reason: decision.reason,
+        text: decision.text,
+    });
     if (!decision.speak) return;
 
     // 行情類用商品代號去重（同商品同句話不重複念，保留 WPF 行為）
@@ -239,6 +304,7 @@ function onTick(contract: ContractInfo) {
 
 function onOrderEventReport(ev: OrderEventReport) {
     const settings = getBroadcastSettings();
+    debugDealEvent();
     if (!settings.enabled || !settings.dealEnabled) return;
     const text = describeOrderVoice(ev);
     if (!text) return;
@@ -252,6 +318,7 @@ function onOrderEventReport(ev: OrderEventReport) {
 
 function onNoticeReport(n: AppNotice) {
     const settings = getBroadcastSettings();
+    debugNoticeEvent();
     if (!settings.enabled || !settings.noticeEnabled) return;
     const text = describeNoticeVoice(n);
     if (!text) return;
@@ -279,13 +346,26 @@ ensureBroadcastSources();
 
 // ---- 手動播報 ----
 
+/** 把當前開關狀態同步到除錯面板（面板掛載時呼叫一次） */
+export function syncBroadcastDebugSwitches() {
+    const s = getBroadcastSettings();
+    debugSwitches({
+        enabled: s.enabled,
+        quote: s.quoteEnabled,
+        deal: s.dealEnabled,
+        notice: s.noticeEnabled,
+    });
+}
+
 /** 立刻播一句話（測試用），會打斷目前的語音 */
 export function broadcastUrgent(text: string) {
+    debugTestAnnouncement();
     getQueue().enqueue(text, { interrupt: true });
 }
 
 /** 依目前的設定念一句話（測試用；不受總開關限制，使用者明確要求念的） */
 export function broadcastMessage(text: string) {
+    debugTestAnnouncement();
     getQueue().enqueue(text, {});
 }
 

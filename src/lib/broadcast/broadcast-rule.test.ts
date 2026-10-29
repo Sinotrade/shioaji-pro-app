@@ -20,6 +20,34 @@ it('does not announce the very first tick', () => {
     expect(decision.speak).toBe(false);
     expect(decision.text).toBe('');
     expect(decision.state.lastPrice).toBe(100);
+    // 未播報必須講得出原因（面板的除錯區塊靠它說明為什麼沒聲音）
+    expect(decision.reason).toBe('first-tick');
+});
+
+it('tells apart the two reasons for not announcing', () => {
+    let state: SymbolBroadcastState = createSymbolState();
+    const base = { price: 100, high: 100, low: 100 };
+    state = evaluateBroadcast(state, base, NO_LIMITS, '台積電', {
+        cooldownMs: 4000,
+        now: 1000,
+    }).state;
+    const spoke = evaluateBroadcast(state, base, NO_LIMITS, '台積電', {
+        cooldownMs: 4000,
+        now: 2000,
+    });
+    expect(spoke.speak).toBe(true);
+    expect(spoke.reason).toBeUndefined();
+
+    // 冷卻擋下 → reason=cooldown
+    const blocked = evaluateBroadcast(
+        spoke.state,
+        { price: 100.5, high: 101, low: 100 },
+        NO_LIMITS,
+        '台積電',
+        { cooldownMs: 4000, now: 2500 },
+    );
+    expect(blocked.speak).toBe(false);
+    expect(blocked.reason).toBe('cooldown');
 });
 
 it('announces a new high', () => {

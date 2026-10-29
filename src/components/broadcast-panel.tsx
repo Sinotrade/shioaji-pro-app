@@ -19,8 +19,13 @@ import {
     broadcastUrgent,
     clearBroadcastQuoteCodes,
     setBroadcastQuoteCodes,
+    syncBroadcastDebugSwitches,
     useBroadcastLog,
 } from '../lib/broadcast/broadcast-hub';
+import {
+    dumpBroadcastDebug,
+    useBroadcastDebug,
+} from '../lib/broadcast/broadcast-debug';
 import {
     COOLDOWN_MAX,
     COOLDOWN_MIN,
@@ -73,6 +78,7 @@ const EVENT_ROWS = [
 export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
     const settings = useBroadcastSettings();
     const log = useBroadcastLog();
+    const debug = useBroadcastDebug();
     const engine = getTtsEngine();
     const [input, setInput] = useState('');
     const [suggestions, setSuggestions] = useState<ProductSuggestion[]>([]);
@@ -89,6 +95,16 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
             active = false;
         };
     }, [engine]);
+
+    // 把開關的實際值同步到除錯面板（沒有 tick 時也要看得到）
+    useEffect(() => {
+        syncBroadcastDebugSwitches();
+    }, [
+        settings.enabled,
+        settings.quoteEnabled,
+        settings.dealEnabled,
+        settings.noticeEnabled,
+    ]);
 
     // 把行情播報清單給中樞（面板關閉時清掉）
     // 用「代號內容」當依賴而不是陣列參考值：block.broadcastCodes 沒設定時
@@ -150,6 +166,11 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
     // 只有一種語音時不顯示選擇器（單一音色是刻意的設計，選了也沒得選）
     const showVoicePicker = voices.length > 1;
 
+    // 已訂閱卻收不到即時報價的商品（最常見原因：當下不是該商品的交易時段）
+    const noQuoteTargets = Object.values(debug.targets).filter(
+        (t) => t.noQuote,
+    );
+
     const usable = probe ? probe.available : engine.available;
     const unusableReason = probe?.reason ?? engine.reason;
 
@@ -185,6 +206,17 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
             <div className={styles.scroller}>
                 {!usable && unusableReason && (
                     <span className={styles.notice}>{unusableReason}</span>
+                )}
+                {!settings.enabled && (
+                    <span className={styles.warn}>
+                        語音播報目前是關閉的 —— 打開右上角的開關才會播報。
+                        （「測試語音」不受這個開關影響，所以測試有聲不代表播報有開。）
+                    </span>
+                )}
+                {settings.enabled && !settings.quoteEnabled && !settings.dealEnabled && !settings.noticeEnabled && (
+                    <span className={styles.warn}>
+                        總開關已開，但三種事件都沒勾 —— 勾選想聽的那一種。
+                    </span>
                 )}
 
                 <span className={styles.sectionTitle}>播報事件</span>
@@ -276,6 +308,17 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
                     />
                 ))}
 
+                {noQuoteTargets.length > 0 && (
+                    <span className={styles.warn}>
+                        ⚠ 有 {noQuoteTargets.length} 個商品（{noQuoteTargets
+                            .map((t) => t.code)
+                            .join('、')}）已訂閱但沒有即時報價 ——
+                        當下可能不是這些商品的交易時段（台股盤中 09:00–13:30、
+                        盤後定價 14:00–14:30；期貨另有夜盤）。
+                        模擬與正式環境的行情覆蓋相同，這些商品不會語音播報。
+                    </span>
+                )}
+
                 <div className={styles.addRow}>
                     {suggestions.length > 0 && (
                         <div className={styles.suggestBox}>
@@ -344,6 +387,71 @@ export function BroadcastPanel({ codes, onCodesChange }: BroadcastPanelProps) {
                             <VolumeX size={12} />
                         )}{' '}
                         測試語音
+                    </button>
+                </div>
+
+                <span className={styles.sectionTitle}>除錯</span>
+                <div className={styles.debugGrid}>
+                    <span className={styles.debugKey}>開關</span>
+                    <span className={styles.debugVal}>
+                        總={debug.switches.enabled ? '開' : '關'} · 行情=
+                        {debug.switches.quote ? '開' : '關'} · 成交=
+                        {debug.switches.deal ? '開' : '關'} · 通知=
+                        {debug.switches.notice ? '開' : '關'}
+                    </span>
+
+                    <span className={styles.debugKey}>佇列</span>
+                    <span className={styles.debugVal}>
+                        待播 {debug.queue.pending} ·{' '}
+                        {debug.queue.speakingText
+                            ? `正在念「${debug.queue.speakingText}」`
+                            : '閒置'}
+                    </span>
+
+                    <span className={styles.debugKey}>計數</span>
+                    <span className={styles.debugVal}>
+                        tick {debug.counters.ticks} · 判定{' '}
+                        {debug.counters.decisions} · 已播{' '}
+                        {debug.counters.spoke} · 一般報價{' '}
+                        {debug.counters.generalQuotes} · 冷卻擋{' '}
+                        {debug.counters.blockedCooldown} · 去重擋{' '}
+                        {debug.counters.duplicateSuppressed} · 過時丟棄{' '}
+                        {debug.counters.droppedStale} · 成交事件{' '}
+                        {debug.counters.dealEvents} · 通知事件{' '}
+                        {debug.counters.noticeEvents} · 測試{' '}
+                        {debug.counters.testAnnouncements}
+                    </span>
+                </div>
+
+                {Object.values(debug.targets).map((t) => (
+                    <div className={styles.debugTarget} key={t.code}>
+                        <span className={styles.debugTargetCode}>{t.code}</span>
+                        <span className={styles.debugTargetName}>{t.name}</span>
+                        <span className={styles.debugTargetDetail}>
+                            合約=
+                            {t.contractResolved
+                                ? 'OK'
+                                : `失敗${t.contractError ? `(${t.contractError})` : ''}`}{' '}
+                            · 訂閱={t.subscribedTypes.join('/') || '無'} · tick=
+                            {t.tickCount} · 價={t.lastPrice ?? '—'} · 判定=
+                            {t.lastStatus ?? '—'} · 未播=
+                            {t.lastSkipReason ?? '—'} · 已播=
+                            {t.lastSpokeText ?? '—'}
+                        </span>
+                        {t.noQuote && (
+                            <span className={styles.debugWarn}>
+                                ⚠ {t.noQuoteReason}
+                            </span>
+                        )}
+                    </div>
+                ))}
+
+                <div className={styles.addRow}>
+                    <button
+                        className={`${styles.toggle} ${styles.toggleOff}`}
+                        onClick={() => dumpBroadcastDebug()}
+                    >
+                        診斷（丟到 console）
                     </button>
                 </div>
             </div>

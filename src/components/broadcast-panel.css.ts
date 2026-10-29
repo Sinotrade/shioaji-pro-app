@@ -281,6 +281,85 @@ export const notice = style({
     borderRadius: vars.radius.sm,
 });
 
+export const warn = style({
+    display: 'block',
+    padding: '4px 8px',
+    marginTop: vars.space.xs,
+    fontSize: '0.66rem',
+    lineHeight: 1.5,
+    color: vars.color.amber,
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+});
+
+// ---- 除錯區塊 ----
+
+export const debugGrid = style({
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0,1fr)',
+    gap: '1px 6px',
+    fontSize: '0.62rem',
+    lineHeight: 1.6,
+});
+
+export const debugKey = style({
+    fontFamily: vars.font.body,
+    color: vars.color.mutedForeground,
+    whiteSpace: 'nowrap',
+});
+
+export const debugVal = style({
+    fontFamily: vars.font.mono,
+    color: vars.color.foreground,
+    wordBreak: 'break-word',
+});
+
+export const debugTarget = style({
+    display: 'grid',
+    gridTemplateColumns: '3.8rem minmax(0,1fr)',
+    gap: '0 6px',
+    padding: '3px 0',
+    borderTop: `1px solid ${vars.color.border}`,
+    fontSize: '0.62rem',
+    lineHeight: 1.5,
+});
+
+export const debugTargetCode = style({
+    fontFamily: vars.font.mono,
+    fontWeight: 600,
+    color: vars.color.foreground,
+});
+
+export const debugTargetName = style({
+    fontFamily: vars.font.body,
+    color: vars.color.mutedForeground,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+});
+
+export const debugTargetDetail = style({
+    gridColumn: '1 / -1',
+    fontFamily: vars.font.mono,
+    color: vars.color.mutedForeground,
+    wordBreak: 'break-word',
+});
+
+export const debugWarn = style({
+    gridColumn: '1 / -1',
+    display: 'block',
+    padding: '3px 6px',
+    marginTop: '2px',
+    fontFamily: vars.font.body,
+    fontSize: '0.62rem',
+    lineHeight: 1.5,
+    color: vars.color.amber,
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+});
+
 // ---- 事件開關列 ----
 
 export const switchList = style({

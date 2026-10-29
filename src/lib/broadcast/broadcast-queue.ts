@@ -9,6 +9,13 @@
 //   3. 插播：急件清空佇列 + 打斷目前正在念的話
 
 import type { TtsEngine } from '../tts';
+import {
+    debugDuplicateSuppressed,
+    debugDroppedStale,
+    debugQueuePending,
+    debugSpeakingDone,
+    debugSpoke,
+} from './broadcast-debug';
 
 export interface BroadcastEnqueueOptions {
     /** 商品代碼；同一商品同句話會被去重。系統訊息可留空 */
@@ -64,7 +71,10 @@ export class BroadcastQueue {
 
         // 智慧過濾：同一商品跟「上一句」一模一樣就不念
         if (symbolCode) {
-            if (this.lastTextBySymbol.get(symbolCode) === text) return;
+            if (this.lastTextBySymbol.get(symbolCode) === text) {
+                debugDuplicateSuppressed();
+                return;
+            }
             this.lastTextBySymbol.set(symbolCode, text);
         }
 
@@ -74,6 +84,7 @@ export class BroadcastQueue {
             interrupt: false,
             requestedAt: this.now(),
         });
+        debugQueuePending(this.queue.length);
         void this.pump();
     }
 
@@ -89,22 +100,28 @@ export class BroadcastQueue {
             while (this.queue.length) {
                 const message = this.queue.shift();
                 if (!message) break;
+                debugQueuePending(this.queue.length);
                 // 過時丟棄：不是急件且已經放超過 10 秒 → 市場早變了，別念
                 if (
                     !message.interrupt &&
                     this.now() - message.requestedAt > this.staleAfterMs
                 ) {
+                    debugDroppedStale();
                     continue;
                 }
                 try {
+                    debugSpoke(message.text, message.symbolCode);
                     await this.engine.speak(message.text);
+                    debugSpeakingDone();
                     this.onSpoken?.(message.text, message.symbolCode);
                 } catch {
                     // 單次發音失敗不影響後續的句子
+                    debugSpeakingDone();
                 }
             }
         } finally {
             this.running = false;
+            debugQueuePending(0);
         }
     }
 }
