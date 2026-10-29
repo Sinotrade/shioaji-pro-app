@@ -8,7 +8,20 @@
 // 與「幾點真的念出來」，瀏覽器的內建佇列不給這個資訊。佇列放在上層
 // （broadcast-queue.ts），engine 只負責單純地把一句話念完。
 
-import type { TtsEngine, TtsSpeakOptions, TtsVoice } from './tts-engine';
+import type { TtsEngine, TtsProbe, TtsSpeakOptions, TtsVoice } from './tts-engine';
+
+/**
+ * 抽象語速刻度（-10~10，0 = 正常）→ Web Speech 的倍率（1 = 正常）。
+ * WPF 的 SpeechSynthesizer.Rate 每格約 10%，這裡採同樣的近似比例。
+ *
+ * 為什麼放在 engine 裡而不是共用層：各平台的「語速」語意不同
+ * （Web Speech 是倍率、WinRT 是 -10~10 的整數、sherpa 是 length_scale），
+ * 映射是平台相關的，必須各做各的。
+ */
+export function rateToSpeed(rate: number): number {
+    const normalized = Math.min(10, Math.max(-10, rate));
+    return Math.min(3, Math.max(0.1, 1 + normalized * 0.1));
+}
 
 function getVoices(synth: SpeechSynthesis): SpeechSynthesisVoice[] {
     try {
@@ -40,6 +53,7 @@ function unavailable(reason: string): TtsEngine {
         id: 'web-speech',
         available: false,
         reason,
+        probe: async () => ({ available: false, reason }),
         speak: async () => undefined,
         cancelAll: () => undefined,
         speaking: false,
@@ -86,6 +100,18 @@ export function createWebSpeechEngine(): TtsEngine {
             }));
         },
 
+        async probe(): Promise<TtsProbe> {
+            // Web Speech 的可用性在建構時就定了（speechSynthesis 存不存在），
+            // probe 只是把結論原樣交出去；未來原生引擎才需要真的去查檔案。
+            const list = voices.length ? voices : getVoices(synth);
+            return {
+                available: true,
+                reason: list.length
+                    ? undefined
+                    : '系統沒有可用的語音（voice 清單是空的）',
+            };
+        },
+
         speak(text: string, options?: TtsSpeakOptions): Promise<void> {
             return new Promise<void>((resolve) => {
                 if (!text.trim()) {
@@ -94,7 +120,7 @@ export function createWebSpeechEngine(): TtsEngine {
                 }
                 const utterance = new UtteranceCtor(text);
                 utterance.lang = 'zh-TW';
-                utterance.rate = options?.rate ?? 1;
+                utterance.rate = rateToSpeed(options?.rate ?? 0);
                 utterance.volume = options?.volume ?? 1;
                 const voice = pickVoice(voices, options?.voiceUri);
                 if (voice) utterance.voice = voice;

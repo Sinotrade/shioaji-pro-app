@@ -1,29 +1,35 @@
 // src/lib/broadcast/broadcast-hub.ts — 語音播報的中樞。
 //
-// 負責三件事：
-//   1. 記錄「哪個面板要播報哪些商品」（每個語音播報面板各自一份）
+// 負責四件事：
+//   1. 記錄「要播報哪些商品」（行情類；清單由唯一的語音播報面板提供）
 //   2. 為這些商品訂閱行情（沿用 quote-ownership 的 retain/release 計數）
-//   3. 把 tick 送進判定層 → 佇列 → 語音引擎
+//   3. 接上三類事件來源：行情 tick、成交／委託回報、通知／條件單
+//   4. 把事件送進規則層 → 佇列 → 語音引擎
 //
-// 為什麼做成 module singleton：語音出口只有一個，多個面板共用同一個
+// 為什麼做成 module singleton：語音出口只有一個，多個來源共用同一個
 // 佇列才能做全域去重（同一商品同句話只念一次）。
+//
+// 三類事件都是「開關控制」，預設全部關閉（見 broadcast-settings.ts）。
 
 import { useSyncExternalStore } from 'react';
 import { getCachedContract, ensureContract } from '../contracts-cache';
+import type { OrderEventReport } from '../order-report';
 import { retainQuote } from '../quote-ownership';
-import { getQuote, subscribeQuoteStore } from '../stream';
+import { getQuote, onOrderEvent, subscribeQuoteStore } from '../stream';
+import { onNotice, type AppNotice } from '../trade';
 import { getTtsEngine } from '../tts';
 import type { TtsEngine } from '../tts';
 import type { ContractInfo } from '../types/contract';
 import type { QuoteTypeName } from '../types/market';
 import { BroadcastQueue, STALE_AFTER_MS } from './broadcast-queue';
+import { describeNoticeVoice, describeOrderVoice } from './broadcast-events';
 import {
     createSymbolState,
     evaluateBroadcast,
     type SymbolBroadcastState,
 } from './broadcast-rule';
 import { toSpeakName } from './broadcast-name';
-import { getBroadcastSettings, rateToSpeed } from './broadcast-settings';
+import { getBroadcastSettings } from './broadcast-settings';
 
 export interface BroadcastLogEntry {
     code: string;
@@ -34,7 +40,6 @@ export interface BroadcastLogEntry {
 
 const LOG_LIMIT = 50;
 
-const panels = new Map<string, string[]>();
 const states = new Map<string, SymbolBroadcastState>();
 // 每筆訂閱記住它的合約代碼：移除時要連帶清掉同一個 key 的播報狀態
 const subscriptions = new Map<string, { release: () => void; contractCode: string }>();
@@ -72,6 +77,8 @@ function getQueue(): BroadcastQueue {
 /**
  * 把「目前的全域設定」（語速、語音）注入每次發聲 ——
  * 使用者在設定面板調整語速後，下一句就用新語速，不用重開面板。
+ *
+ * rate 傳的是「抽象刻度 -10~10」，各 engine 自行映射成自己的語意。
  */
 function createSettingsAwareEngine(): TtsEngine {
     const engine = getTtsEngine();
@@ -88,10 +95,11 @@ function createSettingsAwareEngine(): TtsEngine {
         },
         listVoices: () => engine.listVoices(),
         cancelAll: () => engine.cancelAll(),
+        probe: () => engine.probe(),
         speak: (text, options) => {
             const settings = getBroadcastSettings();
             return engine.speak(text, {
-                rate: options?.rate ?? rateToSpeed(settings.rate),
+                rate: options?.rate ?? settings.rate,
                 volume: options?.volume ?? 1,
                 voiceUri: options?.voiceUri || settings.voiceUri || undefined,
             });
@@ -108,44 +116,36 @@ function pushLog(entry: BroadcastLogEntry) {
     emit();
 }
 
-// ---- 面板註冊 ----
+// ---- 行情清單（由唯一的語音播報面板提供）----
 
-/** 註冊／更新一個語音播報面板要播報的商品清單 */
-export function registerBroadcastPanel(panelId: string, codes: string[]) {
+let quoteCodes: string[] = [];
+
+/** 設定要播報行情的商品清單（單一設定中心，不分面板） */
+export function setBroadcastQuoteCodes(codes: string[]) {
     const next = [...new Set(codes.filter(Boolean))];
-    const current = panels.get(panelId);
-    if (current && current.length === next.length && current.every((c, i) => c === next[i])) {
+    if (next.length === quoteCodes.length && next.every((c, i) => c === quoteCodes[i])) {
         return;
     }
-    panels.set(panelId, next);
+    quoteCodes = next;
     sync();
 }
 
-/** 面板關閉／卸載時取消註冊 */
-export function unregisterBroadcastPanel(panelId: string) {
-    if (!panels.has(panelId)) return;
-    panels.delete(panelId);
+/** 清空行情清單（面板卸載時） */
+export function clearBroadcastQuoteCodes() {
+    if (quoteCodes.length === 0) return;
+    quoteCodes = [];
     sync();
 }
 
-/** 某個面板目前的播報目標（給 UI 顯示） */
-export function getBroadcastPanelCodes(panelId: string): string[] {
-    return [...(panels.get(panelId) ?? [])];
-}
-
-/** 所有面板的播報目標聯集 */
-export function getBroadcastTargets(): string[] {
-    const set = new Set<string>();
-    panels.forEach((codes) => codes.forEach((c) => set.add(c)));
-    return [...set];
+/** 目前要播報行情的商品 */
+export function getBroadcastQuoteCodes(): string[] {
+    return [...quoteCodes];
 }
 
 // ---- 訂閱管理 ----
 
 function desiredCodes(): Set<string> {
-    const set = new Set<string>();
-    panels.forEach((codes) => codes.forEach((c) => set.add(c)));
-    return set;
+    return new Set(quoteCodes);
 }
 
 function sync() {
@@ -194,11 +194,11 @@ function scheduleRetry() {
     }, 5000);
 }
 
-// ---- tick 路由 ----
+// ---- 事件來源 1/3：行情 tick ----
 
 function onTick(contract: ContractInfo) {
     const settings = getBroadcastSettings();
-    if (!settings.enabled) return;
+    if (!settings.enabled || !settings.quoteEnabled) return;
 
     const quote = getQuote(contract.code);
     const tick = quote?.tick;
@@ -231,8 +231,51 @@ function onTick(contract: ContractInfo) {
     states.set(code, decision.state);
     if (!decision.speak) return;
 
+    // 行情類用商品代號去重（同商品同句話不重複念，保留 WPF 行為）
     getQueue().enqueue(decision.text, { symbolCode: code });
 }
+
+// ---- 事件來源 2/3：成交／委託回報 ----
+
+function onOrderEventReport(ev: OrderEventReport) {
+    const settings = getBroadcastSettings();
+    if (!settings.enabled || !settings.dealEnabled) return;
+    const text = describeOrderVoice(ev);
+    if (!text) return;
+    // 不帶 symbolCode → 不做「同商品同句話」去重。
+    // 兩筆一樣價位的成交是兩件事，都要念。
+    // （SSE 重播的重複由 stream 層的 eventId 去重處理，不靠這裡。）
+    getQueue().enqueue(text, {});
+}
+
+// ---- 事件來源 3/3：通知／條件單 ----
+
+function onNoticeReport(n: AppNotice) {
+    const settings = getBroadcastSettings();
+    if (!settings.enabled || !settings.noticeEnabled) return;
+    const text = describeNoticeVoice(n);
+    if (!text) return;
+    getQueue().enqueue(text, {});
+}
+
+// ---- 啟動 ----
+
+let sourcesStarted = false;
+
+/**
+ * 訂閱三類事件來源。冪等。
+ *
+ * 語音播報是 app 級能力，不該因為面板被關掉就不播 ——
+ * 所以訂閱在模組載入時就建立，而不是由面板掛載時啟動。
+ */
+export function ensureBroadcastSources() {
+    if (sourcesStarted) return;
+    sourcesStarted = true;
+    onOrderEvent((ev) => onOrderEventReport(ev));
+    onNotice((n) => onNoticeReport(n));
+}
+
+ensureBroadcastSources();
 
 // ---- 手動播報 ----
 

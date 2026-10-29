@@ -8,7 +8,7 @@
 import type { TtsEngine } from './tts-engine';
 import { createWebSpeechEngine } from './web-speech-engine';
 
-export type { TtsEngine, TtsSpeakOptions, TtsVoice } from './tts-engine';
+export type { TtsEngine, TtsProbe, TtsSpeakOptions, TtsVoice } from './tts-engine';
 
 let engine: TtsEngine | null = null;
 

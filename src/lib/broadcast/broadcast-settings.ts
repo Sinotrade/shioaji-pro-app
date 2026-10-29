@@ -4,6 +4,9 @@
 // 哪些商品（存在 block 上，隨版面一起存檔）。
 //
 // 沿用 repo 既有的 useSyncExternalStore 寫法（見 toast-prefs.ts / privacy.ts）。
+//
+// 註：語速是「抽象刻度 -10~10」，各 engine 自行映射成自己的語意
+// （見 lib/tts/web-speech-engine.ts 的 rateToSpeed）。共用層不做映射。
 
 import { useSyncExternalStore } from 'react';
 
@@ -16,6 +19,12 @@ export interface BroadcastSettings {
     cooldownSec: number;
     /** 指定語音 uri；空字串 = 自動挑中文語音 */
     voiceUri: string;
+    /** 行情狀態播報（創新高／破新低／漲跌停） */
+    quoteEnabled: boolean;
+    /** 成交／委託回報播報 */
+    dealEnabled: boolean;
+    /** 通知／條件單觸發播報 */
+    noticeEnabled: boolean;
 }
 
 const KEY = 'sj-pro-broadcast';
@@ -26,6 +35,10 @@ export const DEFAULT_SETTINGS: BroadcastSettings = {
     rate: 4,
     cooldownSec: 4,
     voiceUri: '',
+    // 三類事件全部預設關：一次全開會被轟炸，由使用者逐一開啟
+    quoteEnabled: false,
+    dealEnabled: false,
+    noticeEnabled: false,
 };
 
 export const RATE_MIN = -10;
@@ -37,11 +50,14 @@ function clamp(value: number, min: number, max: number) {
     return Math.min(max, Math.max(min, value));
 }
 
+function bool(raw: unknown, fallback: boolean): boolean {
+    return typeof raw === 'boolean' ? raw : fallback;
+}
+
 function sanitize(raw: Partial<BroadcastSettings> | null): BroadcastSettings {
     if (!raw) return { ...DEFAULT_SETTINGS };
     return {
-        enabled:
-            typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_SETTINGS.enabled,
+        enabled: bool(raw.enabled, DEFAULT_SETTINGS.enabled),
         rate: clamp(
             Math.round(Number(raw.rate ?? DEFAULT_SETTINGS.rate)),
             RATE_MIN,
@@ -54,6 +70,9 @@ function sanitize(raw: Partial<BroadcastSettings> | null): BroadcastSettings {
         ),
         voiceUri:
             typeof raw.voiceUri === 'string' ? raw.voiceUri : DEFAULT_SETTINGS.voiceUri,
+        quoteEnabled: bool(raw.quoteEnabled, DEFAULT_SETTINGS.quoteEnabled),
+        dealEnabled: bool(raw.dealEnabled, DEFAULT_SETTINGS.dealEnabled),
+        noticeEnabled: bool(raw.noticeEnabled, DEFAULT_SETTINGS.noticeEnabled),
     };
 }
 
@@ -91,13 +110,4 @@ export function useBroadcastSettings(): BroadcastSettings {
         },
         getBroadcastSettings,
     );
-}
-
-/**
- * WPF 語速刻度（-10~10）→ Web Speech 語速倍率（1 = 正常）。
- * WPF 的 SpeechSynthesizer.Rate 每格約 10%，這裡採同樣的近似比例。
- */
-export function rateToSpeed(rate: number): number {
-    const normalized = clamp(rate, RATE_MIN, RATE_MAX);
-    return clamp(1 + normalized * 0.1, 0.1, 3);
 }

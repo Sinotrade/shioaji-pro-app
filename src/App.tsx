@@ -507,7 +507,6 @@ function BlockBody({
         case 'broadcast':
             return (
                 <BroadcastPanel
-                    blockId={block.id}
                     codes={block.broadcastCodes ?? []}
                     onCodesChange={(codes) =>
                         onBroadcastCodesChange(block.id, codes)

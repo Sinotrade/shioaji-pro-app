@@ -280,3 +280,37 @@ export const notice = style({
     background: vars.color.dangerDim,
     borderRadius: vars.radius.sm,
 });
+
+// ---- 事件開關列 ----
+
+export const switchList = style({
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+});
+
+export const switchRow = style({
+    display: 'grid',
+    gridTemplateColumns: 'auto auto minmax(0,1fr)',
+    alignItems: 'baseline',
+    gap: vars.space.sm,
+    padding: '3px 0',
+    cursor: 'pointer',
+});
+
+export const switchLabel = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.72rem',
+    fontWeight: 600,
+    color: vars.color.foreground,
+    whiteSpace: 'nowrap',
+});
+
+export const switchHint = style({
+    fontFamily: vars.font.body,
+    fontSize: '0.62rem',
+    color: vars.color.mutedForeground,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+});

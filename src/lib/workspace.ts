@@ -622,8 +622,9 @@ export const BLOCK_META: Record<
         description: '指定商品，創新高／破新低／漲跌停時語音播報',
         category: 'tools',
         pinnable: false,
-        // 不是 singleton：每個面板各有一份播報清單（可開多個，各播各的）
-        singleton: false,
+        // singleton：語音播報是 app 級能力，事件來源（成交／條件單／通知）是全域的。
+        // 多個面板各有一份設定會互相衝突 → 只有一個全域設定中心。
+        singleton: true,
         defaultSize: { w: 8, h: 14, minW: 6, minH: 8 },
     },
 };

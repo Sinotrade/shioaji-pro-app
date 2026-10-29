@@ -9,6 +9,7 @@ function makeEngine() {
     const engine: TtsEngine = {
         id: 'fake',
         available: true,
+        probe: async () => ({ available: true }),
         get speaking() {
             return speaking;
         },
