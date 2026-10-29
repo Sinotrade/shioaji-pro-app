@@ -55,7 +55,14 @@ const LOG_LIMIT = 50;
 
 const states = new Map<string, SymbolBroadcastState>();
 // 每筆訂閱記住它的合約代碼：移除時要連帶清掉同一個 key 的播報狀態
-const subscriptions = new Map<string, { release: () => void; contractCode: string }>();
+// 與行情 store 的 listener（少解除 listener 會造成「移除商品後仍持續播報」）
+const subscriptions = new Map<
+    string,
+    { release: () => void; unsubscribe: () => void; contractCode: string }
+>();
+// 正在解析合約、尚未完成訂閱的代號。
+// 沒有這層的話，「移除 → 立刻加回來」會讓兩個 attach 同時進行 → 重複訂閱。
+const attaching = new Set<string>();
 // 「訂閱了卻沒資料」的判定計時器
 const noQuoteTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** 訂閱後多久還沒收到 tick 就判定「這個環境沒有這種商品的即時報價」 */
@@ -171,6 +178,10 @@ function sync() {
     for (const [code, entry] of subscriptions) {
         if (desired.has(code)) continue;
         entry.release();
+        // ★ 解除行情 store 的 listener。
+        // 少了這行，只要還有其他元件持有這檔商品的行情訂閱（例如自選清單），
+        // tick 就會繼續進來 → 被移除的商品會一直播報下去。
+        entry.unsubscribe();
         subscriptions.delete(code);
         const timer = noQuoteTimers.get(code);
         if (timer) {
@@ -184,54 +195,69 @@ function sync() {
 
     for (const code of desired) {
         if (subscriptions.has(code)) continue;
+        // 已經在解析中的不要重複 attach（否則會有兩份 listener）
+        if (attaching.has(code)) continue;
         void attach(code);
     }
 }
 
 async function attach(code: string) {
-    let contract: ContractInfo;
+    attaching.add(code);
+    let resolved = false;
     try {
-        contract = await ensureContract(code);
-    } catch (e) {
-        // 解析不到合約（代號打錯 / 尚未開盤）→ 稍後再試
+        let contract: ContractInfo;
+        try {
+            contract = await ensureContract(code);
+        } catch (e) {
+            // 解析不到合約（代號打錯 / 尚未開盤）→ 稍後再試
+            debugContract(code, {
+                name: code,
+                resolved: false,
+                error: e instanceof Error ? e.message : String(e),
+            });
+            scheduleRetry();
+            return;
+        }
+        resolved = true;
         debugContract(code, {
-            name: code,
-            resolved: false,
-            error: e instanceof Error ? e.message : String(e),
+            name: contract.name || code,
+            resolved: true,
+            contractCode: contract.code,
+            contractTargetCode: contract.target_code ?? null,
         });
-        scheduleRetry();
-        return;
-    }
-    debugContract(code, {
-        name: contract.name || code,
-        resolved: true,
-        contractCode: contract.code,
-        contractTargetCode: contract.target_code ?? null,
-    });
-    if (!desiredCodes().has(code)) return;
+        if (!desiredCodes().has(code)) return;
 
-    const type: QuoteTypeName = contract.security_type === 'IND' ? 'Quote' : 'Tick';
-    const release = retainQuote(contract, type);
-    const unsubscribe = subscribeQuoteStore(contract.code, () => {
-        onTick(contract);
-    });
-    debugSubscribed(code, [type]);
-    // 「訂閱了卻一直沒資料」要講清楚：伺服器端可能訂閱成功（desired=true），
-    // 但當下不是這個商品的交易時段 → 上游沒有這種商品的即時成交可推。
-    // 模擬與正式環境的行情覆蓋相同，不要誤導成「模擬環境沒有股票 tick」。
-    // 沒有這段，使用者只會看到「沒聲音」，分不出是沒開關還是沒資料。
-    const timer = setTimeout(() => {
-        noQuoteTimers.delete(code);
-        const t = getBroadcastDebug().targets[code];
-        if (!t || t.tickCount > 0) return;
-        debugNoQuote(
-            code,
-            '已訂閱但沒有即時報價 —— 當下可能不是該商品的交易時段（台股盤中 09:00–13:30、盤後定價 14:00–14:30；期貨另有夜盤），語音播報不會有聲',
-        );
-    }, NO_QUOTE_GRACE_MS);
-    noQuoteTimers.set(code, timer);
-    // 以「面板填的代號」當 key：合約代碼可能跟輸入不同（target_code 别名）
-    subscriptions.set(code, { release, contractCode: contract.code });
+        const type: QuoteTypeName = contract.security_type === 'IND' ? 'Quote' : 'Tick';
+        const release = retainQuote(contract, type);
+        const unsubscribe = subscribeQuoteStore(contract.code, () => {
+            onTick(contract, code);
+        });
+        debugSubscribed(code, [type]);
+        // 「訂閱了卻一直沒資料」要講清楚：伺服器端可能訂閱成功（desired=true），
+        // 但當下不是這個商品的交易時段 → 上游沒有這種商品的即時成交可推。
+        // 模擬與正式環境的行情覆蓋相同，不要誤導成「模擬環境沒有股票 tick」。
+        // 沒有這段，使用者只會看到「沒聲音」，分不出是沒開關還是沒資料。
+        const timer = setTimeout(() => {
+            noQuoteTimers.delete(code);
+            const t = getBroadcastDebug().targets[code];
+            if (!t || t.tickCount > 0) return;
+            debugNoQuote(
+                code,
+                '已訂閱但沒有即時報價 —— 當下可能不是該商品的交易時段（台股盤中 09:00–13:30、盤後定價 14:00–14:30；期貨另有夜盤），語音播報不會有聲',
+            );
+        }, NO_QUOTE_GRACE_MS);
+        noQuoteTimers.set(code, timer);
+        // 以「面板填的代號」當 key：合約代碼可能跟輸入不同（target_code 别名）
+        subscriptions.set(code, { release, unsubscribe, contractCode: contract.code });
+    } finally {
+        attaching.delete(code);
+        // 解析期間商品被移除又加回來 → 這次 attach 會在「已不在清單」時放棄，
+        // 要補一次同步，否則這檔商品會停在「沒訂閱」的狀態。
+        // 合約解析失敗時不在這裡重試（否則會立刻打轉），交給 scheduleRetry。
+        if (resolved && desiredCodes().has(code) && !subscriptions.has(code)) {
+            sync();
+        }
+    }
 }
 
 function scheduleRetry() {
@@ -244,7 +270,12 @@ function scheduleRetry() {
 
 // ---- 事件來源 1/3：行情 tick ----
 
-function onTick(contract: ContractInfo) {
+function onTick(contract: ContractInfo, panelCode: string) {
+    // 這檔商品可能已經被移出播報清單：
+    //   - 解除 listener 與清單更新之間有時間差
+    //   - 其他元件（例如自選清單）仍持有它的行情訂閱時，tick 還是會進來
+    // 被移出清單的商品就不該再播報 —— 這是解除 listener 之外的第二道防線。
+    if (!desiredCodes().has(panelCode)) return;
     const settings = getBroadcastSettings();
     // 開關狀態要在任何 early return 之前先記錄，
     // 否則面板看不出「為什麼沒播報」。
