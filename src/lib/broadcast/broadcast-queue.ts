@@ -42,8 +42,17 @@ export class BroadcastQueue {
         private readonly engine: TtsEngine,
         private readonly now: () => number = Date.now,
         private readonly staleAfterMs: number = STALE_AFTER_MS,
-        /** 句子真的念完時的回呼（用來寫播報紀錄） */
-        private readonly onSpoken?: (text: string, symbolCode: string) => void,
+        /**
+         * 句子「開始播報」時的回呼（用來寫播報紀錄 → 面板的「最近播報」）。
+         *
+         * 為什麼是「開始」而不是「念完」：面板要立刻看到「現在正在念這一句」，
+         * 時間戳才是開始的時間。TS 的 `await` 語意跟 C# 的 `await` 一樣 ——
+         * `await` 之後的程式碼要等語音結束才會執行；所以回呼要放在 `await` **之前**。
+         *
+         * ⚠️ 不要為了「讓 log 先出現」把 `engine.speak()` 改成 fire-and-forget：
+         * 那會讓多句同時出聲 → 去重、冷卻、10 秒過時丟棄全部失效。
+         */
+        private readonly onSpeak?: (text: string, symbolCode: string) => void,
     ) {}
 
     /** 目前排隊中的句數（診斷 / 測試用） */
@@ -111,9 +120,12 @@ export class BroadcastQueue {
                 }
                 try {
                     debugSpoke(message.text, message.symbolCode);
+                    // ★ 在 await 之前回報：這一句確定要念了（冷卻／去重擋下的句子
+                    // 根本進不了佇列，過時丟棄的也走不到這裡），
+                    // 讓面板「立刻」看到目前正在播的內容。
+                    this.onSpeak?.(message.text, message.symbolCode);
                     await this.engine.speak(message.text);
                     debugSpeakingDone();
-                    this.onSpoken?.(message.text, message.symbolCode);
                 } catch {
                     // 單次發音失敗不影響後續的句子
                     debugSpeakingDone();

@@ -101,29 +101,43 @@ it('ignores an empty announcement', () => {
     expect(spoken).toEqual([]);
 });
 
-it('reports a message only after it was actually spoken', async () => {
+it('reports a message when it starts speaking, not after it finishes', async () => {
     const { engine, spoken, finish } = makeEngine();
-    const onSpoken = vi.fn();
-    const queue = new BroadcastQueue(engine, Date.now, 10_000, onSpoken);
+    const onSpeak = vi.fn();
+    const queue = new BroadcastQueue(engine, Date.now, 10_000, onSpeak);
     queue.enqueue('台積電 1900.0，創新高', { symbolCode: '2330' });
-    // 還在念 → 還沒回報
-    expect(onSpoken).not.toHaveBeenCalled();
+    // 還在念 → 面板已經要看到「現在正在播這一句」（時間戳 = 開始時間）
+    expect(onSpeak).toHaveBeenCalledWith('台積電 1900.0，創新高', '2330');
+    // 念完不會再回報一次
     finish();
     await flush();
-    expect(onSpoken).toHaveBeenCalledWith('台積電 1900.0，創新高', '2330');
+    expect(onSpeak).toHaveBeenCalledTimes(1);
 });
 
 it('does not report a message that was dropped as stale', async () => {
     let now = 0;
     const { engine, spoken, finish } = makeEngine();
-    const onSpoken = vi.fn();
-    const queue = new BroadcastQueue(engine, () => now, 10_000, onSpoken);
+    const onSpeak = vi.fn();
+    const queue = new BroadcastQueue(engine, () => now, 10_000, onSpeak);
     queue.enqueue('第一句', { symbolCode: '2330' });
     queue.enqueue('第二句', { symbolCode: '2317' });
     now = 11_000;
     finish();
     await flush();
     expect(spoken).toEqual(['第一句']);
-    expect(onSpoken).toHaveBeenCalledTimes(1);
-    expect(onSpoken).toHaveBeenCalledWith('第一句', '2330');
+    expect(onSpeak).toHaveBeenCalledTimes(1);
+    expect(onSpeak).toHaveBeenCalledWith('第一句', '2330');
+});
+
+it('does not report a message that was dropped by an interrupt', async () => {
+    const { engine, spoken } = makeEngine();
+    const onSpeak = vi.fn();
+    const queue = new BroadcastQueue(engine, Date.now, 10_000, onSpeak);
+    queue.enqueue('普通句', { symbolCode: '2330' });
+    queue.enqueue('排隊句', { symbolCode: '2317' });
+    // 急件清掉排隊 → 排隊句從來沒被念過 → 不該出現在「最近播報」
+    queue.enqueue('急件', { symbolCode: '2330', interrupt: true });
+    await flush();
+    expect(onSpeak).not.toHaveBeenCalledWith('排隊句', '2317');
+    expect(onSpeak).toHaveBeenCalledWith('急件', '2330');
 });

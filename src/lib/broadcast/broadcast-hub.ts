@@ -81,8 +81,9 @@ function getQueue(): BroadcastQueue {
             createSettingsAwareEngine(),
             Date.now,
             STALE_AFTER_MS,
-            // 紀錄在「真的念完」時才寫 —— 面板的「最近播報」才不會列出
-            // 其實被冷卻／去重擋掉、根本沒出聲的句子。
+            // 紀錄在「**開始播報**」時寫 —— 面板的「最近播報」要立刻反映
+            // 現在正在念什麼，時間戳才是開始的時間。
+            // 冷卻／去重擋下的句子進不了佇列，所以不會出現在清單裡。
             (text, symbolCode) => {
                 pushLog({
                     code: symbolCode,
