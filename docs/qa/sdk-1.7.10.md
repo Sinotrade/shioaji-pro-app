@@ -43,7 +43,7 @@ SDK tag commit `8bbfe6bc838485744ee94cb8ec686e1f4ffc5c73`，release 說明三項
 | `src/lib/chart-history.ts`、`intraday-chart.tsx` | Pro 自己的記憶體請求快取；手動重新整理或切回進行中時段會換 revision 重抓 | 1.7.9 時 SDK 若已把 0 筆落盤，Pro 重抓也拿回 0 筆；1.7.10 起重抓才真的有效。保留。 |
 | `intraday-chart.tsx` 零 kbars 空框架 | 0 筆時先開空的時段框架讓即時資料直接畫 | 正常的盤前／無資料處理，保留。 |
 | `tick-tape.tsx`、`vol-profile.tsx` | 錯誤時顯示「重試」；0 筆只顯示空狀態，不自動重抓 | 不是為此問題做的繞路；1.7.10 起換商品或重開面板再查就能拿到資料，保留。 |
-| `sparkline.tsx` | 模組層快取 5 分鐘，連失敗結果 `[]` 也快取 | Pro 自己的短期快取，5 分鐘後會重抓，保留。 |
+| `sparkline.tsx` | 模組層快取 5 分鐘，連失敗結果 `[]` 也快取 | Pro 自己的短期快取；滿 5 分鐘後要等下次觸發載入（換商品或重新掛載）才會重抓，不會定時重抓。與 SDK 修正無關，保留。 |
 | 私有 `modules/agent/lib/query-tools.ts` `get_kbars` | 直接呼叫 `fetchKbars`，沒有 0 筆特別處理 | 不需改。 |
 
 私有端唯讀查閱 `shioaji-pro-desktop` 的 `origin/main`
