@@ -1224,7 +1224,12 @@ export function sanitizeWorkspace(w: Workspace): Workspace {
     };
     const blocks = w.blocks.filter((b) => !unknownIds.has(b.id));
     if (blocks.length === 0) {
-        return { ...structuredClone(DEFAULT_WORKSPACE), unsupported };
+        // 連動群組代碼是版面層級的資料，跟著留下（未知面板升版回來時還用得到）
+        return {
+            ...structuredClone(DEFAULT_WORKSPACE),
+            ...(w.linkGroups ? { linkGroups: w.linkGroups } : {}),
+            unsupported,
+        };
     }
     return {
         ...w,
@@ -1253,24 +1258,28 @@ export function unsupportedPanelsNotice(current: number, library: number): strin
 
 /**
  * 寫入儲存的形狀：把 unsupported 併回 blocks/layout（不留 unsupported
- * 欄位），較新版本讀到時面板原樣回來。id 已被目前面板用掉的略過。
+ * 欄位），較新版本讀到時面板原樣回來。id 若已被目前面板用掉（例如全部
+ * 未知時換成的預設版面、Agent 用了同一個 id），略過的面板換一個不衝突
+ * 的 id 連同 layout 一起存，不丟資料；換過的 id 存下後之後讀寫都穩定。
  */
 export function toStoredWorkspace(w: Workspace): Workspace {
     const { unsupported, ...rest } = w;
     if (!unsupported || unsupported.blocks.length === 0) return rest;
-    const used = new Set(rest.blocks.map((b) => b.id));
-    const keep = unsupported.blocks.filter(
-        (b) => typeof b.id === 'string' && !used.has(b.id),
-    );
-    const keepIds = new Set(keep.map((b) => b.id as string));
-    return {
-        ...rest,
-        blocks: [...rest.blocks, ...(keep as unknown as Block[])],
-        layout: [
-            ...rest.layout,
-            ...unsupported.layout.filter((l) => keepIds.has(l.i)),
-        ],
-    };
+    const used = new Set<string>(rest.blocks.map((b) => b.id));
+    for (const l of rest.layout) used.add(l.i);
+    const blocks: Block[] = [...rest.blocks];
+    const layout: LayoutItem[] = [...rest.layout];
+    for (const hidden of unsupported.blocks) {
+        if (typeof hidden.id !== 'string') continue;
+        const original = hidden.id;
+        let id = original;
+        for (let n = 1; used.has(id); n++) id = `${original}~${n}`;
+        used.add(id);
+        blocks.push({ ...hidden, id } as unknown as Block);
+        const item = unsupported.layout.find((l) => l.i === original);
+        if (item) layout.push({ ...item, i: id });
+    }
+    return { ...rest, blocks, layout };
 }
 
 export function loadWorkspace(): Workspace {
@@ -1305,9 +1314,13 @@ function stripCarry(w: Workspace): Workspace {
     return rest;
 }
 
-/** 錯誤畫面的「重設版面」：只清目前版面，版面庫（profiles）不動 */
+/**
+ * 錯誤畫面的「重設版面」：目前版面（v3）寫成預設版面，版面庫（profiles）
+ * 不動。寫預設而不是刪 key：刪掉會讓讀取退回 v2 舊存檔，若壞的是那份
+ * 就會重載後再崩一次；v2 原樣保留給更舊的版本降版用。
+ */
 export function resetSavedWorkspace() {
-    localStorage.removeItem(WS_KEY);
+    localStorage.setItem(WS_KEY, JSON.stringify(DEFAULT_WORKSPACE));
 }
 
 export function saveWorkspace(w: Workspace) {

@@ -163,6 +163,17 @@ describe('panel view settings (產業鏈資金流向／持股族群)', () => {
         expect(next.unsupported?.layout.map((l) => l.i)).toEqual(['future']);
     });
 
+    it('content revision tells apart workspaces that differ only in skipped panels', () => {
+        const withHidden = (id: string) =>
+            sanitizeWorkspace({
+                ...base(),
+                blocks: [...base().blocks, { id, type: 'futurepanel', pin: null } as never],
+                layout: [...base().layout, { i: id, x: 0, y: 14, w: 96, h: 10 }],
+            });
+        expect(workspaceContentRevision(withHidden('f1'))).not.toBe(workspaceContentRevision(withHidden('f2')));
+        expect(workspaceContentRevision(base())).toBe(workspaceContentRevision(structuredClone(base())));
+    });
+
     it('holding panels accept 呈現 and 分組 and reject them on other panels', () => {
         const ws: Workspace = {
             blocks: [{ id: 'h', type: 'holdingmap', pin: null }],

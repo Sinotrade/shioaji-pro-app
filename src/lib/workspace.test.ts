@@ -473,7 +473,7 @@ describe('unknown panel types from a newer version', () => {
         expect(unsupportedPanelCount(again)).toBe(1);
     });
 
-    it('does not write back a skipped panel whose id is now used by a known panel', () => {
+    it('keeps a skipped panel under a new id when its id is now used by a known panel', () => {
         const w = sanitizeWorkspace(structuredClone(mixed) as unknown as Workspace);
         const reused: Workspace = {
             ...w,
@@ -482,7 +482,33 @@ describe('unknown panel types from a newer version', () => {
         };
         const stored = toStoredWorkspace(reused);
         expect(stored.blocks.filter((b) => b.id === 'f')).toEqual([{ id: 'f', type: 'tape', pin: null }]);
+        expect(stored.blocks.find((b) => b.id === 'f~1')).toEqual({ ...mixed.blocks[1], id: 'f~1' });
+        expect(stored.layout.find((l) => l.i === 'f~1')).toEqual({ ...mixed.layout[1], i: 'f~1' });
         expect(stored.layout.filter((l) => l.i === 'f')).toHaveLength(1);
+        // 存出來的仍是合法版面，再讀回來同樣略過一個
+        const again = sanitizeWorkspace(stored);
+        expect(again.blocks.map((b) => b.id)).toEqual(['w', 'c', 'f']);
+        expect(unsupportedPanelCount(again)).toBe(1);
+    });
+
+    it('all-unknown fallback keeps a panel whose id matches a default panel, and its link groups', () => {
+        const store = stubStore();
+        store.set(
+            'sj-pro-workspace-v3',
+            JSON.stringify({
+                blocks: [{ id: 'chart-0', type: 'futurepanel', pin: null, keep: 1 }],
+                layout: [{ i: 'chart-0', x: 0, y: 0, w: 96, h: 14 }],
+                linkGroups: { A: '2330' },
+            }),
+        );
+        const w = loadWorkspace();
+        expect(w.linkGroups).toEqual({ A: '2330' });
+        saveWorkspace(w);
+        const stored = JSON.parse(store.get('sj-pro-workspace-v3')!);
+        expect(stored.linkGroups).toEqual({ A: '2330' });
+        const hidden = stored.blocks.filter((b: { type: string }) => b.type === 'futurepanel');
+        expect(hidden).toEqual([{ id: 'chart-0~1', type: 'futurepanel', pin: null, keep: 1 }]);
+        expect(stored.layout.filter((l: { i: string }) => l.i === 'chart-0~1')).toHaveLength(1);
     });
 
     it('sanitizes the legacy v2 key as well', () => {
@@ -548,12 +574,14 @@ describe('unknown panel types from a newer version', () => {
         expect(unsupportedPanelsNotice(1, 1)).toContain('請更新到最新版');
     });
 
-    it('reset clears only the current workspace, not profiles', () => {
+    it('reset writes the default workspace and leaves profiles and the legacy key alone', () => {
         const store = stubStore();
         store.set('sj-pro-workspace-v3', JSON.stringify(mixed));
+        store.set('sj-pro-workspace-v2', 'legacy');
         store.set('sj-pro-profiles-v2', '[]');
         resetSavedWorkspace();
-        expect(store.has('sj-pro-workspace-v3')).toBe(false);
+        expect(JSON.parse(store.get('sj-pro-workspace-v3')!)).toEqual(DEFAULT_WORKSPACE);
+        expect(store.get('sj-pro-workspace-v2')).toBe('legacy');
         expect(store.get('sj-pro-profiles-v2')).toBe('[]');
     });
 });

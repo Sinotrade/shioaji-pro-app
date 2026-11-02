@@ -850,6 +850,8 @@ export function workspaceRevision(workspace: Workspace): string {
         stableStringify({
             blocks: workspace.blocks,
             linkGroups: workspace.linkGroups ?? {},
+            // 此版本略過的面板也算內容：不同版面的快照不能互相復原蓋掉
+            ...(workspace.unsupported ? { unsupported: workspace.unsupported } : {}),
             layout: workspace.layout.map((l) => [l.i, l.x, Number.isFinite(l.y) ? l.y : null, l.w, l.h]),
         }),
     );
@@ -861,6 +863,7 @@ export function workspaceContentRevision(workspace: Workspace): string {
         stableStringify({
             blocks: workspace.blocks,
             linkGroups: workspace.linkGroups ?? {},
+            ...(workspace.unsupported ? { unsupported: workspace.unsupported } : {}),
         }),
     );
 }

@@ -1,7 +1,7 @@
 // src/components/app-error-boundary.tsx — App 頂層的最後一道保險。
 // 面板內的錯誤由 PanelErrorBoundary 隔離；這裡接住面板框架之外的 render
 // 崩潰（例如版面資料讓 BlockView 取不到面板定義），避免整個視窗白畫面。
-// 「重設版面」只清目前版面（sj-pro-workspace-v3），版面庫不刪。
+// 「重設版面」把目前版面（sj-pro-workspace-v3）寫回預設，版面庫不刪。
 
 import { LayoutGrid, RotateCw, TriangleAlert } from 'lucide-react';
 import { Component, type ReactNode } from 'react';
