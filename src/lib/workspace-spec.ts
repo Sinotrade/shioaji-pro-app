@@ -972,6 +972,8 @@ export function buildWorkspaceFromSpec(
         });
     }
     const next: Workspace = { blocks, layout };
+    // 此版本不認得的面板（較新版本的存檔）不在規格裡，照樣帶著存回
+    if (current.unsupported) next.unsupported = structuredClone(current.unsupported);
     if (Object.keys(normalized.linkGroups).length) {
         next.linkGroups = { ...normalized.linkGroups };
     }

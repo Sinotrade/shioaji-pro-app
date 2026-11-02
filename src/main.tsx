@@ -6,6 +6,7 @@ import './lib/polyfills';
 import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { AppGate } from './app-gate';
+import { AppErrorBoundary } from './components/app-error-boundary';
 import './index.css';
 import { startAnalytics } from './lib/analytics';
 import { bootstrap } from './lib/boot';
@@ -54,6 +55,8 @@ const root = rootHost.__shioajiRoot ?? createRoot(rootHost);
 rootHost.__shioajiRoot = root;
 root.render(
     <StrictMode>
-        <AppGate />
+        <AppErrorBoundary>
+            <AppGate />
+        </AppErrorBoundary>
     </StrictMode>,
 );

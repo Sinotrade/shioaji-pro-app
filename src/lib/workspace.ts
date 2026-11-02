@@ -167,6 +167,14 @@ export interface Workspace {
     layout: LayoutItem[];
     // 連動群組各自的代碼（跟版面一起存）
     linkGroups?: Partial<Record<LinkGroupId, string>>;
+    // 此版本不認得的面板（較新版本存的版面降版讀到）：只在記憶體帶著、
+    // 不渲染；存檔時原樣併回，升版後面板自動回來。見 sanitizeWorkspace。
+    unsupported?: UnsupportedPanels;
+}
+
+export interface UnsupportedPanels {
+    blocks: Record<string, unknown>[];
+    layout: LayoutItem[];
 }
 
 // ---- 連動群組 ----
@@ -1178,8 +1186,91 @@ function validWorkspace(w: unknown): w is Workspace {
     const ws = w as Workspace;
     if (!Array.isArray(ws.blocks) || !Array.isArray(ws.layout)) return false;
     if (ws.blocks.length === 0) return false;
+    if (!ws.blocks.every((b) => !!b && typeof b === 'object')) return false;
+    if (!ws.layout.every((l) => !!l && typeof l === 'object')) return false;
     const ids = new Set(ws.blocks.map((b) => b.id));
     return ws.layout.every((l) => ids.has(l.i));
+}
+
+export function isKnownBlockType(value: unknown): value is BlockType {
+    return (
+        typeof value === 'string' &&
+        Object.prototype.hasOwnProperty.call(BLOCK_META, value)
+    );
+}
+
+/**
+ * 讀入邊界的唯一關卡：較新版本存的版面可能含這版不認得的面板類型
+ * （BLOCK_META 查不到 → 渲染時整個 App 崩潰）。未知類型的面板連同
+ * 對應的 layout 格子移到 `unsupported`，不渲染但跟著存檔原樣保留；
+ * 剩下的面板若一個都不剩就用預設版面（仍帶著 unsupported）。
+ * 已知類型完全不動；沒有未知面板時回傳原物件。
+ */
+export function sanitizeWorkspace(w: Workspace): Workspace {
+    const carried = w.unsupported;
+    const unknownIds = new Set(
+        w.blocks.filter((b) => !isKnownBlockType(b.type)).map((b) => b.id),
+    );
+    if (unknownIds.size === 0) return w;
+    const unsupported: UnsupportedPanels = {
+        blocks: [
+            ...(carried?.blocks ?? []),
+            ...(w.blocks.filter((b) => unknownIds.has(b.id)) as unknown as Record<string, unknown>[]),
+        ],
+        layout: [
+            ...(carried?.layout ?? []),
+            ...w.layout.filter((l) => unknownIds.has(l.i)),
+        ],
+    };
+    const blocks = w.blocks.filter((b) => !unknownIds.has(b.id));
+    if (blocks.length === 0) {
+        return { ...structuredClone(DEFAULT_WORKSPACE), unsupported };
+    }
+    return {
+        ...w,
+        blocks,
+        layout: w.layout.filter((l) => !unknownIds.has(l.i)),
+        unsupported,
+    };
+}
+
+/** 此版本略過的面板數（給提示用） */
+export function unsupportedPanelCount(w: Workspace): number {
+    return w.unsupported?.blocks.length ?? 0;
+}
+
+/** 啟動提示文字；兩者皆 0 回傳 null */
+export function unsupportedPanelsNotice(current: number, library: number): string | null {
+    if (current <= 0 && library <= 0) return null;
+    const where = [
+        current > 0 ? `目前版面 ${current} 個` : null,
+        library > 0 ? `版面庫 ${library} 個` : null,
+    ]
+        .filter(Boolean)
+        .join('、');
+    return `${where}面板此版本不支援，已暫時略過（版面資料仍保留），請更新到最新版。`;
+}
+
+/**
+ * 寫入儲存的形狀：把 unsupported 併回 blocks/layout（不留 unsupported
+ * 欄位），較新版本讀到時面板原樣回來。id 已被目前面板用掉的略過。
+ */
+export function toStoredWorkspace(w: Workspace): Workspace {
+    const { unsupported, ...rest } = w;
+    if (!unsupported || unsupported.blocks.length === 0) return rest;
+    const used = new Set(rest.blocks.map((b) => b.id));
+    const keep = unsupported.blocks.filter(
+        (b) => typeof b.id === 'string' && !used.has(b.id),
+    );
+    const keepIds = new Set(keep.map((b) => b.id as string));
+    return {
+        ...rest,
+        blocks: [...rest.blocks, ...(keep as unknown as Block[])],
+        layout: [
+            ...rest.layout,
+            ...unsupported.layout.filter((l) => keepIds.has(l.i)),
+        ],
+    };
 }
 
 export function loadWorkspace(): Workspace {
@@ -1188,7 +1279,7 @@ export function loadWorkspace(): Workspace {
         const raw = localStorage.getItem(WS_KEY);
         if (raw) {
             const w = JSON.parse(raw);
-            if (validWorkspace(w)) return w;
+            if (validWorkspace(w)) return sanitizeWorkspace(stripCarry(w));
         }
     } catch {
         // fall through to legacy
@@ -1198,7 +1289,7 @@ export function loadWorkspace(): Workspace {
         const legacy = localStorage.getItem(WS_KEY_LEGACY);
         if (legacy) {
             const w = JSON.parse(legacy);
-            if (validWorkspace(w)) return upscaleLegacyWorkspace(w);
+            if (validWorkspace(w)) return sanitizeWorkspace(upscaleLegacyWorkspace(stripCarry(w)));
         }
     } catch {
         // fall through
@@ -1206,8 +1297,21 @@ export function loadWorkspace(): Workspace {
     return structuredClone(DEFAULT_WORKSPACE);
 }
 
+// 儲存的 JSON 不該有 unsupported 欄位（toStoredWorkspace 已併回）；
+// 萬一有就丟掉，避免外部資料塞進非預期形狀
+function stripCarry(w: Workspace): Workspace {
+    if (!('unsupported' in w)) return w;
+    const { unsupported: _u, ...rest } = w;
+    return rest;
+}
+
+/** 錯誤畫面的「重設版面」：只清目前版面，版面庫（profiles）不動 */
+export function resetSavedWorkspace() {
+    localStorage.removeItem(WS_KEY);
+}
+
 export function saveWorkspace(w: Workspace) {
-    localStorage.setItem(WS_KEY, JSON.stringify(w));
+    localStorage.setItem(WS_KEY, JSON.stringify(toStoredWorkspace(w)));
 }
 
 export function loadProfiles(): Profile[] {
@@ -1217,12 +1321,16 @@ export function loadProfiles(): Profile[] {
         return (arr as Profile[])
             .filter(
                 (p) =>
-                    typeof p.name === 'string' && validWorkspace(p.workspace),
+                    !!p &&
+                    typeof p === 'object' &&
+                    typeof p.name === 'string' &&
+                    validWorkspace(p.workspace),
             )
             .map((p) => {
-                const ws = legacy
-                    ? upscaleLegacyWorkspace(p.workspace)
-                    : p.workspace;
+                const base = stripCarry(p.workspace);
+                const ws = sanitizeWorkspace(
+                    legacy ? upscaleLegacyWorkspace(base) : base,
+                );
                 return typeof p.icon === 'string' && p.icon
                     ? { ...p, workspace: ws }
                     : { name: p.name, workspace: ws };
@@ -1250,7 +1358,12 @@ export function loadProfiles(): Profile[] {
 }
 
 export function saveProfiles(profiles: Profile[]) {
-    localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+    localStorage.setItem(
+        PROFILES_KEY,
+        JSON.stringify(
+            profiles.map((p) => ({ ...p, workspace: toStoredWorkspace(p.workspace) })),
+        ),
+    );
 }
 
 let blockCounter = Date.now() % 100000;
