@@ -1,6 +1,5 @@
 // src/lib/contracts-cache.ts — global contract cache for pinned panels.
-// Resolves a code to ContractInfo (STK first, FUT fallback), subscribes
-// its quote streams once, and exposes a useSyncExternalStore hook.
+// Resolves Contract V2 identities and exposes a useSyncExternalStore hook.
 
 import { useSyncExternalStore } from 'react';
 import { resolveContract } from './shioaji';
@@ -20,6 +19,8 @@ function prefetchBands(c: ContractInfo) {
 }
 
 const cache = new Map<string, ContractInfo>();
+// Preserve code-only consumers while typed lookups can retain colliding codes.
+const typedCache = new Map<string, ContractInfo>();
 const pending = new Map<string, Promise<ContractInfo>>();
 const listeners = new Set<() => void>();
 
@@ -27,12 +28,31 @@ function emit() {
     listeners.forEach((l) => l());
 }
 
+function typedKey(code: string, type: SecurityType | undefined) {
+    return `${type ?? 'AUTO'}:${code}`;
+}
+
+function rememberContract(contract: ContractInfo, requestedCode = contract.code) {
+    cache.set(requestedCode, contract);
+    cache.set(contract.code, contract);
+    typedCache.set(typedKey(requestedCode, contract.security_type), contract);
+    typedCache.set(typedKey(contract.code, contract.security_type), contract);
+}
+
+async function resolveTypedContract(code: string, type?: SecurityType) {
+    const contract = await resolveContract(code, type);
+    if (type && contract.security_type !== type) {
+        throw new Error(`商品 ${code} 的型別不是 ${type}，未使用此合約`);
+    }
+    return contract;
+}
+
 export function getCachedContract(code: string): ContractInfo | undefined {
     return cache.get(code);
 }
 
 export function primeContract(contract: ContractInfo) {
-    cache.set(contract.code, contract);
+    rememberContract(contract);
     if (contract.target_code) {
         registerCodeAlias(contract.target_code, contract.code);
     }
@@ -44,10 +64,10 @@ export async function refreshCachedContracts(
     securityType?: SecurityType,
 ): Promise<void> {
     const targets = new Map<string, ContractInfo>();
-    for (const contract of cache.values()) {
+    for (const contract of typedCache.values()) {
         if (securityType && contract.security_type !== securityType) continue;
         targets.set(
-            `${contract.security_type ?? 'AUTO'}:${contract.code}`,
+            typedKey(contract.code, contract.security_type),
             contract,
         );
     }
@@ -56,7 +76,7 @@ export async function refreshCachedContracts(
     const targetList = [...targets.values()];
     const refreshed = await Promise.allSettled(
         targetList.map((contract) =>
-            resolveContract(contract.code, contract.security_type ?? undefined),
+            resolveTypedContract(contract.code, contract.security_type ?? undefined),
         ),
     );
     let changed = false;
@@ -65,15 +85,22 @@ export async function refreshCachedContracts(
         const previous = targetList[index];
         if (!previous) return;
         const next = result.value;
-        for (const [key, cached] of cache) {
-            if (
-                cached.code === previous.code &&
-                cached.security_type === previous.security_type
-            ) {
-                cache.set(key, next);
+        for (const entries of [cache, typedCache]) {
+            for (const [key, cached] of entries) {
+                if (
+                    cached.code === previous.code &&
+                    cached.security_type === previous.security_type
+                ) {
+                    entries.set(key, next);
+                }
             }
         }
-        cache.set(next.code, next);
+        typedCache.set(typedKey(next.code, next.security_type), next);
+        // Refreshing a hidden type must not switch code-only panels to it.
+        const current = cache.get(next.code);
+        if (!current || current.security_type === previous.security_type) {
+            cache.set(next.code, next);
+        }
         if (next.target_code) {
             registerCodeAlias(next.target_code, next.code);
         }
@@ -86,23 +113,22 @@ export async function ensureContract(
     code: string,
     type?: SecurityType,
 ): Promise<ContractInfo> {
-    const hit = cache.get(code);
+    const hit = type ? typedCache.get(typedKey(code, type)) : cache.get(code);
     if (hit) {
         if (hit.target_code) {
             registerCodeAlias(hit.target_code, hit.code);
         }
         return hit;
     }
-    const pendingKey = `${type ?? 'AUTO'}:${code}`;
+    const pendingKey = typedKey(code, type);
     const inflight = pending.get(pendingKey);
     if (inflight) return inflight;
 
     const task = (async () => {
         // Contract V2 get() searches all security types when no type is
         // supplied, so auto-detection is one request instead of four 404s.
-        const contract = await resolveContract(code, type);
-        cache.set(code, contract);
-        cache.set(contract.code, contract);
+        const contract = await resolveTypedContract(code, type);
+        rememberContract(contract, code);
         if (contract.target_code) {
             registerCodeAlias(contract.target_code, contract.code);
         }

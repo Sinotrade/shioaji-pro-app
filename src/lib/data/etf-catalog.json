@@ -1,0 +1,2827 @@
+{
+  "schemaVersion": 1,
+  "retrievedAt": "2026-10-17T06:44:32.715Z",
+  "sources": [
+    {
+      "exchange": "TSE",
+      "url": "https://openapi.twse.com.tw/v1/opendata/t187ap47_L",
+      "dataDate": "2026-10-16",
+      "count": 272
+    },
+    {
+      "exchange": "OTC",
+      "url": "https://info.tpex.org.tw/api/etfFilter",
+      "dataDate": null,
+      "count": 118
+    },
+    {
+      "exchange": "TSE",
+      "url": "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+      "dataDate": "2026-10-16",
+      "count": 1380
+    }
+  ],
+  "entries": [
+    {
+      "code": "00411A",
+      "name": "主動統一前沿科技",
+      "exchange": "OTC"
+    },
+    {
+      "code": "006201",
+      "name": "元大富櫃50",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00679B",
+      "name": "元大美債20年",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00687B",
+      "name": "國泰20年美債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00687C",
+      "name": "國泰20年美債+櫃U(美元)",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00694B",
+      "name": "富邦美債1-3",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00695B",
+      "name": "富邦美債7-10",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00696B",
+      "name": "富邦美債20年",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00697B",
+      "name": "元大美債7-10",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00719B",
+      "name": "元大美債1-3",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00720B",
+      "name": "元大投資級公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00722B",
+      "name": "群益投資級電信債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00723B",
+      "name": "群益投資級科技債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00724B",
+      "name": "群益投資級金融債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00725B",
+      "name": "國泰投資級公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00726B",
+      "name": "國泰新興投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00727B",
+      "name": "國泰優選非投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00734B",
+      "name": "台新JPM新興債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00740B",
+      "name": "富邦全球投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00741B",
+      "name": "富邦全球非投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00746B",
+      "name": "富邦A級公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00749B",
+      "name": "凱基新興債10+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00750B",
+      "name": "凱基科技債10+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00751B",
+      "name": "元大AAA至A公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00754B",
+      "name": "群益AAA-AA公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00755B",
+      "name": "群益投資級公用債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00756B",
+      "name": "群益投等新興公債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00758B",
+      "name": "復華能源債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00759B",
+      "name": "復華製藥債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00760B",
+      "name": "復華新興企業債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00761B",
+      "name": "國泰A級公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00764B",
+      "name": "群益25年美債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00768B",
+      "name": "復華20年美債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00772B",
+      "name": "中信高評級公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00773B",
+      "name": "中信優先金融債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00777B",
+      "name": "凱基AAA至A公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00778B",
+      "name": "凱基金融債20+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00779B",
+      "name": "凱基美債25+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00780B",
+      "name": "國泰A級金融債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00781B",
+      "name": "國泰A級科技債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00782B",
+      "name": "國泰A級公用債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00785B",
+      "name": "富邦金融投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00786B",
+      "name": "元大10年IG銀行債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00787B",
+      "name": "元大10年IG醫療債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00788B",
+      "name": "元大10年IG電能債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00789B",
+      "name": "復華公司債A3",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00791B",
+      "name": "復華信用債1-5Y",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00792B",
+      "name": "群益A級公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00795B",
+      "name": "中信美國公債20年",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00799B",
+      "name": "國泰A級醫療債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00834B",
+      "name": "第一金金融債10+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00836B",
+      "name": "永豐10年A公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00840B",
+      "name": "凱基IG精選15+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00841B",
+      "name": "凱基AAA-AA公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00842B",
+      "name": "台新美元銀行債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00844B",
+      "name": "台新15年IG金融債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00845B",
+      "name": "富邦新興投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00846B",
+      "name": "富邦歐洲銀行債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00848B",
+      "name": "中信新興亞洲債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00849B",
+      "name": "中信EM主權債0-5",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00853B",
+      "name": "統一美債10年Aa-A",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00856B",
+      "name": "永豐1-3年美公債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00857B",
+      "name": "永豐20年美公債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00858",
+      "name": "永豐美國500大",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00859B",
+      "name": "群益0-1年美債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00860B",
+      "name": "群益1-5Y投資級債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00862B",
+      "name": "中信投資級公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00863B",
+      "name": "中信全球電信債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00864B",
+      "name": "中信美國公債0-1",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00867B",
+      "name": "台新A-BBB電信債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00870B",
+      "name": "元大15年EM主權債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00877",
+      "name": "復華中國5G",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00884B",
+      "name": "中信低碳新興債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00886",
+      "name": "永豐美國科技",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00887",
+      "name": "永豐中國科技50大",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00888",
+      "name": "永豐台灣ESG",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00890B",
+      "name": "凱基ESG BBB債15+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00928",
+      "name": "中信上櫃ESG30",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00931B",
+      "name": "統一美債20年",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00933B",
+      "name": "國泰10Y+金融債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00937B",
+      "name": "群益ESG投等債20+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00942B",
+      "name": "台新美A公司債20+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00948B",
+      "name": "中信優息投資級債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00950B",
+      "name": "凱基A級公司債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00955",
+      "name": "中信日本商社",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00957B",
+      "name": "兆豐US優選投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00958B",
+      "name": "永豐ESG銀行債15+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00959B",
+      "name": "大華投等美債15Y+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00966B",
+      "name": "統一ESG投等債15+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00967B",
+      "name": "元大優息美債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00968B",
+      "name": "元大優息投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00969B",
+      "name": "元大零息超長美債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00970B",
+      "name": "台新BBB投等債20+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "009806",
+      "name": "台新標普500",
+      "exchange": "OTC"
+    },
+    {
+      "code": "009807",
+      "name": "台新標普科技精選",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00980B",
+      "name": "台新特選IG債10+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00980D",
+      "name": "主動聯博投等入息",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00980T",
+      "name": "平衡凱基美國TOP",
+      "exchange": "OTC"
+    },
+    {
+      "code": "009814",
+      "name": "富邦標普500",
+      "exchange": "OTC"
+    },
+    {
+      "code": "009815",
+      "name": "大華美國MAG7+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00981B",
+      "name": "第一金優選非投債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00981D",
+      "name": "主動中信非投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "009822",
+      "name": "華南永昌未來金融",
+      "exchange": "OTC"
+    },
+    {
+      "code": "009823",
+      "name": "群益 S&P500",
+      "exchange": "OTC"
+    },
+    {
+      "code": "009825",
+      "name": "聯邦美國金融創新",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00982B",
+      "name": "FT投資級債20+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00983B",
+      "name": "大華優利美公債20",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00984B",
+      "name": "大華優利美A債15",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00985D",
+      "name": "主動貝萊德優投等",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00986B",
+      "name": "FT金融債10+",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00986D",
+      "name": "主動復華金融債息",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00987B",
+      "name": "野村10+澳洲公債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00987D",
+      "name": "主動統一美債量化",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00988B",
+      "name": "玉山嚴選非投債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00989B",
+      "name": "台新美國非投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00990B",
+      "name": "國泰收益非投等債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00992B",
+      "name": "街口優息非投債",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00998A",
+      "name": "主動復華金融股息",
+      "exchange": "OTC"
+    },
+    {
+      "code": "00400A",
+      "name": "主動國泰動能高息",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰台股動能高息主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00401A",
+      "name": "主動摩根台灣鑫收",
+      "exchange": "TSE",
+      "aliases": [
+        "摩根台灣鑫收益主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00402A",
+      "name": "主動安聯美國科技",
+      "exchange": "TSE",
+      "aliases": [
+        "安聯美國科技領航主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00403A",
+      "name": "主動統一升級50",
+      "exchange": "TSE",
+      "aliases": [
+        "統一台股升級50主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00404A",
+      "name": "主動聯博動能50",
+      "exchange": "TSE",
+      "aliases": [
+        "聯博台灣動能收益50主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00405A",
+      "name": "主動富邦台灣龍耀",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦台灣龍耀主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00406A",
+      "name": "主動中信台灣收益",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託台灣收益成長主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00407A",
+      "name": "主動凱基台灣",
+      "exchange": "TSE",
+      "aliases": [
+        "凱基台灣主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00408A",
+      "name": "主動第一金優股息",
+      "exchange": "TSE",
+      "aliases": [
+        "第一金台股趨勢優股息主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00409A",
+      "name": "主動復華全球50",
+      "exchange": "TSE",
+      "aliases": [
+        "復華全球未來50主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00410A",
+      "name": "主動永豐科技趨勢",
+      "exchange": "TSE",
+      "aliases": [
+        "永豐台灣科技趨勢主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00412A",
+      "name": "主動安聯亞半導體",
+      "exchange": "TSE",
+      "aliases": [
+        "安聯亞洲半導體主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0050",
+      "name": "元大台灣50",
+      "exchange": "TSE",
+      "aliases": [
+        "元大台灣卓越50證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0051",
+      "name": "元大中型100",
+      "exchange": "TSE",
+      "aliases": [
+        "元大台灣中型100證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0052",
+      "name": "富邦科技",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦台灣科技指數證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0053",
+      "name": "元大科技市值",
+      "exchange": "TSE",
+      "aliases": [
+        "元大電子",
+        "元大台灣ETF傘型證券投資信託基金之電子科技證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0054",
+      "name": "元大台商50",
+      "exchange": "TSE",
+      "aliases": [
+        "元大台灣ETF傘型證券投資信託基金之台商收成證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0055",
+      "name": "元大MSCI金融",
+      "exchange": "TSE",
+      "aliases": [
+        "元大台灣ETF傘型證券投資信託基金之金融證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0056",
+      "name": "元大高股息",
+      "exchange": "TSE",
+      "aliases": [
+        "元大台灣高股息證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0057",
+      "name": "富邦摩台",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦台灣ETF傘型證券投資信託基金之富邦台灣摩根指數股票型證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0058",
+      "name": "富邦發達",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦台灣ETF傘型證券投資信託基金之富邦台灣發達指數股票型證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0059",
+      "name": "富邦金融",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦台灣ETF傘型證券投資信託基金之富邦台灣金融指數股票型證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0060",
+      "name": "新台灣",
+      "exchange": "TSE",
+      "aliases": [
+        "元大新台灣證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0061",
+      "name": "元大寶滬深",
+      "exchange": "TSE",
+      "aliases": [
+        "元大標智滬深300證券投資信託基金"
+      ]
+    },
+    {
+      "code": "006203",
+      "name": "元大MSCI台灣",
+      "exchange": "TSE",
+      "aliases": [
+        "元大摩臺證券投資信託基金"
+      ]
+    },
+    {
+      "code": "006204",
+      "name": "永豐臺灣加權",
+      "exchange": "TSE",
+      "aliases": [
+        "永豐臺灣加權ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "006205",
+      "name": "富邦上証",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦上証180證券投資信託基金"
+      ]
+    },
+    {
+      "code": "006206",
+      "name": "元大上證50",
+      "exchange": "TSE",
+      "aliases": [
+        "元大中國傘型證券投資信託基金之上證50證券投資信託基金"
+      ]
+    },
+    {
+      "code": "006207",
+      "name": "復華滬深",
+      "exchange": "TSE",
+      "aliases": [
+        "復華滬深300 A股證券投資信託基金"
+      ]
+    },
+    {
+      "code": "006208",
+      "name": "富邦台50",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦台灣釆吉50 證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00625K",
+      "name": "富邦上証+R",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦上証180證券投資信託基金-加掛人民幣ETF受益憑證-國外成份/加掛外幣證券指數股票型基金"
+      ]
+    },
+    {
+      "code": "00631L",
+      "name": "元大台灣50正2",
+      "exchange": "TSE",
+      "aliases": [
+        "元大ETF傘型證券投資信託基金之台灣50單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00632R",
+      "name": "元大台灣50反1",
+      "exchange": "TSE",
+      "aliases": [
+        "元大ETF傘型證券投資信託基金之台灣50單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00633L",
+      "name": "富邦上証正2",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦中國ETF傘型證券投資信託基金之富邦上証180單日正向兩倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00634R",
+      "name": "富邦上証反1",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦中國ETF傘型證券投資信託基金之富邦上証180單日反向一倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00635U",
+      "name": "期元大S&P黃金",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大S&P黃金(原名：元大S&P黃金)",
+        "元大標普高盛黃金ER指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00636",
+      "name": "國泰中國A50",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰富時中國A50證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00636K",
+      "name": "國泰中國A50+U",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰富時中國A50證券投資信託基金(加掛美元受益憑證)-國外成份/加掛外幣證券指數股票型基金"
+      ]
+    },
+    {
+      "code": "00637L",
+      "name": "元大滬深300正2",
+      "exchange": "TSE",
+      "aliases": [
+        "元大滬深300傘型證券投資信託基金之滬深300單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00638R",
+      "name": "元大滬深300反1",
+      "exchange": "TSE",
+      "aliases": [
+        "元大滬深300傘型證券投資信託基金之滬深300單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00639",
+      "name": "富邦深100",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦深証100證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00640L",
+      "name": "富邦日本正2",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦日本ETF傘型證券投資信託基金之富邦日本東証單日正向兩倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00641R",
+      "name": "富邦日本反1",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦日本ETF傘型證券投資信託基金之富邦日本東証單日反向一倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00642U",
+      "name": "期元大S&P石油",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大S&P石油(原名：元大S&P石油)",
+        "元大標普高盛原油ER指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00643",
+      "name": "群益深証中小",
+      "exchange": "TSE",
+      "aliases": [
+        "群益深証中小１００證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00643K",
+      "name": "群益深証中小+R",
+      "exchange": "TSE",
+      "aliases": [
+        "群益深証中小１００證券投資信託基金加掛—人民幣ETF受益憑證-國外成份/加掛外幣證券指數股票型基金"
+      ]
+    },
+    {
+      "code": "00645",
+      "name": "富邦日本",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦日本東証證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00646",
+      "name": "元大S&P500",
+      "exchange": "TSE",
+      "aliases": [
+        "元大標普500傘型證券投資信託基金之標普500證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00647L",
+      "name": "元大S&P500正2",
+      "exchange": "TSE",
+      "aliases": [
+        "元大標普500傘型證券投資信託基金之標普500單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00648R",
+      "name": "元大S&P500反1",
+      "exchange": "TSE",
+      "aliases": [
+        "元大標普500傘型證券投資信託基金之標普500單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00649",
+      "name": "FH香港",
+      "exchange": "TSE",
+      "aliases": [
+        "復華香港ETF傘型證券投資信託基金之復華恒生證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00650L",
+      "name": "復華香港正2",
+      "exchange": "TSE",
+      "aliases": [
+        "復華香港ETF傘型證券投資信託基金之復華恒生單日正向二倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00651R",
+      "name": "復華香港反1",
+      "exchange": "TSE",
+      "aliases": [
+        "復華香港ETF傘型證券投資信託基金之復華恒生單日反向一倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00652",
+      "name": "富邦印度",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦印度ETF傘型證券投資信託基金之富邦印度NIFTY證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00653L",
+      "name": "富邦印度正2",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦印度ETF傘型證券投資信託基金之富邦印度NIFTY單日正向兩倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00654R",
+      "name": "富邦印度反1",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦印度ETF傘型證券投資信託基金之富邦印度NIFTY單日反向一倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00655L",
+      "name": "國泰中國A50正2",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰A50傘型證券投資信託基金之富時中國A50單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00656R",
+      "name": "國泰中國A50反1",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰A50傘型證券投資信託基金之富時中國A50單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00657",
+      "name": "國泰日經225",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰日本ETF傘型證券投資信託基金之日經225證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00657K",
+      "name": "國泰日經225+U",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰日本ETF傘型證券投資信託基金之日經225證券投資信託基金(加掛美元受益憑證)-國外成份/加掛外幣證券指數股票型基金"
+      ]
+    },
+    {
+      "code": "00658L",
+      "name": "國泰日本正2",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰日本ETF傘型證券投資信託基金之富時日本單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00659R",
+      "name": "國泰日本反1",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰日本ETF傘型證券投資信託基金之富時日本單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00660",
+      "name": "元大歐洲50",
+      "exchange": "TSE",
+      "aliases": [
+        "元大已開發國家傘型證券投資信託基金之元大歐洲50證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00661",
+      "name": "元大日經225",
+      "exchange": "TSE",
+      "aliases": [
+        "元大已開發國家傘型證券投資信託基金之元大日經225證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00662",
+      "name": "富邦NASDAQ",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦NASDAQ-100證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00663L",
+      "name": "國泰臺灣加權正2",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰臺指ETF傘型證券投資信託基金之臺灣加權指數單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00664R",
+      "name": "國泰臺灣加權反1",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰臺指ETF傘型證券投資信託基金之臺灣加權指數單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00665L",
+      "name": "富邦恒生國企正2",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦恒生國企ETF傘型證券投資信託基金之富邦恒生國企單日正向兩倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00666R",
+      "name": "富邦恒生國企反1",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦恒生國企ETF傘型證券投資信託基金之富邦恒生國企單日反向一倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00667",
+      "name": "元大韓國",
+      "exchange": "TSE",
+      "aliases": [
+        "元大韓國KOSPI 200證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00668",
+      "name": "國泰美國道瓊",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰美國ETF傘型證券投資信託基金之道瓊工業平均指數證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00668K",
+      "name": "國泰美國道瓊+U",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰道瓊工業平均指數證券投資信託基金(加掛美元受益憑證)-國外成份/加掛外幣證券指數股票型基金"
+      ]
+    },
+    {
+      "code": "00669R",
+      "name": "國泰美國道瓊反1",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰美國ETF傘型證券投資信託基金之道瓊工業平均指數單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00670L",
+      "name": "富邦NASDAQ正2",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦NASDAQ-100 ETF 傘型證券投資信託基金之富邦NASDAQ-100單日正向兩倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00671R",
+      "name": "富邦NASDAQ反1",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦NASDAQ 反1",
+        "富邦NASDAQ-100 ETF傘型證券投資信託基金之富邦NASDAQ-100 單日反向一倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00672L",
+      "name": "元大S&P原油正2",
+      "exchange": "TSE",
+      "aliases": [
+        "元大標普油金傘型期貨信託基金之元大標普高盛原油ER單日正向2倍指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00673R",
+      "name": "期元大S&P原油反1",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大S&P原油反1(原名：元大S&P原油反1)",
+        "元大標普油金傘型期貨信託基金之元大標普高盛原油ER單日反向1倍指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00674R",
+      "name": "期元大S&P黃金反1",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大S&P黃金反1(原名：元大S&P黃金反1)",
+        "元大標普油金傘型期貨信託基金之元大標普高盛黃金ER單日反向1倍指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00675L",
+      "name": "富邦臺灣加權正2",
+      "exchange": "TSE",
+      "aliases": [
+        "FB臺灣加權正2",
+        "富邦臺灣加權ETF傘型證券投資信託基金之富邦臺灣加權單日正向兩倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00676R",
+      "name": "富邦臺灣加權反1",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦臺灣加權ETF傘型證券投資信託基金之富邦臺灣加權單日反向一倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00677U",
+      "name": "期富邦VIX",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦標普500波動率短期期貨ER指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00678",
+      "name": "群益那斯達克生技",
+      "exchange": "TSE",
+      "aliases": [
+        "群益那斯達克生技證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00680L",
+      "name": "元大美債20正2",
+      "exchange": "TSE",
+      "aliases": [
+        "元大美國政府20年期(以上)債券ETF傘型證券投資信託基金之元大美國政府20年期(以上)債券單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00681R",
+      "name": "元大美債20反1",
+      "exchange": "TSE",
+      "aliases": [
+        "元大美國政府20年期(以上)債券ETF傘型證券投資信託基金之元大美國政府20年期(以上)債券單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00682U",
+      "name": "期元大美元指數",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大美元指數(原名：元大美元指數)",
+        "元大標普美元指數傘型期貨信託基金之元大標普美元ER指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00683L",
+      "name": "期元大美元指正2",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大美元指正2(原名：元大美元指數正2)",
+        "元大標普美元指數傘型期貨信託基金之元大標普美元ER單日正向2倍指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00684R",
+      "name": "期元大美元指反1",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大美元指反1(原名：元大美元指數反1)",
+        "元大標普美元指數傘型期貨信託基金之元大標普美元ER單日反向1倍指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00685L",
+      "name": "群益臺灣加權正2",
+      "exchange": "TSE",
+      "aliases": [
+        "群益臺灣加權指數ETF傘型證券投資信託基金之群益臺灣加權指數單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00686R",
+      "name": "群益臺灣加權反1",
+      "exchange": "TSE",
+      "aliases": [
+        "群益臺灣加權指數ETF傘型證券投資信託基金之群益臺灣加權指數單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00688L",
+      "name": "國泰20年美債正2",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰美國債券ETF傘型證券投資信託基金之20年期(以上)美國公債指數單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00689R",
+      "name": "國泰20年美債反1",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰美國債券ETF傘型證券投資信託基金之20年期(以上)美國公債指數單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00690",
+      "name": "兆豐藍籌30",
+      "exchange": "TSE",
+      "aliases": [
+        "兆豐臺灣藍籌30ETF傘型證券投資信託基金之兆豐臺灣藍籌30 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00691R",
+      "name": "兆豐藍籌反一",
+      "exchange": "TSE",
+      "aliases": [
+        "兆豐國際臺灣藍籌30ETF傘型證券投資信託基金之兆豐國際臺灣藍籌30單日反向一倍ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00692",
+      "name": "富邦公司治理",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦臺灣公司治理100證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00693U",
+      "name": "期街口S&P黃豆",
+      "exchange": "TSE",
+      "aliases": [
+        "街口標普高盛黃豆ER指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00698L",
+      "name": "元大美債7-10正2",
+      "exchange": "TSE",
+      "aliases": [
+        "元大美國政府7至10年期債券ETF傘型證券投資信託基金之元大美國政府7至10年期債券單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00699R",
+      "name": "元大美債7-10反1",
+      "exchange": "TSE",
+      "aliases": [
+        "元大美國政府7至10年期債券ETF傘型證券投資信託基金之元大美國政府7至10年期債券單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00700",
+      "name": "富邦恒生國企",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦恒生國企ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00701",
+      "name": "國泰股利精選30",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰低波動ETF傘型證券投資信託基金之臺灣低波動股利精選30證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00702",
+      "name": "國泰標普低波高息",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰低波動ETF傘型證券投資信託基金之美國標普500低波動高股息證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00703",
+      "name": "台新MSCI中國",
+      "exchange": "TSE",
+      "aliases": [
+        "台新MSCI新興市場國家傘型ETF證券投資信託基金之台新MSCI中國證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00704L",
+      "name": "台新MSCI台灣正2",
+      "exchange": "TSE",
+      "aliases": [
+        "台新MSCI新興市場國家傘型ETF證券投資信託基金之台新MSCI台灣單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00705R",
+      "name": "台新MSCI台灣反1",
+      "exchange": "TSE",
+      "aliases": [
+        "台新MSCI新興市場國家傘型ETF證券投資信託基金之台新MSCI台灣單日反向1倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00706L",
+      "name": "期元大S&P日圓正2",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大S&P日圓正2(原名：元大S&P日圓正2)",
+        "元大標普金日傘型期貨信託基金之元大標普日圓ER單日正向2倍指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00707R",
+      "name": "期元大S&P日圓反1",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大S&P日圓反1(原名：元大S&P日圓反1)",
+        "元大標普金日傘型期貨信託基金之元大標普日圓ER單日反向1倍指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00708L",
+      "name": "期元大S&P黃金正2",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大S&P黃金正2(原名：元大S&P黃金正2)",
+        "元大標普金日傘型期貨信託基金之元大標普高盛黃金ER單日正向2倍指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00709",
+      "name": "富邦歐洲",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦富時歐洲ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00710B",
+      "name": "復華彭博非投等債",
+      "exchange": "TSE",
+      "aliases": [
+        "復華全球收益ETF傘型證券投資信託基金之復華1至5年期非投資等級債券證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00711B",
+      "name": "復華彭博新興債",
+      "exchange": "TSE",
+      "aliases": [
+        "復華全球收益ETF傘型證券投資信託基金之復華新興市場10年期以上債券證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00712",
+      "name": "復華富時不動產",
+      "exchange": "TSE",
+      "aliases": [
+        "復華全球收益ETF傘型證券投資信託基金之復華富時不動產證券化證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00713",
+      "name": "元大台灣高息低波",
+      "exchange": "TSE",
+      "aliases": [
+        "元大台灣高股息低波動ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00714",
+      "name": "群益道瓊美國地產",
+      "exchange": "TSE",
+      "aliases": [
+        "群益道瓊美國地產ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00715L",
+      "name": "期街口布蘭特正2",
+      "exchange": "TSE",
+      "aliases": [
+        "街口標普高盛布蘭特原油ER單日正向2倍指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00716R",
+      "name": "華頓S&P布蘭特反1",
+      "exchange": "TSE",
+      "aliases": [
+        "華頓標普高盛布蘭特原油傘型期貨信託基金之華頓標普高盛布蘭特原油ER單日反向1倍指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00717",
+      "name": "富邦美國特別股",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦標普美國特別股ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00728",
+      "name": "第一金工業30",
+      "exchange": "TSE",
+      "aliases": [
+        "第一金臺灣工業菁英30ETF傘型證券投資信託基金之第一金臺灣工業菁英30 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00729R",
+      "name": "第一金工業30反一",
+      "exchange": "TSE",
+      "aliases": [
+        "第一金臺灣工業菁英30ETF傘型證券投資信託基金之第一金臺灣工業菁英30單日反向一倍ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00730",
+      "name": "富邦臺灣優質高息",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦道瓊臺灣優質高息30ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00731",
+      "name": "復華富時高息低波",
+      "exchange": "TSE",
+      "aliases": [
+        "復華富時台灣高股息低波動證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00732",
+      "name": "國泰RMB短期報酬",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰優勢收益傘型證券投資信託基金之富時人民幣短期報酬ETF 證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00733",
+      "name": "富邦臺灣中小",
+      "exchange": "TSE",
+      "aliases": [
+        "臺灣中小A級動能50 ETF基金",
+        "富邦臺灣中小A級動能50 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00735",
+      "name": "國泰臺韓科技",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰趨勢ETF傘型證券投資信託基金之臺韓科技證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00736",
+      "name": "國泰新興市場",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰趨勢ETF傘型證券投資信託基金之富時新興市場證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00737",
+      "name": "國泰AI機器人",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰趨勢ETF傘型證券投資信託基金之納斯達克全球人工智慧及機器人證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00738U",
+      "name": "期元大道瓊白銀",
+      "exchange": "TSE",
+      "aliases": [
+        "期元大道瓊白銀(原名：元大道瓊白銀)",
+        "元大道瓊白銀ER指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00739",
+      "name": "元大MSCI A股",
+      "exchange": "TSE",
+      "aliases": [
+        "元大MSCI中國A股國際通ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00742",
+      "name": "新光內需收益",
+      "exchange": "TSE",
+      "aliases": [
+        "新光特選內需收益ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00743",
+      "name": "國泰中國A150",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰新中國傘型證券投資信託基金之富時中國A150ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00752",
+      "name": "中信中國50",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託中國外資自由投資50不含A及B股傘型ETF證券投資信託基金之中國信託MSCI中國外資自由50不含A及B股ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00753L",
+      "name": "中信中國50正2",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託中國外資自由投資50不含A及B股傘型ETF證券投資信託基金之中國信託MSCI中國外資自由投資50不含A及B股單日正向2倍ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00757",
+      "name": "統一FANG+",
+      "exchange": "TSE",
+      "aliases": [
+        "統一NYSE FANG+ ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00762",
+      "name": "元大全球AI",
+      "exchange": "TSE",
+      "aliases": [
+        "元大全球人工智慧ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00763U",
+      "name": "期街口道瓊銅",
+      "exchange": "TSE",
+      "aliases": [
+        "街口道瓊銅ER指數股票型期貨信託基金"
+      ]
+    },
+    {
+      "code": "00766L",
+      "name": "台新MSCI中國正2",
+      "exchange": "TSE",
+      "aliases": [
+        "台新MSCI中國外資自由投資單日正向2倍ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00767",
+      "name": "FH美國金融股",
+      "exchange": "TSE",
+      "aliases": [
+        "復華多元資產傘型證券投資信託基金之復華美國金融服務業股票ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00770",
+      "name": "國泰北美科技",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰標普北美科技ETF基金",
+        "國泰標普北美科技ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00771",
+      "name": "元大US高息特別股",
+      "exchange": "TSE",
+      "aliases": [
+        "元大標普美國高息特別股ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00774B",
+      "name": "新光中國政金綠債",
+      "exchange": "TSE",
+      "aliases": [
+        "新光全方位收益ETF傘型證券投資信託基金之新光中國10年期國債及政策金融附加綠債債券ETF 證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00774C",
+      "name": "00774C",
+      "exchange": "TSE",
+      "aliases": [
+        "新光全方位收益ETF傘型證券投資信託基金之新光中國10年期國債及政策金融附加綠債債券ETF證券投資信託基金-加掛人民幣ETF受益憑證-國外成份/加掛外幣證券指數股票型基金"
+      ]
+    },
+    {
+      "code": "00775B",
+      "name": "台新投等債15+",
+      "exchange": "TSE",
+      "aliases": [
+        "台新全方位收益ETF傘型證券投資信託基金之台新富時15年以上特選產業美元投資等級債券ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00776",
+      "name": "新光ICE美國權值",
+      "exchange": "TSE",
+      "aliases": [
+        "新光全方位收益ETF傘型證券投資信託基金之新光NYSE美國核心大型權值股ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00783",
+      "name": "富邦中証500",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦多元收益ⅡETF傘型證券投資信託基金之富邦中國中証中小500ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "0080",
+      "name": "恒中國",
+      "exchange": "TSE",
+      "aliases": [
+        "恒生H股指數股票型基金"
+      ]
+    },
+    {
+      "code": "0081",
+      "name": "恒香港",
+      "exchange": "TSE",
+      "aliases": [
+        "恒生指數股票型基金"
+      ]
+    },
+    {
+      "code": "008201",
+      "name": "BP上證50",
+      "exchange": "TSE",
+      "aliases": [
+        "標智上證50中國指數基金(本基金配息來源可能為本金)"
+      ]
+    },
+    {
+      "code": "00830",
+      "name": "國泰費城半導體",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰大三元ETF傘型證券投資信託基金之美國費城半導體證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00850",
+      "name": "元大臺灣ESG永續",
+      "exchange": "TSE",
+      "aliases": [
+        "元大臺灣ESG永續ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00851",
+      "name": "台新全球AI",
+      "exchange": "TSE",
+      "aliases": [
+        "台新SG全球AI機器人精選ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00852L",
+      "name": "國泰美國道瓊正2",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰道瓊工業平均指數單日正向2倍證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00861",
+      "name": "元大全球未來通訊",
+      "exchange": "TSE",
+      "aliases": [
+        "元大全球未來通訊ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00865B",
+      "name": "國泰US短期公債",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰美國收益傘型證券投資信託基金之美國短期公債ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00866",
+      "name": "新光Shiller CAPE",
+      "exchange": "TSE",
+      "aliases": [
+        "新光優質收益ETF傘型證券投資信託基金之新光Shiller Barclays CAPE®美國產業價值投資ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00875",
+      "name": "國泰網路資安",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰網路資安ETF",
+        "國泰網路資安ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00876",
+      "name": "元大全球5G",
+      "exchange": "TSE",
+      "aliases": [
+        "元大全球5G(原名:元大未來關鍵科技)",
+        "元大全球5G關鍵科技ETF證券投資信託基金(原名:元大全球未來關鍵科技ETF證券投資信託基金)"
+      ]
+    },
+    {
+      "code": "00878",
+      "name": "國泰永續高股息",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰台灣高股息傘型證券投資信託基金之台灣ESG永續高股息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00881",
+      "name": "國泰台灣科技龍頭",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰台灣科技龍頭ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00882",
+      "name": "中信中國高股息",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託全球收益ETF傘型證券投資信託基金之中國信託恒生中國高股息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00885",
+      "name": "富邦越南",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦富時越南ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00891",
+      "name": "中信關鍵半導體",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託臺灣ESG永續關鍵半導體ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00892",
+      "name": "富邦台灣半導體",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦台灣核心半導體ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00893",
+      "name": "國泰智能電動車",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰全球智能電動車ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00894",
+      "name": "中信小資高價30",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託特選小資高價30ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00895",
+      "name": "富邦未來車",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦未來車ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00896",
+      "name": "中信綠能及電動車",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託臺灣綠能及電動車ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00897",
+      "name": "富邦基因免疫生技",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦基因免疫生技ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00898",
+      "name": "國泰基因免疫革命",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰全球基因免疫與醫療革命ETF基金",
+        "國泰全球基因免疫與醫療革命ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00899",
+      "name": "FT潔淨能源",
+      "exchange": "TSE",
+      "aliases": [
+        "FT潔淨能源(原名:富蘭克林潔淨能源)",
+        "富蘭克林華美全球潔淨能源ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00900",
+      "name": "富邦特選高股息30",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦特選台灣高股息30 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00901",
+      "name": "永豐智能車供應鏈",
+      "exchange": "TSE",
+      "aliases": [
+        "永豐台灣智能車供應鏈ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00902",
+      "name": "中信電池及儲能",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託電池及儲能科技ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00903",
+      "name": "富邦元宇宙",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦元宇宙ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00904",
+      "name": "台新臺灣半導體30",
+      "exchange": "TSE",
+      "aliases": [
+        "台新臺灣全市場半導體精選30ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00905",
+      "name": "FT臺灣Smart",
+      "exchange": "TSE",
+      "aliases": [
+        "富蘭克林華美臺灣Smart ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00906",
+      "name": "大華元宇宙科技50",
+      "exchange": "TSE",
+      "aliases": [
+        "大華銀元宇宙科技與服務ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00907",
+      "name": "永豐優息存股",
+      "exchange": "TSE",
+      "aliases": [
+        "永豐台灣優選入息存股ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00908",
+      "name": "富邦入息REITs+",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦全球入息不動產與基礎建設ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00909",
+      "name": "國泰數位支付服務",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰全球數位支付服務ETF基金",
+        "國泰全球數位支付服務ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00910",
+      "name": "第一金太空衛星",
+      "exchange": "TSE",
+      "aliases": [
+        "第一金太空衛星ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00911",
+      "name": "兆豐洲際半導體",
+      "exchange": "TSE",
+      "aliases": [
+        "兆豐洲際半導體ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00912",
+      "name": "中信臺灣智慧50",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託臺灣智慧50ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00913",
+      "name": "兆豐台灣晶圓製造",
+      "exchange": "TSE",
+      "aliases": [
+        "兆豐台灣晶圓製造ETF",
+        "兆豐特選台灣晶圓製造 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00915",
+      "name": "凱基優選高股息30",
+      "exchange": "TSE",
+      "aliases": [
+        "凱基台灣優選高股息30ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00916",
+      "name": "國泰全球品牌50",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰全球品牌50ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00917",
+      "name": "中信特選金融",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託特選金融及數據ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00918",
+      "name": "大華優利高填息30",
+      "exchange": "TSE",
+      "aliases": [
+        "大華優利高填息30 ETF",
+        "大華銀台灣優選股利高填息30ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00919",
+      "name": "群益台灣精選高息",
+      "exchange": "TSE",
+      "aliases": [
+        "群益台灣精選高息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00920",
+      "name": "富邦ESG綠色電力",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦全球ESG綠色電力ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00921",
+      "name": "兆豐龍頭等權重",
+      "exchange": "TSE",
+      "aliases": [
+        "兆豐台灣產業龍頭存股等權重ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00922",
+      "name": "國泰台灣領袖50",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰台灣領袖50 ETF基金",
+        "國泰台灣領袖 50 ETF 證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00923",
+      "name": "群益台ESG低碳50",
+      "exchange": "TSE",
+      "aliases": [
+        "群益台灣ESG低碳50ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00924",
+      "name": "復華S&P500成長",
+      "exchange": "TSE",
+      "aliases": [
+        "復華美國標普500成長ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00925",
+      "name": "新光標普電動車",
+      "exchange": "TSE",
+      "aliases": [
+        "新光標普電動車ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00926",
+      "name": "凱基全球菁英55",
+      "exchange": "TSE",
+      "aliases": [
+        "凱基全球菁英55 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00927",
+      "name": "群益半導體收益",
+      "exchange": "TSE",
+      "aliases": [
+        "群益台灣半導體收益ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00929",
+      "name": "復華台灣科技優息",
+      "exchange": "TSE",
+      "aliases": [
+        "復華台灣科技優息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00930",
+      "name": "永豐ESG低碳高息",
+      "exchange": "TSE",
+      "aliases": [
+        "永豐台灣ESG低碳高息40ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00932",
+      "name": "兆豐永續高息等權",
+      "exchange": "TSE",
+      "aliases": [
+        "兆豐台灣ESG永續高股息等權重ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00934",
+      "name": "中信成長高股息",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託臺灣優選成長高股息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00935",
+      "name": "野村臺灣新科技50",
+      "exchange": "TSE",
+      "aliases": [
+        "野村臺灣創新科技50 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00936",
+      "name": "台新永續高息中小",
+      "exchange": "TSE",
+      "aliases": [
+        "台新永續高息中小型ETF",
+        "台新臺灣永續高息中小型ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00938",
+      "name": "凱基優選30",
+      "exchange": "TSE",
+      "aliases": [
+        "凱基台灣優選30 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00939",
+      "name": "統一台灣高息動能",
+      "exchange": "TSE",
+      "aliases": [
+        "統一台灣高息動能ETF基金",
+        "統一台灣高息動能ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00940",
+      "name": "元大台灣價值高息",
+      "exchange": "TSE",
+      "aliases": [
+        "元大臺灣價值高息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00941",
+      "name": "中信上游半導體",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託上游半導體ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00943",
+      "name": "兆豐電子高息等權",
+      "exchange": "TSE",
+      "aliases": [
+        "兆豐台灣電子成長高息等權重ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00944",
+      "name": "野村趨勢動能高息",
+      "exchange": "TSE",
+      "aliases": [
+        "野村臺灣趨勢動能高股息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00945B",
+      "name": "凱基美國非投等債",
+      "exchange": "TSE",
+      "aliases": [
+        "凱基美國優選收益非投資等級債券ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00946",
+      "name": "群益科技高息成長",
+      "exchange": "TSE",
+      "aliases": [
+        "群益台灣科技高息成長ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00947",
+      "name": "台新臺灣IC設計",
+      "exchange": "TSE",
+      "aliases": [
+        "台新臺灣IC設計動能ETF基金",
+        "台新臺灣IC設計動能ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00949",
+      "name": "復華日本龍頭",
+      "exchange": "TSE",
+      "aliases": [
+        "復華日本護城河優勢龍頭企業ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00951",
+      "name": "台新日本半導體",
+      "exchange": "TSE",
+      "aliases": [
+        "台新日本半導體ETF",
+        "台新日本半導體ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00952",
+      "name": "凱基台灣AI50",
+      "exchange": "TSE",
+      "aliases": [
+        "凱基台灣AI 50",
+        "凱基優選台灣AI 50 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00953B",
+      "name": "群益優選非投等債",
+      "exchange": "TSE",
+      "aliases": [
+        "群益優選收益非投資等級債券ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00954",
+      "name": "中信日本半導體",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託日本ETF傘型證券投資信託基金之中國信託日本半導體ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00956",
+      "name": "中信日經高股息",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託日本ETF傘型證券投資信託基金之中國信託日經高股息50ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00960",
+      "name": "野村全球航運龍頭",
+      "exchange": "TSE",
+      "aliases": [
+        "野村全球航運龍頭息收ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00961",
+      "name": "FT臺灣永續高息",
+      "exchange": "TSE",
+      "aliases": [
+        "富蘭克林華美臺灣ESG永續高息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00962",
+      "name": "台新AI優息動能",
+      "exchange": "TSE",
+      "aliases": [
+        "台新AI優息動能基金",
+        "台新臺灣AI優息動能ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00963",
+      "name": "中信全球高股息",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託優息ETF傘型證券投資信託基金之中國信託全球高股息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00964",
+      "name": "中信亞太高股息",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託優息ETF傘型證券投資信託基金之中國信託亞太高股息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00965",
+      "name": "元大航太防衛科技",
+      "exchange": "TSE",
+      "aliases": [
+        "元大全球航太與防衛科技ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00971",
+      "name": "野村美國研發龍頭",
+      "exchange": "TSE",
+      "aliases": [
+        "野村美日ETF傘型證券投資信託基金之美國創新研發龍頭ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00972",
+      "name": "野村日本動能高息",
+      "exchange": "TSE",
+      "aliases": [
+        "野村美日ETF傘型證券投資信託基金之日本價值動能高息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009800",
+      "name": "中信NASDAQ",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託美國傘型證券投資信託基金之中國信託NASDAQ 100 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009801",
+      "name": "中信美國創新科技",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託美國傘型證券投資信託基金之中國信託美國創新科技ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009802",
+      "name": "富邦旗艦50",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦台灣旗艦動能50 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009803",
+      "name": "玉山市值動能50",
+      "exchange": "TSE",
+      "aliases": [
+        "玉山臺灣市值動能50 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009804",
+      "name": "聯邦台精彩50",
+      "exchange": "TSE",
+      "aliases": [
+        "聯邦台灣精彩50ETF基金",
+        "聯邦台灣精彩50ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009805",
+      "name": "台新美國電力基建",
+      "exchange": "TSE",
+      "aliases": [
+        "台新美國電力基建息收ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009808",
+      "name": "華南永昌優選50",
+      "exchange": "TSE",
+      "aliases": [
+        "華南永昌台灣優選50ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009809",
+      "name": "富邦淨零ESG50",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦台灣淨零轉型ESG 50 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00980A",
+      "name": "主動野村臺灣優選",
+      "exchange": "TSE",
+      "aliases": [
+        "野村臺灣智慧優選主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009810",
+      "name": "玉山全球藍籌100",
+      "exchange": "TSE",
+      "aliases": [
+        "玉山全球跨國藍籌100 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009811",
+      "name": "統一美國50",
+      "exchange": "TSE",
+      "aliases": [
+        "統一美國50ETF基金",
+        "統一美國50ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009812",
+      "name": "野村日本東證",
+      "exchange": "TSE",
+      "aliases": [
+        "野村日本東證ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009813",
+      "name": "貝萊德標普卓越50",
+      "exchange": "TSE",
+      "aliases": [
+        "貝萊德iShares 安碩標普500卓越50 ETF 證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009816",
+      "name": "凱基台灣TOP50",
+      "exchange": "TSE",
+      "aliases": [
+        "凱基台灣 TOP 50 ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009817",
+      "name": "國泰日本不動產",
+      "exchange": "TSE",
+      "aliases": [
+        "國泰大和日本不動產收息ETF基金",
+        "國泰大和日本不動產收息ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009818",
+      "name": "華南永昌NASDAQxT",
+      "exchange": "TSE",
+      "aliases": [
+        "華南永昌NASDAQ 100科技ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009819",
+      "name": "中信數據及電力",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託美國數據中心及電力ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00981A",
+      "name": "主動統一台股增長",
+      "exchange": "TSE",
+      "aliases": [
+        "統一台股增長主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00981T",
+      "name": "平衡凱基雙核收息",
+      "exchange": "TSE",
+      "aliases": [
+        "凱基雙核收息債股平衡ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009820",
+      "name": "元大納斯達克精選",
+      "exchange": "TSE",
+      "aliases": [
+        "元大納斯達克100增強成長精選ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009821",
+      "name": "野村稀土關鍵資源",
+      "exchange": "TSE",
+      "aliases": [
+        "野村全球稀土與關鍵資源ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009824",
+      "name": "群益美國科技巨頭",
+      "exchange": "TSE",
+      "aliases": [
+        "群益美國科技巨頭ETF基金",
+        "群益美國科技巨頭ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009826",
+      "name": "貝萊德世界股票",
+      "exchange": "TSE",
+      "aliases": [
+        "貝萊德iShares安碩世界股票ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009827",
+      "name": "玉山未來全球算力",
+      "exchange": "TSE",
+      "aliases": [
+        "玉山未來全球算力ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009828",
+      "name": "中信台日韓PCB",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託台日韓PCB ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "009829",
+      "name": "大華韓國KOSPI50",
+      "exchange": "TSE",
+      "aliases": [
+        "大華韓國KOSPI 50",
+        "大華銀韓國KOSPI 50 ETF 證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00982A",
+      "name": "主動群益台灣強棒",
+      "exchange": "TSE",
+      "aliases": [
+        "群益台灣精選強棒主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00982D",
+      "name": "主動富邦動態入息",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦優選收益傘型證券投資信託基金之富邦環球動態入息投資級債主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00982T",
+      "name": "平衡兆豐台美動能",
+      "exchange": "TSE",
+      "aliases": [
+        "兆豐台美動能股債平衡ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00983A",
+      "name": "主動中信ARK創新",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託ARK創新主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00983D",
+      "name": "主動富邦複合收益",
+      "exchange": "TSE",
+      "aliases": [
+        "富邦優選收益傘型證券投資信託基金之富邦環球複合優選收益債主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00984A",
+      "name": "主動安聯台灣高息",
+      "exchange": "TSE",
+      "aliases": [
+        "安聯台灣高息成長主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00984D",
+      "name": "主動聯博全球非投",
+      "exchange": "TSE",
+      "aliases": [
+        "聯博優選全球非投資等級債券主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00985A",
+      "name": "主動野村台灣50",
+      "exchange": "TSE",
+      "aliases": [
+        "野村臺灣增強50主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00985B",
+      "name": "群益ESG投等債0-5",
+      "exchange": "TSE",
+      "aliases": [
+        "群益0-5年期ESG投資等級公司債ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00986A",
+      "name": "主動台新龍頭成長",
+      "exchange": "TSE",
+      "aliases": [
+        "台新全球龍頭成長主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00987A",
+      "name": "主動台新優勢成長",
+      "exchange": "TSE",
+      "aliases": [
+        "台新臺灣優勢成長主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00988A",
+      "name": "主動統一全球創新",
+      "exchange": "TSE",
+      "aliases": [
+        "統一全球創新主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00989A",
+      "name": "主動摩根美國科技",
+      "exchange": "TSE",
+      "aliases": [
+        "摩根大美國領先科技主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00990A",
+      "name": "主動元大AI新經濟",
+      "exchange": "TSE",
+      "aliases": [
+        "元大全球AI新經濟主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00991A",
+      "name": "主動復華未來50",
+      "exchange": "TSE",
+      "aliases": [
+        "復華台灣未來50主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00991B",
+      "name": "貝萊德A級公司債",
+      "exchange": "TSE",
+      "aliases": [
+        "貝萊德iShares安碩10年期以上A級美元公司債ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00992A",
+      "name": "主動群益科技創新",
+      "exchange": "TSE",
+      "aliases": [
+        "群益台灣科技創新主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00993A",
+      "name": "主動安聯台灣",
+      "exchange": "TSE",
+      "aliases": [
+        "安聯台灣主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00994A",
+      "name": "主動第一金台股優",
+      "exchange": "TSE",
+      "aliases": [
+        "第一金台股趨勢優選主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00995A",
+      "name": "主動中信台灣卓越",
+      "exchange": "TSE",
+      "aliases": [
+        "中國信託台灣卓越成長主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00996A",
+      "name": "主動兆豐台灣豐收",
+      "exchange": "TSE",
+      "aliases": [
+        "兆豐台灣豐收主動式ETF 證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00997A",
+      "name": "主動群益美國增長",
+      "exchange": "TSE",
+      "aliases": [
+        "群益美國增長主動式ETF證券投資信託基金"
+      ]
+    },
+    {
+      "code": "00999A",
+      "name": "主動野村臺灣高息",
+      "exchange": "TSE",
+      "aliases": [
+        "野村臺灣策略高息主動式ETF證券投資信託基金"
+      ]
+    }
+  ]
+}

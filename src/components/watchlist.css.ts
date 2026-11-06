@@ -2,6 +2,9 @@
 
 import { globalStyle, style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
+import {
+    resultActive, resultCodeWeight, resultDetailSize, resultTextSize, searchResults, searchSurface,
+} from './search-surface.css';
 
 export const list = style({
     display: 'flex',
@@ -319,50 +322,30 @@ export const addRow = style({
     flexShrink: 0,
 });
 
-// name-search suggestions float above the add input
+// Name-search suggestions float above the add input. The popup is portaled to the
+// body and placed by useAnchoredPopup; the margins keep the add row's inset.
 export const suggestBox = style({
-    position: 'absolute',
-    bottom: '100%',
-    left: vars.space.sm,
-    right: vars.space.sm,
+    ...searchSurface,
+    ...searchResults,
+    position: 'fixed',
+    boxSizing: 'border-box',
+    marginLeft: vars.space.sm,
+    marginRight: vars.space.sm,
     zIndex: 30,
-    background: vars.color.panelRaised,
     border: `1px solid ${vars.color.borderBright}`,
     borderRadius: vars.radius.sm,
     boxShadow: '0 -6px 18px rgba(0, 0, 0, 0.3)',
-    overflow: 'hidden',
+    maxHeight: 'min(24rem, 50vh)',
+    overflowX: 'hidden',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
 });
 
 export const suggestRow = style({
-    display: 'grid',
-    gridTemplateColumns: '3.4rem 1fr auto',
-    columnGap: vars.space.sm,
-    alignItems: 'center',
-    width: '100%',
     padding: `4px ${vars.space.sm}`,
-    textAlign: 'left',
-    cursor: 'pointer',
-    background: 'transparent',
-    border: 'none',
-    color: vars.color.foreground,
     fontSize: '0.7rem',
-    ':hover': { background: vars.color.muted },
-});
-
-export const suggestCode = style({
-    fontFamily: vars.font.mono,
-    fontWeight: 600,
-});
-
-export const suggestName = style({
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-});
-
-export const suggestCat = style({
-    fontSize: '0.6rem',
-    color: vars.color.mutedForeground,
+    vars: { [resultTextSize]: '0.7rem', [resultCodeWeight]: '600', [resultDetailSize]: '0.6rem' },
+    selectors: { [`&:hover:not(${resultActive})`]: { background: vars.color.muted } },
 });
 
 export const addInput = style({

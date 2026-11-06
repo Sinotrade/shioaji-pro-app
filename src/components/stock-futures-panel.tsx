@@ -1,17 +1,20 @@
 import { RefreshButton } from './refresh-button';
 import { Star } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveSnapshots } from '../hooks/use-live-snapshots';
+import { pickUnderlying, useStockCatalog } from '../hooks/use-stock-catalog';
 import { primeContract } from '../lib/contracts-cache';
 import {
     fetchFutures
 } from '../lib/shioaji';
-import { loadStockCatalog, type StockMeta } from '../lib/stock-index';
+import type { StockMeta } from '../lib/stock-index';
+import { getProductCatalogVersion } from '../lib/product-catalog-version';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import { fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as styles from './derivative-explorer.css';
 import { AsyncStatus } from './async-status';
+import { CatalogRetryAlert } from './catalog-retry-alert';
 import * as panel from './panel.css';
 import { UnderlyingPicker } from './underlying-picker';
 
@@ -33,31 +36,35 @@ export function StockFuturesPanel({
     contract?: ContractInfo | null;
 }) {
     const [underlying, setUnderlying] = useState<StockMeta | null>(null);
-    const [catalog, setCatalog] = useState<StockMeta[]>([]);
     const [contracts, setContracts] = useState<ContractInfo[]>([]);
     const [mode, setMode] = useState<'continuous' | 'all'>('continuous');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
-
-    useEffect(() => {
-        loadStockCatalog()
-            .then((rows) => {
-                setCatalog(rows);
-                const saved = localStorage.getItem(STOCK_FUTURE_UNDERLYING);
-                setUnderlying(
-                    rows.find((stock) => stock.code === saved) ??
-                        rows.find((stock) => stock.code === '2330') ??
-                        rows[0] ??
-                        null,
-                );
-            })
-            .catch(() => setError(true));
-    }, []);
+    const { catalog, ready: catalogReady, error: catalogError, retry, reloads, version } = useStockCatalog({
+        onLoad: (rows) => {
+            if (rows.length === 0) setLoading(false);
+            const saved = localStorage.getItem(STOCK_FUTURE_UNDERLYING);
+            setUnderlying(previous => pickUnderlying(rows, previous, saved));
+        },
+        onError: () => setLoading(false),
+    });
+    // 同標的、同目錄版本重抓（重試、視窗取得焦點）時舊列身分仍有效，不鎖表格
+    const requestContext = JSON.stringify([version, underlying?.code]);
+    const [loadedContext, setLoadedContext] = useState<string | null>(null);
+    const contractsReady = catalogReady && loadedContext === requestContext && !error;
+    const linkedCode = useRef<string | null>(null);
+    // 換標的時在同一次 render 清掉上一檔的合約，摘要與表格才不會分屬兩檔
+    const [shownCode, setShownCode] = useState(underlying?.code);
+    if (shownCode !== underlying?.code) {
+        setShownCode(underlying?.code);
+        setContracts([]);
+        if (underlying && !catalogError) setLoading(true);
+    }
 
     // 標準 chrome 連動/釘選：不釘時 contract 跟隨自選選擇 — 點到股票
     // 直接跟；點到個股期跟它的標的。目錄查不到（無個股期）就不動。
     useEffect(() => {
-        if (!contract || catalog.length === 0) return;
+        if (!contract || catalog.length === 0 || linkedCode.current === contract.code) return;
         const code =
             contract.security_type === 'STK'
                 ? contract.code
@@ -67,27 +74,32 @@ export function StockFuturesPanel({
         if (!code) return;
         const stock = catalog.find((s) => s.code === code);
         if (!stock) return;
+        linkedCode.current = contract.code;
         setUnderlying((prev) => (prev?.code === stock.code ? prev : stock));
         localStorage.setItem(STOCK_FUTURE_UNDERLYING, stock.code);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [contract?.code, catalog]);
 
     useEffect(() => {
-        if (!underlying) return;
+        if (!underlying || !catalogReady) return;
+        const controller = new AbortController();
         let active = true;
-        setContracts([]);
+        const isCurrent = () => active && getProductCatalogVersion() === version;
         setLoading(true);
         setError(false);
-        fetchFutures({ underlyingCode: underlying.code })
-            .then((rows) => { if (active) setContracts(rows); })
+        fetchFutures({ underlyingCode: underlying.code }, { signal: controller.signal })
+            .then((rows) => {
+                if (!isCurrent()) return;
+                setContracts(rows);
+                setLoadedContext(requestContext);
+            })
             .catch(() => {
-                if (!active) return;
-                setContracts([]);
+                if (!isCurrent()) return;
                 setError(true);
             })
-            .finally(() => { if (active) setLoading(false); });
-        return () => { active = false; };
-    }, [underlying]);
+            .finally(() => { if (isCurrent()) setLoading(false); });
+        return () => { active = false; controller.abort(); };
+    }, [underlying?.code, version, reloads, catalogReady]);
 
     const visible = useMemo(() => {
         const rows =
@@ -131,18 +143,19 @@ export function StockFuturesPanel({
                 </button>
                 <RefreshButton label="更新報價" loading={quotesLoading} onClick={() => void refreshQuotes()} />
             </div>
+            <CatalogRetryAlert catalogError={catalogError} error={error} text='個股期合約載入失敗' onRetry={retry} />
             <div className={styles.summary}>
                 <span className={styles.summaryStrong}>
                     {underlying ? `${underlying.code} ${underlying.name}` : '—'}
                 </span>
                 <span>{roots.size} 種規格</span>
-                <span>{visible.length} 口合約可選</span>
+                <span>{contractsReady || visible.length === 0 ? `${visible.length} 口合約可選` : '更新完成後可選取'}</span>
             </div>
-            {loading ? (
+            {loading && contracts.length === 0 ? (
                 <div className={styles.empty}>
                     <AsyncStatus phase='loading' text='載入個股期合約…' />
                 </div>
-            ) : error ? (
+            ) : (error || catalogError) && contracts.length === 0 ? (
                 <div className={styles.error}><AsyncStatus phase='error' text='個股期合約載入失敗' /></div>
             ) : visible.length === 0 ? (
                 <div className={styles.empty}><AsyncStatus phase='empty' text='此標的目前沒有個股期' /></div>
@@ -183,6 +196,7 @@ export function StockFuturesPanel({
                                         className={styles.row}
                                         title='連動此合約'
                                         onClick={() => {
+                                            if (!contractsReady || getProductCatalogVersion() !== version) return;
                                             primeContract(contract);
                                             onPick(contract.code);
                                         }}
@@ -216,8 +230,10 @@ export function StockFuturesPanel({
                                                 className={styles.iconButton}
                                                 title='加入目前自選清單'
                                                 aria-label={`將 ${contract.code} 加入自選`}
+                                                disabled={!contractsReady}
                                                 onClick={(event) => {
                                                     event.stopPropagation();
+                                                    if (!contractsReady || getProductCatalogVersion() !== version) return;
                                                     void onAdd(contract)
                                                         .then(() =>
                                                             notify({
