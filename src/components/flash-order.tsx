@@ -1836,20 +1836,23 @@ export function FlashOrder({
                 </button>
                 {/* #376 平倉／全刪／停損停利固定同一群：有沒有持倉、掛單數多長都不改變市價鈕的位置 */}
                 <div className={styles.actionSecondary} data-testid='flash-action-secondary'>
-                {pos && !paused && (
-                    <button
-                        className={`${styles.flatBtn} ${armedView ? '' : styles.disabledCell}`}
-                        title={pos.safeExit
-                            ? market === 'S'
-                                ? `平倉 ${maskMoney(fmtStockLots(Math.abs(pos.net)), privMoney)}（整張市價、零股以漲跌停價限價）`
-                                : `市價平倉 ${maskMoney(String(Math.abs(pos.net)), privMoney)}`
-                            : '持倉方向或交易條件不明，請使用持倉面板確認'}
-                        disabled={!pos.safeExit || !armedView || !activeAccount}
-                        onClick={() => void flatten()}
-                    >
-                        平倉
-                    </button>
-                )}
+                {/* #376 平倉一直占位：有沒有持倉，全刪都在同一個位置，不會按錯 */}
+                <button
+                    className={`${styles.flatBtn} ${pos && !paused && armedView ? '' : styles.disabledCell}`}
+                    title={paused
+                        ? paused
+                        : !pos
+                            ? '目前沒有持倉'
+                            : pos.safeExit
+                                ? market === 'S'
+                                    ? `平倉 ${maskMoney(fmtStockLots(Math.abs(pos.net)), privMoney)}（整張市價、零股以漲跌停價限價）`
+                                    : `市價平倉 ${maskMoney(String(Math.abs(pos.net)), privMoney)}`
+                                : '持倉方向或交易條件不明，請使用持倉面板確認'}
+                    disabled={!pos || !!paused || !pos.safeExit || !armedView || !activeAccount}
+                    onClick={() => void flatten()}
+                >
+                    平倉
+                </button>
                 <button
                     className={styles.cancelAllBtn}
                     disabled={!!paused || (workingCount === 0 && otherLotOrders === 0 && ladder.protectedQty === 0)}

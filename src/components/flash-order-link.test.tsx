@@ -292,19 +292,31 @@ it('keeps the reference row in fixed slots whatever the lengths', async () => {
     expect(byTestId(odd, 'flash-ref-lots')).toBeUndefined();
 });
 
-it('groups flatten, cancel and protect so a position never moves the market buttons', async () => {
+it('keeps flatten, cancel and protect in the same slots with or without a position', async () => {
     const r = await mount(stk);
     const group = () => byTestId(r, 'flash-action-secondary')!;
-    expect(text(group())).toContain('全刪');
-    expect(text(group())).toContain('停損停利');
-    expect(text(group())).not.toContain('平倉');
+    const slots = () => group().children.map(c => text(c as ReactTestInstance).replace(/\s*\d+$/, ''));
+    const empty = slots();
+    expect(empty.slice(0, 3)).toEqual(['平倉', '全刪', expect.stringContaining('停損停利')]);
+    expect(button(r, '平倉').props.disabled).toBe(true);
+    expect(button(r, '平倉').props.title).toBe('目前沒有持倉');
     const position = { code: '2330', quantity: 1000, direction: 'Buy', price: 1000, last_price: 1085, pnl: 1, account_type: 'S', cond: 'Cash', account: accounts[0] };
     await show(r, stk, { positions: [position] });
-    expect(text(group())).toContain('平倉');
+    expect(slots().slice(0, 3)).toEqual(empty.slice(0, 3));
+    expect(button(r, '平倉').props.title).toContain('平倉');
+    expect(button(r, '平倉').props.title).not.toBe('目前沒有持倉');
     const bar = group().parent!;
     expect(bar.children).toHaveLength(3); // 市價買、市價賣、次要動作群
     expect(text(bar.children[0] as ReactTestInstance)).toBe('市價買');
     expect(text(bar.children[1] as ReactTestInstance)).toBe('市價賣');
+});
+
+it('paused keeps the flatten slot, disabled, with the reason', async () => {
+    const position = { code: '2330', quantity: 1000, direction: 'Buy', price: 1000, last_price: 1085, pnl: 1, account_type: 'S', cond: 'Cash', account: accounts[0] };
+    const r = await mount(stk, { positions: [position], paused: '暫停送單' });
+    expect(button(r, '平倉').props.disabled).toBe(true);
+    expect(button(r, '平倉').props.title).toBe('暫停送單');
+    expect(text(byTestId(r, 'flash-action-secondary')!).startsWith('平倉')).toBe(true);
 });
 
 it('never lets the layout wrap on content: rows are grids or no-wrap, labels stay on one line', () => {
@@ -321,6 +333,9 @@ it('never lets the layout wrap on content: rows are grids or no-wrap, labels sta
     expect(block('actionBar')).toContain("[NARROW]: { gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }");
     expect(block('actionSecondary')).toContain("[NARROW]: { gridColumn: '1 / -1' }");
     expect(block('refPct')).toContain("[TIGHT]: { display: 'none' }");
+    // the narrowest panel a workspace can make (~204px inside) must still fit the 7-column ladder
+    expect(css).toContain('const MINIMAL = `${flashContainer} (max-width: 230px)`');
+    expect(block('cols7')).toContain('[MINIMAL]: { gridTemplateColumns: COLS7_MINIMAL }');
     expect(block('accountPick')).toContain("[NARROW]: { flex: '1 1 0' }"); // a long account label cannot push the gear down
     const mkt = css.slice(css.indexOf('const mktBase = style('), css.indexOf('export const mktBtn'));
     expect(mkt).toContain("whiteSpace: 'nowrap'");
