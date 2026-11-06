@@ -29,6 +29,16 @@ function render(request: ApprovalRequest) {
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
 describe('Agent 核可視窗：新單', () => {
+    it.each(['WRT', 'STK'])('權證（對帳可能標 %s）以張顯示，不是口', (securityType) => {
+        const html = text(render({
+            ...APPROVAL_FIXTURES.place!,
+            payload: { contract: { code: '030392', security_type: securityType, exchange: 'TSE' },
+                order: { action: 'Buy', price: 1.68, quantity: 2, price_type: 'LMT', order_type: 'ROD', order_lot: 'Common' } },
+        } as ApprovalRequest));
+        expect(html).toContain('2 張');
+        expect(html).not.toContain('2 口');
+    });
+
     it('新單仍顯示買賣方向、價格與數量', () => {
         const html = text(render(APPROVAL_FIXTURES.place!));
         expect(html).toContain('買進 CCFI6');

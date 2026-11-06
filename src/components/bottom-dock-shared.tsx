@@ -12,6 +12,7 @@ import type {
     StockPosition,
 } from '../lib/types/portfolio';
 import { vars } from '../theme.css';
+import { contractMarket } from '../lib/contract-market';
 import * as styles from './bottom-dock.css';
 
 export const ACTIVE_STATUSES: ReadonlySet<string> = new Set([
@@ -143,8 +144,7 @@ export function positionAccountRef(
 export function tradeMarket(t: Trade): 'S' | 'F' {
     const at = t.order.account?.account_type;
     if (at === 'S' || at === 'F') return at;
-    const st = t.contract.security_type;
-    return st === 'FUT' || st === 'OPT' ? 'F' : 'S';
+    return contractMarket(t.contract.security_type) === 'F' ? 'F' : 'S';
 }
 
 export function tradeAccountRef(

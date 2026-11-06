@@ -1,3 +1,4 @@
+import { contractMarket, isWarrant } from './contract-market';
 import { canTrade } from './account-tradable';
 import { createAccountQuery } from './account-query';
 import { remainingWorkingOrderQuantity } from './working-order-quantity';
@@ -92,9 +93,7 @@ function mutationNotStartedError(message: string): Error & {
 }
 
 export function isFuturesContract(contract: ContractBase): boolean {
-    return (
-        contract.security_type === 'FUT' || contract.security_type === 'OPT'
-    );
+    return contractMarket(contract.security_type) === 'F';
 }
 
 // price === null → market order (futures MKT/IOC, stocks MKT/IOC)
@@ -384,10 +383,11 @@ export async function placeStockExitByShares(
     const serverMode = captureServerMode();
     assertTradingLive();
     if (!capturedAccount || capturedAccount.account_type !== 'S') throw mutationNotStartedError('缺少股票平倉帳戶');
-    if (contract.security_type !== 'STK') throw mutationNotStartedError('股票股數平倉僅支援股票');
+    if (contractMarket(contract.security_type) !== 'S') throw mutationNotStartedError('股票股數平倉僅支援股票');
     if (!Number.isSafeInteger(shares) || shares <= 0) throw mutationNotStartedError('平倉股數必須是正整數');
     const lots = Math.floor(shares / 1000);
     const odd = shares % 1000;
+    if (odd && isWarrant(contract.security_type)) throw mutationNotStartedError('權證沒有零股，未滿一張的部分無法平倉，尚未送出任何分單');
     const limitPrice = action === 'Sell' ? contract.limit_down : contract.limit_up;
     if (odd && (!Number.isFinite(limitPrice) || !limitPrice || limitPrice <= 0)) throw mutationNotStartedError('零股需要有效漲跌停價，尚未送出任何分單');
     // 拆單前先做一次合併的手動確認（整張市價＋零股限價兩腳只問一次，

@@ -6,6 +6,7 @@ import { reconcileAfterUnknownOutcome } from '../lib/order-outcome';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTradingLive } from '../hooks/use-stream';
+import { contractMarket } from '../lib/contract-market';
 import { ensureContract } from '../lib/contracts-cache';
 import { maskMoney, secretMoney, usePrivacyMode, usePrivacyMoney } from '../lib/privacy';
 import { useServerInfo, yesterdayQuantityNotice } from '../lib/server-info-store';
@@ -200,7 +201,7 @@ export function PositionsPane({
             throw new Error('股票反手或信用持倉請分開確認交易條件，未送出委託');
         }
         const contract = await ensureContract(p.code);
-        if ((contract.security_type === 'STK' ? 'S' : 'F') !== account.account_type) throw new Error('商品與持倉帳戶市場不符，未送出委託');
+        if (contractMarket(contract.security_type) !== account.account_type) throw new Error('商品與持倉帳戶市場不符，未送出委託');
         const exit = p.direction === 'Buy' ? 'Sell' : 'Buy';
         if (isStockPosition(p)) {
             await placeStockExitByShares(contract, exit, p.quantity, account);

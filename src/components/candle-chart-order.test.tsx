@@ -1294,6 +1294,22 @@ describe('chart order credit conditions', () => {
         expect(text(chip())).toBe('1 張·融券');
     });
 
+    it('warrant point orders go to the stock account as whole-lot cash, ignoring saved odd-lot and credit settings', async () => {
+        const wrt = { code: '030392', name: '台積電群益64購09', security_type: 'WRT', exchange: 'TSE', target_code: null, reference: 1.5, limit_up: 3.28, limit_down: 0.01 };
+        await mount({ contract: wrt, orderSettings: { S: { qty: 300, lot: 'IntradayOdd', orderType: 'ROD', octype: 'Auto', credit: { cond: 'MarginTrading', daytradeShort: false } } } });
+        expect(chip()).toBeUndefined();
+        await act(async () => { modeBtn('點價買').props.onClick(); });
+        await clickChart();
+        const [contract, action, , qty, opts] = m.place.mock.calls[0]!;
+        expect(contract.code).toBe('030392');
+        expect(action).toBe('Buy');
+        expect(qty).toBe(1);
+        expect(opts.account.account_type).toBe('S');
+        expect(opts.orderLot ?? 'Common').toBe('Common');
+        expect(opts.ocType).toBeUndefined();
+        expect(opts.orderCond).toBeUndefined();
+    });
+
     it('futures: 當沖 倉別 is offered and sent with point orders; no credit row', async () => {
         await mount({ contract: fut });
         await openPop();
