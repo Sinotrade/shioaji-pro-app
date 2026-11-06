@@ -654,6 +654,16 @@ describe('full strike range', () => {
         expect(snapshotCodes.live).toHaveLength((30 + 4 + 3 - (26 - 3) + 1) * 2); // rows 23..37, screen 26..34 plus 3 each way
     });
 
+    it('still subscribes when the user scrolled while ATM was pending', async () => {
+        market.refSettled = false;
+        const { r, scrollTo, onPick } = await mountMeasured({ quotes: {} });
+        await scrollTo(760);
+        expect(snapshotCodes.live).toEqual([]);
+        market.quotes = { IX0001: { index: { close: '43000', reference: '42950' } } };
+        await act(async () => { r.update(createElement(OptionChain, { onPick })); });
+        expect(snapshotCodes.live.length).toBeGreaterThan(0);
+    });
+
     it('falls back to the median once the ATM reference query has settled empty', async () => {
         market.refSettled = true;
         await mountMeasured({ quotes: {} });

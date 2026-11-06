@@ -629,7 +629,11 @@ export function OptionChain({
         // 使用者捲走後不搶捲動位置，但價平移動了提示仍要更新
         const m = measure();
         if (m) noteAtm(m.visible);
-    }, [showing, chainKey, centerIndex, atmPending, rows.length, centerOnAtm, measure, noteAtm]);
+        // 等價平時捲動過的話，量測被跳過了，這裡補上才會開始訂閱
+        if (atmPending) return;
+        if (m) settle();
+        else setUnmeasurable(true);
+    }, [showing, chainKey, centerIndex, atmPending, rows.length, centerOnAtm, measure, noteAtm, settle]);
     useEffect(() => {
         const body = bodyRef.current;
         if (!showing || !body || typeof ResizeObserver === 'undefined') return;

@@ -196,6 +196,47 @@ describe('quote ownership shared consumers', () => {
             await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
             expect(mocks.unsubscribe).toHaveBeenCalledTimes(2);
         });
+        it('keeps a quote another page still holds, and stops tracking it', async () => {
+            await subscribeOne(contract);
+            const key = (JSON.parse([...session.values()][0]!) as [string][])[0]![0];
+            const sent: unknown[] = [];
+            let listener: ((e: { data: unknown }) => void) | undefined;
+            vi.stubGlobal('BroadcastChannel', class {
+                addEventListener(_: string, fn: (e: { data: unknown }) => void) { listener = fn; }
+                postMessage(data: { kind: string }) { sent.push(data); if (data.kind === 'held?') queueMicrotask(() => listener!({ data: { kind: 'held', keys: [key] } })); }
+                close() {}
+            });
+            const next = await reload();
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(sent).toContainEqual({ kind: 'held?' });
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+            expect(JSON.parse([...session.values()][0]!)).toEqual([]);
+        });
+        it('answers another page that is about to sweep', async () => {
+            const sent: { kind: string; keys?: string[] }[] = [];
+            let listener: ((e: { data: unknown }) => void) | undefined;
+            vi.stubGlobal('BroadcastChannel', class {
+                addEventListener(_: string, fn: (e: { data: unknown }) => void) { listener = fn; }
+                postMessage(data: { kind: string }) { sent.push(data); }
+                close() {}
+            });
+            await subscribeOne(contract);
+            listener!({ data: { kind: 'held?' } });
+            expect(sent.find(m => m.kind === 'held')!.keys!.length).toBeGreaterThan(0);
+        });
+        it('does not unsubscribe a quote wanted while the sweep is waiting on an earlier one', async () => {
+            await subscribeOne(contract);
+            await subscribeOne(other);
+            let finish!: (v: unknown) => void;
+            mocks.unsubscribe.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+            const next = await reload();
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
+            next.pinQuote(other, 'Tick');
+            finish({ success: true });
+            await flush();
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
+        });
         it('a popout leaves the ledger alone', async () => {
             await subscribeOne(contract);
             vi.stubGlobal('location', { search: '?popout=1' });

@@ -22,6 +22,7 @@ const canOwn = () => !mirror || isStreamOwner();
 // 整理還在、分頁之間不共用），下一次載入等消費者都掛上後，只退掉記錄裡沒人要的。
 // 不向 sidecar 查全部訂閱來對帳：Agent、外部程式與其他分頁的訂閱不是我們的。
 export const ORPHAN_SWEEP_DELAY_MS = 5000;
+const HELD_REPLY_MS = 300;
 const LEDGER_KEY = `sj-quote-ledger:${getApiBase()}`;
 type LedgerEntry = { contract: ContractBase; type: QuoteTypeName; odd?: boolean };
 function readLedger(): Map<string, LedgerEntry> {
@@ -94,14 +95,17 @@ function sync(immediate = false) {
     });
 }
 let sweepTimer: ReturnType<typeof setTimeout> | undefined;
+// 其他分頁還在用的不能退：sidecar 的訂閱不分頁面，退了對方也斷。退之前先問一聲
+const heldElsewhere = new Set<string>();
 function sweepOrphans() {
     sweepTimer = undefined;
     queue = queue.catch(() => undefined).then(async () => {
         if (!canOwn()) return;
-        const desired = desiredNow();
         for (const [key, entry] of orphans) {
             orphans.delete(key);
-            if (desired.has(key) || active.has(key)) continue;
+            // 每一筆都重看：退訂在等回應的時候，可能又有人要了這個商品
+            if (desiredNow().has(key) || active.has(key)) continue;
+            if (heldElsewhere.has(key)) { forget(key); continue; }
             try {
                 await unsubscribeQuote(entry.contract, entry.type, ...oddOpts(entry));
                 forget(key);
@@ -111,10 +115,21 @@ function sweepOrphans() {
 }
 function scheduleOrphanSweep() {
     if (orphans.size === 0 || sweepTimer !== undefined || getStreamStatus() !== 'live') return;
-    sweepTimer = setTimeout(sweepOrphans, ORPHAN_SWEEP_DELAY_MS);
+    sweepTimer = setTimeout(() => {
+        channel?.postMessage({ kind: 'held?' });
+        sweepTimer = setTimeout(sweepOrphans, HELD_REPLY_MS);
+    }, ORPHAN_SWEEP_DELAY_MS - HELD_REPLY_MS);
 }
 channel?.addEventListener('message', e => {
     if (e.data?.kind === 'hello') { if (!canOwn()) sync(); return; }
+    if (e.data?.kind === 'held?') {
+        if (canOwn()) channel?.postMessage({ kind: 'held', keys: [...active.keys(), ...desiredNow().keys()] });
+        return;
+    }
+    if (e.data?.kind === 'held') {
+        if (Array.isArray(e.data.keys)) for (const key of e.data.keys) if (typeof key === 'string') heldElsewhere.add(key);
+        return;
+    }
     if (!canOwn() || e.data?.kind !== 'desired' || typeof e.data.client !== 'string' || !Array.isArray(e.data.desired)) return;
     const desired = (e.data.desired as Desired[]).filter(d => d?.contract?.code && ['Tick', 'BidAsk', 'Quote'].includes(d.type))
         .map((d): Desired => (d.odd === true ? { contract: d.contract, type: d.type, odd: true } : { contract: d.contract, type: d.type }));
