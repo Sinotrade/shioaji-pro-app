@@ -21,6 +21,7 @@ import {
     useState,
     useSyncExternalStore,
 } from 'react';
+import { useHeaderPopoverFit } from '../hooks/use-header-popover-fit';
 import { usePoll } from '../hooks/use-poll';
 import { useStreamStatus } from '../hooks/use-stream';
 import { unsignedAccountLabel } from '../lib/account-signing';
@@ -122,6 +123,9 @@ export function ServerManager({
 }) {
     const [settings, setSettings] = useState<DesktopSettings>(EMPTY_DESKTOP_SETTINGS);
     const [busy, setBusy] = useState(false);
+    const popoverWrapRef = useRef<HTMLDivElement>(null);
+    const popoverRef = useRef<HTMLDivElement>(null);
+    const popoverFit = useHeaderPopoverFit(open, popoverWrapRef, popoverRef);
     const [lastOutput, setLastOutput] = useState('');
     const [ver, setVer] = useState('');
     const [checking, setChecking] = useState(false);
@@ -644,7 +648,7 @@ export function ServerManager({
     };
 
     return (
-        <div className={styles.settingsWrap}>
+        <div ref={popoverWrapRef} className={styles.settingsWrap}>
             <button
                 className={styles.resetBtn}
                 style={{
@@ -678,7 +682,7 @@ export function ServerManager({
                         className={styles.popoverBackdrop}
                         onClick={() => onToggle(false)}
                     />
-                    <div className={styles.popover} style={{ width: '19rem', display: settingsOpen ? 'none' : undefined }}>
+                    <div ref={popoverRef} className={styles.popover} style={{ width: '19rem', display: settingsOpen ? 'none' : undefined, ...popoverFit }}>
                         <span
                             className={styles.settingLabel}
                             style={{

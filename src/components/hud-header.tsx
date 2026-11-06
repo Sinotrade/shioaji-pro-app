@@ -3,7 +3,8 @@
 // 伺服器狀態、Kill Switch（一鍵鎖定/解鎖）、新增面板、閃電全開、設定。
 
 import { LayoutGrid, Lock, Settings, Undo2, Unlock, Zap } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useHeaderPopoverFit } from '../hooks/use-header-popover-fit';
 import { useStreamStatus } from '../hooks/use-stream';
 import { useHeaderItems } from '../lib/header-items';
 import { setRiskSettings, useRiskSettings } from '../lib/risk';
@@ -43,8 +44,11 @@ function Menu({
     children: (close: () => void) => React.ReactNode;
 }) {
     const [open, setOpen] = useState(false);
+    const wrapRef = useRef<HTMLDivElement>(null);
+    const popRef = useRef<HTMLDivElement>(null);
+    const fit = useHeaderPopoverFit(open, wrapRef, popRef);
     return (
-        <div className={styles.settingsWrap}>
+        <div ref={wrapRef} className={styles.settingsWrap}>
             <button
                 className={styles.resetBtn}
                 onClick={() => setOpen((o) => !o)}
@@ -57,7 +61,7 @@ function Menu({
                         className={styles.popoverBackdrop}
                         onClick={() => setOpen(false)}
                     />
-                    <div className={styles.popover}>
+                    <div ref={popRef} className={styles.popover} style={fit}>
                         {children(() => setOpen(false))}
                     </div>
                 </>
