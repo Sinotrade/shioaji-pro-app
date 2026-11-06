@@ -109,6 +109,8 @@ import {
     saveWorkspace,
     popoutSessionFromQuery,
     popoutSessionParam,
+    unsupportedPanelCount,
+    unsupportedPanelsNotice,
     toRenderGeom,
     withBlockSessionConfig,
     type SessionConfigPatch,
@@ -171,6 +173,9 @@ const POPOUT_TYPES: ReadonlySet<string> = new Set([
     'replay',
     'depthmap',
 ]);
+
+// StrictMode 會跑兩次 mount effect；不支援面板的提示每次啟動只出一次
+let unsupportedNoticeShown = false;
 
 const popoutQuery = new URLSearchParams(window.location.search);
 const POPOUT_TYPE = popoutQuery.get('popout');
@@ -979,6 +984,17 @@ function MainApp() {
     const cachedSelected = useContract(selected?.code ?? null);
     const [workspace, setWorkspace] = useState<Workspace>(() => initializeIndicatorPanels(loadWorkspace()));
     const [profiles, setProfiles] = useState<Profile[]>(loadProfiles);
+    // 較新版本存的版面降版讀到：未知面板已在讀入時略過（資料仍保留），提示一次
+    useEffect(() => {
+        if (unsupportedNoticeShown) return;
+        unsupportedNoticeShown = true;
+        const body = unsupportedPanelsNotice(
+            unsupportedPanelCount(workspace),
+            profiles.reduce((n, p) => n + unsupportedPanelCount(p.workspace), 0),
+        );
+        if (body) notify({ kind: 'info', title: '有面板此版本不支援', body });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
     const selectedRef = useRef(selected);
     selectedRef.current = selected;
     const workspaceRef = useRef(workspace);

@@ -13,7 +13,15 @@ import {
     GRID_LEGACY_COLS,
     GRID_LEGACY_SCALE,
     LAYOUT_PRESETS,
+    loadProfiles,
     loadWorkspace,
+    resetSavedWorkspace,
+    sanitizeWorkspace,
+    saveProfiles,
+    saveWorkspace,
+    toStoredWorkspace,
+    unsupportedPanelCount,
+    unsupportedPanelsNotice,
     panelPref,
     toRenderGeom,
     popoutSessionFromQuery,
@@ -378,5 +386,202 @@ describe('built-in layout presets', () => {
         const next = withBlockSessionConfig(ws, 'heat-rt', { chainView: 'rank' });
         expect(next.blocks.find((b) => b.id === 'heat-rt')?.chainView).toBe('rank');
         expect(next.blocks.find((b) => b.id === 'rotation-rt')?.chainView).toBe('rotation');
+    });
+});
+
+describe('unknown panel types from a newer version', () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    function stubStore() {
+        const store = new Map<string, string>();
+        vi.stubGlobal('localStorage', {
+            getItem: (k: string) => store.get(k) ?? null,
+            setItem: (k: string, v: string) => void store.set(k, v),
+            removeItem: (k: string) => void store.delete(k),
+        });
+        return store;
+    }
+
+    // 一個未來版本才有的面板類型，混在已知面板中間
+    const mixed = {
+        blocks: [
+            { id: 'w', type: 'watchlist', pin: null },
+            { id: 'f', type: 'futurepanel', pin: '2330', extra: { keep: 1 } },
+            { id: 'c', type: 'chart', pin: null, chartInterval: '1D' },
+        ],
+        layout: [
+            { i: 'w', x: 0, y: 0, w: 48, h: 14 },
+            { i: 'f', x: 48, y: 0, w: 96, h: 14 },
+            { i: 'c', x: 144, y: 0, w: 144, h: 14 },
+        ],
+    };
+
+    it('skips unknown blocks together with their layout items', () => {
+        const store = stubStore();
+        store.set('sj-pro-workspace-v3', JSON.stringify(mixed));
+        const w = loadWorkspace();
+        expect(w.blocks.map((b) => b.id)).toEqual(['w', 'c']);
+        expect(w.layout.map((l) => l.i)).toEqual(['w', 'c']);
+        expect(w.blocks.every((b) => BLOCK_META[b.type])).toBe(true);
+        expect(unsupportedPanelCount(w)).toBe(1);
+    });
+
+    it('keeps known blocks untouched', () => {
+        const store = stubStore();
+        store.set('sj-pro-workspace-v3', JSON.stringify(mixed));
+        const w = loadWorkspace();
+        expect(w.blocks[1]).toEqual(mixed.blocks[2]);
+        expect(w.layout[1]).toEqual(mixed.layout[2]);
+    });
+
+    it('returns the same object when every type is known', () => {
+        const ws: Workspace = structuredClone(DEFAULT_WORKSPACE);
+        expect(sanitizeWorkspace(ws)).toBe(ws);
+        expect(unsupportedPanelCount(ws)).toBe(0);
+    });
+
+    it('falls back to the default workspace when no known panel is left', () => {
+        const store = stubStore();
+        store.set(
+            'sj-pro-workspace-v3',
+            JSON.stringify({
+                blocks: [{ id: 'f', type: 'futurepanel', pin: null }],
+                layout: [{ i: 'f', x: 0, y: 0, w: 96, h: 14 }],
+            }),
+        );
+        const w = loadWorkspace();
+        expect(w.blocks.map((b) => b.id)).toEqual(DEFAULT_WORKSPACE.blocks.map((b) => b.id));
+        expect(w.layout).toEqual(DEFAULT_WORKSPACE.layout);
+        expect(unsupportedPanelCount(w)).toBe(1);
+    });
+
+    it('writes skipped panels back unchanged so a newer version gets them again', () => {
+        const store = stubStore();
+        store.set('sj-pro-workspace-v3', JSON.stringify(mixed));
+        const w = loadWorkspace();
+        // 使用者在舊版調整版面後存檔
+        saveWorkspace({ ...w, layout: w.layout.map((l) => (l.i === 'w' ? { ...l, h: 20 } : l)) });
+        const stored = JSON.parse(store.get('sj-pro-workspace-v3')!);
+        expect(stored.unsupported).toBeUndefined();
+        expect(stored.blocks.map((b: { id: string }) => b.id)).toEqual(['w', 'c', 'f']);
+        expect(stored.blocks[2]).toEqual(mixed.blocks[1]);
+        expect(stored.layout.find((l: { i: string }) => l.i === 'f')).toEqual(mixed.layout[1]);
+        expect(stored.layout.find((l: { i: string }) => l.i === 'w').h).toBe(20);
+        // 再讀一次（舊版重開）結果一樣，不會越存越多
+        const again = loadWorkspace();
+        expect(again.blocks.map((b) => b.id)).toEqual(['w', 'c']);
+        expect(unsupportedPanelCount(again)).toBe(1);
+    });
+
+    it('keeps a skipped panel under a new id when its id is now used by a known panel', () => {
+        const w = sanitizeWorkspace(structuredClone(mixed) as unknown as Workspace);
+        const reused: Workspace = {
+            ...w,
+            blocks: [...w.blocks, { id: 'f', type: 'tape', pin: null }],
+            layout: [...w.layout, { i: 'f', x: 0, y: 20, w: 48, h: 8 }],
+        };
+        const stored = toStoredWorkspace(reused);
+        expect(stored.blocks.filter((b) => b.id === 'f')).toEqual([{ id: 'f', type: 'tape', pin: null }]);
+        expect(stored.blocks.find((b) => b.id === 'f~1')).toEqual({ ...mixed.blocks[1], id: 'f~1' });
+        expect(stored.layout.find((l) => l.i === 'f~1')).toEqual({ ...mixed.layout[1], i: 'f~1' });
+        expect(stored.layout.filter((l) => l.i === 'f')).toHaveLength(1);
+        // 存出來的仍是合法版面，再讀回來同樣略過一個
+        const again = sanitizeWorkspace(stored);
+        expect(again.blocks.map((b) => b.id)).toEqual(['w', 'c', 'f']);
+        expect(unsupportedPanelCount(again)).toBe(1);
+    });
+
+    it('all-unknown fallback keeps a panel whose id matches a default panel, and its link groups', () => {
+        const store = stubStore();
+        store.set(
+            'sj-pro-workspace-v3',
+            JSON.stringify({
+                blocks: [{ id: 'chart-0', type: 'futurepanel', pin: null, keep: 1 }],
+                layout: [{ i: 'chart-0', x: 0, y: 0, w: 96, h: 14 }],
+                linkGroups: { A: '2330' },
+            }),
+        );
+        const w = loadWorkspace();
+        expect(w.linkGroups).toEqual({ A: '2330' });
+        saveWorkspace(w);
+        const stored = JSON.parse(store.get('sj-pro-workspace-v3')!);
+        expect(stored.linkGroups).toEqual({ A: '2330' });
+        const hidden = stored.blocks.filter((b: { type: string }) => b.type === 'futurepanel');
+        expect(hidden).toEqual([{ id: 'chart-0~1', type: 'futurepanel', pin: null, keep: 1 }]);
+        expect(stored.layout.filter((l: { i: string }) => l.i === 'chart-0~1')).toHaveLength(1);
+    });
+
+    it('sanitizes the legacy v2 key as well', () => {
+        const store = stubStore();
+        store.set(
+            'sj-pro-workspace-v2',
+            JSON.stringify({
+                blocks: [
+                    { id: 'a', type: 'watchlist', pin: null },
+                    { id: 'z', type: 'futurepanel', pin: null },
+                ],
+                layout: [
+                    { i: 'a', x: 0, y: 0, w: 4, h: 14 },
+                    { i: 'z', x: 4, y: 0, w: 4, h: 14 },
+                ],
+            }),
+        );
+        const w = loadWorkspace();
+        expect(w.blocks.map((b) => b.id)).toEqual(['a']);
+        expect(w.layout).toHaveLength(1);
+    });
+
+    it('profiles: skips unknown panels per profile and keeps them on save', () => {
+        const store = stubStore();
+        store.set(
+            'sj-pro-profiles-v2',
+            JSON.stringify([
+                { name: '新版版面', icon: 'star', workspace: mixed },
+                {
+                    name: '全是新面板',
+                    workspace: {
+                        blocks: [{ id: 'f', type: 'futurepanel', pin: null }],
+                        layout: [{ i: 'f', x: 0, y: 0, w: 96, h: 14 }],
+                    },
+                },
+                { name: '一般', workspace: DEFAULT_WORKSPACE },
+            ]),
+        );
+        const profiles = loadProfiles();
+        expect(profiles.map((p) => p.name)).toEqual(['新版版面', '全是新面板', '一般']);
+        expect(profiles[0]!.icon).toBe('star');
+        expect(profiles[0]!.workspace.blocks.map((b) => b.id)).toEqual(['w', 'c']);
+        expect(profiles[0]!.workspace.layout.map((l) => l.i)).toEqual(['w', 'c']);
+        expect(profiles[1]!.workspace.blocks.map((b) => b.id)).toEqual(
+            DEFAULT_WORKSPACE.blocks.map((b) => b.id),
+        );
+        expect(profiles[2]!.workspace).toEqual(DEFAULT_WORKSPACE);
+        expect(profiles.map((p) => unsupportedPanelCount(p.workspace))).toEqual([1, 1, 0]);
+
+        saveProfiles(profiles);
+        const stored = JSON.parse(store.get('sj-pro-profiles-v2')!);
+        expect(stored[0].workspace).toEqual({
+            blocks: [mixed.blocks[0], mixed.blocks[2], mixed.blocks[1]],
+            layout: [mixed.layout[0], mixed.layout[2], mixed.layout[1]],
+        });
+        expect(stored[2].workspace).toEqual(DEFAULT_WORKSPACE);
+    });
+
+    it('notice text counts the current workspace and the layout library', () => {
+        expect(unsupportedPanelsNotice(0, 0)).toBeNull();
+        expect(unsupportedPanelsNotice(2, 0)).toContain('目前版面 2 個');
+        expect(unsupportedPanelsNotice(0, 3)).toContain('版面庫 3 個');
+        expect(unsupportedPanelsNotice(1, 1)).toContain('請更新到最新版');
+    });
+
+    it('reset writes the default workspace and leaves profiles and the legacy key alone', () => {
+        const store = stubStore();
+        store.set('sj-pro-workspace-v3', JSON.stringify(mixed));
+        store.set('sj-pro-workspace-v2', 'legacy');
+        store.set('sj-pro-profiles-v2', '[]');
+        resetSavedWorkspace();
+        expect(JSON.parse(store.get('sj-pro-workspace-v3')!)).toEqual(DEFAULT_WORKSPACE);
+        expect(store.get('sj-pro-workspace-v2')).toBe('legacy');
+        expect(store.get('sj-pro-profiles-v2')).toBe('[]');
     });
 });

@@ -56,6 +56,13 @@ describe('WorkspaceUndoHistory', () => {
         kept.blocks[0]!.chartInterval = '1D';
         expect(history.settle(kept, entry.at + 600)).toBe(false);
         expect(history.peek(kept)).toBeNull();
+        // panels this version skipped belong to the layout: a different set is never absorbed
+        expect(
+            history.settle(
+                { ...mounted, unsupported: { blocks: [{ id: 'f', type: 'futurepanel' }], layout: [] } },
+                entry.at + 600,
+            ),
+        ).toBe(false);
         // link group codes are never absorbed
         expect(history.settle({ ...mounted, linkGroups: { A: '2330' } }, entry.at + 600)).toBe(false);
         // additions after the window are not absorbed either

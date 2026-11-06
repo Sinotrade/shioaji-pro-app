@@ -850,6 +850,8 @@ export function workspaceRevision(workspace: Workspace): string {
         stableStringify({
             blocks: workspace.blocks,
             linkGroups: workspace.linkGroups ?? {},
+            // 此版本略過的面板也算內容：不同版面的快照不能互相復原蓋掉
+            ...(workspace.unsupported ? { unsupported: workspace.unsupported } : {}),
             layout: workspace.layout.map((l) => [l.i, l.x, Number.isFinite(l.y) ? l.y : null, l.w, l.h]),
         }),
     );
@@ -861,6 +863,7 @@ export function workspaceContentRevision(workspace: Workspace): string {
         stableStringify({
             blocks: workspace.blocks,
             linkGroups: workspace.linkGroups ?? {},
+            ...(workspace.unsupported ? { unsupported: workspace.unsupported } : {}),
         }),
     );
 }
@@ -972,6 +975,8 @@ export function buildWorkspaceFromSpec(
         });
     }
     const next: Workspace = { blocks, layout };
+    // 此版本不認得的面板（較新版本的存檔）不在規格裡，照樣帶著存回
+    if (current.unsupported) next.unsupported = structuredClone(current.unsupported);
     if (Object.keys(normalized.linkGroups).length) {
         next.linkGroups = { ...normalized.linkGroups };
     }

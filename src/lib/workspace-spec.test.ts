@@ -5,6 +5,7 @@ import {
     CHART_INTERVALS,
     DEFAULT_WORKSPACE,
     LAYOUT_PRESETS,
+    sanitizeWorkspace,
     type Workspace,
 } from './workspace';
 import {
@@ -146,6 +147,31 @@ describe('panel view settings (產業鏈資金流向／持股族群)', () => {
         expect(next.blocks[0]!.chainKind).toBeUndefined();
         spec.panels[0]!.settings = { view: 'holdings' };
         expect(checkWorkspaceSpec(spec, ws).valid).toBe(false);
+    });
+
+    it('keeps panels this version does not know when an Agent applies a spec', () => {
+        const ws = sanitizeWorkspace({
+            ...base(),
+            blocks: [...base().blocks, { id: 'future', type: 'futurepanel', pin: null } as never],
+            layout: [...base().layout, { i: 'future', x: 0, y: 14, w: 96, h: 10 }],
+        });
+        const spec = workspaceToSpec(ws);
+        expect(spec.panels.map((p) => p.id)).not.toContain('future');
+        const next = buildWorkspaceFromSpec(ws, valid(spec, ws).normalized);
+        expect(next.blocks.map((b) => b.id)).not.toContain('future');
+        expect(next.unsupported?.blocks.map((b) => b.id)).toEqual(['future']);
+        expect(next.unsupported?.layout.map((l) => l.i)).toEqual(['future']);
+    });
+
+    it('content revision tells apart workspaces that differ only in skipped panels', () => {
+        const withHidden = (id: string) =>
+            sanitizeWorkspace({
+                ...base(),
+                blocks: [...base().blocks, { id, type: 'futurepanel', pin: null } as never],
+                layout: [...base().layout, { i: id, x: 0, y: 14, w: 96, h: 10 }],
+            });
+        expect(workspaceContentRevision(withHidden('f1'))).not.toBe(workspaceContentRevision(withHidden('f2')));
+        expect(workspaceContentRevision(base())).toBe(workspaceContentRevision(structuredClone(base())));
     });
 
     it('holding panels accept 呈現 and 分組 and reject them on other panels', () => {

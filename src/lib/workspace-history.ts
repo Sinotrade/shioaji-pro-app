@@ -26,6 +26,8 @@ export interface WorkspaceUndoEntry {
     /** Panels as stored right after the change, for {@link WorkspaceUndoHistory.settle}. */
     afterBlocks: Workspace['blocks'];
     afterLinkGroups: string;
+    /** 此版本略過的面板（較新版本存檔）；不同就是換了版面，不吸收 */
+    afterUnsupported: string;
     /** Panels the change created; only these may persist mount-time defaults. */
     addedIds: string[];
 }
@@ -107,6 +109,7 @@ export class WorkspaceUndoHistory {
             afterRevision: workspaceContentRevision(after),
             afterBlocks: structuredClone(after.blocks),
             afterLinkGroups: stableStringify(after.linkGroups ?? {}),
+            afterUnsupported: stableStringify(after.unsupported ?? null),
             addedIds: after.blocks
                 .filter((block) => !before.blocks.some((b) => b.id === block.id))
                 .map((block) => block.id),
@@ -133,6 +136,7 @@ export class WorkspaceUndoHistory {
         const revision = workspaceContentRevision(current);
         if (revision === top.afterRevision) return false;
         if (stableStringify(current.linkGroups ?? {}) !== top.afterLinkGroups) return false;
+        if (stableStringify(current.unsupported ?? null) !== top.afterUnsupported) return false;
         const prior = top.afterBlocks;
         if (prior.length !== current.blocks.length) return false;
         const added = new Set(top.addedIds);
