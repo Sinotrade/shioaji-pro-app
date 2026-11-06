@@ -327,6 +327,13 @@ export const flatBtn = style([
         color: vars.color.amber,
         borderColor: vars.color.amber,
         background: 'rgba(224, 164, 60, 0.08)',
+        // 跟全刪一樣：停用時看起來不能按
+        ':disabled': {
+            opacity: 0.4,
+            cursor: 'not-allowed',
+            borderColor: vars.color.border,
+            background: vars.color.inset,
+        },
     },
 ]);
 
