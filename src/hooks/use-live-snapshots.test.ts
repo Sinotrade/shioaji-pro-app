@@ -133,6 +133,13 @@ describe('snapshot plus stream projection', () => {
             await act(async () => { vi.advanceTimersByTime(2000); await value.refresh(); });
             expect(value.snapshots.get('C')).toMatchObject({ total_volume: 40 });
         });
+        it('a catch-up wins a tie with the full snapshot it arrived after', async () => {
+            mocks.fetch.mockImplementationOnce(async () => [snapshot('A'), { ...snapshot('C'), datetime: '2026-09-12 10:00:00.123100', total_volume: 20 }]);
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [a] })); });
+            mocks.fetch.mockImplementationOnce(async () => [{ ...snapshot('C'), datetime: '2026-09-12 10:00:00.123900', total_volume: 30 }]);
+            await render([a, c], [c]);
+            expect(value.snapshots.get('C')).toMatchObject({ total_volume: 30 });
+        });
         it('keeps the full snapshot when the entered query fails', async () => {
             await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [a] })); });
             mocks.fetch.mockImplementationOnce(async () => { throw new Error('down'); });

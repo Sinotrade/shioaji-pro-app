@@ -27,7 +27,9 @@ export function useLiveSnapshots(contracts: ContractBase[], fetcher?: () => Prom
     const liveKey = live ? keyOf(live) : key;
     const query = useQuery(useCallback(() => fetcher ? fetcher() : fetchSnapshots(contracts), [key]), `snapshots:${key}`, contracts.length > 0);
     const [sequence, setSequence] = useState(0);
-    const [entered, setEntered] = useState<{ key: string; rows: Map<string, Snapshot> } | null>(null);
+    const [entered, setEntered] = useState<{ key: string; rows: Map<string, { row: Snapshot; over: Snapshot[] | null | undefined }> } | null>(null);
+    const fullData = useRef(query.data);
+    fullData.current = query.data;
     const seen = useRef<{ key: string; codes: Set<string> } | null>(null);
     const requests = useRef(0);
     const applied = useRef(new Map<string, number>());
@@ -47,7 +49,7 @@ export function useLiveSnapshots(contracts: ContractBase[], fetcher?: () => Prom
             if (newest.length === 0) return;
             setEntered(prev => {
                 const next = new Map(prev?.key === key ? prev.rows : undefined);
-                for (const row of newest) next.set(row.code, row);
+                for (const row of newest) next.set(row.code, { row, over: fullData.current });
                 return { key, rows: next };
             });
         }).catch(() => undefined); // 查不到就維持全量快照的值
@@ -67,7 +69,11 @@ export function useLiveSnapshots(contracts: ContractBase[], fetcher?: () => Prom
         for (const contract of contracts) {
             let baseline = result.get(contract.code) ?? (contract.target_code ? result.get(contract.target_code) : undefined);
             const refetched = entered?.key === key ? entered.rows.get(contract.code) : undefined;
-            if (refetched && (!baseline || marketTime(refetched.datetime) > marketTime(baseline.datetime))) baseline = refetched; // 同時間以全量為準
+            if (refetched) {
+                // 資料時間只到毫秒：同時間看到達順序，補查之後才到的全量優先
+                const entry = marketTime(refetched.row.datetime), full = baseline ? marketTime(baseline.datetime) : NaN;
+                if (!baseline || entry > full || (entry === full && refetched.over === query.data)) baseline = refetched.row;
+            }
             const quote = getQuote(contract.code);
             const tick = quote?.tick;
             if (!baseline) continue; // No fabricated zeros while the initial query failed.
