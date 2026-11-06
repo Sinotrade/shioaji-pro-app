@@ -495,7 +495,8 @@ export function ServerManager({
     const switchProfile = async (id: string, base: DesktopSettings, willStart: boolean, stopError: string) => {
         const target = switchTargetFor(id, settings, base.profiles);
         const scenario = applyScenario(!!status?.running, status?.simulation, target.environment === 'production');
-        if (willStart) setSwitchTarget(target);
+        // a later manual switch also retires the notice of an earlier failed one
+        setSwitchTarget(willStart ? target : null);
         try {
             return await timedSwitch(scenario, {
                 stop: async () => {

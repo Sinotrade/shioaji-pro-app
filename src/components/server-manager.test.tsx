@@ -143,6 +143,23 @@ describe('credential profiles in server settings', () => {
         expect(view.root.findByType(ServerEnvNotice).props.notice.tone).toBe('action');
         expect(button('編輯 主帳號').props.disabled).toBe(false);
     });
+    it('retires a failed switch notice when a later switch waits for the user (#370)', async () => {
+        mocks.load.mockResolvedValue({ ...structuredClone(initial), autoStart: false });
+        mocks.select.mockResolvedValueOnce({ ...initial, autoStart: false, activeProfileId: 'two', production: true, credentialRevision: 'two-rev', caPath: two.caPath, hasCaPassword: true });
+        mocks.start.mockResolvedValue({ ok: false, output: 'boom', port: 12345, attached: false });
+        await open();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+        try {
+            await click('切換使用'); await click('確認切換到正式');
+            expect(text()).toContain('切換到正式環境未完成');
+            mocks.status.mockResolvedValue({ running: false });
+            await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+            mocks.select.mockResolvedValueOnce({ ...initial, autoStart: false });
+            await click('切換使用'); await click('確認切換');
+            expect(mocks.start).toHaveBeenCalledOnce();
+            expect(text()).not.toContain('未完成'); expect(text()).toContain('設定已儲存，請按「啟動」套用');
+        } finally { vi.useRealTimers(); }
+    });
     it('starts a stopped server on switch while 自動啟動 is on (#370)', async () => {
         mocks.status.mockResolvedValue({ running: false });
         await open(); await click('切換使用'); await click('確認切換到正式');

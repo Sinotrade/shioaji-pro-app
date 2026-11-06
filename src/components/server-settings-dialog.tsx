@@ -46,7 +46,7 @@ export function ServerSettingsDialog({ settings, status, busy, pendingApply = fa
         <div ref={dialog} className={s.dialog} role="dialog" aria-modal="true" aria-labelledby="server-settings-title" tabIndex={-1}>
             <header className={s.header}><div><h2 id="server-settings-title" className={s.title}>伺服器設定</h2><p className={s.hint}>{status?.running ? `伺服器運行中 · ${status.simulation === true ? '模擬環境' : status.simulation === false ? '正式環境' : '環境未知'} · ${status.scheme ?? 'scheme 未知'}` : '伺服器未啟動'}{pendingApply ? ' · 有設定尚未套用' : ''}</p></div><button className={s.iconButton} aria-label="關閉伺服器設定" title="關閉" disabled={locked} onClick={onClose}><X size={16} /></button></header>
             <div className={s.body}>
-                {switching && <p role="status" className={s.notice}>{switching}就緒後畫面會自動重新載入。</p>}
+                {switching && <p role="status" className={s.notice}>{switching} 就緒後畫面會自動重新載入。</p>}
                 <CredentialProfiles settings={settings} busy={busy || !!switching} running={!!status?.running} applyOnSwitch={applyOnSwitch} onSave={onSave} onAction={onProfileAction} onImported={onImported} onBusyChange={setCredentialBusy} onEditingChange={setEditingProfile} />
                 {!editingProfile && <fieldset className={s.fields} disabled={locked || !!switching}>{children}</fieldset>}
             </div>
