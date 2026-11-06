@@ -57,11 +57,11 @@ SDK tag commit `20dcb3c4be27e635a912d1caf3270ecbe8b8978a`。release 說明三項
 
 11:05–11:14 模擬後端回應異常慢，11:15 恢復（0.06–0.16 秒）。這段期間的時間線：
 
-| 時間 | 操作 | 結果 |
+| 送出時間 | 操作 | 結果 |
 | --- | --- | --- |
-| 11:05:23 | TXF 下單 | 200，3.8 秒 |
-| 11:06:23 | TXF 刪單 | 200，38.5 秒 |
-| 11:07:16 | 權證 HTTP 下單 `04AEA4` | 200，38.7 秒 |
+| 11:05:19 | TXF 下單 | 200，3.8 秒 |
+| 11:05:45 | TXF 刪單 | 200，38.5 秒 |
+| 11:06:38 | 權證 HTTP 下單 `04AEA4` | 200，38.7 秒 |
 | 11:07:32 | `04AEA4` 刪單 | 測試端 40 秒放棄；11:08:41 遲到回覆寫 warning，刪單其實已生效 |
 | 11:08:42 | `04AEA4` 再刪一次 | 200，3.3 秒；第二筆 Cancel 回報 `88`（委託數量已完全刪除） |
 | 11:09:08 | 權證 CLI 下單 | 500 Timeout 60 秒；**委託 11:11:28 仍成立**（`04AEDC`） |
@@ -90,7 +90,7 @@ Pro 兩邊的 commit 紀錄與程式碼都**沒有為權證被拒做的 workarou
 | --- | --- | --- |
 | `order-ticket.tsx`、`grid-ticket.tsx`、`trade.ts` `isFuturesContract` | WRT 走 `placeStockOrder`，`contractKey` 送 WRT | 不是繞路。1.7.10 這條路會收到 400，1.7.11 起可送出。 |
 | `shioaji.ts` `resolveContract` | WRT 不查 `/info`，用占位欄位 | 原因是資料分片，與被拒無關，保留。 |
-| `flash-order.tsx` 454、1097、1228 | 判斷式是 `=== 'STK'`，WRT 被當成期貨市場（`F`） | **疑似問題**：閃電下單對權證會選到期貨帳戶。1.7.10 文件記錄 WRT 帶 `futures_order` 曾會下到期貨帳戶；1.7.11 由 SDK 擋成 400。建議另開 issue。 |
+| `flash-order.tsx` 454、1097、1228 | 判斷式是 `=== 'STK'`，WRT 被當成期貨市場（`F`） | **疑似問題**：閃電下單對權證會選到期貨帳戶。SDK commit `4a44cecf` 記錄 WRT 帶 `futures_order` 舊版會下到期貨帳戶；1.7.11 由 SDK 擋成 400。建議另開 issue。 |
 | `candle-chart.tsx` 706 | 同上，WRT 歸 `F`；333 行的 `orderMarket` 卻給 `null` | 同一類問題，兩處判斷不一致。 |
 | `bottom-dock-positions.tsx` 203、`trade.ts` 387 | 判斷式同上，且股數平倉只收 STK | **疑似問題**：權證持倉用底部一鍵平倉會被擋下（`商品與持倉帳戶市場不符`），單子不會送出。 |
 | `conditional-form.tsx` 305、`trigger-engine.ts` 854 | 權證顯示「此商品不支援」 | 產品範圍限制，不是為 SDK 做的繞路；要不要開放由 PM 決定。 |
