@@ -74,6 +74,12 @@ export function chartEffective(s: ChartOrderSettings, market: ChartOrderMarket):
     };
 }
 
+/** 權證的點價條件：只有整股現股；存著的零股與信用設定不套用，也不覆寫 */
+export function warrantChartOrder(s: ChartOrderSettings): ChartOrderSettings {
+    const { credit: _credit, ...rest } = s;
+    return { ...rest, lot: 'Common', ...(s.lot === 'IntradayOdd' ? { qty: 1 } : {}) };
+}
+
 /** 信用條件的短標籤（「融資」「現沖」；借券豁免在按鈕上縮成「借豁」）；現股回空字串 */
 export function chartCreditTag(credit: FlashCredit, short = false): string {
     const tag = credit.cond !== 'Cash' ? creditLabel('Sell', credit.cond) ?? '' : credit.daytradeShort ? '現沖' : '';

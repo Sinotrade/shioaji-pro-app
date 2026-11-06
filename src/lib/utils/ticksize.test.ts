@@ -193,3 +193,31 @@ describe('formatToTick — 畫圖標籤依跳動價位顯示', () => {
         expect(formatToTick(stk, NaN)).toBe('—');
     });
 });
+
+describe('權證升降單位（買賣辦法第 6 條）', () => {
+    const warrant: ContractBase = { code: '030392', security_type: 'WRT', exchange: 'TSE', target_code: null };
+
+    it.each([
+        [0.01, 0.01], [4.99, 0.01],
+        [5, 0.05], [9.95, 0.05],
+        [10, 0.1], [49.9, 0.1],
+        [50, 0.5], [99.5, 0.5],
+        [100, 1], [499, 1],
+        [500, 5], [1000, 5],
+    ])('%s 元跳 %s', (price, tick) => {
+        expect(tickSizeFor(warrant, price)).toBe(tick);
+    });
+
+    it('5 元以上與股票級距不同，不可共用股票表', () => {
+        const stock: ContractBase = { ...warrant, code: '2330', security_type: 'STK' };
+        expect(tickSizeFor(stock, 7)).toBe(0.01);
+        expect(tickSizeFor(warrant, 7)).toBe(0.05);
+    });
+
+    it('跨級距時依權證表逐檔移動', () => {
+        expect(stepPrice(warrant, 4.99, 1)).toBe(5);
+        expect(stepPrice(warrant, 5, 1)).toBe(5.05);
+        expect(stepPrice(warrant, 5, -1)).toBe(4.99);
+        expect(stepPrice(warrant, 10, -1)).toBe(9.95);
+    });
+});

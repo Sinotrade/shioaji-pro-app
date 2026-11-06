@@ -23,6 +23,17 @@ function stockTick(price: number): number {
     return 5;
 }
 
+// 權證有自己的升降單位（買賣辦法第 6 條），不是股票的表：
+// 例如 5–10 元股票 0.01、權證 0.05；上櫃權證級距相同
+function warrantTick(price: number): number {
+    if (price < 5) return 0.01;
+    if (price < 10) return 0.05;
+    if (price < 50) return 0.1;
+    if (price < 100) return 0.5;
+    if (price < 500) return 1;
+    return 5;
+}
+
 // ETFs (codes starting with 00)
 function etfTick(price: number): number {
     return price < 50 ? 0.01 : 0.05;
@@ -46,6 +57,7 @@ export function tickSizeFor(contract: TickContract, price: number): number {
         if (st === 'OPT') return price >= 10 ? 1 : 0.1;
         return contract.underlying_kind === 'S' ? stockTick(price) : 1;
     }
+    if (st === 'WRT') return warrantTick(price);
     if (contract.code.startsWith('00')) return etfTick(price);
     return stockTick(price);
 }

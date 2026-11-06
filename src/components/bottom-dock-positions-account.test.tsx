@@ -7,7 +7,7 @@ import type { Account, AccountedPosition } from '../lib/types/portfolio';
 const mocks = vi.hoisted(() => ({ place: vi.fn(), stock: vi.fn(), notify: vi.fn(), simulation: undefined as boolean | undefined }));
 vi.mock('../lib/trade', () => ({ placeQuickOrder: mocks.place, placeStockExitByShares: mocks.stock, notify: mocks.notify }));
 vi.mock('../hooks/use-stream', () => ({ useTradingLive: () => true }));
-vi.mock('../lib/contracts-cache', () => ({ ensureContract: async (code: string) => ({ code, name: code, security_type: code === '2330' ? 'STK' : 'FUT' }) }));
+vi.mock('../lib/contracts-cache', () => ({ ensureContract: async (code: string) => ({ code, name: code, security_type: code === '2330' ? 'STK' : code === '030392' ? 'WRT' : 'FUT' }) }));
 vi.mock('../lib/server-info-store', () => ({ useServerInfo: () => null, yesterdayQuantityNotice: () => null, knownServerInfo: () => ({ simulation: mocks.simulation }) }));
 vi.mock('./bottom-dock-shared', async original => ({ ...await original<object>(), useMeasuredWidth: () => ({ ref: { current: null }, width: 1400 }) }));
 import { PositionsPane } from './bottom-dock-positions';
@@ -85,4 +85,11 @@ it('keeps stock shares and explicit owner in the split-exit helper', async () =>
     await click('反');
     expect(mocks.stock).toHaveBeenCalledTimes(1);
     expect(mocks.place).not.toHaveBeenCalled();
+});
+it('closes a warrant position through the stock exit, not as a market mismatch', async () => {
+    const stock = { ...owner, account_type: 'S' };
+    mocks.stock.mockResolvedValue([]);
+    await mount({ ...position, code: '030392', account: stock, quantity: 2000, yd_quantity: 2000, cond: 'Cash' }); await click('平');
+    expect(mocks.stock.mock.calls[0]!.slice(1)).toEqual(['Sell', 2000, stock]);
+    expect(mocks.notify.mock.calls.flat().join()).not.toContain('不符');
 });

@@ -57,6 +57,7 @@ import type {
     StockPosition,
 } from './types/portfolio';
 import type { HistoryTicks } from './types/tick';
+import { contractMarket } from './contract-market';
 import { todayStr } from './utils/date';
 
 export interface ServerInfo {
@@ -942,7 +943,7 @@ async function prepareOrderMutation(tradeId: string, trace: OrderTraceRecord | n
     const account = getAccountState().accounts.find(a => canTrade(a) && reference
         && a.account_type === reference.account_type && a.broker_id === reference.broker_id && a.account_id === reference.account_id);
     if (!account) refuse('缺少已驗證的委託帳戶，未送出改刪單');
-    const futures = ['FUT', 'OPT'].includes(trade.contract.security_type ?? '');
+    const futures = contractMarket(trade.contract.security_type) === 'F';
     if (account!.account_type !== (futures ? 'F' : 'S')) refuse('商品與委託帳戶不符，未送出改刪單');
     traceTrade(trace, trade, trade.account ?? trade.order.account ?? account);
     traceSet(trace, { reconcile: { ran: false } });

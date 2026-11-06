@@ -13,6 +13,7 @@ import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { darkTwClass } from '../theme.css';
 import { fmtPrice } from '../lib/utils/format';
+import { contractMarket } from '../lib/contract-market';
 import * as styles from './approval.css';
 
 export interface ApprovalRequest {
@@ -41,7 +42,7 @@ function num(value: unknown): number | null {
 }
 
 function unitOf(contract: Obj | null, order: Obj | null): string {
-    if (contract?.security_type !== 'STK') return '口';
+    if (contractMarket(contract?.security_type as string | undefined) !== 'S') return '口';
     return ['Odd', 'IntradayOdd'].includes(String(order?.order_lot)) ? '股' : '張';
 }
 

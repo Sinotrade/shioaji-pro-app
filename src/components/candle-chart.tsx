@@ -121,6 +121,7 @@ import {
     loadChartOrderDefault,
     normalizeChartOrder,
     saveChartOrderDefault,
+    warrantChartOrder,
     type ChartOrderMarket,
     type ChartOrderPanelState,
     type ChartOrderSettings,
@@ -162,6 +163,7 @@ import { ChartDrawingOverlays, ChartDrawingTools, ChartObjectList } from './char
 import { toolDef } from '../lib/chart-drawings';
 import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
+import { contractMarket, isWarrant } from '../lib/contract-market';
 import { orderStatusWithNumber } from '../lib/order-status-label';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
@@ -329,9 +331,8 @@ export function CandleChart({
     const themeKey = themeKeyOf(themeSettings);
     const [mode, setMode] = useState<TradeMode>('observe');
     // 圖表下單設定（#204）：每張圖自己一組（每市場一份），缺省取「設為預設」
-    const orderMarket: ChartOrderMarket | null =
-        contract.security_type === 'STK' ? 'S'
-            : contract.security_type === 'FUT' || contract.security_type === 'OPT' ? 'F' : null;
+    const orderMarket: ChartOrderMarket | null = contractMarket(contract.security_type);
+    const warrant = isWarrant(contract.security_type);
     const [localOrder, setLocalOrder] = useState<ChartOrderPanelState>(() => orderSettingsProp ?? {});
     const panelOrder = onOrderSettingsChange ? (orderSettingsProp ?? {}) : localOrder;
     // 沒有自訂過的市場用「設為預設」的值 — 圖表建立時就對股票與期貨兩種
@@ -371,7 +372,9 @@ export function CandleChart({
             : marketSettings.qty === previousSource.qty ? stockOrder.settings.qty : marketSettings.qty;
         setStockOrder({ ...stockOrder, source: savedOrder, settings: normalizeChartOrder({ ...marketSettings, lot, qty }, 'S') });
     }
-    const orderSettings = orderMarket === 'S' ? stockOrder.settings : marketSettings;
+    const orderSettings = orderMarket === 'S'
+        ? (warrant ? warrantChartOrder(stockOrder.settings) : stockOrder.settings)
+        : marketSettings;
     const setOrderSettings = (next: ChartOrderSettings) => {
         if (!orderMarket) return;
         const settings = normalizeChartOrder({ ...next, ...(next.lot !== orderSettings.lot ? { qty: 1 } : {}) }, orderMarket);
@@ -703,7 +706,7 @@ export function CandleChart({
                 setPickedPrice(c.code, price); // sync to order tickets
                 return;
             }
-            const market: ChartOrderMarket = c.security_type === 'STK' ? 'S' : 'F';
+            const market: ChartOrderMarket = contractMarket(c.security_type) ?? 'F';
             const settings = orderSettingsRef.current;
             const qty = settings.qty;
             const last = lastPriceRef.current;
@@ -2287,7 +2290,7 @@ export function CandleChart({
                     </button>
                     );
                 })}
-                {orderMarket && !isCombo && (
+                {orderMarket && !isCombo && !warrant && (
                     <ChartOrderButton
                         market={orderMarket}
                         settings={orderSettings}
