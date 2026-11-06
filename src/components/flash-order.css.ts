@@ -6,8 +6,8 @@ import { vars } from '../theme.css';
 const COLS = '3rem 1fr 4.8rem 1fr 3rem';
 // #216 外側觸買／觸賣欄：觸價 | 委託 | 量 | 價格 | 量 | 委託 | 觸價
 const COLS7 = '1.9rem 2rem minmax(0, 1fr) 3.9rem minmax(0, 1fr) 2rem 1.9rem';
-// 最窄的面板放不下固定欄寬：買量／賣量收掉，其餘等比縮小
-const COLS7_MINIMAL = 'minmax(0, 1.9fr) minmax(0, 2fr) 0 minmax(0, 3.9fr) 0 minmax(0, 2fr) minmax(0, 1.9fr)';
+// 最窄的面板放不下固定欄寬：全部改成比例。買量／賣量同時是限價下單的點擊區，不能收成 0
+const COLS7_MINIMAL = 'minmax(0, 1.4fr) minmax(0, 1.3fr) minmax(0, 1.6fr) minmax(0, 3.2fr) minmax(0, 1.6fr) minmax(0, 1.3fr) minmax(0, 1.4fr)';
 
 const flashContainer = createContainer();
 
@@ -17,7 +17,7 @@ const flashContainer = createContainer();
 //   ≤ 460px  帳戶縮窄讓出位置，數量與齒輪不換行；市價買／賣獨佔一列，
 //            平倉／全刪／停損停利固定在下一列
 //   ≤ 300px  個股期對照列收掉百分比（1口=N張固定靠右，不換行）
-//   ≤ 230px  七欄價格梯收掉買量／賣量並等比縮小（最小寬的面板內寬約 204px）
+//   ≤ 230px  七欄價格梯全部改比例欄寬，七欄都留得下（最小寬的面板內寬約 204px）
 // 仍放不下時才截斷，全文在 tooltip。
 const NARROW = `${flashContainer} (max-width: 460px)`;
 const TIGHT = `${flashContainer} (max-width: 300px)`;
