@@ -13,7 +13,7 @@ const store = new Map<string, string>();
 };
 
 const timing = await import('./startup-timing');
-const { timedAutostart, timedOnboarding, timedRestart, timedStart, timedStop } = await import('./server-actions');
+const { timedAutostart, timedOnboarding, timedRestart, timedStart, timedStop, timedSwitch } = await import('./server-actions');
 
 const cfg = { production: false } as DesktopSettings;
 const started = (over: Partial<StartResult>): StartResult => ({
@@ -247,5 +247,43 @@ describe('timedRestart', () => {
         ).rejects.toThrow('late');
         expect(last()).toMatchObject({ outcome: 'failed', detail: 'restart threw' });
         expect(timing.getActiveTiming()).toBeNull();
+    });
+});
+
+describe('timedSwitch (#370)', () => {
+    const run = () => timing.peekActiveTiming();
+    it('runs stop, select, then start with the selected settings inside one run', async () => {
+        const order: string[] = [];
+        let seen: string | undefined;
+        const res = await timedSwitch('sim-to-prod', {
+            stop: async () => { order.push('stop'); seen = run()?.scenario; },
+            select: async () => { order.push('select'); return 'selected'; },
+            start: async (value: string) => { order.push(`start:${value}`); return true; },
+        });
+        expect(order).toEqual(['stop', 'select', 'start:selected']);
+        expect(seen).toBe('sim-to-prod');
+        expect(res).toEqual({ selected: 'selected', started: true });
+    });
+    it('supersedes an earlier run so its health wait cannot reload mid-switch', async () => {
+        timing.beginTiming('restart');
+        const earlier = run()!.id;
+        let during: string | undefined;
+        await timedSwitch('prod-to-sim', { stop: async () => { during = run()?.id; }, select: async () => 1, start: async () => null });
+        expect(during).toBeDefined();
+        expect(during).not.toBe(earlier);
+    });
+    it('closes the run when nothing starts, the start is refused, or a step throws', async () => {
+        await timedSwitch('start', { stop: async () => {}, select: async () => 1, start: async () => null });
+        expect(run()).toBeNull();
+        await timedSwitch('sim-to-prod', { stop: async () => {}, select: async () => 1, start: async () => false });
+        expect(run()).toBeNull();
+        const select = vi.fn(async () => 1);
+        await expect(timedSwitch('sim-to-prod', { stop: async () => { throw new Error('refused'); }, select, start: async () => true })).rejects.toThrow('refused');
+        expect(select).not.toHaveBeenCalled();
+        expect(run()).toBeNull();
+    });
+    it('leaves the run open after a sent start, for the health wait to close', async () => {
+        await timedSwitch('sim-to-prod', { stop: async () => {}, select: async () => 1, start: async () => true });
+        expect(run()?.scenario).toBe('sim-to-prod');
     });
 });

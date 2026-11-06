@@ -40,8 +40,10 @@ function Callout({ tone, icon, title, children, actions }: { tone: 'danger' | 'w
     </div>;
 }
 
-export function CredentialProfiles({ settings, busy, running, onSave, onAction, onImported, onStart, onBusyChange, onEditingChange }: {
+export function CredentialProfiles({ settings, busy, running, applyOnSwitch = false, onSave, onAction, onImported, onStart, onBusyChange, onEditingChange }: {
     settings: DesktopSettings; busy: boolean; running: boolean;
+    // 切換後由外層直接重新啟動（#370）；首次設定畫面仍由使用者按「啟動」
+    applyOnSwitch?: boolean;
     onSave: (draft: CredentialDraft, apply: boolean) => Promise<DesktopSettings>;
     onAction: (action: 'select' | 'delete', id: string) => Promise<DesktopSettings>;
     onImported: (settings: DesktopSettings) => void;
@@ -137,7 +139,9 @@ export function CredentialProfiles({ settings, busy, running, onSave, onAction, 
             const next = await onAction(action, profile.id);
             setDraft(editDraft(next.profiles.find(p => p.id === next.activeProfileId)));
             focusAfterRender(action === 'select' ? `edit:${profile.id}` : 'add');
-            setMessage(action === 'select' ? '已切換使用中的帳號，按「啟動」即可套用。' : '帳號已刪除，金鑰與憑證密碼已一併移除。');
+            setMessage(action === 'select'
+                ? applyOnSwitch ? '已切換使用中的帳號，正在等待伺服器連線。' : '已切換使用中的帳號，按「啟動」即可套用。'
+                : '帳號已刪除，金鑰與憑證密碼已一併移除。');
         });
     };
     const handleImport = (found: EnvImportResult | null) => {
@@ -218,7 +222,7 @@ export function CredentialProfiles({ settings, busy, running, onSave, onAction, 
                         {confirmButtons('確認刪除', () => profileAction('delete', profile), 'danger', '取消刪除')}
                     </div>}
                     {switching && <div className={s.confirmStrip}>
-                        <p className={s.confirmText}>改用<span className={s.inlineBadge}><EnvBadge environment={profile.environment} /></span>「{profile.name}」？會先停止伺服器與 Agent，再按「啟動」套用。{production && '正式環境的委託會動用真實資金。'}</p>
+                        <p className={s.confirmText}>改用<span className={s.inlineBadge}><EnvBadge environment={profile.environment} /></span>「{profile.name}」？{applyOnSwitch ? '會先停止伺服器與 Agent，再自動以這個帳號重新啟動。' : '會先停止伺服器與 Agent，再按「啟動」套用。'}{production && '正式環境的委託會動用真實資金。'}</p>
                         {confirmButtons(production ? '確認切換到正式' : '確認切換', () => profileAction('select', profile), production ? 'danger' : 'primary', '取消切換')}
                     </div>}
                 </li>;

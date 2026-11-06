@@ -143,3 +143,33 @@ export async function timedRestart(
         throw e;
     }
 }
+
+/** Explicit account/environment switch: stop the old server, select the
+ * profile, then `start` (nested, so timedStart closes the run) or return null
+ * when the user applies it later. Opening the run first cancels a health wait
+ * still pending from an earlier switch, whose reload would land mid-switch.
+ * `stop` and `select` throw to abandon the switch. */
+export async function timedSwitch<T>(
+    scenario: TimingScenario,
+    steps: {
+        stop: () => Promise<void>;
+        select: () => Promise<T>;
+        start: (selected: T) => Promise<boolean | null>;
+    },
+): Promise<{ selected: T; started: boolean | null }> {
+    beginTiming(scenario, { replace: true });
+    setServerIdentityVerified(false);
+    const runId = peekActiveTiming()?.id;
+    try {
+        await steps.stop();
+        const selected = await steps.select();
+        const started = await steps.start(selected);
+        // both are no-ops when the nested start already closed the run
+        if (started === null) endTiming('ok', 'applied on next start', { runId });
+        else if (!started) endTiming('failed', 'start refused', { runId });
+        return { selected, started };
+    } catch (e) {
+        endTiming('failed', 'switch threw', { runId });
+        throw e;
+    }
+}
