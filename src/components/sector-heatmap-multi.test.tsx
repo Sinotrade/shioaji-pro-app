@@ -1,6 +1,6 @@
 // 產業全景可同時開多個面板：各面板存自己的市場（加權／櫃買並排免切換）。
 // 版面沒有指定 index 時用上次的 localStorage 選擇並固定進版面，舊存檔與新面板都一樣。
-import { createElement } from 'react';
+import { createElement, Fragment, useState } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { IcProjection } from '../lib/types/market';
@@ -184,6 +184,51 @@ it('全域選擇只影響之後的新面板', async () => {
     await press(a, '櫃買');
     const b = await render(props('b'));
     expect(blocks.b).toBe('IX0043');
+});
+
+it('同一次 commit 掛載的兩個面板都固定進版面，且各自只切自己', async () => {
+    // 比照 App：版面是唯一來源，面板的 index 由回寫後的版面帶回
+    let setBlocks!: (update: (b: Record<string, string | undefined>) => Record<string, string | undefined>) => void;
+    let latest: Record<string, string | undefined> = {};
+    function Layout() {
+        const [blocks, set] = useState<Record<string, string | undefined>>({ a: undefined, b: undefined });
+        setBlocks = set;
+        latest = blocks;
+        return createElement(
+            Fragment,
+            null,
+            ...Object.keys(blocks).map((id) =>
+                createElement(SectorHeatmap, {
+                    key: id,
+                    index: blocks[id] as 'IX0001' | 'IX0043' | undefined,
+                    onIndexChange: (code: string) => setBlocks((b) => ({ ...b, [id]: code })),
+                }),
+            ),
+        );
+    }
+    let view!: ReactTestRenderer;
+    await act(async () => {
+        view = create(createElement(Layout));
+    });
+    views.push(view);
+    expect(latest).toEqual({ a: 'IX0001', b: 'IX0001' });
+
+    const second = view.root.findAll(
+        (n) => n.type === 'button' && text(n) === '櫃買' && typeof n.props['aria-pressed'] === 'boolean',
+    )[1]!;
+    await act(async () => second.props.onClick());
+    expect(latest).toEqual({ a: 'IX0001', b: 'IX0043' });
+});
+
+it('套用版面重用 block id 且沒有市場時，用全域選擇而不是上一個版面的市場', async () => {
+    const onIndexChange = vi.fn();
+    const v = await render({ index: 'IX0043', onIndexChange });
+    localStorage.setItem(INDEX_KEY, 'IX0001');
+    await act(async () => {
+        v.update(createElement(SectorHeatmap, { onIndexChange }));
+    });
+    expect(onIndexChange).toHaveBeenCalledExactlyOnceWith('IX0001');
+    expect(pressed(v.root, '加權')).toBe(true);
 });
 
 it('已有市場的面板掛載時不回寫版面', async () => {

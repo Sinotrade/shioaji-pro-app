@@ -317,6 +317,11 @@ function Legend({ palette, domain }: { palette: HeatPalette; domain: number }) {
 
 const NO_PROJECTIONS: IcProjection[] = [];
 
+/** 上次選的市場：只當沒有指定市場的面板的預設值。 */
+function lastIndex(): PanoramaIndexCode {
+    return localStorage.getItem(INDEX_KEY) === 'IX0043' ? 'IX0043' : 'IX0001';
+}
+
 interface PanoramaStock {
     key: string;
     weight: number;
@@ -343,9 +348,7 @@ export function SectorHeatmap({
         [theme.mode, theme.convention, theme.custom],
     );
     const [indexCode, setIndexCode] = useState<PanoramaIndexCode>(
-        () =>
-            index ??
-            (localStorage.getItem(INDEX_KEY) === 'IX0043' ? 'IX0043' : 'IX0001'),
+        () => index ?? lastIndex(),
     );
     const [sizeMetric, setSizeMetric] = useState<SizeMetric>(() =>
         initialSizeMetric(localStorage.getItem(SIZE_KEY)),
@@ -353,9 +356,15 @@ export function SectorHeatmap({
     const [drillCat, setDrillCat] = useState<string | null>(null);
     // 版面指定的市場優先：換版面或外部改欄位時都要跟上
     useEffect(() => {
-        if (index) setIndexCode(index);
-        // 新面板與舊存檔沒有市場：掛載時固定進版面，全域選擇只當下一個新面板的預設值
-        else onIndexChange?.(indexCode);
+        if (index) {
+            setIndexCode(index);
+            return;
+        }
+        // 新面板與舊存檔沒有市場：掛載時固定進版面，全域選擇只當下一個新面板的預設值。
+        // 重讀全域值：套用版面重用 block id 時，這裡還留著上一個版面的市場
+        const code = lastIndex();
+        setIndexCode(code);
+        onIndexChange?.(code);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [index]);
     const selectIndex = useCallback(
