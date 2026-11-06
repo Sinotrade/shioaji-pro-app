@@ -29,7 +29,8 @@ import { canTrade } from '../lib/account-tradable';
 import { plainText, secretAccount } from '../lib/privacy';
 import { useRevealText } from '../lib/privacy-text';
 import { EXPECTED_SERVER_VERSION } from '../lib/runtime';
-import { diagnoseOutput, errorLines, validateDesktopSettings } from '../lib/server-diagnostics';
+import { diagnoseOutput, errorLines, validateDesktopSettings, validateProfileSettings } from '../lib/server-diagnostics';
+import { describeServerEnvNotice, type ServerSwitchTarget } from '../lib/server-env-notice';
 import { serverStartErrorCopy } from '../lib/server-start-error';
 import { clearStoredSpawnKeyHash } from '../lib/spawn-keys';
 import { orderTraceDiagnostics } from '../lib/order-trace';
@@ -47,6 +48,7 @@ import {
     timedRestart,
     timedStart,
     timedStop,
+    timedSwitch,
     type ServerActionDeps,
 } from '../lib/server-actions';
 import { freshDiagnostics } from '../lib/diagnostics-snapshot';
@@ -84,6 +86,7 @@ import {
 } from '../lib/tauri';
 import { notify } from '../lib/trade';
 import { Orb } from './orb';
+import { ServerEnvNotice } from './server-env-notice';
 import { ServerSettingsDialog, type ServerConnectionSettings } from './server-settings-dialog';
 import * as dialogStyles from './server-settings-dialog.css';
 import { vars } from '../theme.css';
@@ -139,6 +142,9 @@ export function ServerManager({
     const [settingsLoaded, setSettingsLoaded] = useState(false);
     const [settingsLoadError, setSettingsLoadError] = useState('');
     const [savedForRestart, setSavedForRestart] = useState(false);
+    // explicit environment/account switch: set until the page reloads onto the
+    // new server, or the user takes over with 啟動／重啟／停止 after a failure
+    const [switchTarget, setSwitchTarget] = useState<ServerSwitchTarget | null>(null);
     const restartError = useRef('');
     // in-flight start/restart/stop/switch run (issue #142) + a 1 s tick so
     // the elapsed seconds move while it lasts
@@ -477,33 +483,74 @@ export function ServerManager({
         } finally { setBusy(false); }
     };
 
+    const switchTargetFor = (id: string, from: DesktopSettings, profiles = from.profiles): ServerSwitchTarget => {
+        const environment = profiles.find(profile => profile.id === id)?.environment ?? 'simulation';
+        return { environment, accountOnly: (environment === 'production') === from.production };
+    };
+
+    // #370: the old server has to stop before the native side accepts another
+    // profile. Without a start right after, the app sits on 未運行／LOST until
+    // the user finds the start button. Failures before the selection leave
+    // everything as it was; a failed start stays reported by doStart.
+    const switchProfile = async (id: string, base: DesktopSettings, willStart: boolean, stopError: string) => {
+        const target = switchTargetFor(id, settings, base.profiles);
+        const scenario = applyScenario(!!status?.running, status?.simulation, target.environment === 'production');
+        // a later manual switch also retires the notice of an earlier failed one
+        setSwitchTarget(willStart ? target : null);
+        try {
+            return await timedSwitch(scenario, {
+                stop: async () => {
+                    const stopped = await serverStop({ stopAgents: true, ownedOnly: true });
+                    if (!stopped.ok) throw new Error(stopError);
+                },
+                select: async () => {
+                    const next = await selectCredentialProfile(id);
+                    setSettings(next); setSavedForRestart(true);
+                    return next;
+                },
+                start: next => willStart ? doStart(next, scenario, true) : Promise.resolve(null),
+            });
+        } catch (e) {
+            setSwitchTarget(null);
+            throw e;
+        }
+    };
+
+    // A switch restarts what was running. With nothing running it starts only
+    // if the user left 自動啟動 on: turning that off means starting by hand.
+    const applyOnSwitch = !!status?.running || settings.autoStart;
+
     const saveConnectionSettings = async (draft: ServerConnectionSettings, apply: boolean): Promise<DesktopSettings> => {
         if (logoutInFlight.current) throw new Error('正在登出，請等待完成。');
         restartError.current = '';
         let next = await saveCredentialProfile(draft);
         setSettings(next);
         setSavedForRestart(true);
+        // the saved settings replace whatever an earlier failed switch aimed at
+        setSwitchTarget(null);
         if (apply) {
             const id = draft.id ?? next.profiles.at(-1)?.id;
-            const target = next.profiles.find(profile => profile.id === id);
-            const invalid = validateDesktopSettings({ ...next,
-                configured: target?.secretState === 'stored',
-                production: target?.environment === 'production',
-                caPath: target?.caPath ?? '',
-                hasCaPassword: target?.hasCaPassword ?? (id === next.activeProfileId && next.hasCaPassword),
-            });
+            const invalid = validateProfileSettings(next, id);
             if (invalid) throw new Error(invalid.body);
             await stopAgentsForServerChange();
-            let stoppedForSwitch = false;
             if (id && id !== next.activeProfileId) {
-                const stopped = await serverStop({ stopAgents: true, ownedOnly: true });
-                if (!stopped.ok) throw new Error('未能停止伺服器；帳號已儲存，尚未切換。');
-                next = await selectCredentialProfile(id);
-                setSettings(next);
-                stoppedForSwitch = true;
+                const { selected, started } = await switchProfile(id, next, true, '未能停止伺服器；帳號已儲存，尚未切換。');
+                if (!started) throw new Error('帳號已儲存，但伺服器未能套用。');
+                return selected;
             }
             const scenario = applyScenario(!!status?.running, status?.simulation, next.production);
-            const ok = status?.running && !stoppedForSwitch ? await doRestart(next, scenario) : await doStart(next, scenario);
+            // against what runs, not the last save: 僅儲存 may have stored it earlier.
+            // Nothing running: a retry of a failed switch still is that switch.
+            const environmentChanged = status?.running
+                ? status.simulation === next.production
+                : next.production !== settings.production;
+            if (environmentChanged || switchTarget) {
+                setSwitchTarget({
+                    environment: next.production ? 'production' : 'simulation',
+                    accountOnly: !environmentChanged && !!switchTarget?.accountOnly,
+                });
+            }
+            const ok = status?.running ? await doRestart(next, scenario) : await doStart(next, scenario);
             if (!ok) throw new Error('帳號已儲存，但伺服器未能套用。');
         }
         return next;
@@ -511,18 +558,27 @@ export function ServerManager({
 
     const profileAction = async (action: 'select' | 'delete', id: string): Promise<DesktopSettings> => {
         if (logoutInFlight.current) throw new Error('正在登出，請等待完成。');
+        if (action === 'select' && applyOnSwitch) {
+            const invalid = validateProfileSettings(settings, id);
+            if (invalid) throw new Error(invalid.body);
+        }
         setBusy(true);
         try {
-            // Selecting another account always stops the old generation.
+            if (action === 'select') {
+                // Selecting another account always stops the old generation.
+                const { selected, started } = await switchProfile(id, settings, applyOnSwitch, '無法停止伺服器，尚未變更帳號。');
+                if (started === false) throw new Error('帳號已切換，但伺服器未能啟動；請修正後按「啟動」重試。');
+                return selected;
+            }
             // Deleting the selected account follows the same logout stop path.
-            if (action === 'select' || id === settings.activeProfileId) {
+            if (id === settings.activeProfileId) {
                 setServerIdentityVerified(false);
                 const stopped = await serverStop({ stopAgents: true, ownedOnly: true });
                 if (!stopped.ok) throw new Error('無法停止伺服器，尚未變更帳號。');
             }
-            const next = action === 'select' ? await selectCredentialProfile(id) : await deleteCredentialProfile(id);
+            const next = await deleteCredentialProfile(id);
             setSettings(next); setSavedForRestart(true);
-            if (action === 'delete' && !next.activeProfileId) window.location.reload();
+            if (!next.activeProfileId) window.location.reload();
             return next;
         } finally { setBusy(false); }
     };
@@ -622,6 +678,12 @@ export function ServerManager({
         !!serverVersion &&
         !!EXPECTED_SERVER_VERSION &&
         serverVersion !== EXPECTED_SERVER_VERSION;
+    // busy ends when the spawn is sent; the health wait's run lasts to the reload
+    const switching = !!switchTarget && (busy || !!timingRun);
+    const envNotice = describeServerEnvNotice({
+        target: switchTarget, switching, running: !!status?.running, savedForRestart,
+        environmentMismatch: !!status?.running && status.simulation === settings.production,
+    });
     const updateHeaderLabel =
         updateState.phase === 'downloading'
             ? `下載更新${updatePercent === undefined ? '' : ` ${updatePercent}%`}`
@@ -649,6 +711,7 @@ export function ServerManager({
 
     return (
         <div ref={popoverWrapRef} className={styles.settingsWrap}>
+            {envNotice && <ServerEnvNotice notice={envNotice} onOpen={() => onToggle(true)} />}
             <button
                 className={styles.resetBtn}
                 style={{
@@ -859,16 +922,16 @@ export function ServerManager({
                         <div className={styles.settingGroup}>
                             <button
                                 className={styles.opt.off}
-                                disabled={busy || !settingsLoaded || !!status?.running}
-                                onClick={() => doStart()}
+                                disabled={busy || switching || !settingsLoaded || !!status?.running}
+                                onClick={() => { setSwitchTarget(null); void doStart(); }}
                             >
                                 <Play size={11} style={{ verticalAlign: '-1px' }} />{' '}
                                 啟動
                             </button>
                             <button
                                 className={styles.opt.off}
-                                disabled={busy || !settingsLoaded || !status?.running}
-                                onClick={() => doRestart()}
+                                disabled={busy || switching || !settingsLoaded || !status?.running}
+                                onClick={() => { setSwitchTarget(null); void doRestart(); }}
                             >
                                 <RotateCcw size={11} style={{ verticalAlign: '-1px' }} />{' '}
                                 重啟
@@ -876,7 +939,7 @@ export function ServerManager({
                             <button
                                 className={styles.opt.off}
                                 disabled={busy || !status?.running}
-                                onClick={doStop}
+                                onClick={() => { setSwitchTarget(null); void doStop(); }}
                             >
                                 <Square size={10} style={{ verticalAlign: '-1px' }} />{' '}
                                 停止
@@ -1075,6 +1138,7 @@ export function ServerManager({
                     </div>
                     {settingsOpen && <ServerSettingsDialog
                         settings={settings} status={status} busy={busy || httpsBusy}
+                        switching={switching ? envNotice?.text : undefined} applyOnSwitch={applyOnSwitch}
                         pendingApply={savedForRestart || (!!status?.running && status.simulation === settings.production)}
                         onSave={saveConnectionSettings} onProfileAction={profileAction} onImported={setSettings} onClose={() => {
                             setSettingsOpen(false);

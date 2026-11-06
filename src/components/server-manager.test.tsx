@@ -21,12 +21,15 @@ vi.mock('../lib/trade', () => ({ notify: mocks.notify }));
 import { EMPTY_DESKTOP_SETTINGS, type DesktopSettings } from '../lib/desktop-credentials';
 import { ServerManager } from './server-manager';
 import { ServerSettingsDialog } from './server-settings-dialog';
+import { ServerEnvNotice } from './server-env-notice';
+import { reloadWhenHealthy } from '../lib/tauri';
+import { endTiming } from '../lib/startup-timing';
 import { CredentialProfiles } from './credential-profiles';
 import { getStoredSpawnKeyHash, setStoredSpawnKeyHash } from '../lib/spawn-keys';
 import { recordAgentRuntimeFailure } from '../lib/agent-diagnostics';
 const updateState = { phase: 'idle' };
 const one = { id: 'one', name: '主帳號', environment: 'simulation' as const, caPath: '', hasCA: false, apiKeyMasked: '••••1234', createdAt: '2026-10-20', secretState: 'stored' as const, credentialBackend: 'system' as const, revision: 'one-rev' };
-const two = { ...one, id: 'two', name: '備用帳號', environment: 'production' as const, hasCA: true, caPath: '/fixture/ca.pfx', revision: 'two-rev' };
+const two = { ...one, id: 'two', name: '備用帳號', environment: 'production' as const, hasCA: true, hasCaPassword: true, caPath: '/fixture/ca.pfx', revision: 'two-rev' };
 const initial: DesktopSettings = { ...EMPTY_DESKTOP_SETTINGS, profiles: [one, two], activeProfileId: 'one', credentialRevision: 'one-rev', configured: true };
 describe('credential profiles in server settings', () => {
     let view: ReactTestRenderer;
@@ -45,7 +48,7 @@ describe('credential profiles in server settings', () => {
         mocks.start.mockResolvedValue({ ok: true, output: '', port: 12345, attached: true });
         mocks.stop.mockResolvedValue({ ok: true, output: '' }); mocks.info.mockResolvedValue({ simulation: true });
     });
-    afterEach(async () => { if (view) await act(async () => view.unmount()); vi.unstubAllGlobals(); });
+    afterEach(async () => { if (view) await act(async () => view.unmount()); endTiming('abandoned', 'test ended'); vi.unstubAllGlobals(); });
     const text = () => JSON.stringify(view.toJSON());
     const button = (label: string) => view.root.findAllByType('button').find(node => (node.props['aria-label'] ?? node.children.filter(x => typeof x === 'string').join('')).includes(label))!;
     const click = async (label: string) => { await act(async () => button(label).props.onClick()); };
@@ -102,19 +105,170 @@ describe('credential profiles in server settings', () => {
         mocks.status.mockResolvedValueOnce({ running: true, simulation: false, scheme: 'https', healthy: true });
         await open(); expect(text()).toContain('伺服器運行中 · 正式環境 · https');
     });
-    it('switches only after confirmation and stopping the old server', async () => {
+    it('switches only after confirmation, stopping the old server and then restarting on the new profile (#370)', async () => {
         setStoredSpawnKeyHash('old-spawn-revision');
         await open(); await click('切換使用'); expect(mocks.select).not.toHaveBeenCalled();
-        await click('確認切換');
+        expect(text()).toContain('再自動以這個帳號重新啟動'); expect(text()).toContain('正式環境的委託會動用真實資金');
+        // 切到正式的二次確認維持原樣：第一次只展開確認列
+        expect(mocks.stop).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled();
+        await click('確認切換到正式');
         expect(mocks.stop).toHaveBeenCalledWith({ stopAgents: true, ownedOnly: true }); expect(mocks.select).toHaveBeenCalledWith('two');
         expect(mocks.stop.mock.invocationCallOrder[0]).toBeLessThan(mocks.select.mock.invocationCallOrder[0]!);
-        expect(mocks.start).not.toHaveBeenCalled();
+        expect(mocks.select.mock.invocationCallOrder[0]).toBeLessThan(mocks.start.mock.invocationCallOrder[0]!);
+        expect(mocks.start).toHaveBeenCalledOnce();
+        expect(mocks.start.mock.calls[0]![0]).toMatchObject({ production: true, activeProfileId: 'two', credentialRevision: 'two-rev' });
         expect(getStoredSpawnKeyHash()).toBe('old-spawn-revision');
+        expect(text()).toContain('正在等待伺服器連線');
+    });
+    it('shows the switch on the main screen and keeps profiles locked until the page reloads (#370)', async () => {
+        mocks.start.mockResolvedValue({ ok: true, output: '', port: 12345, attached: false });
+        await open(); await click('切換使用'); await click('確認切換到正式');
+        // spawn 已送出、busy 結束：健康等待期間仍是切換中，不能再切一次
+        expect(reloadWhenHealthy).toHaveBeenCalledOnce();
+        expect(text()).toContain('正在切換到正式環境');
+        expect(view.root.findByType(ServerEnvNotice).props.notice.tone).toBe('progress');
+        expect(view.root.findByType(CredentialProfiles).props.busy).toBe(true);
+        expect(button('編輯 主帳號').props.disabled).toBe(true);
+        await click('關閉伺服器設定'); expect(text()).toContain('正在切換到正式環境');
+        expect(button('重啟').props.disabled).toBe(true);
+        // 逃生口：可以停止，切換提示也隨之結束
+        await click('停止'); expect(view.root.findAllByType(ServerEnvNotice)).toHaveLength(0);
+    });
+    it('reports a failed start through the existing error path and keeps it visible on the main screen (#370)', async () => {
+        mocks.start.mockResolvedValue({ ok: false, output: 'boom', port: 12345, attached: false, error: { kind: 'auth_failed', hint: null, lastLines: [] } });
+        await open(); await click('切換使用'); await click('確認切換到正式');
+        expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ kind: 'err' }));
+        expect(text()).toContain('帳號已切換，但伺服器未能啟動');
+        expect(text()).toContain('切換到正式環境未完成');
+        expect(view.root.findByType(ServerEnvNotice).props.notice.tone).toBe('action');
+        expect(button('編輯 主帳號').props.disabled).toBe(false);
+    });
+    it('retires a failed switch notice when a later switch waits for the user (#370)', async () => {
+        mocks.load.mockResolvedValue({ ...structuredClone(initial), autoStart: false });
+        mocks.select.mockResolvedValueOnce({ ...initial, autoStart: false, activeProfileId: 'two', production: true, credentialRevision: 'two-rev', caPath: two.caPath, hasCaPassword: true });
+        mocks.start.mockResolvedValue({ ok: false, output: 'boom', port: 12345, attached: false });
+        await open();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+        try {
+            await click('切換使用'); await click('確認切換到正式');
+            expect(text()).toContain('切換到正式環境未完成');
+            mocks.status.mockResolvedValue({ running: false });
+            await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+            mocks.select.mockResolvedValueOnce({ ...initial, autoStart: false });
+            await click('切換使用'); await click('確認切換');
+            expect(mocks.start).toHaveBeenCalledOnce();
+            expect(text()).not.toContain('未完成'); expect(text()).toContain('設定已儲存，請按「啟動」套用');
+        } finally { vi.useRealTimers(); }
+    });
+    it('starts a stopped server on switch while 自動啟動 is on (#370)', async () => {
+        mocks.status.mockResolvedValue({ running: false });
+        await open(); await click('切換使用'); await click('確認切換到正式');
+        expect(mocks.start).toHaveBeenCalledOnce();
+    });
+    it('leaves a stopped server to the user when 自動啟動 is off, and says so on the main screen (#370)', async () => {
+        mocks.status.mockResolvedValue({ running: false });
+        mocks.load.mockResolvedValue({ ...structuredClone(initial), autoStart: false });
+        mocks.select.mockResolvedValue({ ...initial, autoStart: false, activeProfileId: 'two', production: true, credentialRevision: 'two-rev', caPath: two.caPath, hasCaPassword: true });
+        await open(); await click('切換使用');
+        expect(text()).toContain('再按「啟動」套用');
+        await click('確認切換到正式');
+        expect(mocks.select).toHaveBeenCalledWith('two'); expect(mocks.start).not.toHaveBeenCalled();
+        expect(text()).toContain('按「啟動」即可套用'); expect(text()).toContain('設定已儲存，請按「啟動」套用');
+    });
+    it('refuses a production profile that cannot start before stopping anything (#370)', async () => {
+        mocks.load.mockResolvedValue({ ...structuredClone(initial), profiles: [one, { ...two, hasCaPassword: false }] });
+        await open(); await click('切換使用'); await click('確認切換到正式');
+        expect(text()).toContain('憑證'); expect(mocks.prepare).not.toHaveBeenCalled();
+        expect(mocks.stop).not.toHaveBeenCalled(); expect(mocks.select).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled();
+        expect(view.root.findAllByType(ServerEnvNotice)).toHaveLength(0);
+    });
+    it('refuses a production profile without a certificate file before stopping anything (#370)', async () => {
+        mocks.load.mockResolvedValue({ ...structuredClone(initial), profiles: [one, { ...two, caPath: '', hasCA: false, hasCaPassword: false }] });
+        await open(); await click('切換使用'); await click('確認切換到正式');
+        expect(text()).toContain('憑證檔'); expect(mocks.prepare).not.toHaveBeenCalled();
+        expect(mocks.stop).not.toHaveBeenCalled(); expect(mocks.select).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled();
+    });
+    it('restarts for another account in the same environment, and does not claim an environment change (#370)', async () => {
+        const sibling = { ...one, id: 'sibling', name: '模擬備用', revision: 'sibling-rev' };
+        mocks.load.mockResolvedValue({ ...structuredClone(initial), profiles: [one, sibling] });
+        mocks.select.mockResolvedValue({ ...initial, profiles: [one, sibling], activeProfileId: 'sibling', credentialRevision: 'sibling-rev' });
+        mocks.start.mockResolvedValue({ ok: true, output: '', port: 12345, attached: false });
+        await open(); await click('切換使用');
+        expect(text()).toContain('再自動以這個帳號重新啟動'); expect(text()).not.toContain('真實資金');
+        await click('確認切換');
+        expect(mocks.stop).toHaveBeenCalledWith({ stopAgents: true, ownedOnly: true }); expect(mocks.select).toHaveBeenCalledWith('sibling');
+        expect(mocks.start).toHaveBeenCalledOnce();
+        expect(mocks.start.mock.calls[0]![0]).toMatchObject({ production: false, activeProfileId: 'sibling', credentialRevision: 'sibling-rev' });
+        expect(text()).toContain('正在切換帳號'); expect(text()).not.toContain('環境…');
+    });
+    it('switches a different profile through 儲存並重啟 on the same path (#370)', async () => {
+        await open(); await click('編輯 備用帳號'); await click('儲存並重啟');
+        expect(mocks.stop).toHaveBeenCalledOnce(); expect(mocks.select).toHaveBeenCalledWith('two'); expect(mocks.start).toHaveBeenCalledOnce();
+        expect(text()).toContain('正在切換到正式環境');
+    });
+    it('names the environment when saving a changed environment with 儲存並重啟 (#370)', async () => {
+        mocks.profile.mockResolvedValueOnce({ ...initial, production: true, caPath: '/fixture/ca.pfx', hasCaPassword: true, profiles: [{ ...one, environment: 'production', caPath: '/fixture/ca.pfx', hasCA: true, hasCaPassword: true }, two] });
+        await open(); await click('編輯 主帳號'); await click('儲存並重啟');
+        expect(mocks.select).not.toHaveBeenCalled(); expect(mocks.stop).toHaveBeenCalledOnce(); expect(mocks.start).toHaveBeenCalledOnce();
+        expect(text()).toContain('正在切換到正式環境');
+    });
+    it('retires a failed switch notice when the settings are saved afterwards (#370)', async () => {
+        const back = { ...two, environment: 'simulation' as const, caPath: '', hasCA: false, hasCaPassword: false };
+        mocks.select.mockResolvedValueOnce({ ...initial, activeProfileId: 'two', production: true, credentialRevision: 'two-rev', caPath: two.caPath, hasCaPassword: true });
+        mocks.start.mockResolvedValue({ ok: false, output: 'boom', port: 12345, attached: false });
+        await open();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+        try {
+            await click('切換使用'); await click('確認切換到正式');
+            expect(text()).toContain('切換到正式環境未完成');
+            mocks.status.mockResolvedValue({ running: false });
+            await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+            mocks.profile.mockResolvedValueOnce({ ...initial, profiles: [one, back], activeProfileId: 'two', production: false, credentialRevision: 'two-rev' });
+            await click('編輯 備用帳號'); await click('僅儲存');
+            expect(mocks.start).toHaveBeenCalledOnce();
+            expect(text()).not.toContain('未完成'); expect(text()).toContain('設定已儲存，請按「啟動」套用');
+        } finally { vi.useRealTimers(); }
+    });
+    it('tracks applying an environment change that was saved earlier, against the running server (#370)', async () => {
+        const saved = { ...initial, production: true, caPath: '/fixture/ca.pfx', hasCaPassword: true, profiles: [{ ...one, environment: 'production' as const, caPath: '/fixture/ca.pfx', hasCA: true, hasCaPassword: true }, two] };
+        mocks.load.mockResolvedValue(structuredClone(saved)); mocks.profile.mockResolvedValueOnce(saved);
+        mocks.start.mockResolvedValue({ ok: true, output: '', port: 12345, attached: false });
+        await open(); await click('編輯 主帳號'); await click('儲存並重啟');
+        expect(mocks.start).toHaveBeenCalledOnce();
+        expect(text()).toContain('正在切換到正式環境');
+        expect(view.root.findByType(CredentialProfiles).props.busy).toBe(true);
+    });
+    it('keeps tracking a corrected retry of a failed switch through the health wait (#370)', async () => {
+        const selected = { ...initial, activeProfileId: 'two', production: true, credentialRevision: 'two-rev', caPath: two.caPath, hasCaPassword: true };
+        mocks.select.mockResolvedValueOnce(selected);
+        mocks.start.mockResolvedValueOnce({ ok: false, output: 'boom', port: 12345, attached: false });
+        await open();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+        try {
+            await click('切換使用'); await click('確認切換到正式');
+            expect(text()).toContain('切換到正式環境未完成');
+            mocks.status.mockResolvedValue({ running: false });
+            await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+            mocks.profile.mockResolvedValueOnce(selected);
+            mocks.start.mockResolvedValueOnce({ ok: true, output: '', port: 12345, attached: false });
+            await click('編輯 備用帳號'); await click('儲存並啟動');
+            expect(mocks.start).toHaveBeenCalledTimes(2);
+            expect(text()).toContain('正在切換到正式環境'); expect(text()).not.toContain('未完成');
+            expect(view.root.findByType(CredentialProfiles).props.busy).toBe(true);
+        } finally { vi.useRealTimers(); }
+    });
+    it('keeps 僅儲存 from restarting but says on the main screen that the change is pending (#370)', async () => {
+        mocks.profile.mockResolvedValueOnce({ ...initial, production: true, caPath: '/fixture/ca.pfx', hasCaPassword: true, profiles: [{ ...one, environment: 'production', caPath: '/fixture/ca.pfx', hasCA: true, hasCaPassword: true }, two] });
+        await open(); await click('編輯 主帳號'); await click('僅儲存');
+        expect(mocks.stop).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled();
+        expect(text()).toContain('環境設定已變更，請按「重啟」套用');
     });
     it('does not switch or delete when stopping fails', async () => {
         await open(); mocks.stop.mockResolvedValue({ ok: false, output: 'busy' });
-        await click('切換使用'); await click('確認切換');
+        await click('切換使用'); await click('確認切換到正式');
         expect(mocks.select).not.toHaveBeenCalled(); expect(mocks.remove).not.toHaveBeenCalled();
+        expect(mocks.start).not.toHaveBeenCalled(); expect(text()).toContain('無法停止伺服器，尚未變更帳號');
+        expect(view.root.findAllByType(ServerEnvNotice)).toHaveLength(0);
     });
     it('requires confirmation and a stop before deleting the active profile', async () => {
         await open(); await click('刪除 主帳號'); expect(mocks.remove).not.toHaveBeenCalled();
