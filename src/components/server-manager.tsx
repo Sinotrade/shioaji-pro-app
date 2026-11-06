@@ -526,6 +526,8 @@ export function ServerManager({
         let next = await saveCredentialProfile(draft);
         setSettings(next);
         setSavedForRestart(true);
+        // the saved settings replace whatever an earlier failed switch aimed at
+        setSwitchTarget(null);
         if (apply) {
             const id = draft.id ?? next.profiles.at(-1)?.id;
             const invalid = validateProfileSettings(next, id);
