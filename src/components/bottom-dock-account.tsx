@@ -8,7 +8,7 @@ import { canTrade } from '../lib/account-tradable';
 import { accountMatches } from '../lib/flash-account';
 import { maskAccountId, usePrivacyMode } from '../lib/privacy';
 import { useAccounts } from '../lib/account-store';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, RotateCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '../hooks/use-query';
 import { maskMoney, usePrivacyMoney } from '../lib/privacy';
@@ -37,6 +37,7 @@ import type {
 } from '../lib/types/portfolio';
 import { canonicalBrokerCode, resolveRealizedName } from '../lib/realized-name';
 import { bizDateLabel, settleDateLabel } from '../lib/settle-date';
+import { isTradingLimitsWindowError } from '../lib/trading-limits-error';
 import { fmtMoney, fmtSigned } from '../lib/utils/format';
 import { vars } from '../theme.css';
 import {
@@ -410,19 +411,26 @@ function PnlSection({
 
 function LimitsSection({
     limits,
-    loading,
+    error,
     sim,
     privMoney,
+    onRetry,
 }: {
     limits: TradingLimits | null | undefined;
-    loading: boolean;
+    error: string | null;
     sim: boolean;
     privMoney: boolean;
+    onRetry: () => void;
 }) {
     const money = (n: number) => maskMoney(fmtMoney(n), privMoney);
     const allZero =
         !!limits &&
         Object.values(limits).every((v) => v === 0);
+    // 失敗時 data 維持 undefined：不能再當成「載入中」，否則永遠卡在 Spinner（#381）。
+    // 已有資料時的刷新失敗沿用 useQuery 的約定，保留上一份。
+    const failed = limits === undefined && !!error;
+    const closed = failed && isTradingLimitsWindowError(error);
+    const empty = closed || !limits || allZero;
     return (
         <section className={styles.acctSection}>
             <div className={styles.acctTitle}>
@@ -431,11 +439,22 @@ function LimitsSection({
                     交易日 08:30–15:00
                 </span>
             </div>
-            {loading || limits === undefined ? (
+            {failed && !closed ? (
+                <AsyncStatus
+                    phase='error'
+                    text={`交易額度查詢失敗：${error}`}
+                    className={styles.acctError}
+                    action={
+                        <button type='button' className={styles.acctRetry} onClick={onRetry}>
+                            <RotateCw size={11} aria-hidden /> 重試
+                        </button>
+                    }
+                />
+            ) : limits === undefined && !closed ? (
                 <Loading text='載入交易額度' />
-            ) : sim && (limits === null || allZero) ? (
+            ) : sim && empty ? (
                 <span className={styles.acctHint}>模擬模式無法查詢</span>
-            ) : limits === null || allZero ? (
+            ) : empty ? (
                 <span className={styles.acctHint}>
                     非交易時段無額度資料（交易日 08:30–15:00 提供）
                 </span>
@@ -812,7 +831,10 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
         await Promise.all([refreshSettle(), refreshPnl(), refreshLimits(), refreshReserve()]);
     }, [refreshSettle, refreshPnl, refreshLimits, refreshReserve]);
     const reportsLoading = loadingSettle || loadingPnl || loadingLimits || loadingReserve;
-    const reportsError = [errorSettle, errorPnl, errorLimits, errorReserve].filter(Boolean).join('；') || null;
+    // 額度時段外是預期狀態，區塊內已有提示，不算報表錯誤（#381）。保留上一份額度時
+    // 畫面沒有提示，刷新失敗仍要留在狀態列，否則舊資料看起來像剛更新
+    const limitsClosed = limits === undefined && isTradingLimitsWindowError(errorLimits);
+    const reportsError = [errorSettle, errorPnl, limitsClosed ? null : errorLimits, errorReserve].filter(Boolean).join('；') || null;
     useEffect(() => {
         onRefreshControls?.({ refresh: refreshReports, loading: reportsLoading, error: reportsError });
         return () => onRefreshControls?.(null);
@@ -841,9 +863,10 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
             {showStock && (
                 <LimitsSection
                     limits={limits}
-                    loading={limits === undefined}
+                    error={errorLimits}
                     sim={sim}
                     privMoney={privMoney}
+                    onRetry={() => void refreshLimits()}
                 />
             )}
         </div>

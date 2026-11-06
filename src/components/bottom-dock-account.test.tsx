@@ -1,10 +1,10 @@
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterEach, expect, it, vi } from 'vitest';
-const fixture = vi.hoisted(() => ({ accounts: ['A', 'B'].map(account_id => ({ account_type: 'F', broker_id: 'BR', account_id, signed: true, person_id: '', username: '' })), pnl: vi.fn(), summary: vi.fn(), settlements: vi.fn(), limits: vi.fn(), reserve: vi.fn() }));
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const fixture = vi.hoisted(() => ({ accounts: ['A', 'B'].map(account_id => ({ account_type: 'F', broker_id: 'BR', account_id, signed: true, person_id: '', username: '' })), pnl: vi.fn(), summary: vi.fn(), settlements: vi.fn(), limits: vi.fn(), reserve: vi.fn(), simulation: false }));
 vi.mock('../lib/account-store', () => ({ useAccounts: () => ({ accounts: fixture.accounts }), getAccountState: () => ({ accounts: fixture.accounts }) }));
 vi.mock('../lib/runtime', () => ({ getApiBase: () => 'http://account-pane-fixture.invalid' }));
-vi.mock('../lib/shioaji', () => ({ fetchInfo: async () => ({ simulation: false }), fetchProfitLoss: fixture.pnl, fetchProfitLossSummary: fixture.summary,
+vi.mock('../lib/shioaji', () => ({ fetchInfo: async () => ({ simulation: fixture.simulation }), fetchProfitLoss: fixture.pnl, fetchProfitLossSummary: fixture.summary,
     fetchSettlements: fixture.settlements, fetchTradingLimits: fixture.limits, fetchStockReserveSummary: fixture.reserve, fetchStockReserveDetail: fixture.reserve, fetchEarmarkingDetail: fixture.reserve, resolveContract: vi.fn(), fetchFuturesRoots: vi.fn(async () => [{ root: 'NSF', name: '美國那斯達克100期貨' }]) }));
 import { AccountPane, type AccountRefreshControls } from './bottom-dock-account';
 let view: ReactTestRenderer | undefined;
@@ -142,4 +142,77 @@ it('#268 遮金額：今日已實現損益展開列的數量也遮', async () =>
     } finally {
         setPrivacyMoney(false);
     }
+});
+
+describe('#381 交易額度查詢失敗', () => {
+    const WINDOW = '500 Query error: QCredit:Query fail{StartTime=83000, EndTime=150000}';
+    const LIMITS = { trading_limit: 500, trading_used: 0, trading_available: 400, margin_limit: 0, margin_used: 0, margin_available: 0, short_limit: 0, short_used: 0, short_available: 0 };
+    let run = 0;
+    let controls: AccountRefreshControls | null;
+    const text = () => JSON.stringify(view!.toJSON());
+    const retry = () => view!.root.findAll(node => node.type === 'button' && node.children.some(child => typeof child === 'string' && child.includes('重試')));
+    const mount = async () => {
+        await act(async () => { view = create(createElement(AccountPane, { positions: [], market: 'S', scopeAccount: null, onRefreshControls: value => { controls = value; } })); });
+    };
+    beforeEach(() => {
+        vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+        vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+        vi.useFakeTimers();
+        run += 1; controls = null; fixture.simulation = false;
+        // Fresh account keys: the pane keeps the previous test's snapshot per account set.
+        fixture.accounts.forEach((a, i) => { a.account_type = 'S'; a.account_id = `${'AB'[i]}-381-${run}`; });
+        fixture.pnl.mockReset().mockResolvedValue([]); fixture.summary.mockReset().mockResolvedValue({ total: { pnl: 0 }, profitloss_sum: [] });
+        fixture.settlements.mockReset().mockResolvedValue([]); fixture.reserve.mockReset().mockResolvedValue({ stocks: [] });
+    });
+    it('非交易時段的 500 顯示既有提示，不再卡載入、也不算報表錯誤', async () => {
+        fixture.limits.mockReset().mockRejectedValue(new Error(WINDOW));
+        await mount();
+        expect(text()).not.toContain('載入交易額度');
+        expect(text()).toContain('非交易時段無額度資料（交易日 08:30–15:00 提供）');
+        expect(retry()).toHaveLength(0);
+        expect(controls!.error).toBeNull();
+    });
+    it('模擬環境同一個錯誤沿用模擬提示', async () => {
+        fixture.simulation = true;
+        fixture.limits.mockReset().mockRejectedValue(new Error(WINDOW));
+        await mount();
+        expect(text()).toContain('模擬模式無法查詢');
+        expect(text()).not.toContain('非交易時段無額度資料');
+    });
+    it('其他錯誤顯示原因與重試，不誤判成非交易時段；重試成功後顯示額度', async () => {
+        fixture.limits.mockReset().mockRejectedValue(new Error('Failed to fetch'));
+        await mount();
+        expect(text()).toContain('交易額度查詢失敗：');
+        expect(text()).toContain('Failed to fetch');
+        expect(text()).not.toContain('非交易時段無額度資料');
+        expect(text()).not.toContain('載入交易額度');
+        expect(controls!.error).toContain('Failed to fetch');
+        expect(retry()).toHaveLength(1);
+        const pending: ((value: typeof LIMITS) => void)[] = [];
+        fixture.limits.mockReset().mockImplementation(() => new Promise(resolve => { pending.push(resolve); }));
+        await act(async () => { vi.advanceTimersByTime(1600); retry()[0]!.props.onClick(); });
+        expect(text()).toContain('載入交易額度');
+        expect(text()).not.toContain('Failed to fetch');
+        await act(async () => { pending.forEach(resolve => resolve(LIMITS)); });
+        expect(text()).toContain('現股 可用/上限');
+        expect(text()).not.toContain('載入交易額度');
+    });
+    it('已有額度時刷新失敗保留上一份資料，錯誤留在狀態列', async () => {
+        fixture.limits.mockReset().mockResolvedValue(LIMITS);
+        await mount();
+        expect(text()).toContain('現股 可用/上限');
+        fixture.limits.mockReset().mockRejectedValue(new Error('Failed to fetch'));
+        await act(async () => { vi.advanceTimersByTime(1600); await controls!.refresh(); });
+        expect(text()).toContain('現股 可用/上限');
+        expect(text()).not.toContain('交易額度查詢失敗');
+        expect(controls!.error).toContain('Failed to fetch');
+    });
+    it('已有額度時遇到時段錯誤，舊資料不能看起來像剛更新', async () => {
+        fixture.limits.mockReset().mockResolvedValue(LIMITS);
+        await mount();
+        fixture.limits.mockReset().mockRejectedValue(new Error(WINDOW));
+        await act(async () => { vi.advanceTimersByTime(1600); await controls!.refresh(); });
+        expect(text()).toContain('現股 可用/上限');
+        expect(controls!.error).toContain('QCredit');
+    });
 });

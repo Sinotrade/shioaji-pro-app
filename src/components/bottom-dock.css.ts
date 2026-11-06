@@ -345,6 +345,29 @@ export const acctHint = style({
     lineHeight: 1.6,
 });
 
+export const acctError = style({
+    justifyContent: 'flex-start',
+    flexWrap: 'wrap',
+    fontFamily: vars.font.body,
+    fontSize: '0.64rem',
+    color: vars.color.danger,
+    lineHeight: 1.6,
+});
+
+export const acctRetry = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    fontFamily: vars.font.display,
+    fontSize: '0.64rem',
+    color: vars.color.foreground,
+    background: vars.color.inset,
+    border: `1px solid ${vars.color.border}`,
+    borderRadius: vars.radius.sm,
+    padding: '1px 8px',
+    cursor: 'pointer',
+});
+
 // ---- 風險指標色條 gauge ----
 
 export const riskRow = style({
