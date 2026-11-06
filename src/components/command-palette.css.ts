@@ -75,7 +75,8 @@ export const hint = style({
 export const results = style({
     ...searchResults,
     maxHeight: '18rem',
-    flex: '1 1 2.4rem',
+    // Basis stays auto: the box has no definite height, so a fixed basis collapses the list to one row.
+    flex: '0 1 auto',
     boxSizing: 'border-box',
     // Expanded details must never squeeze the selected result out of the list.
     minHeight: 'calc(2.4rem + 2px)',
