@@ -67,7 +67,7 @@ export function useLiveSnapshots(contracts: ContractBase[], fetcher?: () => Prom
         for (const contract of contracts) {
             let baseline = result.get(contract.code) ?? (contract.target_code ? result.get(contract.target_code) : undefined);
             const refetched = entered?.key === key ? entered.rows.get(contract.code) : undefined;
-            if (refetched && !(baseline && marketTime(baseline.datetime) > marketTime(refetched.datetime))) baseline = refetched;
+            if (refetched && (!baseline || marketTime(refetched.datetime) > marketTime(baseline.datetime))) baseline = refetched; // 同時間以全量為準
             const quote = getQuote(contract.code);
             const tick = quote?.tick;
             if (!baseline) continue; // No fabricated zeros while the initial query failed.
