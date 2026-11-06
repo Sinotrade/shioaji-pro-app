@@ -16,7 +16,7 @@
 import { LayoutGrid, List } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { groupFlow, shareShift, slotLabel } from '../lib/chain-flow';
-import { connectChainFlow, type FeedMember } from '../lib/chain-flow-feed';
+import { chainFlowStatus, connectChainFlow, type FeedMember } from '../lib/chain-flow-feed';
 import { INDUSTRY_MIN, industryThemes, memberCodes, stageMembers, themeCodes, tierRank } from '../lib/chain-map';
 import { RANK_METRICS, type RankMetric } from '../lib/chain-motion';
 import { entityName, twCodeOf } from '../lib/company-data';
@@ -92,7 +92,7 @@ export function ChainMap({
     onKindChange?: (kind: KindFilter) => void;
 }) {
     const chainFeed = useChainFeed();
-    const { data, ready, themes, index, nameOf, rootRef, rootSize, paused, reducedMotion, revision, book, feed, now, from, closed } = chainFeed;
+    const { data, ready, themes, index, nameOf, rootRef, rootSize, paused, reducedMotion, revision, book, now, from, closed } = chainFeed;
     const themeKey = themeKeyOf(useThemeSettings());
 
     const [themeId, setThemeIdState] = useState(() => {
@@ -225,15 +225,16 @@ export function ChainMap({
     // linked / followed stock, else the list's largest group (today's turnover); waits for the list
     // (細產業 loads its cards first)
     const checkedKind = useRef<KindFilter | null>(null);
-    const seeded = feed.batches > 0 && !feed.seeding;
     useEffect(() => {
-        // also waits for the snapshots: before them every turnover is 0, and before the open it stays 0
-        if (checkedKind.current === kind || !theme || !groupListReady(rows, seeded)) return;
+        // also waits for the snapshots: before them every turnover is 0, and before the open it stays 0.
+        // Read live: 細產業's drill seed starts in an effect above, after this render
+        const feed = chainFlowStatus();
+        if (checkedKind.current === kind || !theme || !groupListReady(rows, feed.batches > 0 && !feed.seeding)) return;
         checkedKind.current = kind;
         const next = fallbackGroup(rows, theme.id, linkedCode ?? focus);
         if (next) setThemeId(next);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [kind, rows, theme, seeded, setThemeId]);
+    }, [kind, rows, theme, setThemeId]);
 
     const pick = useCallback(
         (code: string) => {

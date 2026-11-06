@@ -7,10 +7,16 @@ import type { Theme } from '../lib/company-data/types';
 const m = vi.hoisted(() => ({
     snapshots: [] as unknown[],
     selected: [] as string[],
+    cards: null as Map<string, { code: string; subIndustry: string }> | null,
+    gate: null as Promise<void> | null,
     store: new Map<string, string>(),
 }));
 vi.mock('../lib/api', () => ({
-    apiPost: vi.fn(async (path: string) => (path.startsWith('/api/v1/data/snapshots') ? m.snapshots : { success: true, message: '' })),
+    apiPost: vi.fn(async (path: string) => {
+        if (!path.startsWith('/api/v1/data/snapshots')) return { success: true, message: '' };
+        await m.gate;
+        return m.snapshots;
+    }),
     apiGet: vi.fn(),
     apiPut: vi.fn(),
     apiDelete: vi.fn(),
@@ -23,7 +29,7 @@ vi.mock('../lib/stream', () => ({
     ensureStream: () => undefined,
     streamConnectionEpoch: () => 0,
 }));
-vi.mock('../lib/company-cards', () => ({ useCards: () => ({ cards: null, error: null, retry: () => undefined }) }));
+vi.mock('../lib/company-cards', () => ({ useCards: () => ({ cards: m.cards, error: null, retry: () => undefined }) }));
 vi.mock('./chain-rank', () => ({
     FlowRank: ({ selectedId }: { selectedId: string }) => {
         m.selected.push(selectedId);
@@ -69,6 +75,8 @@ describe('ChainMap selection before the open', () => {
         m.selected.length = 0;
         m.store.clear();
         m.snapshots = [];
+        m.cards = null;
+        m.gate = null;
         vi.stubGlobal('document', { hidden: false, addEventListener() {}, removeEventListener() {} });
         vi.stubGlobal('localStorage', {
             getItem: (k: string) => m.store.get(k) ?? null,
@@ -89,6 +97,32 @@ describe('ChainMap selection before the open', () => {
         await flush();
         expect(m.selected.at(-1)).toBe('chain.a');
         expect(m.store.get('sj-pro-chainmap-theme')).toBe('chain.a');
+    });
+
+    it('waits for 細產業 snapshots that start after the overview seed finished', async () => {
+        const row = (code: string, total_amount: number) => ({ code, close: 100, change_price: 1, total_amount, datetime: new Date().toISOString().replace('T', ' ') });
+        const card = (code: string, subIndustry: string) => [code, { code, subIndustry }] as const;
+        const small = ['6101', '6102', '6103', '6104'];
+        const large = ['6201', '6202', '6203', '6204'];
+        m.cards = new Map([...small.map((c) => card(c, 'small')), ...large.map((c) => card(c, 'large'))]);
+        act(() => {
+            view = create(createElement(ChainMap, { view: 'rank', kind: 'chain' }));
+        });
+        await flush();
+
+        let open!: () => void;
+        m.gate = new Promise((r) => { open = r; });
+        m.snapshots = [...small.map((c) => row(c, 1e6)), ...large.map((c) => row(c, 9e6))];
+        act(() => {
+            view!.update(createElement(ChainMap, { view: 'rank', kind: 'industry' }));
+        });
+        await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+        // snapshots still out: the first group must not be taken for the largest
+        expect(m.store.get('sj-pro-chainmap-theme')).toBe('chain.a');
+
+        open();
+        await flush();
+        expect(m.selected.at(-1)).toBe('industry.large');
     });
 
     it('waits for the snapshots, so a session with turnover still selects the largest group', async () => {
