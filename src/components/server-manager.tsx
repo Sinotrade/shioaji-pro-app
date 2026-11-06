@@ -539,8 +539,17 @@ export function ServerManager({
                 return selected;
             }
             const scenario = applyScenario(!!status?.running, status?.simulation, next.production);
-            const environmentChanged = next.production !== settings.production;
-            if (id && environmentChanged) setSwitchTarget(switchTargetFor(id, settings, next.profiles));
+            // against what runs, not the last save: 僅儲存 may have stored it earlier.
+            // Nothing running: a retry of a failed switch still is that switch.
+            const environmentChanged = status?.running
+                ? status.simulation === next.production
+                : next.production !== settings.production;
+            if (environmentChanged || switchTarget) {
+                setSwitchTarget({
+                    environment: next.production ? 'production' : 'simulation',
+                    accountOnly: !environmentChanged && !!switchTarget?.accountOnly,
+                });
+            }
             const ok = status?.running ? await doRestart(next, scenario) : await doStart(next, scenario);
             if (!ok) throw new Error('帳號已儲存，但伺服器未能套用。');
         }

@@ -229,6 +229,34 @@ describe('credential profiles in server settings', () => {
             expect(text()).not.toContain('未完成'); expect(text()).toContain('設定已儲存，請按「啟動」套用');
         } finally { vi.useRealTimers(); }
     });
+    it('tracks applying an environment change that was saved earlier, against the running server (#370)', async () => {
+        const saved = { ...initial, production: true, caPath: '/fixture/ca.pfx', hasCaPassword: true, profiles: [{ ...one, environment: 'production' as const, caPath: '/fixture/ca.pfx', hasCA: true, hasCaPassword: true }, two] };
+        mocks.load.mockResolvedValue(structuredClone(saved)); mocks.profile.mockResolvedValueOnce(saved);
+        mocks.start.mockResolvedValue({ ok: true, output: '', port: 12345, attached: false });
+        await open(); await click('編輯 主帳號'); await click('儲存並重啟');
+        expect(mocks.start).toHaveBeenCalledOnce();
+        expect(text()).toContain('正在切換到正式環境');
+        expect(view.root.findByType(CredentialProfiles).props.busy).toBe(true);
+    });
+    it('keeps tracking a corrected retry of a failed switch through the health wait (#370)', async () => {
+        const selected = { ...initial, activeProfileId: 'two', production: true, credentialRevision: 'two-rev', caPath: two.caPath, hasCaPassword: true };
+        mocks.select.mockResolvedValueOnce(selected);
+        mocks.start.mockResolvedValueOnce({ ok: false, output: 'boom', port: 12345, attached: false });
+        await open();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+        try {
+            await click('切換使用'); await click('確認切換到正式');
+            expect(text()).toContain('切換到正式環境未完成');
+            mocks.status.mockResolvedValue({ running: false });
+            await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+            mocks.profile.mockResolvedValueOnce(selected);
+            mocks.start.mockResolvedValueOnce({ ok: true, output: '', port: 12345, attached: false });
+            await click('編輯 備用帳號'); await click('儲存並啟動');
+            expect(mocks.start).toHaveBeenCalledTimes(2);
+            expect(text()).toContain('正在切換到正式環境'); expect(text()).not.toContain('未完成');
+            expect(view.root.findByType(CredentialProfiles).props.busy).toBe(true);
+        } finally { vi.useRealTimers(); }
+    });
     it('keeps 僅儲存 from restarting but says on the main screen that the change is pending (#370)', async () => {
         mocks.profile.mockResolvedValueOnce({ ...initial, production: true, caPath: '/fixture/ca.pfx', hasCaPassword: true, profiles: [{ ...one, environment: 'production', caPath: '/fixture/ca.pfx', hasCA: true, hasCaPassword: true }, two] });
         await open(); await click('編輯 主帳號'); await click('僅儲存');
