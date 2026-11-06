@@ -210,5 +210,5 @@ it('single-direction futures without two-way fills keep the weighted average and
 it('fully offset mixed rows show no position bar', async () => {
     const { bar } = await render([row(0, 'Sell', 1, 45552, 1000), row(1, 'Buy', 1, 45513, 950)]);
     expect(bar).not.toContain('多空並存');
-    expect(bar).not.toContain('平倉');
+    expect(bar).toContain('目前沒有持倉'); // 平倉鈕占位但停用
 });

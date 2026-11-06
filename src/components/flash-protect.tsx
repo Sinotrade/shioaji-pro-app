@@ -62,7 +62,7 @@ export function FlashProtectStrip({ protect, block, protectedQty, background, un
                     onClick={() => setOpen(!open)}
                 >
                     <Icon size={11} aria-hidden />
-                    停損停利{p.on ? (block ? '・不符' : protectedQty ? `・保護 ${protectedQty}` : '・開') : '・關'}
+                    <span className={styles.protectChipText}>停損停利{p.on ? (block ? '・不符' : protectedQty ? `・保護 ${protectedQty}` : '・開') : '・關'}</span>
                 </button>
                 {menu}
             </span>

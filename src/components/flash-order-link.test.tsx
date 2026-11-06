@@ -1,5 +1,7 @@
 // 閃電連動：換標的、換對應商品、換群組（linkKey 變了）同一次 render 解除點價
 // 下單，確認視窗開著時的那筆不送；商品列的種類標籤；價差對照列。
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createElement, useLayoutEffect } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -272,4 +274,70 @@ it('a paused panel shows no old-contract info: no order count, no credit banner'
     const r = await mount(stk, { trades: [trade], credit: { cond: 'MarginTrading', daytradeShort: false }, onCreditChange: () => undefined, paused: '載入商品…' });
     expect(text(r.root)).not.toContain('全刪 3');
     expect(byTestId(r, 'flash-credit-banner')).toBeUndefined();
+});
+
+// #376：版面只看面板寬度。對照列與動作列的 DOM 分組固定，內容長短不改變位置。
+it('keeps the reference row in fixed slots whatever the lengths', async () => {
+    const stockFuture = await mount(cdf);
+    const row = byTestId(stockFuture, 'flash-ref')!;
+    expect(row.children).toHaveLength(3);
+    const lots = byTestId(stockFuture, 'flash-ref-lots')!;
+    expect(text(lots)).toBe('1口=2張');
+    expect(row.children[2]).toBe(lots); // always the last slot, pinned right by CSS
+    // the row's tooltip keeps what a narrow panel hides
+    expect(row.props.title).toContain('(+0.92%)');
+    expect(row.props.title).toContain('1口=2張');
+    const odd = await mount(stk, { lot: 'IntradayOdd', onLotChange: () => undefined });
+    expect(byTestId(odd, 'flash-ref')!.children).toHaveLength(2);
+    expect(byTestId(odd, 'flash-ref-lots')).toBeUndefined();
+});
+
+it('keeps flatten, cancel and protect in the same slots with or without a position', async () => {
+    const r = await mount(stk);
+    const group = () => byTestId(r, 'flash-action-secondary')!;
+    const slots = () => group().children.map(c => text(c as ReactTestInstance).replace(/\s*\d+$/, ''));
+    const empty = slots();
+    expect(empty.slice(0, 3)).toEqual(['平倉', '全刪', expect.stringContaining('停損停利')]);
+    expect(button(r, '平倉').props.disabled).toBe(true);
+    expect(button(r, '平倉').props.title).toBe('目前沒有持倉');
+    const position = { code: '2330', quantity: 1000, direction: 'Buy', price: 1000, last_price: 1085, pnl: 1, account_type: 'S', cond: 'Cash', account: accounts[0] };
+    await show(r, stk, { positions: [position] });
+    expect(slots().slice(0, 3)).toEqual(empty.slice(0, 3));
+    expect(button(r, '平倉').props.title).toContain('平倉');
+    expect(button(r, '平倉').props.title).not.toBe('目前沒有持倉');
+    const bar = group().parent!;
+    expect(bar.children).toHaveLength(3); // 市價買、市價賣、次要動作群
+    expect(text(bar.children[0] as ReactTestInstance)).toBe('市價買');
+    expect(text(bar.children[1] as ReactTestInstance)).toBe('市價賣');
+});
+
+it('paused keeps the flatten slot, disabled, with the reason', async () => {
+    const position = { code: '2330', quantity: 1000, direction: 'Buy', price: 1000, last_price: 1085, pnl: 1, account_type: 'S', cond: 'Cash', account: accounts[0] };
+    const r = await mount(stk, { positions: [position], paused: '暫停送單' });
+    expect(button(r, '平倉').props.disabled).toBe(true);
+    expect(button(r, '平倉').props.title).toBe('暫停送單');
+    expect(text(byTestId(r, 'flash-action-secondary')!).startsWith('平倉')).toBe(true);
+});
+
+it('never lets the layout wrap on content: rows are grids or no-wrap, labels stay on one line', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/components/flash-order.css.ts'), 'utf8');
+    const block = (name: string) => css.slice(css.indexOf(`export const ${name} = style(`), css.indexOf('\n});', css.indexOf(`export const ${name} = style(`)));
+    expect(block('refRow')).not.toContain('flexWrap');
+    expect(block('refRow')).toContain("whiteSpace: 'nowrap'");
+    expect(block('actionBar')).not.toContain('flexWrap');
+    expect(block('actionBar')).toContain("display: 'grid'");
+    expect(block('actionSecondary')).not.toContain('flexWrap');
+    // the retreat rules depend on the panel width only, at these thresholds
+    expect(css).toContain('const NARROW = `${flashContainer} (max-width: 460px)`');
+    expect(css).toContain('const TIGHT = `${flashContainer} (max-width: 300px)`');
+    expect(block('actionBar')).toContain("[NARROW]: { gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }");
+    expect(block('actionSecondary')).toContain("[NARROW]: { gridColumn: '1 / -1' }");
+    expect(block('refPct')).toContain("[TIGHT]: { display: 'none' }");
+    // the narrowest panel a workspace can make (~204px inside) must still fit the 7-column ladder
+    expect(css).toContain('const MINIMAL = `${flashContainer} (max-width: 230px)`');
+    expect(block('cols7')).toContain('[MINIMAL]: { gridTemplateColumns: COLS7_MINIMAL }');
+    expect(block('accountPick')).toContain("[NARROW]: { flex: '1 1 0' }"); // a long account label cannot push the gear down
+    const mkt = css.slice(css.indexOf('const mktBase = style('), css.indexOf('export const mktBtn'));
+    expect(mkt).toContain("whiteSpace: 'nowrap'");
+    expect(mkt).toContain('minWidth: 0');
 });
