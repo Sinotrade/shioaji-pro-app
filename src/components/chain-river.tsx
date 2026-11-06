@@ -1,4 +1,4 @@
-// src/components/chain-river.tsx — the canvas engine behind the 排行 lanes.
+// src/components/chain-river.tsx：the canvas engine behind the 金流 (rank) lanes.
 //
 // DOM owns the rows (name, value, hit target); one canvas over the list owns
 // everything that moves: a dashed centre axis, each group's soft gradient
@@ -13,6 +13,8 @@
 
 import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 import {
+    addToBatch,
+    alphaStep,
     approach,
     capParticles,
     easeStep,
@@ -297,7 +299,9 @@ export function useRiver({
             // particles: a short streak in the lane colour behind a bright spark
             if (!reduce && particles.current.length > 0) {
                 const kept: Particle[] = [];
-                ctx.lineCap = 'round';
+                // streaks: x0, y, x1 by colour / alpha / width; sparks: x, y, r by colour / alpha
+                const streaks = new Map<string, number[]>();
+                const sparks = new Map<string, number[]>();
                 for (const pt of particles.current) {
                     const st = pt.lane;
                     if (!st.live) continue;
@@ -311,19 +315,37 @@ export function useRiver({
                     const x = cx + dir * len * pt.p;
                     const y = yMid + pt.off * st.thick;
                     const d = particleAlpha(pt.p) * 1.15 * (palette.dark ? st.alpha : 0.3 + 0.7 * st.alpha);
-                    const color = dir > 0 ? palette.up : palette.down;
-                    ctx.strokeStyle = rgba(color, d * (palette.dark ? 0.5 : 0.45));
-                    ctx.lineWidth = pt.r;
-                    ctx.beginPath();
-                    ctx.moveTo(x - dir * Math.min(10, len * 0.12), y);
-                    ctx.lineTo(x, y);
-                    ctx.stroke();
-                    ctx.fillStyle = `rgba(${dir > 0 ? palette.dot.up : palette.dot.down},${Math.min(1, d * 0.85 * pt.b).toFixed(3)})`;
-                    ctx.beginPath();
-                    ctx.arc(x, y, pt.r * 0.75, 0, Math.PI * 2);
-                    ctx.fill();
+                    const side = dir > 0 ? 'up' : 'down';
+                    // widths 0.8…2 px in 0.4 px steps
+                    const width = Math.round(pt.r * 2.5) / 2.5;
+                    addToBatch(streaks, `${side}|${alphaStep(d * (palette.dark ? 0.5 : 0.45))}|${width}`, x - dir * Math.min(10, len * 0.12), y, x);
+                    addToBatch(sparks, `${side}|${alphaStep(d * 0.85 * pt.b)}`, x, y, pt.r * 0.75);
                 }
                 particles.current = capParticles(kept);
+                ctx.lineCap = 'round';
+                for (const [key, v] of streaks) {
+                    const [side, alpha, width] = key.split('|');
+                    if (alpha === '0') continue;
+                    ctx.strokeStyle = rgba(side === 'up' ? palette.up : palette.down, Number(alpha));
+                    ctx.lineWidth = Number(width);
+                    ctx.beginPath();
+                    for (let i = 0; i < v.length; i += 3) {
+                        ctx.moveTo(v[i]!, v[i + 1]!);
+                        ctx.lineTo(v[i + 2]!, v[i + 1]!);
+                    }
+                    ctx.stroke();
+                }
+                for (const [key, v] of sparks) {
+                    const [side, alpha] = key.split('|');
+                    if (alpha === '0') continue;
+                    ctx.fillStyle = `rgba(${side === 'up' ? palette.dot.up : palette.dot.down},${alpha})`;
+                    ctx.beginPath();
+                    for (let i = 0; i < v.length; i += 3) {
+                        ctx.moveTo(v[i]! + v[i + 2]!, v[i + 1]!);
+                        ctx.arc(v[i]!, v[i + 1]!, v[i + 2]!, 0, Math.PI * 2);
+                    }
+                    ctx.fill();
+                }
             }
 
             // particles keep the loop alive; reduced motion stops once settled

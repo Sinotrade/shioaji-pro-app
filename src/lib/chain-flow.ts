@@ -176,12 +176,18 @@ export interface CodeFlow {
     seedClose: number | null;
     /** Latest cumulative turnover seen on a tick. */
     tickAmount: number;
+    /** Volume (lots) per bar, the snapshot's session-to-date volume, and the previous session's: 量比. */
+    volume: Float64Array;
+    seedVolume: number;
+    yesterdayVolume: number | null;
 }
 
 export interface SeedInput {
     ref: number | null;
     close: number | null;
     totalAmount: number;
+    totalVolume?: number;
+    yesterdayVolume?: number | null;
     shares: number | null;
     /** First slot not covered by the snapshot (bars from this slot on are new). */
     slot: number;
@@ -214,6 +220,9 @@ export class FlowBook {
                 seedSlot: 0,
                 seedClose: null,
                 tickAmount: 0,
+                volume: new Float64Array(SESSION_SLOTS),
+                seedVolume: 0,
+                yesterdayVolume: null,
             };
             this.codes.set(code, flow);
         }
@@ -250,6 +259,8 @@ export class FlowBook {
             if (input.at !== undefined && input.at > flow.lastAt) flow.lastAt = input.at;
         }
         flow.seedAmount = Math.max(0, input.totalAmount || 0);
+        flow.seedVolume = Math.max(0, input.totalVolume || 0);
+        if (input.yesterdayVolume && input.yesterdayVolume > 0) flow.yesterdayVolume = input.yesterdayVolume;
         flow.seedSlot = Math.max(0, Math.min(SESSION_SLOTS, input.slot));
         // the first bar's direction depends on the baseline just installed
         const first = firstFilled(flow.close, 0);
@@ -262,6 +273,7 @@ export class FlowBook {
         if (bar.date) this.ensureDate(bar.date);
         const flow = this.entry(bar.code);
         flow.amount[bar.slot] = bar.amount;
+        flow.volume[bar.slot] = bar.volume;
         flow.close[bar.slot] = bar.close;
         flow.given[bar.slot] = bar.net !== undefined ? 1 : 0;
         flow.net[bar.slot] = bar.net ?? computeNet(flow, bar.slot);
@@ -340,6 +352,24 @@ export function sessionTurnover(flow: CodeFlow): number {
     return Math.max(flow.seedAmount + bars, all, flow.tickAmount);
 }
 
+/** Session-to-date volume (lots), counted like sessionTurnover (ticks carry no volume here). */
+export function sessionVolume(flow: CodeFlow): number {
+    let bars = 0;
+    let all = 0;
+    for (let i = 0; i < SESSION_SLOTS; i += 1) {
+        const v = flow.volume[i]!;
+        all += v;
+        if (i >= flow.seedSlot) bars += v;
+    }
+    return Math.max(flow.seedVolume + bars, all);
+}
+
+/** 量比 as the quote board defines it: session-to-date volume ÷ the previous session's whole-day volume. */
+export function codeVolumeRatio(flow: CodeFlow | undefined): number | null {
+    if (!flow?.yesterdayVolume) return null;
+    return sessionVolume(flow) / flow.yesterdayVolume;
+}
+
 export function codePct(flow: CodeFlow | undefined): number | null {
     if (!flow || !flow.ref || !flow.last) return null;
     return ((flow.last - flow.ref) / flow.ref) * 100;
@@ -364,6 +394,8 @@ export interface GroupFlow {
     /** Session-to-date turnover (seed + bars). */
     total: number;
     pct: number | null;
+    /** Σ session volume ÷ Σ previous-session volume over members that have both; null without any. */
+    volumeRatio: number | null;
     breadth: Breadth;
 }
 
@@ -376,16 +408,28 @@ export function groupFlow(book: FlowBook, codes: Iterable<string>, now = book.la
     let total = 0;
     let wSum = 0;
     let wPct = 0;
+    let volToday = 0;
+    let volYesterday = 0;
     for (const code of codes) {
         count += 1;
         const flow = book.codes.get(code);
         if (!flow) continue;
+        let volAll = 0;
+        let volAfterSeed = 0;
         for (let i = 0; i < SESSION_SLOTS; i += 1) {
             const a = flow.amount[i]!;
             if (a > 0) {
                 turnover[i] = turnover[i]! + a;
                 net[i] = net[i]! + barNet(flow, i);
             }
+            const v = flow.volume[i]!;
+            volAll += v;
+            if (i >= flow.seedSlot) volAfterSeed += v;
+        }
+        if (flow.yesterdayVolume) {
+            // sessionVolume, folded into this pass
+            volToday += Math.max(flow.seedVolume + volAfterSeed, volAll);
+            volYesterday += flow.yesterdayVolume;
         }
         total += sessionTurnover(flow);
         const pct = codePct(flow);
@@ -426,6 +470,7 @@ export function groupFlow(book: FlowBook, codes: Iterable<string>, now = book.la
         accel,
         total,
         pct: wSum > 0 ? wPct / wSum : null,
+        volumeRatio: volYesterday > 0 ? volToday / volYesterday : null,
         breadth,
     };
 }

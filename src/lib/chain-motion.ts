@@ -455,14 +455,14 @@ export function heatCell(net: Float64Array, turnover: Float64Array, now: number 
 /**
  * Adaptive full-colour ratio: the `q` quantile of the current |ratios|, so
  * the spread of today's flows stays visible instead of every tile
- * saturating. Never below HEAT_FLOOR.
+ * saturating. Never below `floor` (HEAT_FLOOR for flow ratios).
  */
-export function heatFull(ratios: Iterable<number | null>, q = 0.9): number {
+export function heatFull(ratios: Iterable<number | null>, q = 0.9, floor = HEAT_FLOOR): number {
     const abs: number[] = [];
     for (const r of ratios) if (r !== null && Number.isFinite(r)) abs.push(Math.abs(r));
-    if (abs.length === 0) return HEAT_FULL;
+    if (abs.length === 0) return Math.max(floor, HEAT_FULL);
     abs.sort((a, b) => a - b);
-    return Math.max(HEAT_FLOOR, abs[Math.min(abs.length - 1, Math.floor(abs.length * q))]!);
+    return Math.max(floor, abs[Math.min(abs.length - 1, Math.floor(abs.length * q))]!);
 }
 
 /** Colour strength 0…1 of a ratio against `full` (gentle 0.8 power so mild flows still register). */

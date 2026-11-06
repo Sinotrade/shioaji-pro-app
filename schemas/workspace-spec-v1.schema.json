@@ -295,7 +295,8 @@
           "enum": [
             "all",
             "chain",
-            "theme"
+            "theme",
+            "industry"
           ]
         }
       }

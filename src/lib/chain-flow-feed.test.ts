@@ -110,6 +110,135 @@ describe('connectChainFlow', () => {
         expect(mocks.ticks.size).toBe(0);
     });
 
+    it('keeps a code another drill still feeds when one drill is released, and reseeds it later', async () => {
+        const holdings = connectChainFlow([member('6643')], 'drill');
+        const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+        await flush();
+        await chainFlowSeedIdle();
+        expect(mocks.snapshots.mock.calls.flatMap(([batch]) => batch.map((c) => c.code))).toEqual(['6643', '3529']);
+
+        industry();
+        // 6643 still feeds 持股族群: only 3529 is dropped
+        const [, dropped] = mocks.unsubscribe.mock.calls.at(-1)!;
+        expect((dropped as ContractBase[]).map((c) => c.code)).toEqual(['3529']);
+
+        // back to 細產業: 3529 missed bars while released, so it is seeded again
+        const again = connectChainFlow([member('6643'), member('3529')], 'drill');
+        await flush();
+        await chainFlowSeedIdle();
+        expect(mocks.snapshots.mock.calls.at(-1)![0].map((c) => c.code)).toEqual(['3529']);
+        again();
+        holdings();
+    });
+
+    it('does not hold a code back for a drill whose batch failed to subscribe', async () => {
+        const holdings = connectChainFlow([member('6643')], 'drill');
+        mocks.subscribe.mockRejectedValueOnce(new Error('timeout')); // 細產業's batch
+        const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+        await flush();
+        holdings();
+        // the industry batch never fed 6643, so 持股族群 really drops it
+        const [, dropped] = mocks.unsubscribe.mock.calls.at(-1)!;
+        expect((dropped as ContractBase[]).map((c) => c.code)).toEqual(['6643']);
+        industry();
+    });
+
+    describe('released while another drill is still subscribing to a shared code', () => {
+        function deferredSubscribe() {
+            let reject!: (reason: Error) => void;
+            let resolve!: () => void;
+            mocks.subscribe.mockImplementationOnce(() => new Promise((ok, fail) => {
+                resolve = () => ok({ success: true, message: '' });
+                reject = fail;
+            }));
+            return { fail: (reason: Error) => reject(reason), succeed: () => resolve() };
+        }
+        const unsubscribed = () => mocks.unsubscribe.mock.calls.map(([key, list]) => [key, (list as ContractBase[]).map((c) => c.code)]);
+
+        it('drops the code itself once that subscribe fails', async () => {
+            const holdings = connectChainFlow([member('6643')], 'drill');
+            await flush();
+            const holdingsKey = mocks.subscribe.mock.calls.at(-1)![0];
+            const pending = deferredSubscribe();
+            const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+            await flush();
+
+            holdings();
+            await flush();
+            // this release is the only one that can drop 6643: it waits for the verdict
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+
+            pending.fail(new Error('timeout'));
+            await flush();
+            expect(unsubscribed()).toEqual([[holdingsKey, ['6643']]]);
+            industry();
+        });
+
+        it('leaves the code to that drill once its subscribe succeeds', async () => {
+            const holdings = connectChainFlow([member('6643')], 'drill');
+            await flush();
+            const holdingsKey = mocks.subscribe.mock.calls.at(-1)![0];
+            const pending = deferredSubscribe();
+            const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+            await flush();
+
+            holdings();
+            pending.succeed();
+            await flush();
+            expect(unsubscribed()).toEqual([[holdingsKey, []]]);
+            industry();
+        });
+
+        it('reseeds the dropped code when it is subscribed again', async () => {
+            const holdings = connectChainFlow([member('6643')], 'drill');
+            await flush();
+            await chainFlowSeedIdle();
+            const pending = deferredSubscribe();
+            const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+            await flush();
+            holdings();
+            pending.fail(new Error('timeout'));
+            await flush();
+            await chainFlowSeedIdle();
+
+            const again = connectChainFlow([member('6643')], 'drill');
+            await flush();
+            await chainFlowSeedIdle();
+            expect(mocks.snapshots.mock.calls.at(-1)![0].map((c) => c.code)).toEqual(['6643']);
+            again();
+            industry();
+        });
+
+        it('still drops the code when the drill it waited for is released too', async () => {
+            const holdings = connectChainFlow([member('6643')], 'drill');
+            await flush();
+            const holdingsKey = mocks.subscribe.mock.calls.at(-1)![0];
+            const pending = deferredSubscribe();
+            const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+            await flush();
+            const industryKey = mocks.subscribe.mock.calls.at(-1)![0];
+
+            holdings();
+            industry();
+            pending.succeed();
+            await flush();
+            expect(unsubscribed().sort()).toEqual([[holdingsKey, ['6643']], [industryKey, ['3529', '6643']]].sort());
+        });
+    });
+
+    it('reports seeding from the moment a feed starts, before the queued seed runs', () => {
+        const release = connectChainFlow([member('2330')]);
+        expect(chainFlowStatus().seeding).toBe(true);
+        release();
+    });
+
+    it('gives drills of different codes different keys even with the same ends and size', () => {
+        const a = kbarBatches(['1234', '5678', '9999'].map(member), FEED_BATCH, 'drill');
+        const b = kbarBatches(['1234', '4321', '9999'].map(member), FEED_BATCH, 'drill');
+        expect(a[0]!.key).not.toBe(b[0]!.key);
+        expect(kbarBatches(['1234', '5678', '9999'].map(member), FEED_BATCH, 'drill')[0]!.key).toBe(a[0]!.key);
+    });
+
     it('reuses snapshots another panel already fetched', async () => {
         mocks.shared.set('2330', snapshot('2330', 1010, 10, '2026-10-21 09:59:50.000000'));
         const release = connectChainFlow([member('2330'), member('2317')]);
