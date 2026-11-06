@@ -36,6 +36,7 @@ import {
     centeredRange,
     fetchChainSnapshots,
     inRange,
+    liveRangeFor,
     nextLiveRange,
     scrollTopFor,
     visibleRange,
@@ -548,15 +549,20 @@ export function OptionChain({
     // 即時訂閱窗（#371）：只有畫面內加緩衝的檔位訂閱，其他檔位留快照
     const chainKey = expiry;
     const [measured, setMeasured] = useState<{ key: string; range: StrikeRange } | null>(null);
+    const [unmeasurable, setUnmeasurable] = useState(false);
     const liveRange = measured?.key === chainKey ? measured.range : centeredRange(centerIndex, rows.length);
+    // 價平還沒算出來就訂閱的話，訂的是中位履約價那一窗，隨後整批退掉（#386）。
+    // 指數與台指期都查不到時才以中位數為準。量到畫面前也先不訂，避免多訂一輪。
+    const atmPending = atm === null && refQuery.updatedAt == null && !refQuery.error;
+    const windowReady = !atmPending && (measured?.key === chainKey || unmeasurable);
     const allContracts = useMemo(
         () => rows.flatMap((r) => [r.call, r.put]).filter((c): c is OptContract => !!c),
         [rows],
     );
     const liveContracts = useMemo(
-        () => rows.slice(liveRange.first, liveRange.last + 1)
+        () => (windowReady ? rows.slice(liveRange.first, liveRange.last + 1) : [])
             .flatMap((r) => [r.call, r.put]).filter((c): c is OptContract => !!c),
-        [rows, liveRange.first, liveRange.last],
+        [rows, windowReady, liveRange.first, liveRange.last],
     );
     const chainSnapshots = useCallback(() => fetchChainSnapshots(allContracts), [allContracts]);
     const { snapshots: snaps, refresh: refreshQuotes, loading: quotesLoading, error: quotesError } = useLiveSnapshots(allContracts, chainSnapshots, liveContracts);
@@ -567,8 +573,8 @@ export function OptionChain({
     const autoScrollTop = useRef<number | null>(null);
     const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const [atmAway, setAtmAway] = useState(false);
-    const latest = useRef({ chainKey, total: rows.length, centerIndex, liveRange });
-    latest.current = { chainKey, total: rows.length, centerIndex, liveRange };
+    const latest = useRef({ chainKey, total: rows.length, centerIndex, liveRange, atmPending });
+    latest.current = { chainKey, total: rows.length, centerIndex, liveRange, atmPending };
 
     const measure = useCallback(() => {
         const body = bodyRef.current;
@@ -588,14 +594,22 @@ export function OptionChain({
         const m = measure();
         if (!m) return;
         noteAtm(m.visible);
-        const { chainKey: key, total, liveRange: current } = latest.current;
-        const range = nextLiveRange(current, m.visible, total);
-        setMeasured((prev) => (prev?.key === key && prev.range === range ? prev : { key, range }));
+        const { chainKey: key, total, liveRange: current, atmPending: pending } = latest.current;
+        if (pending) return;
+        // 這個到期第一次量到畫面：直接用畫面加緩衝；之後才有遲滯
+        setMeasured((prev) => {
+            if (prev?.key !== key) return { key, range: liveRangeFor(m.visible, total) };
+            const range = nextLiveRange(current, m.visible, total);
+            return prev.range === range ? prev : { key, range };
+        });
     }, [measure, noteAtm]);
 
     const centerOnAtm = useCallback(() => {
         const m = measure();
-        if (!m) return;
+        if (!m) {
+            setUnmeasurable(true); // 面板隱藏中：先用價平上下各八檔
+            return;
+        }
         m.body.scrollTop = scrollTopFor(latest.current.centerIndex, m.body.clientHeight, m.headerHeight, m.rowHeight);
         autoScrollTop.current = m.body.scrollTop;
         settle();
@@ -615,7 +629,7 @@ export function OptionChain({
         // 使用者捲走後不搶捲動位置，但價平移動了提示仍要更新
         const m = measure();
         if (m) noteAtm(m.visible);
-    }, [showing, chainKey, centerIndex, rows.length, centerOnAtm, measure, noteAtm]);
+    }, [showing, chainKey, centerIndex, atmPending, rows.length, centerOnAtm, measure, noteAtm]);
     useEffect(() => {
         const body = bodyRef.current;
         if (!showing || !body || typeof ResizeObserver === 'undefined') return;

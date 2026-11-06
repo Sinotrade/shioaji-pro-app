@@ -37,7 +37,7 @@ export function useLiveSnapshots(contracts: ContractBase[], fetcher?: () => Prom
         if (!live) return;
         const before = seen.current?.key === key ? seen.current.codes : null;
         seen.current = { key, codes: new Set(tracked.map(c => c.code)) };
-        const fresh = before ? tracked.filter(c => !before.has(c.code)) : []; // 第一次由全量快照涵蓋
+        const fresh = before?.size ? tracked.filter(c => !before.has(c.code)) : []; // 第一次由全量快照涵蓋
         if (fresh.length === 0) return;
         requests.current += 1;
         const request = requests.current;

@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
 const market = vi.hoisted(() => ({
     quotes: {} as Record<string, unknown>,
     snapshots: undefined as unknown[] | undefined,
+    refSettled: true,
     refresh: vi.fn(),
 }));
 const snapshotCodes = vi.hoisted(() => ({ last: [] as string[], live: [] as string[], rows: new Map<string, unknown>() }));
@@ -25,7 +26,7 @@ vi.mock('../hooks/use-stream', () => ({
     useQuote: (code: string) => market.quotes[code],
 }));
 vi.mock('../hooks/use-query', () => ({
-    useQuery: () => ({ data: market.snapshots, refresh: market.refresh }),
+    useQuery: () => ({ data: market.snapshots, refresh: market.refresh, updatedAt: market.refSettled ? 1 : null, error: null }),
 }));
 vi.mock('../hooks/use-live-snapshots', () => ({
     useLiveSnapshots: (contracts: { code: string }[], _fetcher: unknown, live?: { code: string }[]) => {
@@ -99,6 +100,7 @@ beforeEach(() => {
     });
     market.quotes = { IX0001: { index: { close: '40300', reference: '40250' } } };
     market.snapshots = undefined;
+    market.refSettled = true;
     snapshotCodes.rows = new Map();
     api.fetchOptionRoots.mockResolvedValue([
         { root: 'TEO', name: '電子選擇權' },
@@ -603,14 +605,14 @@ describe('full strike range', () => {
     });
 
     // 假的捲動容器：200px 高、表頭 40px、每列 20px，一次看得到 8 列
-    const mountMeasured = async () => {
+    const mountMeasured = async ({ quotes = { IX0001: { index: { close: '43000', reference: '42950' } } } as Record<string, unknown> } = {}) => {
         const body = {
             scrollTop: 0,
             clientHeight: 200,
             querySelector: (q: string) => ({ getBoundingClientRect: () => ({ height: q === 'thead' ? 40 : 20 }) }),
         };
         const long = series('TX2', '2026-10-14', 'Wed', 60);
-        market.quotes = { IX0001: { index: { close: '43000', reference: '42950' } } };
+        market.quotes = quotes;
         api.fetchOptionRoots.mockResolvedValue([{ root: 'TXO', name: '臺指選擇權' }, { root: 'TX2', name: '臺指選擇權 週三W2' }]);
         api.fetchOptions.mockImplementation(async (root: string) => (root === 'TX2' ? long : BY_ROOT[root] ?? []));
         const onPick = vi.fn();
@@ -639,6 +641,32 @@ describe('full strike range', () => {
         await act(async () => { vi.advanceTimersByTime(1); });
         expect(snapshotCodes.live).toContain('TX245000C-2026-10-14');
         expect(snapshotCodes.live).not.toContain('TX243000C-2026-10-14');
+    });
+
+    it('subscribes nothing until ATM is known, then only the measured window', async () => {
+        market.refSettled = false;
+        const { r, onPick } = await mountMeasured({ quotes: {} });
+        expect(snapshotCodes.last).toHaveLength(120);
+        expect(snapshotCodes.live).toEqual([]);
+        market.quotes = { IX0001: { index: { close: '43000', reference: '42950' } } };
+        await act(async () => { r.update(createElement(OptionChain, { onPick })); });
+        expect(snapshotCodes.live).toContain('TX243000C-2026-10-14');
+        expect(snapshotCodes.live).toHaveLength((30 + 4 + 3 - (26 - 3) + 1) * 2); // rows 23..37, screen 26..34 plus 3 each way
+    });
+
+    it('falls back to the median once the ATM reference query has settled empty', async () => {
+        market.refSettled = true;
+        await mountMeasured({ quotes: {} });
+        expect(snapshotCodes.live.length).toBeGreaterThan(0);
+        expect(snapshotCodes.live).toContain('TX243000C-2026-10-14'); // strike at the median of 60
+    });
+
+    it('a new expiry gets the screen plus buffer at once, not the eight-strike default', async () => {
+        const { r } = await mountMeasured();
+        const n = snapshotCodes.live.length / 2;
+        expect(n).toBe(15);
+        expect(snapshotCodes.live).toContain('TX243700C-2026-10-14');
+        expect(r).toBeTruthy();
     });
 
     it('stops following ATM after a manual scroll, but still says when ATM leaves or returns', async () => {

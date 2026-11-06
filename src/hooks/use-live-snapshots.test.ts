@@ -140,6 +140,14 @@ describe('snapshot plus stream projection', () => {
             await render([a, c], [c]);
             expect(value.snapshots.get('C')).toMatchObject({ total_volume: 30 });
         });
+        it('a window that starts empty relies on the full query when it first fills', async () => {
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [] })); });
+            expect(mocks.retain).not.toHaveBeenCalled();
+            mocks.fetch.mockClear();
+            await render([a, c], [c]);
+            expect(mocks.fetch).not.toHaveBeenCalled();
+            expect(retained()).toEqual(['C:Tick', 'C:BidAsk']);
+        });
         it('keeps the full snapshot when the entered query fails', async () => {
             await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [a] })); });
             mocks.fetch.mockImplementationOnce(async () => { throw new Error('down'); });

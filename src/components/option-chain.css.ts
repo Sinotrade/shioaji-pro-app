@@ -7,6 +7,7 @@ const chainContainer = createContainer();
 // #371 多一欄成交量後的窄面板退讓：先收欄距，再收買、賣兩欄（點選後在閃電看五檔）
 const TIGHT = `${chainContainer} (max-width: 500px)`;
 const NARROW = `${chainContainer} (max-width: 430px)`;
+const MINIMAL = `${chainContainer} (max-width: 300px)`;
 
 export const wrap = style({
     display: 'flex',
@@ -29,8 +30,8 @@ export const toolbar = style({
 
 export const atm = style({
     marginLeft: 'auto',
-    // 極窄面板時讓位給到期選擇器的最小寬度，以省略號截斷（全文在 title）
-    flexShrink: 1,
+    // 窄面板時先縮這一格，到期選擇器保持完整；全文在 title
+    flexShrink: 1000,
     minWidth: 0,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -39,6 +40,7 @@ export const atm = style({
     fontSize: '0.68rem',
     color: vars.color.mutedForeground,
     fontVariantNumeric: 'tabular-nums',
+    '@container': { [MINIMAL]: { display: 'none' } },
 });
 
 // 合約載入狀態：工具列下方單獨一列，過長時以省略號截斷（全文在 title）
