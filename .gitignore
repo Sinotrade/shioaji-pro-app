@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 
+# Python（scripts/ 的 release notes 工具與其測試）
+__pycache__/
+*.py[cod]
+
 # Environment
 .env
 .env.local
