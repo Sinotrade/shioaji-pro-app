@@ -1527,15 +1527,9 @@ function MainApp() {
     );
 
     const setBlockPanoramaIndex = useCallback(
-        (id: string, panoramaIndex: PanoramaIndexCode) => {
-            updateWorkspace({
-                ...workspace,
-                blocks: workspace.blocks.map((block) =>
-                    block.id === id ? { ...block, panoramaIndex } : block,
-                ),
-            });
-        },
-        [workspace, updateWorkspace],
+        (id: string, panoramaIndex: PanoramaIndexCode) =>
+            patchBlock(id, { panoramaIndex }),
+        [patchBlock],
     );
 
     const resetWorkspace = useCallback(() => {

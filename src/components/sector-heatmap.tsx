@@ -330,7 +330,7 @@ export function SectorHeatmap({
 }: {
     onPick?: (code: string) => void;
     /**
-     * 版面為這個面板指定的市場（跟版面一起持久化）；缺省 = 沿用上次選擇。
+     * 版面為這個面板指定的市場（跟版面一起持久化）；缺省 = 用上次選擇並立刻回寫。
      * 同時開多個產業全景時，各面板各存各的（加權／櫃買並排免切換）。
      */
     index?: PanoramaIndexCode;
@@ -354,6 +354,9 @@ export function SectorHeatmap({
     // 版面指定的市場優先：換版面或外部改欄位時都要跟上
     useEffect(() => {
         if (index) setIndexCode(index);
+        // 新面板與舊存檔沒有市場：掛載時固定進版面，全域選擇只當下一個新面板的預設值
+        else onIndexChange?.(indexCode);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [index]);
     const selectIndex = useCallback(
         (code: PanoramaIndexCode) => {

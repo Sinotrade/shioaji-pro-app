@@ -1,5 +1,5 @@
 // 產業全景可同時開多個面板：各面板存自己的市場（加權／櫃買並排免切換）。
-// 版面沒有指定 index 時才沿用上次的 localStorage 選擇，舊存檔因此不受影響。
+// 版面沒有指定 index 時用上次的 localStorage 選擇並固定進版面，舊存檔與新面板都一樣。
 import { createElement } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -121,4 +121,73 @@ it('版面換掉市場 → 面板跟著換', async () => {
     });
     expect(pressed(view.root, '櫃買')).toBe(true);
     expect(pressed(view.root, '加權')).toBe(false);
+});
+
+/** App 的版面：panoramaIndex 跟著 block 存，重新掛載時由它帶回。 */
+function layout(blocks: Record<string, string | undefined>) {
+    const props = (id: string) => ({
+        index: blocks[id],
+        onIndexChange: (code: string) => {
+            blocks[id] = code;
+        },
+    });
+    const press = async (view: ReactTestRenderer, label: string) => {
+        const btn = view.root.find(
+            (n) => n.type === 'button' && text(n) === label && typeof n.props['aria-pressed'] === 'boolean',
+        );
+        await act(async () => btn.props.onClick());
+    };
+    return { props, press };
+}
+
+it('兩個新面板只切一個，重新掛載後各自維持', async () => {
+    const blocks: Record<string, string | undefined> = { a: undefined, b: undefined };
+    const { props, press } = layout(blocks);
+    const a = await render(props('a'));
+    const b = await render(props('b'));
+    expect(blocks).toEqual({ a: 'IX0001', b: 'IX0001' });
+
+    await press(b, '櫃買');
+    expect(blocks).toEqual({ a: 'IX0001', b: 'IX0043' });
+
+    await act(async () => {
+        a.unmount();
+        b.unmount();
+    });
+    views = [];
+    const a2 = await render(props('a'));
+    const b2 = await render(props('b'));
+    expect(pressed(a2.root, '加權')).toBe(true);
+    expect(pressed(b2.root, '櫃買')).toBe(true);
+});
+
+it('舊存檔沒有市場時固定成上次的選擇，之後別的面板切換也不影響它', async () => {
+    localStorage.setItem(INDEX_KEY, 'IX0043');
+    const blocks: Record<string, string | undefined> = { old: undefined, added: undefined };
+    const { props, press } = layout(blocks);
+    const old = await render(props('old'));
+    expect(blocks.old).toBe('IX0043');
+    expect(pressed(old.root, '櫃買')).toBe(true);
+
+    const added = await render(props('added'));
+    await press(added, '加權');
+    await act(async () => old.unmount());
+    views = views.filter((v) => v !== old);
+    const reopened = await render(props('old'));
+    expect(pressed(reopened.root, '櫃買')).toBe(true);
+});
+
+it('全域選擇只影響之後的新面板', async () => {
+    const blocks: Record<string, string | undefined> = { a: undefined, b: undefined };
+    const { props, press } = layout(blocks);
+    const a = await render(props('a'));
+    await press(a, '櫃買');
+    const b = await render(props('b'));
+    expect(blocks.b).toBe('IX0043');
+});
+
+it('已有市場的面板掛載時不回寫版面', async () => {
+    const onIndexChange = vi.fn();
+    await render({ index: 'IX0043', onIndexChange });
+    expect(onIndexChange).not.toHaveBeenCalled();
 });
