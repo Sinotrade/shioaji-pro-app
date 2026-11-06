@@ -831,8 +831,10 @@ function AccountPaneContent({ positions, balance, margin, funds, market, scopeAc
         await Promise.all([refreshSettle(), refreshPnl(), refreshLimits(), refreshReserve()]);
     }, [refreshSettle, refreshPnl, refreshLimits, refreshReserve]);
     const reportsLoading = loadingSettle || loadingPnl || loadingLimits || loadingReserve;
-    // 額度時段外是預期狀態，區塊內已有提示，不算報表錯誤（#381）
-    const reportsError = [errorSettle, errorPnl, isTradingLimitsWindowError(errorLimits) ? null : errorLimits, errorReserve].filter(Boolean).join('；') || null;
+    // 額度時段外是預期狀態，區塊內已有提示，不算報表錯誤（#381）。保留上一份額度時
+    // 畫面沒有提示，刷新失敗仍要留在狀態列，否則舊資料看起來像剛更新
+    const limitsClosed = limits === undefined && isTradingLimitsWindowError(errorLimits);
+    const reportsError = [errorSettle, errorPnl, limitsClosed ? null : errorLimits, errorReserve].filter(Boolean).join('；') || null;
     useEffect(() => {
         onRefreshControls?.({ refresh: refreshReports, loading: reportsLoading, error: reportsError });
         return () => onRefreshControls?.(null);

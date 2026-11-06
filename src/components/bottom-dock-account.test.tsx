@@ -207,4 +207,12 @@ describe('#381 交易額度查詢失敗', () => {
         expect(text()).not.toContain('交易額度查詢失敗');
         expect(controls!.error).toContain('Failed to fetch');
     });
+    it('已有額度時遇到時段錯誤，舊資料不能看起來像剛更新', async () => {
+        fixture.limits.mockReset().mockResolvedValue(LIMITS);
+        await mount();
+        fixture.limits.mockReset().mockRejectedValue(new Error(WINDOW));
+        await act(async () => { vi.advanceTimersByTime(1600); await controls!.refresh(); });
+        expect(text()).toContain('現股 可用/上限');
+        expect(controls!.error).toContain('QCredit');
+    });
 });
