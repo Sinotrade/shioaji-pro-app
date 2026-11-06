@@ -84,6 +84,8 @@ export function useHotkeys({
                 return;
             }
             if (isTyping()) return;
+            // ⌘S、Ctrl+S、⌘B 等是系統／瀏覽器組合鍵，不可改掉下單方向
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
             const k = e.key.toLowerCase();
             if (k === 'b' || k === 's') {
                 window.dispatchEvent(
