@@ -5,15 +5,26 @@ import { useHeaderPopoverFit } from './use-header-popover-fit';
 
 let view: ReactTestRenderer | undefined;
 let latest: CSSProperties | undefined;
-/** The header button's place and the window width; tests move them and fire resize. */
+/** The header button's place and the window width; tests move them and run a frame. */
 const geometry = { left: 0, right: 0, viewport: 0 };
-const listeners = new Set<() => void>();
+const frames = new Map<number, () => void>();
+let nextFrame = 0;
+let styleUpdates = 0;
+
+/** Runs the callbacks queued for the next animation frame. */
+async function runFrame() {
+    await act(async () => {
+        const due = [...frames.values()];
+        frames.clear();
+        for (const callback of due) callback();
+    });
+}
 
 beforeEach(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true));
 afterEach(async () => {
     await act(async () => view?.unmount());
     view = undefined;
-    listeners.clear();
+    frames.clear();
     vi.unstubAllGlobals();
 });
 
@@ -21,6 +32,7 @@ function Probe({ open }: { open: boolean }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const popRef = useRef<HTMLDivElement>(null);
     latest = useHeaderPopoverFit(open, wrapRef, popRef);
+    styleUpdates += 1;
     return createElement('div', { ref: wrapRef, id: 'wrap' }, open ? createElement('div', { ref: popRef, id: 'pop' }) : null);
 }
 
@@ -28,8 +40,11 @@ const win = {
     get innerWidth() { return geometry.viewport; },
     innerHeight: 900,
     getComputedStyle: () => ({ overflowX: 'visible', overflowY: 'visible' }),
-    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
-    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    requestAnimationFrame: (callback: () => void) => {
+        frames.set(++nextFrame, callback);
+        return nextFrame;
+    },
+    cancelAnimationFrame: (id: number) => frames.delete(id),
 };
 
 /** A 276px menu under a header button at [left, right] in a window `viewport` px wide. */
@@ -63,11 +78,29 @@ it('re-places an open menu when the window resizes or the header re-wraps', asyn
     expect(latest).toBeUndefined();
     // The button wraps to the second row's left edge while the menu is open.
     Object.assign(geometry, { left: 18, right: 79, viewport: 1150 });
-    await act(async () => { for (const listener of listeners) listener(); });
+    await runFrame();
     expect(latest).toEqual({ left: 6 - 18, right: 'auto' });
     Object.assign(geometry, { left: 734, right: 795, viewport: 1000 });
-    await act(async () => { for (const listener of listeners) listener(); });
+    await runFrame();
     expect(latest).toBeUndefined();
+});
+
+it('follows a button that changes rows while no size changes', async () => {
+    await render(true, 400, 461, 1000);
+    expect(latest).toBeUndefined();
+    // Same row count, same wrapper and header size: only the button's place differs.
+    Object.assign(geometry, { left: 88, right: 149 });
+    await runFrame();
+    expect(latest).toEqual({ left: 6 - 88, right: 'auto' });
+});
+
+it('does not re-render on frames where the button stayed put', async () => {
+    await render(true, 88, 149, 700);
+    const settled = styleUpdates;
+    await runFrame();
+    await runFrame();
+    expect(styleUpdates).toBe(settled);
+    expect(frames.size).toBe(1);
 });
 
 it('narrows a menu wider than the window and clears the fit and listeners on close', async () => {
@@ -75,5 +108,5 @@ it('narrows a menu wider than the window and clears the fit and listeners on clo
     expect(latest).toEqual({ left: 6 - 10, right: 'auto', width: 238 });
     await render(false, 10, 60, 250);
     expect(latest).toBeUndefined();
-    expect(listeners.size).toBe(0);
+    expect(frames.size).toBe(0);
 });

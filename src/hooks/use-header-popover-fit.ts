@@ -2,7 +2,8 @@
 //
 // 頂欄換行讓按鈕跑到左側時，右緣對齊會超出視窗左緣：依可見範圍往內收、必要時
 // 縮寬（同 K 線工具列的 fitPopover）。放得下時不加任何樣式，桌面外觀不變。開著時
-// 視窗縮放或頂欄重新換行（按鈕文字變長）都依開啟時的原寬重算。
+// 每個 frame 看按鈕位置，依開啟時的原寬重算：頂欄換行時按鈕可能換列，但列數與各元素
+// 尺寸都沒變，ResizeObserver 看不到；位置沒變就不更新 state。
 
 import { useLayoutEffect, useState, type CSSProperties, type RefObject } from 'react';
 import { fitPopover, visibleClipRect } from '../lib/popover-fit';
@@ -23,6 +24,7 @@ export function useHeaderPopoverFit(
         }
         // Measured before any fit style applies: the menu's own width.
         const width = pop.offsetWidth;
+        let placed: CSSProperties | undefined;
         const place = () => {
             const anchor = wrap.getBoundingClientRect();
             const start = anchor.right - width;
@@ -30,20 +32,19 @@ export function useHeaderPopoverFit(
             const fit = fitPopover({ left: start, bottom: anchor.bottom }, { width, height: 0 }, visibleClipRect(wrap));
             // Offsets are relative to the wrapper, the popover's containing block.
             const left = start + fit.left - anchor.left;
-            setStyle(prev => (fit.left === 0 && fit.maxWidth === undefined ? undefined
-                : prev?.left === left && prev?.width === fit.maxWidth ? prev
-                : { left, right: 'auto', ...(fit.maxWidth !== undefined ? { width: fit.maxWidth } : {}) }));
+            const next: CSSProperties | undefined = fit.left === 0 && fit.maxWidth === undefined ? undefined
+                : { left, right: 'auto', ...(fit.maxWidth !== undefined ? { width: fit.maxWidth } : {}) };
+            if (next?.left === placed?.left && next?.width === placed?.width) return;
+            placed = next;
+            setStyle(next);
         };
-        place();
-        win.addEventListener('resize', place);
-        const Observer = (win as typeof globalThis).ResizeObserver;
-        const observer = Observer ? new Observer(place) : null;
-        observer?.observe(wrap);
-        if (wrap.parentElement) observer?.observe(wrap.parentElement);
-        return () => {
-            win.removeEventListener('resize', place);
-            observer?.disconnect();
+        let frame = 0;
+        const follow = () => {
+            place();
+            frame = win.requestAnimationFrame(follow);
         };
+        follow();
+        return () => win.cancelAnimationFrame(frame);
     }, [open, wrapRef, popRef]);
     return style;
 }
