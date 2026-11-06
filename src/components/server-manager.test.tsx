@@ -182,6 +182,25 @@ describe('credential profiles in server settings', () => {
         expect(mocks.stop).not.toHaveBeenCalled(); expect(mocks.select).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled();
         expect(view.root.findAllByType(ServerEnvNotice)).toHaveLength(0);
     });
+    it('refuses a production profile without a certificate file before stopping anything (#370)', async () => {
+        mocks.load.mockResolvedValue({ ...structuredClone(initial), profiles: [one, { ...two, caPath: '', hasCA: false, hasCaPassword: false }] });
+        await open(); await click('切換使用'); await click('確認切換到正式');
+        expect(text()).toContain('憑證檔'); expect(mocks.prepare).not.toHaveBeenCalled();
+        expect(mocks.stop).not.toHaveBeenCalled(); expect(mocks.select).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled();
+    });
+    it('restarts for another account in the same environment, and does not claim an environment change (#370)', async () => {
+        const sibling = { ...one, id: 'sibling', name: '模擬備用', revision: 'sibling-rev' };
+        mocks.load.mockResolvedValue({ ...structuredClone(initial), profiles: [one, sibling] });
+        mocks.select.mockResolvedValue({ ...initial, profiles: [one, sibling], activeProfileId: 'sibling', credentialRevision: 'sibling-rev' });
+        mocks.start.mockResolvedValue({ ok: true, output: '', port: 12345, attached: false });
+        await open(); await click('切換使用');
+        expect(text()).toContain('再自動以這個帳號重新啟動'); expect(text()).not.toContain('真實資金');
+        await click('確認切換');
+        expect(mocks.stop).toHaveBeenCalledWith({ stopAgents: true, ownedOnly: true }); expect(mocks.select).toHaveBeenCalledWith('sibling');
+        expect(mocks.start).toHaveBeenCalledOnce();
+        expect(mocks.start.mock.calls[0]![0]).toMatchObject({ production: false, activeProfileId: 'sibling', credentialRevision: 'sibling-rev' });
+        expect(text()).toContain('正在切換帳號'); expect(text()).not.toContain('環境…');
+    });
     it('switches a different profile through 儲存並重啟 on the same path (#370)', async () => {
         await open(); await click('編輯 備用帳號'); await click('儲存並重啟');
         expect(mocks.stop).toHaveBeenCalledOnce(); expect(mocks.select).toHaveBeenCalledWith('two'); expect(mocks.start).toHaveBeenCalledOnce();

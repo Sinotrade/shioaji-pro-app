@@ -4,6 +4,7 @@
 // can do is say where the change has to be made.
 
 import { CircleAlert } from 'lucide-react';
+import { useRef } from 'react';
 import type { ServerEnvNotice as Notice } from '../lib/server-env-notice';
 import type { StreamStatus } from '../lib/stream';
 import { Orb } from './orb';
@@ -21,7 +22,10 @@ export function ServerEnvNotice({ notice, onOpen }: { notice: Notice; onOpen: ()
 }
 
 export function WebServerHint({ status }: { status: StreamStatus }) {
-    if (status !== 'down') return null;
+    // a reconnect attempt reads as connecting for a moment: stay until LIVE
+    const lost = useRef(false);
+    lost.current = status === 'down' || (status !== 'live' && lost.current);
+    if (!lost.current) return null;
     return (
         <span className={styles.webServerHint} role='status'>
             <CircleAlert size={13} aria-hidden />

@@ -16,6 +16,8 @@ describe('describeServerEnvNotice', () => {
     it('turns into an action once the switch stopped without finishing', () => {
         expect(describeServerEnvNotice({ ...base, running: false, target: { environment: 'simulation', accountOnly: false } }))
             .toEqual({ tone: 'action', text: '切換到模擬環境未完成，請開啟伺服器面板重試' });
+        expect(describeServerEnvNotice({ ...base, running: false, target: { environment: 'simulation', accountOnly: true } })?.text)
+            .toBe('切換帳號未完成，請開啟伺服器面板重試');
     });
     it('asks for the button that applies saved settings', () => {
         expect(describeServerEnvNotice({ ...base, running: false, savedForRestart: true })?.text).toContain('啟動');

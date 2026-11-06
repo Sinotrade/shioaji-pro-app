@@ -30,10 +30,10 @@ const environmentLabel = (environment: CredentialEnvironment) =>
 export function describeServerEnvNotice(input: ServerEnvNoticeInput): ServerEnvNotice | null {
     const { target } = input;
     if (target) {
-        const label = target.accountOnly ? '帳號' : `${environmentLabel(target.environment)}環境`;
+        const what = target.accountOnly ? '切換帳號' : `切換到${environmentLabel(target.environment)}環境`;
         return input.switching
-            ? { tone: 'progress', text: target.accountOnly ? '正在切換帳號…' : `正在切換到${label}…` }
-            : { tone: 'action', text: `切換到${label}未完成，請開啟伺服器面板重試` };
+            ? { tone: 'progress', text: `正在${what}…` }
+            : { tone: 'action', text: `${what}未完成，請開啟伺服器面板重試` };
     }
     if (!input.savedForRestart) return null;
     if (!input.running) return { tone: 'action', text: '設定已儲存，請按「啟動」套用' };

@@ -25,4 +25,15 @@ describe('server env notices', () => {
             expect(view.toJSON()).toBeNull();
         }
     });
+    it('keeps the Web hint through reconnect attempts until the stream is LIVE again', async () => {
+        await render(createElement(WebServerHint, { status: 'connecting' }));
+        expect(view.toJSON()).toBeNull();
+        await act(async () => view.update(createElement(WebServerHint, { status: 'down' })));
+        for (const status of ['connecting', 'down', 'stale', 'connecting'] as const) {
+            await act(async () => view.update(createElement(WebServerHint, { status })));
+            expect(JSON.stringify(view.toJSON())).toContain('請重新啟動 Shioaji server');
+        }
+        await act(async () => view.update(createElement(WebServerHint, { status: 'live' })));
+        expect(view.toJSON()).toBeNull();
+    });
 });
