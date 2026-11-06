@@ -224,6 +224,16 @@ describe('quote ownership shared consumers', () => {
             listener!({ data: { kind: 'held?' } });
             expect(sent.find(m => m.kind === 'held')!.keys!.length).toBeGreaterThan(0);
         });
+        it('announces a new subscription, so a sweep in progress elsewhere leaves it alone', async () => {
+            const sent: { kind: string; keys?: string[] }[] = [];
+            vi.stubGlobal('BroadcastChannel', class {
+                addEventListener() {}
+                postMessage(data: { kind: string }) { sent.push(data); }
+                close() {}
+            });
+            await subscribeOne(contract);
+            expect(sent.filter(m => m.kind === 'held').map(m => m.keys)).toHaveLength(1);
+        });
         it('does not unsubscribe a quote wanted while the sweep is waiting on an earlier one', async () => {
             await subscribeOne(contract);
             await subscribeOne(other);

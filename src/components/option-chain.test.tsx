@@ -664,6 +664,19 @@ describe('full strike range', () => {
         expect(snapshotCodes.live.length).toBeGreaterThan(0);
     });
 
+    it('an ATM move while scrolling does not jump ahead of the settle timer', async () => {
+        vi.useFakeTimers();
+        try {
+            const { r, body, onPick } = await mountMeasured();
+            const before = snapshotCodes.live;
+            body.scrollTop = 2000;
+            await act(async () => { r.root.find((n) => n.props['data-testid'] === 'optchain-body' && n.type === 'div').props.onScroll(); });
+            market.quotes = { IX0001: { index: { close: '43100', reference: '42950' } } };
+            await act(async () => { r.update(createElement(OptionChain, { onPick })); });
+            expect(snapshotCodes.live).toEqual(before);
+        } finally { vi.useRealTimers(); }
+    });
+
     it('falls back to the median once the ATM reference query has settled empty', async () => {
         market.refSettled = true;
         await mountMeasured({ quotes: {} });

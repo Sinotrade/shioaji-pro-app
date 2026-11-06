@@ -83,6 +83,7 @@ function sync(immediate = false) {
             if (!canOwn()) return;
             // 先記再送：請求送出後頁面才卸載，訂閱也不會漏記
             remember(key, value);
+            channel?.postMessage({ kind: 'held', keys: [key] }); // 別的分頁正準備清理時也要看得到
             try { await subscribeQuote(value.contract, value.type, ...oddOpts(value)); active.set(key, value); } catch { /* reconnect registry/manual re-acquire retries */ }
         }
         if (![...active.keys()].some(key => !desired.has(key))) return;

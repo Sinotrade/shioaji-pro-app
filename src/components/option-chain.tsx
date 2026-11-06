@@ -554,7 +554,8 @@ export function OptionChain({
     // 價平還沒算出來就訂閱的話，訂的是中位履約價那一窗，隨後整批退掉（#386）。
     // 指數與台指期都查不到時才以中位數為準。量到畫面前也先不訂，避免多訂一輪。
     const atmPending = atm === null && refQuery.updatedAt == null && !refQuery.error;
-    const windowReady = !atmPending && (measured?.key === chainKey || unmeasurable);
+    const hasMeasured = measured?.key === chainKey;
+    const windowReady = !atmPending && (hasMeasured || unmeasurable);
     const allContracts = useMemo(
         () => rows.flatMap((r) => [r.call, r.put]).filter((c): c is OptContract => !!c),
         [rows],
@@ -630,10 +631,11 @@ export function OptionChain({
         const m = measure();
         if (m) noteAtm(m.visible);
         // 等價平時捲動過的話，量測被跳過了，這裡補上才會開始訂閱
-        if (atmPending) return;
+        // 已經量過就交給捲動的 settle 計時，價平跳動不提早換窗
+        if (atmPending || hasMeasured) return;
         if (m) settle();
         else setUnmeasurable(true);
-    }, [showing, chainKey, centerIndex, atmPending, rows.length, centerOnAtm, measure, noteAtm, settle]);
+    }, [showing, chainKey, centerIndex, atmPending, hasMeasured, rows.length, centerOnAtm, measure, noteAtm, settle]);
     useEffect(() => {
         const body = bodyRef.current;
         if (!showing || !body || typeof ResizeObserver === 'undefined') return;
