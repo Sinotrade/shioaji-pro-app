@@ -70,6 +70,11 @@ export function fallbackGroup(rows: readonly FlowRow[], selectedId: string, foll
     return (owner ?? rows.reduce((a, b) => (b.flow.total > a.flow.total ? b : a))).theme.id;
 }
 
+/** Rows can be judged once their turnover is in: the seed finished (it stays 0 before the open), or some already show it. */
+export function groupListReady(rows: readonly FlowRow[], seeded: boolean): boolean {
+    return rows.length > 0 && (seeded || rows.some((r) => r.flow.total > 0));
+}
+
 export function ChainMap({
     contract,
     onPick,
@@ -87,7 +92,7 @@ export function ChainMap({
     onKindChange?: (kind: KindFilter) => void;
 }) {
     const chainFeed = useChainFeed();
-    const { data, ready, themes, index, nameOf, rootRef, rootSize, paused, reducedMotion, revision, book, now, from, closed } = chainFeed;
+    const { data, ready, themes, index, nameOf, rootRef, rootSize, paused, reducedMotion, revision, book, feed, now, from, closed } = chainFeed;
     const themeKey = themeKeyOf(useThemeSettings());
 
     const [themeId, setThemeIdState] = useState(() => {
@@ -220,14 +225,15 @@ export function ChainMap({
     // linked / followed stock, else the list's largest group (today's turnover); waits for the list
     // (細產業 loads its cards first)
     const checkedKind = useRef<KindFilter | null>(null);
+    const seeded = feed.batches > 0 && !feed.seeding;
     useEffect(() => {
-        // also waits for the snapshots: before them every turnover is 0
-        if (checkedKind.current === kind || !theme || !rows.some((r) => r.flow.total > 0)) return;
+        // also waits for the snapshots: before them every turnover is 0, and before the open it stays 0
+        if (checkedKind.current === kind || !theme || !groupListReady(rows, seeded)) return;
         checkedKind.current = kind;
         const next = fallbackGroup(rows, theme.id, linkedCode ?? focus);
         if (next) setThemeId(next);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [kind, rows, theme, setThemeId]);
+    }, [kind, rows, theme, seeded, setThemeId]);
 
     const pick = useCallback(
         (code: string) => {

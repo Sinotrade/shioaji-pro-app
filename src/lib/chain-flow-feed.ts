@@ -8,7 +8,7 @@
 // - Drill: extra codes outside that universe (持股族群's holdings, 細產業's
 //   members), under their own keys that never include overview codes, so
 //   releasing them cannot drop overview codes; a release also keeps any code
-//   another drill still feeds.
+//   another drill still feeds, deciding only once that drill's subscribe settled.
 // - Ticks the App already receives for other panels (watchlist, chart …)
 //   update the price of overlapping codes faster. This module never
 //   subscribes ticks itself.
@@ -59,6 +59,10 @@ interface Connection {
     subscribed: Set<string>;
     /** Codes of batches whose subscribe failed: nothing of this connection feeds them. */
     failed: Set<string>;
+    /** True until every batch's subscribe has settled, so `failed` may still grow. */
+    subscribing: boolean;
+    /** Resolves when `subscribing` turns false. */
+    settled: Promise<void>;
     error: string | null;
     members: readonly FeedMember[];
 }
@@ -334,6 +338,8 @@ function startSeed(members: readonly FeedMember[], live: () => boolean = () => t
     if (members.length === 0) return;
     const generation = seedGeneration;
     seedPending += 1;
+    // set before the queue runs: a panel reads "not seeding" as "the snapshots are in"
+    status.seeding = true;
     seedQueue = seedQueue
         // every panel closed before this seed ran: marking its codes seeded
         // would make the next open skip the snapshots it needs
@@ -381,6 +387,32 @@ function attachStream() {
     };
 }
 
+/** Codes an open connection feeds, or will feed unless its running subscribe fails. */
+function codesInUse() {
+    const inUse = new Set<string>();
+    for (const c of connections) for (const m of c.members) if (!c.failed.has(m.code)) inUse.add(m.code);
+    return inUse;
+}
+
+/**
+ * Drop a released batch's codes that nothing else feeds. This is the batch's one
+ * unsubscribe: a code left out here stays on the server with no key to drop it,
+ * so it waits for any subscribe that could still fail before keeping a code for it.
+ */
+function releaseBatch(batch: { key: string; contracts: ContractBase[] }) {
+    const undecided = [...connections].filter(
+        (c) => c.subscribing && batch.contracts.some((b) => !c.failed.has(b.code) && c.members.some((m) => m.code === b.code)),
+    );
+    if (undecided.length > 0) {
+        void Promise.all(undecided.map((c) => c.settled)).then(() => releaseBatch(batch));
+        return;
+    }
+    const inUse = codesInUse();
+    const dropped = batch.contracts.filter((c) => !inUse.has(c.code));
+    void unsubscribeKbars(batch.key, dropped).catch(() => undefined);
+    for (const c of dropped) seeded.delete(c.code);
+}
+
 /**
  * Start the feed for `members` (overview leaders, or a drilled-in group's
  * extra codes). Returns the release function, which unsubscribes this
@@ -397,10 +429,12 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
         failed: new Set(),
         error: null,
         members,
+        subscribing: true,
+        settled: Promise.resolve(),
     };
     connections.add(conn);
     let released = false;
-    for (const batch of batches) {
+    const subscribes = batches.map((batch) =>
         subscribeKbars(batch.key, batch.contracts).then(
             () => {
                 if (released) return;
@@ -413,8 +447,11 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
                 conn.error = error instanceof Error ? error.message : String(error);
                 notifyChainFlow(true);
             },
-        );
-    }
+        ),
+    );
+    conn.settled = Promise.all(subscribes).then(() => {
+        conn.subscribing = false;
+    });
     startSeed(members, () => !released);
     notifyChainFlow(true);
     return () => {
@@ -424,12 +461,8 @@ export function connectChainFlow(members: readonly FeedMember[], scope: FeedScop
         // drill batches can overlap (持股族群's holdings, 細產業's members): a code
         // another connection still feeds keeps its K-bars; the others are
         // dropped, and seeded afresh if subscribed again (their bars stopped)
-        const inUse = new Set<string>();
-        for (const c of connections) for (const m of c.members) if (!c.failed.has(m.code)) inUse.add(m.code);
-        for (const batch of batches) {
-            const contracts = batch.contracts.filter((c) => !inUse.has(c.code));
-            void unsubscribeKbars(batch.key, contracts).catch(() => undefined);
-        }
+        const inUse = codesInUse();
+        for (const batch of batches) releaseBatch(batch);
         for (const m of members) if (!inUse.has(m.code)) seeded.delete(m.code);
         streamRefs -= 1;
         if (streamRefs === 0) {

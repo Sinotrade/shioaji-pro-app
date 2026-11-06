@@ -143,6 +143,95 @@ describe('connectChainFlow', () => {
         industry();
     });
 
+    describe('released while another drill is still subscribing to a shared code', () => {
+        function deferredSubscribe() {
+            let reject!: (reason: Error) => void;
+            let resolve!: () => void;
+            mocks.subscribe.mockImplementationOnce(() => new Promise((ok, fail) => {
+                resolve = () => ok({ success: true, message: '' });
+                reject = fail;
+            }));
+            return { fail: (reason: Error) => reject(reason), succeed: () => resolve() };
+        }
+        const unsubscribed = () => mocks.unsubscribe.mock.calls.map(([key, list]) => [key, (list as ContractBase[]).map((c) => c.code)]);
+
+        it('drops the code itself once that subscribe fails', async () => {
+            const holdings = connectChainFlow([member('6643')], 'drill');
+            await flush();
+            const holdingsKey = mocks.subscribe.mock.calls.at(-1)![0];
+            const pending = deferredSubscribe();
+            const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+            await flush();
+
+            holdings();
+            await flush();
+            // this release is the only one that can drop 6643: it waits for the verdict
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+
+            pending.fail(new Error('timeout'));
+            await flush();
+            expect(unsubscribed()).toEqual([[holdingsKey, ['6643']]]);
+            industry();
+        });
+
+        it('leaves the code to that drill once its subscribe succeeds', async () => {
+            const holdings = connectChainFlow([member('6643')], 'drill');
+            await flush();
+            const holdingsKey = mocks.subscribe.mock.calls.at(-1)![0];
+            const pending = deferredSubscribe();
+            const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+            await flush();
+
+            holdings();
+            pending.succeed();
+            await flush();
+            expect(unsubscribed()).toEqual([[holdingsKey, []]]);
+            industry();
+        });
+
+        it('reseeds the dropped code when it is subscribed again', async () => {
+            const holdings = connectChainFlow([member('6643')], 'drill');
+            await flush();
+            await chainFlowSeedIdle();
+            const pending = deferredSubscribe();
+            const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+            await flush();
+            holdings();
+            pending.fail(new Error('timeout'));
+            await flush();
+            await chainFlowSeedIdle();
+
+            const again = connectChainFlow([member('6643')], 'drill');
+            await flush();
+            await chainFlowSeedIdle();
+            expect(mocks.snapshots.mock.calls.at(-1)![0].map((c) => c.code)).toEqual(['6643']);
+            again();
+            industry();
+        });
+
+        it('still drops the code when the drill it waited for is released too', async () => {
+            const holdings = connectChainFlow([member('6643')], 'drill');
+            await flush();
+            const holdingsKey = mocks.subscribe.mock.calls.at(-1)![0];
+            const pending = deferredSubscribe();
+            const industry = connectChainFlow([member('6643'), member('3529')], 'drill');
+            await flush();
+            const industryKey = mocks.subscribe.mock.calls.at(-1)![0];
+
+            holdings();
+            industry();
+            pending.succeed();
+            await flush();
+            expect(unsubscribed().sort()).toEqual([[holdingsKey, ['6643']], [industryKey, ['3529', '6643']]].sort());
+        });
+    });
+
+    it('reports seeding from the moment a feed starts, before the queued seed runs', () => {
+        const release = connectChainFlow([member('2330')]);
+        expect(chainFlowStatus().seeding).toBe(true);
+        release();
+    });
+
     it('gives drills of different codes different keys even with the same ends and size', () => {
         const a = kbarBatches(['1234', '5678', '9999'].map(member), FEED_BATCH, 'drill');
         const b = kbarBatches(['1234', '4321', '9999'].map(member), FEED_BATCH, 'drill');

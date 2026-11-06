@@ -1,6 +1,6 @@
 // 持股 moved out of 產業鏈資金流向 into its own panel: a saved 持股 tab falls back to 金流 (rank).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fallbackGroup, readChainView } from './chain-map';
+import { fallbackGroup, groupListReady, readChainView } from './chain-map';
 import type { FlowRow } from './chain-ui';
 
 const KEY = 'sj-pro-chainmap-view';
@@ -51,5 +51,29 @@ describe('fallbackGroup', () => {
         expect(fallbackGroup(rows, 'x', '9999')).toBe('b');
         expect(fallbackGroup(rows, 'x', null)).toBe('b');
         expect(fallbackGroup([], 'x', null)).toBeNull();
+    });
+
+    it('selects a group even when every turnover is 0 (before the open)', () => {
+        expect(fallbackGroup([row('a', ['2330'], 0), row('b', ['2454'], 0)], 'x', null)).toBe('a');
+    });
+});
+
+describe('groupListReady', () => {
+    const row = (total: number) => ({ flow: { total } }) as unknown as FlowRow;
+
+    it('waits for the seed while every turnover is still 0', () => {
+        expect(groupListReady([row(0), row(0)], false)).toBe(false);
+    });
+
+    it('accepts an all-zero list once the seed finished', () => {
+        expect(groupListReady([row(0), row(0)], true)).toBe(true);
+    });
+
+    it('does not wait for the seed when turnover is already in', () => {
+        expect(groupListReady([row(0), row(5)], false)).toBe(true);
+    });
+
+    it('never judges an empty list, or a 細產業 list that is still loading would be skipped', () => {
+        expect(groupListReady([], true)).toBe(false);
     });
 });
