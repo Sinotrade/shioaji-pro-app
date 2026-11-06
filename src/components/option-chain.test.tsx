@@ -602,6 +602,57 @@ describe('full strike range', () => {
         expect(blank.findAllByType('td').map(text)).toEqual(['—', '—', '—', '—', '45,900', '—', '—', '—', '—']);
     });
 
+    // 假的捲動容器：200px 高、表頭 40px、每列 20px，一次看得到 8 列
+    const mountMeasured = async () => {
+        const body = {
+            scrollTop: 0,
+            clientHeight: 200,
+            querySelector: (q: string) => ({ getBoundingClientRect: () => ({ height: q === 'thead' ? 40 : 20 }) }),
+        };
+        const long = series('TX2', '2026-10-14', 'Wed', 60);
+        market.quotes = { IX0001: { index: { close: '43000', reference: '42950' } } };
+        api.fetchOptionRoots.mockResolvedValue([{ root: 'TXO', name: '臺指選擇權' }, { root: 'TX2', name: '臺指選擇權 週三W2' }]);
+        api.fetchOptions.mockImplementation(async (root: string) => (root === 'TX2' ? long : BY_ROOT[root] ?? []));
+        const onPick = vi.fn();
+        let r!: ReactTestRenderer;
+        await act(async () => {
+            r = create(createElement(OptionChain, { onPick }), {
+                createNodeMock: (el) => ((el.props as Record<string, unknown>)['data-testid'] === 'optchain-body' ? body : null),
+            });
+        });
+        const atmBtn = () => r.root.find((n) => n.type === 'button' && n.props['aria-label'] === '回到價平');
+        const scrollTo = async (top: number) => {
+            body.scrollTop = top;
+            await act(async () => r.root.find((n) => n.props['data-testid'] === 'optchain-body' && n.type === 'div').props.onScroll());
+        };
+        return { r, body, atmBtn, scrollTo, onPick };
+    };
+
+    it('centres on ATM once measured and moves the window only after the scroll settles', async () => {
+        const { body, scrollTo } = await mountMeasured();
+        expect(body.scrollTop).toBe(530); // row 30 in the middle of the 160px under the header
+        const before = snapshotCodes.live;
+        await scrollTo(1000);
+        expect(snapshotCodes.live).toEqual(before); // still scrolling
+        await act(async () => { vi.advanceTimersByTime(299); });
+        expect(snapshotCodes.live).toEqual(before);
+        await act(async () => { vi.advanceTimersByTime(1); });
+        expect(snapshotCodes.live).toContain('TX245000C-2026-10-14');
+        expect(snapshotCodes.live).not.toContain('TX243000C-2026-10-14');
+    });
+
+    it('stops following ATM after a manual scroll, but still says when ATM leaves or returns', async () => {
+        const { r, body, atmBtn, scrollTo, onPick } = await mountMeasured();
+        await scrollTo(760); // rows 38..45, ATM at 30
+        expect(atmBtn().props['data-away']).toBe(true);
+        market.quotes = { IX0001: { index: { close: '43900', reference: '43850' } } }; // ATM now row 39
+        await act(async () => { r.update(createElement(OptionChain, { onPick })); });
+        expect(body.scrollTop).toBe(760);
+        expect(atmBtn().props['data-away']).toBeUndefined();
+        await act(async () => atmBtn().props.onClick());
+        expect(body.scrollTop).toBe(710);
+    });
+
     it('offers a way back to ATM with a lucide icon, not text', async () => {
         const r = await openLong();
         const btn = r.root.find((n) => n.type === 'button' && n.props['aria-label'] === '回到價平');

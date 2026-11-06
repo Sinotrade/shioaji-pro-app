@@ -113,6 +113,18 @@ describe('snapshot plus stream projection', () => {
             await act(async () => { vi.advanceTimersByTime(2000); await value.refresh(); });
             expect(value.snapshots.get('C')).toMatchObject({ total_volume: 88 });
         });
+        it('an older entered response arriving late does not replace a newer one', async () => {
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [a] })); });
+            const pending: ((rows: Snapshot[]) => void)[] = [];
+            mocks.fetch.mockImplementation(() => new Promise<Snapshot[]>(r => { pending.push(r); }));
+            await render([a, c], [c]);
+            await render([a, c], [a]);
+            await render([a, c], [c]);
+            expect(pending).toHaveLength(3); // C, A back in, C again
+            await act(async () => { pending[2]!([{ ...snapshot('C'), datetime: '2026-09-12 10:00:30', total_volume: 30 }]); });
+            await act(async () => { pending[0]!([{ ...snapshot('C'), datetime: '2026-09-12 10:00:00', total_volume: 20 }]); });
+            expect(value.snapshots.get('C')).toMatchObject({ total_volume: 30 });
+        });
         it('keeps the full snapshot when the entered query fails', async () => {
             await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [a] })); });
             mocks.fetch.mockImplementationOnce(async () => { throw new Error('down'); });

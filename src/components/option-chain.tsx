@@ -607,8 +607,15 @@ export function OptionChain({
         followAtm.current = true;
     }, [chainKey]);
     useLayoutEffect(() => {
-        if (showing && followAtm.current) centerOnAtm();
-    }, [showing, chainKey, centerIndex, rows.length, centerOnAtm]);
+        if (!showing) return;
+        if (followAtm.current) {
+            centerOnAtm();
+            return;
+        }
+        // 使用者捲走後不搶捲動位置，但價平移動了提示仍要更新
+        const m = measure();
+        if (m) noteAtm(m.visible);
+    }, [showing, chainKey, centerIndex, rows.length, centerOnAtm, measure, noteAtm]);
     useEffect(() => {
         const body = bodyRef.current;
         if (!showing || !body || typeof ResizeObserver === 'undefined') return;

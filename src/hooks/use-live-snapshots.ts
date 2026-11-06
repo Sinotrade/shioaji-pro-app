@@ -39,7 +39,11 @@ export function useLiveSnapshots(contracts: ContractBase[], fetcher?: () => Prom
             if (seen.current?.key !== key) return;
             setEntered(prev => {
                 const next = new Map(prev?.key === key ? prev.rows : undefined);
-                for (const row of rows) next.set(row.code, row);
+                // 同一檔離窗再入窗時回應可能倒著到：只收資料時間不比手上舊的
+                for (const row of rows) {
+                    const held = next.get(row.code);
+                    if (!held || !(marketTime(held.datetime) > marketTime(row.datetime))) next.set(row.code, row);
+                }
                 return { key, rows: next };
             });
         }).catch(() => undefined); // 查不到就維持全量快照的值
