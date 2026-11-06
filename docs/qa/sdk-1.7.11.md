@@ -51,7 +51,7 @@ SDK tag commit `20dcb3c4be27e635a912d1caf3270ecbe8b8978a`。release 說明三項
 | TLS 根憑證 | 部分 PASS | 登入與合約下載正常，只是沒有壞的間接證據；未單獨驗 emSign 憑證鏈。 |
 | Pro 前端接模擬 sidecar 實際下權證單 | 未測 | 本次未起 vite、未操作 UI；上面的 payload 是照 `placeStockOrder` 組的。 |
 | 正式環境權證下單 | 未測 | 依規定不在正式環境下單。 |
-| Windows／Linux 原生啟動 | 未測 | 只交給 CI 合成測試。 |
+| Windows／Linux 原生啟動 | 未測 | CI 的 combined-agent 用替身 sidecar，不能當成真實 SDK 啟動的證據。 |
 
 ### 模擬環境延遲（paper）
 
@@ -69,8 +69,8 @@ SDK tag commit `20dcb3c4be27e635a912d1caf3270ecbe8b8978a`。release 說明三項
 | 11:12:55 | 權證 HTTP 下單 | 500 Timeout 60 秒；**委託 11:14:43 仍成立**（與上筆為 `04AEF0`、`04AF17`） |
 | 11:15:12 | 權證 CLI 下單 `04AF4D` | 成功，0.16 秒 |
 
-三筆逾時的委託都在發現後刪除。這個延遲的根因沒有查，不確定是不是 SDK 以外的共用環境負載；
-同一時間 TXF 也慢，所以不是權證特有。**這不是 1.7.11 造成的行為，但要記住：`place_order` 回 timeout 不等於沒下單，模擬環境實測過委託在 2–3 分鐘後才成立。**
+三筆逾時的委託都在發現後刪除。這個延遲的根因沒有查，也沒有拿 1.7.10 在同樣條件下比較，
+所以不能排除與 SDK 有關，只能說同一時間 TXF 也慢、不是權證特有。**要記住：`place_order` 回 timeout 不等於沒下單，這次委託在送出後 1 分 48 秒到 3 分 31 秒才成立。**
 Pro 把這類 500 視為失敗時的提示文字本次沒有驗證。
 
 ### 回報 SDK PM 的發現
@@ -90,8 +90,8 @@ Pro 兩邊的 commit 紀錄與程式碼都**沒有為權證被拒做的 workarou
 | --- | --- | --- |
 | `order-ticket.tsx`、`grid-ticket.tsx`、`trade.ts` `isFuturesContract` | WRT 走 `placeStockOrder`，`contractKey` 送 WRT | 不是繞路。1.7.10 這條路會收到 400，1.7.11 起可送出。 |
 | `shioaji.ts` `resolveContract` | WRT 不查 `/info`，用占位欄位 | 原因是資料分片，與被拒無關，保留。 |
-| `flash-order.tsx` 454、1097、1228 | 判斷式是 `=== 'STK'`，WRT 被當成期貨市場（`F`） | **疑似問題**：閃電下單對權證會選到期貨帳戶。SDK commit `4a44cecf` 記錄 WRT 帶 `futures_order` 舊版會下到期貨帳戶；1.7.11 由 SDK 擋成 400。建議另開 issue。 |
-| `candle-chart.tsx` 706 | 同上，WRT 歸 `F`；333 行的 `orderMarket` 卻給 `null` | 同一類問題，兩處判斷不一致。 |
+| `flash-order.tsx` 454、1097、1228 | 判斷式是 `=== 'STK'`，WRT 被當成期貨市場（`F`），選到期貨帳戶 | **疑似問題**：`placeQuickOrder` 要求 WRT 用 S 帳戶（`trade.ts` 211），所以閃電對權證會在本地被拒、不送 HTTP，權證實際上不能用閃電下單。建議另開 issue。 |
+| `candle-chart.tsx` 333、419、706 | 333 行 WRT 的 `orderMarket` 是 `null`，419 行選帳戶退回 `S`；706 行局部分類卻是 `F` | 點價下單仍帶 S 帳戶、走 `stock_order`，不會下到期貨帳戶。不一致的是設定、顯示與觸價參數，下單設定按鈕也被隱藏。 |
 | `bottom-dock-positions.tsx` 203、`trade.ts` 387 | 判斷式同上，且股數平倉只收 STK | **疑似問題**：權證持倉用底部一鍵平倉會被擋下（`商品與持倉帳戶市場不符`），單子不會送出。 |
 | `conditional-form.tsx` 305、`trigger-engine.ts` 854 | 權證顯示「此商品不支援」 | 產品範圍限制，不是為 SDK 做的繞路；要不要開放由 PM 決定。 |
 
