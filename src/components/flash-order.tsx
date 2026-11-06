@@ -1820,7 +1820,7 @@ export function FlashOrder({
                     // 可否融資券的 0 只讓按鈕變淡、仍可點（點下去會重新查）；固定規則才停用
                     disabled={odd || !!ruleBlockRef.current.Buy}
                     data-blocked={buyBlock ? true : undefined}
-                    title={odd ? ODD_LOT_TEXT.priceType : buyBlock ?? undefined}
+                    title={odd ? ODD_LOT_TEXT.priceType : buyBlock ?? `${mktLabel}${buyCredit}買`}
                     onClick={() => void send('Buy', null)}
                 >
                     {mktLabel}{buyCredit}買
@@ -1829,11 +1829,13 @@ export function FlashOrder({
                     className={`${styles.mktBtn.sell} ${armedView && !odd && !sellBlock ? '' : styles.disabledCell}`}
                     disabled={odd || !!ruleBlockRef.current.Sell}
                     data-blocked={sellBlock ? true : undefined}
-                    title={odd ? ODD_LOT_TEXT.priceType : sellBlock ?? undefined}
+                    title={odd ? ODD_LOT_TEXT.priceType : sellBlock ?? `${mktLabel}${sellCredit}賣`}
                     onClick={() => void send('Sell', null)}
                 >
                     {mktLabel}{sellCredit}賣
                 </button>
+                {/* #376 平倉／全刪／停損停利固定同一群：有沒有持倉、掛單數多長都不改變市價鈕的位置 */}
+                <div className={styles.actionSecondary} data-testid='flash-action-secondary'>
                 {pos && !paused && (
                     <button
                         className={`${styles.flatBtn} ${armedView ? '' : styles.disabledCell}`}
@@ -1868,6 +1870,7 @@ export function FlashOrder({
                         onChange={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, protect: next }); }}
                     />
                 )}
+                </div>
             </div>
             {pos && !paused && (
                 <div className={styles.posBar}>
@@ -2048,14 +2051,24 @@ function FlashRefLine({ contract, odd, own, base }: { contract: ContractInfo; od
     const s = spreadOf(own, base);
     const digits = base !== null && Math.abs(base) >= 500 ? 0 : undefined;
     const sign = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '');
+    const lots = odd ? '' : lotsPerContract(contract.multiplier);
+    const baseText = base ? fmtPrice(base) : '—';
+    const diffText = s ? `${sign(s.diff)}${fmtPrice(Math.abs(s.diff), digits)}` : '—';
+    const pctText = s ? `(${sign(s.pct)}${Math.abs(s.pct).toFixed(2)}%)` : '';
+    const kind = odd ? '整零差' : '期現差';
     return (
-        <div className={styles.refRow} data-testid='flash-ref'>
-            <span className={styles.refKey}>{odd ? '整股' : '現股'} <b>{base ? fmtPrice(base) : '—'}</b></span>
-            <span className={styles.refKey}>
-                {odd ? '整零差' : '期現差'}{' '}
-                {s ? <b className={s.diff > 0 ? styles.refUp : s.diff < 0 ? styles.refDown : undefined}>{sign(s.diff)}{fmtPrice(Math.abs(s.diff), digits)} ({sign(s.pct)}{Math.abs(s.pct).toFixed(2)}%)</b> : <b>—</b>}
+        <div className={styles.refRow} data-testid='flash-ref'
+            title={`${odd ? '整股' : '現股'} ${baseText}　${kind} ${diffText}${pctText ? ` ${pctText}` : ''}${lots ? `　${lots}` : ''}`}>
+            <span className={styles.refKey}>{odd ? '整股' : '現股'} <b>{baseText}</b></span>
+            <span className={`${styles.refKey} ${styles.refDiff}`}>
+                {kind}{' '}
+                <b className={s ? s.diff > 0 ? styles.refUp : s.diff < 0 ? styles.refDown : undefined : undefined}>
+                    {diffText}
+                    {/* 個股期多一欄 1口=N張：窄面板先收百分比，全文在這一列的 tooltip */}
+                    {pctText && <span className={odd ? undefined : styles.refPct}> {pctText}</span>}
+                </b>
             </span>
-            {!odd && <span className={styles.refKey}>{lotsPerContract(contract.multiplier)}</span>}
+            {lots && <span className={`${styles.refKey} ${styles.refLots}`} data-testid='flash-ref-lots'>{lots}</span>}
         </div>
     );
 }

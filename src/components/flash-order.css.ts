@@ -9,6 +9,16 @@ const COLS7 = '1.9rem 2rem minmax(0, 1fr) 3.9rem minmax(0, 1fr) 2rem 1.9rem';
 
 const flashContainer = createContainer();
 
+// #376 版面只看面板寬度，不看內容長度：同寬的面板不論商品、價格、信用條件
+// 或有沒有持倉都長得一樣。寬度門檻（寬→窄的退讓順序）：
+//   > 460px  動作列一列排完
+//   ≤ 460px  帳戶縮窄讓出位置，數量與齒輪不換行；市價買／賣獨佔一列，
+//            平倉／全刪／停損停利固定在下一列
+//   ≤ 300px  個股期對照列收掉百分比（1口=N張固定靠右，不換行）
+// 仍放不下時才截斷，全文在 tooltip。
+const NARROW = `${flashContainer} (max-width: 460px)`;
+const TIGHT = `${flashContainer} (max-width: 300px)`;
+
 export const wrap = style({
     display: 'flex',
     flexDirection: 'column',
@@ -57,6 +67,7 @@ export const accountPick = style({
     alignItems: 'center',
     gap: 3,
     maxWidth: '100%',
+    minWidth: 0,
     padding: '1px 5px',
     border: `1px solid ${vars.color.border}`,
     borderRadius: vars.radius.sm,
@@ -65,9 +76,14 @@ export const accountPick = style({
     selectors: {
         '&:focus-within': { outline: `2px solid ${vars.color.accent}`, outlineOffset: 1 },
     },
+    // 帳戶標籤長短（跟隨 ****02）不把齒輪擠到下一列：寬度由這格吸收
+    '@container': {
+        [NARROW]: { flex: '1 1 0' },
+    },
 });
 
 export const accountText = style({
+    minWidth: 0,
     fontFamily: vars.font.mono,
     fontSize: '0.66rem',
     whiteSpace: 'nowrap',
@@ -90,7 +106,7 @@ export const accountSelect = style({
 export const rowBreak = style({
     display: 'none',
     '@container': {
-        [`${flashContainer} (max-width: 460px)`]: { display: 'block', flexBasis: '100%', height: 0 },
+        [NARROW]: { display: 'block', flexBasis: '100%', height: 0 },
     },
 });
 
@@ -240,13 +256,27 @@ export const recenterBtn = style({
 
 export const actionBar = style({
     position: 'relative',
-    display: 'flex',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
     alignItems: 'center',
-    flexWrap: 'wrap',
     gap: vars.space.xs,
     padding: `3px ${vars.space.sm}`,
     borderBottom: `1px solid ${vars.color.border}`,
     flexShrink: 0,
+    '@container': {
+        [NARROW]: { gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' },
+    },
+});
+
+// 平倉／全刪／停損停利：不換行，空間不夠時只有停損停利文字截斷
+export const actionSecondary = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: vars.space.xs,
+    minWidth: 0,
+    '@container': {
+        [NARROW]: { gridColumn: '1 / -1' },
+    },
 });
 
 const mktBase = style({
@@ -259,6 +289,11 @@ const mktBase = style({
     borderRadius: vars.radius.sm,
     border: '1px solid',
     transition: 'all 0.12s',
+    // 按鈕內不換行：長標籤（範圍市價融資買）在按鈕內截斷，全文在 title
+    minWidth: 0,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
 });
 
 export const mktBtn = styleVariants({
@@ -781,7 +816,7 @@ globalStyle(`${kindTag} > i`, { padding: '0 4px', fontStyle: 'normal', color: va
 // 價差對照列（零股：整零差；個股期：期現差＋1口=N張）
 export const refRow = style({
     display: 'flex',
-    flexWrap: 'wrap',
+    alignItems: 'baseline',
     columnGap: vars.space.sm,
     padding: `1px ${vars.space.sm}`,
     fontFamily: vars.font.body,
@@ -792,8 +827,15 @@ export const refRow = style({
     whiteSpace: 'nowrap',
     overflow: 'hidden',
 });
-export const refKey = style({});
+export const refKey = style({ flexShrink: 0 });
 globalStyle(`${refKey} > b`, { fontFamily: vars.font.mono, fontWeight: 600, color: vars.color.foreground });
+// 差價是這一列唯一可以截斷的欄位，其他欄位的位置不受它的長度影響
+export const refDiff = style({ flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' });
+export const refPct = style({
+    '@container': { [TIGHT]: { display: 'none' } },
+});
+// 1口=N張固定靠右
+export const refLots = style({ marginLeft: 'auto' });
 export const refUp = style({});
 export const refDown = style({});
 globalStyle(`${refKey} > b${refUp}`, { color: vars.color.up });
@@ -1072,7 +1114,7 @@ export const gearBtn = styleVariants({
 
 // 動作列裡的停損停利狀態小標（開／關＋保護中 N）
 const protectChipBase = style({
-    flex: '0 0 auto',
+    flex: '0 1 auto',
     display: 'inline-flex',
     alignItems: 'center',
     gap: 3,
@@ -1084,13 +1126,16 @@ const protectChipBase = style({
     borderRadius: vars.radius.sm,
     border: '1px solid',
     cursor: 'pointer',
+    minWidth: 0,
+    maxWidth: '100%',
 });
+export const protectChipText = style({ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' });
 export const protectChip = styleVariants({
     off: [protectChipBase, { color: vars.color.mutedForeground, borderColor: vars.color.border, background: 'transparent' }],
     on: [protectChipBase, { color: vars.color.success, borderColor: vars.color.success, background: 'rgba(34, 197, 94, 0.08)' }],
     bad: [protectChipBase, { color: vars.color.danger, borderColor: vars.color.danger, background: 'rgba(239, 68, 68, 0.08)' }],
 });
-export const protectChipAnchor = style({ position: 'static', display: 'inline-flex' });
+export const protectChipAnchor = style({ position: 'static', display: 'inline-flex', minWidth: 0, marginLeft: 'auto' });
 
 // several marks in one 觸價 cell: no minimum width, tight padding
 export const markCrowded = style({ gap: 1 });
