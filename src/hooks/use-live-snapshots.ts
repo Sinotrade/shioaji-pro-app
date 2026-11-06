@@ -29,21 +29,25 @@ export function useLiveSnapshots(contracts: ContractBase[], fetcher?: () => Prom
     const [sequence, setSequence] = useState(0);
     const [entered, setEntered] = useState<{ key: string; rows: Map<string, Snapshot> } | null>(null);
     const seen = useRef<{ key: string; codes: Set<string> } | null>(null);
+    const requests = useRef(0);
+    const applied = useRef(new Map<string, number>());
     useEffect(() => {
         if (!live) return;
         const before = seen.current?.key === key ? seen.current.codes : null;
         seen.current = { key, codes: new Set(tracked.map(c => c.code)) };
         const fresh = before ? tracked.filter(c => !before.has(c.code)) : []; // 第一次由全量快照涵蓋
         if (fresh.length === 0) return;
+        requests.current += 1;
+        const request = requests.current;
         fetchSnapshots(fresh).then(rows => {
             if (seen.current?.key !== key) return;
+            // 同一檔離窗再入窗時回應可能倒著到：看發出順序，不看資料時間（精度只到毫秒）
+            const newest = rows.filter(row => (applied.current.get(row.code) ?? 0) < request);
+            for (const row of newest) applied.current.set(row.code, request);
+            if (newest.length === 0) return;
             setEntered(prev => {
                 const next = new Map(prev?.key === key ? prev.rows : undefined);
-                // 同一檔離窗再入窗時回應可能倒著到：只收資料時間不比手上舊的
-                for (const row of rows) {
-                    const held = next.get(row.code);
-                    if (!held || !(marketTime(held.datetime) > marketTime(row.datetime))) next.set(row.code, row);
-                }
+                for (const row of newest) next.set(row.code, row);
                 return { key, rows: next };
             });
         }).catch(() => undefined); // 查不到就維持全量快照的值
