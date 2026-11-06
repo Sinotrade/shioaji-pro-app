@@ -17,6 +17,40 @@ const local = new Map<string, { desired: Desired; refs: number }>();
 const clients = new Map<string, Map<string, Desired>>();
 const active = new Map<string, Desired>();
 const canOwn = () => !mirror || isStreamOwner();
+// #386 pagehide 時退訂是一筆接一筆 await，實測頁面卸載後只送得出第一筆，重新整理
+// 留下的訂閱會在 sidecar 累積。所以記下這個頁面訂閱過什麼（sessionStorage：重新
+// 整理還在、分頁之間不共用），下一次載入等消費者都掛上後，只退掉記錄裡沒人要的。
+// 不向 sidecar 查全部訂閱來對帳：Agent、外部程式與其他分頁的訂閱不是我們的。
+export const ORPHAN_SWEEP_DELAY_MS = 5000;
+const LEDGER_KEY = `sj-quote-ledger:${getApiBase()}`;
+type LedgerEntry = { contract: ContractBase; type: QuoteTypeName; odd?: boolean };
+function readLedger(): Map<string, LedgerEntry> {
+    try {
+        const raw = JSON.parse(sessionStorage.getItem(LEDGER_KEY) ?? '[]') as [string, LedgerEntry][];
+        return new Map(Array.isArray(raw) ? raw : []);
+    } catch {
+        return new Map();
+    }
+}
+const ledger = mirror ? new Map<string, LedgerEntry>() : readLedger();
+// 上一次載入留下、這次還沒處理的訂閱
+const orphans = new Map(ledger);
+function saveLedger() {
+    if (mirror) return; // 彈出視窗不訂閱，接手 SSE 後也沒有下一次載入可以清
+    try {
+        sessionStorage.setItem(LEDGER_KEY, JSON.stringify([...ledger]));
+    } catch {
+        // 無法寫入時只是少了下次的清理
+    }
+}
+function remember(key: string, { contract, type, odd }: Desired) {
+    const { security_type, exchange, code, target_code, region, combo } = contract as ContractBase & { combo?: unknown };
+    ledger.set(key, { contract: { security_type, exchange, code, target_code, region, ...(combo ? { combo } : {}) } as ContractBase, type, ...(odd ? { odd } : {}) });
+    saveLedger();
+}
+function forget(key: string) {
+    if (ledger.delete(key)) saveLedger();
+}
 let queue = Promise.resolve();
 const keyOf = (d: Desired) => JSON.stringify([d.contract.security_type, d.contract.exchange, d.contract.target_code || d.contract.code, d.type, ...(d.odd ? ['odd'] : [])]);
 const oddOpts = (d: Desired) => (d.odd ? [{ oddLot: true }] as const : [] as const);
@@ -46,6 +80,8 @@ function sync(immediate = false) {
         const desired = desiredNow();
         for (const [key, value] of desired) if (!active.has(key)) {
             if (!canOwn()) return;
+            // 先記再送：請求送出後頁面才卸載，訂閱也不會漏記
+            remember(key, value);
             try { await subscribeQuote(value.contract, value.type, ...oddOpts(value)); active.set(key, value); } catch { /* reconnect registry/manual re-acquire retries */ }
         }
         if (![...active.keys()].some(key => !desired.has(key))) return;
@@ -53,9 +89,29 @@ function sync(immediate = false) {
         const still = immediate ? desired : desiredNow();
         for (const [key, value] of active) if (!still.has(key)) {
             if (!canOwn()) return;
-            try { await unsubscribeQuote(value.contract, value.type, ...oddOpts(value)); active.delete(key); } catch { /* preserve ownership for a later retry */ }
+            try { await unsubscribeQuote(value.contract, value.type, ...oddOpts(value)); active.delete(key); forget(key); } catch { /* preserve ownership for a later retry */ }
         }
     });
+}
+let sweepTimer: ReturnType<typeof setTimeout> | undefined;
+function sweepOrphans() {
+    sweepTimer = undefined;
+    queue = queue.catch(() => undefined).then(async () => {
+        if (!canOwn()) return;
+        const desired = desiredNow();
+        for (const [key, entry] of orphans) {
+            orphans.delete(key);
+            if (desired.has(key) || active.has(key)) continue;
+            try {
+                await unsubscribeQuote(entry.contract, entry.type, ...oddOpts(entry));
+                forget(key);
+            } catch { /* 留在記錄裡，下一次載入再試 */ }
+        }
+    });
+}
+function scheduleOrphanSweep() {
+    if (orphans.size === 0 || sweepTimer !== undefined || getStreamStatus() !== 'live') return;
+    sweepTimer = setTimeout(sweepOrphans, ORPHAN_SWEEP_DELAY_MS);
 }
 channel?.addEventListener('message', e => {
     if (e.data?.kind === 'hello') { if (!canOwn()) sync(); return; }
@@ -67,13 +123,14 @@ channel?.addEventListener('message', e => {
 });
 if (!mirror) channel?.postMessage({ kind: 'hello' });
 const stopStatus = subscribeStatusStore(() => {
-    if (getStreamStatus() === 'live') sync();
+    if (getStreamStatus() === 'live') { sync(); scheduleOrphanSweep(); }
 });
 const stopOwner = subscribeStreamOwner(() => {
     if (!canOwn()) { active.clear(); clients.clear(); }
     if (canOwn()) channel?.postMessage({ kind: 'hello' });
     sync();
 });
+scheduleOrphanSweep();
 export interface RetainOptions {
     /** 盤中零股行情（intraday_odd），與整股分開計數 */
     oddLot?: boolean;
@@ -121,6 +178,10 @@ export function retainContractQuotes(contract: ContractBase, options?: RetainOpt
 function dispose() {
     stopStatus();
     stopOwner();
+    clearTimeout(sweepTimer);
+    // 釘住的留給背景引擎，不算孤兒
+    for (const key of pinned.keys()) ledger.delete(key);
+    saveLedger();
     local.clear();
     sync(true);
     channel?.close();
