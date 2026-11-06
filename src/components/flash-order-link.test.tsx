@@ -315,6 +315,12 @@ it('never lets the layout wrap on content: rows are grids or no-wrap, labels sta
     expect(block('actionBar')).not.toContain('flexWrap');
     expect(block('actionBar')).toContain("display: 'grid'");
     expect(block('actionSecondary')).not.toContain('flexWrap');
+    // the retreat rules depend on the panel width only, at these thresholds
+    expect(css).toContain('const NARROW = `${flashContainer} (max-width: 460px)`');
+    expect(css).toContain('const TIGHT = `${flashContainer} (max-width: 300px)`');
+    expect(block('actionBar')).toContain("[NARROW]: { gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }");
+    expect(block('actionSecondary')).toContain("[NARROW]: { gridColumn: '1 / -1' }");
+    expect(block('refPct')).toContain("[TIGHT]: { display: 'none' }");
     expect(block('accountPick')).toContain("[NARROW]: { flex: '1 1 0' }"); // a long account label cannot push the gear down
     const mkt = css.slice(css.indexOf('const mktBase = style('), css.indexOf('export const mktBtn'));
     expect(mkt).toContain("whiteSpace: 'nowrap'");
