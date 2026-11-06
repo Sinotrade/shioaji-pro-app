@@ -3,11 +3,13 @@ import { useLiveSnapshots } from '../hooks/use-live-snapshots';
 // src/components/option-chain.tsx — 臺指選擇權 T 字報價表（月選＋週選）.
 // Loads the TAIEX option contracts once per Taipei day: the monthly TXO root
 // plus every weekly root discovered from options/roots (issue #152).
-// Expiries are keyed by (root, delivery_date); shows strikes around the
-// underlying index (fallback TXFR1, then the median strike) for the
-// selected expiry and refreshes quotes via batched snapshots.
+// Expiries are keyed by (root, delivery_date). Every strike of the selected
+// expiry is listed and scrollable, centred on the underlying index (fallback
+// TXFR1, then the median strike). Only the strikes on screen (plus a buffer)
+// subscribe to quotes; see docs/design/option-chain-range.md (#371).
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Crosshair } from 'lucide-react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '../hooks/use-query';
 import { useQuote } from '../hooks/use-stream';
 import { ensureContract } from '../lib/contracts-cache';
@@ -30,9 +32,20 @@ import {
     type ExpiryClock,
 } from '../lib/option-expiry';
 import { pickOptionLeg } from '../lib/option-pick';
+import {
+    centeredRange,
+    fetchChainSnapshots,
+    inRange,
+    liveRangeFor,
+    nextLiveRange,
+    scrollTopFor,
+    visibleRange,
+    WINDOW_SETTLE_MS,
+    type StrikeRange,
+} from '../lib/option-window';
 import { fetchOptionRoots, fetchOptions, fetchSnapshots } from '../lib/shioaji';
 import type { Snapshot } from '../lib/types/market';
-import { fmtPrice, fmtSigned } from '../lib/utils/format';
+import { fmtCompactInt, fmtInt, fmtPrice, fmtSigned } from '../lib/utils/format';
 import * as dock from './bottom-dock.css';
 import * as styles from './option-chain.css';
 import { AsyncStatus } from './async-status';
@@ -257,8 +270,6 @@ export function chainStatusText(
     return parts.join('；');
 }
 
-const STRIKE_SPAN = 8; // strikes above/below ATM
-
 function isCall(c: OptContract): boolean {
     return c.option_right.toUpperCase().startsWith('C');
 }
@@ -291,6 +302,95 @@ function dropLegacyMonth() {
         // ignore
     }
 }
+
+interface ChainRowData {
+    strike: number;
+    call?: OptContract;
+    put?: OptContract;
+}
+
+function SideHead({ label }: { label: string }) {
+    return (
+        <>
+            <th className={`${styles.th} ${styles.sideHeadWide}`} colSpan={4}>{label}</th>
+            <th className={`${styles.th} ${styles.sideHeadNarrow}`} colSpan={2}>{label}</th>
+        </>
+    );
+}
+
+function QuoteHead() {
+    return (
+        <>
+            <th className={styles.th}>成交</th>
+            <th className={`${styles.th} ${styles.bookCol}`}>買</th>
+            <th className={`${styles.th} ${styles.bookCol}`}>賣</th>
+            <th className={styles.th}>量</th>
+        </>
+    );
+}
+
+function QuoteCells({ snapshot: s }: { snapshot?: Snapshot }) {
+    if (!s) {
+        return (
+            <>
+                <td className={styles.td}>—</td>
+                <td className={`${styles.td} ${styles.bookCol}`}>—</td>
+                <td className={`${styles.td} ${styles.bookCol}`}>—</td>
+                <td className={`${styles.td} ${styles.volume}`}>—</td>
+            </>
+        );
+    }
+    const dir = s.change_price > 0 ? 'up' : s.change_price < 0 ? 'down' : 'flat';
+    return (
+        <>
+            <td className={`${styles.td} ${panel.dirText[dir]}`}>
+                {s.close ? fmtPrice(s.close, 0) : '—'}
+            </td>
+            <td className={`${styles.td} ${styles.bookCol}`}>
+                {s.buy_price ? fmtPrice(s.buy_price, 0) : '—'}
+            </td>
+            <td className={`${styles.td} ${styles.bookCol}`}>
+                {s.sell_price ? fmtPrice(s.sell_price, 0) : '—'}
+            </td>
+            <td className={`${styles.td} ${styles.volume}`} title={`今日成交量 ${fmtInt(s.total_volume)} 口`}>
+                {fmtCompactInt(s.total_volume)}
+            </td>
+        </>
+    );
+}
+
+// 全部履約價都在表上：列要 memo，一檔跳動不重畫整張表
+const ChainRow = memo(function ChainRow({ row, call, put, atm, live, onPick }: {
+    row: ChainRowData;
+    call?: Snapshot;
+    put?: Snapshot;
+    atm: boolean;
+    live: boolean;
+    onPick?: (code: string | undefined) => void;
+}) {
+    const pickHint = onPick ? '點 CALL 側連動買權、PUT 側連動賣權' : '';
+    const staleHint = live ? '' : '畫面外的檔位：顯示快照，捲到畫面內才即時更新';
+    return (
+        <tr
+            className={`${onPick ? styles.pickableRow : ''} ${live ? '' : styles.staleRow}`}
+            data-live={live ? true : undefined}
+            title={[pickHint, staleHint].filter(Boolean).join('\n') || undefined}
+            onClick={(e) => {
+                if (!onPick) return;
+                // left half of the row → call, right → put
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                const left = e.clientX - rect.left < rect.width / 2;
+                onPick(left ? row.call?.code : row.put?.code);
+            }}
+        >
+            <QuoteCells snapshot={call} />
+            <td className={`${styles.strike} ${atm ? styles.atmStrike : ''}`}>
+                {fmtPrice(row.strike, 0)}
+            </td>
+            <QuoteCells snapshot={put} />
+        </tr>
+    );
+});
 
 export function OptionChain({
     onPick,
@@ -415,38 +515,17 @@ export function OptionChain({
     ]);
     const atm = ref?.value ?? null;
 
-    // strikes around ATM for the selected expiry
+    // every strike of the selected expiry, ascending
     const rows = useMemo(() => {
-        const inMonth = inExpiry;
-        const strikes = [
-            ...new Set(inMonth.map((c) => c.strike_price)),
-        ].sort((a, b) => a - b);
-        if (strikes.length === 0) return [];
-        const center = atm ?? strikes[Math.floor(strikes.length / 2)]!;
-        let idx = 0;
-        let best = Infinity;
-        strikes.forEach((s, i) => {
-            const d = Math.abs(s - center);
-            if (d < best) {
-                best = d;
-                idx = i;
-            }
-        });
-        const lo = Math.max(0, idx - STRIKE_SPAN);
-        const sel = strikes.slice(lo, idx + STRIKE_SPAN + 1);
-        return sel.map((strike) => ({
-            strike,
-            call: inMonth.find(
-                (c) => c.strike_price === strike && isCall(c),
-            ),
-            put: inMonth.find(
-                (c) => c.strike_price === strike && !isCall(c),
-            ),
-        }));
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [inExpiry, atm === null ? 0 : Math.round(atm / 100)]);
-
-    const { snapshots: snaps, refresh: refreshQuotes, loading: quotesLoading, error: quotesError } = useLiveSnapshots(rows.flatMap(r => [r.call, r.put]).filter((c): c is OptContract => !!c));
+        const byStrike = new Map<number, ChainRowData>();
+        for (const c of inExpiry) {
+            const row = byStrike.get(c.strike_price) ?? { strike: c.strike_price };
+            if (isCall(c)) row.call ??= c;
+            else row.put ??= c;
+            byStrike.set(c.strike_price, row);
+        }
+        return [...byStrike.values()].sort((a, b) => a.strike - b.strike);
+    }, [inExpiry]);
 
     // the strike closest to ATM — exact, not a fixed point distance
     const nearestStrike = useMemo(() => {
@@ -463,6 +542,128 @@ export function OptionChain({
         return best;
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [rows, atm === null ? 0 : Math.round(atm / 10)]);
+    const centerIndex = nearestStrike === null
+        ? Math.floor(rows.length / 2)
+        : rows.findIndex((r) => r.strike === nearestStrike);
+
+    // 即時訂閱窗（#371）：只有畫面內加緩衝的檔位訂閱，其他檔位留快照
+    const chainKey = expiry;
+    const [measured, setMeasured] = useState<{ key: string; range: StrikeRange } | null>(null);
+    const [unmeasurable, setUnmeasurable] = useState(false);
+    const liveRange = measured?.key === chainKey ? measured.range : centeredRange(centerIndex, rows.length);
+    // 價平還沒算出來就訂閱的話，訂的是中位履約價那一窗，隨後整批退掉（#386）。
+    // 指數與台指期都查不到時才以中位數為準。量到畫面前也先不訂，避免多訂一輪。
+    const atmPending = atm === null && refQuery.updatedAt == null && !refQuery.error;
+    const hasMeasured = measured?.key === chainKey;
+    const windowReady = !atmPending && (hasMeasured || unmeasurable);
+    const allContracts = useMemo(
+        () => rows.flatMap((r) => [r.call, r.put]).filter((c): c is OptContract => !!c),
+        [rows],
+    );
+    const liveContracts = useMemo(
+        () => (windowReady ? rows.slice(liveRange.first, liveRange.last + 1) : [])
+            .flatMap((r) => [r.call, r.put]).filter((c): c is OptContract => !!c),
+        [rows, windowReady, liveRange.first, liveRange.last],
+    );
+    const chainSnapshots = useCallback(() => fetchChainSnapshots(allContracts), [allContracts]);
+    const { snapshots: snaps, refresh: refreshQuotes, loading: quotesLoading, error: quotesError } = useLiveSnapshots(allContracts, chainSnapshots, liveContracts);
+
+    const bodyRef = useRef<HTMLDivElement | null>(null);
+    // 使用者捲動過就不再自動置中；按回到價平或換到期才恢復
+    const followAtm = useRef(true);
+    const autoScrollTop = useRef<number | null>(null);
+    const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const [atmAway, setAtmAway] = useState(false);
+    const latest = useRef({ chainKey, total: rows.length, centerIndex, liveRange, atmPending });
+    latest.current = { chainKey, total: rows.length, centerIndex, liveRange, atmPending };
+
+    const measure = useCallback(() => {
+        const body = bodyRef.current;
+        const row = body?.querySelector('tbody tr');
+        if (!body || !row) return null;
+        const rowHeight = row.getBoundingClientRect().height;
+        const headerHeight = body.querySelector('thead')?.getBoundingClientRect().height ?? 0;
+        const visible = visibleRange(body.scrollTop, body.clientHeight, headerHeight, rowHeight, latest.current.total);
+        return visible && { body, visible, rowHeight, headerHeight };
+    }, []);
+
+    const noteAtm = useCallback((visible: StrikeRange) => {
+        setAtmAway(!inRange(visible, latest.current.centerIndex));
+    }, []);
+
+    const settle = useCallback(() => {
+        const m = measure();
+        if (!m) return;
+        noteAtm(m.visible);
+        const { chainKey: key, total, liveRange: current, atmPending: pending } = latest.current;
+        if (pending) return;
+        // 這個到期第一次量到畫面：直接用畫面加緩衝；之後才有遲滯
+        setMeasured((prev) => {
+            if (prev?.key !== key) return { key, range: liveRangeFor(m.visible, total) };
+            const range = nextLiveRange(current, m.visible, total);
+            return prev.range === range ? prev : { key, range };
+        });
+    }, [measure, noteAtm]);
+
+    const centerOnAtm = useCallback(() => {
+        const m = measure();
+        if (!m) {
+            setUnmeasurable(true); // 面板隱藏中：先用價平上下各八檔
+            return;
+        }
+        m.body.scrollTop = scrollTopFor(latest.current.centerIndex, m.body.clientHeight, m.headerHeight, m.rowHeight);
+        autoScrollTop.current = m.body.scrollTop;
+        settle();
+    }, [measure, settle]);
+
+    const showing = !loading && rows.length > 0;
+
+    useLayoutEffect(() => {
+        followAtm.current = true;
+    }, [chainKey]);
+    useLayoutEffect(() => {
+        if (!showing) return;
+        if (followAtm.current) {
+            centerOnAtm();
+            return;
+        }
+        // 使用者捲走後不搶捲動位置，但價平移動了提示仍要更新
+        const m = measure();
+        if (m) noteAtm(m.visible);
+        // 等價平時捲動過的話，量測被跳過了，這裡補上才會開始訂閱
+        // 已經量過就交給捲動的 settle 計時，價平跳動不提早換窗
+        if (atmPending || hasMeasured) return;
+        if (m) settle();
+        else setUnmeasurable(true);
+    }, [showing, chainKey, centerIndex, atmPending, hasMeasured, rows.length, centerOnAtm, measure, noteAtm, settle]);
+    useEffect(() => {
+        const body = bodyRef.current;
+        if (!showing || !body || typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(() => {
+            if (followAtm.current) centerOnAtm();
+            else settle();
+        });
+        observer.observe(body);
+        return () => observer.disconnect();
+    }, [showing, centerOnAtm, settle]);
+    useEffect(() => () => clearTimeout(settleTimer.current), []);
+
+    const onScroll = useCallback(() => {
+        const m = measure();
+        if (!m) return;
+        // 自己置中引發的 scroll 事件不算使用者捲動
+        if (autoScrollTop.current === null || Math.abs(m.body.scrollTop - autoScrollTop.current) > 1) followAtm.current = false;
+        noteAtm(m.visible);
+        clearTimeout(settleTimer.current);
+        settleTimer.current = setTimeout(settle, WINDOW_SETTLE_MS);
+    }, [measure, noteAtm, settle]);
+
+    const pick = useCallback((code: string | undefined) => {
+        if (!code || !onPick) return;
+        onPick(code);
+        // also offer it to a combo panel in 連動 mode (issue #1)
+        pickOptionLeg(code);
+    }, [onPick]);
 
     if (loading) {
         return <div className={dock.emptyState}>
@@ -494,34 +695,6 @@ export function OptionChain({
             </div>
         );
     }
-
-    const Cell = ({ code }: { code?: string }) => {
-        const s = code ? snaps.get(code) : undefined;
-        if (!s) {
-            return (
-                <>
-                    <td className={styles.td}>—</td>
-                    <td className={styles.td}>—</td>
-                    <td className={styles.td}>—</td>
-                </>
-            );
-        }
-        const dir =
-            s.change_price > 0 ? 'up' : s.change_price < 0 ? 'down' : 'flat';
-        return (
-            <>
-                <td className={`${styles.td} ${panel.dirText[dir]}`}>
-                    {s.close ? fmtPrice(s.close, 0) : '—'}
-                </td>
-                <td className={styles.td}>
-                    {s.buy_price ? fmtPrice(s.buy_price, 0) : '—'}
-                </td>
-                <td className={styles.td}>
-                    {s.sell_price ? fmtPrice(s.sell_price, 0) : '—'}
-                </td>
-            </>
-        );
-    };
 
     return (
         <div className={styles.wrap}>
@@ -555,6 +728,19 @@ export function OptionChain({
                         '中位數置中'
                     )}
                 </span>
+                <button
+                    type="button"
+                    className={styles.atmBtn}
+                    aria-label="回到價平"
+                    title={atmAway ? '價平不在畫面內，點一下回到價平' : '回到價平'}
+                    data-away={atmAway ? true : undefined}
+                    onClick={() => {
+                        followAtm.current = true;
+                        centerOnAtm();
+                    }}
+                >
+                    <Crosshair size={12} aria-hidden />
+                </button>
                 <RefreshButton
                     label="更新報價"
                     loading={quotesLoading}
@@ -576,72 +762,33 @@ export function OptionChain({
                     {chainStatusText(complete, failures, unlisted)}
                 </div>
             )}
-            <div className={panel.panelBody}>
+            <div className={panel.panelBody} ref={bodyRef} onScroll={onScroll} data-testid="optchain-body">
                 <table className={styles.table}>
-                    <thead>
+                    <thead className={styles.thead}>
                         <tr>
-                            <th className={styles.th} colSpan={3}>
-                                CALL 買權
-                            </th>
+                            <SideHead label="CALL 買權" />
                             <th className={`${styles.th} ${styles.strikeTh}`}>
                                 履約價
                             </th>
-                            <th className={styles.th} colSpan={3}>
-                                PUT 賣權
-                            </th>
+                            <SideHead label="PUT 賣權" />
                         </tr>
                         <tr>
-                            <th className={styles.th}>成交</th>
-                            <th className={styles.th}>買</th>
-                            <th className={styles.th}>賣</th>
+                            <QuoteHead />
                             <th className={`${styles.th} ${styles.strikeTh}`} />
-                            <th className={styles.th}>成交</th>
-                            <th className={styles.th}>買</th>
-                            <th className={styles.th}>賣</th>
+                            <QuoteHead />
                         </tr>
                     </thead>
                     <tbody>
-                        {rows.map((r) => (
-                            <tr
+                        {rows.map((r, i) => (
+                            <ChainRow
                                 key={r.strike}
-                                className={onPick ? styles.pickableRow : ''}
-                                title={
-                                    onPick
-                                        ? '點 CALL 側連動買權、PUT 側連動賣權'
-                                        : undefined
-                                }
-                                onClick={(e) => {
-                                    if (!onPick) return;
-                                    // left half of the row → call, right → put
-                                    const rect = (
-                                        e.currentTarget as HTMLElement
-                                    ).getBoundingClientRect();
-                                    const left =
-                                        e.clientX - rect.left <
-                                        rect.width / 2;
-                                    const code = left
-                                        ? r.call?.code
-                                        : r.put?.code;
-                                    if (code) {
-                                        onPick(code);
-                                        // also offer it to a combo panel in
-                                        // 連動 mode (issue #1)
-                                        pickOptionLeg(code);
-                                    }
-                                }}
-                            >
-                                <Cell code={r.call?.code} />
-                                <td
-                                    className={`${styles.strike} ${
-                                        r.strike === nearestStrike
-                                            ? styles.atmStrike
-                                            : ''
-                                    }`}
-                                >
-                                    {fmtPrice(r.strike, 0)}
-                                </td>
-                                <Cell code={r.put?.code} />
-                            </tr>
+                                row={r}
+                                call={r.call && snaps.get(r.call.code)}
+                                put={r.put && snaps.get(r.put.code)}
+                                atm={r.strike === nearestStrike}
+                                live={inRange(liveRange, i)}
+                                onPick={onPick ? pick : undefined}
+                            />
                         ))}
                     </tbody>
                 </table>

@@ -97,8 +97,13 @@ export const date = styleVariants({
     ],
 });
 
+// 到期鈕變窄時依序讓位：剩餘天數、週幾；日期、週月標記與箭頭保持完整
 export const weekday = style({
-    flexShrink: 0,
+    flexShrink: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    textOverflow: 'clip',
     fontFamily: vars.font.display,
     fontSize: '0.62rem',
     color: vars.color.mutedForeground,
@@ -147,6 +152,7 @@ export const days = styleVariants({
 
 // 收合列的剩餘天數最先讓位（省略號截斷）
 export const triggerDays = style({
+    flexShrink: 100,
     minWidth: 0,
     overflow: 'hidden',
     textOverflow: 'ellipsis',

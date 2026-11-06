@@ -125,4 +125,135 @@ describe('quote ownership shared consumers', () => {
             expect(mocks.subscribe).toHaveBeenCalledTimes(2);
         } finally { vi.useRealTimers(); }
     });
+    describe('subscriptions left behind by a reload (#386)', () => {
+        let session: Map<string, string>;
+        const other = { ...contract, code: '2317' };
+        const reload = async () => { vi.resetModules(); return import('./quote-ownership'); };
+        beforeEach(() => {
+            session = new Map();
+            vi.stubGlobal('sessionStorage', { getItem: (k: string) => session.get(k) ?? null, setItem: (k: string, v: string) => { session.set(k, v); } });
+            vi.useFakeTimers();
+        });
+        afterEach(() => { vi.useRealTimers(); });
+        const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+        const subscribeOne = async (c: typeof contract) => {
+            const mod = await import('./quote-ownership');
+            mod.retainQuote(c, 'Tick');
+            await flush();
+            return mod;
+        };
+        it('after a reload, unsubscribes what the old page held and nobody wants now', async () => {
+            await subscribeOne(contract);
+            expect(mocks.unsubscribe).not.toHaveBeenCalled(); // the page unloaded before it could release
+            const next = await reload();
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS - 1);
+            expect(mocks.unsubscribe).not.toHaveBeenCalled(); // consumers still mounting
+            await vi.advanceTimersByTimeAsync(1);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
+            expect(mocks.unsubscribe.mock.calls[0]!.slice(0, 2)).toEqual([expect.objectContaining({ code: '2330' }), 'Tick']);
+            await reload();
+            await vi.advanceTimersByTimeAsync(10_000);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(1); // cleared from the ledger, no repeat
+        });
+        it('keeps what the new page wants again', async () => {
+            await subscribeOne(contract);
+            const next = await reload();
+            next.retainQuote(contract, 'Tick');
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+        });
+        it('never touches a subscription this page did not make', async () => {
+            await subscribeOne(contract);
+            session.clear(); // a different tab or a fresh start has its own ledger
+            const next = await reload();
+            next.retainQuote(other, 'Tick');
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+        });
+        it('leaves a quote pinned for the background engine', async () => {
+            const handlers: Record<string, () => void> = {};
+            vi.stubGlobal('window', { addEventListener: (name: string, fn: () => void) => { handlers[name] = fn; } });
+            const { pinQuote } = await import('./quote-ownership');
+            pinQuote(contract, 'Tick');
+            await flush();
+            handlers.pagehide!();
+            await flush();
+            const next = await reload();
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+        });
+        it('waits for the stream, and retries on a later load if the unsubscribe fails', async () => {
+            await subscribeOne(contract);
+            mocks.status = 'connecting';
+            mocks.unsubscribe.mockRejectedValueOnce(new Error('down'));
+            let next = await reload();
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+            mocks.status = 'live'; mocks.changed!();
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
+            next = await reload();
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(2);
+        });
+        it('keeps a quote another page still holds, and stops tracking it', async () => {
+            await subscribeOne(contract);
+            const key = (JSON.parse([...session.values()][0]!) as [string][])[0]![0];
+            const sent: unknown[] = [];
+            let listener: ((e: { data: unknown }) => void) | undefined;
+            vi.stubGlobal('BroadcastChannel', class {
+                addEventListener(_: string, fn: (e: { data: unknown }) => void) { listener = fn; }
+                postMessage(data: { kind: string }) { sent.push(data); if (data.kind === 'held?') queueMicrotask(() => listener!({ data: { kind: 'held', keys: [key] } })); }
+                close() {}
+            });
+            const next = await reload();
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(sent).toContainEqual({ kind: 'held?' });
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+            expect(JSON.parse([...session.values()][0]!)).toEqual([]);
+        });
+        it('answers another page that is about to sweep', async () => {
+            const sent: { kind: string; keys?: string[] }[] = [];
+            let listener: ((e: { data: unknown }) => void) | undefined;
+            vi.stubGlobal('BroadcastChannel', class {
+                addEventListener(_: string, fn: (e: { data: unknown }) => void) { listener = fn; }
+                postMessage(data: { kind: string }) { sent.push(data); }
+                close() {}
+            });
+            await subscribeOne(contract);
+            listener!({ data: { kind: 'held?' } });
+            expect(sent.find(m => m.kind === 'held')!.keys!.length).toBeGreaterThan(0);
+        });
+        it('announces a new subscription, so a sweep in progress elsewhere leaves it alone', async () => {
+            const sent: { kind: string; keys?: string[] }[] = [];
+            vi.stubGlobal('BroadcastChannel', class {
+                addEventListener() {}
+                postMessage(data: { kind: string }) { sent.push(data); }
+                close() {}
+            });
+            await subscribeOne(contract);
+            expect(sent.filter(m => m.kind === 'held').map(m => m.keys)).toHaveLength(1);
+        });
+        it('does not unsubscribe a quote wanted while the sweep is waiting on an earlier one', async () => {
+            await subscribeOne(contract);
+            await subscribeOne(other);
+            let finish!: (v: unknown) => void;
+            mocks.unsubscribe.mockImplementationOnce(() => new Promise(r => { finish = r; }));
+            const next = await reload();
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
+            next.pinQuote(other, 'Tick');
+            finish({ success: true });
+            await flush();
+            expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
+        });
+        it('a popout leaves the ledger alone', async () => {
+            await subscribeOne(contract);
+            vi.stubGlobal('location', { search: '?popout=1' });
+            mocks.owner = true;
+            const next = await reload();
+            await vi.advanceTimersByTimeAsync(next.ORPHAN_SWEEP_DELAY_MS + 1);
+            expect(mocks.unsubscribe).not.toHaveBeenCalled();
+        });
+    });
 });

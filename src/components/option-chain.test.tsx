@@ -2,7 +2,7 @@
 
 import { createElement } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContractInfo } from '../lib/types/contract';
 
 const api = vi.hoisted(() => ({
@@ -13,9 +13,10 @@ const api = vi.hoisted(() => ({
 const market = vi.hoisted(() => ({
     quotes: {} as Record<string, unknown>,
     snapshots: undefined as unknown[] | undefined,
+    refSettled: true,
     refresh: vi.fn(),
 }));
-const snapshotCodes = vi.hoisted(() => ({ last: [] as string[] }));
+const snapshotCodes = vi.hoisted(() => ({ last: [] as string[], live: [] as string[], rows: new Map<string, unknown>() }));
 
 vi.mock('../lib/shioaji', () => api);
 vi.mock('../lib/contracts-cache', () => ({
@@ -25,12 +26,13 @@ vi.mock('../hooks/use-stream', () => ({
     useQuote: (code: string) => market.quotes[code],
 }));
 vi.mock('../hooks/use-query', () => ({
-    useQuery: () => ({ data: market.snapshots, refresh: market.refresh }),
+    useQuery: () => ({ data: market.snapshots, refresh: market.refresh, updatedAt: market.refSettled ? 1 : null, error: null }),
 }));
 vi.mock('../hooks/use-live-snapshots', () => ({
-    useLiveSnapshots: (contracts: { code: string }[]) => {
+    useLiveSnapshots: (contracts: { code: string }[], _fetcher: unknown, live?: { code: string }[]) => {
         snapshotCodes.last = contracts.map((c) => c.code);
-        return { snapshots: new Map(), refresh: vi.fn(), loading: false, error: null };
+        snapshotCodes.live = (live ?? contracts).map((c) => c.code);
+        return { snapshots: snapshotCodes.rows, refresh: vi.fn(), loading: false, error: null };
     },
 }));
 vi.mock('../lib/option-pick', () => ({ pickOptionLeg: vi.fn() }));
@@ -98,6 +100,8 @@ beforeEach(() => {
     });
     market.quotes = { IX0001: { index: { close: '40300', reference: '40250' } } };
     market.snapshots = undefined;
+    market.refSettled = true;
+    snapshotCodes.rows = new Map();
     api.fetchOptionRoots.mockResolvedValue([
         { root: 'TEO', name: '電子選擇權' },
         { root: 'TX1', name: '臺指選擇權 週三W1' },
@@ -149,6 +153,7 @@ const atmStrike = (r: ReactTestRenderer) =>
         .map(text);
 const refreshButton = (r: ReactTestRenderer) =>
     r.root.find((n) => n.type === 'button' && n.props['aria-label'] === '更新報價');
+const bodyRows = (r: ReactTestRenderer) => r.root.find((n) => n.type === 'tbody').findAllByType('tr');
 
 it('lists weekly and monthly expiries sorted, defaulting to the nearest', async () => {
     const r = await renderChain();
@@ -545,4 +550,164 @@ it('does not let a straggling older-day response overwrite a newer day cache', a
     expect(txoCalls()).toBe(2);
     await loadChainContracts('2026-09-25');
     expect(txoCalls()).toBe(2);
+});
+
+// #371：T 字表列出全部履約價，只訂閱訂閱窗；每檔顯示成交量
+describe('full strike range', () => {
+    const openLong = async (onPick = vi.fn()) => {
+        // 履約價遠多於舊版的上下八檔
+        const long = series('TX2', '2026-10-14', 'Wed', 60);
+        market.quotes = { IX0001: { index: { close: '43000', reference: '42950' } } };
+        api.fetchOptionRoots.mockResolvedValue([{ root: 'TXO', name: '臺指選擇權' }, { root: 'TX2', name: '臺指選擇權 週三W2' }]);
+        api.fetchOptions.mockImplementation(async (root: string) => (root === 'TX2' ? long : BY_ROOT[root] ?? []));
+        const r = await renderChain(onPick);
+        expect(selected(r)).toBe('TX2:2026-10-14'); // the nearest expiry
+        return r;
+    };
+
+    it('lists every strike but subscribes only the eight around ATM until the panel is measured', async () => {
+        const r = await openLong();
+        expect(bodyRows(r)).toHaveLength(60);
+        expect(snapshotCodes.last).toHaveLength(120);
+        expect(snapshotCodes.live).toHaveLength(17 * 2);
+        expect(snapshotCodes.live).toContain('TX243000C-2026-10-14');
+        expect(snapshotCodes.live).toContain('TX242200P-2026-10-14');
+        expect(snapshotCodes.live).toContain('TX243800C-2026-10-14');
+        expect(snapshotCodes.live).not.toContain('TX242100C-2026-10-14');
+        expect(snapshotCodes.live).not.toContain('TX245900C-2026-10-14');
+        expect(snapshotCodes.last).toContain('TX245900C-2026-10-14');
+    });
+
+    it('marks only the window as live; a far strike can still be picked', async () => {
+        const onPick = vi.fn();
+        const r = await openLong(onPick);
+        expect(bodyRows(r).filter((row) => row.props['data-live'])).toHaveLength(17);
+        const far = bodyRows(r).find((row) => text(row).includes('45,900'))!;
+        expect(far.props['data-live']).toBeUndefined();
+        expect(far.props.title).toContain('畫面外');
+        const rect = { left: 0, width: 200 };
+        act(() => far.props.onClick({ clientX: 10, currentTarget: { getBoundingClientRect: () => rect } }));
+        expect(onPick).toHaveBeenCalledWith('TX245900C-2026-10-14');
+    });
+
+    it('shows each side’s volume, compact over ten thousand, zero as zero, dash when unknown', async () => {
+        snapshotCodes.rows = new Map([
+            ['TX240300C-2026-10-14', { close: 120, change_price: 1, buy_price: 119, sell_price: 121, total_volume: 12345 }],
+            ['TX240300P-2026-10-14', { close: 80, change_price: -1, buy_price: 79, sell_price: 81, total_volume: 0 }],
+        ]);
+        const r = await openLong();
+        const row = bodyRows(r).find((x) => text(x).includes('40,300'))!;
+        const cells = row.findAllByType('td').map(text);
+        expect(cells).toEqual(['120', '119', '121', '1.2萬', '40,300', '80', '79', '81', '0']);
+        expect(row.findAllByType('td')[3]!.props.title).toContain('12,345');
+        const blank = bodyRows(r).find((x) => text(x).includes('45,900'))!;
+        expect(blank.findAllByType('td').map(text)).toEqual(['—', '—', '—', '—', '45,900', '—', '—', '—', '—']);
+    });
+
+    // 假的捲動容器：200px 高、表頭 40px、每列 20px，一次看得到 8 列
+    const mountMeasured = async ({ quotes = { IX0001: { index: { close: '43000', reference: '42950' } } } as Record<string, unknown> } = {}) => {
+        const body = {
+            scrollTop: 0,
+            clientHeight: 200,
+            querySelector: (q: string) => ({ getBoundingClientRect: () => ({ height: q === 'thead' ? 40 : 20 }) }),
+        };
+        const long = series('TX2', '2026-10-14', 'Wed', 60);
+        market.quotes = quotes;
+        api.fetchOptionRoots.mockResolvedValue([{ root: 'TXO', name: '臺指選擇權' }, { root: 'TX2', name: '臺指選擇權 週三W2' }]);
+        api.fetchOptions.mockImplementation(async (root: string) => (root === 'TX2' ? long : BY_ROOT[root] ?? []));
+        const onPick = vi.fn();
+        let r!: ReactTestRenderer;
+        await act(async () => {
+            r = create(createElement(OptionChain, { onPick }), {
+                createNodeMock: (el) => ((el.props as Record<string, unknown>)['data-testid'] === 'optchain-body' ? body : null),
+            });
+        });
+        const atmBtn = () => r.root.find((n) => n.type === 'button' && n.props['aria-label'] === '回到價平');
+        const scrollTo = async (top: number) => {
+            body.scrollTop = top;
+            await act(async () => r.root.find((n) => n.props['data-testid'] === 'optchain-body' && n.type === 'div').props.onScroll());
+        };
+        return { r, body, atmBtn, scrollTo, onPick };
+    };
+
+    it('centres on ATM once measured and moves the window only after the scroll settles', async () => {
+        const { body, scrollTo } = await mountMeasured();
+        expect(body.scrollTop).toBe(530); // row 30 in the middle of the 160px under the header
+        const before = snapshotCodes.live;
+        await scrollTo(1000);
+        expect(snapshotCodes.live).toEqual(before); // still scrolling
+        await act(async () => { vi.advanceTimersByTime(299); });
+        expect(snapshotCodes.live).toEqual(before);
+        await act(async () => { vi.advanceTimersByTime(1); });
+        expect(snapshotCodes.live).toContain('TX245000C-2026-10-14');
+        expect(snapshotCodes.live).not.toContain('TX243000C-2026-10-14');
+    });
+
+    it('subscribes nothing until ATM is known, then only the measured window', async () => {
+        market.refSettled = false;
+        const { r, onPick } = await mountMeasured({ quotes: {} });
+        expect(snapshotCodes.last).toHaveLength(120);
+        expect(snapshotCodes.live).toEqual([]);
+        market.quotes = { IX0001: { index: { close: '43000', reference: '42950' } } };
+        await act(async () => { r.update(createElement(OptionChain, { onPick })); });
+        expect(snapshotCodes.live).toContain('TX243000C-2026-10-14');
+        expect(snapshotCodes.live).toHaveLength((30 + 4 + 3 - (26 - 3) + 1) * 2); // rows 23..37, screen 26..34 plus 3 each way
+    });
+
+    it('still subscribes when the user scrolled while ATM was pending', async () => {
+        market.refSettled = false;
+        const { r, scrollTo, onPick } = await mountMeasured({ quotes: {} });
+        await scrollTo(760);
+        expect(snapshotCodes.live).toEqual([]);
+        market.quotes = { IX0001: { index: { close: '43000', reference: '42950' } } };
+        await act(async () => { r.update(createElement(OptionChain, { onPick })); });
+        expect(snapshotCodes.live.length).toBeGreaterThan(0);
+    });
+
+    it('an ATM move while scrolling does not jump ahead of the settle timer', async () => {
+        vi.useFakeTimers();
+        try {
+            const { r, body, onPick } = await mountMeasured();
+            const before = snapshotCodes.live;
+            body.scrollTop = 2000;
+            await act(async () => { r.root.find((n) => n.props['data-testid'] === 'optchain-body' && n.type === 'div').props.onScroll(); });
+            market.quotes = { IX0001: { index: { close: '43100', reference: '42950' } } };
+            await act(async () => { r.update(createElement(OptionChain, { onPick })); });
+            expect(snapshotCodes.live).toEqual(before);
+        } finally { vi.useRealTimers(); }
+    });
+
+    it('falls back to the median once the ATM reference query has settled empty', async () => {
+        market.refSettled = true;
+        await mountMeasured({ quotes: {} });
+        expect(snapshotCodes.live.length).toBeGreaterThan(0);
+        expect(snapshotCodes.live).toContain('TX243000C-2026-10-14'); // strike at the median of 60
+    });
+
+    it('a new expiry gets the screen plus buffer at once, not the eight-strike default', async () => {
+        const { r } = await mountMeasured();
+        const n = snapshotCodes.live.length / 2;
+        expect(n).toBe(15);
+        expect(snapshotCodes.live).toContain('TX243700C-2026-10-14');
+        expect(r).toBeTruthy();
+    });
+
+    it('stops following ATM after a manual scroll, but still says when ATM leaves or returns', async () => {
+        const { r, body, atmBtn, scrollTo, onPick } = await mountMeasured();
+        await scrollTo(760); // rows 38..45, ATM at 30
+        expect(atmBtn().props['data-away']).toBe(true);
+        market.quotes = { IX0001: { index: { close: '43900', reference: '43850' } } }; // ATM now row 39
+        await act(async () => { r.update(createElement(OptionChain, { onPick })); });
+        expect(body.scrollTop).toBe(760);
+        expect(atmBtn().props['data-away']).toBeUndefined();
+        await act(async () => atmBtn().props.onClick());
+        expect(body.scrollTop).toBe(710);
+    });
+
+    it('offers a way back to ATM with a lucide icon, not text', async () => {
+        const r = await openLong();
+        const btn = r.root.find((n) => n.type === 'button' && n.props['aria-label'] === '回到價平');
+        expect(btn.props['data-away']).toBeUndefined();
+        expect(() => act(() => btn.props.onClick())).not.toThrow();
+    });
 });

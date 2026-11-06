@@ -17,7 +17,7 @@ let root: ReactTestRenderer | undefined;
 let hook: typeof import('./use-live-snapshots').useLiveSnapshots;
 let value: ReturnType<typeof hook>;
 let renders = 0;
-function Probe({ contracts }: { contracts: ContractBase[] }) { value = hook(contracts); renders++; return null; }
+function Probe({ contracts, live }: { contracts: ContractBase[]; live?: ContractBase[] }) { value = hook(contracts, undefined, live); renders++; return null; }
 async function mount(contracts: ContractBase[]) { await act(async () => { root = create(createElement(Probe, { contracts })); }); }
 beforeEach(async () => {
     vi.resetModules(); vi.useFakeTimers(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -83,4 +83,90 @@ describe('snapshot plus stream projection', () => {
         expect(value.snapshots.get(stk.code)?.close).toBe(100);
     });
 
+    describe('live window (#371)', () => {
+        const opt = (code: string): ContractBase => ({ code, security_type: 'OPT', exchange: 'TAIFEX', target_code: null });
+        const [a, b, c] = [opt('A'), opt('B'), opt('C')];
+        const retained = () => mocks.retain.mock.calls.map(([x, type]) => `${(x as ContractBase).code}:${type}`);
+        const render = (contracts: ContractBase[], live?: ContractBase[]) => act(async () => { root!.update(createElement(Probe, { contracts, live })); });
+        it('queries every contract but subscribes only the window', async () => {
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, b, c], live: [a] })); });
+            expect(mocks.fetch).toHaveBeenCalledOnce();
+            expect((mocks.fetch.mock.calls[0]![0] as ContractBase[]).map(x => x.code)).toEqual(['A', 'B', 'C']);
+            expect(retained()).toEqual(['A:Tick', 'A:BidAsk']);
+            expect([...value.snapshots.keys()]).toEqual(['A', 'B', 'C']);
+        });
+        it('moving the window swaps subscriptions and re-queries only what entered it', async () => {
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, b, c], live: [a, b] })); });
+            const first = [...mocks.releases]; mocks.fetch.mockClear(); mocks.retain.mockClear();
+            await render([a, b, c], [b, c]);
+            expect(first.every(fn => fn.mock.calls.length === 1)).toBe(true);
+            expect(retained()).toEqual(['B:Tick', 'B:BidAsk', 'C:Tick', 'C:BidAsk']);
+            expect(mocks.fetch).toHaveBeenCalledOnce();
+            expect((mocks.fetch.mock.calls[0]![0] as ContractBase[]).map(x => x.code)).toEqual(['C']);
+        });
+        it('shows the fresher entered snapshot, and a later full refresh wins over it', async () => {
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [a] })); });
+            mocks.fetch.mockImplementationOnce(async () => [{ ...snapshot('C'), datetime: '2026-09-12 10:00:00', total_volume: 77 }]);
+            await render([a, c], [c]);
+            expect(value.snapshots.get('C')).toMatchObject({ total_volume: 77 });
+            mocks.fetch.mockImplementationOnce(async () => [snapshot('A'), { ...snapshot('C'), datetime: '2026-09-12 11:00:00', total_volume: 88 }]);
+            await act(async () => { vi.advanceTimersByTime(2000); await value.refresh(); });
+            expect(value.snapshots.get('C')).toMatchObject({ total_volume: 88 });
+        });
+        it('an older entered response arriving late does not replace a newer one', async () => {
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [a] })); });
+            const pending: ((rows: Snapshot[]) => void)[] = [];
+            mocks.fetch.mockImplementation(() => new Promise<Snapshot[]>(r => { pending.push(r); }));
+            await render([a, c], [c]);
+            await render([a, c], [a]);
+            await render([a, c], [c]);
+            expect(pending).toHaveLength(3); // C, A back in, C again
+            await act(async () => { pending[2]!([{ ...snapshot('C'), datetime: '2026-09-12 10:00:00.123900', total_volume: 30 }]); });
+            await act(async () => { pending[0]!([{ ...snapshot('C'), datetime: '2026-09-12 10:00:00.123100', total_volume: 20 }]); });
+            expect(value.snapshots.get('C')).toMatchObject({ total_volume: 30 });
+        });
+        it('a full refresh wins a tie with an entered snapshot', async () => {
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [a] })); });
+            mocks.fetch.mockImplementationOnce(async () => [{ ...snapshot('C'), datetime: '2026-09-12 10:00:00.123900', total_volume: 30 }]);
+            await render([a, c], [c]);
+            mocks.fetch.mockImplementationOnce(async () => [snapshot('A'), { ...snapshot('C'), datetime: '2026-09-12 10:00:00.123999', total_volume: 40 }]);
+            await act(async () => { vi.advanceTimersByTime(2000); await value.refresh(); });
+            expect(value.snapshots.get('C')).toMatchObject({ total_volume: 40 });
+        });
+        it('a catch-up wins a tie with the full snapshot it arrived after', async () => {
+            mocks.fetch.mockImplementationOnce(async () => [snapshot('A'), { ...snapshot('C'), datetime: '2026-09-12 10:00:00.123100', total_volume: 20 }]);
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [a] })); });
+            mocks.fetch.mockImplementationOnce(async () => [{ ...snapshot('C'), datetime: '2026-09-12 10:00:00.123900', total_volume: 30 }]);
+            await render([a, c], [c]);
+            expect(value.snapshots.get('C')).toMatchObject({ total_volume: 30 });
+        });
+        it('a window that starts empty relies on the full query when it first fills', async () => {
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [] })); });
+            expect(mocks.retain).not.toHaveBeenCalled();
+            mocks.fetch.mockClear();
+            await render([a, c], [c]);
+            expect(mocks.fetch).not.toHaveBeenCalled();
+            expect(retained()).toEqual(['C:Tick', 'C:BidAsk']);
+        });
+        it('keeps the full snapshot when the entered query fails', async () => {
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, c], live: [a] })); });
+            mocks.fetch.mockImplementationOnce(async () => { throw new Error('down'); });
+            await render([a, c], [c]);
+            expect(value.snapshots.get('C')).toMatchObject({ close: 100 });
+            expect(value.error).toBeNull();
+        });
+        it('a new contract set relies on its full query, without an extra entered query', async () => {
+            await act(async () => { root = create(createElement(Probe, { contracts: [a, b], live: [a] })); });
+            mocks.fetch.mockClear();
+            await render([b, c], [c]);
+            expect(mocks.fetch).toHaveBeenCalledOnce();
+            expect((mocks.fetch.mock.calls[0]![0] as ContractBase[]).map(x => x.code)).toEqual(['B', 'C']);
+        });
+        it('without a window keeps subscribing everything and never re-queries', async () => {
+            await mount([a, b]); mocks.fetch.mockClear();
+            await render([a, b]);
+            expect(mocks.fetch).not.toHaveBeenCalled();
+            expect(retained()).toEqual(['A:Tick', 'A:BidAsk', 'B:Tick', 'B:BidAsk']);
+        });
+    });
 });
