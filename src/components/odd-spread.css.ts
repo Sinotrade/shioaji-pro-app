@@ -151,11 +151,14 @@ export const kvVal = style({ textAlign: 'right', fontFamily: vars.font.mono, col
 export const kvSub = style({ fontFamily: vars.font.body, color: vars.color.mutedForeground });
 
 // 放在 kvVal 之後：同權重時後定義者勝，損益色才蓋得過預設前景色
-export const tone = styleVariants({
-    pos: { color: vars.color.success },
-    neg: { color: vars.color.danger },
-    flat: { color: vars.color.mutedForeground },
-});
+// 損益正負是價格含義：跟漲跌配色（台股紅漲綠跌／國際綠漲紅跌）走 up／down，
+// 不用狀態色 success／danger（danger 是錯誤用的朱紅）
+export const toneColor = {
+    pos: vars.color.up,
+    neg: vars.color.down,
+    flat: vars.color.mutedForeground,
+} as const;
+export const tone = styleVariants(toneColor, (color) => ({ color }));
 
 const goBase = style({
     marginTop: 'auto',
