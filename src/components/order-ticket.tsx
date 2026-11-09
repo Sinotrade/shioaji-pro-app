@@ -41,7 +41,7 @@ import {
 } from '../lib/order-account';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
 import { isWarrantContract } from '../lib/contract-market';
-import { WARRANT_TICKET_TEXT, warrantMarketOrderBlock, warrantOrderProblem } from '../lib/warrant-rules';
+import { WARRANT_TICKET_TEXT, warrantMarketOrderBlock, warrantOrderProblem, warrantProtectProblem } from '../lib/warrant-rules';
 import { clampLotQuantity, isOddLot, lotLabel, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT, ODD_LOT_WAITING, oddLotReferencePrice, orderQtyUnit, stockOrderProblem, CREDIT_TEXT } from '../lib/odd-lot';
 import { currentProtectionEnv } from '../lib/protection-env';
 import { captureServerMode, SERVER_MODE_CHANGED_MESSAGE } from '../lib/server-info-store';
@@ -88,6 +88,8 @@ export function OrderTicket({
     // 權證：只有整張現股（不得零股、不適用信用），外國標的不收市價（docs/qa/warrant-rules.md）
     const warrant = isWarrantContract(contract);
     const warrantMarketBlock = warrantMarketOrderBlock(contract);
+    // 外國標的權證不能掛括號單：停損停利的出場是市價單，交易所不收
+    const warrantBracketBlock = warrantProtectProblem(contract);
     const quote = useQuote(contract.code);
     const live = useTradingLive();
 
@@ -305,6 +307,7 @@ export function OrderTicket({
             // the setting off → this window, exactly as before
             let bracketOwner: 'window' | 'background' = 'window';
             if (bracketOn) {
+                if (warrantBracketBlock) throw new Error(warrantBracketBlock);
                 // 零股括號單以零股市場判斷方向：沒有零股行情時不能確認
                 if (intradayOdd && oddReference === null) {
                     throw new Error(`${ODD_LOT_WAITING}：尚未收到盤中零股行情，無法確認停損停利方向`);
@@ -1172,10 +1175,14 @@ export function OrderTicket({
                         <span className={styles.fieldLabel}>括號單</span>
                         <div className={styles.segGroup}>
                             <button
-                                className={styles.seg[bracketOn ? 'on' : 'off']}
+                                className={`${styles.seg[bracketOn ? 'on' : 'off']} ${warrantBracketBlock ? styles.segRuleLocked : ''}`}
+                                // 外國標的權證：關著就停用（附原因）；已開著仍可按掉
+                                disabled={!!warrantBracketBlock && !bracketOn}
                                 onClick={() => setBracketOn((b) => !b)}
-                                title='進場成交後自動掛 OCO 停損/停利'
+                                title={warrantBracketBlock ?? '進場成交後自動掛 OCO 停損/停利'}
+                                data-testid='ticket-bracket-toggle'
                             >
+                                {warrantBracketBlock && <Lock size={9} aria-hidden className={styles.segLockIcon} />}
                                 {bracketOn
                                     ? '✓ 成交後自動掛保護'
                                     : '停損停利保護'}

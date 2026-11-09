@@ -9,7 +9,9 @@
 // window's trigger engine never stores, so it can never evaluate or send
 // them, and a background command never touches a window trigger.
 
+import { contractMarket, isWarrantContract } from '../contract-market';
 import type { ContractBase, TickBand as ContractTickBand } from '../types/contract';
+import { warrantTickTable } from '../warrant-rules';
 import type { NewTrigger, RestoreReason as TriggerRestoreReason, TriggerOrder, TriggerSend } from '../trigger-engine';
 import { accountRef, envKeyOf, programsFromTriggers } from './adapter';
 import { bracketEntryWaiting } from './bracket-contract';
@@ -44,10 +46,14 @@ export function backgroundEligible(t: NewTrigger, contract: ContractBase | undef
     if (t.time && (t.group || (t.time.kind === 'send' && t.send?.type === 'LMT'))) return false;
     // 二擇一 legs go together (backgroundGroupEligible)
     if (!inGroup && (t.group || t.ocoMode)) return false;
-    // #226 step 5: stocks too — 整股 and 盤中零股 (shares)
+    // #226 step 5: stocks too — 整股 and 盤中零股 (shares); warrants (WRT, or a
+    // STK-labelled warrant code) whole lots only
     if (t.bracketId || (t.orderLot && t.orderLot !== 'Common' && t.orderLot !== 'IntradayOdd')) return false;
     if (!t.env || !t.orderCode) return false;
-    if (t.account?.account_type === 'S') return contract?.security_type === 'STK';
+    if (t.account?.account_type === 'S') {
+        if (isWarrantContract(contract)) return !t.orderLot || t.orderLot === 'Common';
+        return contract?.security_type === 'STK';
+    }
     if (t.account?.account_type !== 'F' || (t.orderLot && t.orderLot !== 'Common')) return false;
     return contract?.security_type === 'FUT' || contract?.security_type === 'OPT';
 }
@@ -60,13 +66,22 @@ export function stockTickTable(code: string): TickBand[] {
             { min: 100, max: 500, tick: 0.5 }, { min: 500, max: 1000, tick: 1 }, { min: 1000, max: null, tick: 5 }];
 }
 
-const isMarket = (c: ContractBase) => c.security_type === 'FUT' || c.security_type === 'OPT' || c.security_type === 'STK';
+const isMarket = (c: ContractBase) => contractMarket(c.security_type) !== null;
+
+/** The engine's security type: stocks and warrants trade on a securities
+ * account (a warrant keeps WRT; the engine also reads a STK-labelled
+ * warrant code as a warrant). */
+type EngineSecurityType = OrderProgram['binding']['contract']['securityType'];
+const engineSecurityType = (c: ContractBase): EngineSecurityType => c.security_type as EngineSecurityType;
+const isStock = (c: ContractBase) => contractMarket(c.security_type) === 'S';
 
 /** The contract's tick-size table for the engine: the server's bands of
  * its tick rule (`bands`), else its one fixed tick; null when neither is
  * known (nothing can be priced in ticks then). */
 export function tickTableOf(contract: ContractBase & { tick_rule?: string; tick?: number },
     bands: readonly ContractTickBand[] | undefined): TickBand[] | null {
+    // a warrant has its own table (the engine uses it whatever is sent)
+    if (isWarrantContract(contract)) return warrantTickTable();
     if (contract.security_type === 'STK') return stockTickTable(contract.code);
     if (contract.tick_rule) return bands && bands.length ? bands.map(b => ({ min: b.min, max: b.max, tick: b.tick })) : null;
     const tick = Number(contract.tick);
@@ -94,11 +109,11 @@ function programForTimeTrigger(t: TriggerOrder, contract: ContractBase): OrderPr
     const p = programsFromTriggers([{ ...t, quantity: flatten ? 1 : t.quantity }])[0];
     const lv = p?.levels[0];
     if (!p || !lv || p.levels.length !== 1) return null;
-    const stockLot = contract.security_type === 'STK' ? (t.orderLot === 'IntradayOdd' ? 'IntradayOdd' as const : 'Common' as const) : undefined;
+    const stockLot = isStock(contract) ? (t.orderLot === 'IntradayOdd' ? 'IntradayOdd' as const : 'Common' as const) : undefined;
     const order: OrderSpec = flatten ? { priceType: 'MKT', timeInForce: 'IOC' } : sendOrder({ priceType: 'MKT' }, t.send, stockLot);
     const entry = { type: 'time' as const, at: t.time.at, order, ...(t.time.kind === 'flatten' ? { flatten: t.time.scope } : {}) };
     const at = t.createdAt ?? Date.now();
-    return { ...p, binding: { ...p.binding, contract: { ...p.binding.contract, securityType: contract.security_type as "STK" | "FUT" | "OPT" } },
+    return { ...p, binding: { ...p.binding, contract: { ...p.binding.contract, securityType: engineSecurityType(contract) } },
         levels: [{ ...lv, entry, recross: [] }], ...(t.role === 'entry' && !flatten ? { opens: true } : {}), createdAt: at, updatedAt: at };
 }
 
@@ -142,7 +157,7 @@ export function programForNewTrigger(t: TriggerOrder, contract: ContractBase, ti
     if (!p || !isMarket(contract)) return null;
     const lv = p.levels[0];
     if (!lv || lv.entry.type !== 'touch' || p.levels.length !== 1) return null;
-    const stockLot = contract.security_type === 'STK' ? (t.orderLot === 'IntradayOdd' ? 'IntradayOdd' as const : 'Common' as const) : undefined;
+    const stockLot = isStock(contract) ? (t.orderLot === 'IntradayOdd' ? 'IntradayOdd' as const : 'Common' as const) : undefined;
     const ticks = t.send?.type === 'LMT' ? t.send.ticks : null;
     if (ticks !== null && ticks !== 0 && !tickTable) return null;
     const entry = {
@@ -156,7 +171,7 @@ export function programForNewTrigger(t: TriggerOrder, contract: ContractBase, ti
         ...(t.validity ? { validity: { type: t.validity.type, until: t.validity.until } } : {}),
     };
     const at = t.createdAt ?? Date.now();
-    return { ...p, binding: { ...p.binding, contract: { ...p.binding.contract, securityType: contract.security_type as "STK" | "FUT" | "OPT" } },
+    return { ...p, binding: { ...p.binding, contract: { ...p.binding.contract, securityType: engineSecurityType(contract) } },
         levels: [{ ...lv, entry, recross: [] }],
         ...(t.role === 'entry' ? { opens: true } : {}),
         ...(tickTable ? { tickTable } : {}),

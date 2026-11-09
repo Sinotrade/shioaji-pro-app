@@ -96,6 +96,8 @@ import { notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
 import { fmtPrice } from './utils/format';
 import { stepPrice } from './utils/ticksize';
+import { contractMarket } from './contract-market';
+import { warrantTriggerProblem } from './warrant-rules';
 import { bandTickFor, ensureTickBands, prefetchTickBands } from './tick-bands';
 import { isOddLot, ODD_LOT_MAX_SHARES, oddLotMarketablePrice, SHARES_PER_LOT, sharesToUnits, stockQtyUnit } from './odd-lot';
 import type { ContractBase } from './types/contract';
@@ -850,9 +852,13 @@ function handleCommand(cmd: Command): unknown {
 function withContext(t: NewTrigger, contract?: ContractBase, account?: Account): NewTrigger | string {
     if (t.kind === 'alert' || (t.env && t.account && t.orderCode)) return t;
     if (!contract) return '缺少商品資訊，無法固定下單帳戶';
-    const futures = contract.security_type === 'FUT' || contract.security_type === 'OPT';
-    if (!futures && contract.security_type !== 'STK') return '此商品不支援觸價下單';
+    const market = contractMarket(contract.security_type);
+    if (!market) return '此商品不支援觸價下單';
+    const futures = market === 'F';
     if (futures && t.orderLot && t.orderLot !== 'Common') return '期貨選擇權沒有零股，觸價單未建立';
+    // 權證：整張、外國標的觸價後只能限價、限價的觸發價在權證升降單位上
+    const warrant = warrantTriggerProblem(contract, { orderLot: t.orderLot, send: t.send, ...(t.time ? {} : { price: t.price }) });
+    if (warrant) return warrant;
     const s = getAccountState();
     const selected = account
         ? s.accounts.find(a => canTrade(a) && a.account_type === account.account_type
@@ -1077,7 +1083,7 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
         const plan = row.bracketPlan;
         if (!table || !plan) throw new Error('背景執行：跳動點級距尚未取得，無法修改括號單，請稍後再試');
         const request = panelBracketRequest({ env: row.env!, account: row.account!, quoteCode: row.code, orderCode: row.orderCode!,
-            securityType: contract.security_type === 'OPT' ? 'OPT' : contract.security_type === 'STK' ? 'STK' : 'FUT', action: row.action,
+            securityType: contract.security_type === 'OPT' ? 'OPT' : contract.security_type === 'WRT' ? 'WRT' : contract.security_type === 'STK' ? 'STK' : 'FUT', action: row.action,
             plan: { ...plan, tiers: patch.quantity !== undefined ? scaleTiers(plan.tiers, patch.quantity) : plan.tiers },
             tickTable: table, entry: { trigger: { condition: next.condition, price: next.price, send: next.send ?? { type: 'MKT' },
                 ...(next.validity ? { validity: next.validity } : {}),

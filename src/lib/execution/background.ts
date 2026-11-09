@@ -279,15 +279,25 @@ const REJECT_TEXT: Record<string, string> = {
     'rejected.invalidOrder': '送出方式不正確',
     'rejected.invalidValidity': '有效期不正確',
     'rejected.invalidPrice': '觸發價不正確',
+    // 權證（背景執行引擎依交易所規則拒絕，docs/qa/warrant-rules.md）
+    'rejected.warrantOddLot': '權證沒有零股，只能整張',
+    'rejected.warrantCredit': '權證只能現股，不能融資融券或當沖先賣',
+    'rejected.warrantMarket': '外國標的權證不能下市價，請用限價',
+    'rejected.warrantOffTick': '價格不在權證升降單位上',
     'partition.failed': '背景執行資料無法寫入，這個環境已停止，請重新啟動 App',
 };
 
 /** The App answered and refused: nothing was created / changed. */
 export class BackgroundRefusal extends Error {}
 
+/** The user-facing text of an engine refusal code (`rejected.*`). */
+export function rejectionText(code: string): string {
+    return REJECT_TEXT[code] ?? `背景執行未接受（${code}）`;
+}
+
 function rejection(reply: CommandReply): string {
     const bad = reply.notices.find(n => n.code.startsWith('rejected.') || n.code === 'partition.failed');
-    return bad ? (REJECT_TEXT[bad.code] ?? `背景執行未接受（${bad.code}）`) : '背景執行未接受';
+    return bad ? rejectionText(bad.code) : '背景執行未接受';
 }
 
 async function command(cmd: string, args: Record<string, unknown>): Promise<CommandReply> {

@@ -59,7 +59,7 @@ import { fmtClock, fmtCompactInt, fmtInt, fmtPrice, fmtSigned, fmtStockLots } fr
 import { clampLotQuantity, CREDIT_TEXT, creditLabel, isOddLot, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT } from '../lib/odd-lot';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import { contractMarket, isWarrantContract } from '../lib/contract-market';
-import { WARRANT_FLASH_TEXT, warrantMarketOrderBlock } from '../lib/warrant-rules';
+import { WARRANT_FLASH_TEXT, warrantMarketOrderBlock, warrantProtectProblem, warrantTriggerProblem } from '../lib/warrant-rules';
 import { flashAccountLabels, flashSymbolLabel } from '../lib/flash-display';
 import { flashQtyMemoryText, flashQtySlot, rememberedFlashQty, sanitizeFlashQtySetting, validFlashQty, withRememberedFlashQty, type FlashQtySetting } from '../lib/flash-qty-memory';
 import { expiryTime, isStockFuture, lotsPerContract, spreadOf } from '../lib/flash-link';
@@ -458,6 +458,8 @@ export function FlashOrder({
     // 權證：只有整張現股（不得零股、不適用信用），外國標的不收市價（docs/qa/warrant-rules.md）
     const warrant = isWarrantContract(contract);
     const warrantMarketBlock = warrantMarketOrderBlock(contract);
+    // 外國標的權證不能自動停損停利（出場是市價單）；國內標的權證照現股整張附加
+    const warrantProtectBlock = warrantProtectProblem(contract);
     const [localKeys, setLocalKeys] = useState<FlashAccountKeys>(accountKeys ?? {});
     const panelKeys = onAccountKeysChange ? (accountKeys ?? {}) : localKeys;
     const globalAccount = market === 'S' ? accountState.selectedStock : accountState.selectedFutures;
@@ -638,12 +640,16 @@ export function FlashOrder({
     const triggerSendSetting = panelOrder.triggerSend ?? DEFAULT_TRIGGER_SEND;
     const orderKey = `${clickOrderType}:${clickOctype ?? ''}:${mktPriceType}:${protect.on ? JSON.stringify(protect) : 'off'}:${JSON.stringify(triggerSendSetting)}:${panelOrder.triggerLayout ?? 'columns'}`;
     // 自動停損停利開啟但目前條件不能附加：點價不送（不會改成無保護送出）
-    // 權證：觸價引擎與停損停利只認股票／期權，先明確停用（不會改成無保護送出）
+    // 權證：只有整張現股（面板的信用設定不套用）；外國標的不能附加
     const protectBlock = protect.on
-        ? warrant ? WARRANT_FLASH_TEXT.protect : protectConditionProblem({ market, odd, creditCond: credit.cond, daytradeShort: credit.daytradeShort, octype: clickOctype })
+        ? warrant
+            ? warrantProtectBlock
+            : protectConditionProblem({ market, odd, creditCond: credit.cond, daytradeShort: credit.daytradeShort, octype: clickOctype })
         : null;
-    // 觸價單觸發後只以現股送出（同 K 線圖，#263）
-    const triggerBlock = warrant ? WARRANT_FLASH_TEXT.trigger : triggerConditionProblem({ market, creditCond: credit.cond, daytradeShort: credit.daytradeShort });
+    // 觸價單觸發後只以現股送出（同 K 線圖，#263）；權證：整張現股，外國標的觸價後只能限價
+    const triggerBlock = warrant
+        ? warrantTriggerProblem(contract, { send: triggerSendSetting })
+        : triggerConditionProblem({ market, creditCond: credit.cond, daytradeShort: credit.daytradeShort });
     const protectRef = useRef({ protect, block: protectBlock });
     protectRef.current = { protect, block: protectBlock };
     // 非預設才顯示標籤
@@ -1047,8 +1053,7 @@ export function FlashOrder({
     lastTradeRef.current = tradedLast;
     const ladder = useFlashLadder({ code: contract.code, odd, account: activeAccount }, market === 'F');
     // #216 觸價單與限價同時可點：外側觸買／觸賣欄（預設）或 Alt＋點買量／賣量
-    // 權證暫不支援觸價：不畫觸買／觸賣欄（面板設定保留，換回股票時恢復）
-    const triggerLayout = warrant ? 'modifier' : panelOrder.triggerLayout ?? 'columns';
+    const triggerLayout = panelOrder.triggerLayout ?? 'columns';
     const trigRef = triggerPriceRef.current;
     // the same entry / exit classification as placing it (QA 10/13: the
     // preview said 附停損停利 for what became a 停損 exit)
@@ -1066,7 +1071,7 @@ export function FlashOrder({
     const trigNoteBuy = trigNoteFor('Buy');
     const trigNoteSell = trigNoteFor('Sell');
     const trigNote = useMemo(() => ({ buy: trigNoteBuy, sell: trigNoteSell }), [trigNoteBuy, trigNoteSell]);
-    const trigWord = triggerBlock ? (warrant ? WARRANT_FLASH_TEXT.menu : '觸價停用（信用條件）') : triggerLayout === 'columns' ? '點觸買／觸賣=觸價單' : 'Alt＋點=觸價單';
+    const trigWord = triggerBlock ? (warrant ? '觸價停用（外國標的權證觸價後需限價）' : '觸價停用（信用條件）') : triggerLayout === 'columns' ? '點觸買／觸賣=觸價單' : 'Alt＋點=觸價單';
     const openProtectRef = useRef<(() => void) | null>(null);
     const ladderBackgroundRef = useRef(ladder.background);
     ladderBackgroundRef.current = ladder.background;
@@ -1727,7 +1732,7 @@ export function FlashOrder({
                         aria-expanded={menuShown}
                         data-testid='flash-settings'
                         data-unit={`${market === 'F' ? '口' : odd ? '股' : '張'}${unitTag ? `·${unitTag}` : ''}`}
-                        title={`閃電下單設定：${warrant ? '委託條件、記住數量、連動' : '單位、信用、委託條件、觸價、停損停利、記住數量、連動'}\n${market === 'F'
+                        title={`閃電下單設定：${warrant ? '委託條件、觸價、停損停利、記住數量、連動' : '單位、信用、委託條件、觸價、停損停利、記住數量、連動'}\n${market === 'F'
                             ? `單位：口${orderTags.length ? `・${orderTags.join('・')}` : ''}`
                             : `單位：${odd ? '盤中零股（股）' : '整股（張）'}${creditApplies ? `・信用：${creditTag || '現股'}` : warrant ? '・權證只能整張現股' : '・零股只能現股'}`}`}
                         ref={unitBtnRef}
@@ -1752,12 +1757,15 @@ export function FlashOrder({
                             onCredit={next => { armedRef.current = false; setArmed(false); setPanelCredit(next); }}
                             onLot={next => { armedRef.current = false; setArmed(false); setPanelLot(next); }}
                             onOrder={next => { armedRef.current = false; setArmed(false); setPanelOrder(next); }}
-                            // 權證暫不支援觸價與停損停利：收起這些設定（停損停利已開著的面板仍可進去關掉）
-                            triggerSend={warrant ? undefined : triggerSendSetting}
-                            onTriggerSend={warrant ? undefined : next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerSend: next }); }}
-                            triggerLayout={warrant ? undefined : triggerLayout}
-                            onTriggerLayout={warrant ? undefined : next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerLayout: next }); }}
-                            onProtect={warrant && !protect.on ? undefined : () => openProtectRef.current?.()}
+                            triggerSend={triggerSendSetting}
+                            onTriggerSend={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerSend: next }); }}
+                            // 外國標的權證：觸價後市價停用（附原因），只能選限價
+                            triggerMarketBlock={warrantMarketBlock ? WARRANT_FLASH_TEXT.foreignTrigger : null}
+                            triggerLayout={triggerLayout}
+                            onTriggerLayout={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerLayout: next }); }}
+                            // 外國標的權證不能自動停損停利：收起入口並寫原因（已開著的面板仍可進去關掉）
+                            onProtect={warrantProtectBlock && !protect.on ? undefined : () => openProtectRef.current?.()}
+                            protectBlock={warrantProtectBlock}
                             onMore={() => openSettingsRef.current?.(menuTop)}
                             onClose={() => setMenuOpen(false)}
                         />
@@ -1879,8 +1887,8 @@ export function FlashOrder({
                 >
                     全刪{workingCount > 0 && !paused ? ` ${workingCount}` : ''}
                 </button>
-                {/* 權證暫不支援停損停利：關著就不顯示；已開著的仍顯示（不符），讓使用者可以關掉 */}
-                {!paused && (!warrant || protect.on) && (
+                {/* 外國標的權證不能停損停利：關著就不顯示；已開著的仍顯示（不符），讓使用者可以關掉 */}
+                {!paused && (!warrantProtectBlock || protect.on) && (
                     <FlashProtectStrip
                         compact
                         openRef={openProtectRef}
