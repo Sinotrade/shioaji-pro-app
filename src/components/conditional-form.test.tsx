@@ -207,6 +207,7 @@ describe('NewConditionalDialog', () => {
             const r = render(WRT);
             expect(button(r, '盤中零股')).toBeUndefined();
             expect(text(r.root.findAll(n => n.props['data-testid'] === 'cond-warrant-note')[0]!)).toContain('權證只能整張現股');
+            await click(r, '限價');
             await type(r, '觸發價', '12.05'); // the 10–50 warrant band steps 0.1
             expect(text(r.root)).toContain('不在跳動點上');
             await type(r, '觸發價', '12.1');
@@ -216,6 +217,54 @@ describe('NewConditionalDialog', () => {
             expect(req.orderLot).toBeUndefined();
             expect(c).toMatchObject({ security_type: 'WRT' });
             expect(opts.account.account_type).toBe('S');
+        });
+
+        it('a market trigger price is never sent: off the warrant grid is fine at 市價, refused at 限價 (trigger and 二擇一)', async () => {
+            const r = render(WRT);
+            await type(r, '觸發價', '12.05');
+            expect(text(r.root)).not.toContain('不在跳動點上');
+            await click(r, '建立');
+            expect(m.add.mock.calls[0]![0]).toMatchObject({ price: 12.05 });
+            expect(m.add.mock.calls[0]![0].send).toBeUndefined();
+            await click(r, '限價');
+            expect(button(r, '建立').props.disabled).toBe(true);
+            expect(text(r.root)).toContain('不在跳動點上');
+
+            const o = render(WRT);
+            await click(o, '二擇一');
+            await type(o, '上方價', '12.25');
+            await type(o, '下方價', '11.95');
+            expect(button(o, '建立').props.disabled).toBeFalsy();
+            await click(o, '限價');
+            expect(button(o, '建立').props.disabled).toBe(true);
+            expect(text(o.root)).toContain('不在跳動點上');
+        });
+
+        it('a foreign WRT time order cannot be created (always a market order), with the reason', async () => {
+            const r = render(FOREIGN);
+            await click(r, '時間');
+            expect(button(r, '建立').props.disabled).toBe(true);
+            expect(text(r.root)).toContain('外國標的權證不能用時間條件');
+        });
+
+        it.each(['觸價單', '二擇一'])('a foreign WRT %s: 市價 is disabled with the reason', async (form) => {
+            const r = render(FOREIGN);
+            if (form !== '觸價單') await click(r, form);
+            const mkt = r.root.findAll(n => n.type === 'button' && text(n) === '市價')[0]!;
+            expect(mkt.props.disabled).toBe(true);
+            expect(mkt.props.title).toBe(WARRANT_FLASH_TEXT.foreignTriggerMenu);
+            expect(r.root.findAll(n => n.props['data-testid'] === 'cond-warrant-market' && typeof n.type === 'string')).toHaveLength(1);
+        });
+
+        it('a foreign WRT whose send is market anyway (stale state) cannot be created', async () => {
+            const r = render(FOREIGN);
+            await type(r, '觸發價', '3.5');
+            expect(button(r, '建立').props.disabled).toBeFalsy();
+            // the disabled button's own handler (as if it were reached anyway)
+            const mkt = r.root.findAll(n => n.type === 'button' && text(n) === '市價')[0]!;
+            await act(async () => { mkt.props.onClick(); });
+            expect(button(r, '建立').props.disabled).toBe(true);
+            expect(text(r.root)).toContain(WARRANT_FLASH_TEXT.foreignTrigger);
         });
 
         it('a domestic WRT bracket can be created', async () => {
