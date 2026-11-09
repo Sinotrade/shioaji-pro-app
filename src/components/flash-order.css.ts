@@ -530,6 +530,19 @@ export const disabledCell = style({
     opacity: 0.55,
 });
 
+// 交易所規則不收（外國標的權證市價）：跟「尚未啟用」的淡色區分開 — 虛線框、刪除線、鎖頭
+export const ruleLocked = style({
+    cursor: 'not-allowed',
+    opacity: 0.5,
+    borderStyle: 'dashed',
+    textDecoration: 'line-through',
+});
+
+export const ruleLockIcon = style({
+    verticalAlign: '-1px',
+    marginRight: 3,
+});
+
 export const priceCell = style([
     cellBase,
     {

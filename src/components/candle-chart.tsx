@@ -163,7 +163,7 @@ import { ChartDrawingOverlays, ChartDrawingTools, ChartObjectList } from './char
 import { toolDef } from '../lib/chart-drawings';
 import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
-import { contractMarket, isWarrant } from '../lib/contract-market';
+import { contractMarket, isWarrantContract } from '../lib/contract-market';
 import { orderStatusWithNumber } from '../lib/order-status-label';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
@@ -332,7 +332,7 @@ export function CandleChart({
     const [mode, setMode] = useState<TradeMode>('observe');
     // 圖表下單設定（#204）：每張圖自己一組（每市場一份），缺省取「設為預設」
     const orderMarket: ChartOrderMarket | null = contractMarket(contract.security_type);
-    const warrant = isWarrant(contract.security_type);
+    const warrant = isWarrantContract(contract);
     const [localOrder, setLocalOrder] = useState<ChartOrderPanelState>(() => orderSettingsProp ?? {});
     const panelOrder = onOrderSettingsChange ? (orderSettingsProp ?? {}) : localOrder;
     // 沒有自訂過的市場用「設為預設」的值 — 圖表建立時就對股票與期貨兩種

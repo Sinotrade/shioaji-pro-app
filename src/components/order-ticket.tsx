@@ -3,7 +3,7 @@ import { canTrade } from '../lib/account-tradable';
 // Stock vs futures aware; price autofills from the live quote.
 
 import { classifyOrderError, OUTCOME_UNKNOWN_GUIDANCE, reconcileAfterUnknownOutcome, reportOrderError } from '../lib/order-outcome';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, Lock } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ORDER_CONTEXT_CHANGED_MESSAGE, useOrderContext } from '../hooks/use-order-context';
 import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
@@ -40,6 +40,8 @@ import {
     isSelectedAccountUnchanged,
 } from '../lib/order-account';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
+import { isWarrantContract } from '../lib/contract-market';
+import { WARRANT_TICKET_TEXT, warrantMarketOrderBlock, warrantOrderProblem } from '../lib/warrant-rules';
 import { clampLotQuantity, isOddLot, lotLabel, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT, ODD_LOT_WAITING, oddLotReferencePrice, orderQtyUnit, stockOrderProblem, CREDIT_TEXT } from '../lib/odd-lot';
 import { currentProtectionEnv } from '../lib/protection-env';
 import { captureServerMode, SERVER_MODE_CHANGED_MESSAGE } from '../lib/server-info-store';
@@ -83,6 +85,9 @@ export function OrderTicket({
 }) {
     const isFutures =
         contract.security_type === 'FUT' || contract.security_type === 'OPT';
+    // 權證：只有整張現股（不得零股、不適用信用），外國標的不收市價（docs/qa/warrant-rules.md）
+    const warrant = isWarrantContract(contract);
+    const warrantMarketBlock = warrantMarketOrderBlock(contract);
     const quote = useQuote(contract.code);
     const live = useTradingLive();
 
@@ -91,7 +96,7 @@ export function OrderTicket({
     const [qty, setQty] = useState(1);
     const [priceType, setPriceType] = useState('LMT');
     const [orderType, setOrderType] = useState<OrderType>('ROD');
-    const [orderLot, setOrderLot] = useState<StockOrderLot>(() => loadOrderLotPreference('ticket', contract, TICKET_LOTS, 'Common'));
+    const [orderLot, setOrderLot] = useState<StockOrderLot>(() => (isWarrantContract(contract) ? 'Common' : loadOrderLotPreference('ticket', contract, TICKET_LOTS, 'Common')));
     const lotPreferences = useRef(new Map<string, StockOrderLot>());
     const [orderCond, setOrderCond] = useState<StockOrderCond>('Cash');
     // 盤中零股：帶價與括號單參考價只看零股行情（另一個撮合市場，#204）—
@@ -148,7 +153,7 @@ export function OrderTicket({
         // 期貨）變了，都歸 1 — 股數不會被當成張數或口數（#204）
         const classChanged = unitClassRef.current !== isFutures;
         unitClassRef.current = isFutures;
-        const nextLot = isFutures ? 'Common' : lotPreferences.current.get(contract.code) ?? loadOrderLotPreference('ticket', contract, TICKET_LOTS, 'Common');
+        const nextLot = isFutures || warrant ? 'Common' : lotPreferences.current.get(contract.code) ?? loadOrderLotPreference('ticket', contract, TICKET_LOTS, 'Common');
         if (orderLotRef.current !== 'Common' || orderLotRef.current !== nextLot || classChanged) setQty(1);
         setOrderLot(nextLot);
         setFixedQty({});
@@ -280,7 +285,8 @@ export function OrderTicket({
                 if (problem) throw new Error(problem);
             }
             if (!isFutures) {
-                const problem = stockOrderProblem({ quantity: qty, price_type: priceType, order_type: orderType, order_lot: orderLot, order_cond: orderCond, daytrade_short: action === 'Sell' && daytradeShort, action, day_trade: contract.day_trade });
+                const problem = warrantOrderProblem(contract, { price_type: priceType, order_lot: orderLot, order_cond: orderCond, daytrade_short: action === 'Sell' && daytradeShort })
+                    ?? stockOrderProblem({ quantity: qty, price_type: priceType, order_type: orderType, order_lot: orderLot, order_cond: orderCond, daytrade_short: action === 'Sell' && daytradeShort, action, day_trade: contract.day_trade });
                 if (problem) throw new Error(problem);
             }
             const p = priceType === 'LMT' ? Number(price) : 0;
@@ -604,7 +610,8 @@ export function OrderTicket({
             }
             if (!isFutures) {
                 for (const e of allocation) {
-                    const problem = stockOrderProblem({ quantity: e.qty, price_type: priceType, order_type: orderType, order_lot: orderLot, order_cond: orderCond, daytrade_short: action === 'Sell' && daytradeShort, action, day_trade: contract.day_trade });
+                    const problem = warrantOrderProblem(contract, { price_type: priceType, order_lot: orderLot, order_cond: orderCond, daytrade_short: action === 'Sell' && daytradeShort })
+                        ?? stockOrderProblem({ quantity: e.qty, price_type: priceType, order_type: orderType, order_lot: orderLot, order_cond: orderCond, daytrade_short: action === 'Sell' && daytradeShort, action, day_trade: contract.day_trade });
                     if (problem) throw new Error(problem);
                 }
             }
@@ -947,22 +954,27 @@ export function OrderTicket({
                         {priceTypesFor(isFutures).map((pt) => (
                             <button
                                 key={pt}
-                                className={
-                                    styles.seg[priceType === pt ? 'on' : 'off']
-                                }
-                                disabled={!!priceTypeDisabledReason(pt, odd)}
-                                title={priceTypeDisabledReason(pt, odd) ?? undefined}
+                                className={`${styles.seg[priceType === pt ? 'on' : 'off']} ${pt !== 'LMT' && warrantMarketBlock ? styles.segRuleLocked : ''}`}
+                                disabled={!!(priceTypeDisabledReason(pt, odd) ?? (pt !== 'LMT' ? warrantMarketBlock : null))}
+                                title={(priceTypeDisabledReason(pt, odd) ?? (pt !== 'LMT' ? warrantMarketBlock : null)) ?? undefined}
                                 onClick={() => {
                                     setPriceType(pt);
                                     setArmed(false);
                                     setOrderType(defaultOrderTypeFor(pt));
                                 }}
                             >
+                                {pt !== 'LMT' && warrantMarketBlock && <Lock size={9} aria-hidden className={styles.segLockIcon} />}
                                 {pt}
                             </button>
                         ))}
                     </div>
                 </div>
+                {warrantMarketBlock && (
+                    <div className={styles.ruleNote} data-testid='ticket-warrant-market' title={warrantMarketBlock}>
+                        <Lock size={10} aria-hidden />
+                        <span>{WARRANT_TICKET_TEXT.foreignMarket}</span>
+                    </div>
+                )}
 
                 <div className={styles.fieldRow}>
                     <span className={styles.fieldLabel}>效期</span>
@@ -1016,7 +1028,7 @@ export function OrderTicket({
                                     ['IntradayOdd', '盤中零股'],
                                     ['Odd', '盤後零股'],
                                 ] as const
-                            ).map(([lot, label]) => (
+                            ).filter(([lot]) => !warrant || lot === 'Common').map(([lot, label]) => (
                                 <button
                                     key={lot}
                                     className={
@@ -1029,6 +1041,8 @@ export function OrderTicket({
                                             ? '盤中零股 09:00–13:30，以股計（1～999 股），限價 ROD'
                                             : lot === 'Odd'
                                               ? '盤後零股 13:40–14:30 收單、14:30 一次撮合，以股計（1～999 股），限價 ROD'
+                                              : warrant
+                                              ? '權證以張計（1 張 = 1,000 單位）；權證不得零股交易'
                                               : '整股以張計（1 張 = 1,000 股）'
                                     }
                                     onClick={() => {
@@ -1067,7 +1081,7 @@ export function OrderTicket({
                     </span>
                 )}
 
-                {!isFutures && orderLot === 'Common' && (
+                {!isFutures && !warrant && orderLot === 'Common' && (
                     <div className={styles.fieldRow}>
                         <span className={styles.fieldLabel}>信用</span>
                         <div className={styles.segGroup}>
@@ -1126,6 +1140,7 @@ export function OrderTicket({
                 )}
 
                 {!isFutures &&
+                    !warrant &&
                     action === 'Sell' &&
                     orderLot === 'Common' &&
                     orderCond === 'Cash' &&

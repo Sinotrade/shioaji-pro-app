@@ -132,6 +132,22 @@ describe('placeStockOrder last check', () => {
             order_lot: 'Odd' })).rejects.toMatchObject({ mutationNotStarted: true, message: odd.ODD_LOT_TEXT.priceType });
         expect(api.post).not.toHaveBeenCalled();
     });
+    it('refuses warrant odd lots, credit and foreign-underlying market orders before anything is sent', async () => {
+        const { placeStockOrder } = await import('./shioaji');
+        const { WARRANT_TEXT } = await import('./warrant-rules');
+        const wrt = { code: '030392', security_type: 'WRT', exchange: 'TSE' } as never;
+        const stkTyped = { code: '030392', security_type: 'STK', exchange: 'TSE' } as never;
+        const foreign = { code: '03001F', security_type: 'WRT', exchange: 'TSE' } as never;
+        for (const c of [wrt, stkTyped]) {
+            await expect(placeStockOrder(c, { action: 'Buy', price: 5, quantity: 100, price_type: 'LMT', order_type: 'ROD', order_lot: 'IntradayOdd' }))
+                .rejects.toMatchObject({ mutationNotStarted: true, message: WARRANT_TEXT.oddLot });
+            await expect(placeStockOrder(c, { action: 'Buy', price: 5, quantity: 1, price_type: 'LMT', order_type: 'ROD', order_lot: 'Common', order_cond: 'MarginTrading' }))
+                .rejects.toMatchObject({ mutationNotStarted: true, message: WARRANT_TEXT.credit });
+        }
+        await expect(placeStockOrder(foreign, { action: 'Sell', price: 0, quantity: 1, price_type: 'MKT', order_type: 'IOC', order_lot: 'Common' }))
+            .rejects.toMatchObject({ mutationNotStarted: true, message: WARRANT_TEXT.foreignMarket });
+        expect(api.post).not.toHaveBeenCalled();
+    });
 });
 
 describe('placeFuturesOrder last check — order conditions', () => {

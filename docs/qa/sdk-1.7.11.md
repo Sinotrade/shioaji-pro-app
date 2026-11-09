@@ -90,9 +90,9 @@ Pro 兩邊的 commit 紀錄與程式碼都**沒有為權證被拒做的 workarou
 | --- | --- | --- |
 | `order-ticket.tsx`、`grid-ticket.tsx`、`trade.ts` `isFuturesContract` | WRT 走 `placeStockOrder`，`contractKey` 送 WRT | 不是繞路。1.7.10 這條路會收到 400，1.7.11 起可送出。 |
 | `shioaji.ts` `resolveContract` | WRT 不查 `/info`，用占位欄位 | 原因是資料分片，與被拒無關，保留。 |
-| `flash-order.tsx` 454、1097、1228 | 判斷式是 `=== 'STK'`，WRT 被當成期貨市場（`F`），選到期貨帳戶 | **疑似問題**：`placeQuickOrder` 要求 WRT 用 S 帳戶（`trade.ts` 211），所以閃電對權證會在本地被拒、不送 HTTP，權證實際上不能用閃電下單。建議另開 issue。 |
-| `candle-chart.tsx` 333、419、706 | 333 行 WRT 的 `orderMarket` 是 `null`，419 行選帳戶退回 `S`；706 行局部分類卻是 `F` | 點價下單仍帶 S 帳戶、走 `stock_order`，不會下到期貨帳戶。不一致的是設定、顯示與觸價參數，下單設定按鈕也被隱藏。 |
-| `bottom-dock-positions.tsx` 203、`trade.ts` 387 | 判斷式同上，且股數平倉只收 STK | **疑似問題**：權證持倉用底部一鍵平倉會被擋下（`商品與持倉帳戶市場不符`），單子不會送出。 |
+| `flash-order.tsx` 454、1097、1228 | （已過時）當時判斷式是 `=== 'STK'`；但權證實際上被 App 層 `quickOrderBlockMessage` 擋下，閃電面板不會掛載，不會選到期貨帳戶 | **已處理**：權證閃電下單專用 PR（feat/warrant-flash-order）改用 `contractMarket`，開放權證閃電，規則見 `docs/qa/warrant-rules.md`。 |
+| `candle-chart.tsx` 333、419、706 | （已過時）分類不一致 | **已處理**：#389 改用 `contractMarket`，權證點價固定整股現股。 |
+| `bottom-dock-positions.tsx` 203、`trade.ts` 387 | （已過時）權證持倉一鍵平倉被擋 | **已處理**：#389 開放整張市價平倉；外國標的權證（無漲跌幅、不收市價）由權證閃電 PR 改為確認前拒絕並請改用限價。 |
 | `conditional-form.tsx` 305、`trigger-engine.ts` 854 | 權證顯示「此商品不支援」 | 產品範圍限制，不是為 SDK 做的繞路；要不要開放由 PM 決定。 |
 
 ### 私有（`shioaji-pro-desktop`）

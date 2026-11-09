@@ -5,6 +5,7 @@
 // lib/tick-bands 快取，尚未載入時 fallback 到 contract.tick。現貨（STK/
 // ETF）交易所級距表 server 不提供，維持本地表。
 
+import { isWarrantContract } from '../contract-market';
 import { bandTickFor, prefetchTickBands } from '../tick-bands';
 import type { ContractBase, ContractInfo } from '../types/contract';
 
@@ -23,8 +24,9 @@ function stockTick(price: number): number {
     return 5;
 }
 
-// 權證有自己的升降單位（買賣辦法第 6 條），不是股票的表：
-// 例如 5–10 元股票 0.01、權證 0.05；上櫃權證級距相同
+// 權證有自己的升降單位，不是股票的表（docs/qa/warrant-rules.md）：
+// TWSE《認購（售）權證買賣辦法》第 6 條；櫃買「上櫃有價證券交易系統簡介」
+// 權證升降單位表級距相同。例如 5–10 元股票 0.01、權證 0.05
 function warrantTick(price: number): number {
     if (price < 5) return 0.01;
     if (price < 10) return 0.05;
@@ -57,7 +59,8 @@ export function tickSizeFor(contract: TickContract, price: number): number {
         if (st === 'OPT') return price >= 10 ? 1 : 0.1;
         return contract.underlying_kind === 'S' ? stockTick(price) : 1;
     }
-    if (st === 'WRT') return warrantTick(price);
+    // 權證（含 SDK 1.7 以前標成 STK 的權證代號）走權證級距
+    if (isWarrantContract(contract)) return warrantTick(price);
     if (contract.code.startsWith('00')) return etfTick(price);
     return stockTick(price);
 }
