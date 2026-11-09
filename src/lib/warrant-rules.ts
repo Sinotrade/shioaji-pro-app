@@ -29,7 +29,7 @@ export const WARRANT_FLASH_TEXT = {
 
 /** 下單面板價別列下的說明 */
 export const WARRANT_TICKET_TEXT = {
-    foreignMarket: '外國標的權證不能下市價，請用 LMT 限價',
+    foreignMarket: '外國標的權證不能下市價，請用限價',
 } as const;
 
 type WarrantLike = { security_type?: SecurityType | string; code?: string } | null | undefined;
