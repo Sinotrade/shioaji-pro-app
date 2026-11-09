@@ -849,7 +849,7 @@ export function ServerManager({
                                     <span
                                         className={styles.srvChip}
                                         style={{
-                                            color: 'var(--danger, #f23645)',
+                                            color: vars.color.danger,
                                         }}
                                     >
                                         不健康
@@ -873,7 +873,7 @@ export function ServerManager({
                                             style={
                                                 health.ca_expired
                                                     ? {
-                                                          color: 'var(--danger, #f23645)',
+                                                          color: vars.color.danger,
                                                       }
                                                     : undefined
                                             }
@@ -898,7 +898,7 @@ export function ServerManager({
                                 <span
                                     className={styles.emptyHint}
                                     style={{
-                                        color: 'var(--danger, #f23645)',
+                                        color: vars.color.danger,
                                     }}
                                 >
                                     ⚠ 伺服器目前為
@@ -911,7 +911,7 @@ export function ServerManager({
                         {status?.running && status.healthy === false && (
                             <span
                                 className={styles.emptyHint}
-                                style={{ color: 'var(--danger, #f23645)' }}
+                                style={{ color: vars.color.danger }}
                             >
                                 ⚠ 伺服器不健康：正式環境需要憑證與已簽署的
                                 API 金鑰；或切回模擬後按「重啟」
@@ -999,7 +999,7 @@ export function ServerManager({
                         {httpsMsg && (
                             <span
                                 className={styles.emptyHint}
-                                style={{ color: 'var(--danger, #f23645)' }}
+                                style={{ color: vars.color.danger }}
                             >
                                 {httpsMsg}
                             </span>
@@ -1037,7 +1037,7 @@ export function ServerManager({
                             <span
                                 className={styles.emptyHint}
                                 style={{
-                                    color: 'var(--danger, #f23645)',
+                                    color: vars.color.danger,
                                     fontWeight: 600,
                                 }}
                             >
@@ -1047,7 +1047,7 @@ export function ServerManager({
                         {lastOutput && errorLines(lastOutput) && (
                             <span
                                 className={styles.emptyHint}
-                                style={{ color: 'var(--danger, #f23645)' }}
+                                style={{ color: vars.color.danger }}
                             >
                                 {reveal(errorLines(lastOutput))}
                             </span>

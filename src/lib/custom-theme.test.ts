@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { vars } from '../theme.css';
-import { CUSTOM_BASES, CUSTOM_PRESETS, customTokens, isCustomTheme, mix } from './custom-theme';
+import { CUSTOM_BASES, CUSTOM_DANGER, CUSTOM_PRESETS, customTokens, isCustomTheme, mix } from './custom-theme';
 
 describe('custom theme', () => {
     it('內建基底與 preset 的引線色對面板對比至少 3:1', () => {
@@ -69,9 +69,19 @@ describe('custom theme', () => {
         for (const convention of ['tw', 'intl'] as const) {
             const k = customTokens(t, convention);
             expect(k.success).toBe(t.green);
-            expect(k.danger).toBe(t.red);
+            expect(k.danger).toBe(CUSTOM_DANGER[t.base].danger);
             expect(k.successDim).toMatch(/^rgba\(/);
             expect(k.dangerDim).toMatch(/^rgba\(/);
+        }
+    });
+
+    it('keeps the error color vermilion, separate from the user-picked price red', () => {
+        for (const base of ['dark', 'light'] as const) {
+            const t = { ...CUSTOM_BASES[base] };
+            const k = customTokens(t, 'tw');
+            expect(k.danger).not.toBe(k.up);
+            expect(k.danger).toBe(base === 'dark' ? '#ff6a4d' : '#c5341a');
+            expect(k.dangerSolid).toBe(base === 'dark' ? '#d03a24' : '#c5341a');
         }
     });
 });

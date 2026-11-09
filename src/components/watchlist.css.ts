@@ -279,8 +279,8 @@ export const listBtnOn = style({
 
 export const listBtnDanger = style({
     color: '#fff',
-    background: vars.color.danger,
-    borderColor: vars.color.danger,
+    background: vars.color.dangerSolid,
+    borderColor: vars.color.dangerSolid,
     fontSize: '0.6rem',
 });
 

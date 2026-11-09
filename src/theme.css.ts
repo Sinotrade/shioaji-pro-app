@@ -27,6 +27,11 @@ interface Palette {
     green: string;
     greenDim: string;
     greenFlash: string;
+    // 狀態錯誤色（斷線、錯誤、破壞性動作）：朱紅，和漲跌紅分開，與 mobile 一致
+    danger: string;
+    dangerDim: string;
+    // 白字實心底（按鈕、徽章）：深色朱紅太亮，白字不足 4.5:1，改用較深的朱紅
+    dangerSolid: string;
     // 日內區間軌的引線（影線）：漲跌色往 wickBase 混到 wickShare，霧面淡色但對背景仍過 3:1
     wickBase: string;
     wickShare: string;
@@ -52,6 +57,10 @@ const dark: Palette = {
     green: '#16b389',
     greenDim: 'rgba(22, 179, 137, 0.13)',
     greenFlash: 'rgba(22, 179, 137, 0.18)',
+    // 對 panel 6.92:1；白字對 dangerSolid 4.87:1
+    danger: '#ff6a4d',
+    dangerDim: 'rgba(255, 106, 77, 0.13)',
+    dangerSolid: '#d03a24',
     // 往灰色混：紅 #b85e6e 4.53:1、綠 #4a9d90 6.07:1（對 panel）
     wickBase: '#7e8798',
     wickShare: '50%',
@@ -76,6 +85,10 @@ const light: Palette = {
     green: '#0a8a66',
     greenDim: 'rgba(10, 138, 102, 0.10)',
     greenFlash: 'rgba(10, 138, 102, 0.14)',
+    // 對 panel 5.41:1、對 background 4.74:1；白字對 dangerSolid 5.41:1
+    danger: '#c5341a',
+    dangerDim: 'rgba(197, 52, 26, 0.10)',
+    dangerSolid: '#c5341a',
     // 淺色的灰比實體深，往灰混會比實體還搶眼，改往白混：紅 #de4d61 3.93:1、綠 #3ba185 3.17:1
     wickBase: '#ffffff',
     wickShare: '80%',
@@ -113,12 +126,15 @@ function makeTokens(p: Palette, convention: 'tw' | 'intl') {
             wickUp: `color-mix(in srgb, ${up} ${p.wickShare}, ${p.wickBase})`,
             wickDown: `color-mix(in srgb, ${down} ${p.wickShare}, ${p.wickBase})`,
             flat: p.mutedForeground,
-            // 狀態色（成功／錯誤／正式環境等）固定綠／紅，不隨漲跌配色翻轉；
+            // 狀態色（成功／錯誤／正式環境等）固定，不隨漲跌配色翻轉；
+            // 錯誤用朱紅 danger，不沿用漲跌紅，避免台股配色下錯誤和「漲」同色。
             // 價格、買賣方向才用 up／down
             success: p.green,
             successDim: p.greenDim,
-            danger: p.red,
-            dangerDim: p.redDim,
+            danger: p.danger,
+            dangerDim: p.dangerDim,
+            // 白字實心底專用（按鈕、徽章）；文字、邊框、點、淡底仍用 danger
+            dangerSolid: p.dangerSolid,
         },
         space: {
             xs: '0.25rem',

@@ -44,6 +44,8 @@ vi.mock('../lib/odd-spread-service', () => ({
 }));
 
 import { OddSpreadView, type OddSpreadViewProps } from './odd-spread';
+import * as styles from './odd-spread.css';
+import { vars } from '../theme.css';
 
 const account: Account = { account_type: 'S', broker_id: 'BR', account_id: 'A', signed: true, person_id: '', username: '' };
 const otherAccount: Account = { ...account, account_id: 'B' };
@@ -121,6 +123,20 @@ it('張數改 2 → 加權後不賺，依完整費稅顯示虧損確認', async 
     expect(executeButton().props.disabled).toBe(false);
     expect(text(executeButton())).toContain('仍要送出（預估虧損 1,356 元）');
     expect(button('價差未達成本').props.disabled).toBe(true);
+});
+
+it('損益為負（扣手續費、稅後每股）用漲跌配色的 down，不用錯誤色 danger', async () => {
+    await render({ feed: lossFeed });
+    const label = view.root.findAll(n => n.type === 'span' && text(n) === '扣手續費、稅')[0]!;
+    const sib = label.parent!.children.filter((c): c is ReactTestInstance => typeof c !== 'string');
+    const value = sib[sib.indexOf(label) + 1]!;
+    expect(text(value)).toMatch(/^−/);
+    expect(value.props.className).toContain(styles.tone.neg);
+    // 預估損益、每股價差等同一組 tone：正負依漲跌配色，不是狀態色
+    expect(styles.toneColor.neg).toBe(vars.color.down);
+    expect(styles.toneColor.pos).toBe(vars.color.up);
+    expect(styles.toneColor.neg).not.toBe(vars.color.danger);
+    expect(styles.toneColor.pos).not.toBe(vars.color.success);
 });
 
 it('#268 遮金額：虧損確認鈕的文字與 aria-label 不露預估虧損，庫存量也遮', async () => {

@@ -55,6 +55,7 @@ import * as css from './combo-ticket.css';
 import { DepthLadder } from './depth-ladder';
 import * as styles from './order-ticket.css';
 import * as panel from './panel.css';
+import { vars } from '../theme.css';
 import { orderStatusLabel, orderStatusWithNumber } from '../lib/order-status-label';
 
 interface LegState {
@@ -727,7 +728,7 @@ export function ComboTicket() {
                                 className={styles.numInput}
                                 placeholder='代碼 如 TXFF6 / TX417000C6'
                                 value={leg.input}
-                                style={leg.error ? { borderColor: 'var(--danger, #f23645)' } : undefined}
+                                style={leg.error ? { borderColor: vars.color.danger } : undefined}
                                 onChange={(e) => setLeg(i, { input: e.target.value, contract: null })}
                                 onKeyDown={(e) => e.key === 'Enter' && resolveLeg(i)}
                                 onBlur={() => resolveLeg(i)}

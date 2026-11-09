@@ -62,7 +62,7 @@ export const dot = style({
     height: '8px',
     borderRadius: '50%',
     background: vars.color.danger,
-    boxShadow: ['0 0 0 3px rgba(242, 54, 69, 0.25)', `0 0 0 3px color-mix(in srgb, ${vars.color.danger} 25%, transparent)`],
+    boxShadow: ['0 0 0 3px rgba(255, 106, 77, 0.25)', `0 0 0 3px color-mix(in srgb, ${vars.color.danger} 25%, transparent)`],
 });
 
 export const hint = style({
@@ -165,6 +165,6 @@ export const primary = style([button, {
     borderColor: vars.color.danger,
     color: vars.color.danger,
     // color-mix needs Safari 16.2+; older WKWebView keeps the rgba fallback
-    background: ['rgba(242, 54, 69, 0.12)', `color-mix(in srgb, ${vars.color.danger} 12%, transparent)`],
-    ':hover': { borderColor: vars.color.danger, background: ['rgba(242, 54, 69, 0.22)', `color-mix(in srgb, ${vars.color.danger} 22%, transparent)`] },
+    background: ['rgba(255, 106, 77, 0.12)', `color-mix(in srgb, ${vars.color.danger} 12%, transparent)`],
+    ':hover': { borderColor: vars.color.danger, background: ['rgba(255, 106, 77, 0.22)', `color-mix(in srgb, ${vars.color.danger} 22%, transparent)`] },
 }]);

@@ -178,10 +178,10 @@ export const prodBadge = style({
     fontSize: '0.64rem',
     fontWeight: 700,
     letterSpacing: '0.06em',
-    // 正式環境固定用 danger 紅：不能用 up（國際配色下 up 會變綠）
+    // 正式環境固定用 danger 系（白字實心底用 dangerSolid）：不能用 up（國際配色下 up 會變綠）
     color: '#fff',
-    background: vars.color.danger,
-    border: `1px solid ${vars.color.danger}`,
+    background: vars.color.dangerSolid,
+    border: `1px solid ${vars.color.dangerSolid}`,
     borderRadius: vars.radius.sm,
     padding: '0 10px',
     height: '25px',
@@ -289,8 +289,8 @@ export const killBtnOn = style([
     killBase,
     {
         color: '#fff',
-        borderColor: vars.color.danger,
-        background: vars.color.danger,
+        borderColor: vars.color.dangerSolid,
+        background: vars.color.dangerSolid,
         animation: 'pulse-glow 1.2s infinite',
     },
 ]);
@@ -302,8 +302,8 @@ export const killHeaderOn = style({
     fontSize: '0.66rem',
     fontWeight: 700,
     color: '#fff',
-    background: vars.color.danger,
-    border: `1px solid ${vars.color.danger}`,
+    background: vars.color.dangerSolid,
+    border: `1px solid ${vars.color.dangerSolid}`,
     borderRadius: vars.radius.sm,
     padding: '0 10px',
     height: '25px',
