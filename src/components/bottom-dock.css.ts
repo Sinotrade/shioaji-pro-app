@@ -673,8 +673,8 @@ export const batchExec = styleVariants({
         batchBtnBase,
         {
             color: '#fff',
-            background: vars.color.danger,
-            border: `1px solid ${vars.color.danger}`,
+            background: vars.color.dangerSolid,
+            border: `1px solid ${vars.color.dangerSolid}`,
         },
     ],
 });

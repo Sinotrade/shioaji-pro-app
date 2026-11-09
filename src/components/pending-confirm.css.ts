@@ -67,7 +67,7 @@ export const banner = style({
     padding: '6px 8px',
     borderRadius: vars.radius.sm,
     color: vars.color.danger,
-    background: dangerMix(10, 'rgba(242, 54, 69, 0.1)'),
+    background: dangerMix(10, 'rgba(255, 106, 77, 0.1)'),
     border: `1px solid ${vars.color.border}`,
     fontWeight: 600,
     lineHeight: 1.5,

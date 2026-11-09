@@ -62,8 +62,8 @@ export const envBadge = styleVariants({
         padding: '2px 8px',
         borderRadius: vars.radius.sm,
         color: '#fff',
-        background: vars.color.danger,
-        border: `1px solid ${vars.color.danger}`,
+        background: vars.color.dangerSolid,
+        border: `1px solid ${vars.color.dangerSolid}`,
     },
 });
 

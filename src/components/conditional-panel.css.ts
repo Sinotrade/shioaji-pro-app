@@ -84,11 +84,11 @@ export const button = styleVariants({
     }],
     danger: [buttonBase, { borderColor: vars.color.danger, color: vars.color.danger }],
     dangerSolid: [buttonBase, {
-        background: vars.color.danger,
-        borderColor: vars.color.danger,
+        background: vars.color.dangerSolid,
+        borderColor: vars.color.dangerSolid,
         color: '#fff',
         fontWeight: 600,
-        selectors: { '&:hover:not(:disabled)': { background: vars.color.danger, borderColor: vars.color.danger, filter: 'brightness(1.08)' } },
+        selectors: { '&:hover:not(:disabled)': { background: vars.color.dangerSolid, borderColor: vars.color.dangerSolid, filter: 'brightness(1.08)' } },
     }],
 });
 
@@ -113,7 +113,7 @@ const iconButtonBase = style({
 export const iconButton = styleVariants({
     plain: [iconButtonBase],
     danger: [iconButtonBase, { color: vars.color.danger }],
-    dangerSolid: [iconButtonBase, { color: '#fff', background: vars.color.danger, borderColor: vars.color.danger }],
+    dangerSolid: [iconButtonBase, { color: '#fff', background: vars.color.dangerSolid, borderColor: vars.color.dangerSolid }],
     active: [iconButtonBase, { borderColor: vars.color.accent, color: vars.color.accent }],
 });
 

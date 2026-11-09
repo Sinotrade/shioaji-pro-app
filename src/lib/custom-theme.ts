@@ -56,6 +56,12 @@ export const CUSTOM_PRESETS: { name: string; theme: CustomTheme }[] = [
     { name: '黑紫', theme: { base: 'dark', background: '#1b1b1f', panel: '#26262c', foreground: '#e6e3f0', accent: '#b58cff', red: '#ff5c7a', green: '#35c79a' } },
 ];
 
+// 狀態錯誤色（朱紅）：不跟使用者挑的漲跌紅，固定依底色，與 theme.css.ts 一致
+export const CUSTOM_DANGER: Record<CustomBase, { danger: string; dangerSolid: string }> = {
+    dark: { danger: '#ff6a4d', dangerSolid: '#d03a24' },
+    light: { danger: '#c5341a', dangerSolid: '#c5341a' },
+};
+
 const HEX = /^#[0-9a-f]{6}$/i;
 
 export function isCustomTheme(v: unknown): v is CustomTheme {
@@ -120,7 +126,8 @@ export function customTokens(t: CustomTheme, convention: Convention): Record<str
         flat: mutedFg,
         success: t.green,
         successDim: alpha(t.green, dim),
-        danger: t.red,
-        dangerDim: alpha(t.red, dim),
+        danger: CUSTOM_DANGER[t.base].danger,
+        dangerDim: alpha(CUSTOM_DANGER[t.base].danger, dim),
+        dangerSolid: CUSTOM_DANGER[t.base].dangerSolid,
     };
 }

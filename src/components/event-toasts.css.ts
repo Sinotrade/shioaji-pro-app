@@ -42,7 +42,7 @@ export const toast = styleVariants({
         {
             borderLeft: `4px solid ${vars.color.danger}`,
             background: vars.color.panelRaised,
-            boxShadow: `0 10px 30px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(242, 54, 69, 0.25)`,
+            boxShadow: `0 10px 30px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 106, 77, 0.25)`,
         },
     ],
     info: [toastBase, { borderLeft: `4px solid ${vars.color.accent}` }],
@@ -67,7 +67,7 @@ export const icon = styleVariants({
     ok: [iconBase, { color: vars.color.success, background: vars.color.successDim }],
     err: [
         iconBase,
-        { color: vars.color.danger, background: 'rgba(242, 54, 69, 0.14)' },
+        { color: vars.color.danger, background: vars.color.dangerDim },
     ],
     info: [
         iconBase,
