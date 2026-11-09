@@ -83,6 +83,10 @@ describe('回放乘數', () => {
     it('股票以張計，不退成 1', () => {
         expect(replayMultiplier({ ...base, exchange: 'TSE', security_type: 'STK', category: '24' } as ContractInfo)).toBe(1000);
     });
+
+    it('權證一張 1,000 單位，不依標的代號被當成個股期 2,000', () => {
+        expect(replayMultiplier({ ...base, code: '030392', exchange: 'TSE', security_type: 'WRT', underlying_code: '2330' } as ContractInfo)).toBe(1000);
+    });
 });
 
 describe('累計損益按商品分開', () => {

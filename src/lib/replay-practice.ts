@@ -1,6 +1,7 @@
 // src/lib/replay-practice.ts — 行情回放的本機模擬練習：純計算與 localStorage
 // 讀寫。只處理歷史 ticks 與本機紀錄，不呼叫任何下單、撤單或券商交易 API。
 
+import { contractMarket } from './contract-market';
 import type { ContractInfo } from './types/contract';
 import { contractMultiplier } from './utils/contract-cost';
 import { dateStrOffset } from './utils/kbars';
@@ -43,10 +44,11 @@ export function replayPoints(position: ReplayPracticePosition, exit: number): nu
     return replayPointDiff(position, exit) * position.quantity;
 }
 
-// 每 1 單位數量的金額乘數：期權沿用 contractMultiplier()；股票以「張」計，
-// 一張 1,000 股。
+// 每 1 單位數量的金額乘數：期權沿用 contractMultiplier()；股票與權證以「張」計，
+// 一張 1,000 股（權證 1,000 單位，買賣辦法第 5 條）。權證沒有 multiplier，
+// 不能落到期貨的乘數推算（會依標的代號被當成個股期 2,000）。
 export function replayMultiplier(contract: ContractInfo): number {
-    if (contract.security_type === 'STK') return 1000;
+    if (contractMarket(contract.security_type) === 'S') return 1000;
     return contractMultiplier(contract);
 }
 

@@ -58,6 +58,8 @@ import type { Account, AccountedPosition } from '../lib/types/portfolio';
 import { fmtClock, fmtCompactInt, fmtInt, fmtPrice, fmtSigned, fmtStockLots } from '../lib/utils/format';
 import { clampLotQuantity, CREDIT_TEXT, creditLabel, isOddLot, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT } from '../lib/odd-lot';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
+import { contractMarket, isWarrantContract } from '../lib/contract-market';
+import { WARRANT_FLASH_TEXT, warrantMarketOrderBlock } from '../lib/warrant-rules';
 import { flashAccountLabels, flashSymbolLabel } from '../lib/flash-display';
 import { flashQtyMemoryText, flashQtySlot, rememberedFlashQty, sanitizeFlashQtySetting, validFlashQty, withRememberedFlashQty, type FlashQtySetting } from '../lib/flash-qty-memory';
 import { expiryTime, isStockFuture, lotsPerContract, spreadOf } from '../lib/flash-link';
@@ -451,7 +453,11 @@ export function FlashOrder({
     const live = useTradingLive();
     const accountState = useAccounts();
     const privacy = usePrivacyMode();
-    const market: FlashMarket = contract.security_type === 'STK' ? 'S' : 'F';
+    // 股票與權證走證券（S）；權證可能標成 WRT 或 STK（SDK 1.7 以前），以 contractMarket 判斷
+    const market: FlashMarket = contractMarket(contract.security_type) === 'S' ? 'S' : 'F';
+    // 權證：只有整張現股（不得零股、不適用信用），外國標的不收市價（docs/qa/warrant-rules.md）
+    const warrant = isWarrantContract(contract);
+    const warrantMarketBlock = warrantMarketOrderBlock(contract);
     const [localKeys, setLocalKeys] = useState<FlashAccountKeys>(accountKeys ?? {});
     const panelKeys = onAccountKeysChange ? (accountKeys ?? {}) : localKeys;
     const globalAccount = market === 'S' ? accountState.selectedStock : accountState.selectedFutures;
@@ -484,7 +490,8 @@ export function FlashOrder({
     const ownLot = onLotChange ? (isFlashLot(savedLot) ? savedLot : undefined) : localLot;
     const panelLot: FlashLot = ownLot ?? defaultFor('S').lot;
     // 期貨沒有零股：照常以「口」下單，面板單位不變，回到股票時恢復
-    const lot: FlashLot = market === 'F' ? 'Common' : panelLot;
+    // 權證同理：不得零股交易，固定整張；面板的單位設定不覆寫，換回股票時恢復
+    const lot: FlashLot = market === 'F' || warrant ? 'Common' : panelLot;
     // 數量只屬於輸入時的商品類別與單位：單位或類別一變（包含切換版面等外部
     // 改變），同一次 render 就視為 1、點價下單也用 1，不等 effect（#204）
     const unitKey = `${market}:${lot}`;
@@ -582,7 +589,7 @@ export function FlashOrder({
     const [localCredit, setLocalCredit] = useState<FlashCredit | undefined>(() => normalizeFlashCredit(savedCredit));
     const ownCredit = onCreditChange ? normalizeFlashCredit(savedCredit) : localCredit;
     const panelCredit: FlashCredit = ownCredit ?? CASH_CREDIT;
-    const creditApplies = market === 'S' && lot === 'Common';
+    const creditApplies = market === 'S' && lot === 'Common' && !warrant;
     const credit: FlashCredit = creditApplies ? panelCredit : CASH_CREDIT;
     const creditKey = `${credit.cond}:${credit.daytradeShort ? 'dt' : ''}`;
     const setPanelCredit = (next: FlashCredit) => {
@@ -631,11 +638,12 @@ export function FlashOrder({
     const triggerSendSetting = panelOrder.triggerSend ?? DEFAULT_TRIGGER_SEND;
     const orderKey = `${clickOrderType}:${clickOctype ?? ''}:${mktPriceType}:${protect.on ? JSON.stringify(protect) : 'off'}:${JSON.stringify(triggerSendSetting)}:${panelOrder.triggerLayout ?? 'columns'}`;
     // 自動停損停利開啟但目前條件不能附加：點價不送（不會改成無保護送出）
+    // 權證：觸價引擎與停損停利只認股票／期權，先明確停用（不會改成無保護送出）
     const protectBlock = protect.on
-        ? protectConditionProblem({ market, odd, creditCond: credit.cond, daytradeShort: credit.daytradeShort, octype: clickOctype })
+        ? warrant ? WARRANT_FLASH_TEXT.protect : protectConditionProblem({ market, odd, creditCond: credit.cond, daytradeShort: credit.daytradeShort, octype: clickOctype })
         : null;
     // 觸價單觸發後只以現股送出（同 K 線圖，#263）
-    const triggerBlock = triggerConditionProblem({ market, creditCond: credit.cond, daytradeShort: credit.daytradeShort });
+    const triggerBlock = warrant ? WARRANT_FLASH_TEXT.trigger : triggerConditionProblem({ market, creditCond: credit.cond, daytradeShort: credit.daytradeShort });
     const protectRef = useRef({ protect, block: protectBlock });
     protectRef.current = { protect, block: protectBlock };
     // 非預設才顯示標籤
@@ -1057,7 +1065,7 @@ export function FlashOrder({
     const trigNoteBuy = trigNoteFor('Buy');
     const trigNoteSell = trigNoteFor('Sell');
     const trigNote = useMemo(() => ({ buy: trigNoteBuy, sell: trigNoteSell }), [trigNoteBuy, trigNoteSell]);
-    const trigWord = triggerBlock ? '觸價停用（信用條件）' : triggerLayout === 'columns' ? '點觸買／觸賣=觸價單' : 'Alt＋點=觸價單';
+    const trigWord = triggerBlock ? (warrant ? '觸價停用（權證）' : '觸價停用（信用條件）') : triggerLayout === 'columns' ? '點觸買／觸賣=觸價單' : 'Alt＋點=觸價單';
     const openProtectRef = useRef<(() => void) | null>(null);
     const ladderBackgroundRef = useRef(ladder.background);
     ladderBackgroundRef.current = ladder.background;
@@ -1085,6 +1093,11 @@ export function FlashOrder({
             notify({ kind: 'err', title: '⚡ 閃電下單未送出', body: ODD_LOT_TEXT.priceType });
             return;
         }
+        const noMarket = price === null ? warrantMarketOrderBlock(capturedContract) : null;
+        if (noMarket) {
+            notify({ kind: 'err', title: '⚡ 閃電下單未送出', body: noMarket });
+            return;
+        }
         // 信用條件：點下去當下的面板條件；不能用的一邊不送（不會改成現股）
         const { applies: creditOn, credit: clickCredit } = creditRef.current;
         const blocked = ruleBlockRef.current[action];
@@ -1094,7 +1107,7 @@ export function FlashOrder({
         }
         const label = creditOn ? creditLabel(action, clickCredit.cond, clickCredit.daytradeShort) : undefined;
         const clickOrder = orderRef.current;
-        const futures = capturedContract.security_type !== 'STK';
+        const futures = contractMarket(capturedContract.security_type) !== 'S';
         const key = `${oddLot ? 'odd:' : ''}${action}:${price === null ? 'MKT' : keyOf(price)}`;
         if (inflightRef.current.has(key)) return; // double-click guard
         inflightRef.current.add(key);
@@ -1225,7 +1238,7 @@ export function FlashOrder({
         const condition = clickCondition(price, triggerPriceRef.current);
         if (condition !== 'above' && condition !== 'below') { fail(condition); return; }
         const oddLot = oddRef.current;
-        const futures = capturedContract.security_type !== 'STK';
+        const futures = contractMarket(capturedContract.security_type) !== 'S';
         const q = Math.max(1, qtyRef.current);
         const clickOrder = orderRef.current;
         const effect = positionEffect(heldRef.current.held, action, q);
@@ -1384,7 +1397,7 @@ export function FlashOrder({
     const protectionScopeOf = (a: Account, allUnits = false) => {
         const c = contractRef.current;
         return { account: { account_type: a.account_type, broker_id: a.broker_id, account_id: a.account_id },
-            codes: [c.code, c.target_code].filter((x): x is string => !!x), odd: allUnits && c.security_type === 'STK' ? null : oddRef.current };
+            codes: [c.code, c.target_code].filter((x): x is string => !!x), odd: allUnits && contractMarket(c.security_type) === 'S' ? null : oddRef.current };
     };
 
     // 刪單送出前再確認：期間面板暫停或連動、商品變了就不送（不撤到上一檔的委託）
@@ -1400,7 +1413,7 @@ export function FlashOrder({
         // the chip's own orders (same rule as the chips): 只刪目前單位的委託，
         // 點 300 股的格子不可連帶刪掉同價的整股單（#204）
         const side = action === 'Buy' ? 'buy' : 'sell';
-        const unit = contractRef.current.security_type === 'STK' ? oddRef.current : null;
+        const unit = contractMarket(contractRef.current.security_type) === 'S' ? oddRef.current : null;
         const targets = tradesRef.current.filter(
             (t) =>
                 accountMatches((t as Trade & { account?: Account }).account ?? t.order.account, capturedAccount) &&
@@ -1613,7 +1626,7 @@ export function FlashOrder({
             ) : (
             <div className={styles.symbolRow} title={symbolLabel.title}>
                 <span className={styles.kindTag} data-testid='flash-kind'>
-                    <b>{market === 'S' ? (odd ? '零股' : '整股') : isStockFuture(contract) ? '股期' : contract.security_type === 'OPT' ? '選擇權' : '期貨'}</b>
+                    <b>{market === 'S' ? (warrant ? '權證' : odd ? '零股' : '整股') : isStockFuture(contract) ? '股期' : contract.security_type === 'OPT' ? '選擇權' : '期貨'}</b>
                     <i>{market === 'F' ? '口' : odd ? '股' : '張'}</i>
                 </span>
                 <span className={styles.symbolName}>{symbolLabel.name}</span>
@@ -1715,7 +1728,7 @@ export function FlashOrder({
                         data-unit={`${market === 'F' ? '口' : odd ? '股' : '張'}${unitTag ? `·${unitTag}` : ''}`}
                         title={`閃電下單設定：單位、信用、委託條件、觸價、停損停利、記住數量、連動\n${market === 'F'
                             ? `單位：口${orderTags.length ? `・${orderTags.join('・')}` : ''}`
-                            : `單位：${odd ? '盤中零股（股）' : '整股（張）'}${creditApplies ? `・信用：${creditTag || '現股'}` : '・零股只能現股'}`}`}
+                            : `單位：${odd ? '盤中零股（股）' : '整股（張）'}${creditApplies ? `・信用：${creditTag || '現股'}` : warrant ? '・權證只能整張現股' : '・零股只能現股'}`}`}
                         ref={unitBtnRef}
                         onClick={() => {
                             const b = unitBtnRef.current;
@@ -1729,6 +1742,7 @@ export function FlashOrder({
                         <FlashQuickMenu
                             market={market}
                             odd={odd}
+                            warrant={warrant}
                             lot={lot}
                             credit={panelCredit}
                             order={panelOrder}
@@ -1751,7 +1765,7 @@ export function FlashOrder({
                     market={market}
                     settings={flashSettings}
                     onChange={next => {
-                        if (next.lot !== lot) {
+                        if (next.lot !== lot && !warrant) {
                             // 換單位一律先上鎖，股數與張數不能互換
                             armedRef.current = false;
                             setArmed(false);
@@ -1770,7 +1784,7 @@ export function FlashOrder({
                         title: '閃電下單設定',
                         scope: '只影響這個面板',
                         extraRows: settingsRows,
-                        unit: market === 'S',
+                        unit: market === 'S' && !warrant,
                         orderType: false,
                         octype: false,
                         defaultNote: `新開的${market === 'F' ? '期貨' : '股票'}閃電下單面板使用這組單位與數量（不含帳號）`,
@@ -1816,20 +1830,20 @@ export function FlashOrder({
             </div>
             <div className={styles.actionBar}>
                 <button
-                    className={`${styles.mktBtn.buy} ${armedView && !odd && !buyBlock ? '' : styles.disabledCell}`}
+                    className={`${styles.mktBtn.buy} ${armedView && !odd && !warrantMarketBlock && !buyBlock ? '' : styles.disabledCell}`}
                     // 可否融資券的 0 只讓按鈕變淡、仍可點（點下去會重新查）；固定規則才停用
-                    disabled={odd || !!ruleBlockRef.current.Buy}
+                    disabled={odd || !!warrantMarketBlock || !!ruleBlockRef.current.Buy}
                     data-blocked={buyBlock ? true : undefined}
-                    title={odd ? ODD_LOT_TEXT.priceType : buyBlock ?? `${mktLabel}${buyCredit}買`}
+                    title={odd ? ODD_LOT_TEXT.priceType : warrantMarketBlock ?? buyBlock ?? `${mktLabel}${buyCredit}買`}
                     onClick={() => void send('Buy', null)}
                 >
                     {mktLabel}{buyCredit}買
                 </button>
                 <button
-                    className={`${styles.mktBtn.sell} ${armedView && !odd && !sellBlock ? '' : styles.disabledCell}`}
-                    disabled={odd || !!ruleBlockRef.current.Sell}
+                    className={`${styles.mktBtn.sell} ${armedView && !odd && !warrantMarketBlock && !sellBlock ? '' : styles.disabledCell}`}
+                    disabled={odd || !!warrantMarketBlock || !!ruleBlockRef.current.Sell}
                     data-blocked={sellBlock ? true : undefined}
-                    title={odd ? ODD_LOT_TEXT.priceType : sellBlock ?? `${mktLabel}${sellCredit}賣`}
+                    title={odd ? ODD_LOT_TEXT.priceType : warrantMarketBlock ?? sellBlock ?? `${mktLabel}${sellCredit}賣`}
                     onClick={() => void send('Sell', null)}
                 >
                     {mktLabel}{sellCredit}賣

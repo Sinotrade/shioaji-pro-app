@@ -44,9 +44,11 @@ function Seg<T extends string>({ label, items, value, disabled, onPick }: {
     );
 }
 
-export function FlashQuickMenu({ market, odd, lot, credit, order, dayTradeOk, top, onCredit, onLot, onOrder, onMore, onClose, triggerSend, onTriggerSend, triggerLayout, onTriggerLayout, onProtect }: {
+export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, order, dayTradeOk, top, onCredit, onLot, onOrder, onMore, onClose, triggerSend, onTriggerSend, triggerLayout, onTriggerLayout, onProtect }: {
     market: 'S' | 'F';
     odd: boolean;
+    /** 權證：只有整張現股，不顯示信用與零股選項 */
+    warrant?: boolean;
     lot: FlashLot;
     /** the panel's saved credit (shown even while odd lots suspend it) */
     credit: FlashCredit;
@@ -74,7 +76,13 @@ export function FlashQuickMenu({ market, odd, lot, credit, order, dayTradeOk, to
         <>
             <div className={styles.menuBackdrop} onClick={onClose} />
             <div className={styles.unitMenu} role='menu' aria-label='單位與委託條件' style={top !== undefined ? { top } : undefined}>
-                {market === 'S' && (
+                {market === 'S' && warrant && (
+                    <>
+                        <div className={styles.menuNote} data-testid='flash-warrant-note'>權證只能以整張（1 張 = 1,000 單位）現股買賣：不得零股交易，不適用融資、融券或現股當沖先賣。</div>
+                        <div className={styles.menuSep} />
+                    </>
+                )}
+                {market === 'S' && !warrant && (
                     <>
                         {CREDIT_ITEMS.map(([cond, name, desc]) => {
                             const on = !odd && credit.cond === cond && !(cond === 'Cash' && credit.daytradeShort);
@@ -181,7 +189,7 @@ export function FlashQuickMenu({ market, odd, lot, credit, order, dayTradeOk, to
                         </button>
                     </>
                 )}
-                {market === 'S' && (
+                {market === 'S' && !warrant && (
                     <>
                         <div className={styles.menuSep} />
                         {([['Common', '張（整股）'], ['IntradayOdd', '股（盤中零股）']] as [FlashLot, string][]).map(([l, name]) => (
