@@ -147,6 +147,28 @@ export const seg = styleVariants({
     ],
 });
 
+// 交易所規則不收（外國標的權證市價）：比一般停用更明顯 — 虛線框、刪除線、鎖頭
+export const segRuleLocked = style({
+    borderStyle: 'dashed',
+    textDecoration: 'line-through',
+});
+
+export const segLockIcon = style({
+    verticalAlign: '-1px',
+    marginRight: 2,
+});
+
+export const ruleNote = style({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    marginLeft: `calc(3.4rem + ${vars.space.xs})`,
+    fontFamily: vars.font.body,
+    fontSize: '0.62rem',
+    lineHeight: 1.35,
+    color: vars.color.amber,
+});
+
 const iconToggleBase = style({
     display: 'inline-flex',
     alignItems: 'center',

@@ -6,6 +6,7 @@ import { Check, Settings2, ShieldCheck } from 'lucide-react';
 import type { FlashCond, FlashCredit, FlashLot, FlashOrderOpts } from '../lib/flash-account';
 import { TRIGGER_LIMIT_MAX_TICKS, type FlashTriggerSend } from '../lib/flash-trigger';
 import { FUTURES_OCTYPES, ORDER_TYPES, orderTypeDisabledReason } from '../lib/order-conditions';
+import { WARRANT_FLASH_TEXT } from '../lib/warrant-rules';
 import * as styles from './flash-order.css';
 
 const CREDIT_ITEMS: [FlashCond, string, string][] = [
@@ -180,6 +181,9 @@ export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, orde
                         )}
                         <div className={styles.menuNote}>{odd ? '零股觸價單以漲跌停價限價送出。' : '觸價單觸發後的送出方式；點買量／賣量照常是限價。'}</div>
                     </>
+                )}
+                {market === 'S' && warrant && (
+                    <div className={styles.menuNote} data-testid='flash-warrant-trigger-note'>{WARRANT_FLASH_TEXT.menu}。</div>
                 )}
                 {onProtect && (
                     <>

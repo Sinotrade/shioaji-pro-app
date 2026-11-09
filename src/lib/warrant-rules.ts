@@ -21,6 +21,15 @@ export const WARRANT_TEXT = {
 export const WARRANT_FLASH_TEXT = {
     trigger: '權證暫不支援觸價單；請直接點價下單',
     protect: '權證暫不支援自動停損停利；請先在這個面板關閉自動停損停利再下單',
+    /** 設定選單與提示列的短句（觸價欄、觸價設定、停損停利對權證都收起來） */
+    menu: '權證暫不支援觸價與自動停損停利',
+    /** 外國標的權證市價鈕旁的說明列 */
+    foreignMarket: '外國標的權證不能下市價，請點價格下限價單',
+} as const;
+
+/** 下單面板價別列下的說明 */
+export const WARRANT_TICKET_TEXT = {
+    foreignMarket: '外國標的權證不能下市價，請用 LMT 限價',
 } as const;
 
 type WarrantLike = { security_type?: SecurityType | string; code?: string } | null | undefined;

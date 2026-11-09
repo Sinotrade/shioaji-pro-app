@@ -19,7 +19,7 @@ import { creditEnquireCond, creditSideBlocks, creditStatus, prepareCreditOrder, 
 import { getApiBase } from '../lib/runtime';
 import { captureServerMode } from '../lib/server-info-store';
 import { collectFills, fifoPosition, hasTwoWayFills, tradingDayStart } from '../lib/futures-fifo';
-import { Ban, ChevronDown, Crosshair, Locate, LocateFixed, Settings, ShieldCheck, Zap } from 'lucide-react';
+import { Ban, ChevronDown, Crosshair, Locate, LocateFixed, Lock, Settings, ShieldCheck, Zap } from 'lucide-react';
 import { useFlashLadder } from '../hooks/use-flash-ladder';
 import { dayEnd, sessionEnd } from '../lib/conditional/session';
 import { getConditionalSettings } from '../lib/conditional/settings';
@@ -1047,7 +1047,8 @@ export function FlashOrder({
     lastTradeRef.current = tradedLast;
     const ladder = useFlashLadder({ code: contract.code, odd, account: activeAccount }, market === 'F');
     // #216 觸價單與限價同時可點：外側觸買／觸賣欄（預設）或 Alt＋點買量／賣量
-    const triggerLayout = panelOrder.triggerLayout ?? 'columns';
+    // 權證暫不支援觸價：不畫觸買／觸賣欄（面板設定保留，換回股票時恢復）
+    const triggerLayout = warrant ? 'modifier' : panelOrder.triggerLayout ?? 'columns';
     const trigRef = triggerPriceRef.current;
     // the same entry / exit classification as placing it (QA 10/13: the
     // preview said 附停損停利 for what became a 停損 exit)
@@ -1065,7 +1066,7 @@ export function FlashOrder({
     const trigNoteBuy = trigNoteFor('Buy');
     const trigNoteSell = trigNoteFor('Sell');
     const trigNote = useMemo(() => ({ buy: trigNoteBuy, sell: trigNoteSell }), [trigNoteBuy, trigNoteSell]);
-    const trigWord = triggerBlock ? (warrant ? '觸價停用（權證）' : '觸價停用（信用條件）') : triggerLayout === 'columns' ? '點觸買／觸賣=觸價單' : 'Alt＋點=觸價單';
+    const trigWord = triggerBlock ? (warrant ? WARRANT_FLASH_TEXT.menu : '觸價停用（信用條件）') : triggerLayout === 'columns' ? '點觸買／觸賣=觸價單' : 'Alt＋點=觸價單';
     const openProtectRef = useRef<(() => void) | null>(null);
     const ladderBackgroundRef = useRef(ladder.background);
     ladderBackgroundRef.current = ladder.background;
@@ -1726,7 +1727,7 @@ export function FlashOrder({
                         aria-expanded={menuShown}
                         data-testid='flash-settings'
                         data-unit={`${market === 'F' ? '口' : odd ? '股' : '張'}${unitTag ? `·${unitTag}` : ''}`}
-                        title={`閃電下單設定：單位、信用、委託條件、觸價、停損停利、記住數量、連動\n${market === 'F'
+                        title={`閃電下單設定：${warrant ? '委託條件、記住數量、連動' : '單位、信用、委託條件、觸價、停損停利、記住數量、連動'}\n${market === 'F'
                             ? `單位：口${orderTags.length ? `・${orderTags.join('・')}` : ''}`
                             : `單位：${odd ? '盤中零股（股）' : '整股（張）'}${creditApplies ? `・信用：${creditTag || '現股'}` : warrant ? '・權證只能整張現股' : '・零股只能現股'}`}`}
                         ref={unitBtnRef}
@@ -1751,11 +1752,12 @@ export function FlashOrder({
                             onCredit={next => { armedRef.current = false; setArmed(false); setPanelCredit(next); }}
                             onLot={next => { armedRef.current = false; setArmed(false); setPanelLot(next); }}
                             onOrder={next => { armedRef.current = false; setArmed(false); setPanelOrder(next); }}
-                            triggerSend={triggerSendSetting}
-                            onTriggerSend={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerSend: next }); }}
-                            triggerLayout={triggerLayout}
-                            onTriggerLayout={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerLayout: next }); }}
-                            onProtect={() => openProtectRef.current?.()}
+                            // 權證暫不支援觸價與停損停利：收起這些設定（停損停利已開著的面板仍可進去關掉）
+                            triggerSend={warrant ? undefined : triggerSendSetting}
+                            onTriggerSend={warrant ? undefined : next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerSend: next }); }}
+                            triggerLayout={warrant ? undefined : triggerLayout}
+                            onTriggerLayout={warrant ? undefined : next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerLayout: next }); }}
+                            onProtect={warrant && !protect.on ? undefined : () => openProtectRef.current?.()}
                             onMore={() => openSettingsRef.current?.(menuTop)}
                             onClose={() => setMenuOpen(false)}
                         />
@@ -1830,22 +1832,24 @@ export function FlashOrder({
             </div>
             <div className={styles.actionBar}>
                 <button
-                    className={`${styles.mktBtn.buy} ${armedView && !odd && !warrantMarketBlock && !buyBlock ? '' : styles.disabledCell}`}
+                    className={`${styles.mktBtn.buy} ${armedView && !odd && !warrantMarketBlock && !buyBlock ? '' : styles.disabledCell} ${warrantMarketBlock ? styles.ruleLocked : ''}`}
                     // 可否融資券的 0 只讓按鈕變淡、仍可點（點下去會重新查）；固定規則才停用
                     disabled={odd || !!warrantMarketBlock || !!ruleBlockRef.current.Buy}
                     data-blocked={buyBlock ? true : undefined}
                     title={odd ? ODD_LOT_TEXT.priceType : warrantMarketBlock ?? buyBlock ?? `${mktLabel}${buyCredit}買`}
                     onClick={() => void send('Buy', null)}
                 >
+                    {warrantMarketBlock && <Lock size={10} aria-hidden className={styles.ruleLockIcon} />}
                     {mktLabel}{buyCredit}買
                 </button>
                 <button
-                    className={`${styles.mktBtn.sell} ${armedView && !odd && !warrantMarketBlock && !sellBlock ? '' : styles.disabledCell}`}
+                    className={`${styles.mktBtn.sell} ${armedView && !odd && !warrantMarketBlock && !sellBlock ? '' : styles.disabledCell} ${warrantMarketBlock ? styles.ruleLocked : ''}`}
                     disabled={odd || !!warrantMarketBlock || !!ruleBlockRef.current.Sell}
                     data-blocked={sellBlock ? true : undefined}
                     title={odd ? ODD_LOT_TEXT.priceType : warrantMarketBlock ?? sellBlock ?? `${mktLabel}${sellCredit}賣`}
                     onClick={() => void send('Sell', null)}
                 >
+                    {warrantMarketBlock && <Lock size={10} aria-hidden className={styles.ruleLockIcon} />}
                     {mktLabel}{sellCredit}賣
                 </button>
                 {/* #376 平倉／全刪／停損停利固定同一群：有沒有持倉、掛單數多長都不改變市價鈕的位置 */}
@@ -1875,7 +1879,8 @@ export function FlashOrder({
                 >
                     全刪{workingCount > 0 && !paused ? ` ${workingCount}` : ''}
                 </button>
-                {!paused && (
+                {/* 權證暫不支援停損停利：關著就不顯示；已開著的仍顯示（不符），讓使用者可以關掉 */}
+                {!paused && (!warrant || protect.on) && (
                     <FlashProtectStrip
                         compact
                         openRef={openProtectRef}
@@ -1889,6 +1894,12 @@ export function FlashOrder({
                 )}
                 </div>
             </div>
+            {warrantMarketBlock && !paused && (
+                <div className={styles.creditBanner.ok} data-testid='flash-warrant-market' title={warrantMarketBlock}>
+                    <Lock size={10} aria-hidden />
+                    <span>{WARRANT_FLASH_TEXT.foreignMarket}</span>
+                </div>
+            )}
             {pos && !paused && (
                 <div className={styles.posBar}>
                     <span className={pos.net > 0 ? styles.posLong : styles.posShort}

@@ -26,7 +26,7 @@ vi.mock('../lib/allocation', () => ({ allocateByRatio: (t: number, w: number[]) 
 import { OrderTicket } from './order-ticket';
 
 // 權證下單面板（docs/qa/warrant-rules.md）：沒有零股、沒有信用；外國標的不收市價
-import { WARRANT_TEXT } from '../lib/warrant-rules';
+import { WARRANT_TEXT, WARRANT_TICKET_TEXT } from '../lib/warrant-rules';
 
 const wrt = { code: '030392', name: '台積電群益64購09', security_type: 'WRT', exchange: 'TSE', reference: 5, limit_up: 7.2, limit_down: 3.1, day_trade: '' } as unknown as ContractInfo;
 const foreign = { ...wrt, code: '03001F', name: '外國標的購', limit_up: 0, limit_down: 0 } as ContractInfo;
@@ -79,4 +79,15 @@ it('外國標的權證：市價停用並說明；國內標的權證市價可選'
     expect(btn('LMT')!.props.disabled).toBe(false);
     await act(async () => { view.update(createElement(OrderTicket, { contract: wrt, onPlaced: vi.fn() })); });
     expect(btn('MKT')!.props.disabled).toBe(false);
+});
+
+it('外國標的權證：價別列下直接寫出不能市價的原因；國內標的與股票沒有', async () => {
+    const note = () => view.root.findAll(n => n.props['data-testid'] === 'ticket-warrant-market');
+    await mount(foreign);
+    expect(note()).toHaveLength(1);
+    expect(text(note()[0]!)).toBe(WARRANT_TICKET_TEXT.foreignMarket);
+    await act(async () => { view.update(createElement(OrderTicket, { contract: wrt, onPlaced: vi.fn() })); });
+    expect(note()).toHaveLength(0);
+    await act(async () => { view.update(createElement(OrderTicket, { contract: stk, onPlaced: vi.fn() })); });
+    expect(note()).toHaveLength(0);
 });

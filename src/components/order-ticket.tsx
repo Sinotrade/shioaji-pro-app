@@ -3,7 +3,7 @@ import { canTrade } from '../lib/account-tradable';
 // Stock vs futures aware; price autofills from the live quote.
 
 import { classifyOrderError, OUTCOME_UNKNOWN_GUIDANCE, reconcileAfterUnknownOutcome, reportOrderError } from '../lib/order-outcome';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, Lock } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ORDER_CONTEXT_CHANGED_MESSAGE, useOrderContext } from '../hooks/use-order-context';
 import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
@@ -41,7 +41,7 @@ import {
 } from '../lib/order-account';
 import { checkOrderAllowed, getRiskSettings } from '../lib/risk';
 import { isWarrantContract } from '../lib/contract-market';
-import { warrantMarketOrderBlock, warrantOrderProblem } from '../lib/warrant-rules';
+import { WARRANT_TICKET_TEXT, warrantMarketOrderBlock, warrantOrderProblem } from '../lib/warrant-rules';
 import { clampLotQuantity, isOddLot, lotLabel, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT, ODD_LOT_WAITING, oddLotReferencePrice, orderQtyUnit, stockOrderProblem, CREDIT_TEXT } from '../lib/odd-lot';
 import { currentProtectionEnv } from '../lib/protection-env';
 import { captureServerMode, SERVER_MODE_CHANGED_MESSAGE } from '../lib/server-info-store';
@@ -954,9 +954,7 @@ export function OrderTicket({
                         {priceTypesFor(isFutures).map((pt) => (
                             <button
                                 key={pt}
-                                className={
-                                    styles.seg[priceType === pt ? 'on' : 'off']
-                                }
+                                className={`${styles.seg[priceType === pt ? 'on' : 'off']} ${pt !== 'LMT' && warrantMarketBlock ? styles.segRuleLocked : ''}`}
                                 disabled={!!(priceTypeDisabledReason(pt, odd) ?? (pt !== 'LMT' ? warrantMarketBlock : null))}
                                 title={(priceTypeDisabledReason(pt, odd) ?? (pt !== 'LMT' ? warrantMarketBlock : null)) ?? undefined}
                                 onClick={() => {
@@ -965,11 +963,18 @@ export function OrderTicket({
                                     setOrderType(defaultOrderTypeFor(pt));
                                 }}
                             >
+                                {pt !== 'LMT' && warrantMarketBlock && <Lock size={9} aria-hidden className={styles.segLockIcon} />}
                                 {pt}
                             </button>
                         ))}
                     </div>
                 </div>
+                {warrantMarketBlock && (
+                    <div className={styles.ruleNote} data-testid='ticket-warrant-market' title={warrantMarketBlock}>
+                        <Lock size={10} aria-hidden />
+                        <span>{WARRANT_TICKET_TEXT.foreignMarket}</span>
+                    </div>
+                )}
 
                 <div className={styles.fieldRow}>
                     <span className={styles.fieldLabel}>效期</span>
