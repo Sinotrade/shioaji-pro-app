@@ -267,8 +267,8 @@ describe('權證觸價單與自動停損停利（背景執行引擎 #217 已支�
             const r = await mount(contract, trigger({ type: 'LMT', ticks: 1 }));
             await openMenu(r);
             expect(marketItem(r).props.disabled).toBe(true);
-            expect(marketItem(r).props.title).toBe(WARRANT_FLASH_TEXT.foreignTrigger);
-            expect(text(testId(r, 'flash-warrant-trigger-note')[0]!)).toContain(WARRANT_FLASH_TEXT.foreignTrigger);
+            expect(marketItem(r).props.title).toBe(WARRANT_FLASH_TEXT.foreignTriggerMenu);
+            expect(text(testId(r, 'flash-warrant-trigger-note')[0]!)).toContain(WARRANT_FLASH_TEXT.foreignTriggerMenu);
             expect(r.root.findAll(n => n.props.role === 'menuitem' && text(n).includes('自動停損停利'))).toHaveLength(0);
             expect(text(testId(r, 'flash-warrant-protect-note')[0]!)).toContain(WARRANT_FLASH_TEXT.foreignProtect);
             expect(testId(r, 'flash-protect')).toHaveLength(0);

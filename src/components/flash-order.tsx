@@ -1760,7 +1760,7 @@ export function FlashOrder({
                             triggerSend={triggerSendSetting}
                             onTriggerSend={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerSend: next }); }}
                             // 外國標的權證：觸價後市價停用（附原因），只能選限價
-                            triggerMarketBlock={warrantMarketBlock ? WARRANT_FLASH_TEXT.foreignTrigger : null}
+                            triggerMarketBlock={warrantMarketBlock ? WARRANT_FLASH_TEXT.foreignTriggerMenu : null}
                             triggerLayout={triggerLayout}
                             onTriggerLayout={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerLayout: next }); }}
                             // 外國標的權證不能自動停損停利：收起入口並寫原因（已開著的面板仍可進去關掉）
