@@ -22,6 +22,8 @@ import type { Profile, Workspace } from '../lib/workspace';
 import { LayoutLibrary } from './layout-library';
 import { MarketBar } from './market-bar';
 import { ServerManager } from './server-manager';
+import { WebServerHint } from './server-env-notice';
+import { isTauri } from '../lib/runtime';
 import { ForeignServerChip } from './foreign-server-chip';
 import { externalServerLabel, useServerAttachment } from '../lib/server-adoption';
 import { SettingsDialog } from './settings-dialog';
@@ -290,6 +292,7 @@ export function HudHeader({
                     </span>
                 ))}
             <ForeignServerChip />
+            {!isTauri && <WebServerHint status={streamStatus} />}
 
             <MarketBar />
 

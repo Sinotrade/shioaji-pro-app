@@ -715,6 +715,14 @@ export const foreignChip = style({
     },
 });
 
+export const serverEnvNotice = style([foreignChip, {
+    marginRight: '6px',
+    padding: '0 8px',
+    cursor: 'pointer',
+}]);
+
+export const webServerHint = style([foreignChip, { padding: '0 8px' }]);
+
 export const foreignChipAction = style({
     fontFamily: vars.font.display,
     fontSize: '0.64rem',

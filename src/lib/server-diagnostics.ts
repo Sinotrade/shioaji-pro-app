@@ -75,3 +75,19 @@ export function validateDesktopSettings(
     }
     return null;
 }
+
+// the same pre-flight for a profile that is not active yet: settings is what
+// the native side reported, so this runs before anything is stopped
+export function validateProfileSettings(
+    settings: DesktopSettings,
+    id: string | null | undefined,
+): { title: string; body: string } | null {
+    const target = settings.profiles.find((profile) => profile.id === id);
+    return validateDesktopSettings({
+        ...settings,
+        configured: target?.secretState === 'stored',
+        production: target?.environment === 'production',
+        caPath: target?.caPath ?? '',
+        hasCaPassword: target?.hasCaPassword ?? (id === settings.activeProfileId && settings.hasCaPassword),
+    });
+}
