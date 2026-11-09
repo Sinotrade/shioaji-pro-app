@@ -16,6 +16,8 @@ import { dateEnd, dayEnd, fmtNum, fmtUntil, sessionEnd, taipeiInstant, taipeiPar
 import { contractLabel } from '../lib/pending-trigger-view';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import type { ContractInfo } from '../lib/types/contract';
+import { contractMarket, isForeignUnderlyingWarrant, isWarrantContract } from '../lib/contract-market';
+import { WARRANT_FLASH_TEXT, warrantProtectProblem } from '../lib/warrant-rules';
 import type { Account } from '../lib/types/portfolio';
 import { conditionalDemoActive, DEMO_ACCOUNTS, primeConditionalDemo } from '../lib/conditional/demo';
 import { Dialog, useLastPrice } from './conditional-ui';
@@ -66,7 +68,8 @@ function useTarget(initial: ContractInfo | null) {
     // stocks: 整股 or 盤中零股 (the trigger engine's rules: 零股 1–999 股, 成交價
     // only, sent as a limit at the price limit); always 現股 for now
     const [lotRaw, setLot] = useState<StockLot>('Common');
-    const lot: StockLot = futures ? 'Common' : lotRaw;
+    // 權證（WRT 或標成 STK 的權證代號）沒有零股：固定整張
+    const lot: StockLot = futures || isWarrantContract(contract) ? 'Common' : lotRaw;
     return { code, setCode, resolve, resolved, contract, futures, accounts, account, setAccountId, lookupError, lot, setLot };
 }
 
@@ -116,7 +119,15 @@ function TargetRows({ target }: { target: Target }) {
                     </select>
                 )}
             </div>
-            {target.contract && !target.futures && (
+            {target.contract && !target.futures && isWarrantContract(target.contract) && (
+                <div className={styles.formRow} data-testid='cond-warrant-note'>
+                    <span className={styles.label}>單位</span>
+                    <span className={styles.muted}>
+                        權證只能整張現股（1 張 = 1,000 單位）{isForeignUnderlyingWarrant(target.contract.code) ? `；${WARRANT_FLASH_TEXT.foreignTriggerMenu}，也不能附停損停利` : ''}
+                    </span>
+                </div>
+            )}
+            {target.contract && !target.futures && !isWarrantContract(target.contract) && (
                 <div className={styles.formRow}>
                     <span className={styles.label}>單位</span>
                     <Seg label='單位' value={target.lot} onChange={target.setLot}
@@ -302,7 +313,8 @@ function useSubmit() {
 function commonProblem(target: Target): string | null {
     const c = target.contract;
     if (!c || target.resolved !== target.code.trim().toUpperCase()) return '請先選擇商品（輸入代碼後按 Enter）';
-    if (c.security_type !== 'STK' && !isFuturesLike(c)) return '此商品不支援條件單';
+    // 股票與權證（WRT）走證券帳戶，期權走期貨帳戶；權證規則由觸價引擎與括號單把關
+    if (!contractMarket(c.security_type)) return '此商品不支援條件單';
     if (!target.account) return `沒有可下單的${target.futures ? '期貨' : '證券'}帳戶`;
     return null;
 }
@@ -325,7 +337,7 @@ function TriggerForm({ target, onClose, defaults }: { target: Target; onClose: (
     const [price, setPrice] = useState('');
     const [action, setAction] = useState<'Buy' | 'Sell'>('Sell');
     const [qty, setQty] = useState('1');
-    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : 'MKT', ticks: '−2' });
+    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : isForeignUnderlyingWarrant(target.contract?.code) && isWarrantContract(target.contract) ? 'LMT' : 'MKT', ticks: '−2' });
     const [validity, setValidity] = useState<ValidityState>({ type: defaults.validity, date: '' });
     const { busy, error, submit } = useSubmit();
     const odd = !target.futures && target.lot === 'IntradayOdd';
@@ -400,7 +412,7 @@ function TriggerForm({ target, onClose, defaults }: { target: Target; onClose: (
 function OcoForm({ target, onClose, defaults }: { target: Target; onClose: () => void; defaults: FormDefaults }) {
     const [up, setUp] = useState({ price: '', action: 'Buy' as 'Buy' | 'Sell', qty: '1' });
     const [down, setDown] = useState({ price: '', action: 'Sell' as 'Buy' | 'Sell', qty: '1' });
-    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : 'MKT', ticks: '0' });
+    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : isForeignUnderlyingWarrant(target.contract?.code) && isWarrantContract(target.contract) ? 'LMT' : 'MKT', ticks: '0' });
     const [mode, setMode] = useState<'trigger' | 'fill'>(defaults.ocoMode);
     const [validity, setValidity] = useState<ValidityState>({ type: defaults.validity, date: '' });
     const { busy, error, submit } = useSubmit();
@@ -533,6 +545,7 @@ function BracketForm({ target, onClose, defaults }: { target: Target; onClose: (
     const mult = c ? (target.futures ? Number((c as ContractInfo & { multiplier?: number }).multiplier) || 0 : 1000) : 0;
     const riskPerLot = c && ref !== null && Number.isFinite(st) && st > 0 && mult > 0 ? Math.abs(ref - stepPrice(c, ref, -dir * st)) * mult : null;
     const problem = commonProblem(target)
+        ?? warrantProtectProblem(target.contract)
         ?? (!target.futures && target.lot !== 'Common' ? '括號單目前只支援整股；零股請用觸價單或二擇一' : null)
         ?? (!Number.isSafeInteger(total) || total <= 0 ? '進場數量必須是正整數' : null)
         ?? (entryType !== 'MKT' ? priceProblem(target, p, entryType === 'LMT' ? '限價' : '觸發價') : last === undefined ? '市價進場需要現價' : null)
@@ -703,7 +716,7 @@ function TimeForm({ target, onClose, defaults }: { target: Target; onClose: () =
     const [time, setTime] = useState('');
     const [action, setAction] = useState<'Buy' | 'Sell'>('Sell');
     const [qty, setQty] = useState('1');
-    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : 'MKT', ticks: '0' });
+    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : isForeignUnderlyingWarrant(target.contract?.code) && isWarrantContract(target.contract) ? 'LMT' : 'MKT', ticks: '0' });
     // the session still to come: after the day close (or before 05:00) it is the night one
     const [session, setSession] = useState<'day' | 'night'>(() => {
         const p = taipeiParts(Date.now());

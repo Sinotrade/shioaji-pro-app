@@ -24,6 +24,8 @@ export const WARRANT_FLASH_TEXT = {
     foreignTrigger: '外國標的權證觸價後不能送市價；請在設定選單把「觸價後」改成限價',
     /** 設定選單裡「觸價後」的市價選項停用原因 */
     foreignTriggerMenu: '外國標的權證無漲跌幅，觸價後不能送市價，只能限價',
+    /** K 線圖的停損／停利觸發後一律市價，外國標的權證不能用 */
+    chartForeign: '外國標的權證不能用 K 線圖停損停利（觸發後是市價單）；請到條件單面板設定觸價後限價',
     /** 外國標的權證：停損停利的出場是市價單，交易所不收，所以不能附加 */
     foreignProtect: '外國標的權證不能自動停損停利（出場是市價單，交易所不收）；請改用限價自行出場',
     /** 外國標的權證市價鈕旁的說明列 */
@@ -99,4 +101,15 @@ export function warrantTriggerProblem(contract: WarrantLike, t: {
 export function warrantProtectProblem(contract: WarrantLike): string | null {
     if (!isWarrantContract(contract)) return null;
     return isForeignUnderlyingWarrant(contract?.code) ? WARRANT_FLASH_TEXT.foreignProtect : null;
+}
+
+/** 權證以股數市價平倉不收的情況（非權證回 null）：未滿一張的餘數（沒有零股），
+ * 或外國標的（無漲跌幅、不收市價）。閃電平倉在取消停損停利之前先看這裡，
+ * 不能平倉就不動保護。 */
+export function warrantExitBySharesProblem(contract: WarrantLike, shares: number): string | null {
+    if (!isWarrantContract(contract)) return null;
+    if (shares % WARRANT_UNITS_PER_LOT) return '權證沒有零股，未滿一張的部分無法平倉';
+    // 整張走市價：外國標的權證無漲跌幅、交易所不收市價，也沒有漲跌停價可當限價
+    const market = shares >= WARRANT_UNITS_PER_LOT ? warrantMarketOrderBlock(contract) : null;
+    return market ? `${market}（請在下單面板以限價平倉）` : null;
 }

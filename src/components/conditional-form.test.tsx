@@ -22,6 +22,7 @@ vi.mock('../hooks/use-esc-close', () => ({ useEscClose: () => undefined }));
 vi.mock('../lib/conditional/panel-bracket', () => ({ placePanelBracket: m.bracket, derivedPriceProblem: () => null }));
 
 const { NewConditionalDialog } = await import('./conditional-form');
+const { WARRANT_FLASH_TEXT } = await import('../lib/warrant-rules');
 
 function render(contract: unknown = TXF) {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -197,5 +198,41 @@ describe('NewConditionalDialog', () => {
         expect(all).toContain('零股以漲跌停價限價（ROD）送出');
         expect(all).not.toContain('IOC');
     });
-});
 
+    describe('warrants (WRT, private engine #217)', () => {
+        const WRT = { code: '030392', name: '台積電群益64購09', security_type: 'WRT', exchange: 'TSE', target_code: null, reference: 12 };
+        const FOREIGN = { ...WRT, code: '03001F', name: '外國標的購' };
+
+        it('a native WRT contract creates a whole-lot trigger on the securities account', async () => {
+            const r = render(WRT);
+            expect(button(r, '盤中零股')).toBeUndefined();
+            expect(text(r.root.findAll(n => n.props['data-testid'] === 'cond-warrant-note')[0]!)).toContain('權證只能整張現股');
+            await type(r, '觸發價', '12.05'); // the 10–50 warrant band steps 0.1
+            expect(text(r.root)).toContain('不在跳動點上');
+            await type(r, '觸發價', '12.1');
+            await click(r, '建立');
+            const [req, c, opts] = m.add.mock.calls[0]!;
+            expect(req).toMatchObject({ code: '030392', price: 12.1, quantity: 1 });
+            expect(req.orderLot).toBeUndefined();
+            expect(c).toMatchObject({ security_type: 'WRT' });
+            expect(opts.account.account_type).toBe('S');
+        });
+
+        it('a domestic WRT bracket can be created', async () => {
+            const r = render(WRT);
+            await click(r, '括號單');
+            expect(text(r.root)).not.toContain(WARRANT_FLASH_TEXT.foreignProtect);
+        });
+
+        it('a foreign WRT: 觸發後 starts at 限價, says why; no bracket', async () => {
+            const r = render(FOREIGN);
+            expect(text(r.root.findAll(n => n.props['data-testid'] === 'cond-warrant-note')[0]!)).toContain(WARRANT_FLASH_TEXT.foreignTriggerMenu);
+            await type(r, '觸發價', '3.5');
+            await click(r, '建立');
+            expect(m.add.mock.calls[0]![0].send).toMatchObject({ type: 'LMT' });
+            await click(r, '括號單');
+            expect(button(r, '建立').props.disabled).toBe(true);
+            expect(text(r.root)).toContain(WARRANT_FLASH_TEXT.foreignProtect);
+        });
+    });
+});

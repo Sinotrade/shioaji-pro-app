@@ -164,6 +164,7 @@ import { toolDef } from '../lib/chart-drawings';
 import { AsyncStatus } from './async-status';
 import * as panel from './panel.css';
 import { contractMarket, isWarrantContract } from '../lib/contract-market';
+import { WARRANT_FLASH_TEXT, warrantMarketOrderBlock } from '../lib/warrant-rules';
 import { orderStatusWithNumber } from '../lib/order-status-label';
 
 // NOTE: the kbars API only serves 1-minute bars, so 1D aggregates a huge
@@ -333,6 +334,8 @@ export function CandleChart({
     // 圖表下單設定（#204）：每張圖自己一組（每市場一份），缺省取「設為預設」
     const orderMarket: ChartOrderMarket | null = contractMarket(contract.security_type);
     const warrant = isWarrantContract(contract);
+    // 外國標的權證：K 線圖停損／停利觸發後是市價，交易所不收 → 按鈕停用並寫原因
+    const warrantExitBlock = warrantMarketOrderBlock(contract) ? WARRANT_FLASH_TEXT.chartForeign : null;
     const [localOrder, setLocalOrder] = useState<ChartOrderPanelState>(() => orderSettingsProp ?? {});
     const panelOrder = onOrderSettingsChange ? (orderSettingsProp ?? {}) : localOrder;
     // 沒有自訂過的市場用「設為預設」的值 — 圖表建立時就對股票與期貨兩種
@@ -752,8 +755,9 @@ export function CandleChart({
                 });
                 return;
             }
-            // 停損停利只送現股：信用條件生效時不建立（按鈕已停用，這裡再擋一次）
-            const exitBlock = chartExitBlocked(settings, market);
+            // 停損停利只送現股：信用條件生效時不建立（按鈕已停用，這裡再擋一次）；
+            // 外國標的權證觸發後的市價不會被接受，同樣不建立
+            const exitBlock = (warrantMarketOrderBlock(c) ? WARRANT_FLASH_TEXT.chartForeign : null) ?? chartExitBlocked(settings, market);
             if (exitBlock) {
                 notify({ kind: 'err', title: '無法掛觸價單', body: exitBlock });
                 return;
@@ -2275,17 +2279,20 @@ export function CandleChart({
                     const blocked = m.key === 'buy' ? creditSides.buy
                         : m.key === 'sell' ? creditSides.sell
                             : m.key === 'stop' || m.key === 'take' ? exitBlocked : null;
-                    const off = !!blocked && creditApplies;
+                    const ruleBlocked = (m.key === 'stop' || m.key === 'take') ? warrantExitBlock : null;
+                    const off = (!!blocked && creditApplies) || !!ruleBlocked;
                     return (
                     <button
                         key={m.key}
                         className={styles.modeBtn[shownMode === m.key ? 'armed' : 'normal']}
                         disabled={off || undefined}
-                        title={off ? `${m.label}停用：${blocked}` : `交易模式：${m.label}`}
+                        data-rule-locked={ruleBlocked ? 'warrant' : undefined}
+                        title={off ? `${m.label}停用：${ruleBlocked ?? blocked}` : `交易模式：${m.label}`}
                         // 再按一次退出交易模式。頂端不再有「游標」按鈕，
                         // 這是留在頂端的解除方式（另一個是點左側工具列）
                         onClick={() => { if (!off) setTradeMode(shownMode === m.key ? 'observe' : m.key); }}
                     >
+                        {ruleBlocked && <Lock size={10} aria-hidden />}
                         {m.label}
                     </button>
                     );

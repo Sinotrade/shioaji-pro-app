@@ -448,10 +448,21 @@ function prepareAdd(n: NewTrigger): TriggerOrder {
     if (t.bracketId) throw new Error('括號單保護只由主視窗建立');
     const oddProblem = oddLotTriggerProblem(t);
     if (oddProblem) throw new Error(oddProblem);
-    const optionProblem = triggerOptionsProblem(t);
+    const optionProblem = triggerOptionsProblem(t) ?? storedWarrantProblem(t);
     if (optionProblem) throw new Error(optionProblem);
     if (t.group && processedGroups[groupKey(t.env, t.group)]) throw new Error('此 OCO 群組已觸發過，不再建立');
     return t;
+}
+
+/** A warrant's rules on a stored trigger (create and every edit): whole
+ * lots, a foreign underlying only at a limit, a limit trigger on the warrant
+ * grid. The contract comes from the cache; before it is loaded a STK-labelled
+ * warrant code still counts (as the engine reads it). */
+export function storedWarrantProblem(t: Pick<TriggerOrder, 'code' | 'orderCode' | 'account' | 'kind' | 'orderLot' | 'send' | 'price' | 'bracketId'> & { time?: TimeSpec }): string | null {
+    if (t.kind === 'alert' || t.bracketId || t.account?.account_type !== 'S') return null;
+    const cached = getCachedContract(t.code);
+    const contract = { security_type: cached?.security_type ?? 'STK', code: t.orderCode ?? cached?.code ?? t.code };
+    return warrantTriggerProblem(contract, { orderLot: t.orderLot, send: t.send, ...(t.time ? {} : { price: t.price }) });
 }
 
 /** #226 options a market / product cannot take, refused when created. */
@@ -634,7 +645,7 @@ function applyModify(id: string, patch: TriggerPatch): TriggerOrder {
         else delete next.validity;
         changes.push(patch.validity ? '修改有效期' : '有效期改為直到取消');
     }
-    const optionProblem = triggerOptionsProblem(next);
+    const optionProblem = triggerOptionsProblem(next) ?? storedWarrantProblem(next);
     if (optionProblem) throw new Error(optionProblem.replace('，未建立', ''));
     if (!changes.length) return t;
     // A new price may already be crossed: like a restore, the first tick
@@ -712,7 +723,7 @@ export async function modifyTriggerGroup(patches: { id: string; patch: TriggerPa
         delete (next as Partial<BackgroundTriggerOrder>).background;
         delete next.awaitingRecross;
         delete next.paused;
-        const problem = triggerOptionsProblem(next);
+        const problem = triggerOptionsProblem(next) ?? storedWarrantProblem(next);
         if (problem) throw new Error(problem.replace('，未建立', ''));
         return next;
     });
@@ -1068,7 +1079,8 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
     delete next.paused;
     if (patch.price !== undefined && (!Number.isFinite(patch.price) || patch.price <= 0)) throw new Error('觸發價必須是正數');
     if (patch.quantity !== undefined && (!Number.isSafeInteger(patch.quantity) || patch.quantity <= 0)) throw new Error('數量必須是正整數');
-    const problem = triggerOptionsProblem(next);
+    const problem = triggerOptionsProblem(next)
+        ?? (next.kind === 'alert' ? null : warrantTriggerProblem(contract, { orderLot: next.orderLot, send: next.send, ...(next.time ? {} : { price: next.price }) }));
     if (problem) throw new Error(problem.replace('，未建立', ''));
     // never armed already crossed: refused here (a crossing one waits for a
     // new crossing anyway), and the engine's first tick decides like a

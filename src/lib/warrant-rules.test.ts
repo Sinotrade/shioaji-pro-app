@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { contractMarket, isForeignUnderlyingWarrant, isWarrantCode, isWarrantContract } from './contract-market';
 import {
     isWarrantPriceOnTick, WARRANT_FLASH_TEXT, WARRANT_TEXT, WARRANT_UNITS_PER_LOT, warrantMarketOrderBlock, warrantOrderProblem,
-    warrantProtectProblem, warrantTickTable, warrantTriggerProblem,
+    warrantExitBySharesProblem, warrantProtectProblem, warrantTickTable, warrantTriggerProblem,
 } from './warrant-rules';
 import { roundToTick, stepPrice, tickSizeFor } from './utils/ticksize';
 import type { ContractBase } from './types/contract';
@@ -194,5 +194,20 @@ describe('觸價單與停損停利（背景執行引擎同一套規則，私有 
         expect(warrantTriggerProblem(stock, { orderLot: 'IntradayOdd', price: 12.05 })).toBeNull();
         expect(warrantProtectProblem(stock)).toBeNull();
         expect(warrantTriggerProblem({ code: '03001F', security_type: 'FUT' }, {})).toBeNull();
+    });
+});
+
+describe('以股數市價平倉（閃電平倉先檢查，不能平倉就不取消停損停利）', () => {
+    it('國內標的整張可以；未滿一張的餘數不行', () => {
+        expect(warrantExitBySharesProblem(twse, 3000)).toBeNull();
+        expect(warrantExitBySharesProblem(stkTyped, 1000)).toBeNull();
+        expect(warrantExitBySharesProblem(twse, 1500)).toContain('權證沒有零股');
+    });
+    it('外國標的整張也不行（不收市價）', () => {
+        expect(warrantExitBySharesProblem(foreignCall, 2000)).toContain(WARRANT_TEXT.foreignMarket);
+        expect(warrantExitBySharesProblem(foreignPut, 1000)).toContain('請在下單面板以限價平倉');
+    });
+    it('股票不受影響', () => {
+        expect(warrantExitBySharesProblem(stock, 1500)).toBeNull();
     });
 });

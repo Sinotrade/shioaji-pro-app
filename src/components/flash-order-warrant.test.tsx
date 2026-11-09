@@ -5,11 +5,11 @@ import { createElement } from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../hooks/use-flash-ladder', () => ({ useFlashLadder: () => ({ marks: new Map(), protectedQty: 0, background: false }) }));
-vi.mock('../lib/flash-conditional', () => ({ flashStopProtections: async () => ({ stopped: 0, blocked: [], failed: [], restore: [] }),
+vi.mock('../lib/flash-conditional', () => ({ flashStopProtections: mocks.stop,
     flashAddTrigger: mocks.add, flashPlaceBracket: mocks.bracket }));
 import type { Account } from '../lib/types/portfolio';
 import type { ContractInfo } from '../lib/types/contract';
-const mocks = vi.hoisted(() => ({ place: vi.fn(), notify: vi.fn(), add: vi.fn(), bracket: vi.fn(), store: new Map<string, string>() }));
+const mocks = vi.hoisted(() => ({ place: vi.fn(), notify: vi.fn(), add: vi.fn(), bracket: vi.fn(), stop: vi.fn(), stockExit: vi.fn(), store: new Map<string, string>() }));
 const accounts: Account[] = [
     { account_type: 'S', broker_id: 'BR', account_id: 'A1234', signed: true, person_id: '', username: '' },
     { account_type: 'F', broker_id: 'BR', account_id: 'F5678', signed: true, person_id: '', username: '' },
@@ -18,7 +18,7 @@ vi.mock('../lib/account-store', () => ({ ensureAccounts: () => undefined, useAcc
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => undefined, useTradingLive: () => true }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: { tick: { close: '5', volume: 1 } }, snapshot: { close: 5 }, book: undefined }) }));
 vi.mock('../lib/shioaji', () => ({ cancelOrder: vi.fn(), cancelOrders: vi.fn() }));
-vi.mock('../lib/trade', () => ({ notify: mocks.notify, placeQuickOrder: mocks.place, placeStockExitByShares: vi.fn() }));
+vi.mock('../lib/trade', () => ({ notify: mocks.notify, placeQuickOrder: mocks.place, placeStockExitByShares: mocks.stockExit }));
 vi.mock('../lib/stream', () => ({ getAliasFor: () => undefined }));
 vi.mock('../lib/tick-bands', () => ({ useTickBandsVersion: () => 0, bandTickFor: () => undefined, prefetchTickBands: () => undefined }));
 import { FlashOrder } from './flash-order';
@@ -64,6 +64,8 @@ beforeEach(() => {
     mocks.place.mockResolvedValue({ status: { status: 'PendingSubmit' } });
     mocks.add.mockResolvedValue({ id: 't1' });
     mocks.bracket.mockResolvedValue('trigger');
+    mocks.stop.mockResolvedValue({ stopped: 1, blocked: [], failed: [], restore: [] });
+    mocks.stockExit.mockResolvedValue([]);
 });
 afterEach(async () => {
     for (const r of roots.splice(0)) await act(async () => r.unmount());
@@ -297,5 +299,39 @@ describe('權證觸價單與自動停損停利（背景執行引擎 #217 已支�
         expect(r.root.findAll(n => n.props.role === 'menuitem' && text(n).includes('自動停損停利'))).toHaveLength(1);
         expect(testId(r, 'flash-warrant-trigger-note')).toHaveLength(0);
         expect(testId(r, 'flash-warrant-protect-note')).toHaveLength(0);
+    });
+});
+
+describe('平倉：權證先確認能平倉，才取消停損停利', () => {
+    const held = (contract: ContractInfo, shares: number) => ({ positions: [{ account: accounts[0], id: 1, code: contract.code, direction: 'Buy' as const,
+        quantity: shares, price: 5, last_price: 5, pnl: 0, cond: 'Cash' }] });
+
+    it.each([['WRT 外國標的', foreign], ['標成 STK 的外國標的', foreignStkTyped]])('%s：不取消保護、不送單，直接說明原因', async (_n, contract) => {
+        const r = await mount(contract, held(contract, 2000));
+        await arm(r);
+        await act(async () => { await button(r, '平倉').props.onClick(); });
+        expect(mocks.stop).not.toHaveBeenCalled();
+        expect(mocks.stockExit).not.toHaveBeenCalled();
+        expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ title: '⚡ 平倉未送出',
+            body: expect.stringContaining(WARRANT_TEXT.foreignMarket) }));
+        expect(mocks.notify.mock.calls.at(-1)![0].body).toContain('停損停利維持不變');
+    });
+
+    it('國內標的權證有未滿一張的餘數：同樣先擋，不動保護', async () => {
+        const r = await mount(wrt, held(wrt, 1500));
+        await arm(r);
+        await act(async () => { await button(r, '平倉').props.onClick(); });
+        expect(mocks.stop).not.toHaveBeenCalled();
+        expect(mocks.stockExit).not.toHaveBeenCalled();
+        expect(mocks.notify.mock.calls.at(-1)![0].body).toContain('權證沒有零股');
+    });
+
+    it('國內標的權證整張：照常先取消停損停利再市價平倉', async () => {
+        const r = await mount(wrt, held(wrt, 2000));
+        await arm(r);
+        await act(async () => { await button(r, '平倉').props.onClick(); });
+        expect(mocks.stop).toHaveBeenCalledOnce();
+        expect(mocks.stockExit).toHaveBeenCalledWith(expect.objectContaining({ code: wrt.code }), 'Sell', 2000, accounts[0], expect.anything());
+        expect(mocks.stop.mock.invocationCallOrder[0]!).toBeLessThan(mocks.stockExit.mock.invocationCallOrder[0]!);
     });
 });

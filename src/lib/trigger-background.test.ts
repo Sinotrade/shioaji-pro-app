@@ -811,6 +811,36 @@ describe('warrants in the background (private engine #217: WRT whole lots in cas
         expect(created()).toHaveLength(2);
     });
 
+    it('setting off: editing a window warrant trigger keeps the warrant rules (grid, foreign at a limit)', async () => {
+        await boot();
+        const lmt = await add(WRT, { send: { type: 'LMT', ticks: 1 } });
+        const foreign = await add(FOREIGN, { price: 3.01, send: { type: 'LMT', ticks: 0 } });
+        expect(lmt?.id.startsWith('tg-')).toBe(true);
+        expect(foreign?.id.startsWith('tg-')).toBe(true);
+        await expect(engine.modifyTrigger(lmt!.id, { price: 12.05 })).rejects.toThrow('權證價格不在升降單位上');
+        await expect(engine.modifyTrigger(foreign!.id, { send: { type: 'MKT' } })).rejects.toThrow('外國標的權證觸價後不能送市價');
+        // nothing changed: still the armed, valid ones
+        expect(engine.getTriggers().find(t => t.id === lmt!.id)).toMatchObject({ price: 12, send: { type: 'LMT', ticks: 1 } });
+        expect(engine.getTriggers().find(t => t.id === foreign!.id)).toMatchObject({ send: { type: 'LMT', ticks: 0 } });
+        // a legal edit still goes through
+        await engine.modifyTrigger(lmt!.id, { price: 12.1 });
+        expect(engine.getTriggers().find(t => t.id === lmt!.id)?.price).toBe(12.1);
+    });
+
+    it('setting on: a background warrant trigger edit off the grid or to market is refused before the engine', async () => {
+        m.enabled = true;
+        await boot();
+        await add(WRT, { send: { type: 'LMT', ticks: 1 } });
+        await add(FOREIGN, { price: 3.01, send: { type: 'LMT', ticks: 0 } });
+        const [p, f] = created();
+        m.programs = [p!, f!];
+        m.ensure.mockImplementation(async (code: string) => code === FOREIGN.code ? FOREIGN : WRT);
+        await bg.refreshBackground();
+        await expect(engine.modifyTrigger(`bg:${p!.id}:${p!.levels[0]!.id}`, { price: 12.05 })).rejects.toThrow('權證價格不在升降單位上');
+        await expect(engine.modifyTrigger(`bg:${f!.id}:${f!.levels[0]!.id}`, { send: { type: 'MKT' } })).rejects.toThrow('外國標的權證觸價後不能送市價');
+        expect(calls('execution_replace')).toHaveLength(0);
+    });
+
     it('the engine refusing a warrant program shows its Chinese reason', async () => {
         m.enabled = true;
         await boot();

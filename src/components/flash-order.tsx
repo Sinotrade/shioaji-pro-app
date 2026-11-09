@@ -59,7 +59,7 @@ import { fmtClock, fmtCompactInt, fmtInt, fmtPrice, fmtSigned, fmtStockLots } fr
 import { clampLotQuantity, CREDIT_TEXT, creditLabel, isOddLot, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT } from '../lib/odd-lot';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import { contractMarket, isWarrantContract } from '../lib/contract-market';
-import { WARRANT_FLASH_TEXT, warrantMarketOrderBlock, warrantProtectProblem, warrantTriggerProblem } from '../lib/warrant-rules';
+import { WARRANT_FLASH_TEXT, warrantExitBySharesProblem, warrantMarketOrderBlock, warrantProtectProblem, warrantTriggerProblem } from '../lib/warrant-rules';
 import { flashAccountLabels, flashSymbolLabel } from '../lib/flash-display';
 import { flashQtyMemoryText, flashQtySlot, rememberedFlashQty, sanitizeFlashQtySetting, validFlashQty, withRememberedFlashQty, type FlashQtySetting } from '../lib/flash-qty-memory';
 import { expiryTime, isStockFuture, lotsPerContract, spreadOf } from '../lib/flash-link';
@@ -1501,6 +1501,13 @@ export function FlashOrder({
         };
         const action = pos.net > 0 ? 'Sell' : 'Buy';
         const stock = account.account_type === 'S';
+        // 權證（外國標的不收市價、沒有零股）：先確認能平倉，不能就不動停損停利
+        const exitProblem = stock ? warrantExitBySharesProblem(contract, Math.abs(pos.net)) : null;
+        if (exitProblem) {
+            inflightRef.current.delete(key);
+            notify({ kind: 'err', title: '⚡ 平倉未送出', body: `${exitProblem}；停損停利維持不變` });
+            return;
+        }
         const unit = stock ? '張' : '口';
         const codes = [contract.code, contract.target_code].filter((x): x is string => !!x);
         const net = pos.net;
