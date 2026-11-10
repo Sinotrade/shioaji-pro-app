@@ -7,6 +7,7 @@
 import { bracketPlanProblem } from './conditional/bracket-rules';
 import { isOddLot } from './odd-lot';
 import type { BracketEntryPlan, TriggerOrder, TriggerSend } from './trigger-engine';
+import { TRIGGER_CREDIT_TEXT, triggerCreditText } from './trigger-credit';
 import type { Action, FuturesOCType } from './types/order';
 
 // ---- settings (saved with the panel, FlashOrderOpts) ----
@@ -108,10 +109,14 @@ export function protectConditionProblem(c: {
     return null;
 }
 
-/** Whether triggers can be placed with these conditions (null: yes). A
- * trigger goes out in cash only (as on the chart, #263). */
+/** Whether triggers can be placed with these conditions at all (null: yes).
+ * A trigger keeps the panel's credit condition and goes out with it (#263:
+ * 現股, 融資, 融券, 現股當沖先賣 — both engines send them); 借券 neither
+ * engine sends. Each side still follows the panel's own rules when clicked
+ * (融券 only sells, 當沖先賣 only on a sell: a buy is a cash buy). */
 export function triggerConditionProblem(c: { market: FlashMarketKind; creditCond: string; daytradeShort: boolean }): string | null {
-    if (c.market === 'S' && (c.creditCond !== 'Cash' || c.daytradeShort)) return '觸價單觸發後只能以現股送出；信用條件不是現股時不能掛觸價單';
+    if (c.market !== 'S') return null;
+    if (c.creditCond === 'SBLShort' || c.creditCond === 'SBLShortPriceExempt') return TRIGGER_CREDIT_TEXT.sbl;
     return null;
 }
 
@@ -240,7 +245,8 @@ function triggerTitle(t: TriggerOrder, editable: boolean, unit: string): string 
     if (t.bracketId) return `${t.kind === 'stop' ? '停損' : '停利'} ${side} ${t.quantity} ${unit} @ ${t.price}（括號單保護；請到條件單面板修改）`;
     const what = t.role === 'entry' ? '觸價單' : t.kind === 'stop' ? '停損觸價' : '停利觸價';
     const state = t.pending ? '・待確認（請到條件單面板處理）' : t.paused ? '・已暫停' : '';
-    const extra = t.bracketPlan ? '・成交後附停損停利' : '';
+    const credit = triggerCreditText(t);
+    const extra = `${credit ? `・${credit}` : ''}${t.bracketPlan ? '・成交後附停損停利' : ''}`;
     const how = editable ? '\n點一下刪除・拖曳改觸發價' : '\n二擇一／時間條件請到條件單面板處理';
     return `${what} 成交價 ${cond} ${t.price} → ${side} ${t.quantity} ${unit}${extra}${state}${how}`;
 }

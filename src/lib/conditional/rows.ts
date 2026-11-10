@@ -6,6 +6,7 @@
 // action still goes through the engine that owns the order, with its own
 // checks. The UI never shows which engine runs a row.
 
+import { triggerCreditText } from '../trigger-credit';
 import {
     bracketPhase,
     isLive,
@@ -158,7 +159,9 @@ const VALIDITY_WORD: Record<'session' | 'today' | 'date', string> = { session: '
 
 function triggerSide(t: TriggerOrder): CondRow['side'] {
     if (t.kind === 'alert') return { text: '只通知', dir: null };
-    return { text: sideText(t.action, t.quantity, unitOf(t.account, t.orderLot)), dir: t.action };
+    // #263 the credit condition it goes out with (融資／融券／現股當沖先賣)
+    const credit = triggerCreditText(t);
+    return { text: `${sideText(t.action, t.quantity, unitOf(t.account, t.orderLot))}${credit ? `（${credit}）` : ''}`, dir: t.action };
 }
 
 function triggerValidity(t: TriggerOrder, now: number): string {

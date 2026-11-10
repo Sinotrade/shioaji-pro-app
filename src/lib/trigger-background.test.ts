@@ -755,6 +755,46 @@ describe('#226 stocks in the background (step 5)', () => {
         expect(rows[1]!.source).toBeUndefined();
     });
 
+    it('#263 a trigger entry keeps its credit condition: 現股當沖先賣, 融資, 融券 go out as created, also after a modify', async () => {
+        m.enabled = true;
+        await boot();
+        const entry = { ...stop(), code: '2330', price: 900, role: 'entry' as const };
+        await engine.addTrigger({ ...entry, daytradeShort: true }, STK1 as never);
+        await engine.addTrigger({ ...entry, action: 'Buy', condition: 'above', price: 1000, orderCond: 'MarginTrading' }, STK1 as never);
+        await engine.addTrigger({ ...entry, orderCond: 'ShortSelling' }, STK1 as never);
+        const [dt, margin, short] = created();
+        expect(dt!.levels[0]!.entry).toMatchObject({ order: { priceType: 'MKT', timeInForce: 'IOC', stockCond: 'Cash', stockLot: 'Common', daytradeShort: true } });
+        expect(margin!.levels[0]!.entry).toMatchObject({ order: { stockCond: 'MarginTrading', stockLot: 'Common' } });
+        expect((margin!.levels[0]!.entry as { order: { daytradeShort?: boolean } }).order.daytradeShort).toBeUndefined();
+        expect(short!.levels[0]!.entry).toMatchObject({ order: { stockCond: 'ShortSelling' } });
+        expect(m.notify.mock.calls.some(([n]) => String((n as { body: string }).body).includes('（現股當沖先賣）'))).toBe(true);
+        // the rows carry it (ladder, list), and a modify rebuilds the program with it
+        m.programs = [dt!];
+        await bg.refreshBackground();
+        const [row] = engine.getDisplayTriggers();
+        expect(row).toMatchObject({ daytradeShort: true, role: 'entry' });
+        expect(row!.orderCond).toBeUndefined();
+        await tick('2330', 950);
+        await engine.modifyTrigger(row!.id, { price: 890 });
+        const replaced = (calls('execution_replace')[0]![1] as { program: OrderProgram }).program;
+        expect(replaced.levels[0]!.entry).toMatchObject({ price: 890, order: { stockCond: 'Cash', daytradeShort: true } });
+    });
+
+    it('#263 credit the engine does not take is refused with the reason, nothing created', async () => {
+        m.enabled = true;
+        await boot();
+        const entry = { ...stop(), code: '2330', price: 900, role: 'entry' as const };
+        expect(await engine.addTrigger({ ...entry, orderCond: 'SBLShort' }, STK1 as never)).toBeNull();
+        expect(await engine.addTrigger({ ...entry, action: 'Buy', condition: 'above', price: 1000, orderCond: 'ShortSelling' }, STK1 as never)).toBeNull();
+        expect(await engine.addTrigger({ ...entry, action: 'Buy', condition: 'above', price: 1000, daytradeShort: true }, STK1 as never)).toBeNull();
+        // a protective stop (not an entry) closes in cash
+        expect(await engine.addTrigger({ ...stop(), code: '2330', price: 900, daytradeShort: true }, STK1 as never)).toBeNull();
+        expect(created()).toHaveLength(0);
+        const bodies = m.notify.mock.calls.map(([n]) => String((n as { body: string }).body));
+        expect(bodies).toEqual(expect.arrayContaining([expect.stringContaining('不支援借券賣出'), expect.stringContaining('融券、借券只能賣出'),
+            expect.stringContaining('現股當沖先賣只能用在賣出'), expect.stringContaining('停損停利觸價只以現股出場')]));
+    });
+
     it('a 零股 trigger with another send style is refused like in this window', async () => {
         m.enabled = true;
         await boot();

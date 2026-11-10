@@ -96,13 +96,14 @@ import { notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
 import { fmtPrice } from './utils/format';
 import { stepPrice } from './utils/ticksize';
-import { contractMarket } from './contract-market';
-import { warrantTriggerProblem } from './warrant-rules';
+import { contractMarket, isWarrantContract } from './contract-market';
+import { WARRANT_TEXT, warrantTriggerProblem } from './warrant-rules';
 import { bandTickFor, ensureTickBands, prefetchTickBands } from './tick-bands';
 import { isOddLot, ODD_LOT_MAX_SHARES, oddLotMarketablePrice, SHARES_PER_LOT, sharesToUnits, stockQtyUnit } from './odd-lot';
 import type { ContractBase } from './types/contract';
 import type { Account } from './types/portfolio';
-import type { Action, FuturesOCType, StockOrderLot, Trade } from './types/order';
+import type { Action, FuturesOCType, StockOrderCond, StockOrderLot, Trade } from './types/order';
+import { triggerCreditProblem, triggerCreditText } from './trigger-credit';
 import { orderStatusLabel, orderStatusWithNumber } from './order-status-label';
 
 /** Why protection resumed with a first-tick check (#144). */
@@ -175,6 +176,11 @@ export interface TriggerOrder {
     // stocks: IntradayOdd → quantity in shares, sent as a LIMIT at the price
     // limit (零股沒有市價單, #204); absent = Common lots (張)
     orderLot?: StockOrderLot;
+    /** #263 stocks: the credit condition of a trigger entry (融資／融券),
+     * fixed at creation and sent with it (trigger-credit); absent = 現股 */
+    orderCond?: StockOrderCond;
+    /** #263 現股當沖先賣 (a cash sell entry), fixed at creation */
+    daytradeShort?: boolean;
     bracketId?: string;
     suspended?: string; // reason this trigger will not execute
     createdAt?: number;
@@ -448,7 +454,7 @@ function prepareAdd(n: NewTrigger): TriggerOrder {
     if (t.bracketId) throw new Error('括號單保護只由主視窗建立');
     const oddProblem = oddLotTriggerProblem(t);
     if (oddProblem) throw new Error(oddProblem);
-    const optionProblem = triggerOptionsProblem(t) ?? storedWarrantProblem(t);
+    const optionProblem = triggerOptionsProblem(t) ?? storedWarrantProblem(t) ?? storedCreditProblem(t);
     if (optionProblem) throw new Error(optionProblem);
     if (t.group && processedGroups[groupKey(t.env, t.group)]) throw new Error('此 OCO 群組已觸發過，不再建立');
     return t;
@@ -463,6 +469,17 @@ export function storedWarrantProblem(t: Pick<TriggerOrder, 'code' | 'orderCode' 
     const cached = getCachedContract(t.code);
     const contract = { security_type: cached?.security_type ?? 'STK', code: t.orderCode ?? cached?.code ?? t.code };
     return warrantTriggerProblem(contract, { orderLot: t.orderLot, send: t.send, ...(t.time ? {} : { price: t.price }) });
+}
+
+/** #263 the credit condition a stored trigger goes out with: the engines'
+ * rules, and a warrant only in cash (contract from the cache, as above). */
+export function storedCreditProblem(t: Pick<TriggerOrder, 'code' | 'orderCode' | 'kind' | 'action' | 'account' | 'orderLot' | 'bracketId'
+    | 'bracketPlan' | 'role' | 'time' | 'orderCond' | 'daytradeShort'>): string | null {
+    const problem = triggerCreditProblem(t);
+    if (problem || ((!t.orderCond || t.orderCond === 'Cash') && !t.daytradeShort)) return problem;
+    const cached = getCachedContract(t.code);
+    return isWarrantContract({ security_type: cached?.security_type ?? 'STK', code: t.orderCode ?? cached?.code ?? t.code })
+        ? WARRANT_TEXT.credit : null;
 }
 
 /** #226 options a market / product cannot take, refused when created. */
@@ -784,6 +801,12 @@ function kindLabel(t: Pick<TriggerOrder, 'kind' | 'role'>) {
     return t.role === 'entry' ? '觸價單已設' : t.kind === 'stop' ? '停損單已掛' : t.kind === 'take' ? '停利單已掛' : '警示已設';
 }
 
+/** #263 「（現股當沖先賣）」: the credit condition a trigger goes out with; '' in cash. */
+export function creditNote(t: Pick<TriggerOrder, 'orderCond' | 'daytradeShort'>): string {
+    const c = triggerCreditText(t);
+    return c ? `（${c}）` : '';
+}
+
 function qtyText(t: Pick<TriggerOrder, 'quantity' | 'orderLot'>, quantity = t.quantity): string {
     return isOddLot(t.orderLot) ? `${quantity} 股` : `${quantity}`;
 }
@@ -793,11 +816,11 @@ function describe(t: TriggerOrder) {
         const hhmm = new Date(t.time.at + 8 * 3600_000).toISOString().slice(11, 16);
         return t.time.kind === 'flatten'
             ? `${t.code} ${hhmm} 全平並取消（${t.time.scope === 'code' ? '此商品' : '此帳戶'}）`
-            : `${t.code} ${hhmm} 送出 ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t)}`;
+            : `${t.code} ${hhmm} 送出 ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t)}${creditNote(t)}`;
     }
     return t.kind === 'alert'
         ? `${t.code} 觸價 ${t.condition === 'below' ? '≤' : '≥'} ${t.price} 時通知`
-        : `${t.code} ${t.source === 'opposite' ? '對手價' : '觸價'} ${t.cross ? (t.condition === 'below' ? '下穿' : '上穿') : t.condition === 'below' ? '≤' : '≥'} ${t.price} → ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t)}${t.group ? '（OCO）' : ''}`;
+        : `${t.code} ${t.source === 'opposite' ? '對手價' : '觸價'} ${t.cross ? (t.condition === 'below' ? '下穿' : '上穿') : t.condition === 'below' ? '≤' : '≥'} ${t.price} → ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t)}${creditNote(t)}${t.group ? '（OCO）' : ''}`;
 }
 
 /** Odd-lot triggers: stocks only, 盤中零股 only, 1–999 shares. */
@@ -966,7 +989,7 @@ async function addBackgroundGroup(prepared: NewTrigger[], contract: ContractBase
         delete t.requestId;
         return t;
     });
-    const problem = legs.map(t => oddLotTriggerProblem(t) ?? triggerOptionsProblem(t)).find(Boolean);
+    const problem = legs.map(t => oddLotTriggerProblem(t) ?? triggerOptionsProblem(t) ?? storedCreditProblem(t)).find(Boolean);
     if (problem) {
         notify({ kind: 'err', title: '二擇一未建立', body: problem });
         return null;
@@ -995,7 +1018,7 @@ async function addBackgroundTrigger(prepared: NewTrigger, contract: ContractBase
     const t: TriggerOrder = { ...prepared, id: newId(), createdAt: Date.now() };
     delete t.requestId;
     // the same checks as a trigger of this window
-    const problem = oddLotTriggerProblem(t) ?? triggerOptionsProblem(t);
+    const problem = oddLotTriggerProblem(t) ?? triggerOptionsProblem(t) ?? storedCreditProblem(t);
     if (problem) {
         notify({ kind: 'err', title: '觸價單未建立', body: problem });
         return null;
@@ -1570,7 +1593,7 @@ function exitSent(t: TriggerOrder, rec: ExitRecord, trade: Trade, lastPrice: num
         }
     }
     if (getConditionalSettings().notify) notify({ kind: 'ok', title: `${roleWord(t)}觸發`,
-        body: `${t.code} ${t.time ? '時間到' : `@${lastPrice}`} → ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t, rec.quantity)}（${orderStatusWithNumber(trade)}）` });
+        body: `${t.code} ${t.time ? '時間到' : `@${lastPrice}`} → ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t, rec.quantity)}${creditNote(t)}（${orderStatusWithNumber(trade)}）` });
 }
 
 function exitUnknown(t: TriggerOrder, rec: ExitRecord, message: string) {
@@ -1579,6 +1602,13 @@ function exitUnknown(t: TriggerOrder, rec: ExitRecord, message: string) {
         body: `${t.code} ${message} — 請至委託／持倉手動對帳；系統不會自動重送` });
     reconcileAfterUnknownOutcome();
 }
+
+/** #263 placeQuickOrder's credit options of a stored trigger (it re-checks
+ * them with the ticket's rules before sending). */
+const creditOpts = (t: TriggerOrder) => ({
+    ...(t.orderCond && t.orderCond !== 'Cash' ? { orderCond: t.orderCond } : {}),
+    ...(t.daytradeShort ? { daytradeShort: true } : {}),
+});
 
 const notStarted = (e: unknown) => !!(e as { mutationNotStarted?: boolean })?.mutationNotStarted;
 
@@ -1598,6 +1628,8 @@ async function dispatch(t: TriggerOrder, rec: ExitRecord, lastPrice: number) {
             account: ctx.account,
             ocType: t.octype,
             orderLot: isOddLot(t.orderLot) ? t.orderLot : undefined,
+            // #263 the credit condition it was created with (never the panel's now)
+            ...creditOpts(t),
             ...(op.futuresPriceType ? { futuresPriceType: op.futuresPriceType } : {}),
             ...(op.orderType && op.price !== null ? { orderType: op.orderType } : {}),
             beforeSend: () => {
@@ -1654,6 +1686,7 @@ async function sendPending(id: string, allowUnpast: boolean) {
             account: ctx.account,
             ocType: first.octype,
             orderLot: isOddLot(first.orderLot) ? first.orderLot : undefined,
+            ...creditOpts(first),
             ...(op.futuresPriceType ? { futuresPriceType: op.futuresPriceType } : {}),
             ...(op.orderType && op.price !== null ? { orderType: op.orderType } : {}),
             confirmLivePriceCode: userOrder ? priceKeyOf(first) : undefined,
@@ -1990,7 +2023,7 @@ const fmtDiff = (d: number) => `${d > 0 ? '+' : ''}${Number(d.toFixed(4))}`;
 export function describePending(t: TriggerOrder, price: number | undefined, priv: boolean): string {
     const acct = t.account ? `${t.account.account_type === 'F' ? '[期]' : '[證]'}${maskAccountId(t.account.account_id, priv)} ` : '';
     const now = price === undefined ? '目前價未知' : `目前 ${price}（差 ${fmtDiff(price - t.price)}）`;
-    return `${t.code} ${acct}${roleWord(t)} ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t)}`
+    return `${t.code} ${acct}${roleWord(t)} ${exitStyleLabel(t)}${t.action === 'Buy' ? '買' : '賣'} ${qtyText(t)}${creditNote(t)}`
         + ` 觸價 ${t.condition === 'below' ? '≤' : '≥'} ${t.price} · ${now}`;
 }
 
@@ -2007,7 +2040,7 @@ function holdPending(held: { t: TriggerOrder; reason: RestoreReason }[], price: 
     commit();
     for (const { t, reason } of held) {
         notify({ kind: 'err', title: '觸價單待確認（未自動送出）',
-            body: `${pendingName(t)}　${pendingKindLabel(t)}・${exitStyleLabel(t)}${actionLabel(t)}。`
+            body: `${pendingName(t)}　${pendingKindLabel(t)}・${exitStyleLabel(t)}${actionLabel(t)}${creditNote(t)}。`
                 + `價格已${conditionLabel(t)}（偵測時 ${fmtPrice(price)}），沒有自動送單，請到畫面下方的待確認面板處理。` });
     }
 }

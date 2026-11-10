@@ -10,7 +10,7 @@ import { maskIdentifiers } from './trade-mutations';
 
 export const ORDER_TRACE_ENABLED: boolean = import.meta.env.VITE_DEBUG_ORDER_TRACE === '1';
 
-export type OrderTraceEntry = 'flash cell' | 'flash 全刪' | 'orders tab' | 'other';
+export type OrderTraceEntry = 'flash cell' | 'flash 全刪' | 'flash 買全刪' | 'flash 賣全刪' | 'orders tab' | 'other';
 export type OrderTraceKind = 'cancel' | 'cancel_verified' | 'update_price' | 'update_qty' | 'report';
 
 export interface OrderTraceRecord {

@@ -57,6 +57,7 @@ import { ACTIVE_ORDER_STATUSES, type Action, type FuturesOCType, type OrderType,
 import type { Account, AccountedPosition } from '../lib/types/portfolio';
 import { fmtClock, fmtCompactInt, fmtInt, fmtPrice, fmtSigned, fmtStockLots } from '../lib/utils/format';
 import { clampLotQuantity, CREDIT_TEXT, creditLabel, isOddLot, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT } from '../lib/odd-lot';
+import { triggerCreditFields, triggerCreditText } from '../lib/trigger-credit';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import { contractMarket, isWarrantContract } from '../lib/contract-market';
 import { WARRANT_FLASH_TEXT, warrantExitBySharesProblem, warrantMarketOrderBlock, warrantProtectProblem, warrantTriggerProblem } from '../lib/warrant-rules';
@@ -65,6 +66,9 @@ import { flashQtyMemoryText, flashQtySlot, rememberedFlashQty, sanitizeFlashQtyS
 import { expiryTime, isStockFuture, lotsPerContract, spreadOf } from '../lib/flash-link';
 import * as styles from './flash-order.css';
 import { orderStatusWithNumber } from '../lib/order-status-label';
+import { flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMonth } from '../lib/flash-order-totals';
+import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
+import { FlashTotalsRow } from './flash-totals-bar';
 
 const ROW_H = 22; // must match row height in flash-order.css.ts
 const EDGE = 2; // auto-recenter when last price gets this close to the edge
@@ -80,6 +84,12 @@ function onLadder(t: Trade, code: string, stockOddLot: boolean | null): boolean 
         && (t.contract.code === code || getAliasFor(t.contract.code) === code)
         // stocks: only the shown unit (整股 or 零股, #204); null = not a stock
         && (stockOddLot === null || isOddLot(t.order.order_lot) === stockOddLot);
+}
+/** 委託合計與買全刪／賣全刪的範圍：同一實際月份（含連續月別名）、股票只算目前單位。
+ * 合計的「未成交」與買／賣全刪的目標都從這裡加 flashWorkingOrders 產生 */
+function totalsScope(c: ContractInfo, odd: boolean): (t: Trade) => boolean {
+    const stock = contractMarket(c.security_type) === 'S';
+    return t => sameContractMonth(t, c, getAliasFor) && (!stock || isOddLot(t.order.order_lot) === odd);
 }
 const FOLLOW_GLOBAL = '__follow__';
 const ACCOUNT_CHANGED_DURING_CONFIRMATION = '確認期間帳戶已變更，請重新確認';
@@ -255,14 +265,16 @@ const FlashRow = memo(function FlashRow({
     const exact = (v: number | undefined) => (compact && v !== undefined && v >= 10_000 ? `${fmtInt(v)} 股` : undefined);
     const columns = layout === 'columns';
     const op = trigDir === 'above' ? '≥' : '≤';
+    // a side the panel's credit condition cannot send is not a trigger side either
+    const trigSideBlock = (side: 'buy' | 'sell') => trigBlock ?? (side === 'buy' ? buyBlock : sellBlock);
     const trigTitle = (side: 'buy' | 'sell') => !armed ? '先啟用閃電下單'
-        : trigBlock ?? (trigDir === null ? '尚未收到成交價，或此價等於成交價（會立刻觸發），不能掛觸價'
+        : trigSideBlock(side) ?? (trigDir === null ? '尚未收到成交價，或此價等於成交價（會立刻觸發），不能掛觸價'
             : `觸價${side === 'buy' ? '買' : '賣'}：成交價 ${op} ${text} 時${trigNote[side]}（不是限價）`);
     const trigCell = (side: 'buy' | 'sell', marks: LadderMark[]) => (
         <div
-            className={`${styles.trigCell} ${armed && !trigBlock && trigDir !== null ? '' : styles.disabledCell}`}
+            className={`${styles.trigCell} ${armed && !trigSideBlock(side) && trigDir !== null ? '' : styles.disabledCell}`}
             data-trigger={side}
-            data-preview={armed && !trigBlock && trigDir !== null ? `觸${op}` : ''}
+            data-preview={armed && !trigSideBlock(side) && trigDir !== null ? `觸${op}` : ''}
             title={trigTitle(side)}
             onClick={() => onCell(side === 'buy' ? 'Buy' : 'Sell', price, true)}
         >
@@ -621,6 +633,9 @@ export function FlashOrder({
     // 不沿用畫面上可能過時的結果
     const ruleBlockRef = useRef<Record<Action, string | null>>({ Buy: null, Sell: null });
     ruleBlockRef.current = sides.rule;
+    // 觸價單建立時看每一邊目前的停用原因（含已確定不可融資券）
+    const sideBlockRef = useRef<Record<Action, string | null>>({ Buy: null, Sell: null });
+    sideBlockRef.current = { Buy: sides.buy, Sell: sides.sell };
     const creditRef = useRef({ applies: creditApplies, credit });
     creditRef.current = { applies: creditApplies, credit };
     // 委託條件（同下單面板）：點價限價單的效期、期貨倉別、期貨市價鈕的價別。
@@ -646,7 +661,8 @@ export function FlashOrder({
             ? warrantProtectBlock
             : protectConditionProblem({ market, odd, creditCond: credit.cond, daytradeShort: credit.daytradeShort, octype: clickOctype })
         : null;
-    // 觸價單觸發後只以現股送出（同 K 線圖，#263）；權證：整張現股，外國標的觸價後只能限價
+    // 觸價單帶建立當下的信用條件送出（#263：現股、融資、融券、現股當沖先賣；借券不支援）；
+    // 每一邊另照面板規則（sides）；權證：整張現股，外國標的觸價後只能限價
     const triggerBlock = warrant
         ? warrantTriggerProblem(contract, { send: triggerSendSetting })
         : triggerConditionProblem({ market, creditCond: credit.cond, daytradeShort: credit.daytradeShort });
@@ -713,7 +729,8 @@ export function FlashOrder({
     contractRef.current = contract;
     // 確認期間換信用條件也一樣中止（不會用舊條件送出）
     // 暫停（對應商品查詢中）也算換了狀態：確認中的單作廢，之後恢復也不會復活
-    const captureContext = useOrderContext(contract, `${lot}:${creditKey}:${orderKey}:${linkKey}:${paused ? 'paused' : ''}`);
+    // 連續月的實際月份（target_code）也算情境：換月（I6→J6）時等待中的送單／刪單中止
+    const captureContext = useOrderContext(contract, `${contract.target_code ?? ''}:${lot}:${creditKey}:${orderKey}:${linkKey}:${paused ? 'paused' : ''}`);
     const armedRef = useRef(armed);
     // 真實月份個股期（不是近月別名）在最後交易日收盤後一律不送 — 彈出視窗、照選取也一樣；其他期貨不由這裡判斷
     const pausedRef = useRef(paused);
@@ -994,6 +1011,22 @@ export function FlashOrder({
         return m;
     }, [trades, contract.code, lotShown]);
 
+    // 委託合計（設定「顯示委託合計」，預設開）：只從委託與成交回報算，
+    // 不經過持倉投影；範圍：面板帳戶、同一實際月份（含連續月別名）、目前單位、本交易日
+    const showTotals = panelOrder.showTotals !== false;
+    // 送單時記下的現沖先賣旗標（回報不帶）有新紀錄就重算
+    const orderCondsVersion = useStockOrderConditionsVersion();
+    const orderTotals = useMemo(() => showTotals
+        ? flashOrderTotals(trades, totalsScope(contract, odd), market === 'S', flashTotalsSince(market === 'S'))
+        : null, [showTotals, trades, contract, odd, market, orderCondsVersion]);
+
+    // 買全刪／賣全刪可刪的筆數＝合計裡「未成交」的那一組委託（cancelSide 用同一個函式選目標）
+    const sideOrderCount = useMemo(() => {
+        if (!showTotals) return { buy: 0, sell: 0 };
+        const w = flashWorkingOrders(trades, totalsScope(contract, odd), flashTotalsSince(market === 'S'));
+        return { buy: w.buy.length, sell: w.sell.length };
+    }, [showTotals, trades, contract, odd, market]);
+
     // net position for this symbol (alias-aware for continuous contracts)
     const pos = useMemo(() => {
         const matches = positions.filter(
@@ -1059,7 +1092,9 @@ export function FlashOrder({
     // preview said 附停損停利 for what became a 停損 exit)
     const trigNoteFor = (action: Action): string => {
         const sendText = triggerSendText(triggerSendSetting, { market, odd, mktPriceType });
-        const word = action === 'Buy' ? '買進' : '賣出';
+        // #263 the credit condition it will go out with (當沖先賣: sells only)
+        const creditText = creditApplies ? triggerCreditText(triggerCreditFields(credit, action)) : '';
+        const word = `${action === 'Buy' ? '買進' : '賣出'}${creditText ? `（${creditText}）` : ''}`;
         const held = heldRef.current;
         const effect = positionEffect(held.held, action, Math.max(1, qty));
         const intent = triggerIntent({ market, octype: clickOctype, effect, exitSafe: held.exitSafe });
@@ -1071,7 +1106,7 @@ export function FlashOrder({
     const trigNoteBuy = trigNoteFor('Buy');
     const trigNoteSell = trigNoteFor('Sell');
     const trigNote = useMemo(() => ({ buy: trigNoteBuy, sell: trigNoteSell }), [trigNoteBuy, trigNoteSell]);
-    const trigWord = triggerBlock ? (warrant ? '觸價停用（外國標的權證觸價後需限價）' : '觸價停用（信用條件）') : triggerLayout === 'columns' ? '點觸買／觸賣=觸價單' : 'Alt＋點=觸價單';
+    const trigWord = triggerBlock ? (warrant ? '觸價停用（外國標的權證觸價後需限價）' : '觸價停用（借券）') : triggerLayout === 'columns' ? '點觸買／觸賣=觸價單' : 'Alt＋點=觸價單';
     const openProtectRef = useRef<(() => void) | null>(null);
     const ladderBackgroundRef = useRef(ladder.background);
     ladderBackgroundRef.current = ladder.background;
@@ -1241,6 +1276,11 @@ export function FlashOrder({
         if (expiredNow()) { fail(CONTRACT_EXPIRED); return; }
         const { setting, block } = triggerRef.current;
         if (block) { fail(block); return; }
+        // #263 信用條件：點下去當下的面板條件寫進觸價單；不能用的一邊不掛（不改成現股）
+        const { applies: creditOn, credit: clickCredit } = creditRef.current;
+        const sideBlock = creditOn ? sideBlockRef.current[action] : null;
+        if (sideBlock) { fail(sideBlock); return; }
+        const creditFields = creditOn ? triggerCreditFields(clickCredit, action) : {};
         const condition = clickCondition(price, triggerPriceRef.current);
         if (condition !== 'above' && condition !== 'below') { fail(condition); return; }
         const oddLot = oddRef.current;
@@ -1287,6 +1327,7 @@ export function FlashOrder({
                 ...(intent.role === 'entry' ? { role: 'entry' as const } : {}),
                 ...(intent.octype ? { octype: intent.octype } : {}),
                 ...(oddLot ? { orderLot: 'IntradayOdd' as const } : {}),
+                ...creditFields,
                 ...(send ? { send } : {}),
                 validity,
             }, capturedContract, capturedAccount);
@@ -1479,6 +1520,37 @@ export function FlashOrder({
         });
         onOrdersChangedRef.current?.();
     }, [cancelGuard]);
+
+    // 買全刪／賣全刪（點底部合計列的買單／賣單合計）：目標＝合計裡「未成交」的那組委託
+    // （flashWorkingOrders：面板帳戶、同一實際月份、目前單位、本交易日，誰下的單都算 #244），只刪那一邊；
+    // 不取消停損停利（那是「全刪」才做的）。閃電未啟用、暫停時不動作，同一邊送出中不重送
+    const cancelSide = useCallback(async (side: 'buy' | 'sell') => {
+        const capturedAccount = accountRef.current;
+        if (!capturedAccount || pausedRef.current || !armedRef.current) return;
+        const key = `cancel-side:${side}`;
+        if (inflightRef.current.has(key)) return;
+        inflightRef.current.add(key);
+        try {
+            const code = contractRef.current.code;
+            // the context is fixed at the click: a product or account switched meanwhile cancels nothing
+            const guard = cancelGuard();
+            const c = contractRef.current;
+            const title = side === 'buy' ? '⚡ 買全刪' : '⚡ 賣全刪';
+            const targets = flashWorkingOrders(
+                tradesRef.current.filter(t => accountMatches((t as Trade & { account?: Account }).account ?? t.order.account, capturedAccount)),
+                totalsScope(c, oddRef.current), flashTotalsSince(contractMarket(c.security_type) === 'S'))[side];
+            if (targets.length === 0) {
+                notify({ kind: 'err', title, body: `${code}：找不到可刪的${side === 'buy' ? '買' : '賣'}單（可能剛成交或已刪），沒有送出；請到委託分頁核對` });
+                return;
+            }
+            noteOrderTraceEntry(targets.map((t) => t.order.id), side === 'buy' ? 'flash 買全刪' : 'flash 賣全刪');
+            const results = await cancelOrders(targets.map((t) => t.order.id), undefined, guard);
+            const summary = cancellationSummary(results);
+            notify({ kind: summary.kind, title, body: `${code}：${summary.body}` });
+            onOrdersChangedRef.current?.();
+        } finally { inflightRef.current.delete(key); }
+    }, [cancelGuard]);
+    const onCancelSide = useCallback((side: 'buy' | 'sell') => void cancelSide(side), [cancelSide]);
 
     const flatten = useCallback(async () => {
         const account = accountRef.current;
@@ -1768,6 +1840,9 @@ export function FlashOrder({
                             onTriggerSend={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerSend: next }); }}
                             // 外國標的權證：觸價後市價停用（附原因），只能選限價
                             triggerMarketBlock={warrantMarketBlock ? WARRANT_FLASH_TEXT.foreignTriggerMenu : null}
+                            showTotals={showTotals}
+                            // 只是顯示：不改送出的委託，不解除點價下單
+                            onShowTotals={next => { const { showTotals: _was, ...rest } = panelOrder; setPanelOrder(next ? rest : { ...rest, showTotals: false }); }}
                             triggerLayout={triggerLayout}
                             onTriggerLayout={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerLayout: next }); }}
                             // 外國標的權證不能自動停損停利：收起入口並寫原因（已開著的面板仍可進去關掉）
@@ -2051,7 +2126,10 @@ export function FlashOrder({
                 )}
             </div>
             {!paused && (
-            <div className={styles.totalsRow}>
+            <>
+            {/* 提示列一直佔固定一行高：提示出現／消失不改變梯子可用高度，否則 ResizeObserver
+                重算列數、頂端價格位移一檔，游標下的價位會換掉（可能點錯價下單或刪單） */}
+            <div className={styles.totalsRow} data-testid='flash-notices'>
                 {display?.source === 'snapshot' && <span title={display.time}>快照一檔</span>}
                 {odd && !oddQuote && <span title='尚未收到盤中零股行情；梯形暫以整股成交價置中'>等待零股行情</span>}
                 {otherLotOrders > 0 && (
@@ -2059,9 +2137,13 @@ export function FlashOrder({
                         另有{odd ? '整股' : '零股'}委託 {otherLotOrders} 筆
                     </span>
                 )}
-                <span className={styles.totalBid} title={odd ? `${fmtInt(sumBid)} 股` : undefined}>Σ買 {odd ? fmtCompactInt(sumBid) : fmtInt(sumBid)}</span>
-                <span className={styles.totalAsk} title={odd ? `${fmtInt(sumAsk)} 股` : undefined}>Σ賣 {odd ? fmtCompactInt(sumAsk) : fmtInt(sumAsk)}</span>
             </div>
+            <FlashTotalsRow columns={triggerLayout === 'columns'} mine={orderTotals} sumBid={sumBid} sumAsk={sumAsk} odd={odd}
+                unit={market === 'F' ? '口' : odd ? '股' : '張'} priv={privMoney}
+                // 只有整股現股有當沖先賣；期貨、零股、權證的價格欄留空
+                cover={market === 'S' && !odd && !warrant}
+                cancel={{ armed: armedView, counts: sideOrderCount, onCancel: onCancelSide }} />
+            </>
             )}
             <div className={styles.hint}>
                 {armedView
