@@ -632,8 +632,6 @@ export const totalsRow = style({
     flexShrink: 0,
 });
 
-export const totalBid = style({ color: vars.color.up });
-export const totalAsk = style({ color: vars.color.down });
 
 export const hint = style({
     padding: `2px ${vars.space.sm}`,
@@ -1168,86 +1166,74 @@ export const protectChipAnchor = style({ position: 'static', display: 'inline-fl
 export const markCrowded = style({ gap: 1 });
 globalStyle(`${markCrowded} > *`, { minWidth: 0, padding: '0 2px' });
 
-// ---- 委託合計列（部位列下方；設定「顯示委託合計」，預設開）----
-// 買紅賣綠沿用 up／down；待回補是提醒不是錯誤，用 amber（錯誤才用 danger）
-const totRowBase = style({
+// ---- 梯子底部合計列（對齊梯子的欄）----
+// 觸買｜買單＝我的買委託（成交）｜買量＝五檔買量合計｜價格＝現沖先賣回補狀態｜
+// 賣量＝五檔賣量合計｜賣單＝我的賣委託（成交）｜觸賣。欄寬與梯子共用 COLS／cols7
+// （含 ≤230px 的比例欄寬），不另外估。不寫「買／賣」字樣，靠欄位與紅綠色。
+// 我的委託兩行：委託量在上、(成交量) 小字在下；≤230px 收掉成交量（在 tooltip）。
+// 回補狀態：圖示＋短字（待補 N／補齊／待確認）；≤230px 只留圖示＋待補數量。
+export const totGrid = style({
     display: 'grid',
     alignItems: 'stretch',
-    gap: 4,
-    padding: `3px ${vars.space.sm}`,
+    minHeight: 20,
     fontFamily: vars.font.mono,
-    fontSize: '0.66rem',
+    fontSize: '0.62rem',
     fontVariantNumeric: 'tabular-nums',
-    color: vars.color.mutedForeground,
-    borderBottom: `1px solid ${vars.color.border}`,
+    borderTop: `1px solid ${vars.color.border}`,
     background: vars.color.panel,
     flexShrink: 0,
-    minWidth: 0,
-    whiteSpace: 'nowrap',
 });
-export const totRow = styleVariants({
-    cover: [totRowBase, { gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto' }],
-    plain: [totRowBase, { gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }],
+/** 五欄（Alt＋點觸價）；七欄直接用 cols7（含 ≤230px 的比例欄寬） */
+export const totCols5 = style({ gridTemplateColumns: COLS });
+/** 有「我的委託合計」時兩行高 */
+export const totGridTall = style({ minHeight: 28 });
+const totCell = style({ display: 'flex', alignItems: 'center', minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' });
+export const totEmpty = totCell;
+export const totVol = styleVariants({
+    // 對齊買量／賣量格的文字位置（同 buyCell／sellCell 的內距；七欄時同 cols7 的 4px）
+    bid: [totCell, { justifyContent: 'flex-end', paddingRight: 8, color: vars.color.up }],
+    ask: [totCell, { justifyContent: 'flex-start', paddingLeft: 8, color: vars.color.down }],
 });
-const totSideBase = style({
-    position: 'relative',
-    display: 'inline-flex',
-    alignItems: 'baseline',
-    gap: 1,
-    minWidth: 0,
-    overflow: 'hidden',
-    padding: '1px 4px 3px',
-    borderRadius: vars.radius.sm,
-    background: vars.color.inset,
+globalStyle(`${cols7} > ${totVol.bid}`, { paddingRight: 4 });
+globalStyle(`${cols7} > ${totVol.ask}`, { paddingLeft: 4 });
+const totMineBase = style([totCell, {
+    flexDirection: 'column',
+    justifyContent: 'center',
+    lineHeight: 1.05,
+    fontWeight: 700,
+}]);
+export const totMine = styleVariants({
+    buy: [totMineBase, { color: vars.color.up }],
+    sell: [totMineBase, { color: vars.color.down }],
+    none: [totMineBase, { color: vars.color.mutedForeground, fontWeight: 400 }],
 });
-export const totSide = styleVariants({
-    buy: [totSideBase, { color: vars.color.up }],
-    sell: [totSideBase, { color: vars.color.down }],
+export const totMineFill = style({
+    fontSize: '0.54rem',
+    fontWeight: 500,
+    color: vars.color.foreground,
+    opacity: 0.8,
+    '@container': { [MINIMAL]: { display: 'none' } },
 });
-export const totWord = style({ fontFamily: vars.font.body, fontWeight: 600, marginRight: 2 });
-export const totNum = style({ fontWeight: 700, color: 'inherit' });
-export const totFill = style({ color: vars.color.foreground, opacity: 0.85 });
-export const totWorking = style({
-    marginLeft: 'auto',
-    paddingLeft: 4,
-    fontSize: '0.6rem',
-    color: vars.color.mutedForeground,
-    '@container': { [TIGHT]: { display: 'none' } },
-});
-const totProgressBase = style({
-    position: 'absolute',
-    left: 0,
-    bottom: 0,
-    height: 2,
-    borderRadius: 1,
-    transition: 'width 0.2s',
-});
-export const totProgress = styleVariants({
-    buy: [totProgressBase, { background: vars.color.up }],
-    sell: [totProgressBase, { background: vars.color.down }],
+const totCoverBase = style([totCell, {
+    justifyContent: 'center',
+    gap: 2,
+    fontWeight: 700,
+    borderLeft: `1px solid ${vars.color.border}`,
+    borderRight: `1px solid ${vars.color.border}`,
+}]);
+export const totCover = styleVariants({
+    // 待回補是提醒不是錯誤：amber；錯誤才用 danger
+    open: [totCoverBase, { color: vars.color.amber }],
+    done: [totCoverBase, { color: vars.color.mutedForeground, fontWeight: 500 }],
+    unknown: [totCoverBase, { color: vars.color.mutedForeground, fontWeight: 500, cursor: 'help' }],
+    none: [totCoverBase],
 });
 export const totCoverLabel = style({
     fontFamily: vars.font.body,
-    '@container': { [TIGHT]: { display: 'none' } },
+    '@container': { [MINIMAL]: { display: 'none' } },
 });
-export const totCoverShort = style({
-    display: 'none',
-    fontFamily: vars.font.body,
-    '@container': { [TIGHT]: { display: 'inline' } },
-});
-const totCoverBase = style({
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 3,
-    padding: '0 5px',
-    borderRadius: vars.radius.sm,
-    border: '1px solid',
-    fontWeight: 700,
-});
-export const totCover = styleVariants({
-    open: [totCoverBase, { color: vars.color.amber, borderColor: vars.color.amber }],
-    done: [totCoverBase, { color: vars.color.mutedForeground, borderColor: vars.color.border }],
-    none: [totCoverBase, { color: vars.color.mutedForeground, borderColor: 'transparent' }],
-    // 條件未知：中性色虛線框，不是錯誤也不是提醒
-    unknown: [totCoverBase, { color: vars.color.mutedForeground, borderColor: vars.color.borderBright, borderStyle: 'dashed', fontWeight: 600, cursor: 'help' }],
-});
+
+// 數字的寬窄兩種寫法：>230px 用千分位；≤230px 欄寬改比例，改用不含逗號／萬為單位的短寫
+export const totWide = style({ '@container': { [MINIMAL]: { display: 'none' } } });
+export const totNarrow = style({ display: 'none', '@container': { [MINIMAL]: { display: 'inline' } } });
+globalStyle(`${totGrid}`, { '@container': { [MINIMAL]: { fontSize: '0.58rem' } } });

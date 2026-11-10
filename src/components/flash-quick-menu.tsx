@@ -236,7 +236,7 @@ export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, orde
                             role='menuitemcheckbox'
                             aria-checked={showTotals}
                             className={styles.menuItem[showTotals ? 'on' : 'off']}
-                            title='部位列下方顯示今日這個商品的委託量（成交量）、未成交，與現股當沖先賣待回補'
+                            title='梯子底部合計列：買單／賣單欄底下顯示今日這個商品我的委託量（成交量），價格欄底下顯示現股當沖先賣回補狀態'
                             onClick={pick(() => onShowTotals(!showTotals))}
                         >
                             <Sigma size={11} aria-hidden />顯示委託合計

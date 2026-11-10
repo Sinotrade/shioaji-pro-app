@@ -1,34 +1,33 @@
-// src/components/flash-totals-bar.tsx — 閃電下單委託合計列：
-// 「買 32（20）未 12｜賣 40（20）未 20｜待回補 N」，數字定義見 lib/flash-order-totals.ts。
-// 遮金額開啟時跟「多／空 N」一樣遮數量（合計透露交易規模），進度條也收起。
-// 寬度退讓（只看面板寬度，#376）：≤300px 收「未 N」、回補格改短字。
+// src/components/flash-totals-bar.tsx — 閃電梯子最底部的合計列，每格對齊上方的欄：
+//   觸買｜買單：我的買委託（成交）｜買量：五檔買量合計｜價格：現沖先賣回補狀態｜
+//   賣量：五檔賣量合計｜賣單：我的賣委託（成交）｜觸賣
+// 不寫「買／賣／Σ」字樣，靠欄位位置與紅綠色。數字定義見 lib/flash-order-totals.ts。
+// 「顯示委託合計」關閉時只剩五檔量合計（照舊一直顯示）。
+// 遮金額：我的委託與回補數量照「多／空 N」遮；五檔量是公開行情，不遮。
 import { CheckCheck, CircleHelp, RotateCcw } from 'lucide-react';
 import type { FlashOrderTotals, SideTotals } from '../lib/flash-order-totals';
 import { maskMoney } from '../lib/privacy';
-import { fmtInt } from '../lib/utils/format';
+import { fmtCompactInt, fmtInt } from '../lib/utils/format';
 import * as styles from './flash-order.css';
 
-function Side({ side, s, unit, priv }: { side: 'buy' | 'sell'; s: SideTotals; unit: string; priv: boolean }) {
-    const m = (n: number) => maskMoney(fmtInt(n), priv);
-    const pct = s.ordered > 0 ? Math.min(100, (s.filled / s.ordered) * 100) : 0;
+function Mine({ side, s, unit, priv }: { side: 'buy' | 'sell'; s: SideTotals; unit: string; priv: boolean }) {
     const word = side === 'buy' ? '買進' : '賣出';
     const title = priv ? undefined
-        : `委託${word} ${fmtInt(s.ordered)} ${unit}${s.cancelled > 0 ? `（已扣刪單 ${fmtInt(s.cancelled)}）` : ''}\n已成交 ${fmtInt(s.filled)} ${unit}\n未成交 ${fmtInt(s.working)} ${unit}`;
+        : `我的委託${word} ${fmtInt(s.ordered)} ${unit}${s.cancelled > 0 ? `（已扣刪單 ${fmtInt(s.cancelled)}）` : ''}\n已成交 ${fmtInt(s.filled)} ${unit}\n未成交 ${fmtInt(s.working)} ${unit}`;
+    if (s.ordered <= 0) return <span className={styles.totMine.none} title={title ?? undefined} data-testid={`flash-tot-${side}`}>—</span>;
+    // 欄寬只有 2rem：萬以上用精簡寫法（零股股數），完整數字在 tooltip
+    const n = (v: number) => maskMoney(v >= 10_000 ? fmtCompactInt(v) : fmtInt(v), priv);
     return (
-        <span className={styles.totSide[side]} title={title} data-testid={`flash-tot-${side}`}>
-            <span className={styles.totWord}>{side === 'buy' ? '買' : '賣'}</span>
-            <b className={styles.totNum}>{m(s.ordered)}</b>
-            <span className={styles.totFill}>（{m(s.filled)}）</span>
-            {s.working > 0 && <span className={styles.totWorking} data-testid={`flash-tot-${side}-working`}>未{m(s.working)}</span>}
-            {!priv && <span className={styles.totProgress[side]} style={{ width: `${pct}%` }} aria-hidden />}
+        <span className={styles.totMine[side]} title={title} data-testid={`flash-tot-${side}`}>
+            <span>{n(s.ordered)}</span>
+            <span className={styles.totMineFill}>({n(s.filled)})</span>
         </span>
     );
 }
 
 function Cover({ t, unit, priv }: { t: FlashOrderTotals; unit: string; priv: boolean }) {
     const ds = t.dayShort;
-    if (!ds) return <span className={styles.totCover.none} title='今日沒有現股當沖先賣成交' data-testid='flash-tot-cover'>—</span>;
-    const m = (n: number) => maskMoney(fmtInt(n), priv);
+    if (!ds) return <span className={styles.totCover.none} data-testid='flash-tot-cover' />;
     const lines = [
         `現股當沖先賣成交 ${fmtInt(ds.sold)} ${unit}`,
         `已用現股買進回補 ${fmtInt(ds.covered)} ${unit}`,
@@ -36,38 +35,58 @@ function Cover({ t, unit, priv }: { t: FlashOrderTotals; unit: string; priv: boo
         ...(ds.unknownSell > 0 ? [`另有賣出成交 ${fmtInt(ds.unknownSell)} ${unit} 無法確認是否為現股當沖先賣（委託回報不帶這個欄位，只有本 App 送出的委託查得到），未計入`] : []),
         ...(ds.unknownBuy > 0 ? [`另有買進成交 ${fmtInt(ds.unknownBuy)} ${unit} 尚未收到信用條件，未計入回補`] : []),
     ];
-    const title = priv ? undefined : lines.join('\n');
+    const title = priv ? '現股當沖先賣回補狀態' : lines.join('\n');
     // 條件未知的成交可能改變結果：不顯示「補齊」或確定的待回補量
     if (ds.unknownSell > 0 || (ds.unknownBuy > 0 && ds.open > 0)) {
         return (
             <span className={styles.totCover.unknown} title={title} data-testid='flash-tot-cover' data-state='unknown'>
-                <CircleHelp size={9} aria-hidden />
-                <span className={styles.totCoverLabel}>回補待確認</span><span className={styles.totCoverShort}>待確認</span>
+                <CircleHelp size={10} aria-hidden /><span className={styles.totCoverLabel}>待確認</span>
             </span>
         );
     }
     return ds.open > 0
         ? (
-            <span className={styles.totCover.open} title={title} data-testid='flash-tot-cover'>
-                <RotateCcw size={9} aria-hidden />
-                <span className={styles.totCoverLabel}>待回補</span><span className={styles.totCoverShort}>待補</span>{m(ds.open)}
+            <span className={styles.totCover.open} title={title} data-testid='flash-tot-cover' data-state='open'>
+                <RotateCcw size={10} aria-hidden /><span className={styles.totCoverLabel}>待補</span>{maskMoney(fmtInt(ds.open), priv)}
             </span>
         )
         : (
-            <span className={styles.totCover.done} title={title} data-testid='flash-tot-cover'>
-                <CheckCheck size={9} aria-hidden />
-                <span className={styles.totCoverLabel}>先賣已補齊</span><span className={styles.totCoverShort}>補齊</span>
+            <span className={styles.totCover.done} title={title} data-testid='flash-tot-cover' data-state='done'>
+                <CheckCheck size={10} aria-hidden /><span className={styles.totCoverLabel}>補齊</span>
             </span>
         );
 }
 
-/** @param cover 顯示當沖先賣回補格（整股現股；期貨、零股、權證沒有當沖先賣） */
-export function FlashTotalsBar({ totals, unit, priv, cover }: { totals: FlashOrderTotals; unit: string; priv: boolean; cover: boolean }) {
+export function FlashTotalsRow({ columns, mine, cover, sumBid, sumAsk, odd, unit, priv }: {
+    /** 七欄（外側觸買／觸賣欄）或五欄，與梯子相同 */
+    columns: boolean;
+    /** 我的委託合計；null＝「顯示委託合計」關閉 */
+    mine: FlashOrderTotals | null;
+    /** 價格欄放回補狀態（整股現股；期貨、零股、權證沒有） */
+    cover: boolean;
+    sumBid: number;
+    sumAsk: number;
+    /** 零股：五檔量以股計，精簡顯示 */
+    odd: boolean;
+    unit: string;
+    priv: boolean;
+}) {
+    // ≤230px：不含逗號的短寫（萬以上用「萬」），完整數字在 tooltip
+    const vol = (v: number) => (
+        <>
+            <span className={styles.totWide}>{odd ? fmtCompactInt(v) : fmtInt(v)}</span>
+            <span className={styles.totNarrow}>{v >= 10_000 ? fmtCompactInt(v) : String(Math.round(v))}</span>
+        </>
+    );
     return (
-        <div className={styles.totRow[cover ? 'cover' : 'plain']} data-testid='flash-totals'>
-            <Side side='buy' s={totals.buy} unit={unit} priv={priv} />
-            <Side side='sell' s={totals.sell} unit={unit} priv={priv} />
-            {cover && <Cover t={totals} unit={unit} priv={priv} />}
+        <div className={`${styles.totGrid} ${columns ? styles.cols7 : styles.totCols5} ${mine ? styles.totGridTall : ''}`} data-testid='flash-totals'>
+            {columns && <span className={styles.totEmpty} />}
+            {mine ? <Mine side='buy' s={mine.buy} unit={unit} priv={priv} /> : <span className={styles.totEmpty} />}
+            <span className={styles.totVol.bid} title={`五檔買量合計 ${fmtInt(sumBid)}${odd ? ' 股' : ''}`} data-testid='flash-tot-bidvol'>{vol(sumBid)}</span>
+            {mine && cover ? <Cover t={mine} unit={unit} priv={priv} /> : <span className={styles.totCover.none} />}
+            <span className={styles.totVol.ask} title={`五檔賣量合計 ${fmtInt(sumAsk)}${odd ? ' 股' : ''}`} data-testid='flash-tot-askvol'>{vol(sumAsk)}</span>
+            {mine ? <Mine side='sell' s={mine.sell} unit={unit} priv={priv} /> : <span className={styles.totEmpty} />}
+            {columns && <span className={styles.totEmpty} />}
         </div>
     );
 }

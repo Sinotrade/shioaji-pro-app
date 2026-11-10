@@ -67,7 +67,7 @@ import * as styles from './flash-order.css';
 import { orderStatusWithNumber } from '../lib/order-status-label';
 import { flashOrderTotals, flashTotalsSince, sameContractMonth } from '../lib/flash-order-totals';
 import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
-import { FlashTotalsBar } from './flash-totals-bar';
+import { FlashTotalsRow } from './flash-totals-bar';
 
 const ROW_H = 22; // must match row height in flash-order.css.ts
 const EDGE = 2; // auto-recenter when last price gets this close to the edge
@@ -1951,11 +1951,6 @@ export function FlashOrder({
                     </span>
                 </div>
             )}
-            {orderTotals && !paused && (
-                <FlashTotalsBar totals={orderTotals} unit={market === 'F' ? '口' : odd ? '股' : '張'} priv={privMoney}
-                    // 只有整股現股有當沖先賣；期貨、零股、權證不佔回補格
-                    cover={market === 'S' && !odd && !warrant} />
-            )}
             {odd && !paused && (
                 <div className={styles.oddBanner} title='盤中零股與整股分開撮合，成交價可能與整股五檔不同'>
                     盤中零股 · 以股計 · 只限價 ROD · 僅現股；五檔與成交為零股行情（股）
@@ -2071,17 +2066,23 @@ export function FlashOrder({
                 )}
             </div>
             {!paused && (
-            <div className={styles.totalsRow}>
-                {display?.source === 'snapshot' && <span title={display.time}>快照一檔</span>}
-                {odd && !oddQuote && <span title='尚未收到盤中零股行情；梯形暫以整股成交價置中'>等待零股行情</span>}
-                {otherLotOrders > 0 && (
-                    <span title={`梯形只顯示${odd ? '零股' : '整股'}委託；全刪會一併刪除`}>
-                        另有{odd ? '整股' : '零股'}委託 {otherLotOrders} 筆
-                    </span>
-                )}
-                <span className={styles.totalBid} title={odd ? `${fmtInt(sumBid)} 股` : undefined}>Σ買 {odd ? fmtCompactInt(sumBid) : fmtInt(sumBid)}</span>
-                <span className={styles.totalAsk} title={odd ? `${fmtInt(sumAsk)} 股` : undefined}>Σ賣 {odd ? fmtCompactInt(sumAsk) : fmtInt(sumAsk)}</span>
-            </div>
+            <>
+            {(display?.source === 'snapshot' || (odd && !oddQuote) || otherLotOrders > 0) && (
+                <div className={styles.totalsRow}>
+                    {display?.source === 'snapshot' && <span title={display.time}>快照一檔</span>}
+                    {odd && !oddQuote && <span title='尚未收到盤中零股行情；梯形暫以整股成交價置中'>等待零股行情</span>}
+                    {otherLotOrders > 0 && (
+                        <span title={`梯形只顯示${odd ? '零股' : '整股'}委託；全刪會一併刪除`}>
+                            另有{odd ? '整股' : '零股'}委託 {otherLotOrders} 筆
+                        </span>
+                    )}
+                </div>
+            )}
+            <FlashTotalsRow columns={triggerLayout === 'columns'} mine={orderTotals} sumBid={sumBid} sumAsk={sumAsk} odd={odd}
+                unit={market === 'F' ? '口' : odd ? '股' : '張'} priv={privMoney}
+                // 只有整股現股有當沖先賣；期貨、零股、權證的價格欄留空
+                cover={market === 'S' && !odd && !warrant} />
+            </>
             )}
             <div className={styles.hint}>
                 {armedView
