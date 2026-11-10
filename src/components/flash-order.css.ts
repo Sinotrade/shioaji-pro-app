@@ -621,17 +621,25 @@ export const jumpBtn = styleVariants({
     bottom: [jumpBase, { bottom: '6px' }],
 });
 
+/** 梯子下方的提示列（快照一檔／等待零股行情／另有…委託）：沒有提示也保留，固定
+ * 高度、單行，內容變化不影響梯子列數 */
 export const totalsRow = style({
     display: 'flex',
     justifyContent: 'space-between',
-    padding: `2px ${vars.space.sm}`,
+    alignItems: 'center',
+    gap: vars.space.sm,
+    height: 16,
+    boxSizing: 'border-box',
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    padding: `0 ${vars.space.sm}`,
     fontFamily: vars.font.mono,
     fontSize: '0.62rem',
     fontVariantNumeric: 'tabular-nums',
     borderTop: `1px solid ${vars.color.border}`,
     flexShrink: 0,
 });
-
+globalStyle(`${totalsRow} > span`, { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 });
 
 export const hint = style({
     padding: `2px ${vars.space.sm}`,
@@ -1175,7 +1183,9 @@ globalStyle(`${markCrowded} > *`, { minWidth: 0, padding: '0 2px' });
 export const totGrid = style({
     display: 'grid',
     alignItems: 'stretch',
-    minHeight: 20,
+    // 固定高度（不用 minHeight）：內容變化不改變梯子列數
+    height: 20,
+    boxSizing: 'border-box',
     fontFamily: vars.font.mono,
     fontSize: '0.62rem',
     fontVariantNumeric: 'tabular-nums',
@@ -1186,7 +1196,7 @@ export const totGrid = style({
 /** 五欄（Alt＋點觸價）；七欄直接用 cols7（含 ≤230px 的比例欄寬） */
 export const totCols5 = style({ gridTemplateColumns: COLS });
 /** 有「我的委託合計」時兩行高 */
-export const totGridTall = style({ minHeight: 28 });
+export const totGridTall = style({ height: 28 });
 const totCell = style({ display: 'flex', alignItems: 'center', minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' });
 export const totEmpty = totCell;
 export const totVol = styleVariants({
@@ -1237,3 +1247,22 @@ export const totCoverLabel = style({
 export const totWide = style({ '@container': { [MINIMAL]: { display: 'none' } } });
 export const totNarrow = style({ display: 'none', '@container': { [MINIMAL]: { display: 'inline' } } });
 globalStyle(`${totGrid}`, { '@container': { [MINIMAL]: { fontSize: '0.58rem' } } });
+
+// 買全刪／賣全刪：合計格本身是按鈕；不改對齊與高度，只加游標與 hover／focus
+const totMineBtnBase = style({
+    appearance: 'none',
+    border: 'none',
+    margin: 0,
+    padding: 0,
+    background: 'transparent',
+    font: 'inherit',
+    cursor: 'pointer',
+    selectors: {
+        '&[aria-disabled]': { cursor: 'not-allowed' },
+        '&:focus-visible': { outline: `1px solid ${vars.color.accent}`, outlineOffset: -1 },
+    },
+});
+export const totMineBtn = styleVariants({
+    buy: [totMineBtnBase, { selectors: { '&:not([aria-disabled]):hover': { background: vars.color.upDim, boxShadow: `inset 0 0 0 1px ${vars.color.up}` } } }],
+    sell: [totMineBtnBase, { selectors: { '&:not([aria-disabled]):hover': { background: vars.color.downDim, boxShadow: `inset 0 0 0 1px ${vars.color.down}` } } }],
+});

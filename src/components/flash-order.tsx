@@ -1006,6 +1006,16 @@ export function FlashOrder({
         ? flashOrderTotals(trades, t => sameContractMonth(t, contract, getAliasFor) && lotShown(t), market === 'S', flashTotalsSince(market === 'S'))
         : null, [showTotals, trades, contract.code, contract.target_code, lotShown, market, orderCondsVersion]);
 
+    // 買全刪／賣全刪可刪的筆數（同 chip 的規則：目前單位、在場上的委託）
+    const sideOrderCount = useMemo(() => {
+        const n = { buy: 0, sell: 0 };
+        for (const t of trades) {
+            const side = ladderSide(t);
+            if (side && onLadder(t, contract.code, market === 'S' ? odd : null)) n[side]++;
+        }
+        return n;
+    }, [trades, contract.code, market, odd]);
+
     // net position for this symbol (alias-aware for continuous contracts)
     const pos = useMemo(() => {
         const matches = positions.filter(
@@ -1491,6 +1501,39 @@ export function FlashOrder({
         });
         onOrdersChangedRef.current?.();
     }, [cancelGuard]);
+
+    // 買全刪／賣全刪（點底部合計列的買單／賣單合計）：範圍同每價位 chip 刪單
+    // （帳戶、商品含別名、目前顯示的單位，誰下的單都算 #244），只刪那一邊；
+    // 不取消停損停利（那是「全刪」才做的）。閃電未啟用、暫停時不動作，同一邊送出中不重送
+    const cancelSide = useCallback(async (side: 'buy' | 'sell') => {
+        const capturedAccount = accountRef.current;
+        if (!capturedAccount || pausedRef.current || !armedRef.current) return;
+        const key = `cancel-side:${side}`;
+        if (inflightRef.current.has(key)) return;
+        inflightRef.current.add(key);
+        try {
+            const code = contractRef.current.code;
+            // the context is fixed at the click: a product or account switched meanwhile cancels nothing
+            const guard = cancelGuard();
+            const unit = contractMarket(contractRef.current.security_type) === 'S' ? oddRef.current : null;
+            const title = side === 'buy' ? '⚡ 買全刪' : '⚡ 賣全刪';
+            const targets = tradesRef.current.filter(
+                (t) =>
+                    accountMatches((t as Trade & { account?: Account }).account ?? t.order.account, capturedAccount) &&
+                    ladderSide(t) === side && onLadder(t, code, unit),
+            );
+            if (targets.length === 0) {
+                notify({ kind: 'err', title, body: `${code}：找不到可刪的${side === 'buy' ? '買' : '賣'}單（可能剛成交或已刪），沒有送出；請到委託分頁核對` });
+                return;
+            }
+            noteOrderTraceEntry(targets.map((t) => t.order.id), side === 'buy' ? 'flash 買全刪' : 'flash 賣全刪');
+            const results = await cancelOrders(targets.map((t) => t.order.id), undefined, guard);
+            const summary = cancellationSummary(results);
+            notify({ kind: summary.kind, title, body: `${code}：${summary.body}` });
+            onOrdersChangedRef.current?.();
+        } finally { inflightRef.current.delete(key); }
+    }, [cancelGuard]);
+    const onCancelSide = useCallback((side: 'buy' | 'sell') => void cancelSide(side), [cancelSide]);
 
     const flatten = useCallback(async () => {
         const account = accountRef.current;
@@ -2067,21 +2110,22 @@ export function FlashOrder({
             </div>
             {!paused && (
             <>
-            {(display?.source === 'snapshot' || (odd && !oddQuote) || otherLotOrders > 0) && (
-                <div className={styles.totalsRow}>
-                    {display?.source === 'snapshot' && <span title={display.time}>快照一檔</span>}
-                    {odd && !oddQuote && <span title='尚未收到盤中零股行情；梯形暫以整股成交價置中'>等待零股行情</span>}
-                    {otherLotOrders > 0 && (
-                        <span title={`梯形只顯示${odd ? '零股' : '整股'}委託；全刪會一併刪除`}>
-                            另有{odd ? '整股' : '零股'}委託 {otherLotOrders} 筆
-                        </span>
-                    )}
-                </div>
-            )}
+            {/* 提示列一直佔固定一行高：提示出現／消失不改變梯子可用高度，否則 ResizeObserver
+                重算列數、頂端價格位移一檔，游標下的價位會換掉（可能點錯價下單或刪單） */}
+            <div className={styles.totalsRow} data-testid='flash-notices'>
+                {display?.source === 'snapshot' && <span title={display.time}>快照一檔</span>}
+                {odd && !oddQuote && <span title='尚未收到盤中零股行情；梯形暫以整股成交價置中'>等待零股行情</span>}
+                {otherLotOrders > 0 && (
+                    <span title={`梯形只顯示${odd ? '零股' : '整股'}委託；全刪會一併刪除`}>
+                        另有{odd ? '整股' : '零股'}委託 {otherLotOrders} 筆
+                    </span>
+                )}
+            </div>
             <FlashTotalsRow columns={triggerLayout === 'columns'} mine={orderTotals} sumBid={sumBid} sumAsk={sumAsk} odd={odd}
                 unit={market === 'F' ? '口' : odd ? '股' : '張'} priv={privMoney}
                 // 只有整股現股有當沖先賣；期貨、零股、權證的價格欄留空
-                cover={market === 'S' && !odd && !warrant} />
+                cover={market === 'S' && !odd && !warrant}
+                cancel={{ armed: armedView, counts: sideOrderCount, onCancel: onCancelSide }} />
             </>
             )}
             <div className={styles.hint}>

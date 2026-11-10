@@ -45,7 +45,8 @@ const F = accounts[1]!;
 // 客戶情境：買 32（20）、賣 40（30，現股當沖先賣）→ 待回補 10
 const stockTrades = [
     trade(stock, S, 'Buy', 20, 20), trade(stock, S, 'Buy', 12, 0),
-    trade(stock, S, 'Sell', 30, 30, { daytrade_short: true }), trade(stock, S, 'Sell', 10, 0, { daytrade_short: true }),
+    // 先賣在前（回補依成交時間重播）
+    trade(stock, S, 'Sell', 30, 30, { daytrade_short: true }, { ts: now() - 120 }), trade(stock, S, 'Sell', 10, 0, { daytrade_short: true }),
     trade(stock, S, 'Buy', 300, 100, { order_lot: 'IntradayOdd' }),
 ];
 
@@ -90,7 +91,7 @@ it('uses the 5-column grid with Alt＋點 triggers', async () => {
 });
 
 it('says 補齊 once every day-trade short is covered, and stays empty with no short sale', async () => {
-    await render({ contract: stock, trades: [trade(stock, S, 'Sell', 5, 5, { daytrade_short: true }), trade(stock, S, 'Buy', 5, 5)], positions: [] });
+    await render({ contract: stock, trades: [trade(stock, S, 'Sell', 5, 5, { daytrade_short: true }, { ts: now() - 60 }), trade(stock, S, 'Buy', 5, 5)], positions: [] });
     expect(text(one('flash-tot-cover'))).toBe('補齊');
     await act(async () => view.update(createElement(FlashOrder, { contract: stock, trades: [trade(stock, S, 'Buy', 5, 5)], positions: [] })));
     expect(text(one('flash-tot-cover'))).toBe('');
@@ -203,4 +204,15 @@ it('counts a continuous-month order (MXFR1 → MXFI6) on the MXFI6 panel', async
     const r1 = trade(mxfi6, F, 'Buy', 2, 1, {}, { contract: { code: 'MXFR1', target_code: 'MXFI6' } });
     await render({ contract: mxfi6, trades: [r1, trade(mxfi6, F, 'Buy', 1, 0)], positions: [] });
     expect(text(one('flash-tot-buy'))).toBe('3(1)');
+});
+
+// PR #400 review round 3 P1: a notice appearing must not change the ladder height
+it('the notice strip is always there (fixed height), with or without a notice', async () => {
+    await render({ contract: stock, trades: [], positions: [] });
+    expect(byId('flash-notices')).toHaveLength(1);
+    expect(text(one('flash-notices'))).toBe('');
+    await act(async () => view.update(createElement(FlashOrder, { contract: stock, trades: stockTrades, positions: [] })));
+    expect(byId('flash-notices')).toHaveLength(1);
+    expect(text(one('flash-notices'))).toContain('另有零股委託 1 筆');
+    expect(one('flash-notices').props.className).toBe(styles.totalsRow);
 });

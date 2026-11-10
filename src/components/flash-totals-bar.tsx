@@ -1,6 +1,7 @@
 // src/components/flash-totals-bar.tsx — 閃電梯子最底部的合計列，每格對齊上方的欄：
 //   觸買｜買單：我的買委託（成交）｜買量：五檔買量合計｜價格：現沖先賣回補狀態｜
 //   賣量：五檔賣量合計｜賣單：我的賣委託（成交）｜觸賣
+// 點買單／賣單合計＝買全刪／賣全刪（閃電啟用時；沒有在場上的委託時不可點）。
 // 不寫「買／賣／Σ」字樣，靠欄位位置與紅綠色。數字定義見 lib/flash-order-totals.ts。
 // 「顯示委託合計」關閉時只剩五檔量合計（照舊一直顯示）。
 // 遮金額：我的委託與回補數量照「多／空 N」遮；五檔量是公開行情，不遮。
@@ -10,18 +11,45 @@ import { maskMoney } from '../lib/privacy';
 import { fmtCompactInt, fmtInt } from '../lib/utils/format';
 import * as styles from './flash-order.css';
 
-function Mine({ side, s, unit, priv }: { side: 'buy' | 'sell'; s: SideTotals; unit: string; priv: boolean }) {
-    const word = side === 'buy' ? '買進' : '賣出';
-    const title = priv ? undefined
-        : `我的委託${word} ${fmtInt(s.ordered)} ${unit}${s.cancelled > 0 ? `（已扣刪單 ${fmtInt(s.cancelled)}）` : ''}\n已成交 ${fmtInt(s.filled)} ${unit}\n未成交 ${fmtInt(s.working)} ${unit}`;
-    if (s.ordered <= 0) return <span className={styles.totMine.none} title={title ?? undefined} data-testid={`flash-tot-${side}`}>—</span>;
+/** 買全刪／賣全刪：點我的委託合計 */
+export interface SideCancel {
+    armed: boolean;
+    /** 每邊可刪的委託筆數（目前單位、在場上） */
+    counts: { buy: number; sell: number };
+    onCancel: (side: 'buy' | 'sell') => void;
+}
+
+function Mine({ side, s, unit, priv, cancel }: { side: 'buy' | 'sell'; s: SideTotals; unit: string; priv: boolean; cancel?: SideCancel }) {
+    const word = side === 'buy' ? '買' : '賣';
+    const detail = priv ? ''
+        : `我的委託${word === '買' ? '買進' : '賣出'} ${fmtInt(s.ordered)} ${unit}${s.cancelled > 0 ? `（已扣刪單 ${fmtInt(s.cancelled)}）` : ''}\n已成交 ${fmtInt(s.filled)} ${unit}\n未成交 ${fmtInt(s.working)} ${unit}`;
+    if (s.ordered <= 0) return <span className={styles.totMine.none} title={detail || undefined} data-testid={`flash-tot-${side}`}>—</span>;
     // 欄寬只有 2rem：萬以上用精簡寫法（零股股數），完整數字在 tooltip
     const n = (v: number) => maskMoney(v >= 10_000 ? fmtCompactInt(v) : fmtInt(v), priv);
-    return (
-        <span className={styles.totMine[side]} title={title} data-testid={`flash-tot-${side}`}>
+    const body = (
+        <>
             <span>{n(s.ordered)}</span>
             <span className={styles.totMineFill}>({n(s.filled)})</span>
-        </span>
+        </>
+    );
+    const count = cancel?.counts[side] ?? 0;
+    // 沒有在場上的委託（全部成交或已刪）：不可點
+    if (!cancel || count === 0) return <span className={styles.totMine[side]} title={detail || undefined} data-testid={`flash-tot-${side}`}>{body}</span>;
+    // 遮金額時連筆數也不顯示
+    const action = priv ? `刪除全部${word}單` : `刪除全部${word}單（${count} 筆）`;
+    const hint = cancel.armed ? `點一下${action}` : `先啟用閃電下單，才能點一下${action}`;
+    return (
+        <button
+            type='button'
+            className={`${styles.totMine[side]} ${styles.totMineBtn[side]}`}
+            aria-label={action}
+            aria-disabled={!cancel.armed || undefined}
+            title={detail ? `${hint}\n${detail}` : hint}
+            data-testid={`flash-tot-${side}`}
+            onClick={() => { if (cancel.armed) cancel.onCancel(side); }}
+        >
+            {body}
+        </button>
     );
 }
 
@@ -57,7 +85,7 @@ function Cover({ t, unit, priv }: { t: FlashOrderTotals; unit: string; priv: boo
         );
 }
 
-export function FlashTotalsRow({ columns, mine, cover, sumBid, sumAsk, odd, unit, priv }: {
+export function FlashTotalsRow({ columns, mine, cover, sumBid, sumAsk, odd, unit, priv, cancel }: {
     /** 七欄（外側觸買／觸賣欄）或五欄，與梯子相同 */
     columns: boolean;
     /** 我的委託合計；null＝「顯示委託合計」關閉 */
@@ -70,6 +98,8 @@ export function FlashTotalsRow({ columns, mine, cover, sumBid, sumAsk, odd, unit
     odd: boolean;
     unit: string;
     priv: boolean;
+    /** 點買單／賣單合計＝買全刪／賣全刪 */
+    cancel?: SideCancel;
 }) {
     // ≤230px：不含逗號的短寫（萬以上用「萬」），完整數字在 tooltip
     const vol = (v: number) => (
@@ -81,11 +111,11 @@ export function FlashTotalsRow({ columns, mine, cover, sumBid, sumAsk, odd, unit
     return (
         <div className={`${styles.totGrid} ${columns ? styles.cols7 : styles.totCols5} ${mine ? styles.totGridTall : ''}`} data-testid='flash-totals'>
             {columns && <span className={styles.totEmpty} />}
-            {mine ? <Mine side='buy' s={mine.buy} unit={unit} priv={priv} /> : <span className={styles.totEmpty} />}
+            {mine ? <Mine side='buy' s={mine.buy} unit={unit} priv={priv} cancel={cancel} /> : <span className={styles.totEmpty} />}
             <span className={styles.totVol.bid} title={`五檔買量合計 ${fmtInt(sumBid)}${odd ? ' 股' : ''}`} data-testid='flash-tot-bidvol'>{vol(sumBid)}</span>
             {mine && cover ? <Cover t={mine} unit={unit} priv={priv} /> : <span className={styles.totCover.none} />}
             <span className={styles.totVol.ask} title={`五檔賣量合計 ${fmtInt(sumAsk)}${odd ? ' 股' : ''}`} data-testid='flash-tot-askvol'>{vol(sumAsk)}</span>
-            {mine ? <Mine side='sell' s={mine.sell} unit={unit} priv={priv} /> : <span className={styles.totEmpty} />}
+            {mine ? <Mine side='sell' s={mine.sell} unit={unit} priv={priv} cancel={cancel} /> : <span className={styles.totEmpty} />}
             {columns && <span className={styles.totEmpty} />}
         </div>
     );

@@ -5,7 +5,9 @@ import type { Trade } from './types/order';
 
 const t = (action: 'Buy' | 'Sell', quantity: number, deal: number, cancel: number, status: string, extra: Record<string, unknown> = {}, st: Record<string, unknown> = {}) =>
     ({ contract: { code: '2317' }, order: { id: `o${Math.random()}`, action, price: 100, quantity, order_cond: 'Cash', ...extra },
-        status: { status, deal_quantity: deal, cancel_quantity: cancel, deals: [], ...st } }) as unknown as Trade;
+        status: { status, order_ts: ++clock, deal_quantity: deal, cancel_quantity: cancel, deals: [], ...st } }) as unknown as Trade;
+// rows are timed in array order (the cover replay is chronological)
+let clock = 1_000;
 const all = () => true;
 const none = () => undefined;
 const T = (trades: Trade[], stock = true, since = 0) => flashOrderTotals(trades, all, stock, since, none);
@@ -16,8 +18,8 @@ afterEach(() => { vi.unstubAllGlobals(); });
 
 it('counts ordered net of cancels, filled and working per side (customer case 32(20) / 40(20))', () => {
     const r = T([
-        t('Buy', 12, 12, 0, 'Filled'), t('Buy', 8, 8, 0, 'Filled'), t('Buy', 12, 0, 0, 'Submitted'),
         t('Sell', 20, 20, 0, 'Filled', short), t('Sell', 20, 0, 0, 'Submitted', short),
+        t('Buy', 12, 12, 0, 'Filled'), t('Buy', 8, 8, 0, 'Filled'), t('Buy', 12, 0, 0, 'Submitted'),
         t('Sell', 5, 0, 5, 'Cancelled', short), t('Sell', 3, 0, 0, 'Failed'),
     ]);
     expect(r.buy).toEqual({ ordered: 32, filled: 20, working: 12, cancelled: 0 });
@@ -51,6 +53,22 @@ it('never guesses Cash: a sell without the day-trade flag or any row without ord
     expect(r.dayShort).toEqual({ sold: 10, covered: 3, open: 7, unknownSell: 6, unknownBuy: 6 });
 });
 
+// PR #400 review round 3 P1: replay fills in time order
+it('replays fills in time order: only cash buys after a day-trade short sale cover it', () => {
+    // 買 10 → 一般賣 10 → 當沖先賣 10：待回補 10（之前的買進不是回補）
+    expect(T([t('Buy', 10, 10, 0, 'Filled'), t('Sell', 10, 10, 0, 'Filled', plain), t('Sell', 10, 10, 0, 'Filled', short)]).dayShort)
+        .toEqual({ sold: 10, covered: 0, open: 10, unknownSell: 0, unknownBuy: 0 });
+    // 先賣 10 → 買 4 → 先賣 5 → 買 20：每次回補最多扣到 0，多買的不留給之後
+    expect(T([t('Sell', 10, 10, 0, 'Filled', short), t('Buy', 4, 4, 0, 'Filled'), t('Sell', 5, 5, 0, 'Filled', short), t('Buy', 20, 20, 0, 'Filled'),
+        t('Sell', 3, 3, 0, 'Filled', short)]).dayShort).toEqual({ sold: 18, covered: 15, open: 3, unknownSell: 0, unknownBuy: 0 });
+    // one order filled in pieces around a short sale: only the later piece covers
+    const buy = t('Buy', 6, 6, 0, 'Filled', {}, { order_ts: 10, deals: [{ seq: 'a', price: 100, quantity: 2, ts: 11 }, { seq: 'b', price: 100, quantity: 4, ts: 30 }] });
+    const sell = t('Sell', 5, 5, 0, 'Filled', short, { order_ts: 20, deals: [{ seq: 'c', price: 100, quantity: 5, ts: 20 }] });
+    expect(T([buy, sell]).dayShort).toEqual({ sold: 5, covered: 4, open: 1, unknownSell: 0, unknownBuy: 0 });
+    // same second: not counted as a cover (better to show 待補 than a false 補齊)
+    expect(T([t('Buy', 5, 5, 0, 'Filled', {}, { order_ts: 50 }), t('Sell', 5, 5, 0, 'Filled', short, { order_ts: 50 })]).dayShort?.open).toBe(5);
+});
+
 it('fills in order_cond / daytrade_short recorded when this app sent the order', () => {
     const sell = t('Sell', 8, 8, 0, 'Filled', { order_cond: undefined });
     const buy = t('Buy', 8, 8, 0, 'Filled', { order_cond: undefined });
@@ -72,9 +90,9 @@ it('counts only this trading day (same start as futures FIFO)', () => {
     const r = T([
         t('Buy', 5, 5, 0, 'Filled', {}, { order_ts: since - 3600 }), // yesterday
         t('Buy', 2, 2, 0, 'Filled', {}, { order_ts: since + 60 }),
-        t('Buy', 4, 4, 0, 'Filled', {}, { deals: [{ seq: 'a', price: 100, quantity: 4, ts: since - 10 }] }), // no order_ts, old deal
-        t('Buy', 3, 1, 0, 'PartFilled', {}, { deals: [{ seq: 'b', price: 100, quantity: 1, ts: since + 10 }] }),
-        t('Buy', 1, 0, 0, 'Submitted'), // no time at all, still working
+        t('Buy', 4, 4, 0, 'Filled', {}, { order_ts: undefined, deals: [{ seq: 'a', price: 100, quantity: 4, ts: since - 10 }] }), // no order_ts, old deal
+        t('Buy', 3, 1, 0, 'PartFilled', {}, { order_ts: undefined, deals: [{ seq: 'b', price: 100, quantity: 1, ts: since + 10 }] }),
+        t('Buy', 1, 0, 0, 'Submitted', {}, { order_ts: undefined }), // no time at all, still working
     ], true, since);
     expect(r.buy).toEqual({ ordered: 6, filled: 3, working: 3, cancelled: 0 });
 });
@@ -94,6 +112,13 @@ it('matches a contract month both ways through target_code and the stream alias'
     expect(sameContractMonth(row('MXFI6', null), { code: 'MXFR1', target_code: null }, c => (c === 'MXFI6' ? 'MXFR1' : undefined))).toBe(true);
     expect(sameContractMonth(row('MXFR1', 'MXFJ6'), mxfi6)).toBe(false);
     expect(sameContractMonth(row('MXFJ6', null), r1)).toBe(false);
+    // round 3 P2: both sides know their real month → the alias code alone never matches
+    expect(sameContractMonth(row('MXFR1', 'MXFI6'), { code: 'MXFR1', target_code: 'MXFJ6' })).toBe(false);
+    expect(sameContractMonth(row('MXFR1', 'MXFJ6'), { code: 'MXFR1', target_code: 'MXFJ6' })).toBe(true);
+    // only one side knows the real month → alias matching
+    expect(sameContractMonth(row('MXFR1', null), r1)).toBe(true);
+    expect(sameContractMonth(row('MXFR1', 'MXFI6'), { code: 'MXFR1', target_code: null })).toBe(true);
+    expect(sameContractMonth(row('MXFI6', null), { code: 'MXFR1', target_code: null }, c => (c === 'MXFJ6' ? 'MXFR1' : undefined))).toBe(false);
 });
 
 it('the 顯示委託合計 setting survives saving: only an explicit false is kept (absent = on)', async () => {
