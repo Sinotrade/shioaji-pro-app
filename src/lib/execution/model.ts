@@ -35,7 +35,8 @@ export interface ContractKey {
     quoteCode: string;
     /** Tradable code orders are sent with and deals report (e.g. TXFJ6). */
     orderCode: string;
-    securityType: 'STK' | 'FUT' | 'OPT';
+    /** WRT: a warrant (whole lots in cash, its own tick table) */
+    securityType: 'STK' | 'FUT' | 'OPT' | 'WRT';
 }
 
 /** Immutable after creation (#201 environment isolation). A program only

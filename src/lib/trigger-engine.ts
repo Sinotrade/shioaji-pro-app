@@ -96,6 +96,8 @@ import { notify, placeQuickOrder } from './trade';
 import { getTradingState } from './trading-state';
 import { fmtPrice } from './utils/format';
 import { stepPrice } from './utils/ticksize';
+import { contractMarket } from './contract-market';
+import { warrantTriggerProblem } from './warrant-rules';
 import { bandTickFor, ensureTickBands, prefetchTickBands } from './tick-bands';
 import { isOddLot, ODD_LOT_MAX_SHARES, oddLotMarketablePrice, SHARES_PER_LOT, sharesToUnits, stockQtyUnit } from './odd-lot';
 import type { ContractBase } from './types/contract';
@@ -446,10 +448,21 @@ function prepareAdd(n: NewTrigger): TriggerOrder {
     if (t.bracketId) throw new Error('括號單保護只由主視窗建立');
     const oddProblem = oddLotTriggerProblem(t);
     if (oddProblem) throw new Error(oddProblem);
-    const optionProblem = triggerOptionsProblem(t);
+    const optionProblem = triggerOptionsProblem(t) ?? storedWarrantProblem(t);
     if (optionProblem) throw new Error(optionProblem);
     if (t.group && processedGroups[groupKey(t.env, t.group)]) throw new Error('此 OCO 群組已觸發過，不再建立');
     return t;
+}
+
+/** A warrant's rules on a stored trigger (create and every edit): whole
+ * lots, a foreign underlying only at a limit, a limit trigger on the warrant
+ * grid. The contract comes from the cache; before it is loaded a STK-labelled
+ * warrant code still counts (as the engine reads it). */
+export function storedWarrantProblem(t: Pick<TriggerOrder, 'code' | 'orderCode' | 'account' | 'kind' | 'orderLot' | 'send' | 'price' | 'bracketId'> & { time?: TimeSpec }): string | null {
+    if (t.kind === 'alert' || t.bracketId || t.account?.account_type !== 'S') return null;
+    const cached = getCachedContract(t.code);
+    const contract = { security_type: cached?.security_type ?? 'STK', code: t.orderCode ?? cached?.code ?? t.code };
+    return warrantTriggerProblem(contract, { orderLot: t.orderLot, send: t.send, ...(t.time ? {} : { price: t.price }) });
 }
 
 /** #226 options a market / product cannot take, refused when created. */
@@ -632,7 +645,7 @@ function applyModify(id: string, patch: TriggerPatch): TriggerOrder {
         else delete next.validity;
         changes.push(patch.validity ? '修改有效期' : '有效期改為直到取消');
     }
-    const optionProblem = triggerOptionsProblem(next);
+    const optionProblem = triggerOptionsProblem(next) ?? storedWarrantProblem(next);
     if (optionProblem) throw new Error(optionProblem.replace('，未建立', ''));
     if (!changes.length) return t;
     // A new price may already be crossed: like a restore, the first tick
@@ -710,7 +723,7 @@ export async function modifyTriggerGroup(patches: { id: string; patch: TriggerPa
         delete (next as Partial<BackgroundTriggerOrder>).background;
         delete next.awaitingRecross;
         delete next.paused;
-        const problem = triggerOptionsProblem(next);
+        const problem = triggerOptionsProblem(next) ?? storedWarrantProblem(next);
         if (problem) throw new Error(problem.replace('，未建立', ''));
         return next;
     });
@@ -850,9 +863,13 @@ function handleCommand(cmd: Command): unknown {
 function withContext(t: NewTrigger, contract?: ContractBase, account?: Account): NewTrigger | string {
     if (t.kind === 'alert' || (t.env && t.account && t.orderCode)) return t;
     if (!contract) return '缺少商品資訊，無法固定下單帳戶';
-    const futures = contract.security_type === 'FUT' || contract.security_type === 'OPT';
-    if (!futures && contract.security_type !== 'STK') return '此商品不支援觸價下單';
+    const market = contractMarket(contract.security_type);
+    if (!market) return '此商品不支援觸價下單';
+    const futures = market === 'F';
     if (futures && t.orderLot && t.orderLot !== 'Common') return '期貨選擇權沒有零股，觸價單未建立';
+    // 權證：整張、外國標的觸價後只能限價、限價的觸發價在權證升降單位上
+    const warrant = warrantTriggerProblem(contract, { orderLot: t.orderLot, send: t.send, ...(t.time ? {} : { price: t.price }) });
+    if (warrant) return warrant;
     const s = getAccountState();
     const selected = account
         ? s.accounts.find(a => canTrade(a) && a.account_type === account.account_type
@@ -1062,7 +1079,8 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
     delete next.paused;
     if (patch.price !== undefined && (!Number.isFinite(patch.price) || patch.price <= 0)) throw new Error('觸發價必須是正數');
     if (patch.quantity !== undefined && (!Number.isSafeInteger(patch.quantity) || patch.quantity <= 0)) throw new Error('數量必須是正整數');
-    const problem = triggerOptionsProblem(next);
+    const problem = triggerOptionsProblem(next)
+        ?? (next.kind === 'alert' ? null : warrantTriggerProblem(contract, { orderLot: next.orderLot, send: next.send, ...(next.time ? {} : { price: next.price }) }));
     if (problem) throw new Error(problem.replace('，未建立', ''));
     // never armed already crossed: refused here (a crossing one waits for a
     // new crossing anyway), and the engine's first tick decides like a
@@ -1077,7 +1095,7 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
         const plan = row.bracketPlan;
         if (!table || !plan) throw new Error('背景執行：跳動點級距尚未取得，無法修改括號單，請稍後再試');
         const request = panelBracketRequest({ env: row.env!, account: row.account!, quoteCode: row.code, orderCode: row.orderCode!,
-            securityType: contract.security_type === 'OPT' ? 'OPT' : contract.security_type === 'STK' ? 'STK' : 'FUT', action: row.action,
+            securityType: contract.security_type === 'OPT' ? 'OPT' : contract.security_type === 'WRT' ? 'WRT' : contract.security_type === 'STK' ? 'STK' : 'FUT', action: row.action,
             plan: { ...plan, tiers: patch.quantity !== undefined ? scaleTiers(plan.tiers, patch.quantity) : plan.tiers },
             tickTable: table, entry: { trigger: { condition: next.condition, price: next.price, send: next.send ?? { type: 'MKT' },
                 ...(next.validity ? { validity: next.validity } : {}),

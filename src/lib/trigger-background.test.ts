@@ -764,6 +764,95 @@ describe('#226 stocks in the background (step 5)', () => {
     });
 });
 
+describe('warrants in the background (private engine #217: WRT whole lots in cash)', () => {
+    const WRT = { code: '051231', security_type: 'WRT', exchange: 'TSE', limit_up: 15, limit_down: 9 };
+    const FOREIGN = { ...WRT, code: '05123F', limit_up: 0, limit_down: 0 };
+    const created = () => calls('execution_create').map(([, a]) => (a as { program: OrderProgram }).program);
+    const add = (c: typeof WRT, over: Record<string, unknown>) => engine.addTrigger({ ...stop(), code: c.code, condition: 'above', price: 12,
+        action: 'Buy', kind: 'take', role: 'entry', ...over }, c as never);
+
+    it('a warrant trigger is a WRT stock program priced on the warrant tick table', async () => {
+        m.enabled = true;
+        await boot();
+        expect(await add(WRT, { send: { type: 'LMT', ticks: 2 } })).not.toBeNull();
+        const [p] = created();
+        expect(p).toMatchObject({ opens: true, binding: { account: { accountType: 'S' }, contract: { market: 'stock', securityType: 'WRT', orderCode: '051231' } },
+            levels: [{ entry: { price: 12, limitTicks: 2, order: { priceType: 'LMT', timeInForce: 'ROD', stockCond: 'Cash', stockLot: 'Common' } } }] });
+        // 10–50: 0.1 (the stock table says 0.05)
+        expect(p!.tickTable).toContainEqual({ min: 10, max: 50, tick: 0.1 });
+        expect(p!.tickTable).toContainEqual({ min: 5, max: 10, tick: 0.05 });
+    });
+
+    it('a STK-labelled warrant code keeps its type and the warrant table', async () => {
+        m.enabled = true;
+        await boot();
+        await add({ ...WRT, security_type: 'STK' }, {});
+        const [p] = created();
+        expect(p!.binding.contract.securityType).toBe('STK');
+        expect(p!.levels[0]!.entry).toMatchObject({ order: { priceType: 'MKT', stockLot: 'Common', stockCond: 'Cash' } });
+    });
+
+    it('refused before the engine: 零股, a limit off the warrant grid, a foreign warrant at market', async () => {
+        m.enabled = true;
+        await boot();
+        expect(await add(WRT, { orderLot: 'IntradayOdd', quantity: 300 })).toBeNull();
+        expect(await add(WRT, { price: 12.05, send: { type: 'LMT', ticks: 1 } })).toBeNull();
+        expect(await add(FOREIGN, {})).toBeNull();
+        expect(created()).toHaveLength(0);
+        const bodies = m.notify.mock.calls.map(c => (c[0] as { body: string }).body);
+        expect(bodies).toEqual([
+            expect.stringContaining('權證不得零股交易'),
+            expect.stringContaining('權證價格不在升降單位上'),
+            expect.stringContaining('外國標的權證觸價後不能送市價'),
+        ]);
+        // a market trigger's threshold is never sent: anywhere is fine; a foreign warrant at a limit is fine
+        expect(await add(WRT, { price: 12.05 })).not.toBeNull();
+        expect(await add(FOREIGN, { price: 3.01, send: { type: 'LMT', ticks: 0 } })).not.toBeNull();
+        expect(created()).toHaveLength(2);
+    });
+
+    it('setting off: editing a window warrant trigger keeps the warrant rules (grid, foreign at a limit)', async () => {
+        await boot();
+        const lmt = await add(WRT, { send: { type: 'LMT', ticks: 1 } });
+        const foreign = await add(FOREIGN, { price: 3.01, send: { type: 'LMT', ticks: 0 } });
+        expect(lmt?.id.startsWith('tg-')).toBe(true);
+        expect(foreign?.id.startsWith('tg-')).toBe(true);
+        await expect(engine.modifyTrigger(lmt!.id, { price: 12.05 })).rejects.toThrow('權證價格不在升降單位上');
+        await expect(engine.modifyTrigger(foreign!.id, { send: { type: 'MKT' } })).rejects.toThrow('外國標的權證觸價後不能送市價');
+        // nothing changed: still the armed, valid ones
+        expect(engine.getTriggers().find(t => t.id === lmt!.id)).toMatchObject({ price: 12, send: { type: 'LMT', ticks: 1 } });
+        expect(engine.getTriggers().find(t => t.id === foreign!.id)).toMatchObject({ send: { type: 'LMT', ticks: 0 } });
+        // a legal edit still goes through
+        await engine.modifyTrigger(lmt!.id, { price: 12.1 });
+        expect(engine.getTriggers().find(t => t.id === lmt!.id)?.price).toBe(12.1);
+    });
+
+    it('setting on: a background warrant trigger edit off the grid or to market is refused before the engine', async () => {
+        m.enabled = true;
+        await boot();
+        await add(WRT, { send: { type: 'LMT', ticks: 1 } });
+        await add(FOREIGN, { price: 3.01, send: { type: 'LMT', ticks: 0 } });
+        const [p, f] = created();
+        m.programs = [p!, f!];
+        m.ensure.mockImplementation(async (code: string) => code === FOREIGN.code ? FOREIGN : WRT);
+        await bg.refreshBackground();
+        await expect(engine.modifyTrigger(`bg:${p!.id}:${p!.levels[0]!.id}`, { price: 12.05 })).rejects.toThrow('權證價格不在升降單位上');
+        await expect(engine.modifyTrigger(`bg:${f!.id}:${f!.levels[0]!.id}`, { send: { type: 'MKT' } })).rejects.toThrow('外國標的權證觸價後不能送市價');
+        expect(calls('execution_replace')).toHaveLength(0);
+    });
+
+    it('the engine refusing a warrant program shows its Chinese reason', async () => {
+        m.enabled = true;
+        await boot();
+        const orig = m.invoke.getMockImplementation()!;
+        m.invoke.mockImplementation(async (cmd: string, args?: unknown) => cmd === 'execution_create'
+            ? { accepted: false, notices: [{ code: 'rejected.warrantOffTick', programId: null, levelId: null, detail: '' }], revision: 9 }
+            : orig(cmd, args));
+        expect(await add(WRT, {})).toBeNull();
+        expect(m.notify.mock.calls.map(c => (c[0] as { body: string }).body).join('\n')).toContain('價格不在權證升降單位上');
+    });
+});
+
 describe('#226 step 5 review', () => {
     it('editing a stock 觸價 bracket keeps it a stock bracket; a 零股 time order shows shares', async () => {
         const base = program({ entry: { type: 'touch', condition: 'above', price: 600, order: { priceType: 'MKT', timeInForce: 'IOC', stockCond: 'Cash', stockLot: 'Common' } },

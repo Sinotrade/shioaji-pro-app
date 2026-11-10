@@ -7,6 +7,8 @@
 import { ensureBracketHost, registerBracket, registrationFailureText } from '../bracket';
 import { bracketPlanProblem, tierSpecs } from './bracket-rules';
 import { stepPrice } from '../utils/ticksize';
+import { contractMarket } from '../contract-market';
+import { warrantProtectProblem, warrantTriggerProblem } from '../warrant-rules';
 
 /** Stop / take prices at the reference price must be valid prices. */
 export function derivedPriceProblem(r: Pick<PanelBracketRequest, 'contract' | 'action' | 'plan' | 'refPrice'>): string | null {
@@ -84,16 +86,21 @@ function entryOrderOptions(r: PanelBracketRequest, futures: boolean, guard: () =
 /** 'placed': entry sent and protection registered; 'trigger': the 觸價
  * entry is armed; a string: what went wrong (shown to the user). */
 export async function placePanelBracket(r: PanelBracketRequest): Promise<'placed' | 'trigger' | { error: string }> {
-    const futures = r.contract.security_type === 'FUT' || r.contract.security_type === 'OPT';
-    if (!futures && r.contract.security_type !== 'STK') return { error: '此商品不支援括號單' };
-    // checked before anything is sent
-    const problem = bracketPlanProblem(r.plan) ?? derivedPriceProblem(r);
+    const market = contractMarket(r.contract.security_type);
+    if (!market) return { error: '此商品不支援括號單' };
+    const futures = market === 'F';
+    // checked before anything is sent; a warrant: whole lots in cash, its
+    // exits are market orders (none on a foreign underlying), a 觸價 entry
+    // as a trigger of its own (觸價後限價 on the warrant tick grid)
+    const problem = warrantProtectProblem(r.contract)
+        ?? (r.entry.type === 'touch' ? warrantTriggerProblem(r.contract, { send: r.entry.send, price: r.entry.price }) : null)
+        ?? bracketPlanProblem(r.plan) ?? derivedPriceProblem(r);
     if (problem) return { error: problem };
     const qty = r.plan.tiers.reduce((s, t) => s + t.quantity, 0);
     // #226: with 「背景持續執行」 on, a futures / options bracket runs in the
     // background (one owner, decided before anything is sent)
     // (stocks too: 現股 整股 — the panel's brackets are whole lots in cash)
-    if ((futures || r.contract.security_type === 'STK') && backgroundSupported()) {
+    if (backgroundSupported()) {
         const env = currentProtectionEnv();
         if (!env) return { error: '伺服器模式（模擬／正式）尚未確認，括號單未送出' };
         const owner = await backgroundOwnerForNew({ liveOn: env });
@@ -119,7 +126,8 @@ export async function placePanelBracket(r: PanelBracketRequest): Promise<'placed
         account: { account_type: futures ? 'F' : 'S', broker_id: r.account.broker_id, account_id: r.account.account_id },
         orderId: trade.order.id, seqno: trade.order.seqno, quoteCode: r.contract.code,
         orderCode: trade.contract?.target_code || trade.contract?.code || r.contract.target_code || r.contract.code,
-        securityType: r.contract.security_type as 'STK' | 'FUT' | 'OPT', exchange: r.contract.exchange ?? '',
+        // the window's bracket record: a warrant is a stock here (its contract decides the ticks)
+        securityType: (futures ? r.contract.security_type : 'STK') as 'STK' | 'FUT' | 'OPT', exchange: r.contract.exchange ?? '',
         action: r.action, refPrice: r.refPrice,
     }, r.plan);
     try {
@@ -138,27 +146,29 @@ export async function placePanelBracket(r: PanelBracketRequest): Promise<'placed
  * order confirmation setting applies), then handed over with its trade id. */
 async function placeBackgroundPanelBracket(r: PanelBracketRequest, qty: number, env: string): Promise<'placed' | 'trigger' | { error: string }> {
     const c = r.contract as PanelBracketRequest['contract'] & { tick_rule?: string; tick?: number };
-    const st = c.security_type === 'OPT' ? 'OPT' as const : c.security_type === 'STK' ? 'STK' as const : 'FUT' as const;
+    const st = c.security_type === 'OPT' ? 'OPT' as const : c.security_type === 'WRT' ? 'WRT' as const
+        : c.security_type === 'STK' ? 'STK' as const : 'FUT' as const;
+    const stock = st === 'STK' || st === 'WRT';
     // a stock sell bracket's exits would buy back unchecked: not in the background
-    if (st === 'STK' && r.action === 'Sell') return { error: '背景執行：股票賣出括號單（出場為買進）目前不支援，請關閉背景持續執行改用本視窗' };
+    if (stock && r.action === 'Sell') return { error: '背景執行：股票賣出括號單（出場為買進）目前不支援，請關閉背景持續執行改用本視窗' };
     // a stock entry opens a position: with a daily loss limit set the stock
     // account's day P&L is needed, which is not known here (as the engine refuses)
     const stockLossLimit = async () => {
-        if (st !== 'STK') return false;
+        if (!stock) return false;
         const { getRiskSettings } = await import('../risk');
         const s = getRiskSettings();
         return s.enabled && s.maxDailyLoss > 0;
     };
     const LOSS_LIMIT_TEXT = '設了當日虧損上限，但股票帳戶的當日損益無法取得，股票括號單的進場單不送出';
-    const bands = c.tick_rule && st !== 'STK' ? await ensureTickBands(c.tick_rule, st) : undefined;
+    const bands = c.tick_rule && (st === 'FUT' || st === 'OPT') ? await ensureTickBands(c.tick_rule, st) : undefined;
     const tickTable = tickTableOf(c, bands);
     if (!tickTable) return { error: '背景執行：跳動點級距尚未取得，無法依成交價計算停損停利，請稍後再試' };
-    const base = { env, account: { account_type: st === 'STK' ? 'S' as const : 'F' as const, broker_id: r.account.broker_id, account_id: r.account.account_id },
+    const base = { env, account: { account_type: stock ? 'S' as const : 'F' as const, broker_id: r.account.broker_id, account_id: r.account.account_id },
         quoteCode: r.contract.code, securityType: st, action: r.action, plan: r.plan, tickTable } as const;
     if (r.entry.type === 'touch') {
         const request = panelBracketRequest({ ...base, orderCode: r.contract.target_code || r.contract.code,
             entry: { trigger: { condition: r.entry.condition, price: r.entry.price, send: r.entry.send, validity: r.entry.validity,
-                ...(st !== 'STK' && r.order?.octype === 'New' ? { octype: 'New' as const } : {}) } } });
+                ...(!stock && r.order?.octype === 'New' ? { octype: 'New' as const } : {}) } } });
         if (!request) return { error: '背景執行：括號單缺少帳戶或伺服器資訊' };
         const created = await createBackgroundBracket(request);
         if (created === 'created') return 'trigger';
@@ -166,10 +176,10 @@ async function placeBackgroundPanelBracket(r: PanelBracketRequest, qty: number, 
             : `背景執行：建立結果未確認（${created.unconfirmed}）；請先看清單是否已有這張，不要直接重掛` };
     }
     if (await stockLossLimit()) return { error: LOSS_LIMIT_TEXT };
-    const { getRiskSettings } = st === 'STK' ? await import('../risk') : { getRiskSettings: null };
+    const { getRiskSettings } = stock ? await import('../risk') : { getRiskSettings: null };
     let sentAt = Date.now();
     const trade = await placeQuickOrder(r.contract, r.action, r.entry.type === 'LMT' ? r.entry.price : null, qty,
-        entryOrderOptions(r, st !== 'STK', () => {
+        entryOrderOptions(r, !stock, () => {
             if (currentProtectionEnv() !== env) throw new Error('伺服器或模擬／正式模式已切換，進場單未送出');
             // the limit may have been set while the confirmation was open
             const s = getRiskSettings?.();

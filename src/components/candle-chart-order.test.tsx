@@ -1376,3 +1376,30 @@ describe('chart order credit conditions', () => {
         expect(m.lines.map(l => (l.options() as { title?: string }).title)).toContain('融資買2 ⠿');
     });
 });
+
+describe('權證：K 線圖停損停利（觸發後市價）', () => {
+    const wrt = { code: '030392', name: '台積電群益64購09', security_type: 'WRT', exchange: 'TSE', target_code: null, reference: 100, limit_up: 110, limit_down: 90 } as any;
+    const foreign = { ...wrt, code: '03001F', name: '外國標的購', limit_up: 0, limit_down: 0 } as any;
+
+    it.each([['WRT 外國標的', foreign], ['標成 STK 的外國標的', { ...foreign, security_type: 'STK' }]])('%s：停損／停利鈕停用、加鎖並寫原因', async (_n, contract) => {
+        const { WARRANT_FLASH_TEXT } = await import('../lib/warrant-rules');
+        await mount({ contract });
+        for (const label of ['停損', '停利']) {
+            const b = button(view.root, label);
+            expect(b.props.disabled).toBe(true);
+            expect(b.props.title).toBe(`${label}停用：${WARRANT_FLASH_TEXT.chartForeign}`);
+            expect(b.props['data-rule-locked']).toBe('warrant');
+        }
+        // 點價買照常（限價）
+        expect(button(view.root, '點價買').props.disabled).toBeFalsy();
+    });
+
+    it('國內標的權證：停損照常掛觸價單', async () => {
+        await mount({ contract: wrt });
+        expect(button(view.root, '停損').props.disabled).toBeFalsy();
+        await act(async () => { button(view.root, '停損').props.onClick(); });
+        await clickChart();
+        expect(m.addTrigger).toHaveBeenCalledTimes(1);
+        expect(m.addTrigger.mock.calls[0]![0]).toMatchObject({ code: '030392', kind: 'stop' });
+    });
+});

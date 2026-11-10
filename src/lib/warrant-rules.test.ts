@@ -2,7 +2,10 @@
 // 每一條 describe 對應文件中的一條規則；改規則時文件與測試一起改。
 import { describe, expect, it } from 'vitest';
 import { contractMarket, isForeignUnderlyingWarrant, isWarrantCode, isWarrantContract } from './contract-market';
-import { WARRANT_TEXT, WARRANT_UNITS_PER_LOT, warrantMarketOrderBlock, warrantOrderProblem } from './warrant-rules';
+import {
+    isWarrantPriceOnTick, WARRANT_FLASH_TEXT, WARRANT_TEXT, WARRANT_UNITS_PER_LOT, warrantMarketOrderBlock, warrantOrderProblem,
+    warrantExitBySharesProblem, warrantProtectProblem, warrantTickTable, warrantTriggerProblem,
+} from './warrant-rules';
 import { roundToTick, stepPrice, tickSizeFor } from './utils/ticksize';
 import type { ContractBase } from './types/contract';
 
@@ -154,5 +157,57 @@ describe('權證代號判斷（O-001 T30 表二 證券種類代碼）', () => {
         expect(isWarrantContract({ security_type: 'STK', code: '2330' })).toBe(false);
         expect(isWarrantContract({ security_type: 'FUT', code: '030392' })).toBe(false);
         expect(isWarrantContract(undefined)).toBe(false);
+    });
+});
+
+describe('觸價單與停損停利（背景執行引擎同一套規則，私有 PR 217）', () => {
+    it('引擎用的升降單位表與 tickSizeFor 的權證級距一致', () => {
+        for (const price of [0.01, 4.99, 5, 9.95, 10, 49.9, 50, 99.5, 100, 499, 500, 1000]) {
+            const band = warrantTickTable().find(b => price >= b.min && (b.max === null || price < b.max))!;
+            expect(band.tick).toBe(tickSizeFor(twse, price));
+        }
+    });
+
+    it('價格在升降單位上（與引擎 on_tick 相同的例子）', () => {
+        for (const p of [0.01, 4.99, 5, 5.05, 12, 12.1, 12.2, 50.5, 100, 505]) expect(isWarrantPriceOnTick(p)).toBe(true);
+        for (const p of [12.05, 12.15, 5.01, 50.1, 100.5, 502, 0, -1, 0.00001, 0.004, Number.NaN]) expect(isWarrantPriceOnTick(p)).toBe(false);
+    });
+
+    it.each([['上市', twse], ['上櫃', tpex], ['標成 STK', stkTyped]] as const)('國內標的%s權證：市價或限價都可，零股不行，限價要在升降單位上', (_n, c) => {
+        expect(warrantTriggerProblem(c, { price: 12.05 })).toBeNull(); // 市價：觸發價不送出，不限位置
+        expect(warrantTriggerProblem(c, { send: { type: 'LMT' }, price: 12.1 })).toBeNull();
+        expect(warrantTriggerProblem(c, { send: { type: 'LMT' }, price: 12.05 })).toBe(WARRANT_TEXT.offTick);
+        expect(warrantTriggerProblem(c, { orderLot: 'IntradayOdd', send: { type: 'LMT' }, price: 12.1 })).toBe(WARRANT_TEXT.oddLot);
+        expect(warrantProtectProblem(c)).toBeNull();
+    });
+
+    it.each([['外國標的認購', foreignCall], ['外國標的認售', foreignPut], ['標成 STK 的外國標的', { ...foreignCall, security_type: 'STK' } as ContractBase]] as const)(
+        '%s：觸價後只能限價，不能自動停損停利（出場市價）', (_n, c) => {
+            expect(warrantTriggerProblem(c, { price: 3 })).toBe(WARRANT_FLASH_TEXT.foreignTrigger);
+            expect(warrantTriggerProblem(c, { send: { type: 'MKT' }, price: 3 })).toBe(WARRANT_FLASH_TEXT.foreignTrigger);
+            expect(warrantTriggerProblem(c, { send: { type: 'MKP' }, price: 3 })).toBe(WARRANT_FLASH_TEXT.foreignTrigger);
+            expect(warrantTriggerProblem(c, { send: { type: 'LMT' }, price: 3 })).toBeNull();
+            expect(warrantProtectProblem(c)).toBe(WARRANT_FLASH_TEXT.foreignProtect);
+        });
+
+    it('股票與期貨不受影響', () => {
+        expect(warrantTriggerProblem(stock, { orderLot: 'IntradayOdd', price: 12.05 })).toBeNull();
+        expect(warrantProtectProblem(stock)).toBeNull();
+        expect(warrantTriggerProblem({ code: '03001F', security_type: 'FUT' }, {})).toBeNull();
+    });
+});
+
+describe('以股數市價平倉（閃電平倉先檢查，不能平倉就不取消停損停利）', () => {
+    it('國內標的整張可以；未滿一張的餘數不行', () => {
+        expect(warrantExitBySharesProblem(twse, 3000)).toBeNull();
+        expect(warrantExitBySharesProblem(stkTyped, 1000)).toBeNull();
+        expect(warrantExitBySharesProblem(twse, 1500)).toContain('權證沒有零股');
+    });
+    it('外國標的整張也不行（不收市價）', () => {
+        expect(warrantExitBySharesProblem(foreignCall, 2000)).toContain(WARRANT_TEXT.foreignMarket);
+        expect(warrantExitBySharesProblem(foreignPut, 1000)).toContain('請在下單面板以限價平倉');
+    });
+    it('股票不受影響', () => {
+        expect(warrantExitBySharesProblem(stock, 1500)).toBeNull();
     });
 });

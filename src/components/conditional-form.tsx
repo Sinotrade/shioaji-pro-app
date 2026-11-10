@@ -16,6 +16,8 @@ import { dateEnd, dayEnd, fmtNum, fmtUntil, sessionEnd, taipeiInstant, taipeiPar
 import { contractLabel } from '../lib/pending-trigger-view';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import type { ContractInfo } from '../lib/types/contract';
+import { contractMarket, isForeignUnderlyingWarrant, isWarrantContract } from '../lib/contract-market';
+import { WARRANT_FLASH_TEXT, warrantProtectProblem, warrantTriggerProblem } from '../lib/warrant-rules';
 import type { Account } from '../lib/types/portfolio';
 import { conditionalDemoActive, DEMO_ACCOUNTS, primeConditionalDemo } from '../lib/conditional/demo';
 import { Dialog, useLastPrice } from './conditional-ui';
@@ -66,7 +68,8 @@ function useTarget(initial: ContractInfo | null) {
     // stocks: 整股 or 盤中零股 (the trigger engine's rules: 零股 1–999 股, 成交價
     // only, sent as a limit at the price limit); always 現股 for now
     const [lotRaw, setLot] = useState<StockLot>('Common');
-    const lot: StockLot = futures ? 'Common' : lotRaw;
+    // 權證（WRT 或標成 STK 的權證代號）沒有零股：固定整張
+    const lot: StockLot = futures || isWarrantContract(contract) ? 'Common' : lotRaw;
     return { code, setCode, resolve, resolved, contract, futures, accounts, account, setAccountId, lookupError, lot, setLot };
 }
 
@@ -116,7 +119,15 @@ function TargetRows({ target }: { target: Target }) {
                     </select>
                 )}
             </div>
-            {target.contract && !target.futures && (
+            {target.contract && !target.futures && isWarrantContract(target.contract) && (
+                <div className={styles.formRow} data-testid='cond-warrant-note'>
+                    <span className={styles.label}>單位</span>
+                    <span className={styles.muted}>
+                        權證只能整張現股（1 張 = 1,000 單位）{isForeignUnderlyingWarrant(target.contract.code) ? `；${WARRANT_FLASH_TEXT.foreignTriggerMenu}，也不能附停損停利` : ''}
+                    </span>
+                </div>
+            )}
+            {target.contract && !target.futures && !isWarrantContract(target.contract) && (
                 <div className={styles.formRow}>
                     <span className={styles.label}>單位</span>
                     <Seg label='單位' value={target.lot} onChange={target.setLot}
@@ -170,21 +181,24 @@ export function sendOf(s: SendState): TriggerSend | string {
     return { type: 'LMT', ticks: n };
 }
 
-export function SendControl({ value, onChange, futures, label = '觸發後' }: {
+export function SendControl({ value, onChange, futures, label = '觸發後', marketBlock = null }: {
     value: SendState;
     onChange: (v: SendState) => void;
     futures: boolean;
     label?: string;
+    /** 不能送市價的原因（外國標的權證）：市價選項停用並寫出原因 */
+    marketBlock?: string | null;
 }) {
     return (
         <div className={styles.formRow}>
             <span className={styles.label}>{label}</span>
             <Seg label={label} value={value.type} onChange={type => onChange({ ...value, type })}
                 options={[
-                    { id: 'MKT', label: '市價' },
+                    { id: 'MKT', label: '市價', disabled: !!marketBlock, ...(marketBlock ? { title: marketBlock } : {}) },
                     { id: 'MKP', label: '範圍市價', disabled: !futures, title: futures ? undefined : '範圍市價只適用期貨選擇權' },
                     { id: 'LMT', label: '限價' },
                 ]} />
+            {marketBlock && <span className={styles.muted} data-testid='cond-warrant-market'>{marketBlock}</span>}
             {value.type === 'LMT' && (
                 <>
                     <span>觸發價</span>
@@ -302,16 +316,32 @@ function useSubmit() {
 function commonProblem(target: Target): string | null {
     const c = target.contract;
     if (!c || target.resolved !== target.code.trim().toUpperCase()) return '請先選擇商品（輸入代碼後按 Enter）';
-    if (c.security_type !== 'STK' && !isFuturesLike(c)) return '此商品不支援條件單';
+    // 股票與權證（WRT）走證券帳戶，期權走期貨帳戶；權證規則由觸價引擎與括號單把關
+    if (!contractMarket(c.security_type)) return '此商品不支援條件單';
     if (!target.account) return `沒有可下單的${target.futures ? '期貨' : '證券'}帳戶`;
     return null;
 }
 
-function priceProblem(target: Target, p: number | null, label: string): string | null {
+/** `send`: the trigger's send style. A warrant's market trigger price is never
+ * sent (the engine checks the warrant grid only for a limit), so it may sit
+ * anywhere; stocks and futures keep the tick check as before. */
+function priceProblem(target: Target, p: number | null, label: string, send?: SendState['type']): string | null {
     if (p === null || p <= 0) return `請輸入${label}`;
+    if (send !== undefined && send !== 'LMT' && isWarrantContract(target.contract)) return null;
     if (target.contract && roundToTick(target.contract, p) !== p) return `${label} ${fmtNum(p)} 不在跳動點上`;
     return null;
 }
+
+/** A warrant's send rules (foreign underlying: limit only; whole lots);
+ * the price itself is checked by priceProblem. */
+function warrantSendProblem(target: Target, send: TriggerSend | string): string | null {
+    if (typeof send === 'string' || !isWarrantContract(target.contract)) return null;
+    return warrantTriggerProblem(target.contract, { ...lotFields(target), send });
+}
+
+/** 外國標的權證：市價選項停用的原因 */
+const marketBlockOf = (target: Target) =>
+    isWarrantContract(target.contract) && isForeignUnderlyingWarrant(target.contract?.code) ? WARRANT_FLASH_TEXT.foreignTriggerMenu : null;
 
 const kindFor = (condition: 'below' | 'above', action: 'Buy' | 'Sell') =>
     (condition === 'below') === (action === 'Sell') ? 'stop' as const : 'take' as const;
@@ -325,7 +355,7 @@ function TriggerForm({ target, onClose, defaults }: { target: Target; onClose: (
     const [price, setPrice] = useState('');
     const [action, setAction] = useState<'Buy' | 'Sell'>('Sell');
     const [qty, setQty] = useState('1');
-    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : 'MKT', ticks: '−2' });
+    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : isForeignUnderlyingWarrant(target.contract?.code) && isWarrantContract(target.contract) ? 'LMT' : 'MKT', ticks: '−2' });
     const [validity, setValidity] = useState<ValidityState>({ type: defaults.validity, date: '' });
     const { busy, error, submit } = useSubmit();
     const odd = !target.futures && target.lot === 'IntradayOdd';
@@ -339,9 +369,9 @@ function TriggerForm({ target, onClose, defaults }: { target: Target; onClose: (
     const sendValue = odd ? { type: 'MKT' as const } : sendOf(send.type === 'MKP' && !target.futures ? { ...send, type: 'MKT' } : send);
     const validityValue = validityOf(validity, market);
     const crossed = !cross && p !== null && last !== undefined && (condition === 'below' ? last <= p : last >= p);
-    const problem = commonProblem(target) ?? priceProblem(target, p, '觸發價')
+    const problem = commonProblem(target) ?? priceProblem(target, p, '觸發價', odd ? 'MKT' : send.type)
         ?? (!Number.isSafeInteger(q) || q <= 0 ? '數量必須是正整數' : null) ?? lotProblem(target, [q])
-        ?? (typeof sendValue === 'string' ? sendValue : null) ?? (typeof validityValue === 'string' ? validityValue : null);
+        ?? (typeof sendValue === 'string' ? sendValue : null) ?? warrantSendProblem(target, sendValue) ?? (typeof validityValue === 'string' ? validityValue : null);
     const create = () => void submit(async () => {
         if (problem || !target.contract || !target.account || p === null || typeof sendValue === 'string' || typeof validityValue === 'string') return false;
         const made = await addTrigger({ code: target.contract.code, condition, price: p, action, quantity: q, kind: kindFor(condition, action),
@@ -375,7 +405,7 @@ function TriggerForm({ target, onClose, defaults }: { target: Target; onClose: (
                     options={[{ id: 'Buy', label: '買進' }, { id: 'Sell', label: '賣出' }]} />
                 <QtyInput qty={qty} setQty={setQty} unit={unitOf(target)} quick={defaults.quickQty} />
             </div>
-            {!odd && <SendControl value={send} onChange={setSend} futures={target.futures} />}
+            {!odd && <SendControl value={send} onChange={setSend} futures={target.futures} marketBlock={marketBlockOf(target)} />}
             <ValidityControl value={validity} onChange={setValidity} market={market} />
             <Summary>
                 {p === null || !target.contract ? '填好條件後，這裡會用一句話說明這張單會做什麼。' : (
@@ -400,7 +430,7 @@ function TriggerForm({ target, onClose, defaults }: { target: Target; onClose: (
 function OcoForm({ target, onClose, defaults }: { target: Target; onClose: () => void; defaults: FormDefaults }) {
     const [up, setUp] = useState({ price: '', action: 'Buy' as 'Buy' | 'Sell', qty: '1' });
     const [down, setDown] = useState({ price: '', action: 'Sell' as 'Buy' | 'Sell', qty: '1' });
-    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : 'MKT', ticks: '0' });
+    const [send, setSend] = useState<SendState>({ type: target.futures ? defaults.send : isForeignUnderlyingWarrant(target.contract?.code) && isWarrantContract(target.contract) ? 'LMT' : 'MKT', ticks: '0' });
     const [mode, setMode] = useState<'trigger' | 'fill'>(defaults.ocoMode);
     const [validity, setValidity] = useState<ValidityState>({ type: defaults.validity, date: '' });
     const { busy, error, submit } = useSubmit();
@@ -413,10 +443,10 @@ function OcoForm({ target, onClose, defaults }: { target: Target; onClose: () =>
     const qd = Number(down.qty);
     const sendValue = odd ? { type: 'MKT' as const } : sendOf(send.type === 'MKP' && !target.futures ? { ...send, type: 'MKT' } : send);
     const validityValue = validityOf(validity, market);
-    const problem = commonProblem(target) ?? priceProblem(target, pu, '上方價') ?? priceProblem(target, pd, '下方價')
+    const problem = commonProblem(target) ?? priceProblem(target, pu, '上方價', odd ? 'MKT' : send.type) ?? priceProblem(target, pd, '下方價', odd ? 'MKT' : send.type)
         ?? (pu !== null && pd !== null && pu <= pd ? '上方價必須高於下方價' : null)
         ?? (![qu, qd].every(n => Number.isSafeInteger(n) && n > 0) ? '數量必須是正整數' : null) ?? lotProblem(target, [qu, qd])
-        ?? (typeof sendValue === 'string' ? sendValue : null) ?? (typeof validityValue === 'string' ? validityValue : null);
+        ?? (typeof sendValue === 'string' ? sendValue : null) ?? warrantSendProblem(target, sendValue) ?? (typeof validityValue === 'string' ? validityValue : null);
     const outside = last !== undefined && pu !== null && pd !== null && (last >= pu || last <= pd);
     const unit = unitOf(target);
     const create = () => void submit(async () => {
@@ -447,7 +477,7 @@ function OcoForm({ target, onClose, defaults }: { target: Target; onClose: () =>
         <>
             {side('上方', '≥', up, setUp, up.action === 'Buy' ? '突破' : '停利')}
             {side('下方', '≤', down, setDown, down.action === 'Sell' ? '跌破' : '拉回')}
-            {!odd && <SendControl value={send} onChange={setSend} futures={target.futures} />}
+            {!odd && <SendControl value={send} onChange={setSend} futures={target.futures} marketBlock={marketBlockOf(target)} />}
             <div className={styles.formRow}>
                 <span className={styles.label}>另一邊</span>
                 <Seg label='另一邊' value={mode} onChange={setMode}
@@ -533,6 +563,7 @@ function BracketForm({ target, onClose, defaults }: { target: Target; onClose: (
     const mult = c ? (target.futures ? Number((c as ContractInfo & { multiplier?: number }).multiplier) || 0 : 1000) : 0;
     const riskPerLot = c && ref !== null && Number.isFinite(st) && st > 0 && mult > 0 ? Math.abs(ref - stepPrice(c, ref, -dir * st)) * mult : null;
     const problem = commonProblem(target)
+        ?? warrantProtectProblem(target.contract)
         ?? (!target.futures && target.lot !== 'Common' ? '括號單目前只支援整股；零股請用觸價單或二擇一' : null)
         ?? (!Number.isSafeInteger(total) || total <= 0 ? '進場數量必須是正整數' : null)
         ?? (entryType !== 'MKT' ? priceProblem(target, p, entryType === 'LMT' ? '限價' : '觸發價') : last === undefined ? '市價進場需要現價' : null)
@@ -728,6 +759,8 @@ function TimeForm({ target, onClose, defaults }: { target: Target; onClose: () =
     const sendValue = odd ? { type: 'MKT' as const } : sendOf(send.type === 'MKP' && !target.futures ? { ...send, type: 'MKT' } : send);
     const code = target.contract?.target_code || target.contract?.code || '';
     const problem = commonProblem(target)
+        // 時間條件一律市價（指定時間送單沒有觸發價可當限價、收盤前平倉是市價）
+        ?? (marketBlockOf(target) ? '外國標的權證不能用時間條件（送出與收盤前平倉都是市價單），請改用觸價單或二擇一的觸價後限價' : null)
         ?? (mode === 'send' && at === null ? '請輸入時間（例：13:30）' : null)
         ?? (mode === 'flatten' && at === null ? '提前分鐘數須為 1～60' : null)
         ?? (at !== null && at <= Date.now() ? '時間已過；只能設定今天還沒到的時間' : null)

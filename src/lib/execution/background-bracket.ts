@@ -74,8 +74,9 @@ export interface PanelBackgroundSpec {
     account: AccountRef;
     quoteCode: string;
     orderCode: string;
-    /** STK: 現股 整股 (its exits close in cash) */
-    securityType: 'FUT' | 'OPT' | 'STK';
+    /** STK: 現股 整股 (its exits close in cash); WRT: a warrant, the same
+     * (the engine prices it on the warrant tick table) */
+    securityType: 'FUT' | 'OPT' | 'STK' | 'WRT';
     action: 'Buy' | 'Sell';
     plan: BracketEntryPlan;
     tickTable: TickBand[];
@@ -100,13 +101,14 @@ export function panelBracketRequest(spec: PanelBackgroundSpec, id = newBracketId
     if (!env || !spec.account.broker_id || !spec.account.account_id || !Number.isSafeInteger(qty) || qty <= 0) return null;
     const blank = (v: string | null | undefined) => (v && v.trim() ? v : null);
     const e = spec.entry;
+    const stock = spec.securityType === 'STK' || spec.securityType === 'WRT';
     return {
         id,
         binding: {
             env: env.env,
             serverId: env.serverId,
             account: accountKey(spec.account),
-            contract: { market: spec.securityType === 'STK' ? 'stock' : 'futures', quoteCode: spec.quoteCode, orderCode: spec.orderCode,
+            contract: { market: stock ? 'stock' : 'futures', quoteCode: spec.quoteCode, orderCode: spec.orderCode,
                 securityType: spec.securityType },
         },
         side: spec.action,
@@ -114,7 +116,7 @@ export function panelBracketRequest(spec: PanelBackgroundSpec, id = newBracketId
         stop: null,
         take: null,
         ...('trigger' in e
-            ? { trigger: { condition: e.trigger.condition, price: e.trigger.price, order: triggerOrder(e.trigger.send, spec.securityType === 'STK', e.trigger.octype),
+            ? { trigger: { condition: e.trigger.condition, price: e.trigger.price, order: triggerOrder(e.trigger.send, stock, e.trigger.octype),
                 ...(e.trigger.send.type === 'LMT' ? { limitTicks: e.trigger.send.ticks } : {}),
                 ...(e.trigger.validity ? { validity: { type: e.trigger.validity.type, until: e.trigger.validity.until } } : {}) } }
             : e.tradeId ? { entry: { tradeId: e.tradeId, seqno: blank(e.seqno), ordno: blank(e.ordno), sentAt: e.sentAt } } : {}),

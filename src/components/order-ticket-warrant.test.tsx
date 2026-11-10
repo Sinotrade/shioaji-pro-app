@@ -26,7 +26,7 @@ vi.mock('../lib/allocation', () => ({ allocateByRatio: (t: number, w: number[]) 
 import { OrderTicket } from './order-ticket';
 
 // 權證下單面板（docs/qa/warrant-rules.md）：沒有零股、沒有信用；外國標的不收市價
-import { WARRANT_TEXT, WARRANT_TICKET_TEXT } from '../lib/warrant-rules';
+import { WARRANT_FLASH_TEXT, WARRANT_TEXT, WARRANT_TICKET_TEXT } from '../lib/warrant-rules';
 
 const wrt = { code: '030392', name: '台積電群益64購09', security_type: 'WRT', exchange: 'TSE', reference: 5, limit_up: 7.2, limit_down: 3.1, day_trade: '' } as unknown as ContractInfo;
 const foreign = { ...wrt, code: '03001F', name: '外國標的購', limit_up: 0, limit_down: 0 } as ContractInfo;
@@ -90,4 +90,19 @@ it('外國標的權證：價別列下直接寫出不能市價的原因；國內�
     expect(note()).toHaveLength(0);
     await act(async () => { view.update(createElement(OrderTicket, { contract: stk, onPlaced: vi.fn() })); });
     expect(note()).toHaveLength(0);
+});
+
+it('括號單：國內標的權證可開（出場市價有漲跌幅）；外國標的停用並寫原因', async () => {
+    const toggle = () => view.root.findAll(n => n.type === 'button' && n.props['data-testid'] === 'ticket-bracket-toggle')[0]!;
+    await mount(wrt);
+    expect(toggle().props.disabled).toBe(false);
+    await act(async () => { toggle().props.onClick(); });
+    expect(text(toggle())).toContain('成交後自動掛保護');
+    await act(async () => { view.update(createElement(OrderTicket, { contract: foreign, onPlaced: vi.fn() })); });
+    // 換商品會關掉括號單；外國標的關著就停用
+    expect(text(toggle())).not.toContain('成交後自動掛保護');
+    expect(toggle().props.disabled).toBe(true);
+    expect(toggle().props.title).toBe(WARRANT_FLASH_TEXT.foreignProtect);
+    await act(async () => { view.update(createElement(OrderTicket, { contract: stk, onPlaced: vi.fn() })); });
+    expect(toggle().props.disabled).toBe(false);
 });
