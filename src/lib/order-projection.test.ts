@@ -231,3 +231,19 @@ it('a background-engine futures New without full_code is projected with the engi
     // a full_code on the wire always wins over the hint
     expect(projectOrderReport([], order(future, 'New'), [future], 'MXFJ6')![0]!.contract.code).toBe('TXFI6');
 });
+
+// PR #400 review P1: 委託合計要靠 order_cond 判斷回補，不能把缺欄位當成現股
+describe('stock order conditions on projected rows', () => {
+    it('carries order_cond from a stock order report and never invents daytrade_short', () => {
+        const rows = projectOrderReport([], order(stock, 'New', { order_cond: 'MarginTrading' }), [stock])!;
+        expect(rows[0]!.order.order_cond).toBe('MarginTrading');
+        expect(rows[0]!.order).not.toHaveProperty('daytrade_short');
+        expect(projectOrderReport([], order(future), [future])![0]!.order).not.toHaveProperty('order_cond');
+    });
+    it('fills a missing order_cond from the stock deal report, keeping an existing one', () => {
+        const rows = projectOrderReport([], order(), [stock])!;
+        const bare = rows.map(t => ({ ...t, order: { ...t.order, order_cond: undefined } }));
+        expect(projectTradeDeal(bare, deal(stock, { order_cond: 'MarginTrading' }))![0]!.order.order_cond).toBe('MarginTrading');
+        expect(projectTradeDeal(rows, deal(stock, { order_cond: 'MarginTrading' }))![0]!.order.order_cond).toBe('Cash');
+    });
+});

@@ -73,6 +73,8 @@ export function projectOrderReport(rows: AccountedTrade[], report: OrderEventRep
         order: { ...old?.order, id: report.id, seqno: report.seqno, ordno: report.ordno,
             action: report.action as 'Buy' | 'Sell', price: report.price, quantity,
             order_lot: report.orderLot, octype: report.ocType, account,
+            // 股票委託回報帶 order_cond（不帶 daytrade_short）：SSE 比 HTTP 回應早到時也有信用條件
+            ...(report.market === 'stock' && report.orderCond ? { order_cond: report.orderCond } : {}),
             ...(['LMT', 'MKT', 'MKP'].includes(report.priceType) ? { price_type: report.priceType } : {}),
             ...(['ROD', 'IOC', 'FOK'].includes(report.orderType) ? { order_type: report.orderType as 'ROD' | 'IOC' | 'FOK' } : {}),
             ...(typeof order.custom_field === 'string' ? { custom_field: order.custom_field } : {}) },
@@ -101,7 +103,9 @@ export function projectTradeDeal(rows: AccountedTrade[], report: OrderEventRepor
     // cancel_quantity). HTTP status.order_quantity is not: 1.7.6 simulation
     // returns 0 for filled and reduced rows from both refresh modes.
     if (quantity + old.status.cancel_quantity > old.order.quantity) return null;
-    return rows.map(t => t !== old ? t : { ...t, status: { ...t.status, deal_quantity: quantity,
+    // 股票成交回報也帶 order_cond：委託列還沒有時補上
+    const cond = report.market === 'stock' && typeof body?.order_cond === 'string' && body.order_cond && !old.order.order_cond ? body.order_cond : undefined;
+    return rows.map(t => t !== old ? t : { ...t, ...(cond ? { order: { ...t.order, order_cond: cond } } : {}), status: { ...t.status, deal_quantity: quantity,
         status: statusOf(t.order.quantity, quantity, t.status.cancel_quantity),
         deals: [...t.status.deals, { seq, ts: report.ts!, quantity: report.quantity, price: report.price }] } });
 }
