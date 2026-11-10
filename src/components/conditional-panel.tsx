@@ -174,7 +174,7 @@ function PriceCell({ row }: { row: CondRow }) {
 }
 
 function SideText({ side }: { side: CondRow['side'] }) {
-    return <span className={side.dir === 'Buy' ? styles.up : side.dir === 'Sell' ? styles.down : undefined}>{side.text}</span>;
+    return <span title={side.text} className={side.dir === 'Buy' ? styles.up : side.dir === 'Sell' ? styles.down : undefined}>{side.text}</span>;
 }
 
 function AccountText({ row }: { row: CondRow }) {
