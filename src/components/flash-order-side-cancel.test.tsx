@@ -8,8 +8,8 @@ import type { Account } from '../lib/types/portfolio';
 import type { Trade } from '../lib/types/order';
 import type { ContractInfo } from '../lib/types/contract';
 const mocks = vi.hoisted(() => ({ cancel: vi.fn(), notify: vi.fn(), trace: vi.fn(), hold: null as Promise<void> | null }));
-const accounts: Account[] = ['A', 'B'].map(account_id => ({ account_type: 'S', broker_id: 'BR', account_id, signed: true, person_id: '', username: '' }));
-vi.mock('../lib/account-store', () => ({ ensureAccounts: () => undefined, useAccounts: () => ({ loaded: true, accounts, selectedStock: accounts[0], selectedFutures: undefined }) }));
+const accounts: Account[] = [['S', 'A'], ['S', 'B'], ['F', 'FA']].map(([account_type, account_id]) => ({ account_type, broker_id: 'BR', account_id, signed: true, person_id: '', username: '' }) as Account);
+vi.mock('../lib/account-store', () => ({ ensureAccounts: () => undefined, useAccounts: () => ({ loaded: true, accounts, selectedStock: accounts[0], selectedFutures: accounts[2] }) }));
 vi.mock('../hooks/use-stream', () => ({ useQuote: () => undefined, useTradingLive: () => true }));
 vi.mock('../hooks/use-display-book', () => ({ useDisplayBook: () => ({ quote: undefined, snapshot: { close: 100 }, book: undefined }) }));
 // like the real cancelOrders: the guard runs right before each send
@@ -161,4 +161,38 @@ it('has no 買全刪／賣全刪 when 顯示委託合計 is off', async () => {
     await arm();
     expect(view.root.findAll(x => x.props['data-testid'] === 'flash-tot-buy')).toHaveLength(0);
     expect(view.root.findAll(x => typeof x.props['aria-label'] === 'string' && x.props['aria-label'].startsWith('刪除全部'))).toHaveLength(0);
+});
+
+// PR #400 review round 4 P1: the targets are the totals' working orders (same real month), not the chip rule
+const mxf = (code: string, target: string | null) => ({ code, target_code: target, security_type: 'FUT', exchange: 'TAIFEX', reference: 20000, limit_up: 22000, limit_down: 18000 }) as unknown as ContractInfo;
+const fut = (id: string, contract: Record<string, unknown>, action: 'Buy' | 'Sell') => {
+    const t = order(id, accounts[2]!, action, 19990, {});
+    return { ...t, contract: { security_type: 'FUT', ...contract }, order: { ...t.order, order_lot: undefined, order_cond: undefined, daytrade_short: undefined } } as unknown as Trade;
+};
+const futTrades = [
+    fut('old-i6', { code: 'MXFR1', target_code: 'MXFI6' }, 'Buy'), // last month, placed on the alias
+    fut('j6-direct', { code: 'MXFJ6' }, 'Buy'),
+    fut('j6-alias', { code: 'MXFR1', target_code: 'MXFJ6' }, 'Buy'),
+    fut('j6-sell', { code: 'MXFJ6' }, 'Sell'),
+];
+
+it('買全刪 on MXFR1→MXFJ6 cancels exactly the totals’ working buys: never the old MXFI6 month', async () => {
+    await render({ contract: mxf('MXFR1', 'MXFJ6'), trades: futTrades });
+    await arm();
+    expect(cell('buy').props['aria-label']).toBe('刪除全部買單（2 筆）');
+    expect(text(cell('buy'))).toBe('4(0)'); // 2 orders × 2; the count matches the totals' working orders
+    await act(async () => { cell('buy').props.onClick(); });
+    expect(cancelled()).toEqual(['j6-direct', 'j6-alias']);
+});
+
+// PR #400 review round 4 P2: a real-month rollover (I6→J6) on the same alias aborts a pending cancel
+it('a rollover of the continuous month while cancels wait sends nothing', async () => {
+    let release!: () => void;
+    mocks.hold = new Promise<void>(r => { release = r; });
+    await render({ contract: mxf('MXFR1', 'MXFI6'), trades: [fut('i6', { code: 'MXFR1', target_code: 'MXFI6' }, 'Buy')] });
+    await arm();
+    await act(async () => { cell('buy').props.onClick(); });
+    await act(async () => view.update(createElement(FlashOrder, { contract: mxf('MXFR1', 'MXFJ6'), trades: [fut('i6', { code: 'MXFR1', target_code: 'MXFI6' }, 'Buy')], positions: [] })));
+    await act(async () => { release(); });
+    expect(mocks.cancel).not.toHaveBeenCalled();
 });

@@ -216,3 +216,12 @@ it('the notice strip is always there (fixed height), with or without a notice', 
     expect(text(one('flash-notices'))).toContain('另有零股委託 1 筆');
     expect(one('flash-notices').props.className).toBe(styles.totalsRow);
 });
+
+// PR #400 review round 4 P3: a fill with no deal detail time makes the cover status 待確認
+it('a day-trade short fill without deal details shows 待確認, not a guessed 補齊', async () => {
+    const sell = trade(stock, S, 'Sell', 5, 5, { daytrade_short: true }, { ts: now() - 60 });
+    const noDetail = { ...sell, status: { ...sell.status, deals: [] } } as Trade;
+    await render({ contract: stock, trades: [noDetail, trade(stock, S, 'Buy', 5, 5)], positions: [] });
+    expect(one('flash-tot-cover').props['data-state']).toBe('unknown');
+    expect(one('flash-tot-cover').props.title).toContain('時間未知');
+});

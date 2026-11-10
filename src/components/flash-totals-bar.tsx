@@ -62,10 +62,12 @@ function Cover({ t, unit, priv }: { t: FlashOrderTotals; unit: string; priv: boo
         `待回補 ${fmtInt(ds.open)} ${unit}`,
         ...(ds.unknownSell > 0 ? [`另有賣出成交 ${fmtInt(ds.unknownSell)} ${unit} 無法確認是否為現股當沖先賣（委託回報不帶這個欄位，只有本 App 送出的委託查得到），未計入`] : []),
         ...(ds.unknownBuy > 0 ? [`另有買進成交 ${fmtInt(ds.unknownBuy)} ${unit} 尚未收到信用條件，未計入回補`] : []),
+        ...(ds.untimedSell + ds.untimedBuy > 0 ? [`另有成交 ${fmtInt(ds.untimedSell + ds.untimedBuy)} ${unit} 尚未收到成交明細（時間未知），無法判斷回補順序，未計入`] : []),
     ];
     const title = priv ? '現股當沖先賣回補狀態' : lines.join('\n');
     // 條件未知的成交可能改變結果：不顯示「補齊」或確定的待回補量
-    if (ds.unknownSell > 0 || (ds.unknownBuy > 0 && ds.open > 0)) {
+    // 時間未知的先賣一定影響；時間未知的現股買進只在還有待回補時才可能改變結果
+    if (ds.unknownSell > 0 || ds.untimedSell > 0 || ((ds.unknownBuy > 0 || ds.untimedBuy > 0) && ds.open > 0)) {
         return (
             <span className={styles.totCover.unknown} title={title} data-testid='flash-tot-cover' data-state='unknown'>
                 <CircleHelp size={10} aria-hidden /><span className={styles.totCoverLabel}>待確認</span>

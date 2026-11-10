@@ -36,6 +36,10 @@ export interface DayShortTotals {
      * 不帶當沖先賣旗標），或信用條件還沒收到的買賣 */
     unknownSell: number;
     unknownBuy: number;
+    /** 時間未知的成交（deal_quantity 多於成交明細、或明細沒有時間）：先賣或現股買進
+     * 的這部分不猜時間、不進重播，回補狀態改顯示「待確認」 */
+    untimedSell: number;
+    untimedBuy: number;
 }
 
 export interface FlashOrderTotals {
@@ -74,6 +78,28 @@ function isToday(t: Trade, since: number): boolean {
     return true;
 }
 
+/** 合計計入的委託：面板範圍、不是送單失敗、本交易日、數量合法 */
+function counted(t: Trade, matches: (t: Trade) => boolean, since: number): boolean {
+    if (!matches(t) || t.status.status === 'Failed' || !isToday(t, since)) return false;
+    if (t.order.action !== 'Buy' && t.order.action !== 'Sell') return false;
+    return [t.order.quantity, t.status.deal_quantity, t.status.cancel_quantity].every(ok);
+}
+/** 有效委託量＝原始委託 − 已刪，至少是已成交 */
+const effectiveQty = (t: Trade) => Math.max(t.status.deal_quantity, t.order.quantity - t.status.cancel_quantity);
+/** 仍在場上未成交的量（合計的「未成交」） */
+const workingQty = (t: Trade) => ACTIVE_ORDER_STATUSES.has(t.status.status) ? Math.max(0, effectiveQty(t) - t.status.deal_quantity) : 0;
+
+/** 合計「未成交」算到的委託，逐筆列出：買全刪／賣全刪的目標就是這一組（同一個
+ * 判斷，按鈕上的筆數＝實際送出的刪單） */
+export function flashWorkingOrders(trades: readonly Trade[], matches: (t: Trade) => boolean, since: number): { buy: Trade[]; sell: Trade[] } {
+    const out = { buy: [] as Trade[], sell: [] as Trade[] };
+    for (const t of trades) {
+        if (!counted(t, matches, since) || workingQty(t) <= 0) continue;
+        out[t.order.action === 'Buy' ? 'buy' : 'sell'].push(t);
+    }
+    return out;
+}
+
 type ConditionsOf = (t: Trade) => StockOrderConditions | undefined;
 /** 信用條件：委託列（HTTP／回報投影）優先；現沖先賣旗標只有本 App 送單時記下的 */
 const recordedConditions: ConditionsOf = t => stockOrderConditions((t as AccountedTrade).account ?? t.order.account, { seqno: t.order.seqno, ordno: t.order.ordno });
@@ -87,31 +113,28 @@ export function flashOrderTotals(trades: readonly Trade[], matches: (t: Trade) =
     conditionsOf: ConditionsOf = recordedConditions): FlashOrderTotals {
     const buy = empty();
     const sell = empty();
-    const ds = { unknownSell: 0, unknownBuy: 0 };
+    const ds = { unknownSell: 0, unknownBuy: 0, untimedSell: 0, untimedBuy: 0 };
     const fills: Fill[] = [];
     for (const t of trades) {
-        if (!matches(t) || t.status.status === 'Failed' || !isToday(t, since)) continue;
-        const side = t.order.action === 'Buy' ? buy : t.order.action === 'Sell' ? sell : null;
-        if (!side) continue;
+        if (!counted(t, matches, since)) continue;
+        const side = t.order.action === 'Buy' ? buy : sell;
         const { quantity } = t.order;
         const { deal_quantity: deal, cancel_quantity: cancel } = t.status;
-        if (![quantity, deal, cancel].every(ok)) continue;
-        const effective = Math.max(deal, quantity - cancel);
-        side.ordered += effective;
+        side.ordered += effectiveQty(t);
         side.filled += deal;
         side.cancelled += Math.min(cancel, quantity);
-        if (ACTIVE_ORDER_STATUSES.has(t.status.status)) side.working += Math.max(0, effective - deal);
+        side.working += workingQty(t);
         if (!stock || deal <= 0) continue;
         // 條件不明時不猜成現股：不算先賣、也不算回補，另外計數
         const recorded = conditionsOf(t);
         const cond = t.order.order_cond || recorded?.cond;
         if (t.order.action === 'Buy') {
             if (!cond) ds.unknownBuy += deal;
-            else if (cond === 'Cash') fills.push(...dealFills(t, deal, 'cover')); // 融資買不是現沖回補
+            else if (cond === 'Cash') ds.untimedBuy += dealFills(t, deal, 'cover', fills); // 融資買不是現沖回補
         } else {
             const short = t.order.daytrade_short ?? recorded?.daytradeShort;
             if (!cond || (cond === 'Cash' && short === undefined)) ds.unknownSell += deal;
-            else if (cond === 'Cash' && short) fills.push(...dealFills(t, deal, 'short'));
+            else if (cond === 'Cash' && short) ds.untimedSell += dealFills(t, deal, 'short', fills);
             // 一般現股賣出、融資賣、融券賣不影響待回補
         }
     }
@@ -130,32 +153,30 @@ export function flashOrderTotals(trades: readonly Trade[], matches: (t: Trade) =
         }
     }
     // 買進條件未知只在還有先賣要回補時才有影響
-    const any = sold > 0 || ds.unknownSell > 0;
+    const any = sold > 0 || ds.unknownSell > 0 || ds.untimedSell > 0;
     return {
         buy,
         sell,
-        dayShort: stock && any ? { sold, covered, open, unknownSell: ds.unknownSell, unknownBuy: ds.unknownBuy } : null,
+        dayShort: stock && any ? { sold, covered, open, ...ds } : null,
     };
 }
 
 interface Fill { ts: number; kind: 'short' | 'cover'; qty: number }
-/** 一筆委託的成交，逐筆帶成交時間；成交明細少於 deal_quantity 時，差額放在最後
- * 一筆成交（沒有明細就用委託）的時間；沒有任何時間＝0（排最前面） */
-function dealFills(t: Trade, deal: number, kind: Fill['kind']): Fill[] {
-    const out: Fill[] = [];
-    const time = (ts: unknown) => (typeof ts === 'number' && Number.isFinite(ts) ? ts : undefined);
+/** 一筆委託有時間的成交明細放進 out（重播用）；回傳時間未知的量：deal_quantity
+ * 多於明細合計的差額，加上沒有成交時間的明細。不用委託時間或最後一筆成交時間
+ * 代替（會誤判回補順序） */
+function dealFills(t: Trade, deal: number, kind: Fill['kind'], out: Fill[]): number {
     let left = deal;
-    let last = time(t.status.order_ts) ?? 0;
-    for (const d of [...(t.status.deals ?? [])].sort((a, b) => (time(a.ts) ?? 0) - (time(b.ts) ?? 0))) {
+    let untimed = 0;
+    for (const d of t.status.deals ?? []) {
         if (left <= 0) break;
         if (!ok(d.quantity) || d.quantity === 0) continue;
         const qty = Math.min(left, d.quantity);
-        last = time(d.ts) ?? last;
-        out.push({ ts: last, kind, qty });
         left -= qty;
+        if (typeof d.ts === 'number' && Number.isFinite(d.ts) && d.ts > 0) out.push({ ts: d.ts, kind, qty });
+        else untimed += qty;
     }
-    if (left > 0) out.push({ ts: last, kind, qty: left });
-    return out;
+    return untimed + left;
 }
 
 /** 合計的本交易日起點（epoch 秒）：期貨含前一日 15:00 起的夜盤；股票是台北時間當日

@@ -65,7 +65,7 @@ import { flashQtyMemoryText, flashQtySlot, rememberedFlashQty, sanitizeFlashQtyS
 import { expiryTime, isStockFuture, lotsPerContract, spreadOf } from '../lib/flash-link';
 import * as styles from './flash-order.css';
 import { orderStatusWithNumber } from '../lib/order-status-label';
-import { flashOrderTotals, flashTotalsSince, sameContractMonth } from '../lib/flash-order-totals';
+import { flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMonth } from '../lib/flash-order-totals';
 import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
 import { FlashTotalsRow } from './flash-totals-bar';
 
@@ -83,6 +83,12 @@ function onLadder(t: Trade, code: string, stockOddLot: boolean | null): boolean 
         && (t.contract.code === code || getAliasFor(t.contract.code) === code)
         // stocks: only the shown unit (整股 or 零股, #204); null = not a stock
         && (stockOddLot === null || isOddLot(t.order.order_lot) === stockOddLot);
+}
+/** 委託合計與買全刪／賣全刪的範圍：同一實際月份（含連續月別名）、股票只算目前單位。
+ * 合計的「未成交」與買／賣全刪的目標都從這裡加 flashWorkingOrders 產生 */
+function totalsScope(c: ContractInfo, odd: boolean): (t: Trade) => boolean {
+    const stock = contractMarket(c.security_type) === 'S';
+    return t => sameContractMonth(t, c, getAliasFor) && (!stock || isOddLot(t.order.order_lot) === odd);
 }
 const FOLLOW_GLOBAL = '__follow__';
 const ACCOUNT_CHANGED_DURING_CONFIRMATION = '確認期間帳戶已變更，請重新確認';
@@ -716,7 +722,8 @@ export function FlashOrder({
     contractRef.current = contract;
     // 確認期間換信用條件也一樣中止（不會用舊條件送出）
     // 暫停（對應商品查詢中）也算換了狀態：確認中的單作廢，之後恢復也不會復活
-    const captureContext = useOrderContext(contract, `${lot}:${creditKey}:${orderKey}:${linkKey}:${paused ? 'paused' : ''}`);
+    // 連續月的實際月份（target_code）也算情境：換月（I6→J6）時等待中的送單／刪單中止
+    const captureContext = useOrderContext(contract, `${contract.target_code ?? ''}:${lot}:${creditKey}:${orderKey}:${linkKey}:${paused ? 'paused' : ''}`);
     const armedRef = useRef(armed);
     // 真實月份個股期（不是近月別名）在最後交易日收盤後一律不送 — 彈出視窗、照選取也一樣；其他期貨不由這裡判斷
     const pausedRef = useRef(paused);
@@ -1003,18 +1010,15 @@ export function FlashOrder({
     // 送單時記下的現沖先賣旗標（回報不帶）有新紀錄就重算
     const orderCondsVersion = useStockOrderConditionsVersion();
     const orderTotals = useMemo(() => showTotals
-        ? flashOrderTotals(trades, t => sameContractMonth(t, contract, getAliasFor) && lotShown(t), market === 'S', flashTotalsSince(market === 'S'))
-        : null, [showTotals, trades, contract.code, contract.target_code, lotShown, market, orderCondsVersion]);
+        ? flashOrderTotals(trades, totalsScope(contract, odd), market === 'S', flashTotalsSince(market === 'S'))
+        : null, [showTotals, trades, contract, odd, market, orderCondsVersion]);
 
-    // 買全刪／賣全刪可刪的筆數（同 chip 的規則：目前單位、在場上的委託）
+    // 買全刪／賣全刪可刪的筆數＝合計裡「未成交」的那一組委託（cancelSide 用同一個函式選目標）
     const sideOrderCount = useMemo(() => {
-        const n = { buy: 0, sell: 0 };
-        for (const t of trades) {
-            const side = ladderSide(t);
-            if (side && onLadder(t, contract.code, market === 'S' ? odd : null)) n[side]++;
-        }
-        return n;
-    }, [trades, contract.code, market, odd]);
+        if (!showTotals) return { buy: 0, sell: 0 };
+        const w = flashWorkingOrders(trades, totalsScope(contract, odd), flashTotalsSince(market === 'S'));
+        return { buy: w.buy.length, sell: w.sell.length };
+    }, [showTotals, trades, contract, odd, market]);
 
     // net position for this symbol (alias-aware for continuous contracts)
     const pos = useMemo(() => {
@@ -1502,8 +1506,8 @@ export function FlashOrder({
         onOrdersChangedRef.current?.();
     }, [cancelGuard]);
 
-    // 買全刪／賣全刪（點底部合計列的買單／賣單合計）：範圍同每價位 chip 刪單
-    // （帳戶、商品含別名、目前顯示的單位，誰下的單都算 #244），只刪那一邊；
+    // 買全刪／賣全刪（點底部合計列的買單／賣單合計）：目標＝合計裡「未成交」的那組委託
+    // （flashWorkingOrders：面板帳戶、同一實際月份、目前單位、本交易日，誰下的單都算 #244），只刪那一邊；
     // 不取消停損停利（那是「全刪」才做的）。閃電未啟用、暫停時不動作，同一邊送出中不重送
     const cancelSide = useCallback(async (side: 'buy' | 'sell') => {
         const capturedAccount = accountRef.current;
@@ -1515,13 +1519,11 @@ export function FlashOrder({
             const code = contractRef.current.code;
             // the context is fixed at the click: a product or account switched meanwhile cancels nothing
             const guard = cancelGuard();
-            const unit = contractMarket(contractRef.current.security_type) === 'S' ? oddRef.current : null;
+            const c = contractRef.current;
             const title = side === 'buy' ? '⚡ 買全刪' : '⚡ 賣全刪';
-            const targets = tradesRef.current.filter(
-                (t) =>
-                    accountMatches((t as Trade & { account?: Account }).account ?? t.order.account, capturedAccount) &&
-                    ladderSide(t) === side && onLadder(t, code, unit),
-            );
+            const targets = flashWorkingOrders(
+                tradesRef.current.filter(t => accountMatches((t as Trade & { account?: Account }).account ?? t.order.account, capturedAccount)),
+                totalsScope(c, oddRef.current), flashTotalsSince(contractMarket(c.security_type) === 'S'))[side];
             if (targets.length === 0) {
                 notify({ kind: 'err', title, body: `${code}：找不到可刪的${side === 'buy' ? '買' : '賣'}單（可能剛成交或已刪），沒有送出；請到委託分頁核對` });
                 return;
