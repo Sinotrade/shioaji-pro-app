@@ -57,6 +57,7 @@ import { ACTIVE_ORDER_STATUSES, type Action, type FuturesOCType, type OrderType,
 import type { Account, AccountedPosition } from '../lib/types/portfolio';
 import { fmtClock, fmtCompactInt, fmtInt, fmtPrice, fmtSigned, fmtStockLots } from '../lib/utils/format';
 import { clampLotQuantity, CREDIT_TEXT, creditLabel, isOddLot, ODD_LOT_MAX_SHARES, ODD_LOT_TEXT } from '../lib/odd-lot';
+import { triggerCreditFields, triggerCreditText } from '../lib/trigger-credit';
 import { roundToTick, stepPrice } from '../lib/utils/ticksize';
 import { contractMarket, isWarrantContract } from '../lib/contract-market';
 import { WARRANT_FLASH_TEXT, warrantExitBySharesProblem, warrantMarketOrderBlock, warrantProtectProblem, warrantTriggerProblem } from '../lib/warrant-rules';
@@ -255,14 +256,16 @@ const FlashRow = memo(function FlashRow({
     const exact = (v: number | undefined) => (compact && v !== undefined && v >= 10_000 ? `${fmtInt(v)} 股` : undefined);
     const columns = layout === 'columns';
     const op = trigDir === 'above' ? '≥' : '≤';
+    // a side the panel's credit condition cannot send is not a trigger side either
+    const trigSideBlock = (side: 'buy' | 'sell') => trigBlock ?? (side === 'buy' ? buyBlock : sellBlock);
     const trigTitle = (side: 'buy' | 'sell') => !armed ? '先啟用閃電下單'
-        : trigBlock ?? (trigDir === null ? '尚未收到成交價，或此價等於成交價（會立刻觸發），不能掛觸價'
+        : trigSideBlock(side) ?? (trigDir === null ? '尚未收到成交價，或此價等於成交價（會立刻觸發），不能掛觸價'
             : `觸價${side === 'buy' ? '買' : '賣'}：成交價 ${op} ${text} 時${trigNote[side]}（不是限價）`);
     const trigCell = (side: 'buy' | 'sell', marks: LadderMark[]) => (
         <div
-            className={`${styles.trigCell} ${armed && !trigBlock && trigDir !== null ? '' : styles.disabledCell}`}
+            className={`${styles.trigCell} ${armed && !trigSideBlock(side) && trigDir !== null ? '' : styles.disabledCell}`}
             data-trigger={side}
-            data-preview={armed && !trigBlock && trigDir !== null ? `觸${op}` : ''}
+            data-preview={armed && !trigSideBlock(side) && trigDir !== null ? `觸${op}` : ''}
             title={trigTitle(side)}
             onClick={() => onCell(side === 'buy' ? 'Buy' : 'Sell', price, true)}
         >
@@ -621,6 +624,9 @@ export function FlashOrder({
     // 不沿用畫面上可能過時的結果
     const ruleBlockRef = useRef<Record<Action, string | null>>({ Buy: null, Sell: null });
     ruleBlockRef.current = sides.rule;
+    // 觸價單建立時看每一邊目前的停用原因（含已確定不可融資券）
+    const sideBlockRef = useRef<Record<Action, string | null>>({ Buy: null, Sell: null });
+    sideBlockRef.current = { Buy: sides.buy, Sell: sides.sell };
     const creditRef = useRef({ applies: creditApplies, credit });
     creditRef.current = { applies: creditApplies, credit };
     // 委託條件（同下單面板）：點價限價單的效期、期貨倉別、期貨市價鈕的價別。
@@ -646,7 +652,8 @@ export function FlashOrder({
             ? warrantProtectBlock
             : protectConditionProblem({ market, odd, creditCond: credit.cond, daytradeShort: credit.daytradeShort, octype: clickOctype })
         : null;
-    // 觸價單觸發後只以現股送出（同 K 線圖，#263）；權證：整張現股，外國標的觸價後只能限價
+    // 觸價單帶建立當下的信用條件送出（#263：現股、融資、融券、現股當沖先賣；借券不支援）；
+    // 每一邊另照面板規則（sides）；權證：整張現股，外國標的觸價後只能限價
     const triggerBlock = warrant
         ? warrantTriggerProblem(contract, { send: triggerSendSetting })
         : triggerConditionProblem({ market, creditCond: credit.cond, daytradeShort: credit.daytradeShort });
@@ -1059,7 +1066,9 @@ export function FlashOrder({
     // preview said 附停損停利 for what became a 停損 exit)
     const trigNoteFor = (action: Action): string => {
         const sendText = triggerSendText(triggerSendSetting, { market, odd, mktPriceType });
-        const word = action === 'Buy' ? '買進' : '賣出';
+        // #263 the credit condition it will go out with (當沖先賣: sells only)
+        const creditText = creditApplies ? triggerCreditText(triggerCreditFields(credit, action)) : '';
+        const word = `${action === 'Buy' ? '買進' : '賣出'}${creditText ? `（${creditText}）` : ''}`;
         const held = heldRef.current;
         const effect = positionEffect(held.held, action, Math.max(1, qty));
         const intent = triggerIntent({ market, octype: clickOctype, effect, exitSafe: held.exitSafe });
@@ -1071,7 +1080,7 @@ export function FlashOrder({
     const trigNoteBuy = trigNoteFor('Buy');
     const trigNoteSell = trigNoteFor('Sell');
     const trigNote = useMemo(() => ({ buy: trigNoteBuy, sell: trigNoteSell }), [trigNoteBuy, trigNoteSell]);
-    const trigWord = triggerBlock ? (warrant ? '觸價停用（外國標的權證觸價後需限價）' : '觸價停用（信用條件）') : triggerLayout === 'columns' ? '點觸買／觸賣=觸價單' : 'Alt＋點=觸價單';
+    const trigWord = triggerBlock ? (warrant ? '觸價停用（外國標的權證觸價後需限價）' : '觸價停用（借券）') : triggerLayout === 'columns' ? '點觸買／觸賣=觸價單' : 'Alt＋點=觸價單';
     const openProtectRef = useRef<(() => void) | null>(null);
     const ladderBackgroundRef = useRef(ladder.background);
     ladderBackgroundRef.current = ladder.background;
@@ -1241,6 +1250,11 @@ export function FlashOrder({
         if (expiredNow()) { fail(CONTRACT_EXPIRED); return; }
         const { setting, block } = triggerRef.current;
         if (block) { fail(block); return; }
+        // #263 信用條件：點下去當下的面板條件寫進觸價單；不能用的一邊不掛（不改成現股）
+        const { applies: creditOn, credit: clickCredit } = creditRef.current;
+        const sideBlock = creditOn ? sideBlockRef.current[action] : null;
+        if (sideBlock) { fail(sideBlock); return; }
+        const creditFields = creditOn ? triggerCreditFields(clickCredit, action) : {};
         const condition = clickCondition(price, triggerPriceRef.current);
         if (condition !== 'above' && condition !== 'below') { fail(condition); return; }
         const oddLot = oddRef.current;
@@ -1287,6 +1301,7 @@ export function FlashOrder({
                 ...(intent.role === 'entry' ? { role: 'entry' as const } : {}),
                 ...(intent.octype ? { octype: intent.octype } : {}),
                 ...(oddLot ? { orderLot: 'IntradayOdd' as const } : {}),
+                ...creditFields,
                 ...(send ? { send } : {}),
                 validity,
             }, capturedContract, capturedAccount);

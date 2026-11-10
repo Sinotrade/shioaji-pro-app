@@ -52,7 +52,12 @@ describe('what a click does', () => {
         expect(protectConditionProblem({ market: 'S', odd: true, creditCond: 'Cash', daytradeShort: false })).toContain('零股');
         expect(protectConditionProblem({ market: 'S', odd: false, creditCond: 'MarginTrading', daytradeShort: false })).toContain('現股');
         expect(protectConditionProblem({ market: 'S', odd: false, creditCond: 'Cash', daytradeShort: true })).toContain('當沖');
-        expect(triggerConditionProblem({ market: 'S', creditCond: 'ShortSelling', daytradeShort: false })).toContain('現股');
+        // #263 triggers keep the panel's credit condition: only 借券 is refused panel-wide
+        expect(triggerConditionProblem({ market: 'S', creditCond: 'Cash', daytradeShort: true })).toBeNull();
+        expect(triggerConditionProblem({ market: 'S', creditCond: 'MarginTrading', daytradeShort: false })).toBeNull();
+        expect(triggerConditionProblem({ market: 'S', creditCond: 'ShortSelling', daytradeShort: false })).toBeNull();
+        expect(triggerConditionProblem({ market: 'S', creditCond: 'SBLShort', daytradeShort: false })).toContain('借券');
+        expect(triggerConditionProblem({ market: 'S', creditCond: 'SBLShortPriceExempt', daytradeShort: false })).toContain('借券');
         expect(triggerConditionProblem({ market: 'F', creditCond: 'Cash', daytradeShort: false })).toBeNull();
     });
 
@@ -133,6 +138,16 @@ describe('ladder marks', () => {
         const lot = trig({ id: 'l', code: '2330', account: S });
         expect(ladderMarks([odd, lot], [], stock, false).get('100.00')?.buy.map(m => m.id)).toEqual(['o']);
         expect(ladderMarks([odd, lot], [], { ...stock, odd: false }, false).get('100.00')?.buy.map(m => m.id)).toEqual(['l']);
+    });
+
+    it('#263 a stock trigger mark says the credit condition it goes out with', () => {
+        const S = { ...F, account_type: 'S' as const };
+        const stock: MarkScope = { code: '2330', account: S, odd: false, env: ENV };
+        const dt = trig({ id: 'd', code: '2330', account: S, action: 'Sell', condition: 'below', role: 'entry', daytradeShort: true });
+        const cash = trig({ id: 'c', code: '2330', account: S, price: 101, role: 'entry' });
+        const marks = ladderMarks([dt, cash], [], stock, false);
+        expect(marks.get('100.00')!.sell[0]!.title).toContain('→ 賣 1 張・現股當沖先賣');
+        expect(marks.get('101.00')!.buy[0]!.title).toContain('→ 買 1 張\n');
     });
 
     it('protection legs and grouped / pending triggers cannot be edited on the ladder', () => {

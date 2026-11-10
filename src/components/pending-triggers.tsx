@@ -4,6 +4,7 @@
 // Every action is a command to the executing main window. The main window
 // shows the full, collapsible list; popouts only a compact badge.
 
+import { triggerCreditText } from '../lib/trigger-credit';
 import { useEffect, useRef, useState } from 'react';
 import { dismissBracket } from '../lib/bracket';
 import { ensureContract, useContract } from '../lib/contracts-cache';
@@ -104,6 +105,7 @@ function Row({ trigger, price, envNow, sending }: {
     const name = contractLabel(trigger.code, contract);
     const act = actionLabel(trigger);
     const style = exitStyleLabel(trigger);
+    const credit = triggerCreditText(trigger);
     const distance = shown === undefined ? null : distanceLabel(trigger, shown);
     const acct = trigger.account
         ? `${trigger.account.account_type === 'F' ? '期貨' : '證券'}帳戶 ${maskAccountId(trigger.account.account_id, priv)}`
@@ -113,7 +115,7 @@ function Row({ trigger, price, envNow, sending }: {
             <div className={styles.rowHead}>
                 <span className={trigger.kind === 'take' ? styles.kindTake : styles.kindStop}>{kindLabel(trigger)}</span>
                 <span className={trigger.action === 'Buy' ? styles.buy : styles.sell}>{act}</span>
-                <span className={styles.orderType}>{style}單</span>
+                <span className={styles.orderType}>{style}單{credit ? `・${credit}` : ''}</span>
                 {trigger.pending && <span className={styles.detected}>偵測於 {detectedAt(trigger.pending.at)}</span>}
             </div>
             <div className={styles.product}>
