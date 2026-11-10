@@ -2,7 +2,7 @@
 // 快速下拉：常用的委託條件（信用、效期、期貨倉別與市價鈕）、單位與「更多設定…」。
 // 清單與停用規則來自下單面板共用的 order-conditions；選了什麼由閃電面板保存。
 
-import { Check, Lock, Settings2, ShieldCheck } from 'lucide-react';
+import { Check, Lock, Settings2, ShieldCheck, Sigma } from 'lucide-react';
 import type { FlashCond, FlashCredit, FlashLot, FlashOrderOpts } from '../lib/flash-account';
 import { TRIGGER_LIMIT_MAX_TICKS, type FlashTriggerSend } from '../lib/flash-trigger';
 import { FUTURES_OCTYPES, ORDER_TYPES, orderTypeDisabledReason } from '../lib/order-conditions';
@@ -44,7 +44,7 @@ function Seg<T extends string>({ label, items, value, disabled, onPick }: {
     );
 }
 
-export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, order, dayTradeOk, top, onCredit, onLot, onOrder, onMore, onClose, triggerSend, onTriggerSend, triggerMarketBlock = null, triggerLayout, onTriggerLayout, onProtect, protectBlock = null }: {
+export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, order, dayTradeOk, top, onCredit, onLot, onOrder, onMore, onClose, triggerSend, onTriggerSend, triggerMarketBlock = null, triggerLayout, onTriggerLayout, onProtect, protectBlock = null, showTotals, onShowTotals }: {
     market: 'S' | 'F';
     odd: boolean;
     /** 權證：只有整張現股，不顯示信用與零股選項 */
@@ -73,6 +73,9 @@ export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, orde
     onProtect?: () => void;
     /** 不能自動停損停利的原因（外國標的權證），顯示在入口下 */
     protectBlock?: string | null;
+    /** 委託合計列（只是顯示，不解除點價下單） */
+    showTotals?: boolean;
+    onShowTotals?: (on: boolean) => void;
 }) {
     const pick = (fn: () => void) => () => { fn(); onClose(); };
     const oddOrderType = orderTypeDisabledReason('IOC', odd);
@@ -223,6 +226,22 @@ export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, orde
                                 {lot === l && <Check size={11} aria-hidden />}
                             </button>
                         ))}
+                    </>
+                )}
+                {showTotals !== undefined && onShowTotals && (
+                    <>
+                        <div className={styles.menuSep} />
+                        <button
+                            type='button'
+                            role='menuitemcheckbox'
+                            aria-checked={showTotals}
+                            className={styles.menuItem[showTotals ? 'on' : 'off']}
+                            title='部位列下方顯示今日這個商品的委託量（成交量）、未成交，與現股當沖先賣待回補'
+                            onClick={pick(() => onShowTotals(!showTotals))}
+                        >
+                            <Sigma size={11} aria-hidden />顯示委託合計
+                            {showTotals && <Check size={11} aria-hidden />}
+                        </button>
                     </>
                 )}
                 <div className={styles.menuSep} />

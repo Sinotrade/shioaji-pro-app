@@ -65,6 +65,8 @@ import { flashQtyMemoryText, flashQtySlot, rememberedFlashQty, sanitizeFlashQtyS
 import { expiryTime, isStockFuture, lotsPerContract, spreadOf } from '../lib/flash-link';
 import * as styles from './flash-order.css';
 import { orderStatusWithNumber } from '../lib/order-status-label';
+import { flashOrderTotals } from '../lib/flash-order-totals';
+import { FlashTotalsBar } from './flash-totals-bar';
 
 const ROW_H = 22; // must match row height in flash-order.css.ts
 const EDGE = 2; // auto-recenter when last price gets this close to the edge
@@ -994,6 +996,13 @@ export function FlashOrder({
         return m;
     }, [trades, contract.code, lotShown]);
 
+    // 委託合計（設定「顯示委託合計」，預設開）：只從委託與成交回報算，
+    // 不經過持倉投影；範圍同梯形（帳戶、商品含別名、目前單位）
+    const showTotals = panelOrder.showTotals !== false;
+    const orderTotals = useMemo(() => showTotals
+        ? flashOrderTotals(trades, t => (t.contract.code === contract.code || getAliasFor(t.contract.code) === contract.code) && lotShown(t), market === 'S')
+        : null, [showTotals, trades, contract.code, lotShown, market]);
+
     // net position for this symbol (alias-aware for continuous contracts)
     const pos = useMemo(() => {
         const matches = positions.filter(
@@ -1768,6 +1777,9 @@ export function FlashOrder({
                             onTriggerSend={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerSend: next }); }}
                             // 外國標的權證：觸價後市價停用（附原因），只能選限價
                             triggerMarketBlock={warrantMarketBlock ? WARRANT_FLASH_TEXT.foreignTriggerMenu : null}
+                            showTotals={showTotals}
+                            // 只是顯示：不改送出的委託，不解除點價下單
+                            onShowTotals={next => { const { showTotals: _was, ...rest } = panelOrder; setPanelOrder(next ? rest : { ...rest, showTotals: false }); }}
                             triggerLayout={triggerLayout}
                             onTriggerLayout={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerLayout: next }); }}
                             // 外國標的權證不能自動停損停利：收起入口並寫原因（已開著的面板仍可進去關掉）
@@ -1935,6 +1947,11 @@ export function FlashOrder({
                         {maskMoney(fmtSigned(pos.pnl), privMoney)}
                     </span>
                 </div>
+            )}
+            {orderTotals && !paused && (
+                <FlashTotalsBar totals={orderTotals} unit={market === 'F' ? '口' : odd ? '股' : '張'} priv={privMoney}
+                    // 只有整股現股有當沖先賣；期貨、零股、權證不佔回補格
+                    cover={market === 'S' && !odd && !warrant} />
             )}
             {odd && !paused && (
                 <div className={styles.oddBanner} title='盤中零股與整股分開撮合，成交價可能與整股五檔不同'>

@@ -1167,3 +1167,85 @@ export const protectChipAnchor = style({ position: 'static', display: 'inline-fl
 // several marks in one 觸價 cell: no minimum width, tight padding
 export const markCrowded = style({ gap: 1 });
 globalStyle(`${markCrowded} > *`, { minWidth: 0, padding: '0 2px' });
+
+// ---- 委託合計列（部位列下方；設定「顯示委託合計」，預設開）----
+// 買紅賣綠沿用 up／down；待回補是提醒不是錯誤，用 amber（錯誤才用 danger）
+const totRowBase = style({
+    display: 'grid',
+    alignItems: 'stretch',
+    gap: 4,
+    padding: `3px ${vars.space.sm}`,
+    fontFamily: vars.font.mono,
+    fontSize: '0.66rem',
+    fontVariantNumeric: 'tabular-nums',
+    color: vars.color.mutedForeground,
+    borderBottom: `1px solid ${vars.color.border}`,
+    background: vars.color.panel,
+    flexShrink: 0,
+    minWidth: 0,
+    whiteSpace: 'nowrap',
+});
+export const totRow = styleVariants({
+    cover: [totRowBase, { gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto' }],
+    plain: [totRowBase, { gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }],
+});
+const totSideBase = style({
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    gap: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    padding: '1px 4px 3px',
+    borderRadius: vars.radius.sm,
+    background: vars.color.inset,
+});
+export const totSide = styleVariants({
+    buy: [totSideBase, { color: vars.color.up }],
+    sell: [totSideBase, { color: vars.color.down }],
+});
+export const totWord = style({ fontFamily: vars.font.body, fontWeight: 600, marginRight: 2 });
+export const totNum = style({ fontWeight: 700, color: 'inherit' });
+export const totFill = style({ color: vars.color.foreground, opacity: 0.85 });
+export const totWorking = style({
+    marginLeft: 'auto',
+    paddingLeft: 4,
+    fontSize: '0.6rem',
+    color: vars.color.mutedForeground,
+    '@container': { [TIGHT]: { display: 'none' } },
+});
+const totProgressBase = style({
+    position: 'absolute',
+    left: 0,
+    bottom: 0,
+    height: 2,
+    borderRadius: 1,
+    transition: 'width 0.2s',
+});
+export const totProgress = styleVariants({
+    buy: [totProgressBase, { background: vars.color.up }],
+    sell: [totProgressBase, { background: vars.color.down }],
+});
+export const totCoverLabel = style({
+    fontFamily: vars.font.body,
+    '@container': { [TIGHT]: { display: 'none' } },
+});
+export const totCoverShort = style({
+    display: 'none',
+    fontFamily: vars.font.body,
+    '@container': { [TIGHT]: { display: 'inline' } },
+});
+const totCoverBase = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 3,
+    padding: '0 5px',
+    borderRadius: vars.radius.sm,
+    border: '1px solid',
+    fontWeight: 700,
+});
+export const totCover = styleVariants({
+    open: [totCoverBase, { color: vars.color.amber, borderColor: vars.color.amber }],
+    done: [totCoverBase, { color: vars.color.mutedForeground, borderColor: vars.color.border }],
+    none: [totCoverBase, { color: vars.color.mutedForeground, borderColor: 'transparent' }],
+});
