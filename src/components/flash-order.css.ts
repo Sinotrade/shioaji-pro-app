@@ -1248,4 +1248,6 @@ export const totCover = styleVariants({
     open: [totCoverBase, { color: vars.color.amber, borderColor: vars.color.amber }],
     done: [totCoverBase, { color: vars.color.mutedForeground, borderColor: vars.color.border }],
     none: [totCoverBase, { color: vars.color.mutedForeground, borderColor: 'transparent' }],
+    // 條件未知：中性色虛線框，不是錯誤也不是提醒
+    unknown: [totCoverBase, { color: vars.color.mutedForeground, borderColor: vars.color.borderBright, borderStyle: 'dashed', fontWeight: 600, cursor: 'help' }],
 });

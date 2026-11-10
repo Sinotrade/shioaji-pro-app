@@ -65,7 +65,8 @@ import { flashQtyMemoryText, flashQtySlot, rememberedFlashQty, sanitizeFlashQtyS
 import { expiryTime, isStockFuture, lotsPerContract, spreadOf } from '../lib/flash-link';
 import * as styles from './flash-order.css';
 import { orderStatusWithNumber } from '../lib/order-status-label';
-import { flashOrderTotals } from '../lib/flash-order-totals';
+import { flashOrderTotals, sameContractMonth } from '../lib/flash-order-totals';
+import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
 import { FlashTotalsBar } from './flash-totals-bar';
 
 const ROW_H = 22; // must match row height in flash-order.css.ts
@@ -997,11 +998,13 @@ export function FlashOrder({
     }, [trades, contract.code, lotShown]);
 
     // 委託合計（設定「顯示委託合計」，預設開）：只從委託與成交回報算，
-    // 不經過持倉投影；範圍同梯形（帳戶、商品含別名、目前單位）
+    // 不經過持倉投影；範圍：面板帳戶、同一實際月份（含連續月別名）、目前單位、本交易日
     const showTotals = panelOrder.showTotals !== false;
+    // 送單時記下的現沖先賣旗標（回報不帶）有新紀錄就重算
+    const orderCondsVersion = useStockOrderConditionsVersion();
     const orderTotals = useMemo(() => showTotals
-        ? flashOrderTotals(trades, t => (t.contract.code === contract.code || getAliasFor(t.contract.code) === contract.code) && lotShown(t), market === 'S')
-        : null, [showTotals, trades, contract.code, lotShown, market]);
+        ? flashOrderTotals(trades, t => sameContractMonth(t, contract, getAliasFor) && lotShown(t), market === 'S', tradingDayStart(Date.now() / 1000))
+        : null, [showTotals, trades, contract.code, contract.target_code, lotShown, market, orderCondsVersion]);
 
     // net position for this symbol (alias-aware for continuous contracts)
     const pos = useMemo(() => {

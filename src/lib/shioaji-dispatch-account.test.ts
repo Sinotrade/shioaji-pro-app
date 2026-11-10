@@ -160,3 +160,14 @@ it.each(mutations)('rejects mutations without Web Locks before account preflight
     expect(m.baseline).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
 });
+
+// PR #400 review P1: 回報與 update_status 不帶 daytrade_short，送單成功時記下
+it('records a placed stock order day-trade short flag by its returned id', async () => {
+    const { stockOrderConditions, resetStockOrderConditionsForTest } = await import('./stock-order-conditions');
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+    resetStockOrderConditionsForTest();
+    m.accounts[0]!.account_type = 'S';
+    await placeStockOrder({ ...contract, security_type: 'STK', day_trade: 'Yes' } as ContractBase,
+        { action: 'Sell', price: 100, quantity: 1, price_type: 'LMT', order_type: 'ROD', order_lot: 'Common', daytrade_short: true }, m.accounts[0]);
+    expect(stockOrderConditions(m.accounts[0], 'id')).toEqual({ cond: 'Cash', daytradeShort: true });
+});

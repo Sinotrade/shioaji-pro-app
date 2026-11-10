@@ -23,17 +23,22 @@ vi.mock('../lib/tick-bands', () => ({ useTickBandsVersion: () => 0 }));
 vi.mock('../lib/utils/ticksize', () => ({ roundToTick: (_c: unknown, p: number) => p, stepPrice: (_c: unknown, p: number, step: number) => p + step }));
 vi.mock('../lib/privacy', async (orig) => ({ ...(await orig<typeof import('../lib/privacy')>()), usePrivacyMoney: () => mocks.priv }));
 import { FlashOrder } from './flash-order';
+import { noteStockOrderConditions, resetStockOrderConditionsForTest } from '../lib/stock-order-conditions';
 import * as styles from './flash-order.css';
 
 const stock = { code: '2317', security_type: 'STK', exchange: 'TSE', reference: 100, limit_up: 110, limit_down: 90, day_trade: 'Yes' } as unknown as ContractInfo;
 const futures = { code: 'TXFL6', security_type: 'FUT', exchange: 'TAIFEX', reference: 100, limit_up: 110, limit_down: 90, multiplier: 200 } as unknown as ContractInfo;
 let n = 0;
-const trade = (c: ContractInfo, acct: Account, action: 'Buy' | 'Sell', quantity: number, deal: number, extra: Record<string, unknown> = {}) => {
+const now = () => Date.now() / 1000;
+const trade = (c: ContractInfo, acct: Account, action: 'Buy' | 'Sell', quantity: number, deal: number, extra: Record<string, unknown> = {},
+    opts: { ts?: number; contract?: Record<string, unknown> } = {}) => {
     const id = `t${++n}`;
-    return { contract: { code: c.code, security_type: c.security_type }, account: acct,
-        order: { id, account: acct, action, price: 100, quantity, order_lot: 'Common', order_cond: 'Cash', ...extra },
-        status: { id, status: deal >= quantity ? 'Filled' : deal > 0 ? 'PartFilled' : 'Submitted', order_quantity: quantity, deal_quantity: deal, cancel_quantity: 0,
-            deals: deal > 0 ? [{ seq: id, price: 100, quantity: deal, ts: 1 }] : [] } } as unknown as Trade;
+    const ts = opts.ts ?? now();
+    return { contract: { code: c.code, security_type: c.security_type, ...opts.contract }, account: acct,
+        order: { id, account: acct, action, price: 100, quantity, order_lot: 'Common', order_cond: c.security_type === 'FUT' ? undefined : 'Cash',
+            ...(action === 'Sell' && c.security_type !== 'FUT' ? { daytrade_short: false } : {}), ...extra },
+        status: { id, status: deal >= quantity ? 'Filled' : deal > 0 ? 'PartFilled' : 'Submitted', order_ts: ts, order_quantity: quantity, deal_quantity: deal, cancel_quantity: 0,
+            deals: deal > 0 ? [{ seq: id, price: 100, quantity: deal, ts }] : [] } } as unknown as Trade;
 };
 const S = accounts[0]!;
 const F = accounts[1]!;
@@ -52,6 +57,7 @@ const render = async (props: Record<string, unknown>) => { await act(async () =>
 
 beforeEach(() => {
     mocks.priv = false;
+    resetStockOrderConditionsForTest();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
@@ -131,4 +137,37 @@ it('the gear menu toggles 顯示委託合計 (default on); off takes no space an
     expect(saved).not.toHaveProperty('showTotals');
     await act(async () => view.update(createElement(FlashOrder, props())));
     expect(byId('flash-totals')).toHaveLength(1);
+});
+
+// PR #400 review P1: 回報投影的委託沒有 daytrade_short，不能猜成現股
+it('a sell whose day-trade flag is unknown makes the cover cell 回補待確認 instead of 補齊', async () => {
+    const unknownSell = trade(stock, S, 'Sell', 5, 5, { daytrade_short: undefined });
+    await render({ contract: stock, trades: [trade(stock, S, 'Sell', 5, 5, { daytrade_short: true }), trade(stock, S, 'Buy', 5, 5), unknownSell], positions: [] });
+    const cover = one('flash-tot-cover');
+    expect(cover.props['data-state']).toBe('unknown');
+    expect(text(cover)).toBe('回補待確認待確認');
+    expect(cover.props.title).toContain('另有賣出成交 5 張 無法確認是否為現股當沖先賣');
+});
+
+it('uses the conditions this app recorded when it sent the order', async () => {
+    const sell = trade(stock, S, 'Sell', 6, 6, { daytrade_short: undefined, order_cond: undefined });
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+    noteStockOrderConditions(S, sell.order.id, { daytrade_short: true });
+    await render({ contract: stock, trades: [sell], positions: [] });
+    expect(text(one('flash-tot-cover'))).toBe('待回補待補6');
+});
+
+// PR #400 review P2
+it('leaves out the previous session', async () => {
+    const yesterday = now() - 2 * 86400;
+    await render({ contract: stock, trades: [trade(stock, S, 'Buy', 9, 9, {}, { ts: yesterday }), trade(stock, S, 'Buy', 2, 1)], positions: [] });
+    expect(text(one('flash-tot-buy'))).toBe('買2（1）未1');
+});
+
+// PR #400 review P3
+it('counts a continuous-month order (MXFR1 → MXFI6) on the MXFI6 panel', async () => {
+    const mxfi6 = { ...futures, code: 'MXFI6', target_code: null } as unknown as ContractInfo;
+    const r1 = trade(mxfi6, F, 'Buy', 2, 1, {}, { contract: { code: 'MXFR1', target_code: 'MXFI6' } });
+    await render({ contract: mxfi6, trades: [r1, trade(mxfi6, F, 'Buy', 1, 0)], positions: [] });
+    expect(text(one('flash-tot-buy'))).toBe('買3（1）未2');
 });
