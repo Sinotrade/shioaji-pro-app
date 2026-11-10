@@ -65,7 +65,7 @@ import { flashQtyMemoryText, flashQtySlot, rememberedFlashQty, sanitizeFlashQtyS
 import { expiryTime, isStockFuture, lotsPerContract, spreadOf } from '../lib/flash-link';
 import * as styles from './flash-order.css';
 import { orderStatusWithNumber } from '../lib/order-status-label';
-import { flashOrderTotals, sameContractMonth } from '../lib/flash-order-totals';
+import { flashOrderTotals, flashTotalsSince, sameContractMonth } from '../lib/flash-order-totals';
 import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
 import { FlashTotalsBar } from './flash-totals-bar';
 
@@ -1003,7 +1003,7 @@ export function FlashOrder({
     // 送單時記下的現沖先賣旗標（回報不帶）有新紀錄就重算
     const orderCondsVersion = useStockOrderConditionsVersion();
     const orderTotals = useMemo(() => showTotals
-        ? flashOrderTotals(trades, t => sameContractMonth(t, contract, getAliasFor) && lotShown(t), market === 'S', tradingDayStart(Date.now() / 1000))
+        ? flashOrderTotals(trades, t => sameContractMonth(t, contract, getAliasFor) && lotShown(t), market === 'S', flashTotalsSince(market === 'S'))
         : null, [showTotals, trades, contract.code, contract.target_code, lotShown, market, orderCondsVersion]);
 
     // net position for this symbol (alias-aware for continuous contracts)

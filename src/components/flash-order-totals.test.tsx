@@ -149,12 +149,27 @@ it('a sell whose day-trade flag is unknown makes the cover cell 回補待確認 
     expect(cover.props.title).toContain('另有賣出成交 5 張 無法確認是否為現股當沖先賣');
 });
 
-it('uses the conditions this app recorded when it sent the order', async () => {
-    const sell = trade(stock, S, 'Sell', 6, 6, { daytrade_short: undefined, order_cond: undefined });
+it('uses the conditions this app recorded when it sent the order, matched by broker seqno / ordno', async () => {
+    const sell = trade(stock, S, 'Sell', 6, 6, { daytrade_short: undefined, order_cond: undefined, seqno: 'Q1', ordno: 'W001' });
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
-    noteStockOrderConditions(S, sell.order.id, { daytrade_short: true });
+    noteStockOrderConditions(S, { seqno: 'Q1', ordno: 'W001' }, { daytrade_short: true });
     await render({ contract: stock, trades: [sell], positions: [] });
     expect(text(one('flash-tot-cover'))).toBe('待回補待補6');
+    // sidecar restarted: the same seqno now names another order (different ordno) → unknown
+    const reused = trade(stock, S, 'Sell', 6, 6, { daytrade_short: undefined, order_cond: undefined, seqno: 'Q1', ordno: 'Z777' });
+    await act(async () => view.update(createElement(FlashOrder, { contract: stock, trades: [reused], positions: [] })));
+    expect(one('flash-tot-cover').props['data-state']).toBe('unknown');
+});
+
+// PR #400 review round 2 P2: 股票不能套期貨 15:00 的交易日邊界
+it('keeps stock totals after 15:00 (stock day starts at Taipei midnight)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(Date.UTC(2026, 10, 10, 8))); // 16:00 Taipei
+    try {
+        const morning = Date.UTC(2026, 10, 10, 2) / 1000; // 10:00 Taipei
+        await render({ contract: stock, trades: [trade(stock, S, 'Buy', 4, 4, {}, { ts: morning }), trade(stock, S, 'Buy', 3, 3, {}, { ts: morning - 86400 })], positions: [] });
+        expect(text(one('flash-tot-buy'))).toBe('買4（4）');
+    } finally { vi.useRealTimers(); }
 });
 
 // PR #400 review P2

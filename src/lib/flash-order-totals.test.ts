@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { flashOrderTotals, sameContractMonth } from './flash-order-totals';
+import { flashOrderTotals, flashTotalsSince, sameContractMonth } from './flash-order-totals';
 import { tradingDayStart } from './futures-fifo';
 import type { Trade } from './types/order';
 
@@ -101,4 +101,13 @@ it('the 顯示委託合計 setting survives saving: only an explicit false is ke
     expect(normalizeFlashOrderOpts({ orderType: 'ROD', showTotals: false })?.showTotals).toBe(false);
     expect(normalizeFlashOrderOpts({ orderType: 'ROD', showTotals: true })).not.toHaveProperty('showTotals');
     expect(normalizeFlashOrderOpts({ orderType: 'ROD' })).not.toHaveProperty('showTotals');
+});
+
+// review round 2 P2: stocks use Taipei midnight, futures keep the 15:00 night-session start
+it('trading-day start: stocks from Taipei midnight, futures from the previous 15:00', () => {
+    const at1600 = Date.UTC(2026, 10, 10, 8); // Tue 16:00 Taipei
+    expect(flashTotalsSince(true, at1600)).toBe(Date.UTC(2026, 10, 9, 16) / 1000); // Tue 00:00
+    expect(flashTotalsSince(false, at1600)).toBe(Date.UTC(2026, 10, 10, 7) / 1000); // Tue 15:00 (night session)
+    const at1000 = Date.UTC(2026, 10, 10, 2);
+    expect(flashTotalsSince(false, at1000)).toBe(tradingDayStart(at1000 / 1000));
 });

@@ -7,10 +7,12 @@
 //
 // 範圍＝面板目前看到的：同一帳戶（呼叫端已 scopedFlashRows）、同一個實際
 // 月份的商品（sameContractMonth）、同一單位（整股／零股分開，#204）、本交易日
-// （/order/trades 會帶前一時段的成交，用 futures-fifo 的同一個交易日起點）。
+// （/order/trades 會帶前一時段的成交）：期貨用 futures-fifo 的 tradingDayStart
+// （前一日 15:00 夜盤起），股票用台北時間當日 00:00（flashTotalsSince）。
 import { ACTIVE_ORDER_STATUSES, type AccountedTrade, type Trade } from './types/order';
 import type { ContractBase } from './types/contract';
-import { stockOrderConditions, type StockOrderConditions } from './stock-order-conditions';
+import { stockDayStart, stockOrderConditions, type StockOrderConditions } from './stock-order-conditions';
+import { tradingDayStart } from './futures-fifo';
 
 export interface SideTotals {
     /** 有效委託量＝原始委託 − 已刪（減量）；送單失敗的不算 */
@@ -66,7 +68,7 @@ function isToday(t: Trade, since: number): boolean {
 
 type ConditionsOf = (t: Trade) => StockOrderConditions | undefined;
 /** 信用條件：委託列（HTTP／回報投影）優先；現沖先賣旗標只有本 App 送單時記下的 */
-const recordedConditions: ConditionsOf = t => stockOrderConditions((t as AccountedTrade).account ?? t.order.account, t.order.id);
+const recordedConditions: ConditionsOf = t => stockOrderConditions((t as AccountedTrade).account ?? t.order.account, { seqno: t.order.seqno, ordno: t.order.ordno });
 
 /**
  * @param matches 這個面板的委託（商品、單位）
@@ -111,4 +113,10 @@ export function flashOrderTotals(trades: readonly Trade[], matches: (t: Trade) =
         sell,
         dayShort: stock && any ? { sold: ds.sold, covered, open: ds.sold - covered, unknownSell: ds.unknownSell, unknownBuy: ds.unknownBuy } : null,
     };
+}
+
+/** 合計的本交易日起點（epoch 秒）：期貨含前一日 15:00 起的夜盤；股票是台北時間當日
+ * 00:00，15:00 之後仍是今天（不能套期貨的邊界，否則收盤後合計歸零） */
+export function flashTotalsSince(stock: boolean, nowMs = Date.now()): number {
+    return stock ? stockDayStart(nowMs) : tradingDayStart(nowMs / 1000);
 }

@@ -881,7 +881,7 @@ export function placeStockOrder(
         stock_order: { ...order, account: selected },
     }, selected, opts).then(ensureAccepted).then(trade => {
         // 回報與 update_status 都不帶 daytrade_short：送出時記下條件（委託合計用）
-        noteStockOrderConditions(selected, trade.order?.id ?? '', order);
+        noteStockOrderConditions(selected, { seqno: trade.order?.seqno, ordno: trade.order?.ordno }, order);
         return observeTradeResponse(trade, selected);
     });
 }
