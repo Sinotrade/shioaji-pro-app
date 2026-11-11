@@ -13,6 +13,7 @@ import { ACTIVE_ORDER_STATUSES, type AccountedTrade, type Trade } from './types/
 import type { ContractBase } from './types/contract';
 import { stockDayStart, stockOrderConditions, type StockOrderConditions } from './stock-order-conditions';
 import { tradingDayStart } from './futures-fifo';
+import { isOddLot } from './odd-lot';
 
 export interface SideTotals {
     /** 有效委託量＝原始委託 − 已刪（減量）；送單失敗的不算 */
@@ -111,6 +112,32 @@ const recordedConditions: ConditionsOf = t => stockOrderConditions((t as Account
  */
 export function flashOrderTotals(trades: readonly Trade[], matches: (t: Trade) => boolean, stock: boolean, since: number,
     conditionsOf: ConditionsOf = recordedConditions): FlashOrderTotals {
+    const { buy, sell, ds, fills } = collect(trades, matches, stock, since, conditionsOf);
+    // 依成交時間重播：先賣成交增加待回補，之後的現股買進才扣（最多扣到 0）；
+    // 先賣之前的現股買進不算回補。同一秒時買進排前面（不當成回補）：寧可多顯示
+    // 待補，也不要誤報補齊
+    const { sold, covered, open } = replay(fills, 'buysFirst');
+    // 買進條件未知只在還有先賣要回補時才有影響
+    const any = sold > 0 || ds.unknownSell > 0 || ds.untimedSell > 0;
+    return {
+        buy,
+        sell,
+        dayShort: stock && any ? { sold, covered, open, ...ds } : null,
+    };
+}
+
+/** #403 今天還能用現股買進回補的當沖先賣量（委託單位），給風控判斷「回補出場」用：
+ * 只能少算不能多算（多算的部分買進會被當成出場、不經風控）。跟顯示的待回補
+ * 不同：同一秒的買進當成在先賣之後（算回補）；再扣掉條件或時間未知的買進成交
+ * （可能已是回補）與仍在場上的買單（成交後也會回補）。 */
+export function dayShortCoverRoom(trades: readonly Trade[], matches: (t: Trade) => boolean, since: number,
+    conditionsOf: ConditionsOf = recordedConditions): number {
+    const { buy, ds, fills } = collect(trades, matches, true, since, conditionsOf);
+    const { open } = replay(fills, 'shortsFirst');
+    return Math.max(0, open - ds.unknownBuy - ds.untimedBuy - buy.working);
+}
+
+function collect(trades: readonly Trade[], matches: (t: Trade) => boolean, stock: boolean, since: number, conditionsOf: ConditionsOf) {
     const buy = empty();
     const sell = empty();
     const ds = { unknownSell: 0, unknownBuy: 0, untimedSell: 0, untimedBuy: 0 };
@@ -138,10 +165,14 @@ export function flashOrderTotals(trades: readonly Trade[], matches: (t: Trade) =
             // 一般現股賣出、融資賣、融券賣不影響待回補
         }
     }
-    // 依成交時間重播：先賣成交增加待回補，之後的現股買進才扣（最多扣到 0）；
-    // 先賣之前的現股買進不算回補。同一秒時買進排前面（不當成回補）：寧可多顯示
-    // 待補，也不要誤報補齊
-    fills.sort((a, b) => a.ts - b.ts || (a.kind === b.kind ? 0 : a.kind === 'cover' ? -1 : 1));
+    return { buy, sell, ds, fills };
+}
+
+/** 依成交時間重播；同一時間的先賣與買進：`buysFirst` 買進排前面（顯示：寧可多
+ * 顯示待補），`shortsFirst` 先賣排前面（風控：寧可少算可回補） */
+function replay(input: readonly Fill[], ties: 'buysFirst' | 'shortsFirst') {
+    const first: Fill['kind'] = ties === 'buysFirst' ? 'cover' : 'short';
+    const fills = [...input].sort((a, b) => a.ts - b.ts || (a.kind === b.kind ? 0 : a.kind === first ? -1 : 1));
     let sold = 0;
     let covered = 0;
     let open = 0;
@@ -152,13 +183,7 @@ export function flashOrderTotals(trades: readonly Trade[], matches: (t: Trade) =
             open -= c;
         }
     }
-    // 買進條件未知只在還有先賣要回補時才有影響
-    const any = sold > 0 || ds.unknownSell > 0 || ds.untimedSell > 0;
-    return {
-        buy,
-        sell,
-        dayShort: stock && any ? { sold, covered, open, ...ds } : null,
-    };
+    return { sold, covered, open };
 }
 
 interface Fill { ts: number; kind: 'short' | 'cover'; qty: number }
@@ -183,4 +208,20 @@ function dealFills(t: Trade, deal: number, kind: Fill['kind'], out: Fill[]): num
  * 00:00，15:00 之後仍是今天（不能套期貨的邊界，否則收盤後合計歸零） */
 export function flashTotalsSince(stock: boolean, nowMs = Date.now()): number {
     return stock ? stockDayStart(nowMs) : tradingDayStart(nowMs / 1000);
+}
+
+type AccountKeyLike = { account_type: string; broker_id: string; account_id: string };
+
+/** #403 一個帳戶、一檔股票、一個單位（整股／零股）今天還能回補的當沖先賣量，
+ * 跟閃電下單合計同一套算法（只看委託與成交回報，不看持倉投影，#400／#401）。 */
+export function accountCoverRoom(trades: readonly AccountedTrade[], account: AccountKeyLike, code: string, odd: boolean,
+    nowMs = Date.now()): number {
+    const same = (a: Partial<AccountKeyLike> | null | undefined) => !!a && a.broker_id === account.broker_id
+        && a.account_id === account.account_id && (a.account_type === undefined || a.account_type === account.account_type);
+    const matches = (t: Trade) => {
+        const own = (t as AccountedTrade).account;
+        return (own ? same(own) : same(t.order.account)) && (t.contract.target_code || t.contract.code) === code
+            && isOddLot(t.order.order_lot) === odd;
+    };
+    return dayShortCoverRoom(trades, matches, flashTotalsSince(true, nowMs));
 }
