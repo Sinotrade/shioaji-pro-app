@@ -86,6 +86,7 @@ import {
 } from './execution/background-view';
 import { retainQuote } from './quote-ownership';
 import { panelBracketRequest } from './execution/background-bracket';
+import { currentEntryLossLimitProblem } from './execution/background-loss-limit';
 import { sameTradingDay } from './conditional/session';
 import { trailStep, type TrailState } from './conditional/trailing';
 import { getConditionalSettings } from './conditional/settings';
@@ -752,6 +753,9 @@ export async function modifyTriggerGroup(patches: { id: string; patch: TriggerPa
     const group = `${legs[0]!.id}`;
     const built = programForNewGroup(legs.map(l => ({ ...l, group })), contract, table);
     if (!built) throw new Error('背景執行：這組二擇一無法修改，請取消後重新建立');
+    // #403 an opening entry the engine would refuse for the daily loss limit
+    const lossLimit = await currentEntryLossLimitProblem({ opens: !!built.opens, account: built.binding.account });
+    if (lossLimit) throw new Error(lossLimit);
     // keep each leg's position effect (rows do not carry it)
     const made = { ...built, levels: built.levels.map((lv, i) => {
         const was = original.levels.find(o => o.id === rows[i]!.background.levelId);
@@ -1004,6 +1008,12 @@ async function addBackgroundGroup(prepared: NewTrigger[], contract: ContractBase
         notify({ kind: 'err', title: '二擇一未建立', body: '背景執行：二擇一缺少帳戶或伺服器資訊' });
         return null;
     }
+    // #403 the engine would refuse its opening entry when it fires: not armed for nothing
+    const lossLimit = await currentEntryLossLimitProblem({ opens: !!program.opens, account: program.binding.account });
+    if (lossLimit) {
+        notify({ kind: 'err', title: '二擇一未建立', body: lossLimit });
+        return null;
+    }
     const result = await createBackgroundTrigger(program);
     if (result !== 'created') {
         if ('refused' in result) notify({ kind: 'err', title: '二擇一未建立', body: `背景執行：${result.refused}` });
@@ -1026,6 +1036,12 @@ async function addBackgroundTrigger(prepared: NewTrigger, contract: ContractBase
     const program = await backgroundProgram(t, contract);
     if (typeof program === 'string') {
         notify({ kind: 'err', title: '觸價單未建立', body: program });
+        return null;
+    }
+    // #403 the engine would refuse its opening entry when it fires: not armed for nothing
+    const lossLimit = await currentEntryLossLimitProblem({ opens: !!program.opens, account: program.binding.account });
+    if (lossLimit) {
+        notify({ kind: 'err', title: '觸價單未建立', body: lossLimit });
         return null;
     }
     const result = await createBackgroundTrigger(program);
@@ -1117,6 +1133,9 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
         const table = await backgroundTickTable(contract);
         const plan = row.bracketPlan;
         if (!table || !plan) throw new Error('背景執行：跳動點級距尚未取得，無法修改括號單，請稍後再試');
+        // #403 its 觸價 entry opens a position (checked by the engine's risk)
+        const lossLimit = await currentEntryLossLimitProblem({ opens: true, account: original.binding.account });
+        if (lossLimit) throw new Error(lossLimit);
         const request = panelBracketRequest({ env: row.env!, account: row.account!, quoteCode: row.code, orderCode: row.orderCode!,
             securityType: contract.security_type === 'OPT' ? 'OPT' : contract.security_type === 'WRT' ? 'WRT' : contract.security_type === 'STK' ? 'STK' : 'FUT', action: row.action,
             plan: { ...plan, tiers: patch.quantity !== undefined ? scaleTiers(plan.tiers, patch.quantity) : plan.tiers },
@@ -1132,6 +1151,9 @@ export async function modifyTrigger(id: string, patch: TriggerPatch): Promise<vo
     }
     const made = await backgroundProgram(next, contract);
     if (typeof made === 'string') throw new Error(made);
+    // #403 an opening entry the engine would refuse for the daily loss limit
+    const lossLimit = await currentEntryLossLimitProblem({ opens: !!made.opens, account: made.binding.account });
+    if (lossLimit) throw new Error(lossLimit);
     // keep the original position effect (e.g. a closing-only Cover stays Cover)
     const octype = level.entry.order.octype;
     const program = { ...made, levels: made.levels.map(lv => lv.entry.type === 'touch'

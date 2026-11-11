@@ -55,8 +55,9 @@ const listeners = new Set<() => void>();
 
 // cross-window sync — popouts share localStorage but not module state;
 // without this, toggling the kill switch or the Esc-Esc hotkey in one
-// window never reaches already-open popout windows.
-window.addEventListener('storage', (e) => {
+// window never reaches already-open popout windows. (No window: a test /
+// worker importing it for the settings only.)
+if (typeof window !== 'undefined') window.addEventListener('storage', (e) => {
     if (e.key === STORAGE_KEY) {
         settings = load();
         emit();

@@ -915,3 +915,91 @@ describe('#226 step 5 review', () => {
         expect(req.request.binding.contract).toMatchObject({ securityType: 'STK', market: 'stock' });
     });
 });
+
+describe('#403 當日虧損上限: background opening entries the engine would refuse are not created', () => {
+    const STK1 = { ...STK, exchange: 'TSE', limit_up: 990, limit_down: 810 };
+    const TXF1 = { ...TXF, tick: 1 };
+    const created = () => calls('execution_create').map(([, a]) => (a as { program: OrderProgram }).program);
+    const bodies = () => m.notify.mock.calls.map(([n]) => String((n as { body: string }).body));
+    const stockEntry = { ...stop(), code: '2330', price: 900, role: 'entry' as const };
+    const futEntry = { code: 'TXFR1', condition: 'above' as const, price: 20100, action: 'Buy' as const, quantity: 1,
+        kind: 'stop' as const, role: 'entry' as const };
+    async function bootWithRisk(risk: { enabled: boolean; maxDailyLoss: number }) {
+        m.enabled = true;
+        vi.stubGlobal('window', new EventTarget()); // risk.ts listens for other windows' changes
+        await boot();
+        (await import('./risk')).setRiskSettings(risk);
+    }
+
+    it('a stock entry is refused with the reason and how to fix it; nothing is created', async () => {
+        await bootWithRisk({ enabled: true, maxDailyLoss: 5000 });
+        expect(await engine.addTrigger(stockEntry, STK1 as never)).toBeNull();
+        expect(created()).toHaveLength(0);
+        expect(bodies()).toEqual([expect.stringContaining('拿不到股票帳戶的當日損益')]);
+        expect(bodies()[0]).toContain('設定 → 風控');
+    });
+
+    it('a stock entry is created with the limit at 0 or the risk rules off', async () => {
+        await bootWithRisk({ enabled: true, maxDailyLoss: 0 });
+        await engine.addTrigger(stockEntry, STK1 as never);
+        (await import('./risk')).setRiskSettings({ enabled: false, maxDailyLoss: 5000 });
+        await engine.addTrigger(stockEntry, STK1 as never);
+        expect(created().map(p => p.opens)).toEqual([true, true]);
+    });
+
+    it('a stock stop / take (an exit, not opening) is never refused for the limit', async () => {
+        await bootWithRisk({ enabled: true, maxDailyLoss: 5000 });
+        await engine.addTrigger({ ...stop(), code: '2330', price: 900 }, STK1 as never);
+        expect(created()).toHaveLength(1);
+        expect(created()[0]!.opens).toBeUndefined();
+    });
+
+    it('futures: the selected (P&L) account is allowed, another futures account refused', async () => {
+        await bootWithRisk({ enabled: true, maxDailyLoss: 5000 });
+        m.trading = { ...m.trading, marginAccount: `F:${F1.broker_id}:${F1.account_id}` };
+        await engine.addTrigger(futEntry, TXF1 as never);
+        expect(created()).toHaveLength(1);
+        // the main window reads another futures account's P&L now
+        m.trading = { ...m.trading, marginAccount: `F:${F1.broker_id}:fixture-account-F2` };
+        expect(await engine.addTrigger(futEntry, TXF1 as never)).toBeNull();
+        expect(created()).toHaveLength(1);
+        expect(bodies().at(-1)).toContain('只取得主視窗選取的期貨帳戶');
+        // its protective stop still is
+        await engine.addTrigger(stop(), TXF1 as never);
+        expect(created()).toHaveLength(2);
+    });
+
+    it('a 二擇一 of entries on another futures account is refused as one', async () => {
+        await bootWithRisk({ enabled: true, maxDailyLoss: 5000 });
+        m.trading = { ...m.trading, marginAccount: `F:${F1.broker_id}:fixture-account-F2` };
+        const legs = [{ ...futEntry, group: 'g', ocoMode: 'trigger' as const },
+            { ...futEntry, condition: 'below' as const, price: 19900, action: 'Sell' as const, group: 'g', ocoMode: 'trigger' as const }];
+        expect(await engine.addTriggerGroup(legs, TXF1 as never)).toBeNull();
+        expect(created()).toHaveLength(0);
+        expect(bodies().at(-1)).toContain('只取得主視窗選取的期貨帳戶');
+    });
+
+    it('a 指定時間送單 stock entry is refused too', async () => {
+        await bootWithRisk({ enabled: true, maxDailyLoss: 5000 });
+        expect(await engine.addTrigger({ ...stockEntry, price: 0, send: { type: 'MKT' }, time: { kind: 'send', at: Date.now() + 3_600_000 } },
+            STK1 as never)).toBeNull();
+        expect(created()).toHaveLength(0);
+    });
+
+    it('modify: an existing stock entry cannot be changed while the limit is set; its stop can', async () => {
+        await bootWithRisk({ enabled: false, maxDailyLoss: 0 });
+        await engine.addTrigger(stockEntry, STK1 as never);
+        await engine.addTrigger({ ...stop(), code: '2330', price: 880 }, STK1 as never);
+        m.programs = created();
+        await bg.refreshBackground();
+        const rows = engine.getDisplayTriggers();
+        const entryRow = rows.find(r => r.role === 'entry')!;
+        const stopRow = rows.find(r => r.role !== 'entry')!;
+        (await import('./risk')).setRiskSettings({ enabled: true, maxDailyLoss: 5000 });
+        await tick('2330', 950);
+        await expect(engine.modifyTrigger(entryRow.id, { price: 890 })).rejects.toThrow('拿不到股票帳戶的當日損益');
+        expect(calls('execution_replace')).toHaveLength(0);
+        await engine.modifyTrigger(stopRow.id, { price: 870 });
+        expect(calls('execution_replace')).toHaveLength(1);
+    });
+});

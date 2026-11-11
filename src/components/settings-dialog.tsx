@@ -47,6 +47,10 @@ import {
     setRiskSettings,
     useRiskSettings,
 } from '../lib/risk';
+import {
+    dailyLossLimitSet,
+    LOSS_LIMIT_SETTINGS_NOTE,
+} from '../lib/execution/background-loss-limit';
 import { isTauri } from '../lib/runtime';
 import { setSoundEnabled, soundEnabled } from '../lib/sounds';
 import {
@@ -487,6 +491,9 @@ function RiskSection() {
                 <br />
                 Kill Switch（鎖定下單）在畫面右上角「風控」鈕，一鍵鎖定/解鎖。
             </span>
+            {dailyLossLimitSet(risk) && (
+                <span className={hud.riskWarn}>{LOSS_LIMIT_SETTINGS_NOTE}</span>
+            )}
             <span className={hud.settingLabel}>下單確認</span>
             <div className={hud.switchRow}>
                 <span

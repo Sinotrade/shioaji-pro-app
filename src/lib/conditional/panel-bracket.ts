@@ -24,6 +24,7 @@ import { currentProtectionEnv } from '../protection-env';
 import { notify, placeQuickOrder } from '../trade';
 import { backgroundOwnerForNew, backgroundSupported, createBackgroundBracket } from '../execution/background';
 import { panelBracketRequest } from '../execution/background-bracket';
+import { currentEntryLossLimitProblem, dailyLossLimitSet } from '../execution/background-loss-limit';
 import { tickTableOf } from '../execution/background-view';
 import { ensureTickBands } from '../tick-bands';
 import { addTrigger, type BracketEntryPlan, type TriggerSend, type TriggerValidity } from '../trigger-engine';
@@ -156,8 +157,7 @@ async function placeBackgroundPanelBracket(r: PanelBracketRequest, qty: number, 
     const stockLossLimit = async () => {
         if (!stock) return false;
         const { getRiskSettings } = await import('../risk');
-        const s = getRiskSettings();
-        return s.enabled && s.maxDailyLoss > 0;
+        return dailyLossLimitSet(getRiskSettings());
     };
     const LOSS_LIMIT_TEXT = '設了當日虧損上限，但股票帳戶的當日損益無法取得，股票括號單的進場單不送出';
     const bands = c.tick_rule && (st === 'FUT' || st === 'OPT') ? await ensureTickBands(c.tick_rule, st) : undefined;
@@ -166,6 +166,11 @@ async function placeBackgroundPanelBracket(r: PanelBracketRequest, qty: number, 
     const base = { env, account: { account_type: stock ? 'S' as const : 'F' as const, broker_id: r.account.broker_id, account_id: r.account.account_id },
         quoteCode: r.contract.code, securityType: st, action: r.action, plan: r.plan, tickTable } as const;
     if (r.entry.type === 'touch') {
+        // #403 the engine fires this entry as an opening order and refuses it
+        // for the daily loss limit (a stock account, another futures account)
+        const lossLimit = await currentEntryLossLimitProblem({ opens: true,
+            account: { accountType: base.account.account_type, brokerId: base.account.broker_id, accountId: base.account.account_id } });
+        if (lossLimit) return { error: `背景執行：${lossLimit}` };
         const request = panelBracketRequest({ ...base, orderCode: r.contract.target_code || r.contract.code,
             entry: { trigger: { condition: r.entry.condition, price: r.entry.price, send: r.entry.send, validity: r.entry.validity,
                 ...(!stock && r.order?.octype === 'New' ? { octype: 'New' as const } : {}) } } });
@@ -183,7 +188,7 @@ async function placeBackgroundPanelBracket(r: PanelBracketRequest, qty: number, 
             if (currentProtectionEnv() !== env) throw new Error('伺服器或模擬／正式模式已切換，進場單未送出');
             // the limit may have been set while the confirmation was open
             const s = getRiskSettings?.();
-            if (s && s.enabled && s.maxDailyLoss > 0) throw new Error(LOSS_LIMIT_TEXT);
+            if (s && dailyLossLimitSet(s)) throw new Error(LOSS_LIMIT_TEXT);
             // when it really leaves (after the order confirmation): its trading session
             sentAt = Date.now();
         }));
