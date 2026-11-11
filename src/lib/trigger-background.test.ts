@@ -1026,6 +1026,27 @@ describe('#403 當日虧損上限: background opening entries the engine would r
         expect(calls('execution_resume')).toHaveLength(2);
     });
 
+    it('resume: a stock bracket whose entry already fired resumes its protection; one still waiting does not', async () => {
+        await bootWithRisk({ enabled: true, maxDailyLoss: 5000 });
+        const base = program({ entry: { type: 'touch', condition: 'above', price: 600, order: { priceType: 'MKT', timeInForce: 'IOC', stockCond: 'Cash', stockLot: 'Common' } },
+            exit: null, qty: 1, side: 'Buy' });
+        const binding = { ...base.binding, account: { ...base.binding.account, accountType: 'S' as const },
+            contract: { market: 'stock' as const, quoteCode: '2330', orderCode: '2330', securityType: 'STK' as const } };
+        const tier = { ...base.levels[0]!, id: 'T1', exit: { type: 'oco' as const, stop: null, take: null,
+            order: { priceType: 'MKT' as const, timeInForce: 'IOC' as const, stockCond: 'Cash' as const, stockLot: 'Common' as const } },
+            entry: { type: 'tier' as const, of: 'L1', offset: 0, index: 0 }, rules: { stopTicks: 3, takeTicks: 5 } };
+        const fired = { ...base.levels[0]!, phase: 'done' } as unknown as typeof tier;
+        m.programs = [
+            { ...base, id: 'bkt-fired', kind: 'bracket', opens: true, status: 'paused', binding, levels: [fired, tier] },
+            { ...base, id: 'bkt-wait', kind: 'bracket', opens: true, status: 'paused', binding, levels: [base.levels[0]!, tier] },
+        ] as never;
+        await bg.refreshBackground();
+        await bg.resumeBackgroundProgram('bkt-fired');
+        expect(calls('execution_resume').map(([, a]) => a)).toEqual([{ programId: 'bkt-fired' }]);
+        await expect(bg.resumeBackgroundProgram('bkt-wait')).rejects.toThrow('拿不到股票帳戶的當日損益');
+        expect(calls('execution_resume')).toHaveLength(1);
+    });
+
     it('resume: a paused 二擇一 of entries on another futures account is refused; pause works', async () => {
         await bootWithRisk({ enabled: true, maxDailyLoss: 5000 });
         m.trading = { ...m.trading, marginAccount: `F:${F1.broker_id}:${F1.account_id}` };

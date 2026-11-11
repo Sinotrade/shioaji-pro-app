@@ -455,7 +455,10 @@ export async function pauseBackgroundProgram(programId: string): Promise<void> {
  * limit (#403) is not armed again; pausing always works. */
 export async function resumeBackgroundProgram(programId: string): Promise<void> {
     const p = programs.find(x => x.id === programId);
-    if (p && (p.opens || bracketEntryWaiting(p))) {
+    // a bracket whose entry already fired keeps `opens` but resumes only its
+    // stop / take watching: that must stay possible
+    const entryAhead = p && (p.kind === 'bracket' ? bracketEntryWaiting(p) !== null : p.opens);
+    if (p && entryAhead) {
         const problem = await currentEntryLossLimitProblem({ opens: true, account: p.binding.account });
         if (problem) throw new BackgroundRefusal(problem);
     }
