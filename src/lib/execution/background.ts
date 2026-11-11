@@ -27,9 +27,11 @@ import { getStreamStatus, onAnyBidAsk, onAnyTick, onOddLotTick, subscribeStatusS
 import { notify } from '../trade';
 import { envKeyOf } from './adapter';
 import { programFinished } from './background-view';
+import { currentEntryLossLimitProblem } from './background-loss-limit';
 import {
     BRACKET_COMMAND,
     BRACKET_NOTICE_TEXT,
+    bracketEntryWaiting,
     noticeBody,
     DEFAULT_BRACKET_POLICY,
     parseBracketPolicy,
@@ -449,7 +451,14 @@ export async function pauseBackgroundProgram(programId: string): Promise<void> {
     await command(BRACKET_COMMAND.pause, { programId });
 }
 
+/** Resume: an opening entry the engine would refuse for the daily loss
+ * limit (#403) is not armed again; pausing always works. */
 export async function resumeBackgroundProgram(programId: string): Promise<void> {
+    const p = programs.find(x => x.id === programId);
+    if (p && (p.opens || bracketEntryWaiting(p))) {
+        const problem = await currentEntryLossLimitProblem({ opens: true, account: p.binding.account });
+        if (problem) throw new BackgroundRefusal(problem);
+    }
     await command(BRACKET_COMMAND.resume, { programId });
 }
 

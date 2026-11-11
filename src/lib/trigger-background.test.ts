@@ -1002,4 +1002,44 @@ describe('#403 當日虧損上限: background opening entries the engine would r
         await engine.modifyTrigger(stopRow.id, { price: 870 });
         expect(calls('execution_replace')).toHaveLength(1);
     });
+
+    it('resume: a paused stock entry is not armed again under the limit; pausing and its stop still work', async () => {
+        await bootWithRisk({ enabled: false, maxDailyLoss: 0 });
+        await engine.addTrigger(stockEntry, STK1 as never);
+        await engine.addTrigger({ ...stop(), code: '2330', price: 880 }, STK1 as never);
+        const [entryP, stopP] = created();
+        m.programs = [{ ...entryP!, status: 'paused' }, { ...stopP!, status: 'paused' }];
+        await bg.refreshBackground();
+        const rows = engine.getDisplayTriggers();
+        const entryRow = rows.find(r => r.role === 'entry')!;
+        const stopRow = rows.find(r => r.role !== 'entry')!;
+        (await import('./risk')).setRiskSettings({ enabled: true, maxDailyLoss: 5000 });
+        await expect(engine.setTriggerPaused(entryRow.id, false)).rejects.toThrow('拿不到股票帳戶的當日損益');
+        expect(calls('execution_resume')).toHaveLength(0);
+        await engine.setTriggerPaused(stopRow.id, false);
+        expect(calls('execution_resume').map(([, a]) => a)).toEqual([{ programId: stopP!.id }]);
+        await engine.setTriggerPaused(entryRow.id, true);
+        expect(calls('execution_pause').map(([, a]) => a)).toEqual([{ programId: entryP!.id }]);
+        // no limit: it resumes
+        (await import('./risk')).setRiskSettings({ maxDailyLoss: 0 });
+        await engine.setTriggerPaused(entryRow.id, false);
+        expect(calls('execution_resume')).toHaveLength(2);
+    });
+
+    it('resume: a paused 二擇一 of entries on another futures account is refused; pause works', async () => {
+        await bootWithRisk({ enabled: true, maxDailyLoss: 5000 });
+        m.trading = { ...m.trading, marginAccount: `F:${F1.broker_id}:${F1.account_id}` };
+        const legs = [{ ...futEntry, group: 'g', ocoMode: 'trigger' as const },
+            { ...futEntry, condition: 'below' as const, price: 19900, action: 'Sell' as const, group: 'g', ocoMode: 'trigger' as const }];
+        await engine.addTriggerGroup(legs, TXF1 as never);
+        const [gp] = created();
+        m.programs = [{ ...gp!, status: 'paused' }];
+        await bg.refreshBackground();
+        const ids = engine.getDisplayTriggers().map(r => r.id);
+        m.trading = { ...m.trading, marginAccount: `F:${F1.broker_id}:fixture-account-F2` };
+        await expect(engine.setTriggerGroup(ids, 'resume')).rejects.toThrow('只取得主視窗選取的期貨帳戶');
+        expect(calls('execution_resume')).toHaveLength(0);
+        await engine.setTriggerGroup(ids, 'pause');
+        expect(calls('execution_pause')).toHaveLength(1);
+    });
 });
