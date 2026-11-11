@@ -19,6 +19,8 @@ const m = vi.hoisted(() => ({
     accounts: [] as Account[],
     positions: [] as unknown[],
     positionsAt: null as number | null,
+    trades: [] as unknown[],
+    ordersAt: null as number | null,
     place: vi.fn(),
     notify: vi.fn(),
     ensure: vi.fn(),
@@ -41,8 +43,9 @@ vi.mock('./account-store', () => ({ getAccountState: () => ({ accounts: m.accoun
 vi.mock('./trade', () => ({ notify: m.notify, placeQuickOrder: m.place }));
 vi.mock('./contracts-cache', () => ({ ensureContract: m.ensure, getCachedContract: () => undefined }));
 vi.mock('./quote-ownership', () => ({ retainQuote: (...args: unknown[]) => { m.retain(...args); return () => undefined; } }));
-vi.mock('./trading-state', () => ({ getTradingState: () => ({ positions: m.positions,
-    queries: { positions: { updatedAt: m.positionsAt, needsReconcile: false, error: null } } }) }));
+vi.mock('./trading-state', () => ({ getTradingState: () => ({ positions: m.positions, trades: m.trades,
+    queries: { positions: { updatedAt: m.positionsAt, needsReconcile: false, error: null },
+        orders: { updatedAt: m.ordersAt, needsReconcile: false, error: null } } }) }));
 vi.mock('./shioaji', () => ({ fetchTrades: async () => [] }));
 vi.mock('./protection-env', () => ({
     currentProtectionEnv: () => SIM,
@@ -79,7 +82,7 @@ const bodies = () => m.notify.mock.calls.map(([n]) => `${(n as { title: string }
 beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('BroadcastChannel', undefined);
-    m.accounts = [S1, F1]; m.positions = []; m.positionsAt = null;
+    m.accounts = [S1, F1]; m.positions = []; m.positionsAt = null; m.trades = []; m.ordersAt = null;
     for (const f of [m.place, m.notify, m.ensure, m.retain]) f.mockReset();
     m.ensure.mockResolvedValue(STK);
     let n = 0;
@@ -205,5 +208,71 @@ describe('planExitQuantity units', () => {
         const base = { bracketId: 'b', account: ACCT };
         expect(plain(planExitQuantity({ ...base, quantity: 500, orderLot: 'IntradayOdd' }, 0, 200).detail)).toBe('可賣出現股僅 200 股，其餘 300 股未保護');
         expect(plain(planExitQuantity({ ...base, quantity: 3 }, 0, 1).detail)).toBe('可賣出現股僅 1 張，其餘 2 張未保護');
+    });
+});
+
+// #403 a plain stock exit (flash 回補 / sell of shares held, chart stop / take)
+// goes out without the entry risk checks only while it still reduces something
+describe('stock exits re-checked when they fire (#403)', () => {
+    const shortSale = (qty: number, filled: number, extra: Record<string, unknown> = {}) => ({
+        account: S1, contract: { code: '2330' },
+        order: { id: `s${Math.random()}`, action: 'Sell', price: 1000, quantity: qty, order_cond: 'Cash', daytrade_short: true, ...extra },
+        status: { status: 'Filled', order_ts: Date.now() / 1000 - 60, deal_quantity: filled, cancel_quantity: 0,
+            deals: [{ seq: 'd', price: 1000, quantity: filled, ts: Date.now() / 1000 - 60 }] },
+    });
+    const coverBuy = (qty = 1) => engine.addTrigger({ code: '2330', condition: 'above', price: 1010, action: 'Buy', quantity: qty, kind: 'stop' }, STK as never);
+    const optsOf = (i = 0) => m.place.mock.calls[i]![4] as { bypassRisk: boolean };
+
+    it('a cover buy within today\'s 當沖先賣 still to cover goes out as an exit', async () => {
+        await boot();
+        m.trades = [shortSale(1, 1)]; m.ordersAt = 1;
+        await coverBuy(1);
+        await tick(1011);
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(optsOf()).toMatchObject({ bypassRisk: true });
+        expect(optsOf()).not.toHaveProperty('daytradeShort');
+        expect(engine.getExits()[0]?.detail ?? '').not.toContain('套用風控');
+    });
+
+    it('a cover buy with nothing left to cover goes out with the entry risk checks', async () => {
+        await boot();
+        m.trades = [shortSale(1, 1)]; m.ordersAt = 1;
+        await coverBuy(2); // 2 張 against 1 張 short: the rest would open a long
+        await tick(1011);
+        expect(optsOf()).toMatchObject({ bypassRisk: false });
+        expect(engine.getExits()[0]?.detail).toContain('依進場單套用風控');
+    });
+
+    it('two cover exits of one short: the second, while the first is out, is checked as an entry', async () => {
+        await boot();
+        m.trades = [shortSale(1, 1)]; m.ordersAt = 1;
+        await coverBuy(1);
+        await engine.addTrigger({ code: '2330', condition: 'above', price: 1020, action: 'Buy', quantity: 1, kind: 'stop' }, STK as never);
+        await tick(1011);
+        await tick(1021);
+        expect(m.place).toHaveBeenCalledTimes(2);
+        expect([optsOf(0).bypassRisk, optsOf(1).bypassRisk]).toEqual([true, false]);
+    });
+
+    it('unknown orders or positions keep the exit as created', async () => {
+        await boot();
+        await coverBuy(1); // orders never read
+        await engine.addTrigger({ code: '2330', condition: 'below', price: 990, action: 'Sell', quantity: 1, kind: 'stop' }, STK as never);
+        await tick(1011);
+        await tick(989); // positions never read
+        expect([optsOf(0).bypassRisk, optsOf(1).bypassRisk]).toEqual([true, true]);
+    });
+
+    it('a sell exit checks the confirmed cash shares held', async () => {
+        await boot();
+        m.positionsAt = 1;
+        m.positions = [{ account: S1, code: '2330', direction: 'Buy', quantity: 1000, cond: 'Cash' }];
+        await engine.addTrigger({ code: '2330', condition: 'below', price: 990, action: 'Sell', quantity: 1, kind: 'stop' }, STK as never);
+        await tick(989);
+        expect(optsOf(0)).toMatchObject({ bypassRisk: true });
+        m.positions = [];
+        await engine.addTrigger({ code: '2330', condition: 'below', price: 980, action: 'Sell', quantity: 1, kind: 'stop' }, STK as never);
+        await tick(979);
+        expect(optsOf(1)).toMatchObject({ bypassRisk: false });
     });
 });

@@ -66,7 +66,7 @@ import { flashQtyMemoryText, flashQtySlot, rememberedFlashQty, sanitizeFlashQtyS
 import { expiryTime, isStockFuture, lotsPerContract, spreadOf } from '../lib/flash-link';
 import * as styles from './flash-order.css';
 import { orderStatusWithNumber } from '../lib/order-status-label';
-import { flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMonth } from '../lib/flash-order-totals';
+import { dayShortCoverRoom, flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMonth } from '../lib/flash-order-totals';
 import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
 import { FlashTotalsRow } from './flash-totals-bar';
 
@@ -1019,6 +1019,10 @@ export function FlashOrder({
     const orderTotals = useMemo(() => showTotals
         ? flashOrderTotals(trades, totalsScope(contract, odd), market === 'S', flashTotalsSince(market === 'S'))
         : null, [showTotals, trades, contract, odd, market, orderCondsVersion]);
+    // #403 今天還能用現股買進回補的當沖先賣（同一套回報算法）：觸買在這之內＝回補出場單
+    const coverRoom = useMemo(() => market === 'S'
+        ? dayShortCoverRoom(orderTotals ?? flashOrderTotals(trades, totalsScope(contract, odd), true, flashTotalsSince(true)))
+        : 0, [orderTotals, trades, contract, odd, market, orderCondsVersion]);
 
     // 買全刪／賣全刪可刪的筆數＝合計裡「未成交」的那一組委託（cancelSide 用同一個函式選目標）
     const sideOrderCount = useMemo(() => {
@@ -1077,8 +1081,8 @@ export function FlashOrder({
     }, [positions, trades, contract, reconcilePending, lotLast]);
 
     // #216 持倉換成下單單位（整股：張；零股：股；期貨：口），判斷進場／減倉／反手
-    const heldRef = useRef({ held: 0, exitSafe: false });
-    heldRef.current = { held: pos ? (market === 'S' && !odd ? pos.net / 1000 : pos.net) : 0, exitSafe: !!pos?.safeExit };
+    const heldRef = useRef({ held: 0, exitSafe: false, coverRoom: 0 });
+    heldRef.current = { held: pos ? (market === 'S' && !odd ? pos.net / 1000 : pos.net) : 0, exitSafe: !!pos?.safeExit, coverRoom };
     // 觸價方向只看真正的成交價（零股看零股成交），不拿參考價充數
     const triggerPriceRef = useRef<number | null>(null);
     triggerPriceRef.current = odd ? (oddQuote?.tick ? Number(oddQuote.tick.close) : null) : tradedLast;
@@ -1093,12 +1097,14 @@ export function FlashOrder({
     const trigNoteFor = (action: Action): string => {
         const sendText = triggerSendText(triggerSendSetting, { market, odd, mktPriceType });
         // #263 the credit condition it will go out with (當沖先賣: sells only)
-        const creditText = creditApplies ? triggerCreditText(triggerCreditFields(credit, action)) : '';
+        const fields = creditApplies ? triggerCreditFields(credit, action) : {};
+        const creditText = creditApplies ? triggerCreditText(fields) : '';
         const word = `${action === 'Buy' ? '買進' : '賣出'}${creditText ? `（${creditText}）` : ''}`;
         const held = heldRef.current;
-        const effect = positionEffect(held.held, action, Math.max(1, qty));
-        const intent = triggerIntent({ market, octype: clickOctype, effect, exitSafe: held.exitSafe });
-        if (intent.role === 'exit') return `${sendText}${word}平倉（出場單，不附停損停利）`;
+        const q = Math.max(1, qty);
+        const effect = positionEffect(held.held, action, q);
+        const intent = triggerIntent({ market, octype: clickOctype, effect, exitSafe: held.exitSafe, action, qty: q, credit: fields, coverRoom: held.coverRoom });
+        if (intent.role === 'exit') return `${sendText}${word}${market === 'S' && action === 'Buy' ? '回補' : '平倉'}（出場單，不附停損停利）`;
         const pEffect = protectEffect(effect, market, clickOctype);
         if (protect.on && !protectBlock && pEffect === 'reverse') return `${sendText}${word}（自動停損停利開啟時反手不送）`;
         return `${sendText}${word}${protect.on && !protectBlock && pEffect === 'open' ? '（附停損停利）' : ''}`;
@@ -1265,7 +1271,8 @@ export function FlashOrder({
     }, [stillPanelAccount, captureContext]);
 
     // #216 觸價模式：在點的價位掛觸價單（不是限價）。方向由成交價決定；
-    // 反向且數量在持倉內＝停損停利出場（不擋風控、期貨平倉），其他＝進場
+    // 反向且數量在持倉內＝停損停利出場（不擋風控、期貨平倉；股票：現股賣出在
+    // 現股持股內，或現股買進在今天待回補的當沖先賣內，#403），其他＝進場
     // 觸價單（觸發時套用風控）；自動停損停利開啟的進場附括號單
     const placeTriggerAt = useCallback(async (action: Action, price: number) => {
         const capturedAccount = accountRef.current;
@@ -1288,7 +1295,10 @@ export function FlashOrder({
         const q = Math.max(1, qtyRef.current);
         const clickOrder = orderRef.current;
         const effect = positionEffect(heldRef.current.held, action, q);
-        const intent = triggerIntent({ market: futures ? 'F' : 'S', octype: clickOrder.octype, effect, exitSafe: heldRef.current.exitSafe });
+        // #403 stocks: a cash buy within today's 當沖先賣 to cover, or a cash
+        // sell within the shares held, is an exit (no opening-risk checks)
+        const intent = triggerIntent({ market: futures ? 'F' : 'S', octype: clickOrder.octype, effect, exitSafe: heldRef.current.exitSafe,
+            action, qty: q, credit: creditFields, coverRoom: heldRef.current.coverRoom });
         const send = triggerSendOf(setting, { market: futures ? 'F' : 'S', odd: oddLot, mktPriceType: clickOrder.priceType, action });
         const validity = defaultValidity(futures);
         const key = `trigger:${oddLot ? 'odd:' : ''}${action}:${keyOf(price)}`;

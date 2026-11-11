@@ -13,6 +13,7 @@ import { ACTIVE_ORDER_STATUSES, type AccountedTrade, type Trade } from './types/
 import type { ContractBase } from './types/contract';
 import { stockDayStart, stockOrderConditions, type StockOrderConditions } from './stock-order-conditions';
 import { tradingDayStart } from './futures-fifo';
+import { isOddLot } from './odd-lot';
 
 export interface SideTotals {
     /** 有效委託量＝原始委託 − 已刪（減量）；送單失敗的不算 */
@@ -183,4 +184,29 @@ function dealFills(t: Trade, deal: number, kind: Fill['kind'], out: Fill[]): num
  * 00:00，15:00 之後仍是今天（不能套期貨的邊界，否則收盤後合計歸零） */
 export function flashTotalsSince(stock: boolean, nowMs = Date.now()): number {
     return stock ? stockDayStart(nowMs) : tradingDayStart(nowMs / 1000);
+}
+
+/** #403 今天還能用現股買進回補的當沖先賣量（委託單位）：待回補，再扣掉條件或
+ * 時間未知的買進成交（可能已是回補）與仍在場上的買單（成交後也會回補）。
+ * 只能少算不能多算：多算的部分買進會被當成出場、不經風控。 */
+export function dayShortCoverRoom(t: FlashOrderTotals | null): number {
+    const d = t?.dayShort;
+    if (!t || !d) return 0;
+    return Math.max(0, d.open - d.unknownBuy - d.untimedBuy - t.buy.working);
+}
+
+type AccountKeyLike = { account_type: string; broker_id: string; account_id: string };
+
+/** #403 一個帳戶、一檔股票、一個單位（整股／零股）今天還能回補的當沖先賣量，
+ * 跟閃電下單合計同一套算法（只看委託與成交回報，不看持倉投影，#400／#401）。 */
+export function accountCoverRoom(trades: readonly AccountedTrade[], account: AccountKeyLike, code: string, odd: boolean,
+    nowMs = Date.now()): number {
+    const same = (a: Partial<AccountKeyLike> | null | undefined) => !!a && a.broker_id === account.broker_id
+        && a.account_id === account.account_id && (a.account_type === undefined || a.account_type === account.account_type);
+    const matches = (t: Trade) => {
+        const own = (t as AccountedTrade).account;
+        return (own ? same(own) : same(t.order.account)) && (t.contract.target_code || t.contract.code) === code
+            && isOddLot(t.order.order_lot) === odd;
+    };
+    return dayShortCoverRoom(flashOrderTotals(trades, matches, true, flashTotalsSince(true, nowMs)));
 }

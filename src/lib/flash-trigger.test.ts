@@ -94,9 +94,34 @@ describe('what a click does', () => {
         expect(triggerIntent({ market: 'F', octype: 'Auto', effect: 'open', exitSafe: true })).toEqual({ role: 'entry' });
         expect(triggerIntent({ market: 'F', octype: 'New', effect: 'reduce', exitSafe: true })).toEqual({ role: 'entry', octype: 'New' });
         expect(triggerIntent({ market: 'F', octype: 'Cover', effect: 'open', exitSafe: true })).toEqual({ role: 'exit', octype: 'Cover' });
-        // stocks: always an entry (no holdings check or reservation for a plain trigger)
+        // stocks without a side / quantity: an entry
         expect(triggerIntent({ market: 'S', effect: 'reduce', exitSafe: true })).toEqual({ role: 'entry' });
         expect(triggerIntent({ market: 'S', effect: 'reverse', exitSafe: true })).toEqual({ role: 'entry' });
+    });
+
+    // #403 3147: 當沖先賣 1 張, then 觸買 1 張 to cover it — an exit, not an opening entry
+    it('intent (stocks): a cash buy within today\'s 當沖先賣 to cover, or a cash sell within the shares held, is an exit', () => {
+        const S = { market: 'S' as const, exitSafe: false, effect: 'open' as const };
+        // cover buy ≤ 待補 → exit; more than 待補 → entry (the rest would open a long)
+        expect(triggerIntent({ ...S, action: 'Buy', qty: 1, coverRoom: 1 })).toEqual({ role: 'exit' });
+        expect(triggerIntent({ ...S, action: 'Buy', qty: 2, coverRoom: 1 })).toEqual({ role: 'entry' });
+        expect(triggerIntent({ ...S, action: 'Buy', qty: 1, coverRoom: 0 })).toEqual({ role: 'entry' });
+        expect(triggerIntent({ ...S, action: 'Buy', qty: 1 })).toEqual({ role: 'entry' });
+        // the buy positions (#401: a projected short) never decide it
+        expect(triggerIntent({ ...S, action: 'Buy', qty: 1, effect: 'reduce', exitSafe: true, coverRoom: 0 })).toEqual({ role: 'entry' });
+        // a 融資 buy is no cover
+        expect(triggerIntent({ ...S, action: 'Buy', qty: 1, coverRoom: 3, credit: { orderCond: 'MarginTrading' } })).toEqual({ role: 'entry' });
+        // a cash sell within plain cash holdings → exit
+        expect(triggerIntent({ ...S, action: 'Sell', qty: 1, effect: 'reduce', exitSafe: true })).toEqual({ role: 'exit' });
+        expect(triggerIntent({ ...S, action: 'Sell', qty: 1, effect: 'reduce', exitSafe: true, credit: {} })).toEqual({ role: 'exit' });
+        // more than held, holdings not plain cash, or unknown (no position rows: 'open')
+        expect(triggerIntent({ ...S, action: 'Sell', qty: 3, effect: 'reverse', exitSafe: true })).toEqual({ role: 'entry' });
+        expect(triggerIntent({ ...S, action: 'Sell', qty: 1, effect: 'reduce', exitSafe: false })).toEqual({ role: 'entry' });
+        expect(triggerIntent({ ...S, action: 'Sell', qty: 1, effect: 'open', exitSafe: false })).toEqual({ role: 'entry' });
+        // 當沖先賣 / 融資 / 融券 sells open (or carry a credit condition): entries
+        expect(triggerIntent({ ...S, action: 'Sell', qty: 1, effect: 'reduce', exitSafe: true, credit: { daytradeShort: true } })).toEqual({ role: 'entry' });
+        expect(triggerIntent({ ...S, action: 'Sell', qty: 1, effect: 'reduce', exitSafe: true, credit: { orderCond: 'MarginTrading' } })).toEqual({ role: 'entry' });
+        expect(triggerIntent({ ...S, action: 'Sell', qty: 1, effect: 'reduce', exitSafe: true, credit: { orderCond: 'ShortSelling' } })).toEqual({ role: 'entry' });
     });
 
     it('send style: market (range market on futures when the panel says so) or a limit toward a fill', () => {

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMonth } from './flash-order-totals';
+import { accountCoverRoom, dayShortCoverRoom, flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMonth } from './flash-order-totals';
 import { tradingDayStart } from './futures-fifo';
 import type { Trade } from './types/order';
 
@@ -165,4 +165,36 @@ it('flashWorkingOrders lists the same orders the totals count as working', () =>
     const totals = flashOrderTotals(rows, all, false, since, none);
     expect(totals.buy.working).toBe(3);
     expect(totals.sell.working).toBe(2);
+});
+
+// #403 a stock 觸買 within this is a 回補 exit: never more than certainly still short
+it('cover room: the 當沖先賣 still open, less buys of unknown condition or time and working buys', () => {
+    expect(dayShortCoverRoom(null)).toBe(0);
+    expect(dayShortCoverRoom(T([t('Sell', 1, 1, 0, 'Filled', short)]))).toBe(1);
+    expect(dayShortCoverRoom(T([t('Sell', 3, 3, 0, 'Filled', short), t('Buy', 1, 1, 0, 'Filled')]))).toBe(2);
+    // a cover buy still working takes its share
+    expect(dayShortCoverRoom(T([t('Sell', 3, 3, 0, 'Filled', short), t('Buy', 2, 0, 0, 'Submitted')]))).toBe(1);
+    // a buy of unknown condition may have covered
+    expect(dayShortCoverRoom(T([t('Sell', 3, 3, 0, 'Filled', short), t('Buy', 1, 1, 0, 'Filled', { order_cond: undefined })]))).toBe(2);
+    // a plain sell is no short; a buy before the short sale covers nothing
+    expect(dayShortCoverRoom(T([t('Sell', 3, 3, 0, 'Filled', plain)]))).toBe(0);
+    expect(dayShortCoverRoom(T([t('Buy', 1, 1, 0, 'Filled'), t('Sell', 2, 2, 0, 'Filled', short)]))).toBe(2);
+});
+
+it('cover room of one account, stock and unit (整股／零股), from the reports only', () => {
+    const S = { account_type: 'S', broker_id: '9A95', account_id: '0001' };
+    const other = { ...S, account_id: '0002' };
+    const row = (x: Trade, account: typeof S, code = '2317') => ({ ...x, account, contract: { code } }) as never;
+    const now = 5_000_000; // 09:23 Taipei on the first day: the rows below are today's
+    const trades = [
+        row(t('Sell', 2, 2, 0, 'Filled', short), S),
+        row(t('Sell', 5, 5, 0, 'Filled', short), other),
+        row(t('Sell', 4, 4, 0, 'Filled', short), S, '3147'),
+    ];
+    expect(accountCoverRoom(trades, S, '2317', false, now)).toBe(2);
+    expect(accountCoverRoom(trades, other, '2317', false, now)).toBe(5);
+    expect(accountCoverRoom(trades, S, '3147', false, now)).toBe(4);
+    expect(accountCoverRoom(trades, S, '2317', true, now)).toBe(0);
+    // yesterday's short sale is not today's
+    expect(accountCoverRoom(trades, S, '2317', false, now + 86_400_000)).toBe(0);
 });
