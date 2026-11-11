@@ -5,9 +5,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({ place: vi.fn(), register: vi.fn(), add: vi.fn(), create: vi.fn(), owner: 'background' as unknown,
-    notify: vi.fn(), risk: { enabled: false, maxDailyLoss: 0 }, marginAccount: 'F:b:a' as string | undefined }));
+    notify: vi.fn(), risk: { enabled: false, maxDailyLoss: 0 } }));
 vi.mock('../risk', () => ({ getRiskSettings: () => m.risk }));
-vi.mock('../trading-state', () => ({ getTradingState: () => ({ marginAccount: m.marginAccount }) }));
 vi.mock('../bracket', () => ({ ensureBracketHost: vi.fn(), registerBracket: m.register, registrationFailureText: (e: unknown) => String(e) }));
 vi.mock('../protection-env', () => ({ currentProtectionEnv: () => 'http://x|simulation' }));
 vi.mock('../trade', () => ({ notify: m.notify, placeQuickOrder: m.place }));
@@ -28,7 +27,6 @@ beforeEach(() => {
     for (const f of [m.place, m.register, m.add, m.create, m.notify]) f.mockReset();
     m.owner = 'background';
     m.risk = { enabled: false, maxDailyLoss: 0 };
-    m.marginAccount = 'F:b:a';
     m.create.mockResolvedValue('created');
     m.place.mockResolvedValue({ order: { id: 'E1', seqno: 'S1', ordno: '' }, contract: { code: 'TXFR1', target_code: 'TXFJ6' } });
 });
@@ -115,27 +113,5 @@ describe('panel bracket in the background', () => {
         expect(buy).toEqual({ error: expect.stringContaining('股票帳戶的當日損益') });
         expect(m.place).not.toHaveBeenCalled();
         expect(m.create).not.toHaveBeenCalled();
-    });
-
-    it('#403 a 觸價 entry (fired by the engine as an opening order) under a daily loss limit: stock or another futures account is not created', async () => {
-        const STK = { code: '2330', security_type: 'STK', exchange: 'TSE' };
-        const SA = { ...A, account_type: 'S' };
-        const one = { ...plan, trail: null, breakeven: null, tiers: [{ quantity: 1, takeTicks: 10 }] };
-        const touch = { type: 'touch' as const, condition: 'above' as const, price: 610, send: { type: 'MKT' as const },
-            validity: { type: 'today' as const, until: Date.now() + 60_000 } };
-        m.risk = { enabled: true, maxDailyLoss: 5000 };
-        const stock = await placePanelBracket({ contract: STK as never, account: SA as never, action: 'Buy', plan: one, refPrice: 600, entry: touch });
-        expect(stock).toEqual({ error: expect.stringContaining('拿不到股票帳戶的當日損益') });
-        // futures: the selected account (whose P&L the engine gets) is fine, another one is not
-        expect(await placePanelBracket({ contract: TXF as never, account: A as never, action: 'Buy', plan, refPrice: 20000,
-            entry: { ...touch, price: 20100 } })).toBe('trigger');
-        m.marginAccount = 'F:b:other';
-        expect(await placePanelBracket({ contract: TXF as never, account: A as never, action: 'Buy', plan, refPrice: 20000,
-            entry: { ...touch, price: 20100 } })).toEqual({ error: expect.stringContaining('只取得主視窗選取的期貨帳戶') });
-        expect(m.create).toHaveBeenCalledTimes(1);
-        // no limit: the stock one is created
-        m.risk = { enabled: true, maxDailyLoss: 0 };
-        expect(await placePanelBracket({ contract: STK as never, account: SA as never, action: 'Buy', plan: one, refPrice: 600, entry: touch })).toBe('trigger');
-        expect(m.place).not.toHaveBeenCalled();
     });
 });

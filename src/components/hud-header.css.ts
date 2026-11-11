@@ -471,13 +471,6 @@ export const emptyHint = style({
     padding: '2px 8px',
 });
 
-/** 風控: a rule that changes what the background engine sends (#403) */
-export const riskWarn = style({
-    fontSize: '0.68rem',
-    color: vars.color.amber,
-    padding: '2px 8px',
-});
-
 export const convPreview = style({
     fontFamily: vars.font.mono,
     fontSize: '0.66rem',
