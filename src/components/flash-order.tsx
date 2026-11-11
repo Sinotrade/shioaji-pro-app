@@ -1021,8 +1021,8 @@ export function FlashOrder({
         : null, [showTotals, trades, contract, odd, market, orderCondsVersion]);
     // #403 今天還能用現股買進回補的當沖先賣（同一套回報算法）：觸買在這之內＝回補出場單
     const coverRoom = useMemo(() => market === 'S'
-        ? dayShortCoverRoom(orderTotals ?? flashOrderTotals(trades, totalsScope(contract, odd), true, flashTotalsSince(true)))
-        : 0, [orderTotals, trades, contract, odd, market, orderCondsVersion]);
+        ? dayShortCoverRoom(trades, totalsScope(contract, odd), flashTotalsSince(true))
+        : 0, [trades, contract, odd, market, orderCondsVersion]);
 
     // 買全刪／賣全刪可刪的筆數＝合計裡「未成交」的那一組委託（cancelSide 用同一個函式選目標）
     const sideOrderCount = useMemo(() => {

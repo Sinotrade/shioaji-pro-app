@@ -168,17 +168,28 @@ it('flashWorkingOrders lists the same orders the totals count as working', () =>
 });
 
 // #403 a stock 觸買 within this is a 回補 exit: never more than certainly still short
+const R = (trades: Trade[]) => dayShortCoverRoom(trades, all, 0, none);
 it('cover room: the 當沖先賣 still open, less buys of unknown condition or time and working buys', () => {
-    expect(dayShortCoverRoom(null)).toBe(0);
-    expect(dayShortCoverRoom(T([t('Sell', 1, 1, 0, 'Filled', short)]))).toBe(1);
-    expect(dayShortCoverRoom(T([t('Sell', 3, 3, 0, 'Filled', short), t('Buy', 1, 1, 0, 'Filled')]))).toBe(2);
+    expect(R([])).toBe(0);
+    expect(R([t('Sell', 1, 1, 0, 'Filled', short)])).toBe(1);
+    expect(R([t('Sell', 3, 3, 0, 'Filled', short), t('Buy', 1, 1, 0, 'Filled')])).toBe(2);
     // a cover buy still working takes its share
-    expect(dayShortCoverRoom(T([t('Sell', 3, 3, 0, 'Filled', short), t('Buy', 2, 0, 0, 'Submitted')]))).toBe(1);
+    expect(R([t('Sell', 3, 3, 0, 'Filled', short), t('Buy', 2, 0, 0, 'Submitted')])).toBe(1);
     // a buy of unknown condition may have covered
-    expect(dayShortCoverRoom(T([t('Sell', 3, 3, 0, 'Filled', short), t('Buy', 1, 1, 0, 'Filled', { order_cond: undefined })]))).toBe(2);
+    expect(R([t('Sell', 3, 3, 0, 'Filled', short), t('Buy', 1, 1, 0, 'Filled', { order_cond: undefined })])).toBe(2);
     // a plain sell is no short; a buy before the short sale covers nothing
-    expect(dayShortCoverRoom(T([t('Sell', 3, 3, 0, 'Filled', plain)]))).toBe(0);
-    expect(dayShortCoverRoom(T([t('Buy', 1, 1, 0, 'Filled'), t('Sell', 2, 2, 0, 'Filled', short)]))).toBe(2);
+    expect(R([t('Sell', 3, 3, 0, 'Filled', plain)])).toBe(0);
+    expect(R([t('Buy', 1, 1, 0, 'Filled'), t('Sell', 2, 2, 0, 'Filled', short)])).toBe(2);
+});
+
+// Codex review P1: a short sale and a buy in the same second — the display
+// keeps 待補 1 (buy first), the risk room counts the buy as the cover (flat)
+it('cover room: a buy in the same second as the short sale covers it (display still says 待補)', () => {
+    const same = [t('Sell', 1, 1, 0, 'Filled', short, { order_ts: 5000 }), t('Buy', 1, 1, 0, 'Filled', {}, { order_ts: 5000 })];
+    expect(T(same).dayShort?.open).toBe(1);
+    expect(R(same)).toBe(0);
+    // listed buy first, same second: still counted as the cover
+    expect(R([same[1]!, same[0]!])).toBe(0);
 });
 
 it('cover room of one account, stock and unit (整股／零股), from the reports only', () => {

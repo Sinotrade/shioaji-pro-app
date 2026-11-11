@@ -1493,22 +1493,26 @@ function reserve(t: TriggerOrder, lastPrice: number): { rec: ExitRecord; sibling
  * it. It then goes out with the risk checks of an entry (it would open a
  * position). Unknown (no confirmed positions / orders): kept as created. */
 export function stockExitOpens(t: Pick<TriggerOrder, 'role' | 'bracketId' | 'time' | 'account' | 'orderCode' | 'orderLot' | 'action'>,
-    rec: Pick<ExitRecord, 'quantity' | 'reserveKey'>, nowMs = Date.now()): boolean {
+    rec: Pick<ExitRecord, 'id' | 'quantity' | 'reserveKey'>, nowMs = Date.now()): boolean {
     if (t.role === 'entry' || t.bracketId || t.time || t.account?.account_type !== 'S' || !t.orderCode) return false;
     const odd = isOddLot(t.orderLot);
-    const perUnit = odd ? 1 : SHARES_PER_LOT;
-    const own = rec.quantity * perUnit;
-    // the reservation includes this exit itself
-    const others = Math.max(0, reservedShares(rec.reserveKey) - own);
-    let room: number | null;
+    const own = rec.quantity * (odd ? 1 : SHARES_PER_LOT);
     if (t.action === 'Sell') {
-        room = closablePosition(t.account, t.orderCode, 'Sell');
-    } else {
-        const state = getTradingState();
-        const q = state.queries?.orders;
-        room = !q || q.updatedAt === null ? null : accountCoverRoom(state.trades, t.account, t.orderCode, odd, nowMs) * perUnit;
+        const held = closablePosition(t.account, t.orderCode, 'Sell');
+        // the reservation includes this exit itself
+        return held !== null && held - Math.max(0, reservedShares(rec.reserveKey) - own) < own;
     }
-    return room !== null && room - others < own;
+    const state = getTradingState();
+    const q = state.queries?.orders;
+    if (!q || q.updatedAt === null) return false;
+    const room = accountCoverRoom(state.trades, t.account, t.orderCode, odd, nowMs) * (odd ? 1 : SHARES_PER_LOT);
+    // the cover room already takes off working buys and filled covers: an
+    // exit whose order is in the order list is counted there, not again here
+    const listed = new Set(state.trades.map(x => x.order.id));
+    const others = exits.filter(e => e.reserveKey === rec.reserveKey && e.id !== rec.id && !isResolved(e)
+        && !(e.orderId && listed.has(e.orderId)))
+        .reduce((s, e) => s + Math.max(0, e.quantity - e.filled) * (isOddLot(e.orderLot) ? 1 : SHARES_PER_LOT), 0);
+    return room - others < own;
 }
 
 function planFor(t: TriggerOrder) {

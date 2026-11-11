@@ -254,6 +254,23 @@ describe('stock exits re-checked when they fire (#403)', () => {
         expect([optsOf(0).bypassRisk, optsOf(1).bypassRisk]).toEqual([true, false]);
     });
 
+    // Codex review P2: the first cover's order, once listed, is counted by the
+    // cover room (working buy) — its reservation is not taken off again
+    it('a second cover of a 2 張 short stays an exit once the first cover\'s order is listed', async () => {
+        await boot();
+        m.trades = [shortSale(2, 2)]; m.ordersAt = 1;
+        await coverBuy(1);
+        await engine.addTrigger({ code: '2330', condition: 'above', price: 1020, action: 'Buy', quantity: 1, kind: 'stop' }, STK as never);
+        await tick(1011);
+        // the first cover is in the order list, still working
+        m.trades = [...m.trades, { account: S1, contract: { code: '2330' },
+            order: { id: 'exit-1', action: 'Buy', price: 0, quantity: 1, order_cond: 'Cash' },
+            status: { status: 'Submitted', order_ts: Date.now() / 1000, deal_quantity: 0, cancel_quantity: 0, deals: [] } }];
+        await tick(1021);
+        expect(m.place).toHaveBeenCalledTimes(2);
+        expect([optsOf(0).bypassRisk, optsOf(1).bypassRisk]).toEqual([true, true]);
+    });
+
     it('unknown orders or positions keep the exit as created', async () => {
         await boot();
         await coverBuy(1); // orders never read
