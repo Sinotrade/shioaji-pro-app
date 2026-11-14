@@ -185,7 +185,7 @@ export function PositionsPane({
 
     // 捕捉列本身的帳戶；不得以目前選取帳戶補猜持倉歸屬。
     const closeOne = async (p: AccountedPosition, mode2: 'close' | 'reverse') => {
-        if (p.reconcileReason) throw new Error('此持倉待對帳，請先更新持倉再平倉');
+        if (p.reconcileReason) throw Object.assign(new Error('此持倉待對帳，請先更新持倉再平倉；未送出委託'), { mutationNotStarted: true });
         const account = p.account;
         if (!account || !canTrade(account) || !account.broker_id || !account.account_id || !['S', 'F'].includes(account.account_type)) {
             throw new Error('持倉帳戶歸屬不明，未送出委託');
@@ -245,12 +245,14 @@ export function PositionsPane({
         if (targets.length === 0 || busy || busyCode) return;
         setBusy({ done: 0, total: targets.length });
         let ok = 0;
+        let notSent = 0;
         let firstErr = '';
         for (const p of targets) {
             try {
                 await closeOne(p, 'close');
                 ok++;
             } catch (e) {
+                if ((e as { mutationNotStarted?: boolean } | null)?.mutationNotStarted === true) notSent++;
                 if (!firstErr) {
                     firstErr = `${p.code}: ${e instanceof Error ? e.message : String(e)}`;
                 }
@@ -260,12 +262,13 @@ export function PositionsPane({
         setBusy(null);
         setSelected(new Set());
         const fail = targets.length - ok;
+        const unknown = fail - notSent;
         notify({
             kind: fail > 0 ? 'err' : 'ok',
-            title: '批次平倉請核對委託',
-            body: `已送出 ${ok} 筆 / 未完整確認 ${fail} 筆；可能部分送出，勿直接重送${firstErr ? `｜${firstErr}` : ''}`,
+            title: ok === 0 && unknown === 0 ? '批次平倉未成立（未送出或被券商拒絕）' : '批次平倉請核對委託',
+            body: `已送出 ${ok} 筆 / 未成立 ${notSent} 筆 / 未完整確認 ${unknown} 筆${unknown ? '；可能部分送出，勿直接重送' : ''}${firstErr ? `｜${firstErr}` : ''}`,
         });
-        if (fail > 0) reconcileAfterUnknownOutcome();
+        if (unknown > 0) reconcileAfterUnknownOutcome();
         onChanged();
     };
 

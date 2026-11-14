@@ -52,7 +52,7 @@ it('labels and blocks flattening only a position that needs reconciliation', asy
     expect(JSON.stringify(view!.toJSON())).toContain('待對帳');
     await click('平');
     expect(mocks.place).not.toHaveBeenCalled();
-    expect(operationNotice(mocks.notify, '平倉未完整確認').body).toContain('請先更新持倉');
+    expect(operationNotice(mocks.notify, '平倉未成立（未送出或被券商拒絕）').body).toContain('請先更新持倉');
 });
 it('selects credit books independently when projected cash and margin rows share an ID', async () => {
     const stock = { ...owner, account_type: 'S' };
