@@ -48,6 +48,18 @@ let root: ReactTestRenderer | undefined;
 let store: typeof import('./trading-state');
 async function flush() { await act(async () => { await Promise.resolve(); }); }
 async function emit(report: OrderEventReport) { await act(async () => { mocks.order!(report); vi.advanceTimersByTime(50); }); }
+function stockFill(fields: Record<string, unknown> = {}) {
+    return normalizeOrderEvent({ state: 'StockDeal', data: { StockDeal: {
+        trade_id: 'new', seqno: 'new', ordno: 'new', exchange_seq: 'f1', broker_id: 'fixture', account_id: 'a',
+        code: '2330', action: 'Buy', price: 101, quantity: 1, order_lot: 'Common', order_cond: 'Cash', ts: epoch + 10, ...fields,
+    } } })!;
+}
+async function stockOrder(fields: Record<string, unknown> = {}) {
+    const wire = order().raw as { data: { StockOrder: { order: Record<string, unknown> } } };
+    Object.assign(wire.data.StockOrder.order, fields);
+    await emit(normalizeOrderEvent(wire)!);
+}
+async function recovery() { await act(async () => { await vi.advanceTimersByTimeAsync(300); }); }
 beforeEach(async () => {
     vi.resetModules(); vi.clearAllMocks(); vi.useFakeTimers(); vi.setSystemTime(epoch * 1000);
     vi.stubGlobal('navigator', { locks: { request: (_name: string, _options: unknown, callback: (lock: object) => unknown) => callback({}) } });
@@ -67,6 +79,302 @@ beforeEach(async () => {
     await act(async () => { root = create(createElement(Consumer)); });
 });
 afterEach(async () => { await act(async () => { root?.unmount(); }); root = undefined; vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+describe('#401 real-time position books', () => {
+    it('does not reuse fills or their identities across a simulation/production mode change', async () => {
+        const info = await import('./server-info-store');
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: true } as import('./shioaji').ServerInfo);
+        mocks.positions.mockResolvedValue([]);
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        await stockOrder();
+        await emit(stockFill());
+        expect(store.getTradingState().positions[0]!.quantity).toBe(1000);
+        info.observeServerInfo(info.beginServerInfoRequest(), { simulation: false } as import('./shioaji').ServerInfo);
+        await act(async () => { await store.refreshTradingStateForModeChange(); });
+        expect(store.getTradingState().positions).toEqual([]);
+        await stockOrder();
+        // Same identifiers can be reused in the other environment.
+        await emit(stockFill());
+        expect(store.getTradingState().positions[0]!.quantity).toBe(1000);
+    });
+    it('does not reopen a covered fill when its pending contract lookup fails after recovery', async () => {
+        mocks.account.account_type = 'F';
+        mocks.positions.mockResolvedValue([]);
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('positions'); });
+        const old = (order().raw as { data: { StockOrder: { order: object } } }).data.StockOrder;
+        await emit(normalizeOrderEvent({ state: 'FuturesOrder', data: { FuturesOrder: { ...old,
+            order: { ...old.order, oc_type: 'New' },
+            contract: { code: 'TXF', full_code: 'TXFI6', security_type: 'FUT', exchange: 'TAIFEX' },
+        } } })!);
+        let reject!: (reason: Error) => void;
+        const metadata = new Promise<never>((_resolve, fail) => { reject = fail; });
+        mocks.cached.mockReturnValue(undefined);
+        mocks.ensure.mockReturnValue(metadata);
+        await emit(normalizeOrderEvent({ state: 'FuturesDeal', data: { FuturesDeal: {
+            trade_id: 'new', seqno: 'new', ordno: 'new', exchange_seq: 'f1', broker_id: 'fixture', account_id: 'a',
+            code: 'TXF', full_code: 'TXFI6', action: 'Buy', price: 100, quantity: 1, ts: epoch + 10,
+        } } })!);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(true);
+        await recovery();
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+        await act(async () => { reject(new Error('metadata offline')); });
+        await flush();
+        expect(store.getTradingState().positionIssues).toEqual([]);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+    });
+    it('projects partial day-short fills and later cash covers using the recorded request flag', async () => {
+        const { noteStockOrderConditions } = await import('./stock-order-conditions');
+        noteStockOrderConditions(mocks.account, { seqno: 'short', ordno: 'short' }, { order_cond: 'Cash', daytrade_short: true });
+        await stockOrder({ id: 'short', seqno: 'short', ordno: 'short', action: 'Sell' });
+        const sell = { trade_id: 'short', seqno: 'short', ordno: 'short', action: 'Sell' };
+        await emit(stockFill({ ...sell, exchange_seq: 's1', ts: epoch + 3 }));
+        await emit(stockFill({ ...sell, exchange_seq: 's2', ts: epoch + 4 }));
+        expect(store.getTradingState().positions.map(p => [p.direction, p.quantity])).toEqual([['Buy', 1000], ['Sell', 2000]]);
+        await stockOrder();
+        await emit(stockFill({ exchange_seq: 'c1', ts: epoch + 5 }));
+        expect(store.getTradingState().positions.map(p => [p.direction, p.quantity])).toEqual([['Buy', 1000], ['Sell', 1000]]);
+        await emit(stockFill({ exchange_seq: 'c2', ts: epoch + 6 }));
+        expect(store.getTradingState().positions).toEqual([expect.objectContaining({ direction: 'Buy', quantity: 1000 })]);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+        expect(mocks.positions).toHaveBeenCalledOnce();
+    });
+    it.each(['Odd', 'IntradayOdd', 'Common', 'Fixing', 'BlockTrade'])('projects %s quantities in shares', async order_lot => {
+        await stockOrder({ order_lot });
+        await emit(stockFill({ order_lot, quantity: 2 }));
+        expect(store.getTradingState().positions[0]!.quantity).toBe(['Odd', 'IntradayOdd'].includes(order_lot) ? 1002 : 3000);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+    });
+    it.each(['MarginTrading', 'ShortSelling'])('projects partial %s fills without touching cash', async order_cond => {
+        const action = order_cond === 'MarginTrading' ? 'Buy' : 'Sell';
+        await stockOrder({ action, order_cond });
+        await emit(stockFill({ action, order_cond, exchange_seq: 'open1' }));
+        await emit(stockFill({ action, order_cond, exchange_seq: 'open2', ts: epoch + 11 }));
+        await stockOrder({ id: 'close', seqno: 'close', ordno: 'close', action: action === 'Buy' ? 'Sell' : 'Buy', order_cond });
+        await emit(stockFill({ trade_id: 'close', seqno: 'close', ordno: 'close', action: action === 'Buy' ? 'Sell' : 'Buy',
+            order_cond, exchange_seq: 'close1', ts: epoch + 12 }));
+        expect(store.getTradingState().positions).toEqual([expect.objectContaining({ direction: 'Buy', quantity: 1000 }),
+            expect.objectContaining({ direction: action, quantity: 1000, cond: order_cond })]);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+        expect(mocks.positions).toHaveBeenCalledOnce();
+    });
+    it('replays an out-of-order cover and short by fill time and ignores duplicate delivery', async () => {
+        const { noteStockOrderConditions } = await import('./stock-order-conditions');
+        noteStockOrderConditions(mocks.account, { seqno: 'short', ordno: 'short' }, { order_cond: 'Cash', daytrade_short: true });
+        await stockOrder({ id: 'short', seqno: 'short', ordno: 'short', action: 'Sell' });
+        await stockOrder();
+        const cover = stockFill({ ts: epoch + 5 });
+        await emit(cover);
+        expect(store.getTradingState().positions[0]!.quantity).toBe(2000);
+        const short = stockFill({ trade_id: 'short', seqno: 'short', ordno: 'short', action: 'Sell', exchange_seq: 's1', ts: epoch + 3 });
+        await emit(short); await emit(cover); await emit(short);
+        expect(store.getTradingState().positions).toEqual([expect.objectContaining({ direction: 'Buy', quantity: 1000, price: 100 })]);
+        expect(mocks.positions).toHaveBeenCalledOnce();
+    });
+    it.each([false, true])('adopts a raced manual snapshot (already includes fill: %s) and queries once without double counting', async included => {
+        await stockOrder();
+        const pending = deferred<unknown[]>();
+        mocks.positions.mockImplementationOnce(() => pending.promise).mockResolvedValueOnce([{ ...baseline(), quantity: 2000 }]);
+        vi.advanceTimersByTime(1500);
+        let refresh!: Promise<void>;
+        await act(async () => { refresh = store.refreshTradingState('positions'); });
+        await emit(stockFill());
+        await act(async () => { pending.resolve([{ ...baseline(), quantity: included ? 2000 : 1000, price: 99 }]); await refresh; });
+        expect(store.getTradingState().positions[0]).toMatchObject({ quantity: included ? 2000 : 1000, price: 99 });
+        expect(store.getTradingState().queries.positions.reasons).toContain('snapshot-boundary');
+        await recovery();
+        expect(mocks.positions).toHaveBeenCalledTimes(3);
+        expect(store.getTradingState().positions[0]!.quantity).toBe(2000);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+        await emit(stockFill()); await recovery();
+        expect(store.getTradingState().positions[0]!.quantity).toBe(2000);
+        expect(mocks.positions).toHaveBeenCalledTimes(3);
+    });
+    it('keeps another account and condition current while an unknown cash sell queries only its own account', async () => {
+        const b = { ...mocks.account, account_id: 'b' };
+        mocks.extraAccounts = [b];
+        mocks.positions.mockImplementation(async () => [baseline()]);
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('positions'); });
+        await stockOrder({ action: 'Sell' });
+        const before = mocks.positions.mock.calls.length;
+        await emit(stockFill({ action: 'Sell' }));
+        expect(store.getTradingState().positionIssues).toEqual([expect.objectContaining({ account: mocks.account, code: '2330' })]);
+        expect(store.getTradingState().positions.find(p => p.account?.account_id === 'a')).toHaveProperty('reconcileReason');
+        expect(store.getTradingState().positions.find(p => p.account?.account_id === 'b')).not.toHaveProperty('reconcileReason');
+        await stockOrder({ account: b });
+        await emit(stockFill({ account_id: 'b', exchange_seq: 'b1' }));
+        expect(store.getTradingState().positions.find(p => p.account?.account_id === 'b')!.quantity).toBe(2000);
+        await recovery();
+        expect(mocks.positions.mock.calls.slice(before).map(c => c[1].account_id)).toEqual(['a']);
+        expect(store.getTradingState().positions.find(p => p.account?.account_id === 'b')!.quantity).toBe(2000);
+    });
+    it('coalesces unsafe credit closes into one query and does not retry a failed recovery', async () => {
+        await stockOrder({ action: 'Sell', order_cond: 'MarginTrading' });
+        mocks.positions.mockRejectedValueOnce(new Error('offline'));
+        const report = stockFill({ action: 'Sell', order_cond: 'MarginTrading' });
+        await emit(report); await emit(report);
+        await emit(stockFill({ action: 'Sell', order_cond: 'MarginTrading', exchange_seq: 'f2' }));
+        expect(store.getTradingState().positions[0]!.quantity).toBe(1000);
+        await recovery();
+        expect(mocks.positions).toHaveBeenCalledTimes(2);
+        expect(store.getTradingState().queries.positions.reasons).toContain('query-failed');
+        await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+        expect(mocks.positions).toHaveBeenCalledTimes(2);
+    });
+    it('does not discard account A snapshot when account B fills during the read', async () => {
+        const b = { ...mocks.account, account_id: 'b' }; mocks.extraAccounts = [b];
+        const pending = deferred<unknown[]>();
+        mocks.positions.mockImplementation(async (_t: string, a: Account) => a.account_id === 'a' ? pending.promise : [baseline()]);
+        vi.advanceTimersByTime(1500);
+        let refresh!: Promise<void>;
+        await act(async () => { refresh = store.refreshTradingState('positions'); });
+        await stockOrder({ account: b });
+        await emit(stockFill({ account_id: 'b' }));
+        await act(async () => { pending.resolve([{ ...baseline(), quantity: 500 }]); await refresh; });
+        expect(store.getTradingState().positions.find(p => p.account?.account_id === 'a')!.quantity).toBe(500);
+        expect(store.getTradingState().positions.find(p => p.account?.account_id === 'b')!.quantity).toBe(2000);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+        await recovery();
+        expect(mocks.positions).toHaveBeenCalledTimes(3);
+    });
+    it('keeps a second raced recovery visibly uncertain and stops after one follow-up', async () => {
+        await stockOrder();
+        const first = deferred<unknown[]>(), second = deferred<unknown[]>();
+        mocks.positions.mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise);
+        vi.advanceTimersByTime(1500);
+        let refresh!: Promise<void>;
+        await act(async () => { refresh = store.refreshTradingState('positions'); });
+        await emit(stockFill());
+        await act(async () => { first.resolve([{ ...baseline(), quantity: 2000 }]); await refresh; });
+        await recovery();
+        expect(mocks.positions).toHaveBeenCalledTimes(3);
+        await emit(stockFill({ exchange_seq: 'f2', ts: epoch + 11 }));
+        await act(async () => { second.resolve([{ ...baseline(), quantity: 3000 }]); });
+        await flush();
+        expect(store.getTradingState().positions[0]!.quantity).toBe(3000);
+        expect(store.getTradingState().queries.positions.reasons).toContain('snapshot-boundary');
+        await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+        expect(mocks.positions).toHaveBeenCalledTimes(3);
+    });
+    it('does not apply subaccount futures fills to a parent book or claim that a parent snapshot reconciles them', async () => {
+        mocks.account.account_type = 'F';
+        mocks.positions.mockResolvedValue([{ id: 1, code: 'TXFI6', direction: 'Buy', quantity: 2, price: 100, last_price: 100, pnl: 0 }]);
+        mocks.cached.mockReturnValue({ code: 'TXFI6', multiplier: 200 });
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('positions'); });
+        await emit(normalizeOrderEvent({ state: 'FuturesDeal', data: { FuturesDeal: {
+            trade_id: 'sub', exchange_seq: 'sub1', broker_id: 'fixture', account_id: 'a', subaccount: 'child',
+            code: 'TXF', full_code: 'TXFI6', action: 'Buy', price: 100, quantity: 1, ts: epoch + 10,
+        } } })!);
+        expect(store.getTradingState().positions[0]!.quantity).toBe(2);
+        expect(store.getTradingState().positions[0]).not.toHaveProperty('reconcileReason');
+        await recovery();
+        expect(store.getTradingState().positionIssues).toEqual([expect.objectContaining({ subaccount: 'child', code: 'TXFI6' })]);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(true);
+        expect(store.getTradingState().positions[0]!.quantity).toBe(2);
+    });
+    it.each(['DayTrade', 'missing-multiplier', 'combo'])('reconciles unprojectable futures %s once', async path => {
+        mocks.account.account_type = 'F';
+        mocks.positions.mockResolvedValue([]);
+        mocks.cached.mockReturnValue({ code: 'TXFI6', ...(path !== 'missing-multiplier' ? { multiplier: 200 } : {}) });
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('positions'); });
+        const wire = order().raw as { data: { StockOrder: Record<string, unknown> } };
+        const old = wire.data.StockOrder;
+        await emit(normalizeOrderEvent({ state: 'FuturesOrder', data: { FuturesOrder: { ...old,
+            order: { ...(old.order as object), oc_type: path === 'DayTrade' ? 'DayTrade' : 'New' },
+            contract: { code: 'TXF', full_code: 'TXFI6', security_type: 'FUT', exchange: 'TAIFEX' },
+        } } })!);
+        const fill = normalizeOrderEvent({ state: 'FuturesDeal', data: { FuturesDeal: {
+            trade_id: 'new', seqno: 'new', ordno: 'new', exchange_seq: 'fut1', broker_id: 'fixture', account_id: 'a',
+            code: 'TXF', full_code: 'TXFI6', action: 'Buy', price: 100, quantity: 1, ts: epoch + 10, combo: path === 'combo',
+        } } })!;
+        await emit(fill); await emit(fill);
+        expect(store.getTradingState().positions).toEqual([]);
+        expect(store.getTradingState().positionIssues).toHaveLength(1);
+        const before = mocks.positions.mock.calls.length;
+        await recovery();
+        expect(mocks.positions).toHaveBeenCalledTimes(before + 1);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+        await recovery();
+        expect(mocks.positions).toHaveBeenCalledTimes(before + 1);
+    });
+    it('replays out-of-order futures fills from the snapshot to preserve FIFO cost and deduplicates each fill', async () => {
+        mocks.account.account_type = 'F';
+        mocks.positions.mockResolvedValue([]);
+        mocks.cached.mockReturnValue({ code: 'TXFI6', multiplier: 200 });
+        vi.advanceTimersByTime(1500);
+        await act(async () => { await store.refreshTradingState('positions'); });
+        const wire = order().raw as { data: { StockOrder: Record<string, unknown> } };
+        const old = wire.data.StockOrder;
+        for (const [id, action, oc_type] of [['open', 'Buy', 'New'], ['close', 'Sell', 'Cover']]) {
+            await emit(normalizeOrderEvent({ state: 'FuturesOrder', data: { FuturesOrder: { ...old,
+                order: { ...(old.order as object), id, seqno: id, ordno: id, action, oc_type },
+                contract: { code: 'TXF', full_code: 'TXFI6', security_type: 'FUT', exchange: 'TAIFEX' },
+            } } })!);
+        }
+        const fill = (id: string, seq: string, action: string, ts: number, price: number) => normalizeOrderEvent({ state: 'FuturesDeal', data: { FuturesDeal: {
+            trade_id: id, seqno: id, ordno: id, exchange_seq: seq, broker_id: 'fixture', account_id: 'a',
+            code: 'TXF', full_code: 'TXFI6', action, price, quantity: 1, ts: epoch + ts,
+        } } })!;
+        const late = fill('open', 'b2', 'Buy', 5, 120), early = fill('open', 'b1', 'Buy', 3, 100), close = fill('close', 's1', 'Sell', 6, 125);
+        await emit(late); await emit(close); await emit(early);
+        await emit(early); await emit(late); await emit(close);
+        expect(store.getTradingState().positions).toEqual([expect.objectContaining({ direction: 'Buy', quantity: 1, price: 120 })]);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+        expect(mocks.positions).toHaveBeenCalledTimes(2);
+    });
+});
+
+it('retains an unsafe fill until recovery even when a later fill in the same book projects', async () => {
+    await stockOrder();
+    await emit(stockFill({ exchange_seq: 'unsafe', order_lot: undefined }));
+    await emit(stockFill({ exchange_seq: 'safe', ts: epoch + 11 }));
+    expect(store.getTradingState().positions[0]!.quantity).toBe(2000);
+    expect(store.getTradingState().queries.positions.reasons).toContain('unknown-fill');
+    expect(store.getTradingState().positions[0]).toHaveProperty('reconcileReason');
+    await recovery();
+    expect(mocks.positions).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true])('reconciles opposing same-timestamp stock fills rather than guessing cost or gross exposure (short=%s)', async daytrade_short => {
+    const { noteStockOrderConditions } = await import('./stock-order-conditions');
+    noteStockOrderConditions(mocks.account, { seqno: 'sell', ordno: 'sell' }, { order_cond: 'Cash', daytrade_short });
+    await stockOrder({ id: 'sell', seqno: 'sell', ordno: 'sell', action: 'Sell' });
+    await stockOrder();
+    await emit(stockFill({ trade_id: 'sell', seqno: 'sell', ordno: 'sell', action: 'Sell', exchange_seq: 'sell1', price: 110 }));
+    const before = store.getTradingState().positions;
+    await emit(stockFill({ exchange_seq: 'buy1', price: 120 }));
+    expect(store.getTradingState().positions.map(p => [p.direction, p.quantity, p.price])).toEqual(before.map(p => [p.direction, p.quantity, p.price]));
+    expect(store.getTradingState().queries.positions.reasons).toContain('unknown-fill');
+    await recovery();
+    expect(mocks.positions).toHaveBeenCalledTimes(2);
+});
+
+it('resolving one futures metadata report retains another pending report in the same book', async () => {
+    mocks.account.account_type = 'F';
+    mocks.positions.mockResolvedValue([]);
+    mocks.cached.mockReturnValue({ code: 'TXFI6', multiplier: 200 });
+    vi.advanceTimersByTime(1500);
+    await act(async () => { await store.refreshTradingState('positions'); });
+    const futFill = (id: string, ts: number) => normalizeOrderEvent({ state: 'FuturesDeal', data: { FuturesDeal: {
+        trade_id: id, seqno: id, ordno: id, exchange_seq: id, broker_id: 'fixture', account_id: 'a',
+        code: 'TXF', full_code: 'TXFI6', action: 'Buy', price: 100, quantity: 1, ts,
+    } } })!;
+    await emit(futFill('first', epoch + 10));
+    await emit(futFill('second', epoch + 11));
+    const old = (order().raw as { data: { StockOrder: { order: object } } }).data.StockOrder;
+    await emit(normalizeOrderEvent({ state: 'FuturesOrder', data: { FuturesOrder: { ...old,
+        order: { ...old.order, id: 'first', seqno: 'first', ordno: 'first', oc_type: 'New' },
+        contract: { code: 'TXF', full_code: 'TXFI6', security_type: 'FUT', exchange: 'TAIFEX' },
+    } } })!);
+    expect(store.getTradingState().positions[0]!.quantity).toBe(1);
+    expect(store.getTradingState().queries.positions.reasons).toContain('metadata-missing');
+    expect(store.getTradingState().positionIssues).toHaveLength(1);
+    await recovery();
+    expect(mocks.positions).toHaveBeenCalledTimes(3);
+});
 
 it('revokes a popout trading snapshot when the main window announces pagehide', async () => {
     const channels: Array<{ name: string; fire: (data: unknown) => void }> = [];
@@ -1348,7 +1656,7 @@ it('clears the cost estimate once the flagged holding goes flat', async () => {
     expect(store.getTradingState().positions.find(r => r.code === 'TXFI6')).toBeUndefined();
     expect(costReasons()).not.toContain('cost-estimate');
 });
-it('keeps the cost estimate when a racing report makes the refresh skip the snapshot', async () => {
+it('adopts a manual snapshot and clears its cost estimate even when an order report arrives during refresh', async () => {
     await aggregatePartialClose();
     const pending = deferred<unknown[]>();
     mocks.positions.mockImplementationOnce(() => pending.promise);
@@ -1358,8 +1666,10 @@ it('keeps the cost estimate when a racing report makes the refresh skip the snap
     await flush();
     await emit(order('other', 100, epoch + 5)); // a report during the read
     await act(async () => { pending.resolve([{ id: 1, code: 'TXFI6', direction: 'Buy', quantity: 1, price: 120, last_price: 110, pnl: -2000 }]); await refresh; });
-    expect(store.getTradingState().positions.find(r => r.code === 'TXFI6')).toMatchObject({ costUncertain: true });
-    expect(costReasons()).toContain('cost-estimate');
+    expect(store.getTradingState().positions.find(r => r.code === 'TXFI6')).toMatchObject({ quantity: 1, price: 120, pnl: -2000 });
+    expect(store.getTradingState().positions.find(r => r.code === 'TXFI6')).not.toHaveProperty('costUncertain');
+    expect(costReasons()).not.toContain('cost-estimate');
+    expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
 });
 
 // review P2: one account's refresh must not retire another account's fresh tick.

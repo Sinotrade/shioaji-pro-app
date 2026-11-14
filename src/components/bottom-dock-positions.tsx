@@ -16,6 +16,7 @@ import {
     placeStockExitByShares,
 } from '../lib/trade';
 import type { AccountedPosition } from '../lib/types/portfolio';
+import { positionKey as posKey } from '../lib/position-key';
 import {
     fmtInt,
     fmtPrice,
@@ -44,11 +45,6 @@ import {
 } from './bottom-dock-shared';
 
 type SortMode = 'default' | 'value' | 'pnl' | 'code';
-
-function posKey(p: AccountedPosition): string {
-    const acc = p.account ? `${p.account.broker_id}-${p.account.account_id}` : '';
-    return `${acc}:${p.code}:${p.direction}:${p.id}`;
-}
 
 // 排序用市值：last_price × quantity（期貨無乘數資訊，僅供同類相對排序）
 function sortValue(p: AccountedPosition): number {
@@ -189,6 +185,7 @@ export function PositionsPane({
 
     // 捕捉列本身的帳戶；不得以目前選取帳戶補猜持倉歸屬。
     const closeOne = async (p: AccountedPosition, mode2: 'close' | 'reverse') => {
+        if (p.reconcileReason) throw new Error('此持倉待對帳，請先更新持倉再平倉');
         const account = p.account;
         if (!account || !canTrade(account) || !account.broker_id || !account.account_id || !['S', 'F'].includes(account.account_type)) {
             throw new Error('持倉帳戶歸屬不明，未送出委託');
@@ -342,7 +339,7 @@ export function PositionsPane({
                             >
                                 {selectionCell(p)}
                             </td>
-                            <td className={styles.td}>{p.code}</td>
+                            <td className={styles.td}>{p.code}{p.reconcileReason && <small title={p.reconcileReason}> 待對帳</small>}</td>
                             {sz === 'wide' && (
                                 <td className={styles.td}>
                                     {names[p.code] ?? ''}
@@ -488,7 +485,7 @@ export function PositionsPane({
                             <span onClick={(e) => e.stopPropagation()}>
                                 {selectionCell(p)}
                             </span>
-                            <span className={styles.cardCode}>{p.code}</span>
+                            <span className={styles.cardCode}>{p.code}{p.reconcileReason && <small title={p.reconcileReason}> 待對帳</small>}</span>
                             <span className={styles.cardName}>
                                 {names[p.code] ?? ''}
                             </span>

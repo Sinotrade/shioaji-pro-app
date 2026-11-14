@@ -14,11 +14,12 @@
 
 - 主視窗持有共享 positions、trades、餘額及保證金快照。已簽署帳戶逐一初始化；小視窗與 Tray 以同 origin BroadcastChannel 鏡像，不各自啟動主頁或帳務輪詢。
 - `/order/trades` 執行 `update_status` 是正常校正行為：首次查詢建立委託清單；委託分頁右側更新圖示才再查。持倉分頁只查持倉；帳務分頁更新餘額、保證金及帳務明細，不連帶查委託或持倉。各分頁保留自己的查詢時間、錯誤與待對帳狀態。操作有 loading/disabled、共用 single-flight、各分頁完成後短暫 cooldown，不排隊補查。
-- 收到 order/deal 回報不觸發 HTTP 帳務查詢。一般委託由帳戶＋委託身分匹配；成交以 exchange sequence 去重（1.7.6 起另以完整 event_id 去重，見 ADR 0003），支援部分成交及成交先於委託。原始報告缺欄位、合約不符、成交量矛盾時保留資料並標示待確認。
-- position_unit 股票以 Share 為單位；成交 Common lot 轉股，Odd/IntradayOdd 保留股數。現股 Cash 與可明確判斷 New/Cover/Auto 的期貨成交作本機增量。信用/Netting、組合成交、無法判斷的 hedged Auto 不猜測部位。
+- 一般 order/deal 回報只作本機投影。#401 修訂：無法安全投影的成交，只標記該帳戶／商品／信用條件，合併一次 250ms debounce 的該帳戶持倉查詢；不查委託、餘額或保證金，不輪詢、不自動重試失敗。一般委託由帳戶＋委託身分匹配；成交以 exchange sequence 去重（1.7.6 起另以完整 event_id 去重，見 ADR 0003），支援部分成交及成交先於委託。
+- position_unit 股票以 Share 為單位；Common/Fixing/BlockTrade 轉股，Odd/IntradayOdd 保留股數。Cash、MarginTrading、ShortSelling 分開投影。Cash 賣單使用與閃電合計相同的送單紀錄判斷當沖先賣：明確先賣另開空頭、後續現股買進優先回補；未知旗標不猜是否沖銷原庫存。融資賣／融券買只沖銷對應信用庫存。Netting、借券、組合成交、DayTrade 倉別、缺乘數、無法判斷的 hedged Auto 不猜測部位，走一次持倉對帳。
 - 現價使用非試撮成交 tick；未實現 P&L 在券商基準上加上價差×數量×乘數×方向，報酬率由持倉現價/成本更新。這是估算，不推算權威現金、手續費、稅、保證金或已實現損益。期貨乘數不足不假定為 1。
 - 查詢失敗保留相同帳戶既有資料。餘額/保證金標記其來源帳戶，切帳戶時不把另一帳戶的舊值當成新帳戶資料。
-- 查詢期間事件、斷線或 journal overflow 不可被晚快照抹掉。委託快照重播已接收的有效事件，成交序號去重；既有持倉基準在有回報競爭時保留即時投影並標示快照邊界不明。首次快照競爭也須明示不完整。
+- 查詢期間事件、斷線或 journal overflow 不可被晚快照抹掉。委託快照重播已接收的有效事件。#401 修訂：持倉一律採用新快照；只有同帳戶成交會形成競爭，委託回報及另一帳戶成交不使它失效。快照無 watermark，不能安全判斷是否已含競爭成交，因此標記受影響部位並補查一次，不把競爭成交再加到快照上。補查再次競爭時保留待對帳，不形成查詢迴圈。新基準記住已收到成交的識別；基準之後的成交依成交時間重播，每帳戶最多 1000 筆，超限走一次對帳。期貨同一時間但價格／方向不同的 FIFO 順序不明時亦不猜。
+- 分帳戶、分商品及信用條件保留待對帳原因；既有列顯示「待對帳」並拒絕一鍵平倉，查無既有列的原因仍保存在共享狀態。現有 position API 型別沒有子帳戶 selector，非空 subaccount 回報不可套到母帳戶，母帳戶快照也不可宣稱解除子帳戶問題。
 - 上游目前沒有 position snapshot watermark。以客戶端時鐘界定首次基準仍有延遲/時鐘誤差限制，不能當作無漏報或可交易保證。精確邊界需求追蹤 [Shioaji #232](https://github.com/Sinotrade/Shioaji/issues/232)；cache-only Trade HTTP API 不是本次前提（1.7.6 起的使用邊界見 [ADR 0003](0003-trade-report-identity-and-cache-health.md)）。
 - 其他報表用依 scope 共用的 session query，首次與手動查詢；資料範圍變更另取快照，純顯示/篩選變更只在本機重算。
 - 行情列表先快照再用 SSE Tick/BidAsk/Quote；一般行情訂閱按消費者保留/釋放，由主視窗統一對 sidecar 操作。合約 metadata lookup 不再永久訂閱。既有保護單所依賴的已啟動 Tick 保留至其移除，保護單執行不在本 ADR 更動範圍。
