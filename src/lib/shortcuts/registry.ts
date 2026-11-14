@@ -255,7 +255,24 @@ const RISK_TEXT: Partial<Record<Risk, string>> = {
     lock: '委託線鎖定',
 };
 
-export function checkBinding(d: ShortcutDef, chord: string, overrides: Overrides, platform: Platform): BindingCheck {
+// 這個鍵在 d 的作用範圍內會不會跟其他項目（以目前生效的鍵為準）同時觸發
+export function findKeyConflict(d: ShortcutDef, chord: string, overrides: Overrides, platform: Platform): ShortcutDef | null {
+    const c = baseChord(chord);
+    for (const other of forPlatform(platform)) {
+        if (other.id === d.id || other.gesture || other.status === 'disabled') continue;
+        if (!scopesOverlap(d.scope, other.scope)) continue;
+        if (effectiveKeys(other, overrides).some((k) => baseChord(k) === c)) return other;
+    }
+    return null;
+}
+
+export function checkBinding(
+    d: ShortcutDef,
+    chord: string,
+    overrides: Overrides,
+    platform: Platform,
+    opts: { skipConflicts?: boolean } = {},
+): BindingCheck {
     if (!isEditable(d)) return { level: 'block', message: `「${d.label}」是固定按鍵，不開放修改` };
     const parsed = parseChord(chord);
     if (!parsed || parsed.twice) return { level: 'block', message: '無法辨識這個按鍵' };
@@ -265,6 +282,10 @@ export function checkBinding(d: ShortcutDef, chord: string, overrides: Overrides
     if (reserved) return { level: 'block', message: `${text} 保留給「${reserved}」，請換一個鍵` };
 
     const strong = strongModifierCount(chord);
+    // 全域鍵在輸入框內也要能用，單鍵會在打字時誤觸
+    if (d.scope === 'global' && strong === 0) {
+        return { level: 'block', message: '全域快捷鍵要搭配 ⌘／Ctrl 或 ⌥／Alt，避免打字時誤觸' };
+    }
     // 影響誤拖保護：至少一個 ⌘／Ctrl／⌥／Alt
     if (d.risk === 'lock' && strong === 0) {
         return { level: 'block', message: '委託線鎖定要搭配 ⌘／Ctrl 或 ⌥／Alt，避免誤觸後委託線可被拖動' };
@@ -278,10 +299,8 @@ export function checkBinding(d: ShortcutDef, chord: string, overrides: Overrides
         return { level: 'block', message: 'Shift 只能搭配字母；其他按鍵請加 ⌘／Ctrl 或 ⌥／Alt' };
     }
 
-    for (const other of forPlatform(platform)) {
-        if (other.id === d.id || other.gesture || other.status === 'disabled') continue;
-        if (!effectiveKeys(other, overrides).some((k) => baseChord(k) === chord)) continue;
-        if (!scopesOverlap(d.scope, other.scope)) continue;
+    const other = opts.skipConflicts ? null : findKeyConflict(d, chord, overrides, platform);
+    if (other) {
         const where = `「${other.label}」（${SCOPE_LABEL[other.scope]}）`;
         if (!isEditable(other) || other.risk !== 'none') {
             return { level: 'block', message: `${text} 已用於${where}，這個項目不能被取代，請換一個鍵` };
@@ -313,19 +332,41 @@ export function sanitizeOverrides(raw: unknown, platform: Platform): Record<stri
         if (valid.length !== keys.length || valid.length > 2) continue;
         out[id] = valid;
     }
-    // 第二輪：逐項確認現在仍合法（例如之後新增了保留鍵，或兩個覆寫撞到同一鍵）；
-    // 不合法的回到預設
+    // 第二輪：不看衝突的規則（保留鍵、修飾鍵要求）；不合法的回到預設
     for (const id of Object.keys(out)) {
         const d = defById(id)!;
-        const others = { ...out };
-        delete others[id];
-        const bad = out[id]!.some((k) => {
-            const level = checkBinding(d, k, others, platform).level;
-            return level === 'block' || level === 'conflict';
-        });
-        if (bad) delete out[id];
+        if (out[id]!.some((k) => checkBinding(d, k, {}, platform, { skipConflicts: true }).level === 'block')) delete out[id];
+    }
+    // 第三輪：整張「最後生效」的表不能有任何兩項同時觸發。覆寫被丟掉後會回到
+    // 預設鍵，預設鍵可能又撞到別人，所以重複到沒有衝突為止（覆寫只減不增，必定結束）。
+    // 取捨固定：撞到預設的那一方丟覆寫；兩邊都是覆寫時丟登錄表順序較後者。
+    const rank = new Map(SHORTCUTS.map((d, i) => [d.id, i]));
+    for (;;) {
+        const pair = firstConflict(out, platform);
+        if (!pair) break;
+        const [a, b] = pair;
+        const aOver = a.id in out;
+        const bOver = b.id in out;
+        if (!aOver && !bOver) break; // 預設鍵本身互撞（登錄表錯誤，由測試把關）
+        const drop = aOver && bOver ? (rank.get(a.id)! > rank.get(b.id)! ? a : b) : aOver ? a : b;
+        delete out[drop.id];
     }
     return out;
+}
+
+// 生效表裡第一組會同時觸發的項目（有覆寫參與的優先回報）
+export function firstConflict(overrides: Overrides, platform: Platform): [ShortcutDef, ShortcutDef] | null {
+    let fallback: [ShortcutDef, ShortcutDef] | null = null;
+    for (const d of forPlatform(platform)) {
+        if (d.gesture || d.status === 'disabled') continue;
+        for (const k of effectiveKeys(d, overrides)) {
+            const other = findKeyConflict(d, k, overrides, platform);
+            if (!other) continue;
+            if (d.id in overrides || other.id in overrides) return [d, other];
+            fallback ??= [d, other];
+        }
+    }
+    return fallback;
 }
 
 // ---- 提示頁：目前可不可以用 ----

@@ -6,7 +6,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { detectPlatform, type Platform } from './keys';
-import { checkBinding, defById, sanitizeOverrides, type Overrides } from './registry';
+import { checkBinding, defById, sanitizeOverrides, type BindingCheck, type Overrides } from './registry';
 
 export const SHORTCUTS_STORAGE_KEY = 'sj-pro-shortcuts';
 
@@ -97,13 +97,29 @@ export function clearBinding(id: string) {
     emit();
 }
 
-export function resetBinding(id: string) {
-    if (!(id in state.overrides)) return;
-    const next = { ...state.overrides };
+export type ResetResult =
+    | { ok: true }
+    // 預設鍵現在被別的項目用掉：conflict 可指定 replaceId 取代；block 不能取代
+    | { ok: false; chord: string; check: Extract<BindingCheck, { level: 'conflict' | 'block' }> };
+
+// 回復預設前，用與改鍵相同的檢查確認預設鍵沒有被其他項目佔用
+export function resetBinding(id: string, replaceId?: string): ResetResult {
+    const d = defById(id);
+    if (!d || !(id in state.overrides)) return { ok: true };
+    const next: Record<string, readonly string[]> = { ...state.overrides };
     delete next[id];
+    if (replaceId) {
+        const other = defById(replaceId);
+        if (other) next[replaceId] = (next[replaceId] ?? other.keys).filter((k) => !d.keys.includes(k));
+    }
+    for (const chord of d.keys) {
+        const check = checkBinding(d, chord, next, state.platform);
+        if (check.level === 'conflict' || check.level === 'block') return { ok: false, chord, check };
+    }
     state = { ...state, overrides: next };
     persist();
     emit();
+    return { ok: true };
 }
 
 export function resetAllBindings() {
@@ -117,6 +133,12 @@ function sameKeys(a: readonly string[], b: readonly string[]) {
 }
 
 // 測試與截圖用：覆寫平台並重新讀取
+// 測試用：直接放入覆寫（不經檢查），驗證執行期的防線
+export function __setOverridesForTests(overrides: Overrides) {
+    state = { ...state, overrides };
+    emit();
+}
+
 export function __setShortcutPlatformForTests(p: Platform) {
     state = { overrides: read(p), platform: p };
     emit();

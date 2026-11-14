@@ -228,7 +228,8 @@ describe('儲存', () => {
             },
             'mac',
         );
-        expect(clean).toEqual({ 'draw.box': ['Alt+KeyY'], 'draw.fib': ['Alt+KeyU'] });
+        // 兩邊都是覆寫：丟登錄表順序較後者（draw.box）
+        expect(clean).toEqual({ 'chart.lockDrawings': ['Alt+KeyY'], 'draw.fib': ['Alt+KeyU'] });
         expect(sanitizeOverrides('garbage', 'mac')).toEqual({});
     });
 

@@ -153,7 +153,15 @@ export function isTypingTarget(t: EventTarget | null): boolean {
 
 // 按鍵定義在 lib/shortcuts/registry（可在 設定 → 快捷鍵 修改）。
 type KeyLike = Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'> & { key?: string };
-const asKey = (e: KeyLike) => ({ ...e, key: e.key ?? '' });
+// 逐欄讀出：KeyboardEvent 的 code／修飾鍵是 prototype getter，用 {...e} 展開會全部遺失
+const asKey = (e: KeyLike) => ({
+    code: e.code,
+    key: e.key ?? '',
+    metaKey: e.metaKey,
+    ctrlKey: e.ctrlKey,
+    altKey: e.altKey,
+    shiftKey: e.shiftKey,
+});
 
 // 復原／重做：⌘Z／Ctrl+Z 復原；⌘⇧Z／Ctrl+Shift+Z 或 Ctrl+Y 重做
 export function undoKeyOf(e: KeyLike): 'undo' | 'redo' | null {

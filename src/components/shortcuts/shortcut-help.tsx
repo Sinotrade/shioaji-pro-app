@@ -27,7 +27,10 @@ import { useRiskSettings } from '../../lib/risk';
 import {
     currentWindowRole,
     getFocusedPanel,
+    hasStrongModifier,
     holdKeyboard,
+    isComposingEvent,
+    isTypingNow,
     keyboardHeld,
     subscribeFocusedPanel,
     type WindowRole,
@@ -238,7 +241,9 @@ export function ShortcutHelpHost({ popoutPanel }: { popoutPanel?: string | null 
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
-            if (e.repeat || !matchesShortcut('help.open', e)) return;
+            if (e.repeat || isComposingEvent(e) || !matchesShortcut('help.open', e)) return;
+            // 沒有 ⌘／Ctrl／Alt 的綁定在輸入框內不觸發
+            if (!hasStrongModifier(e) && isTypingNow(e)) return;
             // 正在錄製新按鍵：讓錄製元件收到這個組合
             if (!openRef.current && keyboardHeld()) return;
             e.preventDefault();

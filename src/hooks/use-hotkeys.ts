@@ -6,7 +6,7 @@
 import { useEffect } from 'react';
 import { noteEscPress, resetEscCancelArm } from '../lib/esc-cancel-arm';
 import { getRiskSettings } from '../lib/risk';
-import { escTakenByArmedPanel, getFocusedPanel, isTypingNow } from '../lib/shortcuts/guards';
+import { escTakenByArmedPanel, getFocusedPanel, hasStrongModifier, isComposingEvent, isTypingNow } from '../lib/shortcuts/guards';
 import { emitShortcut, matchShortcut } from '../lib/shortcuts/match';
 import { cancelAllOrders, notify } from '../lib/trade';
 
@@ -104,15 +104,17 @@ export function useHotkeys({
                 }
                 return;
             }
-            // 帶修飾鍵的全域鍵：輸入框內也能用
+            // 輸入法組字中一律不處理；全域鍵只有帶 ⌘／Ctrl／Alt 時才能在輸入框內使用
+            if (isComposingEvent(e)) return;
+            const typing = isTypingNow(e);
             const global = matchShortcut(['palette.open', 'settings.open', 'agent.toggle'], e);
-            if (global) {
+            if (global && (!typing || hasStrongModifier(e))) {
                 e.preventDefault();
                 if (global === 'palette.open') onOpenPalette();
                 else emitShortcut({ id: global });
                 return;
             }
-            if (isTypingNow(e)) return;
+            if (typing) return;
             const side = matchShortcut(['ticket.buy', 'ticket.sell'], e);
             if (!side) return;
             const panel = getFocusedPanel();

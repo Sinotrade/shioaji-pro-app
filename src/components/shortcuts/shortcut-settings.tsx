@@ -184,15 +184,21 @@ function Row({
 }) {
     const { overrides, platform } = useShortcutState();
     const risk = useRiskSettings();
-    const [pending, setPending] = useState<{ chord: string; result: BindingCheck } | null>(null);
+    // reset：回復預設時預設鍵被佔用（套用時走 resetBinding）
+    const [pending, setPending] = useState<{ chord: string; result: BindingCheck; reset?: boolean } | null>(null);
     const keys = effectiveKeys(d, overrides);
     const changed = d.id in overrides;
     const editable = isEditable(d);
     const badge = RISK_BADGE[d.risk];
 
     const apply = (chord: string, replaceId?: string) => {
-        setBinding(d.id, chord, replaceId);
+        if (pending?.reset) resetBinding(d.id, replaceId);
+        else setBinding(d.id, chord, replaceId);
         setPending(null);
+    };
+    const reset = () => {
+        const r = resetBinding(d.id);
+        setPending(r.ok ? null : { chord: r.chord, result: r.check, reset: true });
     };
     const onChord = useCallback(
         (chord: string) => {
@@ -272,10 +278,7 @@ function Row({
                         className={styles.iconBtn}
                         title={`回復預設（${d.keys.length ? d.keys.map((k) => chordText(k, platform)).join('、') : '未設定'}）`}
                         aria-label={`回復「${d.label}」預設值`}
-                        onClick={() => {
-                            resetBinding(d.id);
-                            setPending(null);
-                        }}
+                        onClick={reset}
                     >
                         <RotateCcw size={12} />
                     </button>

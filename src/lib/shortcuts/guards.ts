@@ -16,6 +16,15 @@ export function isTypingElement(el: ElementLike | EventTarget | null | undefined
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.isContentEditable === true;
 }
 
+export function isComposingEvent(e: Pick<KeyboardEvent, 'isComposing' | 'keyCode'>): boolean {
+    return !!e.isComposing || e.keyCode === 229;
+}
+
+// ⌘／Ctrl／Alt（Shift 不算：Shift＋字母就是打字）
+export function hasStrongModifier(e: Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'altKey'>): boolean {
+    return !!(e.metaKey || e.ctrlKey || e.altKey);
+}
+
 export function isTypingNow(e?: Pick<KeyboardEvent, 'isComposing' | 'keyCode' | 'target'>): boolean {
     // 輸入法組字中（注音、倉頡…）一律不觸發
     if (e && (e.isComposing || e.keyCode === 229)) return true;
