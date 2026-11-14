@@ -259,3 +259,6 @@ export const segFit = style({
 export const segWrap = style({
     flexWrap: 'wrap',
 });
+
+// 其他分頁（圖表設定的「成交標記」）：內容直接排進彈出層的格線，間距與下單分頁相同
+export const sheet = style({ display: 'contents' });

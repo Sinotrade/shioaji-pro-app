@@ -40,7 +40,7 @@ import {
     Star,
     X,
 } from 'lucide-react';
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
     DEFAULT_CHART_INTERVAL,
     isChartInterval,
@@ -62,6 +62,12 @@ import {
     useDrawingsSaveFailed,
 } from '../lib/chart-drawings';
 import { useQuote } from '../hooks/use-stream';
+import { useChartFills } from '../hooks/use-chart-fills';
+import { highLowAvoid } from '../lib/chart-fill-marks';
+import { chartFillColors, isLightColor, useChartFillColor, useChartFillScope, useChartFillStyle } from '../lib/chart-fill-prefs';
+import { ChartFillDetails } from './chart-fill-details';
+import { ChartFillSettings } from './chart-fill-settings';
+import * as fillStyles from './chart-fill-details.css';
 import {
     colorWithOpacity,
     DEF_BY_TYPE,
@@ -199,6 +205,12 @@ const TRADE_MODES: { key: TradeMode; label: string }[] = [
 
 // keep paging until this floor — one page per fetch, spans widen with tf
 const MAX_HISTORY_DAYS = 1095; // ~3 years
+// 明細「這根 K 棒」：提示框停留這麼久才算查看那根
+const FILL_DWELL_MS = 300;
+
+// 成交待確認時的處置：小視窗沒有委託分頁，要指回主視窗
+const REFRESH_HINT = typeof location !== 'undefined' && new URLSearchParams(location.search).has('popout')
+    ? '可到主視窗的委託分頁按更新' : '可到委託分頁按更新';
 
 export type { ChartSessionMode };
 
@@ -217,6 +229,13 @@ export function CandleChart({
     onShowOhlcChange,
     showHighLow: showHighLowProp,
     onShowHighLowChange,
+    showFills: showFillsProp,
+    onShowFillsChange,
+    fillsReady = false,
+    fillsNote,
+    fillsHint,
+    fillsRetain = false,
+    fillsEnv = null,
 }: {
     panelId?: string;
     contract: ContractBase;
@@ -242,6 +261,18 @@ export function CandleChart({
     // 可見範圍最高／最低標記（#240）：存法同 K 棒讀值。缺省 = 顯示
     showHighLow?: boolean;
     onShowHighLowChange?: (show: boolean) => void;
+    showFills?: boolean;
+    onShowFillsChange?: (show: boolean) => void;
+    // LiveCandleChart 以共享 owner 的環境證據與對帳狀態傳入；沒傳就視為尚未確認（不畫標記）。
+    fillsReady?: boolean;
+    // 成交來源未確認（fillsReady 為 false）時顯示在工具列的原因，例如「成交待對帳：串流中斷」
+    fillsNote?: string;
+    // 未確認時的處置說明；沒傳就請使用者到委託分頁按更新
+    fillsHint?: string;
+    // 待確認時可保留上次確認的淡色標記（LiveCandleChart 傳入；彈出視窗的主視窗鏡像失效時為 false）。沒傳就不保留
+    fillsRetain?: boolean;
+    // 目前的交易環境（null = 暫時未知）：換成另一個已知環境時清掉保留的標記
+    fillsEnv?: string | null;
 }) {
     const hostRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -287,6 +318,17 @@ export function CandleChart({
         onShowHighLowChange?.(!showHighLow);
     };
     const highLowRef = useRef<HighLowLayer | null>(null);
+    const [localShowFills, setLocalShowFills] = useState(showFillsProp !== false);
+    const showFills = onShowFillsChange ? showFillsProp !== false : localShowFills;
+    const setShowFills = (show: boolean) => {
+        setLocalShowFills(show);
+        onShowFillsChange?.(show);
+    };
+    const [fillListOpen, setFillListOpen] = useState(false);
+    // 明細「這根 K 棒」：最近查看的那根（提示框停留夠久才算，移到工具列途中掠過的別根不算；render 時寫 ref，不多 render；用一次就忘，不設時間限制）
+    const lastFillBarRef = useRef<{ scope: string; time: number } | null>(null);
+    // 目前提示框是哪一根、從什麼時候開始顯示（換根或消失時才判斷停留夠不夠久）
+    const tipBarRef = useRef<{ scope: string; time: number; since: number } | null>(null);
     // 讀值列自己訂閱這個 store：讀值變動只重繪讀值列
     const ohlcStore = useMemo(createOhlcStore, []);
     const [hostWidth, setHostWidth] = useState(0);
@@ -1633,6 +1675,45 @@ export function CandleChart({
         chart.timeScale().fitContent();
     };
 
+    // 與工具列「成交／明細」按鈕同一條件：不能下單的圖表（指數、組合）不畫也不留清單
+    const fillsEnabled = !isCombo && !!orderMarket;
+    const fillStyle = useChartFillStyle();
+    // 全部帳戶：同一市場（股票 → 證券、期貨／選擇權 → 期貨）的所有可交易帳戶，合併成點、明細逐筆保留帳戶
+    const fillScope = useChartFillScope();
+    const fillColorMode = useChartFillColor();
+    // 進出點的顏色：預設藍買橘賣，和 K 棒的紅綠分開（設定可改回同 K 棒）
+    // 深淺色組看標籤底色的亮度：自訂主題的起始底色是深色、面板卻改成淺色時也挑對
+    const fillColors = chartFillColors((isLightColor(colors.labelBg) ?? baseMode(themeSettings) === 'light') ? 'light' : 'dark', colors, fillColorMode);
+    const fillAccounts = fillScope === 'all' ? orderAccountView.eligible : undefined;
+    const fillContext = `${contract.security_type}:${contract.exchange}:${contract.code}:${contract.target_code}|${tf.minutes}|${dayOnly}|${currentProtectionEnv()}`;
+    const fillBarsKey = `${contract.code}|${tf.minutes}|${dayOnly}`;
+    // 換組時先清圖再抓歷史：K 棒回來前不能說成「沒有成交」（同組重載保留舊 K 棒，不算）
+    const fillBarsLoading = drawnKeyRef.current !== fillBarsKey || (loading && barsRef.current.length === 0);
+    const fillListId = useId();
+    const fillView = useChartFills({
+        chartRef, seriesRef: candleSeriesRef, trades, contract, account: orderAccountView.active, accounts: fillAccounts,
+        bars: barsRef.current, dataVersion, minutes: tf.minutes, dayOnly, visible: showFills && fillsEnabled,
+        ready: fillsReady && drawnKeyRef.current === fillBarsKey, retain: fillsRetain, env: fillsEnv,
+        context: fillContext, style: fillStyle, priceDecimals: ohlcDecimals, up: fillColors.buy, down: fillColors.sell, labelBg: colors.labelBg,
+        // 成交標籤避開最高／最低標記
+        avoid: () => highLowAvoid(highLowRef.current?.marks() ?? [], chartRef.current?.paneSize() ?? { width: 0, height: 0 }),
+    });
+    // 不要在 handler 裡直接用 fillView：V8 同一 scope 的閉包共用 context，會讓這次 render 的所有 handler 留住整份成交
+    const fillFocusRef = useRef(fillView.focusBar);
+    fillFocusRef.current = fillView.focusBar;
+    // 成交明細缺漏（數量對不上）也當成未確認，處置一律是重新讀回委託。來源本身還沒確認時先講來源
+    // （例如連線尚未就緒），來源確認了、明細對不上才講缺漏。
+    const fillsOk = fillsReady && !fillView.incomplete;
+    const fillGap = fillsReady && fillView.incomplete;
+    const fillNote = fillGap ? '成交待對帳：成交明細缺漏' : fillsNote;
+    const fillHint = fillGap ? REFRESH_HINT : fillsHint ?? REFRESH_HINT;
+    // 明細筆數含圖上沒有對應 K 棒的成交（清單一起列）
+    const fillCount = fillsOk && !fillBarsLoading ? fillView.fills.length + fillView.unplaced.length : '…';
+    // 保留中：圖上畫的是上次確認的淡色標記，明細不列
+    const fillPendingNote = `${fillNote ?? '成交待確認'}${fillView.retained ? '（顯示的是上次確認的成交）' : ''}`;
+    // 有範圍才提示待確認；斷線時帳戶暫時解析不出來、但圖上畫著保留的淡色標記，也要提示
+    const fillScoped = !!fillAccounts || !!orderAccountView.active || fillView.retained;
+
     // draw working-order price lines (buy=up color / sell=down color)
     const orderKey = JSON.stringify(
         workingOrders.map((t) => [
@@ -2197,6 +2278,14 @@ export function CandleChart({
             </div>
         </div>
     ) : null;
+    const fillTip = showFills && fillsEnabled && !fillListOpen && shownMode === 'observe' && !drawings.tool && fillView.hoveredFills.length > 0;
+    // 換根或提示框消失時，停留夠久的那根才寫進 lastFillBarRef
+    const tipTime = fillTip ? fillView.hoveredFills[0]!.time : null;
+    if ((tipBarRef.current?.time ?? null) !== tipTime || (fillTip && tipBarRef.current?.scope !== fillView.scope)) {
+        const tip = tipBarRef.current, now = performance.now();
+        if (tip && now - tip.since >= FILL_DWELL_MS) lastFillBarRef.current = tip;
+        tipBarRef.current = tipTime === null ? null : { scope: fillView.scope, time: tipTime, since: now };
+    }
     return (
         <div className={styles.wrap}
             onPointerDownCapture={() => { if (panelService && panelId) panelService.focus(panelId); }}
@@ -2315,8 +2404,35 @@ export function CandleChart({
                             ...(creditStatusNote ? { status: creditStatusNote } : {}),
                         } : undefined}
                         contractLabel={`${contract.code}${(contract as { name?: string }).name ? ` ${(contract as { name?: string }).name}` : ''}`}
+                        sheets={fillsEnabled ? [{
+                            key: 'fills', label: '成交標記', onInteraction: drawings.onInteraction,
+                            render: (close) => <ChartFillSettings show={showFills} onShowChange={setShowFills} style={fillStyle} color={fillColorMode}
+                                scope={fillScope} onClose={close} />,
+                        }] : undefined}
                     />
                 )}
+                {fillsEnabled && <>
+                    <button className={styles.tfBtn[showFills ? 'active' : 'normal']}
+                        aria-label='顯示成交標記' aria-pressed={showFills} onClick={() => setShowFills(!showFills)}
+                        onPointerDownCapture={drawings.onInteraction} onKeyDownCapture={drawings.onInteraction}
+                        title={`${fillAccounts ? '合併顯示同一市場所有帳戶的實際成交' : '依這張圖的帳戶顯示實際成交'}；滑鼠移到成交 K 棒可看明細。樣式、顏色、帳戶在工具列「圖表下單設定」的「成交標記」分頁`}>
+                        成交
+                    </button>
+                    {showFills && <button className={styles.tfBtn[fillListOpen ? 'active' : 'normal']}
+                        aria-label={`成交明細 ${fillCount}`} aria-expanded={fillListOpen} aria-controls={fillListOpen ? fillListId : undefined}
+                        onPointerDownCapture={drawings.onInteraction} onKeyDownCapture={drawings.onInteraction}
+                        onClick={() => {
+                            // 打開時標示最近查看的那根（用過就忘；滑鼠還停在那根、已停夠久時就是那根，例如用鍵盤按「明細」）；關掉時一併取消
+                            const tip = tipBarRef.current;
+                            fillFocusRef.current(fillListOpen ? null : tip && performance.now() - tip.since >= FILL_DWELL_MS ? tip : lastFillBarRef.current);
+                            lastFillBarRef.current = tipBarRef.current = null;
+                            setFillListOpen(!fillListOpen);
+                        }}
+                        title={fillsOk ? '已載入 K 線範圍內的逐筆成交' : `${fillPendingNote}。${fillView.retained ? '確認前不列明細' : '確認前不顯示標記'}；${fillHint}。`}>
+                        明細 {fillCount}
+                    </button>}
+                    {showFills && !fillsOk && fillScoped && <span className={fillStyles.pendingNote} role='status' title={fillHint}>{fillPendingNote}</span>}
+                </>}
                 <button
                     className={
                         styles.indicatorBtn[
@@ -2358,6 +2474,10 @@ export function CandleChart({
             <div className={styles.chartRow}>
             <ChartDrawingTools api={drawings} />
             <div ref={hostRef} className={styles.chartHost}>
+                {fillTip && <ChartFillDetails
+                    fills={fillView.hoveredFills} bar={fillView.hoveredBar} accountId={orderAccountView.active?.account_id} allAccounts={!!fillAccounts}
+                    privacy={privacy} up={fillColors.buy} down={fillColors.sell} decimalsFor={ohlcDecimals} tooltip compact={hostWidth > 0 && hostWidth < 380} dateless={hostWidth > 0 && hostWidth < 380 && tf.minutes < 1440}
+                />}
                 {loading && (
                     <div className={styles.emptyMsg}>
                         <AsyncStatus phase='loading' text={`載入 ${tf.label} K 線…`} className={panel.mono} />
@@ -2516,6 +2636,11 @@ export function CandleChart({
             </div>
             <ChartObjectList api={drawings} />
             </div>
+            {showFills && fillsEnabled && fillListOpen && <ChartFillDetails id={fillListId}
+                fills={fillView.fills} unplaced={fillView.unplaced} accountId={orderAccountView.active?.account_id} allAccounts={!!fillAccounts} retained={fillView.retained}
+                privacy={privacy} up={fillColors.buy} down={fillColors.sell} pending={!fillsOk} note={fillView.retained ? fillPendingNote : fillNote} hint={fillHint} barsLoading={fillBarsLoading}
+                focus={fillView.focus} onClearFocus={fillView.clearFocus} decimalsFor={ohlcDecimals}
+            />}
         </div>
     );
 }

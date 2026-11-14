@@ -8,6 +8,7 @@ export const wrap = style({
     flexDirection: 'column',
     flex: 1,
     minHeight: 0,
+    minWidth: 0,
 });
 
 // 窄面板放不下時換行（不把按鈕擠成直排字、右端按鈕不被裁掉）；不用

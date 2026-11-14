@@ -745,7 +745,8 @@ describe('chart order settings button', () => {
         if (action === '解鎖') await act(async () => drawingApi().setLocked(id, true));
         await act(async () => drawingApi().setObjectListOpen(true));
         await act(async () => button(view.root, side!).props.onClick());
-        const target = view.root.findAll(n => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith(action!))[0]!;
+        const controls = view.root.findByType(action === '清除全部' ? ChartDrawingTools : ChartObjectList);
+        const target = controls.findAll(n => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith(action!))[0]!;
         expect(target).toBeDefined();
         await act(async () => {
             capture(target, 'PointerDown');
@@ -758,6 +759,67 @@ describe('chart order settings button', () => {
         await act(async () => button(view.root, side!).props.onClick());
         await clickChart();
         expect(m.place).toHaveBeenCalledTimes(1); // 新武裝可正常下單
+    });
+
+    it.each(['點價買', '點價賣'].flatMap(side => ['顯示成交標記', '成交明細']
+        .flatMap(label => (['PointerDown', 'KeyDown'] as const).map(kind => [side, label, kind] as const))))
+    ('武裝%s後操作成交控制項%s的%s，先解除武裝且重新武裝才能下單', async (side, label, kind) => {
+        await mount({ contract: stk });
+        await act(async () => button(view.root, side).props.onClick());
+        expect(text(view.root)).toContain('交易模式 ·');
+        // 明細鈕的名稱帶筆數（「成交明細 N」），所以用前綴比對
+        const target = view.root.findAll(n => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith(label))[0]!;
+        await act(async () => {
+            capture(target, kind);
+            // 先送同一事件內的 chart click，不能依賴下一次 render 才解除武裝。
+            m.click.at(-1)!({ point: { x: 10, y: 10 } });
+            target.props.onClick();
+        });
+        expect(text(view.root)).not.toContain('交易模式 ·');
+        await clickChart();
+        expect(m.place).not.toHaveBeenCalled();
+        await act(async () => button(view.root, side).props.onClick());
+        await clickChart();
+        expect(m.place).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['點價買', '點價賣'])('重開停在成交標記頁會解除%s武裝，重新武裝後才能下單', async (side) => {
+        await mount({ contract: stk });
+        await act(async () => chip().props.onClick());
+        await act(async () => {
+            const tab = button(pop()!, '成交標記');
+            capture(tab, 'PointerDown');
+            tab.props.onClick();
+        });
+        await act(async () => button(pop()!, '完成').props.onClick());
+        await act(async () => button(view.root, side).props.onClick());
+        expect(text(view.root)).toContain('交易模式 ·');
+        await act(async () => chip().props.onClick());
+        expect(pop()!.props['aria-label']).toBe('圖表設定：成交標記');
+        await act(async () => chip().props.onClick());
+        expect(text(view.root)).not.toContain('交易模式 ·');
+        await clickChart();
+        expect(m.place).not.toHaveBeenCalled();
+        await act(async () => button(view.root, side).props.onClick());
+        await clickChart();
+        expect(m.place).toHaveBeenCalledTimes(1);
+        expect(m.place.mock.calls[0]![1]).toBe(side === '點價買' ? 'Buy' : 'Sell');
+    });
+
+    it('停在下單頁時武裝中開關設定會保留武裝，點圖照常下單', async () => {
+        await mount({ contract: stk });
+        await act(async () => chip().props.onClick());
+        await act(async () => button(pop()!, '成交標記').props.onClick());
+        await act(async () => button(pop()!, '下單').props.onClick());
+        await act(async () => button(pop()!, '完成').props.onClick());
+        await act(async () => button(view.root, '點價買').props.onClick());
+        await act(async () => chip().props.onClick());
+        expect(pop()!.props['aria-label']).toBe('圖表下單設定');
+        expect(text(view.root)).toContain('交易模式 ·');
+        await act(async () => button(pop()!, '完成').props.onClick());
+        expect(text(view.root)).toContain('交易模式 ·');
+        await clickChart();
+        expect(m.place).toHaveBeenCalledTimes(1);
     });
 
     it.each(['PointerDown', 'KeyDown'] as const)('武裝後設定對話框的%s即使沒有改物件，也使後續空白點擊不下單', async (kind) => {
