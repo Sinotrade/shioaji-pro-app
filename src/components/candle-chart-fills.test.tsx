@@ -544,6 +544,18 @@ describe('CandleChart 實際成交標記', () => {
         expect(toggle(combo)).toBeUndefined();
         expect(combo.root.findAll((n) => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith('成交明細'))).toHaveLength(0);
     });
+    it('權證圖（WRT，或代號在權證區間的 STK）沒有成交控制，也不畫', async () => {
+        setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
+        for (const contract of [{ ...stk, code: '030001', security_type: 'WRT' }, { ...stk, code: '030001' }]) {
+            // 委託和圖表是同一個合約：拿掉權證條件就會畫出來
+            const r = mount({ contract, trades: trades().map(t => ({ ...t, contract })) }); await flush();
+            expect(toggle(r)).toBeUndefined();
+            expect(r.root.findAll((n) => n.type === 'button' && String(n.props['aria-label'] ?? '').startsWith('成交明細'))).toHaveLength(0);
+            await move(BAR);
+            expect(tooltips(r)).toHaveLength(0);
+            expect(captured.groups).toEqual([]);
+        }
+    });
     it('窄面板（圖表區小於 380px）的 tooltip 省略月日，寬面板維持完整時間', async () => {
         setNow('2026-10-08T09:16:00'); fetchMock.mockResolvedValue(DATA);
         const r = mount({ contract: stk, trades: trades() }); await flush();

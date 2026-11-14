@@ -1675,8 +1675,9 @@ export function CandleChart({
         chart.timeScale().fitContent();
     };
 
-    // 與工具列「成交／明細」按鈕同一條件：不能下單的圖表（指數、組合）不畫也不留清單
-    const fillsEnabled = !isCombo && !!orderMarket;
+    // 與工具列「成交／明細」按鈕同一條件：不能下單的圖表（指數、組合）不畫也不留清單。
+    // 權證也先不畫：對帳後的權證委託可能標成 STK，和 WRT 圖的投影範圍對不上，會少畫又不顯示缺漏
+    const fillsEnabled = !isCombo && !!orderMarket && !warrant;
     const fillStyle = useChartFillStyle();
     // 全部帳戶：同一市場（股票 → 證券、期貨／選擇權 → 期貨）的所有可交易帳戶，合併成點、明細逐筆保留帳戶
     const fillScope = useChartFillScope();
