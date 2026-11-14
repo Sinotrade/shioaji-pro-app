@@ -26,7 +26,8 @@ import { WebServerHint } from './server-env-notice';
 import { isTauri } from '../lib/runtime';
 import { ForeignServerChip } from './foreign-server-chip';
 import { externalServerLabel, useServerAttachment } from '../lib/server-adoption';
-import { SettingsDialog } from './settings-dialog';
+import { isSettingsTab, SettingsDialog, type SettingsTab } from './settings-dialog';
+import { onShortcut } from '../lib/shortcuts/match';
 import { flashPopoutParams, reseedPopoutFlashAccounts } from '../lib/flash-account';
 import { mainFlashSelection } from '../lib/order-account';
 import * as styles from './hud-header.css';
@@ -229,6 +230,16 @@ export function HudHeader({
     const [now, setNow] = useState(() => new Date());
     const [serverMgrOpen, setServerMgrOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
+    // ⌘,／Ctrl+, 與提示頁的「修改快捷鍵」
+    useEffect(
+        () =>
+            onShortcut('settings.open', (d) => {
+                setSettingsTab(isSettingsTab(d.tab) ? d.tab : null);
+                setSettingsOpen(true);
+            }),
+        [],
+    );
     const [layoutLibOpen, setLayoutLibOpen] = useState(false);
 
     useEffect(() => {
@@ -348,14 +359,18 @@ export function HudHeader({
             )}
             <button
                 className={styles.resetBtn}
-                title='設定（外觀/音效與隱私/帳號/風控/版面）'
+                title='設定（外觀/音效與隱私/帳號/風控/版面/快捷鍵）'
                 onClick={() => setSettingsOpen(true)}
             >
                 <Settings size={11} style={{ verticalAlign: '-1px' }} /> 設定
             </button>
             <SettingsDialog
                 open={settingsOpen}
-                onClose={() => setSettingsOpen(false)}
+                initialTab={settingsTab}
+                onClose={() => {
+                    setSettingsOpen(false);
+                    setSettingsTab(null);
+                }}
                 onResetWorkspace={onResetWorkspace}
                 onOpenLayoutLibrary={() => setLayoutLibOpen(true)}
             />

@@ -79,6 +79,9 @@ import {
     type FibLevel,
     type FibOptions,
 } from '../lib/chart-drawing-fib';
+import { chordText } from '../lib/shortcuts/keys';
+import { primaryKey } from '../lib/shortcuts/match';
+import { getShortcutState } from '../lib/shortcuts/store';
 import * as styles from './chart-drawing-tools.css';
 
 const WIDTHS: readonly number[] = LINE_WIDTHS;
@@ -313,9 +316,10 @@ function useTips() {
     return { tipProps, tipNode: node, hideTip: () => setTip(null) };
 }
 
+// 目前的按鍵（含 設定 → 快捷鍵 的自訂）；未設定回 null
 function shortcutText(tool: DrawingToolId): string | null {
-    const s = toolDef(tool).shortcut;
-    return s ? `Alt+${s}` : null;
+    const k = primaryKey(`draw.${tool}`);
+    return k ? chordText(k, getShortcutState().platform) : null;
 }
 
 function toolTip(tool: DrawingToolId, armed: boolean): string {

@@ -12,7 +12,7 @@ import { useDisplayBook } from '../hooks/use-display-book';
 
 import { Crosshair, Link2, Lock, Unlock, Zap } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { TICKET_ACTION_EVENT } from '../hooks/use-hotkeys';
+import { TicketKeyHint, useIsTicketKeyTarget, useTicketAction } from './shortcuts/ticket-key-hint';
 import { useQuery } from '../hooks/use-query';
 import { useQuote, useTradingLive } from '../hooks/use-stream';
 import { useAccounts } from '../lib/account-store';
@@ -463,18 +463,16 @@ export function ComboTicket() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [allFut, hasOpt]);
 
-    // B/S hotkeys switch the combo direction (issue #1 — was inert here)
-    useEffect(() => {
-        const onAction = (e: Event) => {
-            const a = (e as CustomEvent).detail?.action;
-            if (a === 'Buy' || a === 'Sell') {
-                setAction(a);
-                setArmed(false);
-            }
-        };
-        window.addEventListener(TICKET_ACTION_EVENT, onAction);
-        return () => window.removeEventListener(TICKET_ACTION_EVENT, onAction);
-    }, []);
+    // B/S 快捷鍵切換組合方向（issue #1）：只有目前選取的這個組合單面板
+    const rootRef = useRef<HTMLDivElement>(null);
+    const keyTarget = useIsTicketKeyTarget(rootRef);
+    useTicketAction(
+        rootRef,
+        useCallback((a: 'Buy' | 'Sell') => {
+            setAction(a);
+            setArmed(false);
+        }, []),
+    );
 
     // 每腳實際方向預覽 — 使用者下單前一定看得到兩腳各自會買還是賣
     const legDirs: ['Buy' | 'Sell', 'Buy' | 'Sell'] | null = effectiveType
@@ -653,7 +651,7 @@ export function ComboTicket() {
     );
 
     return (
-        <div className={styles.body}>
+        <div className={styles.body} ref={rootRef}>
             <div className={panel.refreshToolbar}>
                 <span role="status">{tradesQuery.error || '組合委託為查詢快照，成交／取消後請手動更新'}</span>
                 <RefreshButton label="更新組合委託" loading={tradesQuery.loading} onClick={() => void tradesQuery.refresh()} />
@@ -833,6 +831,7 @@ export function ComboTicket() {
                             }}
                         >
                             {a === 'Buy' ? '買進組合' : '賣出組合'}
+                            <TicketKeyHint side={a} active={keyTarget} />
                         </button>
                     ))}
                 </div>

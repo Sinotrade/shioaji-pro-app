@@ -93,6 +93,8 @@ import { loadOrderLotPreference, saveOrderLotPreference, QUICK_ORDER_LOTS } from
 import type { ChartOrderPanelState } from '../lib/chart-order-settings';
 import { resetCreditEnquireCache } from '../lib/credit-eligibility';
 import { getRiskSettings, setRiskSettings } from '../lib/risk';
+import { detectPlatform } from '../lib/shortcuts/keys';
+import { __setShortcutPlatformForTests } from '../lib/shortcuts/store';
 
 const S1 = { account_type: 'S', broker_id: 'B', account_id: '1111121', signed: true, person_id: '', username: '' } as Account;
 const S2 = { ...S1, account_id: '2222207' } as Account;
@@ -520,6 +522,8 @@ describe('chart order settings button', () => {
         ['', 'Macintosh', '⌘L'],
     ])('委託線鎖定鈕依平台 %s／%s 提示 %s，圖示與按下狀態跟著切換', async (platform, userAgent, shortcut) => {
         vi.stubGlobal('navigator', { platform, userAgent });
+        // 快捷鍵登錄表在載入時偵測一次平台；測試換平台後重新偵測
+        __setShortcutPlatformForTests(detectPlatform());
         await mount({ contract: stk });
         const lockButton = () => view.root.find(n => n.type === 'button' && n.props['aria-label'] === '委託線鎖定');
         expect(getRiskSettings().orderLineLock).toBe(false);

@@ -11,6 +11,7 @@ import {
     useChartDrawings,
     type ChartDrawingsApi,
 } from './use-chart-drawings';
+import { resetAllBindings, setBinding } from '../lib/shortcuts/store';
 import {
     __resetDrawingsForTest,
     __setDrawingLocksForTest,
@@ -1717,6 +1718,29 @@ describe('第一期：多選、平行通道、量測、文字、復原、快捷�
         expect(api().tool).toBe('horizontal');
         expect(toolShortcutOf({ code: 'KeyF', altKey: true, ctrlKey: false, metaKey: false, shiftKey: false })).toBe('fib');
         expect(undoKeyOf({ key: 'z', code: 'KeyZ', ctrlKey: false, metaKey: false, shiftKey: false, altKey: false })).toBeNull();
+    });
+
+    it('⌥⇧H 隱藏／顯示全部畫圖，可用 ⌘Z 復原；改鍵後立即生效', async () => {
+        const api = await setup();
+        addDrawing('TXF', 'horizontal', [{ time: 1000, price: 25000 }], DEFAULT_DRAWING_STYLE);
+        addDrawing('TXF', 'horizontal', [{ time: 1000, price: 25100 }], DEFAULT_DRAWING_STYLE);
+        await act(async () => {});
+        await down(700, 50); // 點圖：握有鍵盤
+        const e = await key({ key: 'Ó', code: 'KeyH', altKey: true, shiftKey: true });
+        expect(e.defaultPrevented).toBe(true);
+        expect(api().drawings.every((d) => d.hidden)).toBe(true);
+        // Alt+H（不含 Shift）仍是水平線工具
+        await key({ key: '˙', code: 'KeyH', altKey: true });
+        expect(api().tool).toBe('horizontal');
+        await act(async () => api().setTool(null));
+        await key({ key: 'z', code: 'KeyZ', metaKey: true });
+        expect(api().drawings.every((d) => !d.hidden)).toBe(true);
+        setBinding('chart.toggleDrawings', 'Alt+KeyY');
+        await key({ key: 'Ó', code: 'KeyH', altKey: true, shiftKey: true });
+        expect(api().drawings.some((d) => d.hidden)).toBe(false);
+        await key({ key: '¥', code: 'KeyY', altKey: true });
+        expect(api().drawings.every((d) => d.hidden)).toBe(true);
+        resetAllBindings();
     });
 
     it('價差量測：點兩下量完、Esc 清除且吃掉這一下（不算進 Esc×2）', async () => {

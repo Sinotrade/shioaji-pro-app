@@ -1,10 +1,12 @@
 import { canTrade } from '../lib/account-tradable';
 // src/components/settings-dialog.tsx — 統一設定面板：外觀／音效與隱私／
-// 帳號／風控／版面 五分類。原本散在 header 的主題/帳號/版面 popover 全數
+// 帳號／風控／Agent／版面／快捷鍵。原本散在 header 的主題/帳號/版面 popover 全數
 // 收斂到這裡；風控「規則」也在此（Kill Switch 留在 header，一鍵可達）。
 
 import {
+    ArrowRight,
     Bot,
+    Keyboard,
     LayoutGrid,
     Palette,
     RefreshCw,
@@ -83,6 +85,8 @@ import { Orb } from './orb';
 import * as hud from './hud-header.css';
 import * as panel from './panel.css';
 import * as styles from './settings-dialog.css';
+import { keyboardHeld } from '../lib/shortcuts/guards';
+import { ShortcutSettingsSection } from './shortcuts/shortcut-settings';
 
 const MODE_OPTIONS: { key: ThemeMode; label: string }[] = [
     { key: 'dark', label: '深色' },
@@ -102,13 +106,17 @@ const LIMIT_STYLE_OPTIONS: { key: LimitStyle; label: string; title: string }[] =
     { key: 'none', label: '不標示', title: '到漲跌停不加任何標示' },
 ];
 
-type SettingsTab =
+export type SettingsTab =
     | 'appearance'
     | 'soundPrivacy'
     | 'accounts'
     | 'risk'
     | 'agent'
-    | 'layout';
+    | 'layout'
+    | 'shortcuts';
+
+export const isSettingsTab = (v: unknown): v is SettingsTab =>
+    typeof v === 'string' && TABS.some((t) => t.key === v);
 
 const TABS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { key: 'appearance', label: '外觀', icon: <Palette size={13} /> },
@@ -117,6 +125,7 @@ const TABS: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { key: 'risk', label: '風控', icon: <ShieldAlert size={13} /> },
     { key: 'agent', label: 'Agent', icon: <Bot size={13} /> },
     { key: 'layout', label: '版面', icon: <LayoutGrid size={13} /> },
+    { key: 'shortcuts', label: '快捷鍵', icon: <Keyboard size={13} /> },
 ];
 
 function AppearanceSection() {
@@ -430,7 +439,7 @@ export function AccountsSection() {
     );
 }
 
-function RiskSection() {
+function RiskSection({ onOpenShortcuts }: { onOpenShortcuts: () => void }) {
     const risk = useRiskSettings();
     const hoverPricePick = useChartHoverPricePick();
     const dailyPnl = getDailyPnl();
@@ -568,6 +577,10 @@ function RiskSection() {
                 預設關閉，避免誤觸；開啟後在非輸入狀態下 0.6 秒內連按兩次
                 Esc 會撤銷全部未成交委託（第一下會先跳提示）。
             </span>
+            <button className={hud.menuItem} onClick={onOpenShortcuts}>
+                <Keyboard size={12} style={{ verticalAlign: '-2px' }} /> 所有快捷鍵與改鍵{' '}
+                <ArrowRight size={11} style={{ verticalAlign: '-2px' }} />
+            </button>
         </>
     );
 }
@@ -688,17 +701,25 @@ function LayoutSection({
 export function SettingsDialog({
     open,
     onClose,
+    initialTab,
     ...layoutProps
 }: LayoutSectionProps & {
     open: boolean;
     onClose: () => void;
+    // 開啟時切到指定分類（例如從快捷鍵提示頁「修改快捷鍵」）
+    initialTab?: SettingsTab | null;
 }) {
     const [tab, setTab] = useState<SettingsTab>('appearance');
+    useEffect(() => {
+        if (open && initialTab) setTab(initialTab);
+    }, [open, initialTab]);
 
     useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
+                // 錄製新按鍵或提示頁開著時，Esc 歸它們
+                if (keyboardHeld()) return;
                 // capture + preventDefault so the global Esc-Esc cancel-all
                 // hotkey ignores the press that closes this dialog
                 e.preventDefault();
@@ -714,7 +735,7 @@ export function SettingsDialog({
     return (
         <>
             <div className={styles.backdrop} onClick={onClose} />
-            <div className={styles.dialog}>
+            <div className={tab === 'shortcuts' ? `${styles.dialog} ${styles.dialogWide}` : styles.dialog}>
                 <div className={hud.srvDialogTitle}>
                     設定
                     <button
@@ -744,11 +765,12 @@ export function SettingsDialog({
                         {tab === 'appearance' && <AppearanceSection />}
                         {tab === 'soundPrivacy' && <SoundPrivacySection />}
                         {tab === 'accounts' && <AccountsSection />}
-                        {tab === 'risk' && <RiskSection />}
+                        {tab === 'risk' && <RiskSection onOpenShortcuts={() => setTab('shortcuts')} />}
                         {tab === 'agent' && <AgentSection />}
                         {tab === 'layout' && (
                             <LayoutSection {...layoutProps} onClose={onClose} />
                         )}
+                        {tab === 'shortcuts' && <ShortcutSettingsSection />}
                     </div>
                 </div>
             </div>
