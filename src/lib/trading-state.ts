@@ -1,11 +1,12 @@
 import { canTrade } from './account-tradable';
 import { createAccountQuery } from './account-query';
-import { getServerModeVersion, knownServerInfo } from './server-info-store';
+import { getServerModeVersion, knownServerInfo, subscribeServerInfo } from './server-info-store';
 import { onTradeMutation } from './trade-mutations';
 import { useEffect, useSyncExternalStore } from 'react';
-import { getAccountState, refreshAccounts, useAccounts } from './account-store';
+import { getAccountState, refreshAccounts, subscribeAccounts, useAccounts } from './account-store';
 import { ensureContract, getCachedContract } from './contracts-cache';
 import { getApiBase } from './runtime';
+import { currentProtectionEnv } from './protection-env';
 import { subscribeTradeReports } from './boot';
 import { retainQuote } from './quote-ownership';
 import { onTradeResponse } from './trade-observations';
@@ -22,7 +23,7 @@ import { cancelledByQuantity, readMark } from './cancel-verification';
 import { getTradingMirrorFresh, invalidateTradingMirror, markTradingMirrorSnapshot } from './trading-mirror-lease';
 import type { OrderEventReport } from './order-report';
 import type { Account, AccountBalance, AccountedPosition, AccountFunds, Margin } from './types/portfolio';
-import type { AccountedTrade, Trade, TradeCacheHealth } from './types/order';
+import type { AccountedTrade, Deal, Trade, TradeCacheHealth } from './types/order';
 import { markStage } from './startup-timing';
 
 // Startup timing (#142): each accounting read of the initial refresh is
@@ -95,6 +96,9 @@ export interface TradingState {
     queries: Record<TradingQueryScope, TradingQueryStatus>;
     positions: AccountedPosition[];
     trades: AccountedTrade[];
+    /** Environment of the last complete authoritative orders snapshot.
+     * Absent/null means retained rows must not be shown as current fills. */
+    ordersSnapshotEnv?: string | null;
     funds?: AccountFunds[];
     balance?: AccountBalance;
     margin?: Margin;
@@ -105,7 +109,7 @@ export interface TradingState {
     needsReconcile: boolean;
     error: string | null;
 }
-let state: TradingState = { queries: { positions: emptyQuery(), orders: emptyQuery(), account: emptyQuery() }, positions: [], trades: [], updatedAt: null, loading: false, needsReconcile: false, error: null };
+let state: TradingState = { queries: { positions: emptyQuery(), orders: emptyQuery(), account: emptyQuery() }, positions: [], trades: [], ordersSnapshotEnv: null, updatedAt: null, loading: false, needsReconcile: false, error: null };
 const listeners = new Set<() => void>();
 const isMirror = typeof location !== 'undefined' && new URLSearchParams(location.search).has('popout');
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(`sj-trading-state:${getApiBase()}`) : null;
@@ -198,13 +202,72 @@ function publish() {
 function schedulePublish() {
     if (!publishTimer) publishTimer = setTimeout(() => { publishTimer = null; publish(); }, 50);
 }
+// Subscribe before start(): mirrors return early there, and a newly mounted
+// chart must not revive an older snapshot after simulation → production →
+// simulation. Existing rows stay available for reconciliation.
+let ordersMirrorInvalidatedAt = 0;
+function invalidateOrdersSnapshot(markMirrorStale = true) {
+    if (isMirror && markMirrorStale) ordersMirrorInvalidatedAt = Math.max(ordersMirrorInvalidatedAt, Date.now());
+    if (state.ordersSnapshotEnv != null) {
+        state = { ...state, ordersSnapshotEnv: null };
+        publish();
+    }
+}
+let ordersModeVersion = getServerModeVersion();
+let ordersModeKnown = typeof knownServerInfo()?.simulation === 'boolean';
+// This notification is unknown → known (mode re-learned): an account-scope change in the same round records no invalidation time either
+let ordersModeRelearned = false;
+const stopOrdersMode = subscribeServerInfo(() => {
+    const version = getServerModeVersion();
+    const known = typeof knownServerInfo()?.simulation === 'boolean';
+    const invalidated = version !== ordersModeVersion || !known;
+    ordersModeVersion = version;
+    // A popout records the invalidation time only when leaving a known mode (rejecting authoritative reads completed before it).
+    // Unknown → known only re-learns the mode: reads the main window completed meanwhile stay valid, or a late local /info
+    // would leave the chart pending forever.
+    if (invalidated) invalidateOrdersSnapshot(ordersModeKnown);
+    if (known && !ordersModeKnown) {
+        ordersModeRelearned = true;
+        queueMicrotask(() => { ordersModeRelearned = false; });
+    }
+    ordersModeKnown = known;
+});
+// A full read covers only the eligible accounts at that instant. If a
+// retained account later becomes eligible, its old rows need a new read.
+function tradableAccountScope(accounts = tradableAccounts()) {
+    return JSON.stringify([...new Set(accounts.map(accountKey))].sort());
+}
+let ordersAccountScope = tradableAccountScope();
+let ordersAccountsLoaded = getAccountState().loaded;
+let ordersAccountsVersion = 0;
+const stopOrdersAccounts = subscribeAccounts(() => {
+    const next = tradableAccountScope();
+    if (next !== ordersAccountScope) {
+        ordersAccountScope = next;
+        ordersAccountsVersion++;
+        // Initial account discovery in a new popout may use the main's
+        // existing current snapshot; later scope changes must invalidate it.
+        // Re-learning the mode changes the tradable accounts too (unsigned simulation accounts); record no invalidation time in the same round
+        const knownNow = typeof knownServerInfo()?.simulation === 'boolean';
+        if (ordersAccountsLoaded) invalidateOrdersSnapshot(knownNow && ordersModeKnown && !ordersModeRelearned);
+    }
+    ordersAccountsLoaded ||= getAccountState().loaded;
+});
+import.meta.hot?.dispose(stopOrdersMode);
+import.meta.hot?.dispose(stopOrdersAccounts);
 channel?.addEventListener('message', e => {
     if (isMirror && e.data?.kind === 'main-gone') {
         invalidateTradingMirror();
         mirroredCacheContinuous = false;
+        invalidateOrdersSnapshot();
     } else if (isMirror && e.data?.kind === 'state' && Array.isArray(e.data.state?.positions)
         && Array.isArray(e.data.state?.trades)) {
-        state = e.data.state;
+        const incoming = e.data.state as TradingState;
+        const completedAt = incoming.queries?.orders?.updatedAt;
+        // Receiving a heartbeat is not a new authoritative read. A delayed
+        // frame cannot restore provenance revoked by this window.
+        state = ordersMirrorInvalidatedAt > 0 && !(typeof completedAt === 'number' && Number.isFinite(completedAt) && completedAt > ordersMirrorInvalidatedAt)
+            ? { ...incoming, ordersSnapshotEnv: null } : incoming;
         mirroredCacheContinuous = e.data.cacheContinuous === true;
         if (!isStreamOwner()) markTradingMirrorSnapshot();
         publish();
@@ -242,7 +305,7 @@ let ordersBaseline = false;
 let baselineLostMark = 0;
 const nextRefreshAt: Record<TradingQueryScope, number> = { positions: 0, orders: 0, account: 0 };
 let eventSequence = 0;
-const accountKey = (a: { broker_id: string; account_id: string; account_type: string }) => `${a.account_type}:${a.broker_id}:${a.account_id}`;
+function accountKey(a: { broker_id: string; account_id: string; account_type: string }) { return `${a.account_type}:${a.broker_id}:${a.account_id}`; }
 const reportKey = (report: OrderEventReport) => report.eventId ? `event:${report.eventId}` : JSON.stringify(report.raw);
 
 const positionQuotes = new Map<string, { release?: () => void }>();
@@ -273,9 +336,33 @@ function prepareQuotes() {
     }
 }
 
-const tradableAccounts = () => getAccountState().accounts.filter(a => canTrade(a) && ['S', 'F'].includes(a.account_type));
+function tradableAccounts() { return getAccountState().accounts.filter(a => canTrade(a) && ['S', 'F'].includes(a.account_type)); }
 
 type Problem = [ReconcileReason, string];
+
+/** A cache-only row may omit fills this App already holds (the cache can hold the
+ *  order without its deals). Only fill that gap: while the row's deals sum below its
+ *  deal_quantity, add held deals it does not repeat (`seq`, the key projectTradeDeal
+ *  dedupes on) that still fit. Invariant: held deals are only added up to
+ *  deal_quantity, never past it, so one fill spelled with two seqs (REST vs SSE) is
+ *  not counted twice; a row already covering it is kept as is. A gap that is not a
+ *  finite positive number (NaN quantities) counts as no gap. */
+function keepHeldDeals(fresh: Trade, held: Trade): Trade {
+    const arrived = fresh.status.deals;
+    let gap = fresh.status.deal_quantity - arrived.reduce((n, d) => n + d.quantity, 0);
+    if (!Number.isFinite(gap) || gap <= 0) return fresh;
+    const seen = new Set(arrived.map(d => d.seq));
+    // The same fill can carry another seq in REST than in SSE: a held deal with the price and
+    // quantity of an arrived one, under a second apart, is not added. Two genuinely identical
+    // fills then leave the gap open, and the chart says the deals are incomplete (fail closed).
+    const twin = (a: Deal, b: Deal) => a.price === b.price && a.quantity === b.quantity && Math.abs(a.ts - b.ts) < 1;
+    const missing = (held.status.deals ?? []).filter(d => {
+        if (seen.has(d.seq) || arrived.some(a => twin(a, d)) || !(d.quantity > 0 && d.quantity <= gap)) return false;
+        gap -= d.quantity;
+        return true;
+    });
+    return missing.length ? { ...fresh, status: { ...fresh.status, deals: [...arrived, ...missing] } } : fresh;
+}
 
 /** Merge one account's HTTP rows and replay reports received meanwhile.
  *  Returns whether the merge was applied; false keeps the previous view
@@ -287,12 +374,13 @@ function mergeOrders(account: Account, trades: Trade[], accounts: Account[], pro
     const matches = (a: Account | undefined) => a && accountKey(a) === accountKey(account);
     const incoming = trades
         .filter(t => !t.order.account || (t.order.account.account_id === account.account_id && t.order.account.broker_id === account.broker_id))
-        .map(t => ({ ...t, account }));
+        // A row without a deals array (cache) must not put undefined into state.
+        .map(t => ({ ...t, account, status: { ...t.status, deals: Array.isArray(t.status.deals) ? t.status.deals : [] } }));
     let merged: AccountedTrade[];
     if (mode === 'replace') merged = [...state.trades.filter(t => !matches(t.account)), ...incoming];
     else {
         const byId = new Map(incoming.map(t => [t.order.id, t]));
-        merged = state.trades.map(t => matches(t.account) && byId.has(t.order.id) ? byId.get(t.order.id)! : t);
+        merged = state.trades.map(t => matches(t.account) && byId.has(t.order.id) ? keepHeldDeals(byId.get(t.order.id)!, t) : t);
         const known = new Set(state.trades.filter(t => matches(t.account)).map(t => t.order.id));
         merged.push(...incoming.filter(t => !known.has(t.order.id)));
     }
@@ -359,6 +447,9 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
     const readOrders = targets.includes('orders');
     const readAccount = targets.includes('account');
     let ordersRead = false;
+    let ordersEnv: string | null = null;
+    let ordersReadScope: string | null = null;
+    let ordersReadAccountsVersion = ordersAccountsVersion;
     let reread = false;
     const run: Promise<void> = inFlight = (async () => {
         if (resyncInFlight) await resyncInFlight;
@@ -397,6 +488,8 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                 if (!getAccountState().accounts.length) await refreshAccounts();
                 const accounts = tradableAccounts();
                 if (!accounts.length) throw new Error('尚未取得可查詢帳戶；請連線後按更新');
+                ordersReadScope = tradableAccountScope(accounts);
+                ordersReadAccountsVersion = ordersAccountsVersion;
                 let ordersOk = true;
                 // accounts are read up to ACCOUNT_READ_CONCURRENCY at a time
                 // (was one after another): each account's own positions →
@@ -467,7 +560,11 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
                         margin: funds.find(f => future && accountKey(f.account) === accountKey(future))?.margin,
                         balanceAccount: stock && accountKey(stock), marginAccount: future && accountKey(future) };
                 }
-                if (readOrders && ordersOk) ordersRead = true;
+                if (readOrders && ordersOk) {
+                    query.assertCurrent();
+                    ordersRead = true;
+                    ordersEnv = currentProtectionEnv();
+                }
                 if (readPositions) prepareQuotes();
             }
         } catch (e) {
@@ -495,6 +592,11 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
         // The authoritative read covers event_id gaps detected before it began.
         if (ordersRead) {
             ordersBaseline = true;
+            if (!failed.has('orders') && problems.orders.length === 0
+                && ordersReadAccountsVersion === ordersAccountsVersion && ordersReadScope === tradableAccountScope()) {
+                ordersAccountScope = ordersReadScope;
+                state = { ...state, ordersSnapshotEnv: ordersEnv };
+            }
             // update_status covers order and deal gaps for the orders tab; a
             // deal gap still leaves positions unreconciled unless read too.
             const kinds = reportLedger.takeGaps(getApiBase(), ledgerBefore);
@@ -529,8 +631,8 @@ export async function reconcileOrdersOnce(): Promise<void> {
     }
 }
 
-// ---- Shioaji 1.7.6 trade cache health (event-driven only) ----
-export type HealthTrigger = 'reconnect' | 'gap' | 'manual';
+// ---- Shioaji 1.7.6 trade cache health (event-driven, including parked-report grace) ----
+export type HealthTrigger = 'reconnect' | 'gap' | 'manual' | 'parked';
 let healthInFlight: Promise<void> | null = null;
 let healthQueued: HealthTrigger | null = null;
 let lastHealthAt = 0;
@@ -539,6 +641,8 @@ const HEALTH_MAX_INTERVAL_MS = 60000;
 // Consecutive gap-triggered reads that found every cache Healthy: the gap is
 // App-side only, so back off instead of re-reading on every new gap.
 let healthyGapStreak = 0;
+// Set while the store runs: a report was parked (see start)
+let onParked: () => void = () => {};
 const HEALTH_REASONS: Partial<Record<string, Problem>> = {
     SequenceGap: ['sequence-gap', '伺服器委託快取偵測到回報跳號；請手動對帳'],
     PendingReport: ['pending-report', '伺服器有尚未關聯的回報；請手動對帳'],
@@ -547,9 +651,10 @@ const HEALTH_REASONS: Partial<Record<string, Problem>> = {
 };
 
 /** Read trade_cache_health for every tradable account. Triggered only by a
- *  reconnect, a detected sequence gap or a manual reconciliation — never by a
- *  timer. When every cache is Healthy on the same sidecar instance, the orders
- *  view is resynced cache-only (refresh:false) without accounting quota. */
+ *  reconnect, a detected sequence gap, a manual reconciliation or a report still
+ *  parked after its 1.5 s grace — never by a periodic timer. When every cache is
+ *  Healthy on the same sidecar instance, the orders view is resynced cache-only
+ *  (refresh:false) without accounting quota. */
 export function checkTradeCacheHealth(trigger: HealthTrigger): Promise<void> {
     if (isMirror) return Promise.resolve();
     if (healthInFlight) {
@@ -659,7 +764,7 @@ async function resyncOrdersFromCache(accounts: Account[], before: { clockBefore:
         }
         resolve('orders', CACHE_RESYNC_RESOLVES, before.clockBefore);
         for (const [key, deal] of [...pendingDeals]) {
-            if (deal.kind === 'deal' && state.trades.some(t => t.order.id === deal.tradeId)) { pendingDeals.delete(key); applyDeal(deal); }
+            if (deal.kind === 'deal' && state.trades.some(t => t.order.id === deal.tradeId)) { pendingDeals.delete(key); applyDeal(deal, true); }
         }
     } catch {
         // A failed cache read keeps existing reasons; the user can reconcile.
@@ -710,12 +815,19 @@ function releasePositionMeta(key: string) {
         resolve('positions', ['metadata-missing'], undefined, MSG.positionContractMeta);
     }
 }
-function applyDeal(report: OrderEventReport) {
+/** `replayed`: the deal comes from pendingDeals (parked for a missing order row
+ *  or contract), so it reached us before any read that built the row it now
+ *  meets: deals arriving during an update_status read are applied by
+ *  mergeOrders' queryEvents replay (unflagged), and any report during a cache
+ *  resync discards that resync. Such a row may already count it; then
+ *  projectTradeDeal adds only the detail. Positions need no flag: seenFills
+ *  and the snapshot cutoff already apply each fill at most once. */
+function applyDeal(report: OrderEventReport, replayed = false) {
     if (report.kind !== 'deal') return;
     const key = reportKey(report);
     const knownOrder = state.trades.some(t => t.order.id === report.tradeId);
     const fill = positionFill(report, getAccountState().accounts, state.trades);
-    const trades = projectTradeDeal(state.trades, report);
+    const trades = projectTradeDeal(state.trades, report, replayed);
     if (trades) {
         state = { ...state, trades };
         if (orderMetaPending.delete(key) && orderMetaPending.size === 0) resolve('orders', ['metadata-missing'], undefined, MSG.orderMeta);
@@ -723,6 +835,7 @@ function applyDeal(report: OrderEventReport) {
         // Deal-before-order is documented; the order report/response replays it.
         raise('orders', 'metadata-missing', MSG.orderMeta);
         park(report, orderMetaPending);
+        onParked();
     } else {
         raise('orders', 'projection-failed', '成交回報無法套用到委託，委託狀態待對帳');
         if (orderMetaPending.delete(key) && orderMetaPending.size === 0) resolve('orders', ['metadata-missing'], undefined, MSG.orderMeta);
@@ -746,7 +859,7 @@ function applyDeal(report: OrderEventReport) {
                 for (const [pendingKey, pending] of [...pendingDeals]) {
                     if (positionFill(pending, getAccountState().accounts, state.trades)?.code !== fill.code) continue;
                     pendingDeals.delete(pendingKey);
-                    applyDeal(pending);
+                    applyDeal(pending, true);
                 }
                 schedulePublish();
             }).catch(() => undefined).finally(() => pendingContracts.delete(fill.code));
@@ -783,7 +896,7 @@ function applyDeal(report: OrderEventReport) {
 }
 function releasePendingDeals(tradeId: string) {
     for (const [key, deal] of [...pendingDeals]) {
-        if (deal.kind === 'deal' && deal.tradeId === tradeId) { pendingDeals.delete(key); applyDeal(deal); }
+        if (deal.kind === 'deal' && deal.tradeId === tradeId) { pendingDeals.delete(key); applyDeal(deal, true); }
     }
 }
 /** A cancellation that cancelOrder read back from the order's own account
@@ -804,9 +917,10 @@ function applyConfirmedCancellation(trade: AccountedTrade): boolean {
     // Keep the local order (original quantity, metadata).
     // Take only the outcome fields; HTTP rows can carry 0 for order_quantity
     // and modified_price, which must not overwrite known local values.
+    const cur = current.status.deals ?? [], got = trade.status.deals ?? [];
     const status = { ...current.status, status: trade.status.status, status_code: trade.status.status_code || current.status.status_code,
         deal_quantity: trade.status.deal_quantity, cancel_quantity: trade.status.cancel_quantity,
-        deals: (trade.status.deals?.length ?? 0) >= current.status.deals.length ? trade.status.deals : current.status.deals };
+        deals: got.length >= cur.length ? got : cur };
     state = { ...state, trades: state.trades.map(t => t === current ? { ...current, status } : t) };
     // The order is terminal and read back: an earlier unconfirmed change or
     // cancel of this same order no longer needs reconciling.
@@ -971,11 +1085,24 @@ function start() {
                 else {
                     if (pendingReportKeys.size < 500) pendingReportKeys.add(key);
                     raise('orders', 'pending-report', MSG.pendingReport);
+                    onParked();
                 }
             }
         }
         schedulePublish();
     });
+    // A report this window cannot correlate (the order was placed in another window or the
+    // desktop App, and simulation New reports carry no full_code) would otherwise wait for a
+    // manual read. Give the order's own response a short grace, then let the cache-only health
+    // path (refresh:false, no accounting quota) resync it. Bursts share one check.
+    let parkedTimer: ReturnType<typeof setTimeout> | null = null;
+    onParked = () => {
+        if (parkedTimer) return;
+        parkedTimer = setTimeout(() => {
+            parkedTimer = null;
+            if (reasonState.orders.has('pending-report') || reasonState.orders.has('metadata-missing')) void checkTradeCacheHealth('parked');
+        }, 1500);
+    };
     // A skipped event_id may still arrive late: surface it (and read the
     // cache-only health) only if it is still missing after a short grace.
     const gapTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -1028,7 +1155,7 @@ function start() {
     };
     const stopStatus = subscribeStatusStore(statusChanged);
     import.meta.hot?.dispose(() => {
-        stopMutations(); stopResponses(); stopOrders(); stopHints(); stopGaps(); gapTimers.forEach(clearTimeout); stopTicks(); lastTicks.clear(); stopStatus(); channel?.close();
+        stopMutations(); stopResponses(); stopOrders(); stopHints(); stopGaps(); gapTimers.forEach(clearTimeout); if (parkedTimer) clearTimeout(parkedTimer); onParked = () => {}; stopTicks(); lastTicks.clear(); stopStatus(); channel?.close();
         positionQuotes.forEach(entry => entry.release?.());
         if (publishTimer) clearTimeout(publishTimer);
         clearInterval(stateHeartbeat);

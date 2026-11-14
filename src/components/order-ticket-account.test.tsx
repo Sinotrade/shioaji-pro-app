@@ -14,7 +14,7 @@ const h = vi.hoisted(() => {
 const accounts = h.accounts as Account[];
 vi.mock('../lib/account-store', () => {
     const state = () => ({ accounts: m.dropped ? h.accounts.filter(a => !a.account_id.endsWith(m.selected)) : h.accounts, selectedStock: null, selectedFutures: h.accounts.find(a => a.account_id.endsWith(m.selected)) ?? null, loaded: true });
-    return { useAccounts: state, getAccountState: state, selectAccount: vi.fn() };
+    return { useAccounts: state, getAccountState: state, selectAccount: vi.fn(), subscribeAccounts: () => () => {} };
 });
 vi.mock('../lib/order-confirm', () => ({ requestOrderConfirm: m.confirm, accountConfirmLabel: (a: Account) => `${a.broker_id}-${a.account_id}` }));
 vi.mock('../lib/risk', () => ({ checkOrderAllowed: () => null, getRiskSettings: () => ({ confirmManualOrders: m.confirmOn }) }));
