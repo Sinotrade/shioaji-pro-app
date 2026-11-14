@@ -2,7 +2,7 @@
 // 快速下拉：常用的委託條件（信用、效期、期貨倉別與市價鈕）、單位與「更多設定…」。
 // 清單與停用規則來自下單面板共用的 order-conditions；選了什麼由閃電面板保存。
 
-import { Check, Lock, Settings2, ShieldCheck, Sigma } from 'lucide-react';
+import { Check, Info, Lock, Settings2, ShieldCheck, Sigma } from 'lucide-react';
 import type { FlashCond, FlashCredit, FlashLot, FlashOrderOpts } from '../lib/flash-account';
 import { TRIGGER_LIMIT_MAX_TICKS, type FlashTriggerSend } from '../lib/flash-trigger';
 import { FUTURES_OCTYPES, ORDER_TYPES, orderTypeDisabledReason } from '../lib/order-conditions';
@@ -44,7 +44,7 @@ function Seg<T extends string>({ label, items, value, disabled, onPick }: {
     );
 }
 
-export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, order, dayTradeOk, top, onCredit, onLot, onOrder, onMore, onClose, triggerSend, onTriggerSend, triggerMarketBlock = null, triggerLayout, onTriggerLayout, onProtect, protectBlock = null, showTotals, onShowTotals }: {
+export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, order, dayTradeOk, top, onCredit, onLot, onOrder, onMore, onClose, triggerSend, onTriggerSend, triggerMarketBlock = null, triggerLayout, onTriggerLayout, onProtect, protectBlock = null, showTotals, onShowTotals, orderCells, onOrderCells, orderCellsFallback = null }: {
     market: 'S' | 'F';
     odd: boolean;
     /** 權證：只有整張現股，不顯示信用與零股選項 */
@@ -76,6 +76,11 @@ export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, orde
     /** 委託合計列（只是顯示，不解除點價下單） */
     showTotals?: boolean;
     onShowTotals?: (on: boolean) => void;
+    /** #402 價位與合計列的委託格寫法（分段＝成交｜未成交膠囊；精簡＝只顯示未成交） */
+    orderCells?: 'split' | 'compact';
+    onOrderCells?: (v: 'split' | 'compact') => void;
+    /** 選了分段但這個面板放不下、目前以精簡顯示的原因（null＝照設定顯示） */
+    orderCellsFallback?: string | null;
 }) {
     const pick = (fn: () => void) => () => { fn(); onClose(); };
     const oddOrderType = orderTypeDisabledReason('IOC', odd);
@@ -242,6 +247,22 @@ export function FlashQuickMenu({ market, odd, warrant = false, lot, credit, orde
                             <Sigma size={11} aria-hidden />顯示委託合計
                             {showTotals && <Check size={11} aria-hidden />}
                         </button>
+                        {orderCells && onOrderCells && (
+                            <Seg
+                                label='委託格'
+                                items={[
+                                    { value: 'split', label: '分段', title: `成交｜未成交分段：每個價位與合計列，實心＝今日在這個價位的成交、外框＝未成交（點外框刪單）。面板太窄時自動改精簡${orderCellsFallback ? `\n目前以精簡顯示：${orderCellsFallback}` : ''}` },
+                                    { value: 'compact', label: '精簡', title: '只看未成交：每個價位只顯示未成交（點一下刪單）；全部成交的價位才顯示實心成交數，成交量在滑鼠提示' },
+                                ] as const}
+                                value={orderCells}
+                                onPick={v => onOrderCells(v)}
+                            />
+                        )}
+                        {orderCells === 'split' && orderCellsFallback && (
+                            <div className={styles.menuNote} data-testid='flash-order-cells-fallback' title={orderCellsFallback}>
+                                <Info size={9} aria-hidden /> 目前以精簡顯示：{orderCellsFallback}。
+                            </div>
+                        )}
                     </>
                 )}
                 <div className={styles.menuSep} />

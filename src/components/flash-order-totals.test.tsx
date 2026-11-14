@@ -51,7 +51,13 @@ const stockTrades = [
 ];
 
 const text = (node: ReactTestInstance): string => node.children.map(c => typeof c === 'string' ? c : text(c)).join('');
+/** 寬面板看到的文字（≤230px 才顯示的不加千分位寫法不算） */
+const wide = (node: ReactTestInstance): string => node.children.map(c => typeof c === 'string' ? c : c.props.className === styles.totNarrow ? '' : wide(c)).join('');
 let view!: ReactTestRenderer;
+// #402 分段膠囊（預設）：「成交|未成交」（沒有那一段寫 0）
+const seg = (n: ReactTestInstance, k: 'filled' | 'working') => { const s = n.findAll(x => x.props['data-seg'] === k)[0]; return s ? text(s) : '0'; };
+const capsule = (n: ReactTestInstance) => `${seg(n, 'filled')}|${seg(n, 'working')}`;
+const COMPACT = { orderType: 'ROD', octype: 'Auto', futuresPriceType: 'MKT', orderCells: 'compact' };
 const byId = (id: string) => view.root.findAll(x => x.props['data-testid'] === id && typeof x.type === 'string');
 const one = (id: string) => byId(id)[0]!;
 const render = async (props: Record<string, unknown>) => { await act(async () => { view = create(createElement(FlashOrder, props as never)); }); };
@@ -71,11 +77,15 @@ it('aligns my 整股 totals under 買單／賣單 in 張, market volume totals u
     const row = one('flash-totals');
     // same 7-column grid as the ladder (觸買 買單 買量 價格 賣量 賣單 觸賣); no 買／賣／Σ words
     expect(row.props.className).toContain(styles.cols7);
+    // 我的委託合計跨到外側觸價欄（#402：合計列那一格本來就空，數字不溢出）
     const cells = (row.children as ReactTestInstance[]).map(c => (typeof c.type === 'string' ? c : c.findAll(x => typeof x.type === 'string')[0]!));
-    expect(cells).toHaveLength(7);
-    expect(cells.map(c => c.props['data-testid'])).toEqual([undefined, 'flash-tot-buy', 'flash-tot-bidvol', 'flash-tot-cover', 'flash-tot-askvol', 'flash-tot-sell', undefined]);
-    expect(text(one('flash-tot-buy'))).toBe('32(20)');
-    expect(text(one('flash-tot-sell'))).toBe('40(30)');
+    expect(cells).toHaveLength(5);
+    expect(cells.map(c => c.props['data-testid'] ?? c.findAll(x => typeof x.props['data-testid'] === 'string')[0]?.props['data-testid']))
+        .toEqual(['flash-tot-buy', 'flash-tot-bidvol', 'flash-tot-cover', 'flash-tot-askvol', 'flash-tot-sell']);
+    expect(cells[0]!.props.className).toContain(styles.totSpan2);
+    expect(cells[4]!.props.className).toContain(styles.totSpan2);
+    expect(capsule(one('flash-tot-buy'))).toBe('20|12');
+    expect(capsule(one('flash-tot-sell'))).toBe('30|10');
     expect(one('flash-tot-buy').props.title).toContain('我的委託買進 32 張');
     expect(one('flash-tot-buy').props.title).toContain('未成交 12 張');
     expect(text(one('flash-tot-cover'))).toBe('待補10');
@@ -98,8 +108,9 @@ it('says 補齊 once every day-trade short is covered, and stays empty with no s
 });
 
 it('narrow fallback structure: (filled), the cover label and comma numbers each have a class CSS hides at ≤230px', async () => {
-    await render({ contract: stock, trades: stockTrades, positions: [] });
-    expect(one('flash-tot-buy').findAll(x => x.props.className === styles.totMineFill).map(text)).toEqual(['(20)']);
+    await render({ contract: stock, trades: stockTrades, positions: [], orderOpts: COMPACT, onOrderOptsChange: () => {} });
+    expect(wide(one('flash-tot-buy'))).toBe('32(20)');
+    expect(one('flash-tot-buy').findAll(x => x.props.className === styles.totMineFill).map(wide)).toEqual(['(20)']);
     expect(one('flash-tot-cover').findAll(x => x.props.className === styles.totCoverLabel).map(text)).toEqual(['待補']);
     const bid = one('flash-tot-bidvol');
     expect(bid.findAll(x => x.props.className === styles.totWide)).toHaveLength(1);
@@ -108,7 +119,7 @@ it('narrow fallback structure: (filled), the cover label and comma numbers each 
 
 it('盤中零股 counts only odd-lot orders, in 股, and leaves the 價格 cell empty', async () => {
     await render({ contract: stock, trades: stockTrades, positions: [], lot: 'IntradayOdd', onLotChange: () => {} });
-    expect(text(one('flash-tot-buy'))).toBe('300(100)');
+    expect(capsule(one('flash-tot-buy'))).toBe('100|200');
     expect(one('flash-tot-buy').props.title).toContain('股');
     expect(text(one('flash-tot-sell'))).toBe('—');
     expect(byId('flash-tot-cover')).toHaveLength(0);
@@ -117,7 +128,7 @@ it('盤中零股 counts only odd-lot orders, in 股, and leaves the 價格 cell 
 it('futures show 口 and never a cover status', async () => {
     const trades = [trade(futures, F, 'Buy', 3, 2), trade(futures, F, 'Sell', 2, 2, { daytrade_short: true })];
     await render({ contract: futures, trades, positions: [] });
-    expect(text(one('flash-tot-buy'))).toBe('3(2)');
+    expect(capsule(one('flash-tot-buy'))).toBe('2|1');
     expect(one('flash-tot-sell').props.title).toContain('我的委託賣出 2 口');
     expect(byId('flash-tot-cover')).toHaveLength(0);
 });
@@ -129,7 +140,7 @@ it('masks my quantities and the cover count with 遮金額 (market volume totals
         expect(text(one(id))).not.toMatch(/\d/);
         expect(one(id).props.title ?? '').not.toMatch(/\d/);
     }
-    expect(text(one('flash-tot-buy'))).toContain('•••••');
+    expect(text(one('flash-tot-buy'))).toContain('•');
     expect(byId('flash-tot-bidvol')).toHaveLength(1);
 });
 
@@ -187,7 +198,7 @@ it('keeps stock totals after 15:00 (stock day starts at Taipei midnight)', async
     try {
         const morning = Date.UTC(2026, 10, 10, 2) / 1000; // 10:00 Taipei
         await render({ contract: stock, trades: [trade(stock, S, 'Buy', 4, 4, {}, { ts: morning }), trade(stock, S, 'Buy', 3, 3, {}, { ts: morning - 86400 })], positions: [] });
-        expect(text(one('flash-tot-buy'))).toBe('4(4)');
+        expect(capsule(one('flash-tot-buy'))).toBe('4|0');
     } finally { vi.useRealTimers(); }
 });
 
@@ -195,7 +206,7 @@ it('keeps stock totals after 15:00 (stock day starts at Taipei midnight)', async
 it('leaves out the previous session', async () => {
     const yesterday = now() - 2 * 86400;
     await render({ contract: stock, trades: [trade(stock, S, 'Buy', 9, 9, {}, { ts: yesterday }), trade(stock, S, 'Buy', 2, 1)], positions: [] });
-    expect(text(one('flash-tot-buy'))).toBe('2(1)');
+    expect(capsule(one('flash-tot-buy'))).toBe('1|1');
 });
 
 // PR #400 review P3
@@ -203,7 +214,7 @@ it('counts a continuous-month order (MXFR1 → MXFI6) on the MXFI6 panel', async
     const mxfi6 = { ...futures, code: 'MXFI6', target_code: null } as unknown as ContractInfo;
     const r1 = trade(mxfi6, F, 'Buy', 2, 1, {}, { contract: { code: 'MXFR1', target_code: 'MXFI6' } });
     await render({ contract: mxfi6, trades: [r1, trade(mxfi6, F, 'Buy', 1, 0)], positions: [] });
-    expect(text(one('flash-tot-buy'))).toBe('3(1)');
+    expect(capsule(one('flash-tot-buy'))).toBe('1|2');
 });
 
 // PR #400 review round 3 P1: a notice appearing must not change the ladder height
