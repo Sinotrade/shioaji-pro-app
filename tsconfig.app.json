@@ -22,5 +22,5 @@
             "@modules": ["modules/index.ts", "src/modules-stub/index.ts"]
         }
     },
-    "include": ["src", "modules"]
+    "include": ["src", "modules", "scripts/chart-fills-demo/main.tsx"]
 }
