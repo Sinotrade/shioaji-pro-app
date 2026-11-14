@@ -16,6 +16,7 @@ import {
 } from '../lib/shioaji';
 import { getAliasFor } from '../lib/stream';
 import { useTradingState } from '../lib/trading-state';
+import { positionKey } from '../lib/position-key';
 import { queryDisplayState } from '../lib/query-display-state';
 import type { ScannerItem } from '../lib/types/market';
 import {
@@ -245,7 +246,7 @@ export function TrayPanel() {
                                 p.pnl > 0 ? 'up' : p.pnl < 0 ? 'down' : 'flat';
                             return (
                                 <button
-                                    key={`${p.code}-${p.id}`}
+                                    key={positionKey(p)}
                                     className={styles.row}
                                     onClick={() =>
                                         void pickCode(

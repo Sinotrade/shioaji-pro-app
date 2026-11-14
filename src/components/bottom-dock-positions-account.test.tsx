@@ -17,10 +17,10 @@ const owner = { ...selected, account_id: 'OWNER' };
 const position: AccountedPosition = { account: owner, code: 'TMF', id: 1, direction: 'Buy', quantity: 3, price: 100, last_price: 100, pnl: 0 };
 let view: ReactTestRenderer | undefined;
 afterEach(async () => { await act(async () => view?.unmount()); vi.unstubAllGlobals(); vi.clearAllMocks(); mocks.simulation = undefined; });
-async function mount(row: AccountedPosition) {
+async function mount(row: AccountedPosition | AccountedPosition[]) {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
-    await act(async () => { view = create(createElement(PositionsPane, { positions: [row], initialStatus: 'ready', mode: 'merged', market: 'all', scopeKey: '', fallback: { stock: null, futures: selected }, onChanged: vi.fn(), onSelectCode: vi.fn() })); });
+    await act(async () => { view = create(createElement(PositionsPane, { positions: Array.isArray(row) ? row : [row], initialStatus: 'ready', mode: 'merged', market: 'all', scopeKey: '', fallback: { stock: null, futures: selected }, onChanged: vi.fn(), onSelectCode: vi.fn() })); });
     await act(async () => { view!.root.findAllByType(ArmLockButton)[0]!.props.onToggle(); });
 }
 it('shows loading before the first positions result and empty only after a successful read', async () => {
@@ -46,6 +46,22 @@ it('closes the row owner with Cover even when another account is selected', asyn
     mocks.place.mockResolvedValue({ status: { status: 'Submitted', deal_quantity: 0 } });
     await mount(position); await click('平');
     expect(mocks.place.mock.calls[0]!.slice(1)).toEqual(['Sell', null, 3, { account: owner, ocType: 'Cover' }]);
+});
+it('labels and blocks flattening only a position that needs reconciliation', async () => {
+    await mount({ ...position, reconcileReason: '成交無法安全投影' });
+    expect(JSON.stringify(view!.toJSON())).toContain('待對帳');
+    await click('平');
+    expect(mocks.place).not.toHaveBeenCalled();
+    expect(operationNotice(mocks.notify, '平倉未完整確認').body).toContain('請先更新持倉');
+});
+it('selects credit books independently when projected cash and margin rows share an ID', async () => {
+    const stock = { ...owner, account_type: 'S' };
+    const cash: AccountedPosition = { ...position, account: stock, code: '2330', quantity: 1000, yd_quantity: 0, cond: 'Cash' };
+    await mount([cash, { ...cash, cond: 'MarginTrading' }]);
+    const checkboxes = () => view!.root.findAllByType('input').filter(i => i.props.type === 'checkbox' && i.props.title !== '全選（批次平倉）');
+    await act(async () => { checkboxes()[1]!.props.onChange(); });
+    expect(checkboxes().map(c => c.props.checked)).toEqual([false, true]);
+    expect(mocks.stock).not.toHaveBeenCalled();
 });
 it.each([true, false, undefined])('allows unsigned position exits only when simulation=%s (#228)', async simulation => {
     mocks.simulation = simulation;

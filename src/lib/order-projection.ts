@@ -24,7 +24,7 @@ export function projectOrderReport(rows: AccountedTrade[], report: OrderEventRep
     const contract = rec(body?.contract);
     const account = accounts.find(a => canTrade(a) && a.account_type === (report.market === 'stock' ? 'S' : 'F')
         && a.broker_id === ref?.broker_id && a.account_id === ref?.account_id);
-    if (!account || !report.id || !report.ts || !order || !contract
+    if (!account || !report.id || !report.ts || !order || !contract || order.subaccount || body?.subaccount
         || !['Buy', 'Sell'].includes(report.action ?? '') || !num(order.quantity)
         || !num(order.price) || !num(rec(body?.status)?.cancel_quantity)
         || typeof contract.code !== 'string' || !['STK', 'FUT', 'OPT', 'WRT'].includes(String(contract.security_type))) return null;
@@ -90,11 +90,13 @@ export function projectOrderReport(rows: AccountedTrade[], report: OrderEventRep
 export function projectTradeDeal(rows: AccountedTrade[], report: OrderEventReport): AccountedTrade[] | null {
     if (report.kind !== 'deal' || !report.ts || report.quantity <= 0 || report.price <= 0) return null;
     const body = reportBody(report);
+    if (body?.subaccount) return null;
     const seq = body?.exchange_seq;
     if (typeof seq !== 'string' || !seq) return null;
     const old = rows.find(t => t.order.id === report.tradeId && t.account?.account_id === body?.account_id
         && t.account?.broker_id === body?.broker_id && t.account?.account_type === (report.market === 'stock' ? 'S' : 'F'));
     if (!old) return null;
+    if (old.order.action !== report.action) return null;
     const code = report.market === 'futures' ? (body?.full_code || body?.code) : body?.code;
     if (code !== (old.contract.target_code || old.contract.code)) return null;
     if (old.status.deals.some(d => d.seq === seq)) return rows;
