@@ -33,6 +33,13 @@ export const dialog = style({
     padding: vars.space.md,
 });
 
+// 快捷鍵分類清單較長：放大對話框（窄視窗仍以 100vw／84vh 為上限）
+export const dialogWide = style({
+    width: 'min(46rem, calc(100vw - 32px))',
+    height: 'min(42rem, 86vh)',
+    top: '5vh',
+});
+
 export const body = style({
     display: 'flex',
     gap: vars.space.md,

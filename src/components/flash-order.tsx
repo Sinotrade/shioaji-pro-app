@@ -68,6 +68,7 @@ import * as styles from './flash-order.css';
 import { orderStatusWithNumber } from '../lib/order-status-label';
 import { flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMonth } from '../lib/flash-order-totals';
 import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
+import { holdEscForDisarm } from '../lib/shortcuts/guards';
 import { FlashTotalsRow } from './flash-totals-bar';
 
 const ROW_H = 22; // must match row height in flash-order.css.ts
@@ -822,11 +823,16 @@ export function FlashOrder({
     }, [menuShown]);
     useEffect(() => {
         if (!armed) return;
+        // 啟用中 Esc 歸閃電下單：只解除，不算全部刪單的第一下（2026-11-06 決定）
+        const releaseEsc = holdEscForDisarm();
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape' && !settingsOpenRef.current && !menuOpenRef.current && !e.defaultPrevented) setArmed(false);
         };
         window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        return () => {
+            window.removeEventListener('keydown', onKey);
+            releaseEsc();
+        };
     }, [armed]);
 
     // viewport rows = whatever fits the panel height

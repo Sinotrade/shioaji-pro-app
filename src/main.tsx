@@ -16,9 +16,14 @@ import { startBackgroundExecution } from './lib/execution/background';
 import { startOddSpreadService } from './lib/odd-spread-service';
 import { startTriggerEngine } from './lib/trigger-engine';
 import { startConditionalRuntime } from './lib/conditional/runtime';
+import { installBrowserKeyGuard } from './lib/shortcuts/browser-keys';
+import { detectPlatform } from './lib/shortcuts/keys';
+import { isTauri } from './lib/runtime';
 
 initTheme();
 startAnalytics();
+// Windows 桌面版：停用 F5／Ctrl+R 重新載入與 Ctrl+P 列印（每個視窗都裝）
+installBrowserKeyGuard({ tauri: isTauri, mac: detectPlatform() === 'mac' });
 // both are no-ops outside the main window (#102: main-only execution)
 startTriggerEngine();
 startBracketRuntime();

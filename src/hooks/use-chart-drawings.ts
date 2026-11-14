@@ -37,6 +37,7 @@ import {
     setDrawingSettings as saveDrawingSettings,
     setDrawingsLocked,
     showAllDrawings,
+    toggleAllDrawingsHidden,
     toolDef,
     updateDrawing,
     setDrawingsBehind,
@@ -54,6 +55,7 @@ import {
     type DrawingTool,
     type DrawingToolId,
 } from '../lib/chart-drawings';
+import { matchesShortcut } from '../lib/shortcuts/match';
 import {
     dragPoints,
     formatSpan,
@@ -149,34 +151,32 @@ export function isTypingTarget(t: EventTarget | null): boolean {
     );
 }
 
-// 復原／重做的快捷鍵：Ctrl/Cmd+Z 復原；Ctrl/Cmd+Shift+Z 或 Ctrl+Y 重做
-export function undoKeyOf(
-    e: Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>,
-): 'undo' | 'redo' | null {
-    if (e.altKey || !(e.ctrlKey || e.metaKey)) return null;
-    const key = (e.key ?? '').toLowerCase();
-    const k = e.code === 'KeyZ' || key === 'z' ? 'z' : e.code === 'KeyY' || key === 'y' ? 'y' : null;
-    if (k === 'z') return e.shiftKey ? 'redo' : 'undo';
-    if (k === 'y' && !e.shiftKey) return 'redo';
+// 按鍵定義在 lib/shortcuts/registry（可在 設定 → 快捷鍵 修改）。
+type KeyLike = Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'> & { key?: string };
+const asKey = (e: KeyLike) => ({ ...e, key: e.key ?? '' });
+
+// 復原／重做：⌘Z／Ctrl+Z 復原；⌘⇧Z／Ctrl+Shift+Z 或 Ctrl+Y 重做
+export function undoKeyOf(e: KeyLike): 'undo' | 'redo' | null {
+    if (matchesShortcut('draw.undo', asKey(e))) return 'undo';
+    if (matchesShortcut('draw.redo', asKey(e))) return 'redo';
     return null;
 }
 
-// 委託線鎖定：Ctrl/Cmd＋L，兼顧實體鍵位與不同鍵盤配置
-export function orderLockKeyOf(
-    e: Pick<KeyboardEvent, 'key' | 'code' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>,
-): boolean {
-    if (e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey)) return false;
-    return e.code === 'KeyL' || (e.key ?? '').toLowerCase() === 'l';
+// 委託線鎖定：預設 ⌘L／Ctrl+L，兼顧實體鍵位與不同鍵盤配置
+export function orderLockKeyOf(e: KeyLike): boolean {
+    return matchesShortcut('chart.lockOrders', asKey(e));
 }
 
-// Alt＋字母切換工具（用 code：macOS 的 Option 會把 e.key 變成特殊符號）
-export function toolShortcutOf(
-    e: Pick<KeyboardEvent, 'code' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>,
-): DrawingToolId | null {
-    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return null;
-    const m = /^Key([A-Z])$/.exec(e.code ?? '');
-    if (!m) return null;
-    return DRAWING_TOOL_DEFS.find((d) => d.shortcut === m[1])?.tool ?? null;
+// 切換畫圖工具：預設 Alt＋字母（用 code：macOS 的 Option 會把 e.key 變成特殊符號）
+export function toolShortcutOf(e: KeyLike): DrawingToolId | null {
+    return DRAWING_TOOL_DEFS.find((d) => matchesShortcut(`draw.${d.tool}`, asKey(e)))?.tool ?? null;
+}
+
+// K 線圖的畫圖整體操作：隱藏／顯示全部、鎖定／解鎖全部
+export function drawingBulkKeyOf(e: KeyLike): 'toggleHidden' | 'toggleLocked' | null {
+    if (matchesShortcut('chart.toggleDrawings', asKey(e))) return 'toggleHidden';
+    if (matchesShortcut('chart.lockDrawings', asKey(e))) return 'toggleLocked';
+    return null;
 }
 
 export interface Box {
@@ -1383,6 +1383,18 @@ export function useChartDrawings(opts: {
                 setToolChecked(s.tool === shortcut ? null : shortcut);
                 return;
             }
+            const bulk = drawingBulkKeyOf(e);
+            if (bulk) {
+                if (!focused) return;
+                e.preventDefault();
+                // 走 tx：可以 ⌘Z 復原，也跟物件列表的操作一樣記在這張圖的歷史
+                const result = { hid: null as boolean | null };
+                if (bulk === 'toggleHidden') tx(() => { result.hid = toggleAllDrawingsHidden(s.symbolKey); });
+                else tx(() => setDrawingsLocked(s.symbolKey, s.drawings.some((d) => !d.locked)));
+                // 隱藏的物件點不到，選取一併取消
+                if (result.hid) setSelectedIds([]);
+                return;
+            }
             if (e.key !== 'Delete' && e.key !== 'Backspace') return;
             // 焦點必須真的在這張圖上（圖表本體或它的工具列）
             if (!focused) return;
@@ -1398,7 +1410,7 @@ export function useChartDrawings(opts: {
         // 它武裝刪單視窗；Delete 也要先於其他面板處理
         window.addEventListener('keydown', onKey, true);
         return () => window.removeEventListener('keydown', onKey, true);
-    }, [listening, pushState, token, hostRef, undo, redo, clearMeasure, setToolChecked, removeSelected, enterDrawingMode]);
+    }, [listening, pushState, token, hostRef, undo, redo, clearMeasure, setToolChecked, removeSelected, enterDrawingMode, tx]);
 
     // ── 對外操作 ─────────────────────────────────────────────────────
     const selectedList = useMemo(
