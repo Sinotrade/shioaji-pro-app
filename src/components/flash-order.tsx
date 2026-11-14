@@ -34,6 +34,7 @@ import {
     memo,
     useCallback,
     useEffect,
+    useLayoutEffect,
     useMemo,
     useReducer,
     useRef,
@@ -69,6 +70,8 @@ import { orderStatusWithNumber } from '../lib/order-status-label';
 import { flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMonth } from '../lib/flash-order-totals';
 import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
 import { FlashTotalsRow } from './flash-totals-bar';
+import { LadderMine } from './flash-split-qty';
+import { CANCEL_PENDING_MAX_MS, failedCancels, flashCellsMode, ladderCells, settleCancelling, type LadderCell } from '../lib/flash-cells';
 
 const ROW_H = 22; // must match row height in flash-order.css.ts
 const EDGE = 2; // auto-recenter when last price gets this close to the edge
@@ -194,10 +197,14 @@ interface RowProps {
     ask?: number;
     bidPct: number;
     askPct: number;
-    myBuy: number;
-    mySell: number;
-    buyFill: number;
-    sellFill: number;
+    /** #402 我的委託格：未成交（掛在這個價位）與今日在這個價位的成交 */
+    buy: LadderCell | undefined;
+    sell: LadderCell | undefined;
+    /** 委託格寫法：分段膠囊（true）或精簡 */
+    split: boolean;
+    /** 遮金額 */
+    priv: boolean;
+    unit: string;
     avgMark: boolean;
     band: 'up' | 'down' | null;
     armed: boolean;
@@ -237,10 +244,11 @@ const FlashRow = memo(function FlashRow({
     ask,
     bidPct,
     askPct,
-    myBuy,
-    mySell,
-    buyFill,
-    sellFill,
+    buy,
+    sell,
+    split,
+    priv,
+    unit,
     avgMark,
     band,
     armed,
@@ -261,8 +269,14 @@ const FlashRow = memo(function FlashRow({
     onMarkDown,
     onMarkClick,
 }: RowProps) {
-    const vol = compact ? fmtCompactInt : fmtInt;
-    const exact = (v: number | undefined) => (compact && v !== undefined && v >= 10_000 ? `${fmtInt(v)} 股` : undefined);
+    // ≤230px（欄寬改比例）：不加千分位、一萬以上用「萬」，一行放得下（#402）；完整數字在提示
+    const vol = (v: number) => (
+        <>
+            <span className={styles.totWide}>{compact ? fmtCompactInt(v) : fmtInt(v)}</span>
+            <span className={styles.totNarrow}>{v >= 10_000 ? fmtCompactInt(v) : String(Math.round(v))}</span>
+        </>
+    );
+    const exact = (v: number | undefined) => (v !== undefined && v >= 1_000 ? `${fmtInt(v)}${compact ? ' 股' : ''}` : undefined);
     const columns = layout === 'columns';
     const op = trigDir === 'above' ? '≥' : '≤';
     // a side the panel's credit condition cannot send is not a trigger side either
@@ -283,26 +297,10 @@ const FlashRow = memo(function FlashRow({
     );
     const altHint = (side: 'buy' | 'sell') => (!columns && armed && !trigBlock ? `\nAlt＋點＝觸價${side === 'buy' ? '買' : '賣'}（成交價 ${op} ${text}）` : '');
     return (
-        <div className={`${styles.row[isLast ? 'last' : 'normal']} ${columns ? styles.cols7 : ''} ${drop ? styles.dropRow[drop] : ''}`}>
+        <div className={`${styles.row[isLast ? 'last' : 'normal']} ${columns ? styles.cols7 : ''} ${split ? (columns ? styles.colsSplit7 : styles.colsSplit5) : ''} ${drop ? styles.dropRow[drop] : ''}`}>
             {columns && trigCell('buy', buyMarks)}
             <div className={styles.chipCell}>
-                {buyFill > 0 && (
-                    <span
-                        className={styles.fillBadge.buy}
-                        title={`今日買進成交 ${buyFill} @ ${text}`}
-                    >
-                        {buyFill}
-                    </span>
-                )}
-                {myBuy > 0 && (
-                    <button
-                        className={styles.orderChip.buy}
-                        title={`刪除 ${text} 買單 ${myBuy}`}
-                        onClick={() => onCancelAt('Buy', price)}
-                    >
-                        {myBuy}
-                    </button>
-                )}
+                <LadderMine side='buy' cell={buy} split={split} priv={priv} priceText={text} unit={unit} onCancel={() => onCancelAt('Buy', price)} />
             </div>
             <div
                 className={`${styles.buyCell} ${armed && !buyBlock ? '' : styles.disabledCell} ${buyBlock ? styles.blockedSide : ''}`}
@@ -362,23 +360,7 @@ const FlashRow = memo(function FlashRow({
                 {!columns && sellMarks.length > 0 && <MarkChips side='sell' price={price} marks={sellMarks} dragging={dragSide === 'sell'} onMarkDown={onMarkDown} onMarkClick={onMarkClick} />}
             </div>
             <div className={styles.chipCell}>
-                {mySell > 0 && (
-                    <button
-                        className={styles.orderChip.sell}
-                        title={`刪除 ${text} 賣單 ${mySell}`}
-                        onClick={() => onCancelAt('Sell', price)}
-                    >
-                        {mySell}
-                    </button>
-                )}
-                {sellFill > 0 && (
-                    <span
-                        className={styles.fillBadge.sell}
-                        title={`今日賣出成交 ${sellFill} @ ${text}`}
-                    >
-                        {sellFill}
-                    </span>
-                )}
+                <LadderMine side='sell' cell={sell} split={split} priv={priv} priceText={text} unit={unit} onCancel={() => onCancelAt('Sell', price)} />
             </div>
             {columns && trigCell('sell', sellMarks)}
         </div>
@@ -829,6 +811,18 @@ export function FlashOrder({
         return () => window.removeEventListener('keydown', onKey);
     }, [armed]);
 
+    // #402 面板寬度：決定委託格用分段還是精簡（null＝還沒量到，照設定）
+    const wrapRef = useRef<HTMLDivElement>(null);
+    const [panelWidth, setPanelWidth] = useState<number | null>(null);
+    useLayoutEffect(() => {
+        const el = wrapRef.current;
+        if (!el || typeof ResizeObserver === 'undefined') return;
+        setPanelWidth(el.getBoundingClientRect().width);
+        const ro = new ResizeObserver(() => setPanelWidth(el.getBoundingClientRect().width));
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+
     // viewport rows = whatever fits the panel height
     const bodyRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -974,46 +968,31 @@ export function FlashOrder({
     // 零股 in 股) so a price level never adds lots and shares together.
     const lotShown = useCallback((t: Trade) => market !== 'S' || isOddLot(t.order.order_lot) === odd, [market, odd]);
 
-    // my working orders at each price level
-    const myOrders = useMemo(() => {
-        const m = new Map<string, { buy: number; sell: number }>();
-        for (const t of trades) {
-            const side = ladderSide(t);
-            if (!side || !onLadder(t, contract.code, market === 'S' ? odd : null)) continue;
-            // HTTP status.order_quantity can be 0 (1.7.6) — use the shared
-            // original-quantity rule.
-            const key = keyOf(ladderPrice(t));
-            const cur = m.get(key) ?? { buy: 0, sell: 0 };
-            cur[side] += remainingWorkingOrderQuantity(t);
-            m.set(key, cur);
-        }
-        return m;
-    }, [trades, contract.code, market, odd]);
-
-    // today's fills aggregated per price level (from each trade's deals)
-    const myFills = useMemo(() => {
-        const m = new Map<string, { buy: number; sell: number }>();
-        for (const t of trades) {
-            const tc = t.contract.code;
-            if (tc !== contract.code && getAliasFor(tc) !== contract.code) {
-                continue;
-            }
-            if (!lotShown(t)) continue;
-            for (const d of t.status.deals ?? []) {
-                if (!d.quantity) continue;
-                const key = keyOf(Number(d.price));
-                const cur = m.get(key) ?? { buy: 0, sell: 0 };
-                if (t.order.action === 'Buy') cur.buy += d.quantity;
-                else cur.sell += d.quantity;
-                m.set(key, cur);
-            }
-        }
-        return m;
-    }, [trades, contract.code, lotShown]);
+    // #402 每個價位的我的委託格：未成交依委託價（同點價刪單的範圍），已成交依成交價
+    // （今日在這個價位成交的量）。cancelling：已送出刪單、還沒有結果的委託
+    const [cancelling, setCancelling] = useState<ReadonlySet<string>>(() => new Set());
+    const cancelTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+    useEffect(() => () => { for (const t of cancelTimers.current) clearTimeout(t); }, []);
+    // 委託狀態更新為不在場上（已刪、已成交）就不再顯示刪單送出中
+    useEffect(() => {
+        setCancelling(prev => settleCancelling(prev, trades, remainingWorkingOrderQuantity));
+    }, [trades]);
+    const cells = useMemo(() => ladderCells(trades, {
+        // HTTP status.order_quantity can be 0 (1.7.6) — use the shared original-quantity rule.
+        workingQty: t => (onLadder(t, contract.code, market === 'S' ? odd : null) ? remainingWorkingOrderQuantity(t) : 0),
+        orderKey: t => keyOf(ladderPrice(t)),
+        fillScope: t => (t.contract.code === contract.code || getAliasFor(t.contract.code) === contract.code) && lotShown(t),
+        priceKey: keyOf,
+        cancelling,
+    }), [trades, contract.code, market, odd, lotShown, cancelling]);
 
     // 委託合計（設定「顯示委託合計」，預設開）：只從委託與成交回報算，
     // 不經過持倉投影；範圍：面板帳戶、同一實際月份（含連續月別名）、目前單位、本交易日
     const showTotals = panelOrder.showTotals !== false;
+    // #402 委託格（預設分段）；面板寬度不到 SPLIT_MIN_WIDTH 時整個面板改精簡（只看寬度）
+    const orderCellsSetting = panelOrder.orderCells === 'compact' ? 'compact' : 'split';
+    const cellsMode = flashCellsMode(orderCellsSetting, panelWidth);
+    const unitText = market === 'F' ? '口' : odd ? '股' : '張';
     // 送單時記下的現沖先賣旗標（回報不帶）有新紀錄就重算
     const orderCondsVersion = useStockOrderConditionsVersion();
     const orderTotals = useMemo(() => showTotals
@@ -1473,7 +1452,23 @@ export function FlashOrder({
             return;
         }
         noteOrderTraceEntry(targets.map((t) => t.order.id), 'flash cell');
-        const results = await cancelOrders(targets.map((t) => t.order.id), undefined, cancelGuard());
+        // #402 刪單送出中：格子改琥珀虛線，直到委託狀態更新為已刪／已成交（settleCancelling）、
+        // 刪單失敗，或最多 CANCEL_PENDING_MAX_MS
+        const ids = targets.map((t) => t.order.id);
+        const release = (gone: readonly string[]) => {
+            if (gone.length > 0) setCancelling(prev => { const next = new Set(prev); for (const id of gone) next.delete(id); return next; });
+        };
+        setCancelling(prev => new Set([...prev, ...ids]));
+        const timer = setTimeout(() => { cancelTimers.current.delete(timer); release(ids); }, CANCEL_PENDING_MAX_MS);
+        cancelTimers.current.add(timer);
+        let results: Awaited<ReturnType<typeof cancelOrders>>;
+        try {
+            results = await cancelOrders(ids, undefined, cancelGuard());
+        } catch (e) {
+            release(ids);
+            throw e;
+        }
+        release(failedCancels(ids, results));
         const summary = cancellationSummary(results);
         notify({
             kind: summary.kind,
@@ -1682,14 +1677,14 @@ export function FlashOrder({
     const { workingCount, otherLotOrders } = useMemo(() => {
         let n = 0;
         let other = 0;
-        for (const v of myOrders.values()) n += v.buy + v.sell;
+        for (const v of cells.values()) n += (v.buy?.working ?? 0) + (v.sell?.working ?? 0);
         for (const t of trades) {
             if (remainingWorkingOrderQuantity(t) <= 0) continue;
             if (t.contract.code !== contract.code && getAliasFor(t.contract.code) !== contract.code) continue;
             if (!lotShown(t)) other += 1;
         }
         return { workingCount: n, otherLotOrders: other };
-    }, [myOrders, trades, contract.code, lotShown]);
+    }, [cells, trades, contract.code, lotShown]);
 
     const symbolLabel = flashSymbolLabel(contract);
     // rows are memo'd: keep the credit labels referentially stable
@@ -1705,7 +1700,7 @@ export function FlashOrder({
         : '選擇閃電下單帳戶';
 
     return (
-        <div className={styles.wrap}>
+        <div className={styles.wrap} ref={wrapRef}>
             {paused ? (
                 <div className={styles.symbolRow}><span className={styles.symbolName}>{paused}</span></div>
             ) : (
@@ -1843,6 +1838,10 @@ export function FlashOrder({
                             showTotals={showTotals}
                             // 只是顯示：不改送出的委託，不解除點價下單
                             onShowTotals={next => { const { showTotals: _was, ...rest } = panelOrder; setPanelOrder(next ? rest : { ...rest, showTotals: false }); }}
+                            orderCells={orderCellsSetting}
+                            // 只是顯示：不解除點價下單；預設分段不存欄位
+                            onOrderCells={next => { const { orderCells: _was, ...rest } = panelOrder; setPanelOrder(next === 'compact' ? { ...rest, orderCells: 'compact' } : rest); }}
+                            orderCellsFallback={cellsMode.fallback}
                             triggerLayout={triggerLayout}
                             onTriggerLayout={next => { armedRef.current = false; setArmed(false); setPanelOrder({ ...panelOrder, triggerLayout: next }); }}
                             // 外國標的權證不能自動停損停利：收起入口並寫原因（已開著的面板仍可進去關掉）
@@ -2032,8 +2031,11 @@ export function FlashOrder({
                     </span>
                 </div>
             )}
-            <div className={`${styles.headRow} ${triggerLayout === 'columns' ? styles.cols7 : ''}`}>
-                {triggerLayout === 'columns' && <span className={styles.headTrigger} title='點這一欄＝在該價掛觸價買單'>觸買</span>}
+            <div className={`${styles.headRow} ${triggerLayout === 'columns' ? styles.cols7 : ''} ${cellsMode.split ? (triggerLayout === 'columns' ? styles.colsSplit7 : styles.colsSplit5) : ''}`}>
+                {triggerLayout === 'columns' && <span className={styles.headTrigger} title='觸買：點這一欄＝在該價掛觸價買單'>
+                    {/* ≤230px 欄寬只剩約 1rem：改圖示（#402，表頭不換行、不擠在一起） */}
+                    <span className={styles.totWide}>觸買</span><span className={styles.totNarrow}><Crosshair size={9} aria-label='觸買' /></span>
+                </span>}
                 <span>買單</span>
                 <span>買量</span>
                 <button
@@ -2046,7 +2048,10 @@ export function FlashOrder({
                 </button>
                 <span>賣量</span>
                 <span>賣單</span>
-                {triggerLayout === 'columns' && <span className={styles.headTrigger} title='點這一欄＝在該價掛觸價賣單'>觸賣</span>}
+                {triggerLayout === 'columns' && <span className={styles.headTrigger} title='觸賣：點這一欄＝在該價掛觸價賣單'>
+                    {/* ≤230px 欄寬只剩約 1rem：改圖示（#402，表頭不換行、不擠在一起） */}
+                    <span className={styles.totWide}>觸賣</span><span className={styles.totNarrow}><Crosshair size={9} aria-label='觸賣' /></span>
+                </span>}
             </div>
             <div
                 ref={bodyRef}
@@ -2066,8 +2071,7 @@ export function FlashOrder({
                 {!paused && rows.map((price) => {
                     const key = keyOf(price);
                     const lv = book.get(key);
-                    const mine = myOrders.get(key);
-                    const fills = myFills.get(key);
+                    const cell = cells.get(key);
                     const lm = ladder.marks.get(key);
                     const drop = drag && drag.over !== null && keyOf(drag.over) === key
                         ? (drag.group.marks.some(m => dragProblem(m, price, triggerPriceRef.current)) ? 'bad' as const : 'ok' as const) : null;
@@ -2082,10 +2086,11 @@ export function FlashOrder({
                             ask={lv?.ask}
                             bidPct={lv?.bid ? (lv.bid / maxVol) * 90 : 0}
                             askPct={lv?.ask ? (lv.ask / maxVol) * 90 : 0}
-                            myBuy={mine?.buy ?? 0}
-                            mySell={mine?.sell ?? 0}
-                            buyFill={fills?.buy ?? 0}
-                            sellFill={fills?.sell ?? 0}
+                            buy={cell?.buy}
+                            sell={cell?.sell}
+                            split={cellsMode.split}
+                            priv={privMoney}
+                            unit={unitText}
                             avgMark={pos !== null && !privMoney && key === pos.avgKey}
                             band={
                                 limitUp > 0 && key === keyOf(limitUp)
@@ -2139,7 +2144,7 @@ export function FlashOrder({
                 )}
             </div>
             <FlashTotalsRow columns={triggerLayout === 'columns'} mine={orderTotals} sumBid={sumBid} sumAsk={sumAsk} odd={odd}
-                unit={market === 'F' ? '口' : odd ? '股' : '張'} priv={privMoney}
+                unit={unitText} priv={privMoney} split={cellsMode.split}
                 // 只有整股現股有當沖先賣；期貨、零股、權證的價格欄留空
                 cover={market === 'S' && !odd && !warrant}
                 cancel={{ armed: armedView, counts: sideOrderCount, onCancel: onCancelSide }} />

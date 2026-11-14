@@ -42,6 +42,9 @@ const trades = [
 
 const text = (n: ReactTestInstance): string => n.children.map(c => typeof c === 'string' ? c : text(c)).join('');
 let view!: ReactTestRenderer;
+// #402 分段膠囊：「成交|未成交」（沒有那一段寫 0）
+const seg = (n: ReactTestInstance, k: 'filled' | 'working') => { const s = n.findAll(x => x.props['data-seg'] === k)[0]; return s ? text(s) : '0'; };
+const capsule = (n: ReactTestInstance) => `${seg(n, 'filled')}|${seg(n, 'working')}`;
 const cell = (side: 'buy' | 'sell') => view.root.findAll(x => typeof x.type === 'string' && x.props['data-testid'] === `flash-tot-${side}`)[0]!;
 const button = (label: string) => view.root.findAllByType('button').find(b => text(b).includes(label))!;
 const arm = async () => { await act(async () => { button('啟用閃電下單').props.onClick(); }); };
@@ -109,7 +112,7 @@ it('is not clickable without working orders (all filled or none)', async () => {
     await render({ trades: [order('f', A, 'Buy', 97, { deal: 2 })] });
     await arm();
     expect(cell('buy').type).toBe('span');
-    expect(text(cell('buy'))).toBe('2(2)');
+    expect(capsule(cell('buy'))).toBe('2|0');
     expect(cell('sell').type).toBe('span');
     expect(text(cell('sell'))).toBe('—');
 });
@@ -180,7 +183,7 @@ it('買全刪 on MXFR1→MXFJ6 cancels exactly the totals’ working buys: never
     await render({ contract: mxf('MXFR1', 'MXFJ6'), trades: futTrades });
     await arm();
     expect(cell('buy').props['aria-label']).toBe('刪除全部買單（2 筆）');
-    expect(text(cell('buy'))).toBe('4(0)'); // 2 orders × 2; the count matches the totals' working orders
+    expect(capsule(cell('buy'))).toBe('0|4'); // 2 orders × 2; the count matches the totals' working orders
     await act(async () => { cell('buy').props.onClick(); });
     expect(cancelled()).toEqual(['j6-direct', 'j6-alias']);
 });

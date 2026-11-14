@@ -7,7 +7,8 @@ const COLS = '3rem 1fr 4.8rem 1fr 3rem';
 // #216 外側觸買／觸賣欄：觸價 | 委託 | 量 | 價格 | 量 | 委託 | 觸價
 const COLS7 = '1.9rem 2rem minmax(0, 1fr) 3.9rem minmax(0, 1fr) 2rem 1.9rem';
 // 最窄的面板放不下固定欄寬：全部改成比例。買量／賣量同時是限價下單的點擊區，不能收成 0
-const COLS7_MINIMAL = 'minmax(0, 1.4fr) minmax(0, 1.3fr) minmax(0, 1.6fr) minmax(0, 3.2fr) minmax(0, 1.6fr) minmax(0, 1.3fr) minmax(0, 1.4fr)';
+// #402：觸價欄讓 0.4fr 給量欄，零股「2.1萬」「3200」一行放得下
+const COLS7_MINIMAL = 'minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 2fr) minmax(0, 3.2fr) minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 1fr)';
 
 const flashContainer = createContainer();
 
@@ -394,6 +395,9 @@ export const headRow = style({
     flexShrink: 0,
 });
 
+// 表頭不換行；放不下的字截掉（全文在 title），不擠到隔壁欄（#402）
+globalStyle(`${headRow} > *`, { whiteSpace: 'nowrap', overflow: 'hidden', minWidth: 0 });
+
 // fixed window — no native scrolling; the wheel shifts the anchor in ticks
 export const ladderBody = style({
     flex: 1,
@@ -435,6 +439,8 @@ const cellBase = style({
     alignItems: 'center',
     position: 'relative',
     overflow: 'hidden',
+    // 梯子格子一律不換行（#402：零股「1.3萬」在窄面板折成兩行）
+    whiteSpace: 'nowrap',
 });
 
 export const chipCell = style([
@@ -595,6 +601,8 @@ export const volBarAsk = style([volBarBase, { left: 0 }]);
 export const cellText = style({
     position: 'relative',
     zIndex: 1,
+    // ≤230px 比例欄寬：量小一號，四位數與「1.3萬」一行放得下（#402）
+    '@container': { [MINIMAL]: { fontSize: '0.64rem' } },
 });
 
 // floating "back to last price" pill when price leaves the window
@@ -1080,6 +1088,8 @@ export const cols7 = style({
 // narrower cells in the 7-column ladder: volumes keep their digits
 globalStyle(`${cols7} [data-side='buy']`, { paddingRight: 4 });
 globalStyle(`${cols7} [data-side='sell']`, { paddingLeft: 4 });
+globalStyle(`${cols7} [data-side='buy']`, { '@container': { [MINIMAL]: { paddingRight: 2 } } });
+globalStyle(`${cols7} [data-side='sell']`, { '@container': { [MINIMAL]: { paddingLeft: 2 } } });
 globalStyle(`${cols7} > span, ${cols7} > button`, { whiteSpace: 'nowrap', overflow: 'hidden' });
 
 export const trigCell = style([
@@ -1201,8 +1211,8 @@ const totCell = style({ display: 'flex', alignItems: 'center', minWidth: 0, over
 export const totEmpty = totCell;
 export const totVol = styleVariants({
     // 對齊買量／賣量格的文字位置（同 buyCell／sellCell 的內距；七欄時同 cols7 的 4px）
-    bid: [totCell, { justifyContent: 'flex-end', paddingRight: 8, color: vars.color.up }],
-    ask: [totCell, { justifyContent: 'flex-start', paddingLeft: 8, color: vars.color.down }],
+    bid: [totCell, { justifyContent: 'flex-end', paddingRight: 8, paddingLeft: 2, color: vars.color.up }],
+    ask: [totCell, { justifyContent: 'flex-start', paddingLeft: 8, paddingRight: 2, color: vars.color.down }],
 });
 globalStyle(`${cols7} > ${totVol.bid}`, { paddingRight: 4 });
 globalStyle(`${cols7} > ${totVol.ask}`, { paddingLeft: 4 });
@@ -1266,3 +1276,86 @@ export const totMineBtn = styleVariants({
     buy: [totMineBtnBase, { selectors: { '&:not([aria-disabled]):hover': { background: vars.color.upDim, boxShadow: `inset 0 0 0 1px ${vars.color.up}` } } }],
     sell: [totMineBtnBase, { selectors: { '&:not([aria-disabled]):hover': { background: vars.color.downDim, boxShadow: `inset 0 0 0 1px ${vars.color.down}` } } }],
 });
+
+// ---- #402 委託格：分段膠囊（設定「委託格」＝分段，且面板夠寬）----
+// 每個價位的我的委託與底部合計列同一種寫法、只有一種排法（左右並排）：外側實心段＝
+// 今日在這個價位的成交（不可點），內側外框段＝未成交（點＝刪這個價位這一邊）。
+// 買在左欄成交段在左、賣在右欄成交段在右。放不下時不縮、不疊：面板寬度 < 330px
+// 整個面板改用精簡顯示（flash-cells.ts 的 SPLIT_MIN_WIDTH，只看寬度）。
+// 分段時「我的委託」欄 3.5rem（字 0.58rem，兩段合計 8 個字：零股 9999｜9999），
+// 從觸價欄（1.9→1.6rem）與兩個量欄借；量欄在 330px 仍有約 3rem。
+// 合計列的我的委託格跨到外側的觸價欄（合計列那一格本來就空）：可放 12 個字（99.9萬｜99.9萬）。
+const COLS7_SPLIT = '1.6rem 3.5rem minmax(0, 1fr) 3.9rem minmax(0, 1fr) 3.5rem 1.6rem';
+// 五欄（Alt＋點）沒有觸價欄：我的委託欄直接 5.1rem，合計列不用跨欄
+const COLS5_SPLIT = '5.1rem minmax(0, 1fr) 4.8rem minmax(0, 1fr) 5.1rem';
+export const colsSplit7 = style({ gridTemplateColumns: COLS7_SPLIT });
+export const colsSplit5 = style({ gridTemplateColumns: COLS5_SPLIT });
+
+export const split = style({
+    display: 'inline-flex',
+    alignItems: 'stretch',
+    height: 15,
+    margin: 0,
+    padding: 0,
+    border: 0,
+    background: 'none',
+    appearance: 'none',
+    fontFamily: vars.font.mono,
+    fontSize: '0.58rem',
+    fontWeight: 700,
+    lineHeight: 1,
+    whiteSpace: 'nowrap',
+    borderRadius: vars.radius.sm,
+    position: 'relative',
+    selectors: { '&:focus-visible': { outline: `1px solid ${vars.color.accent}`, outlineOffset: 1 } },
+});
+const segBase = style({
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '0 2px',
+    border: '1px solid',
+    whiteSpace: 'nowrap',
+});
+/** 已成交段：同 fillBadge 配色 */
+export const segFill = styleVariants({
+    buy: [segBase, { color: '#fff', background: vars.color.up, borderColor: vars.color.up, cursor: 'default' }],
+    sell: [segBase, { color: '#fff', background: vars.color.down, borderColor: vars.color.down, cursor: 'default' }],
+});
+/** 未成交段：同 orderChip 配色與 hover */
+export const segWork = styleVariants({
+    buy: [segBase, { color: vars.color.up, background: vars.color.upDim, borderColor: vars.color.up, cursor: 'pointer', minWidth: '1rem' }],
+    sell: [segBase, { color: vars.color.down, background: vars.color.downDim, borderColor: vars.color.down, cursor: 'pointer', minWidth: '1rem' }],
+});
+globalStyle(`${split}:hover > ${segWork.buy}`, { color: '#fff', background: vars.color.up });
+globalStyle(`${split}:hover > ${segWork.sell}`, { color: '#fff', background: vars.color.down });
+/** 單獨一段（只有成交、或只有未成交）四角都圓 */
+export const segAlone = style({ borderRadius: vars.radius.sm, minWidth: '1.2rem' });
+export const segOuterL = style({ borderTopLeftRadius: vars.radius.sm, borderBottomLeftRadius: vars.radius.sm, borderRightWidth: 0 });
+export const segOuterR = style({ borderTopRightRadius: vars.radius.sm, borderBottomRightRadius: vars.radius.sm, borderLeftWidth: 0 });
+export const segInnerL = style({ borderTopLeftRadius: vars.radius.sm, borderBottomLeftRadius: vars.radius.sm });
+export const segInnerR = style({ borderTopRightRadius: vars.radius.sm, borderBottomRightRadius: vars.radius.sm });
+/** 同價位多筆委託：疊一層邊（兩種寫法共用） */
+export const multiOrders = styleVariants({
+    buy: { boxShadow: `2px -2px 0 -1px ${vars.color.panel}, 2px -2px 0 0 ${vars.color.up}` },
+    sell: { boxShadow: `2px -2px 0 -1px ${vars.color.panel}, 2px -2px 0 0 ${vars.color.down}` },
+});
+/** 刪單送出中（兩種寫法共用）：狀態色固定，不隨漲跌配色 */
+export const cancelPending = style({
+    borderStyle: 'dashed',
+    borderColor: vars.color.amber,
+    color: vars.color.amber,
+    background: amberDim,
+    cursor: 'progress',
+});
+globalStyle(`${split}:hover > ${cancelPending}`, { color: vars.color.amber, background: amberDim });
+/** 精簡：≤230px 欄寬改比例時字小一號、內距收窄，四位數放得進 */
+export const chipFit = style({
+    whiteSpace: 'nowrap',
+    '@container': { [MINIMAL]: { fontSize: '0.54rem', padding: '2px 1px', minWidth: '1.1rem' } },
+});
+/** 合計列：分段時一行高（同梯子列） */
+export const totGridSplit = style({ height: 22 });
+/** 合計列的我的委託格（七欄時跨到觸價欄）：分段膠囊置中 */
+export const totSplitCell = style([totCell, { justifyContent: 'center' }]);
+export const totSpan2 = style({ gridColumn: 'span 2' });
