@@ -235,19 +235,30 @@ if (!isMirror && typeof window !== 'undefined') window.addEventListener('pagehid
 
 let inFlight: Promise<void> | null = null;
 let inFlightResult: Promise<void> | null = null;
+let inFlightScopes = new Set<TradingQueryScope>();
+const queuedRefreshScopes = new Set<TradingQueryScope>();
+let queuedRefresh: Promise<void> | null = null;
 let resyncInFlight: Promise<void> | null = null;
 const snapshotEnds = new Map<string, number>();
+const snapshotStarts = new Map<string, number>();
+const changedSnapshotBooks = new Map<string, Set<string>>();
 const seenFills = new Set<string>();
+const SEEN_FILL_LIMIT = 10000;
+const POSITION_ISSUE_LIMIT = 500;
+function rememberFill(key: string) {
+    seenFills.add(key);
+    if (seenFills.size > SEEN_FILL_LIMIT) seenFills.delete(seenFills.values().next().value!);
+}
 const positionBaselines = new Map<string, AccountedPosition[]>();
 type JournalFill = PositionFill & { reportKey: string };
 const positionJournals = new Map<string, Map<string, JournalFill>>();
 const accountDealVersions = new Map<string, number>();
-let unattributedDealVersion = 0;
 let positionDealSequence = 0;
 const positionReads = new Set<string>();
 const queuedPositionReads = new Map<string, Account>();
 let positionReadTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingDeals = new Map<string, OrderEventReport>();
+const pendingDealVersions = new Map<string, number>();
 const pendingContracts = new Map<string, number>();
 const orderTimes = new Map<string, number>();
 const pendingOrders = new Map<string, OrderEventReport>();
@@ -280,11 +291,11 @@ function ensurePositionEnvironment() {
     positionModeVersion = version;
     for (const issue of state.positionIssues) resolve('positions', [issue.reason], undefined, issue.cause);
     state = { ...state, positionIssues: [] };
-    snapshotEnds.clear(); seenFills.clear(); positionBaselines.clear(); positionJournals.clear();
+    snapshotEnds.clear(); snapshotStarts.clear(); changedSnapshotBooks.clear(); seenFills.clear(); positionBaselines.clear(); positionJournals.clear();
     accountDealVersions.clear(); recentPositionDeals.clear(); recentPositionDealVersions.clear();
     positionMetadataIssues.clear(); recoveryReports.clear(); queuedPositionReads.clear();
-    pendingDeals.clear(); positionMetaPending.clear(); orderMetaPending.clear(); pendingContracts.clear();
-    unattributedDealVersion = ++positionDealSequence;
+    pendingDeals.clear(); pendingDealVersions.clear(); positionMetaPending.clear(); orderMetaPending.clear(); pendingContracts.clear();
+    ++positionDealSequence;
 }
 function fillIdentity(report: OrderEventReport): string | undefined {
     if (report.kind !== 'deal') return undefined;
@@ -295,13 +306,18 @@ function fillIdentity(report: OrderEventReport): string | undefined {
     return account && typeof seq === 'string' && seq && report.ts && report.tradeId
         ? `${accountKey(account)}:${Math.floor(report.ts / 86400)}:${seq}:${report.tradeId}${subaccount}` : undefined;
 }
+function fillEventIdentity(report: OrderEventReport): string | undefined {
+    const account = dealAccount(report);
+    return report.eventId && account ? `${accountKey(account)}:event:${getApiBase()}:${report.eventId}` : undefined;
+}
 
 function dealAccount(report: OrderEventReport): Account | undefined {
     const body = reportBody(report);
-    return tradableAccounts().find(a => a.account_type === (report.market === 'stock' ? 'S' : 'F')
+    return getAccountState().accounts.find(a => a.account_type === (report.market === 'stock' ? 'S' : 'F')
         && a.broker_id === body?.broker_id && a.account_id === body?.account_id);
 }
 const bookCondition = (p: AccountedPosition) => 'yd_quantity' in p ? ('cond' in p ? p.cond ?? 'Cash' : 'Cash') : '';
+const snapshotBookKey = (code: string, condition: string) => JSON.stringify([code, condition]);
 const inBook = (p: AccountedPosition, fill: PositionFill) => p.account && accountKey(p.account) === accountKey(fill.account)
     && p.code === fill.code && bookCondition(p) === fill.condition;
 
@@ -311,16 +327,21 @@ function clearPositionProblems(account: Account, code?: string, condition?: stri
         && (!reasons || reasons.includes(p.reason)) && (!reportKeys || reportKeys.has(p.reportKey)));
     for (const issue of cleared) resolve('positions', [issue.reason], undefined, issue.cause);
     const issues = state.positionIssues.filter(p => !cleared.includes(p));
-    state = { ...state, positionIssues: issues, positions: state.positions.map(p => {
+    state = { ...state, positionIssues: issues };
+    attachPositionProblems(account);
+    if (!issues.some(i => i.account && accountKey(i.account) === accountKey(account))) queuedPositionReads.delete(accountKey(account));
+}
+
+function attachPositionProblems(account: Account) {
+    state = { ...state, positions: state.positions.map(p => {
         if (!p.account || accountKey(p.account) !== accountKey(account)) return p;
-        const issue = issues.find(i => !i.subaccount && i.account && accountKey(i.account) === accountKey(account) && i.code === p.code
+        const issue = state.positionIssues.find(i => !i.subaccount && i.account && accountKey(i.account) === accountKey(account) && i.code === p.code
             && (i.condition === undefined || i.condition === bookCondition(p)));
         if (issue) return { ...p, reconcileReason: issue.message };
         if (!p.reconcileReason) return p;
         const { reconcileReason: _removed, ...row } = p;
         return row;
     }) };
-    if (!issues.some(i => i.account && accountKey(i.account) === accountKey(account))) queuedPositionReads.delete(accountKey(account));
 }
 
 /** An unsafe fill never invalidates another account/product/credit book.
@@ -337,10 +358,17 @@ function positionProblem(report: OrderEventReport, reason: ReconcileReason, mess
     if (reason === 'metadata-missing') positionMetadataIssues.set(key, issue);
     raise('positions', reason, `${code}：${message}`, cause);
     const issues = state.positionIssues.filter(p => p.cause !== cause);
+    if (issues.length >= POSITION_ISSUE_LIMIT) {
+        const oldest = issues.shift()!;
+        resolve('positions', [oldest.reason], undefined, oldest.cause);
+        positionMetadataIssues.delete(oldest.reportKey);
+        // Keep an aggregate warning when the bounded detail list overflows.
+        raise('positions', 'overflow', '持倉待對帳明細超限，請手動更新持倉');
+    }
     state = { ...state, positionIssues: [...issues, issue], positions: state.positions.map(p =>
         !subaccount && p.account && account && accountKey(p.account) === accountKey(account) && p.code === code
             && (condition === undefined || bookCondition(p) === condition) ? { ...p, reconcileReason: message } : p) };
-    if (query && !recoveryReports.has(reportKey(report))) {
+    if (query && account && canTrade(account) && !subaccount && !recoveryReports.has(reportKey(report))) {
         if (recoveryReports.size >= 10000) recoveryReports.delete(recoveryReports.values().next().value!);
         recoveryReports.add(reportKey(report));
         queuePositionRead(account);
@@ -348,11 +376,9 @@ function positionProblem(report: OrderEventReport, reason: ReconcileReason, mess
 }
 
 /** One debounced recovery per burst, never polling or retrying failed reads.
- * Unknown attribution queries explicit tradable accounts, never a default. */
-function queuePositionRead(account?: Account) {
-    for (const a of account ? [account] : tradableAccounts()) {
-        if (!positionReads.has(accountKey(a))) queuedPositionReads.set(accountKey(a), a);
-    }
+ * Unrepresented accounts cannot be recovered with parent/account queries. */
+function queuePositionRead(account: Account) {
+    if (!positionReads.has(accountKey(account))) queuedPositionReads.set(accountKey(account), account);
     if (!queuedPositionReads.size || positionReadTimer) return;
     positionReadTimer = setTimeout(() => {
         positionReadTimer = null;
@@ -372,6 +398,9 @@ function queuePositionRead(account?: Account) {
             catch { raise('positions', 'query-failed', `${a.account_type} 持倉查詢失敗，保留上次資料`); }
         }).then(() => { prepareQuotes(); publish(); });
         inFlight = run.finally(() => { inFlight = null; });
+        // A recovery can satisfy positions only if it covers every currently
+        // tradable account. It never satisfies orders or funds.
+        inFlightScopes = new Set(tradableAccounts().every(a => accounts.some(b => accountKey(a) === accountKey(b))) ? ['positions'] : []);
         inFlightResult = inFlight;
     }, 250);
 }
@@ -384,50 +413,64 @@ async function readPositionsSnapshot(account: Account, query: ReturnType<typeof 
     ensurePositionEnvironment();
     const key = accountKey(account);
     const version = accountDealVersions.get(key) ?? 0;
-    const unknownVersion = unattributedDealVersion;
     const dealStart = positionDealSequence;
-    const clock = reasonClock;
+    const parkedAtStart = new Map([...pendingDeals].filter(([pendingKey]) => positionMetaPending.has(pendingKey)));
     positionReads.add(key);
     try {
         const positions = await read(() => fetchPositions(account.account_type as 'S' | 'F', query.account(account.account_type as 'S' | 'F', account)));
         query.account(account.account_type as 'S' | 'F', account);
         snapshotEnds.set(key, Date.now() / 1000);
+        snapshotStarts.set(key, dealStart);
         const rows = positions.map(p => ({ ...p, account }));
+        // A changed quantity that local reports did not explain can have
+        // included a still-undelivered fill. Do not add such a report twice.
+        const previous = state.positions.filter(p => p.account && accountKey(p.account) === key);
+        const books = new Set([...previous, ...rows].map(p => snapshotBookKey(p.code, bookCondition(p))));
+        const changed = new Set<string>();
+        if (positionBaselines.has(key)) for (const book of books) {
+            const quantity = (ps: AccountedPosition[], direction: string) => ps.filter(p => snapshotBookKey(p.code, bookCondition(p)) === book && p.direction === direction)
+                .reduce((sum, p) => sum + p.quantity, 0);
+            const buy = quantity(rows, 'Buy') - quantity(previous, 'Buy');
+            const sell = quantity(rows, 'Sell') - quantity(previous, 'Sell');
+            if (buy > 0 || sell < 0) changed.add(`${book}:Buy`);
+            if (sell > 0 || buy < 0) changed.add(`${book}:Sell`);
+        }
+        changedSnapshotBooks.set(key, changed);
         positionBaselines.set(key, rows);
         positionJournals.delete(key);
-        // Retire the bounded fill ledger at a new baseline. Old reports are
-        // fenced by snapshotEnds; recent reports are also remembered by identity
-        // (including those parked for metadata) rather than applied twice.
-        for (const seen of seenFills) if (seen.startsWith(`${key}:`)) seenFills.delete(seen);
-        for (const report of recentPositionDeals.values()) if (dealAccount(report) && accountKey(dealAccount(report)!) === key) {
+        // Only classified reports may be retired by an authoritative read.
+        // A parked report may not yet be in broker accounting. Keep its arrival
+        // sequence and warning until metadata arrives, then query after that.
+        const reports = new Map([...recentPositionDeals, ...pendingDeals]);
+        for (const report of reports.values()) if (dealAccount(report) && accountKey(dealAccount(report)!) === key && !reportBody(report)?.subaccount) {
+            if (positionMetaPending.has(reportKey(report)) || parkedAtStart.has(reportKey(report))) continue;
             const id = fillIdentity(report);
-            if (id) seenFills.add(id);
+            if (id) rememberFill(id);
+            const eventId = fillEventIdentity(report);
+            if (eventId) rememberFill(eventId);
             const pendingKey = reportKey(report);
             releasePositionMeta(pendingKey);
-            if (!orderMetaPending.has(pendingKey)) pendingDeals.delete(pendingKey);
-        }
-        // Metadata parking has a separate lifetime/bound from the recent
-        // report ring. Retire older parked reports covered by this baseline,
-        // too, so a late metadata failure cannot reopen them.
-        for (const [pendingKey, issue] of positionMetadataIssues) if (!issue.subaccount && issue.account && accountKey(issue.account) === key) {
-            const pending = pendingDeals.get(pendingKey);
-            const id = pending && fillIdentity(pending);
-            if (id) seenFills.add(id);
-            releasePositionMeta(pendingKey);
-            if (!orderMetaPending.has(pendingKey)) pendingDeals.delete(pendingKey);
+            if (!orderMetaPending.has(pendingKey)) {
+                pendingDeals.delete(pendingKey);
+                pendingDealVersions.delete(pendingKey);
+            }
         }
         resolveCostEstimate(account);
-        const prefix = `position:${key}:`;
-        for (const [reason, causes] of reasonState.positions) for (const cause of [...causes.keys()]) {
-            if (cause.startsWith(prefix) && !cause.includes(':subaccount:')) resolve('positions', [reason], clock, cause);
-        }
+        const retained = state.positionIssues.filter(p => p.subaccount || !p.account || accountKey(p.account) !== key
+            || positionMetaPending.has(p.reportKey) || parkedAtStart.has(p.reportKey));
+        for (const issue of state.positionIssues) if (!retained.includes(issue)) resolve('positions', [issue.reason], undefined, issue.cause);
         state = { ...state, positions: [...state.positions.filter(p => !p.account || accountKey(p.account) !== key), ...rows],
-            positionIssues: state.positionIssues.filter(p => p.subaccount || !p.account || accountKey(p.account) !== key) };
-        const raced = version !== (accountDealVersions.get(key) ?? 0) || unknownVersion !== unattributedDealVersion;
+            positionIssues: retained };
+        // Reattach retained metadata warnings to the newly adopted rows.
+        attachPositionProblems(account);
+        const classifiedDuringRead = [...parkedAtStart.values()].filter(report => !positionMetaPending.has(reportKey(report))
+            && dealAccount(report) && accountKey(dealAccount(report)!) === key);
+        for (const report of classifiedDuringRead) positionProblem(report, 'snapshot-boundary', '成交資料於持倉查詢期間補齊，快照是否包含成交待對帳', false);
+        const raced = version !== (accountDealVersions.get(key) ?? 0);
         if (raced) {
             // Only affected books are uncertain; reports in another account or
             // order-only reports do not race this position snapshot.
-            for (const report of recentPositionDeals.values()) if (!dealAccount(report) || accountKey(dealAccount(report)!) === key) {
+            for (const report of recentPositionDeals.values()) if (dealAccount(report) && accountKey(dealAccount(report)!) === key && !reportBody(report)?.subaccount) {
                 if ((recentPositionDealVersions.get(reportKey(report)) ?? 0) <= dealStart) continue;
                 positionProblem(report, 'snapshot-boundary', '持倉查詢期間收到成交，快照已採用；等待一次對帳', false);
             }
@@ -435,10 +478,14 @@ async function readPositionsSnapshot(account: Account, query: ReturnType<typeof 
         // Retire queued recovery for this account: this read already covered
         // earlier failures. A new race gets at most one extra query below.
         queuedPositionReads.delete(key);
+        // If metadata resolved during this request, a new read must start
+        // after that classification. Do not let this early read retire it.
+        if (classifiedDuringRead.length) queuedPositionReads.set(key, account);
         return raced;
     } finally {
         positionReads.delete(key);
-        if (followup && (version !== (accountDealVersions.get(key) ?? 0) || unknownVersion !== unattributedDealVersion)) queuePositionRead(account);
+        if (followup && version !== (accountDealVersions.get(key) ?? 0)) queuePositionRead(account);
+        else if (queuedPositionReads.has(key)) queuePositionRead(account);
     }
 }
 const recentPositionDeals = new Map<string, OrderEventReport>();
@@ -551,9 +598,25 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
         if (scope !== 'all') channel?.postMessage({ kind: 'refresh', scope });
         return Promise.resolve();
     }
-    if (inFlight) return inFlightResult ?? inFlight;
-    const targets = scope === 'all' ? queryScopes : [scope];
-    if (targets.some(key => Date.now() < nextRefreshAt[key])) return Promise.resolve();
+    return refreshTradingScopes(scope === 'all' ? queryScopes : [scope]);
+}
+
+function refreshTradingScopes(requested: TradingQueryScope[]): Promise<void> {
+    if (inFlight) {
+        const missing = requested.filter(key => !inFlightScopes.has(key));
+        if (!missing.length) return inFlightResult ?? inFlight;
+        missing.forEach(key => queuedRefreshScopes.add(key));
+        if (!queuedRefresh) queuedRefresh = (inFlightResult ?? inFlight).then(() => {
+            const scopes = [...queuedRefreshScopes];
+            queuedRefreshScopes.clear();
+            queuedRefresh = null;
+            return refreshTradingScopes(scopes);
+        });
+        return queuedRefresh;
+    }
+    const targets = requested.filter(key => Date.now() >= nextRefreshAt[key]);
+    if (!targets.length) return Promise.resolve();
+    inFlightScopes = new Set(targets);
     const readPositions = targets.includes('positions');
     const readOrders = targets.includes('orders');
     const readAccount = targets.includes('account');
@@ -673,7 +736,20 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
             if (key !== 'positions' && before !== eventSequence) problems[key].push(['snapshot-boundary', '更新期間收到回報，快照邊界不明；請確認後手動對帳']);
             // A tab that fully read clears what it resolved before the read
             // started; a failed read keeps every earlier reason.
-            if (!failed.has(key)) resolve(key, AUTHORITATIVE_RESOLVES[key], clockBefore);
+            if (!failed.has(key)) {
+                if (key === 'positions') {
+                    // A complete authoritative refresh can dismiss reports for
+                    // accounts the UI cannot represent. They never race or
+                    // trigger reads of unrelated accounts. Child accounts stay
+                    // visible: parent snapshots cannot reconcile their books.
+                    const cleared = state.positionIssues.filter(i => !i.subaccount && (!i.account || !canTrade(i.account))
+                        && (reasonState.positions.get(i.reason)?.get(i.cause)?.at ?? Infinity) <= clockBefore);
+                    for (const issue of cleared) resolve('positions', [issue.reason], clockBefore, issue.cause);
+                    state = { ...state, positionIssues: state.positionIssues.filter(i => !cleared.includes(i)) };
+                    resolve('positions', ['overflow'], clockBefore);
+                }
+                resolve(key, AUTHORITATIVE_RESOLVES[key], clockBefore);
+            }
             for (const [reason, message] of problems[key]) raise(key, reason, message);
             syncQuery(key, problems[key].length === 0 ? { updatedAt: Date.now() } : {});
         }
@@ -691,18 +767,19 @@ export function refreshTradingState(scope: TradingQueryScope | 'all' = 'all'): P
         queryEvents = null;
         for (const key of targets) nextRefreshAt[key] = Date.now() + 1500;
         inFlight = null;
+        inFlightScopes.clear();
         // Joins boot's own mode-change reread when it already started one.
         if (reread) void refreshTradingStateForModeChange();
     });
     // Health is cache-only (no broker call): check it once after an explicit
     // orders reconciliation to surface what the server still cannot track.
-    inFlightResult = scope === 'orders' ? run.then(() => { if (ordersRead) return checkTradeCacheHealth('manual'); }) : run;
+    inFlightResult = targets.length === 1 && readOrders ? run.then(() => { if (ordersRead) return checkTradeCacheHealth('manual'); }) : run;
     return inFlightResult;
 }
 
 /** One orders reconciliation that really reads orders (#249: after an unknown
- *  order outcome). refreshTradingState('orders') alone may return another
- *  scope's in-flight read or skip during the cooldown; wait both out first.
+ *  order outcome). Wait out any active batch and the orders cooldown before
+ *  issuing the authoritative read.
  *  Never sends or resends anything. */
 export async function reconcileOrdersOnce(): Promise<void> {
     if (isMirror) { channel?.postMessage({ kind: 'refresh', scope: 'orders' }); return; }
@@ -884,8 +961,16 @@ let hasConnected = false;
 let downSinceLive = false;
 function park(report: OrderEventReport, set: Set<string>) {
     const key = reportKey(report);
+    if (!pendingDeals.has(key) && pendingDeals.size >= 500) {
+        const oldest = pendingDeals.keys().next().value!;
+        pendingDeals.delete(oldest); pendingDealVersions.delete(oldest);
+        positionMetaPending.delete(oldest); orderMetaPending.delete(oldest);
+        positionMetadataIssues.delete(oldest);
+        raise('positions', 'overflow', '等待成交資料超限，請手動更新持倉');
+    }
     set.add(key);
-    if (pendingDeals.size < 500 || pendingDeals.has(key)) pendingDeals.set(key, report);
+    pendingDeals.set(key, report);
+    if (!pendingDealVersions.has(key)) pendingDealVersions.set(key, recentPositionDealVersions.get(key) ?? positionDealSequence);
 }
 // The deal no longer waits for order/contract metadata (it applied, was a
 // duplicate, or now fails for another, separately raised reason).
@@ -897,12 +982,17 @@ function releasePositionMeta(key: string) {
         resolve('positions', ['metadata-missing'], undefined, MSG.positionOrderMeta);
         resolve('positions', ['metadata-missing'], undefined, MSG.positionContractMeta);
     }
+    if (!orderMetaPending.has(key) && !pendingDeals.has(key)) pendingDealVersions.delete(key);
 }
 function applyDeal(report: OrderEventReport) {
     if (report.kind !== 'deal') return;
     ensurePositionEnvironment();
     const key = reportKey(report);
     const account = dealAccount(report);
+    if (!account || !canTrade(account) || reportBody(report)?.subaccount) {
+        positionProblem(report, 'unknown-fill', '成交帳戶無法投影至目前持倉，請核對帳戶', false);
+        return;
+    }
     const knownOrder = state.trades.some(t => t.order.id === report.tradeId && t.account && account
         && accountKey(t.account) === accountKey(account));
     const fill = positionFill(report, getAccountState().accounts, state.trades);
@@ -920,13 +1010,16 @@ function applyDeal(report: OrderEventReport) {
     }
     // Fill identity: the complete event_id (Shioaji 1.7.6+) plus the legacy
     // exchange-sequence key. Either one already applied means a duplicate.
-    const eventKey = report.eventId && account ? `${accountKey(account)}:event:${getApiBase()}:${report.eventId}` : null;
+    const eventKey = fillEventIdentity(report);
     const identity = fillIdentity(report);
     if ((identity && seenFills.has(identity)) || (eventKey && seenFills.has(eventKey))) {
         releasePositionMeta(key);
         return;
     }
-    const cutoff = fill && snapshotEnds.get(accountKey(fill.account));
+    const cutoff = fill ? snapshotStarts.get(accountKey(fill.account)) : undefined;
+    const received = pendingDealVersions.get(key) ?? recentPositionDealVersions.get(key);
+    const afterSnapshot = cutoff !== undefined && received !== undefined && received > cutoff;
+    const changedBook = fill && changedSnapshotBooks.get(accountKey(fill.account))?.has(`${snapshotBookKey(fill.code, fill.condition)}:${fill.action}`);
     const c = fill && getCachedContract(fill.code);
     if (fill?.account.account_type === 'F' && !c) {
         park(report, positionMetaPending);
@@ -954,32 +1047,54 @@ function applyDeal(report: OrderEventReport) {
         return;
     }
     const multiplier = fill?.account.account_type === 'S' ? 1 : c?.multiplier ?? c?.contract_size ?? 0;
+    if (fill?.condition === 'Cash' && fill.action === 'Sell' && fill.daytradeShort === undefined) {
+        // A New report may classify the order before the HTTP response adds
+        // its request-only short flag. Crossing a snapshot is not evidence
+        // that the still-unclassified fill has reached broker accounting.
+        park(report, positionMetaPending);
+        positionProblem(report, 'unknown-fill', '成交無法安全投影，等待一次對帳');
+        return;
+    }
     let next: AccountedPosition[] | null = null;
-    if (fill && cutoff && fill.ts > cutoff) {
+    if (fill && afterSnapshot && !changedBook) {
         const akey = accountKey(fill.account);
         const journal = positionJournals.get(akey) ?? new Map<string, JournalFill>();
         positionJournals.set(akey, journal);
         if (journal.size < 1000 || journal.has(fill.key)) {
             journal.set(fill.key, { ...fill, reportKey: key });
-            const fills = [...journal.values()].filter(f => f.code === fill.code && f.condition === fill.condition)
-                .sort((a, b) => a.ts - b.ts || (a.action === b.action ? a.key.localeCompare(b.key) : a.action === 'Buy' ? -1 : 1));
-            let book: AccountedPosition[] | null = (positionBaselines.get(akey) ?? []).filter(p => inBook(p, fill));
+            const fills = [...journal.values()].filter(f => f.code === fill.code && f.condition === fill.condition);
             const mark = tickMark(fill.code, fill.account) ?? state.positions.find(p => inBook(p, fill))?.last_price;
-            for (let i = 0; i < fills.length && book; i++) {
-                const f = fills[i]!;
-                const previous = fills[i - 1];
-                // FIFO order inside one exchange timestamp cannot be recovered
-                // from opaque exchange sequence strings.
-                if (previous?.ts === f.ts && (previous.action !== f.action
-                    || (fill.account.account_type === 'F' && previous.price !== f.price))) { book = null; break; }
-                book = applyPositionFill(book, f, multiplier, mark);
+            // Opening same-side fills commute. Only a subsequent partial FIFO
+            // offset can expose the price order within that second. Replay the
+            // two extreme price orders to detect that ambiguity when it matters.
+            const replay = (priceOrder: number) => {
+                const ordered = fills.slice().sort((a, b) => a.ts - b.ts || (a.action === b.action
+                    ? priceOrder * (a.price - b.price) || a.key.localeCompare(b.key) : a.action === 'Buy' ? -1 : 1));
+                let book: AccountedPosition[] | null = (positionBaselines.get(akey) ?? []).filter(p => inBook(p, fill));
+                for (let i = 0; i < ordered.length && book; i++) {
+                    const f = ordered[i]!;
+                    const previous = ordered[i - 1];
+                    if (previous?.ts === f.ts && previous.action !== f.action
+                        && !(fill.account.account_type === 'F' && previous.openClose === f.openClose && ['New', 'Cover'].includes(f.openClose))) return null;
+                    book = applyPositionFill(book, f, multiplier, mark);
+                }
+                return book;
+            };
+            let book = replay(1);
+            if (book && fill.account.account_type === 'F') {
+                const other = replay(-1);
+                if (!other || book.length !== other.length || book.some((p, i) => {
+                    const q = other[i]!;
+                    return p.direction !== q.direction || p.quantity !== q.quantity || Math.abs(p.price - q.price) > 1e-8 || Math.abs(p.pnl - q.pnl) > 1e-6;
+                })) book = null;
             }
             if (book) next = [...state.positions.filter(p => !inBook(p, fill)), ...book];
+            else journal.delete(fill.key); // an unsafe report cannot poison later valid fills
         }
     }
     if (next && fill) {
-        seenFills.add(fill.key);
-        if (eventKey) seenFills.add(eventKey);
+        rememberFill(fill.key);
+        if (eventKey) rememberFill(eventKey);
         state = { ...state, positions: next };
         const replayed = new Set([...(positionJournals.get(accountKey(fill.account))?.values() ?? [])]
             .filter(f => f.code === fill.code && f.condition === fill.condition).map(f => f.reportKey));
@@ -995,13 +1110,18 @@ function applyDeal(report: OrderEventReport) {
         // Futures open/close needs the order; replay once it arrives.
         park(report, positionMetaPending);
         positionProblem(report, 'metadata-missing', MSG.positionOrderMeta);
-    } else if (fill && (!cutoff || fill.ts <= cutoff)) {
+    } else if (fill && (!afterSnapshot || changedBook)) {
+        // Metadata arrived after this baseline was requested: that earlier
+        // read could not establish whether this parked report was included.
+        if (positionMetaPending.has(key)) recoveryReports.delete(key);
         positionProblem(report, 'snapshot-boundary', '成交可能已含在持倉快照內，等待一次對帳');
+        // Keep the identity/arrival sequence until the next authoritative
+        // snapshot even if this report has aged out of the recent-report ring.
+        park(report, positionMetaPending);
         releasePositionMeta(key);
     } else {
         positionProblem(report, 'unknown-fill', '成交無法安全投影，等待一次對帳');
-        if (fill?.condition === 'Cash' && fill.action === 'Sell' && fill.daytradeShort === undefined) park(report, positionMetaPending);
-        else releasePositionMeta(key);
+        releasePositionMeta(key);
     }
 }
 function releasePendingDeals(tradeId: string) {
@@ -1167,11 +1287,12 @@ function start() {
         // position recovery query; they never trigger order/account polling.
         if (report.kind === 'deal') {
             const identity = fillIdentity(report);
-            if (!(identity && seenFills.has(identity)) && !recentPositionDeals.has(reportKey(report))) {
+            const eventId = fillEventIdentity(report);
+            if (!(identity && seenFills.has(identity)) && !(eventId && seenFills.has(eventId))
+                && !recentPositionDeals.has(reportKey(report)) && !pendingDealVersions.has(reportKey(report))) {
                 const account = dealAccount(report);
                 const version = ++positionDealSequence;
-                if (account) accountDealVersions.set(accountKey(account), version);
-                else unattributedDealVersion = version;
+                if (account && canTrade(account) && !reportBody(report)?.subaccount) accountDealVersions.set(accountKey(account), version);
                 if (recentPositionDeals.size >= 1000) {
                     const oldest = recentPositionDeals.keys().next().value!;
                     recentPositionDeals.delete(oldest); recentPositionDealVersions.delete(oldest);

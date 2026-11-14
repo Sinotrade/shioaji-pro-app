@@ -97,7 +97,7 @@ describe('#401 real-time position books', () => {
         await emit(stockFill());
         expect(store.getTradingState().positions[0]!.quantity).toBe(1000);
     });
-    it('does not reopen a covered fill when its pending contract lookup fails after recovery', async () => {
+    it('keeps an unclassified fill uncertain when an empty recovery snapshot cannot prove inclusion', async () => {
         mocks.account.account_type = 'F';
         mocks.positions.mockResolvedValue([]);
         vi.advanceTimersByTime(1500);
@@ -117,11 +117,11 @@ describe('#401 real-time position books', () => {
         } } })!);
         expect(store.getTradingState().queries.positions.needsReconcile).toBe(true);
         await recovery();
-        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(true);
         await act(async () => { reject(new Error('metadata offline')); });
         await flush();
-        expect(store.getTradingState().positionIssues).toEqual([]);
-        expect(store.getTradingState().queries.positions.needsReconcile).toBe(false);
+        expect(store.getTradingState().positionIssues).toEqual([expect.objectContaining({ reason: 'metadata-missing' })]);
+        expect(store.getTradingState().queries.positions.needsReconcile).toBe(true);
     });
     it('projects partial day-short fills and later cash covers using the recorded request flag', async () => {
         const { noteStockOrderConditions } = await import('./stock-order-conditions');
