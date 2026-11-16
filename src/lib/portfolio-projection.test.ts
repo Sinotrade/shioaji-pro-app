@@ -5,9 +5,51 @@ import type { Account, AccountedPosition } from './types/portfolio';
 
 const account: Account = { account_type: 'S', broker_id: 'test', account_id: 'a', person_id: '', signed: true, username: '' };
 const base: AccountedPosition = { id: 1, code: '2330', direction: 'Buy', quantity: 1000, price: 100, last_price: 110, pnl: 9900, yd_quantity: 1000, cond: 'Cash', account };
-const fill: PositionFill = { key: 'fill', tradeId: 'order', account, code: '2330', action: 'Buy', quantity: 100, price: 120, ts: 1789000000, condition: 'Cash', openClose: '' };
+const fill: PositionFill = { key: 'fill', tradeId: 'order', account, code: '2330', action: 'Buy', quantity: 100, price: 120, ts: 1789000000, condition: 'Cash', openClose: '', daytradeShort: false };
 
 describe('position projection', () => {
+    it('projects a confirmed cash day-trade short immediately and covers it with later cash buys', () => {
+        const short = { ...fill, action: 'Sell' as const, daytradeShort: true, quantity: 2000 };
+        const opened = applyPositionFill([], short, 1)!;
+        expect(opened).toEqual([expect.objectContaining({ direction: 'Sell', quantity: 2000, cond: 'Cash' })]);
+        const partial = applyPositionFill(opened, { ...fill, quantity: 1000 }, 1)!;
+        expect(partial[0]).toMatchObject({ direction: 'Sell', quantity: 1000 });
+        expect(applyPositionFill(partial, { ...fill, quantity: 1000 }, 1)).toEqual([]);
+    });
+    it('keeps owned cash shares when a confirmed day short opens, then covers before adding longs', () => {
+        const short = { ...fill, action: 'Sell' as const, daytradeShort: true, quantity: 2000 };
+        const rows = applyPositionFill([base], short, 1)!;
+        expect(rows).toEqual([base, expect.objectContaining({ direction: 'Sell', quantity: 2000 })]);
+        const partial = applyPositionFill(rows, { ...fill, quantity: 1000 }, 1)!;
+        expect(partial.map(p => [p.direction, p.quantity])).toEqual([['Buy', 1000], ['Sell', 1000]]);
+        const covered = applyPositionFill(partial, { ...fill, quantity: 1500 }, 1)!;
+        expect(covered).toEqual([expect.objectContaining({ direction: 'Buy', quantity: 1500, cond: 'Cash' })]);
+    });
+    it.each(['MarginTrading', 'ShortSelling'])('opens and partially closes only the %s book', condition => {
+        const opening = { ...fill, condition, action: condition === 'MarginTrading' ? 'Buy' as const : 'Sell' as const, quantity: 2000 };
+        const opened = applyPositionFill([base], opening, 1)!;
+        expect(opened[0]).toBe(base);
+        expect(opened[1]).toMatchObject({ cond: condition, direction: opening.action, quantity: 2000, yd_quantity: 0 });
+        const closing = { ...opening, action: opening.action === 'Buy' ? 'Sell' as const : 'Buy' as const, quantity: 1000 };
+        const partial = applyPositionFill(opened, closing, 1)!;
+        expect(partial[0]).toBe(base);
+        expect(partial[1]).toMatchObject({ quantity: 1000, price: 120 });
+        expect(applyPositionFill(partial, closing, 1)).toEqual([base]);
+        expect(applyPositionFill(partial, { ...closing, quantity: 1001 }, 1)).toBeNull();
+    });
+    it('uses the same recorded day-short classification as flash totals, scoped by account and broker reference', async () => {
+        const { noteStockOrderConditions, resetStockOrderConditionsForTest } = await import('./stock-order-conditions');
+        resetStockOrderConditionsForTest();
+        noteStockOrderConditions(account, { seqno: 'seq', ordno: 'ord' }, { order_cond: 'Cash', daytrade_short: true });
+        const raw = { trade_id: 's', seqno: 'seq', ordno: 'ord', exchange_seq: 'f', broker_id: 'test', account_id: 'a', code: '2330',
+            action: 'Sell', price: 100, quantity: 1, order_lot: 'Common', order_cond: 'Cash', ts: fill.ts };
+        const parse = (b: object, accounts = [account]) => positionFill(normalizeOrderEvent({ state: 'StockDeal', data: { StockDeal: b } })!, accounts, []);
+        expect(parse(raw)).toMatchObject({ daytradeShort: true, quantity: 1000 });
+        expect(parse({ ...raw, ordno: 'other' })?.daytradeShort).toBeUndefined();
+        expect(parse({ ...raw, account_id: 'b' }, [{ ...account, account_id: 'b' }])?.daytradeShort).toBeUndefined();
+        expect(parse({ ...raw, subaccount: 'child' })).toBeNull();
+        resetStockOrderConditionsForTest();
+    });
     it('marks current value without discarding broker baseline adjustments', () => {
         expect(markPosition(base, 112, 1)).toMatchObject({ last_price: 112, pnl: 11900 });
         expect(markPosition({ ...base, direction: 'Sell' }, 112, 1).pnl).toBe(7900);
@@ -209,7 +251,7 @@ describe('position projection', () => {
         expect(parse({ ...body, order_lot: 'IntradayOdd' })?.quantity).toBe(1);
         expect(parse({ ...body, account_id: '' })).toBeNull();
         expect(parse({ ...body, exchange_seq: '' })).toBeNull();
-        expect(parse({ ...body, order_cond: 'MarginTrading' })).toBeNull();
+        expect(parse({ ...body, order_cond: 'MarginTrading' })?.condition).toBe('MarginTrading');
         expect(parse({ ...body, order_cond: 'Netting' })).toBeNull();
         expect(parse({ ...body, quantity: 0 })).toBeNull();
     });
@@ -253,7 +295,9 @@ it('replays the native two-part Common Sell fill from an explicit 2000-share bas
         expect(next[0]!.status).toMatchObject({status:index===0?'PartFilled':'Filled',deal_quantity:index+1});
         expect(projectTradeDeal(next,report!)).toBe(next);
         const projected = positionFill(report!,[fixtureAccount],trades)!;
-        positions = applyPositionFill(positions,projected,1)!;
+        // This fixture's Sell is the app's ordinary flatten (known request
+        // condition); the callback itself cannot prove daytrade_short=false.
+        positions = applyPositionFill(positions,{ ...projected, daytradeShort: false },1)!;
         expect(positions.reduce((sum,p)=>sum+p.quantity,0)).toBe(index===0?1000:0);
         trades=next;
     }

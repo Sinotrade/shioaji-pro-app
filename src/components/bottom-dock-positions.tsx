@@ -16,6 +16,7 @@ import {
     placeStockExitByShares,
 } from '../lib/trade';
 import type { AccountedPosition } from '../lib/types/portfolio';
+import { positionKey as posKey } from '../lib/position-key';
 import {
     fmtInt,
     fmtPrice,
@@ -44,11 +45,6 @@ import {
 } from './bottom-dock-shared';
 
 type SortMode = 'default' | 'value' | 'pnl' | 'code';
-
-function posKey(p: AccountedPosition): string {
-    const acc = p.account ? `${p.account.broker_id}-${p.account.account_id}` : '';
-    return `${acc}:${p.code}:${p.direction}:${p.id}`;
-}
 
 // 排序用市值：last_price × quantity（期貨無乘數資訊，僅供同類相對排序）
 function sortValue(p: AccountedPosition): number {
@@ -189,6 +185,7 @@ export function PositionsPane({
 
     // 捕捉列本身的帳戶；不得以目前選取帳戶補猜持倉歸屬。
     const closeOne = async (p: AccountedPosition, mode2: 'close' | 'reverse') => {
+        if (p.reconcileReason) throw Object.assign(new Error('此持倉待對帳，請先更新持倉再平倉；未送出委託'), { mutationNotStarted: true });
         const account = p.account;
         if (!account || !canTrade(account) || !account.broker_id || !account.account_id || !['S', 'F'].includes(account.account_type)) {
             throw new Error('持倉帳戶歸屬不明，未送出委託');
@@ -248,12 +245,14 @@ export function PositionsPane({
         if (targets.length === 0 || busy || busyCode) return;
         setBusy({ done: 0, total: targets.length });
         let ok = 0;
+        let notSent = 0;
         let firstErr = '';
         for (const p of targets) {
             try {
                 await closeOne(p, 'close');
                 ok++;
             } catch (e) {
+                if ((e as { mutationNotStarted?: boolean } | null)?.mutationNotStarted === true) notSent++;
                 if (!firstErr) {
                     firstErr = `${p.code}: ${e instanceof Error ? e.message : String(e)}`;
                 }
@@ -263,12 +262,13 @@ export function PositionsPane({
         setBusy(null);
         setSelected(new Set());
         const fail = targets.length - ok;
+        const unknown = fail - notSent;
         notify({
             kind: fail > 0 ? 'err' : 'ok',
-            title: '批次平倉請核對委託',
-            body: `已送出 ${ok} 筆 / 未完整確認 ${fail} 筆；可能部分送出，勿直接重送${firstErr ? `｜${firstErr}` : ''}`,
+            title: ok === 0 && unknown === 0 ? '批次平倉未成立（未送出或被券商拒絕）' : '批次平倉請核對委託',
+            body: `已送出 ${ok} 筆 / 未成立 ${notSent} 筆 / 未完整確認 ${unknown} 筆${unknown ? '；可能部分送出，勿直接重送' : ''}${firstErr ? `｜${firstErr}` : ''}`,
         });
-        if (fail > 0) reconcileAfterUnknownOutcome();
+        if (unknown > 0) reconcileAfterUnknownOutcome();
         onChanged();
     };
 
@@ -342,7 +342,7 @@ export function PositionsPane({
                             >
                                 {selectionCell(p)}
                             </td>
-                            <td className={styles.td}>{p.code}</td>
+                            <td className={styles.td}>{p.code}{p.reconcileReason && <small title={p.reconcileReason}> 待對帳</small>}</td>
                             {sz === 'wide' && (
                                 <td className={styles.td}>
                                     {names[p.code] ?? ''}
@@ -488,7 +488,7 @@ export function PositionsPane({
                             <span onClick={(e) => e.stopPropagation()}>
                                 {selectionCell(p)}
                             </span>
-                            <span className={styles.cardCode}>{p.code}</span>
+                            <span className={styles.cardCode}>{p.code}{p.reconcileReason && <small title={p.reconcileReason}> 待對帳</small>}</span>
                             <span className={styles.cardName}>
                                 {names[p.code] ?? ''}
                             </span>

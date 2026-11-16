@@ -3,6 +3,7 @@ import type { OrderEventReport } from './order-report';
 import type { Account, AccountedPosition } from './types/portfolio';
 import type { AccountedTrade } from './types/order';
 import { consumeFifo } from './futures-fifo';
+import { stockOrderConditions } from './stock-order-conditions';
 
 type Rec = Record<string, unknown>;
 const record = (v: unknown): Rec | undefined => v && typeof v === 'object' ? v as Rec : undefined;
@@ -26,6 +27,7 @@ export interface PositionFill {
     ts: number;
     condition: string;
     openClose: string;
+    daytradeShort?: boolean;
 }
 
 // Notifications intentionally tolerate missing fields. Accounting must not:
@@ -33,12 +35,14 @@ export interface PositionFill {
 export function positionFill(report: OrderEventReport, accounts: Account[], trades: AccountedTrade[]): PositionFill | null {
     if (report.kind !== 'deal') return null;
     const body = reportBody(report);
-    if (!body || !positive(report.price) || !positive(report.quantity) || !report.ts
+    if (!body || !positive(report.price) || !positive(report.quantity) || !Number.isInteger(report.quantity) || !positive(report.ts)
         || !['Buy', 'Sell'].includes(report.action ?? '') || !text(body.exchange_seq)) return null;
     const type = report.market === 'stock' ? 'S' : 'F';
     const account = accounts.find(a => canTrade(a) && a.account_type === type
         && a.broker_id === text(body.broker_id) && a.account_id === text(body.account_id));
-    if (!account || body.combo === true || (body.combo && typeof body.combo === 'object')) return null;
+    // Account selectors/position snapshots cannot represent a subaccount.
+    // Never apply its fill to the parent account's position.
+    if (!account || text(body.subaccount) || body.combo === true || (body.combo && typeof body.combo === 'object')) return null;
     const trade = trades.find(t => t.order.id === report.tradeId
         && t.account?.account_type === account.account_type
         && t.account?.account_id === account.account_id && t.account?.broker_id === account.broker_id);
@@ -46,16 +50,22 @@ export function positionFill(report: OrderEventReport, accounts: Account[], trad
     if (type === 'S' && !['Common', 'Odd', 'IntradayOdd', 'Fixing', 'BlockTrade'].includes(lot)) return null;
     const condition = type === 'S' ? text(body.order_cond) : '';
     const openClose = type === 'F' ? trade?.order.octype ?? '' : '';
-    if (type === 'S' && condition !== 'Cash') return null;
+    if (type === 'S' && !['Cash', 'MarginTrading', 'ShortSelling'].includes(condition)) return null;
     if (type === 'F' && !['New', 'Cover', 'Auto'].includes(openClose)) return null;
     const code = trade?.contract.target_code || trade?.contract.code || text(body.full_code) || report.code;
-    if (type === 'F' && (text(body.full_code) || text(body.code)) !== code) return null;
+    if ((text(body.full_code) || text(body.code)) !== code) return null;
+    if (trade && (trade.order.action !== report.action
+        || (trade.order.seqno && report.seqno && trade.order.seqno !== report.seqno)
+        || (trade.order.ordno && report.ordno && trade.order.ordno !== report.ordno)
+        || (type === 'S' && trade.order.order_cond && trade.order.order_cond !== condition))) return null;
     if (!code || !report.tradeId) return null;
+    const recorded = type === 'S' ? stockOrderConditions(account, { seqno: report.seqno, ordno: report.ordno }) : undefined;
     return {
         key: `${type}:${account.broker_id}:${account.account_id}:${Math.floor(report.ts / 86400)}:${text(body.exchange_seq)}:${report.tradeId}`,
         tradeId: report.tradeId, account, code, action: report.action as 'Buy' | 'Sell',
         quantity: report.quantity * (type === 'S' && !['Odd', 'IntradayOdd'].includes(lot) ? 1000 : 1),
         price: report.price, ts: report.ts, condition, openClose,
+        ...(type === 'S' ? { daytradeShort: trade?.order.daytrade_short ?? (recorded?.cond === condition ? recorded.daytradeShort : undefined) } : {}),
     };
 }
 
@@ -97,8 +107,11 @@ const lotQty = (lots: Lot[]) => lots.reduce((s, l) => s + l.quantity, 0);
 export function applyPositionFill(rows: AccountedPosition[], fill: PositionFill, multiplier: number, mark?: number): AccountedPosition[] | null {
     if (!positive(multiplier)) return null;
     const futures = fill.account.account_type === 'F';
+    // The wire omits daytrade_short. With owned shares both an ordinary sale
+    // and a separate day short are possible; use the same evidence as Flash.
+    if (!futures && fill.condition === 'Cash' && fill.action === 'Sell' && fill.daytradeShort === undefined) return null;
     const matches = rows.filter(p => sameAccount(p, fill) && p.code === fill.code
-        && (futures || !('cond' in p) || (p.cond ?? 'Cash') === fill.condition));
+        && (futures || ('cond' in p ? p.cond ?? 'Cash' : 'yd_quantity' in p ? 'Cash' : '') === fill.condition));
     const same = matches.filter(p => p.direction === fill.action);
     const opposite = matches.filter(p => p.direction !== fill.action);
     if (same.length > 1 || opposite.length > 1 || (same.length && opposite.length && fill.openClose === 'Auto')) return null;
@@ -109,7 +122,10 @@ export function applyPositionFill(rows: AccountedPosition[], fill: PositionFill,
     const marked = (p: AccountedPosition) => positive(mark) ? markPosition(p, mark, multiplier) : p;
     let remaining = fill.quantity;
     let next = rows.slice();
-    if (fill.openClose !== 'New' && opposite.length) {
+    // A confirmed day-trade short opens a separate cash short even when the
+    // account owns shares. Later cash buys cover it before adding long shares.
+    const dayShort = !futures && fill.condition === 'Cash' && fill.action === 'Sell' && fill.daytradeShort === true;
+    if (fill.openClose !== 'New' && !dayShort && opposite.length) {
         const old = opposite[0]!;
         const closed = Math.min(old.quantity, remaining);
         remaining -= closed;
@@ -142,9 +158,11 @@ export function applyPositionFill(rows: AccountedPosition[], fill: PositionFill,
         });
     }
     if (remaining && fill.openClose === 'Cover') return null;
-    // Cash sells beyond known holdings may be day-trade shorts or settlement
-    // corrections: do not invent a short holding without that contract.
-    if (remaining && !futures && fill.action === 'Sell') return null;
+    // Credit conditions are separate books: a margin sell / short-sale buy
+    // can only close known credit holdings, never open the inverse side.
+    if (remaining && !futures && ((fill.condition === 'Cash' && fill.action === 'Sell' && !dayShort)
+        || (fill.condition === 'MarginTrading' && fill.action === 'Sell')
+        || (fill.condition === 'ShortSelling' && fill.action === 'Buy'))) return null;
     if (!remaining) return next;
     if (same.length) {
         const old = same[0]!;

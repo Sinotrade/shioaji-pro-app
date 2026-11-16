@@ -43,7 +43,7 @@ export type Position = StockPosition | FuturePosition;
 
 // position_unit 回應不含帳戶欄位 — 多帳戶合併查詢時由呼叫端標上來源帳戶，
 // dock 分帳戶檢視／帳戶範圍篩選都靠這個 tag
-export type AccountedPosition = Position & { account?: Account };
+export type AccountedPosition = Position & { account?: Account; reconcileReason?: string };
 
 export interface AccountBalance {
     acc_balance: number;
