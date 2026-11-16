@@ -45,7 +45,9 @@ let view!: ReactTestRenderer;
 // #402 分段膠囊：「成交|未成交」（沒有那一段寫 0）
 const seg = (n: ReactTestInstance, k: 'filled' | 'working') => { const s = n.findAll(x => x.props['data-seg'] === k)[0]; return s ? text(s) : '0'; };
 const capsule = (n: ReactTestInstance) => `${seg(n, 'filled')}|${seg(n, 'working')}`;
-const cell = (side: 'buy' | 'sell') => view.root.findAll(x => typeof x.type === 'string' && x.props['data-testid'] === `flash-tot-${side}`)[0]!;
+// 分段時只有未成交段是刪單按鈕（flash-tot-*-cancel）；沒有未成交時是整個膠囊（span）
+const cell = (side: 'buy' | 'sell') => view.root.findAll(x => typeof x.type === 'string' && x.props['data-testid'] === `flash-tot-${side}-cancel`)[0]
+    ?? view.root.findAll(x => typeof x.type === 'string' && x.props['data-testid'] === `flash-tot-${side}`)[0]!;
 const button = (label: string) => view.root.findAllByType('button').find(b => text(b).includes(label))!;
 const arm = async () => { await act(async () => { button('啟用閃電下單').props.onClick(); }); };
 const render = async (props: Record<string, unknown> = {}) => { await act(async () => { view = create(createElement(FlashOrder, { contract, trades, positions: [], ...props } as never)); }); };

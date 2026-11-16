@@ -1281,13 +1281,15 @@ export const totMineBtn = styleVariants({
 // 每個價位的我的委託與底部合計列同一種寫法、只有一種排法（左右並排）：外側實心段＝
 // 今日在這個價位的成交（不可點），內側外框段＝未成交（點＝刪這個價位這一邊）。
 // 買在左欄成交段在左、賣在右欄成交段在右。放不下時不縮、不疊：面板寬度 < 330px
-// 整個面板改用精簡顯示（flash-cells.ts 的 SPLIT_MIN_WIDTH，只看寬度）。
+// 整個面板改用精簡顯示（flash-cells.ts 的 splitMinWidth：固定欄＋兩個量欄下限，依字級換算）。
 // 分段時「我的委託」欄 3.5rem（字 0.58rem，兩段合計 8 個字：零股 9999｜9999），
-// 從觸價欄（1.9→1.6rem）與兩個量欄借；量欄在 330px 仍有約 3rem。
+// 從觸價欄（1.9→1.6rem）與兩個量欄借；量欄最少 VOL_MIN_REM（3.2rem，五位數量），
+// 再窄就改精簡，不會擠到只剩幾 px。
 // 合計列的我的委託格跨到外側的觸價欄（合計列那一格本來就空）：可放 12 個字（99.9萬｜99.9萬）。
-const COLS7_SPLIT = '1.6rem 3.5rem minmax(0, 1fr) 3.9rem minmax(0, 1fr) 3.5rem 1.6rem';
+const VOL_SPLIT = 'minmax(3.2rem, 1fr)'; // = flash-cells.ts VOL_MIN_REM
+const COLS7_SPLIT = `1.6rem 3.5rem ${VOL_SPLIT} 3.9rem ${VOL_SPLIT} 3.5rem 1.6rem`;
 // 五欄（Alt＋點）沒有觸價欄：我的委託欄直接 5.1rem，合計列不用跨欄
-const COLS5_SPLIT = '5.1rem minmax(0, 1fr) 4.8rem minmax(0, 1fr) 5.1rem';
+const COLS5_SPLIT = `5.1rem ${VOL_SPLIT} 4.8rem ${VOL_SPLIT} 5.1rem`;
 export const colsSplit7 = style({ gridTemplateColumns: COLS7_SPLIT });
 export const colsSplit5 = style({ gridTemplateColumns: COLS5_SPLIT });
 
@@ -1307,14 +1309,16 @@ export const split = style({
     whiteSpace: 'nowrap',
     borderRadius: vars.radius.sm,
     position: 'relative',
-    selectors: { '&:focus-visible': { outline: `1px solid ${vars.color.accent}`, outlineOffset: 1 } },
 });
 const segBase = style({
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     padding: '0 2px',
+    margin: 0,
     border: '1px solid',
+    font: 'inherit',
+    appearance: 'none',
     whiteSpace: 'nowrap',
 });
 /** 已成交段：同 fillBadge 配色 */
@@ -1324,11 +1328,14 @@ export const segFill = styleVariants({
 });
 /** 未成交段：同 orderChip 配色與 hover */
 export const segWork = styleVariants({
-    buy: [segBase, { color: vars.color.up, background: vars.color.upDim, borderColor: vars.color.up, cursor: 'pointer', minWidth: '1rem' }],
-    sell: [segBase, { color: vars.color.down, background: vars.color.downDim, borderColor: vars.color.down, cursor: 'pointer', minWidth: '1rem' }],
+    buy: [segBase, { color: vars.color.up, background: vars.color.upDim, borderColor: vars.color.up, minWidth: '1rem' }],
+    sell: [segBase, { color: vars.color.down, background: vars.color.downDim, borderColor: vars.color.down, minWidth: '1rem' }],
 });
-globalStyle(`${split}:hover > ${segWork.buy}`, { color: '#fff', background: vars.color.up });
-globalStyle(`${split}:hover > ${segWork.sell}`, { color: '#fff', background: vars.color.down });
+/** 未成交段可刪時是按鈕（只有這段能點；成交段點了不會刪單）：hover 與鍵盤焦點只在這段 */
+export const segButton = style({
+    cursor: 'pointer',
+    selectors: { '&:focus-visible': { outline: `1px solid ${vars.color.accent}`, outlineOffset: 1, zIndex: 1 } },
+});
 /** 單獨一段（只有成交、或只有未成交）四角都圓 */
 export const segAlone = style({ borderRadius: vars.radius.sm, minWidth: '1.2rem' });
 export const segOuterL = style({ borderTopLeftRadius: vars.radius.sm, borderBottomLeftRadius: vars.radius.sm, borderRightWidth: 0 });
@@ -1348,7 +1355,8 @@ export const cancelPending = style({
     background: amberDim,
     cursor: 'progress',
 });
-globalStyle(`${split}:hover > ${cancelPending}`, { color: vars.color.amber, background: amberDim });
+globalStyle(`${segButton}${segWork.buy}:not(${cancelPending}):hover`, { color: '#fff', background: vars.color.up });
+globalStyle(`${segButton}${segWork.sell}:not(${cancelPending}):hover`, { color: '#fff', background: vars.color.down });
 /** 精簡：≤230px 欄寬改比例時字小一號、內距收窄，四位數放得進 */
 export const chipFit = style({
     whiteSpace: 'nowrap',

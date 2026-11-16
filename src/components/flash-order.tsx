@@ -71,7 +71,8 @@ import { flashOrderTotals, flashTotalsSince, flashWorkingOrders, sameContractMon
 import { useStockOrderConditionsVersion } from '../lib/stock-order-conditions';
 import { FlashTotalsRow } from './flash-totals-bar';
 import { LadderMine } from './flash-split-qty';
-import { CANCEL_PENDING_MAX_MS, failedCancels, flashCellsMode, ladderCells, settleCancelling, type LadderCell } from '../lib/flash-cells';
+import { CANCEL_PENDING_MAX_MS, failedCancels, flashCellsMode, ladderCells, markCancelling, releaseCancelling, settleCancelling, type Cancelling, type LadderCell } from '../lib/flash-cells';
+import { useThemeSettings } from '../lib/theme-store';
 
 const ROW_H = 22; // must match row height in flash-order.css.ts
 const EDGE = 2; // auto-recenter when last price gets this close to the edge
@@ -99,6 +100,8 @@ const ACCOUNT_CHANGED_DURING_CONFIRMATION = '確認期間帳戶已變更，請�
 const CONTRACT_EXPIRED = '合約已到期，這筆沒有送出';
 const REVERSE_TEXT = '自動停損停利開啟時不送反手單（數量大於持倉）；請先平倉，或關閉自動停損停利';
 const NO_MARKS: LadderMark[] = [];
+const NO_TRADES: Trade[] = [];
+const NO_POSITIONS: AccountedPosition[] = [];
 
 /** 觸價單的預設有效期：條件單設定的「本盤／今日」 */
 function defaultValidity(futures: boolean, now = Date.now()): TriggerValidity {
@@ -370,8 +373,8 @@ const FlashRow = memo(function FlashRow({
 export function FlashOrder({
     contract,
     snapshot,
-    trades: allTrades = [],
-    positions: allPositions = [],
+    trades: allTrades = NO_TRADES,
+    positions: allPositions = NO_POSITIONS,
     onOrdersChanged,
     accountKeys,
     onAccountKeysChange,
@@ -467,8 +470,9 @@ export function FlashOrder({
     // that would otherwise fetch the account list (#139)
     useEffect(ensureAccounts, []);
     const accountKey = activeAccount ? flashAccountKey(activeAccount) : '';
-    const trades = scopedFlashRows(allTrades, activeAccount);
-    const positions = scopedFlashRows(allPositions, activeAccount);
+    // #402 穩定的陣列：報價更新重繪時不重算每個價位的委託格
+    const trades = useMemo(() => scopedFlashRows(allTrades, activeAccount), [allTrades, activeAccount]);
+    const positions = useMemo(() => scopedFlashRows(allPositions, activeAccount), [allPositions, activeAccount]);
     const accountRef = useRef(activeAccount);
     accountRef.current = activeAccount;
     const privMoney = usePrivacyMoney();
@@ -970,7 +974,9 @@ export function FlashOrder({
 
     // #402 每個價位的我的委託格：未成交依委託價（同點價刪單的範圍），已成交依成交價
     // （今日在這個價位成交的量）。cancelling：已送出刪單、還沒有結果的委託
-    const [cancelling, setCancelling] = useState<ReadonlySet<string>>(() => new Set());
+    // 每個 id 記下是哪一次刪單送出的（attempt），只有那一次的失敗／逾時能清掉
+    const [cancelling, setCancelling] = useState<Cancelling>(() => new Map());
+    const cancelAttempt = useRef(0);
     const cancelTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
     useEffect(() => () => { for (const t of cancelTimers.current) clearTimeout(t); }, []);
     // 委託狀態更新為不在場上（已刪、已成交）就不再顯示刪單送出中
@@ -989,9 +995,11 @@ export function FlashOrder({
     // 委託合計（設定「顯示委託合計」，預設開）：只從委託與成交回報算，
     // 不經過持倉投影；範圍：面板帳戶、同一實際月份（含連續月別名）、目前單位、本交易日
     const showTotals = panelOrder.showTotals !== false;
-    // #402 委託格（預設分段）；面板寬度不到 SPLIT_MIN_WIDTH 時整個面板改精簡（只看寬度）
+    // #402 委託格（預設分段）；面板寬度不到 splitMinWidth（依版面與字級）時整個面板改精簡
     const orderCellsSetting = panelOrder.orderCells === 'compact' ? 'compact' : 'split';
-    const cellsMode = flashCellsMode(orderCellsSetting, panelWidth);
+    // 門檻依版面（七欄／五欄）與字級換算（欄寬是 rem）
+    const { fontScale } = useThemeSettings();
+    const cellsMode = flashCellsMode(orderCellsSetting, panelWidth, panelOrder.triggerLayout === 'modifier' ? 'modifier' : 'columns', fontScale);
     const unitText = market === 'F' ? '口' : odd ? '股' : '張';
     // 送單時記下的現沖先賣旗標（回報不帶）有新紀錄就重算
     const orderCondsVersion = useStockOrderConditionsVersion();
@@ -1455,10 +1463,11 @@ export function FlashOrder({
         // #402 刪單送出中：格子改琥珀虛線，直到委託狀態更新為已刪／已成交（settleCancelling）、
         // 刪單失敗，或最多 CANCEL_PENDING_MAX_MS
         const ids = targets.map((t) => t.order.id);
+        const attempt = ++cancelAttempt.current;
         const release = (gone: readonly string[]) => {
-            if (gone.length > 0) setCancelling(prev => { const next = new Set(prev); for (const id of gone) next.delete(id); return next; });
+            if (gone.length > 0) setCancelling(prev => releaseCancelling(prev, gone, attempt));
         };
-        setCancelling(prev => new Set([...prev, ...ids]));
+        setCancelling(prev => markCancelling(prev, ids, attempt));
         const timer = setTimeout(() => { cancelTimers.current.delete(timer); release(ids); }, CANCEL_PENDING_MAX_MS);
         cancelTimers.current.add(timer);
         let results: Awaited<ReturnType<typeof cancelOrders>>;

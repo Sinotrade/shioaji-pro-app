@@ -1,6 +1,6 @@
 // src/components/flash-split-qty.tsx — #402 閃電梯子「我的委託」格的兩種寫法。
-//   分段（SplitQty）：一個膠囊，外側實心段＝已成交（不可點），內側外框段＝未成交
-//     （點＝刪單）。每個價位與底部合計列共用，只有左右並排一種排法。
+//   分段（SplitQty）：一個膠囊，外側實心段＝已成交（span，不可點），內側外框段＝未成交
+//     （只有這段是按鈕，點＝刪單）。每個價位與底部合計列共用，只有左右並排一種排法。
 //   精簡：只顯示未成交 chip；這個價位沒有未成交才顯示實心成交數。
 // 遮金額時每段只放一個「•」，形狀保留（看得出哪裡有單、還能點刪）。
 import { cellTitle, fmtCellQty, type LadderCell } from '../lib/flash-cells';
@@ -31,19 +31,15 @@ export function SplitQty({ side, working, filled, priv, title, ariaLabel, disabl
     const fill = filled > 0 && (
         <span key='f' data-seg='filled' className={`${styles.segFill[side]} ${!both ? styles.segAlone : buy ? styles.segOuterL : styles.segOuterR}`}>{n(filled)}</span>
     );
-    const work = working > 0 && (
-        <span key='w' data-seg='working' className={`${styles.segWork[side]} ${!both ? styles.segAlone : buy ? styles.segInnerR : styles.segInnerL} ${
-            pending ? styles.cancelPending : ''}`}>{n(working)}</span>
-    );
+    // 只有外框的未成交段是刪單按鈕；實心成交段不可點（點到它不會刪單），只有提示
+    const workCls = `${styles.segWork[side]} ${!both ? styles.segAlone : buy ? styles.segInnerR : styles.segInnerL} ${pending ? styles.cancelPending : ''}`;
+    const work = working > 0 && (onCancel
+        ? <button key='w' type='button' data-seg='working' className={`${workCls} ${styles.segButton}`} title={title}
+            aria-label={ariaLabel} aria-disabled={disabled || undefined} data-testid={testId ? `${testId}-cancel` : undefined} onClick={onCancel}>{n(working)}</button>
+        : <span key='w' data-seg='working' className={workCls}>{n(working)}</span>);
     const cls = `${styles.split} ${multi ? styles.multiOrders[side] : ''}`;
     const parts = buy ? [fill, work] : [work, fill];
-    // 只有成交（或不能刪）：不是按鈕
-    if (working <= 0 || !onCancel) return <span className={cls} title={title} data-testid={testId}>{parts}</span>;
-    return (
-        <button type='button' className={cls} title={title} aria-label={ariaLabel} aria-disabled={disabled || undefined} data-testid={testId} onClick={onCancel}>
-            {parts}
-        </button>
-    );
+    return <span className={cls} title={title} data-testid={testId}>{parts}</span>;
 }
 
 /** 梯子一個價位、一邊的我的委託 */

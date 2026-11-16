@@ -5,23 +5,36 @@
 // 委託格設定（齒輪選單「委託格」）：
 //   分段（預設）：一個膠囊，外側實心＝已成交、內側外框＝未成交
 //   精簡：只顯示未成交；這個價位沒有未成交才顯示實心成交數
-// 分段只有左右並排一種排法；面板寬度 < SPLIT_MIN_WIDTH 時整個面板改用精簡。
+// 分段只有左右並排一種排法；面板寬度 < splitMinWidth（版面與字級換算）時整個面板改用精簡。
 // 只看面板寬度、不看數字位數：同樣寬度一定同樣排法，成交量變大不會讓面板跳版。
 import { fmtCompactInt } from './utils/format';
 import type { Trade } from './types/order';
 
-/** 分段需要的最小面板寬度（px）。七欄時我的委託欄 3.5rem（兩段合計 8 個字，零股
- * 9999｜9999）、觸價欄 1.6rem、價格欄 3.9rem，量欄在這個寬度仍有約 3rem（五位數量） */
-export const SPLIT_MIN_WIDTH = 330;
+/** 分段時固定寬度的欄（rem）：七欄＝觸價 1.6×2＋我的委託 3.5×2＋價格 3.9；
+ * 五欄（Alt＋點）＝我的委託 5.1×2＋價格 4.8。同 flash-order.css 的 COLS7_SPLIT／COLS5_SPLIT */
+export const SPLIT_FIXED_REM = { columns: 14.1, modifier: 15 } as const;
+/** 量欄最少要有的寬度（rem）：五位數量（12,345）加內距。分段欄寬也用它當量欄下限 */
+export const VOL_MIN_REM = 3.2;
+/** 面板邊框等 */
+const SPLIT_SLACK_PX = 2;
+
+/** 分段需要的最小面板寬度（px）：固定欄＋兩個量欄下限，依字級（設定的字體大小：
+ * html font-size＝16px×fontScale）換算。七欄、字級 1.0 是 330px */
+export function splitMinWidth(layout: 'columns' | 'modifier', fontScale = 1): number {
+    return Math.ceil((SPLIT_FIXED_REM[layout] + 2 * VOL_MIN_REM) * 16 * fontScale + SPLIT_SLACK_PX);
+}
+/** 七欄、字級 1.0 */
+export const SPLIT_MIN_WIDTH = splitMinWidth('columns', 1);
 
 export type FlashOrderCells = 'split' | 'compact';
 
 /** 實際用哪一種寫法；設定分段但面板太窄時 fallback 是給齒輪選單的原因。
- * width 未知（尚未量到，或測試環境）照設定 */
-export function flashCellsMode(setting: FlashOrderCells, width: number | null): { split: boolean; fallback: string | null } {
+ * 只看面板寬度（與決定欄寬的版面、字級），不看數字。width 未知（尚未量到，或測試環境）照設定 */
+export function flashCellsMode(setting: FlashOrderCells, width: number | null, layout: 'columns' | 'modifier' = 'columns', fontScale = 1): { split: boolean; fallback: string | null } {
     if (setting === 'compact') return { split: false, fallback: null };
-    if (width !== null && width > 0 && width < SPLIT_MIN_WIDTH) {
-        return { split: false, fallback: `面板寬度不到 ${SPLIT_MIN_WIDTH}px，放不下分段` };
+    const min = splitMinWidth(layout, fontScale);
+    if (width !== null && width > 0 && width < min) {
+        return { split: false, fallback: `面板寬度不到 ${min}px，放不下分段` };
     }
     return { split: true, fallback: null };
 }
@@ -67,18 +80,24 @@ export function ladderCells(trades: readonly Trade[], opts: {
     /** 成交價的價位 key */
     priceKey: (p: number) => string;
     /** 已送出刪單、還沒有結果的委託 id */
-    cancelling?: ReadonlySet<string>;
+    cancelling?: { has(id: string): boolean };
 }): LadderCells {
     const m: LadderCells = new Map();
+    // 每格的逐筆明細用 id 索引（同價位上萬筆也不會二次方）
+    const index = new Map<LadderCell, Map<string, CellOrder>>();
     const cellAt = (key: string, side: 'buy' | 'sell'): LadderCell => {
-        const row = m.get(key) ?? {};
-        if (!m.has(key)) m.set(key, row);
-        return (row[side] ??= { working: 0, filled: 0, orders: 0, pending: true, detail: [] });
+        let row = m.get(key);
+        if (!row) { row = {}; m.set(key, row); }
+        let c = row[side];
+        if (!c) { c = { working: 0, filled: 0, orders: 0, pending: true, detail: [] }; row[side] = c; index.set(c, new Map()); }
+        return c;
     };
     const orderAt = (c: LadderCell, t: Trade): CellOrder => {
-        let o = c.detail.find(d => d.id === t.order.id);
+        const byId = index.get(c)!;
+        let o = byId.get(t.order.id);
         if (!o) {
             o = { id: t.order.id, ordno: t.order.ordno || t.order.seqno || '', working: 0, filled: 0 };
+            byId.set(t.order.id, o);
             c.detail.push(o);
         }
         return o;
@@ -140,12 +159,34 @@ export function cellTitle(side: 'buy' | 'sell', priceText: string, c: LadderCell
 /** 刪單送出中最長顯示時間 */
 export const CANCEL_PENDING_MAX_MS = 15_000;
 
-/** 委託已不在場上（或已不在清單）就不再算刪單送出中；沒有變化時回傳同一個 Set */
-export function settleCancelling(cancelling: ReadonlySet<string>, trades: readonly Trade[], workingQty: (t: Trade) => number): ReadonlySet<string> {
+/** 刪單送出中：委託 id → 擁有它的那一次刪單（attempt）。只有擁有的那一次能清掉 */
+export type Cancelling = ReadonlyMap<string, number>;
+
+/** 這一次刪單開始：只認領還沒在刪單中的委託（重複點擊不搶走前一次的標記） */
+export function markCancelling(cur: Cancelling, ids: readonly string[], attempt: number): Cancelling {
+    const add = ids.filter(id => !cur.has(id));
+    if (add.length === 0) return cur;
+    const next = new Map(cur);
+    for (const id of add) next.set(id, attempt);
+    return next;
+}
+
+/** 這一次刪單結束（失敗或逾時）：只清掉自己認領的；別次刪單的標記不動 */
+export function releaseCancelling(cur: Cancelling, ids: readonly string[], attempt: number): Cancelling {
+    const gone = ids.filter(id => cur.get(id) === attempt);
+    if (gone.length === 0) return cur;
+    const next = new Map(cur);
+    for (const id of gone) next.delete(id);
+    return next;
+}
+
+/** 委託已不在場上（或已不在清單）就不再算刪單送出中；沒有變化時回傳同一個 Map */
+export function settleCancelling(cancelling: Cancelling, trades: readonly Trade[], workingQty: (t: Trade) => number): Cancelling {
     if (cancelling.size === 0) return cancelling;
-    const working = new Set(trades.filter(t => workingQty(t) > 0).map(t => t.order.id));
-    const next = new Set([...cancelling].filter(id => working.has(id)));
-    return next.size === cancelling.size ? cancelling : next;
+    const working = new Set<string>();
+    for (const t of trades) if (cancelling.has(t.order.id) && workingQty(t) > 0) working.add(t.order.id);
+    if (working.size === cancelling.size) return cancelling;
+    return new Map([...cancelling].filter(([id]) => working.has(id)));
 }
 
 /** 刪單請求的結果裡，失敗（沒送出、被拒、結果不明）的委託 id：立即恢復，不等狀態更新 */

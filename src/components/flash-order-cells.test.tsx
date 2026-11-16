@@ -9,7 +9,7 @@ import type { Account } from '../lib/types/portfolio';
 import type { Trade } from '../lib/types/order';
 import type { ContractInfo } from '../lib/types/contract';
 import type { FlashOrderOpts } from '../lib/flash-account';
-const mocks = vi.hoisted(() => ({ priv: false, cancel: vi.fn() }));
+const mocks = vi.hoisted(() => ({ priv: false, scale: 1, cancel: vi.fn() }));
 const accounts: Account[] = [
     { account_type: 'S', broker_id: 'BR', account_id: 'S1', signed: true, person_id: '', username: '' },
     { account_type: 'F', broker_id: 'BR', account_id: 'F1', signed: true, person_id: '', username: '' },
@@ -22,6 +22,7 @@ vi.mock('../lib/trade', () => ({ notify: vi.fn(), placeQuickOrder: vi.fn(), plac
 vi.mock('../lib/stream', () => ({ getAliasFor: () => undefined }));
 vi.mock('../lib/tick-bands', () => ({ useTickBandsVersion: () => 0 }));
 vi.mock('../lib/utils/ticksize', () => ({ roundToTick: (_c: unknown, p: number) => p, stepPrice: (_c: unknown, p: number, step: number) => p + step }));
+vi.mock('../lib/theme-store', async (orig) => ({ ...(await orig<typeof import('../lib/theme-store')>()), useThemeSettings: () => ({ mode: 'dark', convention: 'tw', fontScale: mocks.scale }) }));
 vi.mock('../lib/privacy', async (orig) => ({ ...(await orig<typeof import('../lib/privacy')>()), usePrivacyMoney: () => mocks.priv }));
 import { FlashOrder } from './flash-order';
 import * as styles from './flash-order.css';
@@ -47,6 +48,8 @@ const capsule = (n: ReactTestInstance) => `${seg(n, 'filled')}|${seg(n, 'working
 const wide = (node: ReactTestInstance): string => node.children.map(c => typeof c === 'string' ? c : c.props.className === styles.totNarrow ? '' : wide(c)).join('');
 let view!: ReactTestRenderer;
 const cells = (side: 'buy' | 'sell') => view.root.findAll(x => typeof x.type === 'string' && x.props['data-testid'] === `flash-cell-${side}`);
+/** 刪單按鈕：分段時只有未成交段是按鈕（flash-cell-*-cancel），精簡時整個 chip */
+const cancelBtn = (side: 'buy' | 'sell') => view.root.findAll(x => x.type === 'button' && (x.props['data-testid'] === `flash-cell-${side}-cancel` || x.props['data-testid'] === `flash-cell-${side}`))[0]!;
 const nodeMock = (width: number) => {
     const base: Record<string, unknown> = { getBoundingClientRect: () => ({ width, height: 400, top: 0, left: 0, right: width, bottom: 400 }), clientHeight: 400, clientWidth: width, offsetTop: 0, offsetHeight: 0 };
     // 其他 DOM 方法（addEventListener 等）一律空函式
@@ -67,6 +70,7 @@ const segBtn = (label: string) => view.root.findAll(x => x.type === 'button' && 
 
 beforeEach(() => {
     mocks.priv = false;
+    mocks.scale = 1;
     mocks.cancel.mockReset();
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
@@ -143,7 +147,7 @@ it('several orders at one price: one capsule with the stacked edge; a click canc
     expect(capsule(c)).toBe('0|5');
     expect(c.props.className).toContain(styles.multiOrders.buy);
     expect(c.props.title).toContain(`委託 ${a.order.ordno}`);
-    await act(async () => { await c.props.onClick(); });
+    await act(async () => { await cancelBtn('buy').props.onClick(); });
     expect(mocks.cancel.mock.calls.map(x => x[0])).toEqual([a.order.id, b.order.id]);
 });
 
@@ -154,7 +158,7 @@ it('shows 刪單送出中 (amber, dashed) until the order status says cancelled 
     const props = (trades: Trade[]) => ({ contract: stock, trades, positions: [] });
     await render(props([t1]), 340);
     let click!: Promise<unknown>;
-    await act(async () => { click = cells('buy')[0]!.props.onClick(); });
+    await act(async () => { click = cancelBtn('buy').props.onClick(); });
     const working = () => cells('buy')[0]!.findAll(x => x.props['data-seg'] === 'working')[0]!;
     expect(working().props.className).toContain(styles.cancelPending);
     expect(cells('buy')[0]!.props.title).toContain('刪單送出中');
@@ -173,7 +177,7 @@ it('shows 刪單送出中 (amber, dashed) until the order status says cancelled 
 it('a failed cancel ends 刪單送出中 at once', async () => {
     mocks.cancel.mockImplementation(async () => { throw new Error('rejected'); });
     await render({ contract: stock, trades: [trade('Buy', 100, 1, 0)], positions: [] }, 340);
-    await act(async () => { await cells('buy')[0]!.props.onClick(); });
+    await act(async () => { await cancelBtn('buy').props.onClick(); });
     const working = cells('buy')[0]!.findAll(x => x.props['data-seg'] === 'working')[0]!;
     expect(working.props.className).not.toContain(styles.cancelPending);
 });
@@ -183,7 +187,7 @@ it('刪單送出中 never sticks: it ends after CANCEL_PENDING_MAX_MS without a 
     try {
         mocks.cancel.mockImplementation(async (id: string) => ({ order: { id }, status: { status: 'Submitted' } }));
         await render({ contract: stock, trades: [trade('Buy', 100, 1, 0)], positions: [] }, 340);
-        await act(async () => { await cells('buy')[0]!.props.onClick(); });
+        await act(async () => { await cancelBtn('buy').props.onClick(); });
         const working = () => cells('buy')[0]!.findAll(x => x.props['data-seg'] === 'working')[0]!;
         expect(working().props.className).toContain(styles.cancelPending);
         await act(async () => { vi.advanceTimersByTime(CANCEL_PENDING_MAX_MS - 1); });
@@ -212,4 +216,65 @@ it('odd lots: share counts, 萬 from 10,000, still one capsule', async () => {
     expect(byPrice).toContain('1|998');
     // the 整股 order is not on the odd-lot ladder
     expect(byPrice).not.toContain('0|3');
+});
+
+/** 像瀏覽器的點擊冒泡：從點到的元素往上，每個有 onClick 的祖先都會收到（到 FlashOrder 為止） */
+const clickAt = async (node: ReactTestInstance) => {
+    let hit = 0;
+    await act(async () => {
+        for (let n: ReactTestInstance | null = node; n; n = n.parent) {
+            if (typeof n.type === 'string' && typeof n.props.onClick === 'function') { hit++; await n.props.onClick({ target: node, currentTarget: n }); }
+        }
+    });
+    return hit;
+};
+const segOf = (root: ReactTestInstance, k: 'filled' | 'working') => root.findAll(x => typeof x.type === 'string' && x.props['data-seg'] === k)[0]!;
+
+it('only the outlined working segment cancels: a click on the solid filled segment sends nothing (ladder cell and totals)', async () => {
+    mocks.cancel.mockImplementation(async (id: string) => ({ order: { id }, status: { status: 'Cancelled' } }));
+    const t = trade('Buy', 100, 12, 4);
+    await render({ contract: stock, trades: [t], positions: [] }, 340);
+    // ladder cell
+    const cell = cells('buy')[0]!;
+    expect(cell.type).toBe('span');
+    const filled = segOf(cell, 'filled');
+    expect(filled.type).toBe('span');
+    expect(filled.props.onClick).toBeUndefined();
+    expect(await clickAt(filled)).toBe(0);
+    expect(mocks.cancel).not.toHaveBeenCalled();
+    const working = segOf(cell, 'working');
+    expect(working.type).toBe('button');
+    expect(await clickAt(working)).toBe(1);
+    expect(mocks.cancel.mock.calls.map(x => x[0])).toEqual([t.order.id]);
+    // totals row
+    mocks.cancel.mockClear();
+    const tot = view.root.findAll(x => typeof x.type === 'string' && x.props['data-testid'] === 'flash-tot-buy')[0]!;
+    expect(tot.type).toBe('span');
+    const totFilled = segOf(tot, 'filled');
+    expect(totFilled.type).toBe('span');
+    expect(await clickAt(totFilled)).toBe(0);
+    expect(mocks.cancel).not.toHaveBeenCalled();
+    const totWorking = segOf(tot, 'working');
+    expect(totWorking.type).toBe('button');
+    expect(totWorking.props['data-testid']).toBe('flash-tot-buy-cancel');
+});
+
+it('the split/compact threshold follows the font scale, in 7 and 5 columns', async () => {
+    const modifier = { orderOpts: { ...BASE, triggerLayout: 'modifier' }, onOrderOptsChange: () => {} };
+    const cases: [number, Record<string, unknown>, number][] = [
+        [1, {}, 330], [1.3, {}, 429], [1, modifier, 345], [1.3, modifier, 448],
+    ];
+    for (const [scale, extra, min] of cases) {
+        mocks.scale = scale;
+        for (const [width, split] of [[min, true], [min - 1, false]] as const) {
+            await render({ contract: stock, trades: [trade('Buy', 100, 12, 4)], positions: [], ...extra }, width);
+            const c = cells('buy')[0]!;
+            expect(c.props.className.includes(styles.split), `scale ${scale} ${extra.orderOpts ? '5' : '7'}-col ${width}px`).toBe(split);
+            await act(async () => view.unmount());
+        }
+    }
+    // the review case: a 330px panel at font scale 1.3 is compact, not 9px volume columns
+    mocks.scale = 1.3;
+    await render({ contract: stock, trades: [trade('Buy', 100, 12, 4)], positions: [] }, 330);
+    expect(cells('buy')[0]!.props.className).not.toContain(styles.split);
 });
