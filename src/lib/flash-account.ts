@@ -99,6 +99,8 @@ export interface FlashOrderOpts {
     triggerLayout?: 'columns' | 'modifier';
     /** 委託合計列「買 N（成交）／賣 N（成交）／待回補」(absent: 顯示) */
     showTotals?: false;
+    /** #402 委託格：分段（absent）或精簡 */
+    orderCells?: 'compact';
 }
 export const DEFAULT_ORDER_OPTS: FlashOrderOpts = { orderType: 'ROD', octype: 'Auto', futuresPriceType: 'MKT' };
 
@@ -114,6 +116,7 @@ export function normalizeFlashOrderOpts(v: unknown): FlashOrderOpts | undefined 
         ...(normalizeTriggerSend(o.triggerSend) ? { triggerSend: normalizeTriggerSend(o.triggerSend) } : {}),
         ...(o.triggerLayout === 'modifier' ? { triggerLayout: 'modifier' as const } : {}),
         ...(o.showTotals === false ? { showTotals: false as const } : {}),
+        ...(o.orderCells === 'compact' ? { orderCells: 'compact' as const } : {}),
     };
 }
 

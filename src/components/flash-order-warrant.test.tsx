@@ -187,7 +187,8 @@ describe('權證觸價單與自動停損停利（背景執行引擎 #217 已支�
         await act(async () => { r.root.findAll(n => n.props['data-testid'] === 'flash-settings')[0]!.props.onClick(); });
     };
     const group = (r: ReactTestRenderer, label: string) => r.root.findAll(n => n.props.role === 'group' && n.props['aria-label'] === label);
-    const headers = (r: ReactTestRenderer) => r.root.findAll(n => n.type === 'span' && (text(n) === '觸買' || text(n) === '觸賣'));
+    // 觸買／觸賣表頭（#402：≤230px 改圖示，全文在 title）
+    const headers = (r: ReactTestRenderer) => r.root.findAll(n => n.type === 'span' && /^觸[買賣]：/.test(String(n.props.title ?? '')));
     const testId = (r: ReactTestRenderer, id: string) => r.root.findAll(n => n.props['data-testid'] === id && typeof n.type === 'string');
     // the 觸買 column on the row of `price` (same rows as the 限價買 cells)
     const trigBuyAt = (r: ReactTestRenderer, price: string) => {
