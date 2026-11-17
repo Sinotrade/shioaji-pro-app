@@ -17,7 +17,8 @@ function statusOf(quantity: number, deals: number, cancelled: number): OrderStat
 /** `codeHint`: the full code of an order this window did not send (the
  * background engine's), used only for a New report without full_code. */
 export function projectOrderReport(rows: AccountedTrade[], report: OrderEventReport, accounts: Account[], codeHint?: string | null): AccountedTrade[] | null {
-    if (report.kind !== 'order') return null;
+    // 美股委託另由 us-trading-state 投影；台股委託列不收
+    if (report.kind !== 'order' || report.market === 'us') return null;
     const body = reportBody(report);
     const order = rec(body?.order);
     const ref = rec(order?.account);
@@ -88,7 +89,7 @@ export function projectOrderReport(rows: AccountedTrade[], report: OrderEventRep
 }
 
 export function projectTradeDeal(rows: AccountedTrade[], report: OrderEventReport): AccountedTrade[] | null {
-    if (report.kind !== 'deal' || !report.ts || report.quantity <= 0 || report.price <= 0) return null;
+    if (report.kind !== 'deal' || report.market === 'us' || !report.ts || report.quantity <= 0 || report.price <= 0) return null;
     const body = reportBody(report);
     const seq = body?.exchange_seq;
     if (typeof seq !== 'string' || !seq) return null;

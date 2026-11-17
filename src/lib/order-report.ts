@@ -13,7 +13,8 @@
 import type { Action } from './types/order';
 import { fmtInt, fmtPrice } from './utils/format';
 
-export type OrderMarket = 'stock' | 'futures';
+// 'us'：美股（複委託 H 帳戶）的 IntlOrder／IntlDeal 回報
+export type OrderMarket = 'stock' | 'futures' | 'us';
 
 export interface OrderReport {
     kind: 'order';
@@ -42,6 +43,15 @@ export interface OrderReport {
     /** Shioaji 1.7.6+ opaque receipt identity (`""` when absent, e.g. history
      *  records or pre-1.7.6 servers). Not Trade.order.id nor exchange_seq. */
     eventId: string;
+    /** 美股：時效（DAY／OPG／ATC…）；台股為空 */
+    timeInForce?: string;
+    /** 美股：原始 decimal 字串（顯示用，不經過浮點） */
+    priceText?: string;
+    quantityText?: string;
+    /** 美股：本次操作後的委託數量（刪單後為 0） */
+    orderQuantityText?: string;
+    /** 美股：本次刪減的數量 */
+    cancelQuantityText?: string;
     raw: unknown;
 }
 
@@ -59,6 +69,9 @@ export interface DealReport {
     ts?: number;
     /** See OrderReport.eventId. */
     eventId: string;
+    /** 美股：原始 decimal 字串 */
+    priceText?: string;
+    quantityText?: string;
     raw: unknown;
 }
 
@@ -77,6 +90,13 @@ function num(v: unknown): number {
 
 function str(v: unknown): string {
     return typeof v === 'string' ? v : '';
+}
+
+// 美股數值是 decimal 字串；舊格式可能是數字
+function decText(v: unknown): string {
+    if (typeof v === 'string') return v.trim();
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+    return '';
 }
 
 // timestamps arrive as epoch seconds (f64), but guard against ms/ns feeds
@@ -119,6 +139,13 @@ function buildOrderReport(market: OrderMarket, body: Rec, raw: unknown): OrderRe
         modifiedPrice: num(status.modified_price),
         ts: epochSeconds(status.exchange_ts),
         eventId: str(body.event_id),
+        ...(market === 'us' ? {
+            timeInForce: str(order.time_in_force),
+            priceText: decText(order.price),
+            quantityText: decText(order.quantity),
+            orderQuantityText: decText(status.order_quantity),
+            cancelQuantityText: decText(status.cancel_quantity),
+        } : {}),
         raw,
     };
 }
@@ -137,6 +164,7 @@ function buildDealReport(market: OrderMarket, body: Rec, raw: unknown): DealRepo
         orderLot: str(body.order_lot),
         ts: epochSeconds(body.ts),
         eventId: str(body.event_id),
+        ...(market === 'us' ? { priceText: decText(body.price), quantityText: decText(body.quantity) } : {}),
         raw,
     };
 }
@@ -146,6 +174,9 @@ const VARIANTS: [string, OrderMarket, 'order' | 'deal'][] = [
     ['StockDeal', 'stock', 'deal'],
     ['FuturesOrder', 'futures', 'order'],
     ['FuturesDeal', 'futures', 'deal'],
+    // 美股：OrderState wire IORDER／IDEAL，JSON 為 IntlOrder／IntlDeal
+    ['IntlOrder', 'us', 'order'],
+    ['IntlDeal', 'us', 'deal'],
 ];
 
 export function normalizeOrderEvent(payload: unknown): OrderEventReport | null {
@@ -225,6 +256,7 @@ function actionDir(action?: Action): 'up' | 'down' | undefined {
 
 function unitText(r: { market: OrderMarket; orderLot?: string }): string {
     if (r.market === 'futures') return '口';
+    if (r.market === 'us') return '股';
     return r.orderLot === 'Odd' || r.orderLot === 'IntradayOdd' ? '股' : '張';
 }
 
@@ -232,8 +264,9 @@ function symbolText(code: string, name: string): string {
     return name ? `${code} ${name}` : code;
 }
 
-function priceText(priceType: string, price: number): string {
+function priceText(priceType: string, price: number, raw?: string): string {
     if (priceType === 'MKT') return '市價';
+    if (raw && price > 0) return `@ ${raw}`;
     if (priceType === 'MKP') return '範圍市價';
     return price > 0 ? `@ ${fmtPrice(price)}` : '市價';
 }
@@ -252,7 +285,9 @@ function orderMeta(r: OrderReport): string {
             : [COND_LABEL[r.orderCond] ?? '', LOT_LABEL[r.orderLot] ?? '']
                   .filter(Boolean)
                   .join(' ');
-    const spec = [r.orderType, cond].filter(Boolean).join(' ');
+    const spec = r.market === 'us'
+        ? ['美股', r.timeInForce, r.priceType && !['LMT', 'MKT'].includes(r.priceType) ? r.priceType : ''].filter(Boolean).join(' ')
+        : [r.orderType, cond].filter(Boolean).join(' ');
     return [spec, r.ordno ? `委託書號 ${r.ordno}` : '', timeText(r.ts)]
         .filter(Boolean)
         .join(' ｜ ');
@@ -263,8 +298,8 @@ export function describeOrderReport(r: OrderEventReport): ReportMessage {
         const line = [
             actionText(r.action),
             r.code,
-            `${fmtInt(r.quantity)} ${unitText(r)}`,
-            `@ ${fmtPrice(r.price)}`,
+            `${r.quantityText || fmtInt(r.quantity)} ${unitText(r)}`,
+            `@ ${r.priceText || fmtPrice(r.price)}`,
         ]
             .filter(Boolean)
             .join(' ');
@@ -283,6 +318,7 @@ export function describeOrderReport(r: OrderEventReport): ReportMessage {
 
     const symbol = symbolText(r.code, r.name);
     const unit = unitText(r);
+    const qtyText = (n: number, raw?: string) => raw || fmtInt(n);
     const act = actionText(r.action);
     const dir = actionDir(r.action);
 
@@ -292,11 +328,12 @@ export function describeOrderReport(r: OrderEventReport): ReportMessage {
             title: `委託失敗 ${r.code}`,
             lines: [
                 {
-                    text: [act, symbol, `${fmtInt(r.quantity)} ${unit}`, priceText(r.priceType, r.price)]
+                    text: [act, symbol, `${qtyText(r.quantity, r.quantityText)} ${unit}`, priceText(r.priceType, r.price, r.priceText)]
                         .filter(Boolean)
                         .join(' '),
                     dir,
                 },
+                // 美股拒單照 op_msg 原文顯示
                 { text: `${r.opMsg || '請檢查委託條件'}（代碼 ${r.opCode}）` },
             ],
         };
@@ -305,8 +342,8 @@ export function describeOrderReport(r: OrderEventReport): ReportMessage {
     let main: string;
     switch (r.opType) {
         case 'Cancel': {
-            const qty = r.cancelQuantity > 0 ? r.cancelQuantity : r.quantity;
-            main = [act, symbol, `已取消 ${fmtInt(qty)} ${unit}`]
+            const qty = r.cancelQuantity > 0 ? qtyText(r.cancelQuantity, r.cancelQuantityText) : qtyText(r.quantity, r.quantityText);
+            main = [act, symbol, `已取消 ${qty} ${unit}`]
                 .filter(Boolean)
                 .join(' ');
             break;
@@ -323,7 +360,7 @@ export function describeOrderReport(r: OrderEventReport): ReportMessage {
             main = [
                 act,
                 symbol,
-                cut > 0 ? `減量 ${fmtInt(cut)} ${unit}` : '數量已更新',
+                cut > 0 ? `減量 ${qtyText(cut, r.cancelQuantityText)} ${unit}` : '數量已更新',
             ]
                 .filter(Boolean)
                 .join(' ');
@@ -331,7 +368,7 @@ export function describeOrderReport(r: OrderEventReport): ReportMessage {
         }
         default:
             // New（或未知 op — 照委託內容顯示）
-            main = [act, symbol, `${fmtInt(r.quantity)} ${unit}`, priceText(r.priceType, r.price)]
+            main = [act, symbol, `${qtyText(r.quantity, r.quantityText)} ${unit}`, priceText(r.priceType, r.price, r.priceText)]
                 .filter(Boolean)
                 .join(' ');
     }

@@ -931,6 +931,8 @@ function start() {
         if (changed) schedulePublish();
     });
     const stopOrders = onOrderEvent(report => {
+        // 美股（H）回報由 us-trading-state 處理，不影響台股的快照邊界與對帳原因
+        if (report.market === 'us') return;
         eventSequence++;
         if (queryEvents && queryEvents.length >= 1000) queryOverflow = true;
         // A nonempty ID outside the supported v1 format cannot show gaps; keep

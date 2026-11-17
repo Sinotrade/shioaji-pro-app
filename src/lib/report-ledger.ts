@@ -163,3 +163,6 @@ export type ReportLedger = ReturnType<typeof createReportLedger>;
 
 /** One ledger per WebView: SSE fan-out (stream.ts) admits every report. */
 export const reportLedger = createReportLedger();
+
+/** 美股（IntlOrder／IntlDeal）回報的 ledger：跳號只觸發美股委託重新對帳。 */
+export const usReportLedger = createReportLedger();

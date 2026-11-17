@@ -11,7 +11,7 @@ import {
     normalizeOrderEvent,
     type OrderEventReport,
 } from './order-report';
-import { reportLedger } from './report-ledger';
+import { reportLedger, usReportLedger } from './report-ledger';
 import { markStage } from './startup-timing';
 import { isChildWindow } from './window-role';
 import { forgetServerInfo, knownServerInfo } from './server-info-store';
@@ -680,7 +680,8 @@ function dispatchWire(wire: StreamWire) {
 function handleOrderEvent(raw: string) {
     const report = normalizeOrderEvent(JSON.parse(raw));
     if (!report) return;
-    const admitted = reportLedger.admit(
+    // 美股回報另用一本 ledger：它的跳號只讓美股委託重新對帳，不標記台股
+    const admitted = (report.market === 'us' ? usReportLedger : reportLedger).admit(
         { base: getApiBase(), simulation: knownServerInfo()?.simulation },
         report.eventId,
         report.kind,
