@@ -97,7 +97,8 @@ import { notify } from './lib/trade';
 import { tradingActionObserved, useTradingState } from './lib/trading-state';
 import { quickOrderBlockMessage } from './lib/quick-order-support';
 import { ensureStream } from './lib/stream';
-import { contractLinkKey, isUsKey, usLinkKey } from './lib/contract-key';
+import { contractLinkKey, isUsKey } from './lib/contract-key';
+import { createPinSetter, resolveInputContract as resolvePinInput } from './lib/pin-input';
 import { UsIntraday } from './components/us-intraday';
 import { ensureAccounts } from './lib/account-store';
 import type { ContractInfo, SecurityType } from './lib/types/contract';
@@ -1021,17 +1022,7 @@ export default function App() {
     return <MainApp />;
 }
 
-// 手打的代碼：先當台股查，查不到又像美股代碼（英文字母）時改查美股
-const US_TYPED_CODE = /^[A-Za-z][A-Za-z.]{0,9}$/;
-async function resolveInputContract(code: string): Promise<ContractInfo> {
-    if (isUsKey(code)) return ensureContract(code);
-    try {
-        return await ensureContract(code);
-    } catch (error) {
-        if (!US_TYPED_CODE.test(code)) throw error;
-        return ensureContract(usLinkKey(code));
-    }
-}
+const resolveInputContract = (code: string) => resolvePinInput(code, (key) => ensureContract(key));
 
 function MainApp() {
     const {
@@ -1418,26 +1409,21 @@ function MainApp() {
         [workspace, updateWorkspace],
     );
 
-    const setBlockPin = useCallback(
-        (id: string, pin: string | null) => {
-            const store = (value: string | null) => {
-                const w = workspaceRef.current;
-                updateWorkspace({
-                    ...w,
-                    blocks: w.blocks.map((b) =>
-                        b.id === id ? { ...b, pin: value } : b,
-                    ),
-                });
-            };
-            // 手打的代碼台股查不到、又像美股代碼時，改存 US:CODE
-            if (pin && !isUsKey(pin) && !getCachedContract(pin) && US_TYPED_CODE.test(pin)) {
-                resolveInputContract(pin).then((c) => store(contractLinkKey(c)), () => store(pin));
-                return;
-            }
-            store(pin);
-        },
-        [updateWorkspace],
-    );
+    const storePin = useCallback((id: string, pin: string | null) => {
+        const w = workspaceRef.current;
+        updateWorkspace({
+            ...w,
+            blocks: w.blocks.map((b) => (b.id === id ? { ...b, pin } : b)),
+        });
+    }, [updateWorkspace]);
+    const storePinRef = useRef(storePin);
+    storePinRef.current = storePin;
+    // 手打代碼可能改存 US:CODE；較晚回來的查詢不會蓋掉之後的鎖定／解除
+    const [setBlockPin] = useState(() => createPinSetter({
+        ensure: (key) => ensureContract(key),
+        cached: getCachedContract,
+        store: (id, pin) => storePinRef.current(id, pin),
+    }));
 
     const setBlockWallConfig = useCallback(
         (id: string, wallList: string, wallCols: number, wallRows: number) => {
