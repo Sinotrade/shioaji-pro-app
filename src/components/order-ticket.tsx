@@ -47,7 +47,9 @@ import { currentProtectionEnv } from '../lib/protection-env';
 import { captureServerMode, SERVER_MODE_CHANGED_MESSAGE } from '../lib/server-info-store';
 import { loadOrderLotPreference, saveOrderLotPreference, TICKET_LOTS } from '../lib/order-lot-preference';
 import { defaultOrderTypeFor, FUTURES_OCTYPES, futuresOrderProblem, ORDER_TYPES, orderTypeDisabledReason, priceTypeDisabledReason, priceTypesFor } from '../lib/order-conditions';
-import { fetchInfo, placeFuturesOrder, placeStockOrder } from '../lib/shioaji';
+import { fetchInfo, isUsContract, placeFuturesOrder, placeStockOrder } from '../lib/shioaji';
+import { contractLinkKey } from '../lib/contract-key';
+import { UsTicketBody } from './us-ticket-body';
 import { notify } from '../lib/trade';
 import type { ContractInfo } from '../lib/types/contract';
 import type { Account } from '../lib/types/portfolio';
@@ -76,7 +78,24 @@ const acctKey = (a: Account) => `${a.broker_id}-${a.account_id}`;
 
 const UNIT_CHANGED_MESSAGE = '確認期間單位已變更（整股／零股），未送出，請重新確認';
 
+/**
+ * 下單面板：台股現股、期貨、美股共用。美股（region=US）走 UsTicketBody，
+ * 只用美股的下單路徑；台股 hooks 都在 TwOrderTicket 裡，分支在這層切，hook 順序固定。
+ */
 export function OrderTicket({
+    contract,
+    onPlaced,
+}: {
+    contract: ContractInfo;
+    onPlaced: () => void;
+}) {
+    if (isUsContract(contract)) {
+        return <UsTicketBody key={contractLinkKey(contract)} contract={contract} onPlaced={onPlaced} />;
+    }
+    return <TwOrderTicket contract={contract} onPlaced={onPlaced} />;
+}
+
+function TwOrderTicket({
     contract,
     onPlaced,
 }: {
