@@ -19,7 +19,6 @@ vi.mock('../lib/us/us-trading-state', async () => {
     const real = await vi.importActual<typeof import('../lib/us/us-trading-state')>('../lib/us/us-trading-state');
     return { ...real, getUsTradingState: () => m.us, subscribeUsTradingState: () => () => undefined, refreshUsPositions: m.refreshUsPositions, refreshUsTrades: m.refreshUsTrades };
 });
-vi.mock('./us-order-panel', () => ({ UsMarketBadge: () => '美股' }));
 vi.mock('../lib/risk', () => ({ checkUsOrderAllowed: () => null }));
 vi.mock('../lib/stream', () => ({ ensureStream: vi.fn(), getStreamStatus: () => 'down', onOrderEvent: () => () => undefined, subscribeStatusStore: () => () => undefined }));
 vi.mock('./bottom-dock-positions', () => ({ PositionsPane: (p: Record<string, unknown>) => { m.panes.positions = p; return null; } }));

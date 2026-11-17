@@ -21,7 +21,6 @@ vi.mock('../lib/us/us-order-actions', async () => {
     const real = await vi.importActual<typeof import('../lib/us/us-order-actions')>('../lib/us/us-order-actions');
     return { ...real, cancelUsTrade: m.cancelUs };
 });
-vi.mock('./us-order-panel', () => ({ UsMarketBadge: () => '美股' }));
 vi.mock('../lib/risk', () => ({ checkUsOrderAllowed: () => null }));
 vi.mock('./bottom-dock-shared', async original => ({ ...await original<object>(), useMeasuredWidth: () => ({ ref: () => undefined, width: 1400 }) }));
 import { OrdersPane, mergeNewestFirst, type OrderRow } from './bottom-dock-orders';

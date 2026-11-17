@@ -15,8 +15,7 @@ import type { AccountedUsTrade, UsOrderReq } from '../lib/types/us';
 import { decAdd, decIsPositive, decToInt, fmtDec, fmtUsPrice } from '../lib/us/decimal';
 import { cancelUsTrade, placeReplacement, US_FILLED_BEFORE_CANCEL, type UsCancelResult, priceChangeProblem, reduceUsTrade, replacementOrder, UsCancelTooEarlyError } from '../lib/us/us-order-actions';
 import { getUsTradingState, subscribeUsTradingState, usRemaining, type UsTradingState } from '../lib/us/us-trading-state';
-import { UsMarketBadge } from './us-order-panel';
-import * as styles from './us-order-panel.css';
+import * as styles from './bottom-dock-us.css';
 import * as dock from './bottom-dock.css';
 export { fmtUsPnl, usAccountGroupKey, usAmountDir, usPositionRowKey, UsTag, type UsPositionRow } from './bottom-dock-shared';
 
@@ -231,7 +230,7 @@ export function UsRepriceDialog({ row, onClose }: { row: AccountedUsTrade; onClo
     return (
         <div className={styles.backdrop} role='dialog' aria-modal='true' aria-label='美股改價'>
             <div className={styles.dialog}>
-                <div className={styles.dialogTitle}><UsMarketBadge />改價 {row.contract.code}（刪單後重下）</div>
+                <div className={styles.dialogTitle}><span className={styles.marketBadge}>美股</span>改價 {row.contract.code}（刪單後重下）</div>
                 <div className={styles.notice}>
                     美股不能直接改價：會先刪除原委託，確認刪除後再由你按一次送出新委託。兩步之間若有成交，只重下實際取消的股數。
                 </div>

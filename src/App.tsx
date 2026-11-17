@@ -40,7 +40,6 @@ import {
     MarketSignalPanel,
 } from './components/market-pulse-panel';
 import { NoticeCenter } from './components/notice-center';
-import { UsOrderPanel } from './components/us-order-panel';
 import { OptPayoff } from './components/opt-payoff';
 import { OptionChain } from './components/option-chain';
 import { OrderConfirmHost } from './components/order-confirm-dialog';
@@ -98,6 +97,8 @@ import { notify } from './lib/trade';
 import { tradingActionObserved, useTradingState } from './lib/trading-state';
 import { quickOrderBlockMessage } from './lib/quick-order-support';
 import { ensureStream } from './lib/stream';
+import { contractLinkKey, isUsKey, usLinkKey } from './lib/contract-key';
+import { UsIntraday } from './components/us-intraday';
 import { ensureAccounts } from './lib/account-store';
 import type { ContractInfo, SecurityType } from './lib/types/contract';
 import {
@@ -114,6 +115,8 @@ import {
     popoutSessionParam,
     unsupportedPanelCount,
     unsupportedPanelsNotice,
+    takeRetiredPanelCount,
+    RETIRED_US_PANEL_NOTICE,
     withBlockSessionConfig,
     type SessionConfigPatch,
     type Block,
@@ -281,8 +284,9 @@ function BlockBody({
     if (contract?.security_type === 'IND' && indexBlockMessage(block.type)) {
         return <IndexBlockUnavailable type={block.type} />;
     }
-    if (isUsContract(contract) && usBlockMessage(block.type)) {
-        return <div className={styles.blockPlaceholder}>{usBlockMessage(block.type)}</div>;
+    // 美股：已整合的面板照常顯示；其他跟著商品走的面板統一在這裡擋
+    if (contract && isUsContract(contract) && US_UNSUPPORTED.has(block.type)) {
+        return <UsUnsupported />;
     }
     const quickOrderMessage = quickOrderBlockMessage(contract?.security_type, block.type);
     if (quickOrderMessage) {
@@ -303,6 +307,18 @@ function BlockBody({
         case 'dock':
             return <BottomDock {...dockProps} />;
         case 'chart':
+            // 美股沒有歷史 K 線：只顯示報價板
+            if (contract && isUsContract(contract)) return (
+                <>
+                    <QuoteBoard
+                        contract={contract}
+                        sessionMode={block.chartSession}
+                        fields={block.quoteBoard}
+                        onFieldsChange={(quoteBoard) => onSessionConfigChange(block.id, { quoteBoard })}
+                    />
+                    <UsUnsupported detail='美股沒有歷史 K 線' />
+                </>
+            );
             return contract ? (
                 <>
                     <QuoteBoard
@@ -343,6 +359,7 @@ function BlockBody({
                 <BlockPlaceholder phase={missingContractPhase} />
             );
         case 'intraday':
+            if (contract && isUsContract(contract)) return <UsIntraday contract={contract} />;
             return contract ? (
                 <IntradayChart
                     contract={contract}
@@ -493,8 +510,6 @@ function BlockBody({
             );
         case 'notices':
             return <NoticeCenter />;
-        case 'usorder':
-            return <UsOrderPanel />;
         case 'debug':
             return <DebugPanel />;
         case 'grid':
@@ -635,14 +650,21 @@ function IndexBlockUnavailable({ type }: { type: BlockType }) {
     );
 }
 
-// 美股（beta）沒有即時行情，也不走台股下單、grid、括號單與觸價：
-// 只留美股下單面板。美股商品不會進全域選股，這裡是防呆。
-function usBlockMessage(type: BlockType): string | null {
-    if (type === 'usorder' || type === 'dock' || type === 'watchlist' || type === 'movers' || type === 'notices' || type === 'debug') return null;
-    if (type === 'ticket' || type === 'grid' || type === 'flash' || type === 'oddspread' || type === 'conditional' || type === 'combo') {
-        return '美股請使用「美股下單」面板';
-    }
-    return '美股這個版本沒有即時行情（只有前一日參考價）';
+// 美股（SDK 1.8.0b1）只有最佳一檔與逐筆、沒有歷史資料：這些跟著商品走的
+// 面板對美股商品顯示「美股暫不支援」。自選、dock、下單、閃電、報價板、
+// 走勢（只畫訂閱後的逐筆）已整合；不跟商品走的面板（排行、熱力圖…）不受影響。
+const US_UNSUPPORTED: ReadonlySet<BlockType> = new Set<BlockType>([
+    'depth', 'depthmap', 'tape', 'volprofile', 'replay', 'chips', 'company',
+    'oddspread', 'stockfutures', 'warrants', 'optchain', 'combo', 'combolist',
+    'grid', 'conditional', 'backtest', 'chainmap', 'optpnl',
+]);
+
+function UsUnsupported({ detail }: { detail?: string }) {
+    return (
+        <div className={styles.blockPlaceholder} data-testid='us-unsupported'>
+            美股暫不支援{detail ? `（${detail}）` : ''}
+        </div>
+    );
 }
 
 // 組合商品是行情/圖表身分 — 下單類面板要導向組合單（整體 action ×
@@ -726,13 +748,13 @@ function BlockView(props: BlockViewProps) {
                 symbolName={block.type === 'flash' || block.type === 'oddspread' ? undefined : symbol?.name}
                 pinnable={meta.pinnable}
                 pin={block.pin}
-                currentCode={selected?.code ?? null}
+                currentCode={selected ? contractLinkKey(selected) : null}
                 onPinChange={(pin) => onPinChange(block.id, pin)}
                 link={block.type !== 'flash' ? undefined : {
                     mode: linkMode,
                     groups: linkGroups,
                     // 目前的來源代碼：鎖定／群組用自己的代碼（即使合約還在載入），跟自選才用選取
-                    onMode: (mode) => onLinkMode(block.id, mode, sourceCode ?? contract?.code ?? null),
+                    onMode: (mode) => onLinkMode(block.id, mode, sourceCode ?? (contract ? contractLinkKey(contract) : null)),
                     onGroupCode,
                 }}
                 onRemove={() => {
@@ -753,7 +775,7 @@ function BlockView(props: BlockViewProps) {
                               void openPopout(
                                   block.type,
                                   // 閃電：彈出實際下單的合約（對應商品之後），固定不跟群組
-                                  block.type === 'flash' ? flashTargetRef.current : contract?.code ?? null,
+                                  block.type === 'flash' ? flashTargetRef.current : contract ? contractLinkKey(contract) : null,
                                   // popout 開啟時固定帳戶：面板自己的選擇，跟隨主畫面的市場
                                   // 則取此刻主畫面的選擇（popout 不會即時跟隨）
                                   {
@@ -999,6 +1021,18 @@ export default function App() {
     return <MainApp />;
 }
 
+// 手打的代碼：先當台股查，查不到又像美股代碼（英文字母）時改查美股
+const US_TYPED_CODE = /^[A-Za-z][A-Za-z.]{0,9}$/;
+async function resolveInputContract(code: string): Promise<ContractInfo> {
+    if (isUsKey(code)) return ensureContract(code);
+    try {
+        return await ensureContract(code);
+    } catch (error) {
+        if (!US_TYPED_CODE.test(code)) throw error;
+        return ensureContract(usLinkKey(code));
+    }
+}
+
 function MainApp() {
     const {
         items,
@@ -1023,7 +1057,8 @@ function MainApp() {
     const [agentHarnessEnabled, setAgentHarnessEnabledState] = useState(
         isAgentHarnessEnabled,
     );
-    const cachedSelected = useContract(selected?.code ?? null);
+    const selectedKey = selected ? contractLinkKey(selected) : null;
+    const cachedSelected = useContract(selectedKey);
     const [workspace, setWorkspace] = useState<Workspace>(() => initializeIndicatorPanels(loadWorkspace()));
     const [profiles, setProfiles] = useState<Profile[]>(loadProfiles);
     // 較新版本存的版面降版讀到：未知面板已在讀入時略過（資料仍保留），提示一次
@@ -1035,6 +1070,7 @@ function MainApp() {
             profiles.reduce((n, p) => n + unsupportedPanelCount(p.workspace), 0),
         );
         if (body) notify({ kind: 'info', title: '有面板此版本不支援', body });
+        if (takeRetiredPanelCount() > 0) notify({ kind: 'info', title: '美股下單已併入下單與閃電面板', body: RETIRED_US_PANEL_NOTICE });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     const selectedRef = useRef(selected);
@@ -1065,7 +1101,7 @@ function MainApp() {
         }
         if (selected) {
             const refreshed = items.find(
-                (item) => item.contract.code === selected.code,
+                (item) => contractLinkKey(item.contract) === contractLinkKey(selected),
             );
             // 只在 items 的物件就是 contract cache 的最新物件時才採用 —
             // 若其他面板（權證/個股期/走勢牆）對同一檔 prime 了另一個物
@@ -1076,7 +1112,7 @@ function MainApp() {
             if (
                 refreshed &&
                 refreshed.contract !== selected &&
-                (getCachedContract(selected.code) ?? refreshed.contract) ===
+                (getCachedContract(contractLinkKey(selected)) ?? refreshed.contract) ===
                     refreshed.contract
             ) {
                 setSelected(refreshed.contract);
@@ -1114,7 +1150,8 @@ function MainApp() {
     // select & link a symbol WITHOUT adding it to the watchlist
     const selectByCode = useCallback(
         async (code: string) => {
-            const existing = items.find((i) => i.contract.code === code);
+            // code 是連動 key：台股裸代碼、美股 US:CODE
+            const existing = items.find((i) => contractLinkKey(i.contract) === code);
             if (existing) {
                 setSelected(existing.contract);
                 return;
@@ -1167,12 +1204,13 @@ function MainApp() {
     } | null>(null);
     useEffect(() => {
         const c = selected;
-        if (!c) return;
+        // 美股沒有快照：報價板只用即時逐筆與參考價
+        if (!c || isUsContract(c)) return;
         // 只認 code 當依賴 — items 每輪快照輪詢都換 identity，跟著抖
         // 會變成重複抓
         if (
             items.some(
-                (i) => i.contract.code === c.code && i.snapshot !== undefined,
+                (i) => contractLinkKey(i.contract) === contractLinkKey(c) && i.snapshot !== undefined,
             )
         ) {
             return;
@@ -1192,14 +1230,15 @@ function MainApp() {
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selected?.code]);
+    }, [selectedKey]);
     const selectedSnapshot = useMemo(
         () =>
-            items.find((i) => i.contract.code === selected?.code)?.snapshot ??
+            selected && isUsContract(selected) ? undefined :
+            items.find((i) => contractLinkKey(i.contract) === selectedKey)?.snapshot ??
             (fallbackSnap && fallbackSnap.code === selected?.code
                 ? fallbackSnap.snap
                 : undefined),
-        [items, selected, fallbackSnap],
+        [items, selected, selectedKey, fallbackSnap],
     );
 
     // ambient observation: one effect catches every selection path
@@ -1209,7 +1248,7 @@ function MainApp() {
             trackActivity('選商品', `${selected.code} ${selected.name}`);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selected?.code]);
+    }, [selectedKey]);
 
     // ---- workspace ops ----
 
@@ -1381,14 +1420,23 @@ function MainApp() {
 
     const setBlockPin = useCallback(
         (id: string, pin: string | null) => {
-            updateWorkspace({
-                ...workspace,
-                blocks: workspace.blocks.map((b) =>
-                    b.id === id ? { ...b, pin } : b,
-                ),
-            });
+            const store = (value: string | null) => {
+                const w = workspaceRef.current;
+                updateWorkspace({
+                    ...w,
+                    blocks: w.blocks.map((b) =>
+                        b.id === id ? { ...b, pin: value } : b,
+                    ),
+                });
+            };
+            // 手打的代碼台股查不到、又像美股代碼時，改存 US:CODE
+            if (pin && !isUsKey(pin) && !getCachedContract(pin) && US_TYPED_CODE.test(pin)) {
+                resolveInputContract(pin).then((c) => store(contractLinkKey(c)), () => store(pin));
+                return;
+            }
+            store(pin);
         },
-        [workspace, updateWorkspace],
+        [updateWorkspace],
     );
 
     const setBlockWallConfig = useCallback(
@@ -1472,12 +1520,12 @@ function MainApp() {
         groupCodeSeq.current[group] = seq;
         const gen = workspaceGenRef.current;
         setGroupPending((p) => ({ ...p, [group]: { code, seq, gen } }));
-        ensureContract(code).then(
+        resolveInputContract(code).then(
             (c) => {
                 clearPending(group, seq);
                 // 期間又輸入了新代碼或套用了別的版面：這次作廢
                 if (groupCodeSeq.current[group] !== seq || workspaceGenRef.current !== gen) return;
-                updateWorkspace(withGroupCode(workspaceRef.current, group, c.code));
+                updateWorkspace(withGroupCode(workspaceRef.current, group, contractLinkKey(c)));
             },
             () => {
                 clearPending(group, seq);
@@ -1614,9 +1662,10 @@ function MainApp() {
                 getPreset: (name) =>
                     LAYOUT_PRESETS.find((preset) => preset.name === name)
                         ?.workspace,
+                // 美股用 US:CODE（例 US:AAPL）；台股照舊裸代碼
                 resolveContract: async (code) => {
                     const existing = itemsRef.current.find(
-                        (item) => item.contract.code === code,
+                        (item) => contractLinkKey(item.contract) === code,
                     );
                     return existing?.contract ?? ensureContract(code);
                 },
@@ -1689,14 +1738,15 @@ function MainApp() {
     });
 
     const jumpToCode = useCallback(
-        async (code: string, securityType?: SecurityType) => {
-            const existing = items.find((i) => i.contract.code === code &&
-                (!securityType || i.contract.security_type === securityType));
+        async (key: string, securityType?: SecurityType) => {
+            const us = isUsKey(key);
+            const existing = items.find((i) => contractLinkKey(i.contract) === key &&
+                (us || !securityType || i.contract.security_type === securityType));
             if (existing) {
                 setSelected(existing.contract);
                 return;
             }
-            const c = await ensureContract(code, securityType);
+            const c = await ensureContract(key, us ? undefined : securityType);
             setSelected(c);
         },
         [items],
@@ -1704,7 +1754,7 @@ function MainApp() {
 
     const watchlistProps = {
         items,
-        selectedCode: selected?.code ?? null,
+        selectedCode: selectedKey,
         onSelect: setSelected,
         onAdd: addSymbol,
         onRemove: removeSymbol,
@@ -1768,7 +1818,7 @@ function MainApp() {
                 blocks={workspace.blocks}
                 onAdd={addBlock}
                 onLocate={locateBlock}
-                selectedCode={selected?.code}
+                selectedCode={selectedKey ?? undefined}
             />
 
             <div className={grid.gridWrap} ref={containerRef}>

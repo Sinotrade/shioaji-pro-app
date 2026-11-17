@@ -1,4 +1,4 @@
-// src/components/us-order-panel.css.ts — 美股下單面板與美股委託／庫存區段
+// src/components/bottom-dock-us.css.ts — 美股下單面板與美股委託／庫存區段
 
 import { style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';

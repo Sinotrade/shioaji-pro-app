@@ -1,4 +1,4 @@
-// src/components/us-ticket.css.ts — 下單面板的美股分支（樣式取自 us-order-panel.css.ts）
+// src/components/us-ticket.css.ts — 下單面板的美股分支（樣式取自原美股下單面板）
 
 import { style, styleVariants } from '@vanilla-extract/css';
 import { vars } from '../theme.css';
