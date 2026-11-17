@@ -73,6 +73,14 @@ export interface ServerInfo {
     agent_harness?: Health['agent_harness'];
 }
 
+/** 美股合約（region US）：beta 沒有即時報價，也不走台股下單路徑 */
+export function isUsContract(c: Pick<ContractBase, 'region'> | null | undefined): boolean {
+    return c?.region === 'US';
+}
+
+const US_NO_QUOTES = '美股這個版本沒有即時行情';
+const US_TW_ORDER_PATH = '美股請使用「美股下單」面板；這個下單路徑只支援台股';
+
 function contractKey(c: ContractBase) {
     return {
         security_type: c.security_type,
@@ -394,6 +402,7 @@ export function fetchWarrantUnderlyings(opts?: { signal?: AbortSignal }) {
 // ---- market data ----
 
 export function fetchSnapshots(contracts: ContractBase[]) {
+    if (contracts.some(isUsContract)) return Promise.reject(new Error(US_NO_QUOTES));
     return observeMarketSnapshots(contracts, apiPost<Snapshot[]>('/api/v1/data/snapshots', {
         contracts: contracts.map(marketDataContract),
     }));
@@ -410,6 +419,7 @@ export async function fetchKbars(
     end: string,
     opts?: { timeoutMs?: number },
 ): Promise<KBars> {
+    if (isUsContract(contract)) throw new Error(US_NO_QUOTES);
     const body = { contract: marketDataContract(contract), start, end };
     for (let attempt = 0; ; attempt++) {
         try {
@@ -473,6 +483,8 @@ export function subscribeQuote(
     quoteType: QuoteTypeName,
     options?: QuoteSubscribeOptions,
 ) {
+    // 美股 beta 沒有報價（訂閱不會收到資料），一律不訂閱
+    if (isUsContract(contract)) return Promise.reject(new Error(US_NO_QUOTES));
     const oddLot = options?.oddLot === true;
     // 組合商品走巢狀腳訂閱（flat code 如 TXFI6/J6 server 不認）
     const comboMeta = (contract as { combo?: unknown }).combo;
@@ -810,7 +822,7 @@ export function unsubscribeMarketSignal(
 
 /** Every mutation shares this dispatch gate. Re-read the wire account from
  * the current list and the current mode, including after transport loading. */
-function sendOrderMutation<T>(
+export function sendOrderMutation<T>(
     path: string,
     body: unknown,
     account: Account | undefined,
@@ -869,6 +881,9 @@ export function placeStockOrder(
     account?: Account,
     opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean; beforeDispatch?: () => void; onResponse?: (res: Response) => void },
 ) {
+    // 美股不走這條路（grid／括號單／觸價／背景引擎／Agent 都經過這裡）：
+    // 這裡的 order_lot／order_cond／custom_field 美股都會被拒
+    if (isUsContract(contract)) return Promise.reject(Object.assign(new Error(US_TW_ORDER_PATH), { mutationNotStarted: true as const }));
     // 零股不支援的組合（融資券／當沖／市價／IOC／超過 999 股）與整股信用規則
     // （融券買進、不可當沖的當沖先賣）一律在送出前擋下（#204）
     // 權證：沒有零股、只能現股、外國標的不收市價（docs/qa/warrant-rules.md）
@@ -892,6 +907,7 @@ export function placeFuturesOrder(
     account?: Account,
     opts?: { agentInitiated?: boolean; agentCallId?: string; agentAuto?: boolean; beforeDispatch?: () => void },
 ) {
+    if (isUsContract(contract)) return Promise.reject(Object.assign(new Error(US_TW_ORDER_PATH), { mutationNotStarted: true as const }));
     // 倉別／效期／價別不在下單面板提供的範圍就不送（與下單面板、閃電同一套規則）
     const problem = futuresOrderProblem(order);
     if (problem) return Promise.reject(Object.assign(new Error(problem), { mutationNotStarted: true as const }));

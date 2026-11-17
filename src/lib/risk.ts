@@ -126,3 +126,16 @@ export function checkOrderAllowed(quantity: number, orderLot?: StockOrderLot | s
     }
     return null;
 }
+
+/**
+ * 美股（H 帳戶）下單的風控：風控鎖與當日虧損上限照樣封鎖；
+ * 單筆上限以張／口設定，美股以股計、沒有可比的單位，這版不套用（只在台股生效）。
+ */
+export function checkUsOrderAllowed(): string | null {
+    if (settings.locked) return '風控鎖啟動中 — 所有下單已封鎖';
+    if (!settings.enabled) return null;
+    if (settings.maxDailyLoss > 0 && dailyPnl <= -settings.maxDailyLoss) {
+        return `當日虧損 ${secretMoney(Math.round(dailyPnl))} 已達上限 -${secretMoney(settings.maxDailyLoss)}，下單封鎖`;
+    }
+    return null;
+}
