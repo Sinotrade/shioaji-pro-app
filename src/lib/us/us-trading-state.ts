@@ -399,6 +399,17 @@ export function parseIntlPositions(value: unknown): IntlPosition[] | null {
 
 const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
 
+// 查詢期間伺服器或模式剛變（啟動時常見）：結果作廢，稍後重查一次，
+// 不要讓狀態一直停在「查詢中」
+let positionsRetry: ReturnType<typeof setTimeout> | null = null;
+function retryPositionsSoon() {
+    if (positionsRetry) return;
+    positionsRetry = setTimeout(() => {
+        positionsRetry = null;
+        if (state.positionsStatus === 'loading') void refreshUsPositions();
+    }, 1000);
+}
+
 export async function refreshUsPositions(): Promise<void> {
     const accounts = usAccounts();
     if (!accounts.length) { publish({ positions: [], positionsStatus: 'idle', positionsError: null }); return; }
@@ -407,7 +418,7 @@ export async function refreshUsPositions(): Promise<void> {
     const stale = () => base !== getApiBase() || mode !== getServerModeVersion();
     publish({ positionsStatus: state.positionsStatus === 'ready' ? 'ready' : 'loading' });
     const capability = await hasUsPortfolioCapability();
-    if (stale()) return; // 模式穩定後會再查一次
+    if (stale()) { retryPositionsSoon(); return; }
     if (capability === 'no') {
         publish({ positions: [], positionsStatus: 'unsupported', positionsError: null });
         return;
@@ -417,7 +428,7 @@ export async function refreshUsPositions(): Promise<void> {
         return;
     }
     const results = await Promise.allSettled(accounts.map(a => fetchUsPositions(a)));
-    if (stale()) return;
+    if (stale()) { retryPositionsSoon(); return; }
     const rows: (IntlPosition & { account: Account })[] = [];
     for (const [i, r] of results.entries()) {
         if (r.status === 'rejected') {
